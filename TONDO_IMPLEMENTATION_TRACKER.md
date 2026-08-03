@@ -1,13 +1,12 @@
 # Tondo: tracker de implementación
 
-**Estado:** M10.5b, Gate H0, M10.7, M10.6 y Gate T0 están cerrados sobre el
+**Estado:** M10.5b, Gate H0, M10.7, M10.6, Gate T0 y Gate G5 están cerrados sobre el
 draft actual. Metaprogramación, reflection metadata-only, `defer await`, el
 runner público de testing, tiempo virtual y sus proyectos de aceptación forman
-parte de la conformidad viva. Tondo 0.1 sigue en desarrollo: el siguiente
-cierre es `CONF-SEAL-001`/Gate G5 y después comienza STD-0.1A; nada de ello
-afirma todavía una publicación.
+parte del candidato de conformidad inmutable. Tondo 0.1 sigue en desarrollo:
+el siguiente bloque es STD-0.1A; Gate G5 no afirma una publicación.
 
-**Versión del tracker:** 1.36
+**Versión del tracker:** 1.37
 
 **Última actualización:** 2026-08-02
 
@@ -17,9 +16,10 @@ afirma todavía una publicación.
 - [Arquitectura base de Standard Library 0.1](./TONDO_STANDARD_LIBRARY_SPEC.md)
 - [Contrato de testing para Tondo 0.1](./TONDO_TESTING_SPEC.md)
 
-**Objetivo inmediato:** ejecutar `CONF-SEAL-001` sobre la revisión 6 del linaje
-draft, ya sin tareas pendientes, y cerrar Gate G5 sin confundir un candidato
-inmutable con una publicación. Después se completa STD-0.1A, se fijan antes del backend los contratos
+**Objetivo inmediato:** completar STD-0.1A por layers, empezando por
+`STD-PERF-001` y los contratos de cada owner antes de su implementación. Gate
+G5 ya fija la revisión 7 en un candidato inmutable sin confundirlo con una
+publicación. Después se fijan antes del backend los contratos
 runtime-facing de STD-0.1B, comienza M11 y, tras Gate N1, se implementa el resto
 de STD-0.1B y se cierra S1. Todo ello pertenece a la primera Standard Library
 0.1; los slices y fases son orden de implementación, no versiones públicas.
@@ -335,9 +335,9 @@ necesaria; la fragmentación del workspace no.
 | **M9 — Unsafe, targets y toolchain** | Gate G4: preview 0.1 | Completado |
 | **M10 — Bootstrap regression corpus** | Baseline ejecutable pre-`derive` | Completado |
 | **M10.5 — Reliability y testing** | Infraestructura y hardening continuo de evidencia | Completado |
-| **M10.5c — Conformidad del draft** | Una línea de draft y ratchet incremental | Wave 0 cerrado; sellado pendiente en Wave 4 |
-| **M10.7 — Metaprogramación estática** | `derive`, generators, meta VM y contribución a G5 | Especificado; implementación pendiente |
-| **M10.6 — Testing de usuario Tondo 0.1** | Gate T0 y contribución testing a G5 | En curso; lexer de keywords cerrado |
+| **M10.5c — Conformidad del draft** | Una línea de draft, ratchet y candidato inmutable | Completado; Gate G5 cerrado |
+| **M10.7 — Metaprogramación estática** | `derive`, generators, meta VM y contribución a G5 | Completado |
+| **M10.6 — Testing de usuario Tondo 0.1** | Gate T0 y contribución testing a G5 | Completado |
 | **STD-0.1A — Foundation + Hosted** | Base estándar necesaria para meta, testing y backend | Arquitectura base cerrada; slices tempranos y APIs pendientes |
 | **M11 — Backend nativo y optimización** | Implementación de producción | Futuro |
 | **STD-0.1B — Concurrency + Application** | Contratos runtime antes de M11; implementación tras N1 | Arquitectura base cerrada; contratos y código pendientes |
@@ -351,16 +351,15 @@ Estado observado del workspace:
   `tondo-reference-adapter`, `tondo-reliability` y `tondo-vm`.
 - Toolchain utilizado para la validación: Rust 1.93.0 y Cargo 1.93.0; la versión
   mínima soportada queda fijada en Rust 1.93.
-- Última validación del corpus bootstrap implementado, anterior a la ampliación actual
-  del draft: 2026-07-29, con formatter check, `cargo check` de todos los
-  targets, Clippy con warnings denegados, 848 tests Rust inventariados, Rustdoc
-  con warnings denegados y metadatos locked. La suite oficial pasa 205 casos y
-  424 repeticiones byte-estables; el inventario completo registra 1.533 casos
-  lógicos y 1.752 repeticiones.
-- La línea única de draft registra 1.533 tests lógicos y 1.752 repeticiones:
-  1.483 ejecutables, 38 contratos `draft-pending`, tres campañas y nueve fences
-  no ejecutables. Su matriz conserva 17 requisitos cubiertos y expone
-  explícitamente 27 requisitos nuevos o modificados como `draft-pending`.
+- La evidencia actual registra 2.106 tests lógicos y 2.325 repeticiones:
+  2.056 ejecutables, 38 contratos de stdlib aún documentales, tres campañas y
+  nueve fences no ejecutables. La suite bootstrap conserva sus 205 casos y 424
+  repeticiones byte-estables como regresión explícita.
+- La matriz única contiene 316 requisitos: 46 tienen evidencia ejecutable, tres
+  pertenecen a la stdlib pendiente, siete no aplican al target y 260 conservan
+  límites de evidencia del toolchain bootstrap. No queda ningún requisito
+  `draft-pending`. La cobertura limpia es 90,60 % de líneas y mutation mantiene
+  100 % sobre los mutantes ejecutables seleccionados.
 
 ### 4.1 Grafo de dependencias y ruta crítica
 
@@ -2513,7 +2512,8 @@ Antes de ampliar la gramática de M10.7 o M10.6:
   El runner, reliability, matriz, scripts y CI ya no ofrecen selección
   identidades históricas ni fallback entre manifests. El manifest de draft fija los
   hashes de los cuatro specs, el estado abierto, las tareas pendientes y los
-  layers futuros; el preflight de sellado sigue siendo no mutante. Añadir tests
+  layers futuros; el sellado produce un candidato nuevo sin mutar el draft ni
+  el corpus histórico. Añadir tests
   que demuestren selección única, rechazo de nombres de linaje antiguos,
   reproducibilidad y que el gate estricto no presenta la regresión bootstrap
   como conformidad completa.
@@ -2528,13 +2528,17 @@ Antes de ampliar la gramática de M10.7 o M10.6:
   mini-gate antes de integrarse; `META-CONF`, `UTEST-CONF` y los gates
   estándar siguen siendo cierres acumulativos.
 
-- [ ] **CONF-SEAL-001 — Sellar una única conformidad Tondo 0.1.** Después de
+- [x] **CONF-SEAL-001 — Sellar una única conformidad Tondo 0.1.** Después de
   `META-CONF-001`, `UTEST-CONF-001` y Gate T0, exigir cero requisitos
   pendientes, fijar hashes actuales de specs/cases/adaptador, reconstruir desde
   un workspace limpio y promover atómicamente el último draft verificado a la
-  distribución inmutable del primer release. Probar que no mezcla artefactos
-  de otra historia; Gate G5 verifica este
-  resultado y no vuelve a generarlo.
+  distribución inmutable del candidato. El bundle canónico y content-addressed
+  conserva procedencia, rechaza destinos parciales o distintos, se verifica sin
+  consultar el draft vivo y nunca sobrescribe `conformance/0.1`. El gate estricto
+  lo reconstruye en un destino efímero y compara su manifest byte a byte con el
+  candidato versionado. Las pruebas cubren idempotencia, mezcla de historia,
+  tampering, paths y cierre exacto; Gate G5 verifica este resultado sin afirmar
+  una publicación.
 
 ---
 
@@ -3515,19 +3519,19 @@ vez los errores de los slices anteriores.
   inventario, trazabilidad, coverage y mutation evidence para la superficie
   nueva; el sellado conjunto pertenece a `CONF-SEAL-001`.
 
-### Gate G5 — Primera versión del lenguaje publicable
+### Gate G5 — Candidato completo del lenguaje
 
-- [ ] Todo el draft Tondo 0.1, incluidos M10.7 y M10.6, está implementado y
+- [x] Todo el draft Tondo 0.1, incluidos M10.7 y M10.6, está implementado y
   tiene conformidad aplicable sobre `tondo-vm-hosted`.
-- [ ] Gate T0 está cerrado y el grupo de testing forma parte de
+- [x] Gate T0 está cerrado y el grupo de testing forma parte de
   `tondo-conformance-draft`, no de una edición o suite paralela.
-- [ ] `CONF-SEAL-001` ha promovido exactamente el draft verificado, sin
+- [x] `CONF-SEAL-001` ha promovido exactamente el draft verificado, sin
   presentar la regresión bootstrap como requisitos nuevos ni dejar pendientes.
-- [ ] La suite y sus manifests fijan el hash actual de la spec, no el snapshot
+- [x] La suite y sus manifests fijan el hash actual de la spec, no el snapshot
   bootstrap de regresión.
-- [ ] No existe una ruta de ejecución ambiental dentro del frontend ni del VM
+- [x] No existe una ruta de ejecución ambiental dentro del frontend ni del VM
   meta.
-- [ ] La distribución puede describirse como candidata a publicación; este gate
+- [x] La distribución puede describirse como candidata a publicación; este gate
   por sí solo no realiza ni afirma una publicación.
 
 ---
@@ -4495,14 +4499,30 @@ CONF-DRAFT
 
 M4, M5, M6, M7, M8, M9, el corpus bootstrap M10, M10.5, M10.5b y Gates G4/H0
 quedan cerrados. M10.7, M10.6 y Gate T0 también están cerrados dentro del draft
-no publicado. `CONF-DRAFT-001` y `CONF-RATCHET-001` están cerrados; la acción
-inmediata es `CONF-SEAL-001` y Gate G5. Ninguna tarea posterior necesita
+no publicado. `CONF-DRAFT-001`, `CONF-RATCHET-001`, `CONF-SEAL-001` y Gate G5
+están cerrados; la acción inmediata es Wave 5/STD-0.1A. Ninguna tarea posterior necesita
 volver a decidir el orden global: sus prerequisitos están en 4.1.1 y en la wave
 correspondiente.
 
 ---
 
 ## 25. Historial del tracker
+
+### 1.37 — 2026-08-02
+
+- Se completa `CONF-SEAL-001` con promoción atómica a
+  `conformance/candidate`: manifest canónico, objetos por SHA-256, procedencia
+  cerrada de specs, layers, regresión, ratchet, evidencia y adaptador.
+- La revisión 7 añade el layer final de evidencia para `defer await`,
+  hermeticidad meta, layout convencional, cierre de conformidad y el hash
+  canónico C.6; la matriz queda sin requisitos `draft-pending`.
+- El verificador consume solo el closure inmutable, rechaza mezcla histórica,
+  tampering, objetos extra, paths no normales y destinos distintos; una
+  promoción idéntica es idempotente y nunca reemplaza el corpus histórico.
+- El gate estricto reconstruye el candidato desde un resultado fresco, compara
+  su identidad con la versionada y verifica después el bundle versionado.
+- Gate G5 queda cerrado como candidato técnico. Tondo continúa sin publicación
+  y la cola avanza a Wave 5/STD-0.1A.
 
 ### 1.36 — 2026-08-02
 

@@ -233,7 +233,7 @@ mod tests {
     fn repository_ratchet_requires_reports_for_draft_case_layers() {
         let root = repository_root();
         let lineage = DraftLineage::load(&root, DRAFT_LINEAGE_PATH).unwrap();
-        assert_eq!(lineage.manifest().case_layers.len(), 2);
+        assert_eq!(lineage.manifest().case_layers.len(), 3);
         assert!(scope_evidence(&root, "coverage", None, true, |_, _| Ok(Vec::new())).is_err());
         assert!(scope_evidence(&root, "mutation", None, true, |_, _| Ok(Vec::new())).is_err());
     }

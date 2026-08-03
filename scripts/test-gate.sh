@@ -57,3 +57,19 @@ run_step conformance-run \
 run_step conformance-compare \
     cmp "$evidence/conformance-result.json" \
     conformance/0.1/results/tondo-reference-draft-tondo-vm-hosted.json
+
+candidate_directory="$(mktemp -d "$evidence/candidate.XXXXXX")"
+rmdir "$candidate_directory"
+run_step conformance-seal \
+    cargo run -p tondo-conformance --locked -- seal \
+    --root . \
+    --manifest conformance/draft/manifest.json \
+    --lineage draft \
+    --result "$evidence/conformance-result.json" \
+    --output "$candidate_directory"
+run_step conformance-candidate-compare \
+    cmp "$candidate_directory/manifest.json" conformance/candidate/manifest.json
+run_step conformance-candidate-verify \
+    cargo run -p tondo-conformance --locked -- verify-candidate \
+    --root . \
+    --candidate conformance/candidate

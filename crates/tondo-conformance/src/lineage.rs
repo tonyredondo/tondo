@@ -565,13 +565,15 @@ mod tests {
             first.baseline_suite().manifest_sha256(),
             "6bb8fe5b151ef73f1d49b3d432a51ec18c7a634cf4c9d014eea81d6a351c6ffb"
         );
-        assert_eq!(first.manifest().revision, 6);
-        assert_eq!(first.case_layers().len(), 2);
-        assert_eq!(first.case_layers()[0].layer, "meta");
-        assert_eq!(first.case_layers()[0].cases.len(), 6);
-        assert_eq!(first.case_layers()[1].layer, "testing");
-        assert_eq!(first.case_layers()[1].cases.len(), 52);
-        assert_eq!(first.implemented_requirements().len(), 15);
+        assert_eq!(first.manifest().revision, 7);
+        assert_eq!(first.case_layers().len(), 3);
+        assert_eq!(first.case_layers()[0].layer, "finalization");
+        assert_eq!(first.case_layers()[0].cases.len(), 5);
+        assert_eq!(first.case_layers()[1].layer, "meta");
+        assert_eq!(first.case_layers()[1].cases.len(), 6);
+        assert_eq!(first.case_layers()[2].layer, "testing");
+        assert_eq!(first.case_layers()[2].cases.len(), 52);
+        assert_eq!(first.implemented_requirements().len(), 29);
         assert!(first.manifest().pending_tasks.is_empty());
         first.check_sealable().unwrap();
     }

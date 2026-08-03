@@ -30,7 +30,7 @@ fn validate_command_reports_the_single_draft_identity() {
     assert!(output.stderr.is_empty());
     assert_eq!(
         String::from_utf8(output.stdout).expect("identity must be UTF-8"),
-        "tondo-draft 0.1 open 6 1d60f8109d77345c22e1464ec916508de415b3269f9239906def71eeddc469d2\n"
+        "tondo-draft 0.1 open 7 3994ebd5e128307e953dade3bd92943fff2b7114a8521084b632a786546b90c8\n"
     );
 }
 
@@ -60,7 +60,7 @@ fn validate_command_rejects_a_second_lineage_name() {
 }
 
 #[test]
-fn seal_is_a_non_mutating_preflight_for_the_complete_draft() {
+fn seal_requires_explicit_evidence_and_destination() {
     let output = Command::new(executable())
         .args([
             "seal",
@@ -76,12 +76,41 @@ fn seal_is_a_non_mutating_preflight_for_the_complete_draft() {
         .output()
         .expect("the conformance runner must execute");
 
-    assert!(output.status.success());
-    assert!(output.stderr.is_empty());
-    assert_eq!(
-        String::from_utf8(output.stdout).expect("identity must be UTF-8"),
-        "tondo-draft revision 6 satisfies the non-mutating seal preflight\n"
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr)
+            .expect("error must be UTF-8")
+            .contains("`--result` is required for seal")
     );
+}
+
+#[test]
+fn verify_candidate_command_rejects_an_unsealed_directory() {
+    let root = std::env::temp_dir().join(format!(
+        "tondo-candidate-cli-rejection-{}",
+        std::process::id()
+    ));
+    if root.exists() {
+        std::fs::remove_dir_all(&root).expect("stale test directory must be removable");
+    }
+    std::fs::create_dir_all(root.join("candidate")).expect("test directory must be creatable");
+    std::fs::write(root.join("candidate/manifest.json"), b"{}\n")
+        .expect("test manifest must be writable");
+    let output = Command::new(executable())
+        .args([
+            "verify-candidate",
+            "--root",
+            root.to_str().expect("repository path must be UTF-8"),
+            "--candidate",
+            "candidate",
+        ])
+        .output()
+        .expect("the conformance runner must verify");
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("invalid candidate JSON"));
+    std::fs::remove_dir_all(root).expect("test directory must be removable");
 }
 
 #[test]

@@ -1,0 +1,1125 @@
+//! Atomic, content-addressed promotion of the completed draft into a release candidate.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::error::Error;
+use std::fmt;
+use std::fs::{self, OpenOptions};
+use std::io::Write as _;
+use std::path::{Component, Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
+
+use crate::lineage::{
+    DRAFT_LINEAGE_FORMAT, DRAFT_LINEAGE_NAME, DraftLineage, DraftLineageManifest,
+};
+use crate::manifest::PinnedFile;
+use crate::{ADAPTER_PROTOCOL, RESULT_FORMAT, SUITE_NAME, sha256};
+
+pub const CANDIDATE_FORMAT: &str = "tondo-conformance-candidate/1";
+pub const CANDIDATE_STATE: &str = "candidate";
+pub const DEFAULT_CANDIDATE_DIRECTORY: &str = "conformance/candidate";
+pub const RATCHET_PATH: &str = "testing/conformance-ratchet.json";
+
+const RATCHET_FORMAT: &str = "tondo-conformance-ratchet/1";
+const ADAPTER_PACKAGE: &str = "tondo-reference-adapter";
+const ADAPTER_SOURCES: [&str; 10] = [
+    "crates/tondo-reference-adapter/Cargo.toml",
+    "crates/tondo-reference-adapter/src/determinism.rs",
+    "crates/tondo-reference-adapter/src/document.rs",
+    "crates/tondo-reference-adapter/src/lib.rs",
+    "crates/tondo-reference-adapter/src/main.rs",
+    "crates/tondo-reference-adapter/src/maintain.rs",
+    "crates/tondo-reference-adapter/src/semantic.rs",
+    "crates/tondo-reference-adapter/tests/conformance.rs",
+    "crates/tondo-reference-adapter/tests/process_protocol.rs",
+    "crates/tondo-reference-adapter/tests/semantic_contracts.rs",
+];
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CandidateManifest {
+    pub format: String,
+    pub edition: String,
+    pub state: String,
+    pub lineage: CandidateLineage,
+    pub target: CandidateTarget,
+    pub adapter: CandidateAdapter,
+    pub files: Vec<CandidateFile>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CandidateLineage {
+    pub name: String,
+    pub revision: u32,
+    pub manifest_sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CandidateTarget {
+    pub name: String,
+    pub profile: String,
+    pub capabilities: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CandidateAdapter {
+    pub package: String,
+    pub protocol: String,
+    pub implementation: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CandidateFile {
+    pub role: String,
+    pub source_path: String,
+    pub object: PinnedFile,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SealOutcome {
+    Created,
+    AlreadyPresent,
+}
+
+#[derive(Debug)]
+pub enum SealError {
+    Io { path: PathBuf, message: String },
+    Json(String),
+    Invalid(String),
+}
+
+impl fmt::Display for SealError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Io { path, message } => {
+                write!(formatter, "cannot access `{}`: {message}", path.display())
+            }
+            Self::Json(message) => write!(formatter, "invalid candidate JSON: {message}"),
+            Self::Invalid(message) => write!(formatter, "invalid conformance candidate: {message}"),
+        }
+    }
+}
+
+impl Error for SealError {}
+
+#[derive(Debug, Clone)]
+struct CandidateBundle {
+    manifest: CandidateManifest,
+    manifest_bytes: Vec<u8>,
+    objects: BTreeMap<String, Vec<u8>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RatchetRecord {
+    format: String,
+    lineage: String,
+    revision: u32,
+    manifest: PinnedFile,
+    inventory: PinnedFile,
+    matrix: PinnedFile,
+    quality_baseline: PinnedFile,
+    draft_case_layers: u64,
+    pending_tasks: Vec<String>,
+    coverage: ScopeEvidence,
+    mutation: ScopeEvidence,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ScopeEvidence {
+    status: String,
+    reason: String,
+    report_sha256: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ResultRecord {
+    format: String,
+    suite: String,
+    edition: String,
+    manifest_sha256: String,
+    adapter: ResultAdapter,
+    target: CandidateTarget,
+    passed: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct ResultAdapter {
+    adapter_protocol: String,
+    implementation: String,
+    targets: Vec<CandidateTarget>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CoverageMatrixRecord {
+    format: String,
+    summary: CoverageMatrixSummary,
+    requirements: Vec<CoverageRequirement>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CoverageMatrixSummary {
+    total: u64,
+    by_status: BTreeMap<String, u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CoverageRequirement {
+    status: String,
+}
+
+/// Builds and atomically publishes the exact completed draft as a self-contained
+/// content-addressed candidate. Existing identical candidates are accepted;
+/// any differing destination fails closed.
+pub fn seal_candidate(
+    lineage: &DraftLineage,
+    result_path: &Path,
+    output_directory: &Path,
+) -> Result<SealOutcome, SealError> {
+    lineage
+        .check_sealable()
+        .map_err(|error| SealError::Invalid(error.to_string()))?;
+    let bundle = build_candidate(lineage, result_path)?;
+    let outcome = publish_bundle(lineage.root(), output_directory, &bundle)?;
+    let verified = verify_candidate(lineage.root(), &output_directory.join("manifest.json"))?;
+    if verified != bundle.manifest {
+        return invalid("published candidate differs from the promotion input");
+    }
+    Ok(outcome)
+}
+
+/// Verifies an already promoted candidate using only its immutable object
+/// closure. Live draft files are deliberately not consulted.
+pub fn verify_candidate(root: &Path, manifest_path: &Path) -> Result<CandidateManifest, SealError> {
+    require_relative_path(manifest_path, "candidate manifest path")?;
+    if manifest_path.file_name().and_then(|name| name.to_str()) != Some("manifest.json") {
+        return invalid("candidate manifest must be named `manifest.json`");
+    }
+    let relative_directory = manifest_path
+        .parent()
+        .ok_or_else(|| SealError::Invalid("candidate manifest has no parent directory".into()))?;
+    let directory = resolve_directory(root, relative_directory, false)?;
+    let absolute = directory.join("manifest.json");
+    let bytes = read_regular(&absolute)?;
+    let manifest: CandidateManifest =
+        serde_json::from_slice(&bytes).map_err(|error| SealError::Json(error.to_string()))?;
+    validate_candidate_manifest(&manifest)?;
+    if canonical_json(&manifest)? != bytes {
+        return invalid("candidate manifest is not canonical pretty JSON");
+    }
+    let mut objects = BTreeMap::new();
+    for file in &manifest.files {
+        let path = directory.join(&file.object.path);
+        let object = read_regular(&path)?;
+        let actual = sha256(&object);
+        if actual != file.object.sha256 {
+            return invalid(format!(
+                "object `{}` has SHA-256 `{actual}`, expected `{}`",
+                file.object.path, file.object.sha256
+            ));
+        }
+        objects.insert(file.source_path.clone(), object);
+    }
+    verify_candidate_directory(&directory, &manifest)?;
+    verify_candidate_closure(&manifest, &objects)?;
+    Ok(manifest)
+}
+
+fn build_candidate(
+    lineage: &DraftLineage,
+    result_path: &Path,
+) -> Result<CandidateBundle, SealError> {
+    let root = lineage.root();
+    let ratchet_bytes = read_regular(&root.join(RATCHET_PATH))?;
+    let ratchet: RatchetRecord = serde_json::from_slice(&ratchet_bytes)
+        .map_err(|error| SealError::Json(error.to_string()))?;
+    validate_ratchet(lineage, &ratchet, root)?;
+
+    let result_bytes = read_regular(result_path)?;
+    let result = parse_result(&result_bytes)?;
+    validate_result(lineage, &result)?;
+
+    let mut files = Vec::new();
+    let mut objects = BTreeMap::new();
+    add_source(
+        &mut files,
+        &mut objects,
+        "draft-manifest",
+        lineage.manifest_path().to_string_lossy().as_ref(),
+        read_regular(&root.join(lineage.manifest_path()))?,
+    )?;
+    for specification in &lineage.manifest().specifications {
+        add_source(
+            &mut files,
+            &mut objects,
+            "specification",
+            &specification.path,
+            read_regular(&root.join(&specification.path))?,
+        )?;
+    }
+    for layer in &lineage.manifest().case_layers {
+        add_source(
+            &mut files,
+            &mut objects,
+            "case-layer",
+            &layer.manifest.path,
+            read_regular(&root.join(&layer.manifest.path))?,
+        )?;
+    }
+    add_source(
+        &mut files,
+        &mut objects,
+        "regression-manifest",
+        &lineage.manifest().baseline.manifest.path,
+        read_regular(&root.join(&lineage.manifest().baseline.manifest.path))?,
+    )?;
+    add_source(
+        &mut files,
+        &mut objects,
+        "regression-specification",
+        &lineage.manifest().baseline.specification_snapshot.path,
+        read_regular(&root.join(&lineage.manifest().baseline.specification_snapshot.path))?,
+    )?;
+    add_source(
+        &mut files,
+        &mut objects,
+        "conformance-result",
+        "generated:tondo-reference-result",
+        result_bytes,
+    )?;
+    add_source(
+        &mut files,
+        &mut objects,
+        "ratchet",
+        RATCHET_PATH,
+        ratchet_bytes,
+    )?;
+    for evidence in [
+        &ratchet.inventory,
+        &ratchet.matrix,
+        &ratchet.quality_baseline,
+    ] {
+        add_source(
+            &mut files,
+            &mut objects,
+            "quality-evidence",
+            &evidence.path,
+            read_regular(&root.join(&evidence.path))?,
+        )?;
+    }
+    for path in ADAPTER_SOURCES {
+        add_source(
+            &mut files,
+            &mut objects,
+            "adapter-source",
+            path,
+            read_regular(&root.join(path))?,
+        )?;
+    }
+    files.sort_by(|left, right| {
+        left.role
+            .cmp(&right.role)
+            .then_with(|| left.source_path.cmp(&right.source_path))
+    });
+    let manifest = CandidateManifest {
+        format: CANDIDATE_FORMAT.into(),
+        edition: "0.1".into(),
+        state: CANDIDATE_STATE.into(),
+        lineage: CandidateLineage {
+            name: lineage.manifest().lineage.clone(),
+            revision: lineage.manifest().revision,
+            manifest_sha256: lineage.manifest_sha256(),
+        },
+        target: result.target,
+        adapter: CandidateAdapter {
+            package: ADAPTER_PACKAGE.into(),
+            protocol: result.adapter.adapter_protocol,
+            implementation: result.adapter.implementation,
+        },
+        files,
+    };
+    validate_candidate_manifest(&manifest)?;
+    Ok(CandidateBundle {
+        manifest_bytes: canonical_json(&manifest)?,
+        manifest,
+        objects,
+    })
+}
+
+fn validate_ratchet(
+    lineage: &DraftLineage,
+    ratchet: &RatchetRecord,
+    root: &Path,
+) -> Result<(), SealError> {
+    if ratchet.format != RATCHET_FORMAT
+        || ratchet.lineage != lineage.manifest().lineage
+        || ratchet.revision != lineage.manifest().revision
+        || ratchet.manifest.path != lineage.manifest_path().to_string_lossy()
+        || ratchet.manifest.sha256 != lineage.manifest_sha256()
+        || ratchet.draft_case_layers != lineage.manifest().case_layers.len() as u64
+        || !ratchet.pending_tasks.is_empty()
+    {
+        return invalid("ratchet does not describe the exact completed draft");
+    }
+    for (name, scope) in [
+        ("coverage", &ratchet.coverage),
+        ("mutation", &ratchet.mutation),
+    ] {
+        if scope.status != "validated"
+            || scope.reason.is_empty()
+            || !scope.report_sha256.as_deref().is_some_and(is_sha256)
+        {
+            return invalid(format!("ratchet {name} evidence is not validated"));
+        }
+    }
+    for evidence in [
+        &ratchet.inventory,
+        &ratchet.matrix,
+        &ratchet.quality_baseline,
+    ] {
+        require_relative_path(Path::new(&evidence.path), "ratchet evidence path")?;
+        let actual = sha256(&read_regular(&root.join(&evidence.path))?);
+        if actual != evidence.sha256 {
+            return invalid(format!(
+                "ratchet evidence `{}` has SHA-256 `{actual}`, expected `{}`",
+                evidence.path, evidence.sha256
+            ));
+        }
+    }
+    validate_coverage_matrix(&read_regular(&root.join(&ratchet.matrix.path))?)?;
+    Ok(())
+}
+
+fn validate_coverage_matrix(bytes: &[u8]) -> Result<(), SealError> {
+    let matrix: CoverageMatrixRecord =
+        serde_json::from_slice(bytes).map_err(|error| SealError::Json(error.to_string()))?;
+    if matrix.format != "tondo-normative-coverage/1"
+        || matrix.summary.total != matrix.requirements.len() as u64
+        || matrix
+            .summary
+            .by_status
+            .get("draft-pending")
+            .is_some_and(|count| *count != 0)
+        || matrix
+            .requirements
+            .iter()
+            .any(|requirement| requirement.status == "draft-pending")
+    {
+        return invalid("coverage matrix still contains draft-pending requirements");
+    }
+    Ok(())
+}
+
+fn parse_result(bytes: &[u8]) -> Result<ResultRecord, SealError> {
+    serde_json::from_slice(bytes).map_err(|error| SealError::Json(error.to_string()))
+}
+
+fn validate_result(lineage: &DraftLineage, result: &ResultRecord) -> Result<(), SealError> {
+    if result.format != RESULT_FORMAT
+        || result.suite != SUITE_NAME
+        || result.edition != lineage.manifest().edition
+        || result.manifest_sha256 != lineage.baseline_suite().manifest_sha256()
+        || !result.passed
+        || result.adapter.adapter_protocol != ADAPTER_PROTOCOL
+        || result.adapter.implementation != "tondo-reference"
+        || !result.adapter.targets.contains(&result.target)
+        || result.target.name != "tondo-vm-hosted"
+        || result.target.profile != "hosted"
+        || result.target.capabilities != ["console", "process"]
+        || result
+            .target
+            .capabilities
+            .windows(2)
+            .any(|pair| pair[0] >= pair[1])
+    {
+        return invalid(
+            "conformance result does not match the draft regression and reference adapter",
+        );
+    }
+    Ok(())
+}
+
+fn add_source(
+    files: &mut Vec<CandidateFile>,
+    objects: &mut BTreeMap<String, Vec<u8>>,
+    role: &str,
+    source_path: &str,
+    bytes: Vec<u8>,
+) -> Result<(), SealError> {
+    if role.is_empty() || source_path.is_empty() {
+        return invalid("candidate file role and source path must be non-empty");
+    }
+    let digest = sha256(&bytes);
+    if let Some(previous) = objects.insert(digest.clone(), bytes.clone())
+        && previous != bytes
+    {
+        return invalid("two different objects produced the same SHA-256");
+    }
+    files.push(CandidateFile {
+        role: role.into(),
+        source_path: source_path.into(),
+        object: PinnedFile {
+            path: format!("objects/{digest}"),
+            sha256: digest,
+        },
+    });
+    Ok(())
+}
+
+fn validate_candidate_manifest(manifest: &CandidateManifest) -> Result<(), SealError> {
+    if manifest.format != CANDIDATE_FORMAT
+        || manifest.edition != "0.1"
+        || manifest.state != CANDIDATE_STATE
+        || manifest.lineage.name != DRAFT_LINEAGE_NAME
+        || manifest.lineage.revision == 0
+        || !is_sha256(&manifest.lineage.manifest_sha256)
+        || manifest.target.name != "tondo-vm-hosted"
+        || manifest.target.profile != "hosted"
+        || manifest.target.capabilities != ["console", "process"]
+        || manifest
+            .target
+            .capabilities
+            .windows(2)
+            .any(|pair| pair[0] >= pair[1])
+        || manifest.adapter.package != ADAPTER_PACKAGE
+        || manifest.adapter.protocol != ADAPTER_PROTOCOL
+        || manifest.adapter.implementation != "tondo-reference"
+        || manifest.files.is_empty()
+    {
+        return invalid("candidate identity, target, adapter, or file closure is invalid");
+    }
+    if manifest
+        .files
+        .windows(2)
+        .any(|pair| (&pair[0].role, &pair[0].source_path) >= (&pair[1].role, &pair[1].source_path))
+    {
+        return invalid("candidate files must be sorted and unique");
+    }
+    let mut sources = BTreeSet::new();
+    for file in &manifest.files {
+        if file.role.is_empty()
+            || file.source_path.is_empty()
+            || !sources.insert(file.source_path.as_str())
+            || !is_sha256(&file.object.sha256)
+            || file.object.path != format!("objects/{}", file.object.sha256)
+        {
+            return invalid("candidate file provenance or object identity is invalid");
+        }
+    }
+    Ok(())
+}
+
+fn verify_candidate_closure(
+    manifest: &CandidateManifest,
+    objects: &BTreeMap<String, Vec<u8>>,
+) -> Result<(), SealError> {
+    let draft_path = one_role(manifest, "draft-manifest")?;
+    let draft_bytes = objects[draft_path.source_path.as_str()].as_slice();
+    let draft: DraftLineageManifest =
+        serde_json::from_slice(draft_bytes).map_err(|error| SealError::Json(error.to_string()))?;
+    if draft.format != DRAFT_LINEAGE_FORMAT
+        || draft.lineage != manifest.lineage.name
+        || draft.edition != manifest.edition
+        || draft.revision != manifest.lineage.revision
+        || draft.state != "open"
+        || !draft.pending_tasks.is_empty()
+        || sha256(draft_bytes) != manifest.lineage.manifest_sha256
+    {
+        return invalid("embedded draft manifest differs from the sealed lineage identity");
+    }
+
+    let ratchet_file = one_role(manifest, "ratchet")?;
+    let ratchet: RatchetRecord =
+        serde_json::from_slice(&objects[ratchet_file.source_path.as_str()])
+            .map_err(|error| SealError::Json(error.to_string()))?;
+    if ratchet.lineage != draft.lineage
+        || ratchet.revision != draft.revision
+        || ratchet.manifest.sha256 != manifest.lineage.manifest_sha256
+        || ratchet.draft_case_layers != draft.case_layers.len() as u64
+        || !ratchet.pending_tasks.is_empty()
+        || ratchet.coverage.status != "validated"
+        || ratchet.mutation.status != "validated"
+    {
+        return invalid("embedded ratchet differs from the sealed draft");
+    }
+    for evidence in [
+        &ratchet.inventory,
+        &ratchet.matrix,
+        &ratchet.quality_baseline,
+    ] {
+        let bytes = objects
+            .get(evidence.path.as_str())
+            .ok_or_else(|| SealError::Invalid(format!("candidate omits `{}`", evidence.path)))?;
+        if sha256(bytes) != evidence.sha256 {
+            return invalid(format!(
+                "candidate evidence `{}` differs from the ratchet",
+                evidence.path
+            ));
+        }
+    }
+    validate_coverage_matrix(
+        objects
+            .get(ratchet.matrix.path.as_str())
+            .ok_or_else(|| SealError::Invalid("candidate omits its coverage matrix".into()))?,
+    )?;
+    for specification in &draft.specifications {
+        require_object(objects, specification)?;
+    }
+    for layer in &draft.case_layers {
+        require_object(objects, &layer.manifest)?;
+    }
+    require_object(objects, &draft.baseline.manifest)?;
+    require_object(objects, &draft.baseline.specification_snapshot)?;
+
+    let result_file = one_role(manifest, "conformance-result")?;
+    let result = parse_result(&objects[result_file.source_path.as_str()])?;
+    if result.manifest_sha256 != draft.baseline.manifest.sha256
+        || result.target != manifest.target
+        || result.adapter.adapter_protocol != manifest.adapter.protocol
+        || result.adapter.implementation != manifest.adapter.implementation
+        || !result.passed
+    {
+        return invalid("embedded conformance result differs from the candidate identity");
+    }
+    for path in ADAPTER_SOURCES {
+        if !objects.contains_key(path) {
+            return invalid(format!("candidate omits adapter source `{path}`"));
+        }
+    }
+    Ok(())
+}
+
+fn one_role<'a>(
+    manifest: &'a CandidateManifest,
+    role: &str,
+) -> Result<&'a CandidateFile, SealError> {
+    let mut matches = manifest.files.iter().filter(|file| file.role == role);
+    let file = matches
+        .next()
+        .ok_or_else(|| SealError::Invalid(format!("candidate omits role `{role}`")))?;
+    if matches.next().is_some() {
+        return invalid(format!("candidate repeats singleton role `{role}`"));
+    }
+    Ok(file)
+}
+
+fn require_object(
+    objects: &BTreeMap<String, Vec<u8>>,
+    pinned: &PinnedFile,
+) -> Result<(), SealError> {
+    let bytes = objects
+        .get(pinned.path.as_str())
+        .ok_or_else(|| SealError::Invalid(format!("candidate omits `{}`", pinned.path)))?;
+    if sha256(bytes) != pinned.sha256 {
+        return invalid(format!(
+            "candidate object `{}` differs from its draft pin",
+            pinned.path
+        ));
+    }
+    Ok(())
+}
+
+fn publish_bundle(
+    root: &Path,
+    output_directory: &Path,
+    bundle: &CandidateBundle,
+) -> Result<SealOutcome, SealError> {
+    require_relative_path(output_directory, "candidate output directory")?;
+    let relative_parent = output_directory
+        .parent()
+        .ok_or_else(|| SealError::Invalid("candidate output has no parent directory".into()))?;
+    let parent = resolve_directory(root, relative_parent, true)?;
+    let destination = parent.join(
+        output_directory
+            .file_name()
+            .ok_or_else(|| SealError::Invalid("candidate output has no file name".into()))?,
+    );
+    let manifest_path = output_directory.join("manifest.json");
+    if destination.exists() {
+        let existing = verify_candidate(root, &manifest_path)?;
+        if existing == bundle.manifest
+            && read_regular(&destination.join("manifest.json"))? == bundle.manifest_bytes
+        {
+            return Ok(SealOutcome::AlreadyPresent);
+        }
+        return invalid("candidate destination already contains a different promotion");
+    }
+    let name = destination
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| SealError::Invalid("candidate output name is not UTF-8".into()))?;
+    let staging = parent.join(format!(".{name}.staging-{}", std::process::id()));
+    fs::create_dir(&staging).map_err(|error| io(&staging, error))?;
+    let result = (|| {
+        let object_directory = staging.join("objects");
+        fs::create_dir(&object_directory).map_err(|error| io(&object_directory, error))?;
+        for (digest, bytes) in &bundle.objects {
+            write_new(&object_directory.join(digest), bytes)?;
+        }
+        write_new(&staging.join("manifest.json"), &bundle.manifest_bytes)?;
+        fs::rename(&staging, &destination).map_err(|error| io(&destination, error))?;
+        sync_directory(&parent)?;
+        Ok(SealOutcome::Created)
+    })();
+    if result.is_err() && staging.exists() {
+        let _ = fs::remove_dir_all(&staging);
+    }
+    result
+}
+
+fn verify_candidate_directory(
+    directory: &Path,
+    manifest: &CandidateManifest,
+) -> Result<(), SealError> {
+    let mut entries = BTreeSet::new();
+    for entry in fs::read_dir(directory).map_err(|error| io(directory, error))? {
+        let entry = entry.map_err(|error| io(directory, error))?;
+        let name = entry
+            .file_name()
+            .to_str()
+            .ok_or_else(|| SealError::Invalid("candidate entry name is not UTF-8".into()))?
+            .to_owned();
+        entries.insert(name);
+    }
+    if entries != BTreeSet::from(["manifest.json".into(), "objects".into()]) {
+        return invalid("candidate directory contains files outside its manifest closure");
+    }
+    let expected = manifest
+        .files
+        .iter()
+        .map(|file| file.object.sha256.clone())
+        .collect::<BTreeSet<_>>();
+    let object_directory = directory.join("objects");
+    let mut actual = BTreeSet::new();
+    for entry in fs::read_dir(&object_directory).map_err(|error| io(&object_directory, error))? {
+        let entry = entry.map_err(|error| io(&object_directory, error))?;
+        let metadata = entry
+            .file_type()
+            .map_err(|error| io(&entry.path(), error))?;
+        let name = entry.file_name();
+        let name = name
+            .to_str()
+            .ok_or_else(|| SealError::Invalid("candidate object name is not UTF-8".into()))?;
+        if !metadata.is_file() || !actual.insert(name.to_owned()) {
+            return invalid("candidate object directory contains an invalid entry");
+        }
+    }
+    if actual != expected {
+        return invalid("candidate object directory differs from the manifest closure");
+    }
+    Ok(())
+}
+
+fn resolve_directory(root: &Path, relative: &Path, create: bool) -> Result<PathBuf, SealError> {
+    let root_metadata = fs::symlink_metadata(root).map_err(|error| io(root, error))?;
+    if !root_metadata.file_type().is_dir() {
+        return invalid("candidate root is not a directory");
+    }
+    let mut current = root.to_path_buf();
+    for component in relative.components() {
+        let Component::Normal(component) = component else {
+            return invalid("candidate directory contains a non-normal component");
+        };
+        current.push(component);
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_dir() => {}
+            Ok(_) => return invalid(format!("`{}` is not a directory", current.display())),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound && create => {
+                fs::create_dir(&current).map_err(|error| io(&current, error))?;
+            }
+            Err(error) => return Err(io(&current, error)),
+        }
+    }
+    Ok(current)
+}
+
+fn sync_directory(path: &Path) -> Result<(), SealError> {
+    #[cfg(unix)]
+    {
+        let directory = fs::File::open(path).map_err(|error| io(path, error))?;
+        directory.sync_all().map_err(|error| io(path, error))?;
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+    Ok(())
+}
+
+fn canonical_json<T: Serialize>(value: &T) -> Result<Vec<u8>, SealError> {
+    let mut bytes =
+        serde_json::to_vec_pretty(value).map_err(|error| SealError::Json(error.to_string()))?;
+    bytes.push(b'\n');
+    Ok(bytes)
+}
+
+fn read_regular(path: &Path) -> Result<Vec<u8>, SealError> {
+    let metadata = fs::symlink_metadata(path).map_err(|error| io(path, error))?;
+    if !metadata.file_type().is_file() {
+        return invalid(format!("`{}` is not a regular file", path.display()));
+    }
+    fs::read(path).map_err(|error| io(path, error))
+}
+
+fn write_new(path: &Path, bytes: &[u8]) -> Result<(), SealError> {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|error| io(path, error))?;
+    file.write_all(bytes).map_err(|error| io(path, error))?;
+    file.sync_all().map_err(|error| io(path, error))
+}
+
+fn require_relative_path(path: &Path, name: &str) -> Result<(), SealError> {
+    if path.as_os_str().is_empty()
+        || path.is_absolute()
+        || path
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return invalid(format!(
+            "{name} must contain only relative normal components"
+        ));
+    }
+    Ok(())
+}
+
+fn is_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn io(path: &Path, error: std::io::Error) -> SealError {
+    SealError::Io {
+        path: path.to_path_buf(),
+        message: error.to_string(),
+    }
+}
+
+fn invalid<T>(message: impl Into<String>) -> Result<T, SealError> {
+    Err(SealError::Invalid(message.into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::OnceLock;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use super::*;
+    use crate::lineage::DRAFT_LINEAGE_PATH;
+
+    static TEMPORARY_ID: AtomicU64 = AtomicU64::new(0);
+    static REPOSITORY_BUNDLE: OnceLock<CandidateBundle> = OnceLock::new();
+
+    fn repository_root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+    }
+
+    fn temporary_root() -> PathBuf {
+        let id = TEMPORARY_ID.fetch_add(1, Ordering::Relaxed);
+        let root =
+            std::env::temp_dir().join(format!("tondo-candidate-{}-{id}", std::process::id()));
+        fs::create_dir(&root).unwrap();
+        root
+    }
+
+    fn repository_bundle() -> CandidateBundle {
+        REPOSITORY_BUNDLE
+            .get_or_init(build_repository_bundle)
+            .clone()
+    }
+
+    fn build_repository_bundle() -> CandidateBundle {
+        let root = repository_fixture();
+        let lineage = DraftLineage::load(&root, DRAFT_LINEAGE_PATH).unwrap();
+        let bundle = build_candidate(
+            &lineage,
+            &root.join("conformance/0.1/results/tondo-reference-draft-tondo-vm-hosted.json"),
+        )
+        .unwrap();
+        fs::remove_dir_all(root).unwrap();
+        bundle
+    }
+
+    fn repository_fixture() -> PathBuf {
+        let source = repository_root();
+        let root = temporary_root();
+        copy_tree(&source.join("conformance"), &root.join("conformance"));
+        for path in [
+            "TONDO_LANGUAGE_SPEC.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md",
+            "TONDO_TESTING_SPEC.md",
+            "TONDO_TOOLCHAIN_SPEC.md",
+            "testing/inventory.json",
+            "testing/coverage-matrix.json",
+            "testing/quality-baseline.json",
+            RATCHET_PATH,
+        ] {
+            copy_file(&source, &root, path);
+        }
+        for path in ADAPTER_SOURCES {
+            copy_file(&source, &root, path);
+        }
+        let mut ratchet: RatchetRecord =
+            serde_json::from_slice(&fs::read(root.join(RATCHET_PATH)).unwrap()).unwrap();
+        let lineage = DraftLineage::load(&root, DRAFT_LINEAGE_PATH).unwrap();
+        ratchet.lineage = lineage.manifest().lineage.clone();
+        ratchet.revision = lineage.manifest().revision;
+        ratchet.manifest.path = DRAFT_LINEAGE_PATH.into();
+        ratchet.manifest.sha256 = lineage.manifest_sha256();
+        ratchet.draft_case_layers = lineage.manifest().case_layers.len() as u64;
+        ratchet.pending_tasks = lineage.manifest().pending_tasks.clone();
+        for evidence in [
+            &mut ratchet.inventory,
+            &mut ratchet.matrix,
+            &mut ratchet.quality_baseline,
+        ] {
+            evidence.sha256 = sha256(&fs::read(root.join(&evidence.path)).unwrap());
+        }
+        fs::write(root.join(RATCHET_PATH), canonical_json(&ratchet).unwrap()).unwrap();
+        root
+    }
+
+    fn copy_file(source: &Path, destination: &Path, relative: &str) {
+        let output = destination.join(relative);
+        fs::create_dir_all(output.parent().unwrap()).unwrap();
+        fs::copy(source.join(relative), output).unwrap();
+    }
+
+    fn copy_tree(source: &Path, destination: &Path) {
+        fs::create_dir_all(destination).unwrap();
+        for entry in fs::read_dir(source).unwrap() {
+            let entry = entry.unwrap();
+            let output = destination.join(entry.file_name());
+            if entry.file_type().unwrap().is_dir() {
+                copy_tree(&entry.path(), &output);
+            } else {
+                fs::copy(entry.path(), output).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn candidate_is_canonical_self_contained_and_idempotently_published() {
+        let bundle = repository_bundle();
+        let root = temporary_root();
+        assert_eq!(
+            publish_bundle(&root, Path::new("candidate"), &bundle).unwrap(),
+            SealOutcome::Created
+        );
+        let verified = verify_candidate(&root, Path::new("candidate/manifest.json")).unwrap();
+        assert_eq!(verified, bundle.manifest);
+        assert_eq!(
+            publish_bundle(&root, Path::new("candidate"), &bundle).unwrap(),
+            SealOutcome::AlreadyPresent
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn public_seal_promotes_and_reverifies_the_isolated_completed_draft() {
+        let root = repository_fixture();
+        let lineage = DraftLineage::load(&root, DRAFT_LINEAGE_PATH).unwrap();
+        let result =
+            root.join("conformance/0.1/results/tondo-reference-draft-tondo-vm-hosted.json");
+        assert_eq!(
+            seal_candidate(&lineage, &result, Path::new("nested/candidate")).unwrap(),
+            SealOutcome::Created
+        );
+        assert_eq!(
+            seal_candidate(&lineage, &result, Path::new("nested/candidate")).unwrap(),
+            SealOutcome::AlreadyPresent
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn candidate_rejects_mixed_history_tampering_and_partial_destinations() {
+        let bundle = repository_bundle();
+        let root = temporary_root();
+        let mut mixed = bundle.clone();
+        mixed.manifest.lineage.revision += 1;
+        mixed.manifest_bytes = canonical_json(&mixed.manifest).unwrap();
+        publish_bundle(&root, Path::new("mixed"), &mixed).unwrap();
+        assert!(verify_candidate(&root, Path::new("mixed/manifest.json")).is_err());
+
+        publish_bundle(&root, Path::new("tampered"), &bundle).unwrap();
+        let object = bundle.manifest.files[0].object.sha256.clone();
+        fs::write(root.join("tampered/objects").join(object), b"tampered").unwrap();
+        assert!(verify_candidate(&root, Path::new("tampered/manifest.json")).is_err());
+
+        publish_bundle(&root, Path::new("extra"), &bundle).unwrap();
+        fs::write(root.join("extra/untracked"), b"untracked").unwrap();
+        assert!(verify_candidate(&root, Path::new("extra/manifest.json")).is_err());
+
+        fs::write(root.join("not-a-directory"), b"occupied").unwrap();
+        assert!(publish_bundle(&root, Path::new("not-a-directory/candidate"), &bundle).is_err());
+        assert!(!root.join("not-a-directory/candidate").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn candidate_paths_hashes_and_error_vocabulary_are_closed() {
+        let bundle = repository_bundle();
+        assert_eq!(bundle.manifest.format, CANDIDATE_FORMAT);
+        assert!(bundle.manifest.files.windows(2).all(|pair| {
+            (&pair[0].role, &pair[0].source_path) < (&pair[1].role, &pair[1].source_path)
+        }));
+        assert!(require_relative_path(Path::new("candidate/manifest.json"), "path").is_ok());
+        for path in ["", "/absolute", "../escape", "nested/../escape"] {
+            assert!(require_relative_path(Path::new(path), "path").is_err());
+        }
+        assert!(is_sha256(&"a".repeat(64)));
+        assert!(!is_sha256(&"A".repeat(64)));
+        assert!(
+            SealError::Invalid("reason".into())
+                .to_string()
+                .contains("reason")
+        );
+        assert!(verify_candidate(Path::new("missing"), Path::new("candidate.json")).is_err());
+    }
+
+    #[test]
+    fn candidate_validators_reject_identity_provenance_and_conflicts() {
+        let bundle = repository_bundle();
+
+        let mut invalid_manifest = bundle.manifest.clone();
+        invalid_manifest.format = "future-candidate".into();
+        assert!(validate_candidate_manifest(&invalid_manifest).is_err());
+
+        let mut unsorted = bundle.manifest.clone();
+        unsorted.files.reverse();
+        assert!(validate_candidate_manifest(&unsorted).is_err());
+
+        let mut invalid_file = bundle.manifest.clone();
+        invalid_file.files[0].source_path.clear();
+        assert!(validate_candidate_manifest(&invalid_file).is_err());
+
+        assert!(
+            add_source(
+                &mut Vec::new(),
+                &mut BTreeMap::new(),
+                "",
+                "source",
+                Vec::new(),
+            )
+            .is_err()
+        );
+        assert!(one_role(&bundle.manifest, "absent").is_err());
+        let mut repeated = bundle.manifest.clone();
+        let singleton = one_role(&repeated, "draft-manifest").unwrap().clone();
+        repeated.files.push(singleton);
+        assert!(one_role(&repeated, "draft-manifest").is_err());
+
+        let absent = PinnedFile {
+            path: "absent".into(),
+            sha256: "a".repeat(64),
+        };
+        assert!(require_object(&BTreeMap::new(), &absent).is_err());
+        let objects = BTreeMap::from([("present".into(), b"bytes".to_vec())]);
+        let mismatched = PinnedFile {
+            path: "present".into(),
+            sha256: "b".repeat(64),
+        };
+        assert!(require_object(&objects, &mismatched).is_err());
+
+        let root = temporary_root();
+        publish_bundle(&root, Path::new("candidate"), &bundle).unwrap();
+        let mut different = bundle.clone();
+        different.manifest.state = "different".into();
+        different.manifest_bytes = canonical_json(&different.manifest).unwrap();
+        assert!(publish_bundle(&root, Path::new("candidate"), &different).is_err());
+        assert!(verify_candidate(&root, Path::new("missing/manifest.json")).is_err());
+        assert!(read_regular(&root).is_err());
+        fs::remove_dir_all(root).unwrap();
+
+        let io_error = SealError::Io {
+            path: PathBuf::from("evidence"),
+            message: "unavailable".into(),
+        };
+        assert!(io_error.to_string().contains("evidence"));
+    }
+
+    #[test]
+    fn ratchet_result_and_object_closure_fail_closed() {
+        let root = repository_fixture();
+        let lineage = DraftLineage::load(&root, DRAFT_LINEAGE_PATH).unwrap();
+        let ratchet_bytes = fs::read(root.join(RATCHET_PATH)).unwrap();
+        let ratchet: RatchetRecord = serde_json::from_slice(&ratchet_bytes).unwrap();
+        let matrix_bytes = fs::read(root.join(&ratchet.matrix.path)).unwrap();
+        validate_coverage_matrix(&matrix_bytes).unwrap();
+        let mut pending_matrix: serde_json::Value = serde_json::from_slice(&matrix_bytes).unwrap();
+        pending_matrix["requirements"][0]["status"] = "draft-pending".into();
+        pending_matrix["summary"]["by_status"]["draft-pending"] = 1.into();
+        assert!(validate_coverage_matrix(&serde_json::to_vec(&pending_matrix).unwrap()).is_err());
+
+        let mut incomplete = ratchet.clone();
+        incomplete.pending_tasks.push("pending".into());
+        assert!(validate_ratchet(&lineage, &incomplete, &root).is_err());
+
+        let mut unvalidated = ratchet.clone();
+        unvalidated.coverage.status = "unvalidated".into();
+        assert!(validate_ratchet(&lineage, &unvalidated, &root).is_err());
+
+        let mut mismatched = ratchet;
+        mismatched.inventory.sha256 = "a".repeat(64);
+        assert!(validate_ratchet(&lineage, &mismatched, &root).is_err());
+
+        let result_bytes = fs::read(
+            root.join("conformance/0.1/results/tondo-reference-draft-tondo-vm-hosted.json"),
+        )
+        .unwrap();
+        let mut result = parse_result(&result_bytes).unwrap();
+        result.passed = false;
+        assert!(validate_result(&lineage, &result).is_err());
+
+        let bundle = build_candidate(
+            &lineage,
+            &root.join("conformance/0.1/results/tondo-reference-draft-tondo-vm-hosted.json"),
+        )
+        .unwrap();
+        let source_objects = || {
+            bundle
+                .manifest
+                .files
+                .iter()
+                .map(|file| {
+                    (
+                        file.source_path.clone(),
+                        bundle.objects[&file.object.sha256].clone(),
+                    )
+                })
+                .collect::<BTreeMap<_, _>>()
+        };
+        let mut objects = source_objects();
+        objects.remove(ADAPTER_SOURCES[0]);
+        assert!(verify_candidate_closure(&bundle.manifest, &objects).is_err());
+
+        let mut objects = source_objects();
+        objects.insert("testing/inventory.json".into(), b"changed".to_vec());
+        assert!(verify_candidate_closure(&bundle.manifest, &objects).is_err());
+
+        let mut objects = source_objects();
+        let mut failed_result: serde_json::Value = serde_json::from_slice(&result_bytes).unwrap();
+        failed_result["passed"] = false.into();
+        objects.insert(
+            "generated:tondo-reference-result".into(),
+            serde_json::to_vec(&failed_result).unwrap(),
+        );
+        assert!(verify_candidate_closure(&bundle.manifest, &objects).is_err());
+
+        let destination = temporary_root();
+        publish_bundle(&destination, Path::new("missing-object"), &bundle).unwrap();
+        let object = bundle.manifest.files[0].object.sha256.clone();
+        fs::remove_file(destination.join("missing-object/objects").join(object)).unwrap();
+        assert!(verify_candidate(&destination, Path::new("missing-object/manifest.json")).is_err());
+        fs::remove_dir_all(destination).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+}

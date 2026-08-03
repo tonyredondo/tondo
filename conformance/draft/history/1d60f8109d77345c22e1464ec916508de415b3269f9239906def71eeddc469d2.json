@@ -2,11 +2,11 @@
   "format": "tondo-conformance-draft-lineage",
   "lineage": "tondo-draft",
   "edition": "0.1",
-  "revision": 7,
+  "revision": 6,
   "state": "open",
   "parent": {
-    "path": "conformance/draft/history/1d60f8109d77345c22e1464ec916508de415b3269f9239906def71eeddc469d2.json",
-    "sha256": "1d60f8109d77345c22e1464ec916508de415b3269f9239906def71eeddc469d2"
+    "path": "conformance/draft/history/e8dcea866c52c17e18e709fb090a80036aac825363119b38631dd601f8a08b1e.json",
+    "sha256": "e8dcea866c52c17e18e709fb090a80036aac825363119b38631dd601f8a08b1e"
   },
   "baseline": {
     "manifest": {
@@ -37,35 +37,6 @@
     }
   ],
   "case_layers": [
-    {
-      "id": "finalization",
-      "manifest": {
-        "path": "conformance/draft/layers/finalization.json",
-        "sha256": "dc162b242e0f6d5a42a1b3307d0ec10fed0d50cbc36e000ab62a7e6202df241c"
-      },
-      "tasks": [
-        "ASYNC-DEFER-IMPL-001",
-        "CONF-SEAL-001",
-        "META-REPRO-001",
-        "UTEST-PROJECTS-001"
-      ],
-      "requirements": [
-        "TL01-11-11-R001",
-        "TL01-13-7-R006",
-        "TL01-13-7-R007",
-        "TL01-13-7-R008",
-        "TL01-13-7-R009",
-        "TL01-13-7-R010",
-        "TL01-22-9-R001",
-        "TL01-22-9-R002",
-        "TL01-22-9-R003",
-        "TL01-22-9-R004",
-        "TL01-23-14-R001",
-        "TL01-6-8-R002",
-        "TL01-APNDICE-D-LAYOUT-CONVENCIONAL-DE-PROYECTOS-R001",
-        "TL01-C-6-SERIALIZACIN-CANNICA-R001"
-      ]
-    },
     {
       "id": "meta",
       "manifest": {

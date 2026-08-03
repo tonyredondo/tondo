@@ -17,3 +17,7 @@
 /conformance/baseline/** -text
 /conformance/draft/** -text
 /testing/*.json -text
+
+# Candidate objects are opaque content-addressed bytes. Their manifest remains
+# reviewable JSON, while Git must never normalize or text-diff the object data.
+/conformance/candidate/objects/** binary

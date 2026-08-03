@@ -7,6 +7,49 @@
   "claims": [
     {
       "requirements": [
+        "TL01-11-11-R001"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [
+            "draft-layer:finalization:defer-control"
+          ],
+          "waiver": null
+        },
+        "rejection_or_failure": {
+          "evidence": [
+            "draft-layer:finalization:defer-control"
+          ],
+          "waiver": null
+        },
+        "boundary": {
+          "evidence": [
+            "draft-layer:finalization:defer-control"
+          ],
+          "waiver": null
+        },
+        "composition": {
+          "evidence": [
+            "draft-layer:finalization:defer-control"
+          ],
+          "waiver": null
+        },
+        "oracle": {
+          "evidence": [
+            "draft-layer:finalization:defer-control"
+          ],
+          "waiver": null
+        },
+        "public_boundary": {
+          "evidence": [
+            "draft-layer:finalization:defer-control"
+          ],
+          "waiver": null
+        }
+      }
+    },
+    {
+      "requirements": [
         "TL01-12-8-R001",
         "TL01-12-8-R002",
         "TL01-12-8-R003",
@@ -66,6 +109,142 @@
             "conformance:compile-fail/invalid-opaque-result",
             "document:language-0.1:fence:0169",
             "document:language-0.1:fence:0170"
+          ],
+          "waiver": null
+        }
+      }
+    },
+    {
+      "requirements": [
+        "TL01-13-7-R006",
+        "TL01-13-7-R007",
+        "TL01-13-7-R008",
+        "TL01-13-7-R009",
+        "TL01-13-7-R010"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [
+            "draft-layer:finalization:defer-control"
+          ],
+          "waiver": null
+        },
+        "rejection_or_failure": {
+          "evidence": [
+            "draft-layer:finalization:defer-control"
+          ],
+          "waiver": null
+        },
+        "boundary": {
+          "evidence": [
+            "draft-layer:finalization:defer-control"
+          ],
+          "waiver": null
+        },
+        "composition": {
+          "evidence": [
+            "draft-layer:finalization:defer-control"
+          ],
+          "waiver": null
+        },
+        "oracle": {
+          "evidence": [
+            "draft-layer:finalization:defer-control"
+          ],
+          "waiver": null
+        },
+        "public_boundary": {
+          "evidence": [
+            "draft-layer:finalization:defer-control"
+          ],
+          "waiver": null
+        }
+      }
+    },
+    {
+      "requirements": [
+        "TL01-22-9-R001",
+        "TL01-22-9-R002",
+        "TL01-22-9-R003",
+        "TL01-22-9-R004"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [
+            "draft-layer:finalization:conformance-closure"
+          ],
+          "waiver": null
+        },
+        "rejection_or_failure": {
+          "evidence": [
+            "draft-layer:finalization:conformance-closure"
+          ],
+          "waiver": null
+        },
+        "boundary": {
+          "evidence": [
+            "draft-layer:finalization:conformance-closure"
+          ],
+          "waiver": null
+        },
+        "composition": {
+          "evidence": [
+            "draft-layer:finalization:conformance-closure"
+          ],
+          "waiver": null
+        },
+        "oracle": {
+          "evidence": [
+            "draft-layer:finalization:conformance-closure"
+          ],
+          "waiver": null
+        },
+        "public_boundary": {
+          "evidence": [
+            "draft-layer:finalization:conformance-closure"
+          ],
+          "waiver": null
+        }
+      }
+    },
+    {
+      "requirements": [
+        "TL01-23-14-R001"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [
+            "draft-layer:finalization:defer-control"
+          ],
+          "waiver": null
+        },
+        "rejection_or_failure": {
+          "evidence": [
+            "draft-layer:finalization:defer-control"
+          ],
+          "waiver": null
+        },
+        "boundary": {
+          "evidence": [
+            "draft-layer:finalization:defer-control"
+          ],
+          "waiver": null
+        },
+        "composition": {
+          "evidence": [
+            "draft-layer:finalization:defer-control"
+          ],
+          "waiver": null
+        },
+        "oracle": {
+          "evidence": [
+            "draft-layer:finalization:defer-control"
+          ],
+          "waiver": null
+        },
+        "public_boundary": {
+          "evidence": [
+            "draft-layer:finalization:defer-control"
           ],
           "waiver": null
         }
@@ -501,6 +680,135 @@
         "public_boundary": {
           "evidence": [
             "draft-layer:testing:testing-21-unit-overlay"
+          ],
+          "waiver": null
+        }
+      }
+    },
+    {
+      "requirements": [
+        "TL01-6-8-R002"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [
+            "draft-layer:finalization:meta-hermeticity"
+          ],
+          "waiver": null
+        },
+        "rejection_or_failure": {
+          "evidence": [
+            "draft-layer:finalization:meta-hermeticity"
+          ],
+          "waiver": null
+        },
+        "boundary": {
+          "evidence": [
+            "draft-layer:finalization:meta-hermeticity"
+          ],
+          "waiver": null
+        },
+        "composition": {
+          "evidence": [
+            "draft-layer:finalization:meta-hermeticity"
+          ],
+          "waiver": null
+        },
+        "oracle": {
+          "evidence": [
+            "draft-layer:finalization:meta-hermeticity"
+          ],
+          "waiver": null
+        },
+        "public_boundary": {
+          "evidence": [
+            "draft-layer:finalization:meta-hermeticity"
+          ],
+          "waiver": null
+        }
+      }
+    },
+    {
+      "requirements": [
+        "TL01-APNDICE-D-LAYOUT-CONVENCIONAL-DE-PROYECTOS-R001"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [
+            "draft-layer:finalization:project-conventions"
+          ],
+          "waiver": null
+        },
+        "rejection_or_failure": {
+          "evidence": [
+            "draft-layer:finalization:project-conventions"
+          ],
+          "waiver": null
+        },
+        "boundary": {
+          "evidence": [
+            "draft-layer:finalization:project-conventions"
+          ],
+          "waiver": null
+        },
+        "composition": {
+          "evidence": [
+            "draft-layer:finalization:project-conventions"
+          ],
+          "waiver": null
+        },
+        "oracle": {
+          "evidence": [
+            "draft-layer:finalization:project-conventions"
+          ],
+          "waiver": null
+        },
+        "public_boundary": {
+          "evidence": [
+            "draft-layer:finalization:project-conventions"
+          ],
+          "waiver": null
+        }
+      }
+    },
+    {
+      "requirements": [
+        "TL01-C-6-SERIALIZACIN-CANNICA-R001"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [
+            "draft-layer:finalization:canonical-fixture-manifest"
+          ],
+          "waiver": null
+        },
+        "rejection_or_failure": {
+          "evidence": [
+            "draft-layer:finalization:canonical-fixture-manifest"
+          ],
+          "waiver": null
+        },
+        "boundary": {
+          "evidence": [
+            "draft-layer:finalization:canonical-fixture-manifest"
+          ],
+          "waiver": null
+        },
+        "composition": {
+          "evidence": [
+            "draft-layer:finalization:canonical-fixture-manifest"
+          ],
+          "waiver": null
+        },
+        "oracle": {
+          "evidence": [
+            "draft-layer:finalization:canonical-fixture-manifest"
+          ],
+          "waiver": null
+        },
+        "public_boundary": {
+          "evidence": [
+            "draft-layer:finalization:canonical-fixture-manifest"
           ],
           "waiver": null
         }

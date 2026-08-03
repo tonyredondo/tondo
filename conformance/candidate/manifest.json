@@ -1,0 +1,225 @@
+{
+  "format": "tondo-conformance-candidate/1",
+  "edition": "0.1",
+  "state": "candidate",
+  "lineage": {
+    "name": "tondo-draft",
+    "revision": 7,
+    "manifest_sha256": "3994ebd5e128307e953dade3bd92943fff2b7114a8521084b632a786546b90c8"
+  },
+  "target": {
+    "name": "tondo-vm-hosted",
+    "profile": "hosted",
+    "capabilities": [
+      "console",
+      "process"
+    ]
+  },
+  "adapter": {
+    "package": "tondo-reference-adapter",
+    "protocol": "tondo-conformance-adapter-draft",
+    "implementation": "tondo-reference"
+  },
+  "files": [
+    {
+      "role": "adapter-source",
+      "source_path": "crates/tondo-reference-adapter/Cargo.toml",
+      "object": {
+        "path": "objects/c0f1198fe0f38a8561e7add81a6d3a02952375140abf3419e3b533d63b2e81df",
+        "sha256": "c0f1198fe0f38a8561e7add81a6d3a02952375140abf3419e3b533d63b2e81df"
+      }
+    },
+    {
+      "role": "adapter-source",
+      "source_path": "crates/tondo-reference-adapter/src/determinism.rs",
+      "object": {
+        "path": "objects/77b7c85de27f8c094b6d71cc50e08947b5bb92033e0934961f5c9db32486b11f",
+        "sha256": "77b7c85de27f8c094b6d71cc50e08947b5bb92033e0934961f5c9db32486b11f"
+      }
+    },
+    {
+      "role": "adapter-source",
+      "source_path": "crates/tondo-reference-adapter/src/document.rs",
+      "object": {
+        "path": "objects/d2830cc75efe003e6ef73e19a5078e9cf4576dbadb1e0e6610b4a6ec2f9c1ad5",
+        "sha256": "d2830cc75efe003e6ef73e19a5078e9cf4576dbadb1e0e6610b4a6ec2f9c1ad5"
+      }
+    },
+    {
+      "role": "adapter-source",
+      "source_path": "crates/tondo-reference-adapter/src/lib.rs",
+      "object": {
+        "path": "objects/805705bd622f711f95474512567212d3007dea717cd88f733d87fbd27d858ad1",
+        "sha256": "805705bd622f711f95474512567212d3007dea717cd88f733d87fbd27d858ad1"
+      }
+    },
+    {
+      "role": "adapter-source",
+      "source_path": "crates/tondo-reference-adapter/src/main.rs",
+      "object": {
+        "path": "objects/6cc16d11e77d9785d98fc142000f9ca7f486ea3a7bbbd936faa9ef21b3d57a40",
+        "sha256": "6cc16d11e77d9785d98fc142000f9ca7f486ea3a7bbbd936faa9ef21b3d57a40"
+      }
+    },
+    {
+      "role": "adapter-source",
+      "source_path": "crates/tondo-reference-adapter/src/maintain.rs",
+      "object": {
+        "path": "objects/f798b6ad1bd61e055d5940d6ad1665b215ca7cbe2ed713b4d804ebaeeadea545",
+        "sha256": "f798b6ad1bd61e055d5940d6ad1665b215ca7cbe2ed713b4d804ebaeeadea545"
+      }
+    },
+    {
+      "role": "adapter-source",
+      "source_path": "crates/tondo-reference-adapter/src/semantic.rs",
+      "object": {
+        "path": "objects/bdf8c5f52d94f6f7f0b6428b96891b39a82eb603da832512eb6a5ffba9e6d20d",
+        "sha256": "bdf8c5f52d94f6f7f0b6428b96891b39a82eb603da832512eb6a5ffba9e6d20d"
+      }
+    },
+    {
+      "role": "adapter-source",
+      "source_path": "crates/tondo-reference-adapter/tests/conformance.rs",
+      "object": {
+        "path": "objects/34946d5b09e7214782f0831995180d9f27e5141bec748b36e19949fe0364b94f",
+        "sha256": "34946d5b09e7214782f0831995180d9f27e5141bec748b36e19949fe0364b94f"
+      }
+    },
+    {
+      "role": "adapter-source",
+      "source_path": "crates/tondo-reference-adapter/tests/process_protocol.rs",
+      "object": {
+        "path": "objects/7b3ad19a022ac0196b44322de7ea48da47e2ad98fafead095ddd17d4c9ceb606",
+        "sha256": "7b3ad19a022ac0196b44322de7ea48da47e2ad98fafead095ddd17d4c9ceb606"
+      }
+    },
+    {
+      "role": "adapter-source",
+      "source_path": "crates/tondo-reference-adapter/tests/semantic_contracts.rs",
+      "object": {
+        "path": "objects/a8293b5376dc0505a3febfdd218976de3a9bea20acc43b9ac02e3ffc1cafb4c0",
+        "sha256": "a8293b5376dc0505a3febfdd218976de3a9bea20acc43b9ac02e3ffc1cafb4c0"
+      }
+    },
+    {
+      "role": "case-layer",
+      "source_path": "conformance/draft/layers/finalization.json",
+      "object": {
+        "path": "objects/dc162b242e0f6d5a42a1b3307d0ec10fed0d50cbc36e000ab62a7e6202df241c",
+        "sha256": "dc162b242e0f6d5a42a1b3307d0ec10fed0d50cbc36e000ab62a7e6202df241c"
+      }
+    },
+    {
+      "role": "case-layer",
+      "source_path": "conformance/draft/layers/meta.json",
+      "object": {
+        "path": "objects/7be760eb9f998a923cb94b947b3d591562b161654c61bd41f688805e24407038",
+        "sha256": "7be760eb9f998a923cb94b947b3d591562b161654c61bd41f688805e24407038"
+      }
+    },
+    {
+      "role": "case-layer",
+      "source_path": "conformance/draft/layers/testing.json",
+      "object": {
+        "path": "objects/3b3de9e5bed304d1677b82b2047cfd2665cb46e3bbe704dc167d495fb6a8b59c",
+        "sha256": "3b3de9e5bed304d1677b82b2047cfd2665cb46e3bbe704dc167d495fb6a8b59c"
+      }
+    },
+    {
+      "role": "conformance-result",
+      "source_path": "generated:tondo-reference-result",
+      "object": {
+        "path": "objects/f07d818482f6d709c4281c2117d432db17019420e6421d81c9ba10c14f48d089",
+        "sha256": "f07d818482f6d709c4281c2117d432db17019420e6421d81c9ba10c14f48d089"
+      }
+    },
+    {
+      "role": "draft-manifest",
+      "source_path": "conformance/draft/manifest.json",
+      "object": {
+        "path": "objects/3994ebd5e128307e953dade3bd92943fff2b7114a8521084b632a786546b90c8",
+        "sha256": "3994ebd5e128307e953dade3bd92943fff2b7114a8521084b632a786546b90c8"
+      }
+    },
+    {
+      "role": "quality-evidence",
+      "source_path": "testing/coverage-matrix.json",
+      "object": {
+        "path": "objects/91cf0330eeed34ca79a4a86d79a4fd13e09ba945ba6c2de2b7a10688531150c1",
+        "sha256": "91cf0330eeed34ca79a4a86d79a4fd13e09ba945ba6c2de2b7a10688531150c1"
+      }
+    },
+    {
+      "role": "quality-evidence",
+      "source_path": "testing/inventory.json",
+      "object": {
+        "path": "objects/0f0bd5ddca748ec5e50b70bfc3feae64f274b5859d0bc6222db07321c97764c9",
+        "sha256": "0f0bd5ddca748ec5e50b70bfc3feae64f274b5859d0bc6222db07321c97764c9"
+      }
+    },
+    {
+      "role": "quality-evidence",
+      "source_path": "testing/quality-baseline.json",
+      "object": {
+        "path": "objects/6f9b4b42668364d527fe32de6d26896eaa6eefcfe764622f0c6ffabe9af4cbff",
+        "sha256": "6f9b4b42668364d527fe32de6d26896eaa6eefcfe764622f0c6ffabe9af4cbff"
+      }
+    },
+    {
+      "role": "ratchet",
+      "source_path": "testing/conformance-ratchet.json",
+      "object": {
+        "path": "objects/1e75e69b64378738ac6070081928ce5a130443b71498dd859fa9a2cf165c3d03",
+        "sha256": "1e75e69b64378738ac6070081928ce5a130443b71498dd859fa9a2cf165c3d03"
+      }
+    },
+    {
+      "role": "regression-manifest",
+      "source_path": "conformance/0.1/manifest.json",
+      "object": {
+        "path": "objects/6bb8fe5b151ef73f1d49b3d432a51ec18c7a634cf4c9d014eea81d6a351c6ffb",
+        "sha256": "6bb8fe5b151ef73f1d49b3d432a51ec18c7a634cf4c9d014eea81d6a351c6ffb"
+      }
+    },
+    {
+      "role": "regression-specification",
+      "source_path": "conformance/baseline/TONDO_LANGUAGE_SPEC.md",
+      "object": {
+        "path": "objects/ded4e17ab57836d032e5fb9e5be5dba03fc83ac6ff74cee90ab1bb7f8e5c7084",
+        "sha256": "ded4e17ab57836d032e5fb9e5be5dba03fc83ac6ff74cee90ab1bb7f8e5c7084"
+      }
+    },
+    {
+      "role": "specification",
+      "source_path": "TONDO_LANGUAGE_SPEC.md",
+      "object": {
+        "path": "objects/ccfb9628a9e15894d45848ec24d650eba48b833a47f95c6a2835bad10bd1e7f8",
+        "sha256": "ccfb9628a9e15894d45848ec24d650eba48b833a47f95c6a2835bad10bd1e7f8"
+      }
+    },
+    {
+      "role": "specification",
+      "source_path": "TONDO_STANDARD_LIBRARY_SPEC.md",
+      "object": {
+        "path": "objects/a3a8a01a2ea643efcf9c60903e4346a08b3418b9bab93a7553ce5c4b62596339",
+        "sha256": "a3a8a01a2ea643efcf9c60903e4346a08b3418b9bab93a7553ce5c4b62596339"
+      }
+    },
+    {
+      "role": "specification",
+      "source_path": "TONDO_TESTING_SPEC.md",
+      "object": {
+        "path": "objects/4a1ec3d9648ac01b07d3b3402faea0593d9b094d67c7a480cff51c75ae40d8ed",
+        "sha256": "4a1ec3d9648ac01b07d3b3402faea0593d9b094d67c7a480cff51c75ae40d8ed"
+      }
+    },
+    {
+      "role": "specification",
+      "source_path": "TONDO_TOOLCHAIN_SPEC.md",
+      "object": {
+        "path": "objects/f4912ea0da2fb052b90222d60fc6a4444c4007c9e7e9c2ac3569d5d2f3cf8144",
+        "sha256": "f4912ea0da2fb052b90222d60fc6a4444c4007c9e7e9c2ac3569d5d2f3cf8144"
+      }
+    }
+  ]
+}

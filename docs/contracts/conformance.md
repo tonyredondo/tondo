@@ -92,10 +92,32 @@ cargo run -p tondo-conformance --locked -- run \
 ~~~
 
 Repeated runs over an unchanged tree must produce byte-identical output. The
-`seal` command is a non-mutating preflight and fails while the draft manifest
-has pending tasks; it does not create, overwrite, or promote a release.
+`seal` command promotes the completed draft into one immutable candidate; it
+does not publish a language release. It fails closed unless the draft has no
+pending tasks, the current ratchet has validated coverage and mutation
+identities, and the supplied fresh reference result matches the pinned
+bootstrap regression exactly.
+
+The promotion is a canonical, content-addressed bundle. Its manifest fixes the
+exact draft revision and hash, target, adapter implementation, four normative
+specifications, case layers, regression inputs, reference result, ratchet,
+reliability records, and reference-adapter source. Each byte sequence lives at
+`objects/<sha256>` and every source provenance points to that object. Objects
+are written and synchronized in a sibling staging directory, the manifest is
+written last, and one atomic directory rename makes the candidate visible.
+An identical destination is idempotent; a partial, altered, extra, symlinked,
+or different destination is rejected rather than repaired or overwritten.
+
+Verification follows only the candidate's closed object graph. It deliberately
+does not consult live draft files, so later work cannot silently change an
+already promoted candidate. `conformance/0.1` remains an immutable regression
+input and is never used as the candidate destination.
 
 ~~~text
 cargo run -p tondo-conformance --locked -- seal \
-  --root . --manifest conformance/draft/manifest.json --lineage draft
+  --root . --manifest conformance/draft/manifest.json --lineage draft \
+  --result target/reliability/evidence/conformance-result.json \
+  --output conformance/candidate
+cargo run -p tondo-conformance --locked -- verify-candidate \
+  --root . --candidate conformance/candidate
 ~~~
