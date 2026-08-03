@@ -313,11 +313,37 @@ fn change(changed: bool) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
+
+    struct EvidenceSnapshot {
+        root: PathBuf,
+        inventory: Vec<u8>,
+        matrix: Vec<u8>,
+    }
+
+    impl EvidenceSnapshot {
+        fn capture(root: &Path) -> Self {
+            Self {
+                root: root.to_owned(),
+                inventory: fs::read(root.join(INVENTORY_PATH)).unwrap(),
+                matrix: fs::read(root.join(MATRIX_PATH)).unwrap(),
+            }
+        }
+    }
+
+    impl Drop for EvidenceSnapshot {
+        fn drop(&mut self) {
+            fs::write(self.root.join(INVENTORY_PATH), &self.inventory).unwrap();
+            fs::write(self.root.join(MATRIX_PATH), &self.matrix).unwrap();
+        }
+    }
 
     #[test]
     fn evidence_generators_are_callable_as_one_closed_pipeline() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let _snapshot = EvidenceSnapshot::capture(&root);
         assert!(generate_all(&root).unwrap().contains("inventory"));
         assert!(generate_inventory(&root).unwrap().contains("logical tests"));
         assert!(generate_matrix(&root).unwrap().contains("requirements"));
