@@ -56,6 +56,10 @@ run_step stdlib-core-contract \
     scripts/stdlib-core-check.sh
 run_step stdlib-hosted-contract \
     scripts/stdlib-hosted-check.sh
+run_step stdlib-codec-conformance \
+    scripts/stdlib-codec-conformance.sh
+run_step stdlib-performance-report \
+    scripts/stdlib-performance-report.sh
 run_step draft-lineage-validate \
     cargo run -p tondo-conformance --locked -- validate \
     --root . \
