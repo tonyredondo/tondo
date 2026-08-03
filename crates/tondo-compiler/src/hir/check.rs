@@ -21298,6 +21298,42 @@ mod tests {
                         == output.program().interner().scalar(ScalarType::Unit)
             )
         }));
+
+        let (_, _, output) = check(
+            r#"
+fn sink[T: Discard](operation: fn(): Unit ! T) {}
+fn build(input: Int, flag: Bool) {
+    sink(() {
+        if flag {
+            fail input
+        }
+        fail "bad"
+    })
+}
+"#,
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+        assert!(output.program().closures().any(|closure| {
+            matches!(
+                output.program().interner().kind(closure.function_type()),
+                Ok(TypeKind::Function(function))
+                    if matches!(
+                        output.program().interner().kind(function.outcome()),
+                        Ok(TypeKind::Result { .. })
+                    )
+            )
+        }));
+        assert!(
+            output
+                .program()
+                .expressions()
+                .any(|expression| matches!(expression.kind(), HirExpressionKind::Fail { .. }))
+        );
     }
 
     #[test]

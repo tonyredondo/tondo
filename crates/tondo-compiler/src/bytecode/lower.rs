@@ -5199,12 +5199,34 @@ fn verifierTarget(start: Int, flag: Bool): Array[Int] {
     #[test]
     fn aggregate_constants_use_the_shared_lowering_helpers() {
         let program = lowered(
-            "enum Choice { Empty, Item(Int) }\n\
-             const Pair: (Int, Int) = (1, 2)\n\
-             const Pick: Choice = Choice.Item(42)\n\
-             fn read(): Int { match Pick { Choice.Empty => 0\n Choice.Item(value) => value\n } }\n",
+            "type UserId = Int\n\
+             type Person = { id: UserId, name: String }\n\
+             enum Choice { Empty, Item(Int), Named { value: Int } }\n\
+             const UnitValue: Unit = ()\n\
+             const Flag: Bool = true\n\
+             const Answer: Int = 42\n\
+             const Ratio: Float = 2.5\n\
+             const Letter: Char = 'x'\n\
+             const Text: String = \"value\"\n\
+             const Pair: (Int, String) = (Answer, Text)\n\
+             const Numbers: Array[Int] = [1, 2]\n\
+             const Entries: Map[String, Int] = [\"one\": 1]\n\
+             const Permissions: Set[String] = Set[\"read\"]\n\
+             const Missing: Int? = none\n\
+             const Present: Int? = some(Answer)\n\
+             const Success: Int ! String = ok(Answer)\n\
+             const Failure: Int ! String = err(Text)\n\
+             const Span: Range[Int] = 1..=3\n\
+             const Converted: Int8 ! NumericConversionError = Int8(127)\n\
+             const ConversionFailure: Int8 ! NumericConversionError = Int8(128)\n\
+             const Id: UserId = UserId(9)\n\
+             const User: Person = Person { id: Id, name: \"Ada\" }\n\
+             const UnitChoice: Choice = Choice.Empty\n\
+             const TupleChoice: Choice = Choice.Item(1)\n\
+             const RecordChoice: Choice = Choice.Named { value: 2 }\n\
+             fn read(): Int { match RecordChoice { Choice.Empty => 0\n Choice.Item(value) => value\n Choice.Named { value } => value\n } }\n",
         );
-        assert!(program.constants.len() >= 2);
+        assert!(program.constants.len() >= 20);
     }
 
     #[test]

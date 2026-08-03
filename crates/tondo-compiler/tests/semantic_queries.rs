@@ -1,21 +1,30 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use tondo_compiler::diagnostics::DiagnosticCode;
 use tondo_compiler::driver::{
-    BuildTarget, CompilationRequest, DiagnosticFormat, HostProfile, Operation, ResourceLimits,
-    SourceForm, execute,
+    BuildTarget, CompilationRequest, CompilationStatus, DiagnosticFormat, HostProfile, Operation,
+    ResourceLimits, SourceForm, execute,
 };
 use tondo_compiler::hir::{HirTerminalOperation, HirTerminalStatus, HirTerminalUnwindAction};
 use tondo_compiler::package::{Edition, PackageGraph};
+use tondo_compiler::resolve::{ResolveError, resolve};
 use tondo_compiler::semantic::SemanticEntity;
 use tondo_compiler::source::{
     LogicalPath, ModulePath, SourceDatabase, SourceId, SourceInput, TextRange,
 };
+use tondo_compiler::syntax::{LexMode, ParseLimits, ParseMode, lex, parse};
 
 #[test]
 fn public_driver_output_supports_semantic_queries() {
     let source = "fn answer(): Int { 42 }\n\
                   fn inspect(value: ref Join[Int, Never]) {}\n\
+                  fn process(left: mut Array[Int], right: mut Array[Int]) {}\n\
+                  fn inspect_region(item: mut Int, region: mut Array[Int]) {}\n\
+                  fn ranges(values: var Array[Int]) {\n\
+                      process(mut values[0:2], mut values[2:4])\n\
+                      inspect_region(mut values[0], mut values[2:4])\n\
+                  }\n\
                   fn main() {\n    let value = answer()\n}\n";
     let mut sources = SourceDatabase::new();
     let root = sources
@@ -81,4 +90,73 @@ fn public_driver_output_supports_semantic_queries() {
     assert_eq!(contract.operation(), HirTerminalOperation::JoinAwait);
     assert_eq!(contract.unwind(), HirTerminalUnwindAction::JoinTeardown);
     assert!(contract.unwind_may_suspend());
+}
+
+#[test]
+fn public_driver_rejects_inherent_methods_on_intrinsic_types() {
+    let source = "fn Int.invalid() {}\nfn main() {}\n";
+    let mut sources = SourceDatabase::new();
+    let root = sources
+        .add(SourceInput::virtual_file(
+            SourceId::new("root:public-intrinsic-method-test").unwrap(),
+            ModulePath::new("main").unwrap(),
+            LogicalPath::new("main.to").unwrap(),
+            Arc::<[u8]>::from(source.as_bytes().to_vec()),
+        ))
+        .unwrap();
+    let packages = PackageGraph::loose(&sources, root).unwrap();
+    let output = execute(
+        CompilationRequest::new(
+            Operation::Check,
+            Edition::V0_1,
+            BuildTarget::vm_hosted(),
+            HostProfile::Hosted,
+            BTreeSet::new(),
+            DiagnosticFormat::Json,
+            SourceForm::Module,
+            ResourceLimits::default(),
+            packages,
+            sources,
+            root,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    assert_eq!(output.status(), CompilationStatus::Rejected);
+    assert!(output.diagnostics().json_lines().unwrap().contains("E1504"));
+}
+
+#[test]
+fn public_resolve_output_exposes_the_resolved_program() {
+    let source = "type Counter = { value: Int }\n\
+                  fn Counter.read(self): Int { self.value }\n";
+    let mut sources = SourceDatabase::new();
+    let root = sources
+        .add(SourceInput::virtual_file(
+            SourceId::new("root:public-resolve-output-test").unwrap(),
+            ModulePath::new("main").unwrap(),
+            LogicalPath::new("main.to").unwrap(),
+            Arc::<[u8]>::from(source.as_bytes().to_vec()),
+        ))
+        .unwrap();
+    let packages = PackageGraph::loose(&sources, root).unwrap();
+    let lexed = lex(&sources, root, LexMode::Module).unwrap();
+    let parsed = parse(
+        &sources,
+        root,
+        lexed,
+        ParseMode::Module,
+        ParseLimits::default(),
+    )
+    .unwrap();
+    let output = resolve(&packages, &sources, [(root, &parsed)], 10_000).unwrap();
+
+    assert_eq!(output.program().modules().len(), 1);
+    assert_eq!(output.program().file(root).unwrap().imports().len(), 0);
+    assert!(!output.program().members().next().unwrap().is_synthetic());
+    assert!(output.diagnostics().is_empty());
+
+    let error = ResolveError::Diagnostic(DiagnosticCode::new("bad").unwrap_err());
+    assert_eq!(error.to_string(), "invalid diagnostic code `bad`");
 }
