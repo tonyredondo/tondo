@@ -128,6 +128,7 @@ pub enum RuntimeHostValueKind {
     MathError,
     FloatTolerance,
     FloatToleranceError,
+    TextDiff,
     ExitStatus,
     ProcessOutput,
     ProcessHandle,

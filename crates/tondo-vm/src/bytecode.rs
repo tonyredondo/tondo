@@ -245,6 +245,7 @@ pub enum BytecodeIntrinsicType {
     MathError,
     FloatTolerance,
     FloatToleranceError,
+    TextDiff,
     ExitStatus,
     ProcessOutput,
     ProcessHandle,
@@ -384,6 +385,7 @@ impl BytecodeIntrinsicType {
             | Self::MathError
             | Self::FloatTolerance
             | Self::FloatToleranceError
+            | Self::TextDiff
             | Self::ExitStatus
             | Self::ProcessOutput
             | Self::ProcessHandle
@@ -442,6 +444,7 @@ impl BytecodeIntrinsicType {
             | Self::MathError
             | Self::FloatTolerance
             | Self::FloatToleranceError
+            | Self::TextDiff
             | Self::ExitStatus
             | Self::ProcessOutput
             | Self::ProcessError

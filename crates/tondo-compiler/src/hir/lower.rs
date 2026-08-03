@@ -411,6 +411,9 @@ impl<'a> TypeLowerer<'a> {
             let float_tolerance_result = self
                 .interner
                 .result(float_tolerance, float_tolerance_error)?;
+            let text_diff = self
+                .interner
+                .intrinsic(IntrinsicType::TextDiff, Vec::new())?;
             self.push_bootstrap_host_callable(
                 span,
                 HirBootstrapHostFunction::TestingLog,
@@ -494,6 +497,20 @@ impl<'a> TypeLowerer<'a> {
                 vec![(string, false), (string, false)],
                 None,
                 unit,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::TestingDiffText,
+                vec![(string, false), (string, false)],
+                None,
+                text_diff,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::TestingTextDiffRender,
+                vec![(text_diff, ParameterMode::Ref, true)],
+                None,
+                string,
             )?;
             self.push_bootstrap_host_callable_with_modes(
                 span,
@@ -4794,6 +4811,7 @@ impl<'a> TypeLowerer<'a> {
                         | IntrinsicType::MathError
                         | IntrinsicType::FloatTolerance
                         | IntrinsicType::FloatToleranceError
+                        | IntrinsicType::TextDiff
                         | IntrinsicType::ExitStatus
                         | IntrinsicType::ProcessOutput
                         | IntrinsicType::ProcessHandle

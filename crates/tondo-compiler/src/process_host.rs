@@ -13,7 +13,7 @@ use std::os::unix::ffi::OsStringExt;
 #[cfg(unix)]
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 
-use tondo_stdlib::testing::{FloatTolerance, diff_text};
+use tondo_stdlib::testing::{FloatTolerance, TextDiff, diff_text};
 use tondo_stdlib::{json, math, messagepack, path, protobuf};
 use tondo_vm::runtime::{
     RuntimeHostValueKind, RuntimeValue, VmError, VmHost, VmTestNodeKind, VmTestNodeOutcome,
@@ -90,6 +90,7 @@ enum HostValue {
     MathError { _message: String },
     FloatTolerance(FloatTolerance),
     FloatToleranceError { _message: String },
+    TextDiff(TextDiff),
     Instant { domain: u64, nanos: i128 },
     Timer { domain: u64, deadline: i128 },
     DurationError { _message: String },
@@ -480,6 +481,20 @@ impl BootstrapHost {
 
     fn float_tolerance_result_error(&mut self, message: impl Into<String>) -> RuntimeValue {
         RuntimeValue::ResultErr(Box::new(self.float_tolerance_error(message)))
+    }
+
+    fn text_diff(&self, value: &RuntimeValue) -> Result<&TextDiff, VmError> {
+        let RuntimeValue::Host {
+            kind: RuntimeHostValueKind::TextDiff,
+            id,
+        } = value
+        else {
+            return Err(VmError::Host("TextDiff value is invalid".into()));
+        };
+        match self.values.get(id) {
+            Some(HostValue::TextDiff(diff)) => Ok(diff),
+            _ => Err(VmError::Host("TextDiff token is stale".into())),
+        }
     }
 
     fn duration_error(&mut self, message: impl Into<String>) -> RuntimeValue {
@@ -1572,6 +1587,23 @@ impl VmHost for BootstrapHost {
                     })
                 };
                 Self::testing_result(&envelope, result)
+            }
+            (
+                "std.testing.diffText",
+                [RuntimeValue::String(expected), RuntimeValue::String(actual)],
+            ) => {
+                let diff = diff_text(expected, actual);
+                if let Err(message) = self.ensure_bytes_len(diff.render().len()) {
+                    return Err(VmError::Host(message));
+                }
+                Ok(self.allocate(RuntimeHostValueKind::TextDiff, HostValue::TextDiff(diff)))
+            }
+            ("std.testing.TextDiff.render", [value]) => {
+                let rendered = self.text_diff(value)?.render();
+                if let Err(message) = self.ensure_bytes_len(rendered.len()) {
+                    return Err(VmError::Host(message));
+                }
+                Ok(RuntimeValue::String(rendered))
             }
             ("std.testing.assertSome", [RuntimeValue::OptionSome(value)]) => Ok((**value).clone()),
             ("std.testing.assertSome", [RuntimeValue::OptionNone]) => {
@@ -4191,6 +4223,31 @@ mod tests {
                 )
         ));
         assert!(envelope.report().unwrap().terminal().is_none());
+    }
+
+    #[test]
+    fn testing_text_diff_is_bounded_and_rendered_without_host_paths() {
+        let mut host = BootstrapHost::default();
+        let diff = host
+            .invoke(
+                "std.testing.diffText",
+                &[
+                    RuntimeValue::String("old\n".into()),
+                    RuntimeValue::String("new\n".into()),
+                ],
+            )
+            .unwrap();
+        assert!(matches!(
+            &diff,
+            RuntimeValue::Host {
+                kind: RuntimeHostValueKind::TextDiff,
+                ..
+            }
+        ));
+        assert_eq!(
+            host.invoke("std.testing.TextDiff.render", &[diff]).unwrap(),
+            RuntimeValue::String("--- expected\n+++ actual\n-old\n+new\n".into())
+        );
     }
 
     #[test]

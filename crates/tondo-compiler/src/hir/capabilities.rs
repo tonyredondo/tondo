@@ -739,7 +739,8 @@ fn intrinsic_node(
         | IntrinsicType::FsError
         | IntrinsicType::MathError
         | IntrinsicType::FloatTolerance
-        | IntrinsicType::FloatToleranceError => {
+        | IntrinsicType::FloatToleranceError
+        | IntrinsicType::TextDiff => {
             if matches!(
                 capability,
                 HirCapability::Copy

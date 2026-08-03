@@ -460,6 +460,7 @@ impl<'a> TraceMetadataAnalysis<'a> {
                 | BytecodeIntrinsicType::MathError
                 | BytecodeIntrinsicType::FloatTolerance
                 | BytecodeIntrinsicType::FloatToleranceError
+                | BytecodeIntrinsicType::TextDiff
                 | BytecodeIntrinsicType::ExitStatus
                 | BytecodeIntrinsicType::ProcessOutput
                 | BytecodeIntrinsicType::ProcessHandle
@@ -1064,7 +1065,8 @@ fn intrinsic_capability(
         | BytecodeIntrinsicType::Utf8Error
         | BytecodeIntrinsicType::MathError
         | BytecodeIntrinsicType::FloatTolerance
-        | BytecodeIntrinsicType::FloatToleranceError => fixed_capability(matches!(
+        | BytecodeIntrinsicType::FloatToleranceError
+        | BytecodeIntrinsicType::TextDiff => fixed_capability(matches!(
             capability,
             ClosedCapability::Copy
                 | ClosedCapability::Discard
@@ -1431,6 +1433,7 @@ fn intrinsic_terminal(
         | BytecodeIntrinsicType::MathError
         | BytecodeIntrinsicType::FloatTolerance
         | BytecodeIntrinsicType::FloatToleranceError
+        | BytecodeIntrinsicType::TextDiff
         | BytecodeIntrinsicType::ExitStatus
         | BytecodeIntrinsicType::ProcessOutput
         | BytecodeIntrinsicType::ProcessError
@@ -1590,6 +1593,7 @@ impl Verifier<'_> {
                 | BytecodeIntrinsicType::MathError
                 | BytecodeIntrinsicType::FloatTolerance
                 | BytecodeIntrinsicType::FloatToleranceError
+                | BytecodeIntrinsicType::TextDiff
                 | BytecodeIntrinsicType::ExitStatus
                 | BytecodeIntrinsicType::ProcessOutput
                 | BytecodeIntrinsicType::ProcessHandle
@@ -2071,6 +2075,7 @@ impl Verifier<'_> {
                 && !callable.name.starts_with("std.testing.assertNotEqual")
                 && !callable.name.starts_with("std.testing.assertFloatNear")
                 && !callable.name.starts_with("std.testing.assertFloat32Near")
+                && !callable.name.starts_with("std.testing.TextDiff.render")
             {
                 return Err(BytecodeVerificationError::new(
                     &context,

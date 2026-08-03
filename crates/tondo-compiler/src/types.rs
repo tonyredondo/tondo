@@ -122,6 +122,7 @@ pub enum IntrinsicType {
     MathError,
     FloatTolerance,
     FloatToleranceError,
+    TextDiff,
     ExitStatus,
     ProcessOutput,
     ProcessHandle,
@@ -162,6 +163,7 @@ impl IntrinsicType {
             Self::MathError => "MathError",
             Self::FloatTolerance => "FloatTolerance",
             Self::FloatToleranceError => "FloatToleranceError",
+            Self::TextDiff => "TextDiff",
             Self::ExitStatus => "ExitStatus",
             Self::ProcessOutput => "ProcessOutput",
             Self::ProcessHandle => "ProcessHandle",
@@ -197,6 +199,7 @@ impl IntrinsicType {
             | Self::MathError
             | Self::FloatTolerance
             | Self::FloatToleranceError
+            | Self::TextDiff
             | Self::ExitStatus
             | Self::ProcessOutput
             | Self::ProcessHandle

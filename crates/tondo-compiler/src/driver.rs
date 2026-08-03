@@ -1993,7 +1993,7 @@ mod tests {
     fn test_operation_executes_std_testing_value_helpers_through_the_vm() {
         let base = operation_request(
             Operation::Check,
-            b"import std.testing\ntest helpers {\n let tolerance = match testing.FloatTolerance.from(0.01, 0.1) {\n  ok(value) => value\n  err(_) => testing.failNow(\"invalid tolerance\")\n }\n testing.assertTextEqual(\"same\", \"same\")\n testing.assertFloatNear(10.0, 10.5, ref tolerance)\n testing.assertFloat32Near(10.0, 10.5, ref tolerance)\n}\n",
+            b"import std.testing\ntest helpers {\n let tolerance = match testing.FloatTolerance.from(0.01, 0.1) {\n  ok(value) => value\n  err(_) => testing.failNow(\"invalid tolerance\")\n }\n testing.assertTextEqual(\"same\", \"same\")\n testing.assertFloatNear(10.0, 10.5, ref tolerance)\n testing.assertFloat32Near(10.0, 10.5, ref tolerance)\n let diff = testing.diffText(\"old\\n\", \"new\\n\")\n testing.assertTextEqual(diff.render(), \"--- expected\\n+++ actual\\n-old\\n+new\\n\")\n}\n",
             SourceForm::Module,
             ResourceLimits::default(),
         );

@@ -830,6 +830,7 @@ impl<'a> ExpressionChecker<'a> {
                         | IntrinsicType::MathError
                         | IntrinsicType::FloatTolerance
                         | IntrinsicType::FloatToleranceError
+                        | IntrinsicType::TextDiff
                         | IntrinsicType::ExitStatus
                         | IntrinsicType::ProcessOutput
                         | IntrinsicType::ProcessHandle
@@ -13715,6 +13716,7 @@ impl<'a> ExpressionChecker<'a> {
                 ("testing", Some("assertTextEqual")) => {
                     HirBootstrapHostFunction::TestingAssertTextEqual
                 }
+                ("testing", Some("diffText")) => HirBootstrapHostFunction::TestingDiffText,
                 ("testing", Some("assertFloatNear")) => {
                     HirBootstrapHostFunction::TestingAssertFloatNear
                 }
@@ -16510,6 +16512,9 @@ impl<'a> ExpressionChecker<'a> {
                 }
                 (IntrinsicType::VirtualTime, "advance") => {
                     HirBootstrapHostFunction::VirtualTimeAdvance
+                }
+                (IntrinsicType::TextDiff, "render") => {
+                    HirBootstrapHostFunction::TestingTextDiffRender
                 }
                 (IntrinsicType::EnvSnapshot, "arguments") => {
                     HirBootstrapHostFunction::EnvSnapshotArguments
