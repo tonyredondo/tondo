@@ -10,7 +10,7 @@ tail -c 1 "$manifest" | cmp -s <(printf '\n') || {
     echo "stdlib implementation evidence must end with LF" >&2
     exit 1
 }
-! rg -n $'\r|[[:blank:]]$' "$manifest" >/dev/null || {
+! grep -nE $'\r|[[:blank:]]$' "$manifest" >/dev/null || {
     echo "stdlib implementation evidence has whitespace" >&2
     exit 1
 }

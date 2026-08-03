@@ -14,7 +14,7 @@ if ! tail -c 1 "$contract" | cmp -s <(printf '\n'); then
     exit 1
 fi
 
-if rg -n $'\r|[[:blank:]]$' "$contract" >/dev/null; then
+if grep -nE $'\r|[[:blank:]]$' "$contract" >/dev/null; then
     echo "std.json owner contract contains CR or trailing whitespace" >&2
     exit 1
 fi
