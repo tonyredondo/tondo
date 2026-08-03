@@ -14187,6 +14187,7 @@ mod tests {
                 BytecodeIntrinsicType::Timer => [false, false, false, false, true, false],
                 BytecodeIntrinsicType::EnvName
                 | BytecodeIntrinsicType::EnvError
+                | BytecodeIntrinsicType::MathError
                 | BytecodeIntrinsicType::Path
                 | BytecodeIntrinsicType::PathError
                 | BytecodeIntrinsicType::FsError => all,
