@@ -528,11 +528,11 @@ fn write_new_file(path: &Path, bytes: &[u8]) -> Result<(), ArtifactError> {
         .map_err(io_error)?;
     file.write_all(bytes).map_err(io_error)?;
     // The store contract requires a complete file before the atomic rename;
-    // it does not promise durable media commits. `sync_all` maps to a
-    // platform-specific flush operation that is not available for every
-    // filesystem used by the Windows runners, so close the handle explicitly
-    // after the write and let the rename provide the publication boundary.
-    file.flush().map_err(io_error)?;
+    // it does not promise durable media commits. `File` has no user-space
+    // buffer, so `write_all` completes the file contents; close the handle
+    // explicitly and let the rename provide the publication boundary. This
+    // avoids platform-specific flush operations that are not available for
+    // every filesystem used by the Windows runners.
     drop(file);
     Ok(())
 }
