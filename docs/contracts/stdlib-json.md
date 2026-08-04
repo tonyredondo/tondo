@@ -10,7 +10,7 @@ de este documento están reflejadas en el registro machine-readable
 `scripts/test-gate.sh` mediante
 [`scripts/stdlib-json-check.sh`](../../scripts/stdlib-json-check.sh).
 
-La sección 14.8 de `TONDO_STANDARD_LIBRARY_SPEC.md` continúa siendo la fuente
+La sección 14.9 de `TONDO_STANDARD_LIBRARY_SPEC.md` continúa siendo la fuente
 normativa de catálogo y compatibilidad. Este documento cierra las decisiones
 operativas que cada implementación del owner debe respetar.
 

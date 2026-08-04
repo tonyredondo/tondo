@@ -572,6 +572,37 @@ reparación. Para cada modelo/tokenizer se publica:
 TLF no se promociona si el ahorro bruto queda anulado por más reparaciones o si
 la mejora solo existe en un proveedor.
 
+La medición léxica y la evaluación de modelos son productos reproducibles del
+repositorio, no tablas mantenidas a mano. El harness fija:
+
+- revisión exacta de cada tokenizer o hash de su artefacto;
+- manifest content-addressed del corpus y regla de deduplicación;
+- versión del lexer/codec y parámetros completos;
+- candidatos comparados y algoritmo canónico de cada transformación;
+- resultados machine-readable y el Markdown derivado de esos resultados.
+
+Un cambio de corpus, tokenizer, candidato o algoritmo invalida los resultados
+anteriores y exige regenerarlos. El informe humano nunca es el único artefacto
+capaz de reproducir un porcentaje.
+
+### 18.5 Bundle de conformidad L0
+
+TLF no se añade al linaje de conformidad G5 del lenguaje base. G5 conserva sus
+cuatro autoridades —lenguaje, testing, toolchain y stdlib— porque un programa
+`.to` no depende de TLF. L0 produce un bundle content-addressed separado que
+fija como mínimo:
+
+- esta especificación y la identidad del formato;
+- implementación de encoder, decoder, canonicalizer y source maps;
+- schema y golden vectors de la CLI;
+- corpus de properties, fuzzing y límites;
+- harness, manifests y resultados de medición léxica y evaluación LLM; y
+- hashes de toolchain y frontend Tondo contra los que se probó la equivalencia.
+
+El candidato completo de Tondo fija por hash tanto el bundle G5 como el bundle
+L0. Ninguna evidencia TLF cubre requisitos del lenguaje base y ningún resultado
+G5 sustituye las properties o evaluaciones de TLF.
+
 ## 19. Decisiones deliberadas del draft
 
 ### 19.1 Sin aliases de keywords
@@ -621,7 +652,7 @@ mismo cambio:
 - golden vectors, properties y fuzz corpus;
 - estudio reproducible de tokenizers;
 - benchmark de generación/reparación;
-- tracker y matriz de conformidad.
+- tracker, matriz de conformidad L0 y bundle separado.
 
 Después del primer release, cualquier cambio incompatible requerirá el mecanismo
 de negociación que se defina entonces. Este documento no crea hoy checkpoints

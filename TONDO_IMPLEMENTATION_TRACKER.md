@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 1.46
+**Versión del tracker:** 1.47
 
 **Última actualización:** 2026-08-04
 
@@ -17,6 +17,11 @@ desarrollo y no ha sido publicado.
 
 - [Borrador normativo de Tondo 0.1](./TONDO_LANGUAGE_SPEC.md)
 - [Arquitectura base de Standard Library 0.1](./TONDO_STANDARD_LIBRARY_SPEC.md)
+- [Contrato normativo del toolchain 0.1](./TONDO_TOOLCHAIN_SPEC.md)
+- [Contrato de testing para Tondo 0.1](./TONDO_TESTING_SPEC.md)
+
+**Contratos normativos por owner:**
+
 - [Contrato operativo de rendimiento de Standard Library 0.1](./docs/contracts/stdlib-performance.md)
 - [Contrato de owner de `std.json`](./docs/contracts/stdlib-json.md)
 - [Contrato de owner de `std.messagepack`](./docs/contracts/stdlib-messagepack.md)
@@ -24,8 +29,14 @@ desarrollo y no ha sido publicado.
 - [Contrato de owner de `std.testing`](./docs/contracts/stdlib-testing.md)
 - [Contrato de owners Core STD-0.1A](./docs/contracts/stdlib-core.md)
 - [Contrato de owners Hosted STD-0.1A](./docs/contracts/stdlib-hosted.md)
-- [Contrato de testing para Tondo 0.1](./TONDO_TESTING_SPEC.md)
+
+**Companion normativo con conformidad separada:**
+
 - [Tondo LLM Form](./TONDO_LLM_FORM_SPEC.md)
+
+G5 inventaría y sella exactamente los cuatro documentos centrales. TLF no
+cambia la semántica `.to`: Gate L0 produce un bundle separado y el candidato
+final fija ambos por hash.
 
 **Objetivo inmediato:** cerrar primero las dos lagunas verificadas por la
 auditoría: (1) completar las APIs públicas A1–A4 de STD-0.1A, en especial
@@ -36,8 +47,8 @@ runtime-facing de STD-0.1B y M11 esperan esos gates. Todo pertenece a la primera
 versión 0.1; los slices son orden de implementación, no versiones públicas. La
 VM permanece como implementación de referencia y oracle diferencial del
 backend nativo. La lane TLF puede avanzar en paralelo porque solo depende del
-frontend/formatter ya cerrados; no reemplaza esas prioridades y debe cerrar
-antes de `REL-0.1-RC-001`.
+frontend/formatter ya cerrados; no reemplaza esas prioridades y debe producir
+su bundle L0 antes de `REL-0.1-RC-001`.
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -357,7 +368,7 @@ necesaria; la fragmentación del workspace no.
 | **STD-0.1A — Foundation + Hosted** | Base estándar necesaria para meta, testing y backend | Arquitectura/owners y slices tempranos cerrados; firmas A3 e implementación pública incompletas |
 | **M11 — Backend nativo y optimización** | Implementación de producción | Futuro |
 | **STD-0.1B — Concurrency + Application** | Contratos runtime antes de M11; implementación tras N1 | Arquitectura base cerrada; contratos y código pendientes |
-| **TLF — Forma para agentes** | Transporte compacto hacia Tondo canónico | Spec y estudio completados; implementación/evaluación pendientes |
+| **TLF — Forma para agentes** | Transporte compacto hacia Tondo canónico | Spec y estudio exploratorio completados; reproducción, implementación, evaluación y bundle L0 pendientes |
 
 Estado observado del workspace:
 
@@ -368,8 +379,8 @@ Estado observado del workspace:
   `tondo-reference-adapter`, `tondo-reliability`, `tondo-stdlib` y `tondo-vm`.
 - Toolchain utilizado para la validación: Rust 1.93.0 y Cargo 1.93.0; la versión
   mínima soportada queda fijada en Rust 1.93.
-- La evidencia actual registra 2.170 tests lógicos y 2.389 repeticiones:
-  2.120 ejecutables, 38 contratos del spec de testing aún documentales, tres
+- La evidencia actual registra 2.175 tests lógicos y 2.394 repeticiones:
+  2.125 ejecutables, 38 contratos del spec de testing aún documentales, tres
   campañas y nueve fences no ejecutables. La suite bootstrap conserva sus 205 casos y 424
   repeticiones byte-estables como regresión explícita.
 - La matriz única contiene 316 requisitos: 46 tienen evidencia ejecutable, tres
@@ -457,8 +468,9 @@ requisito de la primera publicación STD 0.1.0.
 
 TLF es una lane transversal independiente después de G0. No modifica `.to`, no
 condiciona el backend ni bloquea S1A; sí debe completar codec, mapas, CLI,
-properties, fuzzing y evaluación de generación/reparación antes del candidato
-de release. Su evidencia no cuenta como conformidad del lenguaje base.
+properties, fuzzing, benchmark reproducible, evaluación de generación/reparación
+y bundle content-addressed antes del candidato de release. Su evidencia no
+cuenta como conformidad del lenguaje base.
 
 Los números M10.6 y M10.7 son IDs históricos estables, no prioridad
 cronológica. Este DAG y la cola de la sección 24 son la autoridad para ordenar
@@ -483,12 +495,13 @@ el trabajo.
 | Lifecycle de suites | `ASYNC-DEFER-IMPL-001`, lowering y worker aislado | Retry, JUnit o snapshot update |
 | Mecanismo `CONF-SEAL-001` | `META-CONF-001`, `UTEST-CONF-001` y hashes actuales | Cierre evidencial T0 y STD-0.1A completa |
 | Gate T0 evidencial | `UTEST-SPEC-EVIDENCE-001` y matriz multi-spec sin huecos de testing aplicables | STD-0.1A completa |
-| Gate G5 vivo | `CONF-MATRIX-ALL-001`, `CONF-GAP-AUDIT-001`, `CONF-GAP-IMPL-001` y `CONF-SEAL-FINAL-001` | STD-0.1A completa |
-| `NATIVE-001` | Gates G5/S1A y contratos runtime-facing de STD-0.1B | Implementación de STD-0.1B |
+| Gate G5 vivo | `DOC-TEST-001`, `DOC-TEST-CONF-001`, `CONF-MATRIX-ALL-001`, `CONF-GAP-AUDIT-001`, `CONF-GAP-IMPL-001` y `CONF-SEAL-FINAL-001` | STD-0.1A completa |
+| `NATIVE-001` | `NATIVE-PRODUCT-SPEC-001`, Gates G5/S1A y contratos runtime-facing de STD-0.1B | Implementación de STD-0.1B |
 | `NATIVE-ABI-001` | `NATIVE-001`, `NATIVE-MEM-ADR-001` y contratos de sync/executor | ABI FFI pública |
 | ARC/runtime nativo | `NATIVE-ABI-001` y DEC-014 | Eliminación de retains, COW o escape analysis |
+| `NATIVE-LINK-001`/`NATIVE-CLI-001` | lowering, ARC/ciclos y `NATIVE-STD-001` | Optimizaciones post-N1 |
 | Gate S1 | N1 y todos los slices A/B conformes | Incrementalidad o LSP |
-| Gate L0 | Codec TLF, maps/diagnostics/CLI, properties/fuzz, evaluación y conformidad | Backend nativo o implementación de STD-0.1B |
+| Gate L0 | benchmark reproducible, codec TLF, maps/diagnostics/CLI, properties/fuzz, evaluación, conformidad y bundle L0 | Backend nativo o implementación de STD-0.1B |
 
 ### 4.1.2 Regla de integración por waves
 
@@ -521,7 +534,7 @@ entre dos subsistemas:
 | 18. Semántica numérica | M3 y M6 | G3 y M10 |
 | 19. Texto y Unicode | M1 para léxico; M6 para runtime | G0, G3 y M10 |
 | 20. Ejecutables, scripts y procesos | M3, M7, M8 y M9; API host en STD-0.1A | G2, G4, M10 y S1A |
-| 21. Formato y documentación | M1 y trabajo transversal | G0 y M10 |
+| 21. Formato y documentación | M1, `DOC-TEST-001` y trabajo transversal | G0, `DOC-TEST-CONF-001` y G5 |
 | 22. Diagnósticos y tooling | M0, M1, M2, M9 y M10 | Todos los gates |
 | 23. Gramática de referencia | M1 | G0 y M10 |
 | 24. Ejemplos integrados | Tests de aceptación progresivos | G2, G3, G4 y M10 |
@@ -2579,6 +2592,19 @@ mecanismo de promoción: `conformance/candidate/manifest.json` fija la revisión
 el inventario puede conservar contratos `draft-pending`; el sellado final debe
 cerrar también esos ejes.
 
+- [ ] **DOC-TEST-001 — Implementar `tondo doc-test` por la ruta pública.**
+  Añadir el comando exacto de 21.6, scanner Markdown propio, fixtures fijados,
+  categorías `tondo`/`fragment`/`script`/`compile-fail`/`pseudocode`, perfil
+  `core`, schema JSON ordenado y publicación atómica. Debe reutilizar lexer,
+  parser, formatter y checker ordinarios sin descubrir proyecto ni introducir
+  un parser Markdown general.
+
+- [ ] **DOC-TEST-CONF-001 — Cerrar conformidad de ejemplos verificables.**
+  Probar UTF-8 y CR/LF, headers, fences truncados, offsets de byte, fixtures,
+  errores exactos, formatting, determinismo y ausencia de output parcial sobre
+  los documentos normativos y un corpus hostil. Cada ejemplo ejecutable de la
+  stdlib reutiliza el mismo runner; no existe un harness documental paralelo.
+
 - [ ] **CONF-MATRIX-ALL-001 — Extender la matriz normativa a los cuatro
   specs.** Inventariar requisitos estables de lenguaje, testing, toolchain y
   stdlib con identidad, riesgo y seis dimensiones de evidencia. Un documento
@@ -2601,7 +2627,7 @@ cerrar también esos ejes.
 - [ ] **CONF-SEAL-FINAL-001 — Promover el candidato normativamente completo.**
   Exigir que los requisitos aplicables a lenguaje, testing y toolchain no
   conserven `toolchain-limit`, `draft-pending` ni ausencias; ejecutar resultados
-  frescos, coverage/mutation y Gate T0; después crear un nuevo bundle
+  frescos, `DOC-TEST-CONF-001`, coverage/mutation y Gate T0; después crear un nuevo bundle
   content-addressed y comprobarlo sin consultar el draft vivo. La matriz de
   stdlib puede conservar tareas S1A explícitas y no se presenta como verde.
   Solo esta tarea habilita el cierre final de G5; S1A usa su propio gate.
@@ -3603,6 +3629,8 @@ vez los errores de los slices anteriores.
   conserva límites aplicables ni contratos pendientes.
 - [ ] Gate T0 está cerrado y el grupo de testing forma parte de
   `tondo-conformance-draft`, no de una edición o suite paralela.
+- [ ] `tondo doc-test` ejecuta el contrato completo de 21.6 y valida los
+  ejemplos normativos sin harness paralelo ni resultados parciales.
 - [x] `CONF-SEAL-001` ha promovido exactamente el draft verificado, sin
   presentar la regresión bootstrap como requisitos nuevos. Este punto verifica
   el mecanismo y el candidato revisión 9, no la suficiencia de su matriz.
@@ -4196,12 +4224,21 @@ se implementan todavía, pero sus requisitos alimentan elección de backend,
 memoria y ABI. La VM, la conformidad del lenguaje —incluidos test targets— y la
 conformidad de STD-0.1A son los oracles.
 
-**Orden obligatorio:** baseline → selección → memoria/ABI → lowering mínimo →
-ARC/ciclos correctos → frontera STD-0.1A → diferencial/targets/empaquetado →
-Gate N1. Eliminación de retains, COW, escape analysis, incrementalidad y LSP son
-trabajo posterior a N1 y no pueden retrasar el primer backend correcto.
+**Orden obligatorio:** contrato de producto → baseline → selección →
+memoria/ABI → lowering mínimo → ARC/ciclos correctos → frontera STD-0.1A →
+link/CLI → diferencial/targets/empaquetado → Gate N1. Eliminación de retains,
+COW, escape analysis, incrementalidad y LSP son trabajo posterior a N1 y no
+pueden retrasar el primer backend correcto.
 
 ### 20.1 Selección y contrato del backend
+
+- [x] **NATIVE-PRODUCT-SPEC-001 — Fijar la experiencia pública del backend.**
+  La sección 10.1 de `TONDO_TOOLCHAIN_SPEC.md` define una sola forma
+  `tondo build`, target/backend seleccionados por el plan, output físico no
+  semántico, publicación atómica y `tondo run` sobre el mismo producto. El
+  compilador puro emite un plan de enlace cerrado y el driver interno no usa
+  shell, `PATH` ni flags ambientales; no se promete object format, linker
+  configurable, dynamic linking o ABI FFI pública.
 
 - [ ] **PERF-001 — Definir benchmarks y presupuestos antes de implementar.**
   Incluir compilación, tamaño, programas STD-0.1A, throughput, latencia, memoria,
@@ -4247,6 +4284,20 @@ trabajo posterior a N1 y no pueden retrasar el primer backend correcto.
   observan la misma API, capabilities, errores y cleanup que en la VM; ninguna
   optimización puede añadir una ruta pública específica del backend.
 
+- [ ] **NATIVE-LINK-001 — Implementar el plan de enlace cerrado.** Materializar
+  objetos, runtime, stdlib y unidades privilegiadas desde hashes declarados;
+  invocar el driver exacto sin shell ni búsqueda ambiental; validar el
+  ejecutable y publicar atómicamente. Repetir el build en workspaces distintos
+  debe producir el mismo hash o una divergencia diagnosticada por un input
+  explícito del target.
+
+- [ ] **NATIVE-CLI-001 — Conectar `tondo build` y `tondo run` nativo.** La CLI
+  descubre el mismo proyecto TOML, entrega el plan cerrado y conserva stdout,
+  stderr, argv, exits y diagnostics. `build` produce el artefacto seleccionado;
+  `run` ejecuta temporalmente esos mismos bytes. Cubrir output existente,
+  fallos entre fases, interrupción, permisos y cleanup sin exponer flags
+  `--native`/`--vm` ni dos semánticas.
+
 ### 20.3 Oracle diferencial, targets y empaquetado
 
 - [ ] **NATIVE-CONF-001 — Crear el adaptador nativo de conformidad.** Ejecutar
@@ -4273,6 +4324,8 @@ trabajo posterior a N1 y no pueden retrasar el primer backend correcto.
 
 - [ ] El backend elegido tiene ADR, targets soportados y ABI runtime interna
   explícitos.
+- [ ] `tondo build` y `tondo run` atraviesan el mismo plan de enlace cerrado y
+  el producto ejecutable supera smoke tests reales sin inputs ambientales.
 - [ ] DEC-014 está cerrado y ARC/ciclos correctos satisfacen los contratos de
   concurrencia ya especificados sin layout público accidental.
 - [ ] Todos los programas admitidos atraviesan el MIR verificado común; no
@@ -4369,10 +4422,22 @@ publica hasta cerrar el gate final.
   DNS, sockets, streams, datagrams, TLS boundary, timeouts y cancelación
   exponen errores portables y no realizan I/O implícito.
 
-- [ ] **STD-CODEC-002 — Especificar `std.encoding`, `std.yaml`, `std.toml` y
-  `std.cbor`.** Base64, hexadecimal, YAML, TOML y CBOR fijan owner, streaming,
-  límites y tratamiento de input no confiable sin duplicar
-  `std.serialization`, JSON, MessagePack ni Protobuf de STD-0.1A.
+- [ ] **STD-ENCODING-001 — Especificar `std.encoding`.** Base64, hexadecimal y
+  sus variantes fijan alfabetos, padding, canonicalidad, streaming, límites y
+  errores sobre `Bytes`/`std.io`, sin introducir un owner binario alternativo.
+
+- [ ] **STD-YAML-001 — Especificar `std.yaml`.** Fijar subset seguro, modelo
+  tipado/dinámico, aliases, tags admitidos, streaming, límites y errores con
+  path sin construcción exponencial ni resolución ambiental.
+
+- [ ] **STD-TOML-001 — Especificar `std.toml`.** Fijar versión TOML, modelo de
+  fecha/hora, APIs tipadas/dinámicas, spans, duplicados, streaming aplicable,
+  límites y errores sin confundirlo con `tondo.toml` del toolchain.
+
+- [ ] **STD-CBOR-001 — Especificar `std.cbor`.** Fijar modelo de datos, tags,
+  valores indefinidos, streaming, límites y modo determinista sobre
+  `std.serialization`, sin duplicar MessagePack ni presentar determinismo como
+  canonicalidad universal.
 
 - [ ] **STD-REGEX-001 — Especificar `std.regex`.** Sintaxis, Unicode,
   complejidad y límites evitan comportamiento exponencial no declarado.
@@ -4387,39 +4452,249 @@ publica hasta cerrar el gate final.
 
 ### 21.3 Implementación y evidencia
 
+Cada owner mantiene celdas independientes `SPEC`, `IMPL`, `HOST`, `TEST/FUZZ`,
+`PERF`, `CONF` y `DOC`. Cuando no existe frontera host, el registro del owner
+marca `HOST = not-applicable` con razón; no se crea un stub ni se omite la
+dimensión. Las tareas coordinadoras de 21.3.13 solo agregan estas leaves.
+
+#### 21.3.1 `std.sync`
+
+- [ ] **STD-SYNC-IMPL-001 — Implementar la superficie portable de sync.**
+  Publicar mutex, rwlock, condvar, semáforo y atomics con ownership, poisoning y
+  memory ordering fijados por `STD-SYNC-001` sobre VM y runtime nativo.
+- [ ] **STD-SYNC-HOST-001 — Implementar parking y atomics del host.** Enlazar
+  threads, wakeups y esperas mediante unidades fijadas, sin bloqueo del executor
+  ni fallback single-thread que finja soporte cross-thread.
+- [ ] **STD-SYNC-TEST-001 — Modelar y endurecer sync.** Cubrir litmus de memoria,
+  races, wakeups perdidos, poisoning/cancelación, teardown y límites bajo
+  scheduling adversario y sanitización aplicable.
+- [ ] **STD-SYNC-PERF-001 — Medir sync.** Fijar uncontended/contended latency,
+  throughput, fairness, memoria y tail latency por target contra un oracle de
+  corrección independiente.
+- [ ] **STD-SYNC-CONF-001 — Conformar sync.** Ejecutar casos portables y
+  capability-gated en VM/nativo, incluido rechazo estático cuando falte
+  `threads`.
+- [ ] **STD-SYNC-DOC-001 — Documentar sync.** Publicar ordering, deadlocks,
+  poisoning, cancelación, costes y ejemplos ejecutables sin defaults ocultos.
+
+#### 21.3.2 `std.channel`
+
+- [ ] **STD-CHANNEL-IMPL-001 — Implementar canales tipados.** Publicar creación,
+  send/receive, cierre, backpressure y selección cancelable con `T: Send`, sin
+  keyword nueva ni tasks desligadas.
+- [ ] **STD-CHANNEL-TEST-001 — Modelar y fuzzear canales.** Cubrir buffers 0/N,
+  cierre concurrente, fairness declarada, cancelación, productores/consumidores
+  abandonados, límites y ausencia de mensajes duplicados o perdidos.
+- [ ] **STD-CHANNEL-PERF-001 — Medir canales.** Registrar throughput, tail
+  latency, memoria, wakeups y backpressure con 1:1, N:1 y N:M.
+- [ ] **STD-CHANNEL-CONF-001 — Conformar canales.** Reutilizar el mismo corpus
+  observable sobre VM y nativo, incluidos pánicos/errores y cleanup.
+- [ ] **STD-CHANNEL-DOC-001 — Documentar canales.** Fijar orden, cierre,
+  cancelación, fairness, costes y ejemplos ejecutables de composición.
+
+#### 21.3.3 `std.executor`
+
+- [ ] **STD-EXEC-IMPL-001 — Implementar executor, pools y actores.** Reutilizar
+  async estructurado, channels y sync; el bridge bloqueante retorna a scopes
+  Tondo y no crea un segundo `Task` público.
+- [ ] **STD-EXEC-HOST-001 — Implementar workers host.** Enlazar pools y wakeups
+  fijados por target, con límites, shutdown y revocación sin heredar ambiente ni
+  bloquear el progreso cooperativo.
+- [ ] **STD-EXEC-TEST-001 — Modelar y endurecer executor.** Cubrir fairness,
+  starvation, cancelación, pánicos, actores muertos, shutdown, límites y races
+  con schedulers deterministas y stress real.
+- [ ] **STD-EXEC-PERF-001 — Medir executor.** Fijar scheduling latency,
+  throughput, tail, memoria, startup y coste de wakeup/bridge por target.
+- [ ] **STD-EXEC-CONF-001 — Conformar executor.** Comparar observaciones VM y
+  nativo y validar capabilities `threads` sin stubs silenciosos.
+- [ ] **STD-EXEC-DOC-001 — Documentar executor.** Explicar scopes, pools,
+  actores, bloqueo, cancelación, shutdown, costes y ejemplos ejecutables.
+
+#### 21.3.4 Calendario civil de `std.time`
+
+- [ ] **STD-CIVIL-TIME-IMPL-001 — Implementar calendario y zonas.** Publicar
+  Date, Time, DateTime, parsing/formatting, aritmética y conversiones de zona
+  sobre el time-base único, con reglas y errores versionados.
+- [ ] **STD-CIVIL-TIME-HOST-001 — Integrar datos temporales sellados.** Empaquetar
+  la base de zonas por versión/hash y enlazar clock civil solo mediante la
+  capability declarada; nunca consultar timezone ambiental durante build.
+- [ ] **STD-CIVIL-TIME-TEST-001 — Modelar calendario civil.** Cubrir calendarios,
+  leap years, gaps/folds DST, cambios históricos, límites, round-trips y
+  providers versionados.
+- [ ] **STD-CIVIL-TIME-PERF-001 — Medir tiempo civil.** Fijar parsing,
+  formatting, lookup de zona, conversiones, memoria y tamaño de datos.
+- [ ] **STD-CIVIL-TIME-CONF-001 — Conformar tiempo civil.** Ejecutar el corpus
+  portable sobre VM/nativo con los mismos datos sellados y rechazo de versiones
+  o domains incompatibles.
+- [ ] **STD-CIVIL-TIME-DOC-001 — Documentar tiempo civil.** Separar claramente
+  monotónico/civil, gaps/folds, datos versionados, costes y ejemplos.
+
+#### 21.3.5 `std.encoding`
+
+- [ ] **STD-ENCODING-IMPL-001 — Implementar Base64 y hexadecimal.** Publicar
+  APIs materializadas e incrementales bytes-first, con decode atómico, policies
+  exactas y kernels SIMD solo tras equivalencia escalar.
+- [ ] **STD-ENCODING-TEST-001 — Probar y fuzzear encodings.** Cubrir vectores
+  oficiales, cada frontera de chunk, padding/case inválidos, límites y errores
+  byte-exactos.
+- [ ] **STD-ENCODING-PERF-001 — Medir encodings.** Fijar throughput, tail,
+  allocations, memoria y dispatch multiversion por tamaño/target.
+- [ ] **STD-ENCODING-CONF-001 — Conformar encodings.** Verificar
+  interoperabilidad, streaming y equivalencia scalar/SIMD en VM/nativo.
+- [ ] **STD-ENCODING-DOC-001 — Documentar encodings.** Publicar una única forma
+  por policy, errores, costes y ejemplos materializados/streaming.
+
+#### 21.3.6 `std.yaml`
+
+- [ ] **STD-YAML-IMPL-001 — Implementar YAML seguro.** Publicar typed, dynamic y
+  streaming sobre serialization con aliases/tags acotados y construcción
+  atómica; no habilitar resolución o tipos ambientales.
+- [ ] **STD-YAML-TEST-001 — Probar y fuzzear YAML.** Cubrir corpus interoperable,
+  Unicode, anchors/aliases, tags, duplicados, chunks, bombs, nesting y límites.
+- [ ] **STD-YAML-PERF-001 — Medir YAML.** Fijar throughput, tail, memoria,
+  allocations y comportamiento adversario sin optimizar solo documentos planos.
+- [ ] **STD-YAML-CONF-001 — Conformar YAML.** Comparar typed/dynamic/streaming,
+  interoperabilidad y errores/path sobre VM y nativo.
+- [ ] **STD-YAML-DOC-001 — Documentar YAML.** Enumerar el subset seguro,
+  policies, límites, costes y ejemplos ejecutables.
+
+#### 21.3.7 `std.toml`
+
+- [ ] **STD-TOML-IMPL-001 — Implementar TOML.** Publicar typed, árbol dinámico y
+  parser con spans sobre serialization, preservando fecha/hora, duplicados y
+  construcción atómica sin compartir semántica con el manifest del toolchain.
+- [ ] **STD-TOML-TEST-001 — Probar y fuzzear TOML.** Cubrir corpus oficial,
+  Unicode, números, fechas, tablas, arrays, duplicados, chunks aplicables,
+  límites y spans exactos.
+- [ ] **STD-TOML-PERF-001 — Medir TOML.** Fijar parsing/encoding, tail, memoria,
+  allocations y documentos adversarios.
+- [ ] **STD-TOML-CONF-001 — Conformar TOML.** Verificar interoperabilidad,
+  typed/dynamic, errores/spans y equivalencia VM/nativo.
+- [ ] **STD-TOML-DOC-001 — Documentar TOML.** Separar data format y
+  `tondo.toml`, fijar policies, costes y ejemplos ejecutables.
+
+#### 21.3.8 `std.cbor`
+
+- [ ] **STD-CBOR-IMPL-001 — Implementar CBOR.** Publicar typed, dynamic y
+  streaming con tags, longitudes definidas/indefinidas y modo determinista
+  explícito sobre serialization.
+- [ ] **STD-CBOR-TEST-001 — Probar y fuzzear CBOR.** Cubrir vectores RFC,
+  floats/NaN, tags, maps, chunks, forms no mínimas, nesting, límites y
+  preservación definida por policy.
+- [ ] **STD-CBOR-PERF-001 — Medir CBOR.** Fijar throughput, tail, memoria,
+  allocations y coste del modo determinista.
+- [ ] **STD-CBOR-CONF-001 — Conformar CBOR.** Verificar interoperabilidad,
+  typed/dynamic/streaming, determinismo y equivalencia VM/nativo.
+- [ ] **STD-CBOR-DOC-001 — Documentar CBOR.** Explicar tags, determinismo,
+  preservación, límites, costes y ejemplos ejecutables.
+
+#### 21.3.9 `std.regex`
+
+- [ ] **STD-REGEX-IMPL-001 — Implementar regex acotado.** Publicar compile,
+  match, find y replace con sintaxis/Unicode cerrados y memoria/tiempo sometidos
+  a límites; ninguna entrada válida activa backtracking exponencial oculto.
+- [ ] **STD-REGEX-TEST-001 — Modelar y fuzzear regex.** Cubrir parser,
+  automata/oracle, Unicode, vacíos, captures, replace, límites y patrones/input
+  hostiles.
+- [ ] **STD-REGEX-PERF-001 — Medir regex.** Fijar compile/match throughput,
+  tail, memoria y tamaño de automata sobre corpus normal y adversario.
+- [ ] **STD-REGEX-CONF-001 — Conformar regex.** Ejecutar vectores portables y
+  equivalencia VM/nativo con los mismos límites y errores.
+- [ ] **STD-REGEX-DOC-001 — Documentar regex.** Publicar sintaxis exacta,
+  Unicode, captures, complejidad, límites y ejemplos ejecutables.
+
+#### 21.3.10 `std.uuid`
+
+- [ ] **STD-UUID-IMPL-001 — Implementar UUID.** Publicar representación,
+  parse/format y generadores de las versiones fijadas, separando operaciones
+  puras de clock/entropy.
+- [ ] **STD-UUID-HOST-001 — Integrar proveedores de UUID.** Enlazar entropy y
+  clock declarados con límites y fallos nominales, sin RNG o reloj global
+  implícitos.
+- [ ] **STD-UUID-TEST-001 — Probar UUID.** Cubrir vectores por versión,
+  canonical text, inválidos, orden aplicable, providers deterministas,
+  colisiones modeladas y límites.
+- [ ] **STD-UUID-PERF-001 — Medir UUID.** Fijar parse/format/generation,
+  allocations, memoria y coste de providers.
+- [ ] **STD-UUID-CONF-001 — Conformar UUID.** Verificar operaciones core y
+  capabilities clock/entropy sobre VM/nativo con providers sellados.
+- [ ] **STD-UUID-DOC-001 — Documentar UUID.** Explicar versiones, seguridad de
+  generación, providers, errores, costes y ejemplos ejecutables.
+
+#### 21.3.11 `std.net`
+
+- [ ] **STD-NET-IMPL-001 — Implementar networking portable.** Publicar
+  direcciones, DNS, streams, datagrams y frontera TLS con partial I/O,
+  deadlines y cancelación sobre `std.io`/executor.
+- [ ] **STD-NET-HOST-001 — Implementar adaptadores de red.** Enlazar sockets,
+  resolver y proveedor TLS declarados por target, sin I/O por import, fallback
+  bloqueante oculto ni errores crudos del SO.
+- [ ] **STD-NET-TEST-001 — Modelar y endurecer networking.** Cubrir fragmentación,
+  backpressure, DNS, half-close, cancelación, timeouts, TLS boundary, teardown,
+  límites y fallos host reproducibles.
+- [ ] **STD-NET-PERF-001 — Medir networking.** Fijar throughput, tail, memoria,
+  allocations, conexiones y cancelación con loopback/provider controlado.
+- [ ] **STD-NET-CONF-001 — Conformar networking.** Ejecutar casos portables,
+  capability-gated y de integración sobre targets reales VM/nativos.
+- [ ] **STD-NET-DOC-001 — Documentar networking.** Publicar ownership,
+  partial I/O, DNS/TLS, timeout, cancelación, errores, costes y ejemplos.
+
+#### 21.3.12 `std.log`
+
+- [ ] **STD-LOG-IMPL-001 — Implementar logging estructurado.** Publicar eventos,
+  niveles, fields, filters y sinks explícitos con backpressure/fallo visible y
+  sin globals ambientales.
+- [ ] **STD-LOG-HOST-001 — Implementar sinks capability-gated.** Enlazar
+  console, filesystem y network por unidades declaradas, con flush, rotación o
+  entrega exactamente según el contrato del sink.
+- [ ] **STD-LOG-TEST-001 — Probar logging.** Cubrir orden, concurrencia,
+  backpressure, fallos, cancelación, redacción declarada, límites y teardown de
+  sinks.
+- [ ] **STD-LOG-PERF-001 — Medir logging.** Fijar disabled/enabled cost,
+  throughput, tail, allocations, buffers y presión de sinks.
+- [ ] **STD-LOG-CONF-001 — Conformar logging.** Verificar eventos core y sinks
+  capability-gated en VM/nativo sin que fallos cambien control ocultamente.
+- [ ] **STD-LOG-DOC-001 — Documentar logging.** Publicar fields, filters,
+  sinks, backpressure, fallos, costes y ejemplos ejecutables.
+
+#### 21.3.13 Coordinación de STD-0.1B
+
 - [ ] **STD-B-IMPL-001 — Coordinar implementación portable por owner.** Cada
-  módulo B cierra un subtask `IMPL` reutilizando traits, ownership, async y
-  módulos de STD-0.1A; cualquier intrinsic o unidad privilegiada nueva requiere
-  contrato y justificación explícitos.
+  task `*-IMPL-001` de 21.3.1–21.3.12 está cerrada y enlazada firma por firma;
+  cualquier intrinsic o unidad privilegiada nueva tiene contrato y
+  justificación explícitos.
 
 - [ ] **STD-B-HOST-001 — Coordinar adaptadores por owner.** Cada módulo
-  aplicable cierra un subtask `HOST`; VM y backend nativo enlazan `clock`,
-  `network`, `threads`, `entropy` y capabilities de sinks sin stubs que fallen
-  siempre ni efectos concedidos por import.
+  aplicable cierra su task `*-HOST-001`; los demás registran `not-applicable`
+  con razón. VM y backend nativo enlazan `clock`, `network`, `threads`,
+  `entropy` y sinks sin stubs que fallen siempre ni efectos por import.
 
 - [ ] **STD-B-TEST-001 — Coordinar evidencia funcional por owner.** Cada módulo
-  cierra `MODEL/TEST/FUZZ`; cubrir cierre y backpressure, memory ordering,
-  wakeups, calendario y zonas versionadas, parsers hostiles, regex acotado,
-  UUID, logging concurrente, networking parcial/cancelado y límites.
+  cierra su task `*-TEST-001` y registra MODEL/TEST/FUZZ por separado; ninguna
+  evidencia interna sustituye un caso público del owner.
 
 - [ ] **STD-B-PERF-001 — Coordinar rendimiento por owner.** Cada hot path
-  cierra `PERF` con throughput, tail latency, memoria, allocations, startup,
-  code size y compile time; kernels SIMD o especializados conservan un oracle
-  portable byte/error exacto y fallback por target.
+  cierra su task `*-PERF-001` con throughput, tail latency, memoria,
+  allocations, startup, code size y compile time; SIMD conserva oracle y
+  fallback portable.
 
-- [ ] **STD-B-CONF-001 — Coordinar conformidad y docs por owner.** Cada módulo
-  cierra `CONF` y `DOC`; el agregado publica casos portables/capability-gated y
-  programas reales en VM/nativo sin mutar evidencia histórica ni crear un
-  segundo PackageId de stdlib.
+- [ ] **STD-B-CONF-001 — Coordinar conformidad por owner.** Cada módulo cierra
+  su task `*-CONF-001`; el agregado publica casos portables/capability-gated y
+  programas reales en VM/nativo sin mutar evidencia histórica.
+
+- [ ] **STD-B-DOC-001 — Coordinar documentación por owner.** Cada módulo cierra
+  su task `*-DOC-001`, con firmas, errores, pánicos, ownership, async, orden,
+  coste y ejemplos ejecutables; el agregado no crea un segundo PackageId.
 
 - [ ] **REL-0.1-RC-001 — Construir el candidato completo de primera
   publicación.** Después de todos los micro-gates A/B, reconstruir toolchain,
   VM, backend, runtime, stdlib runtime y companion meta desde inputs cerrados;
-  fijar PackageId, content/API hashes, manifests, checksums y matriz de targets
-  finales. Ejecutar conjuntamente G5, H0, T0, N1, todos los checks que componen
-  S1, conformidad VM/nativa, programas representativos y reproducibilidad desde
-  dos workspaces limpios. Gate S1 se cierra después de verificar este resultado;
-  la tarea crea un candidato, pero no publica por sí misma.
+  fijar PackageId, content/API hashes, manifests, checksums, matriz de targets y
+  el bundle L0 producido por `TLF-BUNDLE-001`. Ejecutar conjuntamente G5, H0,
+  T0, N1, L0, todos los checks que componen S1, conformidad VM/nativa, programas
+  representativos y reproducibilidad desde dos workspaces limpios. Gate S1 se
+  cierra después de verificar este resultado; la tarea crea un candidato, pero
+  no publica por sí misma.
 
 ### Gate S1 — Standard Library 0.1 completa
 
@@ -4435,6 +4710,8 @@ publica hasta cerrar el gate final.
   content/API hashes finales y matriz de targets reproducible.
 - [ ] Tondo 0.1, `tondo test`, VM, backend nativo y los programas
   representativos pasan juntos el gate estricto antes de cualquier publicación.
+- [ ] El candidato fija y verifica por separado los bundles G5 y L0; TLF no
+  amplía la semántica del lenguaje ni reutiliza evidencia incompatible.
 - [ ] `REL-0.1-RC-001` reproduce exactamente el candidato completo y no
   reutiliza el paquete parcial de `NATIVE-REL-001` como si ya incluyera
   STD-0.1B.
@@ -4442,6 +4719,16 @@ publica hasta cerrar el gate final.
 ---
 
 ## 22. Trabajo transversal
+
+### 22.0 Estructura normativa
+
+- [x] **SPEC-STRUCTURE-001 — Validar identidades estructurales de los specs.**
+  `tondo-reliability check/generate` valida UTF-8, fences Markdown cerrados,
+  rutas jerárquicas de headings únicas y números de sección únicos en lenguaje,
+  testing, toolchain, stdlib y TLF. Tests unitarios cubren duplicados con título
+  distinto, duplicados tras normalización, headings dentro de fences y fences
+  truncados. El gate corrige además la colisión histórica `14.5` de stdlib y
+  sus referencias por owner.
 
 ### 22.1 Diagnósticos
 
@@ -4552,12 +4839,12 @@ decodificar. La cadena de trabajo es:
 
 ~~~text
 TLF-RESEARCH-001
-  -> TLF-SPEC-001
+  -> {TLF-BENCH-REPRO-001 + TLF-SPEC-001}
   -> TLF-CODEC-001
   -> {TLF-CANON-001 + TLF-MAP-001 + TLF-DIAG-001}
   -> TLF-CLI-001
   -> {TLF-PROP-001 + TLF-FUZZ-001 + TLF-EVAL-001}
-  -> TLF-CONF-001 -> Gate L0
+  -> TLF-CONF-001 -> TLF-BUNDLE-001 -> Gate L0
 ~~~
 
 - [x] **TLF-RESEARCH-001 — Medir shapes compactos con tokenizers reales.** El
@@ -4566,6 +4853,13 @@ TLF-RESEARCH-001
   cinta léxica elegida reduce 16,18 % de tokens agregados sin aliases ni
   diccionario; el spike conserva los códigos léxicos/sintácticos en 154/154
   expansiones. No afirma todavía calidad de generación.
+
+- [ ] **TLF-BENCH-REPRO-001 — Hacer reproducible el estudio léxico.** Añadir
+  harness versionado, manifest SHA-256 del corpus deduplicado, revisiones o
+  hashes exactos de los cinco tokenizers, algoritmos de cada candidato y
+  resultados machine-readable de los que se derive el Markdown. Un cambio de
+  corpus, tokenizer o transformación invalida el resultado previo y el check
+  debe detectar drift sin acceso implícito a red.
 
 - [x] **TLF-SPEC-001 — Cerrar el contrato del formato.** La especificación
   [`TONDO_LLM_FORM_SPEC.md`](./TONDO_LLM_FORM_SPEC.md) fija identidad draft,
@@ -4613,8 +4907,14 @@ TLF-RESEARCH-001
 
 - [ ] **TLF-CONF-001 — Sellar Gate L0.** Publicar vectores independientes,
   corpus adversario, hashes del formato/medición y evidencia portable de codec,
-  maps, CLI, properties, fuzzing y evaluación. Debe cerrar antes de
-  `REL-0.1-RC-001`, sin atribuir evidencia TLF a G5.
+  maps, CLI, properties, fuzzing y evaluación. Requiere el harness reproducible
+  de `TLF-BENCH-REPRO-001` y no atribuye evidencia TLF a G5.
+
+- [ ] **TLF-BUNDLE-001 — Construir el bundle content-addressed de L0.** Fijar
+  spec TLF, identidad del formato, codec/maps/CLI, golden y fuzz corpora,
+  harnesses, manifests, resultados léxicos/multi-modelo y frontend Tondo usado
+  como oracle. Verificar el bundle sin consultar el workspace vivo. Este bundle
+  es separado del linaje G5 y debe cerrar antes de `REL-0.1-RC-001`.
 
 ---
 
@@ -4771,7 +5071,7 @@ gates en una barrera artificial.
       CONF-SEAL-001`, que demuestra la promoción content-addressed.
     Mini-gate observado: meta/testing ejecutan sus rutas públicas y la regresión
     bootstrap queda separada. El cierre evidencial de T0/G5 se trasladó a
-    `UTEST-SPEC-EVIDENCE-001`, `CONF-MATRIX-ALL-001`,
+    `DOC-TEST-001`, `DOC-TEST-CONF-001`, `UTEST-SPEC-EVIDENCE-001`, `CONF-MATRIX-ALL-001`,
     `CONF-GAP-AUDIT-001`, `CONF-GAP-IMPL-001` y `CONF-SEAL-FINAL-001` tras
     detectar que el candidato no exigía cobertura normativa completa.
 25. [ ] **Wave 5 — STD-0.1A por layers.** Los contratos, slices A0 y kernels
@@ -4795,21 +5095,24 @@ gates en una barrera artificial.
     `STD-NET-001`. Mini-gate: DEC-013/014 reciben requisitos completos sin
     implementar todavía STD-0.1B.
 27. [ ] **Wave 7 — M11 correcto antes que optimizado.** Ejecutar
-    `PERF-001 → NATIVE-001 → NATIVE-MEM-ADR-001 → NATIVE-ABI-001 →
-    NATIVE-002 → ARC-001 → ARC-002 → NATIVE-STD-001 → NATIVE-CONF-001 /
+    `NATIVE-PRODUCT-SPEC-001 → PERF-001 → NATIVE-001 →
+    NATIVE-MEM-ADR-001 → NATIVE-ABI-001 → NATIVE-002 → ARC-001 → ARC-002 →
+    NATIVE-STD-001 → NATIVE-LINK-001 → NATIVE-CLI-001 → NATIVE-CONF-001 /
     NATIVE-DIFF-001 → targets → NATIVE-REL-001`. Cerrar Gate N1.
 28. [ ] **Wave 8 — Completar STD-0.1B y candidato 0.1.** Terminar specs B,
-    implementar cada módulo sobre VM/nativo, ejecutar models/fuzz/perf/conf/doc
-    y `REL-0.1-RC-001`; cerrar Gate S1. Optimizaciones post-N1 avanzan solo por
-    evidencia y no bloquean el candidato salvo que un presupuesto publicado lo
-    exija.
+    cerrar para cada owner las leaves `IMPL`, `HOST` aplicable, `TEST/FUZZ`,
+    `PERF`, `CONF` y `DOC` de 21.3.1–21.3.12, y después los coordinadores
+    `STD-B-*` y `REL-0.1-RC-001`; cerrar Gate S1. Optimizaciones post-N1 avanzan
+    solo por evidencia y no bloquean el candidato salvo que un presupuesto
+    publicado lo exija.
 
 Lane transversal TLF, independiente del orden de Waves 5–8:
 
 - [x] `TLF-RESEARCH-001 → TLF-SPEC-001`.
-- [ ] `TLF-CODEC-001 → (TLF-CANON-001 + TLF-MAP-001 + TLF-DIAG-001) →
+- [ ] `TLF-BENCH-REPRO-001` puede avanzar desde research; en paralelo,
+  `TLF-CODEC-001 → (TLF-CANON-001 + TLF-MAP-001 + TLF-DIAG-001) →
   TLF-CLI-001 → (TLF-PROP-001 + TLF-FUZZ-001 + TLF-EVAL-001) →
-  TLF-CONF-001`.
+  TLF-CONF-001 → TLF-BUNDLE-001`.
 
 Puede avanzar mientras se cierran stdlib/conformidad porque solo consume el
 frontend estable. Gate L0 no es prerrequisito de S1A, G5 o N1, pero sí de
@@ -4826,26 +5129,43 @@ CONF-DRAFT
   -> {meta runtime
       test runtime + algorithms}
   -> {META-CONF + testing implementation}
-  -> {matrix all specs + gap audit + final seal -> T0/G5
+  -> {doc-test + matrix all specs + gap audit + final seal -> T0/G5
       STD-0.1A leaf implementations + public API audit -> S1A}
   -> STD-0.1B runtime contracts
-  -> native correctness / N1
-  -> STD-0.1B implementation + REL-0.1-RC / S1
+  -> native build/link/CLI correctness / N1
+  -> STD-0.1B leaves + REL-0.1-RC / S1
 
-G0 -> TLF spec -> codec/maps/CLI -> properties/fuzz/eval -> L0 -> REL-0.1-RC
+G0 -> TLF spec + reproducible benchmark -> codec/maps/CLI
+   -> properties/fuzz/eval -> conformance -> L0 bundle -> REL-0.1-RC
 ~~~
 
 M4, M5, M6, M7, M8, M9, el corpus bootstrap M10, M10.5, M10.5b y Gates G4/H0
 quedan cerrados como implementación/infraestructura. M10.7 y la implementación
 funcional de M10.6 permanecen cerradas. `CONF-DRAFT-001`,
-`CONF-RATCHET-001` y el mecanismo `CONF-SEAL-001` también permanecen cerrados.
 La auditoría reabre T0/G5 por trazabilidad normativa y Wave 5/S1A por APIs
 públicas ausentes. La acción inmediata es ejecutar las tareas leaf de Wave 5 y
-`CONF-MATRIX-ALL-001`; Wave 6 no se declara iniciada antes de esos cierres.
+`DOC-TEST-001`/`CONF-MATRIX-ALL-001`; Wave 6 no se declara iniciada antes de
+esos cierres.
 
 ---
 
 ## 25. Historial del tracker
+
+### 1.47 — 2026-08-04
+
+- Se cierra la auditoría de completitud del tracker: `tondo doc-test` obtiene
+  tareas públicas de implementación/conformidad y pasa a ser requisito de G5;
+  el lint ejecutable `SPEC-STRUCTURE-001` impide headings, números de sección o
+  fences estructurales ambiguos en los cinco documentos normativos.
+- El producto nativo adopta una sola shape: `tondo build` usa el target del plan
+  cerrado y `tondo run` ejecuta los mismos bytes, sin flags backend. Se separan
+  lowering, plan/link driver cerrado, CLI, targets y empaquetado antes de N1.
+- STD-0.1B deja de depender de cinco umbrellas opacos. Doce owners tienen leaves
+  independientes de IMPL, HOST aplicable, TEST/FUZZ, PERF, CONF y DOC; encoding,
+  YAML, TOML y CBOR poseen además specs separados.
+- TLF conserva una conformidad L0 separada de los cuatro specs de G5. Se añaden
+  reproducción del benchmark léxico y bundle content-addressed; el candidato
+  final fija ambos bundles sin atribuir evidencia entre ellos.
 
 ### 1.46 — 2026-08-04
 

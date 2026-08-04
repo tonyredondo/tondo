@@ -9,7 +9,7 @@ use tondo_reliability::ratchet;
 use tondo_reliability::regression::RegressionLedger;
 use tondo_reliability::{
     INVENTORY_PATH, MATRIX_PATH, QUALITY_BASELINE_PATH, REGRESSION_LEDGER_PATH, canonical_json,
-    check_bytes, workspace_root, write_if_changed,
+    check_bytes, spec_structure, workspace_root, write_if_changed,
 };
 
 const USAGE: &str = "\
@@ -202,6 +202,7 @@ fn required_path<'a>(value: &'a Option<PathBuf>, name: &str) -> Result<&'a Path,
 }
 
 fn generate_all(root: &Path) -> Result<String, String> {
+    spec_structure::validate_repository(root)?;
     let inventory = inventory::build(root)?;
     inventory::validate(&inventory)?;
     validate_regressions(root, &inventory)?;
@@ -219,6 +220,7 @@ fn generate_all(root: &Path) -> Result<String, String> {
 }
 
 fn check_all(root: &Path) -> Result<String, String> {
+    spec_structure::validate_repository(root)?;
     let inventory = inventory::build(root)?;
     inventory::validate(&inventory)?;
     validate_regressions(root, &inventory)?;

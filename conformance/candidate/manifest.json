@@ -4,8 +4,8 @@
   "state": "candidate",
   "lineage": {
     "name": "tondo-draft",
-    "revision": 9,
-    "manifest_sha256": "b5b9a0997f28fca0271651c53304340bf371f5eb7ee8973e67ab7b54bbd81352"
+    "revision": 10,
+    "manifest_sha256": "24682391555b54405e86c331ed31ed4d83ef8638e3546d8dd031000edc3945a3"
   },
   "target": {
     "name": "tondo-vm-hosted",
@@ -137,24 +137,24 @@
       "role": "draft-manifest",
       "source_path": "conformance/draft/manifest.json",
       "object": {
-        "path": "objects/b5b9a0997f28fca0271651c53304340bf371f5eb7ee8973e67ab7b54bbd81352",
-        "sha256": "b5b9a0997f28fca0271651c53304340bf371f5eb7ee8973e67ab7b54bbd81352"
+        "path": "objects/24682391555b54405e86c331ed31ed4d83ef8638e3546d8dd031000edc3945a3",
+        "sha256": "24682391555b54405e86c331ed31ed4d83ef8638e3546d8dd031000edc3945a3"
       }
     },
     {
       "role": "quality-evidence",
       "source_path": "testing/coverage-matrix.json",
       "object": {
-        "path": "objects/b62e758102879ef90e8c13a8345d363084ed341f1e3443704b2d470753912a06",
-        "sha256": "b62e758102879ef90e8c13a8345d363084ed341f1e3443704b2d470753912a06"
+        "path": "objects/5ff1412f17259c14e6a40abd11f2e1900ecfc6c4890085e048698ab3c1a851ae",
+        "sha256": "5ff1412f17259c14e6a40abd11f2e1900ecfc6c4890085e048698ab3c1a851ae"
       }
     },
     {
       "role": "quality-evidence",
       "source_path": "testing/inventory.json",
       "object": {
-        "path": "objects/ed46c5c67dfe512219f1c82a64db34b5797d4ceba34be54ba9aea2e3956e6200",
-        "sha256": "ed46c5c67dfe512219f1c82a64db34b5797d4ceba34be54ba9aea2e3956e6200"
+        "path": "objects/da8e7e3e4c9361040f5eea8399d098817b14d595e48596a783706de03d95a9c3",
+        "sha256": "da8e7e3e4c9361040f5eea8399d098817b14d595e48596a783706de03d95a9c3"
       }
     },
     {
@@ -169,8 +169,8 @@
       "role": "ratchet",
       "source_path": "testing/conformance-ratchet.json",
       "object": {
-        "path": "objects/80d0c692adab521d63126252b87af8886fa9f3643eda1faf6bc9b39070a5a479",
-        "sha256": "80d0c692adab521d63126252b87af8886fa9f3643eda1faf6bc9b39070a5a479"
+        "path": "objects/e5260307891cded5ac5d0ff261166f113063270ec9fc0377c5222f25761a84c2",
+        "sha256": "e5260307891cded5ac5d0ff261166f113063270ec9fc0377c5222f25761a84c2"
       }
     },
     {
@@ -201,8 +201,8 @@
       "role": "specification",
       "source_path": "TONDO_STANDARD_LIBRARY_SPEC.md",
       "object": {
-        "path": "objects/ab8a314cf99bf467d8dd93151adc677da87561d7a57ec6dec404b41d97630199",
-        "sha256": "ab8a314cf99bf467d8dd93151adc677da87561d7a57ec6dec404b41d97630199"
+        "path": "objects/ff9bf9a39ba082d907bf72a10b5e72f758aba88354297e1ff867d7aa00383310",
+        "sha256": "ff9bf9a39ba082d907bf72a10b5e72f758aba88354297e1ff867d7aa00383310"
       }
     },
     {
@@ -217,8 +217,8 @@
       "role": "specification",
       "source_path": "TONDO_TOOLCHAIN_SPEC.md",
       "object": {
-        "path": "objects/9435123cfcb5819083dd93a2c415079aa7d893c921ad053dcdb5495767c381e0",
-        "sha256": "9435123cfcb5819083dd93a2c415079aa7d893c921ad053dcdb5495767c381e0"
+        "path": "objects/7e26e2d381de0e5bcc58171eb785e97149266f34bcf550d7eef91b5806e36bea",
+        "sha256": "7e26e2d381de0e5bcc58171eb785e97149266f34bcf550d7eef91b5806e36bea"
       }
     }
   ]

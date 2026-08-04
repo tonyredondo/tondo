@@ -9,7 +9,7 @@ format Protocol Buffers. El registro machine-readable
 decisiones cerradas y [`scripts/stdlib-protobuf-check.sh`](../../scripts/stdlib-protobuf-check.sh)
 las valida dentro de `scripts/test-gate.sh`.
 
-La sección 14.10 de `TONDO_STANDARD_LIBRARY_SPEC.md` sigue siendo la autoridad
+La sección 14.11 de `TONDO_STANDARD_LIBRARY_SPEC.md` sigue siendo la autoridad
 del catálogo. Este contrato concreta su frontera operativa sin introducir un
 facade universal de codecs, reflection de valores ni una segunda configuración
 de proyecto.

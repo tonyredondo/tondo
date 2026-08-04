@@ -10,7 +10,7 @@ describe las decisiones cerradas y
 [`scripts/stdlib-messagepack-check.sh`](../../scripts/stdlib-messagepack-check.sh)
 las valida dentro de `scripts/test-gate.sh`.
 
-La sección 14.9 de `TONDO_STANDARD_LIBRARY_SPEC.md` sigue siendo la fuente
+La sección 14.10 de `TONDO_STANDARD_LIBRARY_SPEC.md` sigue siendo la fuente
 normativa del catálogo. Este documento fija la frontera operativa del owner sin
 inventar un segundo modelo de serialization ni afirmar una canonicalización
 universal que MessagePack no define.

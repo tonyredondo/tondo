@@ -7,6 +7,7 @@ pub mod matrix;
 pub mod quality;
 pub mod ratchet;
 pub mod regression;
+pub mod spec_structure;
 
 use std::fmt::Write as _;
 use std::fs;

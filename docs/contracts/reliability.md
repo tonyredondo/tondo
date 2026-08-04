@@ -24,6 +24,10 @@ The repository owns six machine-readable records:
 matrix. `tondo-reliability check` rebuilds them in memory, compares exact bytes,
 validates the regression ledger, and validates the quality baseline. A stale,
 missing, duplicated, orphaned, or incomplete record is a test failure.
+Ambos comandos validan antes las cinco especificaciones normativas: UTF-8,
+fences Markdown cerrados, rutas jerárquicas de headings únicas y números de
+sección únicos. Esta comprobación no infiere semántica; protege las identidades y
+anchors que consumen la matriz y la documentación.
 
 The command tondo-reliability ratchet check is the common mini-gate for every
 draft conformance wave. It validates the current draft lineage and its revision
@@ -121,17 +125,18 @@ specification fence.
 runs:
 
 1. formatter fixed-point check;
-2. `cargo check` for every target;
-3. Clippy with warnings denied;
-4. every workspace test and target;
-5. Rustdoc with warnings denied;
-6. exact bootstrap-regression provenance from pinned paths and SHA-256;
-7. locked conformance runner and adapter builds;
-8. exact reliability-record validation;
-9. the incremental conformance ratchet and its content-addressed evidence;
-10. explicit draft-lineage validation;
-11. the complete reference regression run; and
-12. byte-for-byte comparison with the draft result.
+2. structural validation of all normative specifications;
+3. `cargo check` for every target;
+4. Clippy with warnings denied;
+5. every workspace test and target;
+6. Rustdoc with warnings denied;
+7. exact bootstrap-regression provenance from pinned paths and SHA-256;
+8. locked conformance runner and adapter builds;
+9. exact reliability-record validation;
+10. the incremental conformance ratchet and its content-addressed evidence;
+11. explicit draft-lineage validation;
+12. the complete reference regression run; and
+13. byte-for-byte comparison with the draft result.
 
 Linux ARM64, macOS Intel, macOS Apple Silicon, and Windows run the portable
 workspace tests plus a native CLI hello-world smoke test. They do not re-execute
