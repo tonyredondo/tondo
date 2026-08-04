@@ -585,7 +585,7 @@ mod tests {
             first.baseline_suite().manifest_sha256(),
             "6bb8fe5b151ef73f1d49b3d432a51ec18c7a634cf4c9d014eea81d6a351c6ffb"
         );
-        assert_eq!(first.manifest().revision, 11);
+        assert_eq!(first.manifest().revision, 12);
         assert_eq!(first.case_layers().len(), 3);
         assert_eq!(first.case_layers()[0].layer, "finalization");
         assert_eq!(first.case_layers()[0].cases.len(), 6);

@@ -1,0 +1,38 @@
+import std.console
+
+fn dynamic(value: Int): Int {
+    value
+}
+
+fn insertionCode(values: Set[Int]): Int {
+    var code = 0
+    for value in values {
+        code = code * 10 + value
+    }
+    code
+}
+
+fn borrowedSum(values: ref Set[Int]): Int {
+    var total = 0
+    for ref value in values {
+        total += value
+    }
+    total
+}
+
+fn main() {
+    let values = Set[3, 1, 3, 2, dynamic(1)]
+    assert(insertionCode(values) == 312)
+    assert(borrowedSum(ref values) == 6)
+
+    assert(1 in values)
+    assert(not (4 in values))
+
+    assert(values == Set[2, 3, 1])
+    assert(values != Set[3, 1, 4])
+
+    let empty: Set[Int] = Set[]
+    assert(not (1 in empty))
+
+    console.print("set-ordered-membership\n")
+}

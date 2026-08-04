@@ -2190,6 +2190,14 @@ pub enum HirBootstrapHostFunction {
     TextTrim,
     TextLowerAscii,
     TextUpperAscii,
+    /// Compiler-owned Core operation. It is represented as a host callable
+    /// during generic call checking and lowered to value-level control flow;
+    /// it never reaches the VM host.
+    CoreOptionMap,
+    CoreOptionUnwrapOr,
+    CoreResultMap,
+    CoreResultMapErr,
+    CoreResultUnwrapOr,
     TestingLog,
     TestingAssertEqual,
     TestingAssertNotEqual,
@@ -2361,6 +2369,11 @@ impl HirBootstrapHostFunction {
             Self::TextTrim => "std.text.String.trim",
             Self::TextLowerAscii => "std.text.String.toLowerAscii",
             Self::TextUpperAscii => "std.text.String.toUpperAscii",
+            Self::CoreOptionMap => "std.core.Option.map",
+            Self::CoreOptionUnwrapOr => "std.core.Option.unwrapOr",
+            Self::CoreResultMap => "std.core.Result.map",
+            Self::CoreResultMapErr => "std.core.Result.mapErr",
+            Self::CoreResultUnwrapOr => "std.core.Result.unwrapOr",
             Self::TestingLog => "std.testing.log",
             Self::TestingAssertEqual => "std.testing.assertEqual",
             Self::TestingAssertNotEqual => "std.testing.assertNotEqual",

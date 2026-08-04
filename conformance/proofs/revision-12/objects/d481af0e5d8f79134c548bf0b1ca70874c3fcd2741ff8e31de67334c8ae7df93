@@ -1,0 +1,4 @@
+fn valid() {
+    return
+    ()
+}

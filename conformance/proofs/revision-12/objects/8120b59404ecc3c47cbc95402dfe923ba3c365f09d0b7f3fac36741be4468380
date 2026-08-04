@@ -1,0 +1,101 @@
+import std.console
+
+const ConstantSuccess = Int8(127)
+const ConstantRange = Int8(128)
+const ConstantFinite = Int(0.0 / 0.0)
+const ConstantIntegral = Int(0.5)
+const ConstantFloatRange = Float32(3.4028236e38)
+const NamedRange: NumericConversionError = NumericConversionError.OutOfRange
+
+fn classifyInt8(value: Int8 ! NumericConversionError): Int {
+    match value {
+        ok(_) => 0
+        err(NumericConversionError.OutOfRange) => 1
+        err(NumericConversionError.NotFinite) => 2
+        err(NumericConversionError.NotIntegral) => 3
+    }
+}
+
+fn classifyInt(value: Int ! NumericConversionError): Int {
+    match value {
+        ok(_) => 0
+        err(NumericConversionError.OutOfRange) => 1
+        err(NumericConversionError.NotFinite) => 2
+        err(NumericConversionError.NotIntegral) => 3
+    }
+}
+
+fn classifyByte(value: Byte ! NumericConversionError): Int {
+    match value {
+        ok(_) => 0
+        err(NumericConversionError.OutOfRange) => 1
+        err(NumericConversionError.NotFinite) => 2
+        err(NumericConversionError.NotIntegral) => 3
+    }
+}
+
+fn classifyFloat32(value: Float32 ! NumericConversionError): Int {
+    match value {
+        ok(_) => 0
+        err(NumericConversionError.OutOfRange) => 1
+        err(NumericConversionError.NotFinite) => 2
+        err(NumericConversionError.NotIntegral) => 3
+    }
+}
+
+fn classifyError(value: NumericConversionError): Int {
+    match value {
+        NumericConversionError.OutOfRange => 1
+        NumericConversionError.NotFinite => 2
+        NumericConversionError.NotIntegral => 3
+    }
+}
+
+fn unwrapFloat32(value: Float32 ! NumericConversionError): Float32 {
+    match value {
+        ok(number) => number
+        err(_) => 0.0f32
+    }
+}
+
+fn propagateInt8(value: Int): Int8 ! NumericConversionError {
+    Int8(value)?
+}
+
+fn main() {
+    assert(Int16(-128i8) == -128i16)
+    assert(UInt64(255u8) == 255u64)
+    assert(Int(4294967295u32) == 4294967295)
+    assert(UInt8(Byte(255u8)) == 255u8)
+    assert(Float32(18446744073709551615u64) > 0.0f32)
+    assert(Float(-9223372036854775808i64) < 0.0)
+    assert(Float(1.5f32) == 1.5)
+
+    assert(classifyInt8(Int8(127)) == 0)
+    assert(classifyInt8(Int8(128)) == 1)
+    assert(classifyByte(Byte(255u16)) == 0)
+    assert(classifyByte(Byte(256u16)) == 1)
+    assert(classifyInt(Int(0.0 / 0.0)) == 2)
+    assert(classifyInt(Int(0.5)) == 3)
+    assert(classifyInt(Int(9223372036854775808.0)) == 1)
+    assert(classifyFloat32(Float32(3.4028236e38)) == 1)
+
+    let infinity = unwrapFloat32(Float32(1.0 / 0.0))
+    let notANumber = unwrapFloat32(Float32(0.0 / 0.0))
+    assert(infinity > 0.0f32)
+    assert(notANumber != notANumber)
+
+    assert(classifyInt8(propagateInt8(127)) == 0)
+    assert(classifyInt8(propagateInt8(128)) == 1)
+    assert(classifyInt8(ConstantSuccess) == 0)
+    assert(classifyInt8(ConstantRange) == 1)
+    assert(classifyInt(ConstantFinite) == 2)
+    assert(classifyInt(ConstantIntegral) == 3)
+    assert(classifyFloat32(ConstantFloatRange) == 1)
+
+    assert(classifyError(NamedRange) == 1)
+    assert(classifyError(NumericConversionError.NotFinite) == 2)
+    assert(classifyError(NumericConversionError.NotIntegral) == 3)
+
+    console.print("numeric-conversions\n")
+}

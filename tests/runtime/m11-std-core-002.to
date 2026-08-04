@@ -1,0 +1,54 @@
+import std.console
+
+fn increment(value: Int): Int {
+    value + 1
+}
+
+fn errorCode(message: String): Int {
+    message.length()
+}
+
+fn load(condition: Bool): Int ! String {
+    if condition {
+        40
+    } else {
+        fail "missing"
+    }
+}
+
+fn main() {
+    let present: Int? = some(3)
+    let mapped: Int? = present.map(increment)
+    let explicitly_mapped: Int? = present.map[Int, Int](increment)
+    assert(mapped == some(4))
+    assert(explicitly_mapped == some(4))
+
+    let absent: Int? = none
+    assert(absent.map(increment) == none)
+    assert(absent.unwrapOr(9) == 9)
+    assert(mapped.unwrapOr(0) == 4)
+
+    let loaded: Int ! String = load(true)
+    let mapped_result: Int ! String = loaded.map(increment)
+    match mapped_result {
+        ok(value) => assert(value == 41)
+        err(_) => assert(false)
+    }
+    match load(false).map(increment) {
+        ok(_) => assert(false)
+        err(_) => ()
+    }
+
+    let mapped_error: Int ! Int = load(false).mapErr(errorCode)
+    match mapped_error {
+        ok(_) => assert(false)
+        err(code) => assert(code == 7)
+    }
+    match load(true).mapErr[Int, String, Int](errorCode) {
+        ok(value) => assert(value == 40)
+        err(_) => assert(false)
+    }
+    assert(load(true).unwrapOr(8) == 40)
+    assert(load(false).unwrapOr(8) == 8)
+    console.print("core-map-ok\n")
+}

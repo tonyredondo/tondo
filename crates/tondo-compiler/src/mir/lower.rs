@@ -4,10 +4,10 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use crate::hir::{
     CapabilityAnalysis, CapabilityAssumptions, HirAssignmentOperator, HirAssignmentTarget,
     HirAssignmentTargetKind, HirBinaryOperator, HirBootstrapHostFunction, HirCallProtocol,
-    HirCallableSignature, HirCapability, HirCapabilityStatus, HirClosure, HirDeferAction,
-    HirExpression, HirExpressionId, HirExpressionKind, HirForKind, HirIterationProtocol,
-    HirLiteral, HirLoopId, HirMatchMode, HirNominalShape, HirPatternId, HirPatternKind,
-    HirPreludeTraitMethod, HirProgram, HirScopeId, HirStatement, HirTerminalStatus,
+    HirCallableId, HirCallableSignature, HirCapability, HirCapabilityStatus, HirClosure,
+    HirDeferAction, HirExpression, HirExpressionId, HirExpressionKind, HirForKind,
+    HirIterationProtocol, HirLiteral, HirLoopId, HirMatchMode, HirNominalShape, HirPatternId,
+    HirPatternKind, HirPreludeTraitMethod, HirProgram, HirScopeId, HirStatement, HirTerminalStatus,
     HirValueCategory, HirVariantPayload, HirVariantValue, StaticRegionRelation, TerminalAnalysis,
     verify_typed_hir,
 };
@@ -1156,6 +1156,17 @@ impl<'a> FunctionBuilder<'a> {
                 protocol,
                 unsafe_call,
             } => {
+                if let Some(function) = self.core_host_function(*callee)? {
+                    return self.lower_core_call(
+                        function,
+                        arguments,
+                        *signature,
+                        expression.ty(),
+                        span,
+                        destination,
+                        block,
+                    );
+                }
                 let Some((current, operation)) = self.lower_call_operation(
                     *callee,
                     arguments,
@@ -3023,6 +3034,543 @@ impl<'a> FunctionBuilder<'a> {
                 },
             },
         )))
+    }
+
+    fn core_host_function(
+        &self,
+        callee: HirExpressionId,
+    ) -> Result<Option<HirBootstrapHostFunction>, MirError> {
+        let expression = self.expression(callee)?;
+        let function = match expression.kind() {
+            HirExpressionKind::Function(HirCallableId::Host(function))
+            | HirExpressionKind::SpecializedFunction {
+                callable: HirCallableId::Host(function),
+                ..
+            } => *function,
+            _ => return Ok(None),
+        };
+        Ok(matches!(
+            function,
+            HirBootstrapHostFunction::CoreOptionMap
+                | HirBootstrapHostFunction::CoreOptionUnwrapOr
+                | HirBootstrapHostFunction::CoreResultMap
+                | HirBootstrapHostFunction::CoreResultMapErr
+                | HirBootstrapHostFunction::CoreResultUnwrapOr
+        )
+        .then_some(function))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_core_call(
+        &mut self,
+        function: HirBootstrapHostFunction,
+        arguments: &[crate::hir::HirCallArgument],
+        _signature: TypeId,
+        outcome: TypeId,
+        span: Span,
+        destination: MirPlace,
+        block: MirBlockId,
+    ) -> Result<Option<MirBlockId>, MirError> {
+        let mut current = block;
+        let mut receiver = None;
+        let mut fixed = BTreeMap::new();
+        for argument in arguments {
+            if argument.mode() != ParameterMode::Value {
+                return Err(MirError::Construction {
+                    span,
+                    message: "Core Option/Result operations only accept value arguments".into(),
+                });
+            }
+            let Some((next, value)) = self.lower_value(argument.value(), current)? else {
+                return Ok(None);
+            };
+            current = next;
+            match argument.target() {
+                crate::hir::HirCallArgumentTarget::Receiver => receiver = Some(value),
+                crate::hir::HirCallArgumentTarget::Fixed(index) => {
+                    fixed.insert(index, value);
+                }
+                _ => {
+                    return Err(MirError::Construction {
+                        span,
+                        message: "Core Option/Result operation has an invalid argument target"
+                            .into(),
+                    });
+                }
+            }
+        }
+        let receiver = receiver.ok_or_else(|| MirError::Construction {
+            span,
+            message: "Core Option/Result operation has no receiver".into(),
+        })?;
+        match function {
+            HirBootstrapHostFunction::CoreOptionMap
+            | HirBootstrapHostFunction::CoreResultMap
+            | HirBootstrapHostFunction::CoreResultMapErr => {
+                let callback = fixed.remove(&1).ok_or_else(|| MirError::Construction {
+                    span,
+                    message: "Core map operation has no mapper".into(),
+                })?;
+                let callback_type = match self.hir.interner().kind(callback.ty).map_err(|_| {
+                    MirError::Construction {
+                        span,
+                        message: "Core mapper has an invalid function type".into(),
+                    }
+                })? {
+                    TypeKind::Function(function) => function.clone(),
+                    _ => {
+                        return Err(MirError::Construction {
+                            span,
+                            message: "Core mapper is not callable".into(),
+                        });
+                    }
+                };
+                match function {
+                    HirBootstrapHostFunction::CoreOptionMap => self.lower_core_option_map(
+                        receiver,
+                        callback,
+                        callback_type.outcome(),
+                        outcome,
+                        span,
+                        destination,
+                        current,
+                    ),
+                    HirBootstrapHostFunction::CoreResultMap => self.lower_core_result_map(
+                        receiver,
+                        callback,
+                        callback_type.outcome(),
+                        outcome,
+                        span,
+                        destination,
+                        current,
+                    ),
+                    HirBootstrapHostFunction::CoreResultMapErr => self.lower_core_result_map_err(
+                        receiver,
+                        callback,
+                        callback_type.outcome(),
+                        outcome,
+                        span,
+                        destination,
+                        current,
+                    ),
+                    _ => unreachable!("the Core mapper set is closed"),
+                }
+            }
+            HirBootstrapHostFunction::CoreOptionUnwrapOr
+            | HirBootstrapHostFunction::CoreResultUnwrapOr => {
+                let fallback = fixed.remove(&1).ok_or_else(|| MirError::Construction {
+                    span,
+                    message: "Core unwrapOr operation has no fallback".into(),
+                })?;
+                match function {
+                    HirBootstrapHostFunction::CoreOptionUnwrapOr => self.lower_core_option_unwrap(
+                        receiver,
+                        fallback,
+                        outcome,
+                        span,
+                        destination,
+                        current,
+                    ),
+                    HirBootstrapHostFunction::CoreResultUnwrapOr => self.lower_core_result_unwrap(
+                        receiver,
+                        fallback,
+                        outcome,
+                        span,
+                        destination,
+                        current,
+                    ),
+                    _ => unreachable!("the Core unwrap set is closed"),
+                }
+            }
+            _ => unreachable!("Core lowering is selected only for Core operations"),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_core_mapper_branch(
+        &mut self,
+        block: MirBlockId,
+        callback: MirOperand,
+        callback_result: TypeId,
+        payload: MirOperand,
+        destination: MirPlace,
+        aggregate: MirAggregateKind,
+        output: TypeId,
+        span: Span,
+    ) -> Result<Option<MirBlockId>, MirError> {
+        let local = self.allocate_temporary(callback_result, span, block)?;
+        let callback_signature = callback.ty;
+        let operation = MirOperation {
+            ty: callback_result,
+            kind: MirOperationKind::Call {
+                callee: callback,
+                arguments: vec![MirCallArgument {
+                    mode: ParameterMode::Value,
+                    target: crate::hir::HirCallArgumentTarget::Fixed(0),
+                    value: payload,
+                }],
+                signature: callback_signature,
+                protocol: HirCallProtocol::Call,
+                unsafe_call: false,
+            },
+        };
+        let Some(block) = self.invoke(block, span, Some(self.local_place(local)), operation)?
+        else {
+            return Ok(None);
+        };
+        let value = self.transfer_local(local, span)?;
+        self.assign(
+            block,
+            span,
+            destination,
+            MirRvalue {
+                ty: output,
+                kind: MirRvalueKind::Aggregate {
+                    shape: aggregate,
+                    values: vec![value],
+                },
+            },
+        )?;
+        Ok(Some(block))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_core_option_map(
+        &mut self,
+        receiver: MirOperand,
+        callback: MirOperand,
+        callback_result: TypeId,
+        outcome: TypeId,
+        span: Span,
+        destination: MirPlace,
+        block: MirBlockId,
+    ) -> Result<Option<MirBlockId>, MirError> {
+        let TypeKind::Option(item) =
+            self.hir
+                .interner()
+                .kind(receiver.ty)
+                .map_err(|_| MirError::Construction {
+                    span,
+                    message: "Option.map receiver has an invalid type".into(),
+                })?
+        else {
+            return Err(MirError::Construction {
+                span,
+                message: "Option.map receiver is not an Option".into(),
+            });
+        };
+        let some = self.allocate_block(MirBlockKind::Normal)?;
+        let none = self.allocate_block(MirBlockKind::Normal)?;
+        let join = self.allocate_block(MirBlockKind::Normal)?;
+        self.terminate(
+            block,
+            span,
+            MirTerminatorKind::SwitchTag {
+                value: self.borrow_operand(&receiver, span)?,
+                cases: vec![(MirTag::OptionSome, some)],
+                otherwise: none,
+            },
+        )?;
+        let payload = self.project_operand(
+            &receiver,
+            MirProjection {
+                ty: *item,
+                kind: MirProjectionKind::OptionValue,
+            },
+            span,
+        )?;
+        if let Some(end) = self.lower_core_mapper_branch(
+            some,
+            callback,
+            callback_result,
+            payload,
+            destination.clone(),
+            MirAggregateKind::OptionSome,
+            outcome,
+            span,
+        )? {
+            self.terminate(end, span, MirTerminatorKind::Goto { target: join })?;
+        }
+        self.assign(
+            none,
+            span,
+            destination,
+            MirRvalue {
+                ty: outcome,
+                kind: MirRvalueKind::Aggregate {
+                    shape: MirAggregateKind::OptionNone,
+                    values: Vec::new(),
+                },
+            },
+        )?;
+        self.terminate(none, span, MirTerminatorKind::Goto { target: join })?;
+        Ok(Some(join))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_core_result_map(
+        &mut self,
+        receiver: MirOperand,
+        callback: MirOperand,
+        callback_result: TypeId,
+        outcome: TypeId,
+        span: Span,
+        destination: MirPlace,
+        block: MirBlockId,
+    ) -> Result<Option<MirBlockId>, MirError> {
+        let TypeKind::Result { success, error } =
+            self.hir
+                .interner()
+                .kind(receiver.ty)
+                .map_err(|_| MirError::Construction {
+                    span,
+                    message: "Result.map receiver has an invalid type".into(),
+                })?
+        else {
+            return Err(MirError::Construction {
+                span,
+                message: "Result.map receiver is not a Result".into(),
+            });
+        };
+        let ok = self.allocate_block(MirBlockKind::Normal)?;
+        let err = self.allocate_block(MirBlockKind::Normal)?;
+        let join = self.allocate_block(MirBlockKind::Normal)?;
+        self.terminate(
+            block,
+            span,
+            MirTerminatorKind::SwitchTag {
+                value: self.borrow_operand(&receiver, span)?,
+                cases: vec![(MirTag::ResultOk, ok)],
+                otherwise: err,
+            },
+        )?;
+        let payload = self.project_operand(
+            &receiver,
+            MirProjection {
+                ty: *success,
+                kind: MirProjectionKind::ResultOkValue,
+            },
+            span,
+        )?;
+        if let Some(end) = self.lower_core_mapper_branch(
+            ok,
+            callback,
+            callback_result,
+            payload,
+            destination.clone(),
+            MirAggregateKind::ResultOk,
+            outcome,
+            span,
+        )? {
+            self.terminate(end, span, MirTerminatorKind::Goto { target: join })?;
+        }
+        let error = self.project_operand(
+            &receiver,
+            MirProjection {
+                ty: *error,
+                kind: MirProjectionKind::ResultErrValue,
+            },
+            span,
+        )?;
+        self.assign(
+            err,
+            span,
+            destination,
+            MirRvalue {
+                ty: outcome,
+                kind: MirRvalueKind::Aggregate {
+                    shape: MirAggregateKind::ResultErr,
+                    values: vec![error],
+                },
+            },
+        )?;
+        self.terminate(err, span, MirTerminatorKind::Goto { target: join })?;
+        Ok(Some(join))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_core_result_map_err(
+        &mut self,
+        receiver: MirOperand,
+        callback: MirOperand,
+        callback_result: TypeId,
+        outcome: TypeId,
+        span: Span,
+        destination: MirPlace,
+        block: MirBlockId,
+    ) -> Result<Option<MirBlockId>, MirError> {
+        let TypeKind::Result { success, error } =
+            self.hir
+                .interner()
+                .kind(receiver.ty)
+                .map_err(|_| MirError::Construction {
+                    span,
+                    message: "Result.mapErr receiver has an invalid type".into(),
+                })?
+        else {
+            return Err(MirError::Construction {
+                span,
+                message: "Result.mapErr receiver is not a Result".into(),
+            });
+        };
+        let ok = self.allocate_block(MirBlockKind::Normal)?;
+        let err = self.allocate_block(MirBlockKind::Normal)?;
+        let join = self.allocate_block(MirBlockKind::Normal)?;
+        self.terminate(
+            block,
+            span,
+            MirTerminatorKind::SwitchTag {
+                value: self.borrow_operand(&receiver, span)?,
+                cases: vec![(MirTag::ResultOk, ok)],
+                otherwise: err,
+            },
+        )?;
+        let success = self.project_operand(
+            &receiver,
+            MirProjection {
+                ty: *success,
+                kind: MirProjectionKind::ResultOkValue,
+            },
+            span,
+        )?;
+        self.assign(
+            ok,
+            span,
+            destination.clone(),
+            MirRvalue {
+                ty: outcome,
+                kind: MirRvalueKind::Aggregate {
+                    shape: MirAggregateKind::ResultOk,
+                    values: vec![success],
+                },
+            },
+        )?;
+        self.terminate(ok, span, MirTerminatorKind::Goto { target: join })?;
+        let error = self.project_operand(
+            &receiver,
+            MirProjection {
+                ty: *error,
+                kind: MirProjectionKind::ResultErrValue,
+            },
+            span,
+        )?;
+        if let Some(end) = self.lower_core_mapper_branch(
+            err,
+            callback,
+            callback_result,
+            error,
+            destination,
+            MirAggregateKind::ResultErr,
+            outcome,
+            span,
+        )? {
+            self.terminate(end, span, MirTerminatorKind::Goto { target: join })?;
+        }
+        Ok(Some(join))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_core_option_unwrap(
+        &mut self,
+        receiver: MirOperand,
+        fallback: MirOperand,
+        outcome: TypeId,
+        span: Span,
+        destination: MirPlace,
+        block: MirBlockId,
+    ) -> Result<Option<MirBlockId>, MirError> {
+        let TypeKind::Option(item) =
+            self.hir
+                .interner()
+                .kind(receiver.ty)
+                .map_err(|_| MirError::Construction {
+                    span,
+                    message: "Option.unwrapOr receiver has an invalid type".into(),
+                })?
+        else {
+            return Err(MirError::Construction {
+                span,
+                message: "Option.unwrapOr receiver is not an Option".into(),
+            });
+        };
+        let some = self.allocate_block(MirBlockKind::Normal)?;
+        let none = self.allocate_block(MirBlockKind::Normal)?;
+        let join = self.allocate_block(MirBlockKind::Normal)?;
+        self.terminate(
+            block,
+            span,
+            MirTerminatorKind::SwitchTag {
+                value: self.borrow_operand(&receiver, span)?,
+                cases: vec![(MirTag::OptionSome, some)],
+                otherwise: none,
+            },
+        )?;
+        let payload = self.project_operand(
+            &receiver,
+            MirProjection {
+                ty: *item,
+                kind: MirProjectionKind::OptionValue,
+            },
+            span,
+        )?;
+        self.assign_operand(some, span, destination.clone(), payload)?;
+        self.terminate(some, span, MirTerminatorKind::Goto { target: join })?;
+        self.assign_operand(none, span, destination, fallback)?;
+        self.terminate(none, span, MirTerminatorKind::Goto { target: join })?;
+        let _ = outcome;
+        Ok(Some(join))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_core_result_unwrap(
+        &mut self,
+        receiver: MirOperand,
+        fallback: MirOperand,
+        outcome: TypeId,
+        span: Span,
+        destination: MirPlace,
+        block: MirBlockId,
+    ) -> Result<Option<MirBlockId>, MirError> {
+        let TypeKind::Result { success, .. } =
+            self.hir
+                .interner()
+                .kind(receiver.ty)
+                .map_err(|_| MirError::Construction {
+                    span,
+                    message: "Result.unwrapOr receiver has an invalid type".into(),
+                })?
+        else {
+            return Err(MirError::Construction {
+                span,
+                message: "Result.unwrapOr receiver is not a Result".into(),
+            });
+        };
+        let ok = self.allocate_block(MirBlockKind::Normal)?;
+        let err = self.allocate_block(MirBlockKind::Normal)?;
+        let join = self.allocate_block(MirBlockKind::Normal)?;
+        self.terminate(
+            block,
+            span,
+            MirTerminatorKind::SwitchTag {
+                value: self.borrow_operand(&receiver, span)?,
+                cases: vec![(MirTag::ResultOk, ok)],
+                otherwise: err,
+            },
+        )?;
+        let success = self.project_operand(
+            &receiver,
+            MirProjection {
+                ty: *success,
+                kind: MirProjectionKind::ResultOkValue,
+            },
+            span,
+        )?;
+        self.assign_operand(ok, span, destination.clone(), success)?;
+        self.terminate(ok, span, MirTerminatorKind::Goto { target: join })?;
+        self.assign_operand(err, span, destination, fallback)?;
+        self.terminate(err, span, MirTerminatorKind::Goto { target: join })?;
+        let _ = outcome;
+        Ok(Some(join))
     }
 
     fn lower_callee(

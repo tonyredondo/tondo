@@ -36,13 +36,14 @@ pub fn Result.unwrapOr[T, E](self: T ! E, fallback: T): T
 ```
 
 `Display` es el único protocolo de representación textual. `Equatable` y
-`Key` son los únicos protocolos de igualdad/hash que pueden usar colecciones;
-un tipo no obtiene ninguno por tener una representación coincidente.
+`Key` son capacidades estáticas cerradas (no traits implementables) y son los
+únicos protocolos de igualdad/hash que pueden usar colecciones; un tipo no
+obtiene ninguno por tener una representación coincidente.
 
 ```tondo
-pub trait Display { fn display(self, var out: std.format.Builder): Unit }
-pub trait Equatable { fn equals(self, other: Self): Bool }
-pub trait Key: Equatable { fn hash(self): UInt64 }
+trait Display { fn display(self): String }
+// Equatable y Key son capacidades intrínsecas cerradas; no tienen una
+// declaración de trait pública ni dispatch dinámico.
 ```
 
 `Option` y `Result` son valores; mapearlos no captura pánicos ni reordena
@@ -215,4 +216,3 @@ El evento `next` es consumible y no conserva referencias después de la llamada.
 Los derives generan un único `impl` estático; los codecs concretos no construyen
 un DOM para la ruta tipada. La deserialización publica el record únicamente
 después de validar todos sus fields.
-

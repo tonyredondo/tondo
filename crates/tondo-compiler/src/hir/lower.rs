@@ -184,6 +184,17 @@ struct TypeLowerer<'a> {
 
 impl<'a> TypeLowerer<'a> {
     fn lower_bootstrap_host_contracts(&mut self) -> Result<(), HirError> {
+        let file = *self
+            .parsed
+            .keys()
+            .next()
+            .expect("type lowering always receives at least the root source");
+        let span = self.sources.span(file, TextRange::empty(0))?;
+        // Core Option/Result operations are intrinsic language capabilities,
+        // so their generic signatures must be available even in a source file
+        // that does not import a hosted standard-library module.
+        self.push_core_host_contracts(span)?;
+
         let console = ModulePath::new("console")?;
         let bytes_module = ModulePath::new("bytes")?;
         let console_module = self.packages.module(self.packages.standard(), &console);
@@ -313,12 +324,6 @@ impl<'a> TypeLowerer<'a> {
         {
             return Ok(());
         }
-        let file = *self
-            .parsed
-            .keys()
-            .next()
-            .expect("type lowering always receives at least the root source");
-        let span = self.sources.span(file, TextRange::empty(0))?;
         let string = self.interner.scalar(ScalarType::String);
         let bool_type = self.interner.scalar(ScalarType::Bool);
         let int = self.interner.scalar(ScalarType::Int);
@@ -1576,6 +1581,101 @@ impl<'a> TypeLowerer<'a> {
                 )?;
             }
         }
+        Ok(())
+    }
+
+    fn push_core_host_contracts(&mut self, span: Span) -> Result<(), HirError> {
+        let value = self.interner.generic_parameter(0)?;
+        let mapped = self.interner.generic_parameter(1)?;
+        let error = self.interner.generic_parameter(2)?;
+
+        let option_value = self.interner.option(value)?;
+        let option_mapped = self.interner.option(mapped)?;
+        let option_mapper = self.interner.function(FunctionType::new(
+            false,
+            false,
+            vec![FunctionParameter::new(ParameterMode::Value, value)],
+            None,
+            mapped,
+        ))?;
+        self.push_bootstrap_generic_host_callable(
+            span,
+            HirBootstrapHostFunction::CoreOptionMap,
+            vec![
+                (option_value, ParameterMode::Value, true),
+                (option_mapper, ParameterMode::Value, false),
+            ],
+            option_mapped,
+            2,
+            Vec::new(),
+        )?;
+        self.push_bootstrap_generic_host_callable(
+            span,
+            HirBootstrapHostFunction::CoreOptionUnwrapOr,
+            vec![
+                (option_value, ParameterMode::Value, true),
+                (value, ParameterMode::Value, false),
+            ],
+            value,
+            1,
+            Vec::new(),
+        )?;
+
+        let result_value = self.interner.result(value, error)?;
+        let result_mapped = self.interner.result(mapped, error)?;
+        let result_mapper = self.interner.function(FunctionType::new(
+            false,
+            false,
+            vec![FunctionParameter::new(ParameterMode::Value, value)],
+            None,
+            mapped,
+        ))?;
+        self.push_bootstrap_generic_host_callable(
+            span,
+            HirBootstrapHostFunction::CoreResultMap,
+            vec![
+                (result_value, ParameterMode::Value, true),
+                (result_mapper, ParameterMode::Value, false),
+            ],
+            result_mapped,
+            3,
+            Vec::new(),
+        )?;
+
+        let source_error = self.interner.generic_parameter(1)?;
+        let result_error_mapped = self.interner.generic_parameter(2)?;
+        let result_map_error = self.interner.result(value, result_error_mapped)?;
+        let result_map_err_value = self.interner.result(value, source_error)?;
+        let error_mapper = self.interner.function(FunctionType::new(
+            false,
+            false,
+            vec![FunctionParameter::new(ParameterMode::Value, source_error)],
+            None,
+            result_error_mapped,
+        ))?;
+        self.push_bootstrap_generic_host_callable(
+            span,
+            HirBootstrapHostFunction::CoreResultMapErr,
+            vec![
+                (result_map_err_value, ParameterMode::Value, true),
+                (error_mapper, ParameterMode::Value, false),
+            ],
+            result_map_error,
+            3,
+            Vec::new(),
+        )?;
+        let result_unwrap = self.interner.result(value, source_error)?;
+        self.push_bootstrap_generic_host_callable(
+            span,
+            HirBootstrapHostFunction::CoreResultUnwrapOr,
+            vec![
+                (result_unwrap, ParameterMode::Value, true),
+                (value, ParameterMode::Value, false),
+            ],
+            value,
+            2,
+            Vec::new(),
+        )?;
         Ok(())
     }
 

@@ -3242,7 +3242,7 @@ impl Verifier<'_> {
                     ),
                 ));
             }
-            let synthetic_host = context.starts_with("host callable std.testing.")
+            let synthetic_host = context.starts_with("host callable std.")
                 && generic.local.index() == u32::MAX - generic.position;
             let local = if synthetic_host {
                 None

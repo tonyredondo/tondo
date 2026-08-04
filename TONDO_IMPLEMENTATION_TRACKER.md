@@ -4059,11 +4059,14 @@ parte del módulo.
   evolución, descriptor, generated APIs, reader/writer, options, limits y
   errors con una única forma opinionada y hermética.
 
-- [ ] **STD-CORE-IMPL-001 — Publicar los protocolos Core completos.** Conectar
+- [x] **STD-CORE-IMPL-001 — Publicar los protocolos Core completos.** Conectar
   por dispatch estático las operaciones cerradas de `Option` y `Result`, junto
   con `Display`, `Equatable` y `Key`, incluyendo genéricos, ownership y errores.
   Los constructores intrínsecos existentes no sustituyen `map`, `mapErr` y
-  `unwrapOr` ni sus pruebas de composición.
+  `unwrapOr` ni sus pruebas de composición. Cerrado con la ruta pública HIR →
+  MIR para `map`, `mapErr` y `unwrapOr`, y con cobertura end-to-end en
+  `tests/runtime/m11-std-core-002.to`; las capacidades `Display`, `Equatable`
+  y `Key` permanecen estáticas y cerradas, sin vtable ni reflection.
 
 - [ ] **STD-TEXT-IMPL-001 — Completar la API pública de texto.** Añadir
   `String.empty`, `fromChars`, `slice` y `chars`, además de validar todas las

@@ -15851,6 +15851,19 @@ impl<'a> ExpressionChecker<'a> {
         )? {
             return Ok(Some(call));
         }
+        if let Some(call) = self.check_core_method_call(
+            file,
+            range,
+            receiver,
+            receiver_type,
+            member_token,
+            suffix,
+            explicit_bracket,
+            expected,
+            context,
+        )? {
+            return Ok(Some(call));
+        }
         if let Some(call) = self.check_process_method_call(
             file,
             range,
@@ -16114,6 +16127,74 @@ impl<'a> ExpressionChecker<'a> {
             field,
             None,
             None,
+            context,
+        )
+        .map(Some)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn check_core_method_call(
+        &mut self,
+        file: FileId,
+        range: TextRange,
+        receiver: HirExpressionId,
+        receiver_type: TypeId,
+        member_token: SyntaxTokenRef<'_>,
+        suffix: SyntaxNodeRef<'_>,
+        explicit_bracket: Option<SyntaxNodeRef<'_>>,
+        expected: Option<ExpressionExpectation>,
+        context: &mut BodyContext,
+    ) -> Result<Option<HirExpressionId>, HirError> {
+        let member = member_token
+            .token()
+            .normalized_identifier()
+            .unwrap_or(self.token_text(file, member_token)?);
+        let operation = match (self.program.interner.kind(receiver_type)?, member) {
+            (TypeKind::Option(_), "map") => Some(HirBootstrapHostFunction::CoreOptionMap),
+            (TypeKind::Option(_), "unwrapOr") => Some(HirBootstrapHostFunction::CoreOptionUnwrapOr),
+            (TypeKind::Result { .. }, "map") => Some(HirBootstrapHostFunction::CoreResultMap),
+            (TypeKind::Result { .. }, "mapErr") => Some(HirBootstrapHostFunction::CoreResultMapErr),
+            (TypeKind::Result { .. }, "unwrapOr") => {
+                Some(HirBootstrapHostFunction::CoreResultUnwrapOr)
+            }
+            _ => None,
+        };
+        let Some(operation) = operation else {
+            return Ok(None);
+        };
+        let explicit_generics = if let Some(bracket) = explicit_bracket {
+            let Some(arguments) =
+                self.expression_generic_arguments(file, bracket, Some(context))?
+            else {
+                return Ok(Some(self.recovery_expression(file, range)?));
+            };
+            Some(ExplicitGenericArguments {
+                arguments: arguments
+                    .into_iter()
+                    .enumerate()
+                    .map(|(position, argument)| {
+                        (
+                            u32::try_from(position).expect("Core generic position fits in u32"),
+                            argument,
+                        )
+                    })
+                    .collect(),
+            })
+        } else {
+            None
+        };
+        let callee =
+            self.bootstrap_host_callee(operation, self.sources.span(file, member_token.range())?)?;
+        self.check_call(
+            CallSite {
+                file,
+                range,
+                suffix,
+                expected,
+            },
+            callee,
+            Some(receiver),
+            explicit_generics,
             context,
         )
         .map(Some)
