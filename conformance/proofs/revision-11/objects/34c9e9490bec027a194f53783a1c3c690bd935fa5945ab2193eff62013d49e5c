@@ -1,0 +1,27 @@
+import std.console
+
+type Graph = {
+    values: Array[Array[Int]]
+    identity: Ref[Array[Int]]
+}
+
+fn main() {
+    let identity = Ref([42])
+    var original = Graph { values: [[1], [2], [3]], identity }
+    var copied = original
+    copied.values[0][0] = 9
+
+    var index = 0
+    for index < 200 {
+        _ = ([[index], [index + 1]], ["garbage": [index]])
+        index += 1
+    }
+
+    assert(original.values == [[1], [2], [3]])
+    assert(copied.values == [[9], [2], [3]])
+    assert(original.identity == copied.identity)
+    assert(original.identity.value == [42])
+    assert(copied.identity.value == [42])
+
+    console.print("gc-pressure\n")
+}

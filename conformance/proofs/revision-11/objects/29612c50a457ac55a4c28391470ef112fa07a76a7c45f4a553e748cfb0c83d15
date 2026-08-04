@@ -1,0 +1,5 @@
+import std.process
+
+fn invalid(): !process.ProcessError {
+    let handle = process.cmd("/usr/bin/true").start()?
+}

@@ -1,0 +1,2 @@
+trait Summary {}
+fn consume(value: Summary) {}

@@ -18,7 +18,12 @@ pub const CASE_LAYER_FORMAT: &str = "tondo-conformance-case-layer/1";
 
 const BASELINE_MANIFEST_PATH: &str = "conformance/0.1/manifest.json";
 const BASELINE_SPECIFICATION_PATH: &str = "conformance/baseline/TONDO_LANGUAGE_SPEC.md";
-const DRAFT_SPECIFICATIONS: [&str; 4] = [
+const G5_SPECIFICATIONS: [&str; 3] = [
+    "TONDO_LANGUAGE_SPEC.md",
+    "TONDO_TESTING_SPEC.md",
+    "TONDO_TOOLCHAIN_SPEC.md",
+];
+const LEGACY_SPECIFICATIONS: [&str; 4] = [
     "TONDO_LANGUAGE_SPEC.md",
     "TONDO_STANDARD_LIBRARY_SPEC.md",
     "TONDO_TESTING_SPEC.md",
@@ -146,7 +151,7 @@ impl DraftLineage {
         })?;
         let manifest: DraftLineageManifest = serde_json::from_slice(&manifest_bytes)
             .map_err(|error| LineageError::Json(error.to_string()))?;
-        validate_manifest(&manifest)?;
+        validate_active_manifest(&manifest)?;
 
         let mut canonical = serde_json::to_vec_pretty(&manifest)
             .map_err(|error| LineageError::Json(error.to_string()))?;
@@ -280,7 +285,7 @@ impl DraftLineage {
     }
 }
 
-fn validate_case_layer(
+pub(crate) fn validate_case_layer(
     descriptor: &CaseLayer,
     manifest: &DraftCaseLayerManifest,
 ) -> Result<(), LineageError> {
@@ -353,7 +358,23 @@ fn validate_case_layer(
     Ok(())
 }
 
-fn validate_manifest(manifest: &DraftLineageManifest) -> Result<(), LineageError> {
+pub(crate) fn validate_active_manifest(
+    manifest: &DraftLineageManifest,
+) -> Result<(), LineageError> {
+    validate_manifest(manifest)?;
+    if manifest
+        .specifications
+        .iter()
+        .map(|specification| specification.path.as_str())
+        .collect::<Vec<_>>()
+        != G5_SPECIFICATIONS
+    {
+        return invalid("the active draft must contain the closed G5 contract set");
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_manifest(manifest: &DraftLineageManifest) -> Result<(), LineageError> {
     if manifest.format != DRAFT_LINEAGE_FORMAT
         || manifest.lineage != DRAFT_LINEAGE_NAME
         || manifest.edition != "0.1"
@@ -379,14 +400,13 @@ fn validate_manifest(manifest: &DraftLineageManifest) -> Result<(), LineageError
             .iter()
             .map(|specification| specification.path.as_str()),
     )?;
-    if manifest
+    let specification_paths = manifest
         .specifications
         .iter()
         .map(|specification| specification.path.as_str())
-        .collect::<Vec<_>>()
-        != DRAFT_SPECIFICATIONS
-    {
-        return invalid("draft specifications must contain the closed four-document set");
+        .collect::<Vec<_>>();
+    if specification_paths != G5_SPECIFICATIONS && specification_paths != LEGACY_SPECIFICATIONS {
+        return invalid("draft specifications differ from the closed G5 contract set");
     }
     for specification in &manifest.specifications {
         validate_pinned(specification)?;
@@ -555,7 +575,7 @@ mod tests {
         );
         assert_eq!(
             sha256(first.specification("TONDO_LANGUAGE_SPEC.md").unwrap()),
-            "aa972af8334b837a545bfae4f536d950e207cf104f0aed51feeffe2b3151d637"
+            "bdf0a8d998a280febe0f49c639065ba15dda2a0526dbc8d4c4ae23bd05512d24"
         );
         assert_ne!(
             first.baseline_specification(),
@@ -565,15 +585,15 @@ mod tests {
             first.baseline_suite().manifest_sha256(),
             "6bb8fe5b151ef73f1d49b3d432a51ec18c7a634cf4c9d014eea81d6a351c6ffb"
         );
-        assert_eq!(first.manifest().revision, 10);
+        assert_eq!(first.manifest().revision, 11);
         assert_eq!(first.case_layers().len(), 3);
         assert_eq!(first.case_layers()[0].layer, "finalization");
-        assert_eq!(first.case_layers()[0].cases.len(), 5);
+        assert_eq!(first.case_layers()[0].cases.len(), 6);
         assert_eq!(first.case_layers()[1].layer, "meta");
         assert_eq!(first.case_layers()[1].cases.len(), 6);
         assert_eq!(first.case_layers()[2].layer, "testing");
         assert_eq!(first.case_layers()[2].cases.len(), 52);
-        assert_eq!(first.implemented_requirements().len(), 29);
+        assert_eq!(first.implemented_requirements().len(), 30);
         assert!(first.manifest().pending_tasks.is_empty());
         first.check_sealable().unwrap();
     }

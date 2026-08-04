@@ -588,8 +588,8 @@ capaz de reproducir un porcentaje.
 ### 18.5 Bundle de conformidad L0
 
 TLF no se añade al linaje de conformidad G5 del lenguaje base. G5 conserva sus
-cuatro autoridades —lenguaje, testing, toolchain y stdlib— porque un programa
-`.to` no depende de TLF. L0 produce un bundle content-addressed separado que
+tres autoridades —lenguaje, testing y toolchain—; stdlib mantiene S1A/S1 y un
+programa `.to` no depende de TLF. L0 produce un bundle content-addressed separado que
 fija como mínimo:
 
 - esta especificación y la identidad del formato;

@@ -1259,7 +1259,7 @@ Una distribución estándar completa contiene, de forma cerrada:
 7. Hashes de cada componente.
 8. API hash público.
 9. Manifest de conformidad aplicable.
-10. Documentación normativa y ejemplos ejecutables.
+10. Documentación normativa, ejemplos verificables y enlaces a aceptación runtime.
 11. Providers `derive`, programas meta y schemas de inputs/outputs.
 12. Oracles escalares, vectores de interoperabilidad y corpus de benchmarks.
 13. Descriptor canónico `tondo-standard-descriptor-0.1/1` que une runtime,
@@ -2171,7 +2171,10 @@ Antes de considerarse especificado, cada módulo debe incluir:
 
 ### 15.7 Evidencia
 
-- Ejemplos ejecutables.
+- Ejemplos verificables por `tondo doc-test`: parse, formato y typecheck cuando
+  corresponda, sin ejecución ni efectos.
+- Para cualquier comportamiento runtime mostrado, un caso de aceptación
+  enlazado que ejecute la API pública mediante `tondo test` o conformidad.
 - Casos positivos.
 - Rechazos estáticos.
 - Fallos recuperables.

@@ -2,14 +2,14 @@
 
 **Estado:** M0–M10.7 conservan su implementación y Gate H0 permanece cerrado
 para la infraestructura que valida. La auditoría 1.45 reabre los cierres de
-conformidad T0/G5 y STD-0.1A/S1A: existe un candidato content-addressed de la
-revisión 9 y existen kernels/bridges útiles, pero la evidencia actual no prueba
+conformidad T0/G5 y STD-0.1A/S1A: existe un promotion proof content-addressed de
+la revisión actual y existen kernels/bridges útiles, pero la evidencia no prueba
 todo el contrato normativo ni varias APIs públicas de la stdlib. La forma TLF
 para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps,
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 1.47
+**Versión del tracker:** 1.49
 
 **Última actualización:** 2026-08-04
 
@@ -34,14 +34,16 @@ desarrollo y no ha sido publicado.
 
 - [Tondo LLM Form](./TONDO_LLM_FORM_SPEC.md)
 
-G5 inventaría y sella exactamente los cuatro documentos centrales. TLF no
-cambia la semántica `.to`: Gate L0 produce un bundle separado y el candidato
-final fija ambos por hash.
+G5 inventaría y sella exactamente lenguaje, testing y toolchain. La stdlib
+mantiene su conformidad separada en S1A/S1; fijar su spec por hash nunca se
+confunde con conformarla. TLF tampoco cambia la semántica `.to`: Gate L0 produce
+un bundle separado y el candidato final fija G5, S1 y L0 por identidades
+independientes.
 
 **Objetivo inmediato:** cerrar primero las dos lagunas verificadas por la
 auditoría: (1) completar las APIs públicas A1–A4 de STD-0.1A, en especial
 serialization tipada, derives, streaming y generación Protobuf schema-first;
-y (2) ampliar la matriz normativa a los cuatro specs, clasificar cada límite y
+y (2) ampliar la matriz normativa a los tres contratos G5, clasificar cada límite y
 aportar evidencia ejecutable antes de volver a cerrar T0/G5/S1A. Los contratos
 runtime-facing de STD-0.1B y M11 esperan esos gates. Todo pertenece a la primera
 versión 0.1; los slices son orden de implementación, no versiones públicas. La
@@ -452,10 +454,10 @@ inputs, virtual time, lifecycle completo y Gate T0 los esperan.
 
 M10.7 y M10.6 ratchetean evidencia al terminar cada wave, no únicamente en
 `META-CONF-001` o `UTEST-CONF-001`. La implementación funcional de testing ya
-existe, pero T0/G5 no vuelven a cerrarse hasta que la matriz cubra los cuatro
-specs, cada límite aplicable tenga caso ejecutable y `CONF-SEAL-FINAL-001`
-promueva exactamente ese cierre. El candidato revisión 9 demuestra el mecanismo
-de sellado, no sustituye esa prueba normativa. El resultado existente de
+existe, pero T0/G5 no vuelven a cerrarse hasta que la matriz cubra lenguaje,
+testing y toolchain, cada límite aplicable tenga caso ejecutable y
+`CONF-SEAL-FINAL-001` promueva exactamente ese cierre. El promotion proof
+demuestra el mecanismo de sellado, no sustituye esa prueba normativa. El resultado existente de
 `tondo test` permite completar y probar la propia stdlib.
 
 Cada API posterior de STD-0.1A se implementa como slice vertical y amplía
@@ -493,14 +495,14 @@ el trabajo.
 | `UTEST-INPUTS-001` | `UTEST-INPUTS-PLAN-001`, `UTEST-RUNTIME-001` y `STD-ENV-CONF-001` | Mutación de environment |
 | `UTEST-VTIME-001` y Gate T0 | spec + implementación + evidencia del time-base | Calendario civil |
 | Lifecycle de suites | `ASYNC-DEFER-IMPL-001`, lowering y worker aislado | Retry, JUnit o snapshot update |
-| Mecanismo `CONF-SEAL-001` | `META-CONF-001`, `UTEST-CONF-001` y hashes actuales | Cierre evidencial T0 y STD-0.1A completa |
+| Mecanismo `CONF-SEAL-001` | resultado bootstrap completo, ratchet y hashes actuales | Cierre evidencial T0, layers ejecutados o STD-0.1A completa |
 | Gate T0 evidencial | `UTEST-SPEC-EVIDENCE-001` y matriz multi-spec sin huecos de testing aplicables | STD-0.1A completa |
-| Gate G5 vivo | `DOC-TEST-001`, `DOC-TEST-CONF-001`, `CONF-MATRIX-ALL-001`, `CONF-GAP-AUDIT-001`, `CONF-GAP-IMPL-001` y `CONF-SEAL-FINAL-001` | STD-0.1A completa |
-| `NATIVE-001` | `NATIVE-PRODUCT-SPEC-001`, Gates G5/S1A y contratos runtime-facing de STD-0.1B | Implementación de STD-0.1B |
+| Gate G5 vivo | `DOC-TEST-001`, `DOC-TEST-CONF-001`, `CONF-MATRIX-ALL-001`, `CONF-GAP-AUDIT-001`, `CONF-GAP-IMPL-001`, `CONF-LAYER-RESULT-001`, `QUALITY-EVIDENCE-BIND-001` y `CONF-SEAL-FINAL-001` | STD-0.1A completa |
+| `NATIVE-001` | `NATIVE-PRODUCT-SPEC-001`, target/artifact/link/publish specs, Gates G5/S1A y contratos runtime-facing de STD-0.1B | Implementación de STD-0.1B |
 | `NATIVE-ABI-001` | `NATIVE-001`, `NATIVE-MEM-ADR-001` y contratos de sync/executor | ABI FFI pública |
 | ARC/runtime nativo | `NATIVE-ABI-001` y DEC-014 | Eliminación de retains, COW o escape analysis |
-| `NATIVE-LINK-001`/`NATIVE-CLI-001` | lowering, ARC/ciclos y `NATIVE-STD-001` | Optimizaciones post-N1 |
-| Gate S1 | N1 y todos los slices A/B conformes | Incrementalidad o LSP |
+| `NATIVE-LINK-001`/`NATIVE-CLI-001` | target/artifact/link schemas, lowering, ARC/ciclos y `NATIVE-STD-001` | Optimizaciones post-N1 |
+| Gate S1 | N1, todos los slices A/B conformes y `STD-S1-SEAL-001` | L0 o empaquetado global |
 | Gate L0 | benchmark reproducible, codec TLF, maps/diagnostics/CLI, properties/fuzz, evaluación, conformidad y bundle L0 | Backend nativo o implementación de STD-0.1B |
 
 ### 4.1.2 Regla de integración por waves
@@ -2556,8 +2558,9 @@ Antes de ampliar la gramática de M10.7 o M10.6:
   modificados como pendientes hasta que sus propios layers tengan evidencia.
   El runner, reliability, matriz, scripts y CI ya no ofrecen selección
   identidades históricas ni fallback entre manifests. El manifest de draft fija los
-  hashes de los cuatro specs, el estado abierto, las tareas pendientes y los
-  layers futuros; el sellado produce un candidato nuevo sin mutar el draft ni
+  hashes de lenguaje, testing y toolchain, el estado abierto, las tareas
+  pendientes y los layers futuros; stdlib mantiene su linaje S1 separado. El
+  sellado produce un proof nuevo sin mutar el draft ni
   el corpus histórico. Añadir tests
   que demuestren selección única, rechazo de nombres de linaje antiguos,
   reproducibilidad y que el gate estricto no presenta la regresión bootstrap
@@ -2573,24 +2576,25 @@ Antes de ampliar la gramática de M10.7 o M10.6:
   mini-gate antes de integrarse; `META-CONF`, `UTEST-CONF` y los gates
   estándar siguen siendo cierres acumulativos.
 
-- [x] **CONF-SEAL-001 — Sellar una única conformidad Tondo 0.1.** Después de
-  `META-CONF-001`, `UTEST-CONF-001` y Gate T0, exigir cero requisitos
-  pendientes, fijar hashes actuales de specs/cases/adaptador, reconstruir desde
-  un workspace limpio y promover atómicamente el último draft verificado a la
-  distribución inmutable del candidato. El bundle canónico y content-addressed
-  conserva procedencia, rechaza destinos parciales o distintos, se verifica sin
-  consultar el draft vivo y nunca sobrescribe `conformance/0.1`. El gate estricto
-  lo reconstruye en un destino efímero y compara su manifest byte a byte con el
-  candidato versionado. Las pruebas cubren idempotencia, mezcla de historia,
-  tampering, paths y cierre exacto; Gate G5 verifica este resultado sin afirmar
-  una publicación.
+- [x] **CONF-SEAL-001 — Probar el mecanismo de promoción content-addressed.**
+  `seal-proof` fija el draft, specs G5, layers, regresión bootstrap, resultado
+  completo de sus 205 casos, historial canónico hasta revisión 1, ratchet y
+  adaptador. El verificador reconstruye y exige el conjunto exacto de roles y
+  paths, y vuelve a validar offline cada manifest de linaje, layer y suite.
+  Rechaza resultados parciales, casos ausentes/repetidos/reordenados,
+  repeticiones o hashes inválidos, procedencia extra/sustituida, destinos
+  parciales o distintos y tampering; verifica el bundle sin consultar el draft
+  vivo. Cada revisión vive en `conformance/proofs/revision-<N>` y nunca
+  sobrescribe una prueba anterior ni `conformance/0.1`. Su estado explícito es
+  `promotion-proof`: demuestra el mecanismo, no Gate T0/G5 ni un candidato de
+  publicación.
 
-La auditoría 1.45 conserva `CONF-SEAL-001` como implementación verificada del
-mecanismo de promoción: `conformance/candidate/manifest.json` fija la revisión
-8. No lo interpreta como prueba de cobertura completa. El draft puede declarar
-`pending_tasks: []` aunque la matriz conserve requisitos `toolchain-limit`, y
-el inventario puede conservar contratos `draft-pending`; el sellado final debe
-cerrar también esos ejes.
+- [ ] **QUALITY-EVIDENCE-BIND-001 — Ligar quality evidence al árbol medido.**
+  El runner de quality debe calcular antes y después un digest canónico de
+  fuentes, tests, `Cargo.lock`, flags y toolchain; coverage y mutation registran
+  ese digest junto a sus reports. Ratchet y sellado rechazan reports antiguos,
+  mezclados o producidos mientras cambiaba el árbol, aunque sus porcentajes aún
+  superen el baseline.
 
 - [ ] **DOC-TEST-001 — Implementar `tondo doc-test` por la ruta pública.**
   Añadir el comando exacto de 21.6, scanner Markdown propio, fixtures fijados,
@@ -2602,14 +2606,17 @@ cerrar también esos ejes.
 - [ ] **DOC-TEST-CONF-001 — Cerrar conformidad de ejemplos verificables.**
   Probar UTF-8 y CR/LF, headers, fences truncados, offsets de byte, fixtures,
   errores exactos, formatting, determinismo y ausencia de output parcial sobre
-  los documentos normativos y un corpus hostil. Cada ejemplo ejecutable de la
-  stdlib reutiliza el mismo runner; no existe un harness documental paralelo.
+  los documentos normativos y un corpus hostil. El runner documental solo
+  parsea, formatea y typecheckea; cada ejemplo que afirme comportamiento
+  runtime enlaza además un caso de aceptación público de `tondo test` o de
+  conformidad. No existe un harness documental paralelo.
 
-- [ ] **CONF-MATRIX-ALL-001 — Extender la matriz normativa a los cuatro
-  specs.** Inventariar requisitos estables de lenguaje, testing, toolchain y
-  stdlib con identidad, riesgo y seis dimensiones de evidencia. Un documento
-  incluido en el candidato no cuenta como cubierto solo por estar fijado por
-  hash, y un fence no se considera test por ser parseable.
+- [ ] **CONF-MATRIX-ALL-001 — Extender la matriz normativa a los tres contratos
+  G5.** Inventariar requisitos estables de lenguaje, testing y toolchain con
+  identidad, riesgo y seis dimensiones de evidencia. Un documento incluido en
+  un proof no cuenta como cubierto solo por estar fijado por hash, y un fence no
+  se considera test por ser parseable. La matriz de stdlib es
+  `STD-MATRIX-ALL-001` y alimenta S1A/S1, no G5.
 
 - [ ] **CONF-GAP-AUDIT-001 — Clasificar todos los límites existentes.** Revisar
   individualmente los 260 `toolchain-limit` y los 38 `draft-pending` actuales y
@@ -2624,13 +2631,22 @@ cerrar también esos ejes.
   casos ya implementados solo requieren añadir identidad/evidencia, no
   reescribir código que ya funciona.
 
+- [ ] **CONF-LAYER-RESULT-001 — Ejecutar y atestar cada caso de layer.** El
+  resultado de `tondo-conformance run` debe quedar ligado al hash y revisión
+  del draft e incluir, además del corpus bootstrap completo, una observación
+  verificable por cada caso `meta`, `testing` y `finalization`. Referenciar un
+  nombre existente en el inventario no acredita ejecución. El schema rechaza
+  layers/casos/evidencias ausentes, extra, duplicados, reordenados o ligados a
+  otro árbol y el proof incluye el resultado compuesto exacto.
+
 - [ ] **CONF-SEAL-FINAL-001 — Promover el candidato normativamente completo.**
   Exigir que los requisitos aplicables a lenguaje, testing y toolchain no
   conserven `toolchain-limit`, `draft-pending` ni ausencias; ejecutar resultados
-  frescos, `DOC-TEST-CONF-001`, coverage/mutation y Gate T0; después crear un nuevo bundle
-  content-addressed y comprobarlo sin consultar el draft vivo. La matriz de
-  stdlib puede conservar tareas S1A explícitas y no se presenta como verde.
-  Solo esta tarea habilita el cierre final de G5; S1A usa su propio gate.
+  frescos y compuestos de `CONF-LAYER-RESULT-001`,
+  `QUALITY-EVIDENCE-BIND-001`, `DOC-TEST-CONF-001`, coverage/mutation y Gate
+  T0; después crear un bundle `candidate` distinto de los promotion proofs y
+  comprobarlo sin consultar el draft vivo. Solo esta tarea habilita el cierre
+  final de G5; S1A usa su propia matriz y su propio gate.
 
 ---
 
@@ -3629,16 +3645,17 @@ vez los errores de los slices anteriores.
   conserva límites aplicables ni contratos pendientes.
 - [ ] Gate T0 está cerrado y el grupo de testing forma parte de
   `tondo-conformance-draft`, no de una edición o suite paralela.
-- [ ] `tondo doc-test` ejecuta el contrato completo de 21.6 y valida los
+- [ ] `tondo doc-test` aplica el contrato completo de 21.6 y valida los
   ejemplos normativos sin harness paralelo ni resultados parciales.
 - [x] `CONF-SEAL-001` ha promovido exactamente el draft verificado, sin
   presentar la regresión bootstrap como requisitos nuevos. Este punto verifica
-  el mecanismo y el candidato revisión 9, no la suficiencia de su matriz.
+  únicamente el promotion proof del mecanismo, no la suficiencia de su matriz.
 - [x] La suite y sus manifests fijan el hash actual de la spec, no el snapshot
   bootstrap de regresión.
 - [x] No existe una ruta de ejecución ambiental dentro del frontend ni del VM
   meta.
-- [ ] `CONF-GAP-AUDIT-001`, cualquier leaf de `CONF-GAP-IMPL-001` y
+- [ ] `CONF-GAP-AUDIT-001`, cualquier leaf de `CONF-GAP-IMPL-001`,
+  `CONF-LAYER-RESULT-001`, `QUALITY-EVIDENCE-BIND-001` y
   `CONF-SEAL-FINAL-001` están cerrados; solo entonces la distribución puede
   describirse como candidata a publicación. El gate no publica por sí solo.
 
@@ -4146,9 +4163,88 @@ parte del módulo.
   cierra al añadir `STD-TESTING-SHRINK-001` y demostrar toda la superficie del
   contrato mediante el runner público.
 
+#### 19.4.2 Evidencia leaf por owner
+
+Cada tarea siguiente produce un record machine-readable del owner con campos
+separados `SPEC`, `IMPL`, `HOST`, `MODEL`, `TEST`, `FUZZ`, `PERF`, `CONF` y
+`DOC`. Un campo no aplicable lleva razón normativa; no se crea una task vacía.
+Los campos aplicables enlazan artefactos y casos exactos, no solo directorios o
+tests vecinos. Así se conserva granularidad por owner sin multiplicar tareas
+administrativas que no implementan comportamiento.
+
+- [ ] **STD-A-META-EVIDENCE-001 — Cerrar evidencia de `std.meta`.** Registrar
+  build-only HOST como no aplicable y separar modelo, tests/fuzz, presupuestos
+  compile-time, conformidad y docs sobre la ruta pública existente.
+- [ ] **STD-A-REFLECT-EVIDENCE-001 — Cerrar evidencia de `std.reflect`.** Cubrir
+  metadata explícita, roots, privacidad, tamaño/coste, ausencia de reflection
+  runtime ambiental, conformidad y docs; HOST es no aplicable.
+- [ ] **STD-A-BYTES-EVIDENCE-001 — Cerrar evidencia de `std.bytes`.** Cubrir
+  identidad, builders, conversión UTF-8, límites, propiedades, hot paths,
+  conformidad y docs; HOST es no aplicable.
+- [ ] **STD-A-TIME-EVIDENCE-001 — Cerrar evidencia del time-base.** Separar
+  modelo, provider HOST real/virtual, tests/fuzz, precisión/rendimiento,
+  conformidad por capability y docs.
+- [ ] **STD-A-ENV-EVIDENCE-001 — Cerrar evidencia de `std.env`.** Separar
+  snapshot/modelo, adaptador HOST, inputs hostiles, límites, coste,
+  conformidad/capability y docs sin lectura ambiental directa.
+- [ ] **STD-A-CORE-EVIDENCE-001 — Cerrar evidencia Core.** Cubrir protocolos,
+  genéricos, composición, properties/fuzz, dispatch/código generado,
+  conformidad y docs; HOST es no aplicable.
+- [ ] **STD-A-TEXT-EVIDENCE-001 — Cerrar evidencia de texto.** Cubrir Unicode,
+  UTF-8 inválido en fronteras, slicing, iteración, properties/fuzz, coste,
+  conformidad y docs; HOST es no aplicable.
+- [ ] **STD-A-COLL-EVIDENCE-001 — Cerrar evidencia de colecciones.** Cubrir
+  COW, orden, hashing, iteración, modelos/properties/fuzz, memoria/rendimiento,
+  conformidad y docs; HOST es no aplicable.
+- [ ] **STD-A-ITER-EVIDENCE-001 — Cerrar evidencia de iteradores.** Cubrir
+  laziness, consumo, composición, modelos/fuzz, coste, conformidad y docs; HOST
+  es no aplicable.
+- [ ] **STD-A-MATH-EVIDENCE-001 — Cerrar evidencia matemática.** Cubrir modelo
+  numérico, dominios/overflow, properties/fuzz, equivalencia scalar/SIMD,
+  conformidad y docs; HOST es no aplicable.
+- [ ] **STD-A-FMT-EVIDENCE-001 — Cerrar evidencia de formatting.** Cubrir
+  `Display`, builders, atomicidad, límites, properties/fuzz, allocations,
+  conformidad y docs; HOST es no aplicable.
+- [ ] **STD-A-IO-EVIDENCE-001 — Cerrar evidencia de I/O portable.** Cubrir
+  modelo Reader/Writer, partial I/O, EOF, cancelación, fuzz de chunks, límites,
+  coste, conformidad y docs; los adaptadores pertenecen a sus owners Hosted.
+- [ ] **STD-A-PATH-EVIDENCE-001 — Cerrar evidencia de paths.** Cubrir modelo
+  portable/native, bytes/Unicode, normalización, fuzz, coste, conformidad y
+  docs sin consultar filesystem; HOST es no aplicable.
+- [ ] **STD-A-CONSOLE-EVIDENCE-001 — Cerrar evidencia de consola.** Separar
+  modelo de streams, adaptador HOST/capability, partial I/O, fallos, coste,
+  conformidad y docs.
+- [ ] **STD-A-FS-EVIDENCE-001 — Cerrar evidencia de filesystem.** Separar
+  modelo, handles y adaptador HOST, corpus/fuzz, límites, cleanup/rendimiento,
+  conformidad por capability y docs.
+- [ ] **STD-A-PROC-EVIDENCE-001 — Cerrar evidencia de procesos.** Separar
+  modelo de command/pipeline, adaptador HOST, backpressure/cancelación/reaping,
+  stress, coste, conformidad y docs.
+- [ ] **STD-A-SER-EVIDENCE-001 — Cerrar evidencia de serialization.** Cubrir
+  máquina de eventos, derives, paths, construcción atómica, streaming,
+  properties/fuzz, coste, conformidad y docs; HOST es no aplicable.
+- [ ] **STD-A-JSON-EVIDENCE-001 — Cerrar evidencia de JSON.** Cubrir rutas
+  typed/dynamic/streaming, interoperabilidad/JCS, chunks/fuzz, límites,
+  scalar/SIMD, conformidad y docs; HOST es no aplicable.
+- [ ] **STD-A-MSGPACK-EVIDENCE-001 — Cerrar evidencia de MessagePack.** Cubrir
+  typed/dynamic/streaming, modelo wire completo, interoperabilidad, chunks/fuzz,
+  límites/rendimiento, conformidad y docs; HOST es no aplicable.
+- [ ] **STD-A-PROTOBUF-EVIDENCE-001 — Cerrar evidencia de Protobuf.** Cubrir
+  schema-first/generación, modelo wire/evolución, interoperabilidad, fuzz,
+  límites/rendimiento, conformidad y docs; HOST runtime es no aplicable.
+- [ ] **STD-A-TESTING-EVIDENCE-001 — Cerrar evidencia de `std.testing`.**
+  Cubrir helpers, generators/shrinking, temp resources, control sellado,
+  bridge test-only, dogfooding, límites/rendimiento, conformidad y docs.
+
+- [ ] **STD-MATRIX-ALL-001 — Construir la matriz normativa de stdlib.** Unir
+  cada firma y requisito A/B con su record de owner y dimensiones públicas sin
+  introducir requisitos de stdlib en G5. S1A/S1 fallan ante cualquier celda
+  aplicable ausente o `not-applicable` sin razón.
+
 - [ ] **STD-TEST-001 — Coordinar modelos y properties por owner.** Reejecutar y
-  completar la evidencia después de las tareas leaf. Cada modelo debe cubrir la
-  API pública del owner, no solo su kernel Rust o una operación de validación.
+  completar los campos `MODEL`, `TEST` y `FUZZ` de cada leaf `STD-A-*-EVIDENCE`
+  después de su implementación. Cada modelo cubre la API pública del owner, no
+  solo su kernel Rust o una operación de validación.
 
 - [x] **STD-CODEC-KERNEL-001 — Validar los kernels de formatos existentes.**
   `scripts/stdlib-codec-conformance.sh` prueba los kernels materializados y el
@@ -4164,18 +4260,20 @@ parte del módulo.
   reproducible para el código ya existente.
 
 - [ ] **STD-PERF-CONF-001 — Coordinar performance por owner.** Ampliar el gate
-  a todos los hot paths públicos tras su implementación, incluyendo throughput,
+  al campo `PERF` de cada leaf A aplicable tras su implementación, incluyendo throughput,
   tail latency, allocations/memoria, startup, code size y compile time; exigir
   equivalencia exacta de cualquier SIMD/multiversioning con fallback portable.
 
 - [ ] **STD-CONF-001 — Coordinar conformidad por owner.** Cierra solo cuando la
-  matriz multi-spec contiene cada requisito A aplicable con evidencia pública y
-  todos los micro-gates `SPEC → IMPL/HOST → MODEL/TEST/FUZZ → PERF → CONF → DOC`.
+  `STD-MATRIX-ALL-001` contiene cada requisito A aplicable con evidencia pública
+  y todas las leaves registran `SPEC → IMPL/HOST → MODEL/TEST/FUZZ → PERF →
+  CONF → DOC` sin celdas implícitas.
 
 - [ ] **STD-DOC-001 — Cerrar documentación por owner y programas
   representativos.** Corregir `docs/contracts/stdlib-s1a.md` y el manifiesto de
   evidencia para distinguir kernel, bridge parcial y API completa; después
-  añadir ejemplos ejecutables de cada owner sin afirmar una publicación.
+  añadir ejemplos verificables y casos de aceptación runtime enlazados para
+  cada owner sin afirmar una publicación.
 
 ### Gate S1A — Standard Library 0.1 foundation
 
@@ -4224,9 +4322,10 @@ se implementan todavía, pero sus requisitos alimentan elección de backend,
 memoria y ABI. La VM, la conformidad del lenguaje —incluidos test targets— y la
 conformidad de STD-0.1A son los oracles.
 
-**Orden obligatorio:** contrato de producto → baseline → selección →
-memoria/ABI → lowering mínimo → ARC/ciclos correctos → frontera STD-0.1A →
-link/CLI → diferencial/targets/empaquetado → Gate N1. Eliminación de retains,
+**Orden obligatorio:** UX de producto → target/artifact/link/publish schemas →
+baseline → selección → memoria/ABI → lowering por slices → ARC/ciclos correctos
+→ fronteras Core/Hosted de STD-0.1A → link/CLI → conformidad por slices →
+diferencial/targets/empaquetado → Gate N1. Eliminación de retains,
 COW, escape analysis, incrementalidad y LSP son trabajo posterior a N1 y no
 pueden retrasar el primer backend correcto.
 
@@ -4238,7 +4337,30 @@ pueden retrasar el primer backend correcto.
   semántico, publicación atómica y `tondo run` sobre el mismo producto. El
   compilador puro emite un plan de enlace cerrado y el driver interno no usa
   shell, `PATH` ni flags ambientales; no se promete object format, linker
-  configurable, dynamic linking o ABI FFI pública.
+  configurable, dynamic linking o ABI FFI pública. Esta tarea cierra solo la
+  UX pública; los schemas ejecutables del producto se cierran en las leaves
+  siguientes.
+
+- [ ] **NATIVE-TARGET-DESC-001 — Definir el target descriptor nativo.** Fijar
+  schema, canonicalización e identidad de backend, triple, object format,
+  runtime ABI, driver/linker, capabilities, features, flags deterministas y
+  artefactos de toolchain por hash; ninguna selección consulta `PATH` o entorno.
+
+- [ ] **NATIVE-ARTIFACT-001 — Definir la clausura de artefactos nativos.**
+  Extender el artifact draft con objetos, runtime, stdlib, unidades
+  privilegiadas, producto final, productores y hashes, distinguiendo inputs,
+  intermediarios y output publicable sin convertir el layout en ABI pública.
+
+- [ ] **NATIVE-LINK-PLAN-001 — Definir el plan de enlace canónico.** El
+  compilador puro emite un record cerrado, versionado y validable con orden de
+  objetos, runtime, driver exacto, argumentos, output esperado y límites. Casos
+  negativos cubren campos extra, mezcla de targets, hashes ausentes y paths no
+  portables.
+
+- [ ] **NATIVE-PUBLISH-SPEC-001 — Cerrar publicación y consumo del producto.**
+  Especificar staging, fsync/rename aplicable, colisiones, interrupción, cleanup
+  y la identidad exacta que `tondo run` consume después de `tondo build`, con
+  tests de fallo entre todas las fases.
 
 - [ ] **PERF-001 — Definir benchmarks y presupuestos antes de implementar.**
   Incluir compilación, tamaño, programas STD-0.1A, throughput, latencia, memoria,
@@ -4265,10 +4387,34 @@ pueden retrasar el primer backend correcto.
   atomics, wakeups y handles host internos. Esta tarea cierra DEC-013; no
   promete ABI FFI, layout de usuario ni name mangling estables.
 
-- [ ] **NATIVE-002 — Definir y ejecutar un lowering mínimo desde MIR.** Calls,
-  pánicos, cleanup, ownership, préstamos, async, source maps y operaciones
-  checked conservan identidad verificable hasta código nativo. El primer
-  vertical slice ejecuta un programa real antes de ampliar targets u optimizar.
+- [ ] **NATIVE-LOWER-CALLS-001 — Lowering de ABI y llamadas.** Ejecutar un
+  programa real con funciones, parámetros, retornos y llamadas host según la
+  ABI interna elegida.
+
+- [ ] **NATIVE-LOWER-CONTROL-001 — Lowering de control y operaciones checked.**
+  Cubrir branches, loops, match, overflow, bounds y pánicos con observaciones
+  equivalentes a la VM.
+
+- [ ] **NATIVE-LOWER-CLEANUP-001 — Lowering de pánico y cleanup.** Preservar
+  `defer`, unwind/abort elegido, cancelación y destrucción exactamente una vez
+  en salidas normales y abruptas.
+
+- [ ] **NATIVE-LOWER-OWNERSHIP-001 — Lowering de ownership y préstamos.**
+  Materializar movimientos, borrows, retains/releases y COW sin introducir
+  aliasing o layouts públicos accidentales.
+
+- [ ] **NATIVE-LOWER-ASYNC-001 — Lowering de async estructurado.** Conservar
+  frames, suspensión, wakeups, scopes, cancelación y cleanup bajo la ABI runtime.
+
+- [ ] **NATIVE-LOWER-DEBUG-001 — Preservar identidad y source maps.** Relacionar
+  MIR, código nativo, pánicos y diagnósticos con símbolos y rangos lógicos
+  reproducibles sin paths físicos ambientales.
+
+- [ ] **NATIVE-002 — Coordinar el lowering mínimo desde MIR.** Cierra solo tras
+  `NATIVE-LOWER-CALLS-001`, `NATIVE-LOWER-CONTROL-001`,
+  `NATIVE-LOWER-CLEANUP-001`, `NATIVE-LOWER-OWNERSHIP-001`,
+  `NATIVE-LOWER-ASYNC-001` y `NATIVE-LOWER-DEBUG-001`, con al menos un smoke
+  nativo real por slice antes de ampliar targets u optimizar.
 
 ### 20.2 Runtime correcto y frontera estándar
 
@@ -4280,7 +4426,15 @@ pueden retrasar el primer backend correcto.
   linealizables.** Validar ciclos independientes, races aplicables, teardown y
   ausencia de resurrección antes de ejecutar conformidad completa.
 
-- [ ] **NATIVE-STD-001 — Implementar la frontera de STD-0.1A.** Core y Hosted
+- [ ] **NATIVE-STD-CORE-001 — Implementar la frontera Core de STD-0.1A.** Los
+  valores, ownership, errores y protocolos portables observan la misma API que
+  la VM, sin llamadas host o rutas específicas del backend.
+
+- [ ] **NATIVE-STD-HOSTED-001 — Implementar la frontera Hosted de STD-0.1A.**
+  Capabilities, I/O parcial, cancelación, handles, errores y cleanup cruzan
+  unidades privilegiadas fijadas por hash y no heredan estado ambiental.
+
+- [ ] **NATIVE-STD-001 — Coordinar la frontera completa de STD-0.1A.** Core y Hosted
   observan la misma API, capabilities, errores y cleanup que en la VM; ninguna
   optimización puede añadir una ruta pública específica del backend.
 
@@ -4300,10 +4454,24 @@ pueden retrasar el primer backend correcto.
 
 ### 20.3 Oracle diferencial, targets y empaquetado
 
-- [ ] **NATIVE-CONF-001 — Crear el adaptador nativo de conformidad.** Ejecutar
-  lenguaje, test targets y stdlib contra VM y nativo, comparar observaciones
-  completas y exigir que ambos superen de forma independiente los manifiestos
-  aplicables.
+- [ ] **NATIVE-CONF-ADAPTER-001 — Crear el adaptador nativo.** Implementar el
+  protocolo completo con identidad de backend/target y rechazo fail-closed de
+  operaciones o capabilities no soportadas.
+
+- [ ] **NATIVE-CONF-LANGUAGE-001 — Ejecutar conformidad base nativa.** Correr
+  lenguaje/toolchain G5 contra el adaptador nativo y comparar observaciones con
+  la VM sin reutilizar sus resultados.
+
+- [ ] **NATIVE-CONF-TESTING-001 — Ejecutar test targets nativos.** Cubrir
+  lifecycle, async, aislamiento, reporters, exits y cleanup mediante el runner
+  público sobre ambos backends.
+
+- [ ] **NATIVE-CONF-STDLIB-001 — Ejecutar STD-0.1A nativa.** Correr cada owner
+  Core/Hosted y capability aplicable con los mismos oracles y límites.
+
+- [ ] **NATIVE-CONF-001 — Coordinar conformidad nativa.** Cierra solo tras
+  adaptador, lenguaje, testing y stdlib independientes; compara observaciones
+  completas y exige que VM y nativo superen sus manifiestos por separado.
 
 - [ ] **NATIVE-DIFF-001 — Ejecutar differential testing generado.** Programs
   tipados, properties, modelos y regresiones usan ambos backends; cada
@@ -4455,7 +4623,12 @@ publica hasta cerrar el gate final.
 Cada owner mantiene celdas independientes `SPEC`, `IMPL`, `HOST`, `TEST/FUZZ`,
 `PERF`, `CONF` y `DOC`. Cuando no existe frontera host, el registro del owner
 marca `HOST = not-applicable` con razón; no se crea un stub ni se omite la
-dimensión. Las tareas coordinadoras de 21.3.13 solo agregan estas leaves.
+dimensión. `TEST/FUZZ` produce subregistros separados `MODEL`, `TEST` y `FUZZ`;
+la task puede ser una sola porque pertenece a un único owner, pero el gate
+rechaza cualquiera de los tres ausente. En `DOC`, “ejemplo ejecutable” significa
+ejemplo verificable por doc-test más un acceptance runtime enlazado, no que el
+doc runner ejecute efectos. Las tareas coordinadoras de 21.3.13 solo agregan
+estas leaves.
 
 #### 21.3.1 `std.sync`
 
@@ -4659,6 +4832,12 @@ dimensión. Las tareas coordinadoras de 21.3.13 solo agregan estas leaves.
 
 #### 21.3.13 Coordinación de STD-0.1B
 
+- [ ] **STD-B-OWNER-MATRIX-001 — Materializar celdas B por owner.** Generar un
+  record canónico para cada módulo de 21.3.1–21.3.12 con `SPEC`, `IMPL`, `HOST`,
+  `MODEL`, `TEST`, `FUZZ`, `PERF`, `CONF` y `DOC`. `HOST = not-applicable`
+  requiere razón normativa y `MODEL/TEST/FUZZ` conservan identidades separadas;
+  no se crean stubs ni tasks `HOST-NA` administrativas.
+
 - [ ] **STD-B-IMPL-001 — Coordinar implementación portable por owner.** Cada
   task `*-IMPL-001` de 21.3.1–21.3.12 está cerrada y enlazada firma por firma;
   cualquier intrinsic o unidad privilegiada nueva tiene contrato y
@@ -4679,22 +4858,30 @@ dimensión. Las tareas coordinadoras de 21.3.13 solo agregan estas leaves.
   fallback portable.
 
 - [ ] **STD-B-CONF-001 — Coordinar conformidad por owner.** Cada módulo cierra
-  su task `*-CONF-001`; el agregado publica casos portables/capability-gated y
-  programas reales en VM/nativo sin mutar evidencia histórica.
+  su task `*-CONF-001`, y `STD-B-OWNER-MATRIX-001` no conserva celdas aplicables
+  vacías; el agregado publica casos portables/capability-gated y programas
+  reales en VM/nativo sin mutar evidencia histórica.
 
 - [ ] **STD-B-DOC-001 — Coordinar documentación por owner.** Cada módulo cierra
   su task `*-DOC-001`, con firmas, errores, pánicos, ownership, async, orden,
   coste y ejemplos ejecutables; el agregado no crea un segundo PackageId.
 
+- [ ] **STD-S1-SEAL-001 — Sellar la distribución conforme de Standard Library
+  0.1.** Después de los micro-gates A/B y Gate N1, reconstruir únicamente la
+  stdlib, runtime/units/providers que posee, manifests, PackageId, content/API
+  hashes y matriz de targets. Ejecutar conformidad VM/nativa y reproducibilidad
+  desde dos workspaces limpios. Este bundle cierra S1 sin depender de L0 ni del
+  empaquetado global del lenguaje.
+
 - [ ] **REL-0.1-RC-001 — Construir el candidato completo de primera
-  publicación.** Después de todos los micro-gates A/B, reconstruir toolchain,
+  publicación.** Después de G5, T0, N1, S1 y L0, reconstruir toolchain,
   VM, backend, runtime, stdlib runtime y companion meta desde inputs cerrados;
   fijar PackageId, content/API hashes, manifests, checksums, matriz de targets y
   el bundle L0 producido por `TLF-BUNDLE-001`. Ejecutar conjuntamente G5, H0,
-  T0, N1, L0, todos los checks que componen S1, conformidad VM/nativa, programas
-  representativos y reproducibilidad desde dos workspaces limpios. Gate S1 se
-  cierra después de verificar este resultado; la tarea crea un candidato, pero
-  no publica por sí misma.
+  T0, N1, L0, el bundle exacto de `STD-S1-SEAL-001`, conformidad VM/nativa,
+  programas representativos y reproducibilidad desde dos workspaces limpios.
+  La tarea compone gates ya independientes y crea un candidato, pero no publica
+  por sí misma.
 
 ### Gate S1 — Standard Library 0.1 completa
 
@@ -4708,13 +4895,12 @@ dimensión. Las tareas coordinadoras de 21.3.13 solo agregan estas leaves.
   explícita; ningún nombre ilustrativo se anuncia como estable.
 - [ ] La distribución STD 0.1.0 reúne STD-0.1A y STD-0.1B con un único PackageId,
   content/API hashes finales y matriz de targets reproducible.
+- [ ] `STD-S1-SEAL-001` reproduce y verifica el bundle de stdlib sin requerir
+  TLF ni el candidato global.
 - [ ] Tondo 0.1, `tondo test`, VM, backend nativo y los programas
   representativos pasan juntos el gate estricto antes de cualquier publicación.
 - [ ] El candidato fija y verifica por separado los bundles G5 y L0; TLF no
   amplía la semántica del lenguaje ni reutiliza evidencia incompatible.
-- [ ] `REL-0.1-RC-001` reproduce exactamente el candidato completo y no
-  reutiliza el paquete parcial de `NATIVE-REL-001` como si ya incluyera
-  STD-0.1B.
 
 ---
 
@@ -4724,11 +4910,19 @@ dimensión. Las tareas coordinadoras de 21.3.13 solo agregan estas leaves.
 
 - [x] **SPEC-STRUCTURE-001 — Validar identidades estructurales de los specs.**
   `tondo-reliability check/generate` valida UTF-8, fences Markdown cerrados,
-  rutas jerárquicas de headings únicas y números de sección únicos en lenguaje,
-  testing, toolchain, stdlib y TLF. Tests unitarios cubren duplicados con título
-  distinto, duplicados tras normalización, headings dentro de fences y fences
-  truncados. El gate corrige además la colisión histórica `14.5` de stdlib y
-  sus referencias por owner.
+  headings ATX CommonMark de nivel 1–6, cierres opcionales, indentación 0–3,
+  rutas jerárquicas únicas y números cuya profundidad/prefijo coincide con sus
+  padres en lenguaje, testing, toolchain, stdlib y TLF. También liga el hash
+  base declarado por testing a los bytes actuales del lenguaje y rechaza un
+  estado documental que contradiga el runner funcional. Tests cubren títulos
+  raíz, normalización, padres incorrectos, headings dentro de fences y fences
+  truncados.
+
+- [ ] **TRACKER-LINT-001 — Validar el tracker como grafo.** Parsear tasks
+  canónicas y gates, exigir IDs únicos, referencias exactas en campos de
+  dependencia, ausencia de abreviaturas ambiguas y DAG acíclico. Los resúmenes
+  de cerradas/abiertas y la cola topológica se derivan; no se mantienen cifras
+  manuales ni se interpretan menciones históricas como dependencias activas.
 
 ### 22.1 Diagnósticos
 
@@ -4838,13 +5032,15 @@ tokens a `.to`, no crea otro AST y no puede consultar resolución o tipos para
 decodificar. La cadena de trabajo es:
 
 ~~~text
-TLF-RESEARCH-001
-  -> {TLF-BENCH-REPRO-001 + TLF-SPEC-001}
-  -> TLF-CODEC-001
+TLF-RESEARCH-001 -> TLF-SPEC-001 -> TLF-CODEC-001
   -> {TLF-CANON-001 + TLF-MAP-001 + TLF-DIAG-001}
   -> TLF-CLI-001
-  -> {TLF-PROP-001 + TLF-FUZZ-001 + TLF-EVAL-001}
-  -> TLF-CONF-001 -> TLF-BUNDLE-001 -> Gate L0
+  -> {TLF-PROP-001 + TLF-FUZZ-001 + TLF-EVAL-001} --+
+                                                            |
+TLF-RESEARCH-001 -> TLF-BENCH-REPRO-001 --------------------+
+                                                            |
+                                                            v
+                 TLF-CONF-001 -> TLF-BUNDLE-001 -> Gate L0
 ~~~
 
 - [x] **TLF-RESEARCH-001 — Medir shapes compactos con tokenizers reales.** El
@@ -5072,7 +5268,8 @@ gates en una barrera artificial.
     Mini-gate observado: meta/testing ejecutan sus rutas públicas y la regresión
     bootstrap queda separada. El cierre evidencial de T0/G5 se trasladó a
     `DOC-TEST-001`, `DOC-TEST-CONF-001`, `UTEST-SPEC-EVIDENCE-001`, `CONF-MATRIX-ALL-001`,
-    `CONF-GAP-AUDIT-001`, `CONF-GAP-IMPL-001` y `CONF-SEAL-FINAL-001` tras
+    `CONF-GAP-AUDIT-001`, `CONF-GAP-IMPL-001`, `CONF-LAYER-RESULT-001`,
+    `QUALITY-EVIDENCE-BIND-001` y `CONF-SEAL-FINAL-001` tras
     detectar que el candidato no exigía cobertura normativa completa.
 25. [ ] **Wave 5 — STD-0.1A por layers.** Los contratos, slices A0 y kernels
     iniciales están cerrados; la auditoría 1.45 reabre el resto. El orden de
@@ -5086,8 +5283,9 @@ gates en una barrera artificial.
     - A3 implementation: `STD-SER-IMPL-001 → STD-DERIVE-SER-001 →
       STD-JSON-IMPL-001 / STD-MSGPACK-IMPL-001 / STD-PROTOBUF-IMPL-001`;
     - A4: `STD-TESTING-SHRINK-001 → STD-TESTING-IMPL-001`; y
-    - A5: `STD-PUBLIC-API-AUDIT-001 → STD-TEST-001 →
-      STD-CODEC-CONF-001 / STD-PERF-CONF-001 → STD-CONF-001 → STD-DOC-001`.
+    - A5: `STD-PUBLIC-API-AUDIT-001 → leaves STD-A-*-EVIDENCE →
+      STD-TEST-001 / STD-CODEC-CONF-001 / STD-PERF-CONF-001 →
+      STD-MATRIX-ALL-001 → STD-CONF-001 → STD-DOC-001`.
     Los owners independientes pueden avanzar en paralelo, pero S1A no cierra
     hasta que cada firma contractual atraviese una ruta pública real.
 26. [ ] **Wave 6 — Contratos que condicionan el backend.** Cerrar
@@ -5095,16 +5293,17 @@ gates en una barrera artificial.
     `STD-NET-001`. Mini-gate: DEC-013/014 reciben requisitos completos sin
     implementar todavía STD-0.1B.
 27. [ ] **Wave 7 — M11 correcto antes que optimizado.** Ejecutar
-    `NATIVE-PRODUCT-SPEC-001 → PERF-001 → NATIVE-001 →
-    NATIVE-MEM-ADR-001 → NATIVE-ABI-001 → NATIVE-002 → ARC-001 → ARC-002 →
-    NATIVE-STD-001 → NATIVE-LINK-001 → NATIVE-CLI-001 → NATIVE-CONF-001 /
+    `NATIVE-PRODUCT-SPEC-001 → target/artifact/link/publish specs → PERF-001 →
+    NATIVE-001 → NATIVE-MEM-ADR-001 → NATIVE-ABI-001 → leaves NATIVE-LOWER-* →
+    NATIVE-002 → ARC-001 → ARC-002 → NATIVE-STD-CORE/HOSTED → NATIVE-STD-001 →
+    NATIVE-LINK-001 → NATIVE-CLI-001 → leaves NATIVE-CONF-* → NATIVE-CONF-001 /
     NATIVE-DIFF-001 → targets → NATIVE-REL-001`. Cerrar Gate N1.
 28. [ ] **Wave 8 — Completar STD-0.1B y candidato 0.1.** Terminar specs B,
     cerrar para cada owner las leaves `IMPL`, `HOST` aplicable, `TEST/FUZZ`,
     `PERF`, `CONF` y `DOC` de 21.3.1–21.3.12, y después los coordinadores
-    `STD-B-*` y `REL-0.1-RC-001`; cerrar Gate S1. Optimizaciones post-N1 avanzan
-    solo por evidencia y no bloquean el candidato salvo que un presupuesto
-    publicado lo exija.
+    `STD-B-OWNER-MATRIX-001`, `STD-B-*` y `STD-S1-SEAL-001`; cerrar Gate S1. Solo después componer
+    `REL-0.1-RC-001` con G5/N1/L0. Optimizaciones post-N1 avanzan por evidencia
+    y no bloquean el candidato salvo que un presupuesto publicado lo exija.
 
 Lane transversal TLF, independiente del orden de Waves 5–8:
 
@@ -5141,8 +5340,8 @@ G0 -> TLF spec + reproducible benchmark -> codec/maps/CLI
 
 M4, M5, M6, M7, M8, M9, el corpus bootstrap M10, M10.5, M10.5b y Gates G4/H0
 quedan cerrados como implementación/infraestructura. M10.7 y la implementación
-funcional de M10.6 permanecen cerradas. `CONF-DRAFT-001`,
-La auditoría reabre T0/G5 por trazabilidad normativa y Wave 5/S1A por APIs
+funcional de M10.6 permanecen cerradas. `CONF-DRAFT-001` también permanece
+cerrada. La auditoría reabre T0/G5 por trazabilidad normativa y Wave 5/S1A por APIs
 públicas ausentes. La acción inmediata es ejecutar las tareas leaf de Wave 5 y
 `DOC-TEST-001`/`CONF-MATRIX-ALL-001`; Wave 6 no se declara iniciada antes de
 esos cierres.
@@ -5150,6 +5349,42 @@ esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 1.49 — 2026-08-04
+
+- Una segunda auditoría fail-closed completa el `promotion-proof` con toda la
+  cadena histórica del draft, todos los inputs fijados por la suite y validación
+  offline de manifests, roles, paths, hashes y procedencia exacta. Incluir bytes
+  ya no basta para atribuirles un significado distinto.
+- El resultado bootstrap se deserializa con schema cerrado y debe contener los
+  205 casos exactos, en orden, con grupo, repeticiones y observaciones válidas;
+  un resultado reducido, parcial o enriquecido con campos desconocidos falla.
+- La separación production/test conserva un único `tondo.lock.toml` ligado al
+  grafo publicable. `tondo test` valida ese lock y deriva de forma determinista
+  un lock interno para su overlay, evitando tanto contaminar `check/build/run`
+  como obligar al usuario a mantener una segunda identidad.
+- El validador documental exige un único título H1 y el tracker mantiene
+  abiertas de forma explícita la atestación ejecutada de layers, el enlace de
+  quality al árbol medido y el lint del propio grafo, en lugar de atribuirlos al
+  proof mecánico.
+
+### 1.48 — 2026-08-04
+
+- Se corrige la frontera de discovery: producción excluye `tests/` y
+  `*_test.to`; solo `tondo test` los añade y clasifica en su plan cerrado.
+- G5 queda limitado a lenguaje/testing/toolchain, S1 posee stdlib y L0 posee
+  TLF. Las secciones TLF normativas salen de los contratos base y el DAG de L0
+  permite codec y benchmark en paralelo hasta su unión antes de conformidad.
+- `CONF-SEAL-001` se redefine honestamente como `promotion-proof`: valida los
+  205 casos bootstrap completos y conserva una prueba inmutable por revisión,
+  pero `CONF-LAYER-RESULT-001` y `QUALITY-EVIDENCE-BIND-001` quedan como gates
+  explícitos antes del candidato G5 final.
+- STD-0.1A añade una leaf de evidencia por owner con celdas separadas; M11 se
+  divide en schemas de producto, slices de lowering, fronteras Core/Hosted y
+  conformidad vertical. `STD-S1-SEAL-001` desacopla S1 del release global.
+- El validador estructural cubre ATX CommonMark completo, jerarquía numérica y
+  hash/status cruzado de testing; métricas y revisiones vivas dejan de
+  duplicarse manualmente en la documentación.
 
 ### 1.47 — 2026-08-04
 
@@ -5335,8 +5570,9 @@ esos cierres.
 
 ### 1.37 — 2026-08-02
 
-- Se completa `CONF-SEAL-001` con promoción atómica a
-  `conformance/candidate`: manifest canónico, objetos por SHA-256, procedencia
+- Se completa `CONF-SEAL-001` con promoción atómica al bundle que hoy está
+  archivado en `conformance/archive/candidate-revision-10`: manifest canónico,
+  objetos por SHA-256, procedencia
   cerrada de specs, layers, regresión, ratchet, evidencia y adaptador.
 - La revisión 7 añade el layer final de evidencia para `defer await`,
   hermeticidad meta, layout convencional, cierre de conformidad y el hash

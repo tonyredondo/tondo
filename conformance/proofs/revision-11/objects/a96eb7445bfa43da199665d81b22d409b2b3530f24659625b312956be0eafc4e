@@ -1,0 +1,23 @@
+import std.console
+
+async fn observe(value: ref String): String {
+    await identity(ref value)
+}
+
+async fn identity(value: ref String): String {
+    value
+}
+
+async fn main() {
+    scope {
+        var value = "before"
+        let pending = spawn observe(ref value)
+        let observed = await pending
+        value = "after"
+
+        assert(observed == "before")
+        assert(value == "after")
+    }
+
+    console.print("structured-ref-ok\n")
+}

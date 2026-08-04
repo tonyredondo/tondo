@@ -210,8 +210,8 @@ impl ProjectLocation {
                         path.display()
                     ))
                 })?;
-                let discovered =
-                    project_discovery::discover(&root).map_err(TestCommandError::Usage)?;
+                let discovered = project_discovery::discover_for_tests(&root)
+                    .map_err(TestCommandError::Usage)?;
                 let project =
                     ProjectPlan::parse(&discovered.manifest_bytes, &discovered.lockfile_bytes)
                         .map_err(|error| TestCommandError::Usage(error.to_string()))?;
@@ -3027,7 +3027,7 @@ mod tests {
         fs::write(root.join("src/main.to"), b"fn main() {}\n").unwrap();
         fs::write(root.join("tests/smoke.to"), source).unwrap();
         fs::write(root.join("tondo.toml"), "[package]\nname = \"cli\"\n").unwrap();
-        let discovered = project_discovery::discover(&root).unwrap();
+        let discovered = project_discovery::discover_for_tests(&root).unwrap();
         let project =
             ProjectPlan::parse(&discovered.manifest_bytes, &discovered.lockfile_bytes).unwrap();
         let package = project.selected_source_records().next().unwrap().0;
@@ -3610,6 +3610,21 @@ mod tests {
             error,
             TestCommandError::Usage(message) if message.contains("JSON plans are unsupported")
         ));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn production_check_does_not_compile_discovered_test_sources() {
+        let root = conventional_test_project(b"this is not valid Tondo\n");
+        assert_eq!(
+            run(vec![
+                OsString::from("check"),
+                OsString::from("--project"),
+                root.clone().into(),
+            ])
+            .unwrap(),
+            ExitCode::SUCCESS
+        );
         fs::remove_dir_all(root).unwrap();
     }
 

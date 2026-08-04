@@ -17,7 +17,8 @@ use tondo_compiler::artifact::{CAPABILITY_REGISTRY, sha256};
 use tondo_compiler::driver::BuildTarget;
 use tondo_compiler::package::PackageAlias;
 use tondo_compiler::project::{
-    BOOTSTRAP_STANDARD_PACKAGE, LOCKFILE_FORMAT, MANIFEST_FORMAT, bootstrap_standard_hash,
+    BOOTSTRAP_STANDARD_PACKAGE, LOCKFILE_FORMAT, MANIFEST_FORMAT, ProjectPlan,
+    bootstrap_standard_hash,
 };
 
 #[derive(Debug, Clone)]
@@ -25,6 +26,12 @@ pub(crate) struct DiscoveredProject {
     pub(crate) root: PathBuf,
     pub(crate) manifest_bytes: Vec<u8>,
     pub(crate) lockfile_bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SourceSelection {
+    Production,
+    ProductionAndTests,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -116,12 +123,104 @@ struct PackageFingerprint<'a> {
     interface_hash: Option<&'a str>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OwnedDependencyFingerprint {
+    alias: String,
+    package: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OwnedLockedSourceFingerprint {
+    source_set: String,
+    physical_path: String,
+    logical_path: String,
+    module: String,
+    sha256: String,
+}
+
+#[derive(Debug, Serialize)]
+struct OwnedPackageFingerprint<'a> {
+    package_id: &'a str,
+    dependencies: &'a [OwnedDependencyFingerprint],
+    sources: &'a [OwnedLockedSourceFingerprint],
+    interface_hash: Option<&'a str>,
+}
+
 fn default_edition() -> String {
     "0.1".into()
 }
 
+#[allow(clippy::too_many_arguments)]
+fn project_manifest(
+    package_name: &str,
+    edition: &str,
+    target_name: &str,
+    profile: &str,
+    capability_registry: &str,
+    capabilities: &[String],
+    features: &[String],
+    dependencies: &BTreeMap<String, DependencyConfig>,
+    sources: &[SourceRecord],
+) -> Result<Vec<u8>, String> {
+    let root_source = choose_root_source(sources);
+    let package_id = format!("workspace:{package_name}@local");
+    let dependencies = dependencies
+        .iter()
+        .map(|(alias, dependency)| json!({"alias": alias, "package": dependency.package()}))
+        .collect::<Vec<_>>();
+    let manifest = json!({
+        "format": MANIFEST_FORMAT,
+        "target": {
+            "name": target_name,
+            "profile": profile,
+            "capability_registry": capability_registry,
+            "capabilities": capabilities,
+            "features": features
+        },
+        "root": {
+            "package": package_id,
+            "source": root_source.physical_path,
+            "form": "module"
+        },
+        "standard": BOOTSTRAP_STANDARD_PACKAGE,
+        "packages": [{
+            "id": package_id,
+            "local_name": package_name,
+            "edition": edition,
+            "dependencies": dependencies,
+            "source_sets": [{
+                "id": "common",
+                "sources": sources.iter().map(|source| json!({
+                    "physical_path": source.physical_path,
+                    "logical_path": source.logical_path,
+                    "module": source.module
+                })).collect::<Vec<_>>()
+            }]
+        }],
+        "generator_inputs": [],
+        "privileged_units": []
+    });
+    serde_json::to_vec(&manifest)
+        .map_err(|error| format!("cannot encode discovered project: {error}"))
+}
+
 /// Discover a project rooted at `root`.
 pub(crate) fn discover(root: &Path) -> Result<DiscoveredProject, String> {
+    discover_with_selection(root, SourceSelection::Production)
+}
+
+/// Discover the closed production and test source sets used only by
+/// `tondo test`. Normal compilation deliberately never calls this entrypoint.
+pub(crate) fn discover_for_tests(root: &Path) -> Result<DiscoveredProject, String> {
+    discover_with_selection(root, SourceSelection::ProductionAndTests)
+}
+
+fn discover_with_selection(
+    root: &Path,
+    selection: SourceSelection,
+) -> Result<DiscoveredProject, String> {
     let root = root.canonicalize().map_err(|error| {
         format!(
             "cannot resolve project directory `{}`: {error}",
@@ -156,7 +255,19 @@ pub(crate) fn discover(root: &Path) -> Result<DiscoveredProject, String> {
         }
     };
 
-    let sources = collect_sources(&root, has_config)?;
+    let production_sources = collect_sources(&root, SourceSelection::Production)?;
+    if production_sources.is_empty() && selection == SourceSelection::Production {
+        return Err(format!(
+            "a source file is required: project `{}` contains no production `.to` source files",
+            root.display()
+        ));
+    }
+    let sources = match selection {
+        SourceSelection::Production => production_sources.clone(),
+        SourceSelection::ProductionAndTests => {
+            collect_sources(&root, SourceSelection::ProductionAndTests)?
+        }
+    };
     if sources.is_empty() {
         return Err(format!(
             "a source file is required: project `{}` contains no `.to` source files",
@@ -193,47 +304,38 @@ pub(crate) fn discover(root: &Path) -> Result<DiscoveredProject, String> {
             .collect()
     });
     let features = target.features.unwrap_or_default();
-    let root_source = choose_root_source(&sources);
     let package_id = format!("workspace:{package_name}@local");
-    let dependencies = config
-        .dependencies
-        .iter()
-        .map(|(alias, dependency)| json!({"alias": alias, "package": dependency.package()}))
-        .collect::<Vec<_>>();
-    let manifest = json!({
-        "format": MANIFEST_FORMAT,
-        "target": {
-            "name": target_name,
-            "profile": profile,
-            "capability_registry": capability_registry,
-            "capabilities": capabilities,
-            "features": features
-        },
-        "root": {
-            "package": package_id,
-            "source": root_source.physical_path,
-            "form": "module"
-        },
-        "standard": BOOTSTRAP_STANDARD_PACKAGE,
-        "packages": [{
-            "id": package_id,
-            "local_name": package_name,
-            "edition": edition,
-            "dependencies": dependencies,
-            "source_sets": [{
-                "id": "common",
-                "sources": sources.iter().map(|source| json!({
-                    "physical_path": source.physical_path,
-                    "logical_path": source.logical_path,
-                    "module": source.module
-                })).collect::<Vec<_>>()
-            }]
-        }],
-        "generator_inputs": [],
-        "privileged_units": []
-    });
-    let manifest_bytes = serde_json::to_vec(&manifest)
-        .map_err(|error| format!("cannot encode discovered project: {error}"))?;
+    let production_manifest_bytes = (!production_sources.is_empty())
+        .then(|| {
+            project_manifest(
+                &package_name,
+                &edition,
+                &target_name,
+                &profile,
+                &capability_registry,
+                &capabilities,
+                &features,
+                &config.dependencies,
+                &production_sources,
+            )
+        })
+        .transpose()?;
+    let manifest_bytes = match selection {
+        SourceSelection::Production => production_manifest_bytes
+            .clone()
+            .expect("production discovery rejected an empty production source set"),
+        SourceSelection::ProductionAndTests => project_manifest(
+            &package_name,
+            &edition,
+            &target_name,
+            &profile,
+            &capability_registry,
+            &capabilities,
+            &features,
+            &config.dependencies,
+            &sources,
+        )?,
+    };
 
     let lock_path = root.join("tondo.lock.toml");
     let lockfile_bytes = match fs::read(&lock_path) {
@@ -255,7 +357,22 @@ pub(crate) fn discover(root: &Path) -> Result<DiscoveredProject, String> {
                     }
                 }
             }
-            toml_to_json(&bytes, &lock_path)?
+            let production_lock = toml_to_json(&bytes, &lock_path)?;
+            let production_manifest = production_manifest_bytes.as_deref().ok_or_else(|| {
+                "a persistent lockfile requires at least one production source".to_owned()
+            })?;
+            ProjectPlan::parse(production_manifest, &production_lock).map_err(|error| {
+                format!(
+                    "production lockfile `{}` does not match the publishable project: {error}",
+                    lock_path.display()
+                )
+            })?;
+            match selection {
+                SourceSelection::Production => production_lock,
+                SourceSelection::ProductionAndTests => {
+                    derive_test_lockfile(&production_lock, &manifest_bytes, &package_id, &sources)?
+                }
+            }
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             if !config.dependencies.is_empty() {
@@ -285,6 +402,72 @@ fn toml_to_json(bytes: &[u8], path: &Path) -> Result<Vec<u8>, String> {
         .map_err(|error| format!("invalid `{}`: {error}", path.display()))?;
     serde_json::to_vec(&value)
         .map_err(|error| format!("cannot normalize `{}`: {error}", path.display()))
+}
+
+fn derive_test_lockfile(
+    production_lock: &[u8],
+    test_manifest: &[u8],
+    package_id: &str,
+    sources: &[SourceRecord],
+) -> Result<Vec<u8>, String> {
+    let mut lock: serde_json::Value = serde_json::from_slice(production_lock)
+        .map_err(|error| format!("cannot decode validated production lockfile: {error}"))?;
+    let packages = lock
+        .get_mut("packages")
+        .and_then(serde_json::Value::as_array_mut)
+        .ok_or_else(|| "validated production lockfile has no package array".to_owned())?;
+    let package = packages
+        .iter_mut()
+        .find(|package| package.get("id").and_then(serde_json::Value::as_str) == Some(package_id))
+        .ok_or_else(|| {
+            format!("validated production lockfile omits root package `{package_id}`")
+        })?;
+    let mut dependencies = serde_json::from_value::<Vec<OwnedDependencyFingerprint>>(
+        package
+            .get("dependencies")
+            .cloned()
+            .ok_or_else(|| "validated root package omits dependencies".to_owned())?,
+    )
+    .map_err(|error| format!("cannot decode validated root dependencies: {error}"))?;
+    dependencies
+        .sort_by(|left, right| (&left.alias, &left.package).cmp(&(&right.alias, &right.package)));
+    let mut locked_sources = sources
+        .iter()
+        .map(|source| OwnedLockedSourceFingerprint {
+            source_set: "common".into(),
+            physical_path: source.physical_path.clone(),
+            logical_path: source.logical_path.clone(),
+            module: source.module.clone(),
+            sha256: source.sha256.clone(),
+        })
+        .collect::<Vec<_>>();
+    locked_sources.sort_by(|left, right| left.physical_path.cmp(&right.physical_path));
+    let content_hash = sha256(
+        &serde_json::to_vec(&OwnedPackageFingerprint {
+            package_id,
+            dependencies: &dependencies,
+            sources: &locked_sources,
+            interface_hash: None,
+        })
+        .map_err(|error| format!("cannot encode test package fingerprint: {error}"))?,
+    );
+    let package = package
+        .as_object_mut()
+        .ok_or_else(|| "validated root package is not an object".to_owned())?;
+    package.insert("content_hash".into(), content_hash.into());
+    package.insert(
+        "sources".into(),
+        serde_json::to_value(locked_sources)
+            .map_err(|error| format!("cannot encode test source lock: {error}"))?,
+    );
+    lock.as_object_mut()
+        .ok_or_else(|| "validated production lockfile is not an object".to_owned())?
+        .insert("manifest_hash".into(), sha256(test_manifest).into());
+    let bytes = serde_json::to_vec(&lock)
+        .map_err(|error| format!("cannot encode derived test lockfile: {error}"))?;
+    ProjectPlan::parse(test_manifest, &bytes)
+        .map_err(|error| format!("derived test lockfile is inconsistent: {error}"))?;
+    Ok(bytes)
 }
 
 fn generated_lockfile(
@@ -338,22 +521,26 @@ fn generated_lockfile(
     serde_json::to_vec(&lockfile).map_err(|error| format!("cannot encode lockfile: {error}"))
 }
 
-fn collect_sources(root: &Path, has_config: bool) -> Result<Vec<SourceRecord>, String> {
+fn collect_sources(root: &Path, selection: SourceSelection) -> Result<Vec<SourceRecord>, String> {
     let mut files = Vec::new();
     let src = root.join("src");
     if src.is_dir() {
-        collect_dir(&src, &mut files)?;
+        collect_dir(
+            &src,
+            &mut files,
+            selection == SourceSelection::ProductionAndTests,
+        )?;
+    } else {
+        collect_root_sources(
+            root,
+            &mut files,
+            selection == SourceSelection::ProductionAndTests,
+        )?;
+    }
+    if selection == SourceSelection::ProductionAndTests {
         let tests = root.join("tests");
         if tests.is_dir() {
-            collect_dir(&tests, &mut files)?;
-        }
-    } else {
-        collect_root_sources(root, &mut files)?;
-        if has_config {
-            let tests = root.join("tests");
-            if tests.is_dir() {
-                collect_dir(&tests, &mut files)?;
-            }
+            collect_dir(&tests, &mut files, true)?;
         }
     }
     files.sort();
@@ -377,7 +564,11 @@ fn collect_sources(root: &Path, has_config: bool) -> Result<Vec<SourceRecord>, S
         .collect()
 }
 
-fn collect_root_sources(root: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
+fn collect_root_sources(
+    root: &Path,
+    files: &mut Vec<PathBuf>,
+    include_tests: bool,
+) -> Result<(), String> {
     let entries = fs::read_dir(root).map_err(|error| {
         format!(
             "cannot read project directory `{}`: {error}",
@@ -394,6 +585,7 @@ fn collect_root_sources(root: &Path, files: &mut Vec<PathBuf>) -> Result<(), Str
         }
         if metadata.is_file()
             && path.extension().and_then(|extension| extension.to_str()) == Some("to")
+            && (include_tests || !is_test_source(&path))
         {
             files.push(path);
         }
@@ -401,7 +593,11 @@ fn collect_root_sources(root: &Path, files: &mut Vec<PathBuf>) -> Result<(), Str
     Ok(())
 }
 
-fn collect_dir(directory: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
+fn collect_dir(
+    directory: &Path,
+    files: &mut Vec<PathBuf>,
+    include_tests: bool,
+) -> Result<(), String> {
     let entries = fs::read_dir(directory).map_err(|error| {
         format!(
             "cannot read project directory `{}`: {error}",
@@ -424,14 +620,21 @@ fn collect_dir(directory: &Path, files: &mut Vec<PathBuf>) -> Result<(), String>
             if name.starts_with('.') || matches!(name, "target" | "vendor") {
                 continue;
             }
-            collect_dir(&path, files)?;
+            collect_dir(&path, files, include_tests)?;
         } else if metadata.is_file()
             && path.extension().and_then(|extension| extension.to_str()) == Some("to")
+            && (include_tests || !is_test_source(&path))
         {
             files.push(path);
         }
     }
     Ok(())
+}
+
+fn is_test_source(path: &Path) -> bool {
+    path.file_stem()
+        .and_then(|stem| stem.to_str())
+        .is_some_and(|stem| stem.ends_with("_test"))
 }
 
 fn choose_root_source(sources: &[SourceRecord]) -> &SourceRecord {
@@ -504,6 +707,11 @@ mod tests {
     fn discovers_conventional_sources_and_generates_a_closed_internal_graph() {
         let root = temporary_project();
         fs::write(
+            root.join("src/models/user_test.to"),
+            b"test user { assert(true) }\n",
+        )
+        .unwrap();
+        fs::write(
             root.join("tondo.toml"),
             "[package]\nname = \"demo\"\nedition = \"0.1\"\n",
         )
@@ -515,8 +723,43 @@ mod tests {
         )
         .unwrap();
         assert_eq!(project.target_name(), "tondo-vm-hosted");
-        assert_eq!(project.selected_source_paths().count(), 3);
+        assert_eq!(project.selected_source_paths().count(), 2);
+        assert!(
+            project
+                .selected_source_paths()
+                .all(|path| !path.starts_with("tests/") && !path.ends_with("_test.to"))
+        );
         assert_eq!(project.root_source_path(), "src/main.to");
+
+        let mut lock: serde_json::Value =
+            serde_json::from_slice(&discovered.lockfile_bytes).unwrap();
+        lock["packages"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("interface");
+        fs::write(
+            root.join("tondo.lock.toml"),
+            toml::to_string(&toml::Value::try_from(lock).unwrap()).unwrap(),
+        )
+        .unwrap();
+
+        let discovered = discover_for_tests(&root).unwrap();
+        let project = tondo_compiler::project::ProjectPlan::parse(
+            &discovered.manifest_bytes,
+            &discovered.lockfile_bytes,
+        )
+        .unwrap();
+        assert_eq!(project.selected_source_paths().count(), 4);
+        assert!(
+            project
+                .selected_source_paths()
+                .any(|path| path == "src/models/user_test.to")
+        );
+        assert!(
+            project
+                .selected_source_paths()
+                .any(|path| path == "tests/smoke.to")
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -547,7 +790,7 @@ mod tests {
     }
 
     #[test]
-    fn accepts_custom_toml_target_and_both_dependency_spellings() {
+    fn custom_target_and_dependency_spellings_still_require_a_closed_lock() {
         let root = temporary_project();
         fs::create_dir_all(root.join("interfaces")).unwrap();
         fs::write(root.join("interfaces/http.ti"), b"interface").unwrap();
@@ -561,9 +804,8 @@ mod tests {
             "format = \"tondo-lock-draft\"\n",
         )
         .unwrap();
-        let discovered = discover(&root).unwrap();
-        assert!(!discovered.manifest_bytes.is_empty());
-        assert!(!discovered.lockfile_bytes.is_empty());
+        let error = discover(&root).unwrap_err();
+        assert!(error.contains("production lockfile") && error.contains("manifest_hash"));
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -628,8 +870,16 @@ mod tests {
             &discovered.lockfile_bytes,
         )
         .unwrap();
-        assert_eq!(project.selected_source_paths().count(), 2);
+        assert_eq!(project.selected_source_paths().count(), 1);
         assert_eq!(project.root_source_path(), "main.to");
+
+        let discovered = discover_for_tests(&root).unwrap();
+        let project = tondo_compiler::project::ProjectPlan::parse(
+            &discovered.manifest_bytes,
+            &discovered.lockfile_bytes,
+        )
+        .unwrap();
+        assert_eq!(project.selected_source_paths().count(), 2);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -664,7 +914,51 @@ mod tests {
             &discovered.lockfile_bytes,
         )
         .unwrap();
-        assert_eq!(project.selected_source_paths().count(), 3);
+        assert_eq!(project.selected_source_paths().count(), 2);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn root_test_sources_are_visible_only_to_the_test_discovery_entrypoint() {
+        let root = std::env::temp_dir().join(format!(
+            "tondo-root-tests-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("main.to"), b"fn main() {}\n").unwrap();
+        fs::write(root.join("math_test.to"), b"test math { assert(true) }\n").unwrap();
+        fs::create_dir_all(root.join("tests")).unwrap();
+        fs::write(root.join("tests/api.to"), b"test api { assert(true) }\n").unwrap();
+        fs::write(
+            root.join("tondo.toml"),
+            "[package]\nname = \"root_tests\"\n",
+        )
+        .unwrap();
+
+        let production = discover(&root).unwrap();
+        let production = tondo_compiler::project::ProjectPlan::parse(
+            &production.manifest_bytes,
+            &production.lockfile_bytes,
+        )
+        .unwrap();
+        assert_eq!(
+            production.selected_source_paths().collect::<Vec<_>>(),
+            ["main.to"]
+        );
+
+        let tests = discover_for_tests(&root).unwrap();
+        let tests = tondo_compiler::project::ProjectPlan::parse(
+            &tests.manifest_bytes,
+            &tests.lockfile_bytes,
+        )
+        .unwrap();
+        assert_eq!(
+            tests.selected_source_paths().collect::<Vec<_>>(),
+            ["main.to", "math_test.to", "tests/api.to"]
+        );
         fs::remove_dir_all(root).unwrap();
     }
 }

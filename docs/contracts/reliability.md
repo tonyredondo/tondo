@@ -43,6 +43,11 @@ repository records; the quality gate supplies fresh coverage and mutation
 reports to the ratchet. The record never contains physical paths or report
 contents, only portable logical paths and SHA-256 identities.
 
+The current ratchet does not yet bind those report identities to a digest of
+the measured workspace. `QUALITY-EVIDENCE-BIND-001` is therefore a required
+precondition of final sealing; existing records are promotion-mechanism proofs,
+not evidence that an arbitrary later tree retained the measured quality.
+
 ## Inventory semantics
 
 One logical test is not necessarily one source file or one execution:
@@ -60,10 +65,9 @@ One logical test is not necessarily one source file or one execution:
   They are contracts within Tondo 0.1, but are never counted as executable
   coverage before their implementation and draft evidence exist.
 
-The current draft inventory contains 1,886 logical tests and 2,105 repetitions.
-Of those, 1,836 are executable, 38 are draft-pending contracts, three are fuzz
-campaigns, and nine are non-executable fences. Counts are derived from entries
-and cannot be edited independently.
+Current counts are read from `testing/inventory.json.summary`; prose never
+duplicates them. The generator derives every total and status from entries, and
+the checker rejects a summary edited independently.
 
 The inventory rejects:
 
@@ -105,11 +109,10 @@ A draft layer declaration without executable reviewed evidence cannot become
 `covered`. A section or nearby example never counts as semantic coverage by
 proximity.
 
-The current matrix reports 17 covered, 27 draft-pending, seven
-target-inapplicable, three standard-library-pending, and 262 explicit
-toolchain-limit requirements. Later milestones must replace pending states and
-limits with reviewed claims in `testing/normative-evidence.json`; they cannot
-silently turn them green.
+Current counts are read from `testing/coverage-matrix.json.summary`; prose never
+duplicates them. Later milestones must replace pending states and limits with
+reviewed claims in `testing/normative-evidence.json`; they cannot silently turn
+them green.
 
 Each requirement records six dimensions: positive behavior,
 rejection/failure, material boundaries, composition, oracle, and public
@@ -300,8 +303,11 @@ The ordinary local commands are:
 bash scripts/test-gate.sh
 TONDO_FUZZ_RUNS=128 bash scripts/fuzz-smoke.sh
 bash scripts/quality-gate.sh
-cargo run -p tondo-reliability -- ratchet check --root .
 ~~~
+
+`quality-gate.sh` supplies the fresh coverage and mutation paths to
+`ratchet check`; invoking the ratchet without those reports is expected to fail
+while executable draft layers exist.
 
 Updating a quality threshold is a reviewed baseline change, not an automatic
 snapshot update. Generate a fresh report, inspect uncovered risk scopes and all

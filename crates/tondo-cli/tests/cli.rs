@@ -183,32 +183,65 @@ fn test_project(source: &[u8]) -> std::path::PathBuf {
     let production_source = b"fn main() {}\n";
     let production_hash = sha256(production_source);
     let source_hash = sha256(source);
+    let production_manifest_text = format!(
+        "{{\"format\":\"{MANIFEST_FORMAT}\",\"target\":{{\"name\":\"tondo-vm-hosted\",\"profile\":\"hosted\",\"capability_registry\":\"{CAPABILITY_REGISTRY}\",\"capabilities\":[\"console\",\"process\",\"clock\",\"environment\"],\"features\":[]}},\"root\":{{\"package\":\"{package_id}\",\"source\":\"src/main.to\",\"form\":\"module\"}},\"standard\":\"{BOOTSTRAP_STANDARD_PACKAGE}\",\"packages\":[{{\"id\":\"{package_id}\",\"local_name\":\"cli\",\"edition\":\"0.1\",\"dependencies\":[],\"source_sets\":[{{\"id\":\"common\",\"sources\":[{{\"physical_path\":\"src/main.to\",\"logical_path\":\"src/main.to\",\"module\":\"main\"}}]}}]}}],\"generator_inputs\":[],\"privileged_units\":[]}}"
+    );
+    let production_manifest_value: serde_json::Value =
+        serde_json::from_str(&production_manifest_text).unwrap();
+    let production_manifest = serde_json::to_vec(&production_manifest_value).unwrap();
     let manifest_text = format!(
         "{{\"format\":\"{MANIFEST_FORMAT}\",\"target\":{{\"name\":\"tondo-vm-hosted\",\"profile\":\"hosted\",\"capability_registry\":\"{CAPABILITY_REGISTRY}\",\"capabilities\":[\"console\",\"process\",\"clock\",\"environment\"],\"features\":[]}},\"root\":{{\"package\":\"{package_id}\",\"source\":\"src/main.to\",\"form\":\"module\"}},\"standard\":\"{BOOTSTRAP_STANDARD_PACKAGE}\",\"packages\":[{{\"id\":\"{package_id}\",\"local_name\":\"cli\",\"edition\":\"0.1\",\"dependencies\":[],\"source_sets\":[{{\"id\":\"common\",\"sources\":[{{\"physical_path\":\"src/main.to\",\"logical_path\":\"src/main.to\",\"module\":\"main\"}},{{\"physical_path\":\"tests/smoke.to\",\"logical_path\":\"tests/smoke.to\",\"module\":\"tests\"}}]}}]}}],\"generator_inputs\":[],\"privileged_units\":[]}}"
     );
     let manifest_value: serde_json::Value = serde_json::from_str(&manifest_text).unwrap();
     let manifest = serde_json::to_vec(&manifest_value).unwrap();
+    let production_package_fingerprint = format!(
+        "{{\"package_id\":\"{package_id}\",\"dependencies\":[],\"sources\":[{{\"source_set\":\"common\",\"physical_path\":\"src/main.to\",\"logical_path\":\"src/main.to\",\"module\":\"main\",\"sha256\":\"{production_hash}\"}}],\"interface_hash\":null}}"
+    );
+    let production_package_hash = sha256(production_package_fingerprint.as_bytes());
     let package_fingerprint = format!(
         "{{\"package_id\":\"{package_id}\",\"dependencies\":[],\"sources\":[{{\"source_set\":\"common\",\"physical_path\":\"src/main.to\",\"logical_path\":\"src/main.to\",\"module\":\"main\",\"sha256\":\"{production_hash}\"}},{{\"source_set\":\"common\",\"physical_path\":\"tests/smoke.to\",\"logical_path\":\"tests/smoke.to\",\"module\":\"tests\",\"sha256\":\"{source_hash}\"}}],\"interface_hash\":null}}"
     );
     let package_hash = sha256(package_fingerprint.as_bytes());
-    let lockfile = format!(
-        "{{\"format\":\"{LOCKFILE_FORMAT}\",\"manifest_hash\":\"{}\",\"standard\":{{\"package_id\":\"{BOOTSTRAP_STANDARD_PACKAGE}\",\"content_hash\":\"{}\"}},\"packages\":[{{\"id\":\"{package_id}\",\"content_hash\":\"{package_hash}\",\"dependencies\":[],\"sources\":[{{\"source_set\":\"common\",\"physical_path\":\"src/main.to\",\"logical_path\":\"src/main.to\",\"module\":\"main\",\"sha256\":\"{production_hash}\"}},{{\"source_set\":\"common\",\"physical_path\":\"tests/smoke.to\",\"logical_path\":\"tests/smoke.to\",\"module\":\"tests\",\"sha256\":\"{source_hash}\"}}],\"interface\":null}}],\"generator_inputs\":[],\"privileged_units\":[]}}",
-        sha256(&manifest),
+    let production_lockfile = format!(
+        "{{\"format\":\"{LOCKFILE_FORMAT}\",\"manifest_hash\":\"{}\",\"standard\":{{\"package_id\":\"{BOOTSTRAP_STANDARD_PACKAGE}\",\"content_hash\":\"{}\"}},\"packages\":[{{\"id\":\"{package_id}\",\"content_hash\":\"{production_package_hash}\",\"dependencies\":[],\"sources\":[{{\"source_set\":\"common\",\"physical_path\":\"src/main.to\",\"logical_path\":\"src/main.to\",\"module\":\"main\",\"sha256\":\"{production_hash}\"}}],\"interface\":null}}],\"generator_inputs\":[],\"privileged_units\":[]}}",
+        sha256(&production_manifest),
         bootstrap_standard_hash(),
     );
-    let mut lock_value: serde_json::Value = serde_json::from_str(&lockfile).unwrap();
-    remove_json_nulls(&mut lock_value);
-    let lock_toml = toml::to_string(&toml::Value::try_from(lock_value).unwrap()).unwrap();
+    let mut production_lock_value: serde_json::Value =
+        serde_json::from_str(&production_lockfile).unwrap();
+    remove_json_nulls(&mut production_lock_value);
+    let lock_toml =
+        toml::to_string(&toml::Value::try_from(production_lock_value).unwrap()).unwrap();
     fs::write(directory.join("tondo.lock.toml"), lock_toml).unwrap();
-    let normalized_lock = serde_json::to_vec(
+    let normalized_production_lock = serde_json::to_vec(
         &toml::from_str::<toml::Value>(
             &fs::read_to_string(directory.join("tondo.lock.toml")).unwrap(),
         )
         .unwrap(),
     )
     .unwrap();
-    let project = ProjectPlan::parse(&manifest, &normalized_lock).unwrap();
+    let mut test_lock: serde_json::Value =
+        serde_json::from_slice(&normalized_production_lock).unwrap();
+    test_lock["manifest_hash"] = sha256(&manifest).into();
+    test_lock["packages"][0]["content_hash"] = package_hash.into();
+    test_lock["packages"][0]["sources"] = serde_json::json!([
+        {
+            "source_set": "common",
+            "physical_path": "src/main.to",
+            "logical_path": "src/main.to",
+            "module": "main",
+            "sha256": production_hash
+        },
+        {
+            "source_set": "common",
+            "physical_path": "tests/smoke.to",
+            "logical_path": "tests/smoke.to",
+            "module": "tests",
+            "sha256": source_hash
+        }
+    ]);
+    let test_lock = serde_json::to_vec(&test_lock).unwrap();
+    let project = ProjectPlan::parse(&manifest, &test_lock).unwrap();
     fs::write(
         directory.join("tests/snapshots.json"),
         SnapshotStore::empty(package_id)

@@ -7,7 +7,7 @@ use std::process::ExitCode;
 use tondo_conformance::lineage::DraftLineage;
 use tondo_conformance::manifest::CaseGroup;
 use tondo_conformance::runner::{ProcessAdapter, run_suite};
-use tondo_conformance::seal::{SealOutcome, seal_candidate, verify_candidate};
+use tondo_conformance::seal::{ProofOutcome, seal_promotion_proof, verify_promotion_proof};
 use tondo_conformance::sha256;
 
 const USAGE: &str = "\
@@ -16,8 +16,8 @@ Tondo draft conformance runner
 Usage:
   tondo-conformance validate --root <directory> --manifest <draft-path> --lineage draft
   tondo-conformance run --root <directory> --manifest <draft-path> --lineage draft --adapter <executable> [--group <group>] [--output <path>]
-  tondo-conformance seal --root <directory> --manifest <draft-path> --lineage draft --result <path> --output <directory>
-  tondo-conformance verify-candidate --root <directory> --candidate <directory>
+  tondo-conformance seal-proof --root <directory> --manifest <draft-path> --lineage draft --result <path> --output <directory>
+  tondo-conformance verify-proof --root <directory> --proof <directory>
 
 Groups:
   lex-parse-format, compile-pass, compile-fail, semantic-queries, runtime,
@@ -44,7 +44,7 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
     let mut group = None;
     let mut output = None;
     let mut result = None;
-    let mut candidate = None;
+    let mut proof = None;
     let mut index = 1;
     while index < arguments.len() {
         let option = &arguments[index];
@@ -61,12 +61,12 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
             "--group" => set_once(&mut group, parse_group(value)?, option)?,
             "--output" => set_once(&mut output, PathBuf::from(value), option)?,
             "--result" => set_once(&mut result, PathBuf::from(value), option)?,
-            "--candidate" => set_once(&mut candidate, PathBuf::from(value), option)?,
+            "--proof" => set_once(&mut proof, PathBuf::from(value), option)?,
             _ => return Err(format!("unknown option `{option}`\n\n{USAGE}")),
         }
     }
     let root = root.ok_or_else(|| "`--root` is required".to_owned())?;
-    if command == "verify-candidate" {
+    if command == "verify-proof" {
         if manifest.is_some()
             || lineage.is_some()
             || adapter.is_some()
@@ -74,26 +74,25 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
             || output.is_some()
             || result.is_some()
         {
-            return Err("verify-candidate accepts only --root and --candidate".into());
+            return Err("verify-proof accepts only --root and --proof".into());
         }
-        let candidate =
-            candidate.ok_or_else(|| "`--candidate` is required for verify-candidate".to_owned())?;
-        require_relative_normal(&candidate, "--candidate")?;
-        let candidate_manifest = candidate.join("manifest.json");
+        let proof = proof.ok_or_else(|| "`--proof` is required for verify-proof".to_owned())?;
+        require_relative_normal(&proof, "--proof")?;
+        let proof_manifest = proof.join("manifest.json");
         let verified =
-            verify_candidate(&root, &candidate_manifest).map_err(|error| error.to_string())?;
-        let bytes = fs::read(root.join(&candidate_manifest))
-            .map_err(|error| format!("cannot read `{}`: {error}", candidate_manifest.display()))?;
+            verify_promotion_proof(&root, &proof_manifest).map_err(|error| error.to_string())?;
+        let bytes = fs::read(root.join(&proof_manifest))
+            .map_err(|error| format!("cannot read `{}`: {error}", proof_manifest.display()))?;
         println!(
-            "{} revision {} candidate {}",
+            "{} revision {} promotion-proof {}",
             verified.lineage.name,
             verified.lineage.revision,
             sha256(&bytes)
         );
         return Ok(());
     }
-    if candidate.is_some() {
-        return Err("`--candidate` is accepted only by verify-candidate".into());
+    if proof.is_some() {
+        return Err("`--proof` is accepted only by verify-proof".into());
     }
     let manifest = manifest.ok_or_else(|| "`--manifest` is required".to_owned())?;
     let selection = lineage.ok_or_else(|| "`--lineage` is required".to_owned())?;
@@ -133,28 +132,30 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
             }
             Ok(())
         }
-        "seal" => {
+        "seal-proof" => {
             if adapter.is_some() || group.is_some() {
                 return Err(
-                    "seal accepts --root, --manifest, --lineage, --result, and --output".into(),
+                    "seal-proof accepts --root, --manifest, --lineage, --result, and --output"
+                        .into(),
                 );
             }
-            let result = result.ok_or_else(|| "`--result` is required for seal".to_owned())?;
-            let output = output.ok_or_else(|| "`--output` is required for seal".to_owned())?;
+            let result =
+                result.ok_or_else(|| "`--result` is required for seal-proof".to_owned())?;
+            let output =
+                output.ok_or_else(|| "`--output` is required for seal-proof".to_owned())?;
             require_relative_normal(&result, "--result")?;
             require_relative_normal(&output, "--output")?;
-            let outcome = seal_candidate(&lineage, &root.join(&result), &output)
+            let outcome = seal_promotion_proof(&lineage, &root.join(&result), &output)
                 .map_err(|error| error.to_string())?;
-            let candidate_manifest = output.join("manifest.json");
-            let bytes = fs::read(root.join(&candidate_manifest)).map_err(|error| {
-                format!("cannot read `{}`: {error}", candidate_manifest.display())
-            })?;
+            let proof_manifest = output.join("manifest.json");
+            let bytes = fs::read(root.join(&proof_manifest))
+                .map_err(|error| format!("cannot read `{}`: {error}", proof_manifest.display()))?;
             let verb = match outcome {
-                SealOutcome::Created => "sealed",
-                SealOutcome::AlreadyPresent => "verified existing",
+                ProofOutcome::Created => "sealed promotion proof",
+                ProofOutcome::AlreadyPresent => "verified existing promotion proof",
             };
             println!(
-                "{verb} {} revision {} candidate {}",
+                "{verb} {} revision {} {}",
                 lineage.manifest().lineage,
                 lineage.manifest().revision,
                 sha256(&bytes)
@@ -301,12 +302,12 @@ mod tests {
         );
 
         assert_eq!(
-            run(suite_arguments("seal")).unwrap_err(),
-            "`--result` is required for seal"
+            run(suite_arguments("seal-proof")).unwrap_err(),
+            "`--result` is required for seal-proof"
         );
         assert_eq!(
-            run(vec!["verify-candidate".into(), "--root".into(), ".".into()]).unwrap_err(),
-            "`--candidate` is required for verify-candidate"
+            run(vec!["verify-proof".into(), "--root".into(), ".".into()]).unwrap_err(),
+            "`--proof` is required for verify-proof"
         );
         assert!(require_relative_normal(PathBuf::from("a/b").as_path(), "path").is_ok());
         assert!(require_relative_normal(PathBuf::from("../a").as_path(), "path").is_err());

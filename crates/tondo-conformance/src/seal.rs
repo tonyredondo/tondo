@@ -1,4 +1,4 @@
-//! Atomic, content-addressed promotion of the completed draft into a release candidate.
+//! Atomic, content-addressed proof that the draft promotion mechanism is closed.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
@@ -10,14 +10,17 @@ use std::path::{Component, Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::lineage::{
-    DRAFT_LINEAGE_FORMAT, DRAFT_LINEAGE_NAME, DraftLineage, DraftLineageManifest,
+    DRAFT_LINEAGE_NAME, DraftCaseLayerManifest, DraftLineage, DraftLineageManifest,
+    validate_active_manifest, validate_case_layer, validate_manifest as validate_lineage_manifest,
 };
-use crate::manifest::PinnedFile;
+use crate::manifest::{
+    CaseGroup, PinnedFile, SuiteManifest, referenced_files, validate_embedded_suite,
+};
 use crate::{ADAPTER_PROTOCOL, RESULT_FORMAT, SUITE_NAME, sha256};
 
-pub const CANDIDATE_FORMAT: &str = "tondo-conformance-candidate/1";
-pub const CANDIDATE_STATE: &str = "candidate";
-pub const DEFAULT_CANDIDATE_DIRECTORY: &str = "conformance/candidate";
+pub const PROMOTION_PROOF_FORMAT: &str = "tondo-conformance-promotion-proof/1";
+pub const PROMOTION_PROOF_STATE: &str = "promotion-proof";
+pub const DEFAULT_PROOF_DIRECTORY: &str = "conformance/proofs";
 pub const RATCHET_PATH: &str = "testing/conformance-ratchet.json";
 
 const RATCHET_FORMAT: &str = "tondo-conformance-ratchet/1";
@@ -37,19 +40,19 @@ const ADAPTER_SOURCES: [&str; 10] = [
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct CandidateManifest {
+pub struct PromotionProofManifest {
     pub format: String,
     pub edition: String,
     pub state: String,
-    pub lineage: CandidateLineage,
-    pub target: CandidateTarget,
-    pub adapter: CandidateAdapter,
-    pub files: Vec<CandidateFile>,
+    pub lineage: ProofLineage,
+    pub target: ProofTarget,
+    pub adapter: ProofAdapter,
+    pub files: Vec<ProofFile>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct CandidateLineage {
+pub struct ProofLineage {
     pub name: String,
     pub revision: u32,
     pub manifest_sha256: String,
@@ -57,7 +60,7 @@ pub struct CandidateLineage {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct CandidateTarget {
+pub struct ProofTarget {
     pub name: String,
     pub profile: String,
     pub capabilities: Vec<String>,
@@ -65,7 +68,7 @@ pub struct CandidateTarget {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct CandidateAdapter {
+pub struct ProofAdapter {
     pub package: String,
     pub protocol: String,
     pub implementation: String,
@@ -73,14 +76,14 @@ pub struct CandidateAdapter {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct CandidateFile {
+pub struct ProofFile {
     pub role: String,
     pub source_path: String,
     pub object: PinnedFile,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SealOutcome {
+pub enum ProofOutcome {
     Created,
     AlreadyPresent,
 }
@@ -98,8 +101,10 @@ impl fmt::Display for SealError {
             Self::Io { path, message } => {
                 write!(formatter, "cannot access `{}`: {message}", path.display())
             }
-            Self::Json(message) => write!(formatter, "invalid candidate JSON: {message}"),
-            Self::Invalid(message) => write!(formatter, "invalid conformance candidate: {message}"),
+            Self::Json(message) => write!(formatter, "invalid promotion-proof JSON: {message}"),
+            Self::Invalid(message) => {
+                write!(formatter, "invalid conformance promotion proof: {message}")
+            }
         }
     }
 }
@@ -107,8 +112,8 @@ impl fmt::Display for SealError {
 impl Error for SealError {}
 
 #[derive(Debug, Clone)]
-struct CandidateBundle {
-    manifest: CandidateManifest,
+struct PromotionProofBundle {
+    manifest: PromotionProofManifest,
     manifest_bytes: Vec<u8>,
     objects: BTreeMap<String, Vec<u8>>,
 }
@@ -137,22 +142,39 @@ struct ScopeEvidence {
     report_sha256: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ResultRecord {
     format: String,
     suite: String,
+    suite_version: String,
     edition: String,
     manifest_sha256: String,
     adapter: ResultAdapter,
-    target: CandidateTarget,
+    target: ProofTarget,
     passed: bool,
+    cases: Vec<ResultCase>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ResultAdapter {
     adapter_protocol: String,
+    backend: String,
+    compiler: String,
+    compiler_version: String,
     implementation: String,
-    targets: Vec<CandidateTarget>,
+    language_edition: String,
+    targets: Vec<ProofTarget>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ResultCase {
+    id: String,
+    group: CaseGroup,
+    repetitions: u32,
+    observation_sha256: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -173,44 +195,48 @@ struct CoverageRequirement {
     status: String,
 }
 
-/// Builds and atomically publishes the exact completed draft as a self-contained
-/// content-addressed candidate. Existing identical candidates are accepted;
-/// any differing destination fails closed.
-pub fn seal_candidate(
+/// Builds and atomically publishes a self-contained, content-addressed proof of
+/// the promotion mechanism. This deliberately does not claim final normative
+/// conformance; that requires the complete draft-layer result defined by G5.
+/// Existing identical proofs are accepted and differing destinations fail closed.
+pub fn seal_promotion_proof(
     lineage: &DraftLineage,
     result_path: &Path,
     output_directory: &Path,
-) -> Result<SealOutcome, SealError> {
+) -> Result<ProofOutcome, SealError> {
     lineage
         .check_sealable()
         .map_err(|error| SealError::Invalid(error.to_string()))?;
-    let bundle = build_candidate(lineage, result_path)?;
+    let bundle = build_promotion_proof(lineage, result_path)?;
     let outcome = publish_bundle(lineage.root(), output_directory, &bundle)?;
-    let verified = verify_candidate(lineage.root(), &output_directory.join("manifest.json"))?;
+    let verified = verify_promotion_proof(lineage.root(), &output_directory.join("manifest.json"))?;
     if verified != bundle.manifest {
-        return invalid("published candidate differs from the promotion input");
+        return invalid("published promotion proof differs from its input");
     }
     Ok(outcome)
 }
 
-/// Verifies an already promoted candidate using only its immutable object
+/// Verifies an already published promotion proof using only its immutable object
 /// closure. Live draft files are deliberately not consulted.
-pub fn verify_candidate(root: &Path, manifest_path: &Path) -> Result<CandidateManifest, SealError> {
-    require_relative_path(manifest_path, "candidate manifest path")?;
+pub fn verify_promotion_proof(
+    root: &Path,
+    manifest_path: &Path,
+) -> Result<PromotionProofManifest, SealError> {
+    require_relative_path(manifest_path, "promotion-proof manifest path")?;
     if manifest_path.file_name().and_then(|name| name.to_str()) != Some("manifest.json") {
-        return invalid("candidate manifest must be named `manifest.json`");
+        return invalid("promotion-proof manifest must be named `manifest.json`");
     }
-    let relative_directory = manifest_path
-        .parent()
-        .ok_or_else(|| SealError::Invalid("candidate manifest has no parent directory".into()))?;
+    let relative_directory = manifest_path.parent().ok_or_else(|| {
+        SealError::Invalid("promotion-proof manifest has no parent directory".into())
+    })?;
     let directory = resolve_directory(root, relative_directory, false)?;
     let absolute = directory.join("manifest.json");
     let bytes = read_regular(&absolute)?;
-    let manifest: CandidateManifest =
+    let manifest: PromotionProofManifest =
         serde_json::from_slice(&bytes).map_err(|error| SealError::Json(error.to_string()))?;
-    validate_candidate_manifest(&manifest)?;
+    validate_promotion_proof_manifest(&manifest)?;
     if canonical_json(&manifest)? != bytes {
-        return invalid("candidate manifest is not canonical pretty JSON");
+        return invalid("promotion-proof manifest is not canonical pretty JSON");
     }
     let mut objects = BTreeMap::new();
     for file in &manifest.files {
@@ -225,15 +251,15 @@ pub fn verify_candidate(root: &Path, manifest_path: &Path) -> Result<CandidateMa
         }
         objects.insert(file.source_path.clone(), object);
     }
-    verify_candidate_directory(&directory, &manifest)?;
-    verify_candidate_closure(&manifest, &objects)?;
+    verify_promotion_proof_directory(&directory, &manifest)?;
+    verify_promotion_proof_closure(&manifest, &objects)?;
     Ok(manifest)
 }
 
-fn build_candidate(
+fn build_promotion_proof(
     lineage: &DraftLineage,
     result_path: &Path,
-) -> Result<CandidateBundle, SealError> {
+) -> Result<PromotionProofBundle, SealError> {
     let root = lineage.root();
     let ratchet_bytes = read_regular(&root.join(RATCHET_PATH))?;
     let ratchet: RatchetRecord = serde_json::from_slice(&ratchet_bytes)
@@ -253,6 +279,7 @@ fn build_candidate(
         lineage.manifest_path().to_string_lossy().as_ref(),
         read_regular(&root.join(lineage.manifest_path()))?,
     )?;
+    add_history_sources(&mut files, &mut objects, root, lineage.manifest())?;
     for specification in &lineage.manifest().specifications {
         add_source(
             &mut files,
@@ -285,6 +312,23 @@ fn build_candidate(
         &lineage.manifest().baseline.specification_snapshot.path,
         read_regular(&root.join(&lineage.manifest().baseline.specification_snapshot.path))?,
     )?;
+    let baseline = lineage.baseline_suite();
+    let referenced = referenced_files(baseline.manifest())
+        .into_iter()
+        .map(|pinned| (pinned.path.clone(), pinned))
+        .collect::<BTreeMap<_, _>>();
+    for pinned in referenced.values() {
+        if pinned.path == baseline.manifest().specification.path {
+            continue;
+        }
+        add_source(
+            &mut files,
+            &mut objects,
+            "regression-input",
+            &pinned.path,
+            baseline.file(pinned).to_vec(),
+        )?;
+    }
     add_source(
         &mut files,
         &mut objects,
@@ -326,29 +370,45 @@ fn build_candidate(
             .cmp(&right.role)
             .then_with(|| left.source_path.cmp(&right.source_path))
     });
-    let manifest = CandidateManifest {
-        format: CANDIDATE_FORMAT.into(),
+    let manifest = PromotionProofManifest {
+        format: PROMOTION_PROOF_FORMAT.into(),
         edition: "0.1".into(),
-        state: CANDIDATE_STATE.into(),
-        lineage: CandidateLineage {
+        state: PROMOTION_PROOF_STATE.into(),
+        lineage: ProofLineage {
             name: lineage.manifest().lineage.clone(),
             revision: lineage.manifest().revision,
             manifest_sha256: lineage.manifest_sha256(),
         },
         target: result.target,
-        adapter: CandidateAdapter {
+        adapter: ProofAdapter {
             package: ADAPTER_PACKAGE.into(),
             protocol: result.adapter.adapter_protocol,
             implementation: result.adapter.implementation,
         },
         files,
     };
-    validate_candidate_manifest(&manifest)?;
-    Ok(CandidateBundle {
+    validate_promotion_proof_manifest(&manifest)?;
+    Ok(PromotionProofBundle {
         manifest_bytes: canonical_json(&manifest)?,
         manifest,
         objects,
     })
+}
+
+fn add_history_sources(
+    files: &mut Vec<ProofFile>,
+    objects: &mut BTreeMap<String, Vec<u8>>,
+    root: &Path,
+    manifest: &DraftLineageManifest,
+) -> Result<(), SealError> {
+    let mut child = manifest.clone();
+    while let Some(parent) = child.parent.clone() {
+        let bytes = read_regular(&root.join(&parent.path))?;
+        add_source(files, objects, "draft-history", &parent.path, bytes.clone())?;
+        child =
+            serde_json::from_slice(&bytes).map_err(|error| SealError::Json(error.to_string()))?;
+    }
+    Ok(())
 }
 
 fn validate_ratchet(
@@ -420,14 +480,33 @@ fn parse_result(bytes: &[u8]) -> Result<ResultRecord, SealError> {
 }
 
 fn validate_result(lineage: &DraftLineage, result: &ResultRecord) -> Result<(), SealError> {
+    validate_result_contract(
+        &lineage.manifest().edition,
+        lineage.baseline_suite().manifest_sha256().as_str(),
+        lineage.baseline_suite().manifest(),
+        result,
+    )
+}
+
+fn validate_result_contract(
+    edition: &str,
+    manifest_sha256: &str,
+    suite: &SuiteManifest,
+    result: &ResultRecord,
+) -> Result<(), SealError> {
     if result.format != RESULT_FORMAT
         || result.suite != SUITE_NAME
-        || result.edition != lineage.manifest().edition
-        || result.manifest_sha256 != lineage.baseline_suite().manifest_sha256()
+        || result.suite_version != suite.version
+        || result.edition != edition
+        || result.manifest_sha256 != manifest_sha256
         || !result.passed
         || result.adapter.adapter_protocol != ADAPTER_PROTOCOL
+        || result.adapter.backend != "bytecode-vm"
+        || result.adapter.compiler != "tondo-bootstrap/draft"
+        || result.adapter.compiler_version != "draft"
         || result.adapter.implementation != "tondo-reference"
-        || !result.adapter.targets.contains(&result.target)
+        || result.adapter.language_edition != edition
+        || result.adapter.targets != [result.target.clone()]
         || result.target.name != "tondo-vm-hosted"
         || result.target.profile != "hosted"
         || result.target.capabilities != ["console", "process"]
@@ -441,18 +520,37 @@ fn validate_result(lineage: &DraftLineage, result: &ResultRecord) -> Result<(), 
             "conformance result does not match the draft regression and reference adapter",
         );
     }
+    if result.cases.len() != suite.cases.len() {
+        return invalid("conformance result does not contain the complete regression case set");
+    }
+    for (observed, expected) in result.cases.iter().zip(&suite.cases) {
+        if observed.id != expected.id
+            || observed.group != expected.group
+            || observed.repetitions != expected.repeat
+            || observed.observation_sha256.len() != expected.repeat as usize
+            || observed
+                .observation_sha256
+                .iter()
+                .any(|hash| !is_sha256(hash))
+        {
+            return invalid(format!(
+                "conformance result case `{}` differs from the pinned regression manifest",
+                expected.id
+            ));
+        }
+    }
     Ok(())
 }
 
 fn add_source(
-    files: &mut Vec<CandidateFile>,
+    files: &mut Vec<ProofFile>,
     objects: &mut BTreeMap<String, Vec<u8>>,
     role: &str,
     source_path: &str,
     bytes: Vec<u8>,
 ) -> Result<(), SealError> {
     if role.is_empty() || source_path.is_empty() {
-        return invalid("candidate file role and source path must be non-empty");
+        return invalid("promotion-proof file role and source path must be non-empty");
     }
     let digest = sha256(&bytes);
     if let Some(previous) = objects.insert(digest.clone(), bytes.clone())
@@ -460,7 +558,7 @@ fn add_source(
     {
         return invalid("two different objects produced the same SHA-256");
     }
-    files.push(CandidateFile {
+    files.push(ProofFile {
         role: role.into(),
         source_path: source_path.into(),
         object: PinnedFile {
@@ -471,10 +569,10 @@ fn add_source(
     Ok(())
 }
 
-fn validate_candidate_manifest(manifest: &CandidateManifest) -> Result<(), SealError> {
-    if manifest.format != CANDIDATE_FORMAT
+fn validate_promotion_proof_manifest(manifest: &PromotionProofManifest) -> Result<(), SealError> {
+    if manifest.format != PROMOTION_PROOF_FORMAT
         || manifest.edition != "0.1"
-        || manifest.state != CANDIDATE_STATE
+        || manifest.state != PROMOTION_PROOF_STATE
         || manifest.lineage.name != DRAFT_LINEAGE_NAME
         || manifest.lineage.revision == 0
         || !is_sha256(&manifest.lineage.manifest_sha256)
@@ -491,14 +589,14 @@ fn validate_candidate_manifest(manifest: &CandidateManifest) -> Result<(), SealE
         || manifest.adapter.implementation != "tondo-reference"
         || manifest.files.is_empty()
     {
-        return invalid("candidate identity, target, adapter, or file closure is invalid");
+        return invalid("promotion-proof identity, target, adapter, or file closure is invalid");
     }
     if manifest
         .files
         .windows(2)
         .any(|pair| (&pair[0].role, &pair[0].source_path) >= (&pair[1].role, &pair[1].source_path))
     {
-        return invalid("candidate files must be sorted and unique");
+        return invalid("promotion-proof files must be sorted and unique");
     }
     let mut sources = BTreeSet::new();
     for file in &manifest.files {
@@ -508,30 +606,30 @@ fn validate_candidate_manifest(manifest: &CandidateManifest) -> Result<(), SealE
             || !is_sha256(&file.object.sha256)
             || file.object.path != format!("objects/{}", file.object.sha256)
         {
-            return invalid("candidate file provenance or object identity is invalid");
+            return invalid("promotion-proof file provenance or object identity is invalid");
         }
     }
     Ok(())
 }
 
-fn verify_candidate_closure(
-    manifest: &CandidateManifest,
+fn verify_promotion_proof_closure(
+    manifest: &PromotionProofManifest,
     objects: &BTreeMap<String, Vec<u8>>,
 ) -> Result<(), SealError> {
     let draft_path = one_role(manifest, "draft-manifest")?;
     let draft_bytes = objects[draft_path.source_path.as_str()].as_slice();
     let draft: DraftLineageManifest =
         serde_json::from_slice(draft_bytes).map_err(|error| SealError::Json(error.to_string()))?;
-    if draft.format != DRAFT_LINEAGE_FORMAT
+    validate_active_manifest(&draft).map_err(|error| SealError::Invalid(error.to_string()))?;
+    if canonical_json(&draft)? != draft_bytes
         || draft.lineage != manifest.lineage.name
         || draft.edition != manifest.edition
         || draft.revision != manifest.lineage.revision
-        || draft.state != "open"
-        || !draft.pending_tasks.is_empty()
         || sha256(draft_bytes) != manifest.lineage.manifest_sha256
     {
         return invalid("embedded draft manifest differs from the sealed lineage identity");
     }
+    let history_paths = validate_embedded_history(&draft, objects)?;
 
     let ratchet_file = one_role(manifest, "ratchet")?;
     let ratchet: RatchetRecord =
@@ -552,58 +650,192 @@ fn verify_candidate_closure(
         &ratchet.matrix,
         &ratchet.quality_baseline,
     ] {
-        let bytes = objects
-            .get(evidence.path.as_str())
-            .ok_or_else(|| SealError::Invalid(format!("candidate omits `{}`", evidence.path)))?;
+        let bytes = objects.get(evidence.path.as_str()).ok_or_else(|| {
+            SealError::Invalid(format!("promotion proof omits `{}`", evidence.path))
+        })?;
         if sha256(bytes) != evidence.sha256 {
             return invalid(format!(
-                "candidate evidence `{}` differs from the ratchet",
+                "promotion-proof evidence `{}` differs from the ratchet",
                 evidence.path
             ));
         }
     }
     validate_coverage_matrix(
-        objects
-            .get(ratchet.matrix.path.as_str())
-            .ok_or_else(|| SealError::Invalid("candidate omits its coverage matrix".into()))?,
+        objects.get(ratchet.matrix.path.as_str()).ok_or_else(|| {
+            SealError::Invalid("promotion proof omits its coverage matrix".into())
+        })?,
     )?;
     for specification in &draft.specifications {
         require_object(objects, specification)?;
     }
     for layer in &draft.case_layers {
         require_object(objects, &layer.manifest)?;
+        let bytes = &objects[layer.manifest.path.as_str()];
+        let embedded: DraftCaseLayerManifest =
+            serde_json::from_slice(bytes).map_err(|error| SealError::Json(error.to_string()))?;
+        validate_case_layer(layer, &embedded)
+            .map_err(|error| SealError::Invalid(error.to_string()))?;
+        if canonical_json(&embedded)? != *bytes {
+            return invalid(format!(
+                "embedded case layer `{}` is not canonical pretty JSON",
+                layer.id
+            ));
+        }
     }
     require_object(objects, &draft.baseline.manifest)?;
     require_object(objects, &draft.baseline.specification_snapshot)?;
 
     let result_file = one_role(manifest, "conformance-result")?;
     let result = parse_result(&objects[result_file.source_path.as_str()])?;
-    if result.manifest_sha256 != draft.baseline.manifest.sha256
-        || result.target != manifest.target
+    let baseline_bytes = objects
+        .get(draft.baseline.manifest.path.as_str())
+        .ok_or_else(|| {
+            SealError::Invalid("promotion proof omits its regression manifest".into())
+        })?;
+    let baseline: SuiteManifest = serde_json::from_slice(baseline_bytes)
+        .map_err(|error| SealError::Json(error.to_string()))?;
+    let mut baseline_pinned = BTreeMap::new();
+    for pinned in referenced_files(&baseline) {
+        if pinned.path == baseline.specification.path {
+            let snapshot = objects
+                .get(draft.baseline.specification_snapshot.path.as_str())
+                .ok_or_else(|| {
+                    SealError::Invalid("promotion proof omits its regression specification".into())
+                })?;
+            if sha256(snapshot) != pinned.sha256 {
+                return invalid("regression specification differs from the suite manifest");
+            }
+            baseline_pinned.insert(pinned.path, snapshot.clone());
+        } else {
+            require_object(objects, &pinned)?;
+            baseline_pinned.insert(pinned.path.clone(), objects[&pinned.path].clone());
+        }
+    }
+    validate_embedded_suite(&baseline, baseline_bytes, &baseline_pinned)
+        .map_err(|error| SealError::Invalid(error.to_string()))?;
+    validate_result_contract(
+        &draft.edition,
+        &draft.baseline.manifest.sha256,
+        &baseline,
+        &result,
+    )?;
+    if result.target != manifest.target
         || result.adapter.adapter_protocol != manifest.adapter.protocol
         || result.adapter.implementation != manifest.adapter.implementation
-        || !result.passed
     {
-        return invalid("embedded conformance result differs from the candidate identity");
+        return invalid("embedded conformance result differs from the promotion-proof identity");
     }
     for path in ADAPTER_SOURCES {
         if !objects.contains_key(path) {
-            return invalid(format!("candidate omits adapter source `{path}`"));
+            return invalid(format!("promotion proof omits adapter source `{path}`"));
         }
+    }
+    validate_exact_provenance(
+        manifest,
+        &draft_path.source_path,
+        &draft,
+        &ratchet,
+        &baseline,
+        &history_paths,
+    )?;
+    Ok(())
+}
+
+fn validate_embedded_history(
+    manifest: &DraftLineageManifest,
+    objects: &BTreeMap<String, Vec<u8>>,
+) -> Result<Vec<String>, SealError> {
+    let mut child = manifest.clone();
+    let mut paths = Vec::new();
+    while let Some(parent_file) = child.parent.clone() {
+        require_object(objects, &parent_file)?;
+        let parent_bytes = &objects[parent_file.path.as_str()];
+        let parent: DraftLineageManifest = serde_json::from_slice(parent_bytes)
+            .map_err(|error| SealError::Json(error.to_string()))?;
+        validate_lineage_manifest(&parent)
+            .map_err(|error| SealError::Invalid(error.to_string()))?;
+        if canonical_json(&parent)? != *parent_bytes
+            || parent.revision.checked_add(1) != Some(child.revision)
+            || parent.lineage != child.lineage
+            || parent.edition != child.edition
+            || parent.baseline != child.baseline
+        {
+            return invalid("embedded draft history is not the immediate canonical parent chain");
+        }
+        paths.push(parent_file.path);
+        child = parent;
+    }
+    if child.revision != 1 {
+        return invalid("embedded draft history does not terminate at revision 1");
+    }
+    Ok(paths)
+}
+
+fn validate_exact_provenance(
+    manifest: &PromotionProofManifest,
+    draft_manifest_path: &str,
+    draft: &DraftLineageManifest,
+    ratchet: &RatchetRecord,
+    baseline: &SuiteManifest,
+    history_paths: &[String],
+) -> Result<(), SealError> {
+    let mut expected = BTreeSet::new();
+    let mut add = |role: &str, path: &str| {
+        expected.insert((role.to_owned(), path.to_owned()));
+    };
+    add("draft-manifest", draft_manifest_path);
+    for path in history_paths {
+        add("draft-history", path);
+    }
+    for specification in &draft.specifications {
+        add("specification", &specification.path);
+    }
+    for layer in &draft.case_layers {
+        add("case-layer", &layer.manifest.path);
+    }
+    add("regression-manifest", &draft.baseline.manifest.path);
+    add(
+        "regression-specification",
+        &draft.baseline.specification_snapshot.path,
+    );
+    for pinned in referenced_files(baseline) {
+        if pinned.path != baseline.specification.path {
+            add("regression-input", &pinned.path);
+        }
+    }
+    add("conformance-result", "generated:tondo-reference-result");
+    add("ratchet", RATCHET_PATH);
+    for evidence in [
+        &ratchet.inventory,
+        &ratchet.matrix,
+        &ratchet.quality_baseline,
+    ] {
+        add("quality-evidence", &evidence.path);
+    }
+    for path in ADAPTER_SOURCES {
+        add("adapter-source", path);
+    }
+    let observed = manifest
+        .files
+        .iter()
+        .map(|file| (file.role.clone(), file.source_path.clone()))
+        .collect::<BTreeSet<_>>();
+    if observed != expected {
+        return invalid("promotion-proof roles or source provenance differ from the exact closure");
     }
     Ok(())
 }
 
 fn one_role<'a>(
-    manifest: &'a CandidateManifest,
+    manifest: &'a PromotionProofManifest,
     role: &str,
-) -> Result<&'a CandidateFile, SealError> {
+) -> Result<&'a ProofFile, SealError> {
     let mut matches = manifest.files.iter().filter(|file| file.role == role);
     let file = matches
         .next()
-        .ok_or_else(|| SealError::Invalid(format!("candidate omits role `{role}`")))?;
+        .ok_or_else(|| SealError::Invalid(format!("promotion proof omits role `{role}`")))?;
     if matches.next().is_some() {
-        return invalid(format!("candidate repeats singleton role `{role}`"));
+        return invalid(format!("promotion proof repeats singleton role `{role}`"));
     }
     Ok(file)
 }
@@ -614,10 +846,10 @@ fn require_object(
 ) -> Result<(), SealError> {
     let bytes = objects
         .get(pinned.path.as_str())
-        .ok_or_else(|| SealError::Invalid(format!("candidate omits `{}`", pinned.path)))?;
+        .ok_or_else(|| SealError::Invalid(format!("promotion proof omits `{}`", pinned.path)))?;
     if sha256(bytes) != pinned.sha256 {
         return invalid(format!(
-            "candidate object `{}` differs from its draft pin",
+            "promotion-proof object `{}` differs from its draft pin",
             pinned.path
         ));
     }
@@ -627,32 +859,32 @@ fn require_object(
 fn publish_bundle(
     root: &Path,
     output_directory: &Path,
-    bundle: &CandidateBundle,
-) -> Result<SealOutcome, SealError> {
-    require_relative_path(output_directory, "candidate output directory")?;
-    let relative_parent = output_directory
-        .parent()
-        .ok_or_else(|| SealError::Invalid("candidate output has no parent directory".into()))?;
+    bundle: &PromotionProofBundle,
+) -> Result<ProofOutcome, SealError> {
+    require_relative_path(output_directory, "promotion-proof output directory")?;
+    let relative_parent = output_directory.parent().ok_or_else(|| {
+        SealError::Invalid("promotion-proof output has no parent directory".into())
+    })?;
     let parent = resolve_directory(root, relative_parent, true)?;
     let destination = parent.join(
         output_directory
             .file_name()
-            .ok_or_else(|| SealError::Invalid("candidate output has no file name".into()))?,
+            .ok_or_else(|| SealError::Invalid("promotion-proof output has no file name".into()))?,
     );
     let manifest_path = output_directory.join("manifest.json");
     if destination.exists() {
-        let existing = verify_candidate(root, &manifest_path)?;
+        let existing = verify_promotion_proof(root, &manifest_path)?;
         if existing == bundle.manifest
             && read_regular(&destination.join("manifest.json"))? == bundle.manifest_bytes
         {
-            return Ok(SealOutcome::AlreadyPresent);
+            return Ok(ProofOutcome::AlreadyPresent);
         }
-        return invalid("candidate destination already contains a different promotion");
+        return invalid("promotion-proof destination already contains a different proof");
     }
     let name = destination
         .file_name()
         .and_then(|name| name.to_str())
-        .ok_or_else(|| SealError::Invalid("candidate output name is not UTF-8".into()))?;
+        .ok_or_else(|| SealError::Invalid("promotion-proof output name is not UTF-8".into()))?;
     let staging = parent.join(format!(".{name}.staging-{}", std::process::id()));
     fs::create_dir(&staging).map_err(|error| io(&staging, error))?;
     let result = (|| {
@@ -664,7 +896,7 @@ fn publish_bundle(
         write_new(&staging.join("manifest.json"), &bundle.manifest_bytes)?;
         fs::rename(&staging, &destination).map_err(|error| io(&destination, error))?;
         sync_directory(&parent)?;
-        Ok(SealOutcome::Created)
+        Ok(ProofOutcome::Created)
     })();
     if result.is_err() && staging.exists() {
         let _ = fs::remove_dir_all(&staging);
@@ -672,9 +904,9 @@ fn publish_bundle(
     result
 }
 
-fn verify_candidate_directory(
+fn verify_promotion_proof_directory(
     directory: &Path,
-    manifest: &CandidateManifest,
+    manifest: &PromotionProofManifest,
 ) -> Result<(), SealError> {
     let mut entries = BTreeSet::new();
     for entry in fs::read_dir(directory).map_err(|error| io(directory, error))? {
@@ -682,12 +914,12 @@ fn verify_candidate_directory(
         let name = entry
             .file_name()
             .to_str()
-            .ok_or_else(|| SealError::Invalid("candidate entry name is not UTF-8".into()))?
+            .ok_or_else(|| SealError::Invalid("promotion-proof entry name is not UTF-8".into()))?
             .to_owned();
         entries.insert(name);
     }
     if entries != BTreeSet::from(["manifest.json".into(), "objects".into()]) {
-        return invalid("candidate directory contains files outside its manifest closure");
+        return invalid("promotion-proof directory contains files outside its manifest closure");
     }
     let expected = manifest
         .files
@@ -704,13 +936,13 @@ fn verify_candidate_directory(
         let name = entry.file_name();
         let name = name
             .to_str()
-            .ok_or_else(|| SealError::Invalid("candidate object name is not UTF-8".into()))?;
+            .ok_or_else(|| SealError::Invalid("promotion-proof object name is not UTF-8".into()))?;
         if !metadata.is_file() || !actual.insert(name.to_owned()) {
-            return invalid("candidate object directory contains an invalid entry");
+            return invalid("promotion-proof object directory contains an invalid entry");
         }
     }
     if actual != expected {
-        return invalid("candidate object directory differs from the manifest closure");
+        return invalid("promotion-proof object directory differs from the manifest closure");
     }
     Ok(())
 }
@@ -718,12 +950,12 @@ fn verify_candidate_directory(
 fn resolve_directory(root: &Path, relative: &Path, create: bool) -> Result<PathBuf, SealError> {
     let root_metadata = fs::symlink_metadata(root).map_err(|error| io(root, error))?;
     if !root_metadata.file_type().is_dir() {
-        return invalid("candidate root is not a directory");
+        return invalid("promotion-proof root is not a directory");
     }
     let mut current = root.to_path_buf();
     for component in relative.components() {
         let Component::Normal(component) = component else {
-            return invalid("candidate directory contains a non-normal component");
+            return invalid("promotion-proof directory contains a non-normal component");
         };
         current.push(component);
         match fs::symlink_metadata(&current) {
@@ -815,7 +1047,7 @@ mod tests {
     use crate::lineage::DRAFT_LINEAGE_PATH;
 
     static TEMPORARY_ID: AtomicU64 = AtomicU64::new(0);
-    static REPOSITORY_BUNDLE: OnceLock<CandidateBundle> = OnceLock::new();
+    static REPOSITORY_BUNDLE: OnceLock<PromotionProofBundle> = OnceLock::new();
 
     fn repository_root() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -829,16 +1061,16 @@ mod tests {
         root
     }
 
-    fn repository_bundle() -> CandidateBundle {
+    fn repository_bundle() -> PromotionProofBundle {
         REPOSITORY_BUNDLE
             .get_or_init(build_repository_bundle)
             .clone()
     }
 
-    fn build_repository_bundle() -> CandidateBundle {
+    fn build_repository_bundle() -> PromotionProofBundle {
         let root = repository_fixture();
         let lineage = DraftLineage::load(&root, DRAFT_LINEAGE_PATH).unwrap();
-        let bundle = build_candidate(
+        let bundle = build_promotion_proof(
             &lineage,
             &root.join("conformance/0.1/results/tondo-reference-draft-tondo-vm-hosted.json"),
         )
@@ -911,13 +1143,13 @@ mod tests {
         let root = temporary_root();
         assert_eq!(
             publish_bundle(&root, Path::new("candidate"), &bundle).unwrap(),
-            SealOutcome::Created
+            ProofOutcome::Created
         );
-        let verified = verify_candidate(&root, Path::new("candidate/manifest.json")).unwrap();
+        let verified = verify_promotion_proof(&root, Path::new("candidate/manifest.json")).unwrap();
         assert_eq!(verified, bundle.manifest);
         assert_eq!(
             publish_bundle(&root, Path::new("candidate"), &bundle).unwrap(),
-            SealOutcome::AlreadyPresent
+            ProofOutcome::AlreadyPresent
         );
         fs::remove_dir_all(root).unwrap();
     }
@@ -929,12 +1161,12 @@ mod tests {
         let result =
             root.join("conformance/0.1/results/tondo-reference-draft-tondo-vm-hosted.json");
         assert_eq!(
-            seal_candidate(&lineage, &result, Path::new("nested/candidate")).unwrap(),
-            SealOutcome::Created
+            seal_promotion_proof(&lineage, &result, Path::new("nested/candidate")).unwrap(),
+            ProofOutcome::Created
         );
         assert_eq!(
-            seal_candidate(&lineage, &result, Path::new("nested/candidate")).unwrap(),
-            SealOutcome::AlreadyPresent
+            seal_promotion_proof(&lineage, &result, Path::new("nested/candidate")).unwrap(),
+            ProofOutcome::AlreadyPresent
         );
         fs::remove_dir_all(root).unwrap();
     }
@@ -947,16 +1179,16 @@ mod tests {
         mixed.manifest.lineage.revision += 1;
         mixed.manifest_bytes = canonical_json(&mixed.manifest).unwrap();
         publish_bundle(&root, Path::new("mixed"), &mixed).unwrap();
-        assert!(verify_candidate(&root, Path::new("mixed/manifest.json")).is_err());
+        assert!(verify_promotion_proof(&root, Path::new("mixed/manifest.json")).is_err());
 
         publish_bundle(&root, Path::new("tampered"), &bundle).unwrap();
         let object = bundle.manifest.files[0].object.sha256.clone();
         fs::write(root.join("tampered/objects").join(object), b"tampered").unwrap();
-        assert!(verify_candidate(&root, Path::new("tampered/manifest.json")).is_err());
+        assert!(verify_promotion_proof(&root, Path::new("tampered/manifest.json")).is_err());
 
         publish_bundle(&root, Path::new("extra"), &bundle).unwrap();
         fs::write(root.join("extra/untracked"), b"untracked").unwrap();
-        assert!(verify_candidate(&root, Path::new("extra/manifest.json")).is_err());
+        assert!(verify_promotion_proof(&root, Path::new("extra/manifest.json")).is_err());
 
         fs::write(root.join("not-a-directory"), b"occupied").unwrap();
         assert!(publish_bundle(&root, Path::new("not-a-directory/candidate"), &bundle).is_err());
@@ -967,7 +1199,7 @@ mod tests {
     #[test]
     fn candidate_paths_hashes_and_error_vocabulary_are_closed() {
         let bundle = repository_bundle();
-        assert_eq!(bundle.manifest.format, CANDIDATE_FORMAT);
+        assert_eq!(bundle.manifest.format, PROMOTION_PROOF_FORMAT);
         assert!(bundle.manifest.files.windows(2).all(|pair| {
             (&pair[0].role, &pair[0].source_path) < (&pair[1].role, &pair[1].source_path)
         }));
@@ -982,7 +1214,7 @@ mod tests {
                 .to_string()
                 .contains("reason")
         );
-        assert!(verify_candidate(Path::new("missing"), Path::new("candidate.json")).is_err());
+        assert!(verify_promotion_proof(Path::new("missing"), Path::new("candidate.json")).is_err());
     }
 
     #[test]
@@ -991,15 +1223,15 @@ mod tests {
 
         let mut invalid_manifest = bundle.manifest.clone();
         invalid_manifest.format = "future-candidate".into();
-        assert!(validate_candidate_manifest(&invalid_manifest).is_err());
+        assert!(validate_promotion_proof_manifest(&invalid_manifest).is_err());
 
         let mut unsorted = bundle.manifest.clone();
         unsorted.files.reverse();
-        assert!(validate_candidate_manifest(&unsorted).is_err());
+        assert!(validate_promotion_proof_manifest(&unsorted).is_err());
 
         let mut invalid_file = bundle.manifest.clone();
         invalid_file.files[0].source_path.clear();
-        assert!(validate_candidate_manifest(&invalid_file).is_err());
+        assert!(validate_promotion_proof_manifest(&invalid_file).is_err());
 
         assert!(
             add_source(
@@ -1035,7 +1267,7 @@ mod tests {
         different.manifest.state = "different".into();
         different.manifest_bytes = canonical_json(&different.manifest).unwrap();
         assert!(publish_bundle(&root, Path::new("candidate"), &different).is_err());
-        assert!(verify_candidate(&root, Path::new("missing/manifest.json")).is_err());
+        assert!(verify_promotion_proof(&root, Path::new("missing/manifest.json")).is_err());
         assert!(read_regular(&root).is_err());
         fs::remove_dir_all(root).unwrap();
 
@@ -1079,7 +1311,40 @@ mod tests {
         result.passed = false;
         assert!(validate_result(&lineage, &result).is_err());
 
-        let bundle = build_candidate(
+        let result = parse_result(&result_bytes).unwrap();
+        let mut missing = result.clone();
+        missing.cases.pop();
+        assert!(validate_result(&lineage, &missing).is_err());
+
+        let mut duplicated = result.clone();
+        duplicated.cases.push(duplicated.cases[0].clone());
+        assert!(validate_result(&lineage, &duplicated).is_err());
+
+        let mut reordered = result.clone();
+        reordered.cases.swap(0, 1);
+        assert!(validate_result(&lineage, &reordered).is_err());
+
+        let mut wrong_group = result.clone();
+        wrong_group.cases[0].group = CaseGroup::Runtime;
+        assert!(validate_result(&lineage, &wrong_group).is_err());
+
+        let mut wrong_repetitions = result.clone();
+        wrong_repetitions.cases[0].repetitions += 1;
+        assert!(validate_result(&lineage, &wrong_repetitions).is_err());
+
+        let mut missing_observation = result.clone();
+        missing_observation.cases[0].observation_sha256.clear();
+        assert!(validate_result(&lineage, &missing_observation).is_err());
+
+        let mut invalid_observation = result.clone();
+        invalid_observation.cases[0].observation_sha256[0] = "not-a-hash".into();
+        assert!(validate_result(&lineage, &invalid_observation).is_err());
+
+        let mut unknown_field: serde_json::Value = serde_json::from_slice(&result_bytes).unwrap();
+        unknown_field["unexpected"] = true.into();
+        assert!(parse_result(&serde_json::to_vec(&unknown_field).unwrap()).is_err());
+
+        let bundle = build_promotion_proof(
             &lineage,
             &root.join("conformance/0.1/results/tondo-reference-draft-tondo-vm-hosted.json"),
         )
@@ -1099,11 +1364,40 @@ mod tests {
         };
         let mut objects = source_objects();
         objects.remove(ADAPTER_SOURCES[0]);
-        assert!(verify_candidate_closure(&bundle.manifest, &objects).is_err());
+        assert!(verify_promotion_proof_closure(&bundle.manifest, &objects).is_err());
+
+        let history = bundle
+            .manifest
+            .files
+            .iter()
+            .find(|file| file.role == "draft-history")
+            .unwrap();
+        let mut objects = source_objects();
+        objects.remove(&history.source_path);
+        assert!(verify_promotion_proof_closure(&bundle.manifest, &objects).is_err());
+
+        let mut wrong_role = bundle.manifest.clone();
+        wrong_role
+            .files
+            .iter_mut()
+            .find(|file| file.role == "adapter-source")
+            .unwrap()
+            .role = "unexpected-source".into();
+        assert!(verify_promotion_proof_closure(&wrong_role, &source_objects()).is_err());
+
+        let mut objects = source_objects();
+        let regression_input = bundle
+            .manifest
+            .files
+            .iter()
+            .find(|file| file.role == "regression-input")
+            .unwrap();
+        objects.remove(&regression_input.source_path);
+        assert!(verify_promotion_proof_closure(&bundle.manifest, &objects).is_err());
 
         let mut objects = source_objects();
         objects.insert("testing/inventory.json".into(), b"changed".to_vec());
-        assert!(verify_candidate_closure(&bundle.manifest, &objects).is_err());
+        assert!(verify_promotion_proof_closure(&bundle.manifest, &objects).is_err());
 
         let mut objects = source_objects();
         let mut failed_result: serde_json::Value = serde_json::from_slice(&result_bytes).unwrap();
@@ -1112,13 +1406,25 @@ mod tests {
             "generated:tondo-reference-result".into(),
             serde_json::to_vec(&failed_result).unwrap(),
         );
-        assert!(verify_candidate_closure(&bundle.manifest, &objects).is_err());
+        assert!(verify_promotion_proof_closure(&bundle.manifest, &objects).is_err());
+
+        let mut objects = source_objects();
+        let mut partial_result: serde_json::Value = serde_json::from_slice(&result_bytes).unwrap();
+        partial_result["cases"].as_array_mut().unwrap().pop();
+        objects.insert(
+            "generated:tondo-reference-result".into(),
+            serde_json::to_vec(&partial_result).unwrap(),
+        );
+        assert!(verify_promotion_proof_closure(&bundle.manifest, &objects).is_err());
 
         let destination = temporary_root();
         publish_bundle(&destination, Path::new("missing-object"), &bundle).unwrap();
         let object = bundle.manifest.files[0].object.sha256.clone();
         fs::remove_file(destination.join("missing-object/objects").join(object)).unwrap();
-        assert!(verify_candidate(&destination, Path::new("missing-object/manifest.json")).is_err());
+        assert!(
+            verify_promotion_proof(&destination, Path::new("missing-object/manifest.json"))
+                .is_err()
+        );
         fs::remove_dir_all(destination).unwrap();
         fs::remove_dir_all(root).unwrap();
     }

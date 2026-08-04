@@ -38,16 +38,19 @@ future release will deliberately choose its public compatibility policy.
 
 ## Single draft manifest
 
-`conformance/draft/manifest.json` is the only active lineage manifest. It pins
-the four normative documents, the open state, the pending implementation tasks,
+`conformance/draft/manifest.json` is the only active G5 lineage manifest. It pins
+language, testing and toolchain, the open state, pending implementation tasks,
 and optional case layers. It has no release tag, release commit, or parallel
-lineage selector. The CLI accepts only `--lineage draft` so a stale historical
+lineage selector. Standard Library uses its separate S1A/S1 contract; pinning
+its document never implies G5 coverage. The CLI accepts only `--lineage draft` so a stale historical
 identity cannot be selected accidentally.
 
 Case layers are added in the same change as the implementation slice they
 exercise. Their IDs, task IDs, and requirement IDs are sorted and unique, and
 their manifests live below `conformance/draft/layers/`. A layer declaration
-without executable evidence never turns a requirement green.
+without inventory evidence never turns a requirement green. Inventory identity
+alone does not attest execution: `CONF-LAYER-RESULT-001` must bind every layer
+case to a fresh composed result before final sealing.
 
 Until the new draft features have executable layers, `run --lineage draft`
 executes the pinned bootstrap regression suite and reports its exact result.
@@ -92,32 +95,38 @@ cargo run -p tondo-conformance --locked -- run \
 ~~~
 
 Repeated runs over an unchanged tree must produce byte-identical output. The
-`seal` command promotes the completed draft into one immutable candidate; it
-does not publish a language release. It fails closed unless the draft has no
+`seal-proof` command produces an immutable proof of the promotion mechanism; it
+is not a release candidate and does not publish a language release. It fails
+closed unless the draft has no
 pending tasks, the current ratchet has validated coverage and mutation
 identities, and the supplied fresh reference result matches the pinned
 bootstrap regression exactly.
 
-The promotion is a canonical, content-addressed bundle. Its manifest fixes the
-exact draft revision and hash, target, adapter implementation, four normative
-specifications, case layers, regression inputs, reference result, ratchet,
-reliability records, and reference-adapter source. Each byte sequence lives at
+The proof is a canonical, content-addressed bundle. Its manifest fixes the
+exact draft revision and hash, target, adapter implementation, three G5
+specifications, its canonical parent chain through revision 1, case layers,
+regression inputs, reference result, ratchet, reliability records, and
+reference-adapter source. Verification reconstructs the exact allowed
+role/path set and rejects omissions, substitutions, or extra provenance rather
+than merely checking that named hashes exist. Each byte sequence lives at
 `objects/<sha256>` and every source provenance points to that object. Objects
 are written and synchronized in a sibling staging directory, the manifest is
-written last, and one atomic directory rename makes the candidate visible.
+written last, and one atomic directory rename makes the proof visible.
 An identical destination is idempotent; a partial, altered, extra, symlinked,
 or different destination is rejected rather than repaired or overwritten.
 
-Verification follows only the candidate's closed object graph. It deliberately
+Verification follows only the proof's closed object graph. It deliberately
 does not consult live draft files, so later work cannot silently change an
-already promoted candidate. `conformance/0.1` remains an immutable regression
-input and is never used as the candidate destination.
+already published proof. `conformance/0.1` remains an immutable regression
+input and is never used as the proof destination. Each revision uses its own
+`conformance/proofs/revision-<N>` directory; a later proof never replaces an
+older one.
 
 ~~~text
-cargo run -p tondo-conformance --locked -- seal \
+cargo run -p tondo-conformance --locked -- seal-proof \
   --root . --manifest conformance/draft/manifest.json --lineage draft \
   --result target/reliability/evidence/conformance-result.json \
-  --output conformance/candidate
-cargo run -p tondo-conformance --locked -- verify-candidate \
-  --root . --candidate conformance/candidate
+  --output conformance/proofs/revision-<N>
+cargo run -p tondo-conformance --locked -- verify-proof \
+  --root . --proof conformance/proofs/revision-<N>
 ~~~

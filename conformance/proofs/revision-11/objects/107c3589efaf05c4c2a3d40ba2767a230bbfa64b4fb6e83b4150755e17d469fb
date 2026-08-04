@@ -1,0 +1,24 @@
+enum AppError {
+    Missing
+}
+
+enum Answer {
+    Empty
+    Value(Int)
+}
+
+fn load(): Answer ! AppError {
+    Answer.Value(42)
+}
+
+fn answer(): Int ! AppError {
+    let loaded = load()?
+    match loaded {
+        Answer.Empty => fail AppError.Missing
+        Answer.Value(value) => value
+    }
+}
+
+fn main(): !AppError {
+    assert(answer()? == 42)
+}

@@ -4,6 +4,8 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
+use crate::sha256;
+
 const SPECIFICATIONS: [&str; 5] = [
     "TONDO_LANGUAGE_SPEC.md",
     "TONDO_STANDARD_LIBRARY_SPEC.md",
@@ -22,6 +24,35 @@ pub fn validate_repository(root: &Path) -> Result<(), String> {
             .map_err(|error| format!("`{relative}` is not valid UTF-8: {error}"))?;
         validate_document(relative, document)?;
     }
+    let language = fs::read(root.join("TONDO_LANGUAGE_SPEC.md"))
+        .map_err(|error| format!("cannot read `TONDO_LANGUAGE_SPEC.md`: {error}"))?;
+    let testing = fs::read_to_string(root.join("TONDO_TESTING_SPEC.md"))
+        .map_err(|error| format!("cannot read `TONDO_TESTING_SPEC.md`: {error}"))?;
+    validate_testing_metadata(&language, &testing)?;
+    Ok(())
+}
+
+fn validate_testing_metadata(language: &[u8], testing: &str) -> Result<(), String> {
+    let prefix = "- **SHA-256 de la base:** `";
+    let declared = testing
+        .lines()
+        .find_map(|line| line.strip_prefix(prefix)?.strip_suffix("`."))
+        .ok_or_else(|| "TONDO_TESTING_SPEC.md: missing base SHA-256 metadata".to_owned())?;
+    let actual = sha256(language);
+    if declared != actual {
+        return Err(format!(
+            "TONDO_TESTING_SPEC.md: base SHA-256 `{declared}` differs from TONDO_LANGUAGE_SPEC.md `{actual}`"
+        ));
+    }
+    if testing
+        .lines()
+        .find(|line| line.starts_with("- **Estado:**"))
+        .is_some_and(|line| line.contains("todavía no implementado"))
+    {
+        return Err(
+            "TONDO_TESTING_SPEC.md: implementation status contradicts the functional runner".into(),
+        );
+    }
     Ok(())
 }
 
@@ -29,7 +60,9 @@ fn validate_document(path: &str, document: &str) -> Result<(), String> {
     let mut numbered = BTreeMap::<String, usize>::new();
     let mut headings = BTreeMap::<String, usize>::new();
     let mut heading_path = Vec::<(usize, String)>::new();
+    let mut numbered_path = Vec::<(usize, Vec<u64>)>::new();
     let mut fence: Option<(char, usize)> = None;
+    let mut root_heading = None;
 
     for (index, line) in document.lines().enumerate() {
         let line_number = index + 1;
@@ -50,6 +83,17 @@ fn validate_document(path: &str, document: &str) -> Result<(), String> {
         if normalized.is_empty() {
             return Err(format!("{path}:{line_number}: heading has no stable text"));
         }
+        if level == 1 {
+            if let Some(previous) = root_heading.replace(line_number) {
+                return Err(format!(
+                    "{path}:{line_number}: document has a second level-one title; first declared at line {previous}"
+                ));
+            }
+        } else if root_heading.is_none() {
+            return Err(format!(
+                "{path}:{line_number}: the first heading must be the level-one document title"
+            ));
+        }
         while heading_path
             .last()
             .is_some_and(|(ancestor_level, _)| *ancestor_level >= level)
@@ -64,13 +108,44 @@ fn validate_document(path: &str, document: &str) -> Result<(), String> {
             .join(" / ");
         insert_unique(path, "heading path", &identity, line_number, &mut headings)?;
         heading_path.push((level, normalized));
+        while numbered_path
+            .last()
+            .is_some_and(|(ancestor_level, _)| *ancestor_level >= level)
+        {
+            numbered_path.pop();
+        }
         if let Some(number) = numbered_prefix(heading) {
+            let segments = parse_number(number);
+            if segments.len() != level.saturating_sub(1) {
+                return Err(format!(
+                    "{path}:{line_number}: section number `{number}` has depth {}, expected {} for heading level {level}",
+                    segments.len(),
+                    level.saturating_sub(1)
+                ));
+            }
+            if segments.len() > 1 && numbered_path.is_empty() {
+                return Err(format!(
+                    "{path}:{line_number}: section number `{number}` has no numbered parent"
+                ));
+            }
+            if let Some((_, parent)) = numbered_path.last()
+                && !segments.starts_with(parent)
+            {
+                return Err(format!(
+                    "{path}:{line_number}: section number `{number}` is not a child of `{}`",
+                    format_number(parent)
+                ));
+            }
             insert_unique(path, "section number", number, line_number, &mut numbered)?;
+            numbered_path.push((level, segments));
         }
     }
 
     if fence.is_some() {
         return Err(format!("{path}: unterminated Markdown fence"));
+    }
+    if root_heading.is_none() {
+        return Err(format!("{path}: missing level-one document title"));
     }
     Ok(())
 }
@@ -91,7 +166,7 @@ fn insert_unique(
 }
 
 fn opens_fence(line: &str) -> Option<(char, usize)> {
-    let trimmed = line.trim_start();
+    let trimmed = strip_markdown_indent(line)?;
     let marker = trimmed.chars().next()?;
     if !matches!(marker, '`' | '~') {
         return None;
@@ -101,21 +176,47 @@ fn opens_fence(line: &str) -> Option<(char, usize)> {
 }
 
 fn closes_fence(line: &str, marker: char, width: usize) -> bool {
-    let trimmed = line.trim();
-    !trimmed.is_empty()
-        && trimmed.chars().all(|value| value == marker)
-        && trimmed.chars().count() >= width
+    let Some(trimmed) = strip_markdown_indent(line) else {
+        return false;
+    };
+    let trimmed = trimmed.trim_end();
+    let marker_width = trimmed.chars().take_while(|value| *value == marker).count();
+    marker_width >= width && trimmed[marker_width..].is_empty()
 }
 
 fn markdown_heading(line: &str) -> Option<(usize, &str)> {
-    if line.starts_with(' ') || line.starts_with('\t') {
-        return None;
-    }
+    let line = strip_markdown_indent(line)?;
     let hashes = line.bytes().take_while(|byte| *byte == b'#').count();
-    if !(2..=6).contains(&hashes) || line.as_bytes().get(hashes) != Some(&b' ') {
+    if !(1..=6).contains(&hashes)
+        || line
+            .as_bytes()
+            .get(hashes)
+            .is_some_and(|byte| !byte.is_ascii_whitespace())
+    {
         return None;
     }
-    Some((hashes, line[hashes + 1..].trim()))
+    let heading = line[hashes..].trim();
+    Some((hashes, strip_closing_atx(heading)))
+}
+
+fn strip_markdown_indent(line: &str) -> Option<&str> {
+    let spaces = line.bytes().take_while(|byte| *byte == b' ').count();
+    (spaces <= 3 && line.as_bytes().get(spaces) != Some(&b'\t')).then_some(&line[spaces..])
+}
+
+fn strip_closing_atx(heading: &str) -> &str {
+    let trimmed = heading.trim_end();
+    let without_hashes = trimmed.trim_end_matches('#');
+    if without_hashes.len() != trimmed.len()
+        && without_hashes
+            .as_bytes()
+            .last()
+            .is_some_and(|byte| byte.is_ascii_whitespace())
+    {
+        without_hashes.trim_end()
+    } else {
+        trimmed
+    }
 }
 
 fn numbered_prefix(heading: &str) -> Option<&str> {
@@ -135,15 +236,31 @@ fn numbered_prefix(heading: &str) -> Option<&str> {
     }
 }
 
+fn parse_number(number: &str) -> Vec<u64> {
+    number
+        .split('.')
+        .map(|segment| segment.parse().expect("numbered_prefix checked digits"))
+        .collect()
+}
+
+fn format_number(segments: &[u64]) -> String {
+    segments
+        .iter()
+        .map(u64::to_string)
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
 fn normalize_heading(heading: &str) -> String {
     heading
         .chars()
         .filter_map(|value| match value {
             '`' | '*' | '_' => None,
             value if value.is_whitespace() => Some(' '),
-            value => Some(value.to_ascii_lowercase()),
+            value => Some(value),
         })
         .collect::<String>()
+        .to_lowercase()
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
@@ -181,7 +298,7 @@ mod tests {
             validate_document("SPEC.md", "# Title\n\n## Appendix\n\n## `Appendix`\n").unwrap_err();
         assert_eq!(
             error,
-            "SPEC.md:5: duplicate heading path `appendix`; first declared at line 3"
+            "SPEC.md:5: duplicate heading path `title / appendix`; first declared at line 3"
         );
     }
 
@@ -200,5 +317,76 @@ mod tests {
             validate_document("SPEC.md", "# Title\n\n~~~text\n").unwrap_err(),
             "SPEC.md: unterminated Markdown fence"
         );
+    }
+
+    #[test]
+    fn validates_commonmark_atx_headings_and_numbered_parents() {
+        validate_document(
+            "SPEC.md",
+            "# Title\n\n  ## 1. Parent ##\n\n   ### 1.1 Child ###\n",
+        )
+        .unwrap();
+
+        assert!(
+            validate_document("SPEC.md", "# Title\n\n## 1. Parent\n\n### 2.1 Child\n")
+                .unwrap_err()
+                .contains("is not a child")
+        );
+        assert!(
+            validate_document("SPEC.md", "# Title\n\n### 1. Wrong depth\n")
+                .unwrap_err()
+                .contains("has depth")
+        );
+        assert!(
+            validate_document(
+                "SPEC.md",
+                "# Title\n\n## 1. Numbered\n\n## Appendix\n\n### 1.1 Not below section one\n",
+            )
+            .unwrap_err()
+            .contains("parent")
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_titles_at_level_one_and_after_closing_atx_markers() {
+        assert!(validate_document("SPEC.md", "# Title\n\n# `TITLE`\n").is_err());
+        assert!(validate_document("SPEC.md", "# Title\n\n# Other\n").is_err());
+        assert!(validate_document("SPEC.md", "## 1. Section\n").is_err());
+        assert!(validate_document("SPEC.md", "plain text\n").is_err());
+        assert!(
+            validate_document("SPEC.md", "# Title\n\n## Appendix\n\n## Appendix ##\n").is_err()
+        );
+    }
+
+    #[test]
+    fn commonmark_indentation_applies_to_fences_and_headings() {
+        validate_document(
+            "SPEC.md",
+            "# Title\n\n   ~~~text\n## ignored\n   ~~~\n\n   ## Appendix\n",
+        )
+        .unwrap();
+        assert!(
+            validate_document("SPEC.md", "# Title\n\n    ~~~text\n").is_ok(),
+            "four-space indented fences are code blocks, not open fences"
+        );
+    }
+
+    #[test]
+    fn testing_metadata_is_bound_to_the_language_bytes_and_current_status() {
+        let language = b"language";
+        let valid = format!(
+            "- **Estado:** borrador con implementación funcional.\n- **SHA-256 de la base:** `{}`.\n",
+            sha256(language)
+        );
+        validate_testing_metadata(language, &valid).unwrap();
+
+        let stale = "- **Estado:** borrador.\n- **SHA-256 de la base:** `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`.\n";
+        assert!(validate_testing_metadata(language, stale).is_err());
+
+        let misleading = format!(
+            "- **Estado:** todavía no implementado.\n- **SHA-256 de la base:** `{}`.\n",
+            sha256(language)
+        );
+        assert!(validate_testing_metadata(language, &misleading).is_err());
     }
 }

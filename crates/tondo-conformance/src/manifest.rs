@@ -893,7 +893,47 @@ fn validate_expectations(
     Ok(())
 }
 
-fn referenced_files(manifest: &SuiteManifest) -> Vec<PinnedFile> {
+pub(crate) fn validate_embedded_suite(
+    manifest: &SuiteManifest,
+    manifest_bytes: &[u8],
+    pinned: &BTreeMap<String, Vec<u8>>,
+) -> Result<(), ManifestError> {
+    validate_manifest(manifest)?;
+    let canonical =
+        serde_json::to_vec(manifest).map_err(|error| ManifestError::Json(error.to_string()))?;
+    if canonical != manifest_bytes {
+        return invalid("the embedded manifest is not in canonical compact JSON encoding");
+    }
+
+    let mut expected = BTreeMap::new();
+    for file in referenced_files(manifest) {
+        validate_pinned_file(&file)?;
+        if let Some(previous) = expected.insert(file.path.clone(), file.sha256.clone())
+            && previous != file.sha256
+        {
+            return invalid(format!(
+                "path `{}` is pinned with conflicting hashes",
+                file.path
+            ));
+        }
+    }
+    if pinned.keys().ne(expected.keys()) {
+        return invalid("the embedded suite object closure differs from its manifest");
+    }
+    for (path, expected_hash) in expected {
+        let actual = sha256(&pinned[&path]);
+        if actual != expected_hash {
+            return Err(ManifestError::HashMismatch {
+                path,
+                expected: expected_hash,
+                actual,
+            });
+        }
+    }
+    validate_expectations(manifest, pinned)
+}
+
+pub(crate) fn referenced_files(manifest: &SuiteManifest) -> Vec<PinnedFile> {
     let mut files = vec![
         manifest.specification.clone(),
         manifest.fixture_manifest.clone(),
@@ -1376,6 +1416,21 @@ mod tests {
         let expectation = suite.manifest().cases[0].expectation.pinned_file();
         let value = suite.json_file(expectation).unwrap();
         assert!(value.is_object() || value.is_array());
+
+        let pinned = referenced_files(suite.manifest())
+            .into_iter()
+            .map(|file| (file.path.clone(), suite.file(&file).to_vec()))
+            .collect::<BTreeMap<_, _>>();
+        validate_embedded_suite(suite.manifest(), &suite.manifest_bytes, &pinned).unwrap();
+        let mut extra = pinned.clone();
+        extra.insert("unreferenced.txt".into(), Vec::new());
+        assert!(validate_embedded_suite(suite.manifest(), &suite.manifest_bytes, &extra).is_err());
+        let mut noncanonical = suite.manifest_bytes.clone();
+        noncanonical.push(b'\n');
+        assert!(validate_embedded_suite(suite.manifest(), &noncanonical, &pinned).is_err());
+        let mut invalid = suite.manifest().clone();
+        invalid.cases[0].repeat = 0;
+        assert!(validate_embedded_suite(&invalid, &suite.manifest_bytes, &pinned).is_err());
 
         assert!(matches!(
             LoadedSuite::load(root, "conformance/0.1/manifest.json"),
