@@ -516,6 +516,7 @@ impl Verifier<'_> {
                         | IntrinsicType::BytesBuilder
                         | IntrinsicType::BytesError
                         | IntrinsicType::TextError
+                        | IntrinsicType::CollectionError
                         | IntrinsicType::Path
                         | IntrinsicType::PathError
                         | IntrinsicType::FsError
@@ -4722,9 +4723,20 @@ impl Verifier<'_> {
                         ));
                     }
                 };
+                // An own cursor returned by a collection method is already a
+                // concrete iterator state.  The `for` loop consumes that
+                // state directly, so the cursor's collection is the source
+                // collection rather than the cursor value itself.
+                let source_collection = match self.program.interner.kind(source.ty) {
+                    Ok(TypeKind::Cursor {
+                        mode: CursorMode::Own,
+                        collection,
+                    }) if *cursor == source.ty => *collection,
+                    _ => source.ty,
+                };
                 match self.program.interner.kind(*cursor) {
                     Ok(TypeKind::Cursor { mode, collection })
-                        if *mode == expected_mode && *collection == source.ty => {}
+                        if *mode == expected_mode && *collection == source_collection => {}
                     Ok(_) | Err(_) => {
                         return Err(HirInvariantError::new(
                             context,
@@ -4747,7 +4759,7 @@ impl Verifier<'_> {
                 if expected_mode == CursorMode::Mut {
                     self.verify_exclusive_iterator_pattern(pattern_id, source.ty, context)?;
                 }
-                match self.program.interner.kind(source.ty) {
+                match self.program.interner.kind(source_collection) {
                     Ok(TypeKind::Intrinsic {
                         constructor:
                             IntrinsicType::Array | IntrinsicType::Set | IntrinsicType::Range,

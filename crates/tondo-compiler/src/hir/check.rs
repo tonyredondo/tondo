@@ -825,6 +825,7 @@ impl<'a> ExpressionChecker<'a> {
                         | IntrinsicType::BytesBuilder
                         | IntrinsicType::BytesError
                         | IntrinsicType::TextError
+                        | IntrinsicType::CollectionError
                         | IntrinsicType::Path
                         | IntrinsicType::PathError
                         | IntrinsicType::FsError
@@ -11628,7 +11629,17 @@ impl<'a> ExpressionChecker<'a> {
                         }
                     };
                     HirIterationProtocol::Intrinsic {
-                        cursor: self.program.interner.cursor(mode, source_type)?,
+                        cursor: if matches!(
+                            self.program.interner.kind(source_type)?,
+                            TypeKind::Cursor {
+                                mode: CursorMode::Own,
+                                ..
+                            }
+                        ) {
+                            source_type
+                        } else {
+                            self.program.interner.cursor(mode, source_type)?
+                        },
                     }
                 };
                 HirForKind::Iterate {
@@ -11669,6 +11680,7 @@ impl<'a> ExpressionChecker<'a> {
                 constructor: IntrinsicType::Map,
                 arguments,
             } => Some(self.program.interner.tuple(arguments)?),
+            TypeKind::Cursor { collection, .. } => self.iteration_element_type(collection)?,
             TypeKind::Scalar(ScalarType::String) => {
                 Some(self.program.interner.scalar(ScalarType::Char))
             }
@@ -14443,12 +14455,11 @@ impl<'a> ExpressionChecker<'a> {
         if self.reject_explicit_array_sequence_owner_arguments(file, base_node)? {
             return self.recovery_expression(file, range).map(Some);
         }
+        let owner_bracket = base_node
+            .child_nodes()
+            .find(|child| child.kind() == SyntaxKind::BracketPostfix);
         let explicit_bracket = (base_node.kind() == SyntaxKind::PostfixExpr)
-            .then(|| {
-                base_node
-                    .child_nodes()
-                    .find(|child| child.kind() == SyntaxKind::BracketPostfix)
-            })
+            .then_some(owner_bracket)
             .flatten();
         let base_node = if explicit_bracket.is_some() {
             let Some(inner) = base_node
@@ -14525,6 +14536,19 @@ impl<'a> ExpressionChecker<'a> {
                     range,
                     suffix,
                     explicit_bracket,
+                    &tokens,
+                    resolved_index,
+                    &resolved,
+                    expected,
+                    context,
+                )? {
+                    return Ok(Some(call));
+                }
+                if let Some(call) = self.check_qualified_collection_call(
+                    file,
+                    range,
+                    suffix,
+                    owner_bracket,
                     &tokens,
                     resolved_index,
                     &resolved,
@@ -14892,6 +14916,122 @@ impl<'a> ExpressionChecker<'a> {
             callee,
             None,
             None,
+            context,
+        )
+        .map(Some)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn check_qualified_collection_call(
+        &mut self,
+        file: FileId,
+        range: TextRange,
+        suffix: SyntaxNodeRef<'_>,
+        explicit_bracket: Option<SyntaxNodeRef<'_>>,
+        tokens: &[SyntaxTokenRef<'_>],
+        resolved_index: usize,
+        resolved: &ResolvedName,
+        expected: Option<ExpressionExpectation>,
+        context: &mut BodyContext,
+    ) -> Result<Option<HirExpressionId>, HirError> {
+        if resolved_index + 2 != tokens.len() {
+            return Ok(None);
+        }
+        let type_name = match resolved {
+            ResolvedName::Prelude {
+                namespace: Namespace::Type,
+                name,
+            } => Some(name.as_str().to_owned()),
+            ResolvedName::External {
+                module,
+                namespace: Namespace::Type,
+                name,
+            } if module.package().as_str() == "toolchain:std:0.1-bootstrap"
+                && module.path().as_str() == "collections" =>
+            {
+                Some(name.as_str().to_owned())
+            }
+            _ => None,
+        };
+        let Some(type_name) = type_name else {
+            return Ok(None);
+        };
+        let member_token = *tokens
+            .last()
+            .expect("a qualified collection operation has a member token");
+        let member = member_token
+            .token()
+            .normalized_identifier()
+            .map(str::to_owned)
+            .unwrap_or(self.token_text(file, member_token)?.to_owned());
+        let function = match (type_name.as_str(), member.as_str()) {
+            ("Array", "new") => HirBootstrapHostFunction::CollectionArrayNew,
+            ("Array", "withCapacity") => HirBootstrapHostFunction::CollectionArrayWithCapacity,
+            ("Map", "new") => HirBootstrapHostFunction::CollectionMapNew,
+            ("Set", "new") => HirBootstrapHostFunction::CollectionSetNew,
+            _ => return Ok(None),
+        };
+        let bracket = explicit_bracket.or_else(|| {
+            self.raw_operation_type_arguments(file, member_token.range(), suffix.range())
+        });
+        let Some(bracket) = bracket else {
+            self.emit(
+                self.sources.span(file, member_token.range())?,
+                "E1104",
+                format!("{type_name}.{member} requires explicit type arguments"),
+                Vec::new(),
+                None,
+            )?;
+            return self.recovery_expression(file, range).map(Some);
+        };
+        let Some(arguments) = self.expression_generic_arguments(file, bracket, Some(context))?
+        else {
+            return Ok(Some(self.recovery_expression(file, range)?));
+        };
+        let expected_arity = match function {
+            HirBootstrapHostFunction::CollectionArrayNew
+            | HirBootstrapHostFunction::CollectionArrayWithCapacity
+            | HirBootstrapHostFunction::CollectionSetNew => 1,
+            HirBootstrapHostFunction::CollectionMapNew => 2,
+            _ => unreachable!("collection constructors are closed"),
+        };
+        if arguments.len() != expected_arity {
+            self.emit(
+                self.sources.span(file, bracket.range())?,
+                "E1104",
+                format!(
+                    "{type_name}.{member} expects {expected_arity} type argument(s), found {}",
+                    arguments.len()
+                ),
+                Vec::new(),
+                None,
+            )?;
+            return self.recovery_expression(file, range).map(Some);
+        }
+        let explicit_generics = Some(ExplicitGenericArguments {
+            arguments: arguments
+                .into_iter()
+                .enumerate()
+                .map(|(position, argument)| {
+                    (
+                        u32::try_from(position).expect("collection generic position fits in u32"),
+                        argument,
+                    )
+                })
+                .collect(),
+        });
+        let callee =
+            self.bootstrap_host_callee(function, self.sources.span(file, member_token.range())?)?;
+        self.check_call(
+            CallSite {
+                file,
+                range,
+                suffix,
+                expected,
+            },
+            callee,
+            None,
+            explicit_generics,
             context,
         )
         .map(Some)
@@ -16689,6 +16829,19 @@ impl<'a> ExpressionChecker<'a> {
                 (IntrinsicType::Bytes, "toArray") => HirBootstrapHostFunction::BytesToArray,
                 (IntrinsicType::Bytes, "equal") => HirBootstrapHostFunction::BytesEqual,
                 (IntrinsicType::Bytes, "hash") => HirBootstrapHostFunction::BytesHash,
+                (IntrinsicType::Array, "length") => HirBootstrapHostFunction::CollectionArrayLength,
+                (IntrinsicType::Array, "get") => HirBootstrapHostFunction::CollectionArrayGet,
+                (IntrinsicType::Array, "slice") => HirBootstrapHostFunction::CollectionArraySlice,
+                (IntrinsicType::Array, "push") => HirBootstrapHostFunction::CollectionArrayPush,
+                (IntrinsicType::Array, "pop") => HirBootstrapHostFunction::CollectionArrayPop,
+                (IntrinsicType::Map, "get") => HirBootstrapHostFunction::CollectionMapGet,
+                (IntrinsicType::Map, "insert") => HirBootstrapHostFunction::CollectionMapInsert,
+                (IntrinsicType::Map, "contains") => HirBootstrapHostFunction::CollectionMapContains,
+                (IntrinsicType::Map, "entries") => HirBootstrapHostFunction::CollectionMapEntries,
+                (IntrinsicType::Set, "insert") => HirBootstrapHostFunction::CollectionSetInsert,
+                (IntrinsicType::Set, "remove") => HirBootstrapHostFunction::CollectionSetRemove,
+                (IntrinsicType::Set, "contains") => HirBootstrapHostFunction::CollectionSetContains,
+                (IntrinsicType::Set, "values") => HirBootstrapHostFunction::CollectionSetValues,
                 (IntrinsicType::Path, "join") => HirBootstrapHostFunction::PathJoin,
                 (IntrinsicType::Path, "parent") => HirBootstrapHostFunction::PathParent,
                 (IntrinsicType::Path, "fileName") => HirBootstrapHostFunction::PathFileName,
@@ -16803,6 +16956,11 @@ impl<'a> ExpressionChecker<'a> {
                 | HirBootstrapHostFunction::ReaderRead
                 | HirBootstrapHostFunction::WriterWrite
                 | HirBootstrapHostFunction::WriterFlush
+                | HirBootstrapHostFunction::CollectionArrayPush
+                | HirBootstrapHostFunction::CollectionArrayPop
+                | HirBootstrapHostFunction::CollectionMapInsert
+                | HirBootstrapHostFunction::CollectionSetInsert
+                | HirBootstrapHostFunction::CollectionSetRemove
         ) {
             self.check_method_receiver(receiver, ParameterMode::Var, Some(receiver_type), context)?;
         }
@@ -23225,6 +23383,54 @@ fn build(input: Int, flag: Bool) {
         assert_eq!(arrays, 6);
         assert_eq!(maps, 2);
         assert_eq!(sets, 2);
+    }
+
+    #[test]
+    fn closed_collection_constructors_and_methods_lower_through_one_host_surface() {
+        let (_, _, output) = check(
+            "import std.collections\n\
+             fn exercise(): Unit {\n\
+                 var values = Array.new[Int]()\n\
+                 _ = Array.withCapacity[Int](4)\n\
+                 _ = values.length()\n\
+                 _ = values.get(0)\n\
+                 _ = values.slice(0, 0)\n\
+                 _ = values.push(1)\n\
+                 _ = values.pop()\n\
+                 var map = Map.new[String, Int]()\n\
+                 _ = map.get(\"missing\")\n\
+                 _ = map.insert(\"one\", 1)\n\
+                 _ = map.contains(\"one\")\n\
+                 _ = map.entries()\n\
+                 var set = Set.new[Int]()\n\
+                 _ = set.insert(1)\n\
+                 _ = set.remove(1)\n\
+                 _ = set.contains(1)\n\
+                 _ = set.values()\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+
+        let (_, _, missing_arguments) = check(
+            "import std.collections\n\
+             fn invalid(): Unit {\n\
+                 _ = Array.new()\n\
+             }\n",
+        );
+        assert_eq!(codes(&missing_arguments), ["E1104"]);
+
+        let (_, _, wrong_arity) = check(
+            "import std.collections\n\
+             fn invalid(): Unit {\n\
+                 _ = Map.new[Int]()\n\
+             }\n",
+        );
+        assert_eq!(codes(&wrong_arity), ["E1104"]);
     }
 
     #[test]

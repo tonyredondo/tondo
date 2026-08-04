@@ -1,0 +1,14 @@
+import std.console
+
+fn main() {
+    let identity = Ref(42)
+    let other = Ref(7)
+    var values = [1: identity, 2: other]
+
+    let removed = values.remove(1)
+    assert(removed == some(identity))
+    assert(values == [2: other])
+    assert(values.remove(1) == none)
+
+    console.print("map-remove-gc\n")
+}

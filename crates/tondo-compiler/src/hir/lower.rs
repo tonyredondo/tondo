@@ -10,7 +10,7 @@ use crate::source::{FileId, ModulePath, SourceDatabase, Span, TextRange};
 use crate::syntax::ast::Expression as AstExpression;
 use crate::syntax::{Parsed, SyntaxKind, SyntaxNodeRef, SyntaxTokenRef, TokenKind};
 use crate::types::{
-    FunctionParameter, FunctionType, IntrinsicType, ParameterMode, ScalarType, TypeId,
+    CursorMode, FunctionParameter, FunctionType, IntrinsicType, ParameterMode, ScalarType, TypeId,
     TypeInterner, TypeKind, TypeSubstitution,
 };
 
@@ -267,6 +267,15 @@ impl<'a> TypeLowerer<'a> {
         // rather than from a module-qualified path, so their host signatures
         // must be present even when the source only uses the prelude type.
         let text_referenced = text_module.is_some();
+        // Collection owners (`Array`, `Map`, and `Set`) are prelude types, so
+        // the source module reference is not necessarily retained in the
+        // resolver graph. Keep their hosted contracts available whenever the
+        // bootstrap collections module exists, just like `std.text.String`.
+        let collections = ModulePath::new("collections")?;
+        let collections_referenced = self
+            .packages
+            .module(self.packages.standard(), &collections)
+            .is_some();
         let testing_referenced = testing_module.as_ref().is_some_and(|testing_module| {
             self.resolved.references().any(|reference| {
                 matches!(
@@ -315,6 +324,7 @@ impl<'a> TypeLowerer<'a> {
             && !env_referenced
             && !math_referenced
             && !text_referenced
+            && !collections_referenced
             && !testing_referenced
             && !json_referenced
             && !messagepack_referenced
@@ -345,6 +355,9 @@ impl<'a> TypeLowerer<'a> {
         let text_error = self
             .interner
             .intrinsic(IntrinsicType::TextError, Vec::new())?;
+        let collection_error = self
+            .interner
+            .intrinsic(IntrinsicType::CollectionError, Vec::new())?;
         let path_type = self.interner.intrinsic(IntrinsicType::Path, Vec::new())?;
         let path_error = self
             .interner
@@ -1392,6 +1405,211 @@ impl<'a> TypeLowerer<'a> {
                 vec![(string, true), (string, false), (string, false)],
                 None,
                 string,
+            )?;
+        }
+
+        if collections_referenced {
+            let collection_array = |interner: &mut TypeInterner, item| {
+                interner.intrinsic(IntrinsicType::Array, vec![item])
+            };
+            let collection_map = |interner: &mut TypeInterner, key, value| {
+                interner.intrinsic(IntrinsicType::Map, vec![key, value])
+            };
+            let collection_set = |interner: &mut TypeInterner, item| {
+                interner.intrinsic(IntrinsicType::Set, vec![item])
+            };
+            let generic_value = self.interner.generic_parameter(0)?;
+            let generic_key = self.interner.generic_parameter(0)?;
+            let generic_map_value = self.interner.generic_parameter(1)?;
+            let array = collection_array(&mut self.interner, generic_value)?;
+            let array_value = self.interner.option(generic_value)?;
+            let array_with_capacity = self.interner.result(array, collection_error)?;
+            let array_slice = self.interner.result(array, collection_error)?;
+            let array_push = self.interner.result(unit, collection_error)?;
+            let map = collection_map(&mut self.interner, generic_key, generic_map_value)?;
+            let map_value = self.interner.option(generic_map_value)?;
+            let map_cursor = self.interner.cursor(CursorMode::Own, map)?;
+            let set = collection_set(&mut self.interner, generic_key)?;
+            let set_cursor = self.interner.cursor(CursorMode::Own, set)?;
+            let key_bound = vec![(0, vec![self.prelude_trait_bound("Key")])];
+
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::CollectionArrayNew,
+                Vec::new(),
+                array,
+                1,
+                Vec::new(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::CollectionArrayWithCapacity,
+                vec![(int, ParameterMode::Value, false)],
+                array_with_capacity,
+                1,
+                Vec::new(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::CollectionArrayLength,
+                vec![(array, ParameterMode::Value, true)],
+                int,
+                1,
+                Vec::new(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::CollectionArrayGet,
+                vec![
+                    (array, ParameterMode::Value, true),
+                    (int, ParameterMode::Value, false),
+                ],
+                array_value,
+                1,
+                Vec::new(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::CollectionArraySlice,
+                vec![
+                    (array, ParameterMode::Value, true),
+                    (int, ParameterMode::Value, false),
+                    (int, ParameterMode::Value, false),
+                ],
+                array_slice,
+                1,
+                Vec::new(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::CollectionArrayPush,
+                vec![
+                    (array, ParameterMode::Var, true),
+                    (generic_value, ParameterMode::Value, false),
+                ],
+                array_push,
+                1,
+                Vec::new(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::CollectionArrayPop,
+                vec![(array, ParameterMode::Var, true)],
+                array_value,
+                1,
+                Vec::new(),
+            )?;
+
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::CollectionMapNew,
+                Vec::new(),
+                map,
+                2,
+                key_bound.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::CollectionMapGet,
+                vec![
+                    (map, ParameterMode::Value, true),
+                    (generic_key, ParameterMode::Value, false),
+                ],
+                map_value,
+                2,
+                key_bound.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::CollectionMapInsert,
+                vec![
+                    (map, ParameterMode::Var, true),
+                    (generic_key, ParameterMode::Value, false),
+                    (generic_map_value, ParameterMode::Value, false),
+                ],
+                map_value,
+                2,
+                key_bound.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::CollectionMapRemove,
+                vec![
+                    (map, ParameterMode::Var, true),
+                    (generic_key, ParameterMode::Value, false),
+                ],
+                map_value,
+                2,
+                key_bound.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::CollectionMapContains,
+                vec![
+                    (map, ParameterMode::Value, true),
+                    (generic_key, ParameterMode::Value, false),
+                ],
+                bool_type,
+                2,
+                key_bound.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::CollectionMapEntries,
+                vec![(map, ParameterMode::Value, true)],
+                map_cursor,
+                2,
+                key_bound.clone(),
+            )?;
+
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::CollectionSetNew,
+                Vec::new(),
+                set,
+                1,
+                key_bound.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::CollectionSetInsert,
+                vec![
+                    (set, ParameterMode::Var, true),
+                    (generic_key, ParameterMode::Value, false),
+                ],
+                bool_type,
+                1,
+                key_bound.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::CollectionSetRemove,
+                vec![
+                    (set, ParameterMode::Var, true),
+                    (generic_key, ParameterMode::Value, false),
+                ],
+                bool_type,
+                1,
+                key_bound.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::CollectionSetContains,
+                vec![
+                    (set, ParameterMode::Value, true),
+                    (generic_key, ParameterMode::Value, false),
+                ],
+                bool_type,
+                1,
+                key_bound.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::CollectionSetValues,
+                vec![(set, ParameterMode::Value, true)],
+                set_cursor,
+                1,
+                key_bound,
             )?;
         }
 
@@ -5128,6 +5346,7 @@ impl<'a> TypeLowerer<'a> {
                         | IntrinsicType::BytesBuilder
                         | IntrinsicType::BytesError
                         | IntrinsicType::TextError
+                        | IntrinsicType::CollectionError
                         | IntrinsicType::Path
                         | IntrinsicType::PathError
                         | IntrinsicType::FsError

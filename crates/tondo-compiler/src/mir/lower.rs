@@ -2396,6 +2396,22 @@ impl<'a> FunctionBuilder<'a> {
                 )
             }
         };
+        let source_is_cursor = mode == CursorMode::Own
+            && matches!(
+                self.hir
+                    .interner()
+                    .kind(
+                        self.hir
+                            .expression(iteration.source)
+                            .expect("iterator source is indexed")
+                            .ty()
+                    )
+                    .map_err(|error| MirError::Construction {
+                        span,
+                        message: format!("iterator source has an invalid type: {error}"),
+                    })?,
+                TypeKind::Cursor { .. }
+            );
         let state = self.allocate_temporary(iteration.cursor, span, block)?;
         self.assign(
             block,
@@ -2403,7 +2419,11 @@ impl<'a> FunctionBuilder<'a> {
             self.local_place(state),
             MirRvalue {
                 ty: iteration.cursor,
-                kind: MirRvalueKind::IteratorState { source },
+                kind: if source_is_cursor {
+                    MirRvalueKind::Use(source)
+                } else {
+                    MirRvalueKind::IteratorState { source }
+                },
             },
         )?;
         let item_ty = self.pattern_type(iteration.pattern)?;

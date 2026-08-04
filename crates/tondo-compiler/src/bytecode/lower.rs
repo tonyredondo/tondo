@@ -4102,6 +4102,7 @@ fn intrinsic_type(value: IntrinsicType) -> bc::BytecodeIntrinsicType {
         IntrinsicType::BytesBuilder => bc::BytecodeIntrinsicType::BytesBuilder,
         IntrinsicType::BytesError => bc::BytecodeIntrinsicType::BytesError,
         IntrinsicType::TextError => bc::BytecodeIntrinsicType::TextError,
+        IntrinsicType::CollectionError => bc::BytecodeIntrinsicType::CollectionError,
         IntrinsicType::Path => bc::BytecodeIntrinsicType::Path,
         IntrinsicType::PathError => bc::BytecodeIntrinsicType::PathError,
         IntrinsicType::FsError => bc::BytecodeIntrinsicType::FsError,

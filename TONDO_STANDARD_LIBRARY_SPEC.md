@@ -1001,6 +1001,60 @@ las conversiones ASCII no aplican normalización Unicode ni locale. La
 conversión `String(Bytes)` continúa siendo la única frontera UTF-8 que puede
 devolver `Utf8Error` por bytes inválidos.
 
+#### 10.2.3 Contrato cerrado de `std.collections`
+
+`Array[T]`, `Map[K, V]` y `Set[K]` conservan una sola representación de valor
+del lenguaje. La implementación puede compartir buffers mediante COW, pero una
+asignación, paso por valor o resultado de una operación nunca expone alias
+mutables inesperados. Los métodos que cambian una colección exigen un receptor
+`var`; los métodos de consulta son puros. `Map` y `Set` requieren `Key` para
+garantizar igualdad y hashing estables, preservan el orden de inserción y no
+reordenan una entrada al reemplazar su valor.
+
+```tondo
+import std.collections
+
+fn Array.new[T](): Array[T]
+fn Array.withCapacity[T](capacity: Int): Array[T] ! CollectionError
+fn Array.length[T](self): Int
+fn Array.get[T](self, index: Int): T?
+fn Array.slice[T](self, start: Int, end: Int): Array[T] ! CollectionError
+fn Array.push[T](var self, value: T): Unit ! CollectionError
+fn Array.pop[T](var self): T?
+
+fn Map.new[K: Key, V](): Map[K, V]
+fn Map.get[K: Key, V](self, key: K): V?
+fn Map.insert[K: Key, V](var self, key: K, value: V): V?
+fn Map.remove[K: Key, V](var self, key: K): V?
+fn Map.contains[K: Key, V](self, key: K): Bool
+fn Map.entries[K: Key, V](self): Iterator[(K, V)]
+
+fn Set.new[K: Key](): Set[K]
+fn Set.insert[K: Key](var self, value: K): Bool
+fn Set.remove[K: Key](var self, value: K): Bool
+fn Set.contains[K: Key](self, value: K): Bool
+fn Set.values[K: Key](self): Iterator[K]
+
+enum CollectionError { InvalidCapacity, InvalidIndex, InvalidStep, ResourceLimit }
+```
+
+`Array.new` y `Map/Set.new` requieren argumentos de tipo explícitos para que no
+haya una inferencia dependiente del uso posterior. `withCapacity` rechaza una
+capacidad negativa, no representable o por encima del límite del run sin
+publicar una reserva parcial. `get` es total y devuelve `none` fuera de rango;
+los índices negativos cuentan desde el final. `slice` usa `[start, end)`, exige
+límites no negativos y que `start <= end <= length`, y también es atómica.
+`push` conserva el orden y devuelve `CollectionError` si no puede reservar; no
+modifica el array en ese caso. `pop` devuelve `none` para un array vacío.
+
+`Map.insert` devuelve el valor anterior y mantiene la primera posición de la
+key; `remove` devuelve el valor eliminado. `Map.entries` y `Set.values` son
+cursores propios lazy: cada target de `for` consume exactamente un elemento y
+el cursor no se reinicia implícitamente. `Set.insert` devuelve `false` cuando la
+key ya existe y `remove` devuelve `false` cuando está ausente. Los resultados de
+consulta y los cursores se materializan por la ruta HIR → MIR → bytecode → VM;
+no existe un segundo API host ni una segunda representación de colección.
+
 ### 10.3 Protocolos de I/O
 
 `std.io` posee los contratos portables compartidos por console, filesystem y

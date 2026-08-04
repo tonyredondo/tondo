@@ -1,0 +1,7 @@
+type Hidden = {
+    value: Int
+}
+
+fn render(value: Hidden): String {
+    "{value}"
+}

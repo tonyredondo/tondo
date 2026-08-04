@@ -1,0 +1,6 @@
+async fn tick() {}
+
+async fn invalid(pointer: Pointer[Int]): Pointer[Int] {
+    await tick()
+    pointer
+}

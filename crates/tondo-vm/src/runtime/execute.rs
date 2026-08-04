@@ -4,14 +4,14 @@ use std::collections::VecDeque;
 use crate::bytecode::{
     ArraySliceError, BytecodeAggregateKind, BytecodeArraySequenceKind, BytecodeAwaitable,
     BytecodeBinaryOperator, BytecodeBlockId, BytecodeBootstrapHostFunction, BytecodeCallArgument,
-    BytecodeCallArgumentTarget, BytecodeCoercion, BytecodeConstant, BytecodeConstantValue,
-    BytecodeConstantValueKind, BytecodeConstantVariantValue, BytecodeContainmentKind,
-    BytecodeCursorMode, BytecodeFunctionId, BytecodeIndexAccess, BytecodeInstruction,
-    BytecodeInstructionKind, BytecodeIntrinsicType, BytecodeLoanId, BytecodeLoanKind,
-    BytecodeNominalShape, BytecodeNumericConversion, BytecodeNumericConversionError,
-    BytecodeOperand, BytecodeOperandKind, BytecodeOperation, BytecodeOperationKind,
-    BytecodeParameterMode, BytecodePlace, BytecodePrefixOperator, BytecodeProgram,
-    BytecodeProjection, BytecodeProjectionKind, BytecodeRangeKind, BytecodeRvalue,
+    BytecodeCallArgumentTarget, BytecodeCallable, BytecodeCoercion, BytecodeConstant,
+    BytecodeConstantValue, BytecodeConstantValueKind, BytecodeConstantVariantValue,
+    BytecodeContainmentKind, BytecodeCursorMode, BytecodeFunctionId, BytecodeIndexAccess,
+    BytecodeInstruction, BytecodeInstructionKind, BytecodeIntrinsicType, BytecodeLoanId,
+    BytecodeLoanKind, BytecodeNominalShape, BytecodeNumericConversion,
+    BytecodeNumericConversionError, BytecodeOperand, BytecodeOperandKind, BytecodeOperation,
+    BytecodeOperationKind, BytecodeParameterMode, BytecodePlace, BytecodePrefixOperator,
+    BytecodeProgram, BytecodeProjection, BytecodeProjectionKind, BytecodeRangeKind, BytecodeRvalue,
     BytecodeRvalueKind, BytecodeScalarType, BytecodeScopeId, BytecodeSlotId, BytecodeSpan,
     BytecodeTag, BytecodeTerminator, BytecodeTerminatorKind, BytecodeTraceMetadata, BytecodeTypeId,
     BytecodeTypeKind, BytecodeVariantPayload, BytecodeVerificationLimits, normalize_array_index,
@@ -2107,6 +2107,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                     | BytecodeIntrinsicType::BytesBuilder
                     | BytecodeIntrinsicType::BytesError
                     | BytecodeIntrinsicType::TextError
+                    | BytecodeIntrinsicType::CollectionError
                     | BytecodeIntrinsicType::Path
                     | BytecodeIntrinsicType::PathError
                     | BytecodeIntrinsicType::FsError
@@ -3686,6 +3687,7 @@ fn runtime_host_kind(constructor: BytecodeIntrinsicType) -> Option<RuntimeHostVa
         BytecodeIntrinsicType::BytesBuilder => RuntimeHostValueKind::BytesBuilder,
         BytecodeIntrinsicType::BytesError => RuntimeHostValueKind::BytesError,
         BytecodeIntrinsicType::TextError => RuntimeHostValueKind::TextError,
+        BytecodeIntrinsicType::CollectionError => RuntimeHostValueKind::CollectionError,
         BytecodeIntrinsicType::Path => RuntimeHostValueKind::Path,
         BytecodeIntrinsicType::PathError => RuntimeHostValueKind::PathError,
         BytecodeIntrinsicType::FsError => RuntimeHostValueKind::FsError,
@@ -7624,6 +7626,11 @@ impl Engine<'_, '_> {
                         value => Ok(value),
                     })
                     .collect::<Result<Vec<_>, VmError>>()?;
+                if metadata.name.starts_with("std.collections.")
+                    && let Some(result) = self.prepare_collection_call(&metadata, &values)?
+                {
+                    return Ok(result);
+                }
                 let snapshots = values
                     .iter()
                     .map(|value| {
@@ -7670,6 +7677,360 @@ impl Engine<'_, '_> {
         })();
         self.temporary_roots.truncate(marker);
         result
+    }
+
+    fn collection_error_result(&mut self, result_ty: BytecodeTypeId) -> Result<Value, VmError> {
+        self.allocate(
+            result_ty,
+            HeapObject::ResultErr(Some(Value::Host(RuntimeValue::Host {
+                kind: RuntimeHostValueKind::CollectionError,
+                id: 0,
+            }))),
+            &[],
+        )
+    }
+
+    fn prepare_collection_call(
+        &mut self,
+        metadata: &BytecodeCallable,
+        values: &[Value],
+    ) -> Result<Option<OperationResult>, VmError> {
+        let receiver_index = metadata
+            .parameters
+            .iter()
+            .position(|parameter| parameter.receiver);
+        let Some(receiver_index) = receiver_index else {
+            return Ok(None);
+        };
+        let receiver = values
+            .get(receiver_index)
+            .ok_or_else(|| VmError::invariant("collection receiver slot is missing"))?;
+        let name = metadata
+            .name
+            .split_once('[')
+            .map_or(metadata.name.as_str(), |(base, _)| base);
+        let result = match name {
+            "std.collections.Array.length" => {
+                let Value::Heap(handle) = receiver else {
+                    return Err(VmError::invariant("Array.length receiver is not managed"));
+                };
+                let HeapObject::Array(items) = self.heap.get(*handle)?.clone() else {
+                    return Err(VmError::invariant(
+                        "Array.length receiver has the wrong heap shape",
+                    ));
+                };
+                Some(Value::Integer(i128::try_from(items.len()).map_err(
+                    |_| VmError::ResourceLimit {
+                        resource: "array length",
+                        limit: i64::MAX as u64,
+                    },
+                )?))
+            }
+            "std.collections.Array.get" => {
+                let [Value::Heap(handle), Value::Integer(index)] = values else {
+                    return Err(VmError::invariant(
+                        "Array.get arguments have the wrong shape",
+                    ));
+                };
+                let HeapObject::Array(items) = self.heap.get(*handle)?.clone() else {
+                    return Err(VmError::invariant(
+                        "Array.get receiver has the wrong heap shape",
+                    ));
+                };
+                let position = normalize_array_index(*index, items.len());
+                let output = match position {
+                    Some(position) => {
+                        let value = self.copy_value(present(&items[position], "array element")?)?;
+                        self.allocate(
+                            metadata.outcome,
+                            HeapObject::OptionSome(Some(value.clone())),
+                            &[value],
+                        )?
+                    }
+                    None => self.allocate(metadata.outcome, HeapObject::OptionNone, &[])?,
+                };
+                Some(output)
+            }
+            "std.collections.Array.slice" => {
+                let [
+                    Value::Heap(handle),
+                    Value::Integer(start),
+                    Value::Integer(end),
+                ] = values
+                else {
+                    return Err(VmError::invariant(
+                        "Array.slice arguments have the wrong shape",
+                    ));
+                };
+                let HeapObject::Array(items) = self.heap.get(*handle)?.clone() else {
+                    return Err(VmError::invariant(
+                        "Array.slice receiver has the wrong heap shape",
+                    ));
+                };
+                let (Ok(start), Ok(end)) = (usize::try_from(*start), usize::try_from(*end)) else {
+                    return Ok(Some(OperationResult::Value(
+                        self.collection_error_result(metadata.outcome)?,
+                    )));
+                };
+                if start > end || end > items.len() {
+                    return Ok(Some(OperationResult::Value(
+                        self.collection_error_result(metadata.outcome)?,
+                    )));
+                }
+                let output = self.with_temporary_roots(|engine| {
+                    let mut copied = Vec::with_capacity(end - start);
+                    for item in &items[start..end] {
+                        let value = engine.copy_value(present(item, "array element")?)?;
+                        engine.retain_temporary(&value);
+                        copied.push(Some(value));
+                    }
+                    let array =
+                        engine.allocate_like(*handle, HeapObject::Array(copied.into()), &[])?;
+                    engine.allocate(
+                        metadata.outcome,
+                        HeapObject::ResultOk(Some(array.clone())),
+                        &[array],
+                    )
+                })?;
+                Some(output)
+            }
+            "std.collections.Array.push" => {
+                let [Value::Heap(handle), value] = values else {
+                    return Err(VmError::invariant(
+                        "Array.push arguments have the wrong shape",
+                    ));
+                };
+                let HeapObject::Array(mut items) = self.heap.get(*handle)?.clone() else {
+                    return Err(VmError::invariant(
+                        "Array.push receiver has the wrong heap shape",
+                    ));
+                };
+                if items.try_reserve(1).is_err() {
+                    return Ok(Some(OperationResult::Value(
+                        self.collection_error_result(metadata.outcome)?,
+                    )));
+                }
+                items.push(Some(value.clone()));
+                self.replace_object(
+                    *handle,
+                    HeapObject::Array(items),
+                    std::slice::from_ref(value),
+                )?;
+                Some(self.allocate(
+                    metadata.outcome,
+                    HeapObject::ResultOk(Some(Value::Unit)),
+                    &[],
+                )?)
+            }
+            "std.collections.Array.pop" => {
+                let Value::Heap(handle) = receiver else {
+                    return Err(VmError::invariant("Array.pop receiver is not managed"));
+                };
+                let HeapObject::Array(mut items) = self.heap.get(*handle)?.clone() else {
+                    return Err(VmError::invariant(
+                        "Array.pop receiver has the wrong heap shape",
+                    ));
+                };
+                let value = items.pop().flatten();
+                let roots = value.iter().cloned().collect::<Vec<_>>();
+                self.replace_object(*handle, HeapObject::Array(items), &roots)?;
+                let output = match value {
+                    Some(value) => self.allocate(
+                        metadata.outcome,
+                        HeapObject::OptionSome(Some(value.clone())),
+                        &[value],
+                    )?,
+                    None => self.allocate(metadata.outcome, HeapObject::OptionNone, &[])?,
+                };
+                Some(output)
+            }
+            "std.collections.Map.insert" => {
+                let [Value::Heap(handle), key, value] = values else {
+                    return Err(VmError::invariant(
+                        "Map.insert arguments have the wrong shape",
+                    ));
+                };
+                let HeapObject::Map(mut entries) = self.heap.get(*handle)?.clone() else {
+                    return Err(VmError::invariant(
+                        "Map.insert receiver has the wrong heap shape",
+                    ));
+                };
+                let old = if let Some(position) = self.find_map_entry(&entries, key)? {
+                    let old = entries[position]
+                        .1
+                        .replace(value.clone())
+                        .ok_or_else(|| VmError::invariant("map value was already absent"))?;
+                    Some(old)
+                } else {
+                    entries.try_reserve(1).map_err(|_| VmError::ResourceLimit {
+                        resource: "map allocation bytes",
+                        limit: self.limits.max_heap_bytes,
+                    })?;
+                    entries.push((Some(key.clone()), Some(value.clone())));
+                    None
+                };
+                let mut roots = vec![key.clone(), value.clone()];
+                if let Some(old) = &old {
+                    roots.push(old.clone());
+                }
+                self.replace_object(*handle, HeapObject::Map(entries), &roots)?;
+                let output = match old {
+                    Some(old) => self.allocate(
+                        metadata.outcome,
+                        HeapObject::OptionSome(Some(old.clone())),
+                        &[old],
+                    )?,
+                    None => self.allocate(metadata.outcome, HeapObject::OptionNone, &[])?,
+                };
+                Some(output)
+            }
+            "std.collections.Map.get" => {
+                let [Value::Heap(handle), key] = values else {
+                    return Err(VmError::invariant("Map.get arguments have the wrong shape"));
+                };
+                let HeapObject::Map(entries) = self.heap.get(*handle)?.clone() else {
+                    return Err(VmError::invariant(
+                        "Map.get receiver has the wrong heap shape",
+                    ));
+                };
+                let output = match self.find_map_entry(&entries, key)? {
+                    Some(position) => {
+                        let value = self.copy_value(present(&entries[position].1, "map value")?)?;
+                        self.allocate(
+                            metadata.outcome,
+                            HeapObject::OptionSome(Some(value.clone())),
+                            &[value],
+                        )?
+                    }
+                    None => self.allocate(metadata.outcome, HeapObject::OptionNone, &[])?,
+                };
+                Some(output)
+            }
+            "std.collections.Map.contains" => {
+                let [Value::Heap(handle), key] = values else {
+                    return Err(VmError::invariant(
+                        "Map.contains arguments have the wrong shape",
+                    ));
+                };
+                let HeapObject::Map(entries) = self.heap.get(*handle)?.clone() else {
+                    return Err(VmError::invariant(
+                        "Map.contains receiver has the wrong heap shape",
+                    ));
+                };
+                Some(Value::Bool(self.find_map_entry(&entries, key)?.is_some()))
+            }
+            "std.collections.Map.remove" => {
+                let [Value::Heap(_), key] = values else {
+                    return Err(VmError::invariant(
+                        "Map.remove arguments have the wrong shape",
+                    ));
+                };
+                Some(self.map_remove(metadata.outcome, receiver.clone(), key)?)
+            }
+            "std.collections.Map.entries" => Some(self.allocate(
+                metadata.outcome,
+                HeapObject::Iterator {
+                    mode: BytecodeCursorMode::Own,
+                    source: Some(receiver.clone()),
+                    next: 0,
+                },
+                std::slice::from_ref(receiver),
+            )?),
+            "std.collections.Set.insert" => {
+                let [Value::Heap(handle), value] = values else {
+                    return Err(VmError::invariant(
+                        "Set.insert arguments have the wrong shape",
+                    ));
+                };
+                let HeapObject::Set(mut items) = self.heap.get(*handle)?.clone() else {
+                    return Err(VmError::invariant(
+                        "Set.insert receiver has the wrong heap shape",
+                    ));
+                };
+                let mut present = false;
+                for item in items.iter().flatten() {
+                    if self.value_equal(item, value)? {
+                        present = true;
+                        break;
+                    }
+                }
+                if present {
+                    Some(Value::Bool(false))
+                } else {
+                    items.try_reserve(1).map_err(|_| VmError::ResourceLimit {
+                        resource: "set allocation bytes",
+                        limit: self.limits.max_heap_bytes,
+                    })?;
+                    items.push(Some(value.clone()));
+                    self.replace_object(
+                        *handle,
+                        HeapObject::Set(items),
+                        std::slice::from_ref(value),
+                    )?;
+                    Some(Value::Bool(true))
+                }
+            }
+            "std.collections.Set.contains" => {
+                let [Value::Heap(handle), value] = values else {
+                    return Err(VmError::invariant(
+                        "Set.contains arguments have the wrong shape",
+                    ));
+                };
+                let HeapObject::Set(items) = self.heap.get(*handle)?.clone() else {
+                    return Err(VmError::invariant(
+                        "Set.contains receiver has the wrong heap shape",
+                    ));
+                };
+                let mut present = false;
+                for item in items.iter().flatten() {
+                    if self.value_equal(item, value)? {
+                        present = true;
+                        break;
+                    }
+                }
+                Some(Value::Bool(present))
+            }
+            "std.collections.Set.remove" => {
+                let [Value::Heap(handle), value] = values else {
+                    return Err(VmError::invariant(
+                        "Set.remove arguments have the wrong shape",
+                    ));
+                };
+                let HeapObject::Set(mut items) = self.heap.get(*handle)?.clone() else {
+                    return Err(VmError::invariant(
+                        "Set.remove receiver has the wrong heap shape",
+                    ));
+                };
+                let mut position = None;
+                for (index, item) in items.iter().enumerate() {
+                    if let Some(item) = item
+                        && self.value_equal(item, value)?
+                    {
+                        position = Some(index);
+                        break;
+                    }
+                }
+                if let Some(position) = position {
+                    let removed = items.remove(position);
+                    let roots = removed.clone().into_iter().collect::<Vec<_>>();
+                    self.replace_object(*handle, HeapObject::Set(items), &roots)?;
+                    Some(Value::Bool(true))
+                } else {
+                    Some(Value::Bool(false))
+                }
+            }
+            "std.collections.Set.values" => Some(self.allocate(
+                metadata.outcome,
+                HeapObject::Iterator {
+                    mode: BytecodeCursorMode::Own,
+                    source: Some(receiver.clone()),
+                    next: 0,
+                },
+                std::slice::from_ref(receiver),
+            )?),
+            _ => None,
+        };
+        Ok(result.map(OperationResult::Value))
     }
 
     fn materialize_host_value(
@@ -7756,6 +8117,48 @@ impl Engine<'_, '_> {
                         materialized.push(Some(value));
                     }
                     engine.allocate(descriptor, HeapObject::Array(materialized.into()), &[])
+                })
+            }
+            (
+                BytecodeTypeKind::Intrinsic {
+                    constructor: BytecodeIntrinsicType::Map,
+                    arguments,
+                },
+                RuntimeValue::Map(entries),
+            ) => {
+                let [key_type, value_type] = arguments.as_slice() else {
+                    return Err(VmError::invariant("verified map type has the wrong arity"));
+                };
+                self.with_temporary_roots(|engine| {
+                    let mut materialized = Vec::with_capacity(entries.len());
+                    for (key, value) in entries {
+                        let key = engine.materialize_host_value(*key_type, key)?;
+                        engine.retain_temporary(&key);
+                        let value = engine.materialize_host_value(*value_type, value)?;
+                        engine.retain_temporary(&value);
+                        materialized.push((Some(key), Some(value)));
+                    }
+                    engine.allocate(descriptor, HeapObject::Map(materialized.into()), &[])
+                })
+            }
+            (
+                BytecodeTypeKind::Intrinsic {
+                    constructor: BytecodeIntrinsicType::Set,
+                    arguments,
+                },
+                RuntimeValue::Set(values),
+            ) => {
+                let [element_type] = arguments.as_slice() else {
+                    return Err(VmError::invariant("verified set type has the wrong arity"));
+                };
+                self.with_temporary_roots(|engine| {
+                    let mut materialized = Vec::with_capacity(values.len());
+                    for value in values {
+                        let value = engine.materialize_host_value(*element_type, value)?;
+                        engine.retain_temporary(&value);
+                        materialized.push(Some(value));
+                    }
+                    engine.allocate(descriptor, HeapObject::Set(materialized.into()), &[])
                 })
             }
             (BytecodeTypeKind::Intrinsic { constructor, .. }, RuntimeValue::Host { kind, id })

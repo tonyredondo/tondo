@@ -129,6 +129,12 @@ pub enum CollectionError { InvalidCapacity, InvalidIndex, InvalidStep, ResourceL
 `Range` es lazy, no materializa un array y rechaza step cero. Cada target de
 iteración produce un único elemento; consumir un iterador avanza su estado y no
 se reinicia implícitamente. `Array`/`Map`/`Set` nunca exponen buffers mutables.
+La superficie de `std.collections` está conectada al backend bootstrap por una
+única ruta estática HIR → MIR → bytecode → VM: los constructores estáticos usan
+los intrinsics del lenguaje, las consultas y mutaciones operan sobre los mismos
+objetos COW del runtime y `Map.entries`/`Set.values` devuelven cursores propios
+lazy. El conformance hosted está cubierto por
+`tests/runtime/m11-std-collections-001.to` y sus sidecars.
 
 ## `std.math`
 

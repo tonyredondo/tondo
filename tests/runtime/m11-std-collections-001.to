@@ -1,0 +1,57 @@
+import std.collections
+import std.console
+
+fn main() {
+    let empty = Array.new[Int]()
+    assert(empty.length() == 0)
+    var values = Array.withCapacity[Int](4).unwrapOr(Array.new[Int]())
+    assert(values.length() == 0)
+    values.push(10).unwrapOr(())
+    values.push(20).unwrapOr(())
+    assert(values.length() == 2)
+    assert(values.get(0).unwrapOr(0) == 10)
+    assert(values.get(-1).unwrapOr(0) == 20)
+    assert(values.get(20).unwrapOr(99) == 99)
+    let middle = values.slice(0, 1).unwrapOr(Array.new[Int]())
+    assert(middle == [10])
+    assert(values.pop().unwrapOr(0) == 20)
+    assert(values.length() == 1)
+    assert(values.pop().unwrapOr(0) == 10)
+    assert(values.pop().unwrapOr(99) == 99)
+    assert(Array.withCapacity[Int](-1).unwrapOr(Array.new[Int]()).length() == 0)
+    assert(values.slice(-1, 1).unwrapOr(Array.new[Int]()).length() == 0)
+
+    var map = Map.new[String, Int]()
+    assert(map.insert("one", 1).unwrapOr(0) == 0)
+    assert(map.insert("two", 2).unwrapOr(0) == 0)
+    assert(map.insert("one", 10).unwrapOr(0) == 1)
+    assert(map.contains("one"))
+    assert(map.get("one").unwrapOr(0) == 10)
+    assert(map.get("missing").unwrapOr(99) == 99)
+    var map_sum = 0
+    for entry in map.entries() {
+        map_sum += entry.1
+    }
+    assert(map_sum == 12)
+    assert(map.remove("one").unwrapOr(0) == 10)
+    assert(not map.contains("one"))
+    assert(map.remove("one").unwrapOr(99) == 99)
+
+    var set = Set.new[Int]()
+    assert(set.insert(3))
+    assert(not set.insert(3))
+    assert(set.insert(1))
+    assert(set.contains(1))
+    var set_sum = 0
+    for value in set.values() {
+        set_sum += value
+    }
+    assert(set_sum == 4)
+    assert(set.remove(3))
+    assert(not set.remove(3))
+    var names = Set.new[String]()
+    assert(names.insert("tondo"))
+    assert(names.contains("tondo"))
+
+    console.print("collections-ok\n")
+}

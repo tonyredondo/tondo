@@ -1,0 +1,39 @@
+import std.console
+
+fn identity(value: Int): Int {
+    value
+}
+
+fn main() {
+    let first = Ref(identity)
+    let same = first
+    let other = Ref(identity)
+    let missing = Ref(identity)
+
+    assert(first == same)
+    assert(first != other)
+
+    let values = [first: 1, same: 3, other: 2]
+    assert(values[first] == some(3))
+    assert(values[same] == some(3))
+    assert(values[other] == some(2))
+    let copiedValues = values
+    assert(copiedValues[first] == some(3))
+    assert(copiedValues[other] == some(2))
+
+    let identities = Set[first, same, other]
+    assert(same in identities)
+    assert(other in identities)
+    assert(not (missing in identities))
+    let copiedIdentities = identities
+    assert(same in copiedIdentities)
+    assert(other in copiedIdentities)
+    assert(not (missing in copiedIdentities))
+
+    let originalContainer = [first, other]
+    let copiedContainer = originalContainer
+    assert(copiedContainer[0] == first)
+    assert(copiedContainer[1] == other)
+
+    console.print("identity\n")
+}

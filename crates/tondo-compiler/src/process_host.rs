@@ -97,6 +97,9 @@ enum HostValue {
     TextError {
         _message: String,
     },
+    CollectionError {
+        _message: String,
+    },
     Path(path::Path),
     PathError {
         _message: String,
@@ -484,6 +487,19 @@ impl BootstrapHost {
 
     fn text_result_error(&mut self, message: impl Into<String>) -> RuntimeValue {
         RuntimeValue::ResultErr(Box::new(self.text_error(message)))
+    }
+
+    fn collection_error(&mut self, message: impl Into<String>) -> RuntimeValue {
+        self.allocate(
+            RuntimeHostValueKind::CollectionError,
+            HostValue::CollectionError {
+                _message: message.into(),
+            },
+        )
+    }
+
+    fn collection_result_error(&mut self, message: impl Into<String>) -> RuntimeValue {
+        RuntimeValue::ResultErr(Box::new(self.collection_error(message)))
     }
 
     fn path(&self, value: &RuntimeValue) -> Result<&path::Path, VmError> {
@@ -2692,6 +2708,89 @@ impl VmHost for BootstrapHost {
                     HostValue::Bytes(bytes),
                 ))))
             }
+            ("std.collections.Array.new", []) => Ok(RuntimeValue::Array(Vec::new())),
+            ("std.collections.Array.withCapacity", [RuntimeValue::Integer(capacity)]) => {
+                let Ok(capacity) = usize::try_from(*capacity) else {
+                    return Ok(self.collection_result_error(
+                        "array capacity must be non-negative and fit the host size",
+                    ));
+                };
+                if capacity as u64 > self.max_bytes {
+                    return Ok(self.collection_result_error(
+                        "array capacity exceeds the configured collection limit",
+                    ));
+                }
+                let mut values = Vec::new();
+                if values.try_reserve_exact(capacity).is_err() {
+                    return Ok(self.collection_result_error(
+                        "array capacity exceeds the configured collection limit",
+                    ));
+                }
+                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Array(
+                    values,
+                ))))
+            }
+            ("std.collections.Array.length", [RuntimeValue::Array(values)]) => {
+                Ok(RuntimeValue::Integer(
+                    i128::try_from(values.len())
+                        .map_err(|_| VmError::Host("Array length does not fit in Int".into()))?,
+                ))
+            }
+            (
+                "std.collections.Array.get",
+                [RuntimeValue::Array(values), RuntimeValue::Integer(index)],
+            ) => {
+                let index = if *index < 0 {
+                    (*index)
+                        .checked_neg()
+                        .and_then(|offset| usize::try_from(offset).ok())
+                        .and_then(|offset| values.len().checked_sub(offset))
+                } else {
+                    usize::try_from(*index).ok()
+                };
+                Ok(index
+                    .and_then(|index| values.get(index))
+                    .cloned()
+                    .map(|value| RuntimeValue::OptionSome(Box::new(value)))
+                    .unwrap_or(RuntimeValue::OptionNone))
+            }
+            (
+                "std.collections.Array.slice",
+                [
+                    RuntimeValue::Array(values),
+                    RuntimeValue::Integer(start),
+                    RuntimeValue::Integer(end),
+                ],
+            ) => {
+                let Some(start) = usize::try_from(*start).ok() else {
+                    return Ok(self.collection_result_error("slice start must be non-negative"));
+                };
+                let Some(end) = usize::try_from(*end).ok() else {
+                    return Ok(self.collection_result_error("slice end must be non-negative"));
+                };
+                if start > end || end > values.len() {
+                    return Ok(self.collection_result_error(format!(
+                        "slice [{start}, {end}) is outside an array of length {}",
+                        values.len()
+                    )));
+                }
+                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Array(
+                    values[start..end].to_vec(),
+                ))))
+            }
+            ("std.collections.Map.new", []) => Ok(RuntimeValue::Map(Vec::new())),
+            ("std.collections.Map.get", [RuntimeValue::Map(entries), key]) => Ok(entries
+                .iter()
+                .find(|(entry_key, _)| entry_key == key)
+                .map(|(_, value)| RuntimeValue::OptionSome(Box::new(value.clone())))
+                .unwrap_or(RuntimeValue::OptionNone)),
+            ("std.collections.Map.contains", [RuntimeValue::Map(entries), key]) => Ok(
+                RuntimeValue::Bool(entries.iter().any(|(entry_key, _)| entry_key == key)),
+            ),
+            ("std.collections.Set.new", []) => Ok(RuntimeValue::Set(Vec::new())),
+            ("std.collections.Set.contains", [RuntimeValue::Set(values), value]) => {
+                Ok(RuntimeValue::Bool(values.iter().any(|item| item == value)))
+            }
             ("std.process.args", []) => Ok(RuntimeValue::Array(
                 self.arguments
                     .iter()
@@ -3672,6 +3771,119 @@ mod tests {
             RuntimeValue::ResultErr(value)
                 if matches!(value.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::TextError, .. })
         ));
+    }
+
+    #[test]
+    fn collection_host_owner_preserves_value_shapes_and_atomic_errors() {
+        let mut host = BootstrapHost::default();
+        assert_eq!(
+            host.invoke("std.collections.Array.new[Int]", &[]).unwrap(),
+            RuntimeValue::Array(Vec::new())
+        );
+        assert_eq!(
+            ok(host
+                .invoke(
+                    "std.collections.Array.withCapacity[Int]",
+                    &[RuntimeValue::Integer(2)],
+                )
+                .unwrap()),
+            RuntimeValue::Array(Vec::new())
+        );
+        assert!(matches!(
+            host.invoke(
+                "std.collections.Array.withCapacity[Int]",
+                &[RuntimeValue::Integer(-1)],
+            )
+            .unwrap(),
+            RuntimeValue::ResultErr(value)
+                if matches!(value.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::CollectionError, .. })
+        ));
+
+        let array = RuntimeValue::Array(vec![
+            RuntimeValue::Integer(10),
+            RuntimeValue::Integer(20),
+            RuntimeValue::Integer(30),
+        ]);
+        assert_eq!(
+            host.invoke(
+                "std.collections.Array.length[Int]",
+                std::slice::from_ref(&array),
+            )
+            .unwrap(),
+            RuntimeValue::Integer(3)
+        );
+        assert_eq!(
+            host.invoke(
+                "std.collections.Array.get[Int]",
+                &[array.clone(), RuntimeValue::Integer(-1)],
+            )
+            .unwrap(),
+            RuntimeValue::OptionSome(Box::new(RuntimeValue::Integer(30)))
+        );
+        assert_eq!(
+            host.invoke(
+                "std.collections.Array.get[Int]",
+                &[array.clone(), RuntimeValue::Integer(9)],
+            )
+            .unwrap(),
+            RuntimeValue::OptionNone
+        );
+        assert_eq!(
+            ok(host
+                .invoke(
+                    "std.collections.Array.slice[Int]",
+                    &[
+                        array.clone(),
+                        RuntimeValue::Integer(1),
+                        RuntimeValue::Integer(3),
+                    ],
+                )
+                .unwrap()),
+            RuntimeValue::Array(vec![RuntimeValue::Integer(20), RuntimeValue::Integer(30),])
+        );
+        assert!(matches!(
+            host.invoke(
+                "std.collections.Array.slice[Int]",
+                &[
+                    array,
+                    RuntimeValue::Integer(3),
+                    RuntimeValue::Integer(1),
+                ],
+            )
+            .unwrap(),
+            RuntimeValue::ResultErr(value)
+                if matches!(value.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::CollectionError, .. })
+        ));
+
+        let map = RuntimeValue::Map(vec![
+            (RuntimeValue::String("one".into()), RuntimeValue::Integer(1)),
+            (RuntimeValue::String("two".into()), RuntimeValue::Integer(2)),
+        ]);
+        assert_eq!(
+            host.invoke(
+                "std.collections.Map.get[String, Int]",
+                &[map.clone(), RuntimeValue::String("two".into())],
+            )
+            .unwrap(),
+            RuntimeValue::OptionSome(Box::new(RuntimeValue::Integer(2)))
+        );
+        assert_eq!(
+            host.invoke(
+                "std.collections.Map.contains[String, Int]",
+                &[map, RuntimeValue::String("missing".into())],
+            )
+            .unwrap(),
+            RuntimeValue::Bool(false)
+        );
+        let set = RuntimeValue::Set(vec![RuntimeValue::String("tondo".into())]);
+        assert_eq!(
+            host.invoke(
+                "std.collections.Set.contains[String]",
+                &[set, RuntimeValue::String("tondo".into())],
+            )
+            .unwrap(),
+            RuntimeValue::Bool(true)
+        );
     }
 
     #[test]

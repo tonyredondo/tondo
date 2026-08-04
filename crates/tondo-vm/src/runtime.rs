@@ -123,6 +123,7 @@ pub enum RuntimeHostValueKind {
     BytesBuilder,
     BytesError,
     TextError,
+    CollectionError,
     Path,
     PathError,
     FsError,

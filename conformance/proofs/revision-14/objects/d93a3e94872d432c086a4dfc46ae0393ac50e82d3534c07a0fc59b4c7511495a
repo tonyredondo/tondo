@@ -1,0 +1,7 @@
+fn boolToInteger(value: Bool): Int {
+    Int(value)
+}
+
+fn textToFloat(value: String): Float {
+    Float(value)
+}

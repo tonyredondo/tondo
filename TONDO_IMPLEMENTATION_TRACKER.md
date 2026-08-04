@@ -4077,11 +4077,15 @@ parte del módulo.
   identidad del `String` iterable (sin wrapper de cursor adicional), además de
   cobertura hosted end-to-end en `m11-std-text-002`.
 
-- [ ] **STD-COLL-IMPL-001 — Completar constructores y operaciones de
+- [x] **STD-COLL-IMPL-001 — Completar constructores y operaciones de
   colecciones.** Publicar `Array.new/withCapacity/push/pop`, las operaciones
   cerradas de `Map` y `Set`, y sus iteradores con semántica de valor, orden y
   errores exactos. Reutilizar los intrinsics del lenguaje sin crear dos APIs ni
-  dos representaciones.
+  dos representaciones. Cerrado con constructores genéricos explícitos,
+  `CollectionError` atómico, operaciones directas sobre los buffers COW del
+  runtime, orden observable de `Map`/`Set`, cursores own lazy para `entries` y
+  `values`, materialización host de `Map`/`Set` y cobertura hosted en
+  `tests/runtime/m11-std-collections-001.to`.
 
 - [ ] **STD-ITER-IMPL-001 — Implementar los combinadores estáticos.** Conectar
   `map`, `filter`, `take` y `collect` sobre un único `Iterator[T]`, con lazy

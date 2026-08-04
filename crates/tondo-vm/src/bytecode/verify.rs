@@ -455,6 +455,7 @@ impl<'a> TraceMetadataAnalysis<'a> {
                 | BytecodeIntrinsicType::BytesBuilder
                 | BytecodeIntrinsicType::BytesError
                 | BytecodeIntrinsicType::TextError
+                | BytecodeIntrinsicType::CollectionError
                 | BytecodeIntrinsicType::Path
                 | BytecodeIntrinsicType::PathError
                 | BytecodeIntrinsicType::FsError
@@ -1083,6 +1084,7 @@ fn intrinsic_capability(
         BytecodeIntrinsicType::Bytes
         | BytecodeIntrinsicType::BytesError
         | BytecodeIntrinsicType::TextError
+        | BytecodeIntrinsicType::CollectionError
         | BytecodeIntrinsicType::ExitStatus
         | BytecodeIntrinsicType::ProcessOutput
         | BytecodeIntrinsicType::ProcessError
@@ -1458,6 +1460,7 @@ fn intrinsic_terminal(
         | BytecodeIntrinsicType::BytesBuilder
         | BytecodeIntrinsicType::BytesError
         | BytecodeIntrinsicType::TextError
+        | BytecodeIntrinsicType::CollectionError
         | BytecodeIntrinsicType::Path
         | BytecodeIntrinsicType::PathError
         | BytecodeIntrinsicType::FsError
@@ -1628,6 +1631,7 @@ impl Verifier<'_> {
                 | BytecodeIntrinsicType::BytesBuilder
                 | BytecodeIntrinsicType::BytesError
                 | BytecodeIntrinsicType::TextError
+                | BytecodeIntrinsicType::CollectionError
                 | BytecodeIntrinsicType::Path
                 | BytecodeIntrinsicType::PathError
                 | BytecodeIntrinsicType::FsError
@@ -2131,6 +2135,7 @@ impl Verifier<'_> {
                 && !callable.name.starts_with("std.console.readLine")
                 && !callable.name.starts_with("std.io.Reader.read")
                 && !callable.name.starts_with("std.io.Writer.")
+                && !callable.name.starts_with("std.collections.")
             {
                 return Err(BytecodeVerificationError::new(
                     &context,
@@ -14257,6 +14262,7 @@ mod tests {
                 | BytecodeIntrinsicType::GenerationError
                 | BytecodeIntrinsicType::IoError
                 | BytecodeIntrinsicType::ConsoleError
+                | BytecodeIntrinsicType::CollectionError
                 | BytecodeIntrinsicType::TextError => all,
                 BytecodeIntrinsicType::TempDirectory
                 | BytecodeIntrinsicType::Generator

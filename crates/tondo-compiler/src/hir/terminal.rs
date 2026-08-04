@@ -101,6 +101,7 @@ pub(crate) const fn intrinsic_terminal_contract(
         | IntrinsicType::BytesBuilder
         | IntrinsicType::BytesError
         | IntrinsicType::TextError
+        | IntrinsicType::CollectionError
         | IntrinsicType::Path
         | IntrinsicType::PathError
         | IntrinsicType::FsError
@@ -456,6 +457,7 @@ fn intrinsic_node(constructor: IntrinsicType, arguments: Vec<TypeId>) -> Termina
         | IntrinsicType::BytesBuilder
         | IntrinsicType::BytesError
         | IntrinsicType::TextError
+        | IntrinsicType::CollectionError
         | IntrinsicType::Path
         | IntrinsicType::PathError
         | IntrinsicType::FsError
