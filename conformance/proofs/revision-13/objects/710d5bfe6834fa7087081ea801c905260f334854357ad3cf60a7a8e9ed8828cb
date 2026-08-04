@@ -1,0 +1,3 @@
+fn invalid(): impl Iterator[Int] {
+    panic("no witness")
+}

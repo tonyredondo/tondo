@@ -1,0 +1,6 @@
+fn source(): Int ! String {
+    1
+}
+fn invalid(): Int {
+    source()?
+}

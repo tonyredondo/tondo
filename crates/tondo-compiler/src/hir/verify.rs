@@ -515,6 +515,7 @@ impl Verifier<'_> {
                         | IntrinsicType::Bytes
                         | IntrinsicType::BytesBuilder
                         | IntrinsicType::BytesError
+                        | IntrinsicType::TextError
                         | IntrinsicType::Path
                         | IntrinsicType::PathError
                         | IntrinsicType::FsError

@@ -122,6 +122,7 @@ pub enum RuntimeHostValueKind {
     Bytes,
     BytesBuilder,
     BytesError,
+    TextError,
     Path,
     PathError,
     FsError,

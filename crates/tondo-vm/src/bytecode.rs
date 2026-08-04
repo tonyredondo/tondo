@@ -239,6 +239,7 @@ pub enum BytecodeIntrinsicType {
     Bytes,
     BytesBuilder,
     BytesError,
+    TextError,
     Path,
     PathError,
     FsError,
@@ -388,6 +389,7 @@ impl BytecodeIntrinsicType {
             | Self::Bytes
             | Self::BytesBuilder
             | Self::BytesError
+            | Self::TextError
             | Self::Path
             | Self::PathError
             | Self::FsError
@@ -456,6 +458,7 @@ impl BytecodeIntrinsicType {
             | Self::Bytes
             | Self::BytesBuilder
             | Self::BytesError
+            | Self::TextError
             | Self::Path
             | Self::PathError
             | Self::FsError

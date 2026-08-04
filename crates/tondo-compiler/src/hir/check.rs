@@ -824,6 +824,7 @@ impl<'a> ExpressionChecker<'a> {
                         | IntrinsicType::Bytes
                         | IntrinsicType::BytesBuilder
                         | IntrinsicType::BytesError
+                        | IntrinsicType::TextError
                         | IntrinsicType::Path
                         | IntrinsicType::PathError
                         | IntrinsicType::FsError
@@ -14570,6 +14571,19 @@ impl<'a> ExpressionChecker<'a> {
                 )? {
                     return Ok(Some(call));
                 }
+                if let Some(call) = self.check_qualified_text_call(
+                    file,
+                    range,
+                    suffix,
+                    explicit_bracket,
+                    &tokens,
+                    resolved_index,
+                    &resolved,
+                    expected,
+                    context,
+                )? {
+                    return Ok(Some(call));
+                }
                 let resolved_is_type = match &resolved {
                     ResolvedName::Symbol(symbol) => {
                         self.resolved.symbol(*symbol).is_some_and(|symbol| {
@@ -14791,6 +14805,76 @@ impl<'a> ExpressionChecker<'a> {
                 self.sources.span(file, bracket.range())?,
                 "E1104",
                 "std.env operations do not declare generic parameters",
+                Vec::new(),
+                None,
+            )?;
+            return self.recovery_expression(file, range).map(Some);
+        }
+        let callee =
+            self.bootstrap_host_callee(function, self.sources.span(file, member_token.range())?)?;
+        self.check_call(
+            CallSite {
+                file,
+                range,
+                suffix,
+                expected,
+            },
+            callee,
+            None,
+            None,
+            context,
+        )
+        .map(Some)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn check_qualified_text_call(
+        &mut self,
+        file: FileId,
+        range: TextRange,
+        suffix: SyntaxNodeRef<'_>,
+        explicit_bracket: Option<SyntaxNodeRef<'_>>,
+        tokens: &[SyntaxTokenRef<'_>],
+        resolved_index: usize,
+        resolved: &ResolvedName,
+        expected: Option<ExpressionExpectation>,
+        context: &mut BodyContext,
+    ) -> Result<Option<HirExpressionId>, HirError> {
+        if resolved_index + 2 != tokens.len() {
+            return Ok(None);
+        }
+        let is_string_type = match resolved {
+            ResolvedName::Prelude {
+                namespace: Namespace::Type,
+                name,
+            } => name.as_str() == "String",
+            ResolvedName::External {
+                module,
+                namespace: Namespace::Type,
+                name,
+            } => {
+                module.package().as_str() == "toolchain:std:0.1-bootstrap"
+                    && module.path().as_str() == "text"
+                    && name.as_str() == "String"
+            }
+            _ => false,
+        };
+        if !is_string_type {
+            return Ok(None);
+        }
+        let member_token = *tokens
+            .last()
+            .expect("a qualified text operation has a member token");
+        let function = match member_token.token().normalized_identifier() {
+            Some("empty") => HirBootstrapHostFunction::TextEmpty,
+            Some("fromChars") => HirBootstrapHostFunction::TextFromChars,
+            _ => return Ok(None),
+        };
+        if let Some(bracket) = explicit_bracket {
+            self.emit(
+                self.sources.span(file, bracket.range())?,
+                "E1104",
+                "std.text operations do not declare generic parameters",
                 Vec::new(),
                 None,
             )?;
@@ -16563,6 +16647,8 @@ impl<'a> ExpressionChecker<'a> {
                 "length" => HirBootstrapHostFunction::TextLength,
                 "byteLength" => HirBootstrapHostFunction::TextByteLength,
                 "get" => HirBootstrapHostFunction::TextGet,
+                "slice" => HirBootstrapHostFunction::TextSlice,
+                "chars" => HirBootstrapHostFunction::TextChars,
                 "contains" => HirBootstrapHostFunction::TextContains,
                 "startsWith" => HirBootstrapHostFunction::TextStartsWith,
                 "endsWith" => HirBootstrapHostFunction::TextEndsWith,

@@ -4068,11 +4068,14 @@ parte del módulo.
   `tests/runtime/m11-std-core-002.to`; las capacidades `Display`, `Equatable`
   y `Key` permanecen estáticas y cerradas, sin vtable ni reflection.
 
-- [ ] **STD-TEXT-IMPL-001 — Completar la API pública de texto.** Añadir
+- [x] **STD-TEXT-IMPL-001 — Completar la API pública de texto.** Añadir
   `String.empty`, `fromChars`, `slice` y `chars`, además de validar todas las
   operaciones ya conectadas contra scalars Unicode, UTF-8 inválido, límites y
   costes. El bridge actual de búsqueda/transformación no constituye por sí solo
-  el owner completo.
+  el owner completo. Cerrado con `TextError` nominal, construcción segura desde
+  `Array[Char]`, slicing por scalar con límites atómicos y `chars()` como
+  identidad del `String` iterable (sin wrapper de cursor adicional), además de
+  cobertura hosted end-to-end en `m11-std-text-002`.
 
 - [ ] **STD-COLL-IMPL-001 — Completar constructores y operaciones de
   colecciones.** Publicar `Array.new/withCapacity/push/pop`, las operaciones

@@ -1,0 +1,6 @@
+fn invalid() {
+    let values = [1, 2, 3]
+    for mut value in values {
+        value += 1
+    }
+}

@@ -1,0 +1,41 @@
+import std.console
+import std.bytes
+import std.text
+
+fn main(): !(bytes.BytesError | bytes.Utf8Error | text.TextError) {
+    let empty = String.empty()
+    assert(empty == "")
+
+    let rebuilt = String.fromChars(['a', 'ñ', '🙂'])?
+    assert(rebuilt == "añ🙂")
+    assert(rebuilt.slice(1, 3)? == "ñ🙂")
+
+    var position = 0
+    for character in rebuilt.chars() {
+        match position {
+            0 => assert(character == 'a')
+            1 => assert(character == 'ñ')
+            2 => assert(character == '🙂')
+            _ => panic("unexpected character")
+        }
+        position += 1
+    }
+    assert(position == 3)
+
+    match rebuilt.slice(-1, 1) {
+        ok(_) => panic("negative text index was accepted")
+        err(_) => ()
+    }
+    match rebuilt.slice(3, 1) {
+        ok(_) => panic("reversed text boundary was accepted")
+        err(_) => ()
+    }
+
+    let invalid = bytes.fromArray([Byte(255u8)])?
+    match String(invalid) {
+        ok(_) => panic("invalid UTF-8 was accepted")
+        err(_) => ()
+    }
+
+    console.print("text-complete\n")
+}

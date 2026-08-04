@@ -4101,6 +4101,7 @@ fn intrinsic_type(value: IntrinsicType) -> bc::BytecodeIntrinsicType {
         IntrinsicType::Bytes => bc::BytecodeIntrinsicType::Bytes,
         IntrinsicType::BytesBuilder => bc::BytecodeIntrinsicType::BytesBuilder,
         IntrinsicType::BytesError => bc::BytecodeIntrinsicType::BytesError,
+        IntrinsicType::TextError => bc::BytecodeIntrinsicType::TextError,
         IntrinsicType::Path => bc::BytecodeIntrinsicType::Path,
         IntrinsicType::PathError => bc::BytecodeIntrinsicType::PathError,
         IntrinsicType::FsError => bc::BytecodeIntrinsicType::FsError,
@@ -4513,7 +4514,14 @@ fn observe(): (Int, Int, Int, Int, Int, Int, Int, Int, Int) {
                 bc::BytecodeTypeKind::Intrinsic {
                     constructor: bc::BytecodeIntrinsicType::Array,
                     arguments,
-                } => Some((bc::BytecodeTypeId::new(index as u32), ty, arguments)),
+                } if arguments.len() == 1
+                    && matches!(
+                        program.types[arguments[0].index() as usize].kind,
+                        bc::BytecodeTypeKind::Scalar(bc::BytecodeScalarType::Int)
+                    ) =>
+                {
+                    Some((bc::BytecodeTypeId::new(index as u32), ty, arguments))
+                }
                 _ => None,
             })
             .collect::<Vec<_>>();

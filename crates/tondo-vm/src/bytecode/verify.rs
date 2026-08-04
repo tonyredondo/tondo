@@ -454,6 +454,7 @@ impl<'a> TraceMetadataAnalysis<'a> {
                 | BytecodeIntrinsicType::Bytes
                 | BytecodeIntrinsicType::BytesBuilder
                 | BytecodeIntrinsicType::BytesError
+                | BytecodeIntrinsicType::TextError
                 | BytecodeIntrinsicType::Path
                 | BytecodeIntrinsicType::PathError
                 | BytecodeIntrinsicType::FsError
@@ -1081,6 +1082,7 @@ fn intrinsic_capability(
         }
         BytecodeIntrinsicType::Bytes
         | BytecodeIntrinsicType::BytesError
+        | BytecodeIntrinsicType::TextError
         | BytecodeIntrinsicType::ExitStatus
         | BytecodeIntrinsicType::ProcessOutput
         | BytecodeIntrinsicType::ProcessError
@@ -1455,6 +1457,7 @@ fn intrinsic_terminal(
         | BytecodeIntrinsicType::Bytes
         | BytecodeIntrinsicType::BytesBuilder
         | BytecodeIntrinsicType::BytesError
+        | BytecodeIntrinsicType::TextError
         | BytecodeIntrinsicType::Path
         | BytecodeIntrinsicType::PathError
         | BytecodeIntrinsicType::FsError
@@ -1624,6 +1627,7 @@ impl Verifier<'_> {
                 | BytecodeIntrinsicType::Bytes
                 | BytecodeIntrinsicType::BytesBuilder
                 | BytecodeIntrinsicType::BytesError
+                | BytecodeIntrinsicType::TextError
                 | BytecodeIntrinsicType::Path
                 | BytecodeIntrinsicType::PathError
                 | BytecodeIntrinsicType::FsError
@@ -14252,7 +14256,8 @@ mod tests {
                 | BytecodeIntrinsicType::GenerationId
                 | BytecodeIntrinsicType::GenerationError
                 | BytecodeIntrinsicType::IoError
-                | BytecodeIntrinsicType::ConsoleError => all,
+                | BytecodeIntrinsicType::ConsoleError
+                | BytecodeIntrinsicType::TextError => all,
                 BytecodeIntrinsicType::TempDirectory
                 | BytecodeIntrinsicType::Generator
                 | BytecodeIntrinsicType::Reader

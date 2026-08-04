@@ -683,6 +683,7 @@ fn intrinsic_node(
         }
         IntrinsicType::Bytes
         | IntrinsicType::BytesError
+        | IntrinsicType::TextError
         | IntrinsicType::ExitStatus
         | IntrinsicType::ProcessOutput
         | IntrinsicType::ProcessError

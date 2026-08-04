@@ -1,0 +1,15 @@
+pub type Pair = {
+    left: Int
+    right: Int
+}
+fn select(value: Bool): Int {
+    match value {
+        true => 1
+        false => 0
+    }
+}
+fn update(value: Int): Int {
+    var current = value
+    current = current + 1
+    current
+}

@@ -342,6 +342,9 @@ impl<'a> TypeLowerer<'a> {
         let bytes_error = self
             .interner
             .intrinsic(IntrinsicType::BytesError, Vec::new())?;
+        let text_error = self
+            .interner
+            .intrinsic(IntrinsicType::TextError, Vec::new())?;
         let path_type = self.interner.intrinsic(IntrinsicType::Path, Vec::new())?;
         let path_error = self
             .interner
@@ -1307,8 +1310,26 @@ impl<'a> TypeLowerer<'a> {
 
         if text_referenced {
             let char_type = self.interner.scalar(ScalarType::Char);
+            let char_array = self
+                .interner
+                .intrinsic(IntrinsicType::Array, vec![char_type])?;
             let optional_char = self.interner.option(char_type)?;
             let optional_int = self.interner.option(int)?;
+            let text_outcome = self.interner.result(string, text_error)?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::TextEmpty,
+                Vec::new(),
+                None,
+                string,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::TextFromChars,
+                vec![(char_array, false)],
+                None,
+                text_outcome,
+            )?;
             for (function, outcome) in [
                 (HirBootstrapHostFunction::TextLength, int),
                 (HirBootstrapHostFunction::TextByteLength, int),
@@ -1337,6 +1358,20 @@ impl<'a> TypeLowerer<'a> {
                 vec![(string, true), (string, false)],
                 None,
                 optional_int,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::TextSlice,
+                vec![(string, true), (int, false), (int, false)],
+                None,
+                text_outcome,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::TextChars,
+                vec![(string, true)],
+                None,
+                string,
             )?;
             for (function, argument) in [
                 (HirBootstrapHostFunction::TextContains, string),
@@ -5092,6 +5127,7 @@ impl<'a> TypeLowerer<'a> {
                         | IntrinsicType::Bytes
                         | IntrinsicType::BytesBuilder
                         | IntrinsicType::BytesError
+                        | IntrinsicType::TextError
                         | IntrinsicType::Path
                         | IntrinsicType::PathError
                         | IntrinsicType::FsError

@@ -69,7 +69,10 @@ pub fn String.replace(self, old: String, new: String): String
 pub fn String.trim(self): String
 pub fn String.toLowerAscii(self): String
 pub fn String.toUpperAscii(self): String
-pub fn String.chars(self): Iterator[Char]
+// String itself is the canonical zero-allocation Iterator[Char] witness;
+// chars() returns the same immutable String value for use in `for`/Iterator
+// contexts rather than allocating a second cursor wrapper.
+pub fn String.chars(self): String
 
 pub enum TextError { InvalidIndex, InvalidBoundary, ResourceLimit }
 ```

@@ -94,6 +94,9 @@ enum HostValue {
     BytesError {
         _message: String,
     },
+    TextError {
+        _message: String,
+    },
     Path(path::Path),
     PathError {
         _message: String,
@@ -468,6 +471,19 @@ impl BootstrapHost {
 
     fn bytes_result_error(&mut self, message: impl Into<String>) -> RuntimeValue {
         RuntimeValue::ResultErr(Box::new(self.bytes_error(message)))
+    }
+
+    fn text_error(&mut self, message: impl Into<String>) -> RuntimeValue {
+        self.allocate(
+            RuntimeHostValueKind::TextError,
+            HostValue::TextError {
+                _message: message.into(),
+            },
+        )
+    }
+
+    fn text_result_error(&mut self, message: impl Into<String>) -> RuntimeValue {
+        RuntimeValue::ResultErr(Box::new(self.text_error(message)))
     }
 
     fn path(&self, value: &RuntimeValue) -> Result<&path::Path, VmError> {
@@ -1044,6 +1060,19 @@ impl BootstrapHost {
             .map(|value| match value {
                 RuntimeValue::Byte(value) => Ok(*value),
                 _ => Err(VmError::Host("expected Array[Byte] element".into())),
+            })
+            .collect()
+    }
+
+    fn array_chars(value: &RuntimeValue) -> Result<String, VmError> {
+        let RuntimeValue::Array(values) = value else {
+            return Err(VmError::Host("expected Array[Char]".into()));
+        };
+        values
+            .iter()
+            .map(|value| match value {
+                RuntimeValue::Char(value) => Ok(*value),
+                _ => Err(VmError::Host("expected Array[Char] element".into())),
             })
             .collect()
     }
@@ -1803,6 +1832,14 @@ impl VmHost for BootstrapHost {
                     Err(error) => Ok(self.fs_result_error(error.to_string())),
                 }
             }
+            ("std.text.String.empty", []) => Ok(RuntimeValue::String(String::new())),
+            ("std.text.String.fromChars", [chars]) => {
+                let text = Self::array_chars(chars)?;
+                if let Err(message) = self.ensure_bytes_len(text.len()) {
+                    return Ok(self.text_result_error(message));
+                }
+                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::String(text))))
+            }
             ("std.text.String.length", [RuntimeValue::String(text)]) => {
                 Ok(RuntimeValue::Integer(text.chars().count() as i128))
             }
@@ -1816,6 +1853,50 @@ impl VmHost for BootstrapHost {
                     .map(|value| RuntimeValue::OptionSome(Box::new(RuntimeValue::Char(value))))
                     .unwrap_or(RuntimeValue::OptionNone);
                 Ok(value)
+            }
+            (
+                "std.text.String.slice",
+                [
+                    RuntimeValue::String(text),
+                    RuntimeValue::Integer(start),
+                    RuntimeValue::Integer(end),
+                ],
+            ) => {
+                let length = text.chars().count();
+                let Some(start) = usize::try_from(*start).ok() else {
+                    return Ok(self.text_result_error("slice start is not a valid scalar index"));
+                };
+                let Some(end) = usize::try_from(*end).ok() else {
+                    return Ok(self.text_result_error("slice end is not a valid scalar index"));
+                };
+                if start > length || end > length {
+                    return Ok(self.text_result_error(format!(
+                        "slice [{start}, {end}) is outside a string of length {length}"
+                    )));
+                }
+                if start > end {
+                    return Ok(
+                        self.text_result_error(format!("slice start {start} is after end {end}"))
+                    );
+                }
+                let start_byte = text
+                    .char_indices()
+                    .nth(start)
+                    .map_or(text.len(), |(offset, _)| offset);
+                let end_byte = text
+                    .char_indices()
+                    .nth(end)
+                    .map_or(text.len(), |(offset, _)| offset);
+                let sliced = &text[start_byte..end_byte];
+                if let Err(message) = self.ensure_bytes_len(sliced.len()) {
+                    return Ok(self.text_result_error(message));
+                }
+                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::String(
+                    sliced.to_owned(),
+                ))))
+            }
+            ("std.text.String.chars", [RuntimeValue::String(text)]) => {
+                Ok(RuntimeValue::String(text.clone()))
             }
             (
                 "std.text.String.contains",
@@ -3522,6 +3603,75 @@ mod tests {
             panic!("expected successful bytes result");
         };
         *value
+    }
+
+    #[test]
+    fn text_owner_builds_scalars_and_rejects_invalid_boundaries_atomically() {
+        let mut host = BootstrapHost::default();
+        assert_eq!(
+            host.invoke("std.text.String.empty", &[]).unwrap(),
+            RuntimeValue::String(String::new())
+        );
+        let rebuilt = host
+            .invoke(
+                "std.text.String.fromChars",
+                &[RuntimeValue::Array(vec![
+                    RuntimeValue::Char('a'),
+                    RuntimeValue::Char('ñ'),
+                    RuntimeValue::Char('🙂'),
+                ])],
+            )
+            .unwrap();
+        let rebuilt = ok(rebuilt);
+        assert_eq!(rebuilt, RuntimeValue::String("añ🙂".into()));
+        assert_eq!(
+            host.invoke("std.text.String.chars", std::slice::from_ref(&rebuilt))
+                .unwrap(),
+            rebuilt
+        );
+        assert_eq!(
+            ok(host
+                .invoke(
+                    "std.text.String.slice",
+                    &[
+                        rebuilt.clone(),
+                        RuntimeValue::Integer(1),
+                        RuntimeValue::Integer(3),
+                    ],
+                )
+                .unwrap()),
+            RuntimeValue::String("ñ🙂".into())
+        );
+        for (start, end) in [(-1, 1), (0, 4), (3, 1)] {
+            let result = host
+                .invoke(
+                    "std.text.String.slice",
+                    &[
+                        rebuilt.clone(),
+                        RuntimeValue::Integer(start),
+                        RuntimeValue::Integer(end),
+                    ],
+                )
+                .unwrap();
+            assert!(matches!(
+                result,
+                RuntimeValue::ResultErr(value)
+                    if matches!(value.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::TextError, .. })
+            ));
+        }
+
+        let mut limited = BootstrapHost::with_max_bytes(Vec::new(), 2);
+        let result = limited
+            .invoke(
+                "std.text.String.fromChars",
+                &[RuntimeValue::Array(vec![RuntimeValue::Char('🙂')])],
+            )
+            .unwrap();
+        assert!(matches!(
+            result,
+            RuntimeValue::ResultErr(value)
+                if matches!(value.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::TextError, .. })
+        ));
     }
 
     #[test]

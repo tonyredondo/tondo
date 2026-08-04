@@ -961,6 +961,46 @@ Una ruta SIMD, de palabra ancha o específica del target puede acelerar copias,
 comparación y hashing siempre que preserve exactamente el resultado, el orden,
 los errores, los límites y el número observable de operaciones de ownership.
 
+#### 10.2.2 Contrato cerrado de `std.text`
+
+`std.text` mantiene una sola representación: `String` inmutable y siempre
+válido en UTF-8. Los índices y límites de esta API son posiciones de scalar
+Unicode, nunca offsets de bytes. `TextError` pertenece al módulo y no publica
+una representación de error alternativa.
+
+```tondo
+import std.text
+
+fn String.empty(): String
+fn String.fromChars(value: Array[Char]): String ! text.TextError
+fn String.length(self): Int
+fn String.byteLength(self): Int
+fn String.get(self, index: Int): Char?
+fn String.slice(self, start: Int, end: Int): String ! text.TextError
+fn String.contains(self, needle: String): Bool
+fn String.startsWith(self, prefix: String): Bool
+fn String.endsWith(self, suffix: String): Bool
+fn String.find(self, needle: String): Int?
+fn String.replace(self, old: String, new: String): String
+fn String.trim(self): String
+fn String.toLowerAscii(self): String
+fn String.toUpperAscii(self): String
+fn String.chars(self): String
+
+enum TextError { InvalidIndex, InvalidBoundary, ResourceLimit }
+```
+
+`String.chars()` devuelve el mismo valor inmutable: `String` es el witness
+intrínseco de `Iterator[Char]`, por lo que un `for` puede consumirlo sin crear
+un wrapper de cursor. `fromChars` solo acepta valores `Char` (ya son scalars
+válidos), materializa una copia UTF-8 y falla de forma atómica si excede el
+límite del run. `slice` usa `[start, end)`, rechaza índices negativos o fuera
+de rango con `InvalidIndex`, rechaza `start > end` con `InvalidBoundary` y nunca
+publica una cadena parcial. Las búsquedas son por scalar/substring; `trim` y
+las conversiones ASCII no aplican normalización Unicode ni locale. La
+conversión `String(Bytes)` continúa siendo la única frontera UTF-8 que puede
+devolver `Utf8Error` por bytes inválidos.
+
 ### 10.3 Protocolos de I/O
 
 `std.io` posee los contratos portables compartidos por console, filesystem y
