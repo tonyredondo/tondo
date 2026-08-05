@@ -681,6 +681,13 @@ fn intrinsic_node(
                 fixed(HirCapabilityStatus::Unsatisfied)
             }
         }
+        IntrinsicType::File | IntrinsicType::Directory => {
+            if matches!(capability, HirCapability::Discard | HirCapability::Send) {
+                satisfied(Vec::new())
+            } else {
+                fixed(HirCapabilityStatus::Unsatisfied)
+            }
+        }
         IntrinsicType::IoLimits => {
             if matches!(
                 capability,
@@ -783,6 +790,8 @@ fn intrinsic_node(
         | IntrinsicType::GenerationId
         | IntrinsicType::Path
         | IntrinsicType::PathError
+        | IntrinsicType::Metadata
+        | IntrinsicType::OpenMode
         | IntrinsicType::FsError
         | IntrinsicType::MathError
         | IntrinsicType::FloatTolerance

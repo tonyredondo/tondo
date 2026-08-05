@@ -1,0 +1,5 @@
+fn main() {
+    let text = "añ🙂"
+    let step = 0
+    _ = text[::step]
+}

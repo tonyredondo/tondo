@@ -1,0 +1,4 @@
+pub type Account = {
+    name: String
+    priv secret: String
+}

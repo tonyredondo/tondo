@@ -398,6 +398,16 @@ impl<'a> TypeLowerer<'a> {
         let fs_error = self
             .interner
             .intrinsic(IntrinsicType::FsError, Vec::new())?;
+        let file = self.interner.intrinsic(IntrinsicType::File, Vec::new())?;
+        let directory = self
+            .interner
+            .intrinsic(IntrinsicType::Directory, Vec::new())?;
+        let metadata = self
+            .interner
+            .intrinsic(IntrinsicType::Metadata, Vec::new())?;
+        let open_mode = self
+            .interner
+            .intrinsic(IntrinsicType::OpenMode, Vec::new())?;
         let math_error = self
             .interner
             .intrinsic(IntrinsicType::MathError, Vec::new())?;
@@ -438,6 +448,12 @@ impl<'a> TypeLowerer<'a> {
         let path_outcome = self.interner.result(path_type, path_error)?;
         let fs_bytes_outcome = self.interner.result(bytes, fs_error)?;
         let fs_unit_outcome = self.interner.result(unit, fs_error)?;
+        let fs_file_outcome = self.interner.result(file, fs_error)?;
+        let fs_directory_outcome = self.interner.result(directory, fs_error)?;
+        let fs_metadata_outcome = self.interner.result(metadata, fs_error)?;
+        let fs_file_read = self.interner.option(bytes)?;
+        let fs_file_read_outcome = self.interner.result(fs_file_read, fs_error)?;
+        let fs_file_write_outcome = self.interner.result(int, fs_error)?;
 
         let reader = self.interner.intrinsic(IntrinsicType::Reader, Vec::new())?;
         let writer = self.interner.intrinsic(IntrinsicType::Writer, Vec::new())?;
@@ -1347,6 +1363,26 @@ impl<'a> TypeLowerer<'a> {
             let path_array = self
                 .interner
                 .intrinsic(IntrinsicType::Array, vec![path_type])?;
+            let fs_directory_list_outcome = self.interner.result(path_array, fs_error)?;
+            for (function, outcome, parameters) in [
+                (
+                    HirBootstrapHostFunction::FsOpen,
+                    fs_file_outcome,
+                    vec![(path_type, false), (open_mode, false)],
+                ),
+                (
+                    HirBootstrapHostFunction::FsOpenDirectory,
+                    fs_directory_outcome,
+                    vec![(path_type, false)],
+                ),
+                (
+                    HirBootstrapHostFunction::FsMetadata,
+                    fs_metadata_outcome,
+                    vec![(path_type, false)],
+                ),
+            ] {
+                self.push_bootstrap_host_callable(span, function, parameters, None, outcome)?;
+            }
             self.push_bootstrap_host_callable(
                 span,
                 HirBootstrapHostFunction::FsReadAll,
@@ -1361,6 +1397,50 @@ impl<'a> TypeLowerer<'a> {
                 None,
                 fs_unit_outcome,
             )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::FileRead,
+                vec![
+                    (file, ParameterMode::Var, true),
+                    (int, ParameterMode::Value, false),
+                ],
+                None,
+                fs_file_read_outcome,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::FileWrite,
+                vec![
+                    (file, ParameterMode::Var, true),
+                    (bytes, ParameterMode::Value, false),
+                ],
+                None,
+                fs_file_write_outcome,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::FileFlush,
+                vec![(file, ParameterMode::Var, true)],
+                None,
+                fs_unit_outcome,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::DirectoryList,
+                vec![(directory, ParameterMode::Var, true)],
+                None,
+                fs_directory_list_outcome,
+            )?;
+            for function in [
+                HirBootstrapHostFunction::FsOpenModeRead,
+                HirBootstrapHostFunction::FsOpenModeWrite,
+                HirBootstrapHostFunction::FsOpenModeReadWrite,
+                HirBootstrapHostFunction::FsOpenModeAppend,
+                HirBootstrapHostFunction::FsOpenModeCreate,
+                HirBootstrapHostFunction::FsOpenModeCreateNew,
+            ] {
+                self.push_bootstrap_host_callable(span, function, Vec::new(), None, open_mode)?;
+            }
             self.push_bootstrap_host_callable(
                 span,
                 HirBootstrapHostFunction::FsCreateDirectory,
@@ -5560,6 +5640,10 @@ impl<'a> TypeLowerer<'a> {
                         | IntrinsicType::CollectionError
                         | IntrinsicType::Path
                         | IntrinsicType::PathError
+                        | IntrinsicType::File
+                        | IntrinsicType::Directory
+                        | IntrinsicType::Metadata
+                        | IntrinsicType::OpenMode
                         | IntrinsicType::FsError
                         | IntrinsicType::MathError
                         | IntrinsicType::FloatTolerance

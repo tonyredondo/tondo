@@ -245,6 +245,10 @@ pub enum BytecodeIntrinsicType {
     CollectionError,
     Path,
     PathError,
+    File,
+    Directory,
+    Metadata,
+    OpenMode,
     FsError,
     MathError,
     FloatTolerance,
@@ -399,6 +403,10 @@ impl BytecodeIntrinsicType {
             | Self::CollectionError
             | Self::Path
             | Self::PathError
+            | Self::File
+            | Self::Directory
+            | Self::Metadata
+            | Self::OpenMode
             | Self::FsError
             | Self::MathError
             | Self::FloatTolerance
@@ -472,6 +480,10 @@ impl BytecodeIntrinsicType {
             | Self::CollectionError
             | Self::Path
             | Self::PathError
+            | Self::File
+            | Self::Directory
+            | Self::Metadata
+            | Self::OpenMode
             | Self::FsError
             | Self::MathError
             | Self::FloatTolerance
@@ -1432,6 +1444,13 @@ mod tests {
             BytecodeIntrinsicType::BytesError,
             BytecodeIntrinsicType::FormatBuilder,
             BytecodeIntrinsicType::FormatError,
+            BytecodeIntrinsicType::Path,
+            BytecodeIntrinsicType::PathError,
+            BytecodeIntrinsicType::File,
+            BytecodeIntrinsicType::Directory,
+            BytecodeIntrinsicType::Metadata,
+            BytecodeIntrinsicType::OpenMode,
+            BytecodeIntrinsicType::FsError,
             BytecodeIntrinsicType::ExitStatus,
             BytecodeIntrinsicType::ProcessOutput,
             BytecodeIntrinsicType::ProcessHandle,

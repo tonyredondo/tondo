@@ -1,5 +1,6 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
+use std::fs::OpenOptions;
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStderr, ChildStdout, Command as OsCommand, Stdio};
@@ -108,6 +109,22 @@ enum HostValue {
     PathError {
         _message: String,
     },
+    File {
+        file: std::fs::File,
+        readable: bool,
+        writable: bool,
+    },
+    Directory {
+        path: PathBuf,
+    },
+    Metadata {
+        _file: bool,
+        _directory: bool,
+        _symlink: bool,
+        _len: u64,
+        _readonly: bool,
+    },
+    OpenMode(FsOpenMode),
     FsError {
         _message: String,
     },
@@ -178,6 +195,16 @@ enum StreamKind {
     Stdin,
     Stdout,
     Stderr,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FsOpenMode {
+    Read,
+    Write,
+    ReadWrite,
+    Append,
+    Create,
+    CreateNew,
 }
 
 enum ClockProvider {
@@ -280,6 +307,7 @@ pub(crate) struct BootstrapHost {
     values: BTreeMap<u64, HostValue>,
     jobs: BTreeMap<u64, AsyncJob>,
     ready_jobs: BTreeMap<u64, Result<RuntimeValue, VmError>>,
+    ready_fs_jobs: BTreeSet<u64>,
     time_jobs: BTreeMap<u64, TimeJob>,
     clock: ClockProvider,
     previous_clock: Option<(ClockProvider, u64)>,
@@ -339,6 +367,7 @@ impl BootstrapHost {
             values: BTreeMap::new(),
             jobs: BTreeMap::new(),
             ready_jobs: BTreeMap::new(),
+            ready_fs_jobs: BTreeSet::new(),
             time_jobs: BTreeMap::new(),
             clock: ClockProvider::real(),
             previous_clock: None,
@@ -549,6 +578,49 @@ impl BootstrapHost {
             path.to_string()
                 .map(PathBuf::from)
                 .map_err(|error| format!("path is not representable on this target: {error:?}"))
+        }
+    }
+
+    fn file_id(&self, value: &RuntimeValue) -> Result<u64, VmError> {
+        let RuntimeValue::Host {
+            kind: RuntimeHostValueKind::File,
+            id,
+        } = value
+        else {
+            return Err(VmError::Host("File value is invalid".into()));
+        };
+        if matches!(self.values.get(id), Some(HostValue::File { .. })) {
+            Ok(*id)
+        } else {
+            Err(VmError::Host("File token is stale".into()))
+        }
+    }
+
+    fn directory_path(&self, value: &RuntimeValue) -> Result<(u64, PathBuf), VmError> {
+        let RuntimeValue::Host {
+            kind: RuntimeHostValueKind::Directory,
+            id,
+        } = value
+        else {
+            return Err(VmError::Host("Directory value is invalid".into()));
+        };
+        match self.values.get(id) {
+            Some(HostValue::Directory { path }) => Ok((*id, path.clone())),
+            _ => Err(VmError::Host("Directory token is stale".into())),
+        }
+    }
+
+    fn fs_open_mode(&self, value: &RuntimeValue) -> Result<FsOpenMode, VmError> {
+        let RuntimeValue::Host {
+            kind: RuntimeHostValueKind::OpenMode,
+            id,
+        } = value
+        else {
+            return Err(VmError::Host("OpenMode value is invalid".into()));
+        };
+        match self.values.get(id) {
+            Some(HostValue::OpenMode(mode)) => Ok(*mode),
+            _ => Err(VmError::Host("OpenMode token is stale".into())),
         }
     }
 
@@ -1601,13 +1673,13 @@ impl VmHost for BootstrapHost {
                 Ok(RuntimeValue::ResultOk(Box::new(bytes)))
             }
             ("std.io.writeAll", [writer, bytes]) => {
-                let stream = self.writer_stream(writer)?;
                 let bytes = self.bytes(bytes)?.to_vec();
-                if stream == StreamKind::Stdin {
-                    return Ok(self.io_result_error("stdin is not writable"));
-                }
                 if let Err(message) = self.ensure_bytes_len(bytes.len()) {
                     return Ok(self.io_result_error(message));
+                }
+                let stream = self.writer_stream(writer)?;
+                if stream == StreamKind::Stdin {
+                    return Ok(self.io_result_error("stdin is not writable"));
                 }
                 match stream {
                     StreamKind::Stdout => self.stdout.extend_from_slice(&bytes),
@@ -1818,6 +1890,250 @@ impl VmHost for BootstrapHost {
                 RuntimeHostValueKind::Bytes,
                 HostValue::Bytes(self.path(receiver)?.as_bytes().to_vec()),
             )),
+            ("std.fs.OpenMode.Read", []) => Ok(self.allocate(
+                RuntimeHostValueKind::OpenMode,
+                HostValue::OpenMode(FsOpenMode::Read),
+            )),
+            ("std.fs.OpenMode.Write", []) => Ok(self.allocate(
+                RuntimeHostValueKind::OpenMode,
+                HostValue::OpenMode(FsOpenMode::Write),
+            )),
+            ("std.fs.OpenMode.ReadWrite", []) => Ok(self.allocate(
+                RuntimeHostValueKind::OpenMode,
+                HostValue::OpenMode(FsOpenMode::ReadWrite),
+            )),
+            ("std.fs.OpenMode.Append", []) => Ok(self.allocate(
+                RuntimeHostValueKind::OpenMode,
+                HostValue::OpenMode(FsOpenMode::Append),
+            )),
+            ("std.fs.OpenMode.Create", []) => Ok(self.allocate(
+                RuntimeHostValueKind::OpenMode,
+                HostValue::OpenMode(FsOpenMode::Create),
+            )),
+            ("std.fs.OpenMode.CreateNew", []) => Ok(self.allocate(
+                RuntimeHostValueKind::OpenMode,
+                HostValue::OpenMode(FsOpenMode::CreateNew),
+            )),
+            ("std.fs.open", [receiver, mode]) => {
+                let path = match self.filesystem_path(receiver) {
+                    Ok(path) => path,
+                    Err(error) => return Ok(self.fs_result_error(error)),
+                };
+                let mode = self.fs_open_mode(mode)?;
+                match std::fs::symlink_metadata(&path) {
+                    Ok(metadata) if metadata.is_dir() => {
+                        return Ok(self.fs_result_error("path is a directory"));
+                    }
+                    Ok(_) => {}
+                    Err(error) if !matches!(mode, FsOpenMode::Create | FsOpenMode::CreateNew) => {
+                        return Ok(self.fs_result_error(error.to_string()));
+                    }
+                    Err(_) => {}
+                }
+                let mut options = OpenOptions::new();
+                match mode {
+                    FsOpenMode::Read => {
+                        options.read(true);
+                    }
+                    FsOpenMode::Write => {
+                        options.write(true);
+                    }
+                    FsOpenMode::ReadWrite => {
+                        options.read(true).write(true);
+                    }
+                    FsOpenMode::Append => {
+                        options.append(true);
+                    }
+                    FsOpenMode::Create => {
+                        options.write(true).create(true).truncate(true);
+                    }
+                    FsOpenMode::CreateNew => {
+                        options.write(true).create_new(true);
+                    }
+                }
+                match options.open(path) {
+                    Ok(file) => Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                        RuntimeHostValueKind::File,
+                        HostValue::File {
+                            file,
+                            readable: matches!(mode, FsOpenMode::Read | FsOpenMode::ReadWrite),
+                            writable: matches!(
+                                mode,
+                                FsOpenMode::Write
+                                    | FsOpenMode::ReadWrite
+                                    | FsOpenMode::Append
+                                    | FsOpenMode::Create
+                                    | FsOpenMode::CreateNew
+                            ),
+                        },
+                    )))),
+                    Err(error) => Ok(self.fs_result_error(error.to_string())),
+                }
+            }
+            ("std.fs.openDirectory", [receiver]) => {
+                let path = match self.filesystem_path(receiver) {
+                    Ok(path) => path,
+                    Err(error) => return Ok(self.fs_result_error(error)),
+                };
+                match std::fs::symlink_metadata(&path) {
+                    Ok(metadata) if metadata.is_dir() => {
+                        Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                            RuntimeHostValueKind::Directory,
+                            HostValue::Directory { path },
+                        ))))
+                    }
+                    Ok(_) => Ok(self.fs_result_error("path is not a directory")),
+                    Err(error) => Ok(self.fs_result_error(error.to_string())),
+                }
+            }
+            ("std.fs.metadata", [receiver]) => {
+                let path = match self.filesystem_path(receiver) {
+                    Ok(path) => path,
+                    Err(error) => return Ok(self.fs_result_error(error)),
+                };
+                match std::fs::symlink_metadata(path) {
+                    Ok(metadata) => Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                        RuntimeHostValueKind::Metadata,
+                        HostValue::Metadata {
+                            _file: metadata.is_file(),
+                            _directory: metadata.is_dir(),
+                            _symlink: metadata.file_type().is_symlink(),
+                            _len: metadata.len(),
+                            _readonly: metadata.permissions().readonly(),
+                        },
+                    )))),
+                    Err(error) => Ok(self.fs_result_error(error.to_string())),
+                }
+            }
+            ("std.fs.File.read", [receiver, RuntimeValue::Integer(maximum)]) => {
+                let maximum = match usize::try_from(*maximum) {
+                    Ok(maximum) if maximum > 0 => maximum,
+                    _ => return Ok(self.fs_result_error("read length must be positive")),
+                };
+                if let Err(message) = self.ensure_bytes_len(maximum) {
+                    return Ok(self.fs_result_error(message));
+                }
+                let id = self.file_id(receiver)?;
+                let read = match self.values.get_mut(&id) {
+                    Some(HostValue::File { file, readable, .. }) if *readable => {
+                        let mut buffer = vec![0; maximum];
+                        match file.read(&mut buffer) {
+                            Ok(0) => Ok(None),
+                            Ok(count) => {
+                                buffer.truncate(count);
+                                Ok(Some(buffer))
+                            }
+                            Err(error) => Err(error.to_string()),
+                        }
+                    }
+                    Some(HostValue::File { .. }) => Err("file is not readable".to_owned()),
+                    _ => Err("File token is stale".to_owned()),
+                };
+                match read {
+                    Ok(None) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::OptionNone))),
+                    Ok(Some(bytes)) => {
+                        let bytes =
+                            self.allocate(RuntimeHostValueKind::Bytes, HostValue::Bytes(bytes));
+                        Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::OptionSome(
+                            Box::new(bytes),
+                        ))))
+                    }
+                    Err(error) => Ok(self.fs_result_error(error)),
+                }
+            }
+            ("std.fs.File.write", [receiver, bytes]) => {
+                let bytes = self.bytes(bytes)?.to_vec();
+                if let Err(message) = self.ensure_bytes_len(bytes.len()) {
+                    return Ok(self.fs_result_error(message));
+                }
+                let id = self.file_id(receiver)?;
+                let written = match self.values.get_mut(&id) {
+                    Some(HostValue::File { file, writable, .. }) if *writable => {
+                        file.write(&bytes).map_err(|error| error.to_string())
+                    }
+                    Some(HostValue::File { .. }) => Err("file is not writable".to_owned()),
+                    _ => Err("File token is stale".to_owned()),
+                };
+                match written {
+                    Ok(count) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Integer(
+                        i128::try_from(count).map_err(|_| {
+                            VmError::Host("write length does not fit in Int".into())
+                        })?,
+                    )))),
+                    Err(error) => Ok(self.fs_result_error(error)),
+                }
+            }
+            ("std.fs.File.flush", [receiver]) => {
+                let id = self.file_id(receiver)?;
+                let flushed = match self.values.get_mut(&id) {
+                    Some(HostValue::File { file, writable, .. }) if *writable => {
+                        file.flush().map_err(|error| error.to_string())
+                    }
+                    Some(HostValue::File { .. }) => Err("file is not writable".to_owned()),
+                    _ => Err("File token is stale".to_owned()),
+                };
+                match flushed {
+                    Ok(()) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))),
+                    Err(error) => Ok(self.fs_result_error(error)),
+                }
+            }
+            ("std.fs.Directory.list", [receiver]) => {
+                let (_id, base) = self.directory_path(receiver)?;
+                let mut entries = match std::fs::read_dir(&base) {
+                    Ok(entries) => entries.collect::<Result<Vec<_>, _>>(),
+                    Err(error) => Err(error),
+                };
+                let entries = match entries.as_mut() {
+                    Ok(entries) => entries,
+                    Err(error) => return Ok(self.fs_result_error(error.to_string())),
+                };
+                entries.sort_by(|left, right| {
+                    native_file_name_bytes(left).cmp(&native_file_name_bytes(right))
+                });
+                if entries.len() > 1_048_576 {
+                    return Ok(self.fs_result_error("directory entry limit exceeded"));
+                }
+                #[cfg(unix)]
+                let base_bytes = {
+                    use std::os::unix::ffi::OsStrExt;
+                    base.as_os_str().as_bytes().to_vec()
+                };
+                #[cfg(not(unix))]
+                let base_bytes = base.to_string_lossy().as_bytes().to_vec();
+                let mut output = Vec::with_capacity(entries.len());
+                let mut total_bytes = 0usize;
+                for entry in entries.iter() {
+                    let name = native_file_name_bytes(entry);
+                    let separator =
+                        usize::from(!base_bytes.is_empty() && !base_bytes.ends_with(b"/"));
+                    let length = base_bytes
+                        .len()
+                        .checked_add(separator)
+                        .and_then(|length| length.checked_add(name.len()))
+                        .ok_or_else(|| {
+                            VmError::Host("directory path length overflow".to_owned())
+                        })?;
+                    total_bytes = total_bytes.checked_add(length).ok_or_else(|| {
+                        VmError::Host("directory listing length overflow".to_owned())
+                    })?;
+                    if let Err(message) = self.ensure_bytes_len(total_bytes) {
+                        return Ok(self.fs_result_error(message));
+                    }
+                    let mut child = base_bytes.clone();
+                    if separator != 0 {
+                        child.push(b'/');
+                    }
+                    child.extend_from_slice(&name);
+                    let child = match path::Path::from_bytes(&child) {
+                        Ok(path) => path,
+                        Err(error) => return Ok(self.fs_result_error(format!("{error:?}"))),
+                    };
+                    output.push(self.allocate(RuntimeHostValueKind::Path, HostValue::Path(child)));
+                }
+                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Array(
+                    output,
+                ))))
+            }
             ("std.fs.readAll", [receiver]) => {
                 let path = match self.filesystem_path(receiver) {
                     Ok(path) => path,
@@ -3041,6 +3357,20 @@ impl VmHost for BootstrapHost {
                 | "std.io.Writer.flush"
                 | "std.io.readAll"
                 | "std.io.writeAll"
+                | "std.fs.open"
+                | "std.fs.openDirectory"
+                | "std.fs.readAll"
+                | "std.fs.writeAll"
+                | "std.fs.createDirectory"
+                | "std.fs.remove"
+                | "std.fs.metadata"
+                | "std.fs.list"
+                | "std.fs.rename"
+                | "std.fs.atomicWrite"
+                | "std.fs.File.read"
+                | "std.fs.File.write"
+                | "std.fs.File.flush"
+                | "std.fs.Directory.list"
         ) {
             let call = self.next_job;
             self.next_job = self
@@ -3048,6 +3378,9 @@ impl VmHost for BootstrapHost {
                 .checked_add(1)
                 .ok_or_else(|| VmError::Host("async call identity space exhausted".into()))?;
             let result = self.invoke(name, arguments);
+            if name.starts_with("std.fs.") {
+                self.ready_fs_jobs.insert(call);
+            }
             self.ready_jobs.insert(call, result);
             return Ok(call);
         }
@@ -3133,6 +3466,7 @@ impl VmHost for BootstrapHost {
 
     fn poll_async(&mut self, call: u64) -> Result<Option<RuntimeValue>, VmError> {
         if let Some(result) = self.ready_jobs.remove(&call) {
+            self.ready_fs_jobs.remove(&call);
             return result.map(Some);
         }
         if self.time_jobs.contains_key(&call) {
@@ -3243,7 +3577,11 @@ impl VmHost for BootstrapHost {
 
     fn cancel_async(&mut self, call: u64) -> Result<(), VmError> {
         if self.ready_jobs.contains_key(&call) {
-            let cancelled = self.io_result_error("operation cancelled");
+            let cancelled = if self.ready_fs_jobs.contains(&call) {
+                self.fs_result_error("operation cancelled")
+            } else {
+                self.io_result_error("operation cancelled")
+            };
             self.ready_jobs.insert(call, Ok(cancelled));
             return Ok(());
         }
@@ -3265,7 +3603,9 @@ impl VmHost for BootstrapHost {
                 kind @ (RuntimeHostValueKind::ProcessHandle
                 | RuntimeHostValueKind::Timer
                 | RuntimeHostValueKind::Reader
-                | RuntimeHostValueKind::Writer),
+                | RuntimeHostValueKind::Writer
+                | RuntimeHostValueKind::File
+                | RuntimeHostValueKind::Directory),
             id,
         } = value
         else {
@@ -3903,6 +4243,265 @@ mod tests {
             host.invoke("std.fs.remove", &[root]).unwrap(),
             RuntimeValue::ResultOk(_)
         ));
+    }
+
+    #[test]
+    fn filesystem_handles_are_typed_async_and_cleanup_is_affine() {
+        let mut host = BootstrapHost::default();
+        let root = host.allocate(
+            RuntimeHostValueKind::Path,
+            HostValue::Path(
+                path::Path::from_string(&format!("target/tondo-fs-handle-{}", std::process::id()))
+                    .unwrap(),
+            ),
+        );
+        let _ = host.invoke("std.fs.remove", std::slice::from_ref(&root));
+        ok(host
+            .invoke(
+                "std.fs.createDirectory",
+                &[root.clone(), RuntimeValue::Bool(true)],
+            )
+            .unwrap());
+        let file = ok(host
+            .invoke(
+                "std.path.Path.join",
+                &[root.clone(), RuntimeValue::String("data.bin".into())],
+            )
+            .unwrap());
+        let create = host.invoke("std.fs.OpenMode.Create", &[]).unwrap();
+        let handle = ok(host.invoke("std.fs.open", &[file.clone(), create]).unwrap());
+        let payload = bytes_ok(
+            host.invoke(
+                "intrinsic.Bytes.fromString",
+                &[RuntimeValue::String("hello".into())],
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            ok(host
+                .invoke("std.fs.File.write", &[handle.clone(), payload])
+                .unwrap()),
+            RuntimeValue::Integer(5)
+        );
+        ok(host
+            .invoke("std.fs.File.flush", std::slice::from_ref(&handle))
+            .unwrap());
+        let metadata = ok(host
+            .invoke("std.fs.metadata", std::slice::from_ref(&file))
+            .unwrap());
+        assert!(matches!(
+            metadata,
+            RuntimeValue::Host {
+                kind: RuntimeHostValueKind::Metadata,
+                ..
+            }
+        ));
+        host.cleanup(&handle).unwrap();
+        assert!(matches!(
+            host.invoke("std.fs.File.flush", std::slice::from_ref(&handle)),
+            Err(VmError::Host(message)) if message.contains("stale")
+        ));
+
+        let read_mode = host.invoke("std.fs.OpenMode.Read", &[]).unwrap();
+        let reader = ok(host
+            .invoke("std.fs.open", &[file.clone(), read_mode])
+            .unwrap());
+        let call = host
+            .start_async(
+                "std.fs.File.read",
+                &[reader.clone(), RuntimeValue::Integer(32)],
+            )
+            .unwrap();
+        let (_, completed) = host.wait_async(&[call]).unwrap();
+        let RuntimeValue::OptionSome(bytes) = ok(completed) else {
+            panic!("opened file should contain data");
+        };
+        assert_eq!(host.bytes(&bytes).unwrap(), b"hello");
+        let directory = ok(host
+            .invoke("std.fs.openDirectory", std::slice::from_ref(&root))
+            .unwrap());
+        let listed = ok(host
+            .invoke("std.fs.Directory.list", std::slice::from_ref(&directory))
+            .unwrap());
+        assert!(matches!(listed, RuntimeValue::Array(values) if values.len() == 1));
+        host.cleanup(&directory).unwrap();
+        ok(host.invoke("std.fs.remove", &[root]).unwrap());
+    }
+
+    #[test]
+    fn filesystem_handles_cover_modes_errors_and_cancellation() {
+        let mut host = BootstrapHost::default();
+        let root = host.allocate(
+            RuntimeHostValueKind::Path,
+            HostValue::Path(
+                path::Path::from_string(&format!("target/tondo-fs-modes-{}", std::process::id()))
+                    .unwrap(),
+            ),
+        );
+        let fs_error = |value: RuntimeValue| {
+            assert!(matches!(
+                value,
+                RuntimeValue::ResultErr(error)
+                    if matches!(error.as_ref(), RuntimeValue::Host {
+                        kind: RuntimeHostValueKind::FsError,
+                        ..
+                    })
+            ));
+        };
+        let _ = host.invoke("std.fs.remove", std::slice::from_ref(&root));
+        ok(host
+            .invoke(
+                "std.fs.createDirectory",
+                &[root.clone(), RuntimeValue::Bool(true)],
+            )
+            .unwrap());
+        let file = ok(host
+            .invoke(
+                "std.path.Path.join",
+                &[root.clone(), RuntimeValue::String("data.bin".into())],
+            )
+            .unwrap());
+        let missing = ok(host
+            .invoke(
+                "std.path.Path.join",
+                &[root.clone(), RuntimeValue::String("missing.bin".into())],
+            )
+            .unwrap());
+
+        let read = host.invoke("std.fs.OpenMode.Read", &[]).unwrap();
+        assert!(matches!(
+            read,
+            RuntimeValue::Host {
+                kind: RuntimeHostValueKind::OpenMode,
+                ..
+            }
+        ));
+        fs_error(host.invoke("std.fs.open", &[missing, read]).unwrap());
+
+        let create_new = host.invoke("std.fs.OpenMode.CreateNew", &[]).unwrap();
+        let handle = ok(host
+            .invoke("std.fs.open", &[file.clone(), create_new])
+            .unwrap());
+        let payload = host.allocate(
+            RuntimeHostValueKind::Bytes,
+            HostValue::Bytes(b"abc".to_vec()),
+        );
+        assert_eq!(
+            ok(host
+                .invoke("std.fs.File.write", &[handle.clone(), payload.clone()])
+                .unwrap()),
+            RuntimeValue::Integer(3)
+        );
+        ok(host
+            .invoke("std.fs.File.flush", std::slice::from_ref(&handle))
+            .unwrap());
+        let duplicate_create_new = host.invoke("std.fs.OpenMode.CreateNew", &[]).unwrap();
+        fs_error(
+            host.invoke("std.fs.open", &[file.clone(), duplicate_create_new])
+                .unwrap(),
+        );
+
+        let read_mode = host.invoke("std.fs.OpenMode.Read", &[]).unwrap();
+        let reader = ok(host
+            .invoke("std.fs.open", &[file.clone(), read_mode])
+            .unwrap());
+        let chunk = ok(host
+            .invoke(
+                "std.fs.File.read",
+                &[reader.clone(), RuntimeValue::Integer(2)],
+            )
+            .unwrap());
+        let RuntimeValue::OptionSome(chunk) = chunk else {
+            panic!("read should return the first chunk");
+        };
+        assert_eq!(host.bytes(&chunk).unwrap(), b"ab");
+        let eof = ok(host
+            .invoke(
+                "std.fs.File.read",
+                &[reader.clone(), RuntimeValue::Integer(2)],
+            )
+            .unwrap());
+        let RuntimeValue::OptionSome(eof) = eof else {
+            panic!("read should return the final chunk");
+        };
+        assert_eq!(host.bytes(&eof).unwrap(), b"c");
+        assert!(matches!(
+            ok(host
+                .invoke(
+                    "std.fs.File.read",
+                    &[reader.clone(), RuntimeValue::Integer(1)],
+                )
+                .unwrap()),
+            RuntimeValue::OptionNone
+        ));
+        fs_error(
+            host.invoke("std.fs.File.write", &[reader.clone(), payload.clone()])
+                .unwrap(),
+        );
+        fs_error(
+            host.invoke("std.fs.File.flush", std::slice::from_ref(&reader))
+                .unwrap(),
+        );
+        fs_error(
+            host.invoke(
+                "std.fs.File.read",
+                &[reader.clone(), RuntimeValue::Integer(0)],
+            )
+            .unwrap(),
+        );
+        fs_error(
+            host.invoke(
+                "std.fs.File.read",
+                &[reader.clone(), RuntimeValue::Integer(-1)],
+            )
+            .unwrap(),
+        );
+
+        let write_mode = host.invoke("std.fs.OpenMode.Write", &[]).unwrap();
+        let writer = ok(host
+            .invoke("std.fs.open", &[file.clone(), write_mode])
+            .unwrap());
+        fs_error(
+            host.invoke(
+                "std.fs.File.read",
+                &[writer.clone(), RuntimeValue::Integer(1)],
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            ok(host
+                .invoke("std.fs.File.write", &[writer.clone(), payload])
+                .unwrap()),
+            RuntimeValue::Integer(3)
+        );
+        ok(host
+            .invoke("std.fs.File.flush", std::slice::from_ref(&writer))
+            .unwrap());
+
+        let read_mode = host.invoke("std.fs.OpenMode.Read", &[]).unwrap();
+        fs_error(
+            host.invoke("std.fs.open", &[root.clone(), read_mode])
+                .unwrap(),
+        );
+        fs_error(
+            host.invoke("std.fs.openDirectory", std::slice::from_ref(&file))
+                .unwrap(),
+        );
+
+        let directory = ok(host
+            .invoke("std.fs.openDirectory", std::slice::from_ref(&root))
+            .unwrap());
+        let call = host
+            .start_async("std.fs.Directory.list", std::slice::from_ref(&directory))
+            .unwrap();
+        host.cancel_async(call).unwrap();
+        let (_, cancelled) = host.wait_async(&[call]).unwrap();
+        fs_error(cancelled);
+        host.cleanup(&handle).unwrap();
+        host.cleanup(&reader).unwrap();
+        host.cleanup(&writer).unwrap();
+        host.cleanup(&directory).unwrap();
+        ok(host.invoke("std.fs.remove", &[root]).unwrap());
     }
 
     #[test]

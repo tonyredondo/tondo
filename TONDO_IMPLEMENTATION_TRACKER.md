@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 1.52
+**Versión del tracker:** 1.53
 
 **Última actualización:** 2026-08-05
 
@@ -4118,11 +4118,15 @@ parte del módulo.
   `tests/runtime/m11-std-io-001.to` valida la cadena HIR → MIR → bytecode → VM
   con `await`, lectura acotada y escritura drenada.
 
-- [ ] **STD-FS-IMPL-001 — Completar filesystem hosted.** Añadir `open`,
-  `metadata` y los handles afines `File`/`Directory` definidos por el contrato,
-  además de validar las operaciones materializadas existentes. Las funciones
-  `readAll/writeAll/list/...` no cierran el owner mientras falten firmas y
-  cleanup de handles.
+- [x] **STD-FS-IMPL-001 — Completar filesystem hosted.** `open`,
+  `openDirectory`, `metadata`, `File`/`Directory` y sus operaciones async ya
+  atraviesan HIR, MIR, bytecode, VM y bootstrap host con `FsError` nominal.
+  `File` conserva el descriptor y la posición, expone `read`/`write`/`flush`,
+  `Directory.list` mantiene orden por bytes nativos y ambos handles se revocan
+  en cleanup normal/unwind. `readAll/writeAll/list/rename/atomicWrite` existentes
+  también quedan registrados como awaitables y mantienen límites y atomicidad.
+  La fixture `tests/runtime/m11-std-fs-001.to` y la prueba host cubren apertura,
+  metadata, directorio, partial writes, lectura, errores y cleanup.
 
 - [ ] **STD-PROC-IMPL-001 — Alinear procesos con el contrato público.** Exponer
   exactamente `command/shell/pipe`, `Command.run/output/check/start` y
@@ -5376,6 +5380,19 @@ esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 1.53 — 2026-08-05
+
+- Se cierra `STD-FS-IMPL-001`: `std.fs` deja de ser solo un conjunto de
+  funciones de path y expone `open`, `openDirectory`, `metadata`, `File` y
+  `Directory` desde la superficie Tondo. Las operaciones hosted son async,
+  preservan posiciones/short writes, ordenan listados por bytes nativos y
+  convierten errores del host a `FsError` sin éxito parcial.
+- `File` mantiene un descriptor real y `Directory` conserva su raíz; ambos
+  tienen ownership afín y cleanup revocable. La ruta pública se verifica con
+  `m11-std-fs-001.to`, además de pruebas host para handles, metadata,
+  cancelación y stale-token rejection. La matriz de implementación se amplía
+  con todas las capas HIR/bytecode/VM y se regenera la evidencia de Wave 5.
 
 ### 1.52 — 2026-08-05
 

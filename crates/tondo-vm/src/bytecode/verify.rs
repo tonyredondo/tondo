@@ -460,6 +460,10 @@ impl<'a> TraceMetadataAnalysis<'a> {
                 | BytecodeIntrinsicType::CollectionError
                 | BytecodeIntrinsicType::Path
                 | BytecodeIntrinsicType::PathError
+                | BytecodeIntrinsicType::File
+                | BytecodeIntrinsicType::Directory
+                | BytecodeIntrinsicType::Metadata
+                | BytecodeIntrinsicType::OpenMode
                 | BytecodeIntrinsicType::FsError
                 | BytecodeIntrinsicType::MathError
                 | BytecodeIntrinsicType::FloatTolerance
@@ -1084,6 +1088,12 @@ fn intrinsic_capability(
                 ClosedCapability::Discard | ClosedCapability::Send
             ))
         }
+        BytecodeIntrinsicType::File | BytecodeIntrinsicType::Directory => {
+            fixed_capability(matches!(
+                capability,
+                ClosedCapability::Discard | ClosedCapability::Send
+            ))
+        }
         BytecodeIntrinsicType::IoLimits => fixed_capability(matches!(
             capability,
             ClosedCapability::Copy
@@ -1154,6 +1164,8 @@ fn intrinsic_capability(
         | BytecodeIntrinsicType::EnvError
         | BytecodeIntrinsicType::Path
         | BytecodeIntrinsicType::PathError
+        | BytecodeIntrinsicType::Metadata
+        | BytecodeIntrinsicType::OpenMode
         | BytecodeIntrinsicType::FsError => fixed_capability(matches!(
             capability,
             ClosedCapability::Copy
@@ -1482,6 +1494,10 @@ fn intrinsic_terminal(
         | BytecodeIntrinsicType::CollectionError
         | BytecodeIntrinsicType::Path
         | BytecodeIntrinsicType::PathError
+        | BytecodeIntrinsicType::File
+        | BytecodeIntrinsicType::Directory
+        | BytecodeIntrinsicType::Metadata
+        | BytecodeIntrinsicType::OpenMode
         | BytecodeIntrinsicType::FsError
         | BytecodeIntrinsicType::MathError
         | BytecodeIntrinsicType::FloatTolerance
@@ -1656,6 +1672,10 @@ impl Verifier<'_> {
                 | BytecodeIntrinsicType::CollectionError
                 | BytecodeIntrinsicType::Path
                 | BytecodeIntrinsicType::PathError
+                | BytecodeIntrinsicType::File
+                | BytecodeIntrinsicType::Directory
+                | BytecodeIntrinsicType::Metadata
+                | BytecodeIntrinsicType::OpenMode
                 | BytecodeIntrinsicType::FsError
                 | BytecodeIntrinsicType::MathError
                 | BytecodeIntrinsicType::FloatTolerance
@@ -2138,6 +2158,8 @@ impl Verifier<'_> {
                 && !callable.name.starts_with("std.io.Writer.")
                 && !callable.name.starts_with("std.io.readAll")
                 && !callable.name.starts_with("std.io.writeAll")
+                && !callable.name.starts_with("std.fs.File.")
+                && !callable.name.starts_with("std.fs.Directory.")
             {
                 return Err(BytecodeVerificationError::new(
                     &context,
@@ -2165,6 +2187,8 @@ impl Verifier<'_> {
                 && !callable.name.starts_with("std.io.Writer.")
                 && !callable.name.starts_with("std.io.readAll")
                 && !callable.name.starts_with("std.io.writeAll")
+                && !callable.name.starts_with("std.fs.File.")
+                && !callable.name.starts_with("std.fs.Directory.")
                 && !callable.name.starts_with("std.collections.")
             {
                 return Err(BytecodeVerificationError::new(
@@ -14444,6 +14468,10 @@ mod tests {
             BytecodeIntrinsicType::BytesError,
             BytecodeIntrinsicType::Path,
             BytecodeIntrinsicType::PathError,
+            BytecodeIntrinsicType::File,
+            BytecodeIntrinsicType::Directory,
+            BytecodeIntrinsicType::Metadata,
+            BytecodeIntrinsicType::OpenMode,
             BytecodeIntrinsicType::FsError,
             BytecodeIntrinsicType::ExitStatus,
             BytecodeIntrinsicType::ProcessOutput,
@@ -14554,7 +14582,12 @@ mod tests {
                 | BytecodeIntrinsicType::MathError
                 | BytecodeIntrinsicType::Path
                 | BytecodeIntrinsicType::PathError
+                | BytecodeIntrinsicType::Metadata
+                | BytecodeIntrinsicType::OpenMode
                 | BytecodeIntrinsicType::FsError => all,
+                BytecodeIntrinsicType::File | BytecodeIntrinsicType::Directory => {
+                    [false, true, false, false, true, false]
+                }
                 BytecodeIntrinsicType::EnvValue => [true, true, false, false, true, true],
                 BytecodeIntrinsicType::EnvSnapshot => [false, true, false, false, true, true],
             };

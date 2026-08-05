@@ -106,6 +106,10 @@ pub(crate) const fn intrinsic_terminal_contract(
         | IntrinsicType::CollectionError
         | IntrinsicType::Path
         | IntrinsicType::PathError
+        | IntrinsicType::File
+        | IntrinsicType::Directory
+        | IntrinsicType::Metadata
+        | IntrinsicType::OpenMode
         | IntrinsicType::FsError
         | IntrinsicType::MathError
         | IntrinsicType::FloatTolerance
@@ -465,6 +469,10 @@ fn intrinsic_node(constructor: IntrinsicType, arguments: Vec<TypeId>) -> Termina
         | IntrinsicType::CollectionError
         | IntrinsicType::Path
         | IntrinsicType::PathError
+        | IntrinsicType::File
+        | IntrinsicType::Directory
+        | IntrinsicType::Metadata
+        | IntrinsicType::OpenMode
         | IntrinsicType::FsError
         | IntrinsicType::MathError
         | IntrinsicType::FloatTolerance
@@ -553,6 +561,10 @@ mod tests {
             IntrinsicType::BytesError,
             IntrinsicType::Path,
             IntrinsicType::PathError,
+            IntrinsicType::File,
+            IntrinsicType::Directory,
+            IntrinsicType::Metadata,
+            IntrinsicType::OpenMode,
             IntrinsicType::FsError,
             IntrinsicType::MathError,
             IntrinsicType::ExitStatus,

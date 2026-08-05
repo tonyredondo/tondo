@@ -1,0 +1,4 @@
+import main.api
+fn invalid(): Int {
+    api.hidden()
+}

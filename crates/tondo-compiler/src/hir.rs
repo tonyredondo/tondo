@@ -77,6 +77,10 @@ fn bootstrap_process_intrinsic(module: &ModuleId, name: &Name) -> Option<Intrins
         }),
         "fs" => Some(match name.as_str() {
             "FsError" => IntrinsicType::FsError,
+            "File" => IntrinsicType::File,
+            "Directory" => IntrinsicType::Directory,
+            "Metadata" => IntrinsicType::Metadata,
+            "OpenMode" => IntrinsicType::OpenMode,
             _ => return None,
         }),
         "math" => Some(match name.as_str() {
@@ -2194,9 +2198,22 @@ pub enum HirBootstrapHostFunction {
     FsWriteAll,
     FsCreateDirectory,
     FsRemove,
+    FsOpen,
+    FsOpenDirectory,
+    FsMetadata,
     FsList,
     FsRename,
     FsAtomicWrite,
+    FileRead,
+    FileWrite,
+    FileFlush,
+    DirectoryList,
+    FsOpenModeRead,
+    FsOpenModeWrite,
+    FsOpenModeReadWrite,
+    FsOpenModeAppend,
+    FsOpenModeCreate,
+    FsOpenModeCreateNew,
     JsonValidate,
     JsonCanonicalize,
     MessagePackValidate,
@@ -2408,9 +2425,22 @@ impl HirBootstrapHostFunction {
             Self::FsWriteAll => "std.fs.writeAll",
             Self::FsCreateDirectory => "std.fs.createDirectory",
             Self::FsRemove => "std.fs.remove",
+            Self::FsOpen => "std.fs.open",
+            Self::FsOpenDirectory => "std.fs.openDirectory",
+            Self::FsMetadata => "std.fs.metadata",
             Self::FsList => "std.fs.list",
             Self::FsRename => "std.fs.rename",
             Self::FsAtomicWrite => "std.fs.atomicWrite",
+            Self::FileRead => "std.fs.File.read",
+            Self::FileWrite => "std.fs.File.write",
+            Self::FileFlush => "std.fs.File.flush",
+            Self::DirectoryList => "std.fs.Directory.list",
+            Self::FsOpenModeRead => "std.fs.OpenMode.Read",
+            Self::FsOpenModeWrite => "std.fs.OpenMode.Write",
+            Self::FsOpenModeReadWrite => "std.fs.OpenMode.ReadWrite",
+            Self::FsOpenModeAppend => "std.fs.OpenMode.Append",
+            Self::FsOpenModeCreate => "std.fs.OpenMode.Create",
+            Self::FsOpenModeCreateNew => "std.fs.OpenMode.CreateNew",
             Self::JsonValidate => "std.json.validate",
             Self::JsonCanonicalize => "std.json.canonicalize",
             Self::MessagePackValidate => "std.messagepack.validate",
@@ -2505,6 +2535,20 @@ impl HirBootstrapHostFunction {
                 | Self::WriterFlush
                 | Self::IoReadAll
                 | Self::IoWriteAll
+                | Self::FsOpen
+                | Self::FsOpenDirectory
+                | Self::FsReadAll
+                | Self::FsWriteAll
+                | Self::FsCreateDirectory
+                | Self::FsRemove
+                | Self::FsMetadata
+                | Self::FsList
+                | Self::FsRename
+                | Self::FsAtomicWrite
+                | Self::FileRead
+                | Self::FileWrite
+                | Self::FileFlush
+                | Self::DirectoryList
                 | Self::CommandStatus
                 | Self::CommandOutput
                 | Self::CommandRun

@@ -830,6 +830,10 @@ impl<'a> ExpressionChecker<'a> {
                         | IntrinsicType::CollectionError
                         | IntrinsicType::Path
                         | IntrinsicType::PathError
+                        | IntrinsicType::File
+                        | IntrinsicType::Directory
+                        | IntrinsicType::Metadata
+                        | IntrinsicType::OpenMode
                         | IntrinsicType::FsError
                         | IntrinsicType::MathError
                         | IntrinsicType::FloatTolerance
@@ -13702,6 +13706,11 @@ impl<'a> ExpressionChecker<'a> {
             {
                 (module_token, function_token, 4_u8)
             }
+            [module_token, type_token, function_token]
+                if type_token.token().normalized_identifier() == Some("OpenMode") =>
+            {
+                (module_token, function_token, 5_u8)
+            }
             _ => return Ok(None),
         };
         let Some(module_reference) = self.resolved.reference(file, module_token.range()) else {
@@ -13744,6 +13753,16 @@ impl<'a> ExpressionChecker<'a> {
         } else if static_type == 4 {
             match (module.path().as_str(), function_name) {
                 ("format", Some("new")) => HirBootstrapHostFunction::FormatBuilder,
+                _ => return Ok(None),
+            }
+        } else if static_type == 5 {
+            match (module.path().as_str(), function_name) {
+                ("fs", Some("Read")) => HirBootstrapHostFunction::FsOpenModeRead,
+                ("fs", Some("Write")) => HirBootstrapHostFunction::FsOpenModeWrite,
+                ("fs", Some("ReadWrite")) => HirBootstrapHostFunction::FsOpenModeReadWrite,
+                ("fs", Some("Append")) => HirBootstrapHostFunction::FsOpenModeAppend,
+                ("fs", Some("Create")) => HirBootstrapHostFunction::FsOpenModeCreate,
+                ("fs", Some("CreateNew")) => HirBootstrapHostFunction::FsOpenModeCreateNew,
                 _ => return Ok(None),
             }
         } else {
@@ -13798,6 +13817,9 @@ impl<'a> ExpressionChecker<'a> {
                 ("fs", Some("writeAll")) => HirBootstrapHostFunction::FsWriteAll,
                 ("fs", Some("createDirectory")) => HirBootstrapHostFunction::FsCreateDirectory,
                 ("fs", Some("remove")) => HirBootstrapHostFunction::FsRemove,
+                ("fs", Some("open")) => HirBootstrapHostFunction::FsOpen,
+                ("fs", Some("openDirectory")) => HirBootstrapHostFunction::FsOpenDirectory,
+                ("fs", Some("metadata")) => HirBootstrapHostFunction::FsMetadata,
                 ("fs", Some("list")) => HirBootstrapHostFunction::FsList,
                 ("fs", Some("rename")) => HirBootstrapHostFunction::FsRename,
                 ("fs", Some("atomicWrite")) => HirBootstrapHostFunction::FsAtomicWrite,
@@ -17098,6 +17120,10 @@ impl<'a> ExpressionChecker<'a> {
                 (IntrinsicType::Reader, "read") => HirBootstrapHostFunction::ReaderRead,
                 (IntrinsicType::Writer, "write") => HirBootstrapHostFunction::WriterWrite,
                 (IntrinsicType::Writer, "flush") => HirBootstrapHostFunction::WriterFlush,
+                (IntrinsicType::File, "read") => HirBootstrapHostFunction::FileRead,
+                (IntrinsicType::File, "write") => HirBootstrapHostFunction::FileWrite,
+                (IntrinsicType::File, "flush") => HirBootstrapHostFunction::FileFlush,
+                (IntrinsicType::Directory, "list") => HirBootstrapHostFunction::DirectoryList,
                 (IntrinsicType::EnvSnapshot, "arguments") => {
                     HirBootstrapHostFunction::EnvSnapshotArguments
                 }
@@ -17131,6 +17157,10 @@ impl<'a> ExpressionChecker<'a> {
                 | HirBootstrapHostFunction::ReaderRead
                 | HirBootstrapHostFunction::WriterWrite
                 | HirBootstrapHostFunction::WriterFlush
+                | HirBootstrapHostFunction::FileRead
+                | HirBootstrapHostFunction::FileWrite
+                | HirBootstrapHostFunction::FileFlush
+                | HirBootstrapHostFunction::DirectoryList
                 | HirBootstrapHostFunction::IoReadAll
                 | HirBootstrapHostFunction::IoWriteAll
                 | HirBootstrapHostFunction::CollectionArrayPush

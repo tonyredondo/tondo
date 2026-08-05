@@ -122,6 +122,10 @@ pub enum IntrinsicType {
     CollectionError,
     Path,
     PathError,
+    File,
+    Directory,
+    Metadata,
+    OpenMode,
     FsError,
     MathError,
     FloatTolerance,
@@ -177,6 +181,10 @@ impl IntrinsicType {
             Self::CollectionError => "CollectionError",
             Self::Path => "Path",
             Self::PathError => "PathError",
+            Self::File => "File",
+            Self::Directory => "Directory",
+            Self::Metadata => "Metadata",
+            Self::OpenMode => "OpenMode",
             Self::FsError => "FsError",
             Self::MathError => "MathError",
             Self::FloatTolerance => "FloatTolerance",
@@ -227,6 +235,10 @@ impl IntrinsicType {
             | Self::CollectionError
             | Self::Path
             | Self::PathError
+            | Self::File
+            | Self::Directory
+            | Self::Metadata
+            | Self::OpenMode
             | Self::FsError
             | Self::MathError
             | Self::FloatTolerance

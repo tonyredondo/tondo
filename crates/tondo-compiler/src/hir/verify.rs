@@ -521,6 +521,10 @@ impl Verifier<'_> {
                         | IntrinsicType::CollectionError
                         | IntrinsicType::Path
                         | IntrinsicType::PathError
+                        | IntrinsicType::File
+                        | IntrinsicType::Directory
+                        | IntrinsicType::Metadata
+                        | IntrinsicType::OpenMode
                         | IntrinsicType::FsError
                         | IntrinsicType::MathError
                         | IntrinsicType::FloatTolerance
@@ -2125,7 +2129,10 @@ impl Verifier<'_> {
             };
             let host_io_callable = matches!(
                 callable.id,
-                HirCallableId::Host(function) if function.name().starts_with("std.io.")
+                HirCallableId::Host(function)
+                    if function.name().starts_with("std.io.")
+                        || function.name().starts_with("std.fs.File.")
+                        || function.name().starts_with("std.fs.Directory.")
             );
             if function.is_async()
                 && callable.parameters.iter().any(|parameter| {

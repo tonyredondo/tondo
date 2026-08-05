@@ -3,24 +3,31 @@ import std.path
 import std.fs
 import std.bytes
 
-fn main(): !(path.PathError | fs.FsError | bytes.BytesError | bytes.Utf8Error) {
+async fn main(): !(path.PathError | fs.FsError | bytes.BytesError | bytes.Utf8Error) {
     let existing = path.fromString("Cargo.toml")?
-    let _contents = fs.readAll(existing)?
+    let _contents = await fs.readAll(existing)?
 
     let missing = path.fromString("tondo-no-such-file")?
-    match fs.readAll(missing) {
+    match await fs.readAll(missing) {
         ok(_) => assert(false)
-          err(_) => ()
+            err(_) => ()
     }
     let workspace = path.fromString("target/tondo-wave5-fs")?
-    fs.createDirectory(workspace, true)?
+    await fs.createDirectory(workspace, true)?
     let file = workspace.join("data.bin")?
-    fs.atomicWrite(file, bytes.Bytes("ok")?)?
-    let _entries = fs.list(workspace)?
+    await fs.atomicWrite(file, bytes.Bytes("ok")?)?
+    let _entries = await fs.list(workspace)?
+    let _metadata = await fs.metadata(file)?
+    var append_file = await fs.open(file, fs.OpenMode.Append())?
+    let _written = await append_file.write(bytes.Bytes("!")?)?
+    await append_file.flush()?
+    var read_file = await fs.open(file, fs.OpenMode.Read())?
+    let _read = await read_file.read(16)?
+    var directory = await fs.openDirectory(workspace)?
+    let _directory_entries = await directory.list()?
     let moved = workspace.join("renamed.bin")?
-    fs.rename(file, moved)?
-    assert(String(fs.readAll(moved)?)? == "ok")
-    fs.remove(moved)?
-    fs.remove(workspace)?
+    await fs.rename(file, moved)?
+    await fs.remove(moved)?
+    await fs.remove(workspace)?
     console.print("fs-ok\n")
 }

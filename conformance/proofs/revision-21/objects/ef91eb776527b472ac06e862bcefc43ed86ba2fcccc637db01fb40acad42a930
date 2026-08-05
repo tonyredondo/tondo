@@ -1,0 +1,3 @@
+fn invalid(values: ...Int) {
+    values[0] = 1
+}

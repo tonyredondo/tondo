@@ -1120,7 +1120,38 @@ Convertirlo a texto puede fallar o exigir una política explícita. Normalizar
 léxicamente no consulta el filesystem, no resuelve enlaces y no afirma
 canonicalidad física.
 
-### 10.5 Formato
+### 10.5 Filesystem hosted
+
+`std.fs` es la frontera capability-gated para observar y mutar el filesystem.
+Todas sus operaciones que pueden tocar el host son `async`; `std.path` sigue
+siendo puro y síncrono. El owner público es:
+
+```tondo
+type File
+type Directory
+type Metadata
+enum OpenMode { Read, Write, ReadWrite, Append, Create, CreateNew }
+async fn open(path: Path, mode: OpenMode): File ! FsError
+async fn openDirectory(path: Path): Directory ! FsError
+async fn metadata(path: Path): Metadata ! FsError
+async fn File.read(var self, max: Int): Option[Bytes] ! FsError
+async fn File.write(var self, data: Bytes): Int ! FsError
+async fn File.flush(var self): Unit ! FsError
+async fn Directory.list(var self): Array[Path] ! FsError
+```
+
+`File` y `Directory` son afines: el owner se revoca en cleanup normal y durante
+unwind. El verificador impide el uso posterior en programas seguros y el host
+rechaza cualquier token stale o forjado como una violación de la invariante de
+runtime; `FsError.Closed` queda disponible para cierres observables que no
+invaliden esa invariante. `File` conserva posición entre llamadas y no copia
+el descriptor; sus métodos ofrecen la semántica de `Reader`/`Writer`, mientras
+`std.io.readAll` y `std.io.writeAll` siguen recibiendo esos handles explícitos.
+`list` ordena por bytes nativos; `atomicWrite` usa un temporal en el mismo
+directorio, hace flush y rename. Los límites globales se comprueban antes de
+materializar bytes o entradas.
+
+### 10.6 Formato
 
 `Display` es el protocolo mínimo estático usado por interpolación. La stdlib
 puede añadir formato controlado mediante `std.format`, pero:

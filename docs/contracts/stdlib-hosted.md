@@ -54,6 +54,7 @@ pub type Metadata
 pub enum OpenMode { Read, Write, ReadWrite, Append, Create, CreateNew }
 pub enum FsError { NotFound, PermissionDenied, AlreadyExists, InvalidPath, NotDirectory, IsDirectory, Closed, ResourceLimit, Cancelled, Io }
 pub async fn open(path: Path, mode: OpenMode): File ! FsError
+pub async fn openDirectory(path: Path): Directory ! FsError
 pub async fn readAll(path: Path): Bytes ! FsError
 pub async fn writeAll(path: Path, data: Bytes): Unit ! FsError
 pub async fn createDirectory(path: Path, parents: Bool): Unit ! FsError
@@ -62,10 +63,28 @@ pub async fn metadata(path: Path): Metadata ! FsError
 pub async fn list(path: Path): Array[Path] ! FsError
 pub async fn rename(from: Path, to: Path): Unit ! FsError
 pub async fn atomicWrite(path: Path, data: Bytes): Unit ! FsError
+pub async fn File.read(var self, max: Int): Option[Bytes] ! FsError
+pub async fn File.write(var self, data: Bytes): Int ! FsError
+pub async fn File.flush(var self): Unit ! FsError
+pub async fn Directory.list(var self): Array[Path] ! FsError
 ```
 
-Las operaciones requieren `filesystem`. Los handles implementan `Reader` o
-`Writer`, son afines y cierran sus recursos en cleanup normal y durante unwind.
+Las operaciones requieren `filesystem`. `File` es un handle afín que ofrece la
+misma semántica de lectura/escritura que `Reader`/`Writer` mediante sus
+métodos `read`/`write`/`flush`; `std.io.readAll` y `std.io.writeAll` siguen
+recibiendo los handles `Reader`/`Writer` explícitos. `Directory` es un handle
+afín de iteración. Ambos cierran sus recursos en cleanup normal y durante
+unwind. `Read` devuelve `none` al alcanzar EOF, `Write` acepta short writes y
+devuelve los bytes escritos. `Write` y `ReadWrite` abren un archivo existente;
+`Create` trunca o crea y `CreateNew` exige que no exista. `Append` escribe
+siempre al final.
+
+El verificador de ownership impide que un programa seguro conserve un handle
+después de su cleanup; el host también rechaza tokens stale o forjados como
+una violación de la invariante de runtime. `FsError.Closed` queda reservado
+para un cierre observable del recurso que pueda ocurrir sin invalidar esa
+invariante.
+
 `atomicWrite` escribe en un temporal dentro del mismo directorio, hace flush y
 rename; no promete durabilidad de hardware salvo una capability posterior. La
 iteración devuelve paths en orden lexicográfico de bytes para determinismo. Los
@@ -104,4 +123,3 @@ usan backpressure bounded y cierre coordinado. `start` devuelve un handle afín;
 huérfanos. Las rutas async tienen puntos de cancelación definidos antes de
 publicar output. `ProcessExitError` conserva el output capturado sin depender
 de códigos o mensajes concretos del sistema operativo.
-

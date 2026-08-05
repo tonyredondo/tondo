@@ -1,0 +1,3 @@
+fn invalid(values: Set[Float]) {
+    _ = values
+}

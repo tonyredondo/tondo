@@ -2128,6 +2128,10 @@ impl<'program, 'host> Engine<'program, 'host> {
                     | BytecodeIntrinsicType::CollectionError
                     | BytecodeIntrinsicType::Path
                     | BytecodeIntrinsicType::PathError
+                    | BytecodeIntrinsicType::File
+                    | BytecodeIntrinsicType::Directory
+                    | BytecodeIntrinsicType::Metadata
+                    | BytecodeIntrinsicType::OpenMode
                     | BytecodeIntrinsicType::FsError
                     | BytecodeIntrinsicType::MathError
                     | BytecodeIntrinsicType::FloatTolerance
@@ -3711,6 +3715,10 @@ fn runtime_host_kind(constructor: BytecodeIntrinsicType) -> Option<RuntimeHostVa
         BytecodeIntrinsicType::CollectionError => RuntimeHostValueKind::CollectionError,
         BytecodeIntrinsicType::Path => RuntimeHostValueKind::Path,
         BytecodeIntrinsicType::PathError => RuntimeHostValueKind::PathError,
+        BytecodeIntrinsicType::File => RuntimeHostValueKind::File,
+        BytecodeIntrinsicType::Directory => RuntimeHostValueKind::Directory,
+        BytecodeIntrinsicType::Metadata => RuntimeHostValueKind::Metadata,
+        BytecodeIntrinsicType::OpenMode => RuntimeHostValueKind::OpenMode,
         BytecodeIntrinsicType::FsError => RuntimeHostValueKind::FsError,
         BytecodeIntrinsicType::MathError => RuntimeHostValueKind::MathError,
         BytecodeIntrinsicType::FloatTolerance => RuntimeHostValueKind::FloatTolerance,
