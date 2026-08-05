@@ -1,0 +1,7 @@
+fn characterAt(text: String, index: Int): Char {
+    text[index]
+}
+
+fn main() {
+    _ = characterAt("añ🙂", 3)
+}

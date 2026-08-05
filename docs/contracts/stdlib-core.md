@@ -126,6 +126,17 @@ pub fn Iterator.collect[T](self): Array[T] ! CollectionError
 pub enum CollectionError { InvalidCapacity, InvalidIndex, InvalidStep, ResourceLimit }
 ```
 
+Los cuatro combinadores conservan un único protocolo `Iterator[T]` y son
+lazy: `map` y `filter` guardan el callback y solo consumen la fuente al pedir
+el siguiente elemento; `take` limita ese consumo sin crear una colección
+intermedia. Los adaptadores son cursores own afines, se pueden encadenar y su
+estado de posición es observable únicamente por consumo. `collect` consume el
+cursor una sola vez y materializa el `Array[T]` al final, devolviendo
+`CollectionError` si el límite de objetos del runtime impide terminar la
+colección. Un `take` con un conteo negativo se comporta como `take(0)` y
+produce una colección vacía. Los callbacks son síncronos; una suspensión async
+no forma parte de este contrato.
+
 `Range` es lazy, no materializa un array y rechaza step cero. Cada target de
 iteración produce un único elemento; consumir un iterador avanza su estado y no
 se reinicia implícitamente. `Array`/`Map`/`Set` nunca exponen buffers mutables.

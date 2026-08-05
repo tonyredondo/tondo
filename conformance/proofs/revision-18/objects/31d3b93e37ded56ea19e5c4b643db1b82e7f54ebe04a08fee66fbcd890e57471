@@ -1,0 +1,8 @@
+async fn observe[T: Discard + Send](value: ref T) {}
+
+async fn invalid[T: Discard + Send](value: T) {
+    scope {
+        let pending = spawn observe(ref value)
+        await pending
+    }
+}

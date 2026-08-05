@@ -1,0 +1,6 @@
+unsafe fn raw(): Int {
+    1
+}
+fn invalid(): Int {
+    raw()
+}

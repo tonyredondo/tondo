@@ -1,0 +1,6 @@
+trait Marker {}
+type Box[T] = {
+    value: T
+}
+impl[T] Marker for Box[T] {}
+impl[U] Marker for Box[Array[U]] {}

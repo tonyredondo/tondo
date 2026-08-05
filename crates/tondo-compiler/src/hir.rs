@@ -2220,6 +2220,10 @@ pub enum HirBootstrapHostFunction {
     CollectionSetRemove,
     CollectionSetContains,
     CollectionSetValues,
+    IterMap,
+    IterFilter,
+    IterTake,
+    IterCollect,
     /// Compiler-owned Core operation. It is represented as a host callable
     /// during generic call checking and lowered to value-level control flow;
     /// it never reaches the VM host.
@@ -2421,6 +2425,10 @@ impl HirBootstrapHostFunction {
             Self::CollectionSetRemove => "std.collections.Set.remove",
             Self::CollectionSetContains => "std.collections.Set.contains",
             Self::CollectionSetValues => "std.collections.Set.values",
+            Self::IterMap => "std.iter.map",
+            Self::IterFilter => "std.iter.filter",
+            Self::IterTake => "std.iter.take",
+            Self::IterCollect => "std.iter.collect",
             Self::CoreOptionMap => "std.core.Option.map",
             Self::CoreOptionUnwrapOr => "std.core.Option.unwrapOr",
             Self::CoreResultMap => "std.core.Result.map",

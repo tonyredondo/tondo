@@ -1,0 +1,41 @@
+import std.console
+
+fn identityI8(value: Int8): Int8 { value }
+fn identityI16(value: Int16): Int16 { value }
+fn identityI32(value: Int32): Int32 { value }
+fn identityI64(value: Int64): Int64 { value }
+fn identityU8(value: UInt8): UInt8 { value }
+fn identityU16(value: UInt16): UInt16 { value }
+fn identityU32(value: UInt32): UInt32 { value }
+fn identityU64(value: UInt64): UInt64 { value }
+fn identityF32(value: Float32): Float32 { value }
+fn identityF64(value: Float64): Float64 { value }
+
+fn main() {
+    assert(identityI8(-128i8) == -128i8)
+    assert(identityI16(-32768i16) == -32768i16)
+    assert(identityI32(-2147483648i32) == -2147483648i32)
+    assert(identityI64(-9223372036854775808i64) == -9223372036854775808i64)
+
+    assert(identityU8(255u8) == 255u8)
+    assert(identityU16(65535u16) == 65535u16)
+    assert(identityU32(4294967295u32) == 4294967295u32)
+    assert(identityU64(18446744073709551615u64) == 18446744073709551615u64)
+
+    assert(identityF32(1.5f32) == 1.5f32)
+    assert(identityF64(1.5f64) == 1.5f64)
+
+    let contextualI8: Int8 = 127
+    let contextualU64: UInt64 = 18446744073709551615
+    let contextualF32: Float32 = 1.25
+    let canonicalInt: Int = identityI64(42)
+    let canonicalFloat: Float = identityF64(2.5)
+
+    assert(contextualI8 == 127i8)
+    assert(contextualU64 == 18446744073709551615u64)
+    assert(contextualF32 == 1.25f32)
+    assert(canonicalInt == 42)
+    assert(canonicalFloat == 2.5)
+
+    console.print("numeric-intrinsics\n")
+}

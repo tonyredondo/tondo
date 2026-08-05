@@ -1,0 +1,109 @@
+import std.console
+
+fn emit(value: String) {
+    console.print(value)
+}
+
+fn hidden(value: Int): impl Discard {
+    value
+}
+
+fn consumeHidden[T: Discard](value: T) {
+    _ = value
+    emit("closure-guard|")
+}
+
+fn consumeDeferred[T: Discard](value: T) {
+    _ = value
+    emit("deferred-callee|")
+}
+
+fn closureGuard() {
+    let owner = hidden(1)
+    let action = () {
+        defer consumeHidden(owner)
+    }
+    action()
+}
+
+fn deferredCallee() {
+    let owner = hidden(2)
+    let action = () {
+        consumeDeferred(owner)
+    }
+    defer action()
+}
+
+fn verifyArraySnapshot(values: Array[Int]) {
+    assert(values[0] == 1)
+}
+
+fn arraySnapshot() {
+    var values = [1]
+    defer verifyArraySnapshot(values)
+    values[0] = 2
+}
+
+fn earlyReturn() {
+    defer emit("return|")
+    return
+}
+
+fn failure(): Unit ! String {
+    defer emit("fail|")
+    fail "bad"
+}
+
+fn propagate(): Unit ! String {
+    defer emit("question|")
+    failure()?
+}
+
+fn loops() {
+    var index = 0
+    for index < 3 {
+        defer emit("loop|")
+        index += 1
+        if index == 1 {
+            continue
+        }
+        if index == 2 {
+            break
+        }
+    }
+}
+
+fn main() {
+    defer emit("outer-first\n")
+    defer emit("outer-second|")
+
+    var value = "captured|"
+    defer emit(value)
+    value = "changed|"
+
+    var blockValue = "block-captured|"
+    defer {
+        emit(blockValue)
+    }
+    blockValue = "block-changed|"
+
+    var mutableBlockValue = "block-before|"
+    defer {
+        mutableBlockValue = "block-mutated|"
+        emit(mutableBlockValue)
+    }
+    mutableBlockValue = "block-outside|"
+
+    {
+        defer emit("inner|")
+        emit("body|")
+    }
+
+    earlyReturn()
+    _ = failure()
+    _ = propagate()
+    loops()
+    arraySnapshot()
+    deferredCallee()
+    closureGuard()
+}

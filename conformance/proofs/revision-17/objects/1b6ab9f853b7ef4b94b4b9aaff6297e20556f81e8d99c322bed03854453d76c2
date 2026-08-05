@@ -1,0 +1,91 @@
+tondo-fixture-manifest 0.1
+defaults Copy Discard Send Share
+universe module std.console
+universe decl std.console fn print(value: String)
+universe module std.fs
+universe decl std.fs opaque Path
+universe decl std.fs opaque IoError
+universe decl std.fs fn read(path: Path): Bytes ! IoError
+universe module std.json
+universe decl std.json opaque DecodeError
+universe module std.process
+universe decl std.process fn args(): Array[String]
+universe decl std.process fn cmd(program: String, arguments: ...String): Command
+fixture spec.core
+decl spec.core opaque Bytes
+decl spec.core opaque Utf8Error
+decl spec.core opaque Status
+decl spec.core opaque AcquireError
+decl spec.core opaque Resource capabilities Send terminal Resource.release(Resource) unwind resource-release
+decl spec.core fn Resource.release(resource: Resource)
+decl spec.core fn Resource.status(self): Status
+decl spec.core fn consume[T: Discard](value: T)
+decl spec.core fn String.isEmpty(self): Bool
+decl spec.core fn Bytes.text(self): String ! Utf8Error
+decl spec.core fn Array[T].length(self): Int
+decl spec.core fn Array[T].isEmpty(self): Bool
+decl spec.core fn Array[T: Copy].getOr(self, index: Int, fallback: T): T
+decl spec.core fn Array[T].append(var self, value: T)
+decl spec.core fn Map[K: Key, V: Copy].getOr(self, key: K, fallback: V): V
+decl spec.core fn Option[T: Copy].at(self): T
+decl spec.core unsafe fn Pointer[T].read(self): T
+alias fixture spec.0_1 = spec.core
+fixture spec.cursor extends spec.core
+decl spec.cursor opaque Query
+decl spec.cursor opaque Row
+decl spec.cursor opaque DatabaseError
+decl spec.cursor opaque Database
+decl spec.cursor opaque RowCursor capabilities Send terminal RowCursor.close(RowCursor) unwind cursor-close
+decl spec.cursor fn Database.openRows(query: Query): RowCursor ! DatabaseError
+decl spec.cursor fn RowCursor.close(cursor: RowCursor)
+decl spec.cursor impl Iterator[Row] for RowCursor fn next(mut self): Row?
+fixture spec.resource extends spec.core
+decl spec.resource fn acquire(): Resource ! AcquireError
+fixture spec.domain extends spec.core
+require spec.domain type User
+decl spec.domain fn decodeUser(bytes: Bytes): User ! std.json.DecodeError
+fixture spec.settings extends spec.core
+binding spec.settings fs = std.fs
+decl spec.settings alias Path = fs.Path
+decl spec.settings alias IoError = fs.IoError
+decl spec.settings opaque DecodeError
+decl spec.settings opaque Settings
+decl spec.settings fn decodeSettings(bytes: Bytes): Settings ! DecodeError
+fixture spec.user extends spec.core
+decl spec.user type UserId = Int
+decl spec.user type User = { id: UserId, name: String, email: String? }
+fixture spec.console extends spec.core
+binding spec.console console = std.console
+fixture spec.jobs extends spec.core
+decl spec.jobs opaque Deque[T: Discard] capabilities Discard
+decl spec.jobs type Job = { cancelled: Bool }
+decl spec.jobs opaque JobError
+decl spec.jobs fn Deque[T].isEmpty(self): Bool
+decl spec.jobs fn Deque[T].popFront(var self): T?
+decl spec.jobs fn run(job: Job): !JobError
+fixture spec.application extends spec.core
+decl spec.application opaque Path
+decl spec.application opaque ArgsError
+decl spec.application opaque ConfigError
+decl spec.application opaque RuntimeError
+decl spec.application opaque Config
+decl spec.application type Options = { configPath: Path }
+decl spec.application fn parseArgs(arguments: Array[String]): Options ! ArgsError
+decl spec.application fn loadConfig(path: Path): Config ! ConfigError
+decl spec.application fn run(config: Config): !RuntimeError
+fixture spec.async_page extends spec.core
+binding spec.async_page console = std.console
+decl spec.async_page type UserId = Int
+decl spec.async_page opaque User
+decl spec.async_page opaque Posts
+decl spec.async_page opaque ApiError
+decl spec.async_page type Page = { user: User, posts: Posts }
+decl spec.async_page async fn fetchUser(userId: UserId): User ! ApiError
+decl spec.async_page async fn fetchPosts(userId: UserId): Posts ! ApiError
+decl spec.async_page impl Display for Page
+fixture spec.process extends spec.core
+decl spec.process opaque ProcessError
+decl spec.process type ProcessOutput = { stdout: Bytes }
+decl spec.process async fn Pipeline.output(self): ProcessOutput ! ProcessError
+decl spec.process async fn Pipeline.check(self): ProcessOutput ! ProcessError
+end

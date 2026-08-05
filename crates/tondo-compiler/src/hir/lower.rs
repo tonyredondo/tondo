@@ -223,6 +223,8 @@ impl<'a> TypeLowerer<'a> {
         let path_module = self.packages.module(self.packages.standard(), &path);
         let fs = ModulePath::new("fs")?;
         let fs_module = self.packages.module(self.packages.standard(), &fs);
+        let iter = ModulePath::new("iter")?;
+        let iter_module = self.packages.module(self.packages.standard(), &iter);
         let bytes_referenced = bytes_module.as_ref().is_some_and(|bytes_module| {
             self.resolved.references().any(|reference| {
                 matches!(
@@ -276,6 +278,11 @@ impl<'a> TypeLowerer<'a> {
             .packages
             .module(self.packages.standard(), &collections)
             .is_some();
+        // Iteration combinators are compiler-owned just like collection
+        // methods.  Keep their contracts available whenever the closed
+        // bootstrap module exists so method syntax (`source.map(...)`) and
+        // qualified syntax (`iter.map(...)`) share one callable identity.
+        let iter_referenced = iter_module.is_some();
         let testing_referenced = testing_module.as_ref().is_some_and(|testing_module| {
             self.resolved.references().any(|reference| {
                 matches!(
@@ -325,6 +332,7 @@ impl<'a> TypeLowerer<'a> {
             && !math_referenced
             && !text_referenced
             && !collections_referenced
+            && !iter_referenced
             && !testing_referenced
             && !json_referenced
             && !messagepack_referenced
@@ -1610,6 +1618,83 @@ impl<'a> TypeLowerer<'a> {
                 set_cursor,
                 1,
                 key_bound,
+            )?;
+        }
+
+        if iter_referenced {
+            let generic_input = self.interner.generic_parameter(0)?;
+            let generic_output = self.interner.generic_parameter(1)?;
+            let bool_type = self.interner.scalar(ScalarType::Bool);
+            let array_input = self
+                .interner
+                .intrinsic(IntrinsicType::Array, vec![generic_input])?;
+            let array_output = self
+                .interner
+                .intrinsic(IntrinsicType::Array, vec![generic_output])?;
+            let input_cursor = self.interner.cursor(CursorMode::Own, array_input)?;
+            let output_cursor = self.interner.cursor(CursorMode::Own, array_output)?;
+            let map_callback = self.interner.function(FunctionType::new(
+                false,
+                false,
+                vec![FunctionParameter::new(ParameterMode::Value, generic_input)],
+                None,
+                generic_output,
+            ))?;
+            let filter_callback = self.interner.function(FunctionType::new(
+                false,
+                false,
+                vec![FunctionParameter::new(ParameterMode::Value, generic_input)],
+                None,
+                bool_type,
+            ))?;
+            let map_source = self.interner.generic_parameter(2)?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::IterMap,
+                vec![
+                    (map_source, ParameterMode::Value, true),
+                    (map_callback, ParameterMode::Value, false),
+                ],
+                output_cursor,
+                3,
+                Vec::new(),
+            )?;
+            let filter_source = self.interner.generic_parameter(1)?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::IterFilter,
+                vec![
+                    (filter_source, ParameterMode::Value, true),
+                    (filter_callback, ParameterMode::Value, false),
+                ],
+                input_cursor,
+                2,
+                Vec::new(),
+            )?;
+            let take_source = self.interner.generic_parameter(1)?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::IterTake,
+                vec![
+                    (take_source, ParameterMode::Value, true),
+                    (int, ParameterMode::Value, false),
+                ],
+                input_cursor,
+                2,
+                Vec::new(),
+            )?;
+            let collect_source = self.interner.generic_parameter(1)?;
+            let collected_array = self
+                .interner
+                .intrinsic(IntrinsicType::Array, vec![generic_input])?;
+            let collected = self.interner.result(collected_array, collection_error)?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::IterCollect,
+                vec![(collect_source, ParameterMode::Value, true)],
+                collected,
+                2,
+                Vec::new(),
             )?;
         }
 

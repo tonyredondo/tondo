@@ -1,0 +1,9 @@
+trait Left {
+    fn label(self): String
+}
+trait Right {
+    fn label(self): String
+}
+fn choose[T: Discard + Left + Right](value: T): String {
+    value.label()
+}

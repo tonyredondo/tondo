@@ -1,0 +1,202 @@
+{
+  "format": "tondo-quality-baseline/1",
+  "revision": "UTEST-CLI-BACKEND-001-COV90",
+  "coverage": {
+    "tool": "cargo-llvm-cov 0.8.7",
+    "command": "cargo llvm-cov --workspace --all-targets --json --output-path <coverage.json>",
+    "global": {
+      "lines": {
+        "count": 165251,
+        "covered": 149146,
+        "basis_points": 9025
+      },
+      "functions": {
+        "count": 11947,
+        "covered": 10326,
+        "basis_points": 8643
+      },
+      "regions": {
+        "count": 240061,
+        "covered": 212388,
+        "basis_points": 8847
+      }
+    },
+    "risk_scopes": [
+      {
+        "name": "parser",
+        "paths": [
+          "crates/tondo-compiler/src/syntax/cst.rs",
+          "crates/tondo-compiler/src/syntax/format/",
+          "crates/tondo-compiler/src/syntax/lexer.rs",
+          "crates/tondo-compiler/src/syntax/parser.rs"
+        ],
+        "metrics": {
+          "lines": {
+            "count": 8758,
+            "covered": 8288,
+            "basis_points": 9463
+          },
+          "functions": {
+            "count": 690,
+            "covered": 668,
+            "basis_points": 9681
+          },
+          "regions": {
+            "count": 14906,
+            "covered": 13455,
+            "basis_points": 9026
+          }
+        }
+      },
+      {
+        "name": "checkers",
+        "paths": [
+          "crates/tondo-compiler/src/hir/availability.rs",
+          "crates/tondo-compiler/src/hir/capabilities.rs",
+          "crates/tondo-compiler/src/hir/check.rs",
+          "crates/tondo-compiler/src/hir/regions.rs",
+          "crates/tondo-compiler/src/hir/terminal.rs",
+          "crates/tondo-compiler/src/hir/traits.rs",
+          "crates/tondo-compiler/src/resolve",
+          "crates/tondo-compiler/src/types.rs"
+        ],
+        "metrics": {
+          "lines": {
+            "count": 35341,
+            "covered": 32035,
+            "basis_points": 9064
+          },
+          "functions": {
+            "count": 2074,
+            "covered": 1964,
+            "basis_points": 9469
+          },
+          "regions": {
+            "count": 51979,
+            "covered": 44901,
+            "basis_points": 8638
+          }
+        }
+      },
+      {
+        "name": "verifiers",
+        "paths": [
+          "crates/tondo-compiler/src/hir/verify.rs",
+          "crates/tondo-compiler/src/mir/verify.rs",
+          "crates/tondo-vm/src/bytecode/verify.rs"
+        ],
+        "metrics": {
+          "lines": {
+            "count": 30836,
+            "covered": 27419,
+            "basis_points": 8891
+          },
+          "functions": {
+            "count": 1836,
+            "covered": 1574,
+            "basis_points": 8572
+          },
+          "regions": {
+            "count": 42164,
+            "covered": 37767,
+            "basis_points": 8957
+          }
+        }
+      },
+      {
+        "name": "heap",
+        "paths": [
+          "crates/tondo-vm/src/runtime/heap.rs",
+          "crates/tondo-vm/src/runtime/value.rs"
+        ],
+        "metrics": {
+          "lines": {
+            "count": 1047,
+            "covered": 1023,
+            "basis_points": 9770
+          },
+          "functions": {
+            "count": 83,
+            "covered": 76,
+            "basis_points": 9156
+          },
+          "regions": {
+            "count": 1195,
+            "covered": 1134,
+            "basis_points": 9489
+          }
+        }
+      },
+      {
+        "name": "execution",
+        "paths": [
+          "crates/tondo-compiler/src/bytecode/lower.rs",
+          "crates/tondo-vm/src/runtime/execute.rs"
+        ],
+        "metrics": {
+          "lines": {
+            "count": 20466,
+            "covered": 18248,
+            "basis_points": 8916
+          },
+          "functions": {
+            "count": 1312,
+            "covered": 1030,
+            "basis_points": 7850
+          },
+          "regions": {
+            "count": 26451,
+            "covered": 23137,
+            "basis_points": 8747
+          }
+        }
+      },
+      {
+        "name": "protocols",
+        "paths": [
+          "crates/tondo-compiler/src/artifact.rs",
+          "crates/tondo-compiler/src/project.rs",
+          "crates/tondo-conformance/src/",
+          "crates/tondo-reference-adapter/src/",
+          "crates/tondo-reliability/src/"
+        ],
+        "metrics": {
+          "lines": {
+            "count": 16132,
+            "covered": 14697,
+            "basis_points": 9110
+          },
+          "functions": {
+            "count": 1396,
+            "covered": 1030,
+            "basis_points": 7378
+          },
+          "regions": {
+            "count": 25204,
+            "covered": 22312,
+            "basis_points": 8852
+          }
+        }
+      }
+    ],
+    "maximum_drop_basis_points": 0
+  },
+  "mutation": {
+    "tool": "cargo-mutants 27.1.0",
+    "command": "cargo mutants --workspace --no-config --copy-vcs true --file <selected-path> --re <reviewed-selection> --baseline run --jobs 2 --timeout 300 --build-timeout 900 --cargo-arg=--locked --output <directory> --no-times --colors never --annotations none",
+    "selected_paths": [
+      "crates/tondo-compiler/src/project.rs",
+      "crates/tondo-conformance/src/document.rs",
+      "crates/tondo-vm/src/bytecode.rs",
+      "crates/tondo-vm/src/runtime/heap.rs"
+    ],
+    "total": 30,
+    "caught": 26,
+    "missed": 0,
+    "timeout": 0,
+    "unviable": 4,
+    "score_basis_points": 10000,
+    "minimum_score_basis_points": 10000,
+    "survivors": []
+  }
+}

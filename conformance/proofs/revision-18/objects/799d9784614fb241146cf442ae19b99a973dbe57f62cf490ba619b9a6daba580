@@ -1,0 +1,13 @@
+async fn observe(value: ref Int): Int {
+    value
+}
+
+async fn invalid() {
+    scope {
+        var value = 1
+        let pending = spawn observe(ref value)
+        value = 2
+        let observed = await pending
+        assert(observed == 1)
+    }
+}

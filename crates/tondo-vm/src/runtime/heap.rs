@@ -138,8 +138,28 @@ pub(super) enum HeapObject {
         mode: BytecodeCursorMode,
         source: Option<Value>,
         next: usize,
+        adapter: Option<IteratorAdapter>,
     },
     Ref(Option<Value>),
+}
+
+/// Runtime state for the lazy `std.iter` adapters.  The adapter keeps the
+/// source cursor and callback as managed values owned by the outer cursor; no
+/// collection is materialized until `collect` is requested.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) enum IteratorAdapter {
+    Map {
+        callback: Value,
+        source_item: BytecodeTypeId,
+    },
+    Filter {
+        callback: Value,
+        source_item: BytecodeTypeId,
+    },
+    Take {
+        remaining: usize,
+        source_item: BytecodeTypeId,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -598,9 +618,19 @@ impl Heap {
                 HeapObject::Iterator {
                     mode: actual,
                     source,
+                    adapter,
                     ..
                 },
-            ) if expected == actual => visit_optional_value(source, &mut visit),
+            ) if expected == actual => {
+                visit_optional_value(source, &mut visit);
+                if let Some(adapter) = adapter {
+                    match adapter {
+                        IteratorAdapter::Map { callback, .. }
+                        | IteratorAdapter::Filter { callback, .. } => visit(callback),
+                        IteratorAdapter::Take { .. } => {}
+                    }
+                }
+            }
             _ => {
                 return Err(VmError::invariant(
                     "heap object does not match its verified trace descriptor",
@@ -653,4 +683,79 @@ fn visit_payload(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::bytecode::BytecodeVariant;
+
+    use super::*;
+
+    #[test]
+    fn iterator_adapters_trace_source_and_callbacks() {
+        let descriptors = vec![BytecodeTraceDescriptor::Cursor {
+            mode: BytecodeCursorMode::Own,
+            collection: BytecodeTypeId::new(0),
+        }];
+        let source = Value::Heap(HeapHandle {
+            index: 1,
+            generation: 0,
+        });
+        let callback = Value::Heap(HeapHandle {
+            index: 2,
+            generation: 0,
+        });
+
+        for adapter in [
+            IteratorAdapter::Map {
+                callback: callback.clone(),
+                source_item: BytecodeTypeId::new(0),
+            },
+            IteratorAdapter::Filter {
+                callback: callback.clone(),
+                source_item: BytecodeTypeId::new(0),
+            },
+            IteratorAdapter::Take {
+                remaining: 2,
+                source_item: BytecodeTypeId::new(0),
+            },
+        ] {
+            let object = HeapObject::Iterator {
+                mode: BytecodeCursorMode::Own,
+                source: Some(source.clone()),
+                next: 0,
+                adapter: Some(adapter),
+            };
+            let mut roots = Vec::new();
+            Heap::visit_object(&descriptors, BytecodeTypeId::new(0), &object, |value| {
+                roots.push(value.clone())
+            })
+            .unwrap();
+
+            let expected = match object {
+                HeapObject::Iterator {
+                    adapter: Some(IteratorAdapter::Take { .. }),
+                    ..
+                } => vec![source.clone()],
+                _ => vec![source.clone(), callback.clone()],
+            };
+            assert_eq!(roots, expected);
+        }
+
+        let descriptors = vec![BytecodeTraceDescriptor::Variant {
+            nominal: None,
+            arguments: Vec::new(),
+            variants: vec![BytecodeVariant {
+                member: 1,
+                payload: BytecodeVariantPayload::Unit,
+            }],
+        }];
+        let invalid = HeapObject::Variant {
+            variant: 2,
+            payload: AggregatePayload::Unit,
+        };
+        assert!(
+            Heap::visit_object(&descriptors, BytecodeTypeId::new(0), &invalid, |_| {},).is_err()
+        );
+    }
 }

@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 1.49
+**Versión del tracker:** 1.50
 
 **Última actualización:** 2026-08-04
 
@@ -4087,10 +4087,15 @@ parte del módulo.
   `values`, materialización host de `Map`/`Set` y cobertura hosted en
   `tests/runtime/m11-std-collections-001.to`.
 
-- [ ] **STD-ITER-IMPL-001 — Implementar los combinadores estáticos.** Conectar
+- [x] **STD-ITER-IMPL-001 — Implementar los combinadores estáticos.** Conectar
   `map`, `filter`, `take` y `collect` sobre un único `Iterator[T]`, con lazy
-  evaluation, consumo visible, límites y errores de colección. Un `for` sobre
-  ranges demuestra el protocolo base, no estos combinadores.
+  evaluation, consumo visible, límites y errores de colección. Cerrado con
+  adaptadores own encadenables en la VM que retienen callbacks síncronos,
+  consumen fuentes intrínsecas sin arrays intermedios, tratan `take(n < 0)` como
+  vacío y devuelven `CollectionError` al alcanzar el límite de materialización.
+  La ruta HIR → MIR → bytecode acepta sintaxis de método y las formas
+  cualificadas `std.iter.*`; `tests/runtime/m11-std-iter-001.to` cubre map,
+  filter, take, collect, callbacks, rangos, encadenamiento y tipos explícitos.
 
 - [ ] **STD-FMT-IMPL-001 — Exponer `std.format` a programas Tondo.** Conectar
   `Builder`, `format` y `join` a `Display`, con crecimiento acotado, error
@@ -5359,6 +5364,20 @@ esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 1.50 — 2026-08-04
+
+- Se cierra `STD-ITER-IMPL-001`: `map`, `filter`, `take` y `collect` usan
+  adaptadores lazy sobre un único protocolo `Iterator[T]`, conservan callbacks
+  como raíces de GC, permiten encadenamiento y materializan solo en
+  `collect`. La cobertura vertical incluye métodos, llamadas cualificadas,
+  rangos, callbacks síncronos, conteos negativos y especialización explícita.
+- La matriz de owners registra la implementación HIR/heap/VM y el fixture
+  `tests/runtime/m11-std-iter-001.to`; el contrato Core documenta los límites,
+  la semántica one-shot y la ausencia de callbacks async.
+- La evidencia viva del draft incorpora el fixture en el inventario y la matriz,
+  avanza de forma content-addressed a la revisión 18 y conserva el promotion
+  proof inmutable anterior en `conformance/proofs/revision-17`.
 
 ### 1.49 — 2026-08-04
 

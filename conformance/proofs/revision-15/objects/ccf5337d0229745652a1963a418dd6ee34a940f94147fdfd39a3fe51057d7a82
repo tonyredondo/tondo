@@ -1,0 +1,33 @@
+{
+  "format": "tondo-conformance-ratchet/1",
+  "lineage": "tondo-draft",
+  "revision": 15,
+  "manifest": {
+    "path": "conformance/draft/manifest.json",
+    "sha256": "270130e3331076c919f79df1a71089e6785c366bac1ce13ea1c6740afecb5237"
+  },
+  "inventory": {
+    "path": "testing/inventory.json",
+    "sha256": "f060d0a4a11448e498bcc664e5c7c8da1a8c0c72d1578e3593c90a0887e67383"
+  },
+  "matrix": {
+    "path": "testing/coverage-matrix.json",
+    "sha256": "d43c51e59a3c7beed1a5f8ef189bbbf8346acbc6eddc73949f7cd631b0a6733d"
+  },
+  "quality_baseline": {
+    "path": "testing/quality-baseline.json",
+    "sha256": "6f9b4b42668364d527fe32de6d26896eaa6eefcfe764622f0c6ffabe9af4cbff"
+  },
+  "draft_case_layers": 3,
+  "pending_tasks": [],
+  "coverage": {
+    "status": "validated",
+    "reason": "the supplied coverage report passed the quality non-regression gate",
+    "report_sha256": "1f55e5ce5c525f46dca2ef827a8e363d9f7717da76fed39bdaa6e046ded81795"
+  },
+  "mutation": {
+    "status": "validated",
+    "reason": "the supplied mutation report passed the quality non-regression gate",
+    "report_sha256": "bd25ec5f651b7f8f1e280b64ea9b3fb7459960b7362ab904ca8dd61745322eba"
+  }
+}

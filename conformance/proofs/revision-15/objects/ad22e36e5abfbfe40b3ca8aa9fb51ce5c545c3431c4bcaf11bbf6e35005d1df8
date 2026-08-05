@@ -1,0 +1,14 @@
+import std.console
+import std.process
+
+async fn cancelProcess(): !process.ProcessError {
+    scope {
+        let pending = spawn process.shell("exec sleep 30").output()
+        return
+    }
+}
+
+async fn main(): !process.ProcessError {
+    await cancelProcess()?
+    console.print("process-cancelled\n")
+}

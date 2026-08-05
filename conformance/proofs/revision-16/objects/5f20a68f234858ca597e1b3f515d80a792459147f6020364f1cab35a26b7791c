@@ -1,0 +1,163 @@
+{
+  "format": "tondo-conformance-draft-lineage",
+  "lineage": "tondo-draft",
+  "edition": "0.1",
+  "revision": 13,
+  "state": "open",
+  "parent": {
+    "path": "conformance/draft/history/8d60c6ec531f1c5c584a67f6e84370e1b43d85f639858cd258e1240dc4e627c2.json",
+    "sha256": "8d60c6ec531f1c5c584a67f6e84370e1b43d85f639858cd258e1240dc4e627c2"
+  },
+  "baseline": {
+    "manifest": {
+      "path": "conformance/0.1/manifest.json",
+      "sha256": "6bb8fe5b151ef73f1d49b3d432a51ec18c7a634cf4c9d014eea81d6a351c6ffb"
+    },
+    "specification_snapshot": {
+      "path": "conformance/baseline/TONDO_LANGUAGE_SPEC.md",
+      "sha256": "ded4e17ab57836d032e5fb9e5be5dba03fc83ac6ff74cee90ab1bb7f8e5c7084"
+    }
+  },
+  "specifications": [
+    {
+      "path": "TONDO_LANGUAGE_SPEC.md",
+      "sha256": "bdf0a8d998a280febe0f49c639065ba15dda2a0526dbc8d4c4ae23bd05512d24"
+    },
+    {
+      "path": "TONDO_TESTING_SPEC.md",
+      "sha256": "afaa870a75153266570406c22c14fbb6f448067859518be4820c39a3ef804082"
+    },
+    {
+      "path": "TONDO_TOOLCHAIN_SPEC.md",
+      "sha256": "762c70c37e32dbc6eaa4427907d596432a5cf2ba4751133dcf532c6a56170f0c"
+    }
+  ],
+  "case_layers": [
+    {
+      "id": "finalization",
+      "manifest": {
+        "path": "conformance/draft/layers/finalization.json",
+        "sha256": "22872d01588c6c83d1b50b8c63469ebec489e89d6490bb5a3313f7b5b5901eb6"
+      },
+      "tasks": [
+        "ASYNC-DEFER-IMPL-001",
+        "CONF-SEAL-001",
+        "META-REPRO-001",
+        "UTEST-PROJECTS-001"
+      ],
+      "requirements": [
+        "TL01-11-11-R001",
+        "TL01-13-7-R006",
+        "TL01-13-7-R007",
+        "TL01-13-7-R008",
+        "TL01-13-7-R009",
+        "TL01-13-7-R010",
+        "TL01-22-7-R001",
+        "TL01-22-9-R001",
+        "TL01-22-9-R002",
+        "TL01-22-9-R003",
+        "TL01-22-9-R004",
+        "TL01-23-14-R001",
+        "TL01-6-8-R002",
+        "TL01-APNDICE-D-LAYOUT-CONVENCIONAL-DE-PROYECTOS-R001",
+        "TL01-C-6-SERIALIZACIN-CANNICA-R001"
+      ]
+    },
+    {
+      "id": "meta",
+      "manifest": {
+        "path": "conformance/draft/layers/meta.json",
+        "sha256": "7be760eb9f998a923cb94b947b3d591562b161654c61bd41f688805e24407038"
+      },
+      "tasks": [
+        "META-ATOMIC-001",
+        "META-CONF-001",
+        "META-DERIVE-001",
+        "META-DIAG-001",
+        "META-FORMAT-001",
+        "META-GEN-001",
+        "META-MODEL-001",
+        "META-QUERY-001",
+        "META-REPRO-001",
+        "META-ROBUST-001",
+        "META-SEM-001",
+        "META-SPEC-001",
+        "META-SYNTAX-001",
+        "META-TOOLCHAIN-SPEC-001",
+        "META-VM-001",
+        "REFLECT-ARCH-001",
+        "REFLECT-IMPL-001"
+      ],
+      "requirements": [
+        "TL01-27-1-R001",
+        "TL01-27-2-R001",
+        "TL01-27-2-R002",
+        "TL01-27-2-R003",
+        "TL01-27-3-R001",
+        "TL01-27-4-R001",
+        "TL01-27-5-R001",
+        "TL01-27-5-R002",
+        "TL01-27-5-R003",
+        "TL01-27-7-R001",
+        "TL01-27-8-R001"
+      ]
+    },
+    {
+      "id": "testing",
+      "manifest": {
+        "path": "conformance/draft/layers/testing.json",
+        "sha256": "3b3de9e5bed304d1677b82b2047cfd2665cb46e3bbe704dc167d495fb6a8b59c"
+      },
+      "tasks": [
+        "UTEST-ARTIFACT-001",
+        "UTEST-BACKEND-001",
+        "UTEST-CAPTURE-001",
+        "UTEST-CHECK-001",
+        "UTEST-CLI-001",
+        "UTEST-CLI-BACKEND-001",
+        "UTEST-CLI-PARSE-001",
+        "UTEST-CONF-001",
+        "UTEST-CONTROL-001",
+        "UTEST-CST-001",
+        "UTEST-DEPS-001",
+        "UTEST-DISC-001",
+        "UTEST-DOGFOOD-001",
+        "UTEST-EDITION-001",
+        "UTEST-FMT-001",
+        "UTEST-GLOB-001",
+        "UTEST-ID-001",
+        "UTEST-INPUTS-001",
+        "UTEST-INPUTS-PLAN-001",
+        "UTEST-INTEG-001",
+        "UTEST-INTERRUPT-001",
+        "UTEST-JUNIT-001",
+        "UTEST-LEX-001",
+        "UTEST-LIMIT-001",
+        "UTEST-LOWER-001",
+        "UTEST-OVERLAY-001",
+        "UTEST-OWNERS-001",
+        "UTEST-PLAN-001",
+        "UTEST-PLATFORM-001",
+        "UTEST-PROJECTS-001",
+        "UTEST-REPEAT-001",
+        "UTEST-REPORT-001",
+        "UTEST-RESULT-MODEL-001",
+        "UTEST-RETRY-001",
+        "UTEST-RUNTIME-001",
+        "UTEST-SCHED-001",
+        "UTEST-SHARD-001",
+        "UTEST-SNAPSHOT-001",
+        "UTEST-SPEC-001",
+        "UTEST-SUITE-001",
+        "UTEST-VTIME-001"
+      ],
+      "requirements": [
+        "TL01-28-1-R001",
+        "TL01-28-2-R001",
+        "TL01-28-3-R001",
+        "TL01-28-5-R001"
+      ]
+    }
+  ],
+  "pending_tasks": []
+}

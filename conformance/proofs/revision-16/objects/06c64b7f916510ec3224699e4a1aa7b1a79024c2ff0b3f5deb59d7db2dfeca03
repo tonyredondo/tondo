@@ -1,0 +1,25 @@
+import std.console
+
+async fn tick() {}
+
+async fn sibling() {
+    defer console.print("sibling-cleanup\n")
+
+    for {
+        await tick()
+    }
+}
+
+async fn failChild() {
+    await tick()
+    panic("structured child panic")
+}
+
+async fn main() {
+    scope {
+        let waiting = spawn sibling()
+        let failing = spawn failChild()
+        let _ = await waiting
+        let _ = await failing
+    }
+}

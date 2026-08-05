@@ -1,0 +1,32 @@
+const Base: Int = 40
+const Answer: Int = Base + 2
+
+type User = {
+    name: String
+    scores: Array[Int]
+}
+
+enum Status {
+    Ready
+    Failed(String)
+}
+
+fn classify(value: Int?): Status {
+    match value {
+        some(number) if number > 0 => Status.Ready
+        some(_) => Status.Failed("not positive")
+        none => Status.Failed("missing")
+    }
+}
+
+fn main(): Int {
+    let user = User {
+        name: "Ada"
+        scores: [Answer, 2, 3]
+    }
+    let doubled = user.scores * 2
+    let selected = doubled[0:2]
+    let status = classify(selected[0])
+    _ = status
+    selected[0]
+}

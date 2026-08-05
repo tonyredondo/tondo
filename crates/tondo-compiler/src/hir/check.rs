@@ -13652,10 +13652,28 @@ impl<'a> ExpressionChecker<'a> {
         expected: Option<ExpressionExpectation>,
         context: &mut BodyContext,
     ) -> Result<Option<HirExpressionId>, HirError> {
-        if base.kind() != SyntaxKind::PathExpr {
+        // A qualified std function may carry an explicit generic list, e.g.
+        // `iter.take[Int, Array[Int]](...)`.  The postfix node wraps the path
+        // and is otherwise handled by the ordinary member-call dispatcher;
+        // unwrap it here so the compiler-owned host contract remains the one
+        // callable identity for both inferred and explicit forms.
+        let explicit_bracket = base
+            .child_nodes()
+            .find(|child| child.kind() == SyntaxKind::BracketPostfix);
+        let base_path = if base.kind() == SyntaxKind::PathExpr {
+            base
+        } else {
+            explicit_bracket
+                .and_then(|bracket| {
+                    base.child_nodes()
+                        .find(|child| AstExpression::cast(*child).is_some() && *child != bracket)
+                })
+                .unwrap_or(base)
+        };
+        if base_path.kind() != SyntaxKind::PathExpr {
             return Ok(None);
         }
-        let identifiers = base
+        let identifiers = base_path
             .child_tokens()
             .filter(|token| token.kind() == TokenKind::Identifier)
             .collect::<Vec<_>>();
@@ -13751,6 +13769,10 @@ impl<'a> ExpressionChecker<'a> {
                     HirBootstrapHostFunction::MessagePackCanonicalize
                 }
                 ("protobuf", Some("validate")) => HirBootstrapHostFunction::ProtobufValidate,
+                ("iter", Some("map")) => HirBootstrapHostFunction::IterMap,
+                ("iter", Some("filter")) => HirBootstrapHostFunction::IterFilter,
+                ("iter", Some("take")) => HirBootstrapHostFunction::IterTake,
+                ("iter", Some("collect")) => HirBootstrapHostFunction::IterCollect,
                 ("path", Some("fromString")) => HirBootstrapHostFunction::PathFromString,
                 ("path", Some("fromBytes")) => HirBootstrapHostFunction::PathFromBytes,
                 ("fs", Some("readAll")) => HirBootstrapHostFunction::FsReadAll,
@@ -13807,6 +13829,7 @@ impl<'a> ExpressionChecker<'a> {
                 | ("json", Some(name))
                 | ("messagepack", Some(name))
                 | ("protobuf", Some(name))
+                | ("iter", Some(name))
                 | ("path", Some(name))
                 | ("fs", Some(name))
                 | ("testing", Some(name)) => {
@@ -13864,15 +13887,42 @@ impl<'a> ExpressionChecker<'a> {
                 ),
                 _ => false,
             });
-        if !external_value && static_type == 0 {
+        if !external_value && static_type == 0 && module.path().as_str() != "iter" {
             return Ok(None);
         }
         if !matches!(
             host_function,
             HirBootstrapHostFunction::ConsolePrint | HirBootstrapHostFunction::ConsolePrintln
         ) {
-            let callee =
-                self.bootstrap_host_callee(host_function, self.sources.span(file, base.range())?)?;
+            let callee = self.bootstrap_host_callee(
+                host_function,
+                self.sources.span(file, base_path.range())?,
+            )?;
+            let explicit_generics = if module.path().as_str() == "iter" {
+                explicit_bracket
+                    .map(|bracket| {
+                        self.expression_generic_arguments(file, bracket, Some(context))?
+                            .ok_or_else(|| HirError::TraitSelectionInvariant {
+                                message: "iterator generic arguments could not be parsed".into(),
+                            })
+                            .map(|arguments| ExplicitGenericArguments {
+                                arguments: arguments
+                                    .into_iter()
+                                    .enumerate()
+                                    .map(|(position, argument)| {
+                                        (
+                                            u32::try_from(position)
+                                                .expect("iterator generic position fits in u32"),
+                                            argument,
+                                        )
+                                    })
+                                    .collect(),
+                            })
+                    })
+                    .transpose()?
+            } else {
+                None
+            };
             return self
                 .check_call(
                     CallSite {
@@ -13883,7 +13933,7 @@ impl<'a> ExpressionChecker<'a> {
                     },
                     callee,
                     None,
-                    None,
+                    explicit_generics,
                     context,
                 )
                 .map(Some);
@@ -16088,6 +16138,19 @@ impl<'a> ExpressionChecker<'a> {
         )? {
             return Ok(Some(call));
         }
+        if let Some(call) = self.check_iterator_method_call(
+            file,
+            range,
+            receiver,
+            receiver_type,
+            member_token,
+            suffix,
+            explicit_bracket,
+            expected,
+            context,
+        )? {
+            return Ok(Some(call));
+        }
         if let Some(call) = self.check_process_method_call(
             file,
             range,
@@ -16407,6 +16470,91 @@ impl<'a> ExpressionChecker<'a> {
         } else {
             None
         };
+        let callee =
+            self.bootstrap_host_callee(operation, self.sources.span(file, member_token.range())?)?;
+        self.check_call(
+            CallSite {
+                file,
+                range,
+                suffix,
+                expected,
+            },
+            callee,
+            Some(receiver),
+            explicit_generics,
+            context,
+        )
+        .map(Some)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn check_iterator_method_call(
+        &mut self,
+        file: FileId,
+        range: TextRange,
+        receiver: HirExpressionId,
+        receiver_type: TypeId,
+        member_token: SyntaxTokenRef<'_>,
+        suffix: SyntaxNodeRef<'_>,
+        explicit_bracket: Option<SyntaxNodeRef<'_>>,
+        expected: Option<ExpressionExpectation>,
+        context: &mut BodyContext,
+    ) -> Result<Option<HirExpressionId>, HirError> {
+        let member = member_token
+            .token()
+            .normalized_identifier()
+            .unwrap_or(self.token_text(file, member_token)?);
+        let operation = match member {
+            "map" => HirBootstrapHostFunction::IterMap,
+            "filter" => HirBootstrapHostFunction::IterFilter,
+            "take" => HirBootstrapHostFunction::IterTake,
+            "collect" => HirBootstrapHostFunction::IterCollect,
+            _ => return Ok(None),
+        };
+        let element = if let Some(element) = self.iteration_element_type(receiver_type)? {
+            element
+        } else if let Some(query) = self.iterator_trait_query(
+            receiver_type,
+            self.sources.span(file, member_token.range())?,
+            context,
+        )? {
+            let Some(element) = query.arguments().first().copied() else {
+                return Err(HirError::TraitSelectionInvariant {
+                    message: "Iterator query has no element argument".into(),
+                });
+            };
+            self.require_trait_query(
+                self.sources.span(file, member_token.range())?,
+                query,
+                context,
+                TraitRequirementOrigin::Direct,
+            )?;
+            element
+        } else {
+            return Ok(None);
+        };
+        if let Some(bracket) = explicit_bracket {
+            self.emit(
+                self.sources.span(file, bracket.range())?,
+                "E1104",
+                "iterator combinators do not declare method-local generic parameters",
+                Vec::new(),
+                None,
+            )?;
+            return self.recovery_expression(file, range).map(Some);
+        }
+        // `take` and `collect` have no callback from which to infer their
+        // element parameter.  Pin that one generic argument from the
+        // receiver's Iterator witness; the source cursor itself remains a
+        // separate generic so arrays, maps, sets, ranges and strings all
+        // share the same static adapter contract.
+        let explicit_generics = Some(ExplicitGenericArguments {
+            // Every combinator's first generic is the element observed from
+            // the receiver.  `map` still infers its second generic from the
+            // callback result, while `take`/`collect` have no other source of
+            // element information.
+            arguments: [(0_u32, element)].into_iter().collect(),
+        });
         let callee =
             self.bootstrap_host_callee(operation, self.sources.span(file, member_token.range())?)?;
         self.check_call(
@@ -27437,6 +27585,66 @@ fn build(input: Int, flag: Bool) {
 
         let (_, _, transfer) = check("fn invalid() {\n    break\n}\n");
         assert_eq!(codes(&transfer), ["E1205"]);
+    }
+
+    #[test]
+    fn iterator_combinators_share_inferred_and_qualified_host_contracts() {
+        let (_, _, output) = check(
+            "import std.collections\n\
+             import std.iter\n\
+             fn plus_one(value: Int): Int { value + 1 }\n\
+             fn positive(value: Int): Bool { value > 0 }\n\
+             fn generic_map[T: Discard, I: Discard + Iterator[T]](cursor: I, operation: fn(T): T) {\n\
+                 let mapped = cursor.map(operation)\n\
+                 _ = mapped\n\
+             }\n\
+             fn generic_filter[T: Discard, I: Discard + Iterator[T]](cursor: I, predicate: fn(T): Bool) {\n\
+                 let filtered = cursor.filter(predicate)\n\
+                 _ = filtered\n\
+             }\n\
+             fn generic_take[T: Discard, I: Discard + Iterator[T]](cursor: I) {\n\
+                 let taken = cursor.take(1)\n\
+                 _ = taken\n\
+             }\n\
+             fn generic_collect[T: Discard, I: Discard + Iterator[T]](cursor: I) {\n\
+                 let collected = cursor.collect()\n\
+                 _ = collected\n\
+             }\n\
+             fn concrete(): Int {\n\
+                 let mapped = [1, 2].map(plus_one)\n\
+                 let filtered = [1, 2].filter(positive)\n\
+                 let taken = [1, 2].take(1)\n\
+                 let collected = [1, 2].collect()\n\
+                 let qualified_map = iter.map([1, 2], plus_one)\n\
+                 let qualified_filter = iter.filter([1, 2], positive)\n\
+                 let qualified_take = iter.take[Int, Array[Int]]([1, 2], 1)\n\
+                 let qualified_collect = iter.collect[Int, Array[Int]]([1, 2])\n\
+                 _ = mapped\n\
+                 _ = filtered\n\
+                 _ = taken\n\
+                 _ = collected\n\
+                 _ = qualified_map\n\
+                 _ = qualified_filter\n\
+                 _ = qualified_take\n\
+                 _ = qualified_collect\n\
+                 0\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+
+        let (_, _, invalid) = check(
+            "import std.collections\n\
+             fn plus_one(value: Int): Int { value + 1 }\n\
+             fn invalid() {\n\
+                 let value = [1].map[Int](plus_one)\n\
+             }\n",
+        );
+        assert_eq!(codes(&invalid), ["E1104"]);
     }
 
     #[test]

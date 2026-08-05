@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 use std::process::Command;
 
+use tondo_conformance::lineage::{DRAFT_LINEAGE_PATH, DraftLineage};
+
 fn executable() -> &'static str {
     env!("CARGO_BIN_EXE_tondo-conformance")
 }
@@ -28,9 +30,16 @@ fn validate_command_reports_the_single_draft_identity() {
 
     assert!(output.status.success());
     assert!(output.stderr.is_empty());
+    let lineage = DraftLineage::load(repository_root(), DRAFT_LINEAGE_PATH)
+        .expect("the repository draft must remain loadable");
+    let expected = format!(
+        "tondo-draft 0.1 open {} {}\n",
+        lineage.manifest().revision,
+        lineage.manifest_sha256()
+    );
     assert_eq!(
         String::from_utf8(output.stdout).expect("identity must be UTF-8"),
-        "tondo-draft 0.1 open 14 c1ab0c505fb973d397b27f5681604ad4e2de77a6314eef795035274d8ae3fe6c\n"
+        expected
     );
 }
 

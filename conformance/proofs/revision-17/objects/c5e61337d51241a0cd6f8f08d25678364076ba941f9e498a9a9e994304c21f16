@@ -1,0 +1,3 @@
+fn invalid(values: var Map[Int, Int]): Int? {
+    Map[Int, Int].remove(var values, 1)
+}

@@ -1,0 +1,3 @@
+fn invalid(values: Array[Int]): Array[Int] {
+    Array.repeat(ref values, 2)
+}

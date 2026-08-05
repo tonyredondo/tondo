@@ -694,6 +694,7 @@ mod tests {
                 mode: BytecodeCursorMode::Own,
                 source: None,
                 next: 0,
+                adapter: None,
             },
         );
         assert!(snapshot_value(&iterator, &heap, &[], &[]).is_err());

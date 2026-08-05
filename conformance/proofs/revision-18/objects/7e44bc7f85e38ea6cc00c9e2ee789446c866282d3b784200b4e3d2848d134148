@@ -1,0 +1,5 @@
+fn main() {
+    let values = [0, 1, 2, 3, 4]
+    let step = 0
+    _ = values[::step]
+}

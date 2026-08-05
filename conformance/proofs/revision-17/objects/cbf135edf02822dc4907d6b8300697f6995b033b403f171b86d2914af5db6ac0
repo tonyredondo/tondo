@@ -1,0 +1,14 @@
+trait Value {
+    fn value(self): Int
+}
+type Item = {
+    value: Int
+}
+impl Value for Item {
+    fn value(self): Int {
+        self.value
+    }
+}
+fn opaque(): impl Discard {
+    1
+}

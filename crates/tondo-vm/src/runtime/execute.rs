@@ -19,7 +19,7 @@ use crate::bytecode::{
 };
 use crate::literal;
 
-use super::heap::{Heap, HeapHandle, HeapObject};
+use super::heap::{Heap, HeapHandle, HeapObject, IteratorAdapter};
 use super::value::{AggregatePayload, RuntimeJoin, RuntimeLoan, Value, snapshot_value};
 use super::{
     PanicCode, RuntimeHostValueKind, RuntimeValue, ValueCopyStrategy, VmError, VmLimits, VmPanic,
@@ -1371,11 +1371,27 @@ impl<'program, 'host> Engine<'program, 'host> {
             | HeapObject::ResultOk(value)
             | HeapObject::ResultErr(value)
             | HeapObject::Union { value, .. }
-            | HeapObject::Ref(value)
-            | HeapObject::Iterator { source: value, .. } => match value {
+            | HeapObject::Ref(value) => match value {
                 Some(value) => self.value_contains_scope_join(value, scope, visited)?,
                 None => false,
             },
+            HeapObject::Iterator {
+                source, adapter, ..
+            } => {
+                let source_contains = source
+                    .as_ref()
+                    .map(|value| self.value_contains_scope_join(value, scope, visited))
+                    .transpose()?
+                    .unwrap_or(false);
+                let adapter_contains = match adapter {
+                    Some(
+                        IteratorAdapter::Map { callback, .. }
+                        | IteratorAdapter::Filter { callback, .. },
+                    ) => self.value_contains_scope_join(callback, scope, visited)?,
+                    Some(IteratorAdapter::Take { .. }) | None => false,
+                };
+                source_contains || adapter_contains
+            }
             HeapObject::Record { fields, .. } => self.any_value_contains_scope_join(
                 fields.iter().filter_map(|(_, value)| value.as_ref()),
                 scope,
@@ -4051,7 +4067,12 @@ impl Engine<'_, '_> {
         let object = self.heap.get(*handle)?.clone();
         match object {
             HeapObject::String(_) | HeapObject::Ref(_) => Ok(value.clone()),
-            HeapObject::Iterator { mode, source, next } => {
+            HeapObject::Iterator {
+                mode,
+                source,
+                next,
+                adapter,
+            } => {
                 let source = match mode {
                     BytecodeCursorMode::Own => self.copy_optional_value(&source)?,
                     BytecodeCursorMode::Ref => source,
@@ -4061,8 +4082,48 @@ impl Engine<'_, '_> {
                         ));
                     }
                 };
-                let roots = source.iter().cloned().collect::<Vec<_>>();
-                self.allocate_like(*handle, HeapObject::Iterator { mode, source, next }, &roots)
+                let adapter = match adapter {
+                    Some(IteratorAdapter::Map {
+                        callback,
+                        source_item,
+                    }) => Some(IteratorAdapter::Map {
+                        callback: self.copy_rooted_value(&callback)?,
+                        source_item,
+                    }),
+                    Some(IteratorAdapter::Filter {
+                        callback,
+                        source_item,
+                    }) => Some(IteratorAdapter::Filter {
+                        callback: self.copy_rooted_value(&callback)?,
+                        source_item,
+                    }),
+                    Some(IteratorAdapter::Take {
+                        remaining,
+                        source_item,
+                    }) => Some(IteratorAdapter::Take {
+                        remaining,
+                        source_item,
+                    }),
+                    None => None,
+                };
+                let mut roots = source.iter().cloned().collect::<Vec<_>>();
+                if let Some(
+                    IteratorAdapter::Map { callback, .. }
+                    | IteratorAdapter::Filter { callback, .. },
+                ) = &adapter
+                {
+                    roots.push(callback.clone());
+                }
+                self.allocate_like(
+                    *handle,
+                    HeapObject::Iterator {
+                        mode,
+                        source,
+                        next,
+                        adapter,
+                    },
+                    &roots,
+                )
             }
             HeapObject::Tuple(values) => {
                 let values = self.copy_optional_values(&values)?;
@@ -4443,6 +4504,7 @@ impl Engine<'_, '_> {
                         mode,
                         source: Some(value.clone()),
                         next: 0,
+                        adapter: None,
                     },
                     &[value],
                 )
@@ -7631,6 +7693,11 @@ impl Engine<'_, '_> {
                 {
                     return Ok(result);
                 }
+                if metadata.name.starts_with("std.iter.")
+                    && let Some(result) = self.prepare_iterator_call(&metadata, &values)?
+                {
+                    return Ok(result);
+                }
                 let snapshots = values
                     .iter()
                     .map(|value| {
@@ -7933,6 +8000,7 @@ impl Engine<'_, '_> {
                     mode: BytecodeCursorMode::Own,
                     source: Some(receiver.clone()),
                     next: 0,
+                    adapter: None,
                 },
                 std::slice::from_ref(receiver),
             )?),
@@ -8025,12 +8093,275 @@ impl Engine<'_, '_> {
                     mode: BytecodeCursorMode::Own,
                     source: Some(receiver.clone()),
                     next: 0,
+                    adapter: None,
                 },
                 std::slice::from_ref(receiver),
             )?),
             _ => None,
         };
         Ok(result.map(OperationResult::Value))
+    }
+
+    fn prepare_iterator_call(
+        &mut self,
+        metadata: &BytecodeCallable,
+        values: &[Value],
+    ) -> Result<Option<OperationResult>, VmError> {
+        let receiver_index = metadata
+            .parameters
+            .iter()
+            .position(|parameter| parameter.receiver)
+            .ok_or_else(|| VmError::invariant("iterator operation has no receiver"))?;
+        let receiver = values
+            .get(receiver_index)
+            .ok_or_else(|| VmError::invariant("iterator receiver slot is missing"))?
+            .clone();
+        let name = metadata
+            .name
+            .split_once('[')
+            .map_or(metadata.name.as_str(), |(base, _)| base);
+        let parameter_after_receiver = metadata
+            .parameters
+            .iter()
+            .enumerate()
+            .find(|(index, _)| *index != receiver_index)
+            .map(|(index, _)| index);
+        let cursor_descriptor = || {
+            if matches!(
+                self.program.ty(metadata.outcome).map(|ty| &ty.kind),
+                Some(BytecodeTypeKind::Cursor {
+                    mode: BytecodeCursorMode::Own,
+                    ..
+                })
+            ) {
+                Ok(metadata.outcome)
+            } else {
+                self.program
+                    .types
+                    .iter()
+                    .position(|ty| {
+                        matches!(
+                            ty.kind,
+                            BytecodeTypeKind::Cursor {
+                                mode: BytecodeCursorMode::Own,
+                                ..
+                            }
+                        )
+                    })
+                    .map(|index| BytecodeTypeId::new(index as u32))
+                    .ok_or_else(|| VmError::invariant("no owning cursor descriptor is available"))
+            }
+        };
+        let result = match name {
+            "std.iter.map" | "std.iter.filter" => {
+                let callback_index = parameter_after_receiver
+                    .ok_or_else(|| VmError::invariant("iterator callback parameter is missing"))?;
+                let callback = values
+                    .get(callback_index)
+                    .ok_or_else(|| VmError::invariant("iterator callback value is missing"))?
+                    .clone();
+                let callback_ty = metadata
+                    .parameters
+                    .get(callback_index)
+                    .ok_or_else(|| VmError::invariant("iterator callback type is missing"))?
+                    .ty;
+                let BytecodeTypeKind::Function(signature) = &self
+                    .program
+                    .ty(callback_ty)
+                    .ok_or_else(|| VmError::invariant("iterator callback type is invalid"))?
+                    .kind
+                else {
+                    return Err(VmError::invariant(
+                        "iterator callback parameter is not a function",
+                    ));
+                };
+                let source_item = signature.parameters.first().map(|parameter| parameter.ty);
+                let source_item = source_item.ok_or_else(|| {
+                    VmError::invariant("iterator callback has no input parameter")
+                })?;
+                let source = self.normalize_iterator_source(&receiver, cursor_descriptor()?)?;
+                let adapter = if name == "std.iter.map" {
+                    IteratorAdapter::Map {
+                        callback,
+                        source_item,
+                    }
+                } else {
+                    IteratorAdapter::Filter {
+                        callback,
+                        source_item,
+                    }
+                };
+                Some(self.allocate(
+                    metadata.outcome,
+                    HeapObject::Iterator {
+                        mode: BytecodeCursorMode::Own,
+                        source: Some(source.clone()),
+                        next: 0,
+                        adapter: Some(adapter),
+                    },
+                    &[source, receiver],
+                )?)
+            }
+            "std.iter.take" => {
+                let count_index = parameter_after_receiver.ok_or_else(|| {
+                    VmError::invariant("iterator take count parameter is missing")
+                })?;
+                let count = match values.get(count_index) {
+                    Some(Value::Integer(value)) => usize::try_from((*value).max(0)).unwrap_or(0),
+                    _ => return Err(VmError::invariant("iterator take count is not Int")),
+                };
+                let source = self.normalize_iterator_source(&receiver, cursor_descriptor()?)?;
+                let source_item = self.cursor_array_element_type(metadata.outcome)?;
+                Some(self.allocate(
+                    metadata.outcome,
+                    HeapObject::Iterator {
+                        mode: BytecodeCursorMode::Own,
+                        source: Some(source.clone()),
+                        next: 0,
+                        adapter: Some(IteratorAdapter::Take {
+                            remaining: count,
+                            source_item,
+                        }),
+                    },
+                    &[source, receiver],
+                )?)
+            }
+            "std.iter.collect" => {
+                let source = self.normalize_iterator_source(&receiver, cursor_descriptor()?)?;
+                let (array_ty, item_ty) = self.result_array_type(metadata.outcome)?;
+                let marker = self.temporary_roots.len();
+                self.retain_temporary(&source);
+                let result = (|| {
+                    let mut items = Vec::new();
+                    loop {
+                        if items.len() >= self.limits.max_heap_objects as usize {
+                            return Ok(OperationResult::Value(
+                                self.collection_error_result(metadata.outcome)?,
+                            ));
+                        }
+                        match self.next_owned_iterator_value(&source, item_ty)? {
+                            Ok(Some(value)) => {
+                                self.retain_temporary(&value);
+                                items.push(Some(value));
+                            }
+                            Ok(None) => break,
+                            Err((code, message)) => {
+                                return Ok(OperationResult::Panic(code, message));
+                            }
+                        }
+                    }
+                    let array = self.allocate(array_ty, HeapObject::Array(items.into()), &[])?;
+                    Ok(OperationResult::Value(self.allocate(
+                        metadata.outcome,
+                        HeapObject::ResultOk(Some(array.clone())),
+                        &[array],
+                    )?))
+                })();
+                self.temporary_roots.truncate(marker);
+                return result.map(Some);
+            }
+            _ => return Ok(None),
+        };
+        Ok(result.map(OperationResult::Value))
+    }
+
+    fn normalize_iterator_source(
+        &mut self,
+        source: &Value,
+        descriptor: BytecodeTypeId,
+    ) -> Result<Value, VmError> {
+        if let Value::Heap(handle) = source {
+            match self.heap.get(*handle)? {
+                HeapObject::Iterator { mode, .. } if *mode == BytecodeCursorMode::Own => {
+                    return Ok(source.clone());
+                }
+                HeapObject::Array(_)
+                | HeapObject::Map(_)
+                | HeapObject::Set(_)
+                | HeapObject::String(_)
+                | HeapObject::Range { .. } => {}
+                _ => {
+                    return Err(VmError::invariant(
+                        "iterator source is not an owning iterable",
+                    ));
+                }
+            }
+        } else {
+            return Err(VmError::invariant(
+                "iterator source is not a managed iterable",
+            ));
+        }
+        self.allocate(
+            descriptor,
+            HeapObject::Iterator {
+                mode: BytecodeCursorMode::Own,
+                source: Some(source.clone()),
+                next: 0,
+                adapter: None,
+            },
+            std::slice::from_ref(source),
+        )
+    }
+
+    fn cursor_array_element_type(
+        &self,
+        cursor_ty: BytecodeTypeId,
+    ) -> Result<BytecodeTypeId, VmError> {
+        let BytecodeTypeKind::Cursor { collection, .. } = &self
+            .program
+            .ty(cursor_ty)
+            .ok_or_else(|| VmError::invariant("iterator result cursor type is missing"))?
+            .kind
+        else {
+            return Err(VmError::invariant("iterator result is not a cursor"));
+        };
+        let BytecodeTypeKind::Intrinsic {
+            constructor: BytecodeIntrinsicType::Array,
+            arguments,
+        } = &self
+            .program
+            .ty(*collection)
+            .ok_or_else(|| VmError::invariant("iterator cursor collection type is missing"))?
+            .kind
+        else {
+            return Err(VmError::invariant(
+                "iterator cursor collection is not an Array",
+            ));
+        };
+        arguments
+            .first()
+            .copied()
+            .ok_or_else(|| VmError::invariant("iterator cursor array has no element type"))
+    }
+
+    fn result_array_type(
+        &self,
+        result_ty: BytecodeTypeId,
+    ) -> Result<(BytecodeTypeId, BytecodeTypeId), VmError> {
+        let BytecodeTypeKind::Result { success, .. } = &self
+            .program
+            .ty(result_ty)
+            .ok_or_else(|| VmError::invariant("iterator collect result type is missing"))?
+            .kind
+        else {
+            return Err(VmError::invariant("iterator collect result is not Result"));
+        };
+        let BytecodeTypeKind::Intrinsic {
+            constructor: BytecodeIntrinsicType::Array,
+            arguments,
+        } = &self
+            .program
+            .ty(*success)
+            .ok_or_else(|| VmError::invariant("iterator collect array type is missing"))?
+            .kind
+        else {
+            return Err(VmError::invariant("iterator collect result is not Array"));
+        };
+        let item = arguments
+            .first()
+            .copied()
+            .ok_or_else(|| VmError::invariant("iterator collect array has no element type"))?;
+        Ok((*success, item))
     }
 
     fn materialize_host_value(
@@ -8313,7 +8644,13 @@ impl Engine<'_, '_> {
         let Value::Heap(handle) = iterator else {
             return Err(VmError::invariant("iterator state is not managed"));
         };
-        let HeapObject::Iterator { mode, source, next } = self.heap.get(handle)?.clone() else {
+        let HeapObject::Iterator {
+            mode,
+            source,
+            next,
+            adapter,
+        } = self.heap.get(handle)?.clone()
+        else {
             return Err(VmError::invariant(
                 "iterator state has the wrong heap shape",
             ));
@@ -8322,6 +8659,36 @@ impl Engine<'_, '_> {
             return Ok(Ok(None));
         }
         let source = present(&source, "iterator source")?.clone();
+        if let Some(adapter) = adapter {
+            if mode != BytecodeCursorMode::Own || borrowed_source.is_some() {
+                return Err(VmError::invariant(
+                    "lazy iterator adapter is not an owning cursor",
+                ));
+            }
+            let marker = self.temporary_roots.len();
+            self.retain_temporary(&source);
+            let result: Result<Option<IteratorStep>, VmError> = (|| {
+                let (item, adapter, next_index) =
+                    self.iterator_adapter_next(&source, adapter, item_ty)?;
+                let mut roots = vec![source.clone()];
+                if let Some(IteratorStep::Value(value)) = &item {
+                    roots.push(value.clone());
+                }
+                self.replace_object(
+                    handle,
+                    HeapObject::Iterator {
+                        mode,
+                        source: Some(source),
+                        next: next_index,
+                        adapter: Some(adapter),
+                    },
+                    &roots,
+                )?;
+                Ok(item)
+            })();
+            self.temporary_roots.truncate(marker);
+            return result.map(Ok);
+        }
         let (item, next_index) = match mode {
             BytecodeCursorMode::Own => {
                 if borrowed_source.is_some() {
@@ -8361,10 +8728,312 @@ impl Engine<'_, '_> {
                 mode,
                 source: Some(source),
                 next: next_index,
+                adapter: None,
             },
             &roots,
         )?;
         Ok(Ok(item))
+    }
+
+    /// Consume an owning cursor nested inside a lazy adapter.  Nested cursors
+    /// are advanced in place, so adapter chains never allocate an intermediate
+    /// array and retain the observable one-shot consumption contract.
+    fn next_owned_iterator_value(
+        &mut self,
+        iterator: &Value,
+        item_ty: BytecodeTypeId,
+    ) -> Result<Result<Option<Value>, (PanicCode, String)>, VmError> {
+        let Value::Heap(handle) = iterator else {
+            return Err(VmError::invariant(
+                "lazy iterator source is not a managed cursor",
+            ));
+        };
+        let HeapObject::Iterator {
+            mode,
+            source,
+            next,
+            adapter,
+        } = self.heap.get(*handle)?.clone()
+        else {
+            return Err(VmError::invariant(
+                "lazy iterator source has the wrong heap shape",
+            ));
+        };
+        if mode != BytecodeCursorMode::Own {
+            return Err(VmError::invariant(
+                "lazy iterator source is not an owning cursor",
+            ));
+        }
+        if next == usize::MAX {
+            return Ok(Ok(None));
+        }
+        let source = present(&source, "iterator source")?.clone();
+        let marker = self.temporary_roots.len();
+        self.retain_temporary(iterator);
+        let result: Result<Option<Value>, VmError> = (|| {
+            if let Some(adapter) = adapter {
+                let (item, adapter, next_index) =
+                    self.iterator_adapter_next(&source, adapter, item_ty)?;
+                let mut roots = vec![source.clone()];
+                if let Some(IteratorStep::Value(value)) = &item {
+                    roots.push(value.clone());
+                }
+                self.replace_object(
+                    *handle,
+                    HeapObject::Iterator {
+                        mode,
+                        source: Some(source),
+                        next: next_index,
+                        adapter: Some(adapter),
+                    },
+                    &roots,
+                )?;
+                return Ok(item.map(|step| match step {
+                    IteratorStep::Value(value) => value,
+                    IteratorStep::Position(_) => {
+                        unreachable!("nested owning iterator adapter produced a borrowed position")
+                    }
+                }));
+            }
+            let (item, next_index) = self.iterator_item(&source, item_ty, next)?;
+            let mut roots = vec![source.clone()];
+            if let Some(value) = &item {
+                roots.push(value.clone());
+            }
+            self.replace_object(
+                *handle,
+                HeapObject::Iterator {
+                    mode,
+                    source: Some(source),
+                    next: next_index,
+                    adapter: None,
+                },
+                &roots,
+            )?;
+            Ok(item)
+        })();
+        self.temporary_roots.truncate(marker);
+        result.map(Ok)
+    }
+
+    fn iterator_adapter_next(
+        &mut self,
+        source: &Value,
+        adapter: IteratorAdapter,
+        _output_ty: BytecodeTypeId,
+    ) -> Result<(Option<IteratorStep>, IteratorAdapter, usize), VmError> {
+        match adapter {
+            IteratorAdapter::Map {
+                callback,
+                source_item,
+            } => {
+                let marker = self.temporary_roots.len();
+                self.retain_temporary(source);
+                self.retain_temporary(&callback);
+                let result = (|| match self.next_owned_iterator_value(source, source_item)? {
+                    Ok(Some(value)) => match self.invoke_sync_value(
+                        callback.clone(),
+                        vec![(BytecodeCallArgumentTarget::Fixed(0), value)],
+                    )? {
+                        Ok(value) => Ok((
+                            Some(IteratorStep::Value(value)),
+                            IteratorAdapter::Map {
+                                callback,
+                                source_item,
+                            },
+                            0,
+                        )),
+                        Err(panic) => Err(VmError::invariant(format!(
+                            "iterator map callback panicked: {}",
+                            panic.1
+                        ))),
+                    },
+                    Ok(None) => Ok((
+                        None,
+                        IteratorAdapter::Map {
+                            callback,
+                            source_item,
+                        },
+                        usize::MAX,
+                    )),
+                    Err(panic) => Err(VmError::invariant(format!(
+                        "iterator source panicked: {}",
+                        panic.1
+                    ))),
+                })();
+                self.temporary_roots.truncate(marker);
+                result
+            }
+            IteratorAdapter::Filter {
+                callback,
+                source_item,
+            } => {
+                let marker = self.temporary_roots.len();
+                self.retain_temporary(source);
+                self.retain_temporary(&callback);
+                let result = (|| loop {
+                    match self.next_owned_iterator_value(source, source_item)? {
+                        Ok(Some(value)) => match self.invoke_sync_value(
+                            callback.clone(),
+                            vec![(BytecodeCallArgumentTarget::Fixed(0), value.clone())],
+                        )? {
+                            Ok(Value::Bool(true)) => {
+                                break Ok((
+                                    Some(IteratorStep::Value(value)),
+                                    IteratorAdapter::Filter {
+                                        callback,
+                                        source_item,
+                                    },
+                                    0,
+                                ));
+                            }
+                            Ok(Value::Bool(false)) => continue,
+                            Ok(_) => {
+                                break Err(VmError::invariant(
+                                    "iterator filter callback did not return Bool",
+                                ));
+                            }
+                            Err(panic) => {
+                                break Err(VmError::invariant(format!(
+                                    "iterator filter callback panicked: {}",
+                                    panic.1
+                                )));
+                            }
+                        },
+                        Ok(None) => {
+                            break Ok((
+                                None,
+                                IteratorAdapter::Filter {
+                                    callback,
+                                    source_item,
+                                },
+                                usize::MAX,
+                            ));
+                        }
+                        Err(panic) => {
+                            break Err(VmError::invariant(format!(
+                                "iterator source panicked: {}",
+                                panic.1
+                            )));
+                        }
+                    }
+                })();
+                self.temporary_roots.truncate(marker);
+                result
+            }
+            IteratorAdapter::Take {
+                remaining,
+                source_item,
+            } => {
+                if remaining == 0 {
+                    return Ok((
+                        None,
+                        IteratorAdapter::Take {
+                            remaining,
+                            source_item,
+                        },
+                        usize::MAX,
+                    ));
+                }
+                let marker = self.temporary_roots.len();
+                self.retain_temporary(source);
+                let result = (|| match self.next_owned_iterator_value(source, source_item)? {
+                    Ok(Some(value)) => Ok((
+                        Some(IteratorStep::Value(value)),
+                        IteratorAdapter::Take {
+                            remaining: remaining - 1,
+                            source_item,
+                        },
+                        0,
+                    )),
+                    Ok(None) => Ok((
+                        None,
+                        IteratorAdapter::Take {
+                            remaining: 0,
+                            source_item,
+                        },
+                        usize::MAX,
+                    )),
+                    Err(panic) => Err(VmError::invariant(format!(
+                        "iterator source panicked: {}",
+                        panic.1
+                    ))),
+                })();
+                self.temporary_roots.truncate(marker);
+                result
+            }
+        }
+    }
+
+    /// Run a synchronous callback to completion while the iterator terminator
+    /// remains on the caller's frame.  This keeps callback invocation lazy
+    /// without introducing a second public async protocol.
+    fn invoke_sync_value(
+        &mut self,
+        callee: Value,
+        arguments: Vec<(BytecodeCallArgumentTarget, Value)>,
+    ) -> Result<Result<Value, (PanicCode, String)>, VmError> {
+        let operation = self.prepare_evaluated_call(callee, arguments)?;
+        let OperationResult::Call {
+            function,
+            arguments,
+        } = operation
+        else {
+            return match operation {
+                OperationResult::Value(value) => Ok(Ok(value)),
+                OperationResult::Panic(code, message) => Ok(Err((code, message))),
+                OperationResult::HostAsync { name, .. } => Err(VmError::invariant(format!(
+                    "async iterator callback `{name}` is not allowed"
+                ))),
+                OperationResult::TestBoundaryCall { .. }
+                | OperationResult::VirtualTimeBoundaryCall { .. } => Err(VmError::invariant(
+                    "iterator callback crossed an internal async/test boundary",
+                )),
+                OperationResult::Call { .. } => unreachable!(),
+            };
+        };
+        let base_depth = self.frames.len();
+        self.push_frame(function, arguments, None)?;
+        loop {
+            self.step_budget()?;
+            let frame = self
+                .frames
+                .len()
+                .checked_sub(1)
+                .ok_or_else(|| VmError::invariant("iterator callback lost its frame"))?;
+            let (function_id, block_id, instruction_index) = {
+                let frame = &self.frames[frame];
+                (frame.function, frame.block, frame.instruction)
+            };
+            let function = self
+                .program
+                .function(function_id)
+                .ok_or_else(|| VmError::invariant("iterator callback frame is invalid"))?;
+            let block = function
+                .block(block_id)
+                .ok_or_else(|| VmError::invariant("iterator callback block is invalid"))?;
+            if let Some(instruction) = block.instructions.get(instruction_index).cloned() {
+                self.frames[frame].instruction += 1;
+                self.execute_instruction(frame, &instruction)?;
+            } else {
+                let terminator = block.terminator.clone();
+                if let Some(completion) = self.execute_terminator(frame, &terminator)? {
+                    if self.frames.len() != base_depth {
+                        return Err(VmError::invariant(
+                            "iterator callback completed with an unexpected frame depth",
+                        ));
+                    }
+                    return Ok(match completion {
+                        TaskCompletion::Returned(value) => Ok(value),
+                        TaskCompletion::Panicked(panic) => Err((panic.code, panic.message)),
+                        TaskCompletion::Cancelled => Err((
+                            PanicCode::ExplicitPanic,
+                            "iterator callback was cancelled".into(),
+                        )),
+                    });
+                }
+            }
+        }
     }
 
     fn borrowed_iterator_has_item(&self, source: &Value, next: usize) -> Result<bool, VmError> {
@@ -9096,16 +9765,16 @@ mod tests {
     };
 
     use super::{
-        AggregatePayload, DeferredOperation, DeferredValue, Engine, Frame, HeapObject, PanicCode,
-        PlaceComponent, PlaceFailure, RejectingHost, ResolvedPlacePath, RuntimeCleanup,
-        RuntimeDefer, RuntimeFallback, RuntimeHostValueKind, RuntimeJoin, RuntimeLoan, RuntimeType,
-        RuntimeValue, SlotState, TaskCompletion, TaskRecord, TaskStatus, TaskWait, Value,
-        ValueCopyStrategy, VmError, VmHost, VmLimits, VmTestNodeKind, VmTestNodeOutcome,
-        clone_field, clone_index, clone_present, collection_length_fits_int, convert_numeric,
-        integer_bounds, integer_shape, next_unicode_scalar, operand_materialized_slot,
-        operation_access_place, paths_overlap, present, queue_object_equality,
-        queue_payload_equality, runtime_host_kind, set_field, set_index, slice_indices,
-        snapshot_value, take_field, take_index, take_option,
+        AggregatePayload, DeferredOperation, DeferredValue, Engine, Frame, HeapObject,
+        IteratorAdapter, PanicCode, PlaceComponent, PlaceFailure, RejectingHost, ResolvedPlacePath,
+        RuntimeCleanup, RuntimeDefer, RuntimeFallback, RuntimeHostValueKind, RuntimeJoin,
+        RuntimeLoan, RuntimeType, RuntimeValue, SlotState, TaskCompletion, TaskRecord, TaskStatus,
+        TaskWait, Value, ValueCopyStrategy, VmError, VmHost, VmLimits, VmTestNodeKind,
+        VmTestNodeOutcome, clone_field, clone_index, clone_present, collection_length_fits_int,
+        convert_numeric, integer_bounds, integer_shape, next_unicode_scalar,
+        operand_materialized_slot, operation_access_place, paths_overlap, present,
+        queue_object_equality, queue_payload_equality, runtime_host_kind, set_field, set_index,
+        slice_indices, snapshot_value, take_field, take_index, take_option,
     };
 
     fn root_pressure_program() -> BytecodeProgram {
@@ -9881,12 +10550,14 @@ mod tests {
                     mode: BytecodeCursorMode::Own,
                     source: None,
                     next: 3,
+                    adapter: None,
                 },
             ),
             HeapObject::Iterator {
                 mode: BytecodeCursorMode::Own,
                 source: None,
                 next: 3,
+                adapter: None,
             }
         );
 
@@ -10016,6 +10687,7 @@ mod tests {
                 mode: BytecodeCursorMode::Ref,
                 source: None,
                 next: 0,
+                adapter: None,
             },
             "cursor fallback found a ref iterator",
         );
@@ -10753,11 +11425,13 @@ mod tests {
                     mode: BytecodeCursorMode::Own,
                     source: Some(Value::Integer(1)),
                     next: 0,
+                    adapter: None,
                 },
                 &super::HeapObject::Iterator {
                     mode: BytecodeCursorMode::Own,
                     source: Some(Value::Integer(1)),
                     next: 0,
+                    adapter: None,
                 },
                 &mut pending,
             ),
@@ -11197,6 +11871,7 @@ mod tests {
                 mode: BytecodeCursorMode::Ref,
                 source: Some(join.clone()),
                 next: 0,
+                adapter: None,
             }
         );
         assert_nested_join!(
@@ -11248,6 +11923,7 @@ mod tests {
                     mode: BytecodeCursorMode::Ref,
                     source: None,
                     next: usize::MAX,
+                    adapter: None,
                 },
             ),
         ] {
@@ -12113,6 +12789,7 @@ mod tests {
                     mode: BytecodeCursorMode::Ref,
                     source: Some(empty_array.clone()),
                     next: 3,
+                    adapter: None,
                 },
                 std::slice::from_ref(&empty_array),
             )
@@ -12126,6 +12803,7 @@ mod tests {
                     mode: BytecodeCursorMode::Mut,
                     source: Some(empty_array.clone()),
                     next: 0,
+                    adapter: None,
                 },
                 std::slice::from_ref(&empty_array),
             )
@@ -12595,6 +13273,7 @@ mod tests {
                     mode: BytecodeCursorMode::Own,
                     source: Some(source.clone()),
                     next: 1,
+                    adapter: None,
                 },
                 std::slice::from_ref(&source),
             )
@@ -12611,6 +13290,7 @@ mod tests {
             mode: original_mode,
             source: original_source,
             next: original_next,
+            adapter: _,
         } = engine.heap.get(original).unwrap().clone()
         else {
             unreachable!("the original cursor retains its iterator shape")
@@ -12619,6 +13299,7 @@ mod tests {
             mode: copied_mode,
             source: copied_source,
             next: copied_next,
+            adapter: _,
         } = engine.heap.get(copied).unwrap().clone()
         else {
             unreachable!("the copied cursor retains its iterator shape")
@@ -12640,6 +13321,7 @@ mod tests {
                     mode: BytecodeCursorMode::Own,
                     source: Some(source),
                     next: 2,
+                    adapter: None,
                 },
                 &[],
             )
@@ -12803,5 +13485,435 @@ mod tests {
             .is_err()
         );
         assert!(engine.statistics.reclaimed_objects > 0);
+    }
+
+    #[test]
+    fn iterator_contract_helpers_reject_malformed_descriptors_and_states() {
+        let mut program = terminal_fallback_program();
+        let trace = derive_trace_metadata(&program).unwrap();
+        let add_type =
+            |program: &mut BytecodeProgram, name: &str, kind: BytecodeTypeKind| -> BytecodeTypeId {
+                let id = BytecodeTypeId::new(program.types.len() as u32);
+                program.types.push(BytecodeType {
+                    name: name.into(),
+                    kind,
+                });
+                id
+            };
+        let string = BytecodeTypeId::new(0);
+        let strings = BytecodeTypeId::new(1);
+        let int = BytecodeTypeId::new(5);
+        let ints = BytecodeTypeId::new(6);
+        let non_array_cursor = add_type(
+            &mut program,
+            "cursor[own, String]",
+            BytecodeTypeKind::Cursor {
+                mode: BytecodeCursorMode::Own,
+                collection: string,
+            },
+        );
+        let empty_array = add_type(
+            &mut program,
+            "Array[]",
+            BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::Array,
+                arguments: Vec::new(),
+            },
+        );
+        let empty_cursor = add_type(
+            &mut program,
+            "cursor[own, Array[]]",
+            BytecodeTypeKind::Cursor {
+                mode: BytecodeCursorMode::Own,
+                collection: empty_array,
+            },
+        );
+        let empty_result = add_type(
+            &mut program,
+            "Array[] ! String",
+            BytecodeTypeKind::Result {
+                success: empty_array,
+                error: string,
+            },
+        );
+        let int_result = add_type(
+            &mut program,
+            "Array[Int] ! Array[String]",
+            BytecodeTypeKind::Result {
+                success: ints,
+                error: strings,
+            },
+        );
+        let bad_map = add_type(
+            &mut program,
+            "Map[String]",
+            BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::Map,
+                arguments: vec![string],
+            },
+        );
+        let bad_set = add_type(
+            &mut program,
+            "Set[]",
+            BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::Set,
+                arguments: Vec::new(),
+            },
+        );
+        let mut host = RejectingHost;
+        let mut engine = Engine::new(
+            &program,
+            &mut host,
+            VmLimits::default(),
+            ValueCopyStrategy::default(),
+            trace,
+        );
+
+        assert!(matches!(
+            engine.normalize_iterator_source(&Value::Integer(1), BytecodeTypeId::new(7)),
+            Err(VmError::Invariant(message)) if message.contains("not a managed iterable")
+        ));
+        let option = engine
+            .allocate(BytecodeTypeId::new(9), HeapObject::OptionNone, &[])
+            .unwrap();
+        assert!(matches!(
+            engine.normalize_iterator_source(&option, BytecodeTypeId::new(7)),
+            Err(VmError::Invariant(message)) if message.contains("not an owning iterable")
+        ));
+
+        let array = engine
+            .allocate(
+                ints,
+                HeapObject::Array(vec![Some(Value::Integer(1)), Some(Value::Integer(2))].into()),
+                &[],
+            )
+            .unwrap();
+        let normalized = engine
+            .normalize_iterator_source(&array, BytecodeTypeId::new(7))
+            .unwrap();
+        assert!(matches!(
+            engine.heap.get(normalized.heap_handle().unwrap()).unwrap(),
+            HeapObject::Iterator {
+                mode: BytecodeCursorMode::Own,
+                adapter: None,
+                ..
+            }
+        ));
+        let own_cursor = engine
+            .allocate(
+                BytecodeTypeId::new(7),
+                HeapObject::Iterator {
+                    mode: BytecodeCursorMode::Own,
+                    source: Some(array.clone()),
+                    next: 0,
+                    adapter: None,
+                },
+                std::slice::from_ref(&array),
+            )
+            .unwrap();
+        assert_eq!(
+            engine
+                .normalize_iterator_source(&own_cursor, BytecodeTypeId::new(7))
+                .unwrap(),
+            own_cursor
+        );
+        for source in [
+            engine
+                .allocate(string, HeapObject::String("text".into()), &[])
+                .unwrap(),
+            engine
+                .allocate(
+                    BytecodeTypeId::new(2),
+                    HeapObject::Map(vec![(Some(Value::Integer(1)), Some(array.clone()))].into()),
+                    std::slice::from_ref(&array),
+                )
+                .unwrap(),
+            engine
+                .allocate(
+                    BytecodeTypeId::new(8),
+                    HeapObject::Set(vec![Some(Value::Integer(1))].into()),
+                    &[],
+                )
+                .unwrap(),
+            engine
+                .allocate(
+                    BytecodeTypeId::new(3),
+                    HeapObject::Range {
+                        kind: BytecodeRangeKind::Exclusive,
+                        start: Some(Value::Integer(0)),
+                        end: Some(Value::Integer(2)),
+                    },
+                    &[],
+                )
+                .unwrap(),
+        ] {
+            assert!(
+                engine
+                    .normalize_iterator_source(&source, BytecodeTypeId::new(7))
+                    .is_ok()
+            );
+        }
+
+        assert!(
+            engine
+                .cursor_array_element_type(BytecodeTypeId::new(999))
+                .is_err()
+        );
+        assert!(engine.cursor_array_element_type(string).is_err());
+        assert!(engine.cursor_array_element_type(non_array_cursor).is_err());
+        assert!(engine.cursor_array_element_type(empty_cursor).is_err());
+        assert_eq!(
+            engine
+                .cursor_array_element_type(BytecodeTypeId::new(7))
+                .unwrap(),
+            int
+        );
+        assert!(engine.result_array_type(BytecodeTypeId::new(999)).is_err());
+        assert!(engine.result_array_type(string).is_err());
+        assert!(engine.result_array_type(BytecodeTypeId::new(10)).is_err());
+        assert!(engine.result_array_type(empty_result).is_err());
+        assert_eq!(engine.result_array_type(int_result).unwrap(), (ints, int));
+        assert!(matches!(
+            engine.materialize_host_value(bad_map, RuntimeValue::Map(Vec::new())),
+            Err(VmError::Invariant(message)) if message.contains("map type has the wrong arity")
+        ));
+        assert!(matches!(
+            engine.materialize_host_value(bad_set, RuntimeValue::Set(Vec::new())),
+            Err(VmError::Invariant(message)) if message.contains("set type has the wrong arity")
+        ));
+        let host_array = engine
+            .materialize_host_value(
+                strings,
+                RuntimeValue::Array(vec![RuntimeValue::String("array".into())]),
+            )
+            .unwrap();
+        assert!(matches!(
+            engine.heap.get(host_array.heap_handle().unwrap()).unwrap(),
+            HeapObject::Array(_)
+        ));
+        let host_map = engine
+            .materialize_host_value(
+                BytecodeTypeId::new(2),
+                RuntimeValue::Map(vec![(
+                    RuntimeValue::String("key".into()),
+                    RuntimeValue::Array(vec![RuntimeValue::String("value".into())]),
+                )]),
+            )
+            .unwrap();
+        assert!(matches!(
+            engine.heap.get(host_map.heap_handle().unwrap()).unwrap(),
+            HeapObject::Map(_)
+        ));
+        let host_set = engine
+            .materialize_host_value(
+                BytecodeTypeId::new(8),
+                RuntimeValue::Set(vec![RuntimeValue::String("set".into())]),
+            )
+            .unwrap();
+        assert!(matches!(
+            engine.heap.get(host_set.heap_handle().unwrap()).unwrap(),
+            HeapObject::Set(_)
+        ));
+
+        assert!(matches!(
+            engine.next_owned_iterator_value(&Value::Integer(1), int),
+            Err(VmError::Invariant(message)) if message.contains("not a managed cursor")
+        ));
+        assert!(matches!(
+            engine.next_owned_iterator_value(&array, int),
+            Err(VmError::Invariant(message)) if message.contains("wrong heap shape")
+        ));
+        let borrowed_cursor = engine
+            .allocate(
+                BytecodeTypeId::new(17),
+                HeapObject::Iterator {
+                    mode: BytecodeCursorMode::Ref,
+                    source: Some(array.clone()),
+                    next: 0,
+                    adapter: None,
+                },
+                std::slice::from_ref(&array),
+            )
+            .unwrap();
+        assert!(matches!(
+            engine.next_owned_iterator_value(&borrowed_cursor, int),
+            Err(VmError::Invariant(message)) if message.contains("not an owning cursor")
+        ));
+        let exhausted_cursor = engine
+            .allocate(
+                BytecodeTypeId::new(7),
+                HeapObject::Iterator {
+                    mode: BytecodeCursorMode::Own,
+                    source: Some(array.clone()),
+                    next: usize::MAX,
+                    adapter: None,
+                },
+                std::slice::from_ref(&array),
+            )
+            .unwrap();
+        assert_eq!(
+            engine
+                .next_owned_iterator_value(&exhausted_cursor, int)
+                .unwrap()
+                .unwrap(),
+            None
+        );
+        let missing_source = engine
+            .allocate(
+                BytecodeTypeId::new(7),
+                HeapObject::Iterator {
+                    mode: BytecodeCursorMode::Own,
+                    source: None,
+                    next: 0,
+                    adapter: None,
+                },
+                &[],
+            )
+            .unwrap();
+        assert!(matches!(
+            engine.next_owned_iterator_value(&missing_source, int),
+            Err(VmError::Invariant(message)) if message.contains("iterator source")
+        ));
+        let (step, adapter, next) = engine
+            .iterator_adapter_next(
+                &Value::Integer(1),
+                IteratorAdapter::Take {
+                    remaining: 0,
+                    source_item: int,
+                },
+                int,
+            )
+            .unwrap();
+        assert!(step.is_none());
+        assert_eq!(next, usize::MAX);
+        assert!(matches!(
+            adapter,
+            IteratorAdapter::Take { remaining: 0, .. }
+        ));
+
+        let state = BytecodePlace {
+            slot: BytecodeSlotId::new(0),
+            ty: BytecodeTypeId::new(7),
+            projections: Vec::new(),
+            source_loan: None,
+        };
+        let span = BytecodeSpan {
+            file: 0,
+            start: 0,
+            end: 0,
+        };
+        let fallback = install_fallback_frame(&mut engine, int, Value::Integer(1));
+        assert!(matches!(
+            engine.iterator_next(0, &fallback.owner, None, int, span),
+            Err(VmError::Invariant(message)) if message.contains("not managed")
+        ));
+        engine.frames[0].slots[0] = SlotState::Value(array.clone());
+        assert!(matches!(
+            engine.iterator_next(0, &state, None, int, span),
+            Err(VmError::Invariant(message)) if message.contains("wrong heap shape")
+        ));
+        engine.frames[0].slots[0] = SlotState::Value(exhausted_cursor.clone());
+        assert!(matches!(
+            engine.iterator_next(0, &state, None, int, span),
+            Ok(Ok(None))
+        ));
+        let adapter_cursor = engine
+            .allocate(
+                BytecodeTypeId::new(17),
+                HeapObject::Iterator {
+                    mode: BytecodeCursorMode::Ref,
+                    source: Some(array.clone()),
+                    next: 0,
+                    adapter: Some(IteratorAdapter::Take {
+                        remaining: 0,
+                        source_item: int,
+                    }),
+                },
+                std::slice::from_ref(&array),
+            )
+            .unwrap();
+        engine.frames[0].slots[0] = SlotState::Value(adapter_cursor);
+        assert!(matches!(
+            engine.iterator_next(0, &state, None, int, span),
+            Err(VmError::Invariant(message)) if message.contains("lazy iterator adapter")
+        ));
+        let owning_adapter = engine
+            .allocate(
+                BytecodeTypeId::new(7),
+                HeapObject::Iterator {
+                    mode: BytecodeCursorMode::Own,
+                    source: Some(array.clone()),
+                    next: 0,
+                    adapter: Some(IteratorAdapter::Take {
+                        remaining: 0,
+                        source_item: int,
+                    }),
+                },
+                std::slice::from_ref(&array),
+            )
+            .unwrap();
+        engine.frames[0].slots[0] = SlotState::Value(owning_adapter);
+        assert!(matches!(
+            engine.iterator_next(0, &state, Some(&state), int, span),
+            Err(VmError::Invariant(message)) if message.contains("lazy iterator adapter")
+        ));
+        let owning_cursor = engine
+            .allocate(
+                BytecodeTypeId::new(7),
+                HeapObject::Iterator {
+                    mode: BytecodeCursorMode::Own,
+                    source: Some(array.clone()),
+                    next: 0,
+                    adapter: None,
+                },
+                std::slice::from_ref(&array),
+            )
+            .unwrap();
+        engine.frames[0].slots[0] = SlotState::Value(owning_cursor);
+        assert!(matches!(
+            engine.iterator_next(0, &state, Some(&state), int, span),
+            Err(VmError::Invariant(message)) if message.contains("owning iterator")
+        ));
+        let ref_state = engine
+            .allocate(
+                BytecodeTypeId::new(17),
+                HeapObject::Iterator {
+                    mode: BytecodeCursorMode::Ref,
+                    source: Some(array.clone()),
+                    next: 0,
+                    adapter: None,
+                },
+                std::slice::from_ref(&array),
+            )
+            .unwrap();
+        engine.frames[0].slots[0] = SlotState::Value(ref_state);
+        assert!(matches!(
+            engine.iterator_next(0, &state, None, int, span),
+            Err(VmError::Invariant(message)) if message.contains("no source place")
+        ));
+        let other_array = engine
+            .allocate(
+                ints,
+                HeapObject::Array(vec![Some(Value::Integer(9))].into()),
+                &[],
+            )
+            .unwrap();
+        engine.frames[0].slots.push(SlotState::Value(other_array));
+        engine.frame_traces[0].slots.push(ints);
+        let borrowed_place = BytecodePlace {
+            slot: BytecodeSlotId::new(1),
+            ty: ints,
+            projections: Vec::new(),
+            source_loan: None,
+        };
+        assert!(matches!(
+            engine.iterator_next(0, &state, Some(&borrowed_place), int, span),
+            Err(VmError::Invariant(message)) if message.contains("differs")
+        ));
+        engine.frames[0].slots[1] = SlotState::Value(array);
+        assert!(matches!(
+            engine.iterator_next(0, &state, Some(&borrowed_place), int, span),
+            Ok(Ok(Some(super::IteratorStep::Position(0))))
+        ));
     }
 }
