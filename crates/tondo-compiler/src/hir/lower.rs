@@ -225,6 +225,8 @@ impl<'a> TypeLowerer<'a> {
         let fs_module = self.packages.module(self.packages.standard(), &fs);
         let iter = ModulePath::new("iter")?;
         let iter_module = self.packages.module(self.packages.standard(), &iter);
+        let format = ModulePath::new("format")?;
+        let format_module = self.packages.module(self.packages.standard(), &format);
         let bytes_referenced = bytes_module.as_ref().is_some_and(|bytes_module| {
             self.resolved.references().any(|reference| {
                 matches!(
@@ -283,6 +285,11 @@ impl<'a> TypeLowerer<'a> {
         // bootstrap module exists so method syntax (`source.map(...)`) and
         // qualified syntax (`iter.map(...)`) share one callable identity.
         let iter_referenced = iter_module.is_some();
+        let format_referenced = format_module.as_ref().is_some_and(|module| {
+            self.resolved.references().any(|reference| {
+                matches!(reference.entity(), ResolvedEntity::Module(reference_module) if reference_module == module)
+            })
+        });
         let testing_referenced = testing_module.as_ref().is_some_and(|testing_module| {
             self.resolved.references().any(|reference| {
                 matches!(
@@ -333,6 +340,7 @@ impl<'a> TypeLowerer<'a> {
             && !text_referenced
             && !collections_referenced
             && !iter_referenced
+            && !format_referenced
             && !testing_referenced
             && !json_referenced
             && !messagepack_referenced
@@ -357,9 +365,15 @@ impl<'a> TypeLowerer<'a> {
         let bytes_builder = self
             .interner
             .intrinsic(IntrinsicType::BytesBuilder, Vec::new())?;
+        let format_builder = self
+            .interner
+            .intrinsic(IntrinsicType::FormatBuilder, Vec::new())?;
         let bytes_error = self
             .interner
             .intrinsic(IntrinsicType::BytesError, Vec::new())?;
+        let format_error = self
+            .interner
+            .intrinsic(IntrinsicType::FormatError, Vec::new())?;
         let text_error = self
             .interner
             .intrinsic(IntrinsicType::TextError, Vec::new())?;
@@ -1695,6 +1709,60 @@ impl<'a> TypeLowerer<'a> {
                 collected,
                 2,
                 Vec::new(),
+            )?;
+        }
+
+        if format_referenced {
+            let unit_outcome = self.interner.result(unit, format_error)?;
+            let string_outcome = self.interner.result(string, format_error)?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::FormatBuilder,
+                Vec::new(),
+                None,
+                format_builder,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::FormatBuilderAppend,
+                vec![
+                    (format_builder, ParameterMode::Var, true),
+                    (string, ParameterMode::Value, false),
+                ],
+                None,
+                unit_outcome,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::FormatBuilderFinish,
+                vec![(format_builder, ParameterMode::Var, true)],
+                None,
+                string_outcome,
+            )?;
+
+            let format_value = self.interner.generic_parameter(0)?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::FormatFormat,
+                vec![(format_value, ParameterMode::Value, false)],
+                string_outcome,
+                1,
+                vec![(0, vec![self.prelude_trait_bound("Display")])],
+            )?;
+            let join_value = self.interner.generic_parameter(0)?;
+            let join_array = self
+                .interner
+                .intrinsic(IntrinsicType::Array, vec![join_value])?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::FormatJoin,
+                vec![
+                    (join_array, ParameterMode::Value, false),
+                    (string, ParameterMode::Value, false),
+                ],
+                string_outcome,
+                1,
+                vec![(0, vec![self.prelude_trait_bound("Display")])],
             )?;
         }
 
@@ -5429,7 +5497,9 @@ impl<'a> TypeLowerer<'a> {
                         | IntrinsicType::Pipeline
                         | IntrinsicType::Bytes
                         | IntrinsicType::BytesBuilder
+                        | IntrinsicType::FormatBuilder
                         | IntrinsicType::BytesError
+                        | IntrinsicType::FormatError
                         | IntrinsicType::TextError
                         | IntrinsicType::CollectionError
                         | IntrinsicType::Path

@@ -1967,6 +1967,23 @@ fn collect_operation_types(operation: &MirOperation, types: &mut BTreeSet<TypeId
                 collect_operand_types(argument, types);
             }
         }
+        MirOperationKind::Format { value, display } => {
+            collect_operand_types(value, types);
+            if let Some(display) = display {
+                collect_operand_types(display, types);
+            }
+        }
+        MirOperationKind::JoinFormat {
+            values,
+            separator,
+            display,
+        } => {
+            collect_operand_types(values, types);
+            collect_operand_types(separator, types);
+            if let Some(display) = display {
+                collect_operand_types(display, types);
+            }
+        }
     }
 }
 
@@ -2212,6 +2229,23 @@ fn collect_operation_function_references(
         MirOperationKind::BootstrapHostCall { arguments, .. } => {
             for argument in arguments {
                 collect_operand_function_references(argument, references);
+            }
+        }
+        MirOperationKind::Format { value, display } => {
+            collect_operand_function_references(value, references);
+            if let Some(display) = display {
+                collect_operand_function_references(display, references);
+            }
+        }
+        MirOperationKind::JoinFormat {
+            values,
+            separator,
+            display,
+        } => {
+            collect_operand_function_references(values, references);
+            collect_operand_function_references(separator, references);
+            if let Some(display) = display {
+                collect_operand_function_references(display, references);
             }
         }
     }
@@ -3644,6 +3678,19 @@ fn lower_operation(
                 })
                 .collect::<Result<_, BytecodeError>>()?,
         },
+        MirOperationKind::Format { value, display } => bc::BytecodeOperationKind::Format {
+            value: operand(value)?,
+            display: display.as_ref().map(operand).transpose()?,
+        },
+        MirOperationKind::JoinFormat {
+            values,
+            separator,
+            display,
+        } => bc::BytecodeOperationKind::JoinFormat {
+            values: operand(values)?,
+            separator: operand(separator)?,
+            display: display.as_ref().map(operand).transpose()?,
+        },
         MirOperationKind::BootstrapHostCall {
             function,
             arguments,
@@ -4101,6 +4148,8 @@ fn intrinsic_type(value: IntrinsicType) -> bc::BytecodeIntrinsicType {
         IntrinsicType::Bytes => bc::BytecodeIntrinsicType::Bytes,
         IntrinsicType::BytesBuilder => bc::BytecodeIntrinsicType::BytesBuilder,
         IntrinsicType::BytesError => bc::BytecodeIntrinsicType::BytesError,
+        IntrinsicType::FormatBuilder => bc::BytecodeIntrinsicType::FormatBuilder,
+        IntrinsicType::FormatError => bc::BytecodeIntrinsicType::FormatError,
         IntrinsicType::TextError => bc::BytecodeIntrinsicType::TextError,
         IntrinsicType::CollectionError => bc::BytecodeIntrinsicType::CollectionError,
         IntrinsicType::Path => bc::BytecodeIntrinsicType::Path,
@@ -4338,6 +4387,55 @@ mod tests {
         let (resolved, hir) = checked(source);
         let mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
         lower_to_bytecode(&resolved, &hir, &mir, BytecodeLoweringLimits::default()).unwrap()
+    }
+
+    #[test]
+    fn format_operations_lower_to_verified_bytecode_with_static_and_custom_display() {
+        let source = "import std.format\n\
+             type Label = { text: String }\n\
+             impl Display for Label {\n\
+                 fn display(self): String { self.text }\n\
+             }\n\
+             fn value(label: Label, values: Array[Int]): !format.FormatError {\n\
+                 let custom = format.format(label)?\n\
+                 let intrinsic = format.format(42)?\n\
+                 let joined = format.join(values, \",\")?\n\
+                 _ = custom\n\
+                 _ = intrinsic\n\
+                 _ = joined\n\
+             }\n";
+        let program = lowered(source);
+        bc::verify_bytecode(&program).unwrap();
+        let value = program
+            .functions
+            .iter()
+            .flat_map(|function| function.blocks.iter())
+            .flat_map(|block| std::iter::once(&block.terminator))
+            .filter_map(|terminator| match &terminator.kind {
+                bc::BytecodeTerminatorKind::Invoke { operation, .. } => Some(operation),
+                _ => None,
+            })
+            .filter_map(|operation| match &operation.kind {
+                bc::BytecodeOperationKind::Format { display, .. } => Some(display.is_some()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(value.contains(&true));
+        assert!(value.contains(&false));
+        assert!(program.functions.iter().any(|function| {
+            function.blocks.iter().any(|block| {
+                matches!(
+                    block.terminator.kind,
+                    bc::BytecodeTerminatorKind::Invoke {
+                        operation: bc::BytecodeOperation {
+                            kind: bc::BytecodeOperationKind::JoinFormat { .. },
+                            ..
+                        },
+                        ..
+                    }
+                )
+            })
+        }));
     }
 
     fn execute_outcome(source: &str, name: &str) -> VmOutcome {

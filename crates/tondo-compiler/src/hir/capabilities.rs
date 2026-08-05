@@ -709,6 +709,14 @@ fn intrinsic_node(
                 fixed(HirCapabilityStatus::Unsatisfied)
             }
         }
+        IntrinsicType::FormatBuilder => {
+            if matches!(capability, HirCapability::Discard | HirCapability::Send) {
+                satisfied(Vec::new())
+            } else {
+                fixed(HirCapabilityStatus::Unsatisfied)
+            }
+        }
+        IntrinsicType::FormatError => satisfied(Vec::new()),
         IntrinsicType::NumericConversionError => satisfied(Vec::new()),
         IntrinsicType::Duration | IntrinsicType::DurationError | IntrinsicType::ClockError => {
             if matches!(

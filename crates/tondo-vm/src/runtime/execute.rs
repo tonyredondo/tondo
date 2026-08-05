@@ -2122,6 +2122,8 @@ impl<'program, 'host> Engine<'program, 'host> {
                     | BytecodeIntrinsicType::Bytes
                     | BytecodeIntrinsicType::BytesBuilder
                     | BytecodeIntrinsicType::BytesError
+                    | BytecodeIntrinsicType::FormatBuilder
+                    | BytecodeIntrinsicType::FormatError
                     | BytecodeIntrinsicType::TextError
                     | BytecodeIntrinsicType::CollectionError
                     | BytecodeIntrinsicType::Path
@@ -3702,6 +3704,8 @@ fn runtime_host_kind(constructor: BytecodeIntrinsicType) -> Option<RuntimeHostVa
         BytecodeIntrinsicType::Bytes => RuntimeHostValueKind::Bytes,
         BytecodeIntrinsicType::BytesBuilder => RuntimeHostValueKind::BytesBuilder,
         BytecodeIntrinsicType::BytesError => RuntimeHostValueKind::BytesError,
+        BytecodeIntrinsicType::FormatBuilder => RuntimeHostValueKind::FormatBuilder,
+        BytecodeIntrinsicType::FormatError => RuntimeHostValueKind::FormatError,
         BytecodeIntrinsicType::TextError => RuntimeHostValueKind::TextError,
         BytecodeIntrinsicType::CollectionError => RuntimeHostValueKind::CollectionError,
         BytecodeIntrinsicType::Path => RuntimeHostValueKind::Path,
@@ -6420,6 +6424,65 @@ impl Engine<'_, '_> {
             BytecodeOperationKind::Display { argument } => Ok(OperationResult::Value(
                 self.intrinsic_display(frame, operation.ty, argument)?,
             )),
+            BytecodeOperationKind::Format { value, display } => {
+                self.with_temporary_roots(|engine| {
+                    let value_ty = value.ty;
+                    let value = engine.evaluate_operand(frame, value)?;
+                    engine.retain_temporary(&value);
+                    let callback = display
+                        .as_ref()
+                        .map(|operand| engine.evaluate_operand(frame, operand))
+                        .transpose()?;
+                    if let Some(callback) = &callback {
+                        engine.retain_temporary(callback);
+                    }
+                    let text = engine.format_display_value_with_type(value, value_ty, callback)?;
+                    Ok(OperationResult::Value(
+                        engine.format_text_result(operation.ty, [text].into_iter())?,
+                    ))
+                })
+            }
+            BytecodeOperationKind::JoinFormat {
+                values: values_operand,
+                separator,
+                display,
+            } => self.with_temporary_roots(|engine| {
+                let values_ty = values_operand.ty;
+                let values = engine.evaluate_operand(frame, values_operand)?;
+                engine.retain_temporary(&values);
+                let separator = engine.evaluate_operand(frame, separator)?;
+                engine.retain_temporary(&separator);
+                let callback = display
+                    .as_ref()
+                    .map(|operand| engine.evaluate_operand(frame, operand))
+                    .transpose()?;
+                if let Some(callback) = &callback {
+                    engine.retain_temporary(callback);
+                }
+                let element_ty = engine
+                    .array_element(values_ty)
+                    .ok_or_else(|| VmError::invariant("format.join values are not an Array"))?;
+                let separator = engine.string_value(&separator)?.to_owned();
+                let elements = engine.array_values(&values)?;
+                let mut texts = Vec::with_capacity(elements.len().saturating_mul(2));
+                for (index, item) in elements.into_iter().enumerate() {
+                    if index != 0 {
+                        texts.push(separator.clone());
+                    }
+                    let item = item.ok_or_else(|| {
+                        VmError::invariant("format.join encountered a moved Array element")
+                    })?;
+                    engine.retain_temporary(&item);
+                    texts.push(engine.format_display_value_with_type(
+                        item,
+                        element_ty,
+                        callback.clone(),
+                    )?);
+                }
+                Ok(OperationResult::Value(
+                    engine.format_text_result(operation.ty, texts.into_iter())?,
+                ))
+            }),
             BytecodeOperationKind::ExplicitPanic { message } => {
                 let message = self.evaluate_operand(frame, message)?;
                 Ok(OperationResult::Panic(
@@ -6594,6 +6657,59 @@ impl Engine<'_, '_> {
             });
         }
         self.allocate(result_ty, HeapObject::String(output), values)
+    }
+
+    fn format_display_value_with_type(
+        &mut self,
+        value: Value,
+        value_ty: BytecodeTypeId,
+        callback: Option<Value>,
+    ) -> Result<String, VmError> {
+        if let Some(callback) = callback {
+            return match self.invoke_sync_value(
+                callback,
+                vec![(BytecodeCallArgumentTarget::Fixed(0), value)],
+            )? {
+                Ok(value) => self.string_value(&value).map(str::to_owned),
+                Err((code, message)) => Err(VmError::Host(format!(
+                    "Display callback panicked ({}): {message}",
+                    code.code()
+                ))),
+            };
+        }
+        self.display_text(value_ty, value)
+    }
+
+    fn format_text_result(
+        &mut self,
+        result_ty: BytecodeTypeId,
+        texts: impl IntoIterator<Item = String>,
+    ) -> Result<Value, VmError> {
+        let builder = self.host.invoke("std.format.Builder.new", &[])?;
+        if !matches!(builder, RuntimeValue::Host { .. }) {
+            return Err(VmError::Host(
+                "std.format.Builder.new returned a non-builder value".into(),
+            ));
+        }
+        for text in texts {
+            let appended = self.host.invoke(
+                "std.format.Builder.append",
+                &[builder.clone(), RuntimeValue::String(text)],
+            )?;
+            match appended {
+                RuntimeValue::ResultOk(value) if matches!(*value, RuntimeValue::Unit) => {}
+                RuntimeValue::ResultErr(error) => {
+                    return self.materialize_host_value(result_ty, RuntimeValue::ResultErr(error));
+                }
+                _ => {
+                    return Err(VmError::Host(
+                        "std.format.Builder.append returned an invalid result".into(),
+                    ));
+                }
+            }
+        }
+        let finished = self.host.invoke("std.format.Builder.finish", &[builder])?;
+        self.materialize_host_value(result_ty, finished)
     }
 
     fn intrinsic_display(
@@ -10896,6 +11012,125 @@ mod tests {
             failure,
             PlaceFailure::Vm(VmError::Invariant(message)) if message == "closed"
         ));
+    }
+
+    #[test]
+    fn format_builder_host_boundaries_are_materialized_atomically() {
+        #[derive(Clone, Copy)]
+        enum Mode {
+            Success,
+            InvalidBuilder,
+            InvalidAppend,
+            AppendError,
+            InvalidFinish,
+        }
+
+        struct FormatHost {
+            mode: Mode,
+        }
+
+        impl VmHost for FormatHost {
+            fn invoke(
+                &mut self,
+                name: &str,
+                _arguments: &[RuntimeValue],
+            ) -> Result<RuntimeValue, VmError> {
+                match (name, self.mode) {
+                    ("std.format.Builder.new", Mode::InvalidBuilder) => {
+                        Ok(RuntimeValue::String("wrong".into()))
+                    }
+                    ("std.format.Builder.new", _) => Ok(RuntimeValue::Host {
+                        kind: RuntimeHostValueKind::FormatBuilder,
+                        id: 7,
+                    }),
+                    ("std.format.Builder.append", Mode::InvalidAppend) => Ok(RuntimeValue::Unit),
+                    ("std.format.Builder.append", Mode::AppendError) => {
+                        Ok(RuntimeValue::ResultErr(Box::new(RuntimeValue::Host {
+                            kind: RuntimeHostValueKind::FormatError,
+                            id: 8,
+                        })))
+                    }
+                    ("std.format.Builder.append", _) => {
+                        Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
+                    }
+                    ("std.format.Builder.finish", Mode::InvalidFinish) => Ok(RuntimeValue::Unit),
+                    ("std.format.Builder.finish", _) => Ok(RuntimeValue::String("joined".into())),
+                    _ => Err(VmError::UnsupportedHostCall(name.into())),
+                }
+            }
+        }
+
+        let mut program = root_pressure_program();
+        let format_error = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "FormatError".into(),
+            kind: BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::FormatError,
+                arguments: Vec::new(),
+            },
+        });
+        let result = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "String ! FormatError".into(),
+            kind: BytecodeTypeKind::Result {
+                success: BytecodeTypeId::new(0),
+                error: format_error,
+            },
+        });
+        let trace = derive_trace_metadata(&program).unwrap();
+
+        for (mode, result_ty, expected_error) in [
+            (Mode::Success, BytecodeTypeId::new(0), None),
+            (
+                Mode::InvalidBuilder,
+                BytecodeTypeId::new(0),
+                Some("non-builder"),
+            ),
+            (
+                Mode::InvalidAppend,
+                BytecodeTypeId::new(0),
+                Some("invalid result"),
+            ),
+            (Mode::AppendError, result, None),
+            (
+                Mode::InvalidFinish,
+                BytecodeTypeId::new(0),
+                Some("bootstrap host result"),
+            ),
+        ] {
+            let mut host = FormatHost { mode };
+            let mut engine = Engine::new(
+                &program,
+                &mut host,
+                pressure_limits(),
+                ValueCopyStrategy::default(),
+                trace.clone(),
+            );
+            let outcome = engine.format_text_result(result_ty, ["a".to_owned(), "b".to_owned()]);
+            if let Some(expected_error) = expected_error {
+                assert!(
+                    matches!(&outcome, Err(VmError::Host(message)) if message.contains(expected_error))
+                        || matches!(&outcome, Err(VmError::Invariant(message)) if message.contains(expected_error)),
+                    "unexpected format boundary result: {outcome:?}"
+                );
+            } else {
+                let value = outcome.unwrap();
+                if matches!(mode, Mode::Success) {
+                    assert_eq!(engine.string_value(&value).unwrap(), "joined");
+                } else {
+                    let handle = value.heap_handle().expect("result is heap allocated");
+                    assert!(matches!(
+                        engine.heap.get(handle),
+                        Ok(HeapObject::ResultErr(Some(Value::Host(
+                            RuntimeValue::Host {
+                                kind: RuntimeHostValueKind::FormatError,
+                                ..
+                            }
+                        ))))
+                    ));
+                }
+            }
+        }
     }
 
     #[test]

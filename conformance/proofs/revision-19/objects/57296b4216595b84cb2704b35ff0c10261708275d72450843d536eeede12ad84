@@ -1,0 +1,11 @@
+fn replace(values: var Array[Int], replacement: Array[Int]) {
+    values = replacement
+}
+
+fn invalidRoot(values: mut Array[Int]) {
+    values = [1, 2]
+}
+
+fn invalidRegion(values: var Array[Int]) {
+    replace(var values[1:3], [4, 5, 6])
+}

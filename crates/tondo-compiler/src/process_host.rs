@@ -94,6 +94,10 @@ enum HostValue {
     BytesError {
         _message: String,
     },
+    FormatBuilder(Vec<u8>),
+    FormatError {
+        _message: String,
+    },
     TextError {
         _message: String,
     },
@@ -474,6 +478,19 @@ impl BootstrapHost {
 
     fn bytes_result_error(&mut self, message: impl Into<String>) -> RuntimeValue {
         RuntimeValue::ResultErr(Box::new(self.bytes_error(message)))
+    }
+
+    fn format_error(&mut self, message: impl Into<String>) -> RuntimeValue {
+        self.allocate(
+            RuntimeHostValueKind::FormatError,
+            HostValue::FormatError {
+                _message: message.into(),
+            },
+        )
+    }
+
+    fn format_result_error(&mut self, message: impl Into<String>) -> RuntimeValue {
+        RuntimeValue::ResultErr(Box::new(self.format_error(message)))
     }
 
     fn text_error(&mut self, message: impl Into<String>) -> RuntimeValue {
@@ -1064,6 +1081,34 @@ impl BootstrapHost {
         match self.values.get_mut(id) {
             Some(HostValue::BytesBuilder(bytes)) => Ok(bytes),
             _ => Err(VmError::Host("BytesBuilder token is stale".into())),
+        }
+    }
+
+    fn format_builder(&self, value: &RuntimeValue) -> Result<&[u8], VmError> {
+        let RuntimeValue::Host {
+            kind: RuntimeHostValueKind::FormatBuilder,
+            id,
+        } = value
+        else {
+            return Err(VmError::Host("format Builder receiver is invalid".into()));
+        };
+        match self.values.get(id) {
+            Some(HostValue::FormatBuilder(bytes)) => Ok(bytes),
+            _ => Err(VmError::Host("format Builder token is stale".into())),
+        }
+    }
+
+    fn format_builder_mut(&mut self, value: &RuntimeValue) -> Result<&mut Vec<u8>, VmError> {
+        let RuntimeValue::Host {
+            kind: RuntimeHostValueKind::FormatBuilder,
+            id,
+        } = value
+        else {
+            return Err(VmError::Host("format Builder receiver is invalid".into()));
+        };
+        match self.values.get_mut(id) {
+            Some(HostValue::FormatBuilder(bytes)) => Ok(bytes),
+            _ => Err(VmError::Host("format Builder token is stale".into())),
         }
     }
 
@@ -2707,6 +2752,28 @@ impl VmHost for BootstrapHost {
                     RuntimeHostValueKind::Bytes,
                     HostValue::Bytes(bytes),
                 ))))
+            }
+            ("std.format.Builder.new", []) => Ok(self.allocate(
+                RuntimeHostValueKind::FormatBuilder,
+                HostValue::FormatBuilder(Vec::new()),
+            )),
+            ("std.format.Builder.append", [receiver, RuntimeValue::String(text)]) => {
+                let current = self.format_builder(receiver)?.len();
+                let Some(length) = current.checked_add(text.len()) else {
+                    return Ok(self.format_result_error("format Builder length overflow"));
+                };
+                if let Err(message) = self.ensure_bytes_len(length) {
+                    return Ok(self.format_result_error(message));
+                }
+                self.format_builder_mut(receiver)?
+                    .extend_from_slice(text.as_bytes());
+                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
+            }
+            ("std.format.Builder.finish", [receiver]) => {
+                let bytes = self.format_builder(receiver)?.to_vec();
+                let text = String::from_utf8(bytes)
+                    .map_err(|_| VmError::Host("format Builder contains invalid UTF-8".into()))?;
+                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::String(text))))
             }
             ("std.collections.Array.new", []) => Ok(RuntimeValue::Array(Vec::new())),
             ("std.collections.Array.withCapacity", [RuntimeValue::Integer(capacity)]) => {
@@ -4860,6 +4927,78 @@ mod tests {
                 RuntimeValue::Host { kind: RuntimeHostValueKind::BytesError, .. }
             ))
         );
+    }
+
+    #[test]
+    fn format_builder_is_bounded_and_rejects_append_atomically() {
+        let mut host = BootstrapHost::with_max_bytes(Vec::new(), 3);
+        let builder = host.invoke("std.format.Builder.new", &[]).unwrap();
+        assert!(matches!(
+            host.invoke(
+                "std.format.Builder.append",
+                &[builder.clone(), RuntimeValue::String("ton".into())],
+            )
+            .unwrap(),
+            RuntimeValue::ResultOk(value) if *value == RuntimeValue::Unit
+        ));
+        let rejected = host
+            .invoke(
+                "std.format.Builder.append",
+                &[builder.clone(), RuntimeValue::String("!".into())],
+            )
+            .unwrap();
+        assert!(matches!(
+            rejected,
+            RuntimeValue::ResultErr(value)
+                if matches!(
+                    *value,
+                    RuntimeValue::Host {
+                        kind: RuntimeHostValueKind::FormatError,
+                        ..
+                    }
+                )
+        ));
+        let finished = host
+            .invoke("std.format.Builder.finish", &[builder])
+            .unwrap();
+        assert!(matches!(
+            finished,
+            RuntimeValue::ResultOk(value) if *value == RuntimeValue::String("ton".into())
+        ));
+    }
+
+    #[test]
+    fn format_builder_rejects_invalid_and_stale_receivers() {
+        let mut host = BootstrapHost::default();
+        for name in ["std.format.Builder.append", "std.format.Builder.finish"] {
+            let arguments = if name.ends_with("append") {
+                vec![
+                    RuntimeValue::String("not-a-builder".into()),
+                    RuntimeValue::String("x".into()),
+                ]
+            } else {
+                vec![RuntimeValue::String("not-a-builder".into())]
+            };
+            assert!(matches!(
+                host.invoke(name, &arguments),
+                Err(VmError::Host(message)) if message.contains("receiver is invalid")
+            ));
+        }
+        let stale = RuntimeValue::Host {
+            kind: RuntimeHostValueKind::FormatBuilder,
+            id: u64::MAX,
+        };
+        assert!(matches!(
+            host.invoke(
+                "std.format.Builder.append",
+                &[stale.clone(), RuntimeValue::String("x".into())],
+            ),
+            Err(VmError::Host(message)) if message.contains("token is stale")
+        ));
+        assert!(matches!(
+            host.invoke("std.format.Builder.finish", &[stale]),
+            Err(VmError::Host(message)) if message.contains("token is stale")
+        ));
     }
 
     #[test]

@@ -9,9 +9,9 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 1.50
+**Versión del tracker:** 1.51
 
-**Última actualización:** 2026-08-04
+**Última actualización:** 2026-08-05
 
 **Especificaciones normativas:**
 
@@ -4097,10 +4097,14 @@ parte del módulo.
   cualificadas `std.iter.*`; `tests/runtime/m11-std-iter-001.to` cubre map,
   filter, take, collect, callbacks, rangos, encadenamiento y tipos explícitos.
 
-- [ ] **STD-FMT-IMPL-001 — Exponer `std.format` a programas Tondo.** Conectar
+- [x] **STD-FMT-IMPL-001 — Exponer `std.format` a programas Tondo.** Conectar
   `Builder`, `format` y `join` a `Display`, con crecimiento acotado, error
-  atómico y tests end-to-end. El kernel Rust de builder no cuenta como API
-  pública hasta atravesar HIR, bytecode y VM.
+  atómico y tests end-to-end. Cerrado con tipos intrínsecos dedicados,
+  resolución HIR, operaciones MIR/bytecode verificadas y ejecución VM. El
+  builder host conserva el límite global, rechaza cada append sin mutación
+  parcial y `format`/`join` seleccionan `Display` estático, incluyendo callbacks
+  para implementaciones de usuario. `tests/runtime/m11-std-format-001.to` y la
+  prueba host de límites cubren la ruta pública completa.
 
 - [ ] **STD-IO-IMPL-001 — Completar protocolos y helpers de I/O.** Mantener los
   handles `Reader`/`Writer` existentes y añadir `readAll`/`IoLimits`, partial
@@ -5364,6 +5368,20 @@ esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 1.51 — 2026-08-05
+
+- Se cierra `STD-FMT-IMPL-001`: `std.format.Builder.new/append/finish`,
+  `std.format.format` y `std.format.join` ya atraviesan HIR, MIR, bytecode y VM.
+  Los resultados están tipados como `Result[String, FormatError]`, el builder
+  respeta el límite de bytes y cada append fallido es atómico. `Display` usa
+  dispatch intrínseco para tipos conocidos y un callback prelude estático para
+  tipos definidos por el programa, sin reflexión ni dispatch dinámico.
+- La evidencia ejecutable incluye `tests/runtime/m11-std-format-001.to`, que
+  cubre `Display` de usuario, valores intrínsecos, `join` y construcción manual,
+  más la prueba host de límite y preservación del contenido tras un rechazo.
+- La matriz de owners y la evidencia del draft avanzan a la siguiente revisión
+  content-addressed; el promotion proof histórico anterior permanece inmutable.
 
 ### 1.50 — 2026-08-04
 

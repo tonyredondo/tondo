@@ -639,6 +639,15 @@ pub enum MirOperationKind {
         condition_repr: String,
         message_parts: Vec<MirAssertMessagePart>,
     },
+    Format {
+        value: MirOperand,
+        display: Option<MirOperand>,
+    },
+    JoinFormat {
+        values: MirOperand,
+        separator: MirOperand,
+        display: Option<MirOperand>,
+    },
     BootstrapHostCall {
         function: MirBootstrapHostFunction,
         arguments: Vec<MirOperand>,

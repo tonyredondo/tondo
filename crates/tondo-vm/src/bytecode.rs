@@ -239,6 +239,8 @@ pub enum BytecodeIntrinsicType {
     Bytes,
     BytesBuilder,
     BytesError,
+    FormatBuilder,
+    FormatError,
     TextError,
     CollectionError,
     Path,
@@ -390,6 +392,8 @@ impl BytecodeIntrinsicType {
             | Self::Bytes
             | Self::BytesBuilder
             | Self::BytesError
+            | Self::FormatBuilder
+            | Self::FormatError
             | Self::TextError
             | Self::CollectionError
             | Self::Path
@@ -460,6 +464,8 @@ impl BytecodeIntrinsicType {
             | Self::Bytes
             | Self::BytesBuilder
             | Self::BytesError
+            | Self::FormatBuilder
+            | Self::FormatError
             | Self::TextError
             | Self::CollectionError
             | Self::Path
@@ -1112,6 +1118,15 @@ pub enum BytecodeOperationKind {
     Display {
         argument: BytecodeCallArgument,
     },
+    Format {
+        value: BytecodeOperand,
+        display: Option<BytecodeOperand>,
+    },
+    JoinFormat {
+        values: BytecodeOperand,
+        separator: BytecodeOperand,
+        display: Option<BytecodeOperand>,
+    },
     ExplicitPanic {
         message: BytecodeOperand,
     },
@@ -1412,6 +1427,8 @@ mod tests {
             BytecodeIntrinsicType::Bytes,
             BytecodeIntrinsicType::BytesBuilder,
             BytecodeIntrinsicType::BytesError,
+            BytecodeIntrinsicType::FormatBuilder,
+            BytecodeIntrinsicType::FormatError,
             BytecodeIntrinsicType::ExitStatus,
             BytecodeIntrinsicType::ProcessOutput,
             BytecodeIntrinsicType::ProcessHandle,

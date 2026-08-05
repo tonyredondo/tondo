@@ -454,6 +454,8 @@ impl<'a> TraceMetadataAnalysis<'a> {
                 | BytecodeIntrinsicType::Bytes
                 | BytecodeIntrinsicType::BytesBuilder
                 | BytecodeIntrinsicType::BytesError
+                | BytecodeIntrinsicType::FormatBuilder
+                | BytecodeIntrinsicType::FormatError
                 | BytecodeIntrinsicType::TextError
                 | BytecodeIntrinsicType::CollectionError
                 | BytecodeIntrinsicType::Path
@@ -1083,6 +1085,7 @@ fn intrinsic_capability(
         }
         BytecodeIntrinsicType::Bytes
         | BytecodeIntrinsicType::BytesError
+        | BytecodeIntrinsicType::FormatError
         | BytecodeIntrinsicType::TextError
         | BytecodeIntrinsicType::CollectionError
         | BytecodeIntrinsicType::ExitStatus
@@ -1106,6 +1109,10 @@ fn intrinsic_capability(
                 | ClosedCapability::Share
         )),
         BytecodeIntrinsicType::BytesBuilder => fixed_capability(matches!(
+            capability,
+            ClosedCapability::Discard | ClosedCapability::Send
+        )),
+        BytecodeIntrinsicType::FormatBuilder => fixed_capability(matches!(
             capability,
             ClosedCapability::Discard | ClosedCapability::Send
         )),
@@ -1459,6 +1466,8 @@ fn intrinsic_terminal(
         | BytecodeIntrinsicType::Bytes
         | BytecodeIntrinsicType::BytesBuilder
         | BytecodeIntrinsicType::BytesError
+        | BytecodeIntrinsicType::FormatBuilder
+        | BytecodeIntrinsicType::FormatError
         | BytecodeIntrinsicType::TextError
         | BytecodeIntrinsicType::CollectionError
         | BytecodeIntrinsicType::Path
@@ -1630,6 +1639,8 @@ impl Verifier<'_> {
                 | BytecodeIntrinsicType::Bytes
                 | BytecodeIntrinsicType::BytesBuilder
                 | BytecodeIntrinsicType::BytesError
+                | BytecodeIntrinsicType::FormatBuilder
+                | BytecodeIntrinsicType::FormatError
                 | BytecodeIntrinsicType::TextError
                 | BytecodeIntrinsicType::CollectionError
                 | BytecodeIntrinsicType::Path
@@ -2123,6 +2134,7 @@ impl Verifier<'_> {
                     .iter()
                     .any(|parameter| parameter.mode != BytecodeParameterMode::Value)
                 && !callable.name.starts_with("std.bytes.BytesBuilder.")
+                && !callable.name.starts_with("std.format.Builder.")
                 && !callable.name.starts_with("std.env.")
                 && !callable.name.starts_with("std.testing.VirtualTime.")
                 && !callable.name.starts_with("std.testing.assertEqual")
@@ -5022,6 +5034,44 @@ impl Verifier<'_> {
         )
     }
 
+    fn is_format_result(
+        &self,
+        ty: BytecodeTypeId,
+        context: &str,
+    ) -> Result<bool, BytecodeVerificationError> {
+        let BytecodeTypeKind::Result { success, error } = &self.ty(ty, context)?.kind else {
+            return Ok(false);
+        };
+        Ok(self.is_scalar(*success, BytecodeScalarType::String)
+            && matches!(
+                &self.ty(*error, context)?.kind,
+                BytecodeTypeKind::Intrinsic {
+                    constructor: BytecodeIntrinsicType::FormatError,
+                    arguments,
+                } if arguments.is_empty()
+            ))
+    }
+
+    fn verify_display_callback(
+        &self,
+        callback_ty: BytecodeTypeId,
+        target_ty: BytecodeTypeId,
+        context: &str,
+    ) -> Result<(), BytecodeVerificationError> {
+        let BytecodeTypeKind::Function(signature) = &self.ty(callback_ty, context)?.kind else {
+            return Err(operation_error(context));
+        };
+        if signature.is_async
+            || signature.parameters.len() != 1
+            || signature.parameters[0].mode != BytecodeParameterMode::Ref
+            || signature.parameters[0].ty != target_ty
+            || !self.is_scalar(signature.outcome, BytecodeScalarType::String)
+        {
+            return Err(operation_error(context));
+        }
+        Ok(())
+    }
+
     fn function_is_async(
         &self,
         function: &BytecodeFunction,
@@ -5341,6 +5391,42 @@ impl Verifier<'_> {
                     || !self.is_intrinsic_display_type(argument.value.ty)
                     || !self.is_scalar(operation.ty, BytecodeScalarType::String)
                 {
+                    return Err(operation_error(context));
+                }
+            }
+            BytecodeOperationKind::Format { value, display } => {
+                self.verify_operand(function, value, context)?;
+                if operation_context != OperationContext::Immediate
+                    || !self.is_format_result(operation.ty, context)?
+                {
+                    return Err(operation_error(context));
+                }
+                if let Some(display) = display {
+                    self.verify_operand(function, display, context)?;
+                    self.verify_display_callback(display.ty, value.ty, context)?;
+                } else if !self.is_intrinsic_display_type(value.ty) {
+                    return Err(operation_error(context));
+                }
+            }
+            BytecodeOperationKind::JoinFormat {
+                values,
+                separator,
+                display,
+            } => {
+                self.verify_operand(function, values, context)?;
+                self.verify_operand(function, separator, context)?;
+                if operation_context != OperationContext::Immediate
+                    || !self.is_format_result(operation.ty, context)?
+                    || !self.is_scalar(separator.ty, BytecodeScalarType::String)
+                {
+                    return Err(operation_error(context));
+                }
+                let element =
+                    self.intrinsic_argument(values.ty, BytecodeIntrinsicType::Array, 0, context)?;
+                if let Some(display) = display {
+                    self.verify_operand(function, display, context)?;
+                    self.verify_display_callback(display.ty, element, context)?;
+                } else if !self.is_intrinsic_display_type(element) {
                     return Err(operation_error(context));
                 }
             }
@@ -8915,6 +9001,18 @@ fn operation_contains_invalid_borrow(operation: &BytecodeOperation) -> bool {
         BytecodeOperationKind::Display { argument } => {
             argument.mode != BytecodeParameterMode::Ref || !operand_is_loan(&argument.value)
         }
+        BytecodeOperationKind::Format { value, display } => {
+            operand_is_loan(value) || display.as_ref().is_some_and(operand_is_loan)
+        }
+        BytecodeOperationKind::JoinFormat {
+            values,
+            separator,
+            display,
+        } => {
+            operand_is_loan(values)
+                || escapes(separator)
+                || display.as_ref().is_some_and(operand_is_loan)
+        }
         BytecodeOperationKind::Assert {
             condition,
             message_parts,
@@ -8960,6 +9058,23 @@ fn operation_operands(operation: &BytecodeOperation) -> Vec<&BytecodeOperand> {
             operands.extend(arguments.iter().map(|argument| &argument.value));
         }
         BytecodeOperationKind::Display { argument } => operands.push(&argument.value),
+        BytecodeOperationKind::Format { value, display } => {
+            operands.push(value);
+            if let Some(display) = display {
+                operands.push(display);
+            }
+        }
+        BytecodeOperationKind::JoinFormat {
+            values,
+            separator,
+            display,
+        } => {
+            operands.push(values);
+            operands.push(separator);
+            if let Some(display) = display {
+                operands.push(display);
+            }
+        }
         BytecodeOperationKind::Assert {
             condition,
             message_parts,
@@ -10815,6 +10930,23 @@ fn push_tag_operation(
         BytecodeOperationKind::Display { argument } => {
             push_tag_operand(function, &argument.value, events);
         }
+        BytecodeOperationKind::Format { value, display } => {
+            push_tag_operand(function, value, events);
+            if let Some(display) = display {
+                push_tag_operand(function, display, events);
+            }
+        }
+        BytecodeOperationKind::JoinFormat {
+            values,
+            separator,
+            display,
+        } => {
+            push_tag_operand(function, values, events);
+            push_tag_operand(function, separator, events);
+            if let Some(display) = display {
+                push_tag_operand(function, display, events);
+            }
+        }
         BytecodeOperationKind::ExplicitPanic { message } => {
             push_tag_operand(function, message, events);
         }
@@ -11041,6 +11173,23 @@ fn push_operation_events(operation: &BytecodeOperation, events: &mut Vec<LocalEv
         }
         BytecodeOperationKind::Display { argument } => {
             push_operand_events(&argument.value, events);
+        }
+        BytecodeOperationKind::Format { value, display } => {
+            push_operand_events(value, events);
+            if let Some(display) = display {
+                push_operand_events(display, events);
+            }
+        }
+        BytecodeOperationKind::JoinFormat {
+            values,
+            separator,
+            display,
+        } => {
+            push_operand_events(values, events);
+            push_operand_events(separator, events);
+            if let Some(display) = display {
+                push_operand_events(display, events);
+            }
         }
         BytecodeOperationKind::ExplicitPanic { message } => {
             push_operand_events(message, events);
@@ -12715,6 +12864,22 @@ mod tests {
                 arguments: vec![ids.string, ids.string],
             },
         );
+        let format_error = push_type(
+            &mut program,
+            "FormatError",
+            BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::FormatError,
+                arguments: Vec::new(),
+            },
+        );
+        let format_result = push_type(
+            &mut program,
+            "String ! FormatError",
+            BytecodeTypeKind::Result {
+                success: ids.string,
+                error: format_error,
+            },
+        );
         let async_unit = push_type(
             &mut program,
             "async fn()",
@@ -12850,6 +13015,13 @@ mod tests {
                 arguments,
             },
         };
+        let callback = || BytecodeOperand {
+            ty: ids.function,
+            kind: BytecodeOperandKind::Function {
+                callable: BytecodeCallableId::new(0),
+                arguments: Vec::new(),
+            },
+        };
 
         let valid = vec![
             BytecodeOperation {
@@ -12929,6 +13101,21 @@ mod tests {
                             kind: BytecodeOperandKind::Loan(BytecodeLoanId::new(0)),
                         },
                     },
+                },
+            },
+            BytecodeOperation {
+                ty: format_result,
+                kind: BytecodeOperationKind::Format {
+                    value: integer(),
+                    display: None,
+                },
+            },
+            BytecodeOperation {
+                ty: format_result,
+                kind: BytecodeOperationKind::JoinFormat {
+                    values: move_slot(11, ids.array),
+                    separator: string(),
+                    display: None,
                 },
             },
             BytecodeOperation {
@@ -13149,6 +13336,75 @@ mod tests {
                 },
                 OperationContext::Immediate,
                 "borrow escapes",
+            ),
+            (
+                BytecodeOperation {
+                    ty: ids.string,
+                    kind: BytecodeOperationKind::Format {
+                        value: integer(),
+                        display: None,
+                    },
+                },
+                OperationContext::Immediate,
+                "fallible operation operands",
+            ),
+            (
+                BytecodeOperation {
+                    ty: format_result,
+                    kind: BytecodeOperationKind::Format {
+                        value: move_slot(4, ids.wrapper),
+                        display: None,
+                    },
+                },
+                OperationContext::Immediate,
+                "fallible operation operands",
+            ),
+            (
+                BytecodeOperation {
+                    ty: format_result,
+                    kind: BytecodeOperationKind::Format {
+                        value: integer(),
+                        display: Some(callback()),
+                    },
+                },
+                OperationContext::Immediate,
+                "fallible operation operands",
+            ),
+            (
+                BytecodeOperation {
+                    ty: format_result,
+                    kind: BytecodeOperationKind::JoinFormat {
+                        values: move_slot(11, ids.array),
+                        separator: integer(),
+                        display: None,
+                    },
+                },
+                OperationContext::Immediate,
+                "fallible operation operands",
+            ),
+            (
+                BytecodeOperation {
+                    ty: format_result,
+                    kind: BytecodeOperationKind::JoinFormat {
+                        values: integer(),
+                        separator: string(),
+                        display: None,
+                    },
+                },
+                OperationContext::Immediate,
+                "expected an intrinsic type",
+            ),
+            (
+                BytecodeOperation {
+                    ty: format_result,
+                    kind: BytecodeOperationKind::JoinFormat {
+                        values: move_slot(4, ids.wrapper),
+                        separator: string(),
+                        display: Some(callback()),
+                    },
+                },
+                OperationContext::Immediate,
+                "expected an intrinsic type",
             ),
             (
                 BytecodeOperation {
@@ -14250,9 +14506,9 @@ mod tests {
                 | BytecodeIntrinsicType::ProcessError
                 | BytecodeIntrinsicType::ProcessExitError
                 | BytecodeIntrinsicType::Utf8Error => [true, true, false, false, true, true],
-                BytecodeIntrinsicType::BytesBuilder | BytecodeIntrinsicType::VirtualTime => {
-                    [false, true, false, false, true, false]
-                }
+                BytecodeIntrinsicType::BytesBuilder
+                | BytecodeIntrinsicType::FormatBuilder
+                | BytecodeIntrinsicType::VirtualTime => [false, true, false, false, true, false],
                 BytecodeIntrinsicType::ProcessHandle => [false, false, false, false, true, false],
                 BytecodeIntrinsicType::FloatTolerance
                 | BytecodeIntrinsicType::FloatToleranceError
@@ -14264,6 +14520,7 @@ mod tests {
                 | BytecodeIntrinsicType::ConsoleError
                 | BytecodeIntrinsicType::CollectionError
                 | BytecodeIntrinsicType::TextError => all,
+                BytecodeIntrinsicType::FormatError => all,
                 BytecodeIntrinsicType::TempDirectory
                 | BytecodeIntrinsicType::Generator
                 | BytecodeIntrinsicType::Reader

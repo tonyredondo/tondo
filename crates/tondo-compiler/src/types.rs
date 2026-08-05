@@ -116,6 +116,8 @@ pub enum IntrinsicType {
     Bytes,
     BytesBuilder,
     BytesError,
+    FormatBuilder,
+    FormatError,
     TextError,
     CollectionError,
     Path,
@@ -168,6 +170,8 @@ impl IntrinsicType {
             Self::Bytes => "Bytes",
             Self::BytesBuilder => "BytesBuilder",
             Self::BytesError => "BytesError",
+            Self::FormatBuilder => "Builder",
+            Self::FormatError => "FormatError",
             Self::TextError => "TextError",
             Self::CollectionError => "CollectionError",
             Self::Path => "Path",
@@ -215,6 +219,8 @@ impl IntrinsicType {
             | Self::Bytes
             | Self::BytesBuilder
             | Self::BytesError
+            | Self::FormatBuilder
+            | Self::FormatError
             | Self::TextError
             | Self::CollectionError
             | Self::Path

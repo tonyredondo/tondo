@@ -3076,6 +3076,8 @@ impl<'a> FunctionBuilder<'a> {
                 | HirBootstrapHostFunction::CoreResultMap
                 | HirBootstrapHostFunction::CoreResultMapErr
                 | HirBootstrapHostFunction::CoreResultUnwrapOr
+                | HirBootstrapHostFunction::FormatFormat
+                | HirBootstrapHostFunction::FormatJoin
         )
         .then_some(function))
     }
@@ -3119,14 +3121,24 @@ impl<'a> FunctionBuilder<'a> {
                 }
             }
         }
-        let receiver = receiver.ok_or_else(|| MirError::Construction {
-            span,
-            message: "Core Option/Result operation has no receiver".into(),
-        })?;
         match function {
+            HirBootstrapHostFunction::FormatFormat | HirBootstrapHostFunction::FormatJoin => self
+                .lower_format_call(
+                    function,
+                    receiver,
+                    fixed,
+                    outcome,
+                    span,
+                    destination,
+                    current,
+                ),
             HirBootstrapHostFunction::CoreOptionMap
             | HirBootstrapHostFunction::CoreResultMap
             | HirBootstrapHostFunction::CoreResultMapErr => {
+                let receiver = receiver.ok_or_else(|| MirError::Construction {
+                    span,
+                    message: "Core Option/Result operation has no receiver".into(),
+                })?;
                 let callback = fixed.remove(&1).ok_or_else(|| MirError::Construction {
                     span,
                     message: "Core map operation has no mapper".into(),
@@ -3178,6 +3190,10 @@ impl<'a> FunctionBuilder<'a> {
             }
             HirBootstrapHostFunction::CoreOptionUnwrapOr
             | HirBootstrapHostFunction::CoreResultUnwrapOr => {
+                let receiver = receiver.ok_or_else(|| MirError::Construction {
+                    span,
+                    message: "Core Option/Result operation has no receiver".into(),
+                })?;
                 let fallback = fixed.remove(&1).ok_or_else(|| MirError::Construction {
                     span,
                     message: "Core unwrapOr operation has no fallback".into(),
@@ -3204,6 +3220,112 @@ impl<'a> FunctionBuilder<'a> {
             }
             _ => unreachable!("Core lowering is selected only for Core operations"),
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_format_call(
+        &mut self,
+        function: HirBootstrapHostFunction,
+        _receiver: Option<MirOperand>,
+        mut fixed: BTreeMap<u32, MirOperand>,
+        outcome: TypeId,
+        span: Span,
+        destination: MirPlace,
+        block: MirBlockId,
+    ) -> Result<Option<MirBlockId>, MirError> {
+        let (value, separator) = match function {
+            HirBootstrapHostFunction::FormatFormat => (
+                fixed.remove(&0).ok_or_else(|| MirError::Construction {
+                    span,
+                    message: "format(value) has no value operand".into(),
+                })?,
+                None,
+            ),
+            HirBootstrapHostFunction::FormatJoin => (
+                fixed.remove(&0).ok_or_else(|| MirError::Construction {
+                    span,
+                    message: "format.join(values, separator) has no values operand".into(),
+                })?,
+                Some(fixed.remove(&1).ok_or_else(|| MirError::Construction {
+                    span,
+                    message: "format.join(values, separator) has no separator operand".into(),
+                })?),
+            ),
+            _ => {
+                return Err(MirError::Construction {
+                    span,
+                    message: "non-format callable reached format lowering".into(),
+                });
+            }
+        };
+
+        let display_target =
+            match function {
+                HirBootstrapHostFunction::FormatFormat => value.ty,
+                HirBootstrapHostFunction::FormatJoin => {
+                    let TypeKind::Intrinsic {
+                        constructor: IntrinsicType::Array,
+                        arguments,
+                    } = self.hir.interner().kind(value.ty).map_err(|error| {
+                        MirError::Construction {
+                            span,
+                            message: format!("format.join values have an invalid type: {error}"),
+                        }
+                    })?
+                    else {
+                        return Err(MirError::Construction {
+                            span,
+                            message: "format.join values are not an Array".into(),
+                        });
+                    };
+                    *arguments.first().ok_or_else(|| MirError::Construction {
+                        span,
+                        message: "format.join Array has no element type".into(),
+                    })?
+                }
+                _ => unreachable!(),
+            };
+        let mut interner = self.hir.interner().clone();
+        let display_type = HirPreludeTraitMethod::Display
+            .function_type(&mut interner, &[display_target])
+            .map_err(|error| MirError::Construction {
+                span,
+                message: format!("cannot construct Display callback type: {error}"),
+            })?
+            .ok_or_else(|| MirError::Construction {
+                span,
+                message: "Display callback type is unavailable".into(),
+            })?;
+        let display = if HirPreludeTraitMethod::Display
+            .has_intrinsic_implementation(&interner, &[display_target])
+            .map_err(|error| MirError::Construction {
+                span,
+                message: format!("cannot select Display implementation: {error}"),
+            })? {
+            None
+        } else {
+            Some(MirOperand {
+                ty: display_type,
+                kind: MirOperandKind::PreludeTraitFunction {
+                    method: HirPreludeTraitMethod::Display,
+                    arguments: vec![display_target],
+                },
+            })
+        };
+        let kind = match separator {
+            None => MirOperationKind::Format { value, display },
+            Some(separator) => MirOperationKind::JoinFormat {
+                values: value,
+                separator,
+                display,
+            },
+        };
+        self.invoke(
+            block,
+            span,
+            Some(destination),
+            MirOperation { ty: outcome, kind },
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -6665,6 +6787,23 @@ fn collect_operation_region_uses(
                 collect_operand_region_uses(argument, loans, output);
             }
         }
+        MirOperationKind::Format { value, display } => {
+            collect_operand_region_uses(value, loans, output);
+            if let Some(display) = display {
+                collect_operand_region_uses(display, loans, output);
+            }
+        }
+        MirOperationKind::JoinFormat {
+            values,
+            separator,
+            display,
+        } => {
+            collect_operand_region_uses(values, loans, output);
+            collect_operand_region_uses(separator, loans, output);
+            if let Some(display) = display {
+                collect_operand_region_uses(display, loans, output);
+            }
+        }
     }
 }
 
@@ -6728,6 +6867,23 @@ fn operation_move_places(operation: &MirOperation) -> Vec<MirPlace> {
         MirOperationKind::BootstrapHostCall { arguments, .. } => {
             for argument in arguments {
                 collect(argument);
+            }
+        }
+        MirOperationKind::Format { value, display } => {
+            collect(value);
+            if let Some(display) = display {
+                collect(display);
+            }
+        }
+        MirOperationKind::JoinFormat {
+            values,
+            separator,
+            display,
+        } => {
+            collect(values);
+            collect(separator);
+            if let Some(display) = display {
+                collect(display);
             }
         }
     }

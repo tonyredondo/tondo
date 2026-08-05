@@ -99,7 +99,9 @@ pub(crate) const fn intrinsic_terminal_contract(
         | IntrinsicType::Pipeline
         | IntrinsicType::Bytes
         | IntrinsicType::BytesBuilder
+        | IntrinsicType::FormatBuilder
         | IntrinsicType::BytesError
+        | IntrinsicType::FormatError
         | IntrinsicType::TextError
         | IntrinsicType::CollectionError
         | IntrinsicType::Path
@@ -455,7 +457,9 @@ fn intrinsic_node(constructor: IntrinsicType, arguments: Vec<TypeId>) -> Termina
         | IntrinsicType::Pipeline
         | IntrinsicType::Bytes
         | IntrinsicType::BytesBuilder
+        | IntrinsicType::FormatBuilder
         | IntrinsicType::BytesError
+        | IntrinsicType::FormatError
         | IntrinsicType::TextError
         | IntrinsicType::CollectionError
         | IntrinsicType::Path

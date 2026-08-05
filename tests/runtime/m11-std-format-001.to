@@ -1,0 +1,32 @@
+import std.console
+import std.format
+
+type Label = {
+    text: String
+}
+
+impl Display for Label {
+    fn display(self): String {
+        "label:{self.text}"
+    }
+}
+
+fn main(): !format.FormatError {
+    let label = Label { text: "Tondo" }
+    let rendered = format.format(label)?
+    assert(rendered == "label:Tondo")
+
+    let numeric = format.format(42)?
+    assert(numeric == "42")
+
+    let joined = format.join([1, 2, 3], ",")?
+    assert(joined == "1,2,3")
+
+    var builder = format.Builder.new()
+    builder.append("ton")?
+    builder.append("do")?
+    let built = builder.finish()?
+    assert(built == "tondo")
+
+    console.print("format-ok\n")
+}

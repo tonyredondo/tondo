@@ -6,8 +6,8 @@ use std::fmt;
 use crate::hir::{
     CapabilityAnalysis, CapabilityAssumptions, HirBinaryOperator, HirCallProtocol, HirCallableId,
     HirCapability, HirCapabilityStatus, HirClosureProtocols, HirContainmentKind,
-    HirGenericParameter, HirIndexAccess, HirNominalShape, HirPrefixOperator, HirProgram,
-    HirTerminalStatus, HirTraitConstructor, HirTypeDeclarationKind, HirVariantPayload,
+    HirGenericParameter, HirIndexAccess, HirNominalShape, HirPrefixOperator, HirPreludeTraitMethod,
+    HirProgram, HirTerminalStatus, HirTraitConstructor, HirTypeDeclarationKind, HirVariantPayload,
     StaticCollectionRegion, StaticRegionRelation, StaticSlice, TerminalAnalysis,
     static_collection_relation,
 };
@@ -794,6 +794,14 @@ fn mir_operation_contains_invalid_borrow(operation: &MirOperation) -> bool {
             ..
         } => escapes(condition) || message_parts.iter().any(|part| escapes(&part.value)),
         MirOperationKind::BootstrapHostCall { arguments, .. } => arguments.iter().any(escapes),
+        MirOperationKind::Format { value, display } => {
+            escapes(value) || display.as_ref().is_some_and(escapes)
+        }
+        MirOperationKind::JoinFormat {
+            values,
+            separator,
+            display,
+        } => escapes(values) || escapes(separator) || display.as_ref().is_some_and(escapes),
     }
 }
 
@@ -847,6 +855,23 @@ fn operation_operands(operation: &MirOperation) -> Vec<&MirOperand> {
             operands.extend(message_parts.iter().map(super::MirAssertMessagePart::value));
         }
         MirOperationKind::BootstrapHostCall { arguments, .. } => operands.extend(arguments),
+        MirOperationKind::Format { value, display } => {
+            operands.push(value);
+            if let Some(display) = display {
+                operands.push(display);
+            }
+        }
+        MirOperationKind::JoinFormat {
+            values,
+            separator,
+            display,
+        } => {
+            operands.push(values);
+            operands.push(separator);
+            if let Some(display) = display {
+                operands.push(display);
+            }
+        }
     }
     operands
 }
@@ -2449,6 +2474,99 @@ impl Verifier<'_> {
         Ok(())
     }
 
+    fn verify_format_operation(
+        &self,
+        function: &MirFunction,
+        value: &MirOperand,
+        separator: Option<&MirOperand>,
+        display: Option<&MirOperand>,
+        operation_ty: TypeId,
+        context: &str,
+    ) -> Result<(), MirInvariantError> {
+        self.verify_operand(function, value, context)?;
+        let string = self.hir.interner().scalar(ScalarType::String);
+        let format_error = {
+            let mut interner = self.hir.interner().clone();
+            interner
+                .intrinsic(IntrinsicType::FormatError, Vec::new())
+                .map_err(|error| MirInvariantError::new(context, error.to_string()))?
+        };
+        let TypeKind::Result { success, error } = self.kind(operation_ty, context)? else {
+            return Err(MirInvariantError::new(
+                context,
+                "format operation must produce Result[String, FormatError]",
+            ));
+        };
+        if *success != string || *error != format_error {
+            return Err(MirInvariantError::new(
+                context,
+                "format operation result is not Result[String, FormatError]",
+            ));
+        }
+
+        let display_target = match separator {
+            None => value.ty,
+            Some(separator) => {
+                self.verify_operand(function, separator, context)?;
+                if separator.ty != string {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "format.join separator is not String",
+                    ));
+                }
+                let arguments =
+                    self.intrinsic_arguments(value.ty, IntrinsicType::Array, context)?;
+                arguments[0]
+            }
+        };
+        let mut interner = self.hir.interner().clone();
+        let intrinsic = HirPreludeTraitMethod::Display
+            .has_intrinsic_implementation(&interner, &[display_target])
+            .map_err(|error| MirInvariantError::new(context, error.to_string()))?;
+        match (intrinsic, display) {
+            (true, None) => {}
+            (false, Some(callback)) => {
+                self.verify_operand(function, callback, context)?;
+                let expected = HirPreludeTraitMethod::Display
+                    .function_type(&mut interner, &[display_target])
+                    .map_err(|error| MirInvariantError::new(context, error.to_string()))?
+                    .ok_or_else(|| {
+                        MirInvariantError::new(
+                            context,
+                            "format Display callback has no closed function type",
+                        )
+                    })?;
+                if callback.ty != expected
+                    || !matches!(
+                        &callback.kind,
+                        MirOperandKind::PreludeTraitFunction {
+                            method: HirPreludeTraitMethod::Display,
+                            arguments,
+                        } if arguments.as_slice() == [display_target]
+                    )
+                {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "format Display callback does not match its target",
+                    ));
+                }
+            }
+            (true, Some(_)) => {
+                return Err(MirInvariantError::new(
+                    context,
+                    "intrinsic Display format operation must not carry a callback",
+                ));
+            }
+            (false, None) => {
+                return Err(MirInvariantError::new(
+                    context,
+                    "non-intrinsic Display format operation is missing its callback",
+                ));
+            }
+        }
+        Ok(())
+    }
+
     fn verify_operation(
         &self,
         function: &MirFunction,
@@ -2648,6 +2766,30 @@ impl Verifier<'_> {
                         )?;
                     }
                 }
+            }
+            MirOperationKind::Format { value, display } => {
+                self.verify_format_operation(
+                    function,
+                    value,
+                    None,
+                    display.as_ref(),
+                    operation.ty,
+                    context,
+                )?;
+            }
+            MirOperationKind::JoinFormat {
+                values,
+                separator,
+                display,
+            } => {
+                self.verify_format_operation(
+                    function,
+                    values,
+                    Some(separator),
+                    display.as_ref(),
+                    operation.ty,
+                    context,
+                )?;
             }
             MirOperationKind::ExplicitPanic { message } => {
                 self.verify_operand(function, message, context)?;
@@ -8198,6 +8340,23 @@ fn push_tag_operation(
                 push_tag_operand(function, argument, events);
             }
         }
+        MirOperationKind::Format { value, display } => {
+            push_tag_operand(function, value, events);
+            if let Some(display) = display {
+                push_tag_operand(function, display, events);
+            }
+        }
+        MirOperationKind::JoinFormat {
+            values,
+            separator,
+            display,
+        } => {
+            push_tag_operand(function, values, events);
+            push_tag_operand(function, separator, events);
+            if let Some(display) = display {
+                push_tag_operand(function, display, events);
+            }
+        }
     }
 }
 
@@ -8942,6 +9101,23 @@ fn push_operation_events(operation: &MirOperation, events: &mut Vec<LocalEvent>)
         MirOperationKind::BootstrapHostCall { arguments, .. } => {
             for argument in arguments {
                 push_operand_events(argument, events);
+            }
+        }
+        MirOperationKind::Format { value, display } => {
+            push_operand_events(value, events);
+            if let Some(display) = display {
+                push_operand_events(display, events);
+            }
+        }
+        MirOperationKind::JoinFormat {
+            values,
+            separator,
+            display,
+        } => {
+            push_operand_events(values, events);
+            push_operand_events(separator, events);
+            if let Some(display) = display {
+                push_operand_events(display, events);
             }
         }
     }
@@ -10139,6 +10315,27 @@ mod tests {
                     },
                 },
                 1,
+            ),
+            (
+                MirOperation {
+                    ty: integer,
+                    kind: MirOperationKind::Format {
+                        value: borrowed.clone(),
+                        display: Some(copy.clone()),
+                    },
+                },
+                2,
+            ),
+            (
+                MirOperation {
+                    ty: integer,
+                    kind: MirOperationKind::JoinFormat {
+                        values: loaned.clone(),
+                        separator: borrowed.clone(),
+                        display: Some(copy.clone()),
+                    },
+                },
+                3,
             ),
         ];
         for (operation, expected_operands) in &operations {
@@ -12389,6 +12586,186 @@ mod tests {
             error
                 .message()
                 .contains("bootstrap host operation does not match its closed contract"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn format_operations_are_explicitly_verified_and_reject_corruption() {
+        const SOURCE: &str = "import std.format\n\
+             type Label = { text: String }\n\
+             impl Display for Label {\n\
+                 fn display(self): String { self.text }\n\
+             }\n\
+             fn operations(label: Label, values: Array[Int]): !format.FormatError {\n\
+                 let custom = format.format(label)?\n\
+                 let intrinsic = format.format(42)?\n\
+                 let joined = format.join(values, \",\")?\n\
+                 _ = custom\n\
+                 _ = intrinsic\n\
+                 _ = joined\n\
+             }\n";
+
+        let (resolved, hir, mir) = checked_mir(SOURCE);
+        let operations = MirFunctionId::Callable(callable_named(&resolved, "operations"));
+        let function = mir.functions.get(&operations).unwrap();
+        assert!(function.blocks.iter().any(|block| {
+            matches!(
+                block.terminator.kind,
+                MirTerminatorKind::Invoke {
+                    operation: MirOperation {
+                        kind: MirOperationKind::Format {
+                            display: Some(_),
+                            ..
+                        },
+                        ..
+                    },
+                    ..
+                }
+            )
+        }));
+        assert!(function.blocks.iter().any(|block| {
+            matches!(
+                block.terminator.kind,
+                MirTerminatorKind::Invoke {
+                    operation: MirOperation {
+                        kind: MirOperationKind::Format { display: None, .. },
+                        ..
+                    },
+                    ..
+                }
+            )
+        }));
+        assert!(function.blocks.iter().any(|block| {
+            matches!(
+                block.terminator.kind,
+                MirTerminatorKind::Invoke {
+                    operation: MirOperation {
+                        kind: MirOperationKind::JoinFormat { display: None, .. },
+                        ..
+                    },
+                    ..
+                }
+            )
+        }));
+        verify_mir(&resolved, &hir, &mir).unwrap();
+
+        let error = corrupted_mir(SOURCE, |resolved, hir, mir| {
+            let operations = MirFunctionId::Callable(callable_named(resolved, "operations"));
+            let operation = operation_mut(mir.functions.get_mut(&operations).unwrap(), |kind| {
+                matches!(kind, MirOperationKind::Format { display: None, .. })
+            });
+            operation.ty = hir.interner().scalar(ScalarType::Int);
+        });
+        assert!(
+            error
+                .message()
+                .contains("format operation must produce Result[String, FormatError]"),
+            "{error}"
+        );
+
+        let error = corrupted_mir(SOURCE, |resolved, hir, mir| {
+            let operations = MirFunctionId::Callable(callable_named(resolved, "operations"));
+            let operation = operation_mut(mir.functions.get_mut(&operations).unwrap(), |kind| {
+                matches!(kind, MirOperationKind::JoinFormat { .. })
+            });
+            let MirOperationKind::JoinFormat { separator, .. } = &mut operation.kind else {
+                unreachable!()
+            };
+            *separator = MirOperand {
+                ty: hir.interner().scalar(ScalarType::Int),
+                kind: MirOperandKind::Constant(MirConstant::Integer("1".into())),
+            };
+        });
+        assert!(
+            error.message().contains("separator is not String"),
+            "{error}"
+        );
+
+        let error = corrupted_mir(SOURCE, |resolved, _hir, mir| {
+            let operations = MirFunctionId::Callable(callable_named(resolved, "operations"));
+            let callback = mir
+                .functions
+                .get(&operations)
+                .unwrap()
+                .blocks
+                .iter()
+                .find_map(|block| match &block.terminator.kind {
+                    MirTerminatorKind::Invoke {
+                        operation:
+                            MirOperation {
+                                kind:
+                                    MirOperationKind::Format {
+                                        display: Some(callback),
+                                        ..
+                                    },
+                                ..
+                            },
+                        ..
+                    } => Some(callback.clone()),
+                    _ => None,
+                })
+                .unwrap();
+            let operation = operation_mut(mir.functions.get_mut(&operations).unwrap(), |kind| {
+                matches!(kind, MirOperationKind::Format { display: None, .. })
+            });
+            let MirOperationKind::Format { display, .. } = &mut operation.kind else {
+                unreachable!()
+            };
+            *display = Some(callback);
+        });
+        assert!(
+            error
+                .message()
+                .contains("intrinsic Display format operation must not carry a callback"),
+            "{error}"
+        );
+
+        let error = corrupted_mir(SOURCE, |resolved, _hir, mir| {
+            let operations = MirFunctionId::Callable(callable_named(resolved, "operations"));
+            let operation = operation_mut(mir.functions.get_mut(&operations).unwrap(), |kind| {
+                matches!(
+                    kind,
+                    MirOperationKind::Format {
+                        display: Some(_),
+                        ..
+                    }
+                )
+            });
+            let MirOperationKind::Format { display, .. } = &mut operation.kind else {
+                unreachable!()
+            };
+            *display = None;
+        });
+        assert!(
+            error
+                .message()
+                .contains("non-intrinsic Display format operation is missing its callback"),
+            "{error}"
+        );
+
+        let error = corrupted_mir(SOURCE, |resolved, hir, mir| {
+            let operations = MirFunctionId::Callable(callable_named(resolved, "operations"));
+            let operation = operation_mut(mir.functions.get_mut(&operations).unwrap(), |kind| {
+                matches!(
+                    kind,
+                    MirOperationKind::Format {
+                        display: Some(_),
+                        ..
+                    }
+                )
+            });
+            let MirOperationKind::Format { display, .. } = &mut operation.kind else {
+                unreachable!()
+            };
+            let callback = display.as_mut().unwrap();
+            callback.ty = hir.interner().scalar(ScalarType::String);
+            callback.kind = MirOperandKind::Constant(MirConstant::String("wrong".into()));
+        });
+        assert!(
+            error
+                .message()
+                .contains("format Display callback does not match its target"),
             "{error}"
         );
     }

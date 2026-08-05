@@ -823,7 +823,9 @@ impl<'a> ExpressionChecker<'a> {
                         | IntrinsicType::Pipeline
                         | IntrinsicType::Bytes
                         | IntrinsicType::BytesBuilder
+                        | IntrinsicType::FormatBuilder
                         | IntrinsicType::BytesError
+                        | IntrinsicType::FormatError
                         | IntrinsicType::TextError
                         | IntrinsicType::CollectionError
                         | IntrinsicType::Path
@@ -13694,6 +13696,11 @@ impl<'a> ExpressionChecker<'a> {
             {
                 (module_token, function_token, 3_u8)
             }
+            [module_token, type_token, function_token]
+                if type_token.token().normalized_identifier() == Some("Builder") =>
+            {
+                (module_token, function_token, 4_u8)
+            }
             _ => return Ok(None),
         };
         let Some(module_reference) = self.resolved.reference(file, module_token.range()) else {
@@ -13731,6 +13738,11 @@ impl<'a> ExpressionChecker<'a> {
             match (module.path().as_str(), function_name) {
                 ("testing", Some("new")) => HirBootstrapHostFunction::TestingGeneratorNew,
                 ("testing", Some("forCase")) => HirBootstrapHostFunction::TestingGeneratorForCase,
+                _ => return Ok(None),
+            }
+        } else if static_type == 4 {
+            match (module.path().as_str(), function_name) {
+                ("format", Some("new")) => HirBootstrapHostFunction::FormatBuilder,
                 _ => return Ok(None),
             }
         } else {
@@ -13773,6 +13785,8 @@ impl<'a> ExpressionChecker<'a> {
                 ("iter", Some("filter")) => HirBootstrapHostFunction::IterFilter,
                 ("iter", Some("take")) => HirBootstrapHostFunction::IterTake,
                 ("iter", Some("collect")) => HirBootstrapHostFunction::IterCollect,
+                ("format", Some("format")) => HirBootstrapHostFunction::FormatFormat,
+                ("format", Some("join")) => HirBootstrapHostFunction::FormatJoin,
                 ("path", Some("fromString")) => HirBootstrapHostFunction::PathFromString,
                 ("path", Some("fromBytes")) => HirBootstrapHostFunction::PathFromBytes,
                 ("fs", Some("readAll")) => HirBootstrapHostFunction::FsReadAll,
@@ -17013,6 +17027,12 @@ impl<'a> ExpressionChecker<'a> {
                 (IntrinsicType::BytesBuilder, "finish") => {
                     HirBootstrapHostFunction::BytesBuilderFinish
                 }
+                (IntrinsicType::FormatBuilder, "append") => {
+                    HirBootstrapHostFunction::FormatBuilderAppend
+                }
+                (IntrinsicType::FormatBuilder, "finish") => {
+                    HirBootstrapHostFunction::FormatBuilderFinish
+                }
                 (IntrinsicType::Duration, "toNanoseconds") => {
                     HirBootstrapHostFunction::DurationToNanoseconds
                 }
@@ -17096,6 +17116,8 @@ impl<'a> ExpressionChecker<'a> {
                 | HirBootstrapHostFunction::BytesBuilderAppend
                 | HirBootstrapHostFunction::BytesBuilderAppendArray
                 | HirBootstrapHostFunction::BytesBuilderFinish
+                | HirBootstrapHostFunction::FormatBuilderAppend
+                | HirBootstrapHostFunction::FormatBuilderFinish
                 | HirBootstrapHostFunction::TestingGeneratorNextUInt
                 | HirBootstrapHostFunction::TestingGeneratorNextBool
                 | HirBootstrapHostFunction::TestingGeneratorNextInt
