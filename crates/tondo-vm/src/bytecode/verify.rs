@@ -472,6 +472,7 @@ impl<'a> TraceMetadataAnalysis<'a> {
                 | BytecodeIntrinsicType::GenerationError
                 | BytecodeIntrinsicType::Reader
                 | BytecodeIntrinsicType::Writer
+                | BytecodeIntrinsicType::IoLimits
                 | BytecodeIntrinsicType::IoError
                 | BytecodeIntrinsicType::ConsoleError
                 | BytecodeIntrinsicType::ExitStatus
@@ -1083,6 +1084,15 @@ fn intrinsic_capability(
                 ClosedCapability::Discard | ClosedCapability::Send
             ))
         }
+        BytecodeIntrinsicType::IoLimits => fixed_capability(matches!(
+            capability,
+            ClosedCapability::Copy
+                | ClosedCapability::Discard
+                | ClosedCapability::Equatable
+                | ClosedCapability::Key
+                | ClosedCapability::Send
+                | ClosedCapability::Share
+        )),
         BytecodeIntrinsicType::Bytes
         | BytecodeIntrinsicType::BytesError
         | BytecodeIntrinsicType::FormatError
@@ -1484,6 +1494,7 @@ fn intrinsic_terminal(
         | BytecodeIntrinsicType::GenerationError
         | BytecodeIntrinsicType::Reader
         | BytecodeIntrinsicType::Writer
+        | BytecodeIntrinsicType::IoLimits
         | BytecodeIntrinsicType::IoError
         | BytecodeIntrinsicType::ConsoleError
         | BytecodeIntrinsicType::ExitStatus
@@ -1657,6 +1668,7 @@ impl Verifier<'_> {
                 | BytecodeIntrinsicType::GenerationError
                 | BytecodeIntrinsicType::Reader
                 | BytecodeIntrinsicType::Writer
+                | BytecodeIntrinsicType::IoLimits
                 | BytecodeIntrinsicType::IoError
                 | BytecodeIntrinsicType::ConsoleError
                 | BytecodeIntrinsicType::ExitStatus
@@ -2122,6 +2134,10 @@ impl Verifier<'_> {
                         BytecodeParameterMode::Mut | BytecodeParameterMode::Var
                     )
                 })
+                && !callable.name.starts_with("std.io.Reader.")
+                && !callable.name.starts_with("std.io.Writer.")
+                && !callable.name.starts_with("std.io.readAll")
+                && !callable.name.starts_with("std.io.writeAll")
             {
                 return Err(BytecodeVerificationError::new(
                     &context,
@@ -2147,6 +2163,8 @@ impl Verifier<'_> {
                 && !callable.name.starts_with("std.console.readLine")
                 && !callable.name.starts_with("std.io.Reader.read")
                 && !callable.name.starts_with("std.io.Writer.")
+                && !callable.name.starts_with("std.io.readAll")
+                && !callable.name.starts_with("std.io.writeAll")
                 && !callable.name.starts_with("std.collections.")
             {
                 return Err(BytecodeVerificationError::new(
@@ -14525,6 +14543,7 @@ mod tests {
                 | BytecodeIntrinsicType::Generator
                 | BytecodeIntrinsicType::Reader
                 | BytecodeIntrinsicType::Writer => [false, true, false, false, true, false],
+                BytecodeIntrinsicType::IoLimits => [true, true, true, true, true, true],
                 BytecodeIntrinsicType::Duration
                 | BytecodeIntrinsicType::DurationError
                 | BytecodeIntrinsicType::ClockError => all,

@@ -14,7 +14,7 @@ use std::os::unix::ffi::OsStringExt;
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 
 use tondo_stdlib::testing::{FloatTolerance, Generator, TextDiff, diff_text};
-use tondo_stdlib::{json, math, messagepack, path, protobuf};
+use tondo_stdlib::{io as stdlib_io, json, math, messagepack, path, protobuf};
 use tondo_vm::runtime::{
     RuntimeHostValueKind, RuntimeValue, VmError, VmHost, VmTestNodeKind, VmTestNodeOutcome,
 };
@@ -141,6 +141,7 @@ enum HostValue {
     Writer {
         stream: StreamKind,
     },
+    IoLimits(stdlib_io::IoLimits),
     IoError {
         _message: String,
     },
@@ -278,6 +279,7 @@ pub(crate) struct BootstrapHost {
     env_snapshot_id: Option<u64>,
     values: BTreeMap<u64, HostValue>,
     jobs: BTreeMap<u64, AsyncJob>,
+    ready_jobs: BTreeMap<u64, Result<RuntimeValue, VmError>>,
     time_jobs: BTreeMap<u64, TimeJob>,
     clock: ClockProvider,
     previous_clock: Option<(ClockProvider, u64)>,
@@ -336,6 +338,7 @@ impl BootstrapHost {
             env_snapshot_id: None,
             values: BTreeMap::new(),
             jobs: BTreeMap::new(),
+            ready_jobs: BTreeMap::new(),
             time_jobs: BTreeMap::new(),
             clock: ClockProvider::real(),
             previous_clock: None,
@@ -722,6 +725,20 @@ impl BootstrapHost {
 
     fn io_result_error(&mut self, message: impl Into<String>) -> RuntimeValue {
         RuntimeValue::ResultErr(Box::new(self.io_error(message)))
+    }
+
+    fn io_limits(&self, value: &RuntimeValue) -> Result<stdlib_io::IoLimits, VmError> {
+        let RuntimeValue::Host {
+            kind: RuntimeHostValueKind::IoLimits,
+            id,
+        } = value
+        else {
+            return Err(VmError::Host("IoLimits value is invalid".into()));
+        };
+        match self.values.get(id) {
+            Some(HostValue::IoLimits(limits)) => Ok(*limits),
+            _ => Err(VmError::Host("IoLimits token is stale".into())),
+        }
     }
 
     fn console_error(&mut self, message: impl Into<String>) -> RuntimeValue {
@@ -1486,25 +1503,25 @@ impl VmHost for BootstrapHost {
                 Ok(RuntimeValue::Unit)
             }
             ("std.console.flush", []) => Ok(RuntimeValue::Unit),
-            ("std.console.stdin", []) => Ok(self.allocate(
+            ("std.console.stdin", []) => Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
                 RuntimeHostValueKind::Reader,
                 HostValue::Reader {
                     stream: StreamKind::Stdin,
                     offset: 0,
                 },
-            )),
-            ("std.console.stdout", []) => Ok(self.allocate(
+            )))),
+            ("std.console.stdout", []) => Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
                 RuntimeHostValueKind::Writer,
                 HostValue::Writer {
                     stream: StreamKind::Stdout,
                 },
-            )),
-            ("std.console.stderr", []) => Ok(self.allocate(
+            )))),
+            ("std.console.stderr", []) => Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
                 RuntimeHostValueKind::Writer,
                 HostValue::Writer {
                     stream: StreamKind::Stderr,
                 },
-            )),
+            )))),
             ("std.console.readLine", [reader]) => {
                 let (id, stream, offset) = self.reader_state(reader)?;
                 if stream != StreamKind::Stdin {
@@ -1530,6 +1547,74 @@ impl VmHost for BootstrapHost {
                 Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::OptionSome(
                     Box::new(RuntimeValue::String(value)),
                 ))))
+            }
+            ("std.io.defaultLimits", []) => Ok(self.allocate(
+                RuntimeHostValueKind::IoLimits,
+                HostValue::IoLimits(stdlib_io::IoLimits::default()),
+            )),
+            (
+                "std.io.limits",
+                [
+                    RuntimeValue::Integer(max_bytes),
+                    RuntimeValue::Integer(max_read),
+                ],
+            ) => {
+                let Ok(max_bytes) = usize::try_from(*max_bytes) else {
+                    return Ok(self.io_result_error("max_bytes is invalid"));
+                };
+                let Ok(max_read) = usize::try_from(*max_read) else {
+                    return Ok(self.io_result_error("max_read is invalid"));
+                };
+                match stdlib_io::IoLimits::new(max_bytes, max_read) {
+                    Ok(limits) => Ok(RuntimeValue::ResultOk(Box::new(
+                        self.allocate(RuntimeHostValueKind::IoLimits, HostValue::IoLimits(limits)),
+                    ))),
+                    Err(error) => Ok(self.io_result_error(format!("{error:?}"))),
+                }
+            }
+            ("std.io.readAll", [reader, limits]) => {
+                let limits = self.io_limits(limits)?;
+                let (id, stream, offset) = self.reader_state(reader)?;
+                if stream != StreamKind::Stdin {
+                    return Ok(self.io_result_error("reader is not readable"));
+                }
+                let remaining = self.stdin.len().saturating_sub(offset);
+                // The public helper checks the aggregate bound before touching
+                // the handle, so a rejected operation cannot consume input.
+                if remaining > limits.max_bytes {
+                    return Ok(self.io_result_error("readAll exceeds max_bytes"));
+                }
+                let mut output = Vec::with_capacity(remaining);
+                let mut cursor = offset;
+                while cursor < self.stdin.len() {
+                    let count = limits.max_read.min(self.stdin.len() - cursor);
+                    if let Err(message) = self.ensure_bytes_len(count) {
+                        return Ok(self.io_result_error(message));
+                    }
+                    output.extend_from_slice(&self.stdin[cursor..cursor + count]);
+                    cursor += count;
+                }
+                if let Some(HostValue::Reader { offset, .. }) = self.values.get_mut(&id) {
+                    *offset = cursor;
+                }
+                let bytes = self.allocate(RuntimeHostValueKind::Bytes, HostValue::Bytes(output));
+                Ok(RuntimeValue::ResultOk(Box::new(bytes)))
+            }
+            ("std.io.writeAll", [writer, bytes]) => {
+                let stream = self.writer_stream(writer)?;
+                let bytes = self.bytes(bytes)?.to_vec();
+                if stream == StreamKind::Stdin {
+                    return Ok(self.io_result_error("stdin is not writable"));
+                }
+                if let Err(message) = self.ensure_bytes_len(bytes.len()) {
+                    return Ok(self.io_result_error(message));
+                }
+                match stream {
+                    StreamKind::Stdout => self.stdout.extend_from_slice(&bytes),
+                    StreamKind::Stderr => self.stderr.extend_from_slice(&bytes),
+                    StreamKind::Stdin => unreachable!("stdin rejected above"),
+                }
+                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
             }
             ("std.io.Reader.read", [reader, RuntimeValue::Integer(maximum)]) => {
                 let Ok(maximum) = usize::try_from(*maximum) else {
@@ -2949,6 +3034,23 @@ impl VmHost for BootstrapHost {
     }
 
     fn start_async(&mut self, name: &str, arguments: &[RuntimeValue]) -> Result<u64, VmError> {
+        if matches!(
+            name,
+            "std.io.Reader.read"
+                | "std.io.Writer.write"
+                | "std.io.Writer.flush"
+                | "std.io.readAll"
+                | "std.io.writeAll"
+        ) {
+            let call = self.next_job;
+            self.next_job = self
+                .next_job
+                .checked_add(1)
+                .ok_or_else(|| VmError::Host("async call identity space exhausted".into()))?;
+            let result = self.invoke(name, arguments);
+            self.ready_jobs.insert(call, result);
+            return Ok(call);
+        }
         if name == "std.testing.VirtualTime.settle" {
             let [controller] = arguments else {
                 return Err(VmError::Host(
@@ -3030,6 +3132,9 @@ impl VmHost for BootstrapHost {
     }
 
     fn poll_async(&mut self, call: u64) -> Result<Option<RuntimeValue>, VmError> {
+        if let Some(result) = self.ready_jobs.remove(&call) {
+            return result.map(Some);
+        }
         if self.time_jobs.contains_key(&call) {
             let ready = {
                 let job = self
@@ -3137,6 +3242,11 @@ impl VmHost for BootstrapHost {
     }
 
     fn cancel_async(&mut self, call: u64) -> Result<(), VmError> {
+        if self.ready_jobs.contains_key(&call) {
+            let cancelled = self.io_result_error("operation cancelled");
+            self.ready_jobs.insert(call, Ok(cancelled));
+            return Ok(());
+        }
         if let Some(job) = self.time_jobs.get_mut(&call) {
             job.cancellation = true;
             return Ok(());
@@ -3151,7 +3261,11 @@ impl VmHost for BootstrapHost {
 
     fn cleanup(&mut self, value: &RuntimeValue) -> Result<(), VmError> {
         let RuntimeValue::Host {
-            kind: kind @ (RuntimeHostValueKind::ProcessHandle | RuntimeHostValueKind::Timer),
+            kind:
+                kind @ (RuntimeHostValueKind::ProcessHandle
+                | RuntimeHostValueKind::Timer
+                | RuntimeHostValueKind::Reader
+                | RuntimeHostValueKind::Writer),
             id,
         } = value
         else {
@@ -3544,7 +3658,7 @@ mod tests {
     #[test]
     fn console_streams_preserve_partial_reads_and_separate_output_channels() {
         let mut host = BootstrapHost::with_stdin(b"uno\ndos\n".to_vec());
-        let reader = host.invoke("std.console.stdin", &[]).unwrap();
+        let reader = ok(host.invoke("std.console.stdin", &[]).unwrap());
         assert_eq!(
             host.invoke("std.console.readLine", std::slice::from_ref(&reader))
                 .unwrap(),
@@ -3566,7 +3680,7 @@ mod tests {
         );
 
         let mut chunks = BootstrapHost::with_stdin(b"abcdef".to_vec());
-        let reader = chunks.invoke("std.console.stdin", &[]).unwrap();
+        let reader = ok(chunks.invoke("std.console.stdin", &[]).unwrap());
         let first = ok(chunks
             .invoke(
                 "std.io.Reader.read",
@@ -3589,8 +3703,8 @@ mod tests {
             RuntimeHostValueKind::Bytes,
             HostValue::Bytes(b"out".to_vec()),
         );
-        let stdout = chunks.invoke("std.console.stdout", &[]).unwrap();
-        let stderr = chunks.invoke("std.console.stderr", &[]).unwrap();
+        let stdout = ok(chunks.invoke("std.console.stdout", &[]).unwrap());
+        let stderr = ok(chunks.invoke("std.console.stderr", &[]).unwrap());
         assert_eq!(
             ok(chunks
                 .invoke("std.io.Writer.write", &[stdout, bytes.clone()])
@@ -3605,6 +3719,110 @@ mod tests {
         );
         assert_eq!(chunks.stdout, b"out");
         assert_eq!(chunks.stderr, b"out");
+    }
+
+    #[test]
+    fn io_limits_helpers_are_bounded_and_atomic_at_the_public_host_boundary() {
+        let mut host = BootstrapHost::with_stdin(b"abcdef".to_vec());
+        let reader = ok(host.invoke("std.console.stdin", &[]).unwrap());
+        let limits = ok(host
+            .invoke(
+                "std.io.limits",
+                &[RuntimeValue::Integer(3), RuntimeValue::Integer(2)],
+            )
+            .unwrap());
+        assert!(matches!(
+            limits,
+            RuntimeValue::Host {
+                kind: RuntimeHostValueKind::IoLimits,
+                ..
+            }
+        ));
+        let rejected = host
+            .invoke("std.io.readAll", &[reader.clone(), limits])
+            .unwrap();
+        assert!(matches!(
+            rejected,
+            RuntimeValue::ResultErr(value)
+                if matches!(value.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::IoError, .. })
+        ));
+        let first = ok(host
+            .invoke(
+                "std.io.Reader.read",
+                &[reader.clone(), RuntimeValue::Integer(2)],
+            )
+            .unwrap());
+        let RuntimeValue::OptionSome(first) = first else {
+            panic!("a rejected readAll must not consume the reader");
+        };
+        assert_eq!(host.bytes(&first).unwrap(), b"ab");
+
+        let mut exact = BootstrapHost::with_stdin(b"abcdef".to_vec());
+        let reader = ok(exact.invoke("std.console.stdin", &[]).unwrap());
+        let limits = ok(exact
+            .invoke(
+                "std.io.limits",
+                &[RuntimeValue::Integer(8), RuntimeValue::Integer(2)],
+            )
+            .unwrap());
+        let result = ok(exact.invoke("std.io.readAll", &[reader, limits]).unwrap());
+        assert_eq!(exact.bytes(&result).unwrap(), b"abcdef");
+
+        let data = exact.allocate(
+            RuntimeHostValueKind::Bytes,
+            HostValue::Bytes(b"tondo".to_vec()),
+        );
+        let output = ok(exact.invoke("std.console.stdout", &[]).unwrap());
+        assert_eq!(
+            exact.invoke("std.io.writeAll", &[output, data]).unwrap(),
+            RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))
+        );
+        assert_eq!(exact.take_stdout(), b"tondo");
+        assert!(matches!(
+            exact
+                .invoke(
+                    "std.io.limits",
+                    &[RuntimeValue::Integer(0), RuntimeValue::Integer(1)],
+                )
+                .unwrap(),
+            RuntimeValue::ResultErr(value)
+                if matches!(value.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::IoError, .. })
+        ));
+
+        let mut async_host = BootstrapHost::with_stdin(b"xy".to_vec());
+        let reader = ok(async_host.invoke("std.console.stdin", &[]).unwrap());
+        let call = async_host
+            .start_async(
+                "std.io.Reader.read",
+                &[reader.clone(), RuntimeValue::Integer(1)],
+            )
+            .unwrap();
+        let (_, completed) = async_host.wait_async(&[call]).unwrap();
+        let completed = ok(completed);
+        let RuntimeValue::OptionSome(completed) = completed else {
+            panic!("async read must complete with data");
+        };
+        assert_eq!(async_host.bytes(&completed).unwrap(), b"x");
+
+        let call = async_host
+            .start_async("std.io.Reader.read", &[reader, RuntimeValue::Integer(1)])
+            .unwrap();
+        async_host.cancel_async(call).unwrap();
+        let (_, cancelled) = async_host.wait_async(&[call]).unwrap();
+        assert!(matches!(
+            cancelled,
+            RuntimeValue::ResultErr(value)
+                if matches!(value.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::IoError, .. })
+        ));
+
+        let mut cleanup_host = BootstrapHost::with_stdin(Vec::new());
+        let reader = ok(cleanup_host.invoke("std.console.stdin", &[]).unwrap());
+        cleanup_host.cleanup(&reader).unwrap();
+        assert!(
+            cleanup_host
+                .invoke("std.io.Reader.read", &[reader, RuntimeValue::Integer(1)],)
+                .is_err()
+        );
     }
 
     #[test]

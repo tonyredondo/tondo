@@ -681,6 +681,21 @@ fn intrinsic_node(
                 fixed(HirCapabilityStatus::Unsatisfied)
             }
         }
+        IntrinsicType::IoLimits => {
+            if matches!(
+                capability,
+                HirCapability::Copy
+                    | HirCapability::Discard
+                    | HirCapability::Equatable
+                    | HirCapability::Key
+                    | HirCapability::Send
+                    | HirCapability::Share
+            ) {
+                satisfied(Vec::new())
+            } else {
+                fixed(HirCapabilityStatus::Unsatisfied)
+            }
+        }
         IntrinsicType::Bytes
         | IntrinsicType::BytesError
         | IntrinsicType::TextError

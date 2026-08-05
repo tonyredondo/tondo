@@ -4166,6 +4166,7 @@ fn intrinsic_type(value: IntrinsicType) -> bc::BytecodeIntrinsicType {
         IntrinsicType::GenerationError => bc::BytecodeIntrinsicType::GenerationError,
         IntrinsicType::Reader => bc::BytecodeIntrinsicType::Reader,
         IntrinsicType::Writer => bc::BytecodeIntrinsicType::Writer,
+        IntrinsicType::IoLimits => bc::BytecodeIntrinsicType::IoLimits,
         IntrinsicType::IoError => bc::BytecodeIntrinsicType::IoError,
         IntrinsicType::ConsoleError => bc::BytecodeIntrinsicType::ConsoleError,
         IntrinsicType::ExitStatus => bc::BytecodeIntrinsicType::ExitStatus,

@@ -196,8 +196,10 @@ impl<'a> TypeLowerer<'a> {
         self.push_core_host_contracts(span)?;
 
         let console = ModulePath::new("console")?;
+        let io = ModulePath::new("io")?;
         let bytes_module = ModulePath::new("bytes")?;
         let console_module = self.packages.module(self.packages.standard(), &console);
+        let io_module = self.packages.module(self.packages.standard(), &io);
         let process = ModulePath::new("process")?;
         let bytes_module = self
             .packages
@@ -331,7 +333,16 @@ impl<'a> TypeLowerer<'a> {
                 )
             })
         });
+        let io_referenced = io_module.as_ref().is_some_and(|io_module| {
+            self.resolved.references().any(|reference| {
+                matches!(
+                    reference.entity(),
+                    ResolvedEntity::Module(module) if module == io_module
+                )
+            })
+        });
         if !bytes_referenced
+            && !io_referenced
             && !console_referenced
             && !process_referenced
             && !time_referenced
@@ -430,6 +441,9 @@ impl<'a> TypeLowerer<'a> {
 
         let reader = self.interner.intrinsic(IntrinsicType::Reader, Vec::new())?;
         let writer = self.interner.intrinsic(IntrinsicType::Writer, Vec::new())?;
+        let io_limits = self
+            .interner
+            .intrinsic(IntrinsicType::IoLimits, Vec::new())?;
         let io_error = self
             .interner
             .intrinsic(IntrinsicType::IoError, Vec::new())?;
@@ -444,6 +458,8 @@ impl<'a> TypeLowerer<'a> {
         let reader_bytes_outcome = self.interner.result(reader_bytes, io_error)?;
         let writer_count_outcome = self.interner.result(int, io_error)?;
         let writer_unit_outcome = self.interner.result(unit, io_error)?;
+        let io_limits_outcome = self.interner.result(io_limits, io_error)?;
+        let io_bytes_outcome = self.interner.result(bytes, io_error)?;
 
         if console_referenced {
             for (function, outcome) in [
@@ -469,6 +485,16 @@ impl<'a> TypeLowerer<'a> {
                 None,
                 console_line_outcome,
             )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::ConsoleFlush,
+                Vec::new(),
+                None,
+                unit,
+            )?;
+        }
+
+        if io_referenced || console_referenced {
             self.push_bootstrap_host_callable_with_modes(
                 span,
                 HirBootstrapHostFunction::ReaderRead,
@@ -496,12 +522,42 @@ impl<'a> TypeLowerer<'a> {
                 None,
                 writer_unit_outcome,
             )?;
+        }
+
+        if io_referenced {
             self.push_bootstrap_host_callable(
                 span,
-                HirBootstrapHostFunction::ConsoleFlush,
+                HirBootstrapHostFunction::IoLimitsDefault,
                 Vec::new(),
                 None,
-                unit,
+                io_limits,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::IoLimitsNew,
+                vec![(int, false), (int, false)],
+                None,
+                io_limits_outcome,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::IoReadAll,
+                vec![
+                    (reader, ParameterMode::Var, true),
+                    (io_limits, ParameterMode::Value, false),
+                ],
+                None,
+                io_bytes_outcome,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::IoWriteAll,
+                vec![
+                    (writer, ParameterMode::Var, true),
+                    (bytes, ParameterMode::Value, false),
+                ],
+                None,
+                writer_unit_outcome,
             )?;
         }
 
@@ -5516,6 +5572,7 @@ impl<'a> TypeLowerer<'a> {
                         | IntrinsicType::GenerationError
                         | IntrinsicType::Reader
                         | IntrinsicType::Writer
+                        | IntrinsicType::IoLimits
                         | IntrinsicType::IoError
                         | IntrinsicType::ConsoleError
                         | IntrinsicType::ExitStatus

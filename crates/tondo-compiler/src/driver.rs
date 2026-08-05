@@ -2024,7 +2024,7 @@ mod tests {
     fn test_operation_checks_console_stream_protocol_through_the_hir() {
         let request = operation_request(
             Operation::Check,
-            b"import std.console\nimport std.io\nimport std.bytes\nfn acquire(): io.Writer ! console.ConsoleError {\n console.stdout()\n}\nfn emit(output: var io.Writer, data: bytes.Bytes): Int ! io.IoError {\n output.write(data)\n}\n",
+            b"import std.console\nimport std.io\nimport std.bytes\nfn acquire(): io.Writer ! console.ConsoleError {\n console.stdout()\n}\nasync fn emit(data: bytes.Bytes): Int ! (io.IoError | console.ConsoleError) {\n var output = console.stdout()?\n await output.write(data)?\n}\n",
             SourceForm::Module,
             ResourceLimits::default(),
         );

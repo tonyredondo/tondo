@@ -127,6 +127,7 @@ fn bootstrap_process_intrinsic(module: &ModuleId, name: &Name) -> Option<Intrins
         "io" => Some(match name.as_str() {
             "Reader" => IntrinsicType::Reader,
             "Writer" => IntrinsicType::Writer,
+            "IoLimits" => IntrinsicType::IoLimits,
             "IoError" => IntrinsicType::IoError,
             _ => return None,
         }),
@@ -2083,6 +2084,10 @@ pub enum HirBootstrapHostFunction {
     ReaderRead,
     WriterWrite,
     WriterFlush,
+    IoLimitsDefault,
+    IoLimitsNew,
+    IoReadAll,
+    IoWriteAll,
     ProcessArgs,
     ProcessCmd,
     ProcessShell,
@@ -2293,6 +2298,10 @@ impl HirBootstrapHostFunction {
             Self::ReaderRead => "std.io.Reader.read",
             Self::WriterWrite => "std.io.Writer.write",
             Self::WriterFlush => "std.io.Writer.flush",
+            Self::IoLimitsDefault => "std.io.defaultLimits",
+            Self::IoLimitsNew => "std.io.limits",
+            Self::IoReadAll => "std.io.readAll",
+            Self::IoWriteAll => "std.io.writeAll",
             Self::ProcessArgs => "std.process.args",
             Self::ProcessCmd => "std.process.cmd",
             Self::ProcessShell => "std.process.shell",
@@ -2491,7 +2500,12 @@ impl HirBootstrapHostFunction {
     pub const fn is_async(self) -> bool {
         matches!(
             self,
-            Self::CommandStatus
+            Self::ReaderRead
+                | Self::WriterWrite
+                | Self::WriterFlush
+                | Self::IoReadAll
+                | Self::IoWriteAll
+                | Self::CommandStatus
                 | Self::CommandOutput
                 | Self::CommandRun
                 | Self::CommandCheck

@@ -842,6 +842,7 @@ impl<'a> ExpressionChecker<'a> {
                         | IntrinsicType::GenerationError
                         | IntrinsicType::Reader
                         | IntrinsicType::Writer
+                        | IntrinsicType::IoLimits
                         | IntrinsicType::IoError
                         | IntrinsicType::ConsoleError
                         | IntrinsicType::ExitStatus
@@ -13787,6 +13788,10 @@ impl<'a> ExpressionChecker<'a> {
                 ("iter", Some("collect")) => HirBootstrapHostFunction::IterCollect,
                 ("format", Some("format")) => HirBootstrapHostFunction::FormatFormat,
                 ("format", Some("join")) => HirBootstrapHostFunction::FormatJoin,
+                ("io", Some("defaultLimits")) => HirBootstrapHostFunction::IoLimitsDefault,
+                ("io", Some("limits")) => HirBootstrapHostFunction::IoLimitsNew,
+                ("io", Some("readAll")) => HirBootstrapHostFunction::IoReadAll,
+                ("io", Some("writeAll")) => HirBootstrapHostFunction::IoWriteAll,
                 ("path", Some("fromString")) => HirBootstrapHostFunction::PathFromString,
                 ("path", Some("fromBytes")) => HirBootstrapHostFunction::PathFromBytes,
                 ("fs", Some("readAll")) => HirBootstrapHostFunction::FsReadAll,
@@ -17126,6 +17131,8 @@ impl<'a> ExpressionChecker<'a> {
                 | HirBootstrapHostFunction::ReaderRead
                 | HirBootstrapHostFunction::WriterWrite
                 | HirBootstrapHostFunction::WriterFlush
+                | HirBootstrapHostFunction::IoReadAll
+                | HirBootstrapHostFunction::IoWriteAll
                 | HirBootstrapHostFunction::CollectionArrayPush
                 | HirBootstrapHostFunction::CollectionArrayPop
                 | HirBootstrapHostFunction::CollectionMapInsert

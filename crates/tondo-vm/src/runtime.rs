@@ -140,6 +140,7 @@ pub enum RuntimeHostValueKind {
     GenerationError,
     Reader,
     Writer,
+    IoLimits,
     IoError,
     ConsoleError,
     ExitStatus,

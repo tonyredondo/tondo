@@ -134,6 +134,7 @@ pub enum IntrinsicType {
     GenerationError,
     Reader,
     Writer,
+    IoLimits,
     IoError,
     ConsoleError,
     ExitStatus,
@@ -188,6 +189,7 @@ impl IntrinsicType {
             Self::GenerationError => "GenerationError",
             Self::Reader => "Reader",
             Self::Writer => "Writer",
+            Self::IoLimits => "IoLimits",
             Self::IoError => "IoError",
             Self::ConsoleError => "ConsoleError",
             Self::ExitStatus => "ExitStatus",
@@ -237,6 +239,7 @@ impl IntrinsicType {
             | Self::GenerationError
             | Self::Reader
             | Self::Writer
+            | Self::IoLimits
             | Self::IoError
             | Self::ConsoleError
             | Self::ExitStatus

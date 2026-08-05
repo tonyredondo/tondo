@@ -1,0 +1,2 @@
+alias First = Second
+alias Second = First

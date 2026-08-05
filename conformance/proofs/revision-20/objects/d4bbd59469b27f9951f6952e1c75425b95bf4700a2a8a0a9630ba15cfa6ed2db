@@ -1,0 +1,3 @@
+fn invalid(command: Command) {
+    let _ = command.run()
+}

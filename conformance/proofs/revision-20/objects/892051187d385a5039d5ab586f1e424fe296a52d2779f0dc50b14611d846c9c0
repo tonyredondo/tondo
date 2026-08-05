@@ -1,0 +1,4 @@
+fn invalid(value: Int): Int {
+    let value = 1
+    value
+}

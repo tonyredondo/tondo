@@ -1,0 +1,6 @@
+fn invalid(pointer: Pointer[Int]) {
+    let operation = (): Pointer[Int] {
+        pointer
+    }
+    _ = operation
+}

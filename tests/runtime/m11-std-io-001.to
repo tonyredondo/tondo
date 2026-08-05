@@ -1,0 +1,14 @@
+import std.bytes
+import std.console
+import std.io
+
+async fn main(): !(console.ConsoleError | io.IoError | bytes.BytesError) {
+    var input = console.stdin()?
+    let limits = io.defaultLimits()
+    let data = await io.readAll(var input, limits)?
+    assert(data.length() == 0)
+
+    var output = console.stdout()?
+    await io.writeAll(var output, bytes.Bytes("io-ok")?)?
+    console.println(" io-done")
+}

@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 1.51
+**Versión del tracker:** 1.52
 
 **Última actualización:** 2026-08-05
 
@@ -4106,9 +4106,17 @@ parte del módulo.
   para implementaciones de usuario. `tests/runtime/m11-std-format-001.to` y la
   prueba host de límites cubren la ruta pública completa.
 
-- [ ] **STD-IO-IMPL-001 — Completar protocolos y helpers de I/O.** Mantener los
+- [x] **STD-IO-IMPL-001 — Completar protocolos y helpers de I/O.** Mantener los
   handles `Reader`/`Writer` existentes y añadir `readAll`/`IoLimits`, partial
   I/O, EOF, cancelación, límite prospectivo y cleanup por la ruta pública.
+  Cerrado con `IoLimits` validable y default seguro, `readAll`/`writeAll`
+  expuestos desde `std.io`, operaciones `Reader`/`Writer` async con jobs
+  inmediatos cancelables en el host, short reads/writes, EOF y errores tipados.
+  `readAll` comprueba el límite agregado antes de consumir stdin, y el cleanup
+  público retira los tokens `Reader`/`Writer` para que no puedan reutilizarse.
+  La prueba kernel cubre progreso parcial, EOF, límites, cancelación y flush;
+  `tests/runtime/m11-std-io-001.to` valida la cadena HIR → MIR → bytecode → VM
+  con `await`, lectura acotada y escritura drenada.
 
 - [ ] **STD-FS-IMPL-001 — Completar filesystem hosted.** Añadir `open`,
   `metadata` y los handles afines `File`/`Directory` definidos por el contrato,
@@ -5368,6 +5376,22 @@ esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 1.52 — 2026-08-05
+
+- Se cierra `STD-IO-IMPL-001`: `std.io` registra `Reader`, `Writer`,
+  `IoLimits`, `defaultLimits`, `limits`, `readAll` y `writeAll` desde una
+  importación directa del módulo, sin depender de `std.console`. Las
+  operaciones de handles se modelan como awaitables y el bootstrap host
+  conserva jobs inmediatos cancelables, partial I/O, EOF, errores nominales y
+  cleanup de tokens.
+- El kernel portable de `tondo-stdlib` valida límites positivos, propaga
+  cancelación, rechaza progreso inválido, drena short writes y hace flush. El
+  host comprueba prospectivamente `maxBytes`, no consume stdin al rechazar un
+  `readAll`, y materializa bytes solo al completar.
+- La evidencia pública es `tests/runtime/m11-std-io-001.to` con sus sidecars y
+  la prueba host de límites, async/cancelación y cleanup; la matriz de owners y
+  la evidencia content-addressed se regeneran para esta revisión.
 
 ### 1.51 — 2026-08-05
 

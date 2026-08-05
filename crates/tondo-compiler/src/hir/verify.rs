@@ -533,6 +533,7 @@ impl Verifier<'_> {
                         | IntrinsicType::GenerationError
                         | IntrinsicType::Reader
                         | IntrinsicType::Writer
+                        | IntrinsicType::IoLimits
                         | IntrinsicType::IoError
                         | IntrinsicType::ConsoleError
                         | IntrinsicType::ExitStatus
@@ -2122,10 +2123,15 @@ impl Verifier<'_> {
                     "callable signature is not a function type",
                 ));
             };
+            let host_io_callable = matches!(
+                callable.id,
+                HirCallableId::Host(function) if function.name().starts_with("std.io.")
+            );
             if function.is_async()
                 && callable.parameters.iter().any(|parameter| {
                     matches!(parameter.mode, ParameterMode::Mut | ParameterMode::Var)
                 })
+                && !host_io_callable
             {
                 return Err(HirInvariantError::new(
                     &context,

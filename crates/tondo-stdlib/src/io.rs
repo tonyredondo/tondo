@@ -19,6 +19,19 @@ impl Default for IoLimits {
     }
 }
 
+impl IoLimits {
+    /// Creates a bounded I/O policy. Both limits must be positive.
+    pub const fn new(max_bytes: usize, max_read: usize) -> Result<Self, IoError> {
+        if max_bytes == 0 || max_read == 0 {
+            return Err(IoError::ResourceLimit);
+        }
+        Ok(Self {
+            max_bytes,
+            max_read,
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IoError {
     Closed,
@@ -45,9 +58,7 @@ pub trait Writer {
 
 /// Read until EOF while enforcing both the request and aggregate limits.
 pub fn read_all<R: Reader>(reader: &mut R, limits: IoLimits) -> Result<Vec<u8>, IoError> {
-    if limits.max_bytes == 0 || limits.max_read == 0 {
-        return Err(IoError::ResourceLimit);
-    }
+    IoLimits::new(limits.max_bytes, limits.max_read)?;
     let request = limits.max_read.min(limits.max_bytes);
     let mut output = Vec::new();
     loop {
@@ -233,5 +244,47 @@ mod tests {
             VecWriter::with_max_write(0),
             Err(IoError::ResourceLimit)
         ));
+    }
+
+    #[test]
+    fn limits_require_positive_bounds_and_allow_clamping() {
+        assert_eq!(IoLimits::new(0, 1), Err(IoError::ResourceLimit));
+        assert_eq!(IoLimits::new(1, 0), Err(IoError::ResourceLimit));
+        assert_eq!(
+            IoLimits::new(4, 8),
+            Ok(IoLimits {
+                max_bytes: 4,
+                max_read: 8,
+            })
+        );
+    }
+
+    #[test]
+    fn cancellation_is_propagated_without_partial_success() {
+        struct CancelledReader;
+        impl Reader for CancelledReader {
+            fn read(&mut self, _max: usize) -> Result<ReadResult, IoError> {
+                Err(IoError::Cancelled)
+            }
+        }
+
+        struct CancelledWriter;
+        impl Writer for CancelledWriter {
+            fn write(&mut self, _data: &[u8]) -> Result<usize, IoError> {
+                Err(IoError::Cancelled)
+            }
+
+            fn flush(&mut self) -> Result<(), IoError> {
+                Err(IoError::Cancelled)
+            }
+        }
+
+        let mut reader = CancelledReader;
+        assert_eq!(
+            read_all(&mut reader, IoLimits::default()),
+            Err(IoError::Cancelled)
+        );
+        let mut writer = CancelledWriter;
+        assert_eq!(write_all(&mut writer, b"tondo"), Err(IoError::Cancelled));
     }
 }

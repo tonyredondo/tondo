@@ -19,6 +19,9 @@ cargo llvm-cov \
     --json \
     --output-path "$coverage"
 
+# The compiler test target is intentionally broad and can take several
+# minutes under a mutated build; keep the mutation gate strict without
+# classifying a valid caught mutant as a timeout.
 TMPDIR="$mutation_tmp" cargo mutants \
     --workspace \
     --no-config \
@@ -30,7 +33,7 @@ TMPDIR="$mutation_tmp" cargo mutants \
     --re '(ProjectPlan::parse|PrivilegedUnit::validate|validate_line_endings|normalize_array_index|Heap::has_capacity|Heap::ensure_capacity)' \
     --baseline run \
     --jobs 2 \
-    --timeout 300 \
+    --timeout 600 \
     --build-timeout 900 \
     --cargo-arg=--locked \
     --output "$mutation_output" \

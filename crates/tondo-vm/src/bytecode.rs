@@ -257,6 +257,7 @@ pub enum BytecodeIntrinsicType {
     GenerationError,
     Reader,
     Writer,
+    IoLimits,
     IoError,
     ConsoleError,
     ExitStatus,
@@ -410,6 +411,7 @@ impl BytecodeIntrinsicType {
             | Self::GenerationError
             | Self::Reader
             | Self::Writer
+            | Self::IoLimits
             | Self::IoError
             | Self::ConsoleError
             | Self::ExitStatus
@@ -482,6 +484,7 @@ impl BytecodeIntrinsicType {
             | Self::GenerationError
             | Self::Reader
             | Self::Writer
+            | Self::IoLimits
             | Self::IoError
             | Self::ConsoleError
             | Self::ExitStatus

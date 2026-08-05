@@ -1074,6 +1074,32 @@ Un reader o writer concreto conserva el owner de su módulo y satisface los
 protocolos mediante dispatch estático. STD-0.1 no exige type erasure, vtables ni
 un stream dinámico común para almacenar implementaciones heterogéneas.
 
+La superficie mínima de `std.io` es:
+
+```tondo
+enum IoError { Closed, Cancelled, InvalidData, ResourceLimit, Host }
+enum ReadResult { Data(Bytes), Eof }
+trait Reader {
+    async fn read(var self, max: Int): ReadResult ! IoError
+}
+trait Writer {
+    async fn write(var self, data: Bytes): Int ! IoError
+    async fn flush(var self): Unit ! IoError
+}
+fn defaultLimits(): IoLimits
+fn limits(maxBytes: Int, maxRead: Int): IoLimits ! IoError
+async fn readAll[R: Reader](var reader: R, limits: IoLimits): Bytes ! IoError
+async fn writeAll(var writer: Writer, data: Bytes): Unit ! IoError
+type IoLimits
+```
+
+`read` puede entregar menos bytes que los solicitados; el único EOF normal es
+`ReadResult.Eof`. `readAll` no publica un buffer parcial y comprueba el límite
+agregado antes de consumir un handle hosted. `writeAll` drena short writes,
+rechaza escritores sin progreso y hace `flush` al finalizar. Los backends que
+pueden suspender propagan cancelación como `IoError.Cancelled`; el préstamo de
+`Bytes` termina al volver de `write`.
+
 Los protocolos no prometen que toda fuente pueda seek, conocer su longitud,
 repetir una lectura o conservar datos después de cancelar. Cada capacidad
 adicional aparece como trait o método exacto, no como operación que falla

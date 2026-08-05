@@ -197,15 +197,21 @@ pub trait Writer {
     async fn write(var self, data: Bytes): Int ! IoError
     async fn flush(var self): Unit ! IoError
 }
+pub fn defaultLimits(): IoLimits
+pub fn limits(maxBytes: Int, maxRead: Int): IoLimits ! IoError
 pub fn readAll[R: Reader](var reader: R, limits: IoLimits): Bytes ! IoError
+pub fn writeAll(var writer: Writer, data: Bytes): Unit ! IoError
 pub type IoLimits
 ```
 
 `read` puede devolver menos bytes que `max`; `0` solo significa EOF cuando el
 resultado es `Eof`. `write` puede hacer partial I/O y devuelve exactamente los
-bytes aceptados. `readAll` reserva de forma acotada y nunca devuelve un buffer
-parcial junto a éxito. La cancelación ocurre en cada `await` y el writer no
-puede retener una vista del `Bytes` después de completar la operación.
+bytes aceptados. `defaultLimits` ofrece una política segura y `limits` rechaza
+cotas no positivas. `readAll` comprueba el límite agregado antes de consumir un
+handle hosted y nunca devuelve un buffer parcial junto a éxito. `writeAll`
+acepta short writes, exige progreso y hace `flush` al completar. La cancelación
+se propaga como `IoError.Cancelled` en cada punto de espera del backend y el
+writer no puede retener una vista del `Bytes` después de completar la operación.
 
 ## `std.serialization`
 
