@@ -54,6 +54,8 @@ run_step stdlib-testing-contract \
     scripts/stdlib-testing-check.sh
 run_step stdlib-core-contract \
     scripts/stdlib-core-check.sh
+run_step stdlib-serialization-contract \
+    scripts/stdlib-serialization-check.sh
 run_step stdlib-hosted-contract \
     scripts/stdlib-hosted-check.sh
 run_step stdlib-implementation-evidence \

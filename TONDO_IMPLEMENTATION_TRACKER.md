@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 1.54
+**Versión del tracker:** 1.55
 
 **Última actualización:** 2026-08-05
 
@@ -26,6 +26,7 @@ desarrollo y no ha sido publicado.
 - [Contrato de owner de `std.json`](./docs/contracts/stdlib-json.md)
 - [Contrato de owner de `std.messagepack`](./docs/contracts/stdlib-messagepack.md)
 - [Contrato de owner de `std.protobuf`](./docs/contracts/stdlib-protobuf.md)
+- [Contrato de owner de `std.serialization`](./docs/contracts/stdlib-serialization.md)
 - [Contrato de owner de `std.testing`](./docs/contracts/stdlib-testing.md)
 - [Contrato de owners Core STD-0.1A](./docs/contracts/stdlib-core.md)
 - [Contrato de owners Hosted STD-0.1A](./docs/contracts/stdlib-hosted.md)
@@ -3837,13 +3838,17 @@ layer pueden avanzar en paralelo.
   builders y formato estructurado deben reutilizar el protocolo estático sin
   introducir reflection, vtables, lookup abierto ni una segunda interpolación.
 
-- [ ] **STD-SER-001 — Completar la especificación de
+- [x] **STD-SER-001 — Completar la especificación de
   `std.serialization`.** Cerrar las firmas de
   `Serialize`, `Deserialize`, `Serializer[E]` y `Deserializer[E]`, su máquina
   de eventos, derive format-neutral, bounds genéricos, construcción atómica,
-  ownership, errores y personalización mediante impl/DTO explícito. El contrato
-  actual fija los traits principales, pero aún declara pendiente el protocolo
-  exhaustivo y no incluye eventos de records, fields, enums y variants.
+  ownership, errores y personalización mediante impl/DTO explícito. Cerrado con
+  el contrato canónico [`docs/contracts/stdlib-serialization.md`](./docs/contracts/stdlib-serialization.md),
+  su registro machine-readable y un validador iterativo de eventos que cubre
+  arrays, maps con claves arbitrarias, records, fields, enums, variants,
+  límites, duplicados y cierres terminales. La implementación typed de los
+  codecs y el provider derive permanecen en `STD-SER-IMPL-001` y
+  `STD-DERIVE-SER-001`.
 
 - [x] **STD-REFLECT-001 — Especificar el contrato exacto de `std.reflect`.**
   Cerrar antes de `REFLECT-IMPL-001` `TypeInfo`, `TypeId`, kinds,
@@ -5386,6 +5391,22 @@ esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 1.55 — 2026-08-05
+
+- Se cierra `STD-SER-001`: `std.serialization` tiene ahora un contrato único
+  para `Serializer[E]`, `Deserializer[E]`, `Serialize` y `Deserialize`, con
+  scalars de anchura explícita, arrays, maps con `MapKey`, records/fields y
+  enums/variants. Se fijan vistas temporales y `own`, construcción atómica,
+  errores/path, límites finitos y providers `derive` herméticos.
+- El kernel `tondo-stdlib::serialization` valida la máquina completa mediante
+  frames explícitos y una pila iterativa, sin recursion del host; se añaden
+  pruebas de payloads, longitudes, fields duplicados, claves arbitrarias y
+  terminalidad.
+- Se añaden `docs/contracts/stdlib-serialization.md`,
+  `testing/stdlib-serialization.json` y
+  `scripts/stdlib-serialization-check.sh`; el gate estricto los ejecuta y la
+  matriz de implementación distingue el kernel del protocolo typed pendiente.
 
 ### 1.54 — 2026-08-05
 

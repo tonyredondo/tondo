@@ -12,7 +12,7 @@
       "path": "TONDO_STANDARD_LIBRARY_SPEC.md",
       "edition": "0.1",
       "status": "draft-pending",
-      "sha256": "ba3ef55a4ccd6113180a75d25accbede08347d0e224a728c480013f3849dc54f"
+      "sha256": "421d9d3ea7f5e9011eb40e94c38d512bf704bf1a4719b2ed6c7fb6da9b6bbb1c"
     },
     {
       "path": "TONDO_TESTING_SPEC.md",
@@ -34,8 +34,8 @@
     }
   ],
   "summary": {
-    "logical_tests": 2209,
-    "repetitions": 2428,
+    "logical_tests": 2211,
+    "repetitions": 2430,
     "physical_sources": 498,
     "unique_source_hashes": 844,
     "by_kind": {
@@ -44,13 +44,13 @@
       "draft-contract": 38,
       "fixture": 154,
       "fuzz-target": 3,
-      "rust-test": 1434,
+      "rust-test": 1436,
       "spec-fence": 311
     },
     "by_status": {
       "campaign": 3,
       "draft-pending": 38,
-      "executable": 2159,
+      "executable": 2161,
       "non-executable": 9
     },
     "by_phase": {
@@ -72,7 +72,7 @@
       "reliability": 68,
       "resolution": 27,
       "runtime": 208,
-      "semantic": 720,
+      "semantic": 722,
       "testing": 38,
       "tooling": 4
     }
@@ -40354,7 +40354,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "2456a597c96a3704a414e0fac2f672bac17b31a230e2e246cf111579c6a8bfba",
+      "source_sha256": "ab1b67589fe3384144abd9f645caf3b69953fb0bb7fe59c181411b8c78de70dd",
       "target": "host-rust",
       "document": null,
       "edition": "host",
@@ -40372,7 +40372,25 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "2456a597c96a3704a414e0fac2f672bac17b31a230e2e246cf111579c6a8bfba",
+      "source_sha256": "ab1b67589fe3384144abd9f645caf3b69953fb0bb7fe59c181411b8c78de70dd",
+      "target": "host-rust",
+      "document": null,
+      "edition": "host",
+      "status": "executable",
+      "sidecars": []
+    },
+    {
+      "id": "rust:tondo-stdlib:src::serialization:rejects_duplicate_fields_bad_lengths_and_incomplete_map_keys",
+      "kind": "rust-test",
+      "crate_name": "tondo-stdlib",
+      "phase": "semantic",
+      "source": "crates/tondo-stdlib/src/serialization.rs",
+      "fixture": null,
+      "group": "unit",
+      "requirements": [],
+      "oracle": "rust-assertions",
+      "repetitions": 1,
+      "source_sha256": "ab1b67589fe3384144abd9f645caf3b69953fb0bb7fe59c181411b8c78de70dd",
       "target": "host-rust",
       "document": null,
       "edition": "host",
@@ -40390,7 +40408,25 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "2456a597c96a3704a414e0fac2f672bac17b31a230e2e246cf111579c6a8bfba",
+      "source_sha256": "ab1b67589fe3384144abd9f645caf3b69953fb0bb7fe59c181411b8c78de70dd",
+      "target": "host-rust",
+      "document": null,
+      "edition": "host",
+      "status": "executable",
+      "sidecars": []
+    },
+    {
+      "id": "rust:tondo-stdlib:src::serialization:validates_records_enums_and_arbitrary_map_keys",
+      "kind": "rust-test",
+      "crate_name": "tondo-stdlib",
+      "phase": "semantic",
+      "source": "crates/tondo-stdlib/src/serialization.rs",
+      "fixture": null,
+      "group": "unit",
+      "requirements": [],
+      "oracle": "rust-assertions",
+      "repetitions": 1,
+      "source_sha256": "ab1b67589fe3384144abd9f645caf3b69953fb0bb7fe59c181411b8c78de70dd",
       "target": "host-rust",
       "document": null,
       "edition": "host",

@@ -215,30 +215,10 @@ writer no puede retener una vista del `Bytes` después de completar la operació
 
 ## `std.serialization`
 
-```tondo
-pub trait Serializer[E] {
-    fn null(var self): ! E
-    fn bool(var self, value: Bool): ! E
-    fn int(var self, value: Int): ! E
-    fn float(var self, value: Float): ! E
-    fn string(var self, value: String): ! E
-    fn bytes(var self, value: Bytes): ! E
-    fn startArray(var self, length: Int?): ! E
-    fn endArray(var self): ! E
-    fn startMap(var self, length: Int?): ! E
-    fn key(var self, value: String): ! E
-    fn endMap(var self): ! E
-}
-pub trait Deserializer[E] {
-    fn next(var self): SerializationEvent ! E
-}
-pub enum SerializationEvent { Null, Bool(Bool), Int(Int), Float(Float), String(String), Bytes(Bytes), StartArray(Int?), EndArray, StartMap(Int?), Key(String), EndMap }
-pub trait Serialize { fn serialize[E, S: Serializer[E]](self, var serializer: S): ! E }
-pub trait Deserialize { fn deserialize[E, D: Deserializer[E]](var deserializer: D): Self ! E }
-pub enum SerializationError { UnexpectedEvent, TypeMismatch, LimitExceeded, Io(IoError) }
-```
-
-El evento `next` es consumible y no conserva referencias después de la llamada.
-Los derives generan un único `impl` estático; los codecs concretos no construyen
-un DOM para la ruta tipada. La deserialización publica el record únicamente
-después de validar todos sus fields.
+El contrato completo y único está en
+[`docs/contracts/stdlib-serialization.md`](./stdlib-serialization.md). Incluye
+los protocolos `Serializer[E]`/`Deserializer[E]`, eventos para scalars,
+arrays, maps con claves arbitrarias, records y enums, además de `own`, límites,
+atomicidad y reglas de `derive`. Los codecs concretos no construyen un DOM en
+la ruta typed y la deserialización publica un valor solo después de validar
+todos sus componentes.

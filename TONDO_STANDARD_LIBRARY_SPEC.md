@@ -1919,34 +1919,58 @@ produce un pánico ni un valor parcial.
 
 ### 14.6 `std.serialization`
 
-`std.serialization` posee los protocolos estáticos compartidos. Su shape lógico
-es:
+`std.serialization` posee los protocolos estáticos compartidos. La forma
+normativa exhaustiva está en
+[`docs/contracts/stdlib-serialization.md`](./docs/contracts/stdlib-serialization.md)
+y se resume aquí para mantener la tabla de owners junto al lenguaje:
 
 ~~~tondo pseudocode
+pub trait Serializer[E] {
+    fn null(var self): Unit ! E
+    fn bool(var self, value: Bool): Unit ! E
+    fn int(var self, value: Int64): Unit ! E
+    fn uint(var self, value: UInt64): Unit ! E
+    fn float32(var self, value: Float32): Unit ! E
+    fn float64(var self, value: Float64): Unit ! E
+    fn string(var self, value: String): Unit ! E
+    fn bytes(var self, value: Bytes): Unit ! E
+    fn startArray(var self, length: Int?): Unit ! E
+    fn endArray(var self): Unit ! E
+    fn startMap(var self, length: Int?): Unit ! E
+    fn mapKey(var self): Unit ! E
+    fn endMap(var self): Unit ! E
+    fn startRecord(var self, name: String, fields: Int?): Unit ! E
+    fn field(var self, name: String): Unit ! E
+    fn endRecord(var self): Unit ! E
+    fn startEnum(var self, name: String, variant: String): Unit ! E
+    fn endEnum(var self): Unit ! E
+}
+
+pub trait Deserializer[E] {
+    fn next(var self): SerializationEvent ! E
+    fn own(var self, event: SerializationEvent): SerializationEvent ! E
+}
+
 pub trait Serialize {
-    fn serialize[E, S: Serializer[E]](
-        self,
-        var serializer: S,
-    ): !E
+    fn serialize[E, S: Serializer[E]](self, var serializer: S): Unit ! E
 }
 
 pub trait Deserialize {
-    fn deserialize[E, D: Deserializer[E]](
-        var deserializer: D,
-    ): Self !E
+    fn deserialize[E, D: Deserializer[E]](var deserializer: D): Self ! E
 }
 ~~~
 
-`Serializer[E]` y `Deserializer[E]` son protocolos estáticos de eventos
-estructurales: escalares, bytes, secuencias, maps, records, fields, enums y
-variants. No son trait objects y no borran el tipo de error del formato. El
-contrato exhaustivo de sus operaciones se cerrará antes de implementar
-`STD-SER-001`; la decisión normativa ya fijada es que un solo `impl` generado
-puede alimentar varios formatos sin reflection.
+`SerializationEvent` contiene scalars con anchura explícita, arrays, maps con
+`MapKey`, records (`StartRecord`/`Field`) y enums (`StartEnum`). La máquina de
+eventos exige una raíz única, fields únicos, claves y payloads completos,
+longitudes exactas cuando se declaran y cierres balanceados. Los frames son
+explícitos y acotados; no se usa la pila de llamadas del host.
 
 El receiver `self` de `Serialize` es la observación inmutable ordinaria del
-lenguaje: serializar no consume el valor. El serializer/deserializer sí se pasa
-como `var` para que avance su estado sin boxing ni allocation por evento.
+lenguaje: serializar no consume el valor. El serializer/deserializer se pasa
+como `var` para que avance su estado sin boxing ni allocation por evento. Los
+payloads de texto/bytes de `next` son vistas hasta el siguiente evento y `own`
+es la única materialización estable.
 
 La distribución registra providers para:
 
@@ -1969,6 +1993,8 @@ El comportamiento derivado:
 Renombrar, omitir, aplanar o transformar fields cambia un contrato de wire y no
 se esconde en attributes generales. Se expresa con un `impl` manual o con un
 tipo DTO explícito. Protobuf no utiliza este derive para inferir field numbers.
+El error común conserva tipo, path, offset y límites; cada codec puede añadir
+sus variantes nominales sin cambiar la máquina compartida.
 
 ### 14.7 `std.reflect`
 

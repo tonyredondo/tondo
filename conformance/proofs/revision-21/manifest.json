@@ -305,16 +305,16 @@
       "role": "quality-evidence",
       "source_path": "testing/coverage-matrix.json",
       "object": {
-        "path": "objects/dd87ec8ea20bca982ece9dcb7ab3d28af79ade565da3cf69ff682e3bba160e6b",
-        "sha256": "dd87ec8ea20bca982ece9dcb7ab3d28af79ade565da3cf69ff682e3bba160e6b"
+        "path": "objects/03a6e3fbcf04a1b5f68680773ca99760de86166857caae3258d201bffd774efe",
+        "sha256": "03a6e3fbcf04a1b5f68680773ca99760de86166857caae3258d201bffd774efe"
       }
     },
     {
       "role": "quality-evidence",
       "source_path": "testing/inventory.json",
       "object": {
-        "path": "objects/33f3cc463d45c49189da32a1be57d17f76917e32bd891564aa8d700ef94bbdcd",
-        "sha256": "33f3cc463d45c49189da32a1be57d17f76917e32bd891564aa8d700ef94bbdcd"
+        "path": "objects/2d4bd29a2751744d1b0fc8dc9bc027435f21bc6190efc231be7bb65e6174e13f",
+        "sha256": "2d4bd29a2751744d1b0fc8dc9bc027435f21bc6190efc231be7bb65e6174e13f"
       }
     },
     {
@@ -329,8 +329,8 @@
       "role": "ratchet",
       "source_path": "testing/conformance-ratchet.json",
       "object": {
-        "path": "objects/9041ffbf5b0a61bdf37a610e390f93f818cfd25e02b61c563644ce48eff15aa3",
-        "sha256": "9041ffbf5b0a61bdf37a610e390f93f818cfd25e02b61c563644ce48eff15aa3"
+        "path": "objects/a43b9a852d94759fbc22c8d117f06c280842b4fcfde1e0d6144e44af96dce524",
+        "sha256": "a43b9a852d94759fbc22c8d117f06c280842b4fcfde1e0d6144e44af96dce524"
       }
     },
     {

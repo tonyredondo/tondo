@@ -1,0 +1,84 @@
+{
+  "format": "tondo-stdlib-owner-contract/1",
+  "owner": "std.serialization",
+  "edition": "0.1",
+  "phase": "STD-0.1A",
+  "status": "closed-contract",
+  "contract": "docs/contracts/stdlib-serialization.md",
+  "traits": ["Serialize", "Deserialize"],
+  "protocols": ["Serializer[E]", "Deserializer[E]"],
+  "dispatch": "compile-time-static",
+  "dom": {
+    "typed_encode": false,
+    "typed_decode": false,
+    "dynamic_values": "owned-by-format-owner",
+    "reflection": "forbidden"
+  },
+  "events": [
+    "null", "bool", "int64", "uint64", "float32", "float64", "string", "bytes",
+    "start-array", "end-array", "start-map", "map-key", "end-map",
+    "start-record", "field", "end-record", "start-enum", "end-enum"
+  ],
+  "containers": {
+    "array_length": "optional-exact-count",
+    "map_shape": "map-key-key-value",
+    "map_keys": "arbitrary-event-value",
+    "record_shape": "unique-field-then-value",
+    "enum_shape": "zero-or-one-payload-value",
+    "stack": "explicit-bounded-frames",
+    "root": "exactly-one-value"
+  },
+  "payloads": {
+    "string": "temporary-until-next-event",
+    "bytes": "temporary-until-next-event",
+    "materialization": "explicit-own",
+    "numeric_width": "preserve-float32-and-float64-bits"
+  },
+  "atomicity": {
+    "decode": "publish-after-complete-validation",
+    "writer_error": "terminal-no-partial-success",
+    "reader_error": "terminal-no-partial-success",
+    "derive_output": "atomic-source-publication"
+  },
+  "derive": {
+    "provider": "build-only-hermetic",
+    "output": "ordinary-tondo-impl",
+    "field_order": "declaration-order",
+    "private_fields": "explicit-authorized-view-only",
+    "custom_wire_names": "manual-impl-or-explicit-dto",
+    "protobuf_field_numbers": "schema-only",
+    "minimum_bounds": true,
+    "source_maps": true
+  },
+  "limits": [
+    {"id":"max_input_bytes","unit":"bytes","check":"before-read-growth"},
+    {"id":"max_output_bytes","unit":"bytes","check":"before-write-growth"},
+    {"id":"max_depth","unit":"frames","check":"before-push"},
+    {"id":"max_events","unit":"events","check":"before-next-event"},
+    {"id":"max_container_items","unit":"items","check":"before-append"},
+    {"id":"max_string_bytes","unit":"bytes","check":"before-materialize"},
+    {"id":"max_payload_bytes","unit":"bytes","check":"before-materialize"}
+  ],
+  "errors": [
+    "UnexpectedEvent", "TypeMismatch", "MissingField", "DuplicateField",
+    "InvalidContainerLength", "LimitExceeded", "InvalidPath", "IoError"
+  ],
+  "test_matrix": [
+    {"id":"scalar-events","observables":["kind","width","value"]},
+    {"id":"arrays-and-maps","observables":["counts","arbitrary-key","closure"]},
+    {"id":"records-and-enums","observables":["field-order","duplicate","payload"]},
+    {"id":"chunking","observables":["event-sequence","view-lifetime","own"]},
+    {"id":"limits","observables":["finite-resource","atomic-failure","host-stack-safety"]},
+    {"id":"derive","observables":["deterministic-output","bounds","source-map","no-reflection"]},
+    {"id":"typed-path","observables":["public-symbol","no-dom","error-path"]}
+  ],
+  "promotion": {
+    "gates": [
+      {"id":"design","requires":["event-catalog","state-machine","limits","errors"]},
+      {"id":"implementation","requires":["iterative-validator","terminal-state","atomic-decode"]},
+      {"id":"integration","requires":["json-api","messagepack-api","protobuf-api"]},
+      {"id":"promote","requires":["public-typed-path","derive-proof","STD-CODEC-CONF-001","STD-PERF-001-report"]}
+    ],
+    "next": "STD-JSON-API-001"
+  }
+}
