@@ -2566,6 +2566,15 @@ El bootstrap expone una superficie cerrada de procesos, `Bytes` opaco y
 - Migra argumentos runtime a `std.env`.
 - Sustituye errores y tipos provisionales por propietarios canónicos.
 - Mantiene argv exacto, shell explícito, pipes, backpressure y cleanup.
+- `ProcessOutput` conserva `stdout` y `stderr` separados y ofrece además
+  `combined`, una captura byte a byte en el orden observado por el host.
+- `pipe` equivale a `stdout | stdin`; `Command.mergeStderr()` y
+  `Pipeline.mergeStderr()` conectan `stdout + stderr | stdin` y son la forma
+  tipada de `|&`/`2>&1 |` sin depender de un shell.
+- Las redirecciones shell (`2>&1`, `2>file`, `&>file`, `>/dev/null`) solo se
+  interpretan dentro de `shell(...)`. `command(...)` nunca analiza sintaxis de
+  shell; el modo script podrá bajar sus operadores de redirección a estos
+  planes tipados y exigirá las capabilities de los recursos que abra.
 
 El corpus bootstrap no se reescribe. Un proyecto adopta STD-0.1
 seleccionando el nuevo PackageId y lockfile.

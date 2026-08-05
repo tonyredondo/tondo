@@ -100,9 +100,11 @@ pub type ExitStatus
 pub type ProcessOutput
 pub enum ProcessError { Unavailable, PermissionDenied, InvalidArgument, Spawn, Io, Cancelled, ResourceLimit }
 pub enum ProcessExitError { NonZero(ProcessOutput), Signalled(ProcessOutput) }
-pub fn command(program: String, arguments: Array[String]): Command ! ProcessError
+pub fn command(program: String, arguments: ...String): Command ! ProcessError
 pub fn shell(command: String): Command ! ProcessError
 pub fn pipe(left: Command, right: Command): Pipeline ! ProcessError
+pub fn Command.mergeStderr(self): Command
+pub fn Pipeline.mergeStderr(self): Pipeline
 pub async fn Command.run(self): ExitStatus ! ProcessError
 pub async fn Command.output(self): ProcessOutput ! ProcessError
 pub async fn Command.check(self): ProcessOutput ! (ProcessError | ProcessExitError)
@@ -111,6 +113,7 @@ pub async fn ProcessHandle.wait(var self): ExitStatus ! ProcessError
 pub fn ProcessHandle.cancel(var self): Unit
 pub fn ProcessOutput.stdout(self): Bytes
 pub fn ProcessOutput.stderr(self): Bytes
+pub fn ProcessOutput.combined(self): Bytes
 pub fn ProcessOutput.statuses(self): Array[ExitStatus]
 pub fn ExitStatus.code(self): Int?
 pub fn ExitStatus.success(self): Bool
@@ -118,7 +121,21 @@ pub fn ExitStatus.success(self): Bool
 
 La capability `process` es necesaria para construir o ejecutar planes. `shell`
 es siempre explícito; `command` conserva argv exacto sin re-tokenizar. Pipes
-usan backpressure bounded y cierre coordinado. `start` devuelve un handle afín;
+usan backpressure bounded y cierre coordinado. `pipe` conecta únicamente
+`stdout` del lado izquierdo con `stdin` del lado derecho, como `|` en un shell.
+`mergeStderr` es una redirección tipada: conecta ambos `stdout` y `stderr` del
+plan con el siguiente `stdin`, como `|&` (`2>&1 |`) en Bash, sin invocar un
+shell ni re-tokenizar ningún argumento. El `stderr` de las etapas que no se
+redirigen conserva su canal separado.
+
+`ProcessOutput.stdout()` y `ProcessOutput.stderr()` siempre son bytes separados;
+no se presupone UTF-8. `ProcessOutput.combined()` devuelve la secuencia de bytes
+observada en el límite de captura, intercalando los chunks de ambos canales en
+el orden en que el host los recibe, que es la semántica útil de la salida de un
+terminal. No se puede inferir una ordenación por líneas ni se reordena por
+contenido. La salida combinada no convierte ni elimina bytes.
+
+`start` devuelve un handle afín;
 `wait`, `cancel` o el cleanup del owner son terminales y no dejan procesos
 huérfanos. Las rutas async tienen puntos de cancelación definidos antes de
 publicar output. `ProcessExitError` conserva el output capturado sin depender

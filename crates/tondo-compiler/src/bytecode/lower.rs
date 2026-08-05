@@ -3705,11 +3705,20 @@ fn lower_operation(
                 crate::mir::MirBootstrapHostFunction::ProcessPipe => {
                     bc::BytecodeBootstrapHostFunction::ProcessPipe
                 }
+                crate::mir::MirBootstrapHostFunction::CommandMergeStderr => {
+                    bc::BytecodeBootstrapHostFunction::CommandMergeStderr
+                }
+                crate::mir::MirBootstrapHostFunction::PipelineMergeStderr => {
+                    bc::BytecodeBootstrapHostFunction::PipelineMergeStderr
+                }
                 crate::mir::MirBootstrapHostFunction::ProcessOutputStdout => {
                     bc::BytecodeBootstrapHostFunction::ProcessOutputStdout
                 }
                 crate::mir::MirBootstrapHostFunction::ProcessOutputStderr => {
                     bc::BytecodeBootstrapHostFunction::ProcessOutputStderr
+                }
+                crate::mir::MirBootstrapHostFunction::ProcessOutputCombined => {
+                    bc::BytecodeBootstrapHostFunction::ProcessOutputCombined
                 }
                 crate::mir::MirBootstrapHostFunction::ProcessOutputStatuses => {
                     bc::BytecodeBootstrapHostFunction::ProcessOutputStatuses

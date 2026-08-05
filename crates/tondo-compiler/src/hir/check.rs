@@ -5524,6 +5524,9 @@ impl<'a> ExpressionChecker<'a> {
                 (IntrinsicType::ProcessOutput, "stderr") => {
                     Some(HirBootstrapHostFunction::ProcessOutputStderr)
                 }
+                (IntrinsicType::ProcessOutput, "combined") => {
+                    Some(HirBootstrapHostFunction::ProcessOutputCombined)
+                }
                 (IntrinsicType::ProcessOutput, "statuses") => {
                     Some(HirBootstrapHostFunction::ProcessOutputStatuses)
                 }
@@ -13775,7 +13778,7 @@ impl<'a> ExpressionChecker<'a> {
                 ("console", Some("stderr")) => HirBootstrapHostFunction::ConsoleStderr,
                 ("console", Some("readLine")) => HirBootstrapHostFunction::ConsoleReadLine,
                 ("process", Some("args")) => HirBootstrapHostFunction::ProcessArgs,
-                ("process", Some("cmd")) => HirBootstrapHostFunction::ProcessCmd,
+                ("process", Some("command" | "cmd")) => HirBootstrapHostFunction::ProcessCmd,
                 ("process", Some("shell")) => HirBootstrapHostFunction::ProcessShell,
                 ("bytes", Some("empty")) => HirBootstrapHostFunction::BytesEmpty,
                 ("bytes", Some("fromArray")) => HirBootstrapHostFunction::BytesFromArray,
@@ -16994,11 +16997,17 @@ impl<'a> ExpressionChecker<'a> {
                 (IntrinsicType::Command, "output") => HirBootstrapHostFunction::CommandOutput,
                 (IntrinsicType::Command, "run") => HirBootstrapHostFunction::CommandRun,
                 (IntrinsicType::Command, "check") => HirBootstrapHostFunction::CommandCheck,
+                (IntrinsicType::Command, "mergeStderr") => {
+                    HirBootstrapHostFunction::CommandMergeStderr
+                }
                 (IntrinsicType::Pipeline, "start") => HirBootstrapHostFunction::PipelineStart,
                 (IntrinsicType::Pipeline, "status") => HirBootstrapHostFunction::PipelineStatus,
                 (IntrinsicType::Pipeline, "output") => HirBootstrapHostFunction::PipelineOutput,
                 (IntrinsicType::Pipeline, "run") => HirBootstrapHostFunction::PipelineRun,
                 (IntrinsicType::Pipeline, "check") => HirBootstrapHostFunction::PipelineCheck,
+                (IntrinsicType::Pipeline, "mergeStderr") => {
+                    HirBootstrapHostFunction::PipelineMergeStderr
+                }
                 (IntrinsicType::ProcessHandle, "status") => {
                     HirBootstrapHostFunction::ProcessHandleStatus
                 }

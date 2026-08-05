@@ -16,7 +16,7 @@ jq -e '
   .capabilities["std.path"] == [] and
   .capabilities["std.fs"] == ["filesystem"] and
   .capabilities["std.process"] == ["process"] and
-  (.invariants | length) == 7 and (.test_matrix | length) == 7 and
+  (.invariants | length) == 9 and (.test_matrix | length) == 9 and
   .promotion_next == "STD-IMPL-002"
 ' "$contract" >/dev/null
 [[ -s "$root/docs/contracts/stdlib-hosted.md" ]] || { echo "missing hosted contract document" >&2; exit 1; }

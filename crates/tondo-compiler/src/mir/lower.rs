@@ -5987,11 +5987,20 @@ fn bootstrap_host_function(
         HirBootstrapHostFunction::ConsolePrint => MirBootstrapHostFunction::ConsolePrint,
         HirBootstrapHostFunction::ConsolePrintln => MirBootstrapHostFunction::ConsolePrintln,
         HirBootstrapHostFunction::ProcessPipe => MirBootstrapHostFunction::ProcessPipe,
+        HirBootstrapHostFunction::CommandMergeStderr => {
+            MirBootstrapHostFunction::CommandMergeStderr
+        }
+        HirBootstrapHostFunction::PipelineMergeStderr => {
+            MirBootstrapHostFunction::PipelineMergeStderr
+        }
         HirBootstrapHostFunction::ProcessOutputStdout => {
             MirBootstrapHostFunction::ProcessOutputStdout
         }
         HirBootstrapHostFunction::ProcessOutputStderr => {
             MirBootstrapHostFunction::ProcessOutputStderr
+        }
+        HirBootstrapHostFunction::ProcessOutputCombined => {
+            MirBootstrapHostFunction::ProcessOutputCombined
         }
         HirBootstrapHostFunction::ProcessOutputStatuses => {
             MirBootstrapHostFunction::ProcessOutputStatuses

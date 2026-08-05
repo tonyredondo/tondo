@@ -2911,8 +2911,19 @@ impl Verifier<'_> {
                                 || intrinsic(arguments[1].ty, IntrinsicType::Pipeline)?)
                             && intrinsic(operation.ty, IntrinsicType::Pipeline)?
                     }
+                    super::MirBootstrapHostFunction::CommandMergeStderr => {
+                        arguments.len() == 1
+                            && intrinsic(arguments[0].ty, IntrinsicType::Command)?
+                            && intrinsic(operation.ty, IntrinsicType::Command)?
+                    }
+                    super::MirBootstrapHostFunction::PipelineMergeStderr => {
+                        arguments.len() == 1
+                            && intrinsic(arguments[0].ty, IntrinsicType::Pipeline)?
+                            && intrinsic(operation.ty, IntrinsicType::Pipeline)?
+                    }
                     super::MirBootstrapHostFunction::ProcessOutputStdout
-                    | super::MirBootstrapHostFunction::ProcessOutputStderr => {
+                    | super::MirBootstrapHostFunction::ProcessOutputStderr
+                    | super::MirBootstrapHostFunction::ProcessOutputCombined => {
                         arguments.len() == 1
                             && intrinsic(arguments[0].ty, IntrinsicType::ProcessOutput)?
                             && intrinsic(operation.ty, IntrinsicType::Bytes)?
@@ -12874,6 +12885,24 @@ mod tests {
             }
             verify_mir(&resolved, &hir, &mir).unwrap();
         }
+    }
+
+    #[test]
+    fn process_output_redirections_are_verified_at_the_mir_boundary() {
+        const SOURCE: &str = "import std.process\n\
+             async fn main(): !(process.ProcessError) {\n\
+                 let command = process.command(\"/usr/bin/true\")\n\
+                 let merged_command = command.mergeStderr()\n\
+                 let pipeline = process.command(\"/usr/bin/printf\", \"x\") | process.command(\"/bin/cat\")\n\
+                 let merged_pipeline = pipeline.mergeStderr()\n\
+                 let output = await merged_command.output()?\n\
+                 let combined = output.combined\n\
+                 _ = merged_pipeline\n\
+                 _ = combined\n\
+             }\n";
+
+        let (resolved, hir, mir) = checked_mir(SOURCE);
+        verify_mir(&resolved, &hir, &mir).unwrap();
     }
 
     #[test]

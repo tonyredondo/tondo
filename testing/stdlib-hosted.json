@@ -19,6 +19,8 @@
     "terminal-cleanup",
     "argv-preserved",
     "shell-explicit",
+    "streams-separate-and-combined",
+    "typed-stderr-redirection",
     "deterministic-directory-order"
   ],
   "test_matrix": [
@@ -28,6 +30,8 @@
     "partial-io",
     "cancellation",
     "cleanup-on-unwind",
+    "combined-output-order",
+    "pipeline-redirection",
     "host-error-redaction"
   ],
   "promotion_next": "STD-IMPL-002"

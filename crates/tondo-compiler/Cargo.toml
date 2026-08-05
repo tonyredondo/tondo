@@ -17,6 +17,7 @@ tondo-vm = { path = "../tondo-vm" }
 unicode-ident.workspace = true
 unicode-normalization.workspace = true
 unicode-security.workspace = true
+os_pipe.workspace = true
 
 [lints]
 workspace = true

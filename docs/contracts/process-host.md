@@ -23,8 +23,11 @@ opaque ProcessExitError
 opaque terminal ProcessHandle
 
 fn args(): Array[String]
-fn cmd(program: String, arguments: ...String): Command
+fn command(program: String, arguments: ...String): Command
+// `cmd` is retained only as an internal bootstrap compatibility alias.
 fn shell(text: String): Command
+fn Command.mergeStderr(self): Command
+fn Pipeline.mergeStderr(self): Pipeline
 
 fn Command.start(self): ProcessHandle ! ProcessError
 async fn Command.status(self): Array[ExitStatus] ! ProcessError
@@ -45,8 +48,8 @@ async fn ProcessHandle.check(self): ProcessOutput ! (ProcessError | ProcessExitE
 async fn ProcessHandle.cancel(self): Array[ExitStatus] ! ProcessError
 ```
 
-`ProcessOutput` exposes the read-only fields `stdout: Bytes`,
-`stderr: Bytes`, and `statuses: Array[ExitStatus]`. `ExitStatus` exposes
+`ProcessOutput` exposes the read-only fields `stdout: Bytes`, `stderr: Bytes`,
+`combined: Bytes`, and `statuses: Array[ExitStatus]`. `ExitStatus` exposes
 `code: Int?` and `success: Bool`. These are opaque standard-library values at
 the host boundary even though their observable field contract is record-like.
 
@@ -64,10 +67,14 @@ discriminated union and supports arms such as
 
 ## Plans and composition
 
-`cmd` stores the program and each argument separately. It performs no shell
+`command` stores the program and each argument separately. It performs no shell
 parsing, tokenization, globbing, interpolation, environment expansion, or
 execution. Every argument reaches the operating-system process API with the
 same sequence of Unicode scalar values received from its Tondo `String`.
+
+The compiler may still accept `process.cmd` while bootstrap fixtures migrate,
+but it lowers to the same typed command plan and is not part of the public
+stdlib surface.
 
 `shell` is the only shell constructor. It creates one explicit stage using the
 platform shell (`/bin/sh -c` on Unix and `cmd.exe /C` on Windows). No other
@@ -114,13 +121,22 @@ A non-zero exit is data for `status`, `output`, and `run`. It is never a
 panic. Only `check` turns it into the named recoverable error.
 
 Pipeline stderr is captured independently per stage and concatenated in
-pipeline order after all readers finish. No timing-dependent merge is exposed.
+pipeline order after all readers finish. `ProcessOutput.combined` additionally
+records stdout/stderr chunks in the order observed by the host, without
+pretending that the operating system supplied a line order. No content-based
+reordering is performed.
 
 ## Streams, backpressure, and scheduling
 
 `|` connects the previous stage's stdout directly to the next stage's stdin
 with an operating-system pipe. No unbounded Tondo buffer is inserted, so the
 kernel pipe applies backpressure. Stderr is never merged implicitly.
+
+`Command.mergeStderr()` and `Pipeline.mergeStderr()` are explicit typed
+redirections. On a non-final stage they connect both stdout and stderr to the
+next stage's stdin (`|&` / `2>&1 |`); on the final stage they expose both streams
+through stdout while retaining the same bytes in `combined`. Shell syntax is
+not parsed by `command` or by `|`.
 
 The final stdout and every stderr are drained concurrently while children run.
 The cooperative Tondo executor never performs a blocking child wait or stream

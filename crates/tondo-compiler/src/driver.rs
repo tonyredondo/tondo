@@ -2511,7 +2511,7 @@ mod tests {
         assert!(stream_checked.diagnostics().diagnostics().is_empty());
 
         let process_source =
-            b"import std.process\nfn main() {\n    let command = process.cmd(\"true\")\n}\n";
+            b"import std.process\nfn main() {\n    let command = process.command(\"true\")\n}\n";
         let process_rejected = execute(operation_request_with_capabilities(
             Operation::Check,
             process_source,

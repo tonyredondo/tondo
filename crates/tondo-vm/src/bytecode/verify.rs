@@ -5571,8 +5571,19 @@ impl Verifier<'_> {
                                 || intrinsic(arguments[1].ty, BytecodeIntrinsicType::Pipeline)?)
                             && intrinsic(operation.ty, BytecodeIntrinsicType::Pipeline)?
                     }
+                    BytecodeBootstrapHostFunction::CommandMergeStderr => {
+                        arguments.len() == 1
+                            && intrinsic(arguments[0].ty, BytecodeIntrinsicType::Command)?
+                            && intrinsic(operation.ty, BytecodeIntrinsicType::Command)?
+                    }
+                    BytecodeBootstrapHostFunction::PipelineMergeStderr => {
+                        arguments.len() == 1
+                            && intrinsic(arguments[0].ty, BytecodeIntrinsicType::Pipeline)?
+                            && intrinsic(operation.ty, BytecodeIntrinsicType::Pipeline)?
+                    }
                     BytecodeBootstrapHostFunction::ProcessOutputStdout
-                    | BytecodeBootstrapHostFunction::ProcessOutputStderr => {
+                    | BytecodeBootstrapHostFunction::ProcessOutputStderr
+                    | BytecodeBootstrapHostFunction::ProcessOutputCombined => {
                         arguments.len() == 1
                             && intrinsic(arguments[0].ty, BytecodeIntrinsicType::ProcessOutput)?
                             && intrinsic(operation.ty, BytecodeIntrinsicType::Bytes)?
@@ -13192,12 +13203,27 @@ mod tests {
                 vec![move_slot(20, command), move_slot(21, pipeline)],
             ),
             host(
+                BytecodeBootstrapHostFunction::CommandMergeStderr,
+                command,
+                vec![move_slot(20, command)],
+            ),
+            host(
+                BytecodeBootstrapHostFunction::PipelineMergeStderr,
+                pipeline,
+                vec![move_slot(21, pipeline)],
+            ),
+            host(
                 BytecodeBootstrapHostFunction::ProcessOutputStdout,
                 bytes,
                 vec![move_slot(22, process_output)],
             ),
             host(
                 BytecodeBootstrapHostFunction::ProcessOutputStderr,
+                bytes,
+                vec![move_slot(22, process_output)],
+            ),
+            host(
+                BytecodeBootstrapHostFunction::ProcessOutputCombined,
                 bytes,
                 vec![move_slot(22, process_output)],
             ),

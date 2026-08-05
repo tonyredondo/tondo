@@ -3,7 +3,7 @@ use std::ffi::OsString;
 use std::fs::OpenOptions;
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
-use std::process::{Child, ChildStderr, ChildStdout, Command as OsCommand, Stdio};
+use std::process::{Child, Command as OsCommand, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, mpsc};
 use std::thread::{self, JoinHandle};
@@ -14,6 +14,7 @@ use std::os::unix::ffi::OsStringExt;
 #[cfg(unix)]
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 
+use os_pipe::pipe;
 use tondo_stdlib::testing::{FloatTolerance, Generator, TextDiff, diff_text};
 use tondo_stdlib::{io as stdlib_io, json, math, messagepack, path, protobuf};
 use tondo_vm::runtime::{
@@ -48,6 +49,7 @@ fn testing_value_text(value: &RuntimeValue) -> String {
 struct ProcessStage {
     program: String,
     arguments: Vec<String>,
+    merge_stderr: bool,
 }
 
 #[derive(Clone)]
@@ -66,6 +68,7 @@ struct ExitStatus {
 struct ProcessOutput {
     stdout: Vec<u8>,
     stderr: Vec<u8>,
+    combined: Vec<u8>,
     statuses: Vec<ExitStatus>,
 }
 
@@ -1287,6 +1290,11 @@ impl BootstrapHost {
         }
         if let Err(message) = self.ensure_bytes_len(output.stderr.len()) {
             return self.result_error(format!("process stderr exceeds byte limit: {message}"));
+        }
+        if let Err(message) = self.ensure_bytes_len(output.combined.len()) {
+            return self.result_error(format!(
+                "combined process output exceeds byte limit: {message}"
+            ));
         }
         match mode {
             CompletionMode::Status | CompletionMode::Run | CompletionMode::Cancel => {
@@ -3267,7 +3275,7 @@ impl VmHost for BootstrapHost {
                     .collect(),
             )),
             (
-                "std.process.cmd",
+                "std.process.cmd" | "std.process.command",
                 [
                     RuntimeValue::String(program),
                     RuntimeValue::Array(arguments),
@@ -3278,7 +3286,7 @@ impl VmHost for BootstrapHost {
                     .map(|argument| match argument {
                         RuntimeValue::String(argument) => Ok(argument.clone()),
                         _ => Err(VmError::Host(
-                            "std.process.cmd received a non-String argument".into(),
+                            "std.process.command received a non-String argument".into(),
                         )),
                     })
                     .collect::<Result<Vec<_>, _>>()?;
@@ -3288,6 +3296,7 @@ impl VmHost for BootstrapHost {
                         stages: vec![ProcessStage {
                             program: program.clone(),
                             arguments,
+                            merge_stderr: false,
                         }],
                     }),
                 ))
@@ -3302,6 +3311,34 @@ impl VmHost for BootstrapHost {
                 let mut plan = self.plan(left)?;
                 plan.stages.extend(self.plan(right)?.stages);
                 Ok(self.allocate(RuntimeHostValueKind::Pipeline, HostValue::Pipeline(plan)))
+            }
+            ("std.process.Command.mergeStderr", [receiver])
+            | ("std.process.Pipeline.mergeStderr", [receiver]) => {
+                let kind = match receiver {
+                    RuntimeValue::Host {
+                        kind: RuntimeHostValueKind::Command,
+                        ..
+                    } => RuntimeHostValueKind::Command,
+                    RuntimeValue::Host {
+                        kind: RuntimeHostValueKind::Pipeline,
+                        ..
+                    } => RuntimeHostValueKind::Pipeline,
+                    _ => return Err(VmError::Host("process plan is not a host value".into())),
+                };
+                let mut plan = self.plan(receiver)?;
+                let stage = plan
+                    .stages
+                    .last_mut()
+                    .ok_or_else(|| VmError::Host("cannot redirect an empty process plan".into()))?;
+                stage.merge_stderr = true;
+                Ok(self.allocate(
+                    kind,
+                    if kind == RuntimeHostValueKind::Command {
+                        HostValue::Command(plan)
+                    } else {
+                        HostValue::Pipeline(plan)
+                    },
+                ))
             }
             ("std.process.Command.start" | "std.process.Pipeline.start", [receiver]) => {
                 match ProcessGroup::spawn(&self.plan(receiver)?, Arc::new(AtomicBool::new(false))) {
@@ -3322,6 +3359,13 @@ impl VmHost for BootstrapHost {
             ("std.process.ProcessOutput.stderr", [receiver]) => {
                 let output = self.output(receiver)?;
                 Ok(self.allocate(RuntimeHostValueKind::Bytes, HostValue::Bytes(output.stderr)))
+            }
+            ("std.process.ProcessOutput.combined", [receiver]) => {
+                let output = self.output(receiver)?;
+                Ok(self.allocate(
+                    RuntimeHostValueKind::Bytes,
+                    HostValue::Bytes(output.combined),
+                ))
             }
             ("std.process.ProcessOutput.statuses", [receiver]) => {
                 let output = self.output(receiver)?;
@@ -3685,10 +3729,14 @@ impl Drop for BootstrapHost {
     }
 }
 
+struct ProcessCapture {
+    handle: JoinHandle<io::Result<()>>,
+}
+
 struct ProcessGroup {
     children: Vec<Child>,
-    stdout: Option<JoinHandle<io::Result<Vec<u8>>>>,
-    stderr: Vec<JoinHandle<io::Result<Vec<u8>>>>,
+    captures: Vec<ProcessCapture>,
+    events: Option<mpsc::Receiver<(usize, StreamKind, Vec<u8>)>>,
     cancellation: Arc<AtomicBool>,
 }
 
@@ -3698,70 +3746,129 @@ impl ProcessGroup {
             return Err("cannot execute an empty process plan".into());
         }
         let mut children = Vec::with_capacity(plan.stages.len());
-        let mut stderr = Vec::with_capacity(plan.stages.len());
-        let mut previous_stdout: Option<ChildStdout> = None;
-        let mut final_stdout = None;
+        let mut captures = Vec::with_capacity(plan.stages.len() + 1);
+        let (sender, receiver) = mpsc::channel();
+        let mut previous_stdin: Option<Stdio> = None;
 
         for (index, stage) in plan.stages.iter().enumerate() {
             let final_stage = index + 1 == plan.stages.len();
             let mut command = OsCommand::new(&stage.program);
             command.args(&stage.arguments);
-            command.stdout(Stdio::piped()).stderr(Stdio::piped());
             configure_process_group(&mut command);
-            if let Some(stdout) = previous_stdout.take() {
-                command.stdin(Stdio::from(stdout));
+            if let Some(stdin) = previous_stdin.take() {
+                command.stdin(stdin);
             }
+
+            if !final_stage && stage.merge_stderr {
+                let (reader, writer) = match pipe() {
+                    Ok(pipe) => pipe,
+                    Err(error) => {
+                        cleanup_partial(&mut children, &mut captures);
+                        return Err(format!("cannot create process pipe: {error}"));
+                    }
+                };
+                let stdout_writer = match writer.try_clone() {
+                    Ok(writer) => writer,
+                    Err(error) => {
+                        cleanup_partial(&mut children, &mut captures);
+                        return Err(format!("cannot duplicate process pipe: {error}"));
+                    }
+                };
+                command.stdout(Stdio::from(stdout_writer));
+                command.stderr(Stdio::from(writer));
+                previous_stdin = Some(Stdio::from(reader));
+            } else {
+                command.stdout(Stdio::piped()).stderr(Stdio::piped());
+            }
+
             let mut child = match command.spawn() {
                 Ok(child) => child,
                 Err(error) => {
-                    cleanup_partial(&mut children, &mut stderr);
+                    cleanup_partial(&mut children, &mut captures);
                     return Err(format!("cannot spawn `{}`: {error}", stage.program));
                 }
             };
-            let Some(stdout) = child.stdout.take() else {
-                terminate(&mut child);
-                let _ = child.wait();
-                cleanup_partial(&mut children, &mut stderr);
-                return Err(format!("cannot capture stdout for `{}`", stage.program));
-            };
-            let Some(child_stderr) = child.stderr.take() else {
-                terminate(&mut child);
-                let _ = child.wait();
-                cleanup_partial(&mut children, &mut stderr);
-                return Err(format!("cannot capture stderr for `{}`", stage.program));
-            };
-            children.push(child);
-            let stderr_reader = match read_stderr(child_stderr) {
-                Ok(reader) => reader,
-                Err(error) => {
-                    cleanup_partial(&mut children, &mut stderr);
-                    return Err(format!(
-                        "cannot start stderr reader for `{}`: {error}",
-                        stage.program
-                    ));
-                }
-            };
-            stderr.push(stderr_reader);
+
             if final_stage {
-                final_stdout = match read_stdout(stdout) {
-                    Ok(reader) => Some(reader),
+                let Some(stdout) = child.stdout.take() else {
+                    terminate(&mut child);
+                    let _ = child.wait();
+                    cleanup_partial(&mut children, &mut captures);
+                    return Err(format!("cannot capture stdout for `{}`", stage.program));
+                };
+                let Some(stderr) = child.stderr.take() else {
+                    terminate(&mut child);
+                    let _ = child.wait();
+                    cleanup_partial(&mut children, &mut captures);
+                    return Err(format!("cannot capture stderr for `{}`", stage.program));
+                };
+                let stdout_capture =
+                    match spawn_capture(index, stdout, StreamKind::Stdout, sender.clone()) {
+                        Ok(capture) => capture,
+                        Err(error) => {
+                            terminate(&mut child);
+                            let _ = child.wait();
+                            cleanup_partial(&mut children, &mut captures);
+                            return Err(format!("cannot start stdout reader: {error}"));
+                        }
+                    };
+                captures.push(ProcessCapture {
+                    handle: stdout_capture,
+                });
+                let stderr_kind = if stage.merge_stderr {
+                    StreamKind::Stdout
+                } else {
+                    StreamKind::Stderr
+                };
+                let stderr_capture = match spawn_capture(index, stderr, stderr_kind, sender.clone())
+                {
+                    Ok(capture) => capture,
                     Err(error) => {
-                        cleanup_partial(&mut children, &mut stderr);
-                        return Err(format!(
-                            "cannot start stdout reader for `{}`: {error}",
-                            stage.program
-                        ));
+                        terminate(&mut child);
+                        let _ = child.wait();
+                        cleanup_partial(&mut children, &mut captures);
+                        return Err(format!("cannot start stderr reader: {error}"));
                     }
                 };
-            } else {
-                previous_stdout = Some(stdout);
+                captures.push(ProcessCapture {
+                    handle: stderr_capture,
+                });
+            } else if !stage.merge_stderr {
+                let Some(stdout) = child.stdout.take() else {
+                    terminate(&mut child);
+                    let _ = child.wait();
+                    cleanup_partial(&mut children, &mut captures);
+                    return Err(format!("cannot connect stdout for `{}`", stage.program));
+                };
+                previous_stdin = Some(Stdio::from(stdout));
+                let Some(stderr) = child.stderr.take() else {
+                    terminate(&mut child);
+                    let _ = child.wait();
+                    cleanup_partial(&mut children, &mut captures);
+                    return Err(format!("cannot capture stderr for `{}`", stage.program));
+                };
+                let stderr_capture =
+                    match spawn_capture(index, stderr, StreamKind::Stderr, sender.clone()) {
+                        Ok(capture) => capture,
+                        Err(error) => {
+                            terminate(&mut child);
+                            let _ = child.wait();
+                            cleanup_partial(&mut children, &mut captures);
+                            return Err(format!("cannot start stderr reader: {error}"));
+                        }
+                    };
+                captures.push(ProcessCapture {
+                    handle: stderr_capture,
+                });
             }
+            children.push(child);
         }
+        drop(sender);
 
         Ok(Self {
             children,
-            stdout: final_stdout,
-            stderr,
+            captures,
+            events: Some(receiver),
             cancellation,
         })
     }
@@ -3790,11 +3897,32 @@ impl ProcessGroup {
             }
         }
 
-        let stdout = join_reader(self.stdout.take(), "stdout")?;
-        let mut combined_stderr = Vec::new();
-        for reader in self.stderr.drain(..) {
-            combined_stderr.extend(join_reader(Some(reader), "stderr")?);
+        let mut stdout = Vec::new();
+        let mut stderr_by_stage = BTreeMap::<usize, Vec<u8>>::new();
+        let mut combined = Vec::new();
+        if let Some(events) = self.events.take() {
+            for (stage, stream, chunk) in events {
+                combined.extend_from_slice(&chunk);
+                match stream {
+                    StreamKind::Stdout => stdout.extend_from_slice(&chunk),
+                    StreamKind::Stderr => stderr_by_stage
+                        .entry(stage)
+                        .or_default()
+                        .extend_from_slice(&chunk),
+                    StreamKind::Stdin => {
+                        return Err("process capture produced an stdin event".into());
+                    }
+                }
+            }
         }
+        for capture in self.captures.drain(..) {
+            capture
+                .handle
+                .join()
+                .map_err(|_| "process capture reader panicked".to_owned())?
+                .map_err(|error| format!("cannot read process output: {error}"))?;
+        }
+        let stderr = stderr_by_stage.into_values().flatten().collect();
         let statuses = statuses
             .into_iter()
             .map(|status| {
@@ -3808,7 +3936,8 @@ impl ProcessGroup {
             .collect();
         Ok(ProcessOutput {
             stdout,
-            stderr: combined_stderr,
+            stderr,
+            combined,
             statuses,
         })
     }
@@ -3822,54 +3951,49 @@ impl Drop for ProcessGroup {
         for child in &mut self.children {
             let _ = child.wait();
         }
-        if let Some(reader) = self.stdout.take() {
-            let _ = reader.join();
-        }
-        for reader in self.stderr.drain(..) {
-            let _ = reader.join();
+        for capture in self.captures.drain(..) {
+            let _ = capture.handle.join();
         }
     }
 }
 
-fn cleanup_partial(children: &mut [Child], stderr: &mut Vec<JoinHandle<io::Result<Vec<u8>>>>) {
+fn cleanup_partial(children: &mut [Child], captures: &mut Vec<ProcessCapture>) {
     for child in children.iter_mut() {
         terminate(child);
     }
     for child in children.iter_mut() {
         let _ = child.wait();
     }
-    for reader in stderr.drain(..) {
-        let _ = reader.join();
+    for capture in captures.drain(..) {
+        let _ = capture.handle.join();
     }
 }
 
-fn read_stdout(mut stream: ChildStdout) -> io::Result<JoinHandle<io::Result<Vec<u8>>>> {
+fn spawn_capture<R>(
+    stage: usize,
+    mut stream: R,
+    kind: StreamKind,
+    sender: mpsc::Sender<(usize, StreamKind, Vec<u8>)>,
+) -> io::Result<JoinHandle<io::Result<()>>>
+where
+    R: Read + Send + 'static,
+{
     thread::Builder::new()
-        .name("tondo-process-stdout".into())
-        .spawn(move || read_all(&mut stream))
-}
-
-fn read_stderr(mut stream: ChildStderr) -> io::Result<JoinHandle<io::Result<Vec<u8>>>> {
-    thread::Builder::new()
-        .name("tondo-process-stderr".into())
-        .spawn(move || read_all(&mut stream))
-}
-
-fn read_all(stream: &mut impl Read) -> io::Result<Vec<u8>> {
-    let mut output = Vec::new();
-    stream.read_to_end(&mut output)?;
-    Ok(output)
-}
-
-fn join_reader(
-    reader: Option<JoinHandle<io::Result<Vec<u8>>>>,
-    stream: &str,
-) -> Result<Vec<u8>, String> {
-    reader
-        .ok_or_else(|| format!("{stream} reader is missing"))?
-        .join()
-        .map_err(|_| format!("{stream} reader panicked"))?
-        .map_err(|error| format!("cannot read process {stream}: {error}"))
+        .name("tondo-process-output".into())
+        .spawn(move || {
+            let mut buffer = [0_u8; 8 * 1024];
+            loop {
+                let count = stream.read(&mut buffer)?;
+                if count == 0 {
+                    return Ok(());
+                }
+                sender
+                    .send((stage, kind, buffer[..count].to_vec()))
+                    .map_err(|_| {
+                        io::Error::new(io::ErrorKind::BrokenPipe, "capture receiver closed")
+                    })?;
+            }
+        })
 }
 
 fn shell_stage(text: &str) -> ProcessStage {
@@ -3878,6 +4002,7 @@ fn shell_stage(text: &str) -> ProcessStage {
         ProcessStage {
             program: "/bin/sh".into(),
             arguments: vec!["-c".into(), text.into()],
+            merge_stderr: false,
         }
     }
     #[cfg(windows)]
@@ -3885,6 +4010,7 @@ fn shell_stage(text: &str) -> ProcessStage {
         ProcessStage {
             program: "cmd.exe".into(),
             arguments: vec!["/C".into(), text.into()],
+            merge_stderr: false,
         }
     }
     #[cfg(not(any(unix, windows)))]
@@ -3892,6 +4018,7 @@ fn shell_stage(text: &str) -> ProcessStage {
         ProcessStage {
             program: "/bin/sh".into(),
             arguments: vec!["-c".into(), text.into()],
+            merge_stderr: false,
         }
     }
 }
@@ -4522,7 +4649,7 @@ mod tests {
 
     fn command(host: &mut BootstrapHost, program: &str, arguments: &[&str]) -> RuntimeValue {
         host.invoke(
-            "std.process.cmd",
+            "std.process.command",
             &[
                 RuntimeValue::String(program.into()),
                 RuntimeValue::Array(
@@ -4579,6 +4706,22 @@ mod tests {
             panic!("expected decoded process stderr");
         };
         text
+    }
+
+    fn output_combined_bytes(host: &mut BootstrapHost, output: RuntimeValue) -> Vec<u8> {
+        let bytes = host
+            .invoke("std.process.ProcessOutput.combined", &[output])
+            .unwrap();
+        match bytes {
+            RuntimeValue::Host {
+                kind: RuntimeHostValueKind::Bytes,
+                id,
+            } => match host.values.remove(&id) {
+                Some(HostValue::Bytes(bytes)) => bytes,
+                _ => panic!("expected live combined process bytes"),
+            },
+            _ => panic!("expected combined process bytes"),
+        }
     }
 
     fn bytes_ok(value: RuntimeValue) -> RuntimeValue {
@@ -5838,6 +5981,57 @@ mod tests {
         let output = ok(await_call(&mut host, "std.process.Command.output", exact));
         assert_eq!(output_text(&mut host, output), "[two words][*][$HOME]");
         assert!(!marker.exists());
+    }
+
+    #[test]
+    fn process_output_preserves_separate_streams_and_terminal_combined_bytes() {
+        let mut host = BootstrapHost::default();
+        let plan = shell(&mut host, "printf out; printf err >&2");
+        let output = ok(await_call(&mut host, "std.process.Command.output", plan));
+        assert_eq!(output_text(&mut host, output.clone()), "out");
+        assert_eq!(output_stderr_text(&mut host, output.clone()), "err");
+        let mut combined = output_combined_bytes(&mut host, output);
+        combined.sort_unstable();
+        let mut expected = b"outerr".to_vec();
+        expected.sort_unstable();
+        assert_eq!(combined, expected);
+    }
+
+    #[test]
+    fn merge_stderr_feeds_the_next_stage_like_bash_pipe_ampersand() {
+        let mut host = BootstrapHost::default();
+        let source = shell(&mut host, "printf out; printf err >&2");
+        let merged = host
+            .invoke("std.process.Command.mergeStderr", &[source])
+            .unwrap();
+        let sink = command(&mut host, "/bin/cat", &[]);
+        let pipeline = pipe(&mut host, merged, sink);
+        let output = ok(await_call(
+            &mut host,
+            "std.process.Pipeline.output",
+            pipeline,
+        ));
+        assert_eq!(output_text(&mut host, output.clone()), "outerr");
+        assert_eq!(output_stderr_text(&mut host, output.clone()), "");
+        assert_eq!(output_combined_bytes(&mut host, output), b"outerr");
+    }
+
+    #[test]
+    fn separate_pipeline_stderr_is_concatenated_by_stage_order() {
+        let mut host = BootstrapHost::default();
+        for _ in 0..8 {
+            let source = shell(&mut host, "printf first >&2; printf data");
+            let middle = shell(&mut host, "cat >/dev/null; printf second >&2");
+            let sink = shell(&mut host, "cat >/dev/null; printf third >&2");
+            let left = pipe(&mut host, source, middle);
+            let pipeline = pipe(&mut host, left, sink);
+            let output = ok(await_call(
+                &mut host,
+                "std.process.Pipeline.output",
+                pipeline,
+            ));
+            assert_eq!(output_stderr_text(&mut host, output), "firstsecondthird");
+        }
     }
 
     #[test]

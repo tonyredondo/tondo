@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 1.53
+**Versión del tracker:** 1.54
 
 **Última actualización:** 2026-08-05
 
@@ -4128,11 +4128,17 @@ parte del módulo.
   La fixture `tests/runtime/m11-std-fs-001.to` y la prueba host cubren apertura,
   metadata, directorio, partial writes, lectura, errores y cleanup.
 
-- [ ] **STD-PROC-IMPL-001 — Alinear procesos con el contrato público.** Exponer
-  exactamente `command/shell/pipe`, `Command.run/output/check/start` y
-  `ProcessHandle.wait/cancel`, eliminando aliases bootstrap contradictorios o
-  documentándolos como internos. Probar backpressure, cancelación, reaping y
-  errores nominales mediante programas Tondo.
+- [x] **STD-PROC-IMPL-001 — Alinear procesos con el contrato público.** La
+  superficie hosted expone `command/shell/pipe` (con `cmd` documentado solo como
+  alias bootstrap interno), `Command.run/output/check/start`,
+  `ProcessHandle.wait/cancel`, `Command/Pipeline.mergeStderr` y
+  `ProcessOutput.stdout/stderr/combined/statuses`. La captura mantiene stdout y
+  stderr separados y ofrece la secuencia intercalada observada por el host;
+  `mergeStderr` implementa la redirección tipada equivalente a `|&`/`2>&1 |`.
+  Pipes usan backpressure del sistema operativo, los lectores se drenan
+  concurrentemente, cancelación y errores limpian/reaparecen todos los hijos y
+  la prueba host cubre argumentos exactos, streams separados, combined,
+  redirección, formas de pipeline, backpressure y errores nominales.
 
 - [ ] **STD-SER-IMPL-001 — Implementar `std.serialization` tipada.** Publicar
   `Serialize`, `Deserialize`, `Serializer[E]`, `Deserializer[E]` y la máquina
@@ -5380,6 +5386,23 @@ esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 1.54 — 2026-08-05
+
+- Se cierra `STD-PROC-IMPL-001`: el bridge hosted de procesos conserva la
+  construcción exacta de argv y la API pública `process.command/shell/pipe`,
+  con `process.cmd` únicamente como alias bootstrap interno durante la
+  migración.
+- `ProcessOutput` captura `stdout` y `stderr` por separado y añade `combined`,
+  que conserva los chunks en el orden observado por el host sin inventar un
+  orden por líneas. `Command.mergeStderr()` y `Pipeline.mergeStderr()` conectan
+  ambos streams al siguiente stdin o los presentan como stdout en la etapa
+  final, modelando `|&`/`2>&1 |` sin re-tokenizar ni invocar un shell.
+- La implementación mantiene backpressure mediante pipes del sistema,
+  lectores concurrentes, cancelación/reaping idempotente y cleanup también en
+  errores parciales de spawn. Se añaden pruebas directas de streams,
+  redirección, pipelines anidados, backpressure, códigos de salida y errores
+  nominales; la especificación y los contratos hosted quedan alineados.
 
 ### 1.53 — 2026-08-05
 

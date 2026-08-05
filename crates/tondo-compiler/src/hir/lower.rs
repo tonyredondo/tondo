@@ -2048,6 +2048,7 @@ impl<'a> TypeLowerer<'a> {
                         (HirBootstrapHostFunction::CommandOutput, output_outcome),
                         (HirBootstrapHostFunction::CommandRun, status_outcome),
                         (HirBootstrapHostFunction::CommandCheck, check_outcome),
+                        (HirBootstrapHostFunction::CommandMergeStderr, command),
                     ],
                 ),
                 (
@@ -2058,6 +2059,7 @@ impl<'a> TypeLowerer<'a> {
                         (HirBootstrapHostFunction::PipelineOutput, output_outcome),
                         (HirBootstrapHostFunction::PipelineRun, status_outcome),
                         (HirBootstrapHostFunction::PipelineCheck, check_outcome),
+                        (HirBootstrapHostFunction::PipelineMergeStderr, pipeline),
                     ],
                 ),
             ] {
@@ -2098,6 +2100,11 @@ impl<'a> TypeLowerer<'a> {
             for (function, owner, outcome) in [
                 (HirBootstrapHostFunction::ProcessOutputStdout, output, bytes),
                 (HirBootstrapHostFunction::ProcessOutputStderr, output, bytes),
+                (
+                    HirBootstrapHostFunction::ProcessOutputCombined,
+                    output,
+                    bytes,
+                ),
                 (
                     HirBootstrapHostFunction::ProcessOutputStatuses,
                     output,

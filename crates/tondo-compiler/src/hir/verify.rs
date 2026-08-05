@@ -4306,8 +4306,19 @@ impl Verifier<'_> {
                             })
                             && intrinsic(expression.ty, IntrinsicType::Pipeline)
                     }
+                    super::HirBootstrapHostFunction::CommandMergeStderr => {
+                        argument_types.len() == 1
+                            && intrinsic(argument_types[0], IntrinsicType::Command)
+                            && intrinsic(expression.ty, IntrinsicType::Command)
+                    }
+                    super::HirBootstrapHostFunction::PipelineMergeStderr => {
+                        argument_types.len() == 1
+                            && intrinsic(argument_types[0], IntrinsicType::Pipeline)
+                            && intrinsic(expression.ty, IntrinsicType::Pipeline)
+                    }
                     super::HirBootstrapHostFunction::ProcessOutputStdout
-                    | super::HirBootstrapHostFunction::ProcessOutputStderr => {
+                    | super::HirBootstrapHostFunction::ProcessOutputStderr
+                    | super::HirBootstrapHostFunction::ProcessOutputCombined => {
                         argument_types.len() == 1
                             && intrinsic(argument_types[0], IntrinsicType::ProcessOutput)
                             && intrinsic(expression.ty, IntrinsicType::Bytes)
@@ -6300,6 +6311,24 @@ mod tests {
         assert!(diagnostics.is_empty());
         assert!(complete);
         (resolved, program)
+    }
+
+    #[test]
+    fn process_output_redirections_are_verified_at_the_hir_boundary() {
+        const SOURCE: &str = "import std.process\n\
+             async fn main(): !(process.ProcessError) {\n\
+                 let command = process.command(\"/usr/bin/true\")\n\
+                 let merged_command = command.mergeStderr()\n\
+                 let pipeline = process.command(\"/usr/bin/printf\", \"x\") | process.command(\"/bin/cat\")\n\
+                 let merged_pipeline = pipeline.mergeStderr()\n\
+                 let output = await merged_command.output()?\n\
+                 let combined = output.combined\n\
+                 _ = merged_pipeline\n\
+                 _ = combined\n\
+             }\n";
+
+        let (resolved, program) = checked_program_from(SOURCE);
+        verify_typed_hir(&resolved, &program).unwrap();
     }
 
     fn symbol_named(resolved: &ResolvedProgram, name: &str) -> crate::resolve::SymbolId {
