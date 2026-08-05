@@ -12,6 +12,12 @@ and a proof description. Portable kernels live in `tondo-stdlib`; compiler and
 VM bridges are limited to intrinsic lowering or capability-gated host effects.
 There is no second public package, no ambient lookup and no general FFI ABI.
 
+The aggregate owner graph and capability/API rules live in the single
+machine-readable integration contract
+[`testing/stdlib-spec.json`](../../testing/stdlib-spec.json). The strict gate
+validates its topological order and links it to this document and the canonical
+standard-library specification; it does not promote pending typed codecs.
+
 The hosted bridge is intentionally a draft distribution boundary: the VM
 validates the typed operation before invoking the host, and the host returns a
 nominal error or a complete value. Console streams use the same `Reader` and

@@ -26,7 +26,7 @@ jq -e '
     and .owner == "std.json"
     and .edition == "0.1"
     and .phase == "STD-0.1A"
-    and .status == "draft-contract"
+    and .status == "closed-contract"
     and .wire.syntax == "RFC8259"
     and .wire.text_encoding == "utf-8"
     and .wire.whitespace == ["space", "tab", "line-feed", "carriage-return"]
@@ -60,6 +60,24 @@ jq -e '
     and .typed.canonical_field_order == "RFC8785-property-order"
     and .typed.unknown_capture == "declared-extras-only"
     and .typed.parser_stack == "explicit-bounded-stack"
+    and .api.module == "std.json"
+    and .api.value_type == "JsonValue"
+    and .api.member_type == "JsonMember"
+    and .api.number_type == "JsonNumber"
+    and .api.event_type == "JsonEvent"
+    and .api.path_type == "JsonPath"
+    and .api.location_type == "JsonLocation"
+    and .api.options == ["JsonLimits", "JsonDecodeOptions", "JsonEncodeOptions"]
+    and .api.policies == ["JsonDuplicatePolicy", "JsonUnknownFieldPolicy", "JsonNumberPolicy"]
+    and .api.error_type == "JsonError"
+    and .api.error_kind == "JsonErrorKind"
+    and .api.functions == ["parse", "decode", "encode", "validate", "canonicalize", "encodeCanonical"]
+    and .api.number_methods == ["parse", "text", "toInt", "toUInt", "toFloat32", "toFloat64"]
+    and .api.reader_methods == ["fromBytes", "fromReader", "next", "own", "finish"]
+    and .api.writer_methods == ["toWriter", "write", "finish"]
+    and .api.terminal_state == "error-or-finish-terminal"
+    and .api.end_of_document == "next-returns-none-once"
+    and .api.typed_dispatch == "Serialize-Deserialize-static-no-dom"
     and .streaming.event_kinds == [
         "start-array", "end-array", "start-object", "end-object", "key",
         "null", "bool", "number", "string"

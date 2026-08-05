@@ -1,0 +1,52 @@
+{
+  "format": "tondo-stdlib-integration-contract/1",
+  "edition": "0.1",
+  "phase": "STD-0.1A",
+  "status": "closed-draft",
+  "public_release": false,
+  "canonical_spec": "TONDO_STANDARD_LIBRARY_SPEC.md",
+  "owner_manifest": "testing/stdlib-implementation.json",
+  "intrinsics": ["Bytes"],
+  "owner_contracts": [
+    {"id":"std.meta","contract":"docs/contracts/std-meta.md","source_set":"stdlib-meta","dependencies":[]},
+    {"id":"std.reflect","contract":"docs/contracts/std-reflect.md","source_set":"stdlib-reflect","dependencies":[]},
+    {"id":"std.core","contract":"docs/contracts/stdlib-core.md","source_set":"stdlib-core","dependencies":[]},
+    {"id":"std.time","contract":"docs/contracts/stdlib-time.md","source_set":"stdlib-time","dependencies":["std.core"]},
+    {"id":"std.env","contract":"docs/contracts/stdlib-env.md","source_set":"stdlib-hosted","dependencies":["std.core"]},
+    {"id":"std.text","contract":"docs/contracts/stdlib-core.md","source_set":"stdlib-core","dependencies":["std.core"]},
+    {"id":"std.collections","contract":"docs/contracts/stdlib-core.md","source_set":"stdlib-core","dependencies":["std.core"]},
+    {"id":"std.iter","contract":"docs/contracts/stdlib-core.md","source_set":"stdlib-core","dependencies":["std.collections"]},
+    {"id":"std.math","contract":"docs/contracts/stdlib-core.md","source_set":"stdlib-core","dependencies":["std.core"]},
+    {"id":"std.format","contract":"docs/contracts/stdlib-core.md","source_set":"stdlib-core","dependencies":["std.text"]},
+    {"id":"std.io","contract":"docs/contracts/stdlib-core.md","source_set":"stdlib-core","dependencies":["std.core"]},
+    {"id":"std.serialization","contract":"docs/contracts/stdlib-serialization.md","source_set":"stdlib-core","dependencies":["std.core","std.format","std.io"]},
+    {"id":"std.path","contract":"docs/contracts/stdlib-hosted.md","source_set":"stdlib-hosted","dependencies":["std.text"]},
+    {"id":"std.console","contract":"docs/contracts/stdlib-hosted.md","source_set":"stdlib-hosted","dependencies":["std.io"]},
+    {"id":"std.fs","contract":"docs/contracts/stdlib-hosted.md","source_set":"stdlib-hosted","dependencies":["std.path","std.io"]},
+    {"id":"std.process","contract":"docs/contracts/stdlib-hosted.md","source_set":"stdlib-hosted","dependencies":["std.io"]},
+    {"id":"std.json","contract":"docs/contracts/stdlib-json.md","source_set":"stdlib-json","dependencies":["std.serialization","std.io"]},
+    {"id":"std.messagepack","contract":"docs/contracts/stdlib-messagepack.md","source_set":"stdlib-messagepack","dependencies":["std.serialization","std.io"]},
+    {"id":"std.protobuf","contract":"docs/contracts/stdlib-protobuf.md","source_set":"stdlib-protobuf","dependencies":["std.serialization","std.io","std.meta"]},
+    {"id":"std.testing","contract":"docs/contracts/stdlib-testing.md","source_set":"stdlib-testing","dependencies":["std.core","std.io"]}
+  ],
+  "capability_rules": {
+    "import_is_not_capability": true,
+    "gated": ["std.console:console", "std.env:environment", "std.fs:filesystem", "std.process:process"],
+    "build_only": ["std.meta", "std.protobuf:generator"],
+    "test_only": ["std.testing"],
+    "ambient_lookup": false
+  },
+  "api_rules": {
+    "canonical_owner_per_symbol": true,
+    "duplicate_signatures": false,
+    "aliases": false,
+    "implicit_defaults": false,
+    "error_model": "nominal-result-per-owner",
+    "async_io_model": "std.io-reader-writer"
+  },
+  "promotion": {
+    "required_owner_status": "closed-contract",
+    "implementation_remains_pending": ["std.serialization","std.json","std.messagepack","std.protobuf"],
+    "next": "STD-SER-IMPL-001"
+  }
+}

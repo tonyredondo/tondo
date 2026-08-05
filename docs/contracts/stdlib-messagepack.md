@@ -1,7 +1,7 @@
 # Contrato de `std.messagepack`
 
-**Estado:** contrato de owner aceptado para `STD-0.1A`; todavía no publica el
-codec ni una implementación de la Standard Library.
+**Estado:** contrato de API fuente cerrado para `STD-0.1A`; la implementación
+typed del codec continúa pendiente.
 
 `std.messagepack` implementa el modelo binario de la especificación MessagePack
 y reutiliza los traits estáticos de `std.serialization`. El registro
@@ -14,6 +14,97 @@ La sección 14.10 de `TONDO_STANDARD_LIBRARY_SPEC.md` sigue siendo la fuente
 normativa del catálogo. Este documento fija la frontera operativa del owner sin
 inventar un segundo modelo de serialization ni afirmar una canonicalización
 universal que MessagePack no define.
+
+## API fuente única
+
+Las siguientes firmas son la única superficie pública de `std.messagepack`.
+`encode`/`decode` son las operaciones materializadas y los readers/writers son
+la misma máquina en modo incremental; no hay aliases por formato ni defaults
+ambientales.
+
+```tondo
+pub type MessagePackEntry = { key: MessagePackValue, value: MessagePackValue }
+pub enum MessagePackValue {
+    Nil
+    Bool(Bool)
+    Int(Int64)
+    UInt(UInt64)
+    Float32(Float32)
+    Float64(Float64)
+    String(String)
+    Binary(Bytes)
+    Array(Array[MessagePackValue])
+    Map(Array[MessagePackEntry])
+    Ext(MessagePackExt)
+}
+pub type MessagePackExt = { typeCode: Int8, payload: Bytes }
+pub type MessagePackTimestamp = { seconds: Int64, nanoseconds: Int32 }
+pub type MessagePackPath
+
+pub enum MessagePackEvent {
+    Nil, Bool(Bool), Int(Int64), UInt(UInt64), Float32(Float32), Float64(Float64),
+    String(String), Binary(Bytes), StartArray(Int?), EndArray,
+    StartMap(Int?), MapKey, EndMap, Ext(MessagePackExt)
+}
+pub enum MessagePackDuplicatePolicy { Preserve, Reject, First, Last }
+pub enum MessagePackUnknownExtensionPolicy { Preserve, Reject }
+pub enum MessagePackNonMinimalPolicy { Accept, Reject }
+pub type MessagePackLimits = {
+    maxDocumentBytes: Int
+    maxDepth: Int
+    maxArrayItems: Int
+    maxMapPairs: Int
+    maxStringBytes: Int
+    maxBinaryBytes: Int
+    maxExtBytes: Int
+    maxEvents: Int
+    maxOutputBytes: Int
+}
+pub type MessagePackDecodeOptions = {
+    limits: MessagePackLimits
+    dynamicMapDuplicates: MessagePackDuplicatePolicy
+    typedMapDuplicates: MessagePackDuplicatePolicy
+    nonMinimal: MessagePackNonMinimalPolicy
+    unknownExtensions: MessagePackUnknownExtensionPolicy
+}
+pub type MessagePackEncodeOptions = {
+    limits: MessagePackLimits
+    deterministic: Bool
+}
+pub enum MessagePackErrorKind {
+    UnexpectedEof, InvalidTag, InvalidUtf8, InvalidLength, NonMinimalEncoding,
+    InvalidExtension, TypeMismatch, DuplicateKey, NumberRange,
+    DeterministicKeyCollision, OutOfOrderKey, LimitExceeded, IoError, TrailingData
+}
+pub type MessagePackError = { kind: MessagePackErrorKind, offset: Int, path: MessagePackPath }
+
+pub fn decodeValue(input: Bytes, options: MessagePackDecodeOptions): MessagePackValue ! MessagePackError
+pub fn decode[T: Deserialize](input: Bytes, options: MessagePackDecodeOptions): T ! MessagePackError
+pub fn encodeValue(value: MessagePackValue, options: MessagePackEncodeOptions): Bytes ! MessagePackError
+pub fn encode[T: Serialize](value: T, options: MessagePackEncodeOptions): Bytes ! MessagePackError
+pub fn validate(input: Bytes, options: MessagePackDecodeOptions): Unit ! MessagePackError
+pub fn encodeDeterministic(value: MessagePackValue, limits: MessagePackLimits): Bytes ! MessagePackError
+
+pub fn MessagePackTimestamp.fromExt(value: MessagePackExt): MessagePackTimestamp ! MessagePackError
+pub fn MessagePackTimestamp.toExt(self): MessagePackExt ! MessagePackError
+
+pub fn MessagePackReader.fromBytes(input: Bytes, options: MessagePackDecodeOptions): MessagePackReader ! MessagePackError
+pub async fn MessagePackReader.fromReader(var input: Reader, options: MessagePackDecodeOptions): MessagePackReader ! MessagePackError
+pub async fn MessagePackReader.next(var self): MessagePackEvent? ! MessagePackError
+pub fn MessagePackReader.own(var self, event: MessagePackEvent): MessagePackEvent ! MessagePackError
+pub async fn MessagePackReader.finish(var self): Unit ! MessagePackError
+
+pub fn MessagePackWriter.toWriter(var output: Writer, options: MessagePackEncodeOptions): MessagePackWriter ! MessagePackError
+pub async fn MessagePackWriter.write(var self, event: MessagePackEvent): Unit ! MessagePackError
+pub async fn MessagePackWriter.finish(var self): Unit ! MessagePackError
+```
+
+`MessagePackValue.Map` conserva pares y orden; no se ofrece un segundo
+`Map[String, ...]`. `decode` typed nunca crea ese valor dinámico. `next` devuelve
+`none` exactamente una vez después de la raíz, `own` copia vistas de string,
+binary o ext y reader/writer quedan terminales tras error o `finish`. El modo
+determinista se activa solo mediante `MessagePackEncodeOptions.deterministic`
+o `encodeDeterministic`; exige claves ordenadas y rechaza colisiones de bytes.
 
 ## Modelo completo
 

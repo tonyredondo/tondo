@@ -3766,13 +3766,13 @@ layer pueden avanzar en paralelo.
   conformidad permanecen pendientes y esta tarea habilita M10.6 sin anunciar
   disponibilidad en `tondo-vm-hosted`.
 
-- [ ] **STD-SPEC-001 — Cerrar la integración de
-  `TONDO_STANDARD_LIBRARY_SPEC.md`.** Después de los specs por owner, comprobar
-  que todas las superficies de STD-0.1A forman un único contrato sin firmas
-  duplicadas, huecos de capability ni ciclos. La auditoría 1.45 la reabre porque
-  serialization y los tres formatos todavía describen operaciones sin fijar
-  todas sus firmas fuente. Esta tarea es un cierre agregado, no el lugar donde
-  se inventan por primera vez las APIs de cada módulo.
+- [x] **STD-SPEC-001 — Cerrar la integración de
+  `TONDO_STANDARD_LIBRARY_SPEC.md`.** `testing/stdlib-spec.json` es ahora el
+  catálogo machine-readable único de owners, source sets, dependencias,
+  capabilities y reglas de API; `scripts/stdlib-spec-check.sh` comprueba orden
+  topológico, contratos presentes, owner único, ausencia de aliases/defaults y
+  enlace con el spec canónico. Es un cierre agregado y mantiene los codecs
+  typed pendientes en los bloques A3 de implementación.
 
 - [x] **STD-MOD-001 — Definir módulos y prelude mínimo.** El contrato base fija
   el catálogo cerrado, un propietario canónico por declaración, `std` único y
@@ -4049,20 +4049,20 @@ completa del owner existe por la ruta pública”. Cada una debe actualizar la
 matriz de owner por firma, no limitarse a citar un archivo que contiene alguna
 parte del módulo.
 
-- [ ] **STD-JSON-API-001 — Fijar la API fuente exacta de JSON.** Declarar tipos,
-  constructores y firmas typed/dynamic/streaming, options, limits, events y
-  errors; resolver ownership y estado terminal de reader/writer sin crear
-  sobrecargas equivalentes ni defaults ambientales.
+- [x] **STD-JSON-API-001 — Fijar la API fuente exacta de JSON.** Cerrado con
+  `JsonValue`/`JsonNumber`/`JsonPath`, options y limits nominales, parse/decode/
+  encode/validate/canonicalize, `JsonEvent`, readers/writers async, ownership,
+  errores con path y estado terminal; no hay aliases ni defaults ambientales.
 
-- [ ] **STD-MSGPACK-API-001 — Fijar la API fuente exacta de MessagePack.**
-  Declarar tipos y firmas para typed/dynamic/streaming, maps de pares, ext,
-  timestamp, options, limits, events y errors, conservando un solo owner de
-  serialization e I/O.
+- [x] **STD-MSGPACK-API-001 — Fijar la API fuente exacta de MessagePack.**
+  Cerrado con valores y entries de maps arbitrarios, ext/timestamp, policies,
+  options/limits, encode/decode/deterministic, eventos, readers/writers async,
+  ownership, errores y terminalidad bajo el owner común de serialization e I/O.
 
-- [ ] **STD-PROTOBUF-API-001 — Fijar la API fuente y de build de Protobuf.**
-  Declarar schemas en el manifest TOML, mapping de módulos/tipos, baseline de
-  evolución, descriptor, generated APIs, reader/writer, options, limits y
-  errors con una única forma opinionada y hermética.
+- [x] **STD-PROTOBUF-API-001 — Fijar la API fuente y de build de Protobuf.**
+  Cerrado con `[[protobuf.schema]]` en `tondo.toml`, mapping hermético,
+  baseline de evolución, descriptor root explícito, tipos generated,
+  `ProtoReader[T]`/`ProtoWriter[T]`, options, limits, errors y terminalidad.
 
 - [x] **STD-CORE-IMPL-001 — Publicar los protocolos Core completos.** Conectar
   por dispatch estático las operaciones cerradas de `Option` y `Result`, junto
@@ -5391,6 +5391,31 @@ esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 1.56 — 2026-08-05
+
+- Se cierran `STD-JSON-API-001`, `STD-MSGPACK-API-001` y
+  `STD-PROTOBUF-API-001`: cada owner tiene ahora una superficie fuente única
+  con tipos, constructores, funciones typed/dynamic, eventos, options, límites,
+  errores, ownership y estados terminales explícitos.
+- JSON fija sus rutas `parse/decode/encode/validate/canonicalize`, JSON
+  decimal, policies de duplicados/unknown fields y readers/writers async.
+- MessagePack fija maps de pares arbitrarios, ext/timestamp, policies de
+  minimalidad y determinismo, además de readers/writers sin DOM.
+- Protobuf fija `tondo.toml`/`[[protobuf.schema]]`, identidad de inputs,
+  baseline TOML, descriptor root, tipos generated, `ProtoReader[T]`,
+  `ProtoWriter[T]` y errores separados de wire/build.
+- Los tres registros machine-readable pasan a `closed-contract` y sus checks
+  verifican arrays de símbolos y métodos; la implementación typed y derive
+  permanece explícitamente pendiente en los bloques A3 siguientes.
+
+### 1.57 — 2026-08-05
+
+- Se cierra `STD-SPEC-001`: `testing/stdlib-spec.json` fija el grafo único de
+  21 owners, source sets, dependencias, capabilities y reglas de API.
+- El gate agregado comprueba que la declaración es topológica, no contiene
+  ciclos ni owners duplicados, enlaza todos los contratos reales y conserva la
+  frontera `closed-contract` frente a la implementación typed pendiente.
 
 ### 1.55 — 2026-08-05
 

@@ -3,7 +3,7 @@
   "owner": "std.json",
   "edition": "0.1",
   "phase": "STD-0.1A",
-  "status": "draft-contract",
+  "status": "closed-contract",
   "wire": {
     "syntax": "RFC8259",
     "text_encoding": "utf-8",
@@ -59,6 +59,26 @@
     "canonical_field_order": "RFC8785-property-order",
     "unknown_capture": "declared-extras-only",
     "parser_stack": "explicit-bounded-stack"
+  },
+  "api": {
+    "module": "std.json",
+    "value_type": "JsonValue",
+    "member_type": "JsonMember",
+    "number_type": "JsonNumber",
+    "event_type": "JsonEvent",
+    "path_type": "JsonPath",
+    "location_type": "JsonLocation",
+    "options": ["JsonLimits", "JsonDecodeOptions", "JsonEncodeOptions"],
+    "policies": ["JsonDuplicatePolicy", "JsonUnknownFieldPolicy", "JsonNumberPolicy"],
+    "error_type": "JsonError",
+    "error_kind": "JsonErrorKind",
+    "functions": ["parse", "decode", "encode", "validate", "canonicalize", "encodeCanonical"],
+    "number_methods": ["parse", "text", "toInt", "toUInt", "toFloat32", "toFloat64"],
+    "reader_methods": ["fromBytes", "fromReader", "next", "own", "finish"],
+    "writer_methods": ["toWriter", "write", "finish"],
+    "terminal_state": "error-or-finish-terminal",
+    "end_of_document": "next-returns-none-once",
+    "typed_dispatch": "Serialize-Deserialize-static-no-dom"
   },
   "streaming": {
     "event_kinds": [

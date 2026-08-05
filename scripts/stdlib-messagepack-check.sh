@@ -26,7 +26,7 @@ jq -e '
     and .owner == "std.messagepack"
     and .edition == "0.1"
     and .phase == "STD-0.1A"
-    and .status == "draft-contract"
+    and .status == "closed-contract"
     and .wire.spec == "MessagePack"
     and .wire.data_model == [
         "nil", "bool", "int", "uint", "float32", "float64", "str", "bin",
@@ -60,6 +60,24 @@ jq -e '
     and .typed.map_duplicate_default == "reject"
     and .typed.integer_conversion == "exact-before-narrowing"
     and .typed.parser_stack == "explicit-bounded-stack"
+    and .api.module == "std.messagepack"
+    and .api.value_type == "MessagePackValue"
+    and .api.entry_type == "MessagePackEntry"
+    and .api.ext_type == "MessagePackExt"
+    and .api.timestamp_type == "MessagePackTimestamp"
+    and .api.event_type == "MessagePackEvent"
+    and .api.path_type == "MessagePackPath"
+    and .api.options == ["MessagePackLimits", "MessagePackDecodeOptions", "MessagePackEncodeOptions"]
+    and .api.policies == ["MessagePackDuplicatePolicy", "MessagePackUnknownExtensionPolicy", "MessagePackNonMinimalPolicy"]
+    and .api.error_type == "MessagePackError"
+    and .api.error_kind == "MessagePackErrorKind"
+    and .api.functions == ["decodeValue", "decode", "encodeValue", "encode", "validate", "encodeDeterministic"]
+    and .api.timestamp_methods == ["fromExt", "toExt"]
+    and .api.reader_methods == ["fromBytes", "fromReader", "next", "own", "finish"]
+    and .api.writer_methods == ["toWriter", "write", "finish"]
+    and .api.terminal_state == "error-or-finish-terminal"
+    and .api.end_of_document == "next-returns-none-once"
+    and .api.typed_dispatch == "Serialize-Deserialize-static-no-dynamic-dom"
     and .streaming.event_kinds == [
         "nil", "bool", "int", "uint", "float32", "float64", "string", "binary",
         "start-array", "end-array", "start-map", "map-key", "end-map", "ext"

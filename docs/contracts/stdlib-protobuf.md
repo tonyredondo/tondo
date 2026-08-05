@@ -1,7 +1,7 @@
 # Contrato de `std.protobuf`
 
-**Estado:** contrato de owner aceptado para `STD-0.1A`; todavía no publica el
-generador ni el runtime de Protobuf de la Standard Library.
+**Estado:** contrato de API fuente y de build cerrado para `STD-0.1A`; el
+generador y runtime de Protobuf continúan pendientes.
 
 `std.protobuf` es el único owner de la generación schema-first y del wire
 format Protocol Buffers. El registro machine-readable
@@ -13,6 +13,126 @@ La sección 14.11 de `TONDO_STANDARD_LIBRARY_SPEC.md` sigue siendo la autoridad
 del catálogo. Este contrato concreta su frontera operativa sin introducir un
 facade universal de codecs, reflection de valores ni una segunda configuración
 de proyecto.
+
+## API fuente y de build única
+
+El input de build es TOML, nunca JSON ni una convención ambiental. Un proyecto
+declara cada schema y su baseline de evolución con una tabla repetible:
+
+```toml
+[protobuf]
+version = 1
+
+[[protobuf.schema]]
+path = "proto/user.proto"
+module = "app.proto.user"
+package = "acme.user"
+baseline = "proto/baseline/user.proto"
+descriptor = "none" # "root" conserva el descriptor estático
+```
+
+`path`, `module`, `package`, `baseline` y `descriptor` son obligatorios salvo
+`baseline` para un schema nuevo. Los imports se resuelven solo entre paths
+declarados; el generador rechaza duplicados, globs, paths absolutos, cambios de
+line ending y cualquier lectura fuera del grafo cerrado. `tondo.lock.toml`
+fija las identidades de los inputs externos, pero no añade schemas implícitos.
+
+Estas son las únicas firmas runtime del owner y de los tipos generados:
+
+```tondo
+pub type ProtoDescriptor[T]
+pub type UnknownField = {
+    number: UInt32
+    wireType: ProtoWireType
+    tagBytes: Bytes
+    payloadBytes: Bytes
+}
+pub type UnknownFields = Array[UnknownField]
+pub enum ProtoWireType { Varint, Fixed64, LengthDelimited, StartGroup, EndGroup, Fixed32 }
+pub enum ProtoEvent {
+    StartMessage(String)
+    EndMessage
+    Field(UInt32, ProtoWireType)
+    Varint(UInt64)
+    Fixed32(UInt32)
+    Fixed64(UInt64)
+    StartLengthDelimited(UInt32)
+    Bytes(Bytes)
+    EndLengthDelimited
+    StartPacked(UInt32)
+    EndPacked
+    Unknown(UnknownField)
+}
+pub type ProtoPath
+pub type ProtoLimits = {
+    maxSchemaBytes: Int
+    maxImports: Int
+    maxGeneratedTypes: Int
+    maxGeneratedBytes: Int
+    maxMessageBytes: Int
+    maxDepth: Int
+    maxFields: Int
+    maxRepeatedItems: Int
+    maxMapEntries: Int
+    maxStringBytes: Int
+    maxBytesFieldBytes: Int
+    maxPackedBytes: Int
+    maxUnknownBytes: Int
+    maxVarintBytes: Int
+    maxEvents: Int
+    maxOutputBytes: Int
+}
+pub enum ProtoWireTypePolicy { PreserveUnknown, Reject }
+pub enum ProtoUnknownPolicy { Preserve, Discard }
+pub type ProtoDecodeOptions = {
+    limits: ProtoLimits
+    wireType: ProtoWireTypePolicy
+    unknownFields: ProtoUnknownPolicy
+    rejectNonMinimalVarints: Bool
+}
+pub type ProtoEncodeOptions = { limits: ProtoLimits, deterministic: Bool }
+pub enum ProtoErrorKind {
+    UnexpectedEof, InvalidTag, InvalidWireType, InvalidVarint, InvalidLength,
+    InvalidUtf8, TypeMismatch, InvalidPacked, NumberRange, InvalidFieldNumber,
+    InvalidGroup, LimitExceeded, IoError, TrailingData, SchemaMismatch
+}
+pub enum ProtoBuildErrorKind {
+    ProtoSyntaxUnsupported, ProtoImportNotDeclared, ProtoNameCollision,
+    ProtoFieldNumberConflict, ProtoReservedReuse, ProtoSchemaDrift,
+    ProtoWireIncompatible, ProtoGeneratorOutputCollision, ProtoGenerationLimit
+}
+pub type ProtoError = { kind: ProtoErrorKind, offset: Int?, path: ProtoPath }
+pub type ProtoBuildError = { kind: ProtoBuildErrorKind, schema: String, path: String }
+
+pub fn decode[T: Deserialize](input: Bytes, options: ProtoDecodeOptions): T ! ProtoError
+pub fn encode[T: Serialize](value: T, options: ProtoEncodeOptions): Bytes ! ProtoError
+pub fn encodeDeterministic[T: Serialize](value: T, limits: ProtoLimits): Bytes ! ProtoError
+pub fn validate[T](input: Bytes, options: ProtoDecodeOptions): Unit ! ProtoError
+pub fn descriptor[T](): ProtoDescriptor[T]
+
+pub fn ProtoReader[T].fromBytes(input: Bytes, options: ProtoDecodeOptions): ProtoReader[T] ! ProtoError
+pub async fn ProtoReader[T].fromReader(var input: Reader, options: ProtoDecodeOptions): ProtoReader[T] ! ProtoError
+pub async fn ProtoReader[T].next(var self): ProtoEvent? ! ProtoError
+pub fn ProtoReader[T].own(var self, event: ProtoEvent): ProtoEvent ! ProtoError
+pub async fn ProtoReader[T].finish(var self): Unit ! ProtoError
+
+pub fn ProtoWriter[T].toWriter(var output: Writer, options: ProtoEncodeOptions): ProtoWriter[T] ! ProtoError
+pub async fn ProtoWriter[T].write(var self, event: ProtoEvent): Unit ! ProtoError
+pub async fn ProtoWriter[T].finish(var self): Unit ! ProtoError
+
+pub fn UnknownFields.count(self): Int
+pub fn UnknownFields.discard(var self): Unit
+```
+
+Un mensaje generado publica un record nominal y, cuando el schema lo declara,
+su enum oneof, enum abierto y `UnknownFields`; todos implementan los traits
+comunes de `std.serialization`. `descriptor[T]()` solo existe para un tipo
+generado con `descriptor = "root"`; no hace lookup ni conserva metadata de otro
+tipo. `ProtoReader[T]` y `ProtoWriter[T]` están ligados a `T`, no aceptan un
+descriptor runtime y devuelven `none` exactamente una vez después del frame
+raíz. `own` materializa los payloads temporales y cualquier error deja reader o
+writer en estado terminal. La ruta a `std.io.Writer` es async y la de `Bytes`
+usa la misma máquina sin crear un DOM.
 
 ## Alcance y entradas de build
 

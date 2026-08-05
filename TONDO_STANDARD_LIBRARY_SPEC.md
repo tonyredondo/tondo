@@ -1858,6 +1858,14 @@ canónica incluye ambos source sets y sus hashes.
 
 La integración normativa de STD-0.1A queda así:
 
+La relación entre estos owners, sus source sets, dependencias y capabilities
+no se duplica en otro catálogo: la fuente machine-readable única es
+[`testing/stdlib-spec.json`](./testing/stdlib-spec.json), validada por
+`scripts/stdlib-spec-check.sh`. El orden del catálogo es topológico y el gate
+rechaza owners duplicados, contratos ausentes, aliases, defaults implícitos y
+ciclos. Este cierre integra el contrato de los owners; no convierte los
+contratos `closed-contract` en implementaciones publicadas.
+
 | Owner | Source set | Estado | Dependencias directas |
 |---|---|---|---|
 | `std.core` (intrínsecos) | `stdlib-core` | cerrado | lenguaje |
@@ -2183,6 +2191,25 @@ Un error contiene clase estable, byte offset, línea/columna cuando puedan
 calcularse y path estructural. No copia automáticamente el documento, el valor
 de un field ni datos potencialmente secretos dentro de su mensaje.
 
+La API fuente única de 0.1 es:
+
+~~~tondo pseudocode
+pub fn parse(input: Bytes, options: JsonDecodeOptions): JsonValue ! JsonError
+pub fn decode[T: Deserialize](input: Bytes, options: JsonDecodeOptions): T ! JsonError
+pub fn encode[T: Serialize](value: T, options: JsonEncodeOptions): Bytes ! JsonError
+pub fn validate(input: Bytes, options: JsonDecodeOptions): Unit ! JsonError
+pub fn canonicalize(input: Bytes, options: JsonDecodeOptions): Bytes ! JsonError
+pub fn encodeCanonical(value: JsonValue, limits: JsonLimits): Bytes ! JsonError
+pub async fn JsonReader.next(var self): JsonEvent? ! JsonError
+pub fn JsonReader.own(var self, event: JsonEvent): JsonEvent ! JsonError
+pub async fn JsonWriter.write(var self, event: JsonEvent): Unit ! JsonError
+pub async fn JsonWriter.finish(var self): Unit ! JsonError
+~~~
+
+Los tipos, options, limits, eventos y errores exhaustivos están cerrados en el
+[contrato fuente de `std.json`](./docs/contracts/stdlib-json.md). `next` devuelve
+`none` una sola vez tras la raíz y reader/writer son terminales tras error.
+
 ### 14.10 `std.messagepack`
 
 `std.messagepack` implementa la
@@ -2218,6 +2245,24 @@ estándar puede convertirse explícitamente a un `MessagePackTimestamp` de
 segundos Unix y nanosegundos; no adelanta calendario civil ni se convierte en
 `Instant`. Una extensión desconocida no se pierde ni se interpreta por
 reflection.
+
+La API fuente única de 0.1 es:
+
+~~~tondo pseudocode
+pub fn decodeValue(input: Bytes, options: MessagePackDecodeOptions): MessagePackValue ! MessagePackError
+pub fn decode[T: Deserialize](input: Bytes, options: MessagePackDecodeOptions): T ! MessagePackError
+pub fn encodeValue(value: MessagePackValue, options: MessagePackEncodeOptions): Bytes ! MessagePackError
+pub fn encode[T: Serialize](value: T, options: MessagePackEncodeOptions): Bytes ! MessagePackError
+pub fn validate(input: Bytes, options: MessagePackDecodeOptions): Unit ! MessagePackError
+pub fn encodeDeterministic(value: MessagePackValue, limits: MessagePackLimits): Bytes ! MessagePackError
+pub async fn MessagePackReader.next(var self): MessagePackEvent? ! MessagePackError
+pub fn MessagePackReader.own(var self, event: MessagePackEvent): MessagePackEvent ! MessagePackError
+pub async fn MessagePackWriter.write(var self, event: MessagePackEvent): Unit ! MessagePackError
+pub async fn MessagePackWriter.finish(var self): Unit ! MessagePackError
+~~~
+
+El catálogo completo de `MessagePackValue`, ext/timestamp, policies, limits,
+paths y errores está en el [contrato fuente de `std.messagepack`](./docs/contracts/stdlib-messagepack.md).
 
 ### 14.11 `std.protobuf`
 
@@ -2257,6 +2302,37 @@ La evolución se comprueba como tarea de build: reutilizar field numbers,
 cambiar wire-incompatible types o romper una reserva produce diagnostics
 asociados al schema. El runtime no descubre schemas, carga descriptors
 ambientales ni genera código en la primera petición.
+
+La declaración de build canónica usa `tondo.toml`:
+
+~~~toml
+[protobuf]
+version = 1
+[[protobuf.schema]]
+path = "proto/user.proto"
+module = "app.proto.user"
+package = "acme.user"
+baseline = "proto/baseline/user.proto"
+descriptor = "none"
+~~~
+
+La API runtime única es:
+
+~~~tondo pseudocode
+pub fn decode[T: Deserialize](input: Bytes, options: ProtoDecodeOptions): T ! ProtoError
+pub fn encode[T: Serialize](value: T, options: ProtoEncodeOptions): Bytes ! ProtoError
+pub fn encodeDeterministic[T: Serialize](value: T, limits: ProtoLimits): Bytes ! ProtoError
+pub fn validate[T](input: Bytes, options: ProtoDecodeOptions): Unit ! ProtoError
+pub fn descriptor[T](): ProtoDescriptor[T]
+pub async fn ProtoReader[T].next(var self): ProtoEvent? ! ProtoError
+pub fn ProtoReader[T].own(var self, event: ProtoEvent): ProtoEvent ! ProtoError
+pub async fn ProtoWriter[T].write(var self, event: ProtoEvent): Unit ! ProtoError
+pub async fn ProtoWriter[T].finish(var self): Unit ! ProtoError
+~~~
+
+El mapping generado, el descriptor explícito, la evolución contra baseline TOML,
+los eventos y los errores de wire/build están cerrados en el [contrato fuente de
+`std.protobuf`](./docs/contracts/stdlib-protobuf.md).
 
 ### 14.12 Reglas de rendimiento de codecs
 

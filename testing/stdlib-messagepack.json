@@ -3,7 +3,7 @@
   "owner": "std.messagepack",
   "edition": "0.1",
   "phase": "STD-0.1A",
-  "status": "draft-contract",
+  "status": "closed-contract",
   "wire": {
     "spec": "MessagePack",
     "data_model": [
@@ -55,6 +55,26 @@
     "map_duplicate_default": "reject",
     "integer_conversion": "exact-before-narrowing",
     "parser_stack": "explicit-bounded-stack"
+  },
+  "api": {
+    "module": "std.messagepack",
+    "value_type": "MessagePackValue",
+    "entry_type": "MessagePackEntry",
+    "ext_type": "MessagePackExt",
+    "timestamp_type": "MessagePackTimestamp",
+    "event_type": "MessagePackEvent",
+    "path_type": "MessagePackPath",
+    "options": ["MessagePackLimits", "MessagePackDecodeOptions", "MessagePackEncodeOptions"],
+    "policies": ["MessagePackDuplicatePolicy", "MessagePackUnknownExtensionPolicy", "MessagePackNonMinimalPolicy"],
+    "error_type": "MessagePackError",
+    "error_kind": "MessagePackErrorKind",
+    "functions": ["decodeValue", "decode", "encodeValue", "encode", "validate", "encodeDeterministic"],
+    "timestamp_methods": ["fromExt", "toExt"],
+    "reader_methods": ["fromBytes", "fromReader", "next", "own", "finish"],
+    "writer_methods": ["toWriter", "write", "finish"],
+    "terminal_state": "error-or-finish-terminal",
+    "end_of_document": "next-returns-none-once",
+    "typed_dispatch": "Serialize-Deserialize-static-no-dynamic-dom"
   },
   "streaming": {
     "event_kinds": [

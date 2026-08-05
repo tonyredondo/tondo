@@ -26,7 +26,7 @@ jq -e '
     and .owner == "std.protobuf"
     and .edition == "0.1"
     and .phase == "STD-0.1A"
-    and .status == "draft-contract"
+    and .status == "closed-contract"
     and .scope.syntax == "proto3"
     and .scope.input_extension == ".proto"
     and .scope.schema_first == true
@@ -68,6 +68,27 @@ jq -e '
         "package", "logical-path", "fully-qualified-name", "field-number"
     ]
     and .generated.dynamic_dom == false
+    and .api.module == "std.protobuf"
+    and .api.manifest_file == "tondo.toml"
+    and .api.manifest_table == "[[protobuf.schema]]"
+    and .api.manifest_fields == ["path", "module", "package", "baseline", "descriptor"]
+    and .api.descriptor_type == "ProtoDescriptor[T]"
+    and .api.unknown_field_type == "UnknownField"
+    and .api.unknown_fields_type == "UnknownFields"
+    and .api.wire_type == "ProtoWireType"
+    and .api.event_type == "ProtoEvent"
+    and .api.path_type == "ProtoPath"
+    and .api.options == ["ProtoLimits", "ProtoDecodeOptions", "ProtoEncodeOptions"]
+    and .api.policies == ["ProtoWireTypePolicy", "ProtoUnknownPolicy"]
+    and .api.error_types == ["ProtoError", "ProtoBuildError"]
+    and .api.functions == ["decode", "encode", "encodeDeterministic", "validate", "descriptor"]
+    and .api.reader_methods == ["fromBytes", "fromReader", "next", "own", "finish"]
+    and .api.writer_methods == ["toWriter", "write", "finish"]
+    and .api.unknown_methods == ["count", "discard"]
+    and .api.generated_traits == ["Serialize", "Deserialize"]
+    and .api.terminal_state == "error-or-finish-terminal"
+    and .api.end_of_frame == "next-returns-none-once"
+    and .api.typed_dispatch == "schema-bound-static-no-dom"
     and (.scalar_mapping | map(.proto)) == [
         "int32", "int64", "uint32", "uint64", "sint32", "sint64", "fixed32",
         "sfixed32", "fixed64", "sfixed64", "float", "double", "bool", "string",

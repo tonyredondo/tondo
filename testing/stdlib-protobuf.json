@@ -3,7 +3,7 @@
   "owner": "std.protobuf",
   "edition": "0.1",
   "phase": "STD-0.1A",
-  "status": "draft-contract",
+  "status": "closed-contract",
   "scope": {
     "syntax": "proto3",
     "input_extension": ".proto",
@@ -53,6 +53,29 @@
     "api_hash": "generated-output",
     "output_identity": ["package", "logical-path", "fully-qualified-name", "field-number"],
     "dynamic_dom": false
+  },
+  "api": {
+    "module": "std.protobuf",
+    "manifest_file": "tondo.toml",
+    "manifest_table": "[[protobuf.schema]]",
+    "manifest_fields": ["path", "module", "package", "baseline", "descriptor"],
+    "descriptor_type": "ProtoDescriptor[T]",
+    "unknown_field_type": "UnknownField",
+    "unknown_fields_type": "UnknownFields",
+    "wire_type": "ProtoWireType",
+    "event_type": "ProtoEvent",
+    "path_type": "ProtoPath",
+    "options": ["ProtoLimits", "ProtoDecodeOptions", "ProtoEncodeOptions"],
+    "policies": ["ProtoWireTypePolicy", "ProtoUnknownPolicy"],
+    "error_types": ["ProtoError", "ProtoBuildError"],
+    "functions": ["decode", "encode", "encodeDeterministic", "validate", "descriptor"],
+    "reader_methods": ["fromBytes", "fromReader", "next", "own", "finish"],
+    "writer_methods": ["toWriter", "write", "finish"],
+    "unknown_methods": ["count", "discard"],
+    "generated_traits": ["Serialize", "Deserialize"],
+    "terminal_state": "error-or-finish-terminal",
+    "end_of_frame": "next-returns-none-once",
+    "typed_dispatch": "schema-bound-static-no-dom"
   },
   "scalar_mapping": [
     {"proto": "int32", "tondo": "Int32", "wire": "varint-twos-complement"},

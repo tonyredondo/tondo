@@ -1,7 +1,7 @@
 # Contrato de `std.json`
 
-**Estado:** contrato de owner aceptado para `STD-0.1A`; todavía no publica el
-codec ni una implementación de la Standard Library.
+**Estado:** contrato de API fuente cerrado para `STD-0.1A`; la implementación
+typed del codec continúa pendiente.
 
 `std.json` implementa el modelo JSON de RFC 8259 sobre UTF-8 y reutiliza los
 traits estáticos de `std.serialization`. La política canónica y las invariantes
@@ -36,6 +36,109 @@ El dispatch typed es compile-time y no usa reflection, registro global,
 lookup por nombre ni construcción dinámica. Un derive de `Serialize` o
 `Deserialize` genera una implementación estática; el codec no inspecciona
 metadata en runtime.
+
+## API fuente única
+
+Estas son las únicas firmas públicas del owner. Las funciones de módulo son la
+ruta cómoda y `JsonReader`/`JsonWriter` son la ruta incremental; no existen
+aliases `parseJson`/`readJson`, overloads por defecto ni políticas ambientales.
+
+```tondo
+pub enum JsonKind { Null, Bool, Number, String, Array, Object }
+pub type JsonMember = { key: String, value: JsonValue }
+pub enum JsonValue {
+    Null
+    Bool(Bool)
+    Number(JsonNumber)
+    String(String)
+    Array(Array[JsonValue])
+    Object(Array[JsonMember])
+}
+pub type JsonNumber
+pub type JsonPath
+pub type JsonLocation
+
+pub enum JsonEvent {
+    StartArray(Int?)
+    EndArray
+    StartObject(Int?)
+    EndObject
+    Key(String)
+    Null
+    Bool(Bool)
+    Number(JsonNumber)
+    String(String)
+}
+
+pub enum JsonDuplicatePolicy { Reject, First, Last }
+pub enum JsonUnknownFieldPolicy { Reject, Ignore, Capture }
+pub enum JsonNumberPolicy { Exact, Float32, Float64 }
+pub type JsonLimits = {
+    maxDocumentBytes: Int
+    maxDepth: Int
+    maxArrayItems: Int
+    maxObjectMembers: Int
+    maxStringBytes: Int
+    maxNumberBytes: Int
+    maxEvents: Int
+    maxOutputBytes: Int
+}
+pub type JsonDecodeOptions = {
+    limits: JsonLimits
+    duplicateKeys: JsonDuplicatePolicy
+    unknownFields: JsonUnknownFieldPolicy
+    numbers: JsonNumberPolicy
+}
+pub type JsonEncodeOptions = { limits: JsonLimits, canonical: Bool }
+pub enum JsonErrorKind {
+    InvalidUtf8, InvalidSyntax, UnexpectedEof, InvalidEscape,
+    InvalidUnicodeScalar, InvalidNumber, DuplicateKey, UnknownField,
+    MissingField, TypeMismatch, NumberRange, LimitExceeded, IoError,
+    TrailingData, CanonicalizationError
+}
+pub type JsonError = { kind: JsonErrorKind, location: JsonLocation, path: JsonPath }
+
+pub fn parse(input: Bytes, options: JsonDecodeOptions): JsonValue ! JsonError
+pub fn decode[T: Deserialize](input: Bytes, options: JsonDecodeOptions): T ! JsonError
+pub fn encode[T: Serialize](value: T, options: JsonEncodeOptions): Bytes ! JsonError
+pub fn validate(input: Bytes, options: JsonDecodeOptions): Unit ! JsonError
+pub fn canonicalize(input: Bytes, options: JsonDecodeOptions): Bytes ! JsonError
+pub fn encodeCanonical(value: JsonValue, limits: JsonLimits): Bytes ! JsonError
+
+pub fn JsonNumber.parse(text: String): JsonNumber ! JsonError
+pub fn JsonNumber.text(self): String
+pub fn JsonNumber.toInt(self): Int64 ! JsonError
+pub fn JsonNumber.toUInt(self): UInt64 ! JsonError
+pub fn JsonNumber.toFloat32(self): Float32 ! JsonError
+pub fn JsonNumber.toFloat64(self): Float64 ! JsonError
+
+pub fn JsonReader.fromBytes(input: Bytes, options: JsonDecodeOptions): JsonReader ! JsonError
+pub async fn JsonReader.fromReader(var input: Reader, options: JsonDecodeOptions): JsonReader ! JsonError
+pub async fn JsonReader.next(var self): JsonEvent? ! JsonError
+pub fn JsonReader.own(var self, event: JsonEvent): JsonEvent ! JsonError
+pub async fn JsonReader.finish(var self): Unit ! JsonError
+
+pub fn JsonWriter.toWriter(var output: Writer, options: JsonEncodeOptions): JsonWriter ! JsonError
+pub async fn JsonWriter.write(var self, event: JsonEvent): Unit ! JsonError
+pub async fn JsonWriter.finish(var self): Unit ! JsonError
+```
+
+`parse` es la única construcción dinámica; `decode` exige un `T` estático y
+publica el valor solo después de consumir un documento completo. `encode` es la
+única comodidad de bytes para typed y `encodeCanonical` es la única operación
+que aplica JCS a un `JsonValue`. `JsonReader.next` devuelve `none` exactamente
+una vez después de la raíz; `finish` comprueba que no queda un token pendiente.
+`JsonWriter` solo acepta eventos en el orden normativo y `finish` publica éxito
+una sola vez. En ambos casos un error deja el objeto en estado terminal. La
+ruta a un `std.io.Writer` es async; el parser sobre `Bytes` no necesita una API
+paralela.
+
+`JsonValue.Object` conserva el orden de inserción y `JsonMember.key` es UTF-8;
+no se expone un `Map[String, JsonValue]` alternativo. `JsonNumber.text` copia
+el lexema validado y las conversiones numéricas no pasan por `Float64`. Los
+payloads de `JsonEvent` son vistas hasta el siguiente `next`; `own` es la única
+materialización estable. `JsonError` siempre incluye `JsonPath` y posición sin
+copiar el documento en el diagnóstico.
 
 ## Sintaxis y Unicode
 
