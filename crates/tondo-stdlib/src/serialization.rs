@@ -47,11 +47,288 @@ impl Default for Limits {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SerializationError {
     UnexpectedEvent,
+    EndOfInput,
     TypeMismatch,
     LimitExceeded,
     UnbalancedContainer,
     DuplicateField,
     InvalidContainerLength,
+}
+
+/// The statically-dispatched sink used by every typed serializer.
+///
+/// A serializer writes the common event vocabulary; format owners decide how
+/// those events become bytes.  The trait has no `Any`/reflection escape hatch,
+/// so a typed path can be monomorphized by the caller without building a DOM.
+pub trait Serializer {
+    type Error;
+
+    fn write_event(&mut self, event: Event) -> Result<(), Self::Error>;
+}
+
+/// The statically-dispatched source used by every typed deserializer.
+pub trait Deserializer {
+    type Error;
+
+    fn limits(&self) -> Limits;
+
+    fn peek_event(&mut self) -> Result<Option<Event>, Self::Error>;
+
+    fn next_event(&mut self) -> Result<Option<Event>, Self::Error>;
+}
+
+/// A value that can be encoded into the common event protocol.
+pub trait Serialize {
+    fn serialize<S: Serializer<Error = SerializationError>>(
+        &self,
+        serializer: &mut S,
+    ) -> Result<(), SerializationError>;
+}
+
+/// A value that can be decoded from the common event protocol.
+pub trait Deserialize: Sized {
+    fn deserialize<D: Deserializer<Error = SerializationError>>(
+        deserializer: &mut D,
+    ) -> Result<Self, SerializationError>;
+}
+
+/// A bounded event sink used by typed codecs and tests.
+#[derive(Debug, Default)]
+pub struct EventSerializer {
+    events: Vec<Event>,
+    limits: Limits,
+}
+
+impl EventSerializer {
+    pub fn new(limits: Limits) -> Self {
+        Self {
+            events: Vec::new(),
+            limits,
+        }
+    }
+
+    pub fn finish(self) -> Result<Vec<Event>, SerializationError> {
+        validate_events(&self.events, self.limits)?;
+        Ok(self.events)
+    }
+
+    pub fn events(&self) -> &[Event] {
+        &self.events
+    }
+}
+
+impl Serializer for EventSerializer {
+    type Error = SerializationError;
+
+    fn write_event(&mut self, event: Event) -> Result<(), Self::Error> {
+        if self.events.len() >= self.limits.max_events {
+            return Err(SerializationError::LimitExceeded);
+        }
+        self.events.push(event);
+        Ok(())
+    }
+}
+
+/// A bounded event source.  It owns the event slice only for the duration of
+/// the decode and never materialises a format-specific document tree.
+pub struct EventDeserializer<'a> {
+    events: &'a [Event],
+    index: usize,
+    limits: Limits,
+}
+
+impl<'a> EventDeserializer<'a> {
+    pub fn new(events: &'a [Event], limits: Limits) -> Result<Self, SerializationError> {
+        if events.len() > limits.max_events {
+            return Err(SerializationError::LimitExceeded);
+        }
+        Ok(Self {
+            events,
+            index: 0,
+            limits,
+        })
+    }
+
+    pub fn finish(&self) -> Result<(), SerializationError> {
+        (self.index == self.events.len())
+            .then_some(())
+            .ok_or(SerializationError::UnexpectedEvent)
+    }
+
+    pub fn peek_event(&self) -> Option<&Event> {
+        self.events.get(self.index)
+    }
+
+    pub fn limits(&self) -> Limits {
+        self.limits
+    }
+}
+
+impl Deserializer for EventDeserializer<'_> {
+    type Error = SerializationError;
+
+    fn limits(&self) -> Limits {
+        self.limits
+    }
+
+    fn peek_event(&mut self) -> Result<Option<Event>, Self::Error> {
+        Ok(self.events.get(self.index).cloned())
+    }
+
+    fn next_event(&mut self) -> Result<Option<Event>, Self::Error> {
+        let event = self.events.get(self.index).cloned();
+        if event.is_some() {
+            self.index += 1;
+        }
+        Ok(event)
+    }
+}
+
+pub fn serialize_value<T: Serialize>(
+    value: &T,
+    limits: Limits,
+) -> Result<Vec<Event>, SerializationError> {
+    let mut serializer = EventSerializer::new(limits);
+    value.serialize(&mut serializer)?;
+    serializer.finish()
+}
+
+pub fn deserialize_value<T: Deserialize>(
+    events: &[Event],
+    limits: Limits,
+) -> Result<T, SerializationError> {
+    let mut deserializer = EventDeserializer::new(events, limits)?;
+    let value = T::deserialize(&mut deserializer)?;
+    deserializer.finish()?;
+    Ok(value)
+}
+
+fn write_scalar<S: Serializer<Error = SerializationError>>(
+    serializer: &mut S,
+    event: Event,
+) -> Result<(), SerializationError> {
+    serializer.write_event(event)
+}
+
+macro_rules! scalar_codec {
+    ($ty:ty, $event:expr, $pattern:pat => $value:expr) => {
+        impl Serialize for $ty {
+            fn serialize<S: Serializer<Error = SerializationError>>(
+                &self,
+                serializer: &mut S,
+            ) -> Result<(), SerializationError> {
+                write_scalar(serializer, $event(*self))
+            }
+        }
+
+        impl Deserialize for $ty {
+            fn deserialize<D: Deserializer<Error = SerializationError>>(
+                deserializer: &mut D,
+            ) -> Result<Self, SerializationError> {
+                match deserializer.next_event()? {
+                    Some($pattern) => Ok($value),
+                    Some(_) => Err(SerializationError::TypeMismatch),
+                    None => Err(SerializationError::EndOfInput),
+                }
+            }
+        }
+    };
+}
+
+scalar_codec!(bool, Event::Bool, Event::Bool(value) => value);
+scalar_codec!(i64, |value| Event::Int(i128::from(value)), Event::Int(value) =>
+    i64::try_from(value).map_err(|_| SerializationError::TypeMismatch)?);
+scalar_codec!(u64, |value| Event::UInt(u128::from(value)), Event::UInt(value) =>
+    u64::try_from(value).map_err(|_| SerializationError::TypeMismatch)?);
+scalar_codec!(f32, |value: f32| Event::Float32(value.to_bits()), Event::Float32(value) =>
+    f32::from_bits(value));
+scalar_codec!(f64, |value: f64| Event::Float64(value.to_bits()), Event::Float64(value) =>
+    f64::from_bits(value));
+
+impl Serialize for String {
+    fn serialize<S: Serializer<Error = SerializationError>>(
+        &self,
+        serializer: &mut S,
+    ) -> Result<(), SerializationError> {
+        write_scalar(serializer, Event::String(self.clone()))
+    }
+}
+
+impl Deserialize for String {
+    fn deserialize<D: Deserializer<Error = SerializationError>>(
+        deserializer: &mut D,
+    ) -> Result<Self, SerializationError> {
+        match deserializer.next_event()? {
+            Some(Event::String(value)) => Ok(value),
+            Some(_) => Err(SerializationError::TypeMismatch),
+            None => Err(SerializationError::EndOfInput),
+        }
+    }
+}
+
+impl<T: Serialize> Serialize for Vec<T> {
+    fn serialize<S: Serializer<Error = SerializationError>>(
+        &self,
+        serializer: &mut S,
+    ) -> Result<(), SerializationError> {
+        serializer.write_event(Event::StartArray(Some(self.len())))?;
+        for value in self {
+            value.serialize(serializer)?;
+        }
+        serializer.write_event(Event::EndArray)
+    }
+}
+
+impl<T: Deserialize> Deserialize for Vec<T> {
+    fn deserialize<D: Deserializer<Error = SerializationError>>(
+        deserializer: &mut D,
+    ) -> Result<Self, SerializationError> {
+        let Some(Event::StartArray(declared)) = deserializer.next_event()? else {
+            return Err(SerializationError::TypeMismatch);
+        };
+        let mut values = Vec::new();
+        if let Some(length) = declared {
+            values.reserve(length.min(deserializer.limits().max_container_items));
+        }
+        loop {
+            match deserializer.peek_event()? {
+                Some(Event::EndArray) => {
+                    let _ = deserializer.next_event()?;
+                    break;
+                }
+                Some(_) => values.push(T::deserialize(deserializer)?),
+                None => return Err(SerializationError::EndOfInput),
+            }
+        }
+        Ok(values)
+    }
+}
+
+impl<T: Serialize> Serialize for Option<T> {
+    fn serialize<S: Serializer<Error = SerializationError>>(
+        &self,
+        serializer: &mut S,
+    ) -> Result<(), SerializationError> {
+        match self {
+            Some(value) => value.serialize(serializer),
+            None => serializer.write_event(Event::Null),
+        }
+    }
+}
+
+impl<T: Deserialize> Deserialize for Option<T> {
+    fn deserialize<D: Deserializer<Error = SerializationError>>(
+        deserializer: &mut D,
+    ) -> Result<Self, SerializationError> {
+        match deserializer.peek_event()? {
+            Some(Event::Null) => {
+                let _ = deserializer.next_event()?;
+                Ok(None)
+            }
+            Some(_) => T::deserialize(deserializer).map(Some),
+            None => Err(SerializationError::EndOfInput),
+        }
+    }
 }
 
 /// Validate a complete event stream without materialising a document tree.
@@ -474,6 +751,55 @@ mod tests {
         assert_eq!(
             validate_events(&incomplete_map, Limits::default()),
             Err(SerializationError::UnbalancedContainer)
+        );
+    }
+
+    #[test]
+    fn typed_protocol_is_static_bounded_and_round_trips_scalars_and_arrays() {
+        let value = vec![1_i64, 2_i64, 3_i64];
+        let events = serialize_value(&value, Limits::default()).unwrap();
+        assert_eq!(
+            events,
+            vec![
+                Event::StartArray(Some(3)),
+                Event::Int(1),
+                Event::Int(2),
+                Event::Int(3),
+                Event::EndArray,
+            ]
+        );
+        assert_eq!(
+            deserialize_value::<Vec<i64>>(&events, Limits::default()).unwrap(),
+            value
+        );
+
+        let optional = serialize_value(&Option::<String>::None, Limits::default()).unwrap();
+        assert_eq!(optional, vec![Event::Null]);
+        assert_eq!(
+            deserialize_value::<Option<String>>(&optional, Limits::default()).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn typed_protocol_publishes_only_after_complete_validation() {
+        let limits = Limits {
+            max_events: 2,
+            ..Limits::default()
+        };
+        assert_eq!(
+            serialize_value(&vec![1_i64, 2_i64], limits),
+            Err(SerializationError::LimitExceeded)
+        );
+        let incomplete = [Event::StartArray(Some(1)), Event::Int(1)];
+        assert_eq!(
+            deserialize_value::<Vec<i64>>(&incomplete, Limits::default()),
+            Err(SerializationError::EndOfInput)
+        );
+        let trailing = [Event::Bool(true), Event::Null];
+        assert_eq!(
+            deserialize_value::<bool>(&trailing, Limits::default()),
+            Err(SerializationError::UnexpectedEvent)
         );
     }
 }

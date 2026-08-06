@@ -4145,11 +4145,13 @@ parte del módulo.
   la prueba host cubre argumentos exactos, streams separados, combined,
   redirección, formas de pipeline, backpressure y errores nominales.
 
-- [ ] **STD-SER-IMPL-001 — Implementar `std.serialization` tipada.** Publicar
-  `Serialize`, `Deserialize`, `Serializer[E]`, `Deserializer[E]` y la máquina
-  completa de eventos con dispatch estático, construcción atómica, streaming y
-  errores con path después de cerrar `STD-SER-001`. El validador Rust de balance
-  de eventos es solo un kernel.
+- [x] **STD-SER-IMPL-001 — Implementar `std.serialization` tipada.** Publica
+  traits estáticos `Serialize`/`Deserialize`, sinks/sources
+  `Serializer`/`Deserializer`, `EventSerializer`/`EventDeserializer` y los
+  adaptadores bounded `serialize_value`/`deserialize_value`. La construcción
+  solo se publica después de validar la secuencia completa; scalars, `String`,
+  `Option[T]` y `Array[T]` se componen sin DOM, reflection ni trait objects. El
+  lowering de símbolos Tondo y el provider derive permanecen gates separados.
 
 - [ ] **STD-DERIVE-SER-001 — Implementar providers de derive de
   serialization.** Registrar providers build-only reales para `Serialize` y
@@ -5416,6 +5418,14 @@ esos cierres.
 - El gate agregado comprueba que la declaración es topológica, no contiene
   ciclos ni owners duplicados, enlaza todos los contratos reales y conserva la
   frontera `closed-contract` frente a la implementación typed pendiente.
+
+### 1.58 — 2026-08-05
+
+- Se cierra `STD-SER-IMPL-001`: el kernel común ya ofrece dispatch estático,
+  cursor/sink acotados, publicación atómica y composición para scalars,
+  `String`, `Option` y arrays, con tests de límites, truncamiento y datos
+  sobrantes. La pendiente de derive y lowering Tondo queda separada en los
+  bloques siguientes.
 
 ### 1.55 — 2026-08-05
 

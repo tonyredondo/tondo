@@ -1,8 +1,9 @@
 # Contrato de `std.serialization`
 
-**Estado:** contrato común cerrado para STD-0.1A. Este documento define la
-frontera pública que deben implementar JSON, MessagePack y Protobuf; no es una
-API dinámica ni una sustitución de los contratos específicos de cada formato.
+**Estado:** contrato común e implementación portable cerrados para STD-0.1A.
+Este documento define la frontera pública que deben implementar JSON,
+MessagePack y Protobuf; no es una API dinámica ni una sustitución de los
+contratos específicos de cada formato.
 
 `std.serialization` es el único owner de los protocolos tipados compartidos.
 Los codecs concretos eligen cómo representan sus valores dinámicos, pero una
@@ -160,6 +161,18 @@ Protobuf es una excepción deliberada al derive genérico: sus field numbers,
 presence y evolución vienen únicamente del `.proto` schema-first y su
 generator publica impls ordinarios compatibles con estos traits.
 
+## Implementación portable del protocolo
+
+`crates/tondo-stdlib/src/serialization.rs` contiene la implementación de
+referencia del protocolo común. `EventSerializer` aplica el límite de eventos y
+publica el vector únicamente después de `validate_events`; `EventDeserializer`
+mantiene un cursor acotado, soporta `peek_event` para composiciones genéricas y
+solo termina con consumo completo. Los impls estáticos de `Serialize` y
+`Deserialize` cubren scalars, `String`, `Option[T]` y `Array[T]` sin trait
+objects, reflection ni DOM. `serialize_value`/`deserialize_value` son los
+adaptadores de prueba y de los codecs; el lowering de estas operaciones a
+símbolos Tondo públicos y el provider derive siguen siendo gates separados.
+
 ## Límites y errores
 
 Cada reader, writer y codec expone límites finitos para input/output bytes,
@@ -206,5 +219,5 @@ El registro machine-readable de este contrato es
 [`testing/stdlib-serialization.json`](../../testing/stdlib-serialization.json)
 y el check ejecutable es
 [`scripts/stdlib-serialization-check.sh`](../../scripts/stdlib-serialization-check.sh).
-El siguiente cierre de la cadena es `STD-JSON-API-001`, seguido por los
-contratos de API de MessagePack y Protobuf.
+El siguiente cierre de la cadena es `STD-DERIVE-SER-001`, seguido por las
+implementaciones typed/streaming de JSON, MessagePack y Protobuf.
