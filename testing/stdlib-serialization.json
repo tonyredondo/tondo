@@ -79,6 +79,6 @@
       {"id":"integration","requires":["json-api","messagepack-api","protobuf-api"]},
       {"id":"promote","requires":["public-typed-path","derive-proof","STD-CODEC-CONF-001","STD-PERF-001-report"]}
     ],
-    "next": "STD-DERIVE-SER-001"
+    "next": "STD-JSON-IMPL-001"
   }
 }

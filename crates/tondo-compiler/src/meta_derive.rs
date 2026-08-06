@@ -10,7 +10,7 @@ use tondo_vm::runtime::{RuntimeValue, VmOutcome};
 
 use crate::meta::{
     MetaContractError, MetaLimits, MetaOutputSpec, MetaRequest, MetaResponse, MetaSnapshot,
-    ValidatedDerive,
+    MetaSourceMapEntry, ValidatedDerive,
 };
 use crate::meta_vm::{MetaVmArtifact, MetaVmError, MetaVmLimits};
 use crate::source::{LogicalPath, ModulePath, SourceDatabase, SourceId, SourceInput};
@@ -186,14 +186,29 @@ pub fn execute_derive_plan(
             ));
         };
         let body = body.trim();
-        let source = format!(
-            "impl {} for {} {}\n",
-            validated_trait.identity(),
+        let target_type = derive_target_type(derive.target());
+        let generic_header = derive_generic_header(
+            &snapshot,
+            derive.target().module(),
             derive.target().identity(),
+            derive.target().generic_parameters(),
+            validated_trait,
+        );
+        let source = format!(
+            "impl{} {} for {} {}\n",
+            generic_header,
+            validated_trait.identity(),
+            target_type,
             body
         );
         let source = format_single_impl(source.into_bytes())?;
-        builder.add_source(path, derive.target().module(), source)?;
+        let mappings = generated_source_mappings(
+            &snapshot,
+            derive.target().module(),
+            derive.target().identity(),
+            source.len(),
+        )?;
+        builder.add_mapped_source(path, derive.target().module(), source, mappings)?;
         providers.push(validated_trait.provider().to_owned());
     }
 
@@ -201,6 +216,85 @@ pub fn execute_derive_plan(
         response: builder.finish()?,
         providers,
     })
+}
+
+fn generated_source_mappings(
+    snapshot: &MetaSnapshot,
+    module: &str,
+    target: &str,
+    generated_len: usize,
+) -> Result<Vec<MetaSourceMapEntry>, DeriveExecutionError> {
+    let Some(declaration) = snapshot
+        .declarations()
+        .iter()
+        .find(|declaration| declaration.module() == module && declaration.identity() == target)
+    else {
+        return Ok(Vec::new());
+    };
+    let generated_end =
+        u32::try_from(generated_len).map_err(|_| DeriveExecutionError::InvalidProviderBody)?;
+    Ok(vec![MetaSourceMapEntry::new(
+        0,
+        generated_end,
+        declaration.span(),
+    )?])
+}
+
+fn derive_target_type(target: &crate::meta::DeriveTarget) -> String {
+    if target.generic_parameters().is_empty() {
+        target.identity().to_owned()
+    } else {
+        format!(
+            "{}[{}]",
+            target.identity(),
+            target.generic_parameters().join(", ")
+        )
+    }
+}
+
+fn derive_generic_header(
+    snapshot: &MetaSnapshot,
+    module: &str,
+    identity: &str,
+    parameters: &[String],
+    validated_trait: &crate::meta::ValidatedTrait,
+) -> String {
+    if parameters.is_empty() {
+        return String::new();
+    }
+    let declaration = snapshot
+        .declarations()
+        .iter()
+        .find(|declaration| declaration.module() == module && declaration.identity() == identity);
+    let binders = parameters
+        .iter()
+        .map(|parameter| {
+            let mut bounds = declaration
+                .and_then(|declaration| {
+                    declaration
+                        .generic_parameters()
+                        .iter()
+                        .find(|candidate| candidate.name() == parameter)
+                })
+                .map(|parameter| parameter.bounds().to_vec())
+                .unwrap_or_default();
+            if validated_trait
+                .introduced_bounds()
+                .iter()
+                .any(|bound| bound == parameter)
+            {
+                bounds.push(validated_trait.identity().to_owned());
+            }
+            bounds.sort();
+            bounds.dedup();
+            if bounds.is_empty() {
+                parameter.clone()
+            } else {
+                format!("{parameter}: {}", bounds.join(" + "))
+            }
+        })
+        .collect::<Vec<_>>();
+    format!("[{}]", binders.join(", "))
 }
 
 fn output_path(request_index: usize, trait_index: usize) -> String {
@@ -396,7 +490,7 @@ mod tests {
         assert_eq!(output.module(), "app");
         assert_eq!(
             std::str::from_utf8(output.bytes()).unwrap(),
-            "impl Display for User {\n    fn display(self): String {\n        \"User\"\n    }\n}\n"
+            "impl [T: Display]Display for User[T] {\n    fn display(self): String {\n        \"User\"\n    }\n}\n"
         );
         assert_eq!(execution.into_response().outputs().len(), 1);
     }

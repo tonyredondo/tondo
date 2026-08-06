@@ -171,7 +171,36 @@ solo termina con consumo completo. Los impls estáticos de `Serialize` y
 `Deserialize` cubren scalars, `String`, `Option[T]` y `Array[T]` sin trait
 objects, reflection ni DOM. `serialize_value`/`deserialize_value` son los
 adaptadores de prueba y de los codecs; el lowering de estas operaciones a
-símbolos Tondo públicos y el provider derive siguen siendo gates separados.
+símbolos Tondo públicos permanece como un gate separado del kernel y de los
+providers derive.
+
+## Providers derive build-only
+
+Los providers normativos están implementados en
+crates/tondo-compiler/src/serialization_derive.rs y se registran bajo las
+identidades exactas:
+
+- std.derive.serialization.Serialize para serialization.Serialize;
+- std.derive.serialization.Deserialize para serialization.Deserialize.
+
+Cada provider recibe únicamente el MetaSnapshot sellado y devuelve un body de
+impl Tondo ordinario. meta_derive añade el header nominal, conserva los
+parámetros genéricos y sus bounds mínimos, valida el resultado con el parser y
+lo publica atómicamente mediante MetaSourceBuilder. La respuesta incluye un
+source map que asocia el output generado con el span del target autorizado.
+
+La expansión es determinista: records y payloads de variantes siguen el orden
+ordinal del snapshot; los newtypes usan su campo sintético .value; el decode
+construye el valor nominal solo después de validar todos los eventos. Un target
+privado es válido únicamente cuando aparece en el snapshot de la misma unidad
+autorizada. Targets ausentes, bounds genéricos insuficientes y nombres de
+miembro no válidos son errores del provider y no producen outputs parciales.
+
+Los providers no ejecutan Tondo en runtime, no consultan reflection de valores,
+filesystem, environment, reloj, proceso, red, entropy ni threads, y no aceptan
+attributes ejecutables ni callbacks. La cobertura del provider incluye records,
+enums unit/tuple/record, newtypes, genéricos, fields privados, source maps y
+los diagnósticos de rechazo.
 
 ## Límites y errores
 

@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 1.55
+**Versión del tracker:** 1.59
 
 **Última actualización:** 2026-08-05
 
@@ -4151,13 +4151,22 @@ parte del módulo.
   adaptadores bounded `serialize_value`/`deserialize_value`. La construcción
   solo se publica después de validar la secuencia completa; scalars, `String`,
   `Option[T]` y `Array[T]` se componen sin DOM, reflection ni trait objects. El
-  lowering de símbolos Tondo y el provider derive permanecen gates separados.
+  lowering de símbolos Tondo permanece como gate separado; el provider derive
+  está cerrado en STD-DERIVE-SER-001.
 
-- [ ] **STD-DERIVE-SER-001 — Implementar providers de derive de
+- [x] **STD-DERIVE-SER-001 — Implementar providers de derive de
   serialization.** Registrar providers build-only reales para `Serialize` y
   `Deserialize`, generar impls Tondo deterministas para records/enums/genéricos
   y probar diagnósticos, source maps, límites, campos privados/policies y
-  ausencia de reflection runtime.
+  ausencia de reflection runtime. Cerrado con
+  crates/tondo-compiler/src/serialization_derive.rs: los dos providers se
+  registran bajo identidades exactas, consumen solo el MetaSnapshot sellado,
+  generan bodies Tondo ordinarios y el ejecutor añade headers genéricos,
+  valida/parser-formatea el impl y publica source maps de forma atómica.
+  Records, enums unit/tuple/record, newtypes y genéricos están cubiertos por
+  tests, junto con campos privados, bounds insuficientes, targets ausentes,
+  nombres inválidos y ausencia de reflection/capabilities. El siguiente bloque
+  es STD-JSON-IMPL-001.
 
 - [ ] **STD-JSON-IMPL-001 — Implementar las tres rutas de JSON.** Publicar
   typed encode/decode directo, `JsonValue`/`JsonNumber` decimal exacto y
@@ -5418,6 +5427,15 @@ esos cierres.
 - El gate agregado comprueba que la declaración es topológica, no contiene
   ciclos ni owners duplicados, enlaza todos los contratos reales y conserva la
   frontera `closed-contract` frente a la implementación typed pendiente.
+
+### 1.59 — 2026-08-05
+
+- Se cierra STD-DERIVE-SER-001: los providers build-only de Serialize y
+  Deserialize consumen un snapshot sellado, generan impls deterministas para
+  records, enums, newtypes y genéricos, preservan bounds mínimos y publican
+  source maps de forma atómica. Se cubren fields privados, source maps,
+  diagnósticos de targets/bounds/nombres inválidos y ausencia de capabilities
+  runtime. La promoción pasa a STD-JSON-IMPL-001.
 
 ### 1.58 — 2026-08-05
 

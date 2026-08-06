@@ -73,10 +73,11 @@ jq -e '
   ]
   and all(.test_matrix[]; (.observables | length) > 0)
   and (.promotion.gates | map(.id)) == ["design", "implementation", "integration", "promote"]
-  and .promotion.next == "STD-DERIVE-SER-001"
+  and .promotion.next == "STD-JSON-IMPL-001"
 ' "$contract" >/dev/null
 
-grep -q 'STD-DERIVE-SER-001' "$document"
+grep -q 'std.derive.serialization.Serialize' "$document"
+grep -q 'std.derive.serialization.Deserialize' "$document"
 grep -q 'MapKey' "$document"
 grep -q 'StartRecord' "$document"
 grep -q 'StartEnum' "$document"

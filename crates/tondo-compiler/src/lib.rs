@@ -13,7 +13,6 @@ pub mod meta_generate;
 pub mod meta_query;
 pub mod meta_repro;
 pub mod meta_robust;
-#[cfg(test)]
 mod meta_test_support;
 pub mod meta_vm;
 pub mod mir;
@@ -23,6 +22,7 @@ pub mod project;
 pub mod reflect;
 pub mod resolve;
 pub mod semantic;
+pub mod serialization_derive;
 pub mod source;
 pub mod std_meta;
 pub mod syntax;
