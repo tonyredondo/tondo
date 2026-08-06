@@ -40,7 +40,13 @@ fn main() {
         black_box(messagepack::encode_deterministic(&value).expect("deterministic MessagePack"));
     });
     sample("protobuf", || {
-        black_box(protobuf::decode_fields(black_box(&protobuf_input)).expect("valid protobuf"));
+        black_box(
+            protobuf::decode_message(
+                black_box(&protobuf_input),
+                protobuf::ProtoDecodeOptions::default(),
+            )
+            .expect("valid protobuf"),
+        );
     });
     sample("testing", || {
         let mut generator = testing::Generator::new(7);

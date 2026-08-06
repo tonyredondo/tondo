@@ -6200,6 +6200,21 @@ mod tests {
 
     #[test]
     fn hosted_codecs_validate_and_canonicalize_without_partial_success() {
+        let mut protobuf_path = protobuf::ProtoPath::root();
+        protobuf_path.push(protobuf::ProtoPathSegment::Message("Envelope".into()));
+        assert_eq!(protobuf_path.segments().len(), 1);
+        assert_eq!(protobuf_path.to_string(), "$.Envelope");
+        let mut unknown = protobuf::UnknownFields::default();
+        unknown.push(protobuf::UnknownField {
+            number: 7,
+            wire_type: protobuf::ProtoWireType::Varint,
+            tag_bytes: vec![0x38],
+            payload_bytes: vec![1],
+        });
+        assert_eq!(unknown.count(), 1);
+        unknown.discardUnknown();
+        assert!(unknown.is_empty());
+
         let mut host = BootstrapHost::default();
         let json_input = host.allocate(
             RuntimeHostValueKind::Bytes,

@@ -1,5 +1,9 @@
 use crate::CodecError;
 
+#[path = "protobuf_api.rs"]
+mod protobuf_api;
+pub use protobuf_api::*;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Field<'a> {
     pub number: u32,

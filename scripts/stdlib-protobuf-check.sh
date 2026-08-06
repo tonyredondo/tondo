@@ -274,4 +274,27 @@ jq -e '
     and .promotion.next_coordination == "STD-CODEC-CONF-001"
 ' "$contract" >/dev/null
 
+source="$root/crates/tondo-stdlib/src/protobuf_api.rs"
+[[ -s "$source" ]] || {
+    echo "missing typed Protobuf implementation: ${source#"$root"/}" >&2
+    exit 1
+}
+for symbol in \
+    'pub enum ProtoWireType' \
+    'pub struct ProtoReader' \
+    'pub struct ProtoWriter' \
+    'pub enum ProtoValue' \
+    'pub fn from_chunks' \
+    'pub fn decode_message' \
+    'pub fn encode_message' \
+    'pub fn parse_schema' \
+    'pub fn parse_schema_graph' \
+    'pub fn generate_tondo' \
+    'pub fn check_evolution'; do
+    grep -q "$symbol" "$source" || {
+        echo "missing Protobuf implementation symbol: $symbol" >&2
+        exit 1
+    }
+done
+
 echo "std.protobuf owner contract: OK"

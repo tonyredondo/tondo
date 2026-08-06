@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 1.61
+**Versión del tracker:** 1.62
 
 **Última actualización:** 2026-08-05
 
@@ -4193,11 +4193,17 @@ parte del módulo.
   independiente sigue siendo la promoción posterior, no un falso cierre.
   Requiere `STD-MSGPACK-API-001` y `STD-DERIVE-SER-001`.
 
-- [ ] **STD-PROTOBUF-IMPL-001 — Implementar Protobuf schema-first.** Añadir el
-  parser/checker de `.proto`, imports declarados, evolución contra baseline,
-  generator hermético, tipos/impls generados, `ProtoReader[T]`/`ProtoWriter[T]`
-  y modelo completo de presence, repeated/packed, maps, oneof, open enums y
-  unknown fields. El validador wire sin schema queda como kernel reutilizable.
+- [x] **STD-PROTOBUF-IMPL-001 — Implementar Protobuf schema-first.** Cerrado
+  con `protobuf_api.rs`: wire parser y encoder con varints/fixed/length/groups,
+  límites finitos, errors con path y atomicidad terminal; `ProtoReader[T]` y
+  `ProtoWriter` usan frames explícitos, `own`, fragmentación equivalente y
+  salida opcional a `Writer`. `UnknownField(s)` conserva tag/payload raw y el
+  modo determinista ordena los fields dinámicos; el adaptador typed consume
+  `std.serialization` sin reflection. El checker proto3 rechaza syntax y
+  números incompatibles, valida evolución por baseline y genera fuente Tondo
+  estable con `generate_tondo`. El kernel wire anterior permanece como bridge
+  de compatibilidad. La conformance contra implementadores externos y la
+  integración del generator en el driver siguen siendo gates de promoción.
   Requiere `STD-PROTOBUF-API-001` y `STD-DERIVE-SER-001`.
 
 - [ ] **STD-TESTING-SHRINK-001 — Completar generación y shrinking público.**
@@ -5414,6 +5420,21 @@ esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 1.62 — 2026-08-05
+
+- Se completa `STD-PROTOBUF-IMPL-001` con el owner público en
+  `crates/tondo-stdlib/src/protobuf_api.rs`: parser explícito y bounded del
+  wire, reader/writer terminales, dynamic message helpers, typed adapters,
+  unknown raw records, policies y límites.
+- El mismo owner incorpora el checker proto3 hermético de schemas, detección
+  de drift wire y generator determinista de fuente Tondo; no carga descriptors
+  ni reflection en runtime. Se amplían tests de todos los widths, groups,
+  truncaciones, errores, determinismo, terminalidad, typed scalars y evolución.
+- `docs/contracts/stdlib-protobuf.md`, el registro de implementación y
+  `scripts/stdlib-protobuf-check.sh` pasan a reflejar la implementación real.
+  La interoperabilidad externa y la integración del generator en el driver
+  quedan explícitamente para `STD-CODEC-CONF-001` y el gate de toolchain.
 
 ### 1.61 — 2026-08-05
 

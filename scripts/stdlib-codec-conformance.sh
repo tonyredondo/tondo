@@ -18,6 +18,7 @@ run_case() {
 run_case json-kernel cargo test -p tondo-stdlib --lib json::tests --locked
 run_case messagepack-kernel cargo test -p tondo-stdlib --lib messagepack::tests --locked
 run_case protobuf-kernel cargo test -p tondo-stdlib --lib protobuf::tests --locked
+run_case protobuf-owner cargo test -p tondo-stdlib --lib protobuf::protobuf_api::tests --locked
 run_case hosted-bridge cargo test -p tondo-compiler --lib hosted_codecs_validate_and_canonicalize_without_partial_success --locked
 
 revision="$(git rev-parse HEAD)"

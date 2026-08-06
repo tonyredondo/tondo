@@ -1,7 +1,10 @@
 # Contrato de `std.protobuf`
 
-**Estado:** contrato de API fuente y de build cerrado para `STD-0.1A`; el
-generador y runtime de Protobuf continúan pendientes.
+**Estado:** implementación disponible para `STD-0.1A`: runtime wire bounded,
+reader/writer typed, preservación raw, parser/checker proto3 y generator
+determinista de fuente Tondo. La integración final del generator en el driver
+de proyectos y la conformance contra implementadores externos siguen siendo
+gates de promoción separados.
 
 `std.protobuf` es el único owner de la generación schema-first y del wire
 format Protocol Buffers. El registro machine-readable
