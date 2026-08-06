@@ -1,7 +1,7 @@
 # Contrato de `std.json`
 
-**Estado:** contrato de API fuente cerrado para `STD-0.1A`; la implementación
-typed del codec continúa pendiente.
+**Estado:** contrato de API fuente cerrado e implementación typed/dynamic/
+streaming disponible para `STD-0.1A`.
 
 `std.json` implementa el modelo JSON de RFC 8259 sobre UTF-8 y reutiliza los
 traits estáticos de `std.serialization`. La política canónica y las invariantes
@@ -36,6 +36,31 @@ El dispatch typed es compile-time y no usa reflection, registro global,
 lookup por nombre ni construcción dinámica. Un derive de `Serialize` o
 `Deserialize` genera una implementación estática; el codec no inspecciona
 metadata en runtime.
+
+## Implementación cerrada del owner
+
+La implementación portable vive en
+`crates/tondo-stdlib/src/json_api.rs`. `JsonReader` tokeniza con frames
+explícitos de array/object y mantiene el contador de eventos, profundidad,
+miembros, strings y números antes de publicar cada evento. `JsonValue` se
+construye desde ese mismo flujo; no hay un segundo parser y no se requiere un
+DOM para `validate` ni para el camino typed (canonicalize usa explícitamente
+el collector dinámico). `JsonNumber` conserva
+el lexema decimal validado y las conversiones enteras calculan primero el
+valor matemático, sin pasar por `Float64`.
+
+`JsonWriter` valida la máquina root/array/object, orden canónico JCS,
+duplicados y límites de salida antes de completar el documento. El encoder
+usa una pila explícita de tareas para records, arrays y objetos y solo el
+collector dinámico reserva `JsonValue`. `encode_typed` y `decode_typed`
+adaptan los traits estáticos comunes a eventos JSON directamente; no usan
+reflection, trait objects ni lookup de nombres. La adaptación `fromReader`
+del bridge Rust lee de forma acotada para que la superficie Tondo pueda
+exponerla como operación async sin cambiar la semántica del parser.
+
+El kernel provisional anterior permanece privado al bridge durante la
+migración (`kernel_parse`/`kernel_encode_*`); no es una ruta pública
+alternativa y no participa en el dispatch typed.
 
 ## API fuente única
 
@@ -237,15 +262,14 @@ no copia automáticamente el input ni secretos potenciales.
 
 ## Corpus y promoción
 
-Antes de implementar el owner deben existir identidades reproducibles para
-casos válidos e inválidos de RFC 8259, ejemplos RFC 8785, escapes Unicode,
-números de frontera, truncación, fragmentación, límites, policies typed y
-profundidad adversarial. `STD-CODEC-CONF-001` añadirá vectores oficiales y
-comparación con al menos dos implementaciones independientes cuando estén
-disponibles; ese gate no puede sustituirse por round-trips internos.
+El owner ya está implementado contra este contrato y sus identidades
+reproducibles viven en el corpus y en las pruebas de `tondo-stdlib`. El gate
+`STD-CODEC-CONF-001` añadirá vectores oficiales y comparación con al menos dos
+implementaciones independientes cuando estén disponibles; ese gate no puede
+sustituirse por round-trips internos.
 
 La aceptación de `STD-JSON-001` exige que el contrato machine-readable pase,
-que cada clase de corpus tenga un owner y que una futura implementación
-demuestre equivalencia typed/dynamic en los observables declarados. La salida
-canónica, el orden, el path de error, los límites y la ausencia de DOM son
-parte del contrato; el rendimiento se mide además bajo `STD-PERF-001`.
+que cada clase de corpus tenga un owner y que la implementación demuestre
+equivalencia typed/dynamic en los observables declarados. La salida canónica,
+el orden, el path de error, los límites y la ausencia de DOM son parte del
+contrato; el rendimiento se mide además bajo `STD-PERF-001`.

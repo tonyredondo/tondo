@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 1.59
+**Versión del tracker:** 1.60
 
 **Última actualización:** 2026-08-05
 
@@ -4168,12 +4168,17 @@ parte del módulo.
   nombres inválidos y ausencia de reflection/capabilities. El siguiente bloque
   es STD-JSON-IMPL-001.
 
-- [ ] **STD-JSON-IMPL-001 — Implementar las tres rutas de JSON.** Publicar
+- [x] **STD-JSON-IMPL-001 — Implementar las tres rutas de JSON.** Publicar
   typed encode/decode directo, `JsonValue`/`JsonNumber` decimal exacto y
   `JsonReader`/`JsonWriter` incrementales con stack explícito. Cubrir chunking,
   Unicode, paths, policies, RFC 8259/JCS, límites y ausencia de DOM obligatorio;
-  `validate/canonicalize` sobre `serde_json::Value` queda como kernel provisional.
-  Requiere `STD-JSON-API-001` y `STD-DERIVE-SER-001`.
+  `validate/canonicalize` sobre el kernel `serde_json::Value` deja de ser la
+  ruta pública. Cerrado con `crates/tondo-stdlib/src/json_api.rs`: el reader y
+  writer usan frames explícitos, `JsonNumber` conserva el token decimal,
+  duplicate policies conservan la posición del primer miembro y el camino
+  typed adapta `Serialize`/`Deserialize` sin DOM. Se cubren RFC 8259,
+  escapes/surrogates, chunk-equivalent bytes, JCS, límites, terminalidad,
+  paths de error y API de reader/writer.
 
 - [ ] **STD-MSGPACK-IMPL-001 — Implementar MessagePack completo.** Publicar
   typed, dynamic y streaming para todo el modelo wire, claves arbitrarias,
@@ -5402,6 +5407,16 @@ esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 1.60 — 2026-08-06
+
+- Se cierra `STD-JSON-IMPL-001`: `JsonValue` y `JsonNumber` ya son la ruta
+  pública dinámica, `JsonReader`/`JsonWriter` validan eventos con pila
+  explícita y límites finitos, y `encode_typed`/`decode_typed` consumen el
+  protocolo estático común sin reflection ni DOM. Se cubren duplicados first/
+  last, Unicode y surrogates, números exactos, JCS, estados terminales,
+  fragmentación, errores con ubicación, límites de entrada/salida y bridge de
+  reader. La promoción pasa a `STD-MSGPACK-IMPL-001`.
 
 ### 1.56 — 2026-08-05
 

@@ -1,53 +1,62 @@
+#![allow(dead_code)]
+
 use std::collections::BTreeSet;
 
-use serde_json::{Map, Value};
+use serde_json::{Map, Value as KernelValue};
 
 use crate::CodecError;
 
+#[path = "json_api.rs"]
+mod json_api;
+pub use json_api::*;
+
 /// Parse one strict JSON document and reject trailing bytes and duplicates.
-pub fn parse(input: &[u8]) -> Result<Value, CodecError> {
+pub(crate) fn kernel_parse(input: &[u8]) -> Result<KernelValue, CodecError> {
     let text = std::str::from_utf8(input).map_err(|_| CodecError::InvalidUtf8)?;
     scan_duplicates(text.as_bytes())?;
-    let value: Value = serde_json::from_str(text).map_err(|_| CodecError::InvalidSyntax)?;
+    let value: KernelValue = serde_json::from_str(text).map_err(|_| CodecError::InvalidSyntax)?;
     Ok(value)
 }
 
 /// Encode JSON with compact separators, retaining insertion order supplied by
 /// the caller's `Value` map. `serde_json::Value` is only the dynamic API; typed
 /// callers in the compiler write directly to this kernel.
-pub fn encode(value: &Value) -> Result<Vec<u8>, CodecError> {
+pub(crate) fn kernel_encode(value: &KernelValue) -> Result<Vec<u8>, CodecError> {
     serde_json::to_vec(value).map_err(|_| CodecError::InvalidSyntax)
 }
 
 /// Encode the RFC 8785-shaped deterministic subset used by Tondo. Objects are
 /// sorted by their UTF-8 property names and non-finite numbers are rejected by
 /// `serde_json` before this function is called.
-pub fn encode_canonical(value: &Value) -> Result<Vec<u8>, CodecError> {
+pub(crate) fn kernel_encode_canonical(value: &KernelValue) -> Result<Vec<u8>, CodecError> {
     let canonical = canonical_value(value)?;
-    encode(&canonical)
+    kernel_encode(&canonical)
 }
 
-pub fn validate(input: &[u8]) -> Result<(), CodecError> {
-    parse(input).map(|_| ())
+pub(crate) fn kernel_validate(input: &[u8]) -> Result<(), CodecError> {
+    kernel_parse(input).map(|_| ())
 }
 
-fn canonical_value(value: &Value) -> Result<Value, CodecError> {
+fn canonical_value(value: &KernelValue) -> Result<KernelValue, CodecError> {
     Ok(match value {
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => value.clone(),
-        Value::Array(values) => Value::Array(
+        KernelValue::Null
+        | KernelValue::Bool(_)
+        | KernelValue::Number(_)
+        | KernelValue::String(_) => value.clone(),
+        KernelValue::Array(values) => KernelValue::Array(
             values
                 .iter()
                 .map(canonical_value)
                 .collect::<Result<Vec<_>, _>>()?,
         ),
-        Value::Object(object) => {
+        KernelValue::Object(object) => {
             let mut keys = object.keys().collect::<Vec<_>>();
             keys.sort_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
             let mut sorted = Map::new();
             for key in keys {
                 sorted.insert(key.clone(), canonical_value(&object[key])?);
             }
-            Value::Object(sorted)
+            KernelValue::Object(sorted)
         }
     })
 }
@@ -207,22 +216,25 @@ mod tests {
     #[test]
     fn strict_round_trip_and_trailing_data() {
         let input = br#"{"name":"tondo","items":[1,true,null]}"#;
-        let value = parse(input).unwrap();
-        assert_eq!(encode(&value).unwrap(), input);
-        assert_eq!(parse(br#"{} {}"#), Err(CodecError::InvalidSyntax));
+        let value = kernel_parse(input).unwrap();
+        assert_eq!(kernel_encode(&value).unwrap(), input);
+        assert_eq!(kernel_parse(br#"{} {}"#), Err(CodecError::InvalidSyntax));
     }
 
     #[test]
     fn invalid_utf8_and_duplicate_keys_are_rejected() {
-        assert_eq!(parse(&[0xff]), Err(CodecError::InvalidUtf8));
-        assert_eq!(parse(br#"{"a":1,"a":2}"#), Err(CodecError::DuplicateKey));
+        assert_eq!(kernel_parse(&[0xff]), Err(CodecError::InvalidUtf8));
+        assert_eq!(
+            kernel_parse(br#"{"a":1,"a":2}"#),
+            Err(CodecError::DuplicateKey)
+        );
     }
 
     #[test]
     fn canonical_objects_sort_utf8_property_bytes() {
         let value = json!({"z": 1, "a": {"b": 2, "a": 3}});
         assert_eq!(
-            encode_canonical(&value).unwrap(),
+            kernel_encode_canonical(&value).unwrap(),
             br#"{"a":{"a":3,"b":2},"z":1}"#
         );
     }
@@ -230,8 +242,11 @@ mod tests {
     #[test]
     fn arrays_and_scalars_are_preserved() {
         let value = json!([null, false, "é", -0.0]);
-        assert_eq!(parse(&encode(&value).unwrap()).unwrap(), value);
-        validate(b"true").unwrap();
+        assert_eq!(
+            kernel_parse(&kernel_encode(&value).unwrap()).unwrap(),
+            value
+        );
+        kernel_validate(b"true").unwrap();
     }
 
     #[test]
@@ -243,7 +258,7 @@ mod tests {
             br#"{"emoji":"\uD83D\uDE80","slash":"\\"}"#.as_slice(),
             br#"[{"a":[]},{"b":{}}]"#.as_slice(),
         ] {
-            validate(input).unwrap();
+            kernel_validate(input).unwrap();
         }
         for input in [
             br#"+1"#.as_slice(),
@@ -253,12 +268,15 @@ mod tests {
             br#""#.as_slice(),
             br#"{"a":1} trailing"#.as_slice(),
         ] {
-            assert!(parse(input).is_err(), "accepted invalid JSON: {input:?}");
+            assert!(
+                kernel_parse(input).is_err(),
+                "accepted invalid JSON: {input:?}"
+            );
         }
         let mut deeply_nested = vec![b'['; MAX_DEPTH + 1];
         deeply_nested.extend(std::iter::repeat_n(b']', MAX_DEPTH + 1));
         assert!(matches!(
-            parse(&deeply_nested),
+            kernel_parse(&deeply_nested),
             Err(CodecError::LimitExceeded | CodecError::InvalidSyntax)
         ));
     }
@@ -266,8 +284,11 @@ mod tests {
     #[test]
     fn canonical_order_is_utf8_byte_order_and_is_idempotent() {
         let value = json!({"é": 1, "a": {"z": 2, "b": 3}});
-        let first = encode_canonical(&value).unwrap();
+        let first = kernel_encode_canonical(&value).unwrap();
         assert_eq!(first, r#"{"a":{"b":3,"z":2},"é":1}"#.as_bytes());
-        assert_eq!(encode_canonical(&parse(&first).unwrap()).unwrap(), first);
+        assert_eq!(
+            kernel_encode_canonical(&kernel_parse(&first).unwrap()).unwrap(),
+            first
+        );
     }
 }

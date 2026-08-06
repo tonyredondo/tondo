@@ -236,14 +236,114 @@ macro_rules! scalar_codec {
 }
 
 scalar_codec!(bool, Event::Bool, Event::Bool(value) => value);
-scalar_codec!(i64, |value| Event::Int(i128::from(value)), Event::Int(value) =>
-    i64::try_from(value).map_err(|_| SerializationError::TypeMismatch)?);
-scalar_codec!(u64, |value| Event::UInt(u128::from(value)), Event::UInt(value) =>
-    u64::try_from(value).map_err(|_| SerializationError::TypeMismatch)?);
-scalar_codec!(f32, |value: f32| Event::Float32(value.to_bits()), Event::Float32(value) =>
-    f32::from_bits(value));
-scalar_codec!(f64, |value: f64| Event::Float64(value.to_bits()), Event::Float64(value) =>
-    f64::from_bits(value));
+impl Serialize for i64 {
+    fn serialize<S: Serializer<Error = SerializationError>>(
+        &self,
+        serializer: &mut S,
+    ) -> Result<(), SerializationError> {
+        write_scalar(serializer, Event::Int(i128::from(*self)))
+    }
+}
+
+impl Deserialize for i64 {
+    fn deserialize<D: Deserializer<Error = SerializationError>>(
+        deserializer: &mut D,
+    ) -> Result<Self, SerializationError> {
+        match deserializer.next_event()? {
+            Some(Event::Int(value)) => {
+                i64::try_from(value).map_err(|_| SerializationError::TypeMismatch)
+            }
+            Some(Event::UInt(value)) => {
+                i64::try_from(value).map_err(|_| SerializationError::TypeMismatch)
+            }
+            Some(_) => Err(SerializationError::TypeMismatch),
+            None => Err(SerializationError::EndOfInput),
+        }
+    }
+}
+
+impl Serialize for u64 {
+    fn serialize<S: Serializer<Error = SerializationError>>(
+        &self,
+        serializer: &mut S,
+    ) -> Result<(), SerializationError> {
+        write_scalar(serializer, Event::UInt(u128::from(*self)))
+    }
+}
+
+impl Deserialize for u64 {
+    fn deserialize<D: Deserializer<Error = SerializationError>>(
+        deserializer: &mut D,
+    ) -> Result<Self, SerializationError> {
+        match deserializer.next_event()? {
+            Some(Event::UInt(value)) => {
+                u64::try_from(value).map_err(|_| SerializationError::TypeMismatch)
+            }
+            Some(Event::Int(value)) => {
+                u64::try_from(value).map_err(|_| SerializationError::TypeMismatch)
+            }
+            Some(_) => Err(SerializationError::TypeMismatch),
+            None => Err(SerializationError::EndOfInput),
+        }
+    }
+}
+impl Serialize for f32 {
+    fn serialize<S: Serializer<Error = SerializationError>>(
+        &self,
+        serializer: &mut S,
+    ) -> Result<(), SerializationError> {
+        write_scalar(serializer, Event::Float32(self.to_bits()))
+    }
+}
+
+impl Deserialize for f32 {
+    fn deserialize<D: Deserializer<Error = SerializationError>>(
+        deserializer: &mut D,
+    ) -> Result<Self, SerializationError> {
+        let value = match deserializer.next_event()? {
+            Some(Event::Float32(value)) => f32::from_bits(value),
+            Some(Event::Float64(value)) => f64::from_bits(value) as f32,
+            Some(Event::Int(value)) => value as f32,
+            Some(Event::UInt(value)) => value as f32,
+            Some(_) => return Err(SerializationError::TypeMismatch),
+            None => return Err(SerializationError::EndOfInput),
+        };
+        if value.is_finite() {
+            Ok(value)
+        } else {
+            Err(SerializationError::TypeMismatch)
+        }
+    }
+}
+
+impl Serialize for f64 {
+    fn serialize<S: Serializer<Error = SerializationError>>(
+        &self,
+        serializer: &mut S,
+    ) -> Result<(), SerializationError> {
+        write_scalar(serializer, Event::Float64(self.to_bits()))
+    }
+}
+
+impl Deserialize for f64 {
+    fn deserialize<D: Deserializer<Error = SerializationError>>(
+        deserializer: &mut D,
+    ) -> Result<Self, SerializationError> {
+        let value = match deserializer.next_event()? {
+            Some(Event::Float64(value)) => f64::from_bits(value),
+            Some(Event::Float32(value)) => f32::from_bits(value) as f64,
+            Some(Event::Int(value)) => value as f64,
+            Some(Event::UInt(value)) => value as f64,
+            Some(_) => return Err(SerializationError::TypeMismatch),
+            None => return Err(SerializationError::EndOfInput),
+        };
+        if value.is_finite() {
+            Ok(value)
+        } else {
+            Err(SerializationError::TypeMismatch)
+        }
+    }
+}
 
 impl Serialize for String {
     fn serialize<S: Serializer<Error = SerializationError>>(
