@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 1.60
+**Versión del tracker:** 1.61
 
 **Última actualización:** 2026-08-05
 
@@ -4180,10 +4180,17 @@ parte del módulo.
   escapes/surrogates, chunk-equivalent bytes, JCS, límites, terminalidad,
   paths de error y API de reader/writer.
 
-- [ ] **STD-MSGPACK-IMPL-001 — Implementar MessagePack completo.** Publicar
+- [x] **STD-MSGPACK-IMPL-001 — Implementar MessagePack completo.** Publicar
   typed, dynamic y streaming para todo el modelo wire, claves arbitrarias,
   ext/timestamp, floats bit-exact, policies y encoding determinista. El codec
   dinámico materializado actual no sustituye reader/writer ni dispatch typed.
+  Cerrado con `crates/tondo-stdlib/src/messagepack_api.rs`: el parser y writer
+  usan stacks explícitos, se conservan las policies de mapas/extensiones y
+  floats bit-exact, el encoder determinista ordena por bytes de clave y los
+  adapters typed consumen el protocolo estático de `std.serialization`. El
+  corpus local cubre wire model, no-minimal, duplicados, fragmentación,
+  timestamp, límites, terminalidad y typed round-trip. La conformance externa
+  independiente sigue siendo la promoción posterior, no un falso cierre.
   Requiere `STD-MSGPACK-API-001` y `STD-DERIVE-SER-001`.
 
 - [ ] **STD-PROTOBUF-IMPL-001 — Implementar Protobuf schema-first.** Añadir el
@@ -5407,6 +5414,20 @@ esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 1.61 — 2026-08-05
+
+- Se completa `STD-MSGPACK-IMPL-001`: `MessagePackValue`, entries de mapas con
+  claves arbitrarias, policies de duplicados/extensiones y representación
+  mínima viven en `messagepack_api.rs`. Reader y writer son máquinas de estados
+  con stacks explícitos; `fromBytes`, `fromReader` y `fromChunks` comparten la
+  misma ruta acotada y quedan terminales tras errores.
+- `encode_typed`/`decode_typed` usan el protocolo estático de
+  `std.serialization`; el modo determinista ordena por bytes de encoding,
+  normaliza NaN y rechaza colisiones. Timestamp, floats bit-exact, fragmentos,
+  límites y no-minimal están cubiertos por tests de owner.
+- Se actualizan el registro de implementación, el contrato, el validador y la
+  evidencia de test para promover el siguiente bloque a Protobuf.
 
 ### 1.60 — 2026-08-06
 

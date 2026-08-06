@@ -1,7 +1,8 @@
 # Contrato de `std.messagepack`
 
 **Estado:** contrato de API fuente cerrado para `STD-0.1A`; la implementación
-typed del codec continúa pendiente.
+typed, dynamic y streaming del owner está disponible y permanece en promoción
+con evidencia de conformance independiente pendiente.
 
 `std.messagepack` implementa el modelo binario de la especificación MessagePack
 y reutiliza los traits estáticos de `std.serialization`. El registro
@@ -204,6 +205,25 @@ Los errores estables son `UnexpectedEof`, `InvalidTag`, `InvalidUtf8`,
 son error mientras la policy sea `preserve`. Cada error contiene offset de
 byte, path estructural y, cuando proceda, el contexto de map-key/map-value; no
 copia automáticamente payloads grandes o secretos en el diagnóstico.
+
+## Implementación del owner
+
+`crates/tondo-stdlib/src/messagepack_api.rs` contiene la ruta ejecutable del
+owner. `parse_one` consume tags con un `Vec<DecodeFrame>` explícito, comprueba
+longitudes antes de reservar y aplica las policies de duplicados, extensiones y
+formas no mínimas antes de publicar el árbol. El encoder usa una pila de tareas
+para arrays y maps; el modo determinista normaliza NaN, ordena por bytes del
+encoding de la clave y rechaza colisiones. La API compatible `Value`/`encode`/
+`decode` continúa disponible para el bridge, mientras `encode_value`,
+`decode_value`, `encode_typed` y `decode_typed` exponen las opciones cerradas.
+
+`MessagePackReader` genera eventos desde la misma decodificación acotada,
+acepta bytes, chunks y el adaptador bounded de `Read`, y queda terminal tras un
+error o `finish`. `MessagePackWriter` valida la secuencia de eventos con otra
+pila explícita y solo publica bytes después de cerrar la raíz. Los adaptadores
+typed pasan por `std.serialization` y no introducen una tabla de reflection en
+runtime. El corpus unitario cubre el modelo wire, políticas, timestamp,
+fragmentación, límites, determinismo, terminalidad y round-trip typed.
 
 ## Corpus e interoperabilidad
 

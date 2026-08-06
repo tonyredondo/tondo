@@ -170,4 +170,24 @@ jq -e '
     and .promotion.next_coordination == "STD-CODEC-CONF-001"
 ' "$contract" >/dev/null
 
+source="$root/crates/tondo-stdlib/src/messagepack_api.rs"
+[[ -s "$source" ]] || {
+    echo "missing typed MessagePack implementation: ${source#"$root"/}" >&2
+    exit 1
+}
+for symbol in \
+    'pub enum MessagePackValue' \
+    'pub struct MessagePackReader' \
+    'pub struct MessagePackWriter' \
+    'enum Frame' \
+    'pub fn decode_typed' \
+    'pub fn encode_typed' \
+    'pub fn from_chunks' \
+    'fn canonical_value'; do
+    grep -q "$symbol" "$source" || {
+        echo "missing MessagePack implementation symbol: $symbol" >&2
+        exit 1
+    }
+done
+
 echo "std.messagepack owner contract: OK"

@@ -20,14 +20,14 @@ fn sample(name: &str, mut operation: impl FnMut()) {
 fn main() {
     let json_input = br#"{"z":[1,2,3],"a":{"n":true}}"#;
     let messagepack_input = messagepack::encode(&messagepack::Value::Map(vec![
-        (
-            messagepack::Value::String("b".into()),
-            messagepack::Value::UInt(2),
-        ),
-        (
-            messagepack::Value::String("a".into()),
-            messagepack::Value::UInt(1),
-        ),
+        messagepack::MessagePackEntry {
+            key: messagepack::Value::String("b".into()),
+            value: messagepack::Value::UInt(2),
+        },
+        messagepack::MessagePackEntry {
+            key: messagepack::Value::String("a".into()),
+            value: messagepack::Value::UInt(1),
+        },
     ]));
     let protobuf_input = [0x08, 0x01, 0x12, 0x03, b'o', b'k', b'!'];
 
