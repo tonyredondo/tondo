@@ -174,7 +174,20 @@
     "test_registration": false,
     "security": "deterministic-non-cryptographic-no-secrets",
     "format": "tondo-test-generation-0.1/1",
-    "capabilities": []
+    "capabilities": [],
+    "runner": {
+      "module": "crates/tondo-compiler/src/test_generation.rs",
+      "runtime": "RuntimeRunner",
+      "case_order": "generation-index",
+      "replay": "Generator.forCase(seed, caseIndex)",
+      "fresh_worker_per_case": true,
+      "fresh_worker_per_shrink_candidate": true,
+      "dynamic_test_registration": false,
+      "report_format_unchanged": true,
+      "max_cases": 100000,
+      "max_shrink_candidates": 4096,
+      "max_shrink_depth": 64
+    }
   },
   "limits": [
     {"id": "max_assertion_message_bytes", "unit": "bytes", "scope": "one-assertion", "check": "before-display"},

@@ -143,6 +143,17 @@ jq -e '
     and .generation.security == "deterministic-non-cryptographic-no-secrets"
     and .generation.format == "tondo-test-generation-0.1/1"
     and .generation.capabilities == []
+    and .generation.runner.module == "crates/tondo-compiler/src/test_generation.rs"
+    and .generation.runner.runtime == "RuntimeRunner"
+    and .generation.runner.case_order == "generation-index"
+    and .generation.runner.replay == "Generator.forCase(seed, caseIndex)"
+    and .generation.runner.fresh_worker_per_case == true
+    and .generation.runner.fresh_worker_per_shrink_candidate == true
+    and .generation.runner.dynamic_test_registration == false
+    and .generation.runner.report_format_unchanged == true
+    and .generation.runner.max_cases == 100000
+    and .generation.runner.max_shrink_candidates == 4096
+    and .generation.runner.max_shrink_depth == 64
     and (.limits | map(.id)) == [
       "max_assertion_message_bytes", "max_display_bytes", "max_diff_input_bytes",
       "max_diff_lines", "max_diff_hunks", "max_diff_output_bytes",

@@ -33,6 +33,7 @@ pub mod test_check;
 pub mod test_control;
 pub mod test_dependencies;
 pub mod test_discovery;
+pub mod test_generation;
 pub mod test_glob;
 pub mod test_input_runtime;
 pub mod test_inputs;

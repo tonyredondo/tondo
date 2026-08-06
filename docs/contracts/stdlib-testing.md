@@ -324,10 +324,16 @@ tests. Los implementadores deben ser puros, terminantes y deterministas. La
 implementación estándar cubre los escalares enteros, floats, `String` y
 colecciones cuyos elementos tienen `Shrink`; elimina duplicados conservando la
 primera aparición y devuelve candidatos en orden de menor complejidad. `shrink`
-aplica un límite finito y no ejecuta una predicate, no captura pánicos y no
-convierte fallos en excepciones recuperables. Un modo de tooling posterior puede
-reprobar cada candidato en workers nuevos, pero no cambia la semántica de este
-helper ni registra subtests dinámicos.
+aplica un límite finito y rechaza una implementación que publique más
+candidatos que el límite pedido; no ejecuta una predicate, no captura pánicos y
+no convierte fallos en excepciones recuperables.
+
+El runner de tooling conecta este helper mediante
+[`test-generation.md`](./test-generation.md): materializa una campaña con
+`Generator.forCase`, ejecuta los casos en el `RuntimeRunner` ya existente y
+reprueba candidatos en workers nuevos durante el shrinking. La campaña conserva
+el orden, replay y límites, pero nunca registra subtests dinámicos ni cambia
+los formatos de reporte del runner.
 
 ## Límites, formatos y promoción
 

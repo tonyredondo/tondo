@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 1.62
+**Versión del tracker:** 1.63
 
 **Última actualización:** 2026-08-05
 
@@ -28,6 +28,7 @@ desarrollo y no ha sido publicado.
 - [Contrato de owner de `std.protobuf`](./docs/contracts/stdlib-protobuf.md)
 - [Contrato de owner de `std.serialization`](./docs/contracts/stdlib-serialization.md)
 - [Contrato de owner de `std.testing`](./docs/contracts/stdlib-testing.md)
+- [Contrato de campañas de generación del runner](./docs/contracts/test-generation.md)
 - [Contrato de owners Core STD-0.1A](./docs/contracts/stdlib-core.md)
 - [Contrato de owners Hosted STD-0.1A](./docs/contracts/stdlib-hosted.md)
 
@@ -4206,10 +4207,13 @@ parte del módulo.
   integración del generator en el driver siguen siendo gates de promoción.
   Requiere `STD-PROTOBUF-API-001` y `STD-DERIVE-SER-001`.
 
-- [ ] **STD-TESTING-SHRINK-001 — Completar generación y shrinking público.**
-  Conectar el trait `Shrink` y `shrink[T]` al runner ya existente, con orden
-  determinista, límite, replay y composición con `Generator`; no crear un
-  segundo mecanismo de generated cases.
+- [x] **STD-TESTING-SHRINK-001 — Completar generación y shrinking público.**
+  `crates/tondo-compiler/src/test_generation.rs` conecta los helpers públicos
+  `Generator`/`Shrink` con `RuntimeRunner`: materializa casos por
+  `Generator.forCase`, conserva orden por `caseIndex`, permite replay y limita
+  casos, candidatos y profundidad antes de reservar. El primer fallo se reduce
+  en orden estable y cada candidato usa un worker nuevo; los casos son una vista
+  efímera de tooling y no crean `TestEntry`, suites ni subtests dinámicos.
 
 - [ ] **STD-PUBLIC-API-AUDIT-001 — Verificar firma por firma todos los owners
   A.** Generar una matriz contract signature → símbolo HIR → lowering → host/VM
@@ -5420,6 +5424,18 @@ esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 1.63 — 2026-08-05
+
+- Se completa `STD-TESTING-SHRINK-001`: `test_generation.rs` materializa
+  campañas acotadas con `Generator.forCase`, expone replay por `GenerationId`
+  y ejecuta los casos mediante el `RuntimeRunner` existente, reordenando la
+  evidencia por índice y conservando workers aislados.
+- El shrinking consume el trait público `Shrink` en orden determinista,
+  mantiene la primera mejora que conserva el fallo y limita candidatos y
+  profundidad. Cada candidato se ejecuta en un worker nuevo y la API nunca
+  registra subtests ni cambia el reporte canónico. El contrato, owner manifest,
+  checks y pruebas de límite quedan alineados.
 
 ### 1.62 — 2026-08-05
 
