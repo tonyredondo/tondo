@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 1.64
+**Versión del tracker:** 1.65
 
 **Última actualización:** 2026-08-05
 
@@ -4231,7 +4231,9 @@ parte del módulo.
   `STD-SER-IMPL-001`, los owners Core ya completos y
   `STD-PUBLIC-API-AUDIT-001` no dejan ninguna firma sin ruta pública. El
   registro actual `testing/stdlib-implementation.json` solo demuestra archivos
-  y pruebas por owner, no cobertura por firma.
+  y pruebas por owner, no cobertura por firma. `std.core` ya tiene sus 9/9
+  firmas trazadas con `vm-inline`; el coordinador permanece abierto hasta que
+  los demás owners Core alcancen la misma prueba pública.
 
 - [ ] **STD-IMPL-002 — Coordinar Hosted por owner.** Cierra tras
   `STD-FS-IMPL-001`, `STD-PROC-IMPL-001` y la auditoría pública, conservando los
@@ -5429,6 +5431,17 @@ esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 1.65 — 2026-08-07
+
+- El primer cierre incremental de `STD-IMPL-001` cubre `std.core`: las nueve
+  firmas (`Option` y `Result`) se verifican desde contrato y HIR/lowering hasta
+  los agregados y ramas MIR que ejecuta la VM común. La auditoría admite
+  `vm-inline` con símbolos implementativos explícitos, sin inventar una ABI ni
+  un registro runtime paralelo.
+- La matriz pública pasa a 74/206 firmas verificadas y 135 gaps explícitos;
+  `STD-IMPL-001` sigue abierto por los owners restantes. El gate diario y el
+  fixture negativo conservan el comportamiento fail-closed.
 
 ### 1.64 — 2026-08-05
 

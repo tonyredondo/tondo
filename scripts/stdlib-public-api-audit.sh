@@ -26,7 +26,8 @@ jq -e '
         and (.lowering | length > 0)
         and (.case.path | length > 0)
         and (.case.kind | ["runtime", "compile", "runner-source"] | index(.) != null)
-        and (.runtime.kind | ["host", "vm", "not-applicable"] | index(.) != null)
+        and (.runtime.kind | ["host", "vm", "vm-inline", "not-applicable"] | index(.) != null)
+        and ((.runtime.symbols // {}) | type) == "object"
         and (if .runtime.kind == "not-applicable" then (.runtime.paths | length) == 0 and (.runtime.reason | type) == "string" and (.runtime.reason | length > 0) else (.runtime.paths | length > 0) end)
     )
 ' "$config" >/dev/null || die "invalid audit configuration"
@@ -60,6 +61,20 @@ all_paths_contain() {
     return 1
 }
 
+all_paths_contain_any() {
+    local paths_json="$1"
+    local needles_json="$2"
+    local path needle
+    while IFS= read -r path; do
+        [[ -n "$path" ]] || continue
+        while IFS= read -r needle; do
+            [[ -n "$needle" ]] || continue
+            grep -Fq -- "$needle" "$root/$path" && return 0
+        done < <(jq -r '.[]' <<< "$needles_json")
+    done < <(jq -r '.[]' <<< "$paths_json")
+    return 1
+}
+
 has_prefix() {
     local value="$1"
     local prefixes_json="$2"
@@ -88,6 +103,12 @@ canonical_call_for() {
         | map(select(.from == $name) | .to)
         | first // empty
     ' <<< "$owner_json"
+}
+
+runtime_symbols_for() {
+    local symbols_json="$1"
+    local name="$2"
+    jq -c --arg name "$name" '.[$name] // []' <<< "$symbols_json"
 }
 
 operation_name() {
@@ -139,12 +160,13 @@ emit_owner_rows() {
     exclude="$(jq -c '.exclude' <<< "$owner_json")"
     case_path="$(jq -r '.case.path' <<< "$owner_json")"
     case_kind="$(jq -r '.case.kind' <<< "$owner_json")"
-    local hir lowering runtime runtime_kind runtime_reason
+    local hir lowering runtime runtime_kind runtime_reason runtime_symbols
     hir="$(jq -c '.hir' <<< "$owner_json")"
     lowering="$(jq -c '.lowering' <<< "$owner_json")"
     runtime="$(jq -c '.runtime.paths' <<< "$owner_json")"
     runtime_kind="$(jq -r '.runtime.kind' <<< "$owner_json")"
     runtime_reason="$(jq -r '.runtime.reason // empty' <<< "$owner_json")"
+    runtime_symbols="$(jq -c '.runtime.symbols // {}' <<< "$owner_json")"
 
     if ! path_exists "$contract"; then
         die "$owner contract path does not exist: $contract"
@@ -156,7 +178,7 @@ emit_owner_rows() {
     fi
     path_exists "$case_path" || die "$owner public-case path is missing: $case_path"
 
-    local line signature name operation symbol canonical_call
+    local line signature name operation symbol canonical_call runtime_needles
     local -a missing
     while IFS=$'\t' read -r line signature; do
         [[ -n "$signature" ]] || continue
@@ -190,14 +212,19 @@ emit_owner_rows() {
         if ! all_paths_contain "$lowering" "$operation"; then
             missing+=("lowering-symbol")
         fi
+        runtime_needles="$(runtime_symbols_for "$runtime_symbols" "$owner.$name")"
+        if [[ "$(jq 'length' <<< "$runtime_needles")" -eq 0 ]]; then
+            runtime_needles="$(jq -cn --arg operation "$operation" '[ $operation ]')"
+        fi
+
         if [[ "$runtime_kind" == "not-applicable" ]]; then
             [[ -n "$runtime_reason" ]] || missing+=("runtime-not-applicable-reason")
-        elif [[ "$owner" == "std.core" || "$owner" == "std.iter" ]]; then
-            if ! all_paths_contain "$runtime" "$operation"; then
+        elif ! all_paths_contain_any "$runtime" "$runtime_needles"; then
+            if [[ "$runtime_kind" == "host" ]]; then
+                missing+=("host-symbol")
+            else
                 missing+=("vm-symbol")
             fi
-        elif ! all_paths_contain "$runtime" "$symbol"; then
-            missing+=("host-symbol")
         fi
 
         case "$case_kind" in
@@ -244,9 +271,10 @@ emit_owner_rows() {
             --argjson hir "$hir" \
             --argjson lowering "$lowering" \
             --argjson runtime "$runtime" \
+            --argjson runtime_symbols "$runtime_needles" \
             --argjson missing "$missing_json" \
             --arg status "$status" \
-            '{id:($owner+":"+($line|tostring)), owner:$owner, contract:$contract, line:$line, signature:$signature, symbol:$symbol, operation:$operation, evidence:{hir:{paths:$hir,symbol:$operation},lowering:{paths:$lowering,symbol:$operation},host_vm:{kind:$runtime_kind,paths:$runtime,reason:(if $runtime_reason == "" then null else $runtime_reason end),symbol:$symbol},public_case:{path:$case_path,kind:$case_kind,call:$call,bootstrap_alias:false}},missing:$missing,status:$status}' \
+            '{id:($owner+":"+($line|tostring)), owner:$owner, contract:$contract, line:$line, signature:$signature, symbol:$symbol, operation:$operation, evidence:{hir:{paths:$hir,symbol:$operation},lowering:{paths:$lowering,symbol:$operation},host_vm:{kind:$runtime_kind,paths:$runtime,reason:(if $runtime_reason == "" then null else $runtime_reason end),symbol:$symbol,symbols:$runtime_symbols},public_case:{path:$case_path,kind:$case_kind,call:$call,bootstrap_alias:false}},missing:$missing,status:$status}' \
             >> "$rows_ndjson"
     done < <(extract_signatures "$owner_json")
 }
@@ -324,6 +352,7 @@ validate_matrix() {
             and (.symbol | startswith("std."))
             and (.evidence.hir.paths | length > 0)
             and (.evidence.lowering.paths | length > 0)
+            and (.evidence.host_vm.symbols | type) == "array"
             and (.evidence.public_case.bootstrap_alias == false)
             and (.status == (if (.missing | length) == 0 then "verified" else "gap" end))
         )

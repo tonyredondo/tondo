@@ -18,7 +18,7 @@ contract signature → HIR symbol → lowering symbol → host/VM symbol → pub
 
 Una fila solo es `verified` cuando existen los paths declarados, el símbolo de
 la operación aparece en las etapas HIR y lowering, el host/VM contiene el
-símbolo cualificado (o la primitiva VM explícita para los intrinsics Core), y
+símbolo cualificado (o una primitiva VM explícita para los intrinsics Core), y
 el caso contiene una llamada al nombre canónico. La llamada no se satisface
 con un path Rust aislado, un test que ejerce otra operación, una documentación,
 un alias bootstrap ni un registro runtime paralelo.
@@ -27,6 +27,11 @@ Los owners build-only pueden declarar `host_vm.kind = not-applicable`, pero la
 razón debe ser normativa. Si el contrato no expone ninguna firma indexable, el
 owner queda abierto con `no-callable-signatures-indexed`; esto evita confundir
 una implementación de soporte con una API pública auditada.
+
+Los intrinsics Core que se materializan como agregados y ramas MIR usan
+`host_vm.kind = vm-inline`: la matriz conserva los símbolos exactos del
+lowering y del runtime VM común, sin inventar un registro de operaciones
+paralelo ni exigir una función host para una operación puramente portable.
 
 ## Modos
 
@@ -52,6 +57,8 @@ Es una señal fail-closed para el tracker, no un waiver.
 - hay exactamente un owner por identidad de firma;
 - el contrato y los stages se fijan por paths relativos al repositorio;
 - el caso público declara su kind (`runtime`, `compile` o `runner-source`);
+- `host_vm.symbols` conserva el token implementativo usado para verificar la
+  ruta (incluidos los aliases internos explícitos de `vm-inline`);
 - `bootstrap_alias` es siempre `false`;
 - los estados se derivan de `missing`, nunca se editan a mano; y
 - cualquier drift del contrato o de la configuración hace fallar `--check`.

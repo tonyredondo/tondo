@@ -115,17 +115,47 @@
         "crates/tondo-compiler/src/mir/lower.rs"
       ],
       "runtime": {
-        "kind": "vm",
+        "kind": "vm-inline",
         "paths": [
+          "crates/tondo-compiler/src/mir/lower.rs",
           "crates/tondo-vm/src/runtime/execute.rs"
         ],
-        "reason": null
+        "reason": "Core operations lower to verified MIR aggregates/branches executed by the common VM",
+        "symbols": {
+          "std.core.Option.some": [
+            "MirAggregateKind::OptionSome"
+          ],
+          "std.core.Option.none": [
+            "MirAggregateKind::OptionNone"
+          ],
+          "std.core.Option.map": [
+            "lower_core_option_map"
+          ],
+          "std.core.Option.unwrapOr": [
+            "lower_core_option_unwrap"
+          ],
+          "std.core.Result.ok": [
+            "MirAggregateKind::ResultOk"
+          ],
+          "std.core.Result.err": [
+            "MirAggregateKind::ResultErr"
+          ],
+          "std.core.Result.map": [
+            "lower_core_result_map"
+          ],
+          "std.core.Result.mapErr": [
+            "lower_core_result_map_err"
+          ],
+          "std.core.Result.unwrapOr": [
+            "lower_core_result_unwrap"
+          ]
+        }
       },
       "signature_count": 9,
-      "verified_count": 6,
-      "gap_count": 3,
+      "verified_count": 9,
+      "gap_count": 0,
       "owner_missing": [],
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "id": "std.time",
@@ -321,8 +351,8 @@
         "reason": null
       },
       "signature_count": 5,
-      "verified_count": 2,
-      "gap_count": 3,
+      "verified_count": 4,
+      "gap_count": 1,
       "owner_missing": [],
       "status": "open-gaps"
     },
@@ -490,8 +520,8 @@
         "reason": null
       },
       "signature_count": 17,
-      "verified_count": 6,
-      "gap_count": 11,
+      "verified_count": 8,
+      "gap_count": 9,
       "owner_missing": [],
       "status": "open-gaps"
     },
@@ -643,7 +673,10 @@
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
           "reason": null,
-          "symbol": "std.collections.Array.new"
+          "symbol": "std.collections.Array.new",
+          "symbols": [
+            "new"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-collections-001.to",
@@ -684,7 +717,10 @@
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
           "reason": null,
-          "symbol": "std.collections.Array.withCapacity"
+          "symbol": "std.collections.Array.withCapacity",
+          "symbols": [
+            "withCapacity"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-collections-001.to",
@@ -727,7 +763,10 @@
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
           "reason": null,
-          "symbol": "std.collections.Array.length"
+          "symbol": "std.collections.Array.length",
+          "symbols": [
+            "length"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-collections-001.to",
@@ -768,7 +807,10 @@
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
           "reason": null,
-          "symbol": "std.collections.Array.get"
+          "symbol": "std.collections.Array.get",
+          "symbols": [
+            "get"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-collections-001.to",
@@ -809,7 +851,10 @@
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
           "reason": null,
-          "symbol": "std.collections.Array.slice"
+          "symbol": "std.collections.Array.slice",
+          "symbols": [
+            "slice"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-collections-001.to",
@@ -850,7 +895,10 @@
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
           "reason": null,
-          "symbol": "std.collections.Array.push"
+          "symbol": "std.collections.Array.push",
+          "symbols": [
+            "push"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-collections-001.to",
@@ -891,7 +939,10 @@
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
           "reason": null,
-          "symbol": "std.collections.Array.pop"
+          "symbol": "std.collections.Array.pop",
+          "symbols": [
+            "pop"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-collections-001.to",
@@ -932,7 +983,10 @@
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
           "reason": null,
-          "symbol": "std.collections.Map.new"
+          "symbol": "std.collections.Map.new",
+          "symbols": [
+            "new"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-collections-001.to",
@@ -973,7 +1027,10 @@
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
           "reason": null,
-          "symbol": "std.collections.Map.get"
+          "symbol": "std.collections.Map.get",
+          "symbols": [
+            "get"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-collections-001.to",
@@ -1014,7 +1071,10 @@
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
           "reason": null,
-          "symbol": "std.collections.Map.insert"
+          "symbol": "std.collections.Map.insert",
+          "symbols": [
+            "insert"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-collections-001.to",
@@ -1055,7 +1115,10 @@
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
           "reason": null,
-          "symbol": "std.collections.Map.remove"
+          "symbol": "std.collections.Map.remove",
+          "symbols": [
+            "remove"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-collections-001.to",
@@ -1096,7 +1159,10 @@
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
           "reason": null,
-          "symbol": "std.collections.Map.contains"
+          "symbol": "std.collections.Map.contains",
+          "symbols": [
+            "contains"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-collections-001.to",
@@ -1137,7 +1203,10 @@
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
           "reason": null,
-          "symbol": "std.collections.Map.entries"
+          "symbol": "std.collections.Map.entries",
+          "symbols": [
+            "entries"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-collections-001.to",
@@ -1178,7 +1247,10 @@
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
           "reason": null,
-          "symbol": "std.collections.Set.new"
+          "symbol": "std.collections.Set.new",
+          "symbols": [
+            "new"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-collections-001.to",
@@ -1219,7 +1291,10 @@
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
           "reason": null,
-          "symbol": "std.collections.Set.insert"
+          "symbol": "std.collections.Set.insert",
+          "symbols": [
+            "insert"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-collections-001.to",
@@ -1260,7 +1335,10 @@
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
           "reason": null,
-          "symbol": "std.collections.Set.remove"
+          "symbol": "std.collections.Set.remove",
+          "symbols": [
+            "remove"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-collections-001.to",
@@ -1301,7 +1379,10 @@
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
           "reason": null,
-          "symbol": "std.collections.Set.contains"
+          "symbol": "std.collections.Set.contains",
+          "symbols": [
+            "contains"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-collections-001.to",
@@ -1342,7 +1423,10 @@
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
           "reason": null,
-          "symbol": "std.collections.Set.values"
+          "symbol": "std.collections.Set.values",
+          "symbols": [
+            "values"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-collections-001.to",
@@ -1383,7 +1467,10 @@
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
           "reason": null,
-          "symbol": "std.collections.Range.from"
+          "symbol": "std.collections.Range.from",
+          "symbols": [
+            "from"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-collections-001.to",
@@ -1393,7 +1480,6 @@
         }
       },
       "missing": [
-        "host-symbol",
         "public-case-call"
       ],
       "status": "gap"
@@ -1427,7 +1513,10 @@
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
           "reason": null,
-          "symbol": "std.collections.Range.inclusive"
+          "symbol": "std.collections.Range.inclusive",
+          "symbols": [
+            "inclusive"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-collections-001.to",
@@ -1438,7 +1527,6 @@
       },
       "missing": [
         "hir-symbol",
-        "host-symbol",
         "public-case-call"
       ],
       "status": "gap"
@@ -1472,7 +1560,10 @@
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
           "reason": null,
-          "symbol": "std.collections.Range.step"
+          "symbol": "std.collections.Range.step",
+          "symbols": [
+            "step"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-collections-001.to",
@@ -1482,7 +1573,6 @@
         }
       },
       "missing": [
-        "host-symbol",
         "public-case-call"
       ],
       "status": "gap"
@@ -1514,7 +1604,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.console.stdin"
+          "symbol": "std.console.stdin",
+          "symbols": [
+            "stdin"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-console-001.to",
@@ -1556,7 +1649,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.console.stdout"
+          "symbol": "std.console.stdout",
+          "symbols": [
+            "stdout"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-console-001.to",
@@ -1598,7 +1694,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.console.stderr"
+          "symbol": "std.console.stderr",
+          "symbols": [
+            "stderr"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-console-001.to",
@@ -1640,7 +1739,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.console.readLine"
+          "symbol": "std.console.readLine",
+          "symbols": [
+            "readLine"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-console-001.to",
@@ -1682,7 +1784,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.console.print"
+          "symbol": "std.console.print",
+          "symbols": [
+            "print"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-console-001.to",
@@ -1723,7 +1828,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.console.println"
+          "symbol": "std.console.println",
+          "symbols": [
+            "println"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-console-001.to",
@@ -1764,7 +1872,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.console.flush"
+          "symbol": "std.console.flush",
+          "symbols": [
+            "flush"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-console-001.to",
@@ -1802,12 +1913,16 @@
           "symbol": "some"
         },
         "host_vm": {
-          "kind": "vm",
+          "kind": "vm-inline",
           "paths": [
+            "crates/tondo-compiler/src/mir/lower.rs",
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
-          "reason": null,
-          "symbol": "std.core.Option.some"
+          "reason": "Core operations lower to verified MIR aggregates/branches executed by the common VM",
+          "symbol": "std.core.Option.some",
+          "symbols": [
+            "MirAggregateKind::OptionSome"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-core-002.to",
@@ -1843,12 +1958,16 @@
           "symbol": "none"
         },
         "host_vm": {
-          "kind": "vm",
+          "kind": "vm-inline",
           "paths": [
+            "crates/tondo-compiler/src/mir/lower.rs",
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
-          "reason": null,
-          "symbol": "std.core.Option.none"
+          "reason": "Core operations lower to verified MIR aggregates/branches executed by the common VM",
+          "symbol": "std.core.Option.none",
+          "symbols": [
+            "MirAggregateKind::OptionNone"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-core-002.to",
@@ -1884,12 +2003,16 @@
           "symbol": "unwrapOr"
         },
         "host_vm": {
-          "kind": "vm",
+          "kind": "vm-inline",
           "paths": [
+            "crates/tondo-compiler/src/mir/lower.rs",
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
-          "reason": null,
-          "symbol": "std.core.Option.unwrapOr"
+          "reason": "Core operations lower to verified MIR aggregates/branches executed by the common VM",
+          "symbol": "std.core.Option.unwrapOr",
+          "symbols": [
+            "lower_core_option_unwrap"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-core-002.to",
@@ -1898,10 +2021,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "vm-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.core:29",
@@ -1927,12 +2048,16 @@
           "symbol": "map"
         },
         "host_vm": {
-          "kind": "vm",
+          "kind": "vm-inline",
           "paths": [
+            "crates/tondo-compiler/src/mir/lower.rs",
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
-          "reason": null,
-          "symbol": "std.core.Option.map"
+          "reason": "Core operations lower to verified MIR aggregates/branches executed by the common VM",
+          "symbol": "std.core.Option.map",
+          "symbols": [
+            "lower_core_option_map"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-core-002.to",
@@ -1968,12 +2093,16 @@
           "symbol": "ok"
         },
         "host_vm": {
-          "kind": "vm",
+          "kind": "vm-inline",
           "paths": [
+            "crates/tondo-compiler/src/mir/lower.rs",
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
-          "reason": null,
-          "symbol": "std.core.Result.ok"
+          "reason": "Core operations lower to verified MIR aggregates/branches executed by the common VM",
+          "symbol": "std.core.Result.ok",
+          "symbols": [
+            "MirAggregateKind::ResultOk"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-core-002.to",
@@ -2009,12 +2138,16 @@
           "symbol": "err"
         },
         "host_vm": {
-          "kind": "vm",
+          "kind": "vm-inline",
           "paths": [
+            "crates/tondo-compiler/src/mir/lower.rs",
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
-          "reason": null,
-          "symbol": "std.core.Result.err"
+          "reason": "Core operations lower to verified MIR aggregates/branches executed by the common VM",
+          "symbol": "std.core.Result.err",
+          "symbols": [
+            "MirAggregateKind::ResultErr"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-core-002.to",
@@ -2050,12 +2183,16 @@
           "symbol": "map"
         },
         "host_vm": {
-          "kind": "vm",
+          "kind": "vm-inline",
           "paths": [
+            "crates/tondo-compiler/src/mir/lower.rs",
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
-          "reason": null,
-          "symbol": "std.core.Result.map"
+          "reason": "Core operations lower to verified MIR aggregates/branches executed by the common VM",
+          "symbol": "std.core.Result.map",
+          "symbols": [
+            "lower_core_result_map"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-core-002.to",
@@ -2091,12 +2228,16 @@
           "symbol": "mapErr"
         },
         "host_vm": {
-          "kind": "vm",
+          "kind": "vm-inline",
           "paths": [
+            "crates/tondo-compiler/src/mir/lower.rs",
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
-          "reason": null,
-          "symbol": "std.core.Result.mapErr"
+          "reason": "Core operations lower to verified MIR aggregates/branches executed by the common VM",
+          "symbol": "std.core.Result.mapErr",
+          "symbols": [
+            "lower_core_result_map_err"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-core-002.to",
@@ -2105,10 +2246,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "vm-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.core:35",
@@ -2134,12 +2273,16 @@
           "symbol": "unwrapOr"
         },
         "host_vm": {
-          "kind": "vm",
+          "kind": "vm-inline",
           "paths": [
+            "crates/tondo-compiler/src/mir/lower.rs",
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
-          "reason": null,
-          "symbol": "std.core.Result.unwrapOr"
+          "reason": "Core operations lower to verified MIR aggregates/branches executed by the common VM",
+          "symbol": "std.core.Result.unwrapOr",
+          "symbols": [
+            "lower_core_result_unwrap"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-core-002.to",
@@ -2148,10 +2291,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "vm-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.env:28",
@@ -2180,7 +2321,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.env.snapshot"
+          "symbol": "std.env.snapshot",
+          "symbols": [
+            "snapshot"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m10-std-env-001.to",
@@ -2219,7 +2363,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.env.Name.fromText"
+          "symbol": "std.env.Name.fromText",
+          "symbols": [
+            "fromText"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m10-std-env-001.to",
@@ -2260,7 +2407,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.env.Name.fromBytes"
+          "symbol": "std.env.Name.fromBytes",
+          "symbols": [
+            "fromBytes"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m10-std-env-001.to",
@@ -2302,7 +2452,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.env.Snapshot.arguments"
+          "symbol": "std.env.Snapshot.arguments",
+          "symbols": [
+            "arguments"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m10-std-env-001.to",
@@ -2341,7 +2494,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.env.Snapshot.get"
+          "symbol": "std.env.Snapshot.get",
+          "symbols": [
+            "get"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m10-std-env-001.to",
@@ -2380,7 +2536,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.env.Value.asText"
+          "symbol": "std.env.Value.asText",
+          "symbols": [
+            "asText"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m10-std-env-001.to",
@@ -2422,7 +2581,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.env.Value.asBytes"
+          "symbol": "std.env.Value.asBytes",
+          "symbols": [
+            "asBytes"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m10-std-env-001.to",
@@ -2464,7 +2626,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.format.Builder.new"
+          "symbol": "std.format.Builder.new",
+          "symbols": [
+            "new"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-format-001.to",
@@ -2503,7 +2668,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.format.Builder.append"
+          "symbol": "std.format.Builder.append",
+          "symbols": [
+            "append"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-format-001.to",
@@ -2544,7 +2712,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.format.Builder.finish"
+          "symbol": "std.format.Builder.finish",
+          "symbols": [
+            "finish"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-format-001.to",
@@ -2583,7 +2754,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.format.format"
+          "symbol": "std.format.format",
+          "symbols": [
+            "format"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-format-001.to",
@@ -2592,10 +2766,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "host-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.format:180",
@@ -2624,7 +2796,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.format.join"
+          "symbol": "std.format.join",
+          "symbols": [
+            "join"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-format-001.to",
@@ -2633,10 +2808,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "host-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.fs:56",
@@ -2665,7 +2838,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.fs.open"
+          "symbol": "std.fs.open",
+          "symbols": [
+            "open"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-fs-001.to",
@@ -2704,7 +2880,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.fs.openDirectory"
+          "symbol": "std.fs.openDirectory",
+          "symbols": [
+            "openDirectory"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-fs-001.to",
@@ -2745,7 +2924,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.fs.readAll"
+          "symbol": "std.fs.readAll",
+          "symbols": [
+            "readAll"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-fs-001.to",
@@ -2786,7 +2968,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.fs.writeAll"
+          "symbol": "std.fs.writeAll",
+          "symbols": [
+            "writeAll"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-fs-001.to",
@@ -2828,7 +3013,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.fs.createDirectory"
+          "symbol": "std.fs.createDirectory",
+          "symbols": [
+            "createDirectory"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-fs-001.to",
@@ -2869,7 +3057,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.fs.remove"
+          "symbol": "std.fs.remove",
+          "symbols": [
+            "remove"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-fs-001.to",
@@ -2908,7 +3099,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.fs.metadata"
+          "symbol": "std.fs.metadata",
+          "symbols": [
+            "metadata"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-fs-001.to",
@@ -2947,7 +3141,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.fs.list"
+          "symbol": "std.fs.list",
+          "symbols": [
+            "list"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-fs-001.to",
@@ -2986,7 +3183,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.fs.rename"
+          "symbol": "std.fs.rename",
+          "symbols": [
+            "rename"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-fs-001.to",
@@ -3027,7 +3227,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.fs.atomicWrite"
+          "symbol": "std.fs.atomicWrite",
+          "symbols": [
+            "atomicWrite"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-fs-001.to",
@@ -3068,7 +3271,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.fs.File.read"
+          "symbol": "std.fs.File.read",
+          "symbols": [
+            "read"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-fs-001.to",
@@ -3107,7 +3313,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.fs.File.write"
+          "symbol": "std.fs.File.write",
+          "symbols": [
+            "write"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-fs-001.to",
@@ -3146,7 +3355,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.fs.File.flush"
+          "symbol": "std.fs.File.flush",
+          "symbols": [
+            "flush"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-fs-001.to",
@@ -3187,7 +3399,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.fs.Directory.list"
+          "symbol": "std.fs.Directory.list",
+          "symbols": [
+            "list"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-fs-001.to",
@@ -3226,7 +3441,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.io.defaultLimits"
+          "symbol": "std.io.defaultLimits",
+          "symbols": [
+            "defaultLimits"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-io-001.to",
@@ -3267,7 +3485,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.io.limits"
+          "symbol": "std.io.limits",
+          "symbols": [
+            "limits"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-io-001.to",
@@ -3306,7 +3527,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.io.readAll"
+          "symbol": "std.io.readAll",
+          "symbols": [
+            "readAll"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-io-001.to",
@@ -3347,7 +3571,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.io.writeAll"
+          "symbol": "std.io.writeAll",
+          "symbols": [
+            "writeAll"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-io-001.to",
@@ -3389,7 +3616,10 @@
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
           "reason": null,
-          "symbol": "std.iter.Iterator.map"
+          "symbol": "std.iter.Iterator.map",
+          "symbols": [
+            "map"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-iter-001.to",
@@ -3429,7 +3659,10 @@
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
           "reason": null,
-          "symbol": "std.iter.Iterator.filter"
+          "symbol": "std.iter.Iterator.filter",
+          "symbols": [
+            "filter"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-iter-001.to",
@@ -3469,7 +3702,10 @@
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
           "reason": null,
-          "symbol": "std.iter.Iterator.take"
+          "symbol": "std.iter.Iterator.take",
+          "symbols": [
+            "take"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-iter-001.to",
@@ -3509,7 +3745,10 @@
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
           "reason": null,
-          "symbol": "std.iter.Iterator.collect"
+          "symbol": "std.iter.Iterator.collect",
+          "symbols": [
+            "collect"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-iter-001.to",
@@ -3549,7 +3788,10 @@
             "crates/tondo-stdlib/src/json_api.rs"
           ],
           "reason": null,
-          "symbol": "std.json.parse"
+          "symbol": "std.json.parse",
+          "symbols": [
+            "parse"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -3559,7 +3801,6 @@
         }
       },
       "missing": [
-        "host-symbol",
         "public-case-call"
       ],
       "status": "gap"
@@ -3592,7 +3833,10 @@
             "crates/tondo-stdlib/src/json_api.rs"
           ],
           "reason": null,
-          "symbol": "std.json.decode"
+          "symbol": "std.json.decode",
+          "symbols": [
+            "decode"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -3602,7 +3846,6 @@
         }
       },
       "missing": [
-        "host-symbol",
         "lowering-symbol",
         "public-case-call"
       ],
@@ -3636,7 +3879,10 @@
             "crates/tondo-stdlib/src/json_api.rs"
           ],
           "reason": null,
-          "symbol": "std.json.encode"
+          "symbol": "std.json.encode",
+          "symbols": [
+            "encode"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -3646,7 +3892,6 @@
         }
       },
       "missing": [
-        "host-symbol",
         "public-case-call"
       ],
       "status": "gap"
@@ -3679,7 +3924,10 @@
             "crates/tondo-stdlib/src/json_api.rs"
           ],
           "reason": null,
-          "symbol": "std.json.validate"
+          "symbol": "std.json.validate",
+          "symbols": [
+            "validate"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -3719,7 +3967,10 @@
             "crates/tondo-stdlib/src/json_api.rs"
           ],
           "reason": null,
-          "symbol": "std.json.canonicalize"
+          "symbol": "std.json.canonicalize",
+          "symbols": [
+            "canonicalize"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -3761,7 +4012,10 @@
             "crates/tondo-stdlib/src/json_api.rs"
           ],
           "reason": null,
-          "symbol": "std.json.encodeCanonical"
+          "symbol": "std.json.encodeCanonical",
+          "symbols": [
+            "encodeCanonical"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -3806,7 +4060,10 @@
             "crates/tondo-stdlib/src/json_api.rs"
           ],
           "reason": null,
-          "symbol": "std.json.JsonNumber.parse"
+          "symbol": "std.json.JsonNumber.parse",
+          "symbols": [
+            "parse"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -3816,7 +4073,6 @@
         }
       },
       "missing": [
-        "host-symbol",
         "public-case-call"
       ],
       "status": "gap"
@@ -3849,7 +4105,10 @@
             "crates/tondo-stdlib/src/json_api.rs"
           ],
           "reason": null,
-          "symbol": "std.json.JsonNumber.text"
+          "symbol": "std.json.JsonNumber.text",
+          "symbols": [
+            "text"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -3859,7 +4118,6 @@
         }
       },
       "missing": [
-        "host-symbol",
         "public-case-call"
       ],
       "status": "gap"
@@ -3892,7 +4150,10 @@
             "crates/tondo-stdlib/src/json_api.rs"
           ],
           "reason": null,
-          "symbol": "std.json.JsonNumber.toInt"
+          "symbol": "std.json.JsonNumber.toInt",
+          "symbols": [
+            "toInt"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -3937,7 +4198,10 @@
             "crates/tondo-stdlib/src/json_api.rs"
           ],
           "reason": null,
-          "symbol": "std.json.JsonNumber.toUInt"
+          "symbol": "std.json.JsonNumber.toUInt",
+          "symbols": [
+            "toUInt"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -3982,7 +4246,10 @@
             "crates/tondo-stdlib/src/json_api.rs"
           ],
           "reason": null,
-          "symbol": "std.json.JsonNumber.toFloat32"
+          "symbol": "std.json.JsonNumber.toFloat32",
+          "symbols": [
+            "toFloat32"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -4027,7 +4294,10 @@
             "crates/tondo-stdlib/src/json_api.rs"
           ],
           "reason": null,
-          "symbol": "std.json.JsonNumber.toFloat64"
+          "symbol": "std.json.JsonNumber.toFloat64",
+          "symbols": [
+            "toFloat64"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -4072,7 +4342,10 @@
             "crates/tondo-stdlib/src/json_api.rs"
           ],
           "reason": null,
-          "symbol": "std.json.JsonReader.fromBytes"
+          "symbol": "std.json.JsonReader.fromBytes",
+          "symbols": [
+            "fromBytes"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -4082,7 +4355,6 @@
         }
       },
       "missing": [
-        "host-symbol",
         "lowering-symbol",
         "public-case-call"
       ],
@@ -4116,7 +4388,10 @@
             "crates/tondo-stdlib/src/json_api.rs"
           ],
           "reason": null,
-          "symbol": "std.json.JsonReader.fromReader"
+          "symbol": "std.json.JsonReader.fromReader",
+          "symbols": [
+            "fromReader"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -4161,7 +4436,10 @@
             "crates/tondo-stdlib/src/json_api.rs"
           ],
           "reason": null,
-          "symbol": "std.json.JsonReader.next"
+          "symbol": "std.json.JsonReader.next",
+          "symbols": [
+            "next"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -4171,7 +4449,6 @@
         }
       },
       "missing": [
-        "host-symbol",
         "public-case-call"
       ],
       "status": "gap"
@@ -4204,7 +4481,10 @@
             "crates/tondo-stdlib/src/json_api.rs"
           ],
           "reason": null,
-          "symbol": "std.json.JsonReader.own"
+          "symbol": "std.json.JsonReader.own",
+          "symbols": [
+            "own"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -4214,7 +4494,6 @@
         }
       },
       "missing": [
-        "host-symbol",
         "public-case-call"
       ],
       "status": "gap"
@@ -4247,7 +4526,10 @@
             "crates/tondo-stdlib/src/json_api.rs"
           ],
           "reason": null,
-          "symbol": "std.json.JsonReader.finish"
+          "symbol": "std.json.JsonReader.finish",
+          "symbols": [
+            "finish"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -4257,7 +4539,6 @@
         }
       },
       "missing": [
-        "host-symbol",
         "public-case-call"
       ],
       "status": "gap"
@@ -4290,7 +4571,10 @@
             "crates/tondo-stdlib/src/json_api.rs"
           ],
           "reason": null,
-          "symbol": "std.json.JsonWriter.toWriter"
+          "symbol": "std.json.JsonWriter.toWriter",
+          "symbols": [
+            "toWriter"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -4335,7 +4619,10 @@
             "crates/tondo-stdlib/src/json_api.rs"
           ],
           "reason": null,
-          "symbol": "std.json.JsonWriter.write"
+          "symbol": "std.json.JsonWriter.write",
+          "symbols": [
+            "write"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -4345,7 +4632,6 @@
         }
       },
       "missing": [
-        "host-symbol",
         "public-case-call"
       ],
       "status": "gap"
@@ -4378,7 +4664,10 @@
             "crates/tondo-stdlib/src/json_api.rs"
           ],
           "reason": null,
-          "symbol": "std.json.JsonWriter.finish"
+          "symbol": "std.json.JsonWriter.finish",
+          "symbols": [
+            "finish"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -4388,7 +4677,6 @@
         }
       },
       "missing": [
-        "host-symbol",
         "public-case-call"
       ],
       "status": "gap"
@@ -4420,7 +4708,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.math.floor"
+          "symbol": "std.math.floor",
+          "symbols": [
+            "floor"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-math-001.to",
@@ -4461,7 +4752,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.math.ceil"
+          "symbol": "std.math.ceil",
+          "symbols": [
+            "ceil"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-math-001.to",
@@ -4502,7 +4796,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.math.round"
+          "symbol": "std.math.round",
+          "symbols": [
+            "round"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-math-001.to",
@@ -4543,7 +4840,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.math.truncate"
+          "symbol": "std.math.truncate",
+          "symbols": [
+            "truncate"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-math-001.to",
@@ -4582,7 +4882,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.math.sqrt"
+          "symbol": "std.math.sqrt",
+          "symbols": [
+            "sqrt"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-math-001.to",
@@ -4621,7 +4924,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.math.fma"
+          "symbol": "std.math.fma",
+          "symbols": [
+            "fma"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-math-001.to",
@@ -4662,7 +4968,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.math.abs"
+          "symbol": "std.math.abs",
+          "symbols": [
+            "abs"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-math-001.to",
@@ -4703,7 +5012,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.math.min"
+          "symbol": "std.math.min",
+          "symbols": [
+            "min"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-math-001.to",
@@ -4742,7 +5054,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.math.max"
+          "symbol": "std.math.max",
+          "symbols": [
+            "max"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-math-001.to",
@@ -4782,7 +5097,10 @@
             "crates/tondo-stdlib/src/messagepack_api.rs"
           ],
           "reason": null,
-          "symbol": "std.messagepack.decodeValue"
+          "symbol": "std.messagepack.decodeValue",
+          "symbols": [
+            "decodeValue"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -4793,7 +5111,6 @@
       },
       "missing": [
         "hir-symbol",
-        "host-symbol",
         "lowering-symbol",
         "public-case-call"
       ],
@@ -4827,7 +5144,10 @@
             "crates/tondo-stdlib/src/messagepack_api.rs"
           ],
           "reason": null,
-          "symbol": "std.messagepack.decode"
+          "symbol": "std.messagepack.decode",
+          "symbols": [
+            "decode"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -4837,7 +5157,6 @@
         }
       },
       "missing": [
-        "host-symbol",
         "lowering-symbol",
         "public-case-call"
       ],
@@ -4871,7 +5190,10 @@
             "crates/tondo-stdlib/src/messagepack_api.rs"
           ],
           "reason": null,
-          "symbol": "std.messagepack.encodeValue"
+          "symbol": "std.messagepack.encodeValue",
+          "symbols": [
+            "encodeValue"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -4882,7 +5204,6 @@
       },
       "missing": [
         "hir-symbol",
-        "host-symbol",
         "lowering-symbol",
         "public-case-call"
       ],
@@ -4916,7 +5237,10 @@
             "crates/tondo-stdlib/src/messagepack_api.rs"
           ],
           "reason": null,
-          "symbol": "std.messagepack.encode"
+          "symbol": "std.messagepack.encode",
+          "symbols": [
+            "encode"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -4926,7 +5250,6 @@
         }
       },
       "missing": [
-        "host-symbol",
         "public-case-call"
       ],
       "status": "gap"
@@ -4959,7 +5282,10 @@
             "crates/tondo-stdlib/src/messagepack_api.rs"
           ],
           "reason": null,
-          "symbol": "std.messagepack.validate"
+          "symbol": "std.messagepack.validate",
+          "symbols": [
+            "validate"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -4999,7 +5325,10 @@
             "crates/tondo-stdlib/src/messagepack_api.rs"
           ],
           "reason": null,
-          "symbol": "std.messagepack.encodeDeterministic"
+          "symbol": "std.messagepack.encodeDeterministic",
+          "symbols": [
+            "encodeDeterministic"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -5010,7 +5339,6 @@
       },
       "missing": [
         "hir-symbol",
-        "host-symbol",
         "lowering-symbol",
         "public-case-call"
       ],
@@ -5044,7 +5372,10 @@
             "crates/tondo-stdlib/src/messagepack_api.rs"
           ],
           "reason": null,
-          "symbol": "std.messagepack.MessagePackTimestamp.fromExt"
+          "symbol": "std.messagepack.MessagePackTimestamp.fromExt",
+          "symbols": [
+            "fromExt"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -5055,7 +5386,6 @@
       },
       "missing": [
         "hir-symbol",
-        "host-symbol",
         "lowering-symbol",
         "public-case-call"
       ],
@@ -5089,7 +5419,10 @@
             "crates/tondo-stdlib/src/messagepack_api.rs"
           ],
           "reason": null,
-          "symbol": "std.messagepack.MessagePackTimestamp.toExt"
+          "symbol": "std.messagepack.MessagePackTimestamp.toExt",
+          "symbols": [
+            "toExt"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -5100,7 +5433,6 @@
       },
       "missing": [
         "hir-symbol",
-        "host-symbol",
         "lowering-symbol",
         "public-case-call"
       ],
@@ -5134,7 +5466,10 @@
             "crates/tondo-stdlib/src/messagepack_api.rs"
           ],
           "reason": null,
-          "symbol": "std.messagepack.MessagePackReader.fromBytes"
+          "symbol": "std.messagepack.MessagePackReader.fromBytes",
+          "symbols": [
+            "fromBytes"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -5144,7 +5479,6 @@
         }
       },
       "missing": [
-        "host-symbol",
         "lowering-symbol",
         "public-case-call"
       ],
@@ -5178,7 +5512,10 @@
             "crates/tondo-stdlib/src/messagepack_api.rs"
           ],
           "reason": null,
-          "symbol": "std.messagepack.MessagePackReader.fromReader"
+          "symbol": "std.messagepack.MessagePackReader.fromReader",
+          "symbols": [
+            "fromReader"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -5223,7 +5560,10 @@
             "crates/tondo-stdlib/src/messagepack_api.rs"
           ],
           "reason": null,
-          "symbol": "std.messagepack.MessagePackReader.next"
+          "symbol": "std.messagepack.MessagePackReader.next",
+          "symbols": [
+            "next"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -5233,7 +5573,6 @@
         }
       },
       "missing": [
-        "host-symbol",
         "public-case-call"
       ],
       "status": "gap"
@@ -5266,7 +5605,10 @@
             "crates/tondo-stdlib/src/messagepack_api.rs"
           ],
           "reason": null,
-          "symbol": "std.messagepack.MessagePackReader.own"
+          "symbol": "std.messagepack.MessagePackReader.own",
+          "symbols": [
+            "own"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -5276,7 +5618,6 @@
         }
       },
       "missing": [
-        "host-symbol",
         "public-case-call"
       ],
       "status": "gap"
@@ -5309,7 +5650,10 @@
             "crates/tondo-stdlib/src/messagepack_api.rs"
           ],
           "reason": null,
-          "symbol": "std.messagepack.MessagePackReader.finish"
+          "symbol": "std.messagepack.MessagePackReader.finish",
+          "symbols": [
+            "finish"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -5319,7 +5663,6 @@
         }
       },
       "missing": [
-        "host-symbol",
         "public-case-call"
       ],
       "status": "gap"
@@ -5352,7 +5695,10 @@
             "crates/tondo-stdlib/src/messagepack_api.rs"
           ],
           "reason": null,
-          "symbol": "std.messagepack.MessagePackWriter.toWriter"
+          "symbol": "std.messagepack.MessagePackWriter.toWriter",
+          "symbols": [
+            "toWriter"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -5397,7 +5743,10 @@
             "crates/tondo-stdlib/src/messagepack_api.rs"
           ],
           "reason": null,
-          "symbol": "std.messagepack.MessagePackWriter.write"
+          "symbol": "std.messagepack.MessagePackWriter.write",
+          "symbols": [
+            "write"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -5407,7 +5756,6 @@
         }
       },
       "missing": [
-        "host-symbol",
         "public-case-call"
       ],
       "status": "gap"
@@ -5440,7 +5788,10 @@
             "crates/tondo-stdlib/src/messagepack_api.rs"
           ],
           "reason": null,
-          "symbol": "std.messagepack.MessagePackWriter.finish"
+          "symbol": "std.messagepack.MessagePackWriter.finish",
+          "symbols": [
+            "finish"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -5450,7 +5801,6 @@
         }
       },
       "missing": [
-        "host-symbol",
         "public-case-call"
       ],
       "status": "gap"
@@ -5482,7 +5832,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.path.Path.fromString"
+          "symbol": "std.path.Path.fromString",
+          "symbols": [
+            "fromString"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-path-001.to",
@@ -5523,7 +5876,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.path.Path.fromBytes"
+          "symbol": "std.path.Path.fromBytes",
+          "symbols": [
+            "fromBytes"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-path-001.to",
@@ -5564,7 +5920,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.path.Path.join"
+          "symbol": "std.path.Path.join",
+          "symbols": [
+            "join"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-path-001.to",
@@ -5603,7 +5962,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.path.Path.parent"
+          "symbol": "std.path.Path.parent",
+          "symbols": [
+            "parent"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-path-001.to",
@@ -5642,7 +6004,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.path.Path.fileName"
+          "symbol": "std.path.Path.fileName",
+          "symbols": [
+            "fileName"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-path-001.to",
@@ -5683,7 +6048,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.path.Path.extension"
+          "symbol": "std.path.Path.extension",
+          "symbols": [
+            "extension"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-path-001.to",
@@ -5724,7 +6092,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.path.Path.kind"
+          "symbol": "std.path.Path.kind",
+          "symbols": [
+            "kind"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-path-001.to",
@@ -5763,7 +6134,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.path.Path.isEmpty"
+          "symbol": "std.path.Path.isEmpty",
+          "symbols": [
+            "isEmpty"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-path-001.to",
@@ -5804,7 +6178,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.path.Path.toString"
+          "symbol": "std.path.Path.toString",
+          "symbols": [
+            "toString"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-path-001.to",
@@ -5845,7 +6222,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.path.Path.toBytes"
+          "symbol": "std.path.Path.toBytes",
+          "symbols": [
+            "toBytes"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-path-001.to",
@@ -5886,7 +6266,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.process.command"
+          "symbol": "std.process.command",
+          "symbols": [
+            "command"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m8-process-001.to",
@@ -5927,7 +6310,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.process.shell"
+          "symbol": "std.process.shell",
+          "symbols": [
+            "shell"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m8-process-001.to",
@@ -5968,7 +6354,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.process.pipe"
+          "symbol": "std.process.pipe",
+          "symbols": [
+            "pipe"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m8-process-001.to",
@@ -6007,7 +6396,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.process.Command.mergeStderr"
+          "symbol": "std.process.Command.mergeStderr",
+          "symbols": [
+            "mergeStderr"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m8-process-001.to",
@@ -6049,7 +6441,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.process.Pipeline.mergeStderr"
+          "symbol": "std.process.Pipeline.mergeStderr",
+          "symbols": [
+            "mergeStderr"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m8-process-001.to",
@@ -6091,7 +6486,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.process.Command.run"
+          "symbol": "std.process.Command.run",
+          "symbols": [
+            "run"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m8-process-001.to",
@@ -6100,10 +6498,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "host-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.process:109",
@@ -6132,7 +6528,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.process.Command.output"
+          "symbol": "std.process.Command.output",
+          "symbols": [
+            "output"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m8-process-001.to",
@@ -6171,7 +6570,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.process.Command.check"
+          "symbol": "std.process.Command.check",
+          "symbols": [
+            "check"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m8-process-001.to",
@@ -6210,7 +6612,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.process.Command.start"
+          "symbol": "std.process.Command.start",
+          "symbols": [
+            "start"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m8-process-001.to",
@@ -6249,7 +6654,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.process.ProcessHandle.wait"
+          "symbol": "std.process.ProcessHandle.wait",
+          "symbols": [
+            "wait"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m8-process-001.to",
@@ -6258,10 +6666,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "host-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.process:113",
@@ -6290,7 +6696,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.process.ProcessHandle.cancel"
+          "symbol": "std.process.ProcessHandle.cancel",
+          "symbols": [
+            "cancel"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m8-process-001.to",
@@ -6331,7 +6740,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.process.ProcessOutput.stdout"
+          "symbol": "std.process.ProcessOutput.stdout",
+          "symbols": [
+            "stdout"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m8-process-001.to",
@@ -6372,7 +6784,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.process.ProcessOutput.stderr"
+          "symbol": "std.process.ProcessOutput.stderr",
+          "symbols": [
+            "stderr"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m8-process-001.to",
@@ -6413,7 +6828,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.process.ProcessOutput.combined"
+          "symbol": "std.process.ProcessOutput.combined",
+          "symbols": [
+            "combined"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m8-process-001.to",
@@ -6455,7 +6873,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.process.ProcessOutput.statuses"
+          "symbol": "std.process.ProcessOutput.statuses",
+          "symbols": [
+            "statuses"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m8-process-001.to",
@@ -6496,7 +6917,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.process.ExitStatus.code"
+          "symbol": "std.process.ExitStatus.code",
+          "symbols": [
+            "code"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m8-process-001.to",
@@ -6535,7 +6959,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.process.ExitStatus.success"
+          "symbol": "std.process.ExitStatus.success",
+          "symbols": [
+            "success"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m8-process-001.to",
@@ -6575,7 +7002,10 @@
             "crates/tondo-stdlib/src/protobuf_api.rs"
           ],
           "reason": null,
-          "symbol": "std.protobuf.decode"
+          "symbol": "std.protobuf.decode",
+          "symbols": [
+            "decode"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -6585,7 +7015,6 @@
         }
       },
       "missing": [
-        "host-symbol",
         "lowering-symbol",
         "public-case-call"
       ],
@@ -6619,7 +7048,10 @@
             "crates/tondo-stdlib/src/protobuf_api.rs"
           ],
           "reason": null,
-          "symbol": "std.protobuf.encode"
+          "symbol": "std.protobuf.encode",
+          "symbols": [
+            "encode"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -6629,7 +7061,6 @@
         }
       },
       "missing": [
-        "host-symbol",
         "public-case-call"
       ],
       "status": "gap"
@@ -6662,7 +7093,10 @@
             "crates/tondo-stdlib/src/protobuf_api.rs"
           ],
           "reason": null,
-          "symbol": "std.protobuf.encodeDeterministic"
+          "symbol": "std.protobuf.encodeDeterministic",
+          "symbols": [
+            "encodeDeterministic"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -6673,7 +7107,6 @@
       },
       "missing": [
         "hir-symbol",
-        "host-symbol",
         "lowering-symbol",
         "public-case-call"
       ],
@@ -6707,7 +7140,10 @@
             "crates/tondo-stdlib/src/protobuf_api.rs"
           ],
           "reason": null,
-          "symbol": "std.protobuf.validate"
+          "symbol": "std.protobuf.validate",
+          "symbols": [
+            "validate"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -6747,7 +7183,10 @@
             "crates/tondo-stdlib/src/protobuf_api.rs"
           ],
           "reason": null,
-          "symbol": "std.protobuf.descriptor"
+          "symbol": "std.protobuf.descriptor",
+          "symbols": [
+            "descriptor"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -6758,7 +7197,6 @@
       },
       "missing": [
         "hir-symbol",
-        "host-symbol",
         "lowering-symbol",
         "public-case-call"
       ],
@@ -6792,7 +7230,10 @@
             "crates/tondo-stdlib/src/protobuf_api.rs"
           ],
           "reason": null,
-          "symbol": "std.protobuf.ProtoReader"
+          "symbol": "std.protobuf.ProtoReader",
+          "symbols": [
+            "ProtoReader"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -6803,7 +7244,6 @@
       },
       "missing": [
         "hir-symbol",
-        "host-symbol",
         "lowering-symbol",
         "public-case-call"
       ],
@@ -6837,7 +7277,10 @@
             "crates/tondo-stdlib/src/protobuf_api.rs"
           ],
           "reason": null,
-          "symbol": "std.protobuf.ProtoReader"
+          "symbol": "std.protobuf.ProtoReader",
+          "symbols": [
+            "ProtoReader"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -6848,7 +7291,6 @@
       },
       "missing": [
         "hir-symbol",
-        "host-symbol",
         "lowering-symbol",
         "public-case-call"
       ],
@@ -6882,7 +7324,10 @@
             "crates/tondo-stdlib/src/protobuf_api.rs"
           ],
           "reason": null,
-          "symbol": "std.protobuf.ProtoReader"
+          "symbol": "std.protobuf.ProtoReader",
+          "symbols": [
+            "ProtoReader"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -6893,7 +7338,6 @@
       },
       "missing": [
         "hir-symbol",
-        "host-symbol",
         "lowering-symbol",
         "public-case-call"
       ],
@@ -6927,7 +7371,10 @@
             "crates/tondo-stdlib/src/protobuf_api.rs"
           ],
           "reason": null,
-          "symbol": "std.protobuf.ProtoReader"
+          "symbol": "std.protobuf.ProtoReader",
+          "symbols": [
+            "ProtoReader"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -6938,7 +7385,6 @@
       },
       "missing": [
         "hir-symbol",
-        "host-symbol",
         "lowering-symbol",
         "public-case-call"
       ],
@@ -6972,7 +7418,10 @@
             "crates/tondo-stdlib/src/protobuf_api.rs"
           ],
           "reason": null,
-          "symbol": "std.protobuf.ProtoReader"
+          "symbol": "std.protobuf.ProtoReader",
+          "symbols": [
+            "ProtoReader"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -6983,7 +7432,6 @@
       },
       "missing": [
         "hir-symbol",
-        "host-symbol",
         "lowering-symbol",
         "public-case-call"
       ],
@@ -7017,7 +7465,10 @@
             "crates/tondo-stdlib/src/protobuf_api.rs"
           ],
           "reason": null,
-          "symbol": "std.protobuf.ProtoWriter"
+          "symbol": "std.protobuf.ProtoWriter",
+          "symbols": [
+            "ProtoWriter"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -7028,7 +7479,6 @@
       },
       "missing": [
         "hir-symbol",
-        "host-symbol",
         "lowering-symbol",
         "public-case-call"
       ],
@@ -7062,7 +7512,10 @@
             "crates/tondo-stdlib/src/protobuf_api.rs"
           ],
           "reason": null,
-          "symbol": "std.protobuf.ProtoWriter"
+          "symbol": "std.protobuf.ProtoWriter",
+          "symbols": [
+            "ProtoWriter"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -7073,7 +7526,6 @@
       },
       "missing": [
         "hir-symbol",
-        "host-symbol",
         "lowering-symbol",
         "public-case-call"
       ],
@@ -7107,7 +7559,10 @@
             "crates/tondo-stdlib/src/protobuf_api.rs"
           ],
           "reason": null,
-          "symbol": "std.protobuf.ProtoWriter"
+          "symbol": "std.protobuf.ProtoWriter",
+          "symbols": [
+            "ProtoWriter"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -7118,7 +7573,6 @@
       },
       "missing": [
         "hir-symbol",
-        "host-symbol",
         "lowering-symbol",
         "public-case-call"
       ],
@@ -7152,7 +7606,10 @@
             "crates/tondo-stdlib/src/protobuf_api.rs"
           ],
           "reason": null,
-          "symbol": "std.protobuf.UnknownFields.count"
+          "symbol": "std.protobuf.UnknownFields.count",
+          "symbols": [
+            "count"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -7162,7 +7619,6 @@
         }
       },
       "missing": [
-        "host-symbol",
         "public-case-call"
       ],
       "status": "gap"
@@ -7195,7 +7651,10 @@
             "crates/tondo-stdlib/src/protobuf_api.rs"
           ],
           "reason": null,
-          "symbol": "std.protobuf.UnknownFields.discard"
+          "symbol": "std.protobuf.UnknownFields.discard",
+          "symbols": [
+            "discard"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-codecs-001.to",
@@ -7205,7 +7664,6 @@
         }
       },
       "missing": [
-        "host-symbol",
         "public-case-call"
       ],
       "status": "gap"
@@ -7239,7 +7697,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.testing.assertEqual"
+          "symbol": "std.testing.assertEqual",
+          "symbols": [
+            "assertEqual"
+          ]
         },
         "public_case": {
           "path": "crates/tondo-compiler/src/driver.rs",
@@ -7282,7 +7743,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.testing.assertNotEqual"
+          "symbol": "std.testing.assertNotEqual",
+          "symbols": [
+            "assertNotEqual"
+          ]
         },
         "public_case": {
           "path": "crates/tondo-compiler/src/driver.rs",
@@ -7325,7 +7789,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.testing.assertTextEqual"
+          "symbol": "std.testing.assertTextEqual",
+          "symbols": [
+            "assertTextEqual"
+          ]
         },
         "public_case": {
           "path": "crates/tondo-compiler/src/driver.rs",
@@ -7368,7 +7835,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.testing.diffText"
+          "symbol": "std.testing.diffText",
+          "symbols": [
+            "diffText"
+          ]
         },
         "public_case": {
           "path": "crates/tondo-compiler/src/driver.rs",
@@ -7411,7 +7881,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.testing.TextDiff.render"
+          "symbol": "std.testing.TextDiff.render",
+          "symbols": [
+            "render"
+          ]
         },
         "public_case": {
           "path": "crates/tondo-compiler/src/driver.rs",
@@ -7452,7 +7925,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.testing.FloatTolerance.from"
+          "symbol": "std.testing.FloatTolerance.from",
+          "symbols": [
+            "from"
+          ]
         },
         "public_case": {
           "path": "crates/tondo-compiler/src/driver.rs",
@@ -7493,7 +7969,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.testing.assertFloatNear"
+          "symbol": "std.testing.assertFloatNear",
+          "symbols": [
+            "assertFloatNear"
+          ]
         },
         "public_case": {
           "path": "crates/tondo-compiler/src/driver.rs",
@@ -7536,7 +8015,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.testing.assertFloat32Near"
+          "symbol": "std.testing.assertFloat32Near",
+          "symbols": [
+            "assertFloat32Near"
+          ]
         },
         "public_case": {
           "path": "crates/tondo-compiler/src/driver.rs",
@@ -7579,7 +8061,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.testing.assertSome"
+          "symbol": "std.testing.assertSome",
+          "symbols": [
+            "assertSome"
+          ]
         },
         "public_case": {
           "path": "crates/tondo-compiler/src/driver.rs",
@@ -7622,7 +8107,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.testing.assertNone"
+          "symbol": "std.testing.assertNone",
+          "symbols": [
+            "assertNone"
+          ]
         },
         "public_case": {
           "path": "crates/tondo-compiler/src/driver.rs",
@@ -7665,7 +8153,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.testing.assertOk"
+          "symbol": "std.testing.assertOk",
+          "symbols": [
+            "assertOk"
+          ]
         },
         "public_case": {
           "path": "crates/tondo-compiler/src/driver.rs",
@@ -7708,7 +8199,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.testing.assertErr"
+          "symbol": "std.testing.assertErr",
+          "symbols": [
+            "assertErr"
+          ]
         },
         "public_case": {
           "path": "crates/tondo-compiler/src/driver.rs",
@@ -7751,7 +8245,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.testing.tempDirectory"
+          "symbol": "std.testing.tempDirectory",
+          "symbols": [
+            "tempDirectory"
+          ]
         },
         "public_case": {
           "path": "crates/tondo-compiler/src/driver.rs",
@@ -7794,7 +8291,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.testing.TempDirectory.path"
+          "symbol": "std.testing.TempDirectory.path",
+          "symbols": [
+            "path"
+          ]
         },
         "public_case": {
           "path": "crates/tondo-compiler/src/driver.rs",
@@ -7835,7 +8335,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.testing.TempDirectory.cleanup"
+          "symbol": "std.testing.TempDirectory.cleanup",
+          "symbols": [
+            "cleanup"
+          ]
         },
         "public_case": {
           "path": "crates/tondo-compiler/src/driver.rs",
@@ -7878,7 +8381,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.testing.Generator.new"
+          "symbol": "std.testing.Generator.new",
+          "symbols": [
+            "new"
+          ]
         },
         "public_case": {
           "path": "crates/tondo-compiler/src/driver.rs",
@@ -7919,7 +8425,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.testing.Generator.forCase"
+          "symbol": "std.testing.Generator.forCase",
+          "symbols": [
+            "forCase"
+          ]
         },
         "public_case": {
           "path": "crates/tondo-compiler/src/driver.rs",
@@ -7963,7 +8472,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.testing.Generator.id"
+          "symbol": "std.testing.Generator.id",
+          "symbols": [
+            "id"
+          ]
         },
         "public_case": {
           "path": "crates/tondo-compiler/src/driver.rs",
@@ -8004,7 +8516,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.testing.Generator.drawCount"
+          "symbol": "std.testing.Generator.drawCount",
+          "symbols": [
+            "drawCount"
+          ]
         },
         "public_case": {
           "path": "crates/tondo-compiler/src/driver.rs",
@@ -8048,7 +8563,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.testing.Generator.nextUInt"
+          "symbol": "std.testing.Generator.nextUInt",
+          "symbols": [
+            "nextUInt"
+          ]
         },
         "public_case": {
           "path": "crates/tondo-compiler/src/driver.rs",
@@ -8091,7 +8609,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.testing.Generator.nextBool"
+          "symbol": "std.testing.Generator.nextBool",
+          "symbols": [
+            "nextBool"
+          ]
         },
         "public_case": {
           "path": "crates/tondo-compiler/src/driver.rs",
@@ -8135,7 +8656,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.testing.Generator.nextInt"
+          "symbol": "std.testing.Generator.nextInt",
+          "symbols": [
+            "nextInt"
+          ]
         },
         "public_case": {
           "path": "crates/tondo-compiler/src/driver.rs",
@@ -8179,7 +8703,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.testing.Generator.nextBytes"
+          "symbol": "std.testing.Generator.nextBytes",
+          "symbols": [
+            "nextBytes"
+          ]
         },
         "public_case": {
           "path": "crates/tondo-compiler/src/driver.rs",
@@ -8223,7 +8750,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.testing.Generator.nextText"
+          "symbol": "std.testing.Generator.nextText",
+          "symbols": [
+            "nextText"
+          ]
         },
         "public_case": {
           "path": "crates/tondo-compiler/src/driver.rs",
@@ -8266,7 +8796,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.testing.shrink"
+          "symbol": "std.testing.shrink",
+          "symbols": [
+            "shrink"
+          ]
         },
         "public_case": {
           "path": "crates/tondo-compiler/src/driver.rs",
@@ -8308,7 +8841,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.text.String.empty"
+          "symbol": "std.text.String.empty",
+          "symbols": [
+            "empty"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-text-002.to",
@@ -8347,7 +8883,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.text.String.fromChars"
+          "symbol": "std.text.String.fromChars",
+          "symbols": [
+            "fromChars"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-text-002.to",
@@ -8388,7 +8927,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.text.String.length"
+          "symbol": "std.text.String.length",
+          "symbols": [
+            "length"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-text-002.to",
@@ -8430,7 +8972,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.text.String.byteLength"
+          "symbol": "std.text.String.byteLength",
+          "symbols": [
+            "byteLength"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-text-002.to",
@@ -8472,7 +9017,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.text.String.get"
+          "symbol": "std.text.String.get",
+          "symbols": [
+            "get"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-text-002.to",
@@ -8513,7 +9061,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.text.String.slice"
+          "symbol": "std.text.String.slice",
+          "symbols": [
+            "slice"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-text-002.to",
@@ -8552,7 +9103,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.text.String.contains"
+          "symbol": "std.text.String.contains",
+          "symbols": [
+            "contains"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-text-002.to",
@@ -8593,7 +9147,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.text.String.startsWith"
+          "symbol": "std.text.String.startsWith",
+          "symbols": [
+            "startsWith"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-text-002.to",
@@ -8635,7 +9192,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.text.String.endsWith"
+          "symbol": "std.text.String.endsWith",
+          "symbols": [
+            "endsWith"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-text-002.to",
@@ -8677,7 +9237,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.text.String.find"
+          "symbol": "std.text.String.find",
+          "symbols": [
+            "find"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-text-002.to",
@@ -8718,7 +9281,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.text.String.replace"
+          "symbol": "std.text.String.replace",
+          "symbols": [
+            "replace"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-text-002.to",
@@ -8760,7 +9326,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.text.String.trim"
+          "symbol": "std.text.String.trim",
+          "symbols": [
+            "trim"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-text-002.to",
@@ -8802,7 +9371,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.text.String.toLowerAscii"
+          "symbol": "std.text.String.toLowerAscii",
+          "symbols": [
+            "toLowerAscii"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-text-002.to",
@@ -8844,7 +9416,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.text.String.toUpperAscii"
+          "symbol": "std.text.String.toUpperAscii",
+          "symbols": [
+            "toUpperAscii"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-text-002.to",
@@ -8886,7 +9461,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.text.String.chars"
+          "symbol": "std.text.String.chars",
+          "symbols": [
+            "chars"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m11-std-text-002.to",
@@ -8927,7 +9505,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.time.now"
+          "symbol": "std.time.now",
+          "symbols": [
+            "now"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m10-std-time-001.to",
@@ -8968,7 +9549,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.time.resolution"
+          "symbol": "std.time.resolution",
+          "symbols": [
+            "resolution"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m10-std-time-001.to",
@@ -9007,7 +9591,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.time.deadline"
+          "symbol": "std.time.deadline",
+          "symbols": [
+            "deadline"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m10-std-time-001.to",
@@ -9048,7 +9635,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.time.sleep"
+          "symbol": "std.time.sleep",
+          "symbols": [
+            "sleep"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m10-std-time-001.to",
@@ -9089,7 +9679,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.time.Timer.after"
+          "symbol": "std.time.Timer.after",
+          "symbols": [
+            "after"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m10-std-time-001.to",
@@ -9128,7 +9721,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.time.Timer.at"
+          "symbol": "std.time.Timer.at",
+          "symbols": [
+            "at"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m10-std-time-001.to",
@@ -9167,7 +9763,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.time.Timer.wait"
+          "symbol": "std.time.Timer.wait",
+          "symbols": [
+            "wait"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m10-std-time-001.to",
@@ -9206,7 +9805,10 @@
             "crates/tondo-compiler/src/process_host.rs"
           ],
           "reason": null,
-          "symbol": "std.time.Timer.cancel"
+          "symbol": "std.time.Timer.cancel",
+          "symbols": [
+            "cancel"
+          ]
         },
         "public_case": {
           "path": "tests/runtime/m10-std-time-001.to",
@@ -9225,9 +9827,9 @@
   "summary": {
     "owners": 20,
     "signatures": 206,
-    "verified": 67,
-    "signature_gaps": 139,
+    "verified": 74,
+    "signature_gaps": 132,
     "owner_gaps": 3,
-    "gaps": 142
+    "gaps": 135
   }
 }
