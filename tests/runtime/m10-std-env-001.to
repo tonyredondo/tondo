@@ -1,16 +1,31 @@
 import std.console
+import std.bytes
 import std.env
 
-fn main(): !env.EnvError {
+fn inspect_value(value: env.Value) {
+    let _text = value.asText()
+    let _bytes = value.asBytes()
+}
+
+fn main(): !(env.EnvError | bytes.BytesError) {
     let snapshot = env.snapshot()?
     let arguments = snapshot.arguments()
     let missing_name = env.Name.fromText("TONDO_MISSING")?
+    let missing_name_bytes = env.Name.fromBytes(bytes.Bytes("TONDO_MISSING")?)?
     let missing = snapshot.get(missing_name)?
+    let missing_bytes = snapshot.get(missing_name_bytes)?
+    for value in arguments {
+        inspect_value(value)
+    }
     match arguments {
         [] => ()
         [_, ..] => assert(false)
     }
     match missing {
+        none => ()
+        some(_) => assert(false)
+    }
+    match missing_bytes {
         none => ()
         some(_) => assert(false)
     }

@@ -5436,6 +5436,15 @@ esos cierres.
 
 ## 25. Historial del tracker
 
+### 1.71 — 2026-08-07
+
+- `std.env` queda trazado con sus 7/7 firmas públicas. `Name.fromText`,
+  `Name.fromBytes`, `Value.asText` y `Value.asBytes` declaran los aliases de
+  lowering y el fixture cubre ambas formas de nombre y la ruta de inspección
+  de valores, sin consultar el entorno ambiental implícito.
+- La matriz pasa a 92/203 firmas verificadas y 114 gaps explícitos. El
+  baseline de cobertura continúa en 9059 bp.
+
 ### 1.70 — 2026-08-07
 
 - `std.time` queda trazado con sus 8/8 firmas públicas. `now`, `deadline`,

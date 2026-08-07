@@ -208,10 +208,10 @@
         "reason": null
       },
       "signature_count": 7,
-      "verified_count": 3,
-      "gap_count": 4,
+      "verified_count": 7,
+      "gap_count": 0,
       "owner_missing": [],
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "id": "std.text",
@@ -2429,7 +2429,7 @@
           ],
           "symbol": "fromText",
           "symbols": [
-            "fromText"
+            "EnvNameFromText"
           ]
         },
         "host_vm": {
@@ -2450,10 +2450,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.env:30",
@@ -2479,7 +2477,7 @@
           ],
           "symbol": "fromBytes",
           "symbols": [
-            "fromBytes"
+            "EnvNameFromBytes"
           ]
         },
         "host_vm": {
@@ -2500,11 +2498,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol",
-        "public-case-call"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.env:31",
@@ -2626,7 +2621,7 @@
           ],
           "symbol": "asText",
           "symbols": [
-            "asText"
+            "EnvValueAsText"
           ]
         },
         "host_vm": {
@@ -2647,11 +2642,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol",
-        "public-case-call"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.env:34",
@@ -2677,7 +2669,7 @@
           ],
           "symbol": "asBytes",
           "symbols": [
-            "asBytes"
+            "EnvValueAsBytes"
           ]
         },
         "host_vm": {
@@ -2698,11 +2690,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol",
-        "public-case-call"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.format:181",
@@ -10877,9 +10866,9 @@
   "summary": {
     "owners": 20,
     "signatures": 203,
-    "verified": 88,
-    "signature_gaps": 115,
+    "verified": 92,
+    "signature_gaps": 111,
     "owner_gaps": 3,
-    "gaps": 118
+    "gaps": 114
   }
 }
