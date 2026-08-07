@@ -436,10 +436,10 @@
         "reason": null
       },
       "signature_count": 10,
-      "verified_count": 3,
-      "gap_count": 7,
+      "verified_count": 10,
+      "gap_count": 0,
       "owner_missing": [],
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "id": "std.console",
@@ -6337,7 +6337,7 @@
           ],
           "symbol": "fromString",
           "symbols": [
-            "fromString"
+            "PathFromString"
           ]
         },
         "host_vm": {
@@ -6358,10 +6358,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.path:31",
@@ -6387,7 +6385,7 @@
           ],
           "symbol": "fromBytes",
           "symbols": [
-            "fromBytes"
+            "PathFromBytes"
           ]
         },
         "host_vm": {
@@ -6408,10 +6406,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.path:32",
@@ -6533,7 +6529,7 @@
           ],
           "symbol": "fileName",
           "symbols": [
-            "fileName"
+            "PathFileName"
           ]
         },
         "host_vm": {
@@ -6554,10 +6550,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.path:35",
@@ -6583,7 +6577,7 @@
           ],
           "symbol": "extension",
           "symbols": [
-            "extension"
+            "PathExtension"
           ]
         },
         "host_vm": {
@@ -6604,10 +6598,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.path:36",
@@ -6681,7 +6673,7 @@
           ],
           "symbol": "isEmpty",
           "symbols": [
-            "isEmpty"
+            "PathIsEmpty"
           ]
         },
         "host_vm": {
@@ -6702,10 +6694,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.path:38",
@@ -6731,7 +6721,7 @@
           ],
           "symbol": "toString",
           "symbols": [
-            "toString"
+            "PathToString"
           ]
         },
         "host_vm": {
@@ -6752,10 +6742,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.path:39",
@@ -6781,7 +6769,7 @@
           ],
           "symbol": "toBytes",
           "symbols": [
-            "toBytes"
+            "PathToBytes"
           ]
         },
         "host_vm": {
@@ -6802,10 +6790,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.process:103",
@@ -10832,9 +10818,9 @@
   "summary": {
     "owners": 20,
     "signatures": 203,
-    "verified": 105,
-    "signature_gaps": 98,
+    "verified": 112,
+    "signature_gaps": 91,
     "owner_gaps": 3,
-    "gaps": 101
+    "gaps": 94
   }
 }

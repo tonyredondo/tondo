@@ -5436,6 +5436,16 @@ esos cierres.
 
 ## 25. Historial del tracker
 
+### 1.73 — 2026-08-07
+
+- `std.path` queda trazado con sus 10/10 firmas públicas. Las conversiones
+  nativas, composición, padres, nombre/extensión, clasificación, vacío y
+  serialización declaran sus aliases `Path*` exactos de lowering; el fixture
+  ya cubría sus rutas UTF-8 y bytes nativos.
+- La matriz pasa a 112/203 firmas verificadas y 94 gaps explícitos (91 de
+  firmas y 3 owners de compilación sin callable indexable). El
+  baseline de cobertura continúa en 9059 bp.
+
 ### 1.72 — 2026-08-07
 
 - `std.text` queda trazado con sus 15/15 firmas públicas. El fixture único
