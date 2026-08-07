@@ -3431,21 +3431,25 @@ mod tests {
         fs::remove_dir_all(base).unwrap();
 
         let project = conventional_test_project(b"test smoke { assert(true) }\n");
+        let helper_report = format!(
+            "json={}",
+            project.join("target/helper-report.json").display()
+        );
         let run_plan = test_cli::parse(
             &[
-                "test",
-                "--project",
-                project.to_str().unwrap(),
-                "--order",
-                "random",
-                "--seed",
-                "a",
-                "--report",
-                "json=target/helper-report.json",
-                "--test-format",
-                "json",
+                OsString::from("test"),
+                OsString::from("--project"),
+                OsString::from(project.to_str().unwrap()),
+                OsString::from("--order"),
+                OsString::from("random"),
+                OsString::from("--seed"),
+                OsString::from("a"),
+                OsString::from("--report"),
+                OsString::from(helper_report),
+                OsString::from("--test-format"),
+                OsString::from("json"),
             ]
-            .map(OsString::from),
+            .as_slice(),
         )
         .unwrap();
         assert_eq!(execute_test_plan(&run_plan, &project).unwrap(), 0);

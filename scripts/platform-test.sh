@@ -5,8 +5,8 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
 cargo check --workspace --all-targets --locked
-cargo test --workspace --all-targets --locked
 cargo build -p tondo-cli --locked
+cargo test --workspace --all-targets --locked
 
 binary="target/debug/tondo"
 if [[ "${RUNNER_OS:-}" == "Windows" ]]; then
