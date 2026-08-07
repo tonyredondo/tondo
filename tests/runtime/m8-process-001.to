@@ -1,5 +1,8 @@
 import std.console
 import std.process
+import std.bytes
+import std.collections
+import std.text
 
 async fn pipelineText(pipeline: Pipeline): String ! (process.ProcessError | process.Utf8Error) {
     let output = await pipeline.output()?
@@ -9,7 +12,7 @@ async fn pipelineText(pipeline: Pipeline): String ! (process.ProcessError | proc
 async fn main(): !(process.ProcessError | process.Utf8Error) {
     let hostCommands = process.args()
 
-    let source = process.cmd(
+    let source = process.command(
         "git",
         "show",
         "HEAD:tests/runtime/m8-process-001.stdout",
@@ -45,6 +48,25 @@ async fn main(): !(process.ProcessError | process.Utf8Error) {
         .output()?
     assert(String(streams.stdout)? == "stdout")
     assert(String(streams.stderr)? == "stderr")
+    let streams_combined = streams.combined
+    let streams_statuses = streams.statuses
+    assert(String(streams_combined)? != "")
+    assert(streams_statuses[0].success)
+
+    let merged = await process
+        .shell(hostCommands[0])
+        .mergeStderr()
+        .output()?
+    let merged_stderr = merged.stderr
+    let merged_combined = merged.combined
+    let merged_stdout = merged.stdout
+    assert(String(merged_stderr)? == "")
+    assert(String(merged_combined)? == String(merged_stdout)?)
+
+    let _merged_pipeline = (
+        process.shell(hostCommands[0]) |
+        process.shell(hostCommands[0])
+    ).mergeStderr()
 
     let status = await process.shell("exit 7").status()?
     assert(status[0].code == some(7))

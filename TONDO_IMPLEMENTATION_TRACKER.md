@@ -5436,6 +5436,17 @@ esos cierres.
 
 ## 25. Historial del tracker
 
+### 1.76 — 2026-08-07
+
+- `std.process` queda trazado con sus 17/17 firmas públicas. Se fijan los
+  aliases de lowering para shell, redirecciones `mergeStderr`, cancelación y
+  las cuatro proyecciones de `ProcessOutput`; el fixture usa `command`, valida
+  `combined` y `statuses`, cubre la redirección final y construye una pipeline
+  redirigida sin introducir dependencia de shell adicional.
+- La matriz pasa a 135/203 firmas verificadas y 71 gaps explícitos (68 de
+  firmas y 3 owners de compilación sin callable indexable). El baseline de
+  cobertura continúa en 9059 bp.
+
 ### 1.75 — 2026-08-07
 
 - `std.fs` queda trazado con sus 14/14 firmas públicas. Los aliases `Fs*` y

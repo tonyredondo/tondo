@@ -521,10 +521,10 @@
         "reason": null
       },
       "signature_count": 17,
-      "verified_count": 8,
-      "gap_count": 9,
+      "verified_count": 17,
+      "gap_count": 0,
       "owner_missing": [],
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "id": "std.json",
@@ -6813,10 +6813,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "public-case-call"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.process:104",
@@ -6842,7 +6840,7 @@
           ],
           "symbol": "shell",
           "symbols": [
-            "shell"
+            "ProcessShell"
           ]
         },
         "host_vm": {
@@ -6863,10 +6861,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.process:105",
@@ -6940,7 +6936,7 @@
           ],
           "symbol": "mergeStderr",
           "symbols": [
-            "mergeStderr"
+            "CommandMergeStderr"
           ]
         },
         "host_vm": {
@@ -6961,11 +6957,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol",
-        "public-case-call"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.process:107",
@@ -6991,7 +6984,7 @@
           ],
           "symbol": "mergeStderr",
           "symbols": [
-            "mergeStderr"
+            "PipelineMergeStderr"
           ]
         },
         "host_vm": {
@@ -7012,11 +7005,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol",
-        "public-case-call"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.process:108",
@@ -7282,7 +7272,7 @@
           ],
           "symbol": "cancel",
           "symbols": [
-            "cancel"
+            "ProcessHandleCancel"
           ]
         },
         "host_vm": {
@@ -7303,10 +7293,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.process:114",
@@ -7332,7 +7320,7 @@
           ],
           "symbol": "stdout",
           "symbols": [
-            "stdout"
+            "ProcessOutputStdout"
           ]
         },
         "host_vm": {
@@ -7353,10 +7341,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.process:115",
@@ -7382,7 +7368,7 @@
           ],
           "symbol": "stderr",
           "symbols": [
-            "stderr"
+            "ProcessOutputStderr"
           ]
         },
         "host_vm": {
@@ -7403,10 +7389,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.process:116",
@@ -7432,7 +7416,7 @@
           ],
           "symbol": "combined",
           "symbols": [
-            "combined"
+            "ProcessOutputCombined"
           ]
         },
         "host_vm": {
@@ -7453,11 +7437,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol",
-        "public-case-call"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.process:117",
@@ -7504,10 +7485,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "public-case-call"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.process:118",
@@ -10793,9 +10772,9 @@
   "summary": {
     "owners": 20,
     "signatures": 203,
-    "verified": 126,
-    "signature_gaps": 77,
+    "verified": 135,
+    "signature_gaps": 68,
     "owner_gaps": 3,
-    "gaps": 80
+    "gaps": 71
   }
 }
