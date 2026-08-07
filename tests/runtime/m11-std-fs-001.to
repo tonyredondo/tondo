@@ -16,6 +16,7 @@ async fn main(): !(path.PathError | fs.FsError | bytes.BytesError | bytes.Utf8Er
     await fs.createDirectory(workspace, true)?
     let file = workspace.join("data.bin")?
     await fs.atomicWrite(file, bytes.Bytes("ok")?)?
+    await fs.writeAll(file, bytes.Bytes("ok")?)?
     let _entries = await fs.list(workspace)?
     let _metadata = await fs.metadata(file)?
     var append_file = await fs.open(file, fs.OpenMode.Append())?

@@ -493,10 +493,10 @@
         "reason": null
       },
       "signature_count": 14,
-      "verified_count": 7,
-      "gap_count": 7,
+      "verified_count": 14,
+      "gap_count": 0,
       "owner_missing": [],
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "id": "std.process",
@@ -2995,7 +2995,7 @@
           ],
           "symbol": "openDirectory",
           "symbols": [
-            "openDirectory"
+            "FsOpenDirectory"
           ]
         },
         "host_vm": {
@@ -3016,10 +3016,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.fs:58",
@@ -3045,7 +3043,7 @@
           ],
           "symbol": "readAll",
           "symbols": [
-            "readAll"
+            "FsReadAll"
           ]
         },
         "host_vm": {
@@ -3066,10 +3064,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.fs:59",
@@ -3095,7 +3091,7 @@
           ],
           "symbol": "writeAll",
           "symbols": [
-            "writeAll"
+            "FsWriteAll"
           ]
         },
         "host_vm": {
@@ -3116,11 +3112,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol",
-        "public-case-call"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.fs:60",
@@ -3146,7 +3139,7 @@
           ],
           "symbol": "createDirectory",
           "symbols": [
-            "createDirectory"
+            "FsCreateDirectory"
           ]
         },
         "host_vm": {
@@ -3167,10 +3160,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.fs:61",
@@ -3340,7 +3331,7 @@
           ],
           "symbol": "rename",
           "symbols": [
-            "rename"
+            "FsRename"
           ]
         },
         "host_vm": {
@@ -3361,10 +3352,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.fs:65",
@@ -3390,7 +3379,7 @@
           ],
           "symbol": "atomicWrite",
           "symbols": [
-            "atomicWrite"
+            "FsAtomicWrite"
           ]
         },
         "host_vm": {
@@ -3411,10 +3400,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.fs:66",
@@ -3536,7 +3523,7 @@
           ],
           "symbol": "flush",
           "symbols": [
-            "flush"
+            "FileFlush"
           ]
         },
         "host_vm": {
@@ -3557,10 +3544,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.fs:69",
@@ -10808,9 +10793,9 @@
   "summary": {
     "owners": 20,
     "signatures": 203,
-    "verified": 119,
-    "signature_gaps": 84,
+    "verified": 126,
+    "signature_gaps": 77,
     "owner_gaps": 3,
-    "gaps": 87
+    "gaps": 80
   }
 }

@@ -5436,6 +5436,16 @@ esos cierres.
 
 ## 25. Historial del tracker
 
+### 1.75 — 2026-08-07
+
+- `std.fs` queda trazado con sus 14/14 firmas públicas. Los aliases `Fs*` y
+  `FileFlush` fijan los puntos exactos de lowering, y el fixture añade la
+  escritura directa para cubrir `writeAll` junto con atomicidad, handles,
+  directorios, metadata, rename y cleanup.
+- La matriz pasa a 126/203 firmas verificadas y 80 gaps explícitos (77 de
+  firmas y 3 owners de compilación sin callable indexable). El baseline de
+  cobertura continúa en 9059 bp.
+
 ### 1.74 — 2026-08-07
 
 - `std.console` queda trazado con sus 7/7 firmas públicas. Se corrige el
