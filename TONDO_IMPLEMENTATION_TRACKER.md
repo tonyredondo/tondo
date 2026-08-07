@@ -5610,9 +5610,10 @@ M4, M5, M6, M7, M8, M9, el corpus bootstrap M10, M10.5, M10.5b y Gates G4/H0
 quedan cerrados como implementación/infraestructura. M10.7 y la implementación
 funcional de M10.6 permanecen cerradas. `CONF-DRAFT-001` también permanece
 cerrada. La auditoría reabre T0/G5 por trazabilidad normativa y Wave 5/S1A por APIs
-públicas ausentes. La acción inmediata es ejecutar las tareas leaf de Wave 5 y
-`DOC-TEST-001`/`CONF-MATRIX-ALL-001`; Wave 6 no se declara iniciada antes de
-esos cierres.
+públicas ausentes. La acción inmediata es completar primero Wave 4.5, la
+migración de suspensión 1.67 que mantiene M7 abierto. Después se ejecutan las
+tareas leaf de Wave 5 junto a `DOC-TEST-001`/`CONF-MATRIX-ALL-001`; Wave 6 no
+se declara iniciada antes de esos cierres.
 
 ---
 
