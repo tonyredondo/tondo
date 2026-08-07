@@ -1,6 +1,14 @@
 import std.console
 
-fn main() {
+async fn main(): !console.ConsoleError {
+    var input = console.stdin()?
+    let line = console.readLine(var input)?
+    match line {
+        none => ()
+        some(_) => assert(false)
+    }
+    let _stdout = console.stdout()?
+    let _stderr = console.stderr()?
     console.print("line-one")
     console.println("line-two")
     console.flush()

@@ -5436,6 +5436,17 @@ esos cierres.
 
 ## 25. Historial del tracker
 
+### 1.74 — 2026-08-07
+
+- `std.console` queda trazado con sus 7/7 firmas públicas. Se corrige el
+  contrato de `flush` para reflejar su API canónica sin parámetro (el flush de
+  un `Writer` pertenece a `std.io`) y el fixture async adquiere stdin,
+  stdout/stderr, consume EOF con `readLine` y cubre las comodidades de salida.
+  Los aliases `Console*` fijan el lowering por etapa.
+- La matriz pasa a 119/203 firmas verificadas y 87 gaps explícitos (84 de
+  firmas y 3 owners de compilación sin callable indexable). El
+  baseline de cobertura continúa en 9059 bp.
+
 ### 1.73 — 2026-08-07
 
 - `std.path` queda trazado con sus 10/10 firmas públicas. Las conversiones

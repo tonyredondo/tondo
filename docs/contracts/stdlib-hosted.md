@@ -13,7 +13,7 @@ pub async fn stderr(): std.io.Writer ! ConsoleError
 pub async fn readLine(var input: std.io.Reader): String? ! ConsoleError
 pub async fn print(value: String): Unit ! ConsoleError
 pub async fn println(value: String): Unit ! ConsoleError
-pub async fn flush(var output: std.io.Writer): Unit ! ConsoleError
+pub async fn flush(): Unit ! ConsoleError
 pub enum ConsoleError { Unavailable, Closed, Cancelled, Io(std.io.IoError) }
 ```
 

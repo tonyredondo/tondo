@@ -454,7 +454,8 @@
         "crates/tondo-compiler/src/hir/check.rs"
       ],
       "lowering": [
-        "crates/tondo-compiler/src/hir/lower.rs"
+        "crates/tondo-compiler/src/hir/lower.rs",
+        "crates/tondo-compiler/src/hir/check.rs"
       ],
       "runtime": {
         "kind": "host",
@@ -464,10 +465,10 @@
         "reason": null
       },
       "signature_count": 7,
-      "verified_count": 0,
-      "gap_count": 7,
+      "verified_count": 7,
+      "gap_count": 0,
       "owner_missing": [],
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "id": "std.fs",
@@ -1564,11 +1565,12 @@
         },
         "lowering": {
           "paths": [
-            "crates/tondo-compiler/src/hir/lower.rs"
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-compiler/src/hir/check.rs"
           ],
           "symbol": "stdin",
           "symbols": [
-            "stdin"
+            "ConsoleStdin"
           ]
         },
         "host_vm": {
@@ -1589,11 +1591,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol",
-        "public-case-call"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.console:11",
@@ -1615,11 +1614,12 @@
         },
         "lowering": {
           "paths": [
-            "crates/tondo-compiler/src/hir/lower.rs"
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-compiler/src/hir/check.rs"
           ],
           "symbol": "stdout",
           "symbols": [
-            "stdout"
+            "ConsoleStdout"
           ]
         },
         "host_vm": {
@@ -1640,11 +1640,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol",
-        "public-case-call"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.console:12",
@@ -1666,11 +1663,12 @@
         },
         "lowering": {
           "paths": [
-            "crates/tondo-compiler/src/hir/lower.rs"
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-compiler/src/hir/check.rs"
           ],
           "symbol": "stderr",
           "symbols": [
-            "stderr"
+            "ConsoleStderr"
           ]
         },
         "host_vm": {
@@ -1691,11 +1689,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol",
-        "public-case-call"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.console:13",
@@ -1717,11 +1712,12 @@
         },
         "lowering": {
           "paths": [
-            "crates/tondo-compiler/src/hir/lower.rs"
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-compiler/src/hir/check.rs"
           ],
           "symbol": "readLine",
           "symbols": [
-            "readLine"
+            "ConsoleReadLine"
           ]
         },
         "host_vm": {
@@ -1742,11 +1738,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol",
-        "public-case-call"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.console:14",
@@ -1768,11 +1761,12 @@
         },
         "lowering": {
           "paths": [
-            "crates/tondo-compiler/src/hir/lower.rs"
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-compiler/src/hir/check.rs"
           ],
           "symbol": "print",
           "symbols": [
-            "print"
+            "ConsolePrint"
           ]
         },
         "host_vm": {
@@ -1793,10 +1787,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.console:15",
@@ -1818,11 +1810,12 @@
         },
         "lowering": {
           "paths": [
-            "crates/tondo-compiler/src/hir/lower.rs"
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-compiler/src/hir/check.rs"
           ],
           "symbol": "println",
           "symbols": [
-            "println"
+            "ConsolePrintln"
           ]
         },
         "host_vm": {
@@ -1843,17 +1836,15 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.console:16",
       "owner": "std.console",
       "contract": "docs/contracts/stdlib-hosted.md",
       "line": 16,
-      "signature": "pub async fn flush(var output: std.io.Writer): Unit ! ConsoleError",
+      "signature": "pub async fn flush(): Unit ! ConsoleError",
       "symbol": "std.console.flush",
       "operation": "flush",
       "evidence": {
@@ -1868,11 +1859,12 @@
         },
         "lowering": {
           "paths": [
-            "crates/tondo-compiler/src/hir/lower.rs"
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-compiler/src/hir/check.rs"
           ],
           "symbol": "flush",
           "symbols": [
-            "flush"
+            "ConsoleFlush"
           ]
         },
         "host_vm": {
@@ -1893,10 +1885,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.core:26",
@@ -10818,9 +10808,9 @@
   "summary": {
     "owners": 20,
     "signatures": 203,
-    "verified": 112,
-    "signature_gaps": 91,
+    "verified": 119,
+    "signature_gaps": 84,
     "owner_gaps": 3,
-    "gaps": 94
+    "gaps": 87
   }
 }
