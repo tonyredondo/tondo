@@ -4234,8 +4234,9 @@ parte del módulo.
   y pruebas por owner, no cobertura por firma. `std.core` ya tiene sus 9/9
   firmas trazadas con `vm-inline` y `std.collections` sus 18/18 firmas
   públicas verificadas; `std.math` también conserva sus 9/9 firmas verificadas
-  mediante aliases de lowering explícitos; el coordinador permanece abierto
-  hasta que los demás owners Core alcancen la misma prueba pública.
+  mediante aliases de lowering explícitos y `std.format` pasa a 5/5 con
+  `FormatBuilderAppend`; el coordinador permanece abierto hasta que los demás
+  owners Core alcancen la misma prueba pública.
 
 - [ ] **STD-IMPL-002 — Coordinar Hosted por owner.** Cierra tras
   `STD-FS-IMPL-001`, `STD-PROC-IMPL-001` y la auditoría pública, conservando los
@@ -5433,6 +5434,14 @@ esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 1.68 — 2026-08-07
+
+- `std.format` queda trazado con sus 5/5 firmas públicas. El único hueco era
+  el nombre interno `FormatBuilderAppend` del lowering; el host y el fixture
+  ya cubrían la misma operación y ahora la matriz lo declara explícitamente.
+- La matriz pasa a 81/203 firmas verificadas y 125 gaps explícitos. El gate de
+  cobertura conserva 9059 bp.
 
 ### 1.67 — 2026-08-07
 

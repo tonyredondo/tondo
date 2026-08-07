@@ -351,10 +351,10 @@
         "reason": null
       },
       "signature_count": 5,
-      "verified_count": 4,
-      "gap_count": 1,
+      "verified_count": 5,
+      "gap_count": 0,
       "owner_missing": [],
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "id": "std.io",
@@ -2776,7 +2776,7 @@
           ],
           "symbol": "append",
           "symbols": [
-            "append"
+            "FormatBuilderAppend"
           ]
         },
         "host_vm": {
@@ -2797,10 +2797,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.format:183",
@@ -10894,9 +10892,9 @@
   "summary": {
     "owners": 20,
     "signatures": 203,
-    "verified": 80,
-    "signature_gaps": 123,
+    "verified": 81,
+    "signature_gaps": 122,
     "owner_gaps": 3,
-    "gaps": 126
+    "gaps": 125
   }
 }
