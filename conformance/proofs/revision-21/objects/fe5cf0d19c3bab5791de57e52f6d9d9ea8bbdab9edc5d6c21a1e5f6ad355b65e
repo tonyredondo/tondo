@@ -8,11 +8,11 @@
   },
   "inventory": {
     "path": "testing/inventory.json",
-    "sha256": "3d0639e1fdd1ea83b0fe5088696c617835534a03371b6ea5ad0ec251e748efde"
+    "sha256": "5ae028a1b178c8bd925c21937cceed0fe39c456c48f688cd0f95b2f11d5b2854"
   },
   "matrix": {
     "path": "testing/coverage-matrix.json",
-    "sha256": "129efd19814954849d9e59882c7758ed12e7b60f0a8b5818131f5490c28dc95e"
+    "sha256": "ed642c0495b0f3db35ea5552445f69959702c389ddb11a1988cba12fa6d03091"
   },
   "quality_baseline": {
     "path": "testing/quality-baseline.json",
@@ -23,7 +23,7 @@
   "coverage": {
     "status": "validated",
     "reason": "the supplied coverage report passed the quality non-regression gate",
-    "report_sha256": "9ef7ba288788817b9974a2db229b279cfec3c8567999d9f157170045634e27d4"
+    "report_sha256": "7b681d4d08e1f40532b387342c6370daa0b04f3f33aeaa11c55be6205061e718"
   },
   "mutation": {
     "status": "validated",
