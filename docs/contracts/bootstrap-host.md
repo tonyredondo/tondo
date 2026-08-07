@@ -50,7 +50,7 @@ state. Retaining or mutating such a snapshot does not retain or mutate its
 former VM object. A returned compound snapshot is rematerialized while
 completed children remain operation-local roots. `print` must return `Unit`.
 Process plans and opaque results use typed run-local host identities; process
-waits run independently and enter the VM again only through the verified async
+waits run independently and enter the VM again only through the verified suspendible
 completion path. Any shape mismatch is a toolchain host error, not a Tondo
 value or panic.
 
@@ -80,5 +80,5 @@ capability admission, stream routing, evaluation order, and diagnostics.
 Required regression coverage includes accepted and rejected call shapes,
 capability-present and capability-absent imports, HIR-to-bytecode preservation,
 host argument snapshots that do not become VM roots, exact output without an
-implicit newline, async progress, cleanup, and verification before the first
+implicit newline, suspension progress, cleanup, and verification before the first
 possible host invocation.

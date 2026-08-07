@@ -1,10 +1,10 @@
 # Tondo: especificación del lenguaje y toolchain de testing
 
 - **Estado:** borrador normativo en desarrollo; implementación funcional disponible y conformidad T0 pendiente.
-- **Revisión:** 0.1-draft.2 — 2026-08-04.
+- **Revisión:** 0.1-draft.3 — 2026-08-07.
 - **Edición objetivo:** Tondo 0.1.
 - **Especificación base:** [Tondo 0.1](./TONDO_LANGUAGE_SPEC.md).
-- **SHA-256 de la base:** `0422288eb0e8919a24a3f86f5671a8e27cd47731d2b063b0f0a5301af2fc5a0f`.
+- **SHA-256 de la base:** `c85ebfbea9309bc2684292669086bd923b6f6b10c31cd8ef78b31067c61e683c`.
 - **Formatos de tooling:** `tondo-test-report-0.1/7`,
   `tondo-test-list-0.1/6`, `tondo-junit-report-0.1/4`,
   `tondo-test-artifacts-0.1/1` y `tondo-snapshot-store-0.1/1`.
@@ -232,11 +232,11 @@ La grammar consolidada de Tondo 0.1 contiene:
 
 ~~~ebnf
 defer_stmt         = "defer",
-                     ( deferred_async_call | postfix_expression | block ) ;
-deferred_async_call = "await", plain_postfix_expression ;
+                     ( deferred_suspendible_call | postfix_expression | block ) ;
+deferred_suspendible_call = "await", plain_postfix_expression ;
 ~~~
 
-Tanto el `plain_postfix_expression` de `deferred_async_call` como el
+Tanto el `plain_postfix_expression` de `deferred_suspendible_call` como el
 `postfix_expression` ordinario deben terminar en un `call_suffix`. `await`
 pertenece a la forma diferida completa; no ejecuta ni inicia la llamada durante
 el registro.
@@ -246,10 +246,11 @@ reservan con las reglas ordinarias y se invoca y espera al abandonar el scope,
 en su posición LIFO. La forma:
 
 - Solo acepta una llamada `fn(...): Unit` infallible cuyo efecto suspendible se
-  infiere desde el `await`.
+  infiere desde la operación registrada; `await` es obligatorio en esta forma
+  especial de `defer` para distinguirla del cleanup síncrono.
 - Cuenta como punto de suspensión. Un test, setup o script, y cualquier función
   o cierre, infiere el efecto sin una keyword adicional; `@sync`/`@nosuspend`
-  rechaza esta forma con `E1610`.
+  rechaza esta forma con `E1601`.
 - Admite como máximo el mismo único operando afín propietario que un `defer` de
   llamada ordinario.
 - No dispone de variante de bloque, no puede propagar error y no crea un hook de
@@ -268,18 +269,18 @@ y cleanup antes de Gate T0. Una suite la reutiliza sin semántica especial:
 
 ~~~tondo
 suite remoteApi {
-    let service = await TestService.start()?
+    let service = TestService.start()?
     let endpoint: String = service.endpoint()
     defer await TestService.stop(service)
 
     test reportsHealth {
-        assert((await readHealth(endpoint)?).ready)
+        assert(readHealth(endpoint)?.ready)
     }
 }
 ~~~
 
-Un backend no puede implementarla bloqueando un worker del host ni ocultando un
-`await`. Si el target no puede conducir la llamada durante unwind, debe rechazar
+Un backend no puede implementarla bloqueando un worker del host ni ocultando el
+cleanup suspendible. Si el target no puede conducir la llamada durante unwind, debe rechazar
 el artefacto por capability antes de ejecutar tests.
 
 ## 3. Declaraciones `suite` y `test`
@@ -483,12 +484,13 @@ en el reporte de tooling.
 
 ### 4.2 Suspensión y concurrencia
 
-No se escribe `async test` ni `async suite`. El efecto de suspensión se infiere
-porque ninguna declaración forma parte de una API invocable.
+No se escribe `async test` ni `async suite`. Las llamadas suspendibles esperan
+automáticamente en el body y el efecto se infiere; `await` solo permanece para
+consumir handles o como spelling explícito.
 
 ~~~tondo
 test loadsConfiguration {
-    let config = await loadConfiguration()?
+    let config = loadConfiguration()?
     assert(config.port > 0)
 }
 ~~~
@@ -497,12 +499,12 @@ El setup de suite puede suspender y propagar errores:
 
 ~~~tondo
 suite remoteApi {
-    let service = await TestService.start()?
+    let service = TestService.start()?
     let endpoint: String = service.endpoint()
-    defer TestService.stop(service)
+    defer await TestService.stop(service)
 
     test reportsHealth {
-        assert((await readHealth(endpoint)?).ready)
+        assert(readHealth(endpoint)?.ready)
     }
 }
 ~~~
@@ -1284,12 +1286,12 @@ import std.testing
 import std.time
 
 test requestTimesOut {
-    await testing.withVirtualTime((clock) {
+    testing.withVirtualTime((clock) {
         scope {
             let timeout: time.Duration = requestTimeout()
             let result = spawn requestWithTimeout(timeout)
 
-            await clock.advance(timeout)
+            clock.advance(timeout)
 
             assert(await result == RequestOutcome.TimedOut)
         }
@@ -1303,9 +1305,10 @@ léxico y ninguna task puede sobrevivir a la closure. El cierre recibe
 esa región. La closure devuelve `Unit`, puede ser fallible y propaga su unión de
 error al body o fase exterior sin envolverla. Pánico, skip, cancelación y cleanup
 conservan sus reglas ordinarias y siempre desmontan el dominio antes de terminar
-el intento. La propia llamada a `withVirtualTime` debe iniciarse directamente
-con `await`; no puede iniciarse con `spawn`, porque el cambio de proveedor de
-reloj es una frontera léxica del intento y no una tarea concurrente. Las tareas
+el intento. La llamada a `withVirtualTime` debe iniciarse directamente en la
+expresión ordinaria; su espera implícita no puede sustituirse por `spawn`,
+porque el cambio de proveedor de reloj es una frontera léxica del intento y no
+una tarea concurrente. `await` explícito es aceptable como documentación. Las tareas
 que se quieran controlar se crean dentro de la closure y de un `scope`.
 
 Dentro del dominio:
@@ -1350,13 +1353,13 @@ Por ello un `await` ordinario puede atravesar horas de backoff virtual sin
 consumirlas en tiempo real. El reloj nunca avanza automáticamente mientras haya
 una task runnable o una espera externa no durable.
 
-`await clock.settle()` suspende al caller y conduce las demás tasks hasta que
+`clock.settle()` espera implícitamente al caller y conduce las demás tasks hasta que
 cada una termina o queda duraderamente bloqueada en el instante actual. Retorna
 antes de cualquier salto automático a un timer futuro. Esto permite comprobar
 un estado intermedio o la ausencia de un efecto sin elegir una espera
 wall-clock.
 
-`await clock.advance(duration)` exige una duración no negativa y fija un target
+`clock.advance(duration)` espera implícitamente, exige una duración no negativa y fija un target
 exacto `now + duration`. Visita en orden cada deadline no posterior al target,
 ejecuta las tasks despertadas
 hasta quiescencia en ese instante y finalmente retorna con `now == target`;
@@ -2655,14 +2658,14 @@ test retriesAfterBackoff {
     let delay = retryDelay()
     let probe = RetryProbe.new()
 
-    await testing.withVirtualTime((clock) {
+    testing.withVirtualTime((clock) {
         scope {
             let result = spawn fetchWithRetry(probe, delay)
 
-            await clock.settle()
+            clock.settle()
             assert(probe.attemptCount() == 1)
 
-            await clock.advance(delay)
+            clock.advance(delay)
             assert(await result == expectedResponse())
             assert(probe.attemptCount() == 2)
         }
@@ -2680,12 +2683,12 @@ forma parte del runner.
 
 ~~~tondo
 suite messageBroker {
-    let broker = await Broker.start()?
+    let broker = Broker.start()?
     let endpoint: String = broker.endpoint()
     defer await Broker.stop(broker)
 
     test publishesMessage {
-        assert((await publish(endpoint, "ready")?).accepted)
+        assert(publish(endpoint, "ready")?.accepted)
     }
 }
 ~~~
@@ -2820,9 +2823,10 @@ Selector vacío, glob inválido, CODEOWNERS inválido, opciones de
 retry/repeat/shard/order/report/artifacts/snapshot, interrupción, timeout e
 infraestructura son diagnósticos del toolchain, no nuevos errores de compilación
 `E`. Tondo 0.1 permite `defer await` únicamente en la forma general fijada en
-2.5. `E1608` rechaza cualquier otro cleanup suspendible; `E1610` conserva el
-contexto no suspendible y las violaciones de ownership/liveness conservan sus
-códigos `E14xx`.
+2.5. `E1608` rechaza cualquier otro cleanup suspendible; `E1601` conserva la
+frontera no suspendible de `@sync`/`@nosuspend`, `E1610` queda para un `await` o
+`scope` fuera de una entrada válida, y las violaciones de ownership/liveness
+conservan sus códigos `E14xx`.
 
 ## 15. Formato machine-readable
 
@@ -3891,7 +3895,7 @@ suite behaviorGroup {
 
 ~~~tondo
 test loadsValue {
-    let value = await loadValue()?
+    let value = loadValue()?
     assert(value == expected)
 }
 ~~~
@@ -3900,11 +3904,11 @@ test loadsValue {
 
 ~~~tondo
 suite serviceGroup {
-    let service = await Service.start()?
+    let service = Service.start()?
     defer await Service.stop(service)
 
     test responds {
-        assert((await service.ping()).ready)
+        assert(service.ping().ready)
     }
 }
 ~~~
@@ -3951,10 +3955,10 @@ import std.testing
 test expiresAtDeadline {
     let timeout = operationTimeout()
 
-    await testing.withVirtualTime((clock) {
+    testing.withVirtualTime((clock) {
         scope {
             let result = spawn operation(timeout)
-            await clock.advance(timeout)
+            clock.advance(timeout)
             assert(await result == OperationOutcome.TimedOut)
         }
     })?

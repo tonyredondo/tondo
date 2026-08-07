@@ -107,7 +107,7 @@ language error therefore returns only its normative diagnostics with exit code
 1 and no partial formatter output. `fmt` is complete for its one-file bootstrap
 surface and succeeds after syntax validation. `check` succeeds with exit code 0
 when expression checking reports a complete semantic snapshot; warnings are
-rendered without changing that status. `run` lowers explicit sync or async
+rendered without changing that status. `run` lowers sync or inferred suspendible
 `main` and implicit script entry bodies through verified HIR, MIR, and bytecode
 and executes them in the VM. Root scripts may use a shebang, top-level
 statements, `await`, structured scopes, and the capability-gated process API.

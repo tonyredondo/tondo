@@ -35,8 +35,8 @@ Closures preserve the same product:
 ~~~tondo
 let safeSync = () { () }
 let unsafeSync = unsafe () { () }
-let safeSuspendible = () { await operation() }
-let unsafeSuspendible = unsafe () { await rawOperation() }
+let safeSuspendible = () { operation() }
+let unsafeSuspendible = unsafe () { rawOperation() }
 ~~~
 
 The body of an unsafe function or closure is an unsafe region. Safe code creates
@@ -52,16 +52,19 @@ The region is lexical and expression-valued. Leaving it removes permission.
 Nested ordinary blocks inherit the active permission; a separately declared
 safe closure does not.
 
-Una llamada `unsafe` suspendible mantiene ambos efectos explícitos:
+Una llamada `unsafe` suspendible mantiene la región `unsafe` explícita; la
+espera de una llamada directa sigue siendo implícita:
 
 ~~~tondo
 let value = unsafe {
-    await unsafeOperation()
+    unsafeOperation()
 }
 ~~~
 
-`unsafe` proves caller acknowledgement and `await` initiates suspension.
-Neither keyword substitutes for the other.
+`unsafe` prueba el reconocimiento del contrato raw. Una llamada directa espera
+automáticamente; `await unsafeOperation()` es una forma explícita equivalente y
+`spawn unsafeOperation()` conserva un `Join`. Ninguna de esas formas sustituye la
+región `unsafe`.
 
 ## Diagnostics
 
@@ -69,7 +72,7 @@ Neither keyword substitutes for the other.
 
 - an unsafe named function is called outside an unsafe region;
 - an unsafe closure is called outside an unsafe region;
-- an unsafe callable with inferred suspension is awaited outside an unsafe region; or
+- an unsafe callable with inferred suspension is called or awaited outside an unsafe region; or
 - a raw-pointer operation is used outside an unsafe region.
 
 `E1702` is emitted when a safe or safe-suspendible closure captures a value whose type

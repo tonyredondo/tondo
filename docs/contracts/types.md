@@ -15,7 +15,8 @@ can represent:
 - canonical scalar types, including `Unit` and `Never`;
 - nominal applications identified by a complete type-namespace
   `SymbolIdentity`;
-- tuples and function types with parameter modes, variadics, async, and unsafe;
+- tuples and function types with parameter modes, variadics, inferred
+  `suspends`, and unsafe;
 - option, result, and normalized structural union types;
 - intrinsic applications such as `Array[T]`, `Map[K, V]`, and `Ref[T]`;
 - generic parameters by complete binder position;
@@ -82,9 +83,9 @@ argument vector. Its canonical constructor is the atom supplied by
 
 Opaque results use the value declaration atom followed by `#result`. Generated
 closure types use their exact effect kind (`closure`, `unsafe-closure`,
-`async-closure`, or `async-unsafe-closure`), source ID, module, logical file,
+`suspendible-closure`, or `unsafe-suspendible-closure`), source ID, module, logical file,
 and starting byte; captured generic arguments follow as a canonical
-application. The kind's async/unsafe bits must equal the structural function
+application. The kind's suspendible/unsafe bits must equal the structural function
 signature retained by HIR. Cursor types use the exact `cursor[own,T]`,
 `cursor[ref,T]`, or `cursor[mut,T]` form. They are compiler-internal concrete
 state types for the five intrinsic iteration sources and cannot be named in

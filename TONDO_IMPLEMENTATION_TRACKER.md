@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 1.66
+**Versión del tracker:** 1.67
 
 **Última actualización:** 2026-08-07
 
@@ -43,8 +43,9 @@ un bundle separado y el candidato final fija G5, S1 y L0 por identidades
 independientes.
 
 **Objetivo inmediato:** migrar primero los contratos cuya forma normativa ha
-cambiado: (1) eliminar el modificador fuente `async` y adoptar suspensión
-inferida, `Join` transferible, `oneshot` y `AsyncIterator`; (2) migrar
+cambiado: (1) eliminar el modificador fuente `async`, adoptar suspensión
+inferida con espera implícita y publicar `suspends` en interfaces, además de
+`Join` transferible, `oneshot` y `AsyncIterator`; (2) migrar
 serialization a `Encode[C]`/`Decode[C]`, `Value`/`ValueView`/`Raw` y separar la
 API de protocolo de Protobuf; (3) completar las rutas públicas A1–A4 y ampliar
 la matriz normativa a los tres contratos G5 antes de volver a cerrar T0/G5/S1A.
@@ -72,9 +73,10 @@ volver a demostrar la ruta pública completa.
 
 - No existe la keyword `async` ni `async fn`, `async unsafe fn` o un wrapper
   público `Task`/`Future`. Todas las funciones son `fn`.
-- `await` es el único marcador escrito de suspensión. El compilador infiere el
-  efecto transitivo, lo publica en metadatos/IDE/ABI y exige `await` o `spawn`
-  para una llamada suspendible. `@sync`/`@nosuspend` es una garantía negativa.
+- En la revisión 1.66, `await` era el marcador escrito obligatorio para iniciar
+  una llamada suspendible. Esa regla queda registrada como antecedente del
+  prototipo y está supersedida por la espera implícita y el contrato `suspends`
+  de la revisión 1.67. `@sync`/`@nosuspend` sigue siendo una garantía negativa.
 - `spawn call()` crea una task ligera; `spawn thread call()` crea un thread del
   sistema operativo. Ambos devuelven el mismo `Join[T, E]` afín y se consumen
   mediante `await`; `return spawn call()` es una expresión ordinaria.
@@ -102,7 +104,7 @@ volver a demostrar la ruta pública completa.
   convertirlo en `Value`.
 - Los defaults de límites son finitos; límites no acotados y `rawUnchecked` solo
   existen en `unsafe`. Streaming reutiliza el único `Reader`/`Writer`; no hay
-  APIs sync/async duplicadas.
+  APIs síncronas/suspendibles duplicadas.
 
 ### Reglas de migración
 
@@ -113,6 +115,42 @@ volver a demostrar la ruta pública completa.
 - La migración requiere actualizar spec, contratos, registros machine-readable,
   derive providers, lowering, APIs públicas, tests y evidencia antes de marcar
   una leaf `[x]`.
+
+## 0. Decisiones aceptadas en la revisión 1.67
+
+Esta revisión fija la forma final de la suspensión por defecto y supersede la
+frase histórica de 1.66 que exigía escribir `await` en toda llamada
+suspendible. Las tareas marcadas como completadas antes de esta revisión son
+evidencia del prototipo anterior hasta que vuelvan a pasar este contrato.
+
+### Suspensión por defecto
+
+- Todas las declaraciones continúan usando únicamente `fn`; no existe una
+  keyword fuente `async` ni wrappers públicos `Task`/`Future`.
+- Una llamada directa a una función u operación cuyo contrato es `suspends`
+  espera implícitamente en una expresión ordinaria y devuelve el resultado
+  lógico. `await call()` es una spelling explícita opcional y produce el mismo
+  lowering; no añade una espera duplicada.
+- `await` sigue siendo obligatorio para consumir `Join`, `Waiter` u otro handle
+  pendiente. Los handles no se convierten implícitamente en su resultado.
+  `spawn call()` y `spawn thread call()` son las únicas formas de conservar
+  trabajo pendiente; ambos producen `Join[T, E]` afín.
+- `for item in source` elige `Iterator[T]` si existe. Cuando solo existe
+  `AsyncIterator[T]`, espera cada `next` implícitamente; `for await` queda como
+  spelling opcional para desambiguar una fuente que implementa ambos
+  protocolos. No se materializa un array intermedio.
+- `@sync`/`@nosuspend` es la frontera negativa: cualquier llamada suspendible
+  directa, explícita o iteración asíncrona dentro de ella produce `E1601`.
+  `defer await` permanece como forma especial y obligatoria de registrar
+  cleanup suspendible; la regla de espera implícita no se aplica al registro.
+- El efecto inferido se publica como `suspends` después del outcome en la
+  interfaz/ABI, metadatos y herramientas. No se escribe en la declaración
+  fuente; cambiarlo es drift de API/ABI y debe invalidar el hash correspondiente.
+
+La implementación debe bajar una llamada directa suspendible al mismo
+`Await` verificado que `await call()`, conservar `Spawn` como operación
+pendiente y comprobar el efecto publicado antes del typecheck del cuerpo del
+cliente. Esta decisión no declara completada la migración del compilador.
 
 ---
 
@@ -265,14 +303,14 @@ cantidad de infraestructura necesaria antes del primer programa ejecutable.
 | `ADR-007` | VM interpretada como primer backend | Permite validar semántica antes de asumir el coste de LLVM, Cranelift o generación nativa propia |
 | `ADR-008` | `Value` explícito y legible antes que NaN-boxing u otras representaciones compactas | La representación bootstrap debe favorecer corrección e inspección |
 | `ADR-009` | GC preciso, no móvil y stop-the-world para la VM bootstrap | Satisface memoria automática y ciclos con un runtime inicial pequeño |
-| `ADR-010` | Executor cooperativo de un solo hilo como primer runtime async | El lenguaje no exige una task por thread; permite validar concurrencia estructurada antes del paralelismo |
+| `ADR-010` | Executor cooperativo de un solo hilo como primer runtime de suspensión | El lenguaje no exige una task por thread; permite validar concurrencia estructurada antes del paralelismo |
 | `ADR-011` | Copias lógicas correctas antes que copy-on-write | Una copia eager es conforme; COW es una optimización no observable que debe añadirse después |
 | `ADR-012` | Pipeline de compilación determinista, inicialmente no incremental | Incrementalidad no debe contaminar la semántica ni retrasar el primer compilador |
 | `ADR-013` | Monomorfización como primera estrategia para genéricos y dispatch estático | Encaja con los traits sin vtables y mantiene el bytecode tipado |
 | `ADR-014` | Sin formato serializado estable de bytecode durante bootstrap | El bytecode puede ser in-memory hasta que la semántica y el loader estén estabilizados |
 | `ADR-015` | Un subconjunto bootstrap es una limitación del toolchain, no una edición ni dialecto de fuente | Las construcciones no implementadas se rechazan; nunca reciben semántica provisional |
 | `ADR-016` | Metaprogramación estática mediante `derive` y una ronda hermética de generators Tondo | Elimina boilerplate sin macros textuales, reflection dinámica, plugins nativos ni ejecución ambiental dentro del frontend |
-| `ADR-017` | Trabajo de procesos bloqueante fuera del executor cooperativo | Conserva progreso async y cancelación estructurada sin fingir I/O no bloqueante |
+| `ADR-017` | Trabajo de procesos bloqueante fuera del executor cooperativo | Conserva progreso suspendible y cancelación estructurada sin fingir I/O no bloqueante |
 | `ADR-018` | TLF es un formato de transporte, no una segunda semántica | Conserva el pipeline `.to`, reutiliza formatter/diagnósticos y exige expansión explícita antes del lexer ordinario |
 
 ### 3.2 Decisiones que deben documentarse antes de su milestone
@@ -343,7 +381,7 @@ cantidad de infraestructura necesaria antes del primer programa ejecutable.
   integration roots y fija árbol/identidad, capturas `Copy + Send + Share`,
   envelope estructurado,
   `std.testing.log/tags/failNow/skip/attach/snapshot/withVirtualTime`, inferencia
-  de error/async, aislamiento, selección substring/glob/exact, ownership por
+  de error/suspensión, aislamiento, selección substring/glob/exact, ownership por
   CODEOWNERS, sharding, orden aleatorio reproducible, retries y repeat explícitos
   en workers nuevos, tiempo virtual opt-in sobre la API monotónica de
   producción, inputs públicos/secretos, interrupción, artifacts
@@ -1285,7 +1323,7 @@ dinámicos ni dispatch oculto.
 - [x] **CALL-003 — Derivar `Call`, `CallMut` y `CallOnce` desde cuerpo y
   capturas.**
 
-- [x] **CALL-004 — Implementar closures sync, async y unsafe en la
+- [x] **CALL-004 — Implementar closures sync, suspendibles y unsafe en la
   representación semántica, aunque sus runtimes se activen después.**
 
 Evidencia observada el 2026-07-21 para GEN-001, GEN-002, TRAIT-001 a TRAIT-006,
@@ -1316,18 +1354,18 @@ CAP-001 y CALL-001 a CALL-004:
   determinista.
 - Cada trait publica una tabla determinista de métodos requeridos, asociados y
   defaults. `Self` ocupa una posición genérica oculta después de los binders del
-  trait y un receptor async registra la obligación intrínseca `Self: Send`.
+  trait y un receptor suspendible registra la obligación intrínseca `Self: Send`.
 - Los defaults se comprueban una sola vez con parámetros rígidos y pueden
   llamar métodos del mismo trait sin lookup global. Las especializaciones de
   método inferidas o explícitas conservan el prefijo del trait y `Self`; los
   corchetes de un index siguen recorriendo su ruta ordinaria.
 - El verifier exige correspondencia exacta entre resolución y tabla HIR,
   clasificación de receptor, aridad completa, prefijo genérico, presencia de
-  body y requisito async. Los defaults mantienen `Self` genérico y sólo se
+  body y requisito suspendible. Los defaults mantienen `Self` genérico y sólo se
   convierten en roots de bytecode cuando un dispatch concreto los selecciona.
 - Cada `impl` publica una identidad estable, su cabecera normalizada, binders,
   métodos y contratos instanciados. La coincidencia exige nombre, receptor,
-  modos, variadicidad, genéricos, bounds, `async`, `unsafe`, éxito y error
+  modos, variadicidad, genéricos, bounds, `suspends`, `unsafe`, éxito y error
   exactos; un default puede omitirse o sustituirse.
 - Las orphan rules se aplican después de expandir aliases y usan el constructor
   nominal exterior. Los protocolos cerrados no admiten `impl` manual, mientras
@@ -1402,14 +1440,14 @@ CAP-001 y CALL-001 a CALL-004:
 - Los tres verifiers rechazan bounds duplicados o falsos, testigos genéricos,
   `Never` o cíclicos, familias duplicadas y sellos alterados. Las regresiones
   cubren resultados fallibles, familias genéricas, funciones libres,
-  inherentes, asociadas y async, bounds fuente y prelude, y mutaciones en cada
+  inherentes, asociadas y suspendibles, bounds fuente y prelude, y mutaciones en cada
   frontera.
 - Un único motor calcula `Copy`, `Discard`, `Equatable`, `Key`, `Send` y
   `Share` mediante resúmenes nominales simbólicos y un punto fijo coinductivo.
   `Copy` implica `Discard`; `Key` implica `Copy`, `Equatable` y `Discard`.
 - La tabla completa queda alineada con el interner HIR. Los bounds opacos sólo
   publican lo declarado, los binders genéricos sólo usan constraints visibles y
-  un trait con receptor async aporta y exige `Self: Send`.
+  un trait con receptor suspendible aporta y exige `Self: Send`.
 - La formación de `Map`, `Set` y `Ref`, la igualdad estructural, membership,
   map lookup, política de duplicados y discard consumen la misma prueba cerrada.
   Las regresiones cubren genéricos, nominals recursivos y toda la matriz
@@ -1421,7 +1459,7 @@ CAP-001 y CALL-001 a CALL-004:
 - Las funciones libres y operaciones asociadas sin receptor producen un valor
   uniforme con firma exacta. Una función genérica se especializa explícitamente
   o desde un único contexto `fn(...)`; parámetros abiertos, ambiguos, bounds no
-  satisfechos o diferencias de modo, variádico, `async`, `unsafe` y error se
+  satisfechos o diferencias de modo, variádico, `suspends`, `unsafe` y error se
   rechazan antes de MIR.
 - Los valores asociados infieren o fijan los argumentos del owner y del método.
   Las operaciones asociadas de traits exigen `Self` explícito y prueba estática;
@@ -1437,20 +1475,20 @@ CAP-001 y CALL-001 a CALL-004:
   asociadas, de trait, locales, parámetros y constantes sin vtable ni type pack
   runtime.
 - Cada expresión de cierre publica un tipo generado distinto. CALL-004 elige
-  canónicamente `closure`, `unsafe-closure`, `async-closure` o
-  `async-unsafe-closure`, y conserva los mismos bits en su firma estructural,
+  canónicamente `closure`, `unsafe-closure`, `suspendible-closure` o
+  `unsafe-suspendible-closure`, y conserva los mismos bits en su firma estructural,
   junto con binders heredados, parámetros completos, body HIR separado y
   capturas sintácticas ordenadas por `LocalId`.
 - El outcome se infiere sobre todos los caminos alcanzables y las closures
   anidadas conservan problemas de inferencia independientes. Un tipo de función
-  esperado debe coincidir también en `async` y `unsafe`, o produce únicamente
+  esperado debe coincidir también en `suspends` y `unsafe`, o produce únicamente
   `E1102`; no existe conversión que añada u oculte un efecto.
 - Las capturas conservan `let`/`var`, copian un snapshot owned cuando prueban
   `Copy` y, en caso contrario, mueven el binding exterior al construir el
   entorno. Los free uses de closures anidadas se propagan. Préstamos
   `ref`/`mut`/`var` y el receiver prestado producen `E1402`; parámetros
   variádicos exigen nombre y conservan elemento en la firma y `Array[T]` dentro
-  del body. Las firmas async rechazan parámetros `mut`/`var` con el diagnóstico
+  del body. Las firmas suspendibles rechazan parámetros `mut`/`var` con el diagnóstico
   normativo `E1609`.
 - `Copy`, `Discard`, `Send` y `Share` se derivan componente a componente desde
   las capturas sustituidas; `Equatable` y `Key` se rechazan. OWN-006 elimina la
@@ -1458,7 +1496,7 @@ CAP-001 y CALL-001 a CALL-004:
   descarte estructural o transferencia completa en todas las salidas normales.
 - El admission verifier exige correspondencia uno-a-uno entre metadata y
   expresión, identidad generada versus efectos de firma, firma/body, ausencia
-  de parámetros async exclusivos, tipo, mutabilidad y binding de cada captura.
+  de parámetros suspendibles exclusivos, tipo, mutabilidad y binding de cada captura.
   HIR vuelve a decidir Copy/Move, MIR sólo admite esa transferencia directa
   desde el local exterior exacto y bytecode vuelve a comprobar esquema,
   capacidad y disponibilidad del entorno.
@@ -1469,7 +1507,7 @@ CAP-001 y CALL-001 a CALL-004:
   `CallOnce`: una escritura, paso mutable o `CallMut` sobre una captura impide
   `Call`, y un move impide también `CallMut`. Construir una closure anidada no
   ejecuta su body, pero sí mueve en ese punto las capturas afines que necesita;
-  el código inalcanzable no contamina la fila exterior. En una closure async,
+  el código inalcanzable no contamina la fila exterior. En una closure suspendible,
   escribir el entorno impide también `CallMut`. `CallOnce` exige que cada
   captura pruebe `Discard` o abandone su slot de entorno en toda terminación
   normal, `return`, `fail` y salida fallida de `?`; los joins intersectan esa
@@ -1483,7 +1521,7 @@ CAP-001 y CALL-001 a CALL-004:
   y erasures. MIR crea un cuerpo `MirFunctionId::Closure` con entorno oculto en
   el parámetro cero, proyecta capturas y confina el `Borrow` de cierre al callee
   inmediato; el verifier MIR repite firma, protocolo y forma de acceso. Los tres
-  verifiers rechazan una firma async o unsafe en la operación de llamada
+  verifiers rechazan una firma suspendible o unsafe en la operación de llamada
   síncrona segura.
 - La monomorfización crea instancias de callable para closures, incluidos bodies
   genéricos, y las carga al mismo presupuesto `T0002`. El catálogo bytecode
@@ -1501,13 +1539,13 @@ CAP-001 y CALL-001 a CALL-004:
 - Los cuatro tipos de closure pueden construirse, copiarse, trazarse,
   snapshottearse, descartarse y borrarse a su firma uniforme exacta. El verifier
   bytecode rechaza calls con efectos y la entrada pública de la VM rechaza un
-  body async o unsafe como root, de modo que CALL-004 no activa prematuramente
+  body suspendible o unsafe como root, de modo que CALL-004 no activa prematuramente
   el runtime de M7 ni evita la frontera de M9.
 - Las regresiones públicas y unitarias ejecutan closures puras, mutables,
   `CallOnce`, borradas a `fn`, genéricas, opacas, variádicas, anidadas,
   proyectadas, fallibles y bajo presión de GC; también mutan HIR, MIR y bytecode
   para probar cada frontera defensiva. Fixtures adicionales cubren las cuatro
-  identidades, mismatch de efectos, `E1609`, protocolo async stateful y rechazo
+  identidades, mismatch de efectos, `E1609`, protocolo suspendible stateful y rechazo
   de llamadas/entries con efectos. OWN-006 añade capturas afines observadas y
   movidas, propagación anidada, metadata forjada y construcción bajo presión de
   GC; OWN-007 añade observación terminal, transferencia total frente a parcial,
@@ -1526,8 +1564,8 @@ CAP-001 y CALL-001 a CALL-004:
 - El gate original de M4 ejecuta closures con capturas `Copy + Discard` y
   genéricos a través del bytecode normal; OWN-006 extiende esa misma vertical a
   capturas afines mediante moves verificados, sin introducir otro runtime.
-- Los cuatro contratos sync/unsafe/async están representados sin conversión de
-  efectos; sólo la firma síncrona segura puede usar la operación de llamada M4.
+- Los cuatro contratos sync/unsafe/suspendible están representados sin conversión
+  de efectos; sólo la firma síncrona segura puede usar la operación de llamada M4.
 - La monomorfización tiene límites controlados y no puede divergir.
 
 ---
@@ -2052,19 +2090,21 @@ Clasificación explícita de los ejemplos integrados exigidos por este gate:
 
 ## 12. M7 — Async y concurrencia estructurada
 
-**Objetivo histórico:** el prototipo implementó suspensión y concurrencia sin
-futures implícitos. El contrato vigente elimina el modificador fuente `async` y
-requiere completar `ASYNC-INFER-001` y sus leaves antes de cerrar M7 conforme.
+**Objetivo:** el prototipo implementó suspensión y concurrencia con `await`
+explícito. El contrato vigente elimina el modificador fuente `async`, hace
+implícita la espera de llamadas directas y publica `suspends`; hay que completar
+la migración frontend/HIR/MIR y sus leaves antes de cerrar M7 conforme.
 
 - [ ] **ASYNC-001 — Typecheckear funciones y closures suspendibles.** HIR conserva el
   efecto en la identidad y la firma exacta, comprueba cuerpos nombrados y
   cierres concretos, deriva su protocolo de llamada y rechaza parámetros
   exclusivos con `E1609`.
 
-- [ ] **ASYNC-002 — Exigir `await` o `spawn` al invocar trabajo suspendible.** Una
-  llamada suspendible se materializa como operación HIR no ejecutable por sí sola y
-  solo puede quedar inmediatamente bajo uno de esos dos iniciadores; el resto
-  produce `E1601`.
+- [ ] **ASYNC-002 — Bajar la espera implícita de llamadas suspendibles.** Una
+  llamada directa se materializa como una operación HIR con el mismo `Await`
+  verificado que `await call()`; no exige spelling adicional en una expresión
+  ordinaria. `spawn` es la única iniciación que conserva un `Join`; `@sync` y
+  `@nosuspend` rechazan la llamada directa y producen `E1601`.
 
 - [ ] **ASYNC-003 — Prohibir préstamos y parámetros incompatibles a través de
   suspensión.** El análisis de liveness comprueba `Send` para cada owner vivo,
@@ -2141,10 +2181,23 @@ requiere completar `ASYNC-INFER-001` y sus leaves antes de cerrar M7 conforme.
 
 - [ ] **ASYNC-INFER-001 — Migrar el frontend al efecto suspendible inferido.**
   Eliminar `async` de lexer, grammar, function types, closures, traits,
-  diagnostics y fixtures; propagar la capacidad desde `await` y rechazar una
-  llamada suspendible sin `await`/`spawn`. Mantener `@sync`/`@nosuspend` como
-  garantía negativa y añadir compile-pass/compile-fail para inferencia
-  transitiva, efectos en metadatos y ausencia de wrappers `Task`/`Future`.
+  diagnostics y fixtures; propagar la capacidad desde llamadas `suspends`,
+  `await` explícito, iteración asíncrona y cleanup. Bajar llamadas directas a
+  espera implícita, publicar `suspends` en interfaces/ABI y rechazar solo el
+  uso en `@sync`/`@nosuspend`. Añadir compile-pass/compile-fail para inferencia
+  transitiva, equivalencia de lowering, drift de metadatos y ausencia de
+  wrappers `Task`/`Future`.
+
+- [ ] **ASYNC-IMPLICIT-AWAIT-001 — Unificar el lowering de espera directa.**
+  Resolver primero la firma pública `suspends`, insertar `Await` para una
+  llamada ordinaria y hacer que `await call()` comparta exactamente el mismo
+  HIR/MIR/bytecode. Probar errores, evaluación izquierda-a-derecha, liveness,
+  `unsafe`, `@nosuspend` y ausencia de doble espera.
+
+- [ ] **ASYNC-EFFECT-API-001 — Publicar el efecto `suspends`.** Generar el
+  marcador después del outcome en interfaces, hashes ABI, diagnósticos e IDE;
+  cargarlo antes de typecheckear clientes y rechazar cualquier drift de efecto.
+  No introducir un modificador fuente ni APIs duplicadas.
 
 - [ ] **ASYNC-JOIN-RETURN-001 — Hacer transferible `Join` fuera del scope.**
   Sustituir la regla histórica `join-escapes` por ownership afín: `await`,
@@ -2159,16 +2212,23 @@ requiere completar `ASYNC-INFER-001` y sus leaves antes de cerrar M7 conforme.
   Añadir `Waiter`/`Completer`, finalización atómica, `AlreadyCompleted`,
   cancelación y pruebas de carreras sin callbacks ni scheduler adicional.
 
-- [ ] **ASYNC-ITER-001 — Implementar `AsyncIterator` y `for await`.**
-  Añadir el protocolo estático, backpressure, cierre en `break`/cancelación y
+- [ ] **ASYNC-ITER-001 — Implementar `AsyncIterator` y la iteración implícita.**
+  Añadir el protocolo estático, hacer que `for` espere cada `next` cuando no
+  exista `Iterator[T]`, conservar `for await` como desambiguador opcional,
+  implementar backpressure, cierre en `break`/cancelación y
   `collect(limit:)`; adaptar receiver de Channel y demostrar que no se crea un
   array intermedio.
 
 ### Gate de salida de M7
 
-- [ ] Ningún hijo sobrevive a su scope bajo las reglas de transferencia de 1.66.
+- [ ] Ningún hijo sobrevive a su scope bajo las reglas de transferencia de 1.67.
 - [ ] Todo `Join` se consume, se transfiere, se cancela o se detached de forma
   explícita.
+- [ ] Una llamada directa suspendible y `await call()` producen el mismo
+  resultado y la misma secuencia de efectos; `@sync`/`@nosuspend` rechaza la
+  forma directa.
+- [ ] Interfaces y clientes usan el marcador `suspends` con hashes ABI
+  coherentes y el cambio de efecto se diagnostica como drift.
 - [x] Cancelación no aparece como variante implícita de `E`.
 - [x] El executor de un hilo satisface progreso cooperativo.
 - [x] El código no depende del orden concreto de scheduling.
@@ -2191,8 +2251,10 @@ shell implícito ni efectos de importación.
 
 - [x] **SCRIPT-003 — Inferir localmente la unión cerrada de errores del script.**
 
-- [ ] **SCRIPT-004 — Inferir suspensión del `main` implícito cuando aparezca
-  `await` o `scope` top-level, sin escribir `async` en la firma.**
+- [ ] **SCRIPT-004 — Inferir suspensión del `main` implícito.** Una llamada
+  suspendible directa, `await` explícito, iteración `AsyncIterator` o `scope`
+  top-level hace suspendible el `main` implícito sin escribir `async` en la
+  firma.
 
 - [x] **SCRIPT-005 — Prohibir importar un script y mezclarlo con `main`
   explícito.**
@@ -2513,7 +2575,7 @@ de M10.6, STD-0.1A, M11 y STD-0.1B.
 
 - [x] **PROP-002 — Generar programas tipados por construcción.** Cubrir
   combinaciones de tipos, operadores, genéricos, traits, patterns, ownership,
-  préstamos, control, async y errores sin depender de que el frontend acepte
+  préstamos, suspensión y errores sin depender de que el frontend acepte
   ruido aleatorio como programa válido.
 
 - [x] **META-001 — Añadir properties metamórficas.** Como mínimo: reconstrucción
@@ -2784,7 +2846,8 @@ completa Tondo 0.1.
 2. **Lenguaje:** lexer → CST → formatter; tras unir source classes,
    discovery y dev-dependencies del plan → árbol/capturas →
    overlays/integration. `ASYNC-DEFER-IMPL-001` avanza en paralelo sobre la
-   ruta async existente.
+   ruta de suspensión existente y debe migrar a la espera implícita antes de
+   cerrar testing.
 3. **Ejecución:** check → lowering y modelo de resultados en paralelo →
    envelope → worker → inputs/lifecycle/límites.
 4. **Algoritmos puros:** glob → shard → order/scheduler, después de identidad y
@@ -2808,18 +2871,18 @@ reporters.
   aislamiento, resultados,
   ownership, selección substring/glob/exact, sharding, orden reproducible,
   retries por rondas, repeat por iteraciones y workers nuevos,
-  `withVirtualTime`/`settle`/`advance`, quiescencia durable, cleanup async,
+  `withVirtualTime`/`settle`/`advance`, quiescencia durable, cleanup suspendible,
   interrupción, inputs públicos/secretos, artifact/snapshot stores, update
   explícito, CLI, JSON/JUnit, stdlib boundary, diagnósticos y conformidad sin
   depender de una implementación provisional.
 
 - [x] **ASYNC-DEFER-SPEC-001 — Cerrar `defer await` como efecto general de
-  Tondo 0.1.** Especificar grammar, inferencia async solo en
-  test/setup/script, requisito `async` explícito en funciones, métodos y cierres,
-  única llamada infallible `Unit`, reserva de un operando afín, liveness/`Send`,
+  Tondo 0.1.** Especificar grammar, inferencia de suspensión desde el cleanup,
+  ausencia de requisito `async` en funciones, métodos y cierres, única llamada
+  infalible `Unit`, reserva de un operando afín, liveness/`Send`,
   LIFO, no cancelación cooperativa durante unwind, pánico/suprimidos,
-  timeout/resource/interrupt y rechazo por capability. No admitir bloque async,
-  error propagado, hook de testing ni await oculto. Sus reglas ya están
+  timeout/resource/interrupt y rechazo por capability. No admitir bloque
+  suspendible, error propagado, hook de testing ni await oculto. Sus reglas ya están
   incorporadas a la especificación consolidada; implementación y conformidad
   permanecen pendientes.
 
@@ -2959,21 +3022,32 @@ reporters.
   dedicados en `formatter_spec`, además de la suite completa del compilador y
   el gate oficial del formatter.
 
-- [x] **ASYNC-DEFER-IMPL-001 — Implementar y verificar `defer await`.** Añadir
-  la forma 0.1 al CST/formatter sin feature gate, checks de
-  firma/efecto/ownership,
-  guards async en HIR/MIR/bytecode y conducción LIFO en el executor. Probar
-  inferencia de entradas/script, `E1610` en función no async, retorno, error
-  exterior, pánico, cancelación, cleanup suprimido, timeout, resource limit,
-  interrupción, un owner afín, `Send` y rechazo de bloque/llamada
-  fallible/capability mediante `E1608`/`E14xx`. La forma se conecta al parser
-  existente; HIR conserva `Await -> AsyncCall`, MIR/bytecode validan el contexto
-  `DeferredAsync` y la VM conduce llamadas async de bytecode y resultados async
-  de host sin cancelar el cleanup que inició el unwind. Evidencia ejecutable:
+- [ ] **ASYNC-DEFER-IMPL-001 — Migrar y verificar `defer await` bajo la
+  espera implícita.** Añadir la forma 0.1 al CST/formatter sin feature gate,
+  checks de firma/efecto/ownership, guards de suspensión en HIR/MIR/bytecode y
+  conducción LIFO en el executor. Probar inferencia de entradas/script,
+  `E1601` en `@sync`/`@nosuspend`, retorno, error exterior, pánico,
+  cancelación, cleanup suprimido, timeout, resource limit, interrupción, un
+  owner afín, `Send` y rechazo de bloque/llamada fallible/capability mediante
+  `E1608`/`E14xx`. La forma se conecta al parser existente; HIR conserva
+  `Await` sobre una llamada suspendible, MIR/bytecode validan el contexto
+  `DeferredAsync` y la VM conduce llamadas suspendibles de bytecode y host sin
+  cancelar el cleanup que inició el unwind. Las llamadas ordinarias del body
+  esperan implícitamente; solo los handles exigen `await`. Evidencia ejecutable:
   `m10-async-defer-await`, `m10-async-defer-lifo` y `m10-async-defer-cancel`, más
-  negativos para función no async, `Join`, awaits anidados y llamada fallible.
+  negativos para función no suspendible, `Join`, awaits anidados y llamada
+  fallible.
   La inmutabilidad se demuestra reproduciendo el corpus bootstrap por sus
   hashes, no manteniendo dos gramáticas en el compilador del draft.
+
+- [ ] **UTEST-SUSPENSION-MIGRATION-001 — Migrar el runner al efecto
+  `suspends` publicado.** Revisar check, lowering, worker y fixtures de test para
+  que una llamada suspendible directa espere implícitamente, `await` directo
+  siga siendo equivalente, `Join`/`Waiter` conserven consumo explícito y
+  `@sync`/`@nosuspend` produzca `E1601`. El test harness no puede introducir una
+  API `async` paralela ni depender de que el body escriba `await` para inferir
+  suspensión. Añadir compile-pass, compile-fail y runtime tests con hash de
+  interfaz `suspends` antes de marcar la conformidad de testing.
 
 - [x] **UTEST-ID-001 — Construir el árbol estático suite/test.** La identidad
   interna usa PackageId + source class + module path + ordered node path + kind;
@@ -3174,7 +3248,7 @@ reporters.
   protocolo.
 
 - [x] **UTEST-VTIME-001 — Implementar tiempo virtual determinista sobre la API
-  de producción.** Ejecutar `withVirtualTime` como `CallOnce` async bajo un
+  de producción.** Ejecutar `withVirtualTime` como `CallOnce` suspendible bajo un
   dominio por intento/fase; prestar `ref VirtualTime`, prohibir escape y todo
   solapamiento dentro del mismo envelope y desmontar siempre tras retorno, error,
   pánico, skip o cancelación.
@@ -3197,7 +3271,7 @@ reporters.
   cobertura ejercitada por los tests unitarios del módulo y del envelope. La
   superficie pública está conectada de extremo a extremo mediante
   `std.testing.withVirtualTime`, `VirtualTime.settle` y `advance`: el frontend
-  infiere closures async, conserva `Send + CallOnce` mediante una coerción
+  infiere closures suspendibles, conserva `Send + CallOnce` mediante una coerción
   consumible verificada en HIR/MIR/bytecode, presta el controlador opaco y
   rechaza `spawn withVirtualTime` con `E1601`. El VM sustituye y restaura la
   pareja proveedor/dominio de `std.time`, conduce las mismas tasks y timers y
@@ -5452,13 +5526,16 @@ gates en una barrera artificial.
     `CONF-GAP-AUDIT-001`, `CONF-GAP-IMPL-001`, `CONF-LAYER-RESULT-001`,
     `QUALITY-EVIDENCE-BIND-001` y `CONF-SEAL-FINAL-001` tras
     detectar que el candidato no exigía cobertura normativa completa.
-25. [ ] **Wave 4.5 — Migración de suspensión 1.66.** Completar
-    `ASYNC-INFER-001`, `ASYNC-JOIN-RETURN-001`, `ASYNC-THREAD-SPAWN-001`,
-    `ASYNC-ONESHOT-001` y `ASYNC-ITER-001`, junto a la actualización de
-    `SCRIPT-004`, del ABI de bytecode y de los contratos de I/O. El mini-gate
-    exige `rg` sin firmas `async fn`, tests de inferencia transitiva, Join
-    transferible, one-shot y `for await`; los kernels existentes solo cuentan
-    como evidencia histórica hasta pasar este gate.
+25. [ ] **Wave 4.5 — Migración de suspensión 1.67.** Completar
+    `ASYNC-INFER-001`, `ASYNC-IMPLICIT-AWAIT-001`, `ASYNC-EFFECT-API-001`,
+    `ASYNC-JOIN-RETURN-001`, `ASYNC-THREAD-SPAWN-001`, `ASYNC-ONESHOT-001` y
+    `ASYNC-ITER-001`, junto a la actualización de `SCRIPT-004`, del ABI de
+    bytecode y de los contratos de I/O. El mini-gate exige `rg` sin firmas
+    `async fn`, equivalencia de lowering entre llamada directa y `await`,
+    metadatos `suspends` con hash estable, Join transferible, one-shot,
+    `for` sobre `AsyncIterator` y el desambiguador opcional `for await`; los
+    kernels existentes solo cuentan como evidencia histórica hasta pasar este
+    gate.
 26. [ ] **Wave 5 — STD-0.1A por layers.** Los contratos, slices A0 y kernels
     iniciales están cerrados; la auditoría 1.45 reabre el resto. El orden de
     cierre es:

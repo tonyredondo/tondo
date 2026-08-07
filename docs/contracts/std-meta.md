@@ -18,7 +18,7 @@ generated sources.
 - positive `steps`, `memory_bytes` and `output_bytes` limits.
 
 The request has no callback, capability, filesystem, environment, process,
-clock, entropy, thread, async, FFI, unsafe or host-identity field. There is no
+clock, entropy, thread, suspension, FFI, unsafe or host-identity field. There is no
 ambient lookup. Inputs are the only non-model values visible to the companion.
 
 ## Source builder and ownership

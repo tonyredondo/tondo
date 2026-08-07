@@ -31,8 +31,9 @@ strings and TEXT-004 distinct text and byte domains, and TEXT-002
 Unicode-scalar String length, indexing, and slicing, plus TEXT-003 static
 Display execution and ordered interpolation, plus VARIADIC-001 homogeneous
 final packs and VARIADIC-002 explicit Array spread, plus OPT-COW-001..003
-measured and differentially validated collection copy-on-write, plus
-ASYNC-001..004, EXEC-001/002, SCOPE-001, SPAWN-001, JOIN-001,
+measured and differentially validated collection copy-on-write, plus the
+historical explicit-await ASYNC-001..004 prototype (the 1.67 implicit-await
+migration remains pending), EXEC-001/002, SCOPE-001, SPAWN-001, JOIN-001,
 CANCEL-001/002, PANIC-ASYNC-001, SEND-001, SHARE-001, and MAIN-ASYNC-001
 
 **Language baseline:** Tondo 0.1
@@ -185,7 +186,7 @@ closure value in a frame, another object, or the operation-local root stack.
 Logical copy recursively copies the environment and every Copy capture;
 immutable strings and `Ref[T]` retain their ordinary sharing rule. Snapshotting
 produces the detached callable identity plus detached capture values for
-tooling. Sync, unsafe, async, and async-unsafe closures share this storage
+tooling. Sync, unsafe, suspendible, and unsafe-suspendible closures share this storage
 machinery; their exact effects remain in callable type metadata, not object
 layout.
 
@@ -476,11 +477,12 @@ separate `queued` bit makes enqueue idempotent; a wake only changes
 ignores duplicate or stale notifications. If no task is runnable before the
 root completes, the VM reports an invariant failure instead of spinning.
 
-The selected safe entry may be synchronous or async and always becomes task
-zero. This runtime root is not a lexical `scope`, so it does not authorize
-detached `spawn`. A direct async `await` pushes the callee frame into the same
-task and resumes the caller with its logical value. `spawn` instead creates a
-new runnable task under the active innermost task scope and stores an immediate
+The selected safe entry may be synchronous or suspendible and always becomes
+task zero. This runtime root is not a lexical `scope`, so it does not authorize
+detached `spawn`. A direct suspendible call, whether written with `await` or
+not, pushes the callee frame into the same task and resumes the caller with its
+logical value. `spawn` instead creates a new runnable task under the active
+innermost task scope and stores an immediate
 `Join` in the owner. Awaiting an incomplete handle consumes no state yet: the
 owner parks with its exact handle place, destination, normal edge, and unwind
 edge. Child completion wakes it; resumption then consumes both handle and
@@ -491,8 +493,8 @@ creation order, and closed bit. Draining requests cancellation for every live
 child and parks the owner until all children are complete. Cancellation is one
 internal `RuntimeUnwind::Cancelled` state, distinct from returned Tondo values,
 recoverable error `E`, language panic, and VM failure. It is observed only at
-the implemented cooperative boundaries: `await`, `spawn`, task-scope entry, and
-task-scope drain. The child then follows its ordinary unwind ledger, including
+the implemented cooperative boundaries: an implicit or explicit wait, `spawn`,
+task-scope entry, and task-scope drain. The child then follows its ordinary unwind ledger, including
 defers and nested task scopes, before completing as cancelled.
 
 A child panic requests cancellation of its live siblings and wakes the scope
@@ -505,13 +507,13 @@ completion defensively requires every non-root task to be consumed, so no child
 can survive its owner even if malformed bytecode passed an earlier check.
 
 Explicit cleanup entries are drained from the same runtime LIFO ledger. A
-`defer await` entry is captured before the scope continues, then its async call
+`defer await` entry is captured before the scope continues, then its suspendible call
 is started only when that entry reaches the drain. A bytecode callee reuses the
-ordinary frame continuation; an async host call parks the current task in a
+ordinary frame continuation; a suspendible host call parks the current task in a
 dedicated deferred-host wait state. That wait is not cancelled by the unwind
 which started the cleanup, and completion resumes the same drain block so later
 entries and the original panic/cancellation retain their precedence. Ordinary
-`defer` entries still reject async host results defensively. A cleanup panic
+`defer` entries still reject suspendible host results defensively. A cleanup panic
 continues through the remaining LIFO entries and is recorded as primary or
 suppressed according to the existing unwind rules.
 
@@ -562,12 +564,13 @@ The source remains available only in the Copy case; an affine source is
 unavailable after the call. Named spread has the same runtime path and differs
 only in its verifier-proved association with the exact variadic parameter.
 
-The ordinary call path admits only synchronous signatures and requires its
-verified `unsafe_call` bit to agree with the callable. `Await` and `Spawn` reuse
-the same associated operation preparation for async signatures and preserve
-that agreement. The public execution entry accepts a safe sync or async body
-and rejects an unsafe root; nested unsafe execution has already crossed a
-verified lexical region. Effectful closures retain their exact type through
+The ordinary call path admits synchronous signatures and suspendible signatures.
+For a suspendible signature, the verifier lowers an ordinary call to the same
+`Await` operation used by explicit `await call()`; only `Spawn` preserves a
+pending handle. The verified `unsafe_call` bit must agree with the callable.
+The public execution entry accepts a safe sync or suspendible body and rejects
+an unsafe root; nested unsafe execution has already crossed a verified lexical
+region. Effectful closures retain their exact type through
 construction, copying, tracing, snapshots, and erasure. Raw Pointer operations
 cross only their distinct typed privileged-host boundary; the bootstrap exposes
 no allocator, stable layout, or safe address source and therefore invents no
@@ -625,11 +628,11 @@ and snapshot managed closure captures, and collect during construction, logical
 copy, affine multi-capture moves, and invocation. Mutated HIR, MIR, and bytecode
 fixtures must prove that their respective admission gates reject forged closure
 identity, schema, protocol, signature, access, erasure, and effectful ordinary
-calls before execution. Entry tests must accept a safe async root, reject an
+calls before execution. Entry tests must accept a safe suspendible root, reject an
 unsafe root, and preserve the same logical outcome contract as synchronous
 `main`.
 
-Async regressions execute direct awaits, concurrent children, concrete async
+Suspension regressions execute implicit/explicit direct waits, concurrent children, concrete suspendible
 closures, fallible cancellation without an injected error variant, structured
 shared references, child panic, sibling cancellation/cleanup, and multiple
 parked or completed managed values under a collection threshold of one.

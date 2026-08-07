@@ -22,8 +22,9 @@ lifted arithmetic, ARRAY-007 named concatenation/repetition, and ITER-001/002
 static user iterators plus all four intrinsic iteration forms, plus TEXT-002
 Unicode-scalar String length, indexing, and slicing, and TEXT-003 decoded
 interpolation with static `Display`, plus VARIADIC-001/002 homogeneous final
-packs and whole-array spread, plus ASYNC-001..003, SCOPE-001, SPAWN-001,
-JOIN-001, SEND-001, SHARE-001, and MAIN-ASYNC-001 implemented
+packs and whole-array spread, plus the historical explicit-await ASYNC-001..003
+prototype, SCOPE-001, SPAWN-001, JOIN-001, SEND-001, SHARE-001, and
+MAIN-ASYNC-001; the 1.67 implicit-await migration remains pending
 
 ## Boundary
 
@@ -82,8 +83,9 @@ results, trait default bodies, exact implementation bodies, trait-provided
 iteration, the closed structural capabilities `Copy`, `Discard`, `Equatable`,
   `Key`, `Send`, and `Share`, all four closure effect identities and exact
   signatures, region-checked unsafe invocation, exact closure-to-`fn`
-  coercion, safe and unsafe async initiation, structured task scopes, `Join`
-  ownership, async liveness/capability rules, implicit script entry bodies, the
+  coercion, safe and unsafe suspendible initiation, structured task scopes,
+  `Join` ownership, suspension liveness/capability rules, implicit script entry
+  bodies, the
   closed `Command`/`Pipeline` process surface, and the six typed raw Pointer
   operations. Concrete external implementations remain an explicit privileged
   target boundary rather than receiving provisional semantics. Persistent
@@ -113,7 +115,7 @@ The implemented bootstrap subset includes:
   functions, and inherent methods;
 - empty and generic traits with required receiver methods, associated
   operations, default bodies, contextual `Self`, and the intrinsic `Self: Send`
-  marker on async receiver methods;
+  marker on suspendible receiver methods;
 - generic and concrete `impl` declarations with normalized coherence headers,
   module-based orphan checks, exact source/prelude contracts, omitted or
   replaced defaults, and checked implementation bodies;
@@ -128,7 +130,7 @@ The implemented bootstrap subset includes:
 - first-class free and receiver-free associated functions with one exact
   uniform `fn(...)` type, including contextual generic specialization and
   qualified source-trait associated operations;
-- concrete sync, unsafe, async, and async-unsafe closures with annotated or
+- concrete sync, unsafe, suspendible, and unsafe-suspendible closures with annotated or
   context-inferred parameters, inferred or explicit outcomes, variadic body
   bindings, separate semantic body roots, syntactic by-value environments, and
   effect-specific generated nominal identities that preserve enclosing generic
@@ -174,7 +176,7 @@ The implemented bootstrap subset includes:
 - precise `Never` propagation through blocks, contextual coercions, calls,
   `if`, `match`, and loops, including mandatory `W1006` diagnostics; and
 - explicit discard, structural equality, collection membership, map lookup, and
-  async receiver implementations checked against the common closed-capability
+  suspendible receiver implementations checked against the common closed-capability
   proof.
 
 A fallible callable is checked against two related expectations: its logical
@@ -220,7 +222,8 @@ specialization.
 
 A named free function or associated operation without `self` becomes a value
 with its structural function type. Parameter names are erased, while parameter
-modes, variadic shape, `async`, `unsafe`, success, and error types remain part
+  modes, variadic shape, the inferred `suspends` effect, `unsafe`, success, and
+  error types remain part
 of that type. A receiver method is never converted into a bound function:
 `value.method` and `Type.method` without an immediate receiver call are rejected
 and a later closure must bind the receiver explicitly.
@@ -258,7 +261,7 @@ function value nor a type assertion that needs contextual reinterpretation.
 
 CALL-002 assigns every closure expression one unnameable generated type keyed
 by its stable source identity. CALL-004 selects the exact generated kind
-`closure`, `unsafe-closure`, `async-closure`, or `async-unsafe-closure` from its
+`closure`, `unsafe-closure`, `suspendible-closure`, or `unsafe-suspendible-closure` from its
 two effect bits. The closure table retains that identity, the matching exact
 structural function signature, inherited generic binders, parameter metadata,
 capture metadata, and a checked body root. The body is an independent semantic
@@ -272,10 +275,10 @@ signature stores the element type while its body local has `Array[T]`. The
 outcome may be written or inferred by one invariant problem shared by every
 reachable implicit result and `return`. Nested closures suspend the enclosing
 inference problem, retain their own body root, and propagate syntactic free uses
-to every environment that must carry them. A closure's `async` and `unsafe`
-bits must match an expected function type exactly or produce `E1102`; there is
-no conversion that adds or hides either effect. Async callables reject `mut`
-and `var` parameters with `E1609`. The later ASYNC-003 analysis owns `Send` and
+to every environment that must carry them. A closure's inferred `suspends` and
+`unsafe` effects must match an expected function type exactly or produce
+`E1102`; there is no conversion that adds or hides either effect. Suspendible
+callables reject `mut` and `var` parameters with `E1609`. The later ASYNC-003 analysis owns `Send` and
 liveness requirements for shared parameters and values crossing suspension.
 
 Captures are the sorted unique outer locals referenced anywhere in the closure
@@ -305,7 +308,7 @@ the conversion then requires that exact signature, `Call`, and an environment
 that proves `Copy + Send + Share`, otherwise it emits `E1108`. CALL-004 permits
 all four effect kinds to be constructed, copied, discarded, and converted to an
 identical uniform function signature. Invocation keeps each effect visible:
-ASYNC-002 owns `await`/`spawn`, while the M9 unsafe boundary admits an unsafe
+ASYNC-002 owns implicit suspension, explicit `await` for handles, and `spawn`, while the M9 unsafe boundary admits an unsafe
 call only when body checking carries an active lexical region. Raw operations
 and recursively Pointer-containing captures use that same proof and emit
 `E1701` or `E1702` rather than erasing the effect.
@@ -320,7 +323,7 @@ moving a capture into a nested closure at that nested construction site. Merely
 observing a non-`Copy` capture does not weaken either repeatable protocol. A
 synchronous closure that writes but never moves a capture therefore retains
 `CallMut`; whether it also retains `CallOnce` is decided by the terminal rule
-below. An async closure that writes a capture loses both borrowed protocols,
+  below. A suspendible closure that writes a capture loses both borrowed protocols,
 because it must own its environment across suspension and cannot expose a
 hidden exclusive borrow.
 
@@ -346,14 +349,15 @@ mutable/replacement-capable place; `CallOnce` transfers the callable and no
 longer requires a `Copy` bound. Generic code uses only its exact written call
 bounds and their closed implications. Opaque callers use only published bounds.
 Both forms must expose one exact function signature or produce `E1115`, and an
-inaccessible protocol produces `E1407`. An async or unsafe signature never becomes this
-ordinary HIR call node: expression checking remains incomplete until the
-effect-aware initiating expressions and context proofs are implemented.
+inaccessible protocol produces `E1407`. A suspendible signature is admitted in
+the same expression position: the checker inserts an implicit `Await` during
+lowering, while `spawn` remains the explicit alternative that preserves a
+pending `Join`. An unsafe signature still requires the lexical unsafe proof.
 
 HIR admission independently requires exactly one construction expression per
 closure table entry, a generated kind that exactly matches the signature's
-`async`/`unsafe` bits and source position, a complete signature/body agreement,
-no exclusive async parameter, canonical inherited generics, exact parameter
+  `suspends`/`unsafe` bits and source position, a complete signature/body agreement,
+  no exclusive suspendible parameter, canonical inherited generics, exact parameter
 locals, and sorted owned capture locals whose types, mutability, and CALL-002
   contextual Copy/Move decision are rederived from their bindings and inherited
   bounds. It independently rederives the effect-sensitive, move-sensitive and
@@ -371,12 +375,12 @@ follow it, so a trait `Catalog[T]` with `fn choose[U]` has the complete position
 `T = $0`, `Self = $1`, and `U = $2`.
 
 HIR stores every trait member in strict `MemberId` order together with whether
-it has a default body and whether an async receiver imposes `Self: Send`.
+it has a default body and whether a suspendible receiver imposes `Self: Send`.
 Required methods have a signature but no checked body. Associated operations
 without `self` use the same representation and may themselves have defaults.
 The admission verifier requires the table to match resolution exactly, checks
 owner and receiver classification, preserves the trait-generic prefix, and
-rejects inconsistent arity, default-body, or async requirement metadata.
+rejects inconsistent arity, default-body, or suspendible requirement metadata.
 
 Each default body is checked once with rigid trait parameters and contextual
 `Self`. A receiver call may select only another receiver method declared by the
@@ -405,7 +409,7 @@ Contract admission performs these checks before any body is typechecked:
   replaced, and no extra method is accepted;
 - after substituting trait arguments, contextual `Self`, and method-local
   binders, function type, receiver classification, generic arity, unordered
-  bound sets, parameter modes and positions, variadic element, `async`,
+  bound sets, parameter modes and positions, variadic element, `suspends`,
   `unsafe`, success, and error are exact; and
 - `Display` and `Iterator[T]` synthesize their language-owned contracts, while
   `Copy`, `Discard`, `Equatable`, `Key`, `Send`, `Share`, `Call`, `CallMut`, and
@@ -501,9 +505,9 @@ infers the yielded element.
 An admitted `impl Bound` annotation belongs to exactly one free, inherent, or
 associated function declaration. It is not a general type expression: using it
 in a parameter, field, alias, function-value type, closure, trait member, or
-trait implementation member is rejected as `E0004`. An async declaration
+trait implementation member is rejected as `E0004`. A suspendible declaration
 retains the same opaque contract; its executable body crosses the ordinary
-verified HIR boundary before async-specific MIR lowering.
+verified HIR boundary before suspension-specific MIR lowering.
 
 The type interner represents the result as one nominal family keyed by the
 callable's stable `SymbolIdentity` plus its invariant generic arguments. The
@@ -526,7 +530,7 @@ After inference, the checker proves every normalized published bound against
 the concrete witness under the declaration's own generic assumptions. The
 closed implication lattice and structural engine apply to all six intrinsic
 capabilities; source traits, `Display`, and `Iterator[T]` use the ordinary
-static selection proof. A published source trait with an async receiver also
+static selection proof. A published source trait with a suspendible receiver also
 implies `Send`. The contract itself must publish or imply `Discard`. Callers
 retain only the opaque
 identity, generic arguments, exterior error, and published bounds: the witness
@@ -563,7 +567,7 @@ static proof and selection rules above. An exact enclosing bound is sufficient
 for a rigid generic parameter; concrete types require an admitted
 implementation, including all recursively substituted header bounds. External
 trait assumptions can likewise be forwarded, but no concrete external
-implementation is fabricated locally. A source trait containing an async
+implementation is fabricated locally. A source trait containing a suspendible
 receiver method implies `Self: Send`; that implication is available to generic
 callers and opaque contracts and is required of every concrete implementation
 target.
@@ -970,9 +974,10 @@ that scope and one already type-checked invocation-shaped `HirDeferAction`; the
 invocation itself is delayed, but its direct operands remain in source
 evaluation order. An ordinary action must return `Unit`, be infallible and
 synchronous, and be a call, `assert`, bootstrap host invocation, or the
-zero-argument closure generated for a defer block. `defer await` is represented
-by one `Await` wrapper around one `AsyncCall`: it is still infallible `Unit`,
-but its async signature is retained for lowering and executor scheduling. It
+  zero-argument closure generated for a defer block. `defer await` is represented
+  by one `Await` wrapper around one suspendible call: it is still infallible
+  `Unit`, but its suspension effect is retained for lowering and executor
+  scheduling. It
 cannot wrap a `Join`, a block, a fallible call, or a second await. Both forms
 cannot retain a `ref`, `mut`, or `var` argument, and a defer body cannot register
 another defer or transfer control outside itself. Admission rewalks both
@@ -984,7 +989,7 @@ Every direct operand proven `Copy` is a registration-time snapshot. There may
 be at most one non-`Copy` operand. It must be a complete local binding or a
 temporary value. A deferred callee uses `Call` only when it is both `Copy` and
 repeatable; otherwise it uses `CallOnce`. This protocol rule is identical for
-`defer await`; the async signature changes suspension, not ownership. It never
+`defer await`; the suspension effect changes scheduling, not ownership. It never
 retains the exclusive borrow required by `CallMut`, and a non-`Copy` callee must
 use `CallOnce`. HIR records
 that exact operand as the guard instead of pretending to move it when the
@@ -1187,32 +1192,32 @@ active-loan policy to its exact live set. It rejects an exclusive loan with
 `E1605`, and allows only the current scope's affine `Join` state as the
 language-defined non-`Send` exception.
 
-## Async initiation and structured task regions
+## Suspension lowering and structured task regions
 
-The checker represents an async call as `AsyncCall`; that node describes a
-fully associated operation but cannot execute independently. Its only admitted
-parents are `Await` and `Spawn`. A safe direct await accepts either one such
-operation or a `Join[T, E]`, produces the logical callable outcome, and leaves
-error propagation to a distinct `?`. Every other async call, context, or
-operand is rejected with the stable `E1601`, `E1610`, or `E1611` diagnostic
-before availability analysis.
+The checker represents a suspendible call as `SuspendibleCall`; that node
+describes a fully associated operation but cannot execute synchronously. In an
+ordinary expression its parent is an implicit `Await` inserted by lowering. An
+explicit `await call()` produces the same node and is semantically equivalent.
+`Join[T, E]` and `Waiter` values require an explicit `Await`, while `Spawn` is the
+only parent that preserves a pending handle. A direct call in a
+`@sync`/`@nosuspend` context is rejected with `E1601`; malformed explicit
+operands use `E1610` or `E1611` before availability analysis.
 
 `Scope` owns one stable lexical task-scope identity. A `Spawn` inside it records
-that exact innermost identity, evaluates one async operation, and produces
+that exact innermost identity, evaluates one suspendible operation, and produces
 `Join[T, E]`. Availability tracks the spawn provenance independently from the
 container type: whole-value moves, assignment, irrefutable patterns, option
 wrapping, and branch joins transfer or merge the same set of child identities.
-A child identity may cross a nested task scope that does not own it, but may
-never leave its own scope or reach its normal end. Returning it directly or
-inside a nominal, option, result, tuple, array, or other aggregate produces
-`E1603`.
+A child identity may cross a nested task scope that does not own it. Returning
+or moving the complete `Join` transfers the obligation to the caller; any other
+escape or a normal scope end with the handle still live produces `E1603`.
 
 Awaiting a `Join` consumes the complete owner and removes its child provenance.
 Every `ref` argument of its spawn operation keeps one `Spawn` region loan tied
 to that child. Moving or wrapping the handle retargets the provenance without
 releasing the loan; consuming the last owner releases it. This prevents a
 write, move, or incompatible loan of the source while the child can observe it.
-A direct async `ref T` await requires `T: Send`; the concurrent spawn form
+A direct suspendible `ref T` call requires `T: Send`; the concurrent spawn form
 requires `T: Send + Share`. Callee, owned arguments, success, and error values
 transferred through a child likewise require `Send`.
 
@@ -1251,7 +1256,7 @@ Every accepted spelling reaches the same canonical type graph:
 - `Int64`/`Int` and `Float64`/`Float` share scalar nodes;
 - `Option[T]` and `T?` share an option node;
 - `Result[T, E]`, `T ! E`, and `!E` share a result node;
-- tuple, function, mode, variadic, async, and unsafe information is preserved;
+- tuple, function, mode, variadic, `suspends`, and unsafe information is preserved;
 - intrinsic constructors have a closed arity table;
 - records, enums, and newtypes retain nominal identity; and
 - aliases are substituted completely and never enter `TypeKind`.
@@ -1354,7 +1359,7 @@ receiver lowering, method permissions, explicit and inferred generic
 specialization, inference conflicts, and unsolved variables. Trait tests cover
 empty and generic declarations, contextual `Self`,
 required and associated operations, defaults under bounds, inferred and
-explicit same-trait calls, async receiver requirements, invalid bodies, and
+  explicit same-trait calls, suspendible receiver requirements, invalid bodies, and
 unknown members. Implementation tests cover deterministic IDs, generic header
 occurrence, local-trait structural targets, cross-module orphan rejection,
 source and prelude contracts, closed protocols, method generics and bound sets,
@@ -1377,7 +1382,7 @@ layers, multiple-assignment leaves, borrow-only discard parameters, generic
 bounds, constraint forwarding, obligation budgets, and public-driver `E1105`
 propagation. Capability regressions cover the complete intrinsic matrix,
 implication forwarding, recursive nominal equality and keys, opaque bounds,
-async-trait `Self: Send`, collection and reference formation, equality,
+  suspendible-trait `Self: Send`, collection and reference formation, equality,
 membership, map lookup, explicit own/ref/mut cursor modes and capabilities, and
 order-insensitive map/set runtime equality. Ownership-availability regressions
 cover sequential and `CallOnce` moves, Copy and immediate-observation
@@ -1400,12 +1405,12 @@ Closure regressions cover distinct generated identities, inherited generic
 binders, exact and inferred outcomes, nested free-use propagation, mutable
 snapshot metadata, modes, variadics, borrowed-capture rejection, deferred
 contextual coercion, all six structural capabilities, all four effect kinds,
-exact effect-preserving function conversion, `E1609`, async stateful protocols,
+  exact effect-preserving function conversion, `E1609`, suspendible stateful protocols,
 executable synchronous-safe Copy environments, terminal observation, all- versus
 partial-return transfer, `fail`, `?`, and complete newtype extraction. Mutated
 HIR proves that
 capture type, mutability, construction correspondence, generated kind versus
-signature effects, protocol rows, exclusive async parameters, effectful-call
+  signature effects, protocol rows, exclusive suspendible parameters, effectful-call
 exclusion, and the bootstrap `Copy` admission proof are independently rechecked.
 Dedicated admission tests mutate
 otherwise valid HIR to prove rejection of incomplete/recovery state,
@@ -1419,5 +1424,5 @@ Opaque-result regressions additionally cover forbidden syntax positions,
 free/inherent/associated identity, generic family specialization, fallible
 success and error channels, contextual empty containers, strict witness
 equality, unreachable and error-only paths, closed `Discard` derivation,
-source/prelude and intrinsic bounds, private representation, async contract retention,
+  source/prelude and intrinsic bounds, private representation, suspendible contract retention,
 representation cycles, and HIR mutations of bounds and seals.

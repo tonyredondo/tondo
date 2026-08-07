@@ -204,7 +204,7 @@ absent from the observable oracle.
 
 ## Scripts and processes
 
-M8 fixtures execute sync and inferred-async script roots, shebang admission,
+M8 fixtures execute sync and inferred-suspendible script roots, shebang admission,
 closed error-union inference, and the exact example in specification section
 24.17. Compile-fail cases cover script/module isolation, explicit-main
 conflicts, the four-form-only pipe operator, missing `std.process` imports,

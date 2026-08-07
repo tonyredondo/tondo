@@ -20,9 +20,10 @@ ARRAY-006 closed lifted arithmetic, ARRAY-007 named concatenation/repetition,
 and ITER-001/002 static user iterators plus all four intrinsic iteration forms
 implemented, plus TEXT-002 Unicode-scalar String length, indexing, and slicing,
 and TEXT-003 static Display calls plus ordered interpolation, plus
-VARIADIC-001/002 homogeneous final packs and whole-array spread, plus
-ASYNC-001..004, SCOPE-001, SPAWN-001, JOIN-001, SEND-001, SHARE-001, and
-MAIN-ASYNC-001
+VARIADIC-001/002 homogeneous final packs and whole-array spread, plus the
+historical explicit-await ASYNC-001..004 prototype, SCOPE-001, SPAWN-001,
+JOIN-001, SEND-001, SHARE-001, and MAIN-ASYNC-001; the 1.67 implicit-await
+migration remains pending
 
 This document fixes the internal contract required by M3, M5, and M7. It does
 not define observable source-language behavior; `TONDO_LANGUAGE_SPEC.md`
@@ -58,8 +59,9 @@ An admitted program guarantees:
 - every concrete closure has one effect-specific generated type, matching exact
   signature, independently derived protocol row, independent body root, one
   construction expression, and an exact owned capture table;
-- every indirect call has one exact synchronous-safe signature, selected call
-  protocol, and source access form accepted by typed HIR;
+- every indirect call has one exact effect-bearing signature, selected call
+  protocol, and source access form accepted by typed HIR; suspendible calls
+  lower to an implicit `Await` unless `Spawn` is explicit;
 - every prelude trait operand has complete canonical arguments and the exact
   `Display.display` or `Iterator.next` function type;
 - every ordinary named-function operand is either intrinsically non-generic or
@@ -84,8 +86,8 @@ They remain queryable but can never be lowered or executed.
 | Phase | Facts proved or represented |
 |---|---|
 | Resolution | Namespaces, declaration/member/local identity, visibility, and lexical binding |
-| Typed HIR | Static types, contextual conversions, opaque contracts and witnesses, effect-exact concrete closure signatures, capture sets and call protocols, selected synchronous-safe or safe-async initiation, task-scope and `Join` provenance, value/place category, pattern coverage, source evaluation order, and source-level control targets |
-| MIR construction (M3/M4/M5) | Typed locals and temporaries, explicit CFG, places, synchronous-safe calls, effect-preserving closure bodies with a hidden environment, contextual Copy/Move closure-environment construction, branch targets, normal/abnormal edge shape, and spans |
+| Typed HIR | Static types, contextual conversions, opaque contracts and witnesses, effect-exact concrete closure signatures, capture sets and call protocols, implicit suspension or explicit handle consumption, safe `spawn` initiation, task-scope and `Join` provenance, value/place category, pattern coverage, source evaluation order, and source-level control targets |
+| MIR construction (M3/M4/M5) | Typed locals and temporaries, explicit CFG, places, synchronous calls plus implicit-suspension lowering, effect-preserving closure bodies with a hidden environment, contextual Copy/Move closure-environment construction, branch targets, normal/abnormal edge shape, and spans |
 | Ownership MIR (M5) | Contextual `Copy` versus `Move`, immediate non-escaping observations, whole-owner source availability, typed internal move paths, uniform `match` copy/observe/consume lowering, call-local `ref`/`mut`/`var` loans, inferred last-use pattern regions, static and runtime-checked collection regions, canonical borrowed-iterator boundaries, explicit scope-nested defer registrations with affine guard transitions, and closed intrinsic fallback actions |
 | Async MIR (M7) | `Await`, `Spawn`, task-scope entry/drain, normal and tagged abnormal edges, exact suspension-live frame state, and `Send`/loan checks across suspension |
 | Bytecode/backend | Layout and executable instructions only; no source semantic inference |
@@ -229,9 +231,9 @@ capture references are typed projections from that slot, and explicit source
 parameters follow it in their original order. A capture projection may itself
 move, and availability then rejects every overlapping later use on the same CFG
 route. Construction remains separate from body execution. The body and exact
-function signature may represent sync, unsafe, async, or async-unsafe source
-effects even though only a synchronous-safe body can currently be reached by a
-call operation.
+function signature may represent sync, unsafe, suspendible, or
+unsafe-suspendible source effects. A suspendible body is reached by the
+implicit-await call operation; only `spawn` preserves it as a pending handle.
 
 An indirect closure call carries the exact protocol selected by HIR. `Call` and
 `CallMut` read a place through a shallow, non-escaping `Borrow` operand so body
@@ -330,10 +332,10 @@ call-local loans and every live exclusive region are rejected, surviving
 ordinary owners must satisfy `Send`, and only a `Join` owned by the current
 task scope receives its sealed exception. `Spawn` admits its explicit
 structured shared loans and retains them until the corresponding handle is
-consumed or torn down. The ordinary MIR call operation remains synchronous and
-retains an explicit `unsafe_call` bit. That bit must agree exactly with the
+consumed or torn down. The ordinary MIR call operation may be synchronous or
+lower to an implicit `Await` and retains an explicit `unsafe_call` bit. That bit must agree exactly with the
 selected callable signature; it is true only after HIR proved an active unsafe
-region. `Await` and `Spawn` carry the same exact call operation for async work,
+region. `Await` and `Spawn` carry the same exact call operation for suspendible work,
 including the independently verified unsafe bit. Raw Pointer operations have
 six distinct host-operation identities and complete receiver, argument, and
 result type checks; they cannot be forged from a safe host call.
@@ -484,10 +486,10 @@ TERM-003 and TERM-004 populate those blocks with six explicit forms:
 
 - `RegisterDefer { scope, action, guard }` stores one already checked
   infallible `Unit` invocation. A synchronous action uses a sync call signature;
-  `defer await` retains the async call signature and is admitted through the
+  `defer await` retains the suspendible call signature and is admitted through the
   `DeferredAsync` operation context. Copy operands are snapshots; an optional
   guard names its unique complete affine owner slot, including one environment
-  capture slot while lowering a closure body. No async block or fallible cleanup
+  capture slot while lowering a closure body. No suspendible block or fallible cleanup
   operation can reach this statement form.
 - `RegisterFallback { scope, owner }` arms the sealed structural unwind action
   for a non-absent terminal owner. Owning parameters register at entry,
@@ -542,8 +544,10 @@ move, aggregate, call, or iterator edge can duplicate the obligation. Capture
 failure occurs before the replacement and therefore leaves the original
 fallback armed.
 
-`Await` is a suspension terminator whose awaitable is either one complete async
-operation or one `Join` operand. It writes the logical result only on `target`;
+`Await` is a suspension terminator whose awaitable is either one complete
+suspendible operation or one `Join`/`Waiter` operand. Direct suspendible calls
+lower to this terminator implicitly; an explicit `await` selects the same shape.
+It writes the logical result only on `target`;
 panic and cooperative cancellation use the explicit `unwind` edge while
 retaining their distinct tagged runtime state. Values live across the
 terminator remain ordinary typed locals in a frame that the executor may park.
@@ -551,13 +555,13 @@ An exclusive loan may not be live there; the BORROW-006 boundary check is
 reused for the exact active set, and all surviving values must satisfy the
 required `Send` contract before bytecode generation.
 
-An async deferred call does not use an `Await` terminator at registration. Its
+A suspendible deferred call does not use an `Await` terminator at registration. Its
 operands are captured by `RegisterDefer`; the cleanup drain later transfers the
-same async operation to the executor, preserving the surrounding unwind edge
+same suspendible operation to the executor, preserving the surrounding unwind edge
 and LIFO position.
 
 `EnterTaskScope` pushes one lexical identity. `Spawn` names the active
-innermost identity, transfers one async operation, and writes the exact
+innermost identity, transfers one suspendible operation, and writes the exact
 `Join[T, E]` only on its normal edge. `DrainScopes` lists the exact
 inner-to-outer task-scope suffix and the lexical defer scopes that follow it.
 Every return, propagation, loop transfer, panic, and cancellation path therefore
@@ -580,8 +584,8 @@ The structural verifier introduced in M3 proves at minimum:
 - call arity, modes, argument types, and outcome agree with the selected
   callable, and every indirect call repeats the exact HIR signature/protocol
   selection for concrete, generic, and opaque callees;
-- the ordinary call operation has neither an `async` nor `unsafe` signature;
-  retaining such a callable or body does not make it synchronously executable;
+- a direct ordinary call either has a clear effect bit or lowers to `Await`; a
+  `suspends` callable is never executed synchronously by retaining its body;
 - every static function operand has complete specialization arity and its exact
   substituted type, while an indirect callee has that same concrete structural
   function type;
@@ -651,7 +655,7 @@ on their successful edge, and the return place must be initialized on every
 `Return`. Payload refinement is a separate forward analysis so initialization
 alone cannot authorize an invalid projection.
 
-The async verifier additionally proves operation effect and call protocol,
+The suspension verifier additionally proves operation effect and call protocol,
 awaitable/result agreement, `Join` move access, active innermost spawn scope,
 scope-stack balance, exact normal/unwind destinations, suspension liveness,
 `Send`/`Share` requirements, and the exclusion of exclusive loans. It reuses

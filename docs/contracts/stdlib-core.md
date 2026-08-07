@@ -9,8 +9,10 @@ debe conservar exactamente las firmas y los observables de este documento.
 
 - Todas las operaciones son dispatch estático. No hay `Any`, vtables ni
   lookup por nombre.
-- Los valores cuyo cuerpo no alcanza `await` no suspenden. Los errores se devuelven
-  como `Result` con la sintaxis `T ! E`.
+- Las llamadas a operaciones `suspends` esperan automáticamente en la forma
+  ordinaria. El efecto se infiere transitivamente y se publica como `suspends`
+  en la interfaz/ABI; los errores se devuelven como `Result` con la sintaxis
+  `T ! E`.
 - Los límites de memoria, longitud y pasos son argumentos de options o defaults
   finitos del owner; alcanzar un límite devuelve un error nominal y no publica
   un valor parcial.
@@ -51,10 +53,14 @@ errores. `unwrapOr` es total. La construcción de un error no toca el host.
 
 ## `std.async`
 
-El owner usa la suspensión inferida del lenguaje: no publica modificadores ni
-wrappers `Task`/`Future` y no duplica operaciones con sufijos async. `Join` solo
-nace de `spawn` y se consume mediante `await`; la cancelación y el detach son
-operaciones terminales estructuradas.
+El owner usa la suspensión inferida del lenguaje: no publica modificadores
+fuente ni wrappers `Task`/`Future` y no duplica operaciones con sufijos async.
+La interfaz canónica imprime `suspends` después del outcome. `Join` solo nace de
+`spawn` y se consume mediante `await handle`; la cancelación y el detach son
+operaciones terminales estructuradas. `await` delante de una llamada directa es
+opcional; para convertir un `Join` o `Waiter` pendiente en su resultado sigue
+siendo obligatorio. `Waiter.wait()` es una llamada suspendible directa y espera
+implícitamente.
 
 ```tondo
 pub type Join[T, E]
@@ -73,7 +79,8 @@ trait AsyncIterator[T] { fn next(mut self): T? }
 
 La finalización de `Completer` es atómica y exactamente una operación gana; las
 posteriores devuelven `AlreadyCompleted`. `AsyncIterator` mantiene backpressure,
-cierra al salir de `for await` y no materializa un array implícitamente.
+cierra al salir de `for` (o `for await`) y no materializa un array
+implícitamente.
 
 ## `std.text`
 

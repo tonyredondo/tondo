@@ -22,8 +22,9 @@ iterators plus all four intrinsic iteration forms, and the M3 VM admission
 path implemented, plus TEXT-001 immutable UTF-8 strings and TEXT-004 distinct
 text and byte domains, and TEXT-002 Unicode-scalar String length, indexing, and
 slicing, plus TEXT-003 intrinsic/static Display dispatch and interpolation,
-plus VARIADIC-001/002 homogeneous final packs and whole-array spread, plus
-ASYNC-001..004, EXEC-001/002, SCOPE-001, SPAWN-001, JOIN-001,
+plus VARIADIC-001/002 homogeneous final packs and whole-array spread, plus the
+historical explicit-await ASYNC-001..004 prototype (the 1.67 implicit-await
+migration remains pending), EXEC-001/002, SCOPE-001, SPAWN-001, JOIN-001,
 CANCEL-001/002, PANIC-ASYNC-001, SEND-001, SHARE-001, and MAIN-ASYNC-001
 
 This document fixes the in-memory boundary between `tondo-compiler` and
@@ -74,7 +75,7 @@ optional concrete-closure metadata. Closure metadata records the generated
 environment type, ordered capture schema, and `Call`/`CallMut`/`CallOnce` row.
 Function entries retain the inferred suspendible effect and the exact `unsafe`
 bit. A non-suspendible, suspendible or unsafe callable remains distinct after
-compiler `TypeId` values have disappeared; no `async` modifier is serialized.
+compiler `TypeId` values have disappeared; no source `async` modifier is serialized.
 Compiler-produced executable callable entries are concrete instances: their
 generic arity is zero and their signature types have already been substituted.
 Static function operands name that concrete callable and carry an empty
@@ -335,7 +336,7 @@ row, effect-exact function signature, and lowered body. Its operands carry the
 corresponding concrete capture values and preserve MIR's contextual Copy or Move
 access. Verification requires identity, schema, signature, value, capability,
 and path-availability agreement before allocation. Constructing this aggregate
-does not invoke its body, including for async or unsafe closure kinds.
+does not invoke its body, including for suspendible or unsafe closure kinds.
 
 A call operation accepts either a direct concrete function operand or a
 borrow/copy/move of a place containing a callable value. The latter is the
@@ -424,12 +425,14 @@ indirect shared/exclusive callees, intrinsic ref/mut-cursor construction, and
 the replacement witness attached to write validation. Stores, aggregates,
 returns, every call argument, and unrelated operations reject it.
 
-The bootstrap `Call` operation remains deliberately synchronous. Its signature
-must have the suspendible-effect bit clear and its explicit `unsafe_call` bit
-must equal the callable's unsafe effect. `Await` and `Spawn` are the only
-suspendible initiation terminators and rederive their operation's effect, protocol, outcome, arguments,
-capabilities, and control-flow contract, including the same unsafe-bit
-agreement. HIR supplies that bit only after proving a lexical unsafe region.
+The bootstrap `Call` operation remains deliberately synchronous when its
+suspendible-effect bit is clear. A direct call to a `suspends` callable is
+lowered to the same verified `Await` operation that an explicit `await call()`
+would have produced; source syntax does not change the ABI. `Spawn` is the only
+initiation terminator that intentionally preserves a pending handle. Both
+rederive the operation's effect, protocol, outcome, arguments, capabilities,
+and control-flow contract, including the same unsafe-bit agreement. HIR supplies
+that bit only after proving a lexical unsafe region.
 The six raw Pointer host operations keep separate enum identities; the verifier
 rederives their concrete Pointer element, `Int` offset, `UInt64` address, value,
 and result types before execution.
@@ -609,13 +612,14 @@ Before execution, the verifier proves:
   operand exactly;
 - closure protocols are rederived from the executable body and cannot be
   strengthened by forged catalog metadata; a body that moves an environment
-  path cannot advertise `Call` or `CallMut`, and an async body that writes its
+  path cannot advertise `Call` or `CallMut`, and a suspendible body that writes its
   environment cannot advertise either borrowed protocol; `CallOnce` requires
   every non-`Discard` capture to be completely moved on every reachable normal
   return, with branch states intersected rather than unioned;
-- async callables have no `mut` or `var` parameter; the synchronous-safe call
-  opcode rejects every async or unsafe function signature, while `Await` and
-  `Spawn` require async-safe signatures and their exact logical outcomes;
+- suspendible callables have no `mut` or `var` parameter; the synchronous-safe
+  call opcode is used only when the effect bit is clear, while an implicit or
+  explicit `Await` and `Spawn` require suspendible-safe signatures and their
+  exact logical outcomes;
 - every closed executable `Map[K, V]` and `Set[K]` has `K: Key`, every `Ref[T]`
   has `T: Discard`, equality has `T: Equatable`, array membership has an
   equatable element, map/set membership has a key, and map lookup has `V: Copy`;
@@ -629,7 +633,7 @@ Before execution, the verifier proves:
   token;
 - every opaque coercion seals exactly its catalogued witness into the matching
   opaque family;
-- calls and async operations have an exact structural signature, matching
+- calls and suspendible operations have an exact structural signature, matching
   outcome, complete fixed/receiver association, correct modes, valid variadic
   element or final spread, supported protocol, protocol-compatible
   loan/copy/move access, and no unimplemented unsafe effect;
@@ -648,12 +652,13 @@ Before execution, the verifier proves:
 - each `Spawn` names the active innermost task scope, every task-scope stack
   agrees at CFG joins, and `DrainScopes` removes exactly an active
   inner-to-outer suffix before its aligned defer scopes;
-- every `Await` has one valid async call or affine `Join` operand, writes its
+- every `Await` has one valid suspendible call or affine `Join` operand, writes its
   logical result only on the normal edge, and admits only `Send` live values
   plus the current scope's sealed join exception;
 - every `RegisterDefer` contains one infallible `Unit` operation. Synchronous
   entries use the `Deferred` call context; `defer await` entries use
-  `DeferredAsync` and therefore retain exactly one async call signature. Both
+  `DeferredAsync` (the internal tag for a suspendible defer) and therefore retain
+  exactly one suspendible call signature. Both
   snapshot all closed `Copy` operands, retain at most one complete affine guard
   in a local or closure-capture owner slot, and belong to a live lexical scope;
 - every concrete terminal entry parameter/capture and every terminal store,

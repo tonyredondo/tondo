@@ -13,15 +13,16 @@ failed proof.
 
 Both a test body and a suite setup are checked as a private
 `fn(): Unit ! E`; the checker records the inferred suspendible effect when the
-body contains `await`:
+body calls a suspendible operation, iterates an `AsyncIterator`, uses `await` or
+registers suspendible cleanup:
 
 - `Unit` and `Never` are the only admitted normal results;
 - a test may use bare `return`, but cannot return a value;
 - suite setup cannot use `return` at all (`E1205`);
 - the error union is normalized by nominal name, must be duplicate-free and
   every member must satisfy `Discard`; and
-- `await` and the virtual-time operations infer suspension without an extra
-  keyword or an `async test` spelling.
+- suspendible calls and the virtual-time operations infer suspension without an
+  extra keyword or an `async test` spelling; direct calls wait implicitly.
 
 The resulting `TestBodyContract` is immutable input for lowering. It carries
 the exact operation list and the ordinary facts needed by later admission
@@ -40,7 +41,8 @@ runtime.
 
 `withVirtualTime` requires a suspendible `Send + CallOnce` closure accepting
 `ref VirtualTime`, returning `Unit`, and neither escaping nor sharing the
-controller. The boundary itself must be awaited directly rather than spawned;
+controller. The boundary itself must be called directly rather than spawned;
+its result is awaited implicitly (an explicit `await` is optional);
 controlled tasks are spawned inside the callback's structured scope. The
 controller is therefore opaque and cannot become a Tondo value or capability.
 

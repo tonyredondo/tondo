@@ -19,7 +19,7 @@ any divergence, identity drift or artifact hash mismatch.
 
 Entries are ordered by logical source span, not insertion order. Parent links
 must refer to an earlier entry, so cycles and hidden second roots cannot be
-introduced by lowering. Checked error members, async status, input/output
+introduced by lowering. Checked error members, inferred suspension status, input/output
 domain, deferred cleanup and cleanup hooks remain attached to the entry.
 
 ## Environment and host boundaries

@@ -988,7 +988,7 @@ producen `E2105`; nunca se atribuye silenciosamente el span al archivo completo.
 
 El VM meta ofrece asignación administrada y operaciones puras de `std.meta`.
 Rechaza filesystem, red, procesos, environment, reloj, entropy, threads, FFI,
-`unsafe`, `Pointer` y async. Un generator input se lee desde el request; su path
+`unsafe`, `Pointer` y suspensión. Un generator input se lee desde el request; su path
 físico nunca se revela.
 
 Los contadores de pasos, memoria viva y bytes de salida se comprueban de forma

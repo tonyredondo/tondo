@@ -2,14 +2,14 @@
 
 **Línea de desarrollo de la librería:** `draft`
 
-**Revisión del documento:** `draft.2`
+**Revisión del documento:** `draft.3`
 
 **Estado:** borrador normativo; Tondo y STD-0.1 todavía no
 se han publicado
 
 **Edición de lenguaje compatible:** Tondo 0.1
 
-**Última actualización:** 2026-07-31
+**Última actualización:** 2026-08-07
 
 ---
 
@@ -798,10 +798,16 @@ No materializa un array de forma oculta detrás de una API anunciada como lazy.
 ### 9.1 Suspensión visible
 
 Todas las operaciones se declaran con `fn`. El compilador infiere un efecto de
-suspensión cuando el cuerpo contiene `await` o llama a una operación que puede
-suspenderse. El efecto se publica en metadatos y documentación, pero no crea un
-wrapper `Task`/`Future` ni una segunda API. `@sync`/`@nosuspend` garantiza que una
-función no suspende.
+suspensión cuando el cuerpo llama a una operación `suspends`, usa `await`, itera
+un `AsyncIterator` o registra cleanup suspendible. Las llamadas suspendibles
+ordinarias esperan automáticamente y devuelven el resultado lógico; no crean un
+wrapper `Task`/`Future` ni una segunda API.
+
+La interfaz pública imprime el efecto como `suspends` después del outcome y lo
+incluye en el hash ABI. Ese marcador pertenece al contrato publicado, no exige
+un modificador repetido en la implementación fuente. `@sync`/`@nosuspend`
+garantiza que una función no suspende y rechaza cualquier llamada suspendible,
+incluso cuando aparece sin `await`.
 
 Una operación síncrona:
 
@@ -816,8 +822,9 @@ STD-0.1 no duplica automáticamente cada operación como `read` y `readAsync`.
 El módulo elige una forma canónica según el efecto real:
 
 - Cálculo y transformación de memoria: síncrono.
-- Espera potencialmente no acotada de host: función suspendible, consumida con
-  `await` en el punto que el caller elija.
+- Espera potencialmente no acotada de host: función suspendible, esperada
+  automáticamente en la forma ordinaria; `await` queda disponible como spelling
+  explícito y es obligatorio para consumir un handle pendiente.
 - Construcción inerte de un plan: síncrona.
 - Operación que solo consulta metadata ya materializada: síncrona.
 
@@ -828,19 +835,26 @@ semántica diferente.
 ### 9.3 `spawn`, `Join` y `oneshot`
 
 `spawn call()` devuelve un `Join[T, E]` afín; `spawn thread call()` solicita un
-thread del sistema operativo. Ambos se esperan con `await` y están sujetos a
-ownership estructurado: un scope debe esperar, cancelar, detach o transferir
-cada handle. `cancel` solicita cancelación y aún requiere `await`; `detach`
+thread del sistema operativo. Ambos se consumen con `await handle` y están
+sujetos a ownership estructurado: un scope debe esperar, cancelar, detach o
+transferir cada handle. `cancel` solicita cancelación y el `Join` aún requiere
+`await handle`; `detach`
 consume el handle y lo entrega a un supervisor, sin permitir préstamos locales.
 
 `std.async.oneshot[T, E]` divide una operación en `Waiter` y `Completer`. El
-waiter se consume una vez; completar, fallar o cancelar es atómico y una segunda
-finalización produce `AlreadyCompleted`. No hay callbacks ni scheduler implícito.
+waiter se consume una vez; `Waiter.wait()` es una llamada suspendible ordinaria
+y por tanto espera implícitamente, mientras que un valor `Waiter` o `Join` sin
+consumir solo puede convertirse en resultado mediante `await handle`. Completar,
+fallar o cancelar es atómico y una segunda finalización produce
+`AlreadyCompleted`. No hay callbacks ni scheduler implícito.
 
-`AsyncIterator[T]` y `for await item in source` cubren streams lazy con
-backpressure, un elemento por `next`, cierre al salir y materialización solo
-mediante `collect(limit:)`. Un receiver de `std.channel.Channel` puede exponer
-este protocolo.
+`AsyncIterator[T]` y `for item in source` cubren streams lazy con backpressure
+cuando la fuente no tiene un iterador síncrono. Cada elemento espera un `next`,
+el efecto se infiere y el cierre ocurre al salir. `for await item in source`
+permanece como spelling explícito opcional para desambiguar una fuente que
+implementa ambos protocolos. La materialización solo ocurre mediante
+`collect(limit:)`. Un receiver de `std.channel.Channel` puede exponer este
+protocolo.
 
 La superficie nominal mínima de `std.async` es:
 
@@ -862,7 +876,8 @@ pub trait AsyncIterator[T] {
 ~~~
 
 `Join` no expone constructor, poller ni callback: solo nace de `spawn` y se
-consume con `await`. `Waiter.wait` es la operación suspendible de la pareja;
+consume con `await`. `Waiter.wait` es la operación suspendible de la pareja y
+se espera implícitamente en una llamada ordinaria;
 `Completer` puede completarse desde otro task o thread que cumpla `Send`. La
 segunda finalización no cambia el resultado de la primera y devuelve
 `AlreadyCompleted` de forma atómica.
@@ -1119,7 +1134,8 @@ Sus APIs concretas deberán distinguir:
 Un reader o writer concreto conserva el owner de su módulo y satisface los
 protocolos mediante dispatch estático. `read`, `write`, `flush`, `readAll` y
 `writeAll` se declaran como `fn`; si una implementación puede esperar I/O, el
-compilador infiere el efecto y el caller escribe `await`. No hay variantes
+compilador infiere el efecto y una llamada ordinaria espera automáticamente. El
+caller puede escribir `await` como forma explícita, pero no hay variantes
 `readAsync` ni `writeAsync`. STD-0.1 no exige type erasure, vtables ni
 un stream dinámico común para almacenar implementaciones heterogéneas.
 
@@ -2583,7 +2599,7 @@ Una API suspendible prueba además:
 - Progreso de otras tasks.
 - Cancelación.
 - Pánico y error durante cleanup.
-- Roots a través de `await`.
+- Roots a través de fronteras de suspensión implícitas o explícitas.
 - Backpressure y límites.
 
 Un codec o parser prueba además:
