@@ -4233,8 +4233,9 @@ parte del módulo.
   registro actual `testing/stdlib-implementation.json` solo demuestra archivos
   y pruebas por owner, no cobertura por firma. `std.core` ya tiene sus 9/9
   firmas trazadas con `vm-inline` y `std.collections` sus 18/18 firmas
-  públicas verificadas; el coordinador permanece abierto hasta que los demás
-  owners Core alcancen la misma prueba pública.
+  públicas verificadas; `std.math` también conserva sus 9/9 firmas verificadas
+  mediante aliases de lowering explícitos; el coordinador permanece abierto
+  hasta que los demás owners Core alcancen la misma prueba pública.
 
 - [ ] **STD-IMPL-002 — Coordinar Hosted por owner.** Cierra tras
   `STD-FS-IMPL-001`, `STD-PROC-IMPL-001` y la auditoría pública, conservando los
@@ -5432,6 +5433,15 @@ esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 1.67 — 2026-08-07
+
+- `std.math` queda trazado con sus 9/9 firmas públicas. Las operaciones
+  `floor`, `ceil`, `round`, `fma` y `abs` usan los nombres internos
+  `Math*` del lowering declarados por etapa; el runtime host ya conserva las
+  mismas llamadas y el fixture público cubre la superficie completa.
+- La matriz mantiene 80/203 firmas verificadas y 126 gaps explícitos; no se
+  altera el cálculo de cobertura ni el gate estricto.
 
 ### 1.66 — 2026-08-07
 

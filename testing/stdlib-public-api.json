@@ -323,10 +323,10 @@
         "reason": null
       },
       "signature_count": 9,
-      "verified_count": 4,
-      "gap_count": 5,
+      "verified_count": 9,
+      "gap_count": 0,
       "owner_missing": [],
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "id": "std.format",
@@ -5092,7 +5092,7 @@
           ],
           "symbol": "floor",
           "symbols": [
-            "floor"
+            "MathFloor"
           ]
         },
         "host_vm": {
@@ -5113,10 +5113,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.math:162",
@@ -5142,7 +5140,7 @@
           ],
           "symbol": "ceil",
           "symbols": [
-            "ceil"
+            "MathCeil"
           ]
         },
         "host_vm": {
@@ -5163,10 +5161,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.math:163",
@@ -5192,7 +5188,7 @@
           ],
           "symbol": "round",
           "symbols": [
-            "round"
+            "MathRound"
           ]
         },
         "host_vm": {
@@ -5213,10 +5209,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.math:164",
@@ -5338,7 +5332,7 @@
           ],
           "symbol": "fma",
           "symbols": [
-            "fma"
+            "MathFma"
           ]
         },
         "host_vm": {
@@ -5359,10 +5353,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.math:167",
@@ -5388,7 +5380,7 @@
           ],
           "symbol": "abs",
           "symbols": [
-            "abs"
+            "MathAbs"
           ]
         },
         "host_vm": {
@@ -5409,10 +5401,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.math:168",
@@ -10904,9 +10894,9 @@
   "summary": {
     "owners": 20,
     "signatures": 203,
-    "verified": 75,
-    "signature_gaps": 128,
+    "verified": 80,
+    "signature_gaps": 123,
     "owner_gaps": 3,
-    "gaps": 131
+    "gaps": 126
   }
 }
