@@ -180,10 +180,10 @@
         "reason": null
       },
       "signature_count": 8,
-      "verified_count": 4,
-      "gap_count": 4,
+      "verified_count": 8,
+      "gap_count": 0,
       "owner_missing": [],
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "id": "std.env",
@@ -10513,7 +10513,7 @@
           ],
           "symbol": "now",
           "symbols": [
-            "now"
+            "TimeNow"
           ]
         },
         "host_vm": {
@@ -10534,10 +10534,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.time:41",
@@ -10611,7 +10609,7 @@
           ],
           "symbol": "deadline",
           "symbols": [
-            "deadline"
+            "TimeDeadline"
           ]
         },
         "host_vm": {
@@ -10632,10 +10630,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.time:43",
@@ -10661,7 +10657,7 @@
           ],
           "symbol": "sleep",
           "symbols": [
-            "sleep"
+            "TimeSleep"
           ]
         },
         "host_vm": {
@@ -10682,10 +10678,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.time:45",
@@ -10855,7 +10849,7 @@
           ],
           "symbol": "cancel",
           "symbols": [
-            "cancel"
+            "TimerCancel"
           ]
         },
         "host_vm": {
@@ -10876,19 +10870,16 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol",
-        "public-case-call"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     }
   ],
   "summary": {
     "owners": 20,
     "signatures": 203,
-    "verified": 84,
-    "signature_gaps": 119,
+    "verified": 88,
+    "signature_gaps": 115,
     "owner_gaps": 3,
-    "gaps": 122
+    "gaps": 118
   }
 }

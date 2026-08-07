@@ -20,5 +20,7 @@ async fn main(): !(time.ClockError | time.DurationError) {
     await time.sleep(zero)?
     let timer = time.Timer.after(zero)?
     await timer.wait()?
+    let cancelled = time.Timer.after(zero)?
+    cancelled.cancel()
     console.print("time-ok\n")
 }

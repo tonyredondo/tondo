@@ -5436,6 +5436,14 @@ esos cierres.
 
 ## 25. Historial del tracker
 
+### 1.70 — 2026-08-07
+
+- `std.time` queda trazado con sus 8/8 firmas públicas. `now`, `deadline`,
+  `sleep` y `Timer.cancel` declaran sus símbolos de lowering (`Time*`/`Timer*`)
+  y el fixture runtime cubre también la cancelación de un timer no consumido.
+- La matriz pasa a 88/203 firmas verificadas y 118 gaps explícitos; la
+  cobertura continúa por encima del baseline de 9059 bp.
+
 ### 1.69 — 2026-08-07
 
 - `std.io` queda trazado con sus 4/4 firmas públicas. `defaultLimits`,
