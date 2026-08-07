@@ -7,6 +7,10 @@ replace the publication checklist in `TONDO_STANDARD_LIBRARY_SPEC.md`.
 ## One owner, one implementation boundary
 
 `testing/stdlib-implementation.json` is the machine-readable owner closure.
+La trazabilidad por firma se comprueba además con
+[`stdlib-public-api-audit.md`](./stdlib-public-api-audit.md), cuya matriz viva
+puede permanecer abierta mientras los leaves de implementación sigan
+pendientes.
 Every owner has one canonical implementation boundary, source-controlled tests
 and a proof description. Portable kernels live in `tondo-stdlib`; compiler and
 VM bridges are limited to intrinsic lowering or capability-gated host effects.

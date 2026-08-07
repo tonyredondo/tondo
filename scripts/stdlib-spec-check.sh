@@ -66,6 +66,10 @@ for path in TONDO_STANDARD_LIBRARY_SPEC.md docs/contracts/stdlib-s1a.md; do
         echo "integration contract is not linked from $path" >&2
         exit 1
     }
+    grep -Fq 'stdlib-public-api-audit.md' "$path" || {
+        echo "public API audit is not linked from $path" >&2
+        exit 1
+    }
 done
 
 echo "stdlib integration contract: OK"

@@ -62,6 +62,10 @@ run_step stdlib-hosted-contract \
     scripts/stdlib-hosted-check.sh
 run_step stdlib-implementation-evidence \
     scripts/stdlib-implementation-check.sh
+run_step stdlib-public-api-audit \
+    scripts/stdlib-public-api-audit.sh --check
+run_step stdlib-public-api-audit-tests \
+    scripts/stdlib-public-api-audit-test.sh
 run_step stdlib-codec-conformance \
     scripts/stdlib-codec-conformance.sh
 run_step stdlib-performance-report \

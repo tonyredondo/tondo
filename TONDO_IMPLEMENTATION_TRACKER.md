@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 1.63
+**Versión del tracker:** 1.64
 
 **Última actualización:** 2026-08-05
 
@@ -4215,10 +4215,15 @@ parte del módulo.
   en orden estable y cada candidato usa un worker nuevo; los casos son una vista
   efímera de tooling y no crean `TestEntry`, suites ni subtests dinámicos.
 
-- [ ] **STD-PUBLIC-API-AUDIT-001 — Verificar firma por firma todos los owners
-  A.** Generar una matriz contract signature → símbolo HIR → lowering → host/VM
-  → caso público. Debe fallar si solo existe un path Rust, un fixture que llama
-  otra operación, una prueba documental o un alias bootstrap no normativo.
+- [x] **STD-PUBLIC-API-AUDIT-001 — Verificar firma por firma todos los owners
+  A.** `scripts/stdlib-public-api-audit.sh` genera y valida
+  `testing/stdlib-public-api.json` con la cadena contract signature → símbolo
+  HIR → lowering → host/VM → caso público. `--check` detecta drift y mantiene
+  visibles los huecos; `--strict` falla ante cualquiera. No acepta un path Rust
+  aislado, un fixture que llama otra operación, una prueba documental ni un
+  alias bootstrap. El resultado actual es deliberadamente `open-gaps` (142
+  filas/owners pendientes), que bloquea la promoción y alimenta los siguientes
+  leaves de implementación.
 
 - [ ] **STD-IMPL-001 — Coordinar implementación Core por owner.** Cierra cuando
   `STD-CORE-IMPL-001`, `STD-TEXT-IMPL-001`, `STD-COLL-IMPL-001`,
@@ -5424,6 +5429,18 @@ esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 1.64 — 2026-08-05
+
+- Se cierra `STD-PUBLIC-API-AUDIT-001` como mecanismo fail-closed, no como
+  publicación de la stdlib. `testing/stdlib-public-api-config.json` fija los
+  owners, contratos, etapas y casos; el generador extrae 206 firmas y la matriz
+  registra 67 cadenas verificadas y 142 gaps explícitos. `--check` entra en el
+  gate diario y `--strict` queda reservado para S1A.
+- La auditoría rechaza paths Rust sin llamada pública, casos documentales,
+  aliases bootstrap y drift de firmas. Los owners build-only sin una superficie
+  indexable también quedan abiertos, en vez de cerrarse por tener un módulo de
+  soporte.
 
 ### 1.63 — 2026-08-05
 

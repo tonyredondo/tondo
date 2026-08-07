@@ -1866,6 +1866,14 @@ rechaza owners duplicados, contratos ausentes, aliases, defaults implícitos y
 ciclos. Este cierre integra el contrato de los owners; no convierte los
 contratos `closed-contract` en implementaciones publicadas.
 
+La trazabilidad de implementación por firma se mantiene separada en
+[`docs/contracts/stdlib-public-api-audit.md`](./docs/contracts/stdlib-public-api-audit.md)
+y [`testing/stdlib-public-api.json`](./testing/stdlib-public-api.json). La
+matriz debe demostrar `contrato → HIR → lowering → host/VM → caso público`;
+un path Rust, una prueba documental o un alias bootstrap no son evidencia
+suficiente. Mientras existan filas `open-gaps`, el catálogo sigue siendo un
+contrato de desarrollo y no una publicación.
+
 | Owner | Source set | Estado | Dependencias directas |
 |---|---|---|---|
 | `std.core` (intrínsecos) | `stdlib-core` | cerrado | lenguaje |
