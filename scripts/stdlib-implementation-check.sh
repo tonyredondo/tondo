@@ -21,8 +21,8 @@ jq -e '
   and .phase == "STD-0.1A"
   and .status == "implemented-draft"
   and .public_release == false
-  and (.owners | length) == 20
-  and ([.owners[].id] | unique | length) == 20
+  and (.owners | length) == 21
+  and ([.owners[].id] | unique | length) == 21
   and all(.owners[]; (.layer | test("^A[0-4]$")) and (.implementation | length > 0) and (.tests | length > 0) and (.proof | length > 0))
   and (.evidence_commands | length) == 4
   and .conformance_lineage == "conformance/draft/manifest.json"

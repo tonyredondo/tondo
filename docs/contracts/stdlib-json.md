@@ -1,7 +1,7 @@
 # Contrato de `std.json`
 
-**Estado:** contrato de API fuente cerrado e implementación typed/dynamic/
-streaming disponible para `STD-0.1A`.
+**Estado:** contrato de API fuente normativo para `STD-0.1A`; la implementación
+typed/dynamic/streaming debe migrar al ABI `Encode[C]`/`Decode[C]`.
 
 `std.json` implementa el modelo JSON de RFC 8259 sobre UTF-8 y reutiliza los
 traits estáticos de `std.serialization`. La política canónica y las invariantes
@@ -18,12 +18,12 @@ operativas que cada implementación del owner debe respetar.
 
 El owner tiene tres formas coordinadas, no tres parsers:
 
-1. **Typed:** `Serialize` y `Deserialize` generados o escritos de forma
+1. **Typed:** `Encode` y `Decode` generados o escritos de forma
    estática codifican directamente un `T` a un `Writer` y decodifican desde un
    `Reader`. La ruta de bytes materializada es una comodidad sobre el mismo
    writer/reader y no pasa por un árbol dinámico.
-2. **Dynamic:** `JsonValue` representa `null`, boolean, `JsonNumber`, string,
-   array y object. `JsonNumber` conserva un token decimal validado y no lo
+2. **Dynamic:** `std.serialization.Value` (reexportado como `json.Value`)
+   representa `null`, boolean, `JsonNumber`, string, array y object. `JsonNumber` conserva un token decimal validado y no lo
    reduce a `Float64` al parsearlo. Un object es una secuencia ordenada de
    miembros con claves únicas después de aplicar su política de duplicados.
 3. **Streaming:** `JsonReader` produce eventos incrementales y `JsonWriter`
@@ -33,8 +33,8 @@ El owner tiene tres formas coordinadas, no tres parsers:
    acotado por `max_depth`, no el stack de llamadas del host.
 
 El dispatch typed es compile-time y no usa reflection, registro global,
-lookup por nombre ni construcción dinámica. Un derive de `Serialize` o
-`Deserialize` genera una implementación estática; el codec no inspecciona
+lookup por nombre ni construcción dinámica. Un derive de `Encode` o
+`Decode` genera una implementación estática; el codec no inspecciona
 metadata en runtime.
 
 ## Implementación cerrada del owner
@@ -42,7 +42,7 @@ metadata en runtime.
 La implementación portable vive en
 `crates/tondo-stdlib/src/json_api.rs`. `JsonReader` tokeniza con frames
 explícitos de array/object y mantiene el contador de eventos, profundidad,
-miembros, strings y números antes de publicar cada evento. `JsonValue` se
+miembros, strings y números antes de publicar cada evento. `Value` se
 construye desde ese mismo flujo; no hay un segundo parser y no se requiere un
 DOM para `validate` ni para el camino typed (canonicalize usa explícitamente
 el collector dinámico). `JsonNumber` conserva
@@ -52,11 +52,11 @@ valor matemático, sin pasar por `Float64`.
 `JsonWriter` valida la máquina root/array/object, orden canónico JCS,
 duplicados y límites de salida antes de completar el documento. El encoder
 usa una pila explícita de tareas para records, arrays y objetos y solo el
-collector dinámico reserva `JsonValue`. `encode_typed` y `decode_typed`
+collector dinámico reserva `Value`. `encode_typed` y `decode_typed`
 adaptan los traits estáticos comunes a eventos JSON directamente; no usan
 reflection, trait objects ni lookup de nombres. La adaptación `fromReader`
 del bridge Rust lee de forma acotada para que la superficie Tondo pueda
-exponerla como operación async sin cambiar la semántica del parser.
+exponerla como operación suspendible sin cambiar la semántica del parser.
 
 El kernel provisional anterior permanece privado al bridge durante la
 migración (`kernel_parse`/`kernel_encode_*`); no es una ruta pública
@@ -70,13 +70,13 @@ aliases `parseJson`/`readJson`, overloads por defecto ni políticas ambientales.
 
 ```tondo
 pub enum JsonKind { Null, Bool, Number, String, Array, Object }
-pub type JsonMember = { key: String, value: JsonValue }
-pub enum JsonValue {
+pub type JsonMember = { key: String, value: Value }
+pub enum Value {
     Null
     Bool(Bool)
     Number(JsonNumber)
     String(String)
-    Array(Array[JsonValue])
+    Array(Array[Value])
     Object(Array[JsonMember])
 }
 pub type JsonNumber
@@ -123,12 +123,12 @@ pub enum JsonErrorKind {
 }
 pub type JsonError = { kind: JsonErrorKind, location: JsonLocation, path: JsonPath }
 
-pub fn parse(input: Bytes, options: JsonDecodeOptions): JsonValue ! JsonError
-pub fn decode[T: Deserialize](input: Bytes, options: JsonDecodeOptions): T ! JsonError
-pub fn encode[T: Serialize](value: T, options: JsonEncodeOptions): Bytes ! JsonError
+pub fn parse(input: Bytes, options: JsonDecodeOptions): Value ! JsonError
+pub fn decode[T: Decode[Json]](input: Bytes, options: JsonDecodeOptions): T ! JsonError
+pub fn encode[T: Encode[Json]](value: T, options: JsonEncodeOptions): Bytes ! JsonError
 pub fn validate(input: Bytes, options: JsonDecodeOptions): Unit ! JsonError
 pub fn canonicalize(input: Bytes, options: JsonDecodeOptions): Bytes ! JsonError
-pub fn encodeCanonical(value: JsonValue, limits: JsonLimits): Bytes ! JsonError
+pub fn encodeCanonical(value: Value, limits: JsonLimits): Bytes ! JsonError
 
 pub fn JsonNumber.parse(text: String): JsonNumber ! JsonError
 pub fn JsonNumber.text(self): String
@@ -138,32 +138,38 @@ pub fn JsonNumber.toFloat32(self): Float32 ! JsonError
 pub fn JsonNumber.toFloat64(self): Float64 ! JsonError
 
 pub fn JsonReader.fromBytes(input: Bytes, options: JsonDecodeOptions): JsonReader ! JsonError
-pub async fn JsonReader.fromReader(var input: Reader, options: JsonDecodeOptions): JsonReader ! JsonError
-pub async fn JsonReader.next(var self): JsonEvent? ! JsonError
+pub fn JsonReader.fromReader(var input: Reader, options: JsonDecodeOptions): JsonReader ! JsonError
+pub fn JsonReader.next(var self): JsonEvent? ! JsonError
 pub fn JsonReader.own(var self, event: JsonEvent): JsonEvent ! JsonError
-pub async fn JsonReader.finish(var self): Unit ! JsonError
+pub fn JsonReader.finish(var self): Unit ! JsonError
 
 pub fn JsonWriter.toWriter(var output: Writer, options: JsonEncodeOptions): JsonWriter ! JsonError
-pub async fn JsonWriter.write(var self, event: JsonEvent): Unit ! JsonError
-pub async fn JsonWriter.finish(var self): Unit ! JsonError
+pub fn JsonWriter.write(var self, event: JsonEvent): Unit ! JsonError
+pub fn JsonWriter.finish(var self): Unit ! JsonError
 ```
 
 `parse` es la única construcción dinámica; `decode` exige un `T` estático y
 publica el valor solo después de consumir un documento completo. `encode` es la
 única comodidad de bytes para typed y `encodeCanonical` es la única operación
-que aplica JCS a un `JsonValue`. `JsonReader.next` devuelve `none` exactamente
+que aplica JCS a un `Value`. `JsonReader.next` devuelve `none` exactamente
 una vez después de la raíz; `finish` comprueba que no queda un token pendiente.
 `JsonWriter` solo acepta eventos en el orden normativo y `finish` publica éxito
 una sola vez. En ambos casos un error deja el objeto en estado terminal. La
-ruta a un `std.io.Writer` es async; el parser sobre `Bytes` no necesita una API
+ruta a un `std.io.Writer` es suspendible; el parser sobre `Bytes` no necesita una API
 paralela.
 
-`JsonValue.Object` conserva el orden de inserción y `JsonMember.key` es UTF-8;
-no se expone un `Map[String, JsonValue]` alternativo. `JsonNumber.text` copia
+`Value.Object` conserva el orden de inserción y `JsonMember.key` es UTF-8;
+no se expone un `Map[String, Value]` alternativo. `JsonNumber.text` copia
 el lexema validado y las conversiones numéricas no pasan por `Float64`. Los
 payloads de `JsonEvent` son vistas hasta el siguiente `next`; `own` es la única
 materialización estable. `JsonError` siempre incluye `JsonPath` y posición sin
 copiar el documento en el diagnóstico.
+
+`ValueView`/`parseView` son la ruta prestada e inmutable. `Raw`/`RawView` son
+bytes JSON opacos; `raw(bytes)` valida y `rawUnchecked(bytes)` solo está
+disponible en `unsafe`. `@name`, `@json(...)`, `@ignore` y `@json(base64)` se
+resuelven por derive en compile time; `@json(base64)` convierte `Bytes` tipado
+a texto Base64 RFC 4648, pero `parse` dinámico conserva el texto original.
 
 ## Sintaxis y Unicode
 
@@ -218,7 +224,7 @@ ambiental ni global y dos opciones incompatibles se rechazan antes de leer el
 documento.
 
 El encoder ordinario mantiene el orden declarativo de un record y el orden de
-inserción de un `JsonValue.Object`. El encoder canonical aplica RFC 8785: los
+inserción de un `Value.Object`. El encoder canonical aplica RFC 8785: los
 nombres se ordenan según JCS, strings y números usan su representación JCS y
 no se emite whitespace. Un `JsonWriter` canonical de streaming exige que el
 caller entregue las claves en ese orden; si no puede hacerlo, falla antes de
@@ -236,7 +242,7 @@ anterior; `JsonEvent.own` crea un valor estable cuando el caller lo necesita.
 escapa strings estrictamente y escribe directamente al `std.io.Writer`. El
 writer no hace buffering ilimitado para completar un documento y, tras un error
 de I/O, límite o estado, queda terminal y no anuncia éxito posterior. La ruta
-typed puede escribir un campo y continuar sin construir `JsonValue` ni un DOM.
+typed puede escribir un campo y continuar sin construir `Value` ni un DOM.
 
 El parser de valores y el decoder typed usan la misma máquina léxica y el mismo
 oráculo de errores. El decoder typed no materializa un DOM intermedio; un

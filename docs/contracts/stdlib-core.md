@@ -9,7 +9,7 @@ debe conservar exactamente las firmas y los observables de este documento.
 
 - Todas las operaciones son dispatch estático. No hay `Any`, vtables ni
   lookup por nombre.
-- Los valores que no declaran `async` no suspenden. Los errores se devuelven
+- Los valores cuyo cuerpo no alcanza `await` no suspenden. Los errores se devuelven
   como `Result` con la sintaxis `T ! E`.
 - Los límites de memoria, longitud y pasos son argumentos de options o defaults
   finitos del owner; alcanzar un límite devuelve un error nominal y no publica
@@ -48,6 +48,32 @@ trait Display { fn display(self): String }
 
 `Option` y `Result` son valores; mapearlos no captura pánicos ni reordena
 errores. `unwrapOr` es total. La construcción de un error no toca el host.
+
+## `std.async`
+
+El owner usa la suspensión inferida del lenguaje: no publica modificadores ni
+wrappers `Task`/`Future` y no duplica operaciones con sufijos async. `Join` solo
+nace de `spawn` y se consume mediante `await`; la cancelación y el detach son
+operaciones terminales estructuradas.
+
+```tondo
+pub type Join[T, E]
+pub type Waiter[T, E]
+pub type Completer[T, E]
+pub type AlreadyCompleted
+
+pub fn oneshot[T, E](): (Waiter[T, E], Completer[T, E])
+pub fn Waiter.wait(var self): T ! E
+pub fn Completer.complete(var self, value: T): Unit ! AlreadyCompleted
+pub fn Completer.fail(var self, error: E): Unit ! AlreadyCompleted
+pub fn Completer.cancel(var self): Unit ! AlreadyCompleted
+
+trait AsyncIterator[T] { fn next(mut self): T? }
+```
+
+La finalización de `Completer` es atómica y exactamente una operación gana; las
+posteriores devuelven `AlreadyCompleted`. `AsyncIterator` mantiene backpressure,
+cierra al salir de `for await` y no materializa un array implícitamente.
 
 ## `std.text`
 
@@ -131,8 +157,9 @@ estado de posición es observable únicamente por consumo. `collect` consume el
 cursor una sola vez y materializa el `Array[T]` al final, devolviendo
 `CollectionError` si el límite de objetos del runtime impide terminar la
 colección. Un `take` con un conteo negativo se comporta como `take(0)` y
-produce una colección vacía. Los callbacks son síncronos; una suspensión async
-no forma parte de este contrato.
+produce una colección vacía. Los callbacks son síncronos; una suspensión
+inferida no forma parte de este contrato.
+
 
 `Range` se construye únicamente con los operadores de lenguaje `start .. end`
 (final exclusivo) y `start ..= end` (final inclusivo). Es lazy y no materializa
@@ -196,11 +223,11 @@ introduce una segunda sintaxis de interpolación.
 pub enum IoError { Closed, Cancelled, InvalidData, ResourceLimit, Host }
 pub enum ReadResult { Data(Bytes), Eof }
 pub trait Reader {
-    async fn read(var self, max: Int): ReadResult ! IoError
+    fn read(var self, max: Int): ReadResult ! IoError
 }
 pub trait Writer {
-    async fn write(var self, data: Bytes): Int ! IoError
-    async fn flush(var self): Unit ! IoError
+    fn write(var self, data: Bytes): Int ! IoError
+    fn flush(var self): Unit ! IoError
 }
 pub fn defaultLimits(): IoLimits
 pub fn limits(maxBytes: Int, maxRead: Int): IoLimits ! IoError
@@ -222,7 +249,7 @@ writer no puede retener una vista del `Bytes` después de completar la operació
 
 El contrato completo y único está en
 [`docs/contracts/stdlib-serialization.md`](./stdlib-serialization.md). Incluye
-los protocolos `Serializer[E]`/`Deserializer[E]`, eventos para scalars,
+los protocolos `Encoder[C, E]`/`Decoder[C, E]`, eventos para scalars,
 arrays, maps con claves arbitrarias, records y enums, además de `own`, límites,
 atomicidad y reglas de `derive`. Los codecs concretos no construyen un DOM en
 la ruta typed y la deserialización publica un valor solo después de validar

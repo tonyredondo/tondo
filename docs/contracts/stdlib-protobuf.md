@@ -1,13 +1,15 @@
 # Contrato de `std.protobuf`
 
-**Estado:** implementación disponible para `STD-0.1A`: runtime wire bounded,
-reader/writer typed, preservación raw, parser/checker proto3 y generator
-determinista de fuente Tondo. La integración final del generator en el driver
-de proyectos y la conformance contra implementadores externos siguen siendo
-gates de promoción separados.
+**Estado:** contrato normativo para `STD-0.1A`. El runtime wire, reader/writer y
+generator existentes son un prototipo pre-ABI; la migración a
+`Encode[Protobuf]`/`Decode[Protobuf]` y la integración final del generator siguen
+pendientes.
 
 `std.protobuf` es el único owner de la generación schema-first y del wire
-format Protocol Buffers. El registro machine-readable
+protocol Protocol Buffers. Comparte los traits estáticos `Encode[Protobuf]` y
+`Decode[Protobuf]`, pero no expone el árbol dinámico `serialization.Value`: la
+inspección sin tipo utiliza `ProtoEvent` y `UnknownField` ligados al wire.
+El registro machine-readable
 [`testing/stdlib-protobuf.json`](../../testing/stdlib-protobuf.json) fija las
 decisiones cerradas y [`scripts/stdlib-protobuf-check.sh`](../../scripts/stdlib-protobuf-check.sh)
 las valida dentro de `scripts/test-gate.sh`.
@@ -107,21 +109,21 @@ pub enum ProtoBuildErrorKind {
 pub type ProtoError = { kind: ProtoErrorKind, offset: Int?, path: ProtoPath }
 pub type ProtoBuildError = { kind: ProtoBuildErrorKind, schema: String, path: String }
 
-pub fn decode[T: Deserialize](input: Bytes, options: ProtoDecodeOptions): T ! ProtoError
-pub fn encode[T: Serialize](value: T, options: ProtoEncodeOptions): Bytes ! ProtoError
-pub fn encodeDeterministic[T: Serialize](value: T, limits: ProtoLimits): Bytes ! ProtoError
+pub fn decode[T: Decode[Protobuf]](input: Bytes, options: ProtoDecodeOptions): T ! ProtoError
+pub fn encode[T: Encode[Protobuf]](value: T, options: ProtoEncodeOptions): Bytes ! ProtoError
+pub fn encodeDeterministic[T: Encode[Protobuf]](value: T, limits: ProtoLimits): Bytes ! ProtoError
 pub fn validate[T](input: Bytes, options: ProtoDecodeOptions): Unit ! ProtoError
 pub fn descriptor[T](): ProtoDescriptor[T]
 
 pub fn ProtoReader[T].fromBytes(input: Bytes, options: ProtoDecodeOptions): ProtoReader[T] ! ProtoError
-pub async fn ProtoReader[T].fromReader(var input: Reader, options: ProtoDecodeOptions): ProtoReader[T] ! ProtoError
-pub async fn ProtoReader[T].next(var self): ProtoEvent? ! ProtoError
+pub fn ProtoReader[T].fromReader(var input: Reader, options: ProtoDecodeOptions): ProtoReader[T] ! ProtoError
+pub fn ProtoReader[T].next(var self): ProtoEvent? ! ProtoError
 pub fn ProtoReader[T].own(var self, event: ProtoEvent): ProtoEvent ! ProtoError
-pub async fn ProtoReader[T].finish(var self): Unit ! ProtoError
+pub fn ProtoReader[T].finish(var self): Unit ! ProtoError
 
 pub fn ProtoWriter[T].toWriter(var output: Writer, options: ProtoEncodeOptions): ProtoWriter[T] ! ProtoError
-pub async fn ProtoWriter[T].write(var self, event: ProtoEvent): Unit ! ProtoError
-pub async fn ProtoWriter[T].finish(var self): Unit ! ProtoError
+pub fn ProtoWriter[T].write(var self, event: ProtoEvent): Unit ! ProtoError
+pub fn ProtoWriter[T].finish(var self): Unit ! ProtoError
 
 pub fn UnknownFields.count(self): Int
 pub fn UnknownFields.discard(var self): Unit
@@ -134,7 +136,7 @@ generado con `descriptor = "root"`; no hace lookup ni conserva metadata de otro
 tipo. `ProtoReader[T]` y `ProtoWriter[T]` están ligados a `T`, no aceptan un
 descriptor runtime y devuelven `none` exactamente una vez después del frame
 raíz. `own` materializa los payloads temporales y cualquier error deja reader o
-writer en estado terminal. La ruta a `std.io.Writer` es async y la de `Bytes`
+writer en estado terminal. La ruta a `std.io.Writer` es suspendible y la de `Bytes`
 usa la misma máquina sin crear un DOM.
 
 ## Alcance y entradas de build
@@ -167,7 +169,7 @@ después del build.
 ## Modelo generado
 
 Cada `message` produce un tipo nominal con acceso directo a sus fields,
-`Serialize`/`Deserialize` estáticos y una colección `UnknownFields`. El tipo
+`Encode`/`Decode` estáticos y una colección `UnknownFields`. El tipo
 generado es un valor normal de Tondo: sus copias, moves, préstamos y COW siguen
 las reglas del lenguaje y no dependen de un arena o finalizador oculto.
 

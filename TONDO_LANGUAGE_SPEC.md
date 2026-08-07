@@ -66,7 +66,8 @@ Su superficie pretende combinar:
 - La indexación, slicing y ergonomía de colecciones de Python.
 - Las operaciones vectorizadas y la semántica aritmética de NumPy.
 - La idea de vistas compactas de los slices de Go y `Span<T>` de C#, sin lifetimes escritos por el usuario.
-- La concurrencia estructurada de Swift y Kotlin, manteniendo resultados async ordinarios.
+- La concurrencia estructurada de Swift y Kotlin, manteniendo resultados ordinarios
+  y un efecto de suspensión inferido.
 - La composición de procesos de Bash y Nushell sin shell implícito.
 - La separación entre referencias seguras con identidad y punteros raw confinados a `unsafe`.
 
@@ -321,10 +322,12 @@ No se adoptan:
 
 Se adoptan conceptualmente:
 
-- `async` como parte explícita del contrato de una función y `await` en cada suspensión.
-- El resultado lógico ordinario de una función async, separado del handle creado al lanzarla concurrentemente.
+- `await` como único marcador explícito de suspensión; el compilador infiere el
+  efecto `suspend` de la función y lo propaga a sus callers.
+- El resultado lógico ordinario de una función suspendible, separado del handle creado al lanzarla concurrentemente.
 - Lifetimes estructurados para tareas hijas.
-- Separación entre semántica del lenguaje, scheduler e implementación de frames async.
+- Separación entre semántica del lenguaje, scheduler e implementación de frames
+  suspendibles.
 - ARC y las comprobaciones de unicidad como inspiración de implementación para
   identidad y buffers copy-on-write, complementados con recolección automática
   de ciclos.
@@ -333,7 +336,8 @@ No se adoptan:
 
 - Frames de coroutine, continuations o allocators visibles en firmas cotidianas.
 - Cancelación manual obligatoria para cada llamada secuencial.
-- Una ABI async fijada prematuramente por la sintaxis fuente.
+- Una ABI de suspensión fijada prematuramente por una keyword o un wrapper de
+  retorno visible.
 - La obligación de romper manualmente cada ciclo de referencias fuertes.
 
 ---
@@ -373,7 +377,8 @@ Una firma declara:
 - Parámetros que pueden cambiar de extensión o reemplazarse sin conservarla
   mediante `var`.
 - Parámetros genéricos y constraints.
-- Capacidad de suspensión mediante `async`, cuando existe.
+- Capacidad de suspensión inferida desde `await`; `@sync`/`@nosuspend` puede
+  imponer que una función nunca suspenda.
 - Precondiciones inseguras mediante `unsafe`, cuando el llamador debe garantizarlas.
 
 No hay excepciones comprobables fuera de la firma.
@@ -395,7 +400,8 @@ Ejemplos:
 - `remove` elimina una clave; asignar `none` no elimina.
 - `ref T` expresa observación prestada y temporal; `Ref[T]` expresa identidad
   segura y almacenable; `Pointer[T]` expresa acceso raw inseguro.
-- `async fn` expresa suspensión; `spawn` expresa concurrencia.
+- `await` expresa un punto de suspensión; `spawn` expresa concurrencia y
+  `spawn thread` expresa una frontera explícita de thread del sistema.
 - Un script raíz se convierte en un único `main` implícito; los módulos importados permanecen libres de efectos.
 
 ---
@@ -546,7 +552,7 @@ Estas convenciones no participan en resolución ni visibilidad. El linter debe d
 Las palabras reservadas de Tondo 0.1 son:
 
 ~~~text
-alias      and        as         async      await
+alias      and        as         await
 break      const      continue   defer      derive
 else       enum       err        fail       false
 fn         for        if         impl       import
@@ -562,7 +568,6 @@ type       unsafe     var        with
 | `alias` | Declarar un alias transparente |
 | `and` | Conjunción booleana con short-circuit |
 | `as` | Asignar alias a un import |
-| `async` | Declarar una función o cierre que puede suspenderse |
 | `await` | Esperar explícitamente una operación asíncrona |
 | `break` | Terminar el bucle actual |
 | `const` | Declarar una constante de módulo |
@@ -3022,7 +3027,33 @@ for item in stream {
 }
 ~~~
 
-### 10.18 Colecciones heterogéneas
+### 10.18 `AsyncIterator[T]`
+
+`AsyncIterator[T]` es el protocolo estático para streams lazy con backpressure.
+Su `next` puede suspenderse por inferencia y produce como máximo un elemento por
+llamada:
+
+~~~tondo pseudocode
+trait AsyncIterator[T] {
+    fn next(mut self): T?
+}
+
+fn consume(stream: impl AsyncIterator[Bytes]) {
+    for await chunk in stream {
+        use(chunk)
+    }
+}
+~~~
+
+`for await item in source` evalúa `source` una vez, espera cada `next` y no
+materializa un array. `break`, error, cancelación o salida del scope cierran el
+stream según su contrato. `collect(limit: ...)` es la operación explícita que
+materializa un `Array[T]`; exige límite cuando no se puede demostrar finitud.
+Un receiver de `Channel` puede adaptarse a este protocolo. `AsyncIterator` es
+distinto de `Iterator[T]`, aunque ambos conservan la regla de una implementación
+por target y elemento.
+
+### 10.19 Colecciones heterogéneas
 
 La heterogeneidad requiere una unión explícita:
 
@@ -3038,7 +3069,7 @@ let settings: Map[String, Int | String | Bool] = [
 
 No existe promoción a `Any`.
 
-### 10.19 Garantías de complejidad
+### 10.20 Garantías de complejidad
 
 Salvo copy-on-write o asignación necesaria:
 
@@ -3160,7 +3191,7 @@ fn inspect(resource: ref Resource) {
 inspect(ref resource)
 ~~~
 
-Su semántica completa y sus reglas async se definen en 16.3.
+Su semántica completa y sus reglas de suspensión se definen en 16.3.
 
 Un único parámetro final puede ser variádico y homogéneo:
 
@@ -3355,12 +3386,13 @@ fn(String, ...String)
 fn(ref Resource): Status
 fn(mut Array[Float], Float)
 fn(var Array[String], String)
-async unsafe fn(Pointer[Byte]): Bytes ! IoError
+unsafe fn(Pointer[Byte]): Bytes ! IoError
 ~~~
 
 Las funciones nombradas pueden pasarse como valores si la firma coincide
-exactamente. `ref`, `mut`, `var`, `async`, `unsafe`, el variádico, el éxito y el
-error forman parte del tipo; los nombres de parámetros no. Un valor cuyo tipo es
+exactamente. `ref`, `mut`, `var`, el efecto suspendible inferido, `unsafe`, el
+variádico, el éxito y el error forman parte del contrato; los nombres de
+parámetros no. Un valor cuyo tipo es
 literalmente `fn(...)` tiene representación uniforme y cumple siempre
 `Copy + Discard + Send + Share`. Esto incluye funciones nombradas especializadas
 y cierres que hayan realizado la coerción segura definida en 11.8.
@@ -3440,7 +3472,7 @@ let read: unsafe fn(Pointer[Byte]): Byte = unsafe (address) {
 Su cuerpo es una región `unsafe` y llamarlo requiere la misma región explícita
 que una función `unsafe` nombrada. `unsafe` forma parte de su firma de llamada.
 Un cierre que además pueda suspenderse utiliza la única combinación canónica
-`async unsafe (parameters) { ... }`. La región unsafe del llamador debe abarcar
+`unsafe (parameters) { ... }`. La región unsafe del llamador debe abarcar
 el `await` o el `spawn` que inicia la operación. La captura de punteros conserva
 además las reglas explícitas de 16.12.
 
@@ -3559,7 +3591,7 @@ fn reserveCleanup(): !AcquireError {
 
 Tres bounds intrínsecos cerrados describen cómo puede invocarse un callable
 concreto. Su argumento es la firma completa, incluidos `ref`, `mut`, `var`,
-variádico, éxito, error, `async` y `unsafe`:
+variádico, éxito, error, el efecto suspendible inferido y `unsafe`:
 
 ~~~text
 Call[fn(A): B]
@@ -3586,10 +3618,11 @@ ni implementarlos manualmente. Toda función nombrada y todo valor uniforme
 El compilador deriva los protocolos de cada cierre a partir de todos sus caminos
 de control. Una captura escrita impide `Call`; una captura movida impide
 `Call` y `CallMut`. `CallOnce` exige además que ninguna captura terminal quede
-abandonada tras una salida normal, `return`, `fail` o `?`. En un cierre `async`,
+abandonada tras una salida normal, `return`, `fail` o `?`. En un cierre
+suspendible,
 escribir una captura también impide `CallMut`: la operación debe poseer su entorno
 durante toda posible suspensión y no crea un préstamo exclusivo oculto a través
-de `await`. La mutabilidad compartida async se expresa con un tipo de
+de `await`. La mutabilidad compartida entre tareas se expresa con un tipo de
 sincronización explícito.
 
 Una llamada ordinaria prueba, en orden, `Call`, `CallMut` y `CallOnce`, y elige el
@@ -3610,7 +3643,7 @@ fn invoke[F: CallOnce[fn(Int): String]](
 ~~~
 
 El protocolo no borra la firma: invocar `Call[unsafe fn(...)]` continúa exigiendo
-una región `unsafe`, y una firma `async` continúa exigiendo `await` o `spawn`.
+una región `unsafe`, y una firma suspendible continúa exigiendo `await` o `spawn`.
 Los modos `ref`, `mut`, `var`, el variádico y el error se comprueban igual que en
 una llamada directa.
 
@@ -3658,244 +3691,85 @@ Descartar de ese modo un `Join`, un handle en propiedad todavía activo o
 cualquier compuesto que los contenga es error; debe ejecutarse una operación
 terminal concreta.
 
-### 11.10 Funciones asíncronas
+### 11.10 Funciones y efectos de suspensión
 
-`async fn` declara que una función puede suspenderse:
+Todas las funciones se declaran con `fn`. No existe una keyword `async`, ni un tipo público `Task` o `Future`. El compilador infiere un efecto de suspensión cuando el cuerpo contiene `await` o llama a una operación que puede suspenderse. El efecto queda registrado en ABI, metadatos, diagnósticos, documentación e IDE, pero no se escribe en la fuente. `@sync` y su alias `@nosuspend` garantizan que una función no suspende y hacen que cualquier `await` sea error.
 
-~~~tondo
-async fn fetchUser(id: UserId): User ! NetworkError {
+~~~tondo pseudocode
+fn fetchUser(id: UserId): User ! NetworkError {
     let response = await http.get(userUrl(id))?
     decodeUser(response.body)?
 }
+// @sync
+fn parseHeader(input: Bytes): Header ! ParseError { decodeHeader(input)? }
 ~~~
 
-El resultado escrito es el resultado lógico, no un wrapper de ejecución. La firma anterior produce `User ! NetworkError`, no `Task[Result[User, NetworkError]]`. `async` forma parte del tipo de función y del contrato público.
+El resultado escrito es siempre el resultado lógico, nunca un wrapper de ejecución. No hay APIs duplicadas con sufijo `Async`. Una llamada suspendible debe estar bajo `await` (secuencial) o `spawn` (concurrente); una llamada desnuda produce `E1601`. Las funciones que no alcanzan `await` siguen siendo síncronas y no crean un frame suspendible. Un valor vivo a través de `await` debe ser `Send`; un préstamo `mut`/`var` no puede cruzar la suspensión. Una función `unsafe` que suspende se declara `unsafe fn`; no existe una variante fuente adicional para combinar ambos efectos.
 
-Una llamada asíncrona no puede escribirse como una llamada ordinaria descartable. Debe aparecer como operando de `await` para ejecución secuencial o de `spawn` para ejecución concurrente. Esto impide crear trabajo que nunca se espera accidentalmente.
+Un `ref T` puede permanecer prestado durante una llamada suspendible secuencial:
+el propietario debe seguir vivo, no puede moverse ni recibir un préstamo
+exclusivo y `T` debe ser `Send`. Al iniciar la misma operación con `spawn`, el
+préstamo compartido requiere además `Share` y queda bloqueado hasta consumir el
+`Join`. Un receptor `self` suspendible equivale a `ref Self` y exige `Self:
+Send`; una implementación de trait debe conservar esa capacidad.
 
-Una función asíncrona puede ser infallible, fallible y devolver cualquier tipo ordinario:
-
-~~~tondo
-async fn flush(): !IoError
-async fn read(path: Path): Bytes ! IoError
-async fn sleep(duration: Duration)
-~~~
-
-Una función, método o cierre `async` no puede declarar parámetros ni receptores
-`mut` o `var` en 0.1. Un préstamo exclusivo no puede permanecer activo durante
-una suspensión; el código transforma y devuelve un valor, limita la mutación
-antes de iniciar la operación async o utiliza un tipo de sincronización explícito.
-
-`async unsafe fn` combina suspensión con precondiciones que debe demostrar el
-llamador. El orden de modificadores es siempre `async unsafe fn`; ambos forman
-parte del tipo. `unsafe` habilita las operaciones raw catalogadas y hace que su
-cuerpo sea una región unsafe, pero no relaja por sí solo `Send`, `Share`,
-ownership, cancelación ni la vida estructurada. Si una precondición debe
-permanecer cierta a través de suspensiones, la documentación unsafe la expresa
-para la duración lógica completa de la llamada. Una frontera que necesite
-transportar estado raw no `Send` lo convierte primero en un handle opaco auditado
-con el contrato concurrente adecuado.
-
-Sí puede declarar un parámetro `ref T`. En `await operation(ref value)`, el
-préstamo compartido dura hasta completar la llamada y el propietario debe
-permanecer vivo y sin movimiento ni préstamo exclusivo. `T` debe cumplir `Send`
-porque el frame async puede migrar entre workers; no necesita `Share` mientras la
-llamada sea secuencial y no exista otro observador concurrente. Lanzar esa llamada
-mediante `spawn` añade las reglas estructuradas de 11.12 y exige además `Share`.
-
-Un receptor `self` async equivale a `ref Self` para esta regla y exige
-`Self: Send`. En un trait, la presencia de ese método forma parte visible del
-contrato y toda implementación debe tener un target `Send`; un llamador genérico
-puede obtener ese hecho desde el trait. `spawn` sigue exigiendo `Share` en el
-punto de llamada y no convierte el trait completo en `Share`.
-
-Todo valor que permanezca vivo a través de un punto `await` debe cumplir `Send`. El compilador utiliza liveness: un valor no `Send` puede emplearse y terminar antes de la primera suspensión, pero no formar parte del frame suspendido. En una función genérica, mantener un `T` a través de `await` exige el constraint `T: Send`. Esta regla permite que cualquier task suspendida migre entre workers sin introducir una variante “local” del modelo async.
-
-Un cierre concreto se comprueba con las capacidades derivadas de su entorno, no
-solo con su firma. Por ello mantenerlo vivo a través de `await` exige que sus
-capturas cumplan `Send`, mientras un valor uniforme `fn(...)` ya lo cumple por
-construcción.
-
-Los `Join` pertenecientes al `scope` actual son una excepción intrínseca: el runtime los conserva en el estado estructurado del scope mientras la tarea propietaria espera otro hijo. Eso permite tener varios joins pendientes sin convertirlos en valores transferibles; la excepción no autoriza pasarlos a otra task o thread.
+El análisis de liveness aplica la misma regla a todo valor vivo a través de
+`await`, incluidos parámetros genéricos y capturas de closures. Un `T` que
+cruza la suspensión exige `T: Send`; un valor no `Send` puede usarse y terminarse
+antes del primer punto de suspensión, pero no formar parte del frame. La
+inferencia no convierte una función suspendible en una función síncrona ni
+introduce una variante local del modelo.
 
 ### 11.11 `await`
 
-`await` marca cada punto donde la función actual puede suspenderse:
+`await operation` es el único punto explícito de suspensión. Puede aparecer en cualquier función o cierre cuyo efecto inferido sea suspendible, incluido `main`, un script y un test. Devuelve el resultado lógico, consume un `Join[T, E]` y no propaga errores implícitamente: `await operation?` significa `(await operation)?`. Acepta una llamada suspendible, un callable compatible o un `Join`; otra forma produce `E1611`. Dos awaits son secuenciales. La única suspensión de cleanup es `defer await` con una llamada infalible de `Unit`.
+
+Una expresión `await` debe aparecer en una función cuyo efecto inferido sea
+suspendible y debe consumir exactamente el awaitable que recibe; no se admite
+una suspensión implícita ni un resultado `Join` abandonado.
+
+### 11.12 Concurrencia estructurada
+
+`spawn call()` inicia una task ligera en el `scope` actual y devuelve un handle afín `Join[T, E]`. `spawn thread call()` inicia un thread del sistema operativo; ambos usan el mismo handle y se esperan con `await`.
 
 ~~~tondo
-let user = await fetchUser(userId)?
-~~~
-
-La forma canónica anterior equivale a aplicar `?` al resultado obtenido después de esperar. `await operation?` se interpreta como `(await operation)?`, no como `await (operation?)`.
-
-`await`:
-
-- Solo puede aparecer dentro de una función o cierre `async`, en un script cuyo
-  `main` implícito sea async o en una entrada de test cuyo contexto async se
-  infiera según 28.3; otro contexto produce `E1610`.
-- Acepta una llamada async nombrada, a un valor `async fn(...)`, a un callable
-  concreto con el protocolo correspondiente, o un `Join[T, E]` producido por
-  `spawn`; cualquier otra forma produce `E1611`.
-- Devuelve el valor lógico `T` o `T ! E` de la operación.
-- Consume el `Join` cuando su operando es un handle; el handle queda no disponible aunque la espera produzca error o pánico.
-- No crea concurrencia por sí mismo; dos awaits consecutivos son secuenciales.
-- No propaga errores implícitamente; `?` continúa siendo visible y separado.
-- No puede aparecer dentro de un bloque `defer`. La única forma de cleanup que
-  puede suspenderse es la llamada infalible `defer await` definida en 13.7; no
-  existe un bloque async equivalente.
-
-### 11.12 Concurrencia estructurada con `scope` y `spawn`
-
-`scope` delimita la vida máxima de las tareas que contiene. `spawn` inicia una llamada async de forma concurrente y devuelve un handle `Join[T, E]` ligado a ese scope:
-
-~~~tondo
-async fn loadPage(userId: UserId): Page ! LoadError {
-    scope {
-        let userJob = spawn fetchUser(userId)
-        let postsJob = spawn fetchPosts(userId)
-
-        Page {
-            user: await userJob?
-            posts: await postsJob?
-        }
-    }
+fn prepare(): Join[Result, WorkerError] {
+    let job = spawn work()
+    do_other_work()
+    return job
 }
 ~~~
 
-Para una operación infallible, el handle se normaliza como `Join[T, Never]`. `Join` no envuelve el resultado de todas las llamadas async: solo existe cuando `spawn` solicita concurrencia y necesita representar una finalización pendiente.
+`return spawn call()` es únicamente el retorno de una expresión. Un `Join` puede transferirse por movimiento al caller. Al salir un scope, cada hijo debe ser esperado, cancelado, detached o transferido; no existe detach ni descarte implícito. `cancel` solicita cancelación pero el handle aún debe esperarse; `detach` consume el handle y lo entrega a un supervisor, y un detached no puede capturar préstamos locales. Error o pánico cancela y espera los hijos no transferidos antes del cleanup del scope. Argumentos y resultados cruzan por `Send`; préstamos `ref` enviados a un hijo requieren `Send + Share`.
 
-La región propietaria de `Join` se rastrea por el compilador y no se escribe como parámetro de lifetime en código fuente.
+El callee y cada argumento propio se transfieren mediante `CallOnce` al frame
+hijo. Un `Join` es el único owner de su resultado y error: no se puede copiar,
+observar por un poller ni guardar vivo al final del scope sin una terminación
+explícita. El runtime conserva sus roots hasta `await`, `cancel` observado,
+`detach` o transferencia por movimiento, incluso si el caller trabaja en otro
+thread.
 
-`scope` es una expresión cuyo tipo es el tipo de su bloque. Solo puede aparecer en
-un contexto async (`E1610`) porque abandonar el scope puede requerir esperar
-cleanup; esa salida cuenta como punto de suspensión para la regla de `Send`. Los
-argumentos de cada llamada lanzada se evalúan por completo, de izquierda a
-derecha, en la tarea propietaria antes de que el hijo pueda comenzar a
-observarlos.
+### 11.13 One-shot y completion
 
-Reglas estructurales:
+La librería ofrece `oneshot[T, E]` con dos capacidades: `Waiter` y `Completer`. El waiter se consume una vez; `complete`, `fail` y `cancel` son atómicos y una segunda finalización devuelve `AlreadyCompleted`. No captura callbacks ni define scheduler. Para notificaciones repetidas se usa `Channel` o `Signal`.
 
-- `spawn` solo es válido dentro de `scope` (`E1602`) y solo acepta una llamada de
-  firma async, ya sea nombrada, uniforme o demostrada por `CallOnce`; otro
-  operando produce `E1611`.
-- Los tipos de éxito y error de la llamada lanzada deben cumplir `Send`, porque el hijo transfiere su resultado a la tarea propietaria.
-- Cada `Join[T, E]` pertenece al scope más interno, es afín y no puede copiarse, devolverse, almacenarse fuera de él ni sobrevivirlo.
-- `Join[T, E]` no cumple `Send` ni `Share`: solo la tarea propietaria del `scope` puede esperarlo o cancelarlo.
-- Un join se consume exactamente una vez mediante `await` o mediante una operación explícita de cancelación de la futura librería.
-- `_ = join` no cuenta como consumo y es error; una tarea no puede abandonarse mediante descarte.
-- Alcanzar normalmente el final con un join sin consumir es error de compilación.
-- Si un `return`, `fail`, `?`, pánico o cancelación abandona el scope, cada join no consumido entra en teardown estructural: se solicita cancelación si su hijo continúa activo, se espera su cleanup y se consume el resultado si ya había terminado. Este es el propietario estructurado autorizado por 8.10; no convierte las salidas recuperables en cleanup implícito para otros bindings terminales del usuario.
-- En esa salida no local, el teardown de hijos es la primera fase de abandonar el
-  bloque `scope`: termina todos los hijos y libera sus préstamos estructurados
-  antes de ejecutar los `defer` registrados directamente en ese bloque. Los
-  defers de scopes léxicos más internos ya atravesados conservan su LIFO normal y
-  el borrow checker impide que consuman o muten una región todavía prestada al
-  hijo. Esta prioridad evita cerrar un recurso mientras una task aún lo observa.
-- Un éxito o error no observado durante ese teardown no sustituye la salida que lo inició. Un valor con obligación terminal ejecuta su acción de unwind; los demás valores se descartan como parte explícita de la política del scope. Un error recuperable se conserva como contexto diagnóstico suprimido. Un pánico de hijo continúa siguiendo la prioridad de 11.14.
-- No existe `spawn` separado o detached implícito. Una API de proceso o servicio de larga vida debe poseer explícitamente el scope que mantiene vivo su trabajo.
+### 11.14 `AsyncIterator[T]`
 
-Todo argumento enviado en propiedad al hijo debe cumplir `Send`. Los argumentos
-`Copy` se copian lógicamente y los argumentos afines se mueven al hijo, por lo que
-estos últimos no pueden entregarse después a otro hijo. Un argumento explícito
-`ref` no se envía en propiedad: crea el préstamo compartido estructurado descrito
-abajo. El callee también se transfiere al hijo y se invoca mediante
-`CallOnce[async fn(...)]`: una función nombrada se copia y un cierre concreto se
-copia o mueve según su entorno. Tanto el callee como cualquier argumento propio
-deben cumplir `Send`; `Share` solo es necesario para préstamos compartidos.
+`AsyncIterator[T]` es el protocolo lazy con backpressure:
 
-Los tipos `T` y `E` de un `Join[T, E]` pueden contener obligaciones terminales: el handle las posee mientras el resultado no se haya transferido mediante `await`. Esto no limita qué trabajo puede lanzarse. La acción de unwind de `Join` conoce su estado y, exactamente una vez, cancela o consume el resultado aplicando recursivamente las acciones necesarias.
+~~~tondo pseudocode
+trait AsyncIterator[T] { fn next(mut self): T? }
 
-A diferencia de la acción no suspendible de un handle ordinario, este teardown
-forma parte del runtime async del `scope` y puede suspender a su propietario hasta
-que todos los hijos hayan terminado su cleanup. Esa suspensión ya está incluida en
-el contrato de salida de `scope`; no introduce `await` oculto en una función
-síncrona ni permite acciones terminales async arbitrarias.
-
-El receptor `self` de un método async y los argumentos `ref` conservan su
-semántica de préstamo. Con `await` directo, cada préstamo dura hasta que termina
-la llamada. Con `spawn receiver.operation(ref other)`, pueden cruzar al hijo como
-préstamos compartidos estructurados solo si sus tipos cumplen `Send + Share`.
-Cada origen debe ser un lvalue estable que viva hasta consumir el `Join`; durante
-ese intervalo no puede moverse ni prestarse con `mut` o `var`, aunque pueden
-coexistir otros préstamos `ref`. Un temporal puede prestarse a un `await` directo,
-pero no a `spawn`, porque carecería de propietario exterior durante la vida del
-hijo.
-
-Ningún hijo recibe un binding exterior por referencia implícita ni un préstamo
-`mut` o `var`. Un cierre puede llevar al hijo su entorno por valor conforme a
-11.8; sus capturas `Copy` se copian y las afines se mueven al construir o
-transferir el cierre. Todo préstamo compartido exterior aparece como receptor
-`self` o argumento `ref` en la llamada lanzada. El estado compartido modificable
-se expresa mediante tipos de sincronización definidos sobre las capacidades de la
-sección 16.
-
-El orden en que el scheduler avanza hijos listos no está especificado. Sí están especificados el orden de evaluación que crea cada hijo, las relaciones establecidas por `await`, canales y locks, y la ausencia de data races en código seguro.
-
-### 11.13 Funciones y cierres async como valores
-
-El tipo de una función asíncrona conserva `async`:
-
-~~~tondo
-async fn(UserId): User ! NetworkError
-~~~
-
-Un cierre asíncrono antepone `async` a su lista de parámetros:
-
-~~~tondo
-let fetch: async fn(UserId): User ! NetworkError = async (id) {
-    await fetchUser(id)?
+fn consume(stream: impl AsyncIterator[Bytes]) {
+    for await chunk in stream { use(chunk) }
 }
 ~~~
 
-La anotación anterior realiza la coerción uniforme de 11.8 porque el cierre no
-captura estado. Sin tipo esperado, conserva un tipo anónimo y puede implementar
-`Call`, `CallMut` o `CallOnce` para la firma async correspondiente. `await`
-directo utiliza su modo derivado; `spawn` siempre transfiere el callee y utiliza
-`CallOnce`, de modo que nunca mantiene un préstamo exclusivo oculto en la tarea
-propietaria.
+`for await item in source` evalúa la fuente una vez y espera un elemento por `next`, sin materializar arrays. `break`, error, cancelación o salida del scope cierra el stream. `collect(limit: ...)` es la operación explícita que materializa un `Array[T]`; exige límite si no se prueba finitud. Un receiver de `Channel` puede adaptarse a este protocolo.
 
-`fn(A): B`, `unsafe fn(A): B`, `async fn(A): B` y
-`async unsafe fn(A): B` son cuatro tipos distintos. No existen conversiones
-implícitas que añadan u oculten suspensión o responsabilidad unsafe.
+### 11.15 Cancelación y efectos visibles
 
-### 11.14 Cancelación y pánicos en tareas
-
-La cancelación estructurada es una señal de control del runtime, no una variante añadida automáticamente a cada `E`. Es cooperativa y solo se observa en puntos de cancelación definidos:
-
-- Antes de suspender o al reanudarse en `await`.
-- Durante operaciones async de canales, timers, streams y procesos que la librería declare cancelables.
-- Al entrar o abandonar un `scope` que ya recibió cancelación.
-- En una comprobación explícita de la futura API de cancelación.
-
-Un bucle de CPU sin esos puntos no se cancela por preempción. Debe cooperar mediante una comprobación o yield async explícito. Al observar cancelación:
-
-- Se impide iniciar nuevo trabajo hijo.
-- Se desenrollan scopes según el orden único de 8.10: primero termina el registro
-  estructural de hijos de cada `scope` y después se drena su cleanup léxico en
-  LIFO.
-- Se ejecutan tanto los `defer` síncronos como los `defer await` registrados y
-  el fallback de cada token terminal vivo que no tenga guard, exactamente una
-  vez.
-- No se convierte la cancelación en un éxito ni se descartan errores ya observados.
-- El error o pánico que originó la salida conserva prioridad sobre cancelaciones derivadas.
-
-Una API que permita solicitar o observar cancelación explícitamente puede devolver un tipo nominal `Cancelled`; esa decisión pertenece a la librería y queda visible en su firma.
-
-Un pánico dentro de un hijo marca inmediatamente el scope como fallido, solicita cancelar a sus hermanos y se propaga como pánico al propietario en su siguiente punto de cancelación o al abandonar el scope. Nunca interrumpe una instrucción síncrona a mitad ni se transforma en `! E`. Si el propietario ejecuta un bucle de CPU sin puntos de cancelación, la observación se retrasa igual que cualquier otra cancelación cooperativa.
-
-Antes de propagarlo se espera el cleanup estructurado de todos los hijos. Si varios hijos entran en pánico antes de terminar el teardown, el hijo creado primero por orden de evaluación proporciona el pánico principal y los demás se adjuntan como diagnósticos suprimidos. Un pánico ya producido por el propietario conserva prioridad. Si el propietario solo tenía pendiente un éxito, `return`, `fail` o cancelación, el primer pánico de hijo prevalece y el resultado pendiente se conserva únicamente como contexto suprimido. Los errores recuperables no observados nunca se convierten en pánicos ni amplían implícitamente `E`; siguen la política de teardown de 11.12.
-
-### 11.15 Efectos visibles
-
-Tondo 0.1 no tiene un sistema general de efectos, pero las firmas reflejan:
-
-- Errores recuperables mediante `! E`.
-- Observación prestada mediante `ref`.
-- Mutación de extensión fija mediante `mut` y cambio estructural mediante `var`.
-- Suspensión mediante `async`.
-- Precondiciones raw del llamador mediante `unsafe`.
-
-I/O, reloj y aleatoriedad se distinguen mediante tipos y módulos de librería. La concurrencia se inicia únicamente con `spawn`, y todo acceso raw requiere una región `unsafe`.
+La cancelación es cooperativa y se observa en `await`, canales, timers, streams, procesos y comprobaciones de librería. Un pánico de hijo cancela hermanos, espera su cleanup y se propaga; el primer pánico por orden de creación es el principal. Las firmas reflejan errores con `! E`, préstamos con `ref`, mutación con `mut`/`var` y raw con `unsafe`. La suspensión es un efecto inferido, no una keyword ni una dimensión escrita del tipo de función.
 
 ---
 
@@ -3972,11 +3846,11 @@ trait Compare {
 
 Un trait no contiene campos, constructores ni inicialización. Puede declarar una operación asociada sin `self`; se invoca mediante `Trait.operation[Implementer](...)` y permite contratos como decoding o fábricas estáticas sin reflection. Especificar el implementador elimina la ambigüedad incluso cuando el método no recibe ni devuelve `Self`.
 
-Un trait que declara un método `async` con receptor `self` tiene el requisito
+Un trait cuyo método puede suspenderse con receptor `self` tiene el requisito
 intrínseco `Self: Send` de 11.10. Toda implementación debe satisfacerlo y, para
 comprobación genérica, `T: Trait` permite deducir también `T: Send`. No es
 herencia general entre traits: es una condición cerrada de formación de ese
-contrato async.
+contrato suspendible.
 
 ~~~tondo
 trait Decode {
@@ -4026,7 +3900,7 @@ El cuerpo de un `impl` completa exactamente el contrato del trait:
 - Tras sustituir `Self` y los parámetros del trait, cada implementación debe
   coincidir con la firma declarada: nombre, aridad, posiciones de parámetros,
   receptor, préstamos `ref`/`mut`/`var`, posición variádica, parámetros genéricos
-  y sus bounds, modificadores `async`/`unsafe` en su orden canónico, éxito y
+  y sus bounds, modificador `unsafe` y efecto suspendible en su orden canónico, éxito y
   error. Los nombres locales de parámetros y binders genéricos pueden diferir o
   usar `_`; las etiquetas públicas de llamada siguen siendo siempre las
   declaradas por el trait.
@@ -4236,7 +4110,7 @@ por las libertades de representación de 8.13; esa decisión no es observable.
 Reglas:
 
 - Solo puede ocupar el éxito superior declarado después de `:` en una función
-  libre, inherente o asociada, incluida una función `async`. Puede seguirle un
+  libre, inherente o asociada, incluida una función suspendible. Puede seguirle un
   canal visible `! E`. No aparece en parámetros, fields, aliases, funciones como
   valores, cierres, métodos de trait ni sus implementaciones.
 - La lista contiene uno o más traits, capacidades o protocolos válidos para un
@@ -4563,7 +4437,7 @@ defer {
 }
 ~~~
 
-Una llamada async infalible se registra con una única forma:
+Una llamada suspendible infalible se registra con una única forma:
 
 ~~~tondo pseudocode
 defer await Service.stop(service)
@@ -4612,21 +4486,21 @@ Reglas:
 - La expresión diferida debe ser infallible y devolver `Unit`.
 - Las formas ordinarias `defer call()` y `defer { ... }` son estrictamente
   síncronas: no pueden contener `await`, `spawn`, una expresión `scope` ni una
-  llamada async.
-- `defer await call()` solo acepta una llamada `async fn(...): Unit`
+  llamada suspendible.
+- `defer await call()` solo acepta una llamada `fn(...): Unit`
   infallible. La llamada no se inicia al registrar el defer: sus operandos y
   ownership se reservan entonces y se invoca y espera al abandonar el scope, en
   su posición LIFO.
 - `defer await` cuenta como suspensión de la entrada que lo contiene. Una
-  función o cierre debe ser `async`; un script, test o setup de suite infiere su
-  contexto async según sus reglas. Todos los valores reservados que continúen
+  función o cierre puede suspenderse por inferencia; un script, test o setup de suite
+  infiere su contexto según sus reglas. Todos los valores reservados que continúen
   vivos satisfacen el mismo contrato `Send` y de liveness que en cualquier otro
   `await`.
-- La llamada async diferida admite como máximo el mismo operando afín propietario
+- La llamada suspendible diferida admite como máximo el mismo operando afín propietario
   que una llamada diferida ordinaria. No existe `defer await { ... }`, no puede
   propagar un error ni iniciar `scope` o `spawn`.
 - Una salida cooperativa, incluido `return`, `fail`, pánico o cancelación
-  estructurada, no cancela el cleanup async que ella misma inicia. Timeout,
+  estructurada, no cancela el cleanup suspendible que ella misma inicia. Timeout,
   resource limit, interrupción externa, pérdida de aislamiento, OOM
   irrecuperable o aborto continúan pudiendo terminarlo.
 - El runtime conduce el cleanup suspendido sin bloquear un worker del host. Un
@@ -4638,6 +4512,10 @@ Reglas:
 - OOM irrecuperable, stack overflow, corrupción del runtime, aborto del proceso y terminación externa no son pánicos Tondo y no garantizan ejecutar defers.
 
 `defer` no es un destructor ni finalizador. Hace visible el punto de adquisición y el cleanup.
+
+Un `defer await` debe conservar la misma obligación de ownership hasta completar
+su espera; registrar el cleanup no transfiere ni elimina esa obligación antes
+del teardown.
 
 ### 13.8 Asignación simple y múltiple
 
@@ -5476,7 +5354,7 @@ let status = inspect(ref resource)
   llamador hasta completar una llamada directa.
 - Pueden coexistir préstamos `ref` solapados. Cualquier préstamo `mut` o `var`, o
   movimiento del propietario, espera a que todos ellos terminen.
-- En una llamada síncrona dura únicamente hasta regresar el callee. En async
+- En una llamada síncrona dura únicamente hasta regresar el callee. En una función suspendible
   sigue las reglas de `await` y `spawn` de 11.10 y 11.12.
 
 `ref` no es `Ref[T]`: el primero es permiso temporal comprobado por el compilador,
@@ -5667,7 +5545,7 @@ nunca cambia qué programas son válidos.
 
 La vida de un préstamo `ref`, `mut` o `var` se infiere y no se escribe como
 lifetime. En una llamada síncrona queda limitada dinámicamente a esa llamada. Un
-`ref` de una llamada async puede extenderse hasta completar el `await` o consumir
+`ref` de una llamada suspendible puede extenderse hasta completar el `await` o consumir
 el `Join` propietario, pero continúa ligado a esa estructura y nunca se convierte
 en un valor de referencia. Un binding de patrón `ref` queda limitado al arm o a
 la iteración; un binding de patrón `mut` o `var`, únicamente a la iteración.
@@ -5769,7 +5647,7 @@ recorrer el heap ni simular cleanup de recursos.
 El target de referencia Tondo 0.1 utiliza una VM con collector **mark-and-sweep
 preciso, no móvil y stop-the-world**. El bytecode verificado aporta descriptores
 cerrados de trazado para cada forma administrada; frames síncronos, frames
-async, tasks estructuradas y registros del host publican sus roots de manera
+suspensión, tasks estructuradas y registros del host publican sus roots de manera
 explícita. El collector no ejecuta código Tondo y recupera ciclos
 inalcanzables.
 
@@ -5935,14 +5813,14 @@ let header = unsafe {
 }
 ~~~
 
-Una función puede ser simultáneamente async y unsafe:
+Una función `unsafe` también puede suspenderse por inferencia:
 
 ~~~tondo
-async unsafe fn readHeaderAsync(
+unsafe fn readHeader(
     address: Pointer[Byte],
 ): Header ! DecodeError {
     let first = address.read()
-    await decodeHeaderAsync(first)?
+    await decodeHeader(first)?
 }
 ~~~
 
@@ -5950,7 +5828,7 @@ El llamador mantiene visibles ambos efectos:
 
 ~~~tondo
 let header = unsafe {
-    await readHeaderAsync(address)?
+    await readHeader(address)?
 }
 ~~~
 
@@ -6041,10 +5919,10 @@ Reglas adicionales:
 
 - No existen operadores aritméticos especiales sobre punteros.
 - El programador debe garantizar alineación, tamaño, inicialización, mutabilidad, procedencia y vida suficiente.
-- Un puntero solo puede capturarse por un cierre `unsafe` o `async unsafe`; así la
+- Un puntero solo puede capturarse por un cierre `unsafe` o `unsafe suspendible`; así la
   procedencia, alineación y vida exigidas por cada uso forman parte visible del
   contrato de llamada. El llamador debe mantener esas precondiciones durante toda
-  la invocación y, en forma async, a través de todas sus suspensiones. El cierre
+  la invocación y, en forma suspendible, a través de todas sus suspensiones. El cierre
   concreto deriva que no es `Send` ni `Share` porque `Pointer[T]` tampoco lo es.
   Una frontera que necesite cruzar una task o thread valida sus precondiciones y
   encapsula primero el puntero en un handle opaco auditado; `unsafe` no convierte
@@ -6101,11 +5979,13 @@ Reglas relevantes:
 
 ### 16.14 Tasks, threads y canales
 
-Las tasks creadas por `spawn` pertenecen al modelo async estructurado de la sección 11. Pueden ejecutarse en el thread actual o migrar entre workers; el programa no puede depender de una correspondencia entre task y thread.
+Las tasks creadas por `spawn` pertenecen al modelo estructurado de la sección 11.
+Pueden ejecutarse en el thread actual o migrar entre workers; el programa no
+puede depender de una correspondencia entre task y thread.
 
 Los threads del sistema operativo son recursos explícitos de la librería. Para no
 depender de variadic generics, una operación conceptual
-`Thread.start[F, A, R](operation: F, argument: A)` exige
+`spawn thread operation(argument)` exige
 `F: Send + CallOnce[fn(A): R]`, `A: Send` y `R: Send`. Varios valores se agrupan
 en una tuple y la ausencia de datos usa `()`. El payload y el callable se copian
 si cumplen `Copy` y se mueven en otro caso; por ello un cierre puede llevar
@@ -6115,7 +5995,9 @@ Ningún thread se separa silenciosamente de su handle.
 
 Los canales tipados, mutexes, atomics, actores y pools de trabajo pertenecen a la librería estándar, pero deben respetar `Send` y `Share`. Un `Channel[T]` solo transporta `T: Send`; enviar un `T` afín mueve el valor al canal. Tondo 0.1 no introduce un segundo modelo implícito de memoria compartida ni una keyword `select`; una futura operación de selección debe diseñarse de forma exhaustiva y cancelable.
 
-El trabajo bloqueante o intensivo de CPU no debe ejecutarse directamente en un worker async cuando pueda impedir el progreso de otras tasks. La librería ofrecerá una frontera explícita hacia threads o un pool bloqueante.
+El trabajo bloqueante o intensivo de CPU no debe ejecutarse directamente en un
+worker cooperativo cuando pueda impedir el progreso de otras tasks. La librería
+ofrecerá una frontera explícita hacia threads o un pool bloqueante.
 
 #### Garantía de progreso cooperativo
 
@@ -6142,9 +6024,9 @@ El lenguaje no fija:
 
 Un loop de CPU que no suspende puede monopolizar su worker. Si todas las
 capacidades de ejecución están monopolizadas de ese modo, Tondo no promete
-progreso async. Las APIs bloqueantes de la librería estándar deben usar una
+progreso cooperativo. Las APIs bloqueantes de la librería estándar deben usar una
 frontera explícita de blocking o threads y no ocupar silenciosamente un worker
-async. La cancelación se observa solo en los puntos definidos por 11.14; una vez
+de suspensión. La cancelación se observa solo en los puntos definidos por 11.14; una vez
 alcanzado uno con cancelación pendiente, debe observarse antes de iniciar nuevo
 trabajo hijo.
 
@@ -6218,8 +6100,8 @@ adyacente `??` es error léxico y nunca significa coalescencia.
 -value     negación de entero con signo o float
 not value  negación booleana
 ~value     complemento bitwise de entero o Byte
-await op   esperar una operación async
-spawn call iniciar una llamada async en el scope actual
+await op   esperar una operación suspendible o un Join
+spawn call iniciar una task en el scope actual
 ~~~
 
 No existe `!value` como negación; `!` queda reservado en tipos fallibles.
@@ -6751,10 +6633,11 @@ fn main(): !(ConfigError | NetworkError) {
 }
 ~~~
 
-Un punto de entrada puede ser asíncrono. El runtime crea y conduce el scope raíz sin exponer un executor en la firma:
+Un punto de entrada puede contener `await` o `spawn`. El runtime crea y conduce
+el scope raíz sin exponer un executor ni un wrapper en la firma:
 
 ~~~tondo
-async fn main(): !AppError {
+fn main(): !AppError {
     let server = await Server.start()?
     defer Server.stop(server)
 
@@ -6774,7 +6657,7 @@ async fn main(): !AppError {
 - Puede declarar un error `E` mediante `: !E`.
 - Su error `E` debe cumplir `Discard`; al llegar a la frontera del runtime debe
   ser un dato diagnosticable, no ownership pendiente de cleanup.
-- Puede ser `async`, pero no `unsafe`.
+- Puede suspenderse por inferencia, pero no puede ser `unsafe`.
 - No puede sobrecargarse.
 
 Un target `hosted` ejecutable sin `main` explícito válido ni script raíz produce
@@ -6821,10 +6704,9 @@ En un script raíz:
 - `let`, `var`, control de flujo, expresiones y `defer` de nivel superior son sentencias locales del `main` implícito.
 - Una función nombrada de módulo no captura `let` o `var` del script; esos bindings solo son visibles para sentencias posteriores del `main` implícito.
 - Las sentencias se ejecutan en orden de fuente.
-- Un `await` o un `scope` de nivel superior convierte el `main` implícito en
-  `async`. Un `scope` sin hijos es válido aunque normalmente redundante; su
-  contrato sigue siendo async y no depende de demostrar si contiene trabajo
-  concurrente.
+- Un `await` o un `scope` de nivel superior hace que el `main` implícito sea
+  suspendible por inferencia. Un `scope` sin hijos es válido aunque normalmente
+  redundante; su contrato sigue siendo el de un scope estructurado.
 - El compilador infiere localmente la unión cerrada de errores propagados por el cuerpo, porque la firma implícita no es una API importable.
 - El error inferido debe cumplir `Discard`, igual que en un `main` explícito; una
   obligación terminal no puede convertirse en el diagnóstico final del runtime.
@@ -6901,7 +6783,10 @@ Un pipeline comienza a ejecutar únicamente mediante una operación terminal exp
 - `run()`: conecta los streams configurados y espera.
 - `check()`: espera y convierte estados no satisfactorios en un error nominal.
 
-Las operaciones que esperan I/O deben ofrecer forma async y se consumen con `await`. Las variantes bloqueantes, si existen, deben nombrarse como tales y no bloquear silenciosamente un worker async.
+Las operaciones que esperan I/O se declaran como funciones ordinarias cuyo efecto
+de suspensión infiere el compilador y se consumen con `await`. Las variantes
+bloqueantes, si existen, deben nombrarse como tales y no bloquear silenciosamente
+un worker cooperativo.
 
 ### 20.7 Streams y datos
 
@@ -6923,13 +6808,15 @@ No poder crear un proceso, perder un stream o fallar al esperar son errores recu
 
 Una operación `check()` puede aplicar una política explícita y devolver `!ProcessExitError`. En un pipeline, el resultado conserva el estado de cada etapa; la librería deberá especificar qué políticas de comprobación ofrece sin copiar silenciosamente la regla particular de un shell.
 
-`Command.start()` crea un proceso del sistema y devuelve un handle; la keyword `spawn` queda reservada exclusivamente para crear una task async dentro de `scope`. La separación evita una excepción léxica para nombres de método y hace visible qué clase de concurrencia comienza.
+`Command.start()` crea un proceso del sistema y devuelve un handle; `spawn` queda
+reservado para tasks y threads estructurados. La separación evita una excepción
+léxica para nombres de método y hace visible qué clase de concurrencia comienza.
 
 ### 20.9 Vida, cancelación y cleanup
 
 Un proceso iniciado es un recurso externo. Su handle en propiedad es afín y debe permitir esperar, cancelar o transferir ownership mediante movimiento explícito. Abandonar un hijo todavía activo sin una operación terminal o un `defer` que garantice cleanup es error de compilación.
 
-Cuando una operación de proceso pertenece a un `scope` async:
+Cuando una operación de proceso pertenece a un `scope` estructurado:
 
 - La cancelación del scope solicita detener la espera y aplica la política de cleanup configurada.
 - Cerrar pipes y esperar hijos evita zombies y tareas suspendidas permanentemente.
@@ -6948,7 +6835,7 @@ en 20.11.
 - Un error no manejado de `main`, explícito o implícito, corresponde a un código de fallo no cero; el valor canónico inicial es `1`.
 - El runtime escribe una representación diagnóstica del error en stderr.
 - Un pánico utiliza un código de fallo distinto cuando la plataforma lo permita y termina solo después del unwind estructurado.
-- Antes de terminar, el scope async raíz cancela y espera cualquier hijo estructurado pendiente.
+- Antes de terminar, el scope raíz cancela y espera cualquier hijo estructurado pendiente.
 
 La representación diagnóstica por defecto incluye al menos el nombre del tipo y sus variantes, pero no constituye una interfaz de usuario estable. No obtiene por reflection acceso a campos privados ni revela contenido opaco; cualquier payload adicional requiere un contrato de formato explícito definido por la librería. Una aplicación que necesite mensajes o códigos concretos debe manejar el error dentro de `main` y utilizar la API de proceso.
 
@@ -6959,7 +6846,7 @@ ejecutable **`hosted`**. Un target hosted proporciona como mínimo:
 
 - Invocación de un `main` explícito o implícito.
 - Código de terminación y un canal diagnóstico equivalente a stderr.
-- Runtime suficiente para ownership, pánicos, unwind estructurado y async, aunque
+- Runtime suficiente para ownership, pánicos, unwind estructurado y suspensión, aunque
   el executor utilice un único thread.
 
 Un target de librería no necesita punto de entrada. Un entorno freestanding o
@@ -6997,7 +6884,7 @@ stubs que fallen siempre en runtime. La ausencia de una capacidad elimina los
 módulos estándar que dependen de ella. Importarlos se rechaza con `E1008`,
 incluyendo en el diagnóstico la capacidad ausente.
 
-Las semánticas nucleares, los tipos de valor y async no dependen de `threads`:
+Las semánticas nucleares, los tipos de valor y la suspensión no dependen de `threads`:
 un executor monothread es conforme. `Command` y `Pipeline` siguen siendo tipos
 intrínsecos de plan, pero sus constructores y operaciones terminales pertenecen a
 `std.process` y solo existen con la capacidad `process`. Por tanto, un script que
@@ -7076,7 +6963,7 @@ Antes de construir el layout se aplican, en este orden:
    grafía que mantiene inequívoca su asociación.
 6. `: Unit` se omite como resultado infallible de una declaración, cierre o tipo
    de función, salvo que `:` o `Unit` tenga un comentario asociado.
-7. Los modificadores se ordenan `pub async unsafe fn`, omitiendo los ausentes.
+7. Los modificadores se ordenan `pub unsafe fn`, omitiendo los ausentes.
 8. Si la emisión sin trivia uniría dos negaciones `-` como el token inválido `--`,
    se parentiza el operando interior: `- -value` se emite `-(-value)`. Si uniría
    dos propagaciones postfix como `??`, se parentiza la primera:
@@ -7309,8 +7196,8 @@ La documentación de una función fallible debe explicar:
 
 Una función `unsafe` pública debe enumerar las obligaciones de alineación,
 lifetime, procedencia, aliasing e inicialización que correspondan. Una función
-async pública debe documentar cancelación, recursos retenidos y efectos de larga
-duración cuando no sean obvios por sus tipos. Una `async unsafe fn` documenta
+el efecto suspendible debe documentar cancelación, recursos retenidos y efectos
+de larga duración cuando no sean obvios por sus tipos. Una `unsafe fn` documenta
 además cuáles de sus obligaciones deben seguir siendo ciertas a través de cada
 suspensión y hasta completar la llamada.
 
@@ -7364,7 +7251,7 @@ Las categorías tienen este procedimiento exacto:
 - `tondo fragment`: se parsea primero con la superficie de `script_program`. Los
   imports y declaraciones permanecen a nivel de módulo; los statements superiores
   se trasladan, sin cambiar su AST, a una función privada con símbolo higiénico
-  inaccesible al source. Esa función infiere `async` y su unión cerrada de errores
+  inaccesible al source. Esa función infiere suspensión y su unión cerrada de errores
   con las mismas reglas que el `main` implícito de 20.3, pero no es un entry
   point y nunca se ejecuta. Después se añade el fixture, se resuelve y se
   typecheckea. Si el bloque declara una función `main`, se comprueba como raíz
@@ -7692,16 +7579,16 @@ oculten un diagnóstico independiente.
 
 | Código | Nombre estable | Condición primaria |
 |---|---|---|
-| `E1601` | `async-call-not-awaited` | Llamada async fuera de `await` o `spawn`. |
-| `E1602` | `spawn-outside-scope` | `spawn` no pertenece a un `scope` async válido. |
+| `E1601` | `suspend-call-not-awaited` | Llamada suspendible fuera de `await` o `spawn`. |
+| `E1602` | `spawn-outside-scope` | `spawn` no pertenece a un `scope` válido. |
 | `E1603` | `join-escapes` | Un `Join` sale de su región propietaria. |
 | `E1605` | `non-send-transfer` | Valor no `Send` cruza task/thread o queda vivo a través de `await`. |
 | `E1606` | `non-share-borrow` | Préstamo concurrente exige `Share` y el origen no lo cumple. |
 | `E1607` | `exclusive-borrow-across-await` | Préstamo `mut`/`var` cruza una suspensión prohibida. |
-| `E1608` | `invalid-async-cleanup` | Cleanup async usa una forma distinta de una única llamada infallible `defer await`, o un defer intenta crear scope o lanzar trabajo. |
-| `E1609` | `invalid-async-signature` | Firma async contiene receptor o parámetro exclusivo prohibido. |
-| `E1610` | `invalid-async-context` | `await` o `scope` aparece fuera de una función, cierre o script async. |
-| `E1611` | `invalid-async-operand` | `await` o `spawn` recibe una forma que no representa la operación permitida. |
+| `E1608` | `invalid-suspend-cleanup` | Cleanup suspendible usa una forma distinta de una única llamada infallible `defer await`, o un defer intenta crear scope o lanzar trabajo. |
+| `E1609` | `invalid-suspend-signature` | Firma suspendible contiene receptor o parámetro exclusivo prohibido. |
+| `E1610` | `invalid-suspend-context` | `await` o `scope` aparece fuera de una función, cierre o script con efecto suspendible. |
+| `E1611` | `invalid-suspend-operand` | `await` o `spawn` recibe una forma que no representa la operación permitida. |
 
 #### Unsafe, programas y constantes
 
@@ -7914,8 +7801,8 @@ local de la fuente:
 - Un tipo anónimo generado por el lenguaje utiliza
   `generated["<kind>","<source_id>","<module>","<file>",<start_byte>]`, con los
   cuatro strings escapados como JSON y argumentos de tipo canónicos cuando
-  existan. `<kind>` es `closure`, `unsafe-closure`, `async-closure` o
-  `async-unsafe-closure`; la ubicación es el nodo de fuente que lo crea. Los
+  existan. `<kind>` es `closure`, `unsafe-closure` o `suspendible-closure`; la
+  ubicación es el nodo de fuente que lo crea. Los
   cursores intrínsecos sin identidad de fuente se escriben como
   `cursor[own,<collection_type>]`, `cursor[ref,<collection_type>]` o
   `cursor[mut,<collection_type>]` según el modo de 10.17.
@@ -8076,7 +7963,7 @@ Son errores obligatorios, entre otros:
   supera la terminación por cambio de tamaño (`E1112`).
 - Más de una implementación `Iterator[T]` para el mismo target (`E1113`).
 - Literal de map con una clave constante repetida (`E1116`).
-- Llamada async sin `await` o `spawn` (`E1601`).
+- Llamada suspendible sin `await` o `spawn` (`E1601`).
 - `Join` que intenta escapar de su región estructurada (`E1603`) o conserva su
   obligación terminal en una salida normal (`E1404`).
 - Uso de un binding después de mover un valor afín (`E1401`).
@@ -8134,7 +8021,7 @@ La suite se divide como mínimo en:
 1. **Lexing, parsing y formato:** casos válidos, inválidos, recuperación y
    resultados byte a byte de `tondo fmt`.
 2. **Compile-pass y compile-fail:** resolución, tipos, traits, exhaustividad,
-   ownership, préstamos, capacidades, async, unsafe y códigos diagnósticos.
+   ownership, préstamos, capacidades, suspensión, unsafe y códigos diagnósticos.
 3. **Consultas semánticas:** schema JSON, IDs, spans, reparaciones y datos
    obligatorios de 22.5.
 4. **Runtime:** orden de evaluación, overflow, bounds, slicing, copy-on-write,
@@ -8144,7 +8031,7 @@ La suite se divide como mínimo en:
 5. **Concurrencia:** litmus tests de memoria y progreso que enumeran resultados
    permitidos y prohibidos, sin exigir un orden de scheduling ni tiempos de
    pared concretos.
-6. **Hosted:** entrada, salida, código de terminación, `main` async y cleanup del
+6. **Hosted:** entrada, salida, código de terminación, `main` suspendible y cleanup del
    scope raíz. Los casos de procesos solo se aplican cuando existe la capacidad
    `process`.
 7. **Metaprogramación:** gramática y formato de `derive`, autorización y
@@ -8152,7 +8039,7 @@ La suite se divide como mínimo en:
    reproducibilidad, queries de expansión y metadata runtime sin acceso a
    valores.
 8. **Testing:** gramática y formato de `suite`/`test`, source sets, inferencia
-   async/fallible, lifecycle, aislamiento, selección, retries, tiempo virtual,
+   suspendible/fallible, lifecycle, aislamiento, selección, retries, tiempo virtual,
    snapshots y equivalencia de los formatos versionados definidos por
    `TONDO_TESTING_SPEC.md`.
 
@@ -8229,7 +8116,7 @@ letter_or_digit = Unicode_XID_Continue | "_" ;
 identifier      = letter, { letter_or_digit } ;
 
 field_name      = identifier
-                | "alias" | "and" | "as" | "async" | "await"
+                | "alias" | "and" | "as" | "await"
                 | "break" | "const" | "continue" | "defer" | "derive"
                 | "else" | "enum" | "err" | "fail" | "false" | "fn"
                 | "for" | "if" | "impl" | "import" | "in"
@@ -8437,13 +8324,12 @@ primary_type    = type_path
 tuple_type      = "(", type_expr, ",", type_expr,
                   { ",", type_expr }, [ "," ], ")" ;
 
-function_type   = [ function_modifiers ], "fn", "(",
+function_type   = "fn", "(",
                   [ function_type_list ], ")",
                   [ outcome_annotation ] ;
 
 function_modifiers
-                = "async", [ "unsafe" ]
-                | "unsafe" ;
+                = "unsafe" ;
 
 parameter_modifier
                 = "ref" | "mut" | "var" ;
@@ -8570,8 +8456,9 @@ implementation_method
                   [ outcome_annotation ], block, NL ;
 ~~~
 
-Un método de trait puede anteponer `async`, `unsafe` o la combinación canónica
-`async unsafe` a `fn`; la implementación debe coincidir exactamente. El primer
+Un método de trait puede anteponer `unsafe` a `fn`; la implementación debe
+coincidir exactamente. La capacidad de suspensión se infiere desde el cuerpo y
+la implementación debe conservarla. El primer
 parámetro puede ser `self`, `mut self` o `var self`.
 
 En una llamada calificada a una operación de trait sin receptor, el primer argumento genérico después del nombre del método selecciona `Self`; no forma parte de los `generic_params` declarados por el método.
@@ -8604,7 +8491,7 @@ parameter       = identifier, ":", [ parameter_modifier ], type_expr
 
 Una firma no puede expresar dos `!` superiores. El tipo completo después de `:` puede ser un éxito ordinario, `T ! E` o el shorthand `!E`.
 
-Una firma `async`, también cuando sea `async unsafe`, no puede contener parámetros
+Una firma suspendible, también cuando sea `unsafe`, no puede contener parámetros
 ni receptores `mut` o `var`; cada parámetro `ref T` exige `T: Send`, y un receptor
 `self` exige `Self: Send`. Ambos adquieren además `Share` al lanzarse mediante
 `spawn`. `unsafe` no relaja esas condiciones. Un parámetro `...T` debe ser el
@@ -8664,7 +8551,7 @@ Fuera de la forma `defer { ... }`, tanto el `postfix_expression` ordinario como
 el `plain_postfix_expression` de `deferred_async_call` deben terminar en un
 `call_suffix`; diferir un valor, un acceso de campo o un método sin llamarlo es
 error semántico. La segunda forma queda además restringida por 13.7 a una
-llamada async infallible que devuelve `Unit`.
+llamada suspendible infallible que devuelve `Unit`.
 
 ### 23.15 Asignación
 
@@ -8698,7 +8585,7 @@ una forma sea una ruta de lugar no concede por sí solo permiso de escritura.
 ### 23.16 `for`
 
 ~~~ebnf
-for_stmt        = "for",
+for_stmt        = "for", [ "await" ],
                   ( block
                   | irrefutable_pattern, "in", expression, block
                   | expression, block ) ;
@@ -8709,6 +8596,10 @@ Resolución:
 - `for { ... }`: infinito.
 - Si aparece `in` al nivel del header: iteración.
 - En otro caso: la expresión debe ser `Bool`.
+- `for await pattern in expression` solo es válido para una fuente que
+  implemente `AsyncIterator[T]`; espera cada `next` y hereda el efecto de
+  suspensión de 11.14. La forma `for await` sin `in` o sobre una fuente
+  síncrona produce `E1611`.
 
 ### 23.17 Expresiones condicionales y match
 
@@ -8877,7 +8768,7 @@ Sin esa frontera, un postfix sobre el valor ya esperado se parentiza:
 let id = (await fetchUser()).id
 ~~~
 
-Así `await factory().fetch()` espera la llamada async formada por la cadena
+Así `await factory().fetch()` espera la llamada suspendible formada por la cadena
 completa, mientras `(await factory()).fetch()` espera primero `factory` y llama
 después al método del resultado. Un `?` dentro de argumentos o de una expresión
 agrupada conserva su significado local. `spawn` no admite postfix exterior
@@ -9132,8 +9023,9 @@ El parser puede construir una AST preliminar antes de resolución para:
 - `Type { ... }`: record literal o variante record.
 - `Type(value)` en patrón: variante, newtype o discriminación de unión.
 - `(parameters) { ... }`: cierre o expresión agrupada seguida de un bloque inválido.
-- `async (parameters) { ... }`: cierre asíncrono.
-- `async unsafe (parameters) { ... }`: cierre asíncrono con contrato unsafe.
+- `(parameters) { ... }`: cierre; si contiene `await`, su efecto es suspendible.
+- `unsafe (parameters) { ... }`: cierre con contrato unsafe; si contiene `await`,
+  también es suspendible.
 - `unsafe (parameters) { ... }`: cierre unsafe; `unsafe { ... }` sigue siendo una
   región y no un cierre.
 - `for header`: patrón iterador o condición.
@@ -9463,7 +9355,7 @@ El lado derecho se completa antes de la primera escritura.
 ### 24.14 Concurrencia estructurada
 
 ~~~tondo fragment spec.async_page
-async fn loadPage(userId: UserId): Page ! ApiError {
+fn loadPage(userId: UserId): Page ! ApiError {
     scope {
         let userJob = spawn fetchUser(userId)
         let postsJob = spawn fetchPosts(userId)
@@ -9475,7 +9367,7 @@ async fn loadPage(userId: UserId): Page ! ApiError {
     }
 }
 
-async fn main(): !ApiError {
+fn main(): !ApiError {
     let page = await loadPage(UserId(42))?
     console.print("{page}")
 }
@@ -9536,7 +9428,8 @@ let output = await pipeline.check()?
 console.print(String(output.stdout)?)
 ~~~
 
-El `await` convierte el `main` implícito en async. Construir el pipeline no ejecuta nada hasta alcanzar `check()`.
+El `await` hace suspendible por inferencia al `main` implícito. Construir el pipeline
+no ejecuta nada hasta alcanzar `check()`.
 
 ---
 
@@ -9689,7 +9582,10 @@ Los parámetros por defecto no forman parte de 0.1; un record de opciones conser
 
 ### 25.21 Generators y concurrencia no estructurada
 
-No hay `yield`, generators de sintaxis especial, tasks detached implícitas ni futures creados por llamadas async sin `await` o `spawn`. El protocolo estático `Iterator[T]` cubre consumo síncrono; los streams asíncronos se definirán sobre `async` y la librería sin añadir trabajo huérfano.
+No hay `yield`, generators de sintaxis especial, tasks detached implícitas ni
+wrappers future creados por llamadas suspendibles sin `await` o `spawn`. El
+protocolo estático `Iterator[T]` cubre consumo síncrono; `AsyncIterator[T]` cubre
+streams suspendibles sin añadir trabajo huérfano.
 
 ### 25.22 Dispatch dinámico de traits
 
@@ -9766,7 +9662,7 @@ Esta especificación define:
 - Préstamos compartidos `ref`, mutabilidad `mut`/`var`, valores `Copy` y afines,
   gestión automática, `Ref[T]`, frontera `unsafe` de `Pointer[T]` y contrato
   cerrado de comportamiento indefinido.
-- Funciones async, `await`, scopes de tasks, `spawn`, `Join`, cancelación
+- Funciones suspendibles, `await`, scopes de tasks, `spawn`, `Join`, cancelación
   estructurada y garantía de progreso cooperativo.
 - Capacidades intrínsecas `Copy`, `Discard`, `Equatable`, `Key`, `Send` y
   `Share`, y protocolos cerrados `Call`, `CallMut` y `CallOnce`.
@@ -9819,7 +9715,7 @@ anterior:
 El catálogo cerrado, sus capabilities y las características diferidas se fijan
 exclusivamente en `TONDO_STANDARD_LIBRARY_SPEC.md`. En particular, esta
 frontera no incorpora a STD-0.1 `Deque`, priority queues, `Decimal`, `BigInt`,
-`Complex`, aleatoriedad general de usuario, `WeakRef`, `Cell`, streams async
+`Complex`, aleatoriedad general de usuario, `WeakRef`, `Cell`, streams suspendibles
 generales ni una FFI pública.
 
 ### 26.3 Prelude
@@ -9964,7 +9860,7 @@ La forma canónica es:
 ~~~tondo pseudocode
 import std.serialization
 
-derive serialization.Serialize + serialization.Deserialize for User
+derive serialization.Encode[Json] + serialization.Decode[Json] for User
 ~~~
 
 Un tipo genérico declara sus binders una sola vez:
@@ -9972,7 +9868,7 @@ Un tipo genérico declara sus binders una sola vez:
 ~~~tondo pseudocode
 import std.serialization
 
-derive[T] serialization.Serialize + serialization.Deserialize for Page[T]
+derive[T] serialization.Encode[Json] + serialization.Decode[Json] for Page[T]
 ~~~
 
 `derive` es una declaración top-level. No tiene cuerpo, `pub`, `priv`, opciones,
@@ -9990,8 +9886,9 @@ declaración en una autorización explícita del propietario.
 
 Los bounds escritos en los binders son parte de la solicitud. Además, un
 provider puede introducir únicamente los bounds positivos mínimos necesarios
-sobre esos mismos binders; por ejemplo, el `impl Serialize for Page[T]`
-generado puede requerir `T: Serialize`. Los bounds y la cabecera exacta del
+sobre esos mismos binders; por ejemplo, el `impl Encode[Json] for Page[T]`
+generado puede requerir `T: Encode[Json] + Decode[Json]` cuando la expansión lo
+necesite. Los bounds y la cabecera exacta del
 `impl` aparecen en la expansión semántica y en la interfaz pública cuando sean
 observables. Para cada bound introducido, el compilador vuelve a comprobar la
 expansión sin ese bound; si continúa siendo válida, la salida se rechaza por
@@ -10219,7 +10116,7 @@ es la raíz explícita de retención.
 
 Los serializers y deserializers de tipos estáticos se implementan como traits
 ordinarios y código especializado.
-`derive serialization.Serialize + serialization.Deserialize for User` puede
+`derive serialization.Encode[Json] + serialization.Decode[Json] for User` puede
 generar acceso directo a sus campos, validación y construcción sin tabla de
 reflection ni árbol intermedio. El mismo par de traits puede alimentar JSON y
 MessagePack; Protobuf utiliza además código schema-first generado desde
@@ -10288,7 +10185,7 @@ suite arithmetic {
 
 - solo son válidas en fuentes clasificadas como test por el plan cerrado;
 - tienen un identificador estático y no admiten `pub`, `priv`, parámetros,
-  genéricos, retorno escrito, `async`, `unsafe`, atributos ni nombre string;
+  genéricos, retorno escrito, efecto suspendible, `unsafe`, atributos ni nombre string;
 - pueden aparecer en el nivel superior; dentro de una suite solo pueden
   anidarse otras suites y tests;
 - no pueden aparecer en funciones, cierres, traits, `impl`, bloques ordinarios,
@@ -10305,17 +10202,17 @@ registro runtime ni usar reflection.
 Cada test se comprueba como una entrada privada no direccionable equivalente a:
 
 ~~~text
-async? fn <test-entry>(): Unit ! E
+fn <test-entry>(): Unit ! E
 ~~~
 
 Cada setup de suite se comprueba como otra entrada equivalente a:
 
 ~~~text
-async? fn <suite-setup>(): Unit ! E
+fn <suite-setup>(): Unit ! E
 ~~~
 
 `E` es la unión cerrada inferida localmente y debe cumplir `Discard`; si no hay
-fallos, es `Never`. La entrada se vuelve async cuando contiene una operación que
+fallos, es `Never`. La entrada se vuelve suspendible cuando contiene una operación que
 exige suspensión, incluido `defer await`. No se escribe un modificador porque
 ninguna entrada es una API invocable. El body de test puede usar `return` sin
 valor, `fail` y `?`; el setup admite `fail` y `?`, pero un `return` que ocultaría
@@ -10331,7 +10228,7 @@ delimitándolo explícitamente.
 Para cada subárbol seleccionado, el runner ejecuta el setup de una suite una vez,
 después sus descendientes y finalmente abandona el scope léxico de la suite. Los
 `defer` registrados por el setup forman su teardown LIFO, incluso cuando el setup
-o un descendiente falla. `defer await` es la única forma de teardown async; no
+o un descendiente falla. `defer await` es la única forma de teardown suspendible; no
 existen hooks `before`/`after` ni callbacks de lifecycle paralelos.
 
 Un descendiente solo puede leer un binding ancestral cuando fue declarado con
@@ -10407,8 +10304,8 @@ pub enum Choice {
 ~~~tondo pseudocode
 import std.serialization
 
-derive serialization.Serialize + serialization.Deserialize for User
-derive[T] serialization.Serialize + serialization.Deserialize for Page[T]
+derive serialization.Encode[Json] + serialization.Decode[Json] for User
+derive[T] serialization.Encode[Json] + serialization.Decode[Json] for Page[T]
 ~~~
 
 ### Funciones
@@ -10421,7 +10318,7 @@ fn load(): Value ! Error
 fn log(values: ...String)
 fn transform[T: Discard + Display](value: T): String
 fn makeCounter(): impl CallMut[fn(): Int] + Discard
-async fn fetch(): Value ! Error
+fn fetch(): Value ! Error
 unsafe fn read(address: Pointer[Byte]): Byte
 ~~~
 
@@ -10447,8 +10344,8 @@ fn(A): B ! E
 fn(ref A): B
 fn(mut A, B): C
 fn(var A, B): C
-async fn(A): B ! E
-async unsafe fn(Pointer[Byte]): B ! E
+fn(A): B ! E
+unsafe fn(Pointer[Byte]): B ! E
 Call[fn(A): B]      // solo como bound
 CallMut[fn(A): B]   // solo como bound
 CallOnce[fn(A): B]  // solo como bound
@@ -10601,7 +10498,7 @@ Tondo se considera fiel a esta especificación cuando un programa puede leerse c
   publica exactamente las precondiciones que podrían introducirlo.
 - La memoria ordinaria se administra automáticamente, incluidos los ciclos; el
   cleanup de recursos externos permanece explícito.
-- La suspensión se ve como `async` y `await`.
+- La suspensión se ve como `await` y queda registrada en el efecto inferido.
 - La concurrencia se ve como `scope` y `spawn`.
 - La exportación se ve como `pub`.
 - La discriminación se ve como `match`.
@@ -10731,8 +10628,8 @@ type ProcessOutput = {
     stdout: Bytes
 }
 
-async fn Pipeline.output(self): ProcessOutput ! ProcessError
-async fn Pipeline.check(self): ProcessOutput ! ProcessError
+fn Pipeline.output(self): ProcessOutput ! ProcessError
+fn Pipeline.check(self): ProcessOutput ! ProcessError
 ~~~
 
 ### C.3 Fixtures especializados
@@ -10750,7 +10647,7 @@ indicadas:
 | `spec.console` | Binding de módulo `console = std.console`. |
 | `spec.jobs` | Tipos `Deque[T]`, `Job`, `JobError` y las operaciones de C.4. |
 | `spec.application` | Tipos y operaciones de aplicación de C.4; el import `std.process` permanece en el fence. |
-| `spec.async_page` | Binding `console = std.console`; tipos async de C.4. |
+| `spec.async_page` | Binding `console = std.console`; tipos suspendibles de C.4. |
 | `spec.process` | Interfaces de proceso de C.2; los imports permanecen en el script. |
 
 `Database` es un tipo opaco usado solo como propietario de una operación asociada;
@@ -10840,8 +10737,8 @@ type Page = {
     posts: Posts
 }
 
-async fn fetchUser(userId: UserId): User ! ApiError
-async fn fetchPosts(userId: UserId): Posts ! ApiError
+fn fetchUser(userId: UserId): User ! ApiError
+fn fetchPosts(userId: UserId): Posts ! ApiError
 impl Display for Page
 ~~~
 
@@ -10957,19 +10854,19 @@ decl spec.async_page opaque User
 decl spec.async_page opaque Posts
 decl spec.async_page opaque ApiError
 decl spec.async_page type Page = { user: User, posts: Posts }
-decl spec.async_page async fn fetchUser(userId: UserId): User ! ApiError
-decl spec.async_page async fn fetchPosts(userId: UserId): Posts ! ApiError
+decl spec.async_page fn fetchUser(userId: UserId): User ! ApiError
+decl spec.async_page fn fetchPosts(userId: UserId): Posts ! ApiError
 decl spec.async_page impl Display for Page
 fixture spec.process extends spec.core
 decl spec.process opaque ProcessError
 decl spec.process type ProcessOutput = { stdout: Bytes }
-decl spec.process async fn Pipeline.output(self): ProcessOutput ! ProcessError
-decl spec.process async fn Pipeline.check(self): ProcessOutput ! ProcessError
+decl spec.process fn Pipeline.output(self): ProcessOutput ! ProcessError
+decl spec.process fn Pipeline.check(self): ProcessOutput ! ProcessError
 end
 ~~~
 
 El SHA-256 esperado de esos bytes es
-`762aa519d74966cebf4888a3ddcb4799f25e90015129c0eafe5c835495be633b`. Un cambio de una firma, capability, requirement, binding,
+`714da31de9e190eed73361d6d3ded585661c9878a355994db1b160f913d529b8`. Un cambio de una firma, capability, requirement, binding,
 orden o byte exige publicar un hash nuevo y una nueva revisión del Markdown. De
 este modo dos runners no pueden usar stubs distintos y afirmar que comprobaron el
 mismo ejemplo.

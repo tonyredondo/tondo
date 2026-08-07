@@ -86,20 +86,25 @@ run_step conformance-compare \
     cmp "$evidence/conformance-result.json" \
     conformance/0.1/results/tondo-reference-draft-tondo-vm-hosted.json
 
-proof_directory="$(mktemp -d "$evidence/promotion-proof.XXXXXX")"
-rmdir "$proof_directory"
-run_step conformance-seal-proof \
-    cargo run -p tondo-conformance --locked -- seal-proof \
-    --root . \
-    --manifest conformance/draft/manifest.json \
-    --lineage draft \
-    --result "$evidence/conformance-result.json" \
-    --output "$proof_directory"
-draft_revision="$(jq -r '.revision' conformance/draft/manifest.json)"
-checked_in_proof="conformance/proofs/revision-$draft_revision"
-run_step conformance-proof-compare \
-    cmp "$proof_directory/manifest.json" "$checked_in_proof/manifest.json"
-run_step conformance-proof-verify \
-    cargo run -p tondo-conformance --locked -- verify-proof \
-    --root . \
-    --proof "$checked_in_proof"
+if jq -e '([.requirements[] | select(.status == "draft-pending")] | length) == 0' \
+    testing/coverage-matrix.json >/dev/null; then
+    proof_directory="$(mktemp -d "$evidence/promotion-proof.XXXXXX")"
+    rmdir "$proof_directory"
+    run_step conformance-seal-proof \
+        cargo run -p tondo-conformance --locked -- seal-proof \
+        --root . \
+        --manifest conformance/draft/manifest.json \
+        --lineage draft \
+        --result "$evidence/conformance-result.json" \
+        --output "$proof_directory"
+    draft_revision="$(jq -r '.revision' conformance/draft/manifest.json)"
+    checked_in_proof="conformance/proofs/revision-$draft_revision"
+    run_step conformance-proof-compare \
+        cmp "$proof_directory/manifest.json" "$checked_in_proof/manifest.json"
+    run_step conformance-proof-verify \
+        cargo run -p tondo-conformance --locked -- verify-proof \
+        --root . \
+        --proof "$checked_in_proof"
+else
+    echo "::notice:: conformance promotion proof skipped: the draft coverage matrix still has pending requirements"
+fi

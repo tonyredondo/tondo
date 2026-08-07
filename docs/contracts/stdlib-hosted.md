@@ -7,13 +7,13 @@ módulo nunca concede por sí solo la capability del host.
 ## `std.console`
 
 ```tondo
-pub async fn stdin(): std.io.Reader ! ConsoleError
-pub async fn stdout(): std.io.Writer ! ConsoleError
-pub async fn stderr(): std.io.Writer ! ConsoleError
-pub async fn readLine(var input: std.io.Reader): String? ! ConsoleError
-pub async fn print(value: String): Unit ! ConsoleError
-pub async fn println(value: String): Unit ! ConsoleError
-pub async fn flush(): Unit ! ConsoleError
+pub fn stdin(): std.io.Reader ! ConsoleError
+pub fn stdout(): std.io.Writer ! ConsoleError
+pub fn stderr(): std.io.Writer ! ConsoleError
+pub fn readLine(var input: std.io.Reader): String? ! ConsoleError
+pub fn print(value: String): Unit ! ConsoleError
+pub fn println(value: String): Unit ! ConsoleError
+pub fn flush(): Unit ! ConsoleError
 pub enum ConsoleError { Unavailable, Closed, Cancelled, Io(std.io.IoError) }
 ```
 
@@ -53,20 +53,20 @@ pub type Directory
 pub type Metadata
 pub enum OpenMode { Read, Write, ReadWrite, Append, Create, CreateNew }
 pub enum FsError { NotFound, PermissionDenied, AlreadyExists, InvalidPath, NotDirectory, IsDirectory, Closed, ResourceLimit, Cancelled, Io }
-pub async fn open(path: Path, mode: OpenMode): File ! FsError
-pub async fn openDirectory(path: Path): Directory ! FsError
-pub async fn readAll(path: Path): Bytes ! FsError
-pub async fn writeAll(path: Path, data: Bytes): Unit ! FsError
-pub async fn createDirectory(path: Path, parents: Bool): Unit ! FsError
-pub async fn remove(path: Path): Unit ! FsError
-pub async fn metadata(path: Path): Metadata ! FsError
-pub async fn list(path: Path): Array[Path] ! FsError
-pub async fn rename(from: Path, to: Path): Unit ! FsError
-pub async fn atomicWrite(path: Path, data: Bytes): Unit ! FsError
-pub async fn File.read(var self, max: Int): Option[Bytes] ! FsError
-pub async fn File.write(var self, data: Bytes): Int ! FsError
-pub async fn File.flush(var self): Unit ! FsError
-pub async fn Directory.list(var self): Array[Path] ! FsError
+pub fn open(path: Path, mode: OpenMode): File ! FsError
+pub fn openDirectory(path: Path): Directory ! FsError
+pub fn readAll(path: Path): Bytes ! FsError
+pub fn writeAll(path: Path, data: Bytes): Unit ! FsError
+pub fn createDirectory(path: Path, parents: Bool): Unit ! FsError
+pub fn remove(path: Path): Unit ! FsError
+pub fn metadata(path: Path): Metadata ! FsError
+pub fn list(path: Path): Array[Path] ! FsError
+pub fn rename(from: Path, to: Path): Unit ! FsError
+pub fn atomicWrite(path: Path, data: Bytes): Unit ! FsError
+pub fn File.read(var self, max: Int): Option[Bytes] ! FsError
+pub fn File.write(var self, data: Bytes): Int ! FsError
+pub fn File.flush(var self): Unit ! FsError
+pub fn Directory.list(var self): Array[Path] ! FsError
 ```
 
 Las operaciones requieren `filesystem`. `File` es un handle afín que ofrece la
@@ -105,11 +105,11 @@ pub fn shell(command: String): Command ! ProcessError
 pub fn pipe(left: Command, right: Command): Pipeline ! ProcessError
 pub fn Command.mergeStderr(self): Command
 pub fn Pipeline.mergeStderr(self): Pipeline
-pub async fn Command.run(self): ExitStatus ! ProcessError
-pub async fn Command.output(self): ProcessOutput ! ProcessError
-pub async fn Command.check(self): ProcessOutput ! (ProcessError | ProcessExitError)
-pub async fn Command.start(self): ProcessHandle ! ProcessError
-pub async fn ProcessHandle.wait(var self): ExitStatus ! ProcessError
+pub fn Command.run(self): ExitStatus ! ProcessError
+pub fn Command.output(self): ProcessOutput ! ProcessError
+pub fn Command.check(self): ProcessOutput ! (ProcessError | ProcessExitError)
+pub fn Command.start(self): ProcessHandle ! ProcessError
+pub fn ProcessHandle.wait(var self): ExitStatus ! ProcessError
 pub fn ProcessHandle.cancel(var self): Unit
 pub fn ProcessOutput.stdout(self): Bytes
 pub fn ProcessOutput.stderr(self): Bytes
@@ -137,6 +137,6 @@ contenido. La salida combinada no convierte ni elimina bytes.
 
 `start` devuelve un handle afín;
 `wait`, `cancel` o el cleanup del owner son terminales y no dejan procesos
-huérfanos. Las rutas async tienen puntos de cancelación definidos antes de
+huérfanos. Las rutas suspendible tienen puntos de cancelación definidos antes de
 publicar output. `ProcessExitError` conserva el output capturado sin depender
 de códigos o mensajes concretos del sistema operativo.

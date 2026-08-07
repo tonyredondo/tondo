@@ -36,7 +36,7 @@ jq -e '
     and .wire.nan_infinity == false
     and .wire.canonicalization == "RFC8785"
     and .values.kinds == ["null", "bool", "number", "string", "array", "object"]
-    and .values.dynamic_type == "JsonValue"
+    and .values.dynamic_type == "Value"
     and .values.number_type == "JsonNumber"
     and .values.event_type == "JsonEvent"
     and .values.path_type == "JsonPath"
@@ -50,7 +50,7 @@ jq -e '
     and .number.nonfinite_literals == "reject"
     and .number.negative_zero == "preserve-until-canonicalization"
     and .number.integer_conversion_intermediate == "never-float"
-    and .typed.traits == ["Serialize", "Deserialize"]
+    and .typed.traits == ["Encode[Json]", "Decode[Json]"]
     and .typed.dispatch == "compile-time-static"
     and .typed.decode_requires_dom == false
     and .typed.encode_requires_dom == false
@@ -61,7 +61,7 @@ jq -e '
     and .typed.unknown_capture == "declared-extras-only"
     and .typed.parser_stack == "explicit-bounded-stack"
     and .api.module == "std.json"
-    and .api.value_type == "JsonValue"
+    and .api.value_type == "Value"
     and .api.member_type == "JsonMember"
     and .api.number_type == "JsonNumber"
     and .api.event_type == "JsonEvent"
@@ -77,7 +77,7 @@ jq -e '
     and .api.writer_methods == ["toWriter", "write", "finish"]
     and .api.terminal_state == "error-or-finish-terminal"
     and .api.end_of_document == "next-returns-none-once"
-    and .api.typed_dispatch == "Serialize-Deserialize-static-no-dom"
+    and .api.typed_dispatch == "Encode-Decode-static-no-dom"
     and .streaming.event_kinds == [
         "start-array", "end-array", "start-object", "end-object", "key",
         "null", "bool", "number", "string"

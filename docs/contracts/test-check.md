@@ -12,15 +12,16 @@ failed proof.
 ## Hidden entry shape
 
 Both a test body and a suite setup are checked as a private
-`async? fn(): Unit ! E`:
+`fn(): Unit ! E`; the checker records the inferred suspendible effect when the
+body contains `await`:
 
 - `Unit` and `Never` are the only admitted normal results;
 - a test may use bare `return`, but cannot return a value;
 - suite setup cannot use `return` at all (`E1205`);
 - the error union is normalized by nominal name, must be duplicate-free and
   every member must satisfy `Discard`; and
-- `await` and the virtual-time operations infer async without an `async test`
-  spelling.
+- `await` and the virtual-time operations infer suspension without an extra
+  keyword or an `async test` spelling.
 
 The resulting `TestBodyContract` is immutable input for lowering. It carries
 the exact operation list and the ordinary facts needed by later admission
@@ -37,7 +38,7 @@ slash and no whitespace. Duplicate evidence receives the corresponding P-code
 family, while negative or overflowing virtual durations are rejected before
 runtime.
 
-`withVirtualTime` requires an async `Send + CallOnce` closure accepting
+`withVirtualTime` requires a suspendible `Send + CallOnce` closure accepting
 `ref VirtualTime`, returning `Unit`, and neither escaping nor sharing the
 controller. The boundary itself must be awaited directly rather than spawned;
 controlled tasks are spawned inside the callback's structured scope. The

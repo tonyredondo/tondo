@@ -5,13 +5,13 @@
   "phase": "STD-0.1A",
   "status": "closed-contract",
   "contract": "docs/contracts/stdlib-serialization.md",
-  "traits": ["Serialize", "Deserialize"],
-  "protocols": ["Serializer[E]", "Deserializer[E]"],
+  "traits": ["Encode[C]", "Decode[C]"],
+  "protocols": ["Encoder[C, E]", "Decoder[C, E]"],
   "dispatch": "compile-time-static",
   "dom": {
-    "typed_encode": false,
-    "typed_decode": false,
-    "dynamic_values": "owned-by-format-owner",
+    "typed_encode": "static-derive-direct",
+    "typed_decode": "static-derive-atomic",
+    "dynamic_values": "std.serialization.Value-json-messagepack; protocol-owned-protobuf",
     "reflection": "forbidden"
   },
   "events": [

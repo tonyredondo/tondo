@@ -4,7 +4,7 @@
 - **Revisión:** 0.1-draft.2 — 2026-08-04.
 - **Edición objetivo:** Tondo 0.1.
 - **Especificación base:** [Tondo 0.1](./TONDO_LANGUAGE_SPEC.md).
-- **SHA-256 de la base:** `bdf0a8d998a280febe0f49c639065ba15dda2a0526dbc8d4c4ae23bd05512d24`.
+- **SHA-256 de la base:** `0422288eb0e8919a24a3f86f5671a8e27cd47731d2b063b0f0a5301af2fc5a0f`.
 - **Formatos de tooling:** `tondo-test-report-0.1/7`,
   `tondo-test-list-0.1/6`, `tondo-junit-report-0.1/4`,
   `tondo-test-artifacts-0.1/1` y `tondo-snapshot-store-0.1/1`.
@@ -199,7 +199,7 @@ sustrato mínimo compartido:
 - `Duration` como valor portable con quantum canónico de nanosegundo, signo y
   overflow explícitos.
 - `Instant` monotónico, sin relación implícita con calendario o zona horaria.
-- Suspensión, timers y deadlines async ligados al executor.
+- Suspensión, timers y deadlines ligados al executor.
 - Identidad opaca de proveedor y rechazo de operaciones entre instantes de
   dominios distintos.
 - Los puntos de cancelación, overflow, resolución y capabilities de esas
@@ -218,11 +218,11 @@ plan cerrado. El tracker puede secuenciar ese slice antes del resto de la
 librería estándar, pero no sustituirlo por nombres, duraciones o bridges
 privados del runner.
 
-### 2.5 Dependencia de cleanup asíncrono general
+### 2.5 Dependencia de cleanup suspendible general
 
 Testing no añade `beforeAll`, `afterAll`, callbacks de teardown ni una operación
 privada para esperar cleanup. Tondo 0.1 admite en cualquier función o entrada
-async una única forma visible de registrar una llamada asíncrona infallible:
+una única forma visible de registrar una llamada suspendible infallible:
 
 ~~~tondo
 defer await Service.stop(service)
@@ -245,10 +245,11 @@ La llamada no se inicia al registrar el `defer`; sus operandos y ownership se
 reservan con las reglas ordinarias y se invoca y espera al abandonar el scope,
 en su posición LIFO. La forma:
 
-- Solo acepta una llamada `async fn(...): Unit` infallible.
-- Cuenta como punto de suspensión. Un test, setup o script infiere contexto
-  async según sus reglas; una función o método debe declararse `async` y un
-  cierre debe usar su forma `async`, explícitamente, o produce `E1610`.
+- Solo acepta una llamada `fn(...): Unit` infallible cuyo efecto suspendible se
+  infiere desde el `await`.
+- Cuenta como punto de suspensión. Un test, setup o script, y cualquier función
+  o cierre, infiere el efecto sin una keyword adicional; `@sync`/`@nosuspend`
+  rechaza esta forma con `E1610`.
 - Admite como máximo el mismo único operando afín propietario que un `defer` de
   llamada ordinario.
 - No dispone de variante de bloque, no puede propagar error y no crea un hook de
@@ -329,7 +330,7 @@ Ninguna declaración admite:
 - Parámetros genéricos ni constraints.
 - Receptor.
 - Anotación de retorno o de error.
-- Modificadores `async` o `unsafe`.
+- Modificadores de suspensión explícitos o `unsafe`.
 - Atributos.
 - Nombre string alternativo.
 
@@ -446,7 +447,7 @@ en test, un test en suite ni infiere nodos a partir de nombres.
 Cada test se comprueba como una entrada privada no direccionable equivalente a:
 
 ~~~text
-async? fn <test-entry>(): Unit ! E
+fn <test-entry>(): Unit ! E
 ~~~
 
 El símbolo sintético no puede escribirse ni observarse desde fuente. El body:
@@ -455,7 +456,7 @@ El símbolo sintético no puede escribirse ni observarse desde fuente. El body:
 - Infiere localmente una unión cerrada `E` de errores, como el `main` implícito
   de un script.
 - Es infallible cuando no propaga ni produce errores.
-- Se vuelve async cuando contiene una operación que exige suspensión, con las
+- Se vuelve suspendible cuando contiene una operación que exige suspensión, con las
   mismas reglas que el `main` implícito.
 - Puede usar `return`, que sale únicamente del test actual.
 - Puede usar `fail` y `?`; ambos alimentan el canal inferido `E`.
@@ -468,7 +469,7 @@ cualquier error de tipos utiliza los diagnósticos ordinarios. No existe un tipo
 especial `TestResult`.
 
 El prefijo de setup de cada suite se comprueba como otra entrada privada
-equivalente a `async? fn <suite-setup>(): Unit ! E`, con unión cerrada inferida
+equivalente a `fn <suite-setup>(): Unit ! E`, con unión cerrada inferida
 `E: Discard`. Su entorno local permanece vivo mientras el runner ejecuta los
 descendientes seleccionados y abandona después el scope léxico de la suite. Ese
 entorno y sus entradas de ejecución no son valores Tondo, no tienen ABI pública
@@ -480,9 +481,9 @@ transferencia de control que intente abandonar el setup utiliza `E1205`. Una
 suite tampoco produce un `SuiteResult` visible; el runner conserva su lifecycle
 en el reporte de tooling.
 
-### 4.2 Async y concurrencia
+### 4.2 Suspensión y concurrencia
 
-No se escribe `async test` ni `async suite`. La necesidad de async se infiere
+No se escribe `async test` ni `async suite`. El efecto de suspensión se infiere
 porque ninguna declaración forma parte de una API invocable.
 
 ~~~tondo
@@ -545,7 +546,7 @@ Dentro de una suite, un `defer` registrado por el setup pertenece al scope
 léxico de esa suite. Se ejecuta después de que terminen todos sus descendientes
 seleccionados, en LIFO y con las reglas ordinarias. Si el setup falla antes de
 alcanzar los miembros, se ejecutan los defers que ya hubiera registrado. La
-forma general `defer await` de 2.5 permite finalizar un recurso async sin
+forma general `defer await` de 2.5 permite finalizar un recurso suspendible sin
 introducir un hook de suite; conserva resultado `Unit` infallible, ownership,
 orden, pánico y límites de cualquier otro cleanup.
 
@@ -1097,7 +1098,7 @@ hoja construye sus fixtures propias mediante helpers y `defer`.
 
 ### 7.4 Inicio y terminación de entradas
 
-El runner conduce cada body de test y setup de suite —síncronos o async según la
+El runner conduce cada body de test y setup de suite —síncronos o suspendibles según la
 inferencia ordinaria— y cada teardown síncrono hasta uno de estos terminales:
 
 - Retorno normal.
@@ -1271,7 +1272,7 @@ haya sido abandonada.
 
 ### 7.9 Dominio de tiempo virtual determinista
 
-`testing.withVirtualTime` ejecuta una closure async exactamente una vez dentro
+`testing.withVirtualTime` ejecuta una closure suspendible exactamente una vez dentro
 de un dominio temporal nuevo. El dominio pertenece al intento y a la fase que
 alcanzó la llamada; no sustituye el reloj de otras hojas, otras fases, suites
 descendientes ni código ejecutado antes o después de la closure.
@@ -1283,7 +1284,7 @@ import std.testing
 import std.time
 
 test requestTimesOut {
-    await testing.withVirtualTime(async (clock) {
+    await testing.withVirtualTime((clock) {
         scope {
             let timeout: time.Duration = requestTimeout()
             let result = spawn requestWithTimeout(timeout)
@@ -2305,13 +2306,13 @@ pub fn skip(reason: String): Never
 pub fn attach(name: String, mediaType: String, data: bytes.Bytes)
 pub fn snapshot(name: String, actual: String)
 
-pub async fn withVirtualTime[
+pub fn withVirtualTime[
     E,
-    F: Send + CallOnce[async fn(ref VirtualTime): Unit ! E],
+    F: Send + CallOnce[fn(ref VirtualTime): Unit ! E],
 ](body: F): ! E
 
-pub async fn VirtualTime.settle(ref self)
-pub async fn VirtualTime.advance(ref self, duration: time.Duration)
+pub fn VirtualTime.settle(ref self)
+pub fn VirtualTime.advance(ref self, duration: time.Duration)
 ~~~
 
 Se utilizan mediante resolución de módulo ordinaria:
@@ -2354,7 +2355,7 @@ valores ni sobrecargas variádicas en Tondo 0.1.
 
 `withVirtualTime` es genérica únicamente sobre la unión de error y el tipo
 concreto del cierre. Exige `CallOnce` porque ejecuta el body una vez y `Send`
-porque su frame async puede migrar. Un body infallible infiere `E = Never`; uno
+porque su frame suspendible puede migrar. Un body infallible infiere `E = Never`; uno
 fallible conserva exactamente `E`. La llamada usa el `?` ordinario para
 propagar ese canal; con `E = Never` no existe rama `err` ejecutable. No existe
 type erasure, allocation de callback ni wrapper `Task`.
@@ -2362,7 +2363,7 @@ type erasure, allocation de callback ni wrapper `Task`.
 `VirtualTime` es un tipo opaco test-only con `Send`, sin `Copy`, `Share`,
 `Equatable`, `Key` ni `Display`. El usuario nunca lo construye ni posee:
 `withVirtualTime` presta un único controlador al cierre y lo revoca al
-terminarlo. `settle` y `advance` son async porque conducir otras tasks es un
+terminarlo. `settle` y `advance` son suspendibles porque conducir otras tasks es un
 punto de suspensión visible; no esconden bloqueo detrás de una llamada
 síncrona.
 
@@ -2654,7 +2655,7 @@ test retriesAfterBackoff {
     let delay = retryDelay()
     let probe = RetryProbe.new()
 
-    await testing.withVirtualTime(async (clock) {
+    await testing.withVirtualTime((clock) {
         scope {
             let result = spawn fetchWithRetry(probe, delay)
 
@@ -2689,7 +2690,7 @@ suite messageBroker {
 }
 ~~~
 
-`Broker.stop` es una llamada async infallible que consume el owner. El runner no
+`Broker.stop` es una llamada suspendible infallible que consume el owner. El runner no
 ejecuta un callback oculto: al abandonar la suite alcanza el `defer await`
 general, lo espera bajo el timeout de teardown y solo después finaliza el
 envelope.
@@ -2762,7 +2763,7 @@ El contrato inicial no incluye:
 - Redacción automática de secretos después de que el programa los haya copiado
   a un canal observable.
 - Reporte JSON/JUnit parcial presentado como completo después de interrupción.
-- Hooks de teardown async exclusivos de testing; se reutiliza `defer await`.
+- Hooks de teardown exclusivos de testing; se reutiliza `defer await`.
 
 Estas ausencias no impiden que `std.testing` o tooling posterior añadan
 utilidades explícitas. Cualquier operación que espere un pánico debe conservar
@@ -2819,8 +2820,9 @@ Selector vacío, glob inválido, CODEOWNERS inválido, opciones de
 retry/repeat/shard/order/report/artifacts/snapshot, interrupción, timeout e
 infraestructura son diagnósticos del toolchain, no nuevos errores de compilación
 `E`. Tondo 0.1 permite `defer await` únicamente en la forma general fijada en
-2.5. `E1608` rechaza cualquier otro cleanup async; `E1610` conserva el contexto
-no async y las violaciones de ownership/liveness conservan sus códigos `E14xx`.
+2.5. `E1608` rechaza cualquier otro cleanup suspendible; `E1610` conserva el
+contexto no suspendible y las violaciones de ownership/liveness conservan sus
+códigos `E14xx`.
 
 ## 15. Formato machine-readable
 
@@ -3753,7 +3755,7 @@ versionada. El grupo cubre como mínimo:
 12. `testing.tags`, merge idempotente, `P2002` por conflicto, atribución desde
     helpers/tasks, uso durante cleanup, presupuesto de output y prohibición de
     usar tags runtime para discovery, selección, sharding u orden.
-13. Setup síncrono, async, infallible y fallible inferido.
+13. Setup síncrono, suspendible, infallible y fallible inferido.
 14. Ejecución de setup exactamente una vez y solo para subárboles seleccionados.
 15. Nesting exterior-interior, teardown interior-exterior y LIFO de `defer`.
 16. Fallo de setup, `blocked-setup`, causa única y continuidad de hermanos.
@@ -3809,7 +3811,7 @@ versionada. El grupo cubre como mínimo:
     `tondo.attempts`, streams decisivos, conteos por identidad y policy
     `--allow-flaky`.
 41. Contrato temporal mínimo de producción compartido, body
-    `CallOnce[async fn(ref VirtualTime)]`, propagación exacta de `E`, préstamo
+    `CallOnce[fn(ref VirtualTime)]` con suspensión inferida, propagación exacta de `E`, préstamo
     no escapable, identidad/mismatch entre proveedores, ausencia de `Clock`
     inyectado y rechazo desde producción.
 42. Herencia del dominio por tasks estructuradas, cola ready y empates de timers
@@ -3824,8 +3826,8 @@ versionada. El grupo cubre como mínimo:
 45. `virtual_time` por intento en JSON `/7`, orden y contadores canónicos,
     reinicio exacto entre retries, `tondo.virtual_time` en JUnit `/4`, duración
     JUnit real y equivalencia VM/backend para el mismo corpus temporal.
-46. `defer await` en Tondo 0.1: única llamada async infallible, ownership afín,
-    inferencia en test/setup/script, `async` explícito en funciones, cleanup
+46. `defer await` en Tondo 0.1: única llamada suspendible infallible, ownership afín,
+    inferencia en test/setup/script y funciones, cleanup
     LIFO esperado, pánico/límites y rechazo de cualquier forma alternativa sin
     introducir hooks de suite.
 47. Inputs públicos/secretos, hashes de perfil, tres estados de
@@ -3885,7 +3887,7 @@ suite behaviorGroup {
 }
 ~~~
 
-### Fallible y async
+### Fallible y suspensión
 
 ~~~tondo
 test loadsValue {
@@ -3894,7 +3896,7 @@ test loadsValue {
 }
 ~~~
 
-### Cleanup async
+### Cleanup suspendible
 
 ~~~tondo
 suite serviceGroup {
@@ -3949,7 +3951,7 @@ import std.testing
 test expiresAtDeadline {
     let timeout = operationTimeout()
 
-    await testing.withVirtualTime(async (clock) {
+    await testing.withVirtualTime((clock) {
         scope {
             let result = spawn operation(timeout)
             await clock.advance(timeout)
@@ -3993,5 +3995,5 @@ tondo test \
 > sobre las APIs de producción. Ownership, inputs, sharding, orden y reportes
 > son políticas explícitas del runner; glob selecciona sin depender del host,
 > retry confirma un fallo y repeat busca inestabilidad en fronteras nuevas.
-> Cleanup async reutiliza `defer await`, no hooks. El resto del código continúa
+> Cleanup suspendible reutiliza `defer await`, no hooks. El resto del código continúa
 > siendo Tondo ordinario.

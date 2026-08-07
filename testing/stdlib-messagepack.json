@@ -26,7 +26,9 @@
     "timestamp_type_code": -1
   },
   "values": {
-    "dynamic_type": "MessagePackValue",
+    "dynamic_type": "Value",
+    "view_type": "ValueView",
+    "raw_type": "Raw",
     "ext_type": "Ext",
     "timestamp_type": "MessagePackTimestamp",
     "map_representation": "ordered-pairs-arbitrary-keys",
@@ -48,7 +50,7 @@
     "reflection": "forbidden"
   },
   "typed": {
-    "traits": ["Serialize", "Deserialize"],
+    "traits": ["Encode[MessagePack]", "Decode[MessagePack]"],
     "dispatch": "compile-time-static",
     "decode_requires_dynamic_dom": false,
     "encode_requires_dynamic_dom": false,
@@ -58,7 +60,7 @@
   },
   "api": {
     "module": "std.messagepack",
-    "value_type": "MessagePackValue",
+    "value_type": "Value",
     "entry_type": "MessagePackEntry",
     "ext_type": "MessagePackExt",
     "timestamp_type": "MessagePackTimestamp",
@@ -68,13 +70,14 @@
     "policies": ["MessagePackDuplicatePolicy", "MessagePackUnknownExtensionPolicy", "MessagePackNonMinimalPolicy"],
     "error_type": "MessagePackError",
     "error_kind": "MessagePackErrorKind",
-    "functions": ["decodeValue", "decode", "encodeValue", "encode", "validate", "encodeDeterministic"],
+    "functions": ["parse", "decode", "encode", "validate", "encodeDeterministic"],
     "timestamp_methods": ["fromExt", "toExt"],
     "reader_methods": ["fromBytes", "fromReader", "next", "own", "finish"],
     "writer_methods": ["toWriter", "write", "finish"],
     "terminal_state": "error-or-finish-terminal",
     "end_of_document": "next-returns-none-once",
-    "typed_dispatch": "Serialize-Deserialize-static-no-dynamic-dom"
+    "typed_dispatch": "Encode-Decode-static-no-dynamic-dom",
+    "annotations": ["@name", "@messagepack", "@ignore"]
   },
   "streaming": {
     "event_kinds": [

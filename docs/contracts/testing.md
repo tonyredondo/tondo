@@ -223,7 +223,7 @@ reap them.
 
 ## Unsafe, targets, and closed builds
 
-M9 runtime fixtures execute direct, indirect, closure, and async unsafe
+M9 runtime fixtures execute direct, indirect, closure, and suspendible unsafe
 callables only through lexical regions. Compile-fail cases fix `E1701` for
 missing regions and `E1702` for direct and recursively Pointer-containing safe
 captures. The six raw operations run through dot and qualified HIR forms,

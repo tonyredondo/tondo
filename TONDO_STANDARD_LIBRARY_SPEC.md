@@ -81,7 +81,7 @@ bootstrap no se convierte en API de STD-0.1 hasta que su módulo cumpla la
 La Standard Library debe ser:
 
 1. **Pequeña:** cada concepto tiene una superficie mínima y justificada.
-2. **Regular:** las mismas reglas de error, ownership y async se aplican en
+2. **Regular:** las mismas reglas de error, ownership y suspendible se aplican en
    todos los módulos.
 3. **Explícita:** I/O, reloj, entorno, proceso y demás efectos aparecen en el
    módulo, la firma y la capability.
@@ -159,7 +159,7 @@ reparten así:
 
 | Documento | Autoridad |
 |---|---|
-| [`TONDO_LANGUAGE_SPEC.md`](./TONDO_LANGUAGE_SPEC.md) | Sintaxis, tipos, ownership, async, módulos, imports, prelude, intrinsics, `derive` y límites de reflection |
+| [`TONDO_LANGUAGE_SPEC.md`](./TONDO_LANGUAGE_SPEC.md) | Sintaxis, tipos, ownership, suspendible, módulos, imports, prelude, intrinsics, `derive` y límites de reflection |
 | [`TONDO_TOOLCHAIN_SPEC.md`](./TONDO_TOOLCHAIN_SPEC.md) | Manifiesto, lockfile, PackageId, target, capabilities, generación meta, interfaces, artefactos y unidades privilegiadas |
 | [`TONDO_TESTING_SPEC.md`](./TONDO_TESTING_SPEC.md) | Testing Tondo 0.1, runner y núcleo sellado de `std.testing` |
 | Este documento | API estándar, reglas comunes, catálogo de módulos y distribución de la stdlib |
@@ -298,7 +298,7 @@ Son cambios incompatibles, como mínimo:
 
 - Retirar o renombrar un módulo, tipo, función, método, constante o variante.
 - Cambiar un parámetro, resultado, error, constraint, receiver o variadicidad.
-- Añadir o retirar `async` o `unsafe`.
+- Añadir o retirar `suspendible` o `unsafe`.
 - Cambiar una operación infallible por fallible o a la inversa.
 - Añadir una variante a un enum que el consumidor puede comprobar
   exhaustivamente.
@@ -545,7 +545,7 @@ otro lenguaje.
 En particular:
 
 - No se duplican función libre y método para la misma operación.
-- No se añade un sufijo `Async`; `async` ya forma parte de la firma.
+- No se añade un sufijo `Async`; `suspendible` ya forma parte de la firma.
 - No se añade un prefijo `try`; `! E` ya muestra que la operación falla.
 - No se ofrecen variantes que solo cambian entre tuple y argumentos.
 - No se usan booleanos para elegir comportamientos con semántica distinta.
@@ -559,7 +559,7 @@ Las declaraciones siguen las convenciones del lenguaje:
 - Funciones, métodos, parámetros y fields: `camelCase`.
 - Constantes de módulo: `PascalCase`.
 - Módulos: una palabra minúscula o `camelCase`.
-- Acrónimos como palabras: `Utf8Error`, `JsonValue`, `userId`.
+- Acrónimos como palabras: `Utf8Error`, `Value`, `userId`.
 
 Los módulos usan nombres completos cuando una abreviatura no sea universal. Una
 abreviatura aceptada no crea también un alias largo.
@@ -797,14 +797,17 @@ No materializa un array de forma oculta detrás de una API anunciada como lazy.
 
 ### 9.1 Suspensión visible
 
-Una operación que puede suspenderse es `async fn`. No devuelve `Task`,
-`Future` ni otro wrapper solo para representar async.
+Todas las operaciones se declaran con `fn`. El compilador infiere un efecto de
+suspensión cuando el cuerpo contiene `await` o llama a una operación que puede
+suspenderse. El efecto se publica en metadatos y documentación, pero no crea un
+wrapper `Task`/`Future` ni una segunda API. `@sync`/`@nosuspend` garantiza que una
+función no suspende.
 
 Una operación síncrona:
 
 - Retorna sin punto de suspensión.
 - No espera de forma oculta a una task Tondo.
-- No ejecuta una callback async.
+- No ejecuta una callback suspendible.
 - No bloquea indefinidamente un worker cooperativo.
 
 ### 9.2 Una forma por operación
@@ -813,7 +816,8 @@ STD-0.1 no duplica automáticamente cada operación como `read` y `readAsync`.
 El módulo elige una forma canónica según el efecto real:
 
 - Cálculo y transformación de memoria: síncrono.
-- Espera potencialmente no acotada de host: async.
+- Espera potencialmente no acotada de host: función suspendible, consumida con
+  `await` en el punto que el caller elija.
 - Construcción inerte de un plan: síncrona.
 - Operación que solo consulta metadata ya materializada: síncrona.
 
@@ -821,21 +825,63 @@ Si una forma bloqueante es necesaria, su módulo, nombre y documentación hacen
 visible esa decisión; no comparte nombre con una operación suspendible de
 semántica diferente.
 
-### 9.3 Scheduler y backpressure
+### 9.3 `spawn`, `Join` y `oneshot`
 
-Una API async de host:
+`spawn call()` devuelve un `Join[T, E]` afín; `spawn thread call()` solicita un
+thread del sistema operativo. Ambos se esperan con `await` y están sujetos a
+ownership estructurado: un scope debe esperar, cancelar, detach o transferir
+cada handle. `cancel` solicita cancelación y aún requiere `await`; `detach`
+consume el handle y lo entrega a un supervisor, sin permitir préstamos locales.
+
+`std.async.oneshot[T, E]` divide una operación en `Waiter` y `Completer`. El
+waiter se consume una vez; completar, fallar o cancelar es atómico y una segunda
+finalización produce `AlreadyCompleted`. No hay callbacks ni scheduler implícito.
+
+`AsyncIterator[T]` y `for await item in source` cubren streams lazy con
+backpressure, un elemento por `next`, cierre al salir y materialización solo
+mediante `collect(limit:)`. Un receiver de `std.channel.Channel` puede exponer
+este protocolo.
+
+La superficie nominal mínima de `std.async` es:
+
+~~~tondo pseudocode
+pub type Join[T, E]
+pub type Waiter[T, E]
+pub type Completer[T, E]
+pub type AlreadyCompleted
+
+pub fn oneshot[T, E](): (Waiter[T, E], Completer[T, E])
+pub fn Waiter.wait(var self): T ! E
+pub fn Completer.complete(var self, value: T): Unit ! AlreadyCompleted
+pub fn Completer.fail(var self, error: E): Unit ! AlreadyCompleted
+pub fn Completer.cancel(var self): Unit ! AlreadyCompleted
+
+pub trait AsyncIterator[T] {
+    fn next(mut self): T?
+}
+~~~
+
+`Join` no expone constructor, poller ni callback: solo nace de `spawn` y se
+consume con `await`. `Waiter.wait` es la operación suspendible de la pareja;
+`Completer` puede completarse desde otro task o thread que cumpla `Send`. La
+segunda finalización no cambia el resultado de la primera y devuelve
+`AlreadyCompleted` de forma atómica.
+
+### 9.4 Scheduler y backpressure
+
+Una API suspendible de host:
 
 - No bloquea el único worker cooperativo mientras espera I/O.
 - Mantiene vivos sus argumentos y roots durante la suspensión.
 - Respeta backpressure y límites finitos.
-- No crea tasks detached.
+- No crea tasks detached; el caller usa `spawn` si necesita concurrencia.
 - Publica los puntos de cancelación.
 - Completa o limpia todo recurso antes de entregar su outcome terminal.
 
 La implementación puede usar event loops, workers o primitivas del sistema
 siempre que esos detalles no cambien el contrato.
 
-### 9.4 Cancelación
+### 9.5 Cancelación
 
 Una operación cancelable documenta:
 
@@ -848,7 +894,7 @@ Una operación cancelable documenta:
 No se promete preempción de código CPU. La cancelación continúa siendo
 cooperativa.
 
-### 9.5 Timeouts y deadlines
+### 9.6 Timeouts y deadlines
 
 Un timeout o deadline:
 
@@ -1071,7 +1117,10 @@ Sus APIs concretas deberán distinguir:
 - Operación síncrona de punto de suspensión.
 
 Un reader o writer concreto conserva el owner de su módulo y satisface los
-protocolos mediante dispatch estático. STD-0.1 no exige type erasure, vtables ni
+protocolos mediante dispatch estático. `read`, `write`, `flush`, `readAll` y
+`writeAll` se declaran como `fn`; si una implementación puede esperar I/O, el
+compilador infiere el efecto y el caller escribe `await`. No hay variantes
+`readAsync` ni `writeAsync`. STD-0.1 no exige type erasure, vtables ni
 un stream dinámico común para almacenar implementaciones heterogéneas.
 
 La superficie mínima de `std.io` es:
@@ -1080,16 +1129,16 @@ La superficie mínima de `std.io` es:
 enum IoError { Closed, Cancelled, InvalidData, ResourceLimit, Host }
 enum ReadResult { Data(Bytes), Eof }
 trait Reader {
-    async fn read(var self, max: Int): ReadResult ! IoError
+    fn read(var self, max: Int): ReadResult ! IoError
 }
 trait Writer {
-    async fn write(var self, data: Bytes): Int ! IoError
-    async fn flush(var self): Unit ! IoError
+    fn write(var self, data: Bytes): Int ! IoError
+    fn flush(var self): Unit ! IoError
 }
 fn defaultLimits(): IoLimits
 fn limits(maxBytes: Int, maxRead: Int): IoLimits ! IoError
-async fn readAll[R: Reader](var reader: R, limits: IoLimits): Bytes ! IoError
-async fn writeAll(var writer: Writer, data: Bytes): Unit ! IoError
+fn readAll[R: Reader](var reader: R, limits: IoLimits): Bytes ! IoError
+fn writeAll(var writer: Writer, data: Bytes): Unit ! IoError
 type IoLimits
 ```
 
@@ -1123,7 +1172,7 @@ canonicalidad física.
 ### 10.5 Filesystem hosted
 
 `std.fs` es la frontera capability-gated para observar y mutar el filesystem.
-Todas sus operaciones que pueden tocar el host son `async`; `std.path` sigue
+Todas sus operaciones que pueden tocar el host son `suspendible`; `std.path` sigue
 siendo puro y síncrono. El owner público es:
 
 ```tondo
@@ -1131,13 +1180,13 @@ type File
 type Directory
 type Metadata
 enum OpenMode { Read, Write, ReadWrite, Append, Create, CreateNew }
-async fn open(path: Path, mode: OpenMode): File ! FsError
-async fn openDirectory(path: Path): Directory ! FsError
-async fn metadata(path: Path): Metadata ! FsError
-async fn File.read(var self, max: Int): Option[Bytes] ! FsError
-async fn File.write(var self, data: Bytes): Int ! FsError
-async fn File.flush(var self): Unit ! FsError
-async fn Directory.list(var self): Array[Path] ! FsError
+fn open(path: Path, mode: OpenMode): File ! FsError
+fn openDirectory(path: Path): Directory ! FsError
+fn metadata(path: Path): Metadata ! FsError
+fn File.read(var self, max: Int): Option[Bytes] ! FsError
+fn File.write(var self, data: Bytes): Int ! FsError
+fn File.flush(var self): Unit ! FsError
+fn Directory.list(var self): Array[Path] ! FsError
 ```
 
 `File` y `Directory` son afines: el owner se revoca en cleanup normal y durante
@@ -1484,6 +1533,7 @@ actualizar esta especificación y el tracker antes de implementar.
 | Métodos de tipos intrínsecos | Core | — | 0.1 | Option, Result, String, Array, Map, Set, Range e Iterator |
 | `std.bytes` | Core | — | 0.1 | `Bytes`, builders y conversión binaria explícita |
 | `std.io` | Core | — | 0.1 | Protocolos de lectura/escritura, buffers, EOF, partial I/O y errores portables |
+| `std.async` | Core | — | 0.1 | `Join`, `oneshot`, cancelación cooperativa y adaptación `AsyncIterator` |
 | `std.math` | Core | — | 0.1 | Matemática escalar portable y semántica IEEE nombrada |
 | `std.format` | Core | — | 0.1 | Formatting explícito sobre `Display`, sin reflection |
 | `std.serialization` | Core | — | 0.1 | Traits estáticos, eventos estructurales y contratos compartidos de encode/decode |
@@ -1533,7 +1583,7 @@ actualizar esta especificación y el tracker antes de implementar.
 - `std.encoding`, `std.yaml`, `std.toml` y `std.cbor` reutilizan `std.io` y
   `std.serialization`; no introducen otro facade universal ni árboles
   heterogéneos compartidos entre formatos.
-- `std.channel`, `std.sync` y `std.executor` reutilizan el único modelo async,
+- `std.channel`, `std.sync` y `std.executor` reutilizan el único modelo suspendible,
   de ownership y de memoria del lenguaje; ninguna API crea tasks desligadas o
   un segundo tipo de future.
 - `std.time` separa estrictamente el reloj monotónico del calendario civil. El
@@ -1692,13 +1742,13 @@ para representar también un deadline ya vencido. Las esperas y timers solo
 aceptan retrasos no negativos:
 
 ~~~tondo pseudocode
-pub async fn sleep(delay: Duration): Unit ! ClockError
+pub fn sleep(delay: Duration): Unit ! ClockError
 
 pub type Timer
 
 pub fn Timer.after(delay: Duration): Timer ! ClockError
 pub fn Timer.at(deadline: Instant): Timer ! ClockError
-pub async fn Timer.wait(self): Unit ! ClockError
+pub fn Timer.wait(self): Unit ! ClockError
 pub fn Timer.cancel(self): Unit
 ~~~
 
@@ -1706,7 +1756,7 @@ pub fn Timer.cancel(self): Unit
 cuando el programa necesita armar, transferir o cancelar un timer. No son dos
 semánticas de reloj: ambas registran un único evento one-shot en el mismo
 proveedor. Un retraso negativo produce `ClockError.InvalidDelay`; cero es válido
-y conserva un punto de suspensión async. Un deadline vencido hace que `wait`
+y conserva un punto de suspensión suspendible. Un deadline vencido hace que `wait`
 termine sin esperar.
 
 `Timer` es afín, no es `Copy`, `Share`, `Equatable` ni `Key`, y puede moverse
@@ -1841,7 +1891,7 @@ Estas entradas utilizan las categorías existentes de `tondo-toolchain` (`source
 `dependency-interface` y `privileged-unit`); no se añade un path físico ni una
 segunda identidad de `std.time`. El `content_hash` de la distribución y su
 `api_hash` cubren el slice completo. La implementación hosted ya materializa
-el proveedor real/virtual y la frontera async descrita en
+el proveedor real/virtual y la frontera suspendible descrita en
 `docs/contracts/stdlib-time.md`; mientras no existan los bytes y hashes
 reproducibles del plan cerrado, `STD-TIME-BASE-CONF-001` permanece pendiente y
 `std.time` no se anuncia como una superficie distribuida estable.
@@ -1882,16 +1932,17 @@ contrato de desarrollo y no una publicación.
 | `std.iter` | `stdlib-core` | cerrado | colecciones |
 | `std.math` | `stdlib-core` | cerrado | numéricos intrínsecos |
 | `std.format` | `stdlib-core` | cerrado | `Display`, `std.bytes` |
-| `std.io` | `stdlib-core` | cerrado | `Bytes`, async |
-| `std.serialization` | `stdlib-core` | cerrado | `std.io`, `Display` |
+| `std.io` | `stdlib-core` | cerrado | `Bytes` |
+| `std.async` | `stdlib-core` | cerrado | `Join`, `oneshot`, `AsyncIterator` |
+| `std.serialization` | `stdlib-core` | cerrado | `std.io`, `std.bytes` |
 | `std.console` | `stdlib-hosted` | cerrado | `std.io`, capability `console` |
 | `std.path` | `stdlib-hosted` | cerrado | `String`, `Bytes` |
 | `std.fs` | `stdlib-hosted` | cerrado | `std.path`, `std.io`, `filesystem` |
 | `std.process` | `stdlib-hosted` | cerrado | `std.io`, `std.bytes`, `process` |
 
 Los contratos de JSON, MessagePack, Protobuf y `std.testing` mantienen sus
-registros de owner existentes y reutilizan exactamente `Serializer`,
-`Deserializer`, `Reader`, `Writer` y `Bytes` de estos source sets. `std.path`
+registros de owner existentes y reutilizan exactamente `Encoder`,
+`Decoder`, `Reader`, `Writer` y `Bytes` de estos source sets. `std.path`
 no adquiere `filesystem` por importar; `std.console`, `std.fs` y `std.process`
 solo comprueban su capability en el límite del adaptador. Ningún contrato
 introduce una segunda representación de error, stream o colección.
@@ -1906,15 +1957,17 @@ y conformance antes de cerrar S1A.
 
 Hay dos rutas deliberadamente distintas:
 
-- **Tipada:** un tipo concreto implementa `serialization.Serialize` y/o
-  `serialization.Deserialize`; el compilador monomorfiza la llamada y el codec
+- **Tipada:** un tipo concreto implementa `serialization.Encode[C]` y/o
+  `serialization.Decode[C]`; el compilador monomorfiza la llamada y el codec
   accede directamente a su estructura.
-- **Dinámica explícita:** cada formato posee su propio enum `Value` para
-  documentos cuyo schema no se conoce al compilar.
+- **Dinámica explícita:** JSON y MessagePack comparten `serialization.Value`
+  (reexportado como `json.Value`/`messagepack.Value`) para documentos cuyo
+  schema no se conoce al compilar; Protobuf conserva un modelo de wire propio.
 
 La ruta tipada no construye un `Value`, no consulta `std.reflect` y no busca
 fields por string. La ruta dinámica no introduce `Any`: sus casos posibles son
-un enum cerrado y específico del formato.
+un enum cerrado y documentado, y el codec rechaza las variantes que su wire
+format no admite.
 
 Todo codec ofrece tres niveles cuando el formato los admite:
 
@@ -1933,6 +1986,44 @@ materializados. Los defaults estándar son finitos y versionados. Alcanzar un
 límite devuelve un error nominal con clase, offset y path estructural; no
 produce un pánico ni un valor parcial.
 
+La ruta dinámica común pertenece a `std.serialization` y se expone como
+`serialization.Value` (JSON y MessagePack pueden reexportarlo como `Value`). Sus
+variantes son `Null`, `Bool`, `Int`, `UInt`, `Float`, `Text`, `Bytes`,
+`Object(ordered Map[String, Value])`, `Map(ordered Array[(Value, Value)])` y
+`Extension(tag, Bytes)`. JSON solo produce las variantes de su modelo y rechaza
+`Bytes`, `Extension` y mapas con claves no textuales salvo una opción explícita;
+MessagePack conserva bytes, extensiones y claves arbitrarias. Protobuf no usa
+este árbol: su inspección dinámica es un modelo de wire propio con fields
+desconocidos.
+
+`Value` es poseído, mutable y tiene copia lógica independiente. `ValueView` es
+prestado e inmutable y solo vive hasta el siguiente evento o hasta que termina
+la entrada; `parseView` lo entrega sin materialización. `clone()` siempre produce
+una copia lógica; copy-on-write es una optimización interna no observable.
+`Raw`/`RawView` son bytes opacos específicos de cada codec. `raw(bytes)` valida
+antes de construir `Raw`; `rawUnchecked(bytes)` solo existe en `unsafe`.
+
+La derivación estática utiliza `Encode[C]` y `Decode[C]`, donde `C` es el codec
+(`Json`, `MessagePack` o `Protobuf`), no interfaces runtime:
+
+~~~tondo pseudocode
+pub trait Encode[C] {
+    fn encode[E, S: Encoder[C, E]](self, var encoder: S): Unit ! E
+}
+pub trait Decode[C] {
+    fn decode[E, D: Decoder[C, E]](var decoder: D): Self ! E
+}
+~~~
+
+Un mismo tipo puede implementar varios codecs. `@name("wire_name")` cambia el
+nombre común; `@json(...)`, `@messagepack(...)` y `@proto(number)` afinan un
+codec concreto. `@proto(number)` es obligatorio para cada field Protobuf y los
+números nunca se infieren. `@ignore` es simétrico y omite el field al codificar y
+decodificar. `@json(base64)` convierte `Bytes` tipado a/desde texto Base64
+(RFC 4648; URL-safe debe nombrarse explícitamente); `parse` dinámico conserva el
+texto original. Las anotaciones se resuelven en compile time y no requieren
+reflection de valores.
+
 ### 14.6 `std.serialization`
 
 `std.serialization` posee los protocolos estáticos compartidos. La forma
@@ -1941,7 +2032,7 @@ normativa exhaustiva está en
 y se resume aquí para mantener la tabla de owners junto al lenguaje:
 
 ~~~tondo pseudocode
-pub trait Serializer[E] {
+pub trait Encoder[C, E] {
     fn null(var self): Unit ! E
     fn bool(var self, value: Bool): Unit ! E
     fn int(var self, value: Int64): Unit ! E
@@ -1962,17 +2053,17 @@ pub trait Serializer[E] {
     fn endEnum(var self): Unit ! E
 }
 
-pub trait Deserializer[E] {
+pub trait Decoder[C, E] {
     fn next(var self): SerializationEvent ! E
     fn own(var self, event: SerializationEvent): SerializationEvent ! E
 }
 
-pub trait Serialize {
-    fn serialize[E, S: Serializer[E]](self, var serializer: S): Unit ! E
+pub trait Encode[C] {
+    fn encode[E, S: Encoder[C, E]](self, var encoder: S): Unit ! E
 }
 
-pub trait Deserialize {
-    fn deserialize[E, D: Deserializer[E]](var deserializer: D): Self ! E
+pub trait Decode[C] {
+    fn decode[E, D: Decoder[C, E]](var decoder: D): Self ! E
 }
 ~~~
 
@@ -1982,8 +2073,8 @@ eventos exige una raíz única, fields únicos, claves y payloads completos,
 longitudes exactas cuando se declaran y cierres balanceados. Los frames son
 explícitos y acotados; no se usa la pila de llamadas del host.
 
-El receiver `self` de `Serialize` es la observación inmutable ordinaria del
-lenguaje: serializar no consume el valor. El serializer/deserializer se pasa
+El receiver `self` de `Encode` es la observación inmutable ordinaria del
+lenguaje: codificar no consume el valor. El encoder/decoder se pasa
 como `var` para que avance su estado sin boxing ni allocation por evento. Los
 payloads de texto/bytes de `next` son vistas hasta el siguiente evento y `own`
 es la única materialización estable.
@@ -1993,7 +2084,9 @@ La distribución registra providers para:
 ~~~tondo pseudocode
 import std.serialization
 
-derive serialization.Serialize + serialization.Deserialize for User
+derive serialization.Encode[Json] + serialization.Decode[Json]
+    + serialization.Encode[MessagePack] + serialization.Decode[MessagePack]
+    for User
 ~~~
 
 El comportamiento derivado:
@@ -2107,7 +2200,7 @@ no una omisión provisional.
 `FieldInfo` contiene únicamente `name`, `type`, ordinal declarativo y docs
 retenidas; `VariantInfo`, nombre, ordinal y descriptores de su payload;
 `ParameterInfo`, posición, tipo y modo (`value`, `ref`, `mut` o `var`); y
-`FunctionInfo`, parámetros, outcome, variadicidad y flags `async`/`unsafe`.
+`FunctionInfo`, parámetros, outcome, variadicidad y flags `suspendible`/`unsafe`.
 Todas las colecciones devueltas son valores inmutables canónicos. Sus elementos
 no dependen de direcciones, vtables ni del orden de un registro global.
 
@@ -2173,9 +2266,9 @@ compila.
 `std.json` implementa JSON UTF-8 conforme a
 [RFC 8259](https://www.rfc-editor.org/rfc/rfc8259.html). Su superficie contiene:
 
-- encode/decode tipado mediante `Serialize` y `Deserialize`;
+- encode/decode tipado mediante `Encode` y `Decode`;
 - `JsonReader`, `JsonWriter` y eventos incrementales;
-- `JsonValue` para uso sin schema;
+- `Value` para uso sin schema;
 - `JsonNumber`, que conserva una representación numérica validada sin forzar
   pérdida inmediata a `Float64`; y
 - opciones nominales de límites, campos desconocidos, duplicados y números no
@@ -2187,7 +2280,7 @@ política solicitada. Ignorar campos desconocidos o elegir una política distint
 requiere `DecodeOptions` explícito; no depende de globals.
 
 El encoder ordinario conserva el orden declarativo de un tipo y el orden de
-inserción de `JsonValue.Object`. `encodeCanonical` implementa
+inserción de `Value.Object`. `encodeCanonical` implementa
 [RFC 8785 (JCS)](https://www.rfc-editor.org/rfc/rfc8785.html):
 ordena properties según esa norma, usa su serialización de strings y números y
 emite UTF-8 sin whitespace. Como JCS restringe el dominio a I-JSON, la operación
@@ -2202,16 +2295,16 @@ de un field ni datos potencialmente secretos dentro de su mensaje.
 La API fuente única de 0.1 es:
 
 ~~~tondo pseudocode
-pub fn parse(input: Bytes, options: JsonDecodeOptions): JsonValue ! JsonError
-pub fn decode[T: Deserialize](input: Bytes, options: JsonDecodeOptions): T ! JsonError
-pub fn encode[T: Serialize](value: T, options: JsonEncodeOptions): Bytes ! JsonError
+pub fn parse(input: Bytes, options: JsonDecodeOptions): Value ! JsonError
+pub fn decode[T: Decode[Json]](input: Bytes, options: JsonDecodeOptions): T ! JsonError
+pub fn encode[T: Encode[Json]](value: T, options: JsonEncodeOptions): Bytes ! JsonError
 pub fn validate(input: Bytes, options: JsonDecodeOptions): Unit ! JsonError
 pub fn canonicalize(input: Bytes, options: JsonDecodeOptions): Bytes ! JsonError
-pub fn encodeCanonical(value: JsonValue, limits: JsonLimits): Bytes ! JsonError
-pub async fn JsonReader.next(var self): JsonEvent? ! JsonError
+pub fn encodeCanonical(value: Value, limits: JsonLimits): Bytes ! JsonError
+pub fn JsonReader.next(var self): JsonEvent? ! JsonError
 pub fn JsonReader.own(var self, event: JsonEvent): JsonEvent ! JsonError
-pub async fn JsonWriter.write(var self, event: JsonEvent): Unit ! JsonError
-pub async fn JsonWriter.finish(var self): Unit ! JsonError
+pub fn JsonWriter.write(var self, event: JsonEvent): Unit ! JsonError
+pub fn JsonWriter.finish(var self): Unit ! JsonError
 ~~~
 
 Los tipos, options, limits, eventos y errores exhaustivos están cerrados en el
@@ -2226,8 +2319,8 @@ binaria completa: nil, booleanos, enteros signed/unsigned, floats, strings
 UTF-8, binary, arrays, maps y extension values. Un objeto `str` con bytes UTF-8
 inválidos produce error; `bin` conserva cualquier secuencia de bytes.
 
-La ruta tipada comparte `Serialize`/`Deserialize` y escribe directamente al
-buffer o writer. `MessagePackValue` representa uso dinámico. Como una key
+La ruta tipada comparte `Encode`/`Decode` y escribe directamente al
+buffer o writer. `Value` representa uso dinámico. Como una key
 MessagePack puede ser cualquier valor, un map dinámico conserva sus pares como
 secuencia ordenada en lugar de imponer artificialmente `Map[String, Value]`;
 así también puede detectar duplicados según la política del caller.
@@ -2257,19 +2350,19 @@ reflection.
 La API fuente única de 0.1 es:
 
 ~~~tondo pseudocode
-pub fn decodeValue(input: Bytes, options: MessagePackDecodeOptions): MessagePackValue ! MessagePackError
-pub fn decode[T: Deserialize](input: Bytes, options: MessagePackDecodeOptions): T ! MessagePackError
-pub fn encodeValue(value: MessagePackValue, options: MessagePackEncodeOptions): Bytes ! MessagePackError
-pub fn encode[T: Serialize](value: T, options: MessagePackEncodeOptions): Bytes ! MessagePackError
+pub fn parse(input: Bytes, options: MessagePackDecodeOptions): Value ! MessagePackError
+pub fn decode[T: Decode[MessagePack]](input: Bytes, options: MessagePackDecodeOptions): T ! MessagePackError
+pub fn encode(value: Value, options: MessagePackEncodeOptions): Bytes ! MessagePackError
+pub fn encode[T: Encode[MessagePack]](value: T, options: MessagePackEncodeOptions): Bytes ! MessagePackError
 pub fn validate(input: Bytes, options: MessagePackDecodeOptions): Unit ! MessagePackError
-pub fn encodeDeterministic(value: MessagePackValue, limits: MessagePackLimits): Bytes ! MessagePackError
-pub async fn MessagePackReader.next(var self): MessagePackEvent? ! MessagePackError
+pub fn encodeDeterministic(value: Value, limits: MessagePackLimits): Bytes ! MessagePackError
+pub fn MessagePackReader.next(var self): MessagePackEvent? ! MessagePackError
 pub fn MessagePackReader.own(var self, event: MessagePackEvent): MessagePackEvent ! MessagePackError
-pub async fn MessagePackWriter.write(var self, event: MessagePackEvent): Unit ! MessagePackError
-pub async fn MessagePackWriter.finish(var self): Unit ! MessagePackError
+pub fn MessagePackWriter.write(var self, event: MessagePackEvent): Unit ! MessagePackError
+pub fn MessagePackWriter.finish(var self): Unit ! MessagePackError
 ~~~
 
-El catálogo completo de `MessagePackValue`, ext/timestamp, policies, limits,
+El catálogo completo de `Value`, ext/timestamp, policies, limits,
 paths y errores está en el [contrato fuente de `std.messagepack`](./docs/contracts/stdlib-messagepack.md).
 
 ### 14.11 `std.protobuf`
@@ -2327,15 +2420,15 @@ descriptor = "none"
 La API runtime única es:
 
 ~~~tondo pseudocode
-pub fn decode[T: Deserialize](input: Bytes, options: ProtoDecodeOptions): T ! ProtoError
-pub fn encode[T: Serialize](value: T, options: ProtoEncodeOptions): Bytes ! ProtoError
-pub fn encodeDeterministic[T: Serialize](value: T, limits: ProtoLimits): Bytes ! ProtoError
+pub fn decode[T: Decode[Protobuf]](input: Bytes, options: ProtoDecodeOptions): T ! ProtoError
+pub fn encode[T: Encode[Protobuf]](value: T, options: ProtoEncodeOptions): Bytes ! ProtoError
+pub fn encodeDeterministic[T: Encode[Protobuf]](value: T, limits: ProtoLimits): Bytes ! ProtoError
 pub fn validate[T](input: Bytes, options: ProtoDecodeOptions): Unit ! ProtoError
 pub fn descriptor[T](): ProtoDescriptor[T]
-pub async fn ProtoReader[T].next(var self): ProtoEvent? ! ProtoError
+pub fn ProtoReader[T].next(var self): ProtoEvent? ! ProtoError
 pub fn ProtoReader[T].own(var self, event: ProtoEvent): ProtoEvent ! ProtoError
-pub async fn ProtoWriter[T].write(var self, event: ProtoEvent): Unit ! ProtoError
-pub async fn ProtoWriter[T].finish(var self): Unit ! ProtoError
+pub fn ProtoWriter[T].write(var self, event: ProtoEvent): Unit ! ProtoError
+pub fn ProtoWriter[T].finish(var self): Unit ! ProtoError
 ~~~
 
 El mapping generado, el descriptor explícito, la evolución contra baseline TOML,
@@ -2402,7 +2495,7 @@ Antes de considerarse especificado, cada módulo debe incluir:
 
 ### 15.4 Ejecución
 
-- Síncrona o async.
+- Síncrona o suspendible.
 - Puntos de suspensión.
 - Puntos de cancelación.
 - Backpressure.
@@ -2484,7 +2577,7 @@ Una API capability-gated prueba además:
 - Cleanup.
 - Matriz de targets publicada.
 
-Una API async prueba además:
+Una API suspendible prueba además:
 
 - Suspensión real.
 - Progreso de otras tasks.
@@ -2606,7 +2699,7 @@ No forman parte de STD-0.1:
 - RPC y gRPC; Protobuf y la frontera de red sí pertenecen a STD-0.1.
 - Formatos adicionales a JSON, MessagePack, Protobuf, YAML, TOML y CBOR.
 - Aleatoriedad y entropía de usuario.
-- Streams async generales o reactivos; los protocolos acotados de byte I/O de
+- Streams suspendible generales o reactivos; los protocolos acotados de byte I/O de
   `std.io`, sockets de `std.net` y canales de `std.channel` sí pertenecen a
   0.1.
 - Deque y priority queues.
@@ -2707,7 +2800,7 @@ STD-0.1 puede publicarse como 0.1.0 únicamente cuando:
 - [ ] La matriz edición/target/perfil/capabilities está versionada.
 - [ ] Todas las unidades privilegiadas están fijadas por hash.
 - [ ] No existe búsqueda ambiental o de red durante compilación.
-- [ ] Cada API documenta errores, pánicos, ownership, async, orden y coste.
+- [ ] Cada API documenta errores, pánicos, ownership, suspendible, orden y coste.
 - [ ] Todas las capabilities ausentes producen rechazo estático.
 - [ ] Los tipos y errores tienen un propietario canónico.
 - [ ] Los módulos core no dependen de host.

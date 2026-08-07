@@ -42,7 +42,7 @@
     "bytes_encoding": "arbitrary-octets"
   },
   "generated": {
-    "traits": ["Serialize", "Deserialize"],
+    "traits": ["Encode[Protobuf]", "Decode[Protobuf]"],
     "dispatch": "compile-time-static",
     "message_kind": "nominal-record",
     "unknown_type": "UnknownFields",
@@ -72,7 +72,7 @@
     "reader_methods": ["fromBytes", "fromReader", "next", "own", "finish"],
     "writer_methods": ["toWriter", "write", "finish"],
     "unknown_methods": ["count", "discard"],
-    "generated_traits": ["Serialize", "Deserialize"],
+    "generated_traits": ["Encode[Protobuf]", "Decode[Protobuf]"],
     "terminal_state": "error-or-finish-terminal",
     "end_of_frame": "next-returns-none-once",
     "typed_dispatch": "schema-bound-static-no-dom"

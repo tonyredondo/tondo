@@ -18,9 +18,9 @@ jq -e '
   and .canonical_spec == "TONDO_STANDARD_LIBRARY_SPEC.md"
   and .owner_manifest == "testing/stdlib-implementation.json"
   and .intrinsics == ["Bytes"]
-  and (.owner_contracts | length) == 20
-  and ([.owner_contracts[].id] | unique | length) == 20
-  and (.owner_contracts | map(.contract) | length) == 20
+  and (.owner_contracts | length) == 21
+  and ([.owner_contracts[].id] | unique | length) == 21
+  and (.owner_contracts | map(.contract) | length) == 21
   and ((.owner_contracts | map(.contract) | unique | length) < (.owner_contracts | length))
   and .capability_rules.import_is_not_capability == true
   and .capability_rules.ambient_lookup == false
@@ -31,11 +31,11 @@ jq -e '
   and .api_rules.error_model == "nominal-result-per-owner"
   and .api_rules.async_io_model == "std.io-reader-writer"
   and .promotion.required_owner_status == "closed-contract"
-  and .promotion.implementation_remains_pending == ["std.serialization","std.json","std.messagepack","std.protobuf"]
+  and .promotion.implementation_remains_pending == ["std.async","std.serialization","std.json","std.messagepack","std.protobuf"]
   and .promotion.next == "STD-SER-IMPL-001"
 ' "$contract" >/dev/null
 
-expected='std.meta std.reflect std.core std.time std.env std.text std.collections std.iter std.math std.format std.io std.serialization std.path std.console std.fs std.process std.json std.messagepack std.protobuf std.testing'
+expected='std.meta std.reflect std.core std.time std.env std.text std.collections std.iter std.math std.format std.io std.async std.serialization std.path std.console std.fs std.process std.json std.messagepack std.protobuf std.testing'
 actual="$(jq -r '.owner_contracts[].id' "$contract" | paste -sd ' ' -)"
 [[ "$actual" == "$expected" ]] || { echo "stdlib owner order is not canonical" >&2; exit 1; }
 

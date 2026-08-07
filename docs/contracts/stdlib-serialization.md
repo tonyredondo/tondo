@@ -1,6 +1,7 @@
 # Contrato de `std.serialization`
 
-**Estado:** contrato común e implementación portable cerrados para STD-0.1A.
+**Estado:** contrato común normativo de STD-0.1A; la implementación conforme
+queda pendiente de migrar desde el prototipo anterior.
 Este documento define la frontera pública que deben implementar JSON,
 MessagePack y Protobuf; no es una API dinámica ni una sustitución de los
 contratos específicos de cada formato.
@@ -12,13 +13,13 @@ construcción atómica del resultado.
 
 ## Principios
 
-- Un tipo implementa `Serialize`, `Deserialize` o ambos. El compilador
+- Un tipo implementa `Encode[C]`, `Decode[C]` o ambos. El compilador
   monomorfiza la llamada; no hay trait objects, vtables, registro global ni
   lookup por nombre.
-- La ruta typed escribe directamente al `Serializer[E]` o lee eventos desde un
-  `Deserializer[E]`. No materializa `JsonValue`, `MessagePackValue` ni otro
+- La ruta typed escribe directamente al `Encoder[C, E]` o lee eventos desde un
+  `Decoder[C, E]`. No materializa `Value` dinámico ni otro
   DOM intermedio.
-- `Serializer[E]` y `Deserializer[E]` son protocolos de estado. `var` expresa
+- `Encoder[C, E]` y `Decoder[C, E]` son protocolos de estado. `var` expresa
   que el cursor o writer avanza; cada operación mantiene la identidad del
   error `E` del formato.
 - Un decoder no publica un `T` hasta haber consumido y validado todos sus
@@ -29,7 +30,7 @@ construcción atómica del resultado.
 ## Protocolos públicos
 
 ```tondo
-pub trait Serializer[E] {
+pub trait Encoder[C, E] {
     fn null(var self): Unit ! E
     fn bool(var self, value: Bool): Unit ! E
     fn int(var self, value: Int64): Unit ! E
@@ -54,17 +55,17 @@ pub trait Serializer[E] {
     fn endEnum(var self): Unit ! E
 }
 
-pub trait Deserializer[E] {
+pub trait Decoder[C, E] {
     fn next(var self): SerializationEvent ! E
     fn own(var self, event: SerializationEvent): SerializationEvent ! E
 }
 
-pub trait Serialize {
-    fn serialize[E, S: Serializer[E]](self, var serializer: S): Unit ! E
+pub trait Encode[C] {
+    fn encode[E, S: Encoder[C, E]](self, var encoder: S): Unit ! E
 }
 
-pub trait Deserialize {
-    fn deserialize[E, D: Deserializer[E]](var deserializer: D): Self ! E
+pub trait Decode[C] {
+    fn decode[E, D: Decoder[C, E]](var decoder: D): Self ! E
 }
 ```
 
@@ -75,11 +76,25 @@ sin una decisión del impl generado. `Float32` conserva sus bits y `Float64`
 conserva su valor IEEE completo, incluidos signed zero y NaN cuando el formato
 lo admite.
 
-`Serializer` es terminal después del primer error. `Deserializer` es terminal
+`Encoder` es terminal después del primer error. `Decoder` es terminal
 después de un error de input, límite, I/O o secuencia; volver a llamar a
 `next` no puede producir un valor parcial nuevo. El codec decide la forma
 concreta del error `E`, pero debe conservar la clase, offset y path estructural
 que exige su contrato.
+
+## Value dinámico, vistas y Raw
+
+`serialization.Value` es el árbol poseído común de JSON y MessagePack: `Null`,
+`Bool`, `Int`, `UInt`, `Float`, `Text`, `Bytes`, `Object`, `Map` y `Extension`.
+`Object` conserva miembros ordenados con claves `String`; `Map` conserva pares
+ordenados de `Value` y permite claves arbitrarias. JSON rechaza las variantes que
+no puede representar; Protobuf usa su propio modelo de wire y no convierte a
+`Value`.
+
+`ValueView` es prestado e inmutable y `parseView` lo entrega hasta el siguiente
+evento. `clone()` produce copia lógica independiente; copy-on-write es interno.
+`Raw` y `RawView` son bytes opacos específicos del codec; la construcción segura
+valida los bytes y `rawUnchecked` solo existe en `unsafe`.
 
 ## Eventos
 
@@ -138,7 +153,7 @@ es un error antes de reservar o publicar datos.
 
 ## Derive y personalización
 
-El provider de `derive serialization.Serialize + serialization.Deserialize`
+El provider de `derive serialization.Encode[C] + serialization.Decode[C]`
 genera output Tondo ordinario y determinista:
 
 - records visitan fields en orden de declaración;
@@ -149,8 +164,13 @@ genera output Tondo ordinario y determinista:
   sus fields;
 - los fields privados solo se incluyen cuando el provider tiene autorización
   explícita para el tipo objetivo; nunca se hacen públicos por accidente; y
-- renombrar, omitir, aplanar, transformar o asignar IDs de wire requiere un
-  `impl` manual o un DTO declarado.
+- `@name("wire_name")` establece el nombre común;
+- `@json(...)`, `@messagepack(...)` y `@proto(number)` afinan un codec;
+- `@proto(number)` es obligatorio y nunca se infiere;
+- `@ignore` omite simétricamente al codificar y decodificar; y
+- `@json(base64)` convierte `Bytes` tipado a/desde Base64 RFC 4648. Renombrar,
+  aplanar, transformar o cualquier regla no cubierta requiere un `impl` manual
+  o un DTO declarado.
 
 No se permiten attributes ejecutables, callbacks al compilador, reflection de
 valores ni providers que consulten filesystem, environment, process, reloj,
@@ -163,16 +183,18 @@ generator publica impls ordinarios compatibles con estos traits.
 
 ## Implementación portable del protocolo
 
-`crates/tondo-stdlib/src/serialization.rs` contiene la implementación de
-referencia del protocolo común. `EventSerializer` aplica el límite de eventos y
-publica el vector únicamente después de `validate_events`; `EventDeserializer`
+`crates/tondo-stdlib/src/serialization.rs` contiene el prototipo pre-ABI del
+protocolo común. `EventEncoder` aplica el límite de eventos y
+publica el vector únicamente después de `validate_events`; `EventDecoder`
 mantiene un cursor acotado, soporta `peek_event` para composiciones genéricas y
-solo termina con consumo completo. Los impls estáticos de `Serialize` y
-`Deserialize` cubren scalars, `String`, `Option[T]` y `Array[T]` sin trait
-objects, reflection ni DOM. `serialize_value`/`deserialize_value` son los
+solo termina con consumo completo. Los impls estáticos de `Encode` y
+`Decode` cubren scalars, `String`, `Option[T]` y `Array[T]` sin trait
+objects, reflection ni DOM. `encode_value`/`decode_value` son los
 adaptadores de prueba y de los codecs; el lowering de estas operaciones a
 símbolos Tondo públicos permanece como un gate separado del kernel y de los
-providers derive.
+providers derive. La migración a `Encode[C]`/`Decode[C]`, `Value` común y los
+codecs separados es un trabajo pendiente del tracker; estas rutas no se anuncian
+como implementación conforme.
 
 ## Providers derive build-only
 
@@ -180,8 +202,8 @@ Los providers normativos están implementados en
 crates/tondo-compiler/src/serialization_derive.rs y se registran bajo las
 identidades exactas:
 
-- std.derive.serialization.Serialize para serialization.Serialize;
-- std.derive.serialization.Deserialize para serialization.Deserialize.
+- std.derive.serialization.Encode para serialization.Encode[C];
+- std.derive.serialization.Decode para serialization.Decode[C].
 
 Cada provider recibe únicamente el MetaSnapshot sellado y devuelve un body de
 impl Tondo ordinario. meta_derive añade el header nominal, conserva los

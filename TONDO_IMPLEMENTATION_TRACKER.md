@@ -9,9 +9,9 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 1.65
+**Versión del tracker:** 1.66
 
-**Última actualización:** 2026-08-05
+**Última actualización:** 2026-08-07
 
 **Especificaciones normativas:**
 
@@ -42,11 +42,13 @@ confunde con conformarla. TLF tampoco cambia la semántica `.to`: Gate L0 produc
 un bundle separado y el candidato final fija G5, S1 y L0 por identidades
 independientes.
 
-**Objetivo inmediato:** cerrar primero las dos lagunas verificadas por la
-auditoría: (1) completar las APIs públicas A1–A4 de STD-0.1A, en especial
-serialization tipada, derives, streaming y generación Protobuf schema-first;
-y (2) ampliar la matriz normativa a los tres contratos G5, clasificar cada límite y
-aportar evidencia ejecutable antes de volver a cerrar T0/G5/S1A. Los contratos
+**Objetivo inmediato:** migrar primero los contratos cuya forma normativa ha
+cambiado: (1) eliminar el modificador fuente `async` y adoptar suspensión
+inferida, `Join` transferible, `oneshot` y `AsyncIterator`; (2) migrar
+serialization a `Encode[C]`/`Decode[C]`, `Value`/`ValueView`/`Raw` y separar la
+API de protocolo de Protobuf; (3) completar las rutas públicas A1–A4 y ampliar
+la matriz normativa a los tres contratos G5 antes de volver a cerrar T0/G5/S1A.
+Los contratos
 runtime-facing de STD-0.1B y M11 esperan esos gates. Todo pertenece a la primera
 versión 0.1; los slices son orden de implementación, no versiones públicas. La
 VM permanece como implementación de referencia y oracle diferencial del
@@ -58,6 +60,59 @@ su bundle L0 antes de `REL-0.1-RC-001`.
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
 > decisiones técnicas y permite distinguir entre una característica
 > implementada, una característica validada y una implementación conforme.
+
+## 0. Decisiones aceptadas en la revisión 1.66
+
+Estas decisiones son normativas para Tondo 0.1 y sustituyen cualquier cierre
+histórico que utilice otra forma. Una marca `[x]` de una tarea anterior solo
+conserva evidencia del prototipo pre-1.66; las migraciones siguientes deben
+volver a demostrar la ruta pública completa.
+
+### Suspensión y concurrencia
+
+- No existe la keyword `async` ni `async fn`, `async unsafe fn` o un wrapper
+  público `Task`/`Future`. Todas las funciones son `fn`.
+- `await` es el único marcador escrito de suspensión. El compilador infiere el
+  efecto transitivo, lo publica en metadatos/IDE/ABI y exige `await` o `spawn`
+  para una llamada suspendible. `@sync`/`@nosuspend` es una garantía negativa.
+- `spawn call()` crea una task ligera; `spawn thread call()` crea un thread del
+  sistema operativo. Ambos devuelven el mismo `Join[T, E]` afín y se consumen
+  mediante `await`; `return spawn call()` es una expresión ordinaria.
+- Al salir un scope cada child debe esperarse, cancelarse, detached o
+  transferirse. `cancel` solicita y luego requiere observar la finalización;
+  `detach` consume el handle y prohíbe capturar préstamos locales. El unwind
+  cancela y espera children no transferidos.
+- `oneshot[T, E]` separa `Waiter` y `Completer`, completa una sola vez y devuelve
+  `AlreadyCompleted` en una segunda finalización. `AsyncIterator[T]` y
+  `for await` son el protocolo lazy con backpressure; `collect(limit:)` es la
+  materialización explícita.
+
+### Serialization y protocolos
+
+- `std.serialization` posee los traits genéricos estáticos `Encode[C]` y
+  `Decode[C]`; no hay interfaces runtime, reflection de valores ni DOM en la
+  ruta tipada. Un mismo tipo puede implementar varios codecs.
+- JSON y MessagePack comparten `serialization.Value` (aliases de módulo), con
+  `ValueView` prestado, `Raw` opaco y copy-on-write no observable. `parse` es la
+  ruta dinámica; `decode[T]` y `encode(value)` son las rutas tipadas/dinámicas
+  unificadas.
+- `@name`, `@json`, `@messagepack`, `@proto(number)`, `@ignore` y
+  `@json(base64)` se resuelven en compile time. Protobuf exige números de field
+  explícitos y conserva su modelo de wire (`ProtoEvent`/`UnknownField`), sin
+  convertirlo en `Value`.
+- Los defaults de límites son finitos; límites no acotados y `rawUnchecked` solo
+  existen en `unsafe`. Streaming reutiliza el único `Reader`/`Writer`; no hay
+  APIs sync/async duplicadas.
+
+### Reglas de migración
+
+- El ABI anterior `Serialize`/`Deserialize`, `Serializer`/`Deserializer`, los
+  enums `JsonValue`/`MessagePackValue` y los signatures `async fn` son
+  **predecessor ABI**. No se consideran conformes aunque sus kernels sigan
+  pasando sus tests internos.
+- La migración requiere actualizar spec, contratos, registros machine-readable,
+  derive providers, lowering, APIs públicas, tests y evidencia antes de marcar
+  una leaf `[x]`.
 
 ---
 
@@ -1997,26 +2052,27 @@ Clasificación explícita de los ejemplos integrados exigidos por este gate:
 
 ## 12. M7 — Async y concurrencia estructurada
 
-**Objetivo:** implementar suspensión y concurrencia sin futures implícitos,
-tasks detached ni wrappers visibles en las firmas.
+**Objetivo histórico:** el prototipo implementó suspensión y concurrencia sin
+futures implícitos. El contrato vigente elimina el modificador fuente `async` y
+requiere completar `ASYNC-INFER-001` y sus leaves antes de cerrar M7 conforme.
 
-- [x] **ASYNC-001 — Typecheckear funciones y closures async.** HIR conserva el
+- [ ] **ASYNC-001 — Typecheckear funciones y closures suspendibles.** HIR conserva el
   efecto en la identidad y la firma exacta, comprueba cuerpos nombrados y
   cierres concretos, deriva su protocolo de llamada y rechaza parámetros
   exclusivos con `E1609`.
 
-- [x] **ASYNC-002 — Exigir `await` o `spawn` al invocar trabajo async.** Una
-  llamada async se materializa como operación HIR no ejecutable por sí sola y
+- [ ] **ASYNC-002 — Exigir `await` o `spawn` al invocar trabajo suspendible.** Una
+  llamada suspendible se materializa como operación HIR no ejecutable por sí sola y
   solo puede quedar inmediatamente bajo uno de esos dos iniciadores; el resto
   produce `E1601`.
 
-- [x] **ASYNC-003 — Prohibir préstamos y parámetros incompatibles a través de
+- [ ] **ASYNC-003 — Prohibir préstamos y parámetros incompatibles a través de
   suspensión.** El análisis de liveness comprueba `Send` para cada owner vivo,
   reutiliza la frontera de loans de BORROW-006 y emite `E1607` si un préstamo
   exclusivo alcanza `await`; los préstamos estructurados de `spawn` permanecen
   activos hasta consumir su `Join`.
 
-- [x] **ASYNC-004 — Transformar MIR async en frames suspendibles.** MIR y
+- [ ] **ASYNC-004 — Transformar MIR suspendible en frames suspendibles.** MIR y
   bytecode poseen terminadores separados `Await`, `Spawn` y `DrainScopes`,
   además de `EnterTaskScope`; el executor aparca el vector de frames tipados de
   cada task sin recurrir al stack de Rust y lo restaura al reanudarla.
@@ -2036,12 +2092,12 @@ tasks detached ni wrappers visibles en las firmas.
   drena exactamente el sufijo léxico abandonado antes de sus defers y la VM
   verifica owner, anidamiento y cierre único.
 
-- [x] **SPAWN-001 — Implementar `spawn` y `Join[T, E]`.** Los argumentos se
+- [ ] **SPAWN-001 — Implementar `spawn` y `Join[T, E]`.** Los argumentos se
   preparan en la task propietaria, se transfieren a un frame hijo mediante
   `CallOnce`, y el resultado inmediato es un handle afín ligado a la identidad
   runtime del hijo y de su scope.
 
-- [x] **JOIN-001 — Tratar `Join` como obligación terminal y consumirlo mediante
+- [ ] **JOIN-001 — Tratar `Join` como obligación terminal y consumirlo mediante
   `await`.** HIR rastrea su procedencia a través de bindings, asignaciones,
   patterns y contenedores, impide que escape o llegue vivo al final con
   `E1603`, y libera los préstamos de `spawn` solo cuando desaparece el último
@@ -2071,8 +2127,8 @@ tasks detached ni wrappers visibles en las firmas.
   que puede cruzar tasks y bloquea escritura/movimiento del origen hasta
   consumir el `Join`.
 
-- [x] **MAIN-ASYNC-001 — Implementar `async fn main` y scope raíz.** El driver
-  admite una entrada async segura con el mismo outcome lógico que `main`
+- [ ] **MAIN-ASYNC-001 — Implementar `main` suspendible por inferencia y scope raíz.** El driver
+  admite una entrada segura con el mismo outcome lógico que `main`
   síncrono; la task raíz pertenece al executor, pero no crea un scope léxico
   implícito para autorizar `spawn` detached.
 
@@ -2083,14 +2139,41 @@ tasks detached ni wrappers visibles en las firmas.
   cleanup, pánicos de hermanos y roots vivos bajo GC, sin fijar una traza
   concreta del scheduler.
 
+- [ ] **ASYNC-INFER-001 — Migrar el frontend al efecto suspendible inferido.**
+  Eliminar `async` de lexer, grammar, function types, closures, traits,
+  diagnostics y fixtures; propagar la capacidad desde `await` y rechazar una
+  llamada suspendible sin `await`/`spawn`. Mantener `@sync`/`@nosuspend` como
+  garantía negativa y añadir compile-pass/compile-fail para inferencia
+  transitiva, efectos en metadatos y ausencia de wrappers `Task`/`Future`.
+
+- [ ] **ASYNC-JOIN-RETURN-001 — Hacer transferible `Join` fuera del scope.**
+  Sustituir la regla histórica `join-escapes` por ownership afín: `await`,
+  `cancel`, `detach` o `return`/move son las únicas terminaciones; validar
+  teardown, cancelación y unwind cuando el handle se transfiere al caller.
+
+- [ ] **ASYNC-THREAD-SPAWN-001 — Unificar task y thread bajo `spawn`.**
+  Implementar `spawn thread call()` con el mismo `Join[T, E]`, capacidades
+  `Send`, cleanup y diagnostics; retirar la API pública paralela `Thread.start`.
+
+- [ ] **ASYNC-ONESHOT-001 — Implementar completion one-shot.**
+  Añadir `Waiter`/`Completer`, finalización atómica, `AlreadyCompleted`,
+  cancelación y pruebas de carreras sin callbacks ni scheduler adicional.
+
+- [ ] **ASYNC-ITER-001 — Implementar `AsyncIterator` y `for await`.**
+  Añadir el protocolo estático, backpressure, cierre en `break`/cancelación y
+  `collect(limit:)`; adaptar receiver de Channel y demostrar que no se crea un
+  array intermedio.
+
 ### Gate de salida de M7
 
-- [x] Ningún hijo sobrevive a su scope.
-- [x] Todo `Join` se consume o recibe cleanup estructurado.
+- [ ] Ningún hijo sobrevive a su scope bajo las reglas de transferencia de 1.66.
+- [ ] Todo `Join` se consume, se transfiere, se cancela o se detached de forma
+  explícita.
 - [x] Cancelación no aparece como variante implícita de `E`.
 - [x] El executor de un hilo satisface progreso cooperativo.
 - [x] El código no depende del orden concreto de scheduling.
-- [x] Los roots de frames suspendidos permanecen vivos.
+- [ ] Los roots de frames suspendidos permanecen vivos tras la migración de
+  efectos inferidos.
 
 ---
 
@@ -2108,8 +2191,8 @@ shell implícito ni efectos de importación.
 
 - [x] **SCRIPT-003 — Inferir localmente la unión cerrada de errores del script.**
 
-- [x] **SCRIPT-004 — Convertir el `main` implícito en async cuando aparezca
-  `await` o `scope` top-level.**
+- [ ] **SCRIPT-004 — Inferir suspensión del `main` implícito cuando aparezca
+  `await` o `scope` top-level, sin escribir `async` en la firma.**
 
 - [x] **SCRIPT-005 — Prohibir importar un script y mezclarlo con `main`
   explícito.**
@@ -2943,23 +3026,25 @@ reporters.
   ocho tests unitarios deterministas.
 
 - [x] **UTEST-CHECK-001 — Inferir el contrato exacto del body.**
-  `test_check::check` cierra las entradas privadas `async? fn(): Unit ! E` de
+  `test_check::check` cierra las entradas privadas `fn(): Unit ! E` de
   tests y setups, permite `Unit`/`Never`, prohíbe valores retornados y
   `return` en setup, normaliza la unión de errores y exige `Discard`. Consume
   las pruebas de ownership, préstamos, terminales, `Send`, `Share` y `unsafe`
-  sin relajarlas, infiere async desde `await` y tiempo virtual y rechaza
+  sin relajarlas, infiere suspensión desde `await` y tiempo virtual y rechaza
   `std.testing` desde producción con `E2003`. Valida las formas monomórficas de
   `log`, `tags`, `failNow`, `skip`, `attach`, `snapshot`, `withVirtualTime`,
   `settle` y `advance`, incluyendo nombres/media types, duplicados de
   evidencia, `P2005`/`P2006` y la clausura
-  `Send + CallOnce[async fn(ref VirtualTime): Unit ! E]`. Evidencia:
+  `Send + CallOnce[fn(ref VirtualTime): Unit ! E]` con efecto suspendible
+  inferido. Evidencia:
   `docs/contracts/test-check.md` y diez tests unitarios deterministas.
 
 ### 17.3 Lowering, runtime y CLI
 
 - [x] **UTEST-LOWER-001 — Bajar entradas de test por el pipeline común.** HIR,
   MIR, bytecode y sus admission verifiers representan árbol/parent, entradas de
-  setup, snapshots de entorno, identidad, source span, error, async, cleanup,
+  setup, snapshots de entorno, identidad, source span, error, suspensión,
+  cleanup,
   `TestLog`, `TestTags`, `TestFailNow`, `TestSkip`, `TestAttach`,
   `TestSnapshot`, entrada/salida de dominio, `VirtualTimeSettle` y
   `VirtualTimeAdvance` sin crear un segundo frontend o una ruta de ejecución no
@@ -3840,10 +3925,11 @@ layer pueden avanzar en paralelo.
   introducir reflection, vtables, lookup abierto ni una segunda interpolación.
 
 - [x] **STD-SER-001 — Completar la especificación de
-  `std.serialization`.** Cerrar las firmas de
-  `Serialize`, `Deserialize`, `Serializer[E]` y `Deserializer[E]`, su máquina
-  de eventos, derive format-neutral, bounds genéricos, construcción atómica,
-  ownership, errores y personalización mediante impl/DTO explícito. Cerrado con
+  `std.serialization`.** Cerrar las firmas de `Encode[C]`, `Decode[C]`,
+  `Encoder[C, E]` y `Decoder[C, E]`, su máquina de eventos, derive
+  format-neutral, `Value`/`ValueView`/`Raw`, bounds genéricos, construcción
+  atómica, ownership, errores, límites y personalización mediante anotaciones
+  compile-time/impl explícito. Cerrado con
   el contrato canónico [`docs/contracts/stdlib-serialization.md`](./docs/contracts/stdlib-serialization.md),
   su registro machine-readable y un validador iterativo de eventos que cubre
   arrays, maps con claves arbitrarias, records, fields, enums, variants,
@@ -3868,7 +3954,8 @@ layer pueden avanzar en paralelo.
   no publica respuestas parciales.
 
 - [x] **STD-JSON-001 — Especificar JSON out of the box.** Ruta
-  typed directa, `JsonValue`/`JsonNumber`, reader/writer/eventos incrementales,
+  typed directa `Encode[Json]`/`Decode[Json]`, `Value`/`ValueView`/`Raw`,
+  `JsonNumber`, reader/writer/eventos incrementales,
   UTF-8, duplicados, unknown fields, orden/canonical output, límites, errors con
   path y corpus interoperable; nunca materializar DOM para typed decode. Cerrado
   con [`docs/contracts/stdlib-json.md`](./docs/contracts/stdlib-json.md), el
@@ -3886,10 +3973,10 @@ layer pueden avanzar en paralelo.
   [`docs/contracts/stdlib-messagepack.md`](./docs/contracts/stdlib-messagepack.md),
   el registro [`testing/stdlib-messagepack.json`](./testing/stdlib-messagepack.json)
   y el check [`scripts/stdlib-messagepack-check.sh`](./scripts/stdlib-messagepack-check.sh),
-  integrado en `scripts/test-gate.sh`. El contrato fija `MessagePackValue` con
+  integrado en `scripts/test-gate.sh`. El contrato fija `Value` común con
   maps de pares ordenados y claves arbitrarias, `Ext`/timestamp explícitos,
   typed dispatch sin DOM, reader/writer con stack acotado, policies de
-  duplicados y extensiones, y `encodeDeterministic` sin afirmar una
+  duplicados y extensiones, `Value` común y `encodeDeterministic` sin afirmar una
   canonicalización universal. La interoperabilidad queda preparada para
   `STD-CODEC-CONF-001`.
 
@@ -3906,7 +3993,8 @@ layer pueden avanzar en paralelo.
   mapping de presencia y escalares, open enums numéricos, maps last-wins,
   packed/unpacked, unknown raw fields, parser streaming con frame, evolución
   contra baseline TOML y `encodeDeterministic` propio de Tondo sin reflection
-  runtime. La conformidad wire e interoperabilidad quedan preparadas para
+  runtime; Protobuf conserva una API de protocolo separada de `Value`. La
+  conformidad wire e interoperabilidad quedan preparadas para
   `STD-CODEC-CONF-001`.
 
 - [x] **STD-PERF-001 — Fijar contratos de rendimiento.** Cada hot path tiene
@@ -4050,20 +4138,46 @@ completa del owner existe por la ruta pública”. Cada una debe actualizar la
 matriz de owner por firma, no limitarse a citar un archivo que contiene alguna
 parte del módulo.
 
-- [x] **STD-JSON-API-001 — Fijar la API fuente exacta de JSON.** Cerrado con
-  `JsonValue`/`JsonNumber`/`JsonPath`, options y limits nominales, parse/decode/
-  encode/validate/canonicalize, `JsonEvent`, readers/writers async, ownership,
-  errores con path y estado terminal; no hay aliases ni defaults ambientales.
+#### 19.4.2 Migración ABI 1.66
 
-- [x] **STD-MSGPACK-API-001 — Fijar la API fuente exacta de MessagePack.**
-  Cerrado con valores y entries de maps arbitrarios, ext/timestamp, policies,
-  options/limits, encode/decode/deterministic, eventos, readers/writers async,
-  ownership, errores y terminalidad bajo el owner común de serialization e I/O.
+La revisión del diseño reabre las leaves A3 aunque sus kernels pre-ABI pasen
+tests. Antes de volver a marcarlas `[x]` deben cumplirse todos estos puntos:
 
-- [x] **STD-PROTOBUF-API-001 — Fijar la API fuente y de build de Protobuf.**
-  Cerrado con `[[protobuf.schema]]` en `tondo.toml`, mapping hermético,
-  baseline de evolución, descriptor root explícito, tipos generated,
-  `ProtoReader[T]`/`ProtoWriter[T]`, options, limits, errors y terminalidad.
+- `STD-SER-IMPL-001`: publicar `Encode[C]`/`Decode[C]` y
+  `Encoder[C, E]`/`Decoder[C, E]` desde la ruta Tondo, con adapters typed sin DOM.
+- `STD-DERIVE-SER-001`: generar derives por codec, anotaciones `@name`,
+  `@ignore`, `@json(base64)` y `@proto(number)` con source maps deterministas.
+- `STD-JSON-API-001`/`STD-MSGPACK-API-001`: migrar a `parse`, `decode[T]`,
+  `encode(value)` y aliases de `serialization.Value`, `ValueView` y `Raw`.
+- `STD-PROTOBUF-API-001`: conservar `ProtoEvent`/`UnknownField` como API de
+  protocolo y usar únicamente `Encode[Protobuf]`/`Decode[Protobuf]` para tipos
+  generados; no introducir un DOM `Value` para Protobuf.
+- `STD-JSON-IMPL-001`, `STD-MSGPACK-IMPL-001` y `STD-PROTOBUF-IMPL-001`:
+  conectar las tres rutas (bytes, streaming y typed) a esos símbolos públicos,
+  preservar límites finitos y demostrar tests de anotaciones, Base64, vistas,
+  Raw y errores estructurados. Los símbolos Rust `Serialize`/`Deserialize` y
+  `JsonValue`/`MessagePackValue` son solo bridges de compatibilidad hasta cerrar
+  estas leaves.
+
+- [ ] **STD-JSON-API-001 — Fijar la API fuente exacta de JSON.** Publicar
+  `parse -> Value`, `decode[T: Decode[Json]]`, `encode[T: Encode[Json]]`,
+  `ValueView`/`parseView`, `Raw`, `JsonReader`/`JsonWriter`, options y limits
+  nominales, errores con path y estado terminal; no hay aliases ni defaults
+  ambientales. La implementación solo puede cerrar la tarea tras actualizar
+  el registro de firma por firma.
+
+- [ ] **STD-MSGPACK-API-001 — Fijar la API fuente exacta de MessagePack.**
+  Publicar `parse -> Value`, `decode[T: Decode[MessagePack]]`,
+  `encode[T: Encode[MessagePack]]`, `ValueView`/`Raw`, ext/timestamp, policies,
+  options/limits, eventos, readers/writers, ownership, errores y terminalidad
+  bajo el owner común de serialization e I/O.
+
+- [ ] **STD-PROTOBUF-API-001 — Fijar la API fuente y de build de Protobuf.**
+  Publicar `[[protobuf.schema]]` en `tondo.toml`, mapping hermético, baseline
+  de evolución, descriptor root explícito, tipos generated,
+  `Encode[Protobuf]`/`Decode[Protobuf]`, `ProtoReader[T]`/`ProtoWriter[T]`,
+  `ProtoEvent`, options, limits, errors y terminalidad. El contrato de wire no
+  introduce un alias dinámico a `serialization.Value`.
 
 - [x] **STD-CORE-IMPL-001 — Publicar los protocolos Core completos.** Conectar
   por dispatch estático las operaciones cerradas de `Option` y `Result`, junto
@@ -4146,66 +4260,47 @@ parte del módulo.
   la prueba host cubre argumentos exactos, streams separados, combined,
   redirección, formas de pipeline, backpressure y errores nominales.
 
-- [x] **STD-SER-IMPL-001 — Implementar `std.serialization` tipada.** Publica
-  traits estáticos `Serialize`/`Deserialize`, sinks/sources
-  `Serializer`/`Deserializer`, `EventSerializer`/`EventDeserializer` y los
-  adaptadores bounded `serialize_value`/`deserialize_value`. La construcción
-  solo se publica después de validar la secuencia completa; scalars, `String`,
-  `Option[T]` y `Array[T]` se componen sin DOM, reflection ni trait objects. El
-  lowering de símbolos Tondo permanece como gate separado; el provider derive
-  está cerrado en STD-DERIVE-SER-001.
+- [ ] **STD-SER-IMPL-001 — Implementar `std.serialization` tipada.** Publicar
+  `Encode[C]`/`Decode[C]` y los protocolos `Encoder[C, E]`/`Decoder[C, E]`
+  por la ruta fuente de Tondo. Los adaptadores typed deben escribir y leer sin
+  `Value`, reflection runtime ni trait objects; los errores y los estados
+  terminales se validan antes de publicar el resultado. Scalar, `String`,
+  `Option[T]`, `Array[T]` y records/enums se componen mediante dispatch estático.
+  Los símbolos Rust del prototipo anterior son bridges internos y no cuentan
+  como API cerrada.
 
-- [x] **STD-DERIVE-SER-001 — Implementar providers de derive de
-  serialization.** Registrar providers build-only reales para `Serialize` y
-  `Deserialize`, generar impls Tondo deterministas para records/enums/genéricos
-  y probar diagnósticos, source maps, límites, campos privados/policies y
-  ausencia de reflection runtime. Cerrado con
-  crates/tondo-compiler/src/serialization_derive.rs: los dos providers se
-  registran bajo identidades exactas, consumen solo el MetaSnapshot sellado,
-  generan bodies Tondo ordinarios y el ejecutor añade headers genéricos,
-  valida/parser-formatea el impl y publica source maps de forma atómica.
-  Records, enums unit/tuple/record, newtypes y genéricos están cubiertos por
-  tests, junto con campos privados, bounds insuficientes, targets ausentes,
-  nombres inválidos y ausencia de reflection/capabilities. El siguiente bloque
-  es STD-JSON-IMPL-001.
+- [ ] **STD-DERIVE-SER-001 — Implementar providers de derive de
+  serialization.** Registrar providers build-only para
+  `Encode[C]`/`Decode[C]`, generar impls Tondo deterministas para
+  records/enums/newtypes/genéricos y probar diagnostics, source maps, límites,
+  campos privados y ausencia de reflection runtime. Resolver en compile time
+  `@name`, `@json(...)`, `@messagepack(...)`, `@proto(number)`, `@ignore` y
+  `@json(base64)` de forma simétrica; no inferir números Protobuf ni leer el
+  entorno. El provider recibe solo el MetaSnapshot sellado.
 
-- [x] **STD-JSON-IMPL-001 — Implementar las tres rutas de JSON.** Publicar
-  typed encode/decode directo, `JsonValue`/`JsonNumber` decimal exacto y
-  `JsonReader`/`JsonWriter` incrementales con stack explícito. Cubrir chunking,
-  Unicode, paths, policies, RFC 8259/JCS, límites y ausencia de DOM obligatorio;
-  `validate/canonicalize` sobre el kernel `serde_json::Value` deja de ser la
-  ruta pública. Cerrado con `crates/tondo-stdlib/src/json_api.rs`: el reader y
-  writer usan frames explícitos, `JsonNumber` conserva el token decimal,
-  duplicate policies conservan la posición del primer miembro y el camino
-  typed adapta `Serialize`/`Deserialize` sin DOM. Se cubren RFC 8259,
-  escapes/surrogates, chunk-equivalent bytes, JCS, límites, terminalidad,
-  paths de error y API de reader/writer.
+- [ ] **STD-JSON-IMPL-001 — Implementar las tres rutas de JSON.** Publicar
+  `parse -> Value`, `decode[T: Decode[Json]]` y
+  `encode[T: Encode[Json]]`, además de `ValueView`/`parseView`, `Raw` y
+  `JsonReader`/`JsonWriter` con stack explícito. Cubrir chunking, Unicode,
+  paths, policies, RFC 8259/JCS, Base64 anotado, límites finitos y ausencia de
+  DOM en la ruta typed. El bridge `serde_json` no sustituye la API pública.
 
-- [x] **STD-MSGPACK-IMPL-001 — Implementar MessagePack completo.** Publicar
-  typed, dynamic y streaming para todo el modelo wire, claves arbitrarias,
-  ext/timestamp, floats bit-exact, policies y encoding determinista. El codec
-  dinámico materializado actual no sustituye reader/writer ni dispatch typed.
-  Cerrado con `crates/tondo-stdlib/src/messagepack_api.rs`: el parser y writer
-  usan stacks explícitos, se conservan las policies de mapas/extensiones y
-  floats bit-exact, el encoder determinista ordena por bytes de clave y los
-  adapters typed consumen el protocolo estático de `std.serialization`. El
-  corpus local cubre wire model, no-minimal, duplicados, fragmentación,
-  timestamp, límites, terminalidad y typed round-trip. La conformance externa
-  independiente sigue siendo la promoción posterior, no un falso cierre.
-  Requiere `STD-MSGPACK-API-001` y `STD-DERIVE-SER-001`.
+- [ ] **STD-MSGPACK-IMPL-001 — Implementar MessagePack completo.** Publicar
+  `parse -> Value`, `decode[T: Decode[MessagePack]]`,
+  `encode[T: Encode[MessagePack]]`, `ValueView`/`Raw` y streaming para todo el
+  modelo wire, claves arbitrarias, ext/timestamp, floats bit-exact, policies y
+  encoding determinista. El codec debe consumir los protocolos comunes sin
+  materializar un `Value` en la ruta typed; el corpus cubre fragmentación,
+  non-minimal, duplicados, límites y terminalidad.
 
-- [x] **STD-PROTOBUF-IMPL-001 — Implementar Protobuf schema-first.** Cerrado
-  con `protobuf_api.rs`: wire parser y encoder con varints/fixed/length/groups,
-  límites finitos, errors con path y atomicidad terminal; `ProtoReader[T]` y
-  `ProtoWriter` usan frames explícitos, `own`, fragmentación equivalente y
-  salida opcional a `Writer`. `UnknownField(s)` conserva tag/payload raw y el
-  modo determinista ordena los fields dinámicos; el adaptador typed consume
-  `std.serialization` sin reflection. El checker proto3 rechaza syntax y
-  números incompatibles, valida evolución por baseline y genera fuente Tondo
-  estable con `generate_tondo`. El kernel wire anterior permanece como bridge
-  de compatibilidad. La conformance contra implementadores externos y la
-  integración del generator en el driver siguen siendo gates de promoción.
-  Requiere `STD-PROTOBUF-API-001` y `STD-DERIVE-SER-001`.
+- [ ] **STD-PROTOBUF-IMPL-001 — Implementar Protobuf schema-first.** Publicar
+  `Encode[Protobuf]`/`Decode[Protobuf]`, `ProtoReader[T]`/`ProtoWriter[T]`,
+  `ProtoEvent` y `UnknownField` como API de wire separada, sin convertir
+  Protobuf en `serialization.Value`. El checker proto3 valida números y
+  evolución por baseline TOML; el encoder/reader usan frames explícitos,
+  límites finitos, atomicidad terminal y preservación de unknown fields. La
+  conformance externa y la integración del generator son gates posteriores;
+  los kernels pre-ABI solo cuentan como evidencia histórica.
 
 - [x] **STD-TESTING-SHRINK-001 — Completar generación y shrinking público.**
   `crates/tondo-compiler/src/test_generation.rs` conecta los helpers públicos
@@ -5357,7 +5452,14 @@ gates en una barrera artificial.
     `CONF-GAP-AUDIT-001`, `CONF-GAP-IMPL-001`, `CONF-LAYER-RESULT-001`,
     `QUALITY-EVIDENCE-BIND-001` y `CONF-SEAL-FINAL-001` tras
     detectar que el candidato no exigía cobertura normativa completa.
-25. [ ] **Wave 5 — STD-0.1A por layers.** Los contratos, slices A0 y kernels
+25. [ ] **Wave 4.5 — Migración de suspensión 1.66.** Completar
+    `ASYNC-INFER-001`, `ASYNC-JOIN-RETURN-001`, `ASYNC-THREAD-SPAWN-001`,
+    `ASYNC-ONESHOT-001` y `ASYNC-ITER-001`, junto a la actualización de
+    `SCRIPT-004`, del ABI de bytecode y de los contratos de I/O. El mini-gate
+    exige `rg` sin firmas `async fn`, tests de inferencia transitiva, Join
+    transferible, one-shot y `for await`; los kernels existentes solo cuentan
+    como evidencia histórica hasta pasar este gate.
+26. [ ] **Wave 5 — STD-0.1A por layers.** Los contratos, slices A0 y kernels
     iniciales están cerrados; la auditoría 1.45 reabre el resto. El orden de
     cierre es:
     - A1: `STD-CORE-IMPL-001`, `STD-TEXT-IMPL-001`, `STD-COLL-IMPL-001`,
@@ -5366,25 +5468,28 @@ gates en una barrera artificial.
     - A3 spec: `STD-SER-001` y
       `STD-JSON-API-001 / STD-MSGPACK-API-001 / STD-PROTOBUF-API-001 →
       STD-SPEC-001`;
-    - A3 implementation: `STD-SER-IMPL-001 → STD-DERIVE-SER-001 →
-      STD-JSON-IMPL-001 / STD-MSGPACK-IMPL-001 / STD-PROTOBUF-IMPL-001`;
+    - A3 ABI migration: `STD-SER-IMPL-001 → STD-DERIVE-SER-001` must first
+      land the `Encode[C]`/`Decode[C]` and `Value` contracts; only then:
+      `STD-JSON-IMPL-001 / STD-MSGPACK-IMPL-001 / STD-PROTOBUF-IMPL-001`;
+    - A3 implementation (after ABI migration):
+      `STD-JSON-IMPL-001 / STD-MSGPACK-IMPL-001 / STD-PROTOBUF-IMPL-001`;
     - A4: `STD-TESTING-SHRINK-001 → STD-TESTING-IMPL-001`; y
     - A5: `STD-PUBLIC-API-AUDIT-001 → leaves STD-A-*-EVIDENCE →
       STD-TEST-001 / STD-CODEC-CONF-001 / STD-PERF-CONF-001 →
       STD-MATRIX-ALL-001 → STD-CONF-001 → STD-DOC-001`.
     Los owners independientes pueden avanzar en paralelo, pero S1A no cierra
     hasta que cada firma contractual atraviese una ruta pública real.
-26. [ ] **Wave 6 — Contratos que condicionan el backend.** Cerrar
+27. [ ] **Wave 6 — Contratos que condicionan el backend.** Cerrar
     `STD-CONC-001`, `STD-SYNC-001`, `STD-EXEC-001` y la frontera runtime de
     `STD-NET-001`. Mini-gate: DEC-013/014 reciben requisitos completos sin
     implementar todavía STD-0.1B.
-27. [ ] **Wave 7 — M11 correcto antes que optimizado.** Ejecutar
+28. [ ] **Wave 7 — M11 correcto antes que optimizado.** Ejecutar
     `NATIVE-PRODUCT-SPEC-001 → target/artifact/link/publish specs → PERF-001 →
     NATIVE-001 → NATIVE-MEM-ADR-001 → NATIVE-ABI-001 → leaves NATIVE-LOWER-* →
     NATIVE-002 → ARC-001 → ARC-002 → NATIVE-STD-CORE/HOSTED → NATIVE-STD-001 →
     NATIVE-LINK-001 → NATIVE-CLI-001 → leaves NATIVE-CONF-* → NATIVE-CONF-001 /
     NATIVE-DIFF-001 → targets → NATIVE-REL-001`. Cerrar Gate N1.
-28. [ ] **Wave 8 — Completar STD-0.1B y candidato 0.1.** Terminar specs B,
+29. [ ] **Wave 8 — Completar STD-0.1B y candidato 0.1.** Terminar specs B,
     cerrar para cada owner las leaves `IMPL`, `HOST` aplicable, `TEST/FUZZ`,
     `PERF`, `CONF` y `DOC` de 21.3.1–21.3.12, y después los coordinadores
     `STD-B-OWNER-MATRIX-001`, `STD-B-*` y `STD-S1-SEAL-001`; cerrar Gate S1. Solo después componer

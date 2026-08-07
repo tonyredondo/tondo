@@ -26,8 +26,8 @@ The four callable effects remain distinct:
 ~~~tondo
 fn safeSync()
 unsafe fn unsafeSync()
-async fn safeAsync()
-async unsafe fn unsafeAsync()
+fn suspendible()
+unsafe fn unsafeSuspendible()
 ~~~
 
 Closures preserve the same product:
@@ -35,8 +35,8 @@ Closures preserve the same product:
 ~~~tondo
 let safeSync = () { () }
 let unsafeSync = unsafe () { () }
-let safeAsync = async () { () }
-let unsafeAsync = async unsafe () { () }
+let safeSuspendible = () { await operation() }
+let unsafeSuspendible = unsafe () { await rawOperation() }
 ~~~
 
 The body of an unsafe function or closure is an unsafe region. Safe code creates
@@ -52,11 +52,11 @@ The region is lexical and expression-valued. Leaving it removes permission.
 Nested ordinary blocks inherit the active permission; a separately declared
 safe closure does not.
 
-An async unsafe call keeps both effects explicit:
+Una llamada `unsafe` suspendible mantiene ambos efectos explícitos:
 
 ~~~tondo
 let value = unsafe {
-    await unsafeAsyncOperation()
+    await unsafeOperation()
 }
 ~~~
 
@@ -69,16 +69,16 @@ Neither keyword substitutes for the other.
 
 - an unsafe named function is called outside an unsafe region;
 - an unsafe closure is called outside an unsafe region;
-- an async unsafe callable is awaited outside an unsafe region; or
+- an unsafe callable with inferred suspension is awaited outside an unsafe region; or
 - a raw-pointer operation is used outside an unsafe region.
 
-`E1702` is emitted when a safe or safe-async closure captures a value whose type
+`E1702` is emitted when a safe or safe-suspendible closure captures a value whose type
 can contain `Pointer`. The search is structural through tuples, nominal types,
 unions, options, results, arrays, maps, sets, ranges, `Ref`, callables and
 closure environments. `defer` uses a safe closure and follows the same rule.
 
-The capture is permitted only by an `unsafe` or `async unsafe` closure. Such a
-closure preserves the unsafe bit in its concrete type and any exact uniform
+The capture is permitted only by an `unsafe` closure. Its body may infer
+suspension; the closure preserves the unsafe bit in its concrete type and any exact uniform
 `unsafe fn(...)` coercion.
 
 ## Closed raw-pointer surface
@@ -277,7 +277,7 @@ Tests cover:
 - all four closure effect combinations;
 - direct and indirect unsafe calls;
 - lexical unsafe regions;
-- async unsafe initiation;
+- unsafe suspendible initiation;
 - `E1701` for missing regions;
 - `E1702` for direct and recursively contained Pointer captures;
 - the exact six raw operations and their arities/type arguments;

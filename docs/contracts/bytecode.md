@@ -72,9 +72,9 @@ The VM data model retains receiver position, parameter modes, variadic element
 type, generic arity, outcome, function type, optional implementation, and
 optional concrete-closure metadata. Closure metadata records the generated
 environment type, ordered capture schema, and `Call`/`CallMut`/`CallOnce` row.
-Function entries retain the exact `async` and `unsafe` bits, so sync, unsafe,
-async, and async-unsafe closures remain distinct after compiler `TypeId` values
-have disappeared.
+Function entries retain the inferred suspendible effect and the exact `unsafe`
+bit. A non-suspendible, suspendible or unsafe callable remains distinct after
+compiler `TypeId` values have disappeared; no `async` modifier is serialized.
 Compiler-produced executable callable entries are concrete instances: their
 generic arity is zero and their signature types have already been substituted.
 Static function operands name that concrete callable and carry an empty
@@ -425,9 +425,9 @@ the replacement witness attached to write validation. Stores, aggregates,
 returns, every call argument, and unrelated operations reject it.
 
 The bootstrap `Call` operation remains deliberately synchronous. Its signature
-must have the async bit clear and its explicit `unsafe_call` bit must equal the
-callable's unsafe effect. `Await` and `Spawn` are the only async initiation
-terminators and rederive their operation's effect, protocol, outcome, arguments,
+must have the suspendible-effect bit clear and its explicit `unsafe_call` bit
+must equal the callable's unsafe effect. `Await` and `Spawn` are the only
+suspendible initiation terminators and rederive their operation's effect, protocol, outcome, arguments,
 capabilities, and control-flow contract, including the same unsafe-bit
 agreement. HIR supplies that bit only after proving a lexical unsafe region.
 The six raw Pointer host operations keep separate enum identities; the verifier

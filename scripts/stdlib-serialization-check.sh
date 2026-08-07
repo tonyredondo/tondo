@@ -23,12 +23,12 @@ jq -e '
   and .phase == "STD-0.1A"
   and .status == "closed-contract"
   and .contract == "docs/contracts/stdlib-serialization.md"
-  and .traits == ["Serialize", "Deserialize"]
-  and .protocols == ["Serializer[E]", "Deserializer[E]"]
+  and .traits == ["Encode[C]", "Decode[C]"]
+  and .protocols == ["Encoder[C, E]", "Decoder[C, E]"]
   and .dispatch == "compile-time-static"
-  and .dom.typed_encode == false
-  and .dom.typed_decode == false
-  and .dom.dynamic_values == "owned-by-format-owner"
+  and .dom.typed_encode == "static-derive-direct"
+  and .dom.typed_decode == "static-derive-atomic"
+  and .dom.dynamic_values == "std.serialization.Value-json-messagepack; protocol-owned-protobuf"
   and .dom.reflection == "forbidden"
   and .events == [
     "null", "bool", "int64", "uint64", "float32", "float64", "string", "bytes",
@@ -76,8 +76,10 @@ jq -e '
   and .promotion.next == "STD-JSON-IMPL-001"
 ' "$contract" >/dev/null
 
-grep -q 'std.derive.serialization.Serialize' "$document"
-grep -q 'std.derive.serialization.Deserialize' "$document"
+grep -q 'std.derive.serialization.Encode' "$document"
+grep -q 'std.derive.serialization.Decode' "$document"
+grep -q 'Value dinámico' "$document"
+grep -q '@ignore' "$document"
 grep -q 'MapKey' "$document"
 grep -q 'StartRecord' "$document"
 grep -q 'StartEnum' "$document"

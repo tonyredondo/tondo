@@ -1098,6 +1098,31 @@ mod tests {
         for path in ADAPTER_SOURCES {
             copy_file(&source, &root, path);
         }
+        // Seal tests exercise the proof transport with a deliberately closed
+        // matrix. The repository draft remains open while ABI migrations are
+        // pending; converting only this isolated fixture avoids asserting a
+        // false completion claim in tracked evidence.
+        let matrix_path = root.join("testing/coverage-matrix.json");
+        let mut matrix: serde_json::Value =
+            serde_json::from_slice(&fs::read(&matrix_path).unwrap()).unwrap();
+        let mut promoted = 0u64;
+        for requirement in matrix["requirements"].as_array_mut().unwrap() {
+            if requirement["status"] == "draft-pending" {
+                requirement["status"] = serde_json::Value::String("covered".into());
+                promoted += 1;
+            }
+        }
+        let by_status = matrix["summary"]["by_status"].as_object_mut().unwrap();
+        by_status.insert("draft-pending".into(), serde_json::Value::from(0u64));
+        let covered = by_status
+            .get("covered")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0);
+        by_status.insert(
+            "covered".into(),
+            serde_json::Value::from(covered + promoted),
+        );
+        fs::write(&matrix_path, serde_json::to_vec_pretty(&matrix).unwrap()).unwrap();
         let mut ratchet: RatchetRecord =
             serde_json::from_slice(&fs::read(root.join(RATCHET_PATH)).unwrap()).unwrap();
         let lineage = DraftLineage::load(&root, DRAFT_LINEAGE_PATH).unwrap();

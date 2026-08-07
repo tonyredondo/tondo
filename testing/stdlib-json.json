@@ -28,7 +28,9 @@
       "array",
       "object"
     ],
-    "dynamic_type": "JsonValue",
+    "dynamic_type": "Value",
+    "view_type": "ValueView",
+    "raw_type": "Raw",
     "number_type": "JsonNumber",
     "event_type": "JsonEvent",
     "path_type": "JsonPath",
@@ -47,8 +49,8 @@
   },
   "typed": {
     "traits": [
-      "Serialize",
-      "Deserialize"
+      "Encode[Json]",
+      "Decode[Json]"
     ],
     "dispatch": "compile-time-static",
     "decode_requires_dom": false,
@@ -62,7 +64,7 @@
   },
   "api": {
     "module": "std.json",
-    "value_type": "JsonValue",
+    "value_type": "Value",
     "member_type": "JsonMember",
     "number_type": "JsonNumber",
     "event_type": "JsonEvent",
@@ -78,7 +80,8 @@
     "writer_methods": ["toWriter", "write", "finish"],
     "terminal_state": "error-or-finish-terminal",
     "end_of_document": "next-returns-none-once",
-    "typed_dispatch": "Serialize-Deserialize-static-no-dom"
+    "typed_dispatch": "Encode-Decode-static-no-dom",
+    "annotations": ["@name", "@json", "@ignore", "@json(base64)"]
   },
   "streaming": {
     "event_kinds": [

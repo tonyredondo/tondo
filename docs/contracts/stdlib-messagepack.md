@@ -1,8 +1,8 @@
 # Contrato de `std.messagepack`
 
-**Estado:** contrato de API fuente cerrado para `STD-0.1A`; la implementación
-typed, dynamic y streaming del owner está disponible y permanece en promoción
-con evidencia de conformance independiente pendiente.
+**Estado:** contrato de API fuente normativo para `STD-0.1A`; la implementación
+typed, dynamic y streaming debe migrar al ABI `Encode[C]`/`Decode[C]` antes de
+cerrar el owner.
 
 `std.messagepack` implementa el modelo binario de la especificación MessagePack
 y reutiliza los traits estáticos de `std.serialization`. El registro
@@ -24,8 +24,8 @@ la misma máquina en modo incremental; no hay aliases por formato ni defaults
 ambientales.
 
 ```tondo
-pub type MessagePackEntry = { key: MessagePackValue, value: MessagePackValue }
-pub enum MessagePackValue {
+pub type MessagePackEntry = { key: Value, value: Value }
+pub enum Value {
     Nil
     Bool(Bool)
     Int(Int64)
@@ -34,7 +34,7 @@ pub enum MessagePackValue {
     Float64(Float64)
     String(String)
     Binary(Bytes)
-    Array(Array[MessagePackValue])
+    Array(Array[Value])
     Map(Array[MessagePackEntry])
     Ext(MessagePackExt)
 }
@@ -79,28 +79,28 @@ pub enum MessagePackErrorKind {
 }
 pub type MessagePackError = { kind: MessagePackErrorKind, offset: Int, path: MessagePackPath }
 
-pub fn decodeValue(input: Bytes, options: MessagePackDecodeOptions): MessagePackValue ! MessagePackError
-pub fn decode[T: Deserialize](input: Bytes, options: MessagePackDecodeOptions): T ! MessagePackError
-pub fn encodeValue(value: MessagePackValue, options: MessagePackEncodeOptions): Bytes ! MessagePackError
-pub fn encode[T: Serialize](value: T, options: MessagePackEncodeOptions): Bytes ! MessagePackError
+pub fn parse(input: Bytes, options: MessagePackDecodeOptions): Value ! MessagePackError
+pub fn decode[T: Decode[MessagePack]](input: Bytes, options: MessagePackDecodeOptions): T ! MessagePackError
+pub fn encode(value: Value, options: MessagePackEncodeOptions): Bytes ! MessagePackError
+pub fn encode[T: Encode[MessagePack]](value: T, options: MessagePackEncodeOptions): Bytes ! MessagePackError
 pub fn validate(input: Bytes, options: MessagePackDecodeOptions): Unit ! MessagePackError
-pub fn encodeDeterministic(value: MessagePackValue, limits: MessagePackLimits): Bytes ! MessagePackError
+pub fn encodeDeterministic(value: Value, limits: MessagePackLimits): Bytes ! MessagePackError
 
 pub fn MessagePackTimestamp.fromExt(value: MessagePackExt): MessagePackTimestamp ! MessagePackError
 pub fn MessagePackTimestamp.toExt(self): MessagePackExt ! MessagePackError
 
 pub fn MessagePackReader.fromBytes(input: Bytes, options: MessagePackDecodeOptions): MessagePackReader ! MessagePackError
-pub async fn MessagePackReader.fromReader(var input: Reader, options: MessagePackDecodeOptions): MessagePackReader ! MessagePackError
-pub async fn MessagePackReader.next(var self): MessagePackEvent? ! MessagePackError
+pub fn MessagePackReader.fromReader(var input: Reader, options: MessagePackDecodeOptions): MessagePackReader ! MessagePackError
+pub fn MessagePackReader.next(var self): MessagePackEvent? ! MessagePackError
 pub fn MessagePackReader.own(var self, event: MessagePackEvent): MessagePackEvent ! MessagePackError
-pub async fn MessagePackReader.finish(var self): Unit ! MessagePackError
+pub fn MessagePackReader.finish(var self): Unit ! MessagePackError
 
 pub fn MessagePackWriter.toWriter(var output: Writer, options: MessagePackEncodeOptions): MessagePackWriter ! MessagePackError
-pub async fn MessagePackWriter.write(var self, event: MessagePackEvent): Unit ! MessagePackError
-pub async fn MessagePackWriter.finish(var self): Unit ! MessagePackError
+pub fn MessagePackWriter.write(var self, event: MessagePackEvent): Unit ! MessagePackError
+pub fn MessagePackWriter.finish(var self): Unit ! MessagePackError
 ```
 
-`MessagePackValue.Map` conserva pares y orden; no se ofrece un segundo
+`Value.Map` conserva pares y orden; no se ofrece un segundo
 `Map[String, ...]`. `decode` typed nunca crea ese valor dinámico. `next` devuelve
 `none` exactamente una vez después de la raíz, `own` copia vistas de string,
 binary o ext y reader/writer quedan terminales tras error o `finish`. El modo
@@ -109,14 +109,14 @@ o `encodeDeterministic`; exige claves ordenadas y rechaza colisiones de bytes.
 
 ## Modelo completo
 
-`MessagePackValue` representa todos los tipos del wire model:
+`Value` representa todos los tipos del wire model:
 
 - `Nil` y `Bool`;
 - `Int` signed y `UInt` unsigned, sin pasar por `Float64`;
 - `Float32` y `Float64`, conservando sus bits en la ruta ordinaria;
 - `String` UTF-8, `Binary` como bytes arbitrarios;
 - `Array` ordenado; y
-- `Map` como secuencia ordenada de pares `(MessagePackValue, MessagePackValue)`.
+- `Map` como secuencia ordenada de pares `(Value, Value)`.
 
 Una clave de map puede ser cualquier valor MessagePack, incluidos arrays,
 maps, binarios y extensiones. Por eso el árbol dinámico no se representa como
@@ -134,9 +134,9 @@ reflection, un registro global o una heurística de nombre.
 
 ## Typed y streaming
 
-`Serialize` y `Deserialize` generan dispatch estático. El encode typed escribe
+`Encode` y `Decode` generan dispatch estático. El encode typed escribe
 directamente a `std.io.Writer` y el decode typed consume un `Reader` sin crear
-un `MessagePackValue` intermedio. Las sobrecargas materializadas con
+un `Value` intermedio. Las sobrecargas materializadas con
 `BytesBuilder` son una comodidad sobre la misma máquina.
 
 `MessagePackReader` emite eventos incrementales para nil, bool, enteros,

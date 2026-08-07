@@ -30,22 +30,22 @@ fn Command.mergeStderr(self): Command
 fn Pipeline.mergeStderr(self): Pipeline
 
 fn Command.start(self): ProcessHandle ! ProcessError
-async fn Command.status(self): Array[ExitStatus] ! ProcessError
-async fn Command.output(self): ProcessOutput ! ProcessError
-async fn Command.run(self): Array[ExitStatus] ! ProcessError
-async fn Command.check(self): ProcessOutput ! (ProcessError | ProcessExitError)
+fn Command.status(self): Array[ExitStatus] ! ProcessError
+fn Command.output(self): ProcessOutput ! ProcessError
+fn Command.run(self): Array[ExitStatus] ! ProcessError
+fn Command.check(self): ProcessOutput ! (ProcessError | ProcessExitError)
 
 fn Pipeline.start(self): ProcessHandle ! ProcessError
-async fn Pipeline.status(self): Array[ExitStatus] ! ProcessError
-async fn Pipeline.output(self): ProcessOutput ! ProcessError
-async fn Pipeline.run(self): Array[ExitStatus] ! ProcessError
-async fn Pipeline.check(self): ProcessOutput ! (ProcessError | ProcessExitError)
+fn Pipeline.status(self): Array[ExitStatus] ! ProcessError
+fn Pipeline.output(self): ProcessOutput ! ProcessError
+fn Pipeline.run(self): Array[ExitStatus] ! ProcessError
+fn Pipeline.check(self): ProcessOutput ! (ProcessError | ProcessExitError)
 
-async fn ProcessHandle.status(self): Array[ExitStatus] ! ProcessError
-async fn ProcessHandle.output(self): ProcessOutput ! ProcessError
-async fn ProcessHandle.run(self): Array[ExitStatus] ! ProcessError
-async fn ProcessHandle.check(self): ProcessOutput ! (ProcessError | ProcessExitError)
-async fn ProcessHandle.cancel(self): Array[ExitStatus] ! ProcessError
+fn ProcessHandle.status(self): Array[ExitStatus] ! ProcessError
+fn ProcessHandle.output(self): ProcessOutput ! ProcessError
+fn ProcessHandle.run(self): Array[ExitStatus] ! ProcessError
+fn ProcessHandle.check(self): ProcessOutput ! (ProcessError | ProcessExitError)
+fn ProcessHandle.cancel(self): Array[ExitStatus] ! ProcessError
 ```
 
 `ProcessOutput` exposes the read-only fields `stdout: Bytes`, `stderr: Bytes`,
@@ -102,7 +102,7 @@ The resulting `ProcessHandle` is affine and terminal. Exactly one of
 `status`, `output`, `run`, `check`, or `cancel` must consume it.
 
 The plan operations perform `start` plus the corresponding terminal handle
-operation. They are async because they may wait for child exit or stream I/O:
+operation. They are suspendible because they may wait for child exit or stream I/O:
 
 - `status` drains both output streams, waits for every stage, and returns all
   statuses in pipeline order.

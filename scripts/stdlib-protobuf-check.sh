@@ -55,7 +55,7 @@ jq -e '
     and .wire.ordinary_known_field_order == "field-number"
     and .wire.string_encoding == "utf-8"
     and .wire.bytes_encoding == "arbitrary-octets"
-    and .generated.traits == ["Serialize", "Deserialize"]
+    and .generated.traits == ["Encode[Protobuf]", "Decode[Protobuf]"]
     and .generated.dispatch == "compile-time-static"
     and .generated.message_kind == "nominal-record"
     and .generated.unknown_type == "UnknownFields"
@@ -85,7 +85,7 @@ jq -e '
     and .api.reader_methods == ["fromBytes", "fromReader", "next", "own", "finish"]
     and .api.writer_methods == ["toWriter", "write", "finish"]
     and .api.unknown_methods == ["count", "discard"]
-    and .api.generated_traits == ["Serialize", "Deserialize"]
+    and .api.generated_traits == ["Encode[Protobuf]", "Decode[Protobuf]"]
     and .api.terminal_state == "error-or-finish-terminal"
     and .api.end_of_frame == "next-returns-none-once"
     and .api.typed_dispatch == "schema-bound-static-no-dom"

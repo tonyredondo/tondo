@@ -40,17 +40,17 @@ pub enum ClockError {
 pub fn now(): Instant ! ClockError
 pub fn resolution(): Duration ! ClockError
 pub fn deadline(after: Duration): Instant ! ClockError
-pub async fn sleep(delay: Duration): Unit ! ClockError
+pub fn sleep(delay: Duration): Unit ! ClockError
 
 pub fn Timer.after(delay: Duration): Timer ! ClockError
 pub fn Timer.at(deadline: Instant): Timer ! ClockError
-pub async fn Timer.wait(self): Unit ! ClockError
+pub fn Timer.wait(self): Unit ! ClockError
 pub fn Timer.cancel(self): Unit
 ~~~
 
 `deadline` accepts signed durations so an already-expired deadline can be
 represented. `sleep` and timer creation reject negative delays with
-`ClockError.InvalidDelay`; zero remains a real async suspension point. A timer
+`ClockError.InvalidDelay`; zero remains a real suspension point. A timer
 is one-shot and has no reset or repeat operation.
 
 ## Provider boundary
@@ -62,7 +62,7 @@ inspect the provider. The hosted implementation uses one provider boundary:
 - the real provider is based on `std::time::Instant`, never the wall clock;
 - `now` is non-blocking and non-decreasing within one domain;
 - the current hosted resolution reports one nanosecond;
-- `sleep` and `Timer.wait` register one-shot async jobs and are polled by the
+- `sleep` and `Timer.wait` register one-shot suspendible jobs and are polled by the
   existing cooperative executor; and
 - cancellation is idempotent and cleanup is completed before a cancelled
   operation leaves the VM.
