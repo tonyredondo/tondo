@@ -4235,8 +4235,9 @@ parte del módulo.
   firmas trazadas con `vm-inline` y `std.collections` sus 18/18 firmas
   públicas verificadas; `std.math` también conserva sus 9/9 firmas verificadas
   mediante aliases de lowering explícitos y `std.format` pasa a 5/5 con
-  `FormatBuilderAppend`; el coordinador permanece abierto hasta que los demás
-  owners Core alcancen la misma prueba pública.
+  `FormatBuilderAppend`; `std.io` pasa a 4/4 con los aliases
+  `IoLimitsDefault`, `IoReadAll` e `IoWriteAll`; el coordinador permanece
+  abierto hasta que los demás owners Core alcancen la misma prueba pública.
 
 - [ ] **STD-IMPL-002 — Coordinar Hosted por owner.** Cierra tras
   `STD-FS-IMPL-001`, `STD-PROC-IMPL-001` y la auditoría pública, conservando los
@@ -5434,6 +5435,15 @@ esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 1.69 — 2026-08-07
+
+- `std.io` queda trazado con sus 4/4 firmas públicas. `defaultLimits`,
+  `readAll` y `writeAll` declaran los nombres internos exactos del lowering;
+  Reader/Writer async, límites y los casos públicos ya atravesaban el resto
+  de la cadena.
+- La matriz pasa a 84/203 firmas verificadas y 122 gaps explícitos. El
+  baseline de cobertura sigue en 9059 bp.
 
 ### 1.68 — 2026-08-07
 

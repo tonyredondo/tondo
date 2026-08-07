@@ -379,10 +379,10 @@
         "reason": null
       },
       "signature_count": 4,
-      "verified_count": 1,
-      "gap_count": 3,
+      "verified_count": 4,
+      "gap_count": 0,
       "owner_missing": [],
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "id": "std.serialization",
@@ -3655,7 +3655,7 @@
           ],
           "symbol": "defaultLimits",
           "symbols": [
-            "defaultLimits"
+            "IoLimitsDefault"
           ]
         },
         "host_vm": {
@@ -3676,10 +3676,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.io:206",
@@ -3753,7 +3751,7 @@
           ],
           "symbol": "readAll",
           "symbols": [
-            "readAll"
+            "IoReadAll"
           ]
         },
         "host_vm": {
@@ -3774,10 +3772,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.io:208",
@@ -3803,7 +3799,7 @@
           ],
           "symbol": "writeAll",
           "symbols": [
-            "writeAll"
+            "IoWriteAll"
           ]
         },
         "host_vm": {
@@ -3824,10 +3820,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.iter:118",
@@ -10892,9 +10886,9 @@
   "summary": {
     "owners": 20,
     "signatures": 203,
-    "verified": 81,
-    "signature_gaps": 122,
+    "verified": 84,
+    "signature_gaps": 119,
     "owner_gaps": 3,
-    "gaps": 125
+    "gaps": 122
   }
 }
