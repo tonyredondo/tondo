@@ -236,10 +236,10 @@
         "reason": null
       },
       "signature_count": 15,
-      "verified_count": 2,
-      "gap_count": 13,
+      "verified_count": 15,
+      "gap_count": 0,
       "owner_missing": [],
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "id": "std.collections",
@@ -9796,7 +9796,7 @@
           ],
           "symbol": "fromChars",
           "symbols": [
-            "fromChars"
+            "TextFromChars"
           ]
         },
         "host_vm": {
@@ -9817,10 +9817,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.text:60",
@@ -9846,7 +9844,7 @@
           ],
           "symbol": "length",
           "symbols": [
-            "length"
+            "TextLength"
           ]
         },
         "host_vm": {
@@ -9867,11 +9865,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol",
-        "public-case-call"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.text:61",
@@ -9897,7 +9892,7 @@
           ],
           "symbol": "byteLength",
           "symbols": [
-            "byteLength"
+            "TextByteLength"
           ]
         },
         "host_vm": {
@@ -9918,11 +9913,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol",
-        "public-case-call"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.text:62",
@@ -9948,7 +9940,7 @@
           ],
           "symbol": "get",
           "symbols": [
-            "get"
+            "TextGet"
           ]
         },
         "host_vm": {
@@ -9969,10 +9961,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "public-case-call"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.text:63",
@@ -10046,7 +10036,7 @@
           ],
           "symbol": "contains",
           "symbols": [
-            "contains"
+            "TextContains"
           ]
         },
         "host_vm": {
@@ -10067,10 +10057,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "public-case-call"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.text:65",
@@ -10096,7 +10084,7 @@
           ],
           "symbol": "startsWith",
           "symbols": [
-            "startsWith"
+            "TextStartsWith"
           ]
         },
         "host_vm": {
@@ -10117,11 +10105,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol",
-        "public-case-call"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.text:66",
@@ -10147,7 +10132,7 @@
           ],
           "symbol": "endsWith",
           "symbols": [
-            "endsWith"
+            "TextEndsWith"
           ]
         },
         "host_vm": {
@@ -10168,11 +10153,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol",
-        "public-case-call"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.text:67",
@@ -10198,7 +10180,7 @@
           ],
           "symbol": "find",
           "symbols": [
-            "find"
+            "TextFind"
           ]
         },
         "host_vm": {
@@ -10219,10 +10201,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "public-case-call"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.text:68",
@@ -10248,7 +10228,7 @@
           ],
           "symbol": "replace",
           "symbols": [
-            "replace"
+            "TextReplace"
           ]
         },
         "host_vm": {
@@ -10269,11 +10249,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol",
-        "public-case-call"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.text:69",
@@ -10299,7 +10276,7 @@
           ],
           "symbol": "trim",
           "symbols": [
-            "trim"
+            "TextTrim"
           ]
         },
         "host_vm": {
@@ -10320,11 +10297,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol",
-        "public-case-call"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.text:70",
@@ -10350,7 +10324,7 @@
           ],
           "symbol": "toLowerAscii",
           "symbols": [
-            "toLowerAscii"
+            "TextLowerAscii"
           ]
         },
         "host_vm": {
@@ -10371,11 +10345,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol",
-        "public-case-call"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.text:71",
@@ -10401,7 +10372,7 @@
           ],
           "symbol": "toUpperAscii",
           "symbols": [
-            "toUpperAscii"
+            "TextUpperAscii"
           ]
         },
         "host_vm": {
@@ -10422,11 +10393,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol",
-        "public-case-call"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.text:75",
@@ -10452,7 +10420,7 @@
           ],
           "symbol": "chars",
           "symbols": [
-            "chars"
+            "TextChars"
           ]
         },
         "host_vm": {
@@ -10473,10 +10441,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.time:40",
@@ -10866,9 +10832,9 @@
   "summary": {
     "owners": 20,
     "signatures": 203,
-    "verified": 92,
-    "signature_gaps": 111,
+    "verified": 105,
+    "signature_gaps": 98,
     "owner_gaps": 3,
-    "gaps": 114
+    "gaps": 101
   }
 }

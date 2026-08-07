@@ -5436,6 +5436,15 @@ esos cierres.
 
 ## 25. Historial del tracker
 
+### 1.72 — 2026-08-07
+
+- `std.text` queda trazado con sus 15/15 firmas públicas. El fixture único
+  ejerce construcción desde caracteres, longitud escalar y UTF-8, indexación,
+  búsquedas, reemplazo, recorte, transformaciones ASCII y recorrido; los
+  aliases `Text*` fijan los símbolos internos de lowering sin heurísticas.
+- La matriz pasa a 105/203 firmas verificadas y 101 gaps explícitos. El
+  baseline de cobertura continúa en 9059 bp.
+
 ### 1.71 — 2026-08-07
 
 - `std.env` queda trazado con sus 7/7 firmas públicas. `Name.fromText`,

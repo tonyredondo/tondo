@@ -8,6 +8,18 @@ fn main(): !(bytes.BytesError | bytes.Utf8Error | text.TextError) {
 
     let rebuilt = String.fromChars(['a', 'ñ', '🙂'])?
     assert(rebuilt == "añ🙂")
+    assert(rebuilt.length() == 3)
+    assert(rebuilt.byteLength() == 7)
+    assert(rebuilt.get(1) == some('ñ'))
+    assert(rebuilt.get(-1) == none)
+    assert(rebuilt.contains("ñ🙂"))
+    assert(rebuilt.startsWith("añ"))
+    assert(rebuilt.endsWith("🙂"))
+    assert(rebuilt.find("ñ") == some(1))
+    assert(rebuilt.replace("ñ", "n") == "an🙂")
+    assert(rebuilt.trim() == "añ🙂")
+    assert(rebuilt.toLowerAscii() == "añ🙂")
+    assert(rebuilt.toUpperAscii() == "Añ🙂")
     assert(rebuilt.slice(1, 3)? == "ñ🙂")
 
     var position = 0
