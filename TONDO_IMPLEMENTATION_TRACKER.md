@@ -4221,7 +4221,7 @@ parte del módulo.
   HIR → lowering → host/VM → caso público. `--check` detecta drift y mantiene
   visibles los huecos; `--strict` falla ante cualquiera. No acepta un path Rust
   aislado, un fixture que llama otra operación, una prueba documental ni un
-  alias bootstrap. El resultado actual es deliberadamente `open-gaps` (142
+  alias bootstrap. El resultado actual es deliberadamente `open-gaps` (131
   filas/owners pendientes), que bloquea la promoción y alimenta los siguientes
   leaves de implementación.
 
@@ -4232,8 +4232,9 @@ parte del módulo.
   `STD-PUBLIC-API-AUDIT-001` no dejan ninguna firma sin ruta pública. El
   registro actual `testing/stdlib-implementation.json` solo demuestra archivos
   y pruebas por owner, no cobertura por firma. `std.core` ya tiene sus 9/9
-  firmas trazadas con `vm-inline`; el coordinador permanece abierto hasta que
-  los demás owners Core alcancen la misma prueba pública.
+  firmas trazadas con `vm-inline` y `std.collections` sus 18/18 firmas
+  públicas verificadas; el coordinador permanece abierto hasta que los demás
+  owners Core alcancen la misma prueba pública.
 
 - [ ] **STD-IMPL-002 — Coordinar Hosted por owner.** Cierra tras
   `STD-FS-IMPL-001`, `STD-PROC-IMPL-001` y la auditoría pública, conservando los
@@ -5431,6 +5432,19 @@ esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 1.66 — 2026-08-07
+
+- `std.collections` queda trazado de extremo a extremo para sus 18 firmas
+  públicas: `Array`, `Map` y `Set` conservan sus llamadas runtime y
+  `Array.withCapacity` declara el símbolo interno exacto de lowering.
+- Se elimina del contrato la familia redundante `Range.from`,
+  `Range.inclusive` y `Range.step`. Los operadores `..`/`..=` son los únicos
+  constructores normativos y siguen admitiendo todos los tipos discretos del
+  lenguaje; los steps permanecen definidos exclusivamente para slices.
+- La matriz pasa a 75/203 firmas verificadas y 131 gaps explícitos. El
+  auditor ahora permite aliases declarados por etapa (`hir_symbols` y
+  `lowering_symbols`) sin aceptar coincidencias textuales accidentales.
 
 ### 1.65 — 2026-08-07
 

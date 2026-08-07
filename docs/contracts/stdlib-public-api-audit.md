@@ -57,8 +57,11 @@ Es una señal fail-closed para el tracker, no un waiver.
 - hay exactamente un owner por identidad de firma;
 - el contrato y los stages se fijan por paths relativos al repositorio;
 - el caso público declara su kind (`runtime`, `compile` o `runner-source`);
-- `host_vm.symbols` conserva el token implementativo usado para verificar la
-  ruta (incluidos los aliases internos explícitos de `vm-inline`);
+- `hir.symbols`, `lowering.symbols` y `host_vm.symbols` conservan los tokens
+  implementativos usados para verificar cada ruta. Cuando una fase usa un
+  nombre interno distinto de la firma pública, el alias se declara de forma
+  explícita en la configuración; nunca se acepta una coincidencia accidental
+  por texto común;
 - `bootstrap_alias` es siempre `false`;
 - los estados se derivan de `missing`, nunca se editan a mano; y
 - cualquier drift del contrato o de la configuración hace fallar `--check`.

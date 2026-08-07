@@ -265,11 +265,11 @@
         ],
         "reason": null
       },
-      "signature_count": 21,
-      "verified_count": 17,
-      "gap_count": 4,
+      "signature_count": 18,
+      "verified_count": 18,
+      "gap_count": 0,
       "owner_missing": [],
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "id": "std.iter",
@@ -657,14 +657,20 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "new"
+          "symbol": "new",
+          "symbols": [
+            "new"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
-          "symbol": "new"
+          "symbol": "new",
+          "symbols": [
+            "new"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -701,14 +707,20 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "withCapacity"
+          "symbol": "withCapacity",
+          "symbols": [
+            "withCapacity"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
-          "symbol": "withCapacity"
+          "symbol": "withCapacity",
+          "symbols": [
+            "CollectionArrayWithCapacity"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -729,10 +741,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.collections:95",
@@ -747,14 +757,20 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "length"
+          "symbol": "length",
+          "symbols": [
+            "length"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
-          "symbol": "length"
+          "symbol": "length",
+          "symbols": [
+            "length"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -791,14 +807,20 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "get"
+          "symbol": "get",
+          "symbols": [
+            "get"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
-          "symbol": "get"
+          "symbol": "get",
+          "symbols": [
+            "get"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -835,14 +857,20 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "slice"
+          "symbol": "slice",
+          "symbols": [
+            "slice"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
-          "symbol": "slice"
+          "symbol": "slice",
+          "symbols": [
+            "slice"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -879,14 +907,20 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "push"
+          "symbol": "push",
+          "symbols": [
+            "push"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
-          "symbol": "push"
+          "symbol": "push",
+          "symbols": [
+            "push"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -923,14 +957,20 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "pop"
+          "symbol": "pop",
+          "symbols": [
+            "pop"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
-          "symbol": "pop"
+          "symbol": "pop",
+          "symbols": [
+            "pop"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -967,14 +1007,20 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "new"
+          "symbol": "new",
+          "symbols": [
+            "new"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
-          "symbol": "new"
+          "symbol": "new",
+          "symbols": [
+            "new"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -1011,14 +1057,20 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "get"
+          "symbol": "get",
+          "symbols": [
+            "get"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
-          "symbol": "get"
+          "symbol": "get",
+          "symbols": [
+            "get"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -1055,14 +1107,20 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "insert"
+          "symbol": "insert",
+          "symbols": [
+            "insert"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
-          "symbol": "insert"
+          "symbol": "insert",
+          "symbols": [
+            "insert"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -1099,14 +1157,20 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "remove"
+          "symbol": "remove",
+          "symbols": [
+            "remove"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
-          "symbol": "remove"
+          "symbol": "remove",
+          "symbols": [
+            "remove"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -1143,14 +1207,20 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "contains"
+          "symbol": "contains",
+          "symbols": [
+            "contains"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
-          "symbol": "contains"
+          "symbol": "contains",
+          "symbols": [
+            "contains"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -1187,14 +1257,20 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "entries"
+          "symbol": "entries",
+          "symbols": [
+            "entries"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
-          "symbol": "entries"
+          "symbol": "entries",
+          "symbols": [
+            "entries"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -1231,14 +1307,20 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "new"
+          "symbol": "new",
+          "symbols": [
+            "new"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
-          "symbol": "new"
+          "symbol": "new",
+          "symbols": [
+            "new"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -1275,14 +1357,20 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "insert"
+          "symbol": "insert",
+          "symbols": [
+            "insert"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
-          "symbol": "insert"
+          "symbol": "insert",
+          "symbols": [
+            "insert"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -1319,14 +1407,20 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "remove"
+          "symbol": "remove",
+          "symbols": [
+            "remove"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
-          "symbol": "remove"
+          "symbol": "remove",
+          "symbols": [
+            "remove"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -1363,14 +1457,20 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "contains"
+          "symbol": "contains",
+          "symbols": [
+            "contains"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
-          "symbol": "contains"
+          "symbol": "contains",
+          "symbols": [
+            "contains"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -1407,14 +1507,20 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "values"
+          "symbol": "values",
+          "symbols": [
+            "values"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
-          "symbol": "values"
+          "symbol": "values",
+          "symbols": [
+            "values"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -1439,145 +1545,6 @@
       "status": "verified"
     },
     {
-      "id": "std.collections:115",
-      "owner": "std.collections",
-      "contract": "docs/contracts/stdlib-core.md",
-      "line": 115,
-      "signature": "pub fn Range.from(start: Int, end: Int): Range",
-      "symbol": "std.collections.Range.from",
-      "operation": "from",
-      "evidence": {
-        "hir": {
-          "paths": [
-            "crates/tondo-compiler/src/hir/check.rs"
-          ],
-          "symbol": "from"
-        },
-        "lowering": {
-          "paths": [
-            "crates/tondo-compiler/src/hir/lower.rs",
-            "crates/tondo-vm/src/runtime/execute.rs"
-          ],
-          "symbol": "from"
-        },
-        "host_vm": {
-          "kind": "host",
-          "paths": [
-            "crates/tondo-compiler/src/process_host.rs",
-            "crates/tondo-vm/src/runtime/execute.rs"
-          ],
-          "reason": null,
-          "symbol": "std.collections.Range.from",
-          "symbols": [
-            "from"
-          ]
-        },
-        "public_case": {
-          "path": "tests/runtime/m11-std-collections-001.to",
-          "kind": "runtime",
-          "call": "from",
-          "bootstrap_alias": false
-        }
-      },
-      "missing": [
-        "public-case-call"
-      ],
-      "status": "gap"
-    },
-    {
-      "id": "std.collections:116",
-      "owner": "std.collections",
-      "contract": "docs/contracts/stdlib-core.md",
-      "line": 116,
-      "signature": "pub fn Range.inclusive(start: Int, end: Int): Range",
-      "symbol": "std.collections.Range.inclusive",
-      "operation": "inclusive",
-      "evidence": {
-        "hir": {
-          "paths": [
-            "crates/tondo-compiler/src/hir/check.rs"
-          ],
-          "symbol": "inclusive"
-        },
-        "lowering": {
-          "paths": [
-            "crates/tondo-compiler/src/hir/lower.rs",
-            "crates/tondo-vm/src/runtime/execute.rs"
-          ],
-          "symbol": "inclusive"
-        },
-        "host_vm": {
-          "kind": "host",
-          "paths": [
-            "crates/tondo-compiler/src/process_host.rs",
-            "crates/tondo-vm/src/runtime/execute.rs"
-          ],
-          "reason": null,
-          "symbol": "std.collections.Range.inclusive",
-          "symbols": [
-            "inclusive"
-          ]
-        },
-        "public_case": {
-          "path": "tests/runtime/m11-std-collections-001.to",
-          "kind": "runtime",
-          "call": "inclusive",
-          "bootstrap_alias": false
-        }
-      },
-      "missing": [
-        "hir-symbol",
-        "public-case-call"
-      ],
-      "status": "gap"
-    },
-    {
-      "id": "std.collections:117",
-      "owner": "std.collections",
-      "contract": "docs/contracts/stdlib-core.md",
-      "line": 117,
-      "signature": "pub fn Range.step(self, step: Int): Range ! CollectionError",
-      "symbol": "std.collections.Range.step",
-      "operation": "step",
-      "evidence": {
-        "hir": {
-          "paths": [
-            "crates/tondo-compiler/src/hir/check.rs"
-          ],
-          "symbol": "step"
-        },
-        "lowering": {
-          "paths": [
-            "crates/tondo-compiler/src/hir/lower.rs",
-            "crates/tondo-vm/src/runtime/execute.rs"
-          ],
-          "symbol": "step"
-        },
-        "host_vm": {
-          "kind": "host",
-          "paths": [
-            "crates/tondo-compiler/src/process_host.rs",
-            "crates/tondo-vm/src/runtime/execute.rs"
-          ],
-          "reason": null,
-          "symbol": "std.collections.Range.step",
-          "symbols": [
-            "step"
-          ]
-        },
-        "public_case": {
-          "path": "tests/runtime/m11-std-collections-001.to",
-          "kind": "runtime",
-          "call": "step",
-          "bootstrap_alias": false
-        }
-      },
-      "missing": [
-        "public-case-call"
-      ],
-      "status": "gap"
-    },
-    {
       "id": "std.console:10",
       "owner": "std.console",
       "contract": "docs/contracts/stdlib-hosted.md",
@@ -1590,13 +1557,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "stdin"
+          "symbol": "stdin",
+          "symbols": [
+            "stdin"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "stdin"
+          "symbol": "stdin",
+          "symbols": [
+            "stdin"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -1635,13 +1608,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "stdout"
+          "symbol": "stdout",
+          "symbols": [
+            "stdout"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "stdout"
+          "symbol": "stdout",
+          "symbols": [
+            "stdout"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -1680,13 +1659,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "stderr"
+          "symbol": "stderr",
+          "symbols": [
+            "stderr"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "stderr"
+          "symbol": "stderr",
+          "symbols": [
+            "stderr"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -1725,13 +1710,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "readLine"
+          "symbol": "readLine",
+          "symbols": [
+            "readLine"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "readLine"
+          "symbol": "readLine",
+          "symbols": [
+            "readLine"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -1770,13 +1761,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "print"
+          "symbol": "print",
+          "symbols": [
+            "print"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "print"
+          "symbol": "print",
+          "symbols": [
+            "print"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -1814,13 +1811,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "println"
+          "symbol": "println",
+          "symbols": [
+            "println"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "println"
+          "symbol": "println",
+          "symbols": [
+            "println"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -1858,13 +1861,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "flush"
+          "symbol": "flush",
+          "symbols": [
+            "flush"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "flush"
+          "symbol": "flush",
+          "symbols": [
+            "flush"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -1903,14 +1912,20 @@
             "crates/tondo-compiler/src/hir.rs",
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "some"
+          "symbol": "some",
+          "symbols": [
+            "some"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/mir/lower.rs"
           ],
-          "symbol": "some"
+          "symbol": "some",
+          "symbols": [
+            "some"
+          ]
         },
         "host_vm": {
           "kind": "vm-inline",
@@ -1948,14 +1963,20 @@
             "crates/tondo-compiler/src/hir.rs",
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "none"
+          "symbol": "none",
+          "symbols": [
+            "none"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/mir/lower.rs"
           ],
-          "symbol": "none"
+          "symbol": "none",
+          "symbols": [
+            "none"
+          ]
         },
         "host_vm": {
           "kind": "vm-inline",
@@ -1993,14 +2014,20 @@
             "crates/tondo-compiler/src/hir.rs",
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "unwrapOr"
+          "symbol": "unwrapOr",
+          "symbols": [
+            "unwrapOr"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/mir/lower.rs"
           ],
-          "symbol": "unwrapOr"
+          "symbol": "unwrapOr",
+          "symbols": [
+            "unwrapOr"
+          ]
         },
         "host_vm": {
           "kind": "vm-inline",
@@ -2038,14 +2065,20 @@
             "crates/tondo-compiler/src/hir.rs",
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "map"
+          "symbol": "map",
+          "symbols": [
+            "map"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/mir/lower.rs"
           ],
-          "symbol": "map"
+          "symbol": "map",
+          "symbols": [
+            "map"
+          ]
         },
         "host_vm": {
           "kind": "vm-inline",
@@ -2083,14 +2116,20 @@
             "crates/tondo-compiler/src/hir.rs",
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "ok"
+          "symbol": "ok",
+          "symbols": [
+            "ok"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/mir/lower.rs"
           ],
-          "symbol": "ok"
+          "symbol": "ok",
+          "symbols": [
+            "ok"
+          ]
         },
         "host_vm": {
           "kind": "vm-inline",
@@ -2128,14 +2167,20 @@
             "crates/tondo-compiler/src/hir.rs",
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "err"
+          "symbol": "err",
+          "symbols": [
+            "err"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/mir/lower.rs"
           ],
-          "symbol": "err"
+          "symbol": "err",
+          "symbols": [
+            "err"
+          ]
         },
         "host_vm": {
           "kind": "vm-inline",
@@ -2173,14 +2218,20 @@
             "crates/tondo-compiler/src/hir.rs",
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "map"
+          "symbol": "map",
+          "symbols": [
+            "map"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/mir/lower.rs"
           ],
-          "symbol": "map"
+          "symbol": "map",
+          "symbols": [
+            "map"
+          ]
         },
         "host_vm": {
           "kind": "vm-inline",
@@ -2218,14 +2269,20 @@
             "crates/tondo-compiler/src/hir.rs",
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "mapErr"
+          "symbol": "mapErr",
+          "symbols": [
+            "mapErr"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/mir/lower.rs"
           ],
-          "symbol": "mapErr"
+          "symbol": "mapErr",
+          "symbols": [
+            "mapErr"
+          ]
         },
         "host_vm": {
           "kind": "vm-inline",
@@ -2263,14 +2320,20 @@
             "crates/tondo-compiler/src/hir.rs",
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "unwrapOr"
+          "symbol": "unwrapOr",
+          "symbols": [
+            "unwrapOr"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/mir/lower.rs"
           ],
-          "symbol": "unwrapOr"
+          "symbol": "unwrapOr",
+          "symbols": [
+            "unwrapOr"
+          ]
         },
         "host_vm": {
           "kind": "vm-inline",
@@ -2307,13 +2370,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "snapshot"
+          "symbol": "snapshot",
+          "symbols": [
+            "snapshot"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "snapshot"
+          "symbol": "snapshot",
+          "symbols": [
+            "snapshot"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -2349,13 +2418,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "fromText"
+          "symbol": "fromText",
+          "symbols": [
+            "fromText"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "fromText"
+          "symbol": "fromText",
+          "symbols": [
+            "fromText"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -2393,13 +2468,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "fromBytes"
+          "symbol": "fromBytes",
+          "symbols": [
+            "fromBytes"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "fromBytes"
+          "symbol": "fromBytes",
+          "symbols": [
+            "fromBytes"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -2438,13 +2519,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "arguments"
+          "symbol": "arguments",
+          "symbols": [
+            "arguments"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "arguments"
+          "symbol": "arguments",
+          "symbols": [
+            "arguments"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -2480,13 +2567,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "get"
+          "symbol": "get",
+          "symbols": [
+            "get"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "get"
+          "symbol": "get",
+          "symbols": [
+            "get"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -2522,13 +2615,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "asText"
+          "symbol": "asText",
+          "symbols": [
+            "asText"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "asText"
+          "symbol": "asText",
+          "symbols": [
+            "asText"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -2567,13 +2666,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "asBytes"
+          "symbol": "asBytes",
+          "symbols": [
+            "asBytes"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "asBytes"
+          "symbol": "asBytes",
+          "symbols": [
+            "asBytes"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -2600,10 +2705,10 @@
       "status": "gap"
     },
     {
-      "id": "std.format:176",
+      "id": "std.format:181",
       "owner": "std.format",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 176,
+      "line": 181,
       "signature": "pub fn Builder.new(): Builder",
       "symbol": "std.format.Builder.new",
       "operation": "new",
@@ -2612,13 +2717,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "new"
+          "symbol": "new",
+          "symbols": [
+            "new"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "new"
+          "symbol": "new",
+          "symbols": [
+            "new"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -2642,10 +2753,10 @@
       "status": "verified"
     },
     {
-      "id": "std.format:177",
+      "id": "std.format:182",
       "owner": "std.format",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 177,
+      "line": 182,
       "signature": "pub fn Builder.append(var self, value: String): Unit ! FormatError",
       "symbol": "std.format.Builder.append",
       "operation": "append",
@@ -2654,13 +2765,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "append"
+          "symbol": "append",
+          "symbols": [
+            "append"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "append"
+          "symbol": "append",
+          "symbols": [
+            "append"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -2686,10 +2803,10 @@
       "status": "gap"
     },
     {
-      "id": "std.format:178",
+      "id": "std.format:183",
       "owner": "std.format",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 178,
+      "line": 183,
       "signature": "pub fn Builder.finish(var self): String ! FormatError",
       "symbol": "std.format.Builder.finish",
       "operation": "finish",
@@ -2698,13 +2815,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "finish"
+          "symbol": "finish",
+          "symbols": [
+            "finish"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "finish"
+          "symbol": "finish",
+          "symbols": [
+            "finish"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -2728,10 +2851,10 @@
       "status": "verified"
     },
     {
-      "id": "std.format:179",
+      "id": "std.format:184",
       "owner": "std.format",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 179,
+      "line": 184,
       "signature": "pub fn format[T: Display](value: T): String ! FormatError",
       "symbol": "std.format.format",
       "operation": "format",
@@ -2740,13 +2863,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "format"
+          "symbol": "format",
+          "symbols": [
+            "format"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "format"
+          "symbol": "format",
+          "symbols": [
+            "format"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -2770,10 +2899,10 @@
       "status": "verified"
     },
     {
-      "id": "std.format:180",
+      "id": "std.format:185",
       "owner": "std.format",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 180,
+      "line": 185,
       "signature": "pub fn join[T: Display](values: Array[T], separator: String): String ! FormatError",
       "symbol": "std.format.join",
       "operation": "join",
@@ -2782,13 +2911,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "join"
+          "symbol": "join",
+          "symbols": [
+            "join"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "join"
+          "symbol": "join",
+          "symbols": [
+            "join"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -2824,13 +2959,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "open"
+          "symbol": "open",
+          "symbols": [
+            "open"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "open"
+          "symbol": "open",
+          "symbols": [
+            "open"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -2866,13 +3007,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "openDirectory"
+          "symbol": "openDirectory",
+          "symbols": [
+            "openDirectory"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "openDirectory"
+          "symbol": "openDirectory",
+          "symbols": [
+            "openDirectory"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -2910,13 +3057,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "readAll"
+          "symbol": "readAll",
+          "symbols": [
+            "readAll"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "readAll"
+          "symbol": "readAll",
+          "symbols": [
+            "readAll"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -2954,13 +3107,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "writeAll"
+          "symbol": "writeAll",
+          "symbols": [
+            "writeAll"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "writeAll"
+          "symbol": "writeAll",
+          "symbols": [
+            "writeAll"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -2999,13 +3158,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "createDirectory"
+          "symbol": "createDirectory",
+          "symbols": [
+            "createDirectory"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "createDirectory"
+          "symbol": "createDirectory",
+          "symbols": [
+            "createDirectory"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -3043,13 +3208,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "remove"
+          "symbol": "remove",
+          "symbols": [
+            "remove"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "remove"
+          "symbol": "remove",
+          "symbols": [
+            "remove"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -3085,13 +3256,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "metadata"
+          "symbol": "metadata",
+          "symbols": [
+            "metadata"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "metadata"
+          "symbol": "metadata",
+          "symbols": [
+            "metadata"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -3127,13 +3304,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "list"
+          "symbol": "list",
+          "symbols": [
+            "list"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "list"
+          "symbol": "list",
+          "symbols": [
+            "list"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -3169,13 +3352,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "rename"
+          "symbol": "rename",
+          "symbols": [
+            "rename"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "rename"
+          "symbol": "rename",
+          "symbols": [
+            "rename"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -3213,13 +3402,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "atomicWrite"
+          "symbol": "atomicWrite",
+          "symbols": [
+            "atomicWrite"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "atomicWrite"
+          "symbol": "atomicWrite",
+          "symbols": [
+            "atomicWrite"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -3257,13 +3452,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "read"
+          "symbol": "read",
+          "symbols": [
+            "read"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "read"
+          "symbol": "read",
+          "symbols": [
+            "read"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -3299,13 +3500,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "write"
+          "symbol": "write",
+          "symbols": [
+            "write"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "write"
+          "symbol": "write",
+          "symbols": [
+            "write"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -3341,13 +3548,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "flush"
+          "symbol": "flush",
+          "symbols": [
+            "flush"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "flush"
+          "symbol": "flush",
+          "symbols": [
+            "flush"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -3385,13 +3598,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "list"
+          "symbol": "list",
+          "symbols": [
+            "list"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "list"
+          "symbol": "list",
+          "symbols": [
+            "list"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -3415,10 +3634,10 @@
       "status": "verified"
     },
     {
-      "id": "std.io:200",
+      "id": "std.io:205",
       "owner": "std.io",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 200,
+      "line": 205,
       "signature": "pub fn defaultLimits(): IoLimits",
       "symbol": "std.io.defaultLimits",
       "operation": "defaultLimits",
@@ -3427,13 +3646,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "defaultLimits"
+          "symbol": "defaultLimits",
+          "symbols": [
+            "defaultLimits"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "defaultLimits"
+          "symbol": "defaultLimits",
+          "symbols": [
+            "defaultLimits"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -3459,10 +3684,10 @@
       "status": "gap"
     },
     {
-      "id": "std.io:201",
+      "id": "std.io:206",
       "owner": "std.io",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 201,
+      "line": 206,
       "signature": "pub fn limits(maxBytes: Int, maxRead: Int): IoLimits ! IoError",
       "symbol": "std.io.limits",
       "operation": "limits",
@@ -3471,13 +3696,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "limits"
+          "symbol": "limits",
+          "symbols": [
+            "limits"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "limits"
+          "symbol": "limits",
+          "symbols": [
+            "limits"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -3501,10 +3732,10 @@
       "status": "verified"
     },
     {
-      "id": "std.io:202",
+      "id": "std.io:207",
       "owner": "std.io",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 202,
+      "line": 207,
       "signature": "pub fn readAll[R: Reader](var reader: R, limits: IoLimits): Bytes ! IoError",
       "symbol": "std.io.readAll",
       "operation": "readAll",
@@ -3513,13 +3744,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "readAll"
+          "symbol": "readAll",
+          "symbols": [
+            "readAll"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "readAll"
+          "symbol": "readAll",
+          "symbols": [
+            "readAll"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -3545,10 +3782,10 @@
       "status": "gap"
     },
     {
-      "id": "std.io:203",
+      "id": "std.io:208",
       "owner": "std.io",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 203,
+      "line": 208,
       "signature": "pub fn writeAll(var writer: Writer, data: Bytes): Unit ! IoError",
       "symbol": "std.io.writeAll",
       "operation": "writeAll",
@@ -3557,13 +3794,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "writeAll"
+          "symbol": "writeAll",
+          "symbols": [
+            "writeAll"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "writeAll"
+          "symbol": "writeAll",
+          "symbols": [
+            "writeAll"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -3589,10 +3832,10 @@
       "status": "gap"
     },
     {
-      "id": "std.iter:121",
+      "id": "std.iter:118",
       "owner": "std.iter",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 121,
+      "line": 118,
       "signature": "pub fn Iterator.map[T, U](self, fn(T): U): Iterator[U]",
       "symbol": "std.iter.Iterator.map",
       "operation": "map",
@@ -3601,14 +3844,20 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "map"
+          "symbol": "map",
+          "symbols": [
+            "map"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
-          "symbol": "map"
+          "symbol": "map",
+          "symbols": [
+            "map"
+          ]
         },
         "host_vm": {
           "kind": "vm",
@@ -3632,10 +3881,10 @@
       "status": "verified"
     },
     {
-      "id": "std.iter:122",
+      "id": "std.iter:119",
       "owner": "std.iter",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 122,
+      "line": 119,
       "signature": "pub fn Iterator.filter[T](self, fn(T): Bool): Iterator[T]",
       "symbol": "std.iter.Iterator.filter",
       "operation": "filter",
@@ -3644,14 +3893,20 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "filter"
+          "symbol": "filter",
+          "symbols": [
+            "filter"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
-          "symbol": "filter"
+          "symbol": "filter",
+          "symbols": [
+            "filter"
+          ]
         },
         "host_vm": {
           "kind": "vm",
@@ -3675,10 +3930,10 @@
       "status": "verified"
     },
     {
-      "id": "std.iter:123",
+      "id": "std.iter:120",
       "owner": "std.iter",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 123,
+      "line": 120,
       "signature": "pub fn Iterator.take[T](self, count: Int): Iterator[T]",
       "symbol": "std.iter.Iterator.take",
       "operation": "take",
@@ -3687,14 +3942,20 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "take"
+          "symbol": "take",
+          "symbols": [
+            "take"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
-          "symbol": "take"
+          "symbol": "take",
+          "symbols": [
+            "take"
+          ]
         },
         "host_vm": {
           "kind": "vm",
@@ -3718,10 +3979,10 @@
       "status": "verified"
     },
     {
-      "id": "std.iter:124",
+      "id": "std.iter:121",
       "owner": "std.iter",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 124,
+      "line": 121,
       "signature": "pub fn Iterator.collect[T](self): Array[T] ! CollectionError",
       "symbol": "std.iter.Iterator.collect",
       "operation": "collect",
@@ -3730,14 +3991,20 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "collect"
+          "symbol": "collect",
+          "symbols": [
+            "collect"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-vm/src/runtime/execute.rs"
           ],
-          "symbol": "collect"
+          "symbol": "collect",
+          "symbols": [
+            "collect"
+          ]
         },
         "host_vm": {
           "kind": "vm",
@@ -3773,13 +4040,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "parse"
+          "symbol": "parse",
+          "symbols": [
+            "parse"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "parse"
+          "symbol": "parse",
+          "symbols": [
+            "parse"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -3818,13 +4091,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "decode"
+          "symbol": "decode",
+          "symbols": [
+            "decode"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "decode"
+          "symbol": "decode",
+          "symbols": [
+            "decode"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -3864,13 +4143,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "encode"
+          "symbol": "encode",
+          "symbols": [
+            "encode"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "encode"
+          "symbol": "encode",
+          "symbols": [
+            "encode"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -3909,13 +4194,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "validate"
+          "symbol": "validate",
+          "symbols": [
+            "validate"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "validate"
+          "symbol": "validate",
+          "symbols": [
+            "validate"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -3952,13 +4243,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "canonicalize"
+          "symbol": "canonicalize",
+          "symbols": [
+            "canonicalize"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "canonicalize"
+          "symbol": "canonicalize",
+          "symbols": [
+            "canonicalize"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -3997,13 +4294,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "encodeCanonical"
+          "symbol": "encodeCanonical",
+          "symbols": [
+            "encodeCanonical"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "encodeCanonical"
+          "symbol": "encodeCanonical",
+          "symbols": [
+            "encodeCanonical"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -4045,13 +4348,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "parse"
+          "symbol": "parse",
+          "symbols": [
+            "parse"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "parse"
+          "symbol": "parse",
+          "symbols": [
+            "parse"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -4090,13 +4399,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "text"
+          "symbol": "text",
+          "symbols": [
+            "text"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "text"
+          "symbol": "text",
+          "symbols": [
+            "text"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -4135,13 +4450,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "toInt"
+          "symbol": "toInt",
+          "symbols": [
+            "toInt"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "toInt"
+          "symbol": "toInt",
+          "symbols": [
+            "toInt"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -4183,13 +4504,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "toUInt"
+          "symbol": "toUInt",
+          "symbols": [
+            "toUInt"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "toUInt"
+          "symbol": "toUInt",
+          "symbols": [
+            "toUInt"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -4231,13 +4558,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "toFloat32"
+          "symbol": "toFloat32",
+          "symbols": [
+            "toFloat32"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "toFloat32"
+          "symbol": "toFloat32",
+          "symbols": [
+            "toFloat32"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -4279,13 +4612,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "toFloat64"
+          "symbol": "toFloat64",
+          "symbols": [
+            "toFloat64"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "toFloat64"
+          "symbol": "toFloat64",
+          "symbols": [
+            "toFloat64"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -4327,13 +4666,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "fromBytes"
+          "symbol": "fromBytes",
+          "symbols": [
+            "fromBytes"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "fromBytes"
+          "symbol": "fromBytes",
+          "symbols": [
+            "fromBytes"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -4373,13 +4718,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "fromReader"
+          "symbol": "fromReader",
+          "symbols": [
+            "fromReader"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "fromReader"
+          "symbol": "fromReader",
+          "symbols": [
+            "fromReader"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -4421,13 +4772,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "next"
+          "symbol": "next",
+          "symbols": [
+            "next"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "next"
+          "symbol": "next",
+          "symbols": [
+            "next"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -4466,13 +4823,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "own"
+          "symbol": "own",
+          "symbols": [
+            "own"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "own"
+          "symbol": "own",
+          "symbols": [
+            "own"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -4511,13 +4874,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "finish"
+          "symbol": "finish",
+          "symbols": [
+            "finish"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "finish"
+          "symbol": "finish",
+          "symbols": [
+            "finish"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -4556,13 +4925,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "toWriter"
+          "symbol": "toWriter",
+          "symbols": [
+            "toWriter"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "toWriter"
+          "symbol": "toWriter",
+          "symbols": [
+            "toWriter"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -4604,13 +4979,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "write"
+          "symbol": "write",
+          "symbols": [
+            "write"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "write"
+          "symbol": "write",
+          "symbols": [
+            "write"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -4649,13 +5030,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "finish"
+          "symbol": "finish",
+          "symbols": [
+            "finish"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "finish"
+          "symbol": "finish",
+          "symbols": [
+            "finish"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -4682,10 +5069,10 @@
       "status": "gap"
     },
     {
-      "id": "std.math:156",
+      "id": "std.math:161",
       "owner": "std.math",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 156,
+      "line": 161,
       "signature": "pub fn floor(value: Float): Float",
       "symbol": "std.math.floor",
       "operation": "floor",
@@ -4694,13 +5081,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "floor"
+          "symbol": "floor",
+          "symbols": [
+            "floor"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "floor"
+          "symbol": "floor",
+          "symbols": [
+            "floor"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -4726,10 +5119,10 @@
       "status": "gap"
     },
     {
-      "id": "std.math:157",
+      "id": "std.math:162",
       "owner": "std.math",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 157,
+      "line": 162,
       "signature": "pub fn ceil(value: Float): Float",
       "symbol": "std.math.ceil",
       "operation": "ceil",
@@ -4738,13 +5131,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "ceil"
+          "symbol": "ceil",
+          "symbols": [
+            "ceil"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "ceil"
+          "symbol": "ceil",
+          "symbols": [
+            "ceil"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -4770,10 +5169,10 @@
       "status": "gap"
     },
     {
-      "id": "std.math:158",
+      "id": "std.math:163",
       "owner": "std.math",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 158,
+      "line": 163,
       "signature": "pub fn round(value: Float): Float",
       "symbol": "std.math.round",
       "operation": "round",
@@ -4782,13 +5181,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "round"
+          "symbol": "round",
+          "symbols": [
+            "round"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "round"
+          "symbol": "round",
+          "symbols": [
+            "round"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -4814,10 +5219,10 @@
       "status": "gap"
     },
     {
-      "id": "std.math:159",
+      "id": "std.math:164",
       "owner": "std.math",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 159,
+      "line": 164,
       "signature": "pub fn truncate(value: Float): Float",
       "symbol": "std.math.truncate",
       "operation": "truncate",
@@ -4826,13 +5231,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "truncate"
+          "symbol": "truncate",
+          "symbols": [
+            "truncate"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "truncate"
+          "symbol": "truncate",
+          "symbols": [
+            "truncate"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -4856,10 +5267,10 @@
       "status": "verified"
     },
     {
-      "id": "std.math:160",
+      "id": "std.math:165",
       "owner": "std.math",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 160,
+      "line": 165,
       "signature": "pub fn sqrt(value: Float): Float ! MathError",
       "symbol": "std.math.sqrt",
       "operation": "sqrt",
@@ -4868,13 +5279,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "sqrt"
+          "symbol": "sqrt",
+          "symbols": [
+            "sqrt"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "sqrt"
+          "symbol": "sqrt",
+          "symbols": [
+            "sqrt"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -4898,10 +5315,10 @@
       "status": "verified"
     },
     {
-      "id": "std.math:161",
+      "id": "std.math:166",
       "owner": "std.math",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 161,
+      "line": 166,
       "signature": "pub fn fma(a: Float, b: Float, c: Float): Float",
       "symbol": "std.math.fma",
       "operation": "fma",
@@ -4910,13 +5327,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "fma"
+          "symbol": "fma",
+          "symbols": [
+            "fma"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "fma"
+          "symbol": "fma",
+          "symbols": [
+            "fma"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -4942,10 +5365,10 @@
       "status": "gap"
     },
     {
-      "id": "std.math:162",
+      "id": "std.math:167",
       "owner": "std.math",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 162,
+      "line": 167,
       "signature": "pub fn abs(value: Float): Float",
       "symbol": "std.math.abs",
       "operation": "abs",
@@ -4954,13 +5377,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "abs"
+          "symbol": "abs",
+          "symbols": [
+            "abs"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "abs"
+          "symbol": "abs",
+          "symbols": [
+            "abs"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -4986,10 +5415,10 @@
       "status": "gap"
     },
     {
-      "id": "std.math:163",
+      "id": "std.math:168",
       "owner": "std.math",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 163,
+      "line": 168,
       "signature": "pub fn min(a: Float, b: Float): Float",
       "symbol": "std.math.min",
       "operation": "min",
@@ -4998,13 +5427,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "min"
+          "symbol": "min",
+          "symbols": [
+            "min"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "min"
+          "symbol": "min",
+          "symbols": [
+            "min"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -5028,10 +5463,10 @@
       "status": "verified"
     },
     {
-      "id": "std.math:164",
+      "id": "std.math:169",
       "owner": "std.math",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 164,
+      "line": 169,
       "signature": "pub fn max(a: Float, b: Float): Float",
       "symbol": "std.math.max",
       "operation": "max",
@@ -5040,13 +5475,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "max"
+          "symbol": "max",
+          "symbols": [
+            "max"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "max"
+          "symbol": "max",
+          "symbols": [
+            "max"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -5082,13 +5523,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "decodeValue"
+          "symbol": "decodeValue",
+          "symbols": [
+            "decodeValue"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "decodeValue"
+          "symbol": "decodeValue",
+          "symbols": [
+            "decodeValue"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -5129,13 +5576,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "decode"
+          "symbol": "decode",
+          "symbols": [
+            "decode"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "decode"
+          "symbol": "decode",
+          "symbols": [
+            "decode"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -5175,13 +5628,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "encodeValue"
+          "symbol": "encodeValue",
+          "symbols": [
+            "encodeValue"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "encodeValue"
+          "symbol": "encodeValue",
+          "symbols": [
+            "encodeValue"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -5222,13 +5681,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "encode"
+          "symbol": "encode",
+          "symbols": [
+            "encode"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "encode"
+          "symbol": "encode",
+          "symbols": [
+            "encode"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -5267,13 +5732,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "validate"
+          "symbol": "validate",
+          "symbols": [
+            "validate"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "validate"
+          "symbol": "validate",
+          "symbols": [
+            "validate"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -5310,13 +5781,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "encodeDeterministic"
+          "symbol": "encodeDeterministic",
+          "symbols": [
+            "encodeDeterministic"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "encodeDeterministic"
+          "symbol": "encodeDeterministic",
+          "symbols": [
+            "encodeDeterministic"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -5357,13 +5834,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "fromExt"
+          "symbol": "fromExt",
+          "symbols": [
+            "fromExt"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "fromExt"
+          "symbol": "fromExt",
+          "symbols": [
+            "fromExt"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -5404,13 +5887,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "toExt"
+          "symbol": "toExt",
+          "symbols": [
+            "toExt"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "toExt"
+          "symbol": "toExt",
+          "symbols": [
+            "toExt"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -5451,13 +5940,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "fromBytes"
+          "symbol": "fromBytes",
+          "symbols": [
+            "fromBytes"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "fromBytes"
+          "symbol": "fromBytes",
+          "symbols": [
+            "fromBytes"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -5497,13 +5992,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "fromReader"
+          "symbol": "fromReader",
+          "symbols": [
+            "fromReader"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "fromReader"
+          "symbol": "fromReader",
+          "symbols": [
+            "fromReader"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -5545,13 +6046,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "next"
+          "symbol": "next",
+          "symbols": [
+            "next"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "next"
+          "symbol": "next",
+          "symbols": [
+            "next"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -5590,13 +6097,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "own"
+          "symbol": "own",
+          "symbols": [
+            "own"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "own"
+          "symbol": "own",
+          "symbols": [
+            "own"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -5635,13 +6148,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "finish"
+          "symbol": "finish",
+          "symbols": [
+            "finish"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "finish"
+          "symbol": "finish",
+          "symbols": [
+            "finish"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -5680,13 +6199,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "toWriter"
+          "symbol": "toWriter",
+          "symbols": [
+            "toWriter"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "toWriter"
+          "symbol": "toWriter",
+          "symbols": [
+            "toWriter"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -5728,13 +6253,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "write"
+          "symbol": "write",
+          "symbols": [
+            "write"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "write"
+          "symbol": "write",
+          "symbols": [
+            "write"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -5773,13 +6304,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "finish"
+          "symbol": "finish",
+          "symbols": [
+            "finish"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "finish"
+          "symbol": "finish",
+          "symbols": [
+            "finish"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -5818,13 +6355,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "fromString"
+          "symbol": "fromString",
+          "symbols": [
+            "fromString"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "fromString"
+          "symbol": "fromString",
+          "symbols": [
+            "fromString"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -5862,13 +6405,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "fromBytes"
+          "symbol": "fromBytes",
+          "symbols": [
+            "fromBytes"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "fromBytes"
+          "symbol": "fromBytes",
+          "symbols": [
+            "fromBytes"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -5906,13 +6455,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "join"
+          "symbol": "join",
+          "symbols": [
+            "join"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "join"
+          "symbol": "join",
+          "symbols": [
+            "join"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -5948,13 +6503,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "parent"
+          "symbol": "parent",
+          "symbols": [
+            "parent"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "parent"
+          "symbol": "parent",
+          "symbols": [
+            "parent"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -5990,13 +6551,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "fileName"
+          "symbol": "fileName",
+          "symbols": [
+            "fileName"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "fileName"
+          "symbol": "fileName",
+          "symbols": [
+            "fileName"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -6034,13 +6601,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "extension"
+          "symbol": "extension",
+          "symbols": [
+            "extension"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "extension"
+          "symbol": "extension",
+          "symbols": [
+            "extension"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -6078,13 +6651,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "kind"
+          "symbol": "kind",
+          "symbols": [
+            "kind"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "kind"
+          "symbol": "kind",
+          "symbols": [
+            "kind"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -6120,13 +6699,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "isEmpty"
+          "symbol": "isEmpty",
+          "symbols": [
+            "isEmpty"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "isEmpty"
+          "symbol": "isEmpty",
+          "symbols": [
+            "isEmpty"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -6164,13 +6749,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "toString"
+          "symbol": "toString",
+          "symbols": [
+            "toString"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "toString"
+          "symbol": "toString",
+          "symbols": [
+            "toString"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -6208,13 +6799,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "toBytes"
+          "symbol": "toBytes",
+          "symbols": [
+            "toBytes"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "toBytes"
+          "symbol": "toBytes",
+          "symbols": [
+            "toBytes"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -6252,13 +6849,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "command"
+          "symbol": "command",
+          "symbols": [
+            "command"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "command"
+          "symbol": "command",
+          "symbols": [
+            "command"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -6296,13 +6899,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "shell"
+          "symbol": "shell",
+          "symbols": [
+            "shell"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "shell"
+          "symbol": "shell",
+          "symbols": [
+            "shell"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -6340,13 +6949,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "pipe"
+          "symbol": "pipe",
+          "symbols": [
+            "pipe"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "pipe"
+          "symbol": "pipe",
+          "symbols": [
+            "pipe"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -6382,13 +6997,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "mergeStderr"
+          "symbol": "mergeStderr",
+          "symbols": [
+            "mergeStderr"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "mergeStderr"
+          "symbol": "mergeStderr",
+          "symbols": [
+            "mergeStderr"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -6427,13 +7048,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "mergeStderr"
+          "symbol": "mergeStderr",
+          "symbols": [
+            "mergeStderr"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "mergeStderr"
+          "symbol": "mergeStderr",
+          "symbols": [
+            "mergeStderr"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -6472,13 +7099,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "run"
+          "symbol": "run",
+          "symbols": [
+            "run"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "run"
+          "symbol": "run",
+          "symbols": [
+            "run"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -6514,13 +7147,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "output"
+          "symbol": "output",
+          "symbols": [
+            "output"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "output"
+          "symbol": "output",
+          "symbols": [
+            "output"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -6556,13 +7195,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "check"
+          "symbol": "check",
+          "symbols": [
+            "check"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "check"
+          "symbol": "check",
+          "symbols": [
+            "check"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -6598,13 +7243,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "start"
+          "symbol": "start",
+          "symbols": [
+            "start"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "start"
+          "symbol": "start",
+          "symbols": [
+            "start"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -6640,13 +7291,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "wait"
+          "symbol": "wait",
+          "symbols": [
+            "wait"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "wait"
+          "symbol": "wait",
+          "symbols": [
+            "wait"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -6682,13 +7339,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "cancel"
+          "symbol": "cancel",
+          "symbols": [
+            "cancel"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "cancel"
+          "symbol": "cancel",
+          "symbols": [
+            "cancel"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -6726,13 +7389,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "stdout"
+          "symbol": "stdout",
+          "symbols": [
+            "stdout"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "stdout"
+          "symbol": "stdout",
+          "symbols": [
+            "stdout"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -6770,13 +7439,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "stderr"
+          "symbol": "stderr",
+          "symbols": [
+            "stderr"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "stderr"
+          "symbol": "stderr",
+          "symbols": [
+            "stderr"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -6814,13 +7489,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "combined"
+          "symbol": "combined",
+          "symbols": [
+            "combined"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "combined"
+          "symbol": "combined",
+          "symbols": [
+            "combined"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -6859,13 +7540,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "statuses"
+          "symbol": "statuses",
+          "symbols": [
+            "statuses"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "statuses"
+          "symbol": "statuses",
+          "symbols": [
+            "statuses"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -6903,13 +7590,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "code"
+          "symbol": "code",
+          "symbols": [
+            "code"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "code"
+          "symbol": "code",
+          "symbols": [
+            "code"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -6945,13 +7638,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "success"
+          "symbol": "success",
+          "symbols": [
+            "success"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "success"
+          "symbol": "success",
+          "symbols": [
+            "success"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -6987,13 +7686,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "decode"
+          "symbol": "decode",
+          "symbols": [
+            "decode"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "decode"
+          "symbol": "decode",
+          "symbols": [
+            "decode"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -7033,13 +7738,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "encode"
+          "symbol": "encode",
+          "symbols": [
+            "encode"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "encode"
+          "symbol": "encode",
+          "symbols": [
+            "encode"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -7078,13 +7789,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "encodeDeterministic"
+          "symbol": "encodeDeterministic",
+          "symbols": [
+            "encodeDeterministic"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "encodeDeterministic"
+          "symbol": "encodeDeterministic",
+          "symbols": [
+            "encodeDeterministic"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -7125,13 +7842,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "validate"
+          "symbol": "validate",
+          "symbols": [
+            "validate"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "validate"
+          "symbol": "validate",
+          "symbols": [
+            "validate"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -7168,13 +7891,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "descriptor"
+          "symbol": "descriptor",
+          "symbols": [
+            "descriptor"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "descriptor"
+          "symbol": "descriptor",
+          "symbols": [
+            "descriptor"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -7215,13 +7944,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "ProtoReader"
+          "symbol": "ProtoReader",
+          "symbols": [
+            "ProtoReader"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "ProtoReader"
+          "symbol": "ProtoReader",
+          "symbols": [
+            "ProtoReader"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -7262,13 +7997,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "ProtoReader"
+          "symbol": "ProtoReader",
+          "symbols": [
+            "ProtoReader"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "ProtoReader"
+          "symbol": "ProtoReader",
+          "symbols": [
+            "ProtoReader"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -7309,13 +8050,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "ProtoReader"
+          "symbol": "ProtoReader",
+          "symbols": [
+            "ProtoReader"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "ProtoReader"
+          "symbol": "ProtoReader",
+          "symbols": [
+            "ProtoReader"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -7356,13 +8103,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "ProtoReader"
+          "symbol": "ProtoReader",
+          "symbols": [
+            "ProtoReader"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "ProtoReader"
+          "symbol": "ProtoReader",
+          "symbols": [
+            "ProtoReader"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -7403,13 +8156,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "ProtoReader"
+          "symbol": "ProtoReader",
+          "symbols": [
+            "ProtoReader"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "ProtoReader"
+          "symbol": "ProtoReader",
+          "symbols": [
+            "ProtoReader"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -7450,13 +8209,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "ProtoWriter"
+          "symbol": "ProtoWriter",
+          "symbols": [
+            "ProtoWriter"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "ProtoWriter"
+          "symbol": "ProtoWriter",
+          "symbols": [
+            "ProtoWriter"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -7497,13 +8262,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "ProtoWriter"
+          "symbol": "ProtoWriter",
+          "symbols": [
+            "ProtoWriter"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "ProtoWriter"
+          "symbol": "ProtoWriter",
+          "symbols": [
+            "ProtoWriter"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -7544,13 +8315,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "ProtoWriter"
+          "symbol": "ProtoWriter",
+          "symbols": [
+            "ProtoWriter"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "ProtoWriter"
+          "symbol": "ProtoWriter",
+          "symbols": [
+            "ProtoWriter"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -7591,13 +8368,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "count"
+          "symbol": "count",
+          "symbols": [
+            "count"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "count"
+          "symbol": "count",
+          "symbols": [
+            "count"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -7636,13 +8419,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "discard"
+          "symbol": "discard",
+          "symbols": [
+            "discard"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "discard"
+          "symbol": "discard",
+          "symbols": [
+            "discard"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -7682,14 +8471,20 @@
             "crates/tondo-compiler/src/hir.rs",
             "crates/tondo-compiler/src/test_check.rs"
           ],
-          "symbol": "assertEqual"
+          "symbol": "assertEqual",
+          "symbols": [
+            "assertEqual"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/test_generation.rs"
           ],
-          "symbol": "assertEqual"
+          "symbol": "assertEqual",
+          "symbols": [
+            "assertEqual"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -7728,14 +8523,20 @@
             "crates/tondo-compiler/src/hir.rs",
             "crates/tondo-compiler/src/test_check.rs"
           ],
-          "symbol": "assertNotEqual"
+          "symbol": "assertNotEqual",
+          "symbols": [
+            "assertNotEqual"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/test_generation.rs"
           ],
-          "symbol": "assertNotEqual"
+          "symbol": "assertNotEqual",
+          "symbols": [
+            "assertNotEqual"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -7774,14 +8575,20 @@
             "crates/tondo-compiler/src/hir.rs",
             "crates/tondo-compiler/src/test_check.rs"
           ],
-          "symbol": "assertTextEqual"
+          "symbol": "assertTextEqual",
+          "symbols": [
+            "assertTextEqual"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/test_generation.rs"
           ],
-          "symbol": "assertTextEqual"
+          "symbol": "assertTextEqual",
+          "symbols": [
+            "assertTextEqual"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -7820,14 +8627,20 @@
             "crates/tondo-compiler/src/hir.rs",
             "crates/tondo-compiler/src/test_check.rs"
           ],
-          "symbol": "diffText"
+          "symbol": "diffText",
+          "symbols": [
+            "diffText"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/test_generation.rs"
           ],
-          "symbol": "diffText"
+          "symbol": "diffText",
+          "symbols": [
+            "diffText"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -7866,14 +8679,20 @@
             "crates/tondo-compiler/src/hir.rs",
             "crates/tondo-compiler/src/test_check.rs"
           ],
-          "symbol": "render"
+          "symbol": "render",
+          "symbols": [
+            "render"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/test_generation.rs"
           ],
-          "symbol": "render"
+          "symbol": "render",
+          "symbols": [
+            "render"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -7910,14 +8729,20 @@
             "crates/tondo-compiler/src/hir.rs",
             "crates/tondo-compiler/src/test_check.rs"
           ],
-          "symbol": "from"
+          "symbol": "from",
+          "symbols": [
+            "from"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/test_generation.rs"
           ],
-          "symbol": "from"
+          "symbol": "from",
+          "symbols": [
+            "from"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -7954,14 +8779,20 @@
             "crates/tondo-compiler/src/hir.rs",
             "crates/tondo-compiler/src/test_check.rs"
           ],
-          "symbol": "assertFloatNear"
+          "symbol": "assertFloatNear",
+          "symbols": [
+            "assertFloatNear"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/test_generation.rs"
           ],
-          "symbol": "assertFloatNear"
+          "symbol": "assertFloatNear",
+          "symbols": [
+            "assertFloatNear"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -8000,14 +8831,20 @@
             "crates/tondo-compiler/src/hir.rs",
             "crates/tondo-compiler/src/test_check.rs"
           ],
-          "symbol": "assertFloat32Near"
+          "symbol": "assertFloat32Near",
+          "symbols": [
+            "assertFloat32Near"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/test_generation.rs"
           ],
-          "symbol": "assertFloat32Near"
+          "symbol": "assertFloat32Near",
+          "symbols": [
+            "assertFloat32Near"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -8046,14 +8883,20 @@
             "crates/tondo-compiler/src/hir.rs",
             "crates/tondo-compiler/src/test_check.rs"
           ],
-          "symbol": "assertSome"
+          "symbol": "assertSome",
+          "symbols": [
+            "assertSome"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/test_generation.rs"
           ],
-          "symbol": "assertSome"
+          "symbol": "assertSome",
+          "symbols": [
+            "assertSome"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -8092,14 +8935,20 @@
             "crates/tondo-compiler/src/hir.rs",
             "crates/tondo-compiler/src/test_check.rs"
           ],
-          "symbol": "assertNone"
+          "symbol": "assertNone",
+          "symbols": [
+            "assertNone"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/test_generation.rs"
           ],
-          "symbol": "assertNone"
+          "symbol": "assertNone",
+          "symbols": [
+            "assertNone"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -8138,14 +8987,20 @@
             "crates/tondo-compiler/src/hir.rs",
             "crates/tondo-compiler/src/test_check.rs"
           ],
-          "symbol": "assertOk"
+          "symbol": "assertOk",
+          "symbols": [
+            "assertOk"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/test_generation.rs"
           ],
-          "symbol": "assertOk"
+          "symbol": "assertOk",
+          "symbols": [
+            "assertOk"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -8184,14 +9039,20 @@
             "crates/tondo-compiler/src/hir.rs",
             "crates/tondo-compiler/src/test_check.rs"
           ],
-          "symbol": "assertErr"
+          "symbol": "assertErr",
+          "symbols": [
+            "assertErr"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/test_generation.rs"
           ],
-          "symbol": "assertErr"
+          "symbol": "assertErr",
+          "symbols": [
+            "assertErr"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -8230,14 +9091,20 @@
             "crates/tondo-compiler/src/hir.rs",
             "crates/tondo-compiler/src/test_check.rs"
           ],
-          "symbol": "tempDirectory"
+          "symbol": "tempDirectory",
+          "symbols": [
+            "tempDirectory"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/test_generation.rs"
           ],
-          "symbol": "tempDirectory"
+          "symbol": "tempDirectory",
+          "symbols": [
+            "tempDirectory"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -8276,14 +9143,20 @@
             "crates/tondo-compiler/src/hir.rs",
             "crates/tondo-compiler/src/test_check.rs"
           ],
-          "symbol": "path"
+          "symbol": "path",
+          "symbols": [
+            "path"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/test_generation.rs"
           ],
-          "symbol": "path"
+          "symbol": "path",
+          "symbols": [
+            "path"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -8320,14 +9193,20 @@
             "crates/tondo-compiler/src/hir.rs",
             "crates/tondo-compiler/src/test_check.rs"
           ],
-          "symbol": "cleanup"
+          "symbol": "cleanup",
+          "symbols": [
+            "cleanup"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/test_generation.rs"
           ],
-          "symbol": "cleanup"
+          "symbol": "cleanup",
+          "symbols": [
+            "cleanup"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -8366,14 +9245,20 @@
             "crates/tondo-compiler/src/hir.rs",
             "crates/tondo-compiler/src/test_check.rs"
           ],
-          "symbol": "new"
+          "symbol": "new",
+          "symbols": [
+            "new"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/test_generation.rs"
           ],
-          "symbol": "new"
+          "symbol": "new",
+          "symbols": [
+            "new"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -8410,14 +9295,20 @@
             "crates/tondo-compiler/src/hir.rs",
             "crates/tondo-compiler/src/test_check.rs"
           ],
-          "symbol": "forCase"
+          "symbol": "forCase",
+          "symbols": [
+            "forCase"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/test_generation.rs"
           ],
-          "symbol": "forCase"
+          "symbol": "forCase",
+          "symbols": [
+            "forCase"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -8457,14 +9348,20 @@
             "crates/tondo-compiler/src/hir.rs",
             "crates/tondo-compiler/src/test_check.rs"
           ],
-          "symbol": "id"
+          "symbol": "id",
+          "symbols": [
+            "id"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/test_generation.rs"
           ],
-          "symbol": "id"
+          "symbol": "id",
+          "symbols": [
+            "id"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -8501,14 +9398,20 @@
             "crates/tondo-compiler/src/hir.rs",
             "crates/tondo-compiler/src/test_check.rs"
           ],
-          "symbol": "drawCount"
+          "symbol": "drawCount",
+          "symbols": [
+            "drawCount"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/test_generation.rs"
           ],
-          "symbol": "drawCount"
+          "symbol": "drawCount",
+          "symbols": [
+            "drawCount"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -8548,14 +9451,20 @@
             "crates/tondo-compiler/src/hir.rs",
             "crates/tondo-compiler/src/test_check.rs"
           ],
-          "symbol": "nextUInt"
+          "symbol": "nextUInt",
+          "symbols": [
+            "nextUInt"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/test_generation.rs"
           ],
-          "symbol": "nextUInt"
+          "symbol": "nextUInt",
+          "symbols": [
+            "nextUInt"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -8594,14 +9503,20 @@
             "crates/tondo-compiler/src/hir.rs",
             "crates/tondo-compiler/src/test_check.rs"
           ],
-          "symbol": "nextBool"
+          "symbol": "nextBool",
+          "symbols": [
+            "nextBool"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/test_generation.rs"
           ],
-          "symbol": "nextBool"
+          "symbol": "nextBool",
+          "symbols": [
+            "nextBool"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -8641,14 +9556,20 @@
             "crates/tondo-compiler/src/hir.rs",
             "crates/tondo-compiler/src/test_check.rs"
           ],
-          "symbol": "nextInt"
+          "symbol": "nextInt",
+          "symbols": [
+            "nextInt"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/test_generation.rs"
           ],
-          "symbol": "nextInt"
+          "symbol": "nextInt",
+          "symbols": [
+            "nextInt"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -8688,14 +9609,20 @@
             "crates/tondo-compiler/src/hir.rs",
             "crates/tondo-compiler/src/test_check.rs"
           ],
-          "symbol": "nextBytes"
+          "symbol": "nextBytes",
+          "symbols": [
+            "nextBytes"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/test_generation.rs"
           ],
-          "symbol": "nextBytes"
+          "symbol": "nextBytes",
+          "symbols": [
+            "nextBytes"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -8735,14 +9662,20 @@
             "crates/tondo-compiler/src/hir.rs",
             "crates/tondo-compiler/src/test_check.rs"
           ],
-          "symbol": "nextText"
+          "symbol": "nextText",
+          "symbols": [
+            "nextText"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/test_generation.rs"
           ],
-          "symbol": "nextText"
+          "symbol": "nextText",
+          "symbols": [
+            "nextText"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -8781,14 +9714,20 @@
             "crates/tondo-compiler/src/hir.rs",
             "crates/tondo-compiler/src/test_check.rs"
           ],
-          "symbol": "shrink"
+          "symbol": "shrink",
+          "symbols": [
+            "shrink"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/test_generation.rs"
           ],
-          "symbol": "shrink"
+          "symbol": "shrink",
+          "symbols": [
+            "shrink"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -8827,13 +9766,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "empty"
+          "symbol": "empty",
+          "symbols": [
+            "empty"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "empty"
+          "symbol": "empty",
+          "symbols": [
+            "empty"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -8869,13 +9814,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "fromChars"
+          "symbol": "fromChars",
+          "symbols": [
+            "fromChars"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "fromChars"
+          "symbol": "fromChars",
+          "symbols": [
+            "fromChars"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -8913,13 +9864,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "length"
+          "symbol": "length",
+          "symbols": [
+            "length"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "length"
+          "symbol": "length",
+          "symbols": [
+            "length"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -8958,13 +9915,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "byteLength"
+          "symbol": "byteLength",
+          "symbols": [
+            "byteLength"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "byteLength"
+          "symbol": "byteLength",
+          "symbols": [
+            "byteLength"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -9003,13 +9966,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "get"
+          "symbol": "get",
+          "symbols": [
+            "get"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "get"
+          "symbol": "get",
+          "symbols": [
+            "get"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -9047,13 +10016,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "slice"
+          "symbol": "slice",
+          "symbols": [
+            "slice"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "slice"
+          "symbol": "slice",
+          "symbols": [
+            "slice"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -9089,13 +10064,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "contains"
+          "symbol": "contains",
+          "symbols": [
+            "contains"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "contains"
+          "symbol": "contains",
+          "symbols": [
+            "contains"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -9133,13 +10114,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "startsWith"
+          "symbol": "startsWith",
+          "symbols": [
+            "startsWith"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "startsWith"
+          "symbol": "startsWith",
+          "symbols": [
+            "startsWith"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -9178,13 +10165,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "endsWith"
+          "symbol": "endsWith",
+          "symbols": [
+            "endsWith"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "endsWith"
+          "symbol": "endsWith",
+          "symbols": [
+            "endsWith"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -9223,13 +10216,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "find"
+          "symbol": "find",
+          "symbols": [
+            "find"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "find"
+          "symbol": "find",
+          "symbols": [
+            "find"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -9267,13 +10266,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "replace"
+          "symbol": "replace",
+          "symbols": [
+            "replace"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "replace"
+          "symbol": "replace",
+          "symbols": [
+            "replace"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -9312,13 +10317,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "trim"
+          "symbol": "trim",
+          "symbols": [
+            "trim"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "trim"
+          "symbol": "trim",
+          "symbols": [
+            "trim"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -9357,13 +10368,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "toLowerAscii"
+          "symbol": "toLowerAscii",
+          "symbols": [
+            "toLowerAscii"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "toLowerAscii"
+          "symbol": "toLowerAscii",
+          "symbols": [
+            "toLowerAscii"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -9402,13 +10419,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "toUpperAscii"
+          "symbol": "toUpperAscii",
+          "symbols": [
+            "toUpperAscii"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "toUpperAscii"
+          "symbol": "toUpperAscii",
+          "symbols": [
+            "toUpperAscii"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -9447,13 +10470,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "chars"
+          "symbol": "chars",
+          "symbols": [
+            "chars"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "chars"
+          "symbol": "chars",
+          "symbols": [
+            "chars"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -9491,13 +10520,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "now"
+          "symbol": "now",
+          "symbols": [
+            "now"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "now"
+          "symbol": "now",
+          "symbols": [
+            "now"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -9535,13 +10570,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "resolution"
+          "symbol": "resolution",
+          "symbols": [
+            "resolution"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "resolution"
+          "symbol": "resolution",
+          "symbols": [
+            "resolution"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -9577,13 +10618,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "deadline"
+          "symbol": "deadline",
+          "symbols": [
+            "deadline"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "deadline"
+          "symbol": "deadline",
+          "symbols": [
+            "deadline"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -9621,13 +10668,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "sleep"
+          "symbol": "sleep",
+          "symbols": [
+            "sleep"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "sleep"
+          "symbol": "sleep",
+          "symbols": [
+            "sleep"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -9665,13 +10718,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "after"
+          "symbol": "after",
+          "symbols": [
+            "after"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "after"
+          "symbol": "after",
+          "symbols": [
+            "after"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -9707,13 +10766,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "at"
+          "symbol": "at",
+          "symbols": [
+            "at"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "at"
+          "symbol": "at",
+          "symbols": [
+            "at"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -9749,13 +10814,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "wait"
+          "symbol": "wait",
+          "symbols": [
+            "wait"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "wait"
+          "symbol": "wait",
+          "symbols": [
+            "wait"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -9791,13 +10862,19 @@
           "paths": [
             "crates/tondo-compiler/src/hir/check.rs"
           ],
-          "symbol": "cancel"
+          "symbol": "cancel",
+          "symbols": [
+            "cancel"
+          ]
         },
         "lowering": {
           "paths": [
             "crates/tondo-compiler/src/hir/lower.rs"
           ],
-          "symbol": "cancel"
+          "symbol": "cancel",
+          "symbols": [
+            "cancel"
+          ]
         },
         "host_vm": {
           "kind": "host",
@@ -9826,10 +10903,10 @@
   ],
   "summary": {
     "owners": 20,
-    "signatures": 206,
-    "verified": 74,
-    "signature_gaps": 132,
+    "signatures": 203,
+    "verified": 75,
+    "signature_gaps": 128,
     "owner_gaps": 3,
-    "gaps": 135
+    "gaps": 131
   }
 }

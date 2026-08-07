@@ -112,9 +112,6 @@ pub fn Set.contains[K: Key](self, value: K): Bool
 pub fn Set.values[K: Key](self): Iterator[K]
 
 pub type Range
-pub fn Range.from(start: Int, end: Int): Range
-pub fn Range.inclusive(start: Int, end: Int): Range
-pub fn Range.step(self, step: Int): Range ! CollectionError
 pub trait Iterator[T] {
     fn next(var self): T?
 }
@@ -137,9 +134,17 @@ colección. Un `take` con un conteo negativo se comporta como `take(0)` y
 produce una colección vacía. Los callbacks son síncronos; una suspensión async
 no forma parte de este contrato.
 
-`Range` es lazy, no materializa un array y rechaza step cero. Cada target de
-iteración produce un único elemento; consumir un iterador avanza su estado y no
-se reinicia implícitamente. `Array`/`Map`/`Set` nunca exponen buffers mutables.
+`Range` se construye únicamente con los operadores de lenguaje `start .. end`
+(final exclusivo) y `start ..= end` (final inclusivo). Es lazy y no materializa
+un array; cada target de iteración produce un único elemento. No existe una
+segunda familia de constructores nominales (`Range.from`/`Range.inclusive`) ni
+un método `Range.step`: esos nombres duplicarían la sintaxis canónica y
+restringirían innecesariamente el rango a `Int`, mientras que los operadores
+admiten todos los tipos discretos soportados por el lenguaje (`Int`, enteros
+sin signo y `Char`). Los pasos son una propiedad de los slices, no de un
+`Range`; un range descendente permanece vacío según el contrato del lenguaje.
+Consumir un iterador avanza su estado y no se reinicia implícitamente.
+`Array`/`Map`/`Set` nunca exponen buffers mutables.
 La superficie de `std.collections` está conectada al backend bootstrap por una
 única ruta estática HIR → MIR → bytecode → VM: los constructores estáticos usan
 los intrinsics del lenguaje, las consultas y mutaciones operan sobre los mismos

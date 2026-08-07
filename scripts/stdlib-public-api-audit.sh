@@ -28,6 +28,8 @@ jq -e '
         and (.case.kind | ["runtime", "compile", "runner-source"] | index(.) != null)
         and (.runtime.kind | ["host", "vm", "vm-inline", "not-applicable"] | index(.) != null)
         and ((.runtime.symbols // {}) | type) == "object"
+        and ((.hir_symbols // {}) | type) == "object"
+        and ((.lowering_symbols // {}) | type) == "object"
         and (if .runtime.kind == "not-applicable" then (.runtime.paths | length) == 0 and (.runtime.reason | type) == "string" and (.runtime.reason | length > 0) else (.runtime.paths | length > 0) end)
     )
 ' "$config" >/dev/null || die "invalid audit configuration"
@@ -73,6 +75,15 @@ all_paths_contain_any() {
         done < <(jq -r '.[]' <<< "$needles_json")
     done < <(jq -r '.[]' <<< "$paths_json")
     return 1
+}
+
+stage_symbols_for() {
+    local owner_json="$1"
+    local stage="$2"
+    local name="$3"
+    local operation="$4"
+    jq -c --arg stage "$stage" --arg name "$name" --arg operation "$operation" \
+        '((.[$stage] // {})[$name] // [$operation])' <<< "$owner_json"
 }
 
 has_prefix() {
@@ -178,7 +189,7 @@ emit_owner_rows() {
     fi
     path_exists "$case_path" || die "$owner public-case path is missing: $case_path"
 
-    local line signature name operation symbol canonical_call runtime_needles
+    local line signature name operation symbol canonical_call hir_needles lowering_needles runtime_needles
     local -a missing
     while IFS=$'\t' read -r line signature; do
         [[ -n "$signature" ]] || continue
@@ -203,13 +214,16 @@ emit_owner_rows() {
         [[ -n "$canonical_call" ]] || canonical_call="$operation"
         missing=()
 
+        hir_needles="$(stage_symbols_for "$owner_json" hir_symbols "$owner.$name" "$operation")"
+        lowering_needles="$(stage_symbols_for "$owner_json" lowering_symbols "$owner.$name" "$operation")"
+
         if ! grep -Fq -- "$signature" "$root/$contract"; then
             missing+=("contract-signature-drift")
         fi
-        if ! all_paths_contain "$hir" "$operation"; then
+        if ! all_paths_contain_any "$hir" "$hir_needles"; then
             missing+=("hir-symbol")
         fi
-        if ! all_paths_contain "$lowering" "$operation"; then
+        if ! all_paths_contain_any "$lowering" "$lowering_needles"; then
             missing+=("lowering-symbol")
         fi
         runtime_needles="$(runtime_symbols_for "$runtime_symbols" "$owner.$name")"
@@ -271,10 +285,12 @@ emit_owner_rows() {
             --argjson hir "$hir" \
             --argjson lowering "$lowering" \
             --argjson runtime "$runtime" \
+            --argjson hir_symbols "$hir_needles" \
+            --argjson lowering_symbols "$lowering_needles" \
             --argjson runtime_symbols "$runtime_needles" \
             --argjson missing "$missing_json" \
             --arg status "$status" \
-            '{id:($owner+":"+($line|tostring)), owner:$owner, contract:$contract, line:$line, signature:$signature, symbol:$symbol, operation:$operation, evidence:{hir:{paths:$hir,symbol:$operation},lowering:{paths:$lowering,symbol:$operation},host_vm:{kind:$runtime_kind,paths:$runtime,reason:(if $runtime_reason == "" then null else $runtime_reason end),symbol:$symbol,symbols:$runtime_symbols},public_case:{path:$case_path,kind:$case_kind,call:$call,bootstrap_alias:false}},missing:$missing,status:$status}' \
+            '{id:($owner+":"+($line|tostring)), owner:$owner, contract:$contract, line:$line, signature:$signature, symbol:$symbol, operation:$operation, evidence:{hir:{paths:$hir,symbol:$operation,symbols:$hir_symbols},lowering:{paths:$lowering,symbol:$operation,symbols:$lowering_symbols},host_vm:{kind:$runtime_kind,paths:$runtime,reason:(if $runtime_reason == "" then null else $runtime_reason end),symbol:$symbol,symbols:$runtime_symbols},public_case:{path:$case_path,kind:$case_kind,call:$call,bootstrap_alias:false}},missing:$missing,status:$status}' \
             >> "$rows_ndjson"
     done < <(extract_signatures "$owner_json")
 }
@@ -352,6 +368,8 @@ validate_matrix() {
             and (.symbol | startswith("std."))
             and (.evidence.hir.paths | length > 0)
             and (.evidence.lowering.paths | length > 0)
+            and (.evidence.hir.symbols | type) == "array"
+            and (.evidence.lowering.symbols | type) == "array"
             and (.evidence.host_vm.symbols | type) == "array"
             and (.evidence.public_case.bootstrap_alias == false)
             and (.status == (if (.missing | length) == 0 then "verified" else "gap" end))
