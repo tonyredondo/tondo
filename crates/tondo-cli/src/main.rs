@@ -3436,7 +3436,7 @@ mod tests {
             project.join("target/helper-report.json").display()
         );
         let run_plan = test_cli::parse(
-            &[
+            [
                 OsString::from("test"),
                 OsString::from("--project"),
                 OsString::from(project.to_str().unwrap()),
