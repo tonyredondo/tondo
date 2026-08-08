@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 1.77
+**Versión del tracker:** 1.78
 
 **Última actualización:** 2026-08-08
 
@@ -5645,6 +5645,15 @@ se declara iniciada antes de esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 1.78 — 2026-08-08
+
+- La matriz de calidad queda reforzada sin rebajar el umbral: el parser prueba
+  rutas segmentadas, argumentos múltiples y formas vacías de annotations, y
+  `CodecError` cubre en tests el texto canónico de cada variante.
+- La evidencia regenerada y validada contiene 2.284 tests lógicos y 308
+  requisitos; el siguiente gate debe medir la cobertura sobre este árbol y
+  conservar el mínimo operativo de 90,5%.
 
 ### 1.77 — 2026-08-08
 

@@ -45,3 +45,27 @@ impl std::fmt::Display for CodecError {
 }
 
 impl std::error::Error for CodecError {}
+
+#[cfg(test)]
+mod tests {
+    use super::CodecError;
+
+    #[test]
+    fn codec_error_display_is_canonical_for_every_variant() {
+        let cases = [
+            (CodecError::UnexpectedEof, "unexpected end of input"),
+            (CodecError::InvalidSyntax, "invalid syntax"),
+            (CodecError::InvalidUtf8, "invalid UTF-8"),
+            (CodecError::DuplicateKey, "duplicate key"),
+            (CodecError::TrailingData, "trailing data"),
+            (CodecError::LimitExceeded, "codec limit exceeded"),
+            (CodecError::InvalidTag, "invalid tag"),
+            (CodecError::InvalidLength, "invalid length"),
+            (CodecError::InvalidWireType, "invalid wire type"),
+            (CodecError::VarintOverflow, "varint overflow"),
+        ];
+        for (error, expected) in cases {
+            assert_eq!(error.to_string(), expected);
+        }
+    }
+}

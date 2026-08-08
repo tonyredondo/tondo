@@ -4571,8 +4571,8 @@ derive[T] serialization.Serialize for Page[T]
     #[test]
     fn serialization_attributes_are_lossless_children_of_fields_and_variants() {
         let source = br#"type User = {
-    @name("wire_name") @json(base64) payload: Bytes
-    @ignore private_value: Int
+    @name("wire_name") @json.options("wire", 1,) payload: Bytes
+    @ignore @empty() private_value: Int
 }
 
 enum Outcome {
@@ -4590,7 +4590,7 @@ enum Outcome {
                 .iter()
                 .filter(|node| node.kind() == SyntaxKind::Attribute)
                 .count(),
-            5
+            6
         );
         let record_body = parsed
             .cst()
@@ -4633,7 +4633,7 @@ enum Outcome {
             .into_bytes();
         let formatted_text = String::from_utf8(formatted).expect("formatter emits UTF-8");
         assert!(formatted_text.contains("@name(\"wire_name\")"));
-        assert!(formatted_text.contains("@json(base64)"));
+        assert!(formatted_text.contains("@json.options(\"wire\", 1,)"));
         assert!(formatted_text.contains("@proto(1)"));
     }
 
