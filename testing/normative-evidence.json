@@ -2,7 +2,7 @@
   "format": "tondo-normative-evidence/1",
   "document": "TONDO_LANGUAGE_SPEC.md",
   "edition": "0.1",
-  "document_sha256": "c85ebfbea9309bc2684292669086bd923b6f6b10c31cd8ef78b31067c61e683c",
+  "document_sha256": "241da23ea49c93038740d1037358dd1b09f7c5bf31c2152d7fff4810a0c65d64",
   "target": "tondo-vm-hosted",
   "claims": [
     {

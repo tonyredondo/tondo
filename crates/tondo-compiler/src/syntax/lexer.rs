@@ -1442,6 +1442,7 @@ fn operator_at(bytes: &[u8]) -> Option<(usize, TokenKind)> {
         (b"}", TokenKind::RBrace),
         (b",", TokenKind::Comma),
         (b".", TokenKind::Dot),
+        (b"@", TokenKind::At),
         (b":", TokenKind::Colon),
         (b"?", TokenKind::Question),
         (b"!", TokenKind::Bang),
@@ -1733,7 +1734,7 @@ mod tests {
 
     #[test]
     fn maximal_munch_covers_the_complete_operator_inventory() {
-        let input = "<<= >>= ... ..= => += -= *= /= %= &= ^= |= << >> <= >= == != .. ( ) [ ] { } , . : ? ! ~ = + - * / % & ^ | < >";
+        let input = "<<= >>= ... ..= => += -= *= /= %= &= ^= |= << >> <= >= == != .. ( ) [ ] { } , . @ : ? ! ~ = + - * / % & ^ | < >";
         let (_, _, lexed) = lex_bytes(input.as_bytes(), LexMode::Module);
         assert!(lexed.diagnostics().is_empty());
         assert_eq!(
@@ -1767,6 +1768,7 @@ mod tests {
                 TokenKind::RBrace,
                 TokenKind::Comma,
                 TokenKind::Dot,
+                TokenKind::At,
                 TokenKind::Colon,
                 TokenKind::Question,
                 TokenKind::Bang,

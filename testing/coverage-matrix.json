@@ -2,8 +2,8 @@
   "format": "tondo-normative-coverage/1",
   "document": "TONDO_LANGUAGE_SPEC.md",
   "edition": "0.1",
-  "document_sha256": "c85ebfbea9309bc2684292669086bd923b6f6b10c31cd8ef78b31067c61e683c",
-  "inventory_sha256": "247e25f6d5a3f4ac7b5631f2f40d6312515b5f467276c71b6c4392fc56795425",
+  "document_sha256": "241da23ea49c93038740d1037358dd1b09f7c5bf31c2152d7fff4810a0c65d64",
+  "inventory_sha256": "3b9ee1e75c70d2c23863e6b8242fb6e99680ea1c93e694e0f682ebf3686acac4",
   "target": "tondo-vm-hosted",
   "summary": {
     "total": 308,
@@ -25,7 +25,7 @@
   "requirements": [
     {
       "id": "TL01-10-10-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "10.10 Consulta de maps",
       "heading_anchor": "10-10-consulta-de-maps",
       "line_start": 2685,
@@ -68,7 +68,7 @@
     },
     {
       "id": "TL01-10-12-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "10.12 Orden de maps",
       "heading_anchor": "10-12-orden-de-maps",
       "line_start": 2752,
@@ -111,7 +111,7 @@
     },
     {
       "id": "TL01-10-15-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "10.15 `Set[K]`",
       "heading_anchor": "10-15-set-k",
       "line_start": 2836,
@@ -154,7 +154,7 @@
     },
     {
       "id": "TL01-10-17-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "10.17 `Iterator[T]`",
       "heading_anchor": "10-17-iterator-t",
       "line_start": 2896,
@@ -197,7 +197,7 @@
     },
     {
       "id": "TL01-10-17-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "10.17 `Iterator[T]`",
       "heading_anchor": "10-17-iterator-t",
       "line_start": 2955,
@@ -240,7 +240,7 @@
     },
     {
       "id": "TL01-10-17-R003",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "10.17 `Iterator[T]`",
       "heading_anchor": "10-17-iterator-t",
       "line_start": 2971,
@@ -283,7 +283,7 @@
     },
     {
       "id": "TL01-10-17-R004",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "10.17 `Iterator[T]`",
       "heading_anchor": "10-17-iterator-t",
       "line_start": 2977,
@@ -326,7 +326,7 @@
     },
     {
       "id": "TL01-10-3-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "10.3 Indexación de arrays",
       "heading_anchor": "10-3-indexación-de-arrays",
       "line_start": 2359,
@@ -369,7 +369,7 @@
     },
     {
       "id": "TL01-10-3-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "10.3 Indexación de arrays",
       "heading_anchor": "10-3-indexación-de-arrays",
       "line_start": 2385,
@@ -412,7 +412,7 @@
     },
     {
       "id": "TL01-10-4-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "10.4 Slicing",
       "heading_anchor": "10-4-slicing",
       "line_start": 2413,
@@ -455,7 +455,7 @@
     },
     {
       "id": "TL01-10-4-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "10.4 Slicing",
       "heading_anchor": "10-4-slicing",
       "line_start": 2447,
@@ -498,7 +498,7 @@
     },
     {
       "id": "TL01-10-5-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "10.5 Mutación de arrays",
       "heading_anchor": "10-5-mutación-de-arrays",
       "line_start": 2484,
@@ -541,7 +541,7 @@
     },
     {
       "id": "TL01-10-6-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "10.6 Aritmética de arrays",
       "heading_anchor": "10-6-aritmética-de-arrays",
       "line_start": 2532,
@@ -584,7 +584,7 @@
     },
     {
       "id": "TL01-10-6-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "10.6 Aritmética de arrays",
       "heading_anchor": "10-6-aritmética-de-arrays",
       "line_start": 2546,
@@ -627,7 +627,7 @@
     },
     {
       "id": "TL01-10-6-R003",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "10.6 Aritmética de arrays",
       "heading_anchor": "10-6-aritmética-de-arrays",
       "line_start": 2562,
@@ -670,7 +670,7 @@
     },
     {
       "id": "TL01-10-7-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "10.7 Concatenación, repetición y producto algebraico",
       "heading_anchor": "10-7-concatenación-repetición-y-producto-algebraico",
       "line_start": 2594,
@@ -738,7 +738,7 @@
     },
     {
       "id": "TL01-10-9-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "10.9 `Map[K, V]`",
       "heading_anchor": "10-9-map-k-v",
       "line_start": 2675,
@@ -781,7 +781,7 @@
     },
     {
       "id": "TL01-11-10-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "11.10 Funciones y efectos de suspensión",
       "heading_anchor": "11-10-funciones-y-efectos-de-suspensión",
       "line_start": 3719,
@@ -824,7 +824,7 @@
     },
     {
       "id": "TL01-11-10-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "11.10 Funciones y efectos de suspensión",
       "heading_anchor": "11-10-funciones-y-efectos-de-suspensión",
       "line_start": 3743,
@@ -867,7 +867,7 @@
     },
     {
       "id": "TL01-11-10-R003",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "11.10 Funciones y efectos de suspensión",
       "heading_anchor": "11-10-funciones-y-efectos-de-suspensión",
       "line_start": 3751,
@@ -910,7 +910,7 @@
     },
     {
       "id": "TL01-11-11-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "11.11 `await`",
       "heading_anchor": "11-11-await",
       "line_start": 3773,
@@ -953,7 +953,7 @@
     },
     {
       "id": "TL01-11-12-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "11.12 Concurrencia estructurada",
       "heading_anchor": "11-12-concurrencia-estructurada",
       "line_start": 3800,
@@ -996,7 +996,7 @@
     },
     {
       "id": "TL01-11-3-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "11.3 Parámetros y argumentos",
       "heading_anchor": "11-3-parámetros-y-argumentos",
       "line_start": 3172,
@@ -1039,7 +1039,7 @@
     },
     {
       "id": "TL01-11-3-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "11.3 Parámetros y argumentos",
       "heading_anchor": "11-3-parámetros-y-argumentos",
       "line_start": 3174,
@@ -1082,7 +1082,7 @@
     },
     {
       "id": "TL01-11-3-R003",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "11.3 Parámetros y argumentos",
       "heading_anchor": "11-3-parámetros-y-argumentos",
       "line_start": 3179,
@@ -1125,7 +1125,7 @@
     },
     {
       "id": "TL01-11-3-R004",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "11.3 Parámetros y argumentos",
       "heading_anchor": "11-3-parámetros-y-argumentos",
       "line_start": 3222,
@@ -1168,7 +1168,7 @@
     },
     {
       "id": "TL01-11-3-R005",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "11.3 Parámetros y argumentos",
       "heading_anchor": "11-3-parámetros-y-argumentos",
       "line_start": 3238,
@@ -1211,7 +1211,7 @@
     },
     {
       "id": "TL01-11-3-R006",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "11.3 Parámetros y argumentos",
       "heading_anchor": "11-3-parámetros-y-argumentos",
       "line_start": 3246,
@@ -1254,7 +1254,7 @@
     },
     {
       "id": "TL01-11-4-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "11.4 Recursión",
       "heading_anchor": "11-4-recursión",
       "line_start": 3260,
@@ -1297,7 +1297,7 @@
     },
     {
       "id": "TL01-11-5-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "11.5 Métodos inherentes",
       "heading_anchor": "11-5-métodos-inherentes",
       "line_start": 3296,
@@ -1340,7 +1340,7 @@
     },
     {
       "id": "TL01-11-5-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "11.5 Métodos inherentes",
       "heading_anchor": "11-5-métodos-inherentes",
       "line_start": 3300,
@@ -1383,7 +1383,7 @@
     },
     {
       "id": "TL01-11-5-R003",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "11.5 Métodos inherentes",
       "heading_anchor": "11-5-métodos-inherentes",
       "line_start": 3341,
@@ -1426,7 +1426,7 @@
     },
     {
       "id": "TL01-11-6-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "11.6 Receptores `mut self` y `var self`",
       "heading_anchor": "11-6-receptores-mut-self-y-var-self",
       "line_start": 3360,
@@ -1469,7 +1469,7 @@
     },
     {
       "id": "TL01-11-7-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "11.7 Funciones como valores",
       "heading_anchor": "11-7-funciones-como-valores",
       "line_start": 3407,
@@ -1512,7 +1512,7 @@
     },
     {
       "id": "TL01-11-7-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "11.7 Funciones como valores",
       "heading_anchor": "11-7-funciones-como-valores",
       "line_start": 3420,
@@ -1555,7 +1555,7 @@
     },
     {
       "id": "TL01-11-7-R003",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "11.7 Funciones como valores",
       "heading_anchor": "11-7-funciones-como-valores",
       "line_start": 3431,
@@ -1598,7 +1598,7 @@
     },
     {
       "id": "TL01-11-8-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "11.8 Cierres",
       "heading_anchor": "11-8-cierres",
       "line_start": 3446,
@@ -1641,7 +1641,7 @@
     },
     {
       "id": "TL01-11-8-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "11.8 Cierres",
       "heading_anchor": "11-8-cierres",
       "line_start": 3479,
@@ -1684,7 +1684,7 @@
     },
     {
       "id": "TL01-11-8-R003",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "11.8 Cierres",
       "heading_anchor": "11-8-cierres",
       "line_start": 3537,
@@ -1727,7 +1727,7 @@
     },
     {
       "id": "TL01-11-9-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "11.9 Descarte de resultados",
       "heading_anchor": "11-9-descarte-de-resultados",
       "line_start": 3688,
@@ -1770,7 +1770,7 @@
     },
     {
       "id": "TL01-11-9-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "11.9 Descarte de resultados",
       "heading_anchor": "11-9-descarte-de-resultados",
       "line_start": 3699,
@@ -1813,7 +1813,7 @@
     },
     {
       "id": "TL01-12-1-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "12.1 Genéricos",
       "heading_anchor": "12-1-genéricos",
       "line_start": 3880,
@@ -1856,7 +1856,7 @@
     },
     {
       "id": "TL01-12-2-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "12.2 Invariancia",
       "heading_anchor": "12-2-invariancia",
       "line_start": 3886,
@@ -1899,7 +1899,7 @@
     },
     {
       "id": "TL01-12-3-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "12.3 Declaración de trait",
       "heading_anchor": "12-3-declaración-de-trait",
       "line_start": 3916,
@@ -1942,7 +1942,7 @@
     },
     {
       "id": "TL01-12-3-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "12.3 Declaración de trait",
       "heading_anchor": "12-3-declaración-de-trait",
       "line_start": 3920,
@@ -1985,7 +1985,7 @@
     },
     {
       "id": "TL01-12-4-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "12.4 Implementación explícita",
       "heading_anchor": "12-4-implementación-explícita",
       "line_start": 3946,
@@ -2028,7 +2028,7 @@
     },
     {
       "id": "TL01-12-4-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "12.4 Implementación explícita",
       "heading_anchor": "12-4-implementación-explícita",
       "line_start": 3958,
@@ -2084,7 +2084,7 @@
     },
     {
       "id": "TL01-12-4-R003",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "12.4 Implementación explícita",
       "heading_anchor": "12-4-implementación-explícita",
       "line_start": 3966,
@@ -2127,7 +2127,7 @@
     },
     {
       "id": "TL01-12-4-R004",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "12.4 Implementación explícita",
       "heading_anchor": "12-4-implementación-explícita",
       "line_start": 3969,
@@ -2170,7 +2170,7 @@
     },
     {
       "id": "TL01-12-4-R005",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "12.4 Implementación explícita",
       "heading_anchor": "12-4-implementación-explícita",
       "line_start": 3971,
@@ -2213,7 +2213,7 @@
     },
     {
       "id": "TL01-12-5-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "12.5 Constraints",
       "heading_anchor": "12-5-constraints",
       "line_start": 4002,
@@ -2273,7 +2273,7 @@
     },
     {
       "id": "TL01-12-6-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "12.6 Coherencia",
       "heading_anchor": "12-6-coherencia",
       "line_start": 4053,
@@ -2316,7 +2316,7 @@
     },
     {
       "id": "TL01-12-6-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "12.6 Coherencia",
       "heading_anchor": "12-6-coherencia",
       "line_start": 4068,
@@ -2359,7 +2359,7 @@
     },
     {
       "id": "TL01-12-6-R003",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "12.6 Coherencia",
       "heading_anchor": "12-6-coherencia",
       "line_start": 4100,
@@ -2402,7 +2402,7 @@
     },
     {
       "id": "TL01-12-6-R004",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "12.6 Coherencia",
       "heading_anchor": "12-6-coherencia",
       "line_start": 4111,
@@ -2445,7 +2445,7 @@
     },
     {
       "id": "TL01-12-8-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "12.8 Resultados opacos estáticos",
       "heading_anchor": "12-8-resultados-opacos-estáticos",
       "line_start": 4187,
@@ -2530,7 +2530,7 @@
     },
     {
       "id": "TL01-12-8-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "12.8 Resultados opacos estáticos",
       "heading_anchor": "12-8-resultados-opacos-estáticos",
       "line_start": 4193,
@@ -2615,7 +2615,7 @@
     },
     {
       "id": "TL01-12-8-R003",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "12.8 Resultados opacos estáticos",
       "heading_anchor": "12-8-resultados-opacos-estáticos",
       "line_start": 4200,
@@ -2700,7 +2700,7 @@
     },
     {
       "id": "TL01-12-8-R004",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "12.8 Resultados opacos estáticos",
       "heading_anchor": "12-8-resultados-opacos-estáticos",
       "line_start": 4228,
@@ -2785,7 +2785,7 @@
     },
     {
       "id": "TL01-13-1-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "13.1 Bloques",
       "heading_anchor": "13-1-bloques",
       "line_start": 4267,
@@ -2828,7 +2828,7 @@
     },
     {
       "id": "TL01-13-2-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "13.2 `if`",
       "heading_anchor": "13-2-if",
       "line_start": 4274,
@@ -2871,7 +2871,7 @@
     },
     {
       "id": "TL01-13-2-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "13.2 `if`",
       "heading_anchor": "13-2-if",
       "line_start": 4302,
@@ -2914,7 +2914,7 @@
     },
     {
       "id": "TL01-13-3-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "13.3 Un único bucle `for`",
       "heading_anchor": "13-3-un-único-bucle-for",
       "line_start": 4381,
@@ -2957,7 +2957,7 @@
     },
     {
       "id": "TL01-13-3-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "13.3 Un único bucle `for`",
       "heading_anchor": "13-3-un-único-bucle-for",
       "line_start": 4388,
@@ -3000,7 +3000,7 @@
     },
     {
       "id": "TL01-13-3-R003",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "13.3 Un único bucle `for`",
       "heading_anchor": "13-3-un-único-bucle-for",
       "line_start": 4395,
@@ -3043,7 +3043,7 @@
     },
     {
       "id": "TL01-13-3-R004",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "13.3 Un único bucle `for`",
       "heading_anchor": "13-3-un-único-bucle-for",
       "line_start": 4409,
@@ -3086,7 +3086,7 @@
     },
     {
       "id": "TL01-13-4-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "13.4 `break` y `continue`",
       "heading_anchor": "13-4-break-y-continue",
       "line_start": 4458,
@@ -3129,7 +3129,7 @@
     },
     {
       "id": "TL01-13-5-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "13.5 `return`",
       "heading_anchor": "13-5-return",
       "line_start": 4474,
@@ -3172,7 +3172,7 @@
     },
     {
       "id": "TL01-13-6-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "13.6 `fail`",
       "heading_anchor": "13-6-fail",
       "line_start": 4486,
@@ -3215,7 +3215,7 @@
     },
     {
       "id": "TL01-13-7-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "13.7 `defer`",
       "heading_anchor": "13-7-defer",
       "line_start": 4527,
@@ -3258,7 +3258,7 @@
     },
     {
       "id": "TL01-13-7-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "13.7 `defer`",
       "heading_anchor": "13-7-defer",
       "line_start": 4540,
@@ -3301,7 +3301,7 @@
     },
     {
       "id": "TL01-13-7-R003",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "13.7 `defer`",
       "heading_anchor": "13-7-defer",
       "line_start": 4545,
@@ -3344,7 +3344,7 @@
     },
     {
       "id": "TL01-13-7-R004",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "13.7 `defer`",
       "heading_anchor": "13-7-defer",
       "line_start": 4551,
@@ -3387,7 +3387,7 @@
     },
     {
       "id": "TL01-13-7-R005",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "13.7 `defer`",
       "heading_anchor": "13-7-defer",
       "line_start": 4557,
@@ -3430,7 +3430,7 @@
     },
     {
       "id": "TL01-13-7-R006",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "13.7 `defer`",
       "heading_anchor": "13-7-defer",
       "line_start": 4558,
@@ -3485,7 +3485,7 @@
     },
     {
       "id": "TL01-13-7-R007",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "13.7 `defer`",
       "heading_anchor": "13-7-defer",
       "line_start": 4570,
@@ -3540,7 +3540,7 @@
     },
     {
       "id": "TL01-13-7-R008",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "13.7 `defer`",
       "heading_anchor": "13-7-defer",
       "line_start": 4580,
@@ -3595,7 +3595,7 @@
     },
     {
       "id": "TL01-13-7-R009",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "13.7 `defer`",
       "heading_anchor": "13-7-defer",
       "line_start": 4581,
@@ -3650,7 +3650,7 @@
     },
     {
       "id": "TL01-13-7-R010",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "13.7 `defer`",
       "heading_anchor": "13-7-defer",
       "line_start": 4587,
@@ -3705,7 +3705,7 @@
     },
     {
       "id": "TL01-13-8-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "13.8 Asignación simple y múltiple",
       "heading_anchor": "13-8-asignación-simple-y-múltiple",
       "line_start": 4602,
@@ -3748,7 +3748,7 @@
     },
     {
       "id": "TL01-13-8-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "13.8 Asignación simple y múltiple",
       "heading_anchor": "13-8-asignación-simple-y-múltiple",
       "line_start": 4630,
@@ -3791,7 +3791,7 @@
     },
     {
       "id": "TL01-13-8-R003",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "13.8 Asignación simple y múltiple",
       "heading_anchor": "13-8-asignación-simple-y-múltiple",
       "line_start": 4642,
@@ -3834,7 +3834,7 @@
     },
     {
       "id": "TL01-13-8-R004",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "13.8 Asignación simple y múltiple",
       "heading_anchor": "13-8-asignación-simple-y-múltiple",
       "line_start": 4671,
@@ -3877,7 +3877,7 @@
     },
     {
       "id": "TL01-13-8-R005",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "13.8 Asignación simple y múltiple",
       "heading_anchor": "13-8-asignación-simple-y-múltiple",
       "line_start": 4715,
@@ -3933,7 +3933,7 @@
     },
     {
       "id": "TL01-14-1-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "14.1 `match` como expresión",
       "heading_anchor": "14-1-match-como-expresión",
       "line_start": 4876,
@@ -3976,7 +3976,7 @@
     },
     {
       "id": "TL01-14-2-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "14.2 Exhaustividad",
       "heading_anchor": "14-2-exhaustividad",
       "line_start": 4883,
@@ -4019,7 +4019,7 @@
     },
     {
       "id": "TL01-14-4-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "14.4 Guards",
       "heading_anchor": "14-4-guards",
       "line_start": 5052,
@@ -4062,7 +4062,7 @@
     },
     {
       "id": "TL01-15-2-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "15.2 Propagación con `?`",
       "heading_anchor": "15-2-propagación-con",
       "line_start": 5164,
@@ -4105,7 +4105,7 @@
     },
     {
       "id": "TL01-15-2-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "15.2 Propagación con `?`",
       "heading_anchor": "15-2-propagación-con",
       "line_start": 5168,
@@ -4148,7 +4148,7 @@
     },
     {
       "id": "TL01-15-2-R003",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "15.2 Propagación con `?`",
       "heading_anchor": "15-2-propagación-con",
       "line_start": 5189,
@@ -4191,7 +4191,7 @@
     },
     {
       "id": "TL01-15-3-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "15.3 Widening de uniones de error",
       "heading_anchor": "15-3-widening-de-uniones-de-error",
       "line_start": 5223,
@@ -4234,7 +4234,7 @@
     },
     {
       "id": "TL01-15-7-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "15.7 Pánicos",
       "heading_anchor": "15-7-pánicos",
       "line_start": 5298,
@@ -4295,7 +4295,7 @@
     },
     {
       "id": "TL01-15-7-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "15.7 Pánicos",
       "heading_anchor": "15-7-pánicos",
       "line_start": 5322,
@@ -4338,7 +4338,7 @@
     },
     {
       "id": "TL01-15-7-R003",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "15.7 Pánicos",
       "heading_anchor": "15-7-pánicos",
       "line_start": 5330,
@@ -4381,7 +4381,7 @@
     },
     {
       "id": "TL01-15-7-R004",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "15.7 Pánicos",
       "heading_anchor": "15-7-pánicos",
       "line_start": 5339,
@@ -4424,7 +4424,7 @@
     },
     {
       "id": "TL01-15-8-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "15.8 `assert`",
       "heading_anchor": "15-8-assert",
       "line_start": 5362,
@@ -4467,7 +4467,7 @@
     },
     {
       "id": "TL01-16-10-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "16.10 `Ref[T]`",
       "heading_anchor": "16-10-ref-t",
       "line_start": 5803,
@@ -4510,7 +4510,7 @@
     },
     {
       "id": "TL01-16-10-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "16.10 `Ref[T]`",
       "heading_anchor": "16-10-ref-t",
       "line_start": 5837,
@@ -4553,7 +4553,7 @@
     },
     {
       "id": "TL01-16-11-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "16.11 Handles con identidad",
       "heading_anchor": "16-11-handles-con-identidad",
       "line_start": 5848,
@@ -4596,7 +4596,7 @@
     },
     {
       "id": "TL01-16-11-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "16.11 Handles con identidad",
       "heading_anchor": "16-11-handles-con-identidad",
       "line_start": 5861,
@@ -4639,7 +4639,7 @@
     },
     {
       "id": "TL01-16-12-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "16.12 `Pointer[T]` y `unsafe`",
       "heading_anchor": "16-12-pointer-t-y-unsafe",
       "line_start": 5867,
@@ -4682,7 +4682,7 @@
     },
     {
       "id": "TL01-16-12-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "16.12 `Pointer[T]` y `unsafe`",
       "heading_anchor": "16-12-pointer-t-y-unsafe",
       "line_start": 5869,
@@ -4725,7 +4725,7 @@
     },
     {
       "id": "TL01-16-12-R003",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "16.12 `Pointer[T]` y `unsafe`",
       "heading_anchor": "16-12-pointer-t-y-unsafe",
       "line_start": 5878,
@@ -4768,7 +4768,7 @@
     },
     {
       "id": "TL01-16-13-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "16.13 Capacidades `Send` y `Share`",
       "heading_anchor": "16-13-capacidades-send-y-share",
       "line_start": 6032,
@@ -4811,7 +4811,7 @@
     },
     {
       "id": "TL01-16-13-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "16.13 Capacidades `Send` y `Share`",
       "heading_anchor": "16-13-capacidades-send-y-share",
       "line_start": 6036,
@@ -4854,7 +4854,7 @@
     },
     {
       "id": "TL01-16-13-R003",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "16.13 Capacidades `Send` y `Share`",
       "heading_anchor": "16-13-capacidades-send-y-share",
       "line_start": 6040,
@@ -4897,7 +4897,7 @@
     },
     {
       "id": "TL01-16-13-R004",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "16.13 Capacidades `Send` y `Share`",
       "heading_anchor": "16-13-capacidades-send-y-share",
       "line_start": 6048,
@@ -4940,7 +4940,7 @@
     },
     {
       "id": "TL01-16-14-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "16.14 Tasks, threads y canales",
       "heading_anchor": "16-14-tasks-threads-y-canales",
       "line_start": 6055,
@@ -4983,7 +4983,7 @@
     },
     {
       "id": "TL01-16-14-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "16.14 Tasks, threads y canales",
       "heading_anchor": "16-14-tasks-threads-y-canales",
       "line_start": 6069,
@@ -5026,7 +5026,7 @@
     },
     {
       "id": "TL01-16-14-R003",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "16.14 Tasks, threads y canales",
       "heading_anchor": "16-14-tasks-threads-y-canales",
       "line_start": 6071,
@@ -5069,7 +5069,7 @@
     },
     {
       "id": "TL01-16-15-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "16.15 Modelo de memoria concurrente",
       "heading_anchor": "16-15-modelo-de-memoria-concurrente",
       "line_start": 6108,
@@ -5112,7 +5112,7 @@
     },
     {
       "id": "TL01-16-15-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "16.15 Modelo de memoria concurrente",
       "heading_anchor": "16-15-modelo-de-memoria-concurrente",
       "line_start": 6115,
@@ -5155,7 +5155,7 @@
     },
     {
       "id": "TL01-16-15-R003",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "16.15 Modelo de memoria concurrente",
       "heading_anchor": "16-15-modelo-de-memoria-concurrente",
       "line_start": 6124,
@@ -5198,7 +5198,7 @@
     },
     {
       "id": "TL01-16-2-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "16.2 Parámetros inmutables",
       "heading_anchor": "16-2-parámetros-inmutables",
       "line_start": 5401,
@@ -5241,7 +5241,7 @@
     },
     {
       "id": "TL01-16-3-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "16.3 Parámetros `ref`, `mut` y `var`",
       "heading_anchor": "16-3-parámetros-ref-mut-y-var",
       "line_start": 5420,
@@ -5284,7 +5284,7 @@
     },
     {
       "id": "TL01-16-3-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "16.3 Parámetros `ref`, `mut` y `var`",
       "heading_anchor": "16-3-parámetros-ref-mut-y-var",
       "line_start": 5511,
@@ -5327,7 +5327,7 @@
     },
     {
       "id": "TL01-16-3-R003",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "16.3 Parámetros `ref`, `mut` y `var`",
       "heading_anchor": "16-3-parámetros-ref-mut-y-var",
       "line_start": 5532,
@@ -5370,7 +5370,7 @@
     },
     {
       "id": "TL01-16-3-R004",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "16.3 Parámetros `ref`, `mut` y `var`",
       "heading_anchor": "16-3-parámetros-ref-mut-y-var",
       "line_start": 5541,
@@ -5413,7 +5413,7 @@
     },
     {
       "id": "TL01-16-4-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "16.4 Préstamos de regiones",
       "heading_anchor": "16-4-préstamos-de-regiones",
       "line_start": 5558,
@@ -5456,7 +5456,7 @@
     },
     {
       "id": "TL01-16-4-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "16.4 Préstamos de regiones",
       "heading_anchor": "16-4-préstamos-de-regiones",
       "line_start": 5608,
@@ -5499,7 +5499,7 @@
     },
     {
       "id": "TL01-16-5-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "16.5 Vida de préstamos",
       "heading_anchor": "16-5-vida-de-préstamos",
       "line_start": 5617,
@@ -5542,7 +5542,7 @@
     },
     {
       "id": "TL01-16-5-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "16.5 Vida de préstamos",
       "heading_anchor": "16-5-vida-de-préstamos",
       "line_start": 5645,
@@ -5585,7 +5585,7 @@
     },
     {
       "id": "TL01-16-6-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "16.6 Copy-on-write",
       "heading_anchor": "16-6-copy-on-write",
       "line_start": 5668,
@@ -5628,7 +5628,7 @@
     },
     {
       "id": "TL01-17-1-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "17.1 Principio",
       "heading_anchor": "17-1-principio",
       "line_start": 6132,
@@ -5671,7 +5671,7 @@
     },
     {
       "id": "TL01-17-1-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "17.1 Principio",
       "heading_anchor": "17-1-principio",
       "line_start": 6139,
@@ -5714,7 +5714,7 @@
     },
     {
       "id": "TL01-17-4-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "17.4 Operadores aritméticos",
       "heading_anchor": "17-4-operadores-aritméticos",
       "line_start": 6215,
@@ -5757,7 +5757,7 @@
     },
     {
       "id": "TL01-17-5-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "17.5 Shifts",
       "heading_anchor": "17-5-shifts",
       "line_start": 6229,
@@ -5814,7 +5814,7 @@
     },
     {
       "id": "TL01-17-6-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "17.6 Bitwise y pipelines",
       "heading_anchor": "17-6-bitwise-y-pipelines",
       "line_start": 6258,
@@ -5857,7 +5857,7 @@
     },
     {
       "id": "TL01-18-2-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "18.2 Overflow",
       "heading_anchor": "18-2-overflow",
       "line_start": 6413,
@@ -5900,7 +5900,7 @@
     },
     {
       "id": "TL01-18-5-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "18.5 Floats",
       "heading_anchor": "18-5-floats",
       "line_start": 6465,
@@ -5943,7 +5943,7 @@
     },
     {
       "id": "TL01-18-5-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "18.5 Floats",
       "heading_anchor": "18-5-floats",
       "line_start": 6471,
@@ -5986,7 +5986,7 @@
     },
     {
       "id": "TL01-18-5-R003",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "18.5 Floats",
       "heading_anchor": "18-5-floats",
       "line_start": 6473,
@@ -6029,7 +6029,7 @@
     },
     {
       "id": "TL01-19-2-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "19.2 Longitud e indexación",
       "heading_anchor": "19-2-longitud-e-indexación",
       "line_start": 6568,
@@ -6072,7 +6072,7 @@
     },
     {
       "id": "TL01-19-2-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "19.2 Longitud e indexación",
       "heading_anchor": "19-2-longitud-e-indexación",
       "line_start": 6581,
@@ -6115,7 +6115,7 @@
     },
     {
       "id": "TL01-19-3-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "19.3 Slicing de strings",
       "heading_anchor": "19-3-slicing-de-strings",
       "line_start": 6596,
@@ -6158,7 +6158,7 @@
     },
     {
       "id": "TL01-19-6-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "19.6 Concatenación",
       "heading_anchor": "19-6-concatenación",
       "line_start": 6643,
@@ -6201,7 +6201,7 @@
     },
     {
       "id": "TL01-2-2-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "2.2 No objetivos",
       "heading_anchor": "2-2-no-objetivos",
       "line_start": 160,
@@ -6244,7 +6244,7 @@
     },
     {
       "id": "TL01-20-10-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "20.10 Terminación del programa",
       "heading_anchor": "20-10-terminación-del-programa",
       "line_start": 6919,
@@ -6287,7 +6287,7 @@
     },
     {
       "id": "TL01-20-2-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "20.2 Restricciones de `main`",
       "heading_anchor": "20-2-restricciones-de-main",
       "line_start": 6734,
@@ -6330,7 +6330,7 @@
     },
     {
       "id": "TL01-20-2-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "20.2 Restricciones de `main`",
       "heading_anchor": "20-2-restricciones-de-main",
       "line_start": 6736,
@@ -6373,7 +6373,7 @@
     },
     {
       "id": "TL01-20-2-R003",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "20.2 Restricciones de `main`",
       "heading_anchor": "20-2-restricciones-de-main",
       "line_start": 6737,
@@ -6416,7 +6416,7 @@
     },
     {
       "id": "TL01-20-3-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "20.3 Script raíz y `main` implícito",
       "heading_anchor": "20-3-script-raíz-y-main-implícito",
       "line_start": 6788,
@@ -6459,7 +6459,7 @@
     },
     {
       "id": "TL01-20-3-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "20.3 Script raíz y `main` implícito",
       "heading_anchor": "20-3-script-raíz-y-main-implícito",
       "line_start": 6791,
@@ -6502,7 +6502,7 @@
     },
     {
       "id": "TL01-20-3-R003",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "20.3 Script raíz y `main` implícito",
       "heading_anchor": "20-3-script-raíz-y-main-implícito",
       "line_start": 6792,
@@ -6545,7 +6545,7 @@
     },
     {
       "id": "TL01-20-5-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "20.5 Comandos como valores",
       "heading_anchor": "20-5-comandos-como-valores",
       "line_start": 6824,
@@ -6588,7 +6588,7 @@
     },
     {
       "id": "TL01-20-6-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "20.6 Pipelines",
       "heading_anchor": "20-6-pipelines",
       "line_start": 6851,
@@ -6631,7 +6631,7 @@
     },
     {
       "id": "TL01-20-6-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "20.6 Pipelines",
       "heading_anchor": "20-6-pipelines",
       "line_start": 6863,
@@ -6674,7 +6674,7 @@
     },
     {
       "id": "TL01-20-8-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "20.8 Inicio, salida y errores de procesos",
       "heading_anchor": "20-8-inicio-salida-y-errores-de-procesos",
       "line_start": 6888,
@@ -6717,7 +6717,7 @@
     },
     {
       "id": "TL01-20-9-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "20.9 Vida, cancelación y cleanup",
       "heading_anchor": "20-9-vida-cancelación-y-cleanup",
       "line_start": 6896,
@@ -6760,7 +6760,7 @@
     },
     {
       "id": "TL01-20-9-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "20.9 Vida, cancelación y cleanup",
       "heading_anchor": "20-9-vida-cancelación-y-cleanup",
       "line_start": 6903,
@@ -6803,7 +6803,7 @@
     },
     {
       "id": "TL01-21-5-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "21.5 Documentación pública",
       "heading_anchor": "21-5-documentación-pública",
       "line_start": 7258,
@@ -6846,7 +6846,7 @@
     },
     {
       "id": "TL01-21-5-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "21.5 Documentación pública",
       "heading_anchor": "21-5-documentación-pública",
       "line_start": 7268,
@@ -6889,7 +6889,7 @@
     },
     {
       "id": "TL01-21-5-R003",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "21.5 Documentación pública",
       "heading_anchor": "21-5-documentación-pública",
       "line_start": 7276,
@@ -6932,7 +6932,7 @@
     },
     {
       "id": "TL01-21-6-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "21.6 Ejemplos verificables",
       "heading_anchor": "21-6-ejemplos-verificables",
       "line_start": 7285,
@@ -6975,7 +6975,7 @@
     },
     {
       "id": "TL01-21-6-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "21.6 Ejemplos verificables",
       "heading_anchor": "21-6-ejemplos-verificables",
       "line_start": 7312,
@@ -7018,7 +7018,7 @@
     },
     {
       "id": "TL01-21-6-R003",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "21.6 Ejemplos verificables",
       "heading_anchor": "21-6-ejemplos-verificables",
       "line_start": 7322,
@@ -7061,7 +7061,7 @@
     },
     {
       "id": "TL01-21-6-R004",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "21.6 Ejemplos verificables",
       "heading_anchor": "21-6-ejemplos-verificables",
       "line_start": 7343,
@@ -7104,7 +7104,7 @@
     },
     {
       "id": "TL01-21-6-R005",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "21.6 Ejemplos verificables",
       "heading_anchor": "21-6-ejemplos-verificables",
       "line_start": 7383,
@@ -7147,7 +7147,7 @@
     },
     {
       "id": "TL01-21-7-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "21.7 Corpus mínimo de formato 0.1",
       "heading_anchor": "21-7-corpus-mínimo-de-formato-0-1",
       "line_start": 7527,
@@ -7190,7 +7190,7 @@
     },
     {
       "id": "TL01-22-1-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "22.1 Principios de diagnóstico",
       "heading_anchor": "22-1-principios-de-diagnóstico",
       "line_start": 7540,
@@ -7233,7 +7233,7 @@
     },
     {
       "id": "TL01-22-2-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "22.2 Códigos estables",
       "heading_anchor": "22-2-códigos-estables",
       "line_start": 7553,
@@ -7276,7 +7276,7 @@
     },
     {
       "id": "TL01-22-3-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "22.3 Salida estructurada",
       "heading_anchor": "22-3-salida-estructurada",
       "line_start": 7816,
@@ -7319,7 +7319,7 @@
     },
     {
       "id": "TL01-22-3-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "22.3 Salida estructurada",
       "heading_anchor": "22-3-salida-estructurada",
       "line_start": 7837,
@@ -7362,7 +7362,7 @@
     },
     {
       "id": "TL01-22-4-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "22.4 Fixes",
       "heading_anchor": "22-4-fixes",
       "line_start": 7916,
@@ -7405,7 +7405,7 @@
     },
     {
       "id": "TL01-22-5-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "22.5 Consultas semánticas",
       "heading_anchor": "22-5-consultas-semánticas",
       "line_start": 7923,
@@ -7448,7 +7448,7 @@
     },
     {
       "id": "TL01-22-7-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "22.7 Modo LLM",
       "heading_anchor": "22-7-modo-llm",
       "line_start": 8005,
@@ -7491,7 +7491,7 @@
     },
     {
       "id": "TL01-22-8-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "22.8 Cobertura diagnóstica y perfiles",
       "heading_anchor": "22-8-cobertura-diagnóstica-y-perfiles",
       "line_start": 8019,
@@ -7534,7 +7534,7 @@
     },
     {
       "id": "TL01-22-9-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "22.9 Conformidad ejecutable",
       "heading_anchor": "22-9-conformidad-ejecutable",
       "line_start": 8088,
@@ -7589,7 +7589,7 @@
     },
     {
       "id": "TL01-22-9-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "22.9 Conformidad ejecutable",
       "heading_anchor": "22-9-conformidad-ejecutable",
       "line_start": 8127,
@@ -7644,7 +7644,7 @@
     },
     {
       "id": "TL01-22-9-R003",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "22.9 Conformidad ejecutable",
       "heading_anchor": "22-9-conformidad-ejecutable",
       "line_start": 8134,
@@ -7699,7 +7699,7 @@
     },
     {
       "id": "TL01-22-9-R004",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "22.9 Conformidad ejecutable",
       "heading_anchor": "22-9-conformidad-ejecutable",
       "line_start": 8155,
@@ -7754,7 +7754,7 @@
     },
     {
       "id": "TL01-23-11-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "23.11 Enums",
       "heading_anchor": "23-11-enums",
       "line_start": 8507,
@@ -7797,7 +7797,7 @@
     },
     {
       "id": "TL01-23-12-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "23.12 Traits e implementaciones",
       "heading_anchor": "23-12-traits-e-implementaciones",
       "line_start": 8540,
@@ -7840,7 +7840,7 @@
     },
     {
       "id": "TL01-23-13-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "23.13 Funciones y métodos",
       "heading_anchor": "23-13-funciones-y-métodos",
       "line_start": 8573,
@@ -7883,7 +7883,7 @@
     },
     {
       "id": "TL01-23-13-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "23.13 Funciones y métodos",
       "heading_anchor": "23-13-funciones-y-métodos",
       "line_start": 8575,
@@ -7926,7 +7926,7 @@
     },
     {
       "id": "TL01-23-14-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "23.14 Bloques y sentencias",
       "heading_anchor": "23-14-bloques-y-sentencias",
       "line_start": 8631,
@@ -7981,7 +7981,7 @@
     },
     {
       "id": "TL01-23-16-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "23.16 `for`",
       "heading_anchor": "23-16-for",
       "line_start": 8679,
@@ -8024,7 +8024,7 @@
     },
     {
       "id": "TL01-23-18-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "23.18 Cierres",
       "heading_anchor": "23-18-cierres",
       "line_start": 8735,
@@ -8067,7 +8067,7 @@
     },
     {
       "id": "TL01-23-2-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "23.2 Tokens léxicos",
       "heading_anchor": "23-2-tokens-léxicos",
       "line_start": 8250,
@@ -8110,7 +8110,7 @@
     },
     {
       "id": "TL01-23-21-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "23.21 Llamadas",
       "heading_anchor": "23-21-llamadas",
       "line_start": 8914,
@@ -8153,7 +8153,7 @@
     },
     {
       "id": "TL01-23-21-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "23.21 Llamadas",
       "heading_anchor": "23-21-llamadas",
       "line_start": 8918,
@@ -8196,7 +8196,7 @@
     },
     {
       "id": "TL01-23-21-R003",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "23.21 Llamadas",
       "heading_anchor": "23-21-llamadas",
       "line_start": 8919,
@@ -8239,7 +8239,7 @@
     },
     {
       "id": "TL01-23-21-R004",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "23.21 Llamadas",
       "heading_anchor": "23-21-llamadas",
       "line_start": 8921,
@@ -8282,7 +8282,7 @@
     },
     {
       "id": "TL01-23-24-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "23.24 Set",
       "heading_anchor": "23-24-set",
       "line_start": 8968,
@@ -8325,7 +8325,7 @@
     },
     {
       "id": "TL01-23-26-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "23.26 Patrones",
       "heading_anchor": "23-26-patrones",
       "line_start": 9086,
@@ -8368,7 +8368,7 @@
     },
     {
       "id": "TL01-23-26-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "23.26 Patrones",
       "heading_anchor": "23-26-patrones",
       "line_start": 9088,
@@ -8411,7 +8411,7 @@
     },
     {
       "id": "TL01-23-26-R003",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "23.26 Patrones",
       "heading_anchor": "23-26-patrones",
       "line_start": 9090,
@@ -8454,7 +8454,7 @@
     },
     {
       "id": "TL01-23-26-R004",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "23.26 Patrones",
       "heading_anchor": "23-26-patrones",
       "line_start": 9099,
@@ -8497,7 +8497,7 @@
     },
     {
       "id": "TL01-23-6-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "23.6 Constantes",
       "heading_anchor": "23-6-constantes",
       "line_start": 8352,
@@ -8540,7 +8540,7 @@
     },
     {
       "id": "TL01-23-7-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "23.7 Parámetros genéricos",
       "heading_anchor": "23-7-parámetros-genéricos",
       "line_start": 8367,
@@ -8583,7 +8583,7 @@
     },
     {
       "id": "TL01-23-9-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "23.9 Expresiones de tipo",
       "heading_anchor": "23-9-expresiones-de-tipo",
       "line_start": 8447,
@@ -8626,7 +8626,7 @@
     },
     {
       "id": "TL01-23-9-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "23.9 Expresiones de tipo",
       "heading_anchor": "23-9-expresiones-de-tipo",
       "line_start": 8449,
@@ -8669,7 +8669,7 @@
     },
     {
       "id": "TL01-23-9-R003",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "23.9 Expresiones de tipo",
       "heading_anchor": "23-9-expresiones-de-tipo",
       "line_start": 8453,
@@ -8712,7 +8712,7 @@
     },
     {
       "id": "TL01-24-14-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "24.14 Concurrencia estructurada",
       "heading_anchor": "24-14-concurrencia-estructurada",
       "line_start": 9463,
@@ -8755,7 +8755,7 @@
     },
     {
       "id": "TL01-24-16-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "24.16 Frontera raw con `Pointer[T]`",
       "heading_anchor": "24-16-frontera-raw-con-pointer-t",
       "line_start": 9495,
@@ -8798,7 +8798,7 @@
     },
     {
       "id": "TL01-25-14-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "25.14 Punteros en código seguro y memoria manual implícita",
       "heading_anchor": "25-14-punteros-en-código-seguro-y-memoria-manual-implícita",
       "line_start": 9611,
@@ -8841,7 +8841,7 @@
     },
     {
       "id": "TL01-25-22-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "25.22 Dispatch dinámico de traits",
       "heading_anchor": "25-22-dispatch-dinámico-de-traits",
       "line_start": 9680,
@@ -8884,7 +8884,7 @@
     },
     {
       "id": "TL01-26-5-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "26.5 Criterio para añadir una característica al lenguaje",
       "heading_anchor": "26-5-criterio-para-añadir-una-característica-al-lenguaje",
       "line_start": 9867,
@@ -8927,7 +8927,7 @@
     },
     {
       "id": "TL01-26-5-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "26.5 Criterio para añadir una característica al lenguaje",
       "heading_anchor": "26-5-criterio-para-añadir-una-característica-al-lenguaje",
       "line_start": 9869,
@@ -8970,7 +8970,7 @@
     },
     {
       "id": "TL01-26-6-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "26.6 Criterio de estabilidad",
       "heading_anchor": "26-6-criterio-de-estabilidad",
       "line_start": 9917,
@@ -9013,7 +9013,7 @@
     },
     {
       "id": "TL01-27-1-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "27.1 Modelo único",
       "heading_anchor": "27-1-modelo-único",
       "line_start": 9940,
@@ -9068,7 +9068,7 @@
     },
     {
       "id": "TL01-27-2-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "27.2 Declaración `derive`",
       "heading_anchor": "27-2-declaración-derive",
       "line_start": 9962,
@@ -9123,7 +9123,7 @@
     },
     {
       "id": "TL01-27-2-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "27.2 Declaración `derive`",
       "heading_anchor": "27-2-declaración-derive",
       "line_start": 9969,
@@ -9178,7 +9178,7 @@
     },
     {
       "id": "TL01-27-2-R003",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "27.2 Declaración `derive`",
       "heading_anchor": "27-2-declaración-derive",
       "line_start": 9975,
@@ -9233,7 +9233,7 @@
     },
     {
       "id": "TL01-27-3-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "27.3 Providers y resultado de `derive`",
       "heading_anchor": "27-3-providers-y-resultado-de-derive",
       "line_start": 10000,
@@ -9288,7 +9288,7 @@
     },
     {
       "id": "TL01-27-4-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "27.4 Acceso privado de un provider",
       "heading_anchor": "27-4-acceso-privado-de-un-provider",
       "line_start": 10030,
@@ -9343,11 +9343,11 @@
     },
     {
       "id": "TL01-27-5-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "27.5 Generadores declarados por el manifiesto",
       "heading_anchor": "27-5-generadores-declarados-por-el-manifiesto",
-      "line_start": 10056,
-      "line_end": 10060,
+      "line_start": 10064,
+      "line_end": 10068,
       "text": "Cada salida declarada debe aparecer exactamente una vez. Una salida adicional, ausente, duplicada, con otro módulo o fuera de su path produce `E2106` y descarta la generación completa. Los bytes aceptados se formatean canónicamente, reciben identidad de fuente generada y pasan por el lexer, parser, resolver y typechecker ordinarios.",
       "text_sha256": "ff77fa2408457ba146ea77e9d65df9dd25da2f16b5d3d1abbc37628ac242d1fe",
       "phase": "metaprogramming",
@@ -9398,11 +9398,11 @@
     },
     {
       "id": "TL01-27-5-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "27.5 Generadores declarados por el manifiesto",
       "heading_anchor": "27-5-generadores-declarados-por-el-manifiesto",
-      "line_start": 10062,
-      "line_end": 10066,
+      "line_start": 10070,
+      "line_end": 10074,
       "text": "Un generador general solo observa la clausura semántica pública de los roots declarados. Una lista vacía produce un modelo sin declaraciones y es la forma normal de un generador schema-first. No recibe bodies ni símbolos privados. Para generar a partir de un schema, descriptor o archivo de datos, ese contenido debe ser un input explícito; no puede abrir el archivo por su cuenta.",
       "text_sha256": "367ce2d42f26fd13cce8a88a5968c1f29d3fa18263d8e876af5535c831a4cab0",
       "phase": "metaprogramming",
@@ -9453,11 +9453,11 @@
     },
     {
       "id": "TL01-27-5-R003",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "27.5 Generadores declarados por el manifiesto",
       "heading_anchor": "27-5-generadores-declarados-por-el-manifiesto",
-      "line_start": 10068,
-      "line_end": 10072,
+      "line_start": 10076,
+      "line_end": 10080,
       "text": "Cada root, y toda declaración necesaria para resolver su firma o estructura, debe poder typecheckearse usando únicamente fuente escrita e interfaces de dependencias. Si depende de una salida de la ronda actual se produce `E2109`. Las declaraciones que no pertenezcan a esa clausura pueden referenciar fuente generada y se validan durante el typecheck completo posterior.",
       "text_sha256": "e96745bcd3edf815b7dde90d1e7ad503d121f713fc1e5d0bebf58833924b505e",
       "phase": "metaprogramming",
@@ -9508,11 +9508,11 @@
     },
     {
       "id": "TL01-27-7-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "27.7 Perfil hermético `meta`",
       "heading_anchor": "27-7-perfil-hermético-meta",
-      "line_start": 10117,
-      "line_end": 10121,
+      "line_start": 10125,
+      "line_end": 10129,
       "text": "Un run tiene presupuestos enteros declarados de pasos, memoria administrada y bytes de resultado. Alcanzar uno produce `E2107`; pedir una capacidad ausente produce `E2108`. El mismo programa, modelo, inputs, límites, toolchain y target debe producir exactamente los mismos bytes o los mismos diagnósticos ordenados. Un proveedor que no pueda cumplirlo no es válido para un build reproducible.",
       "text_sha256": "48bb98c8054411605e3c6b831e69661cb5f7751621046c8c3d989e5ef2712fd6",
       "phase": "metaprogramming",
@@ -9563,11 +9563,11 @@
     },
     {
       "id": "TL01-27-8-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "27.8 Fases y ausencia de ciclos",
       "heading_anchor": "27-8-fases-y-ausencia-de-ciclos",
-      "line_start": 10142,
-      "line_end": 10146,
+      "line_start": 10150,
+      "line_end": 10154,
       "text": "Ningún generador observa la salida de otro. La fuente generada no puede contener `derive`, registrar generadores ni crear una segunda ronda. Tampoco puede reemplazar un path escrito a mano o una salida de otro productor. Así, el grafo de generación es finito por construcción y su resultado no depende del orden de ejecución.",
       "text_sha256": "d116aee0949fd58076467a8a0bac9bad4c274df3c34cefb116afaf82672fd058",
       "phase": "metaprogramming",
@@ -9618,11 +9618,11 @@
     },
     {
       "id": "TL01-28-1-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "28.1 Un único contrato Tondo 0.1",
       "heading_anchor": "28-1-un-único-contrato-tondo-0-1",
-      "line_start": 10248,
-      "line_end": 10252,
+      "line_start": 10256,
+      "line_end": 10260,
       "text": "El corpus bootstrap y su suite de regresión conservan la evidencia que existía antes de integrar esta superficie. No constituyen una versión pública ni una edición alternativa: la primera publicación de Tondo 0.1 debe implementar el contrato consolidado y publicar nuevos hashes de conformidad.",
       "text_sha256": "afc5629402443b23dfbfea622891df90df53d1562c7ee66a6e793272726033c6",
       "phase": "testing",
@@ -9673,11 +9673,11 @@
     },
     {
       "id": "TL01-28-2-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "28.2 Árbol estático",
       "heading_anchor": "28-2-árbol-estático",
-      "line_start": 10279,
-      "line_end": 10280,
+      "line_start": 10287,
+      "line_end": 10288,
       "text": "no pueden aparecer en funciones, cierres, traits, `impl`, bloques ordinarios, scripts ni bodies de test; y",
       "text_sha256": "5925e8aa84d38434cdd47f9ef53792702a572152034ff3aeb13edeb1d6f0ad3c",
       "phase": "testing",
@@ -9728,11 +9728,11 @@
     },
     {
       "id": "TL01-28-3-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "28.3 Entradas ocultas e inferencia",
       "heading_anchor": "28-3-entradas-ocultas-e-inferencia",
-      "line_start": 10302,
-      "line_end": 10307,
+      "line_start": 10310,
+      "line_end": 10315,
       "text": "`E` es la unión cerrada inferida localmente y debe cumplir `Discard`; si no hay fallos, es `Never`. La entrada se vuelve suspendible cuando contiene una operación que exige suspensión, incluido `defer await`. No se escribe un modificador porque ninguna entrada es una API invocable. El body de test puede usar `return` sin valor, `fail` y `?`; el setup admite `fail` y `?`, pero un `return` que ocultaría descendientes produce `E1205`. Ninguna forma introduce `TestResult`.",
       "text_sha256": "695084a5fb930c2600ec3fabc0c995ce4409edd66e184b6209ac9a1efedf1dab",
       "phase": "testing",
@@ -9783,11 +9783,11 @@
     },
     {
       "id": "TL01-28-5-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "28.5 Frontera con producción",
       "heading_anchor": "28-5-frontera-con-producción",
-      "line_start": 10342,
-      "line_end": 10346,
+      "line_start": 10350,
+      "line_end": 10354,
       "text": "Una declaración de test en producción o script produce `E2001`. Alterar desde test la API sellada, exportar una declaración de test o importar `std.testing` desde producción produce `E2003`. La validez del producto se comprueba antes de aplicar el overlay: los tests no pueden reparar una unidad de producción inválida.",
       "text_sha256": "3d3ff001823cbee9f12a90e45e0830608dc7b2fc82660616b5219f703ed37f45",
       "phase": "testing",
@@ -9838,7 +9838,7 @@
     },
     {
       "id": "TL01-4-2-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "4.2 Inmutabilidad profunda por defecto",
       "heading_anchor": "4-2-inmutabilidad-profunda-por-defecto",
       "line_start": 366,
@@ -9881,7 +9881,7 @@
     },
     {
       "id": "TL01-4-3-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "4.3 Contratos visibles",
       "heading_anchor": "4-3-contratos-visibles",
       "line_start": 385,
@@ -9924,7 +9924,7 @@
     },
     {
       "id": "TL01-5-10-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "5.10 Literales de string",
       "heading_anchor": "5-10-literales-de-string",
       "line_start": 742,
@@ -9967,7 +9967,7 @@
     },
     {
       "id": "TL01-5-10-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "5.10 Literales de string",
       "heading_anchor": "5-10-literales-de-string",
       "line_start": 752,
@@ -10010,7 +10010,7 @@
     },
     {
       "id": "TL01-5-10-R003",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "5.10 Literales de string",
       "heading_anchor": "5-10-literales-de-string",
       "line_start": 784,
@@ -10053,7 +10053,7 @@
     },
     {
       "id": "TL01-5-11-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "5.11 Literales de colecciones",
       "heading_anchor": "5-11-literales-de-colecciones",
       "line_start": 828,
@@ -10096,7 +10096,7 @@
     },
     {
       "id": "TL01-5-4-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "5.4 Identificadores",
       "heading_anchor": "5-4-identificadores",
       "line_start": 522,
@@ -10139,7 +10139,7 @@
     },
     {
       "id": "TL01-5-4-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "5.4 Identificadores",
       "heading_anchor": "5-4-identificadores",
       "line_start": 538,
@@ -10182,7 +10182,7 @@
     },
     {
       "id": "TL01-5-4-R003",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "5.4 Identificadores",
       "heading_anchor": "5-4-identificadores",
       "line_start": 543,
@@ -10225,7 +10225,7 @@
     },
     {
       "id": "TL01-5-4-R004",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "5.4 Identificadores",
       "heading_anchor": "5-4-identificadores",
       "line_start": 553,
@@ -10268,7 +10268,7 @@
     },
     {
       "id": "TL01-5-5-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "5.5 Palabras reservadas",
       "heading_anchor": "5-5-palabras-reservadas",
       "line_start": 619,
@@ -10311,7 +10311,7 @@
     },
     {
       "id": "TL01-5-7-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "5.7 Literales enteros",
       "heading_anchor": "5-7-literales-enteros",
       "line_start": 676,
@@ -10354,7 +10354,7 @@
     },
     {
       "id": "TL01-5-7-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "5.7 Literales enteros",
       "heading_anchor": "5-7-literales-enteros",
       "line_start": 686,
@@ -10397,7 +10397,7 @@
     },
     {
       "id": "TL01-5-8-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "5.8 Literales flotantes",
       "heading_anchor": "5-8-literales-flotantes",
       "line_start": 704,
@@ -10440,7 +10440,7 @@
     },
     {
       "id": "TL01-5-9-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "5.9 Literales de caracteres",
       "heading_anchor": "5-9-literales-de-caracteres",
       "line_start": 718,
@@ -10483,7 +10483,7 @@
     },
     {
       "id": "TL01-5-9-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "5.9 Literales de caracteres",
       "heading_anchor": "5-9-literales-de-caracteres",
       "line_start": 720,
@@ -10526,7 +10526,7 @@
     },
     {
       "id": "TL01-6-3-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "6.3 Imports",
       "heading_anchor": "6-3-imports",
       "line_start": 907,
@@ -10569,7 +10569,7 @@
     },
     {
       "id": "TL01-6-5-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "6.5 Constantes",
       "heading_anchor": "6-5-constantes",
       "line_start": 939,
@@ -10612,7 +10612,7 @@
     },
     {
       "id": "TL01-6-5-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "6.5 Constantes",
       "heading_anchor": "6-5-constantes",
       "line_start": 957,
@@ -10655,7 +10655,7 @@
     },
     {
       "id": "TL01-6-6-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "6.6 Módulos ejecutables",
       "heading_anchor": "6-6-módulos-ejecutables",
       "line_start": 961,
@@ -10719,7 +10719,7 @@
     },
     {
       "id": "TL01-6-7-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "6.7 Identidad de paquete, edición y resolución",
       "heading_anchor": "6-7-identidad-de-paquete-edición-y-resolución",
       "line_start": 972,
@@ -10762,7 +10762,7 @@
     },
     {
       "id": "TL01-6-7-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "6.7 Identidad de paquete, edición y resolución",
       "heading_anchor": "6-7-identidad-de-paquete-edición-y-resolución",
       "line_start": 986,
@@ -10805,7 +10805,7 @@
     },
     {
       "id": "TL01-6-7-R003",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "6.7 Identidad de paquete, edición y resolución",
       "heading_anchor": "6-7-identidad-de-paquete-edición-y-resolución",
       "line_start": 999,
@@ -10848,7 +10848,7 @@
     },
     {
       "id": "TL01-6-8-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "6.8 Source sets, targets y generación",
       "heading_anchor": "6-8-source-sets-targets-y-generación",
       "line_start": 1029,
@@ -10891,7 +10891,7 @@
     },
     {
       "id": "TL01-6-8-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "6.8 Source sets, targets y generación",
       "heading_anchor": "6-8-source-sets-targets-y-generación",
       "line_start": 1044,
@@ -10946,7 +10946,7 @@
     },
     {
       "id": "TL01-7-10-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "7.10 Namespaces",
       "heading_anchor": "7-10-namespaces",
       "line_start": 1272,
@@ -10989,7 +10989,7 @@
     },
     {
       "id": "TL01-7-11-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "7.11 Alcance y orden de resolución",
       "heading_anchor": "7-11-alcance-y-orden-de-resolución",
       "line_start": 1306,
@@ -11032,7 +11032,7 @@
     },
     {
       "id": "TL01-7-2-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "7.2 Bindings mutables",
       "heading_anchor": "7-2-bindings-mutables",
       "line_start": 1078,
@@ -11075,7 +11075,7 @@
     },
     {
       "id": "TL01-7-3-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "7.3 Desestructuración",
       "heading_anchor": "7-3-desestructuración",
       "line_start": 1097,
@@ -11118,7 +11118,7 @@
     },
     {
       "id": "TL01-7-4-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "7.4 Ausencia de shadowing",
       "heading_anchor": "7-4-ausencia-de-shadowing",
       "line_start": 1103,
@@ -11161,7 +11161,7 @@
     },
     {
       "id": "TL01-7-4-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "7.4 Ausencia de shadowing",
       "heading_anchor": "7-4-ausencia-de-shadowing",
       "line_start": 1114,
@@ -11204,7 +11204,7 @@
     },
     {
       "id": "TL01-7-6-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "7.6 Visibilidad de records",
       "heading_anchor": "7-6-visibilidad-de-records",
       "line_start": 1169,
@@ -11247,7 +11247,7 @@
     },
     {
       "id": "TL01-7-6-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "7.6 Visibilidad de records",
       "heading_anchor": "7-6-visibilidad-de-records",
       "line_start": 1170,
@@ -11290,7 +11290,7 @@
     },
     {
       "id": "TL01-7-6-R003",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "7.6 Visibilidad de records",
       "heading_anchor": "7-6-visibilidad-de-records",
       "line_start": 1179,
@@ -11333,7 +11333,7 @@
     },
     {
       "id": "TL01-7-6-R004",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "7.6 Visibilidad de records",
       "heading_anchor": "7-6-visibilidad-de-records",
       "line_start": 1184,
@@ -11376,7 +11376,7 @@
     },
     {
       "id": "TL01-7-6-R005",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "7.6 Visibilidad de records",
       "heading_anchor": "7-6-visibilidad-de-records",
       "line_start": 1194,
@@ -11419,7 +11419,7 @@
     },
     {
       "id": "TL01-7-7-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "7.7 Visibilidad de enums",
       "heading_anchor": "7-7-visibilidad-de-enums",
       "line_start": 1214,
@@ -11462,7 +11462,7 @@
     },
     {
       "id": "TL01-7-9-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "7.9 APIs públicas bien formadas",
       "heading_anchor": "7-9-apis-públicas-bien-formadas",
       "line_start": 1234,
@@ -11505,7 +11505,7 @@
     },
     {
       "id": "TL01-7-9-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "7.9 APIs públicas bien formadas",
       "heading_anchor": "7-9-apis-públicas-bien-formadas",
       "line_start": 1245,
@@ -11548,7 +11548,7 @@
     },
     {
       "id": "TL01-8-10-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "8.10 Valores `Copy` y valores afines",
       "heading_anchor": "8-10-valores-copy-y-valores-afines",
       "line_start": 1562,
@@ -11591,7 +11591,7 @@
     },
     {
       "id": "TL01-8-10-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "8.10 Valores `Copy` y valores afines",
       "heading_anchor": "8-10-valores-copy-y-valores-afines",
       "line_start": 1587,
@@ -11634,7 +11634,7 @@
     },
     {
       "id": "TL01-8-10-R003",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "8.10 Valores `Copy` y valores afines",
       "heading_anchor": "8-10-valores-copy-y-valores-afines",
       "line_start": 1694,
@@ -11677,7 +11677,7 @@
     },
     {
       "id": "TL01-8-10-R004",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "8.10 Valores `Copy` y valores afines",
       "heading_anchor": "8-10-valores-copy-y-valores-afines",
       "line_start": 1716,
@@ -11720,7 +11720,7 @@
     },
     {
       "id": "TL01-8-11-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "8.11 Igualdad",
       "heading_anchor": "8-11-igualdad",
       "line_start": 1738,
@@ -11763,7 +11763,7 @@
     },
     {
       "id": "TL01-8-11-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "8.11 Igualdad",
       "heading_anchor": "8-11-igualdad",
       "line_start": 1744,
@@ -11806,7 +11806,7 @@
     },
     {
       "id": "TL01-8-12-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "8.12 Capacidad `Key`",
       "heading_anchor": "8-12-capacidad-key",
       "line_start": 1776,
@@ -11849,7 +11849,7 @@
     },
     {
       "id": "TL01-8-13-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "8.13 Representación y ABI",
       "heading_anchor": "8-13-representación-y-abi",
       "line_start": 1794,
@@ -11892,7 +11892,7 @@
     },
     {
       "id": "TL01-8-13-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "8.13 Representación y ABI",
       "heading_anchor": "8-13-representación-y-abi",
       "line_start": 1805,
@@ -11935,7 +11935,7 @@
     },
     {
       "id": "TL01-8-13-R003",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "8.13 Representación y ABI",
       "heading_anchor": "8-13-representación-y-abi",
       "line_start": 1810,
@@ -11978,7 +11978,7 @@
     },
     {
       "id": "TL01-8-13-R004",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "8.13 Representación y ABI",
       "heading_anchor": "8-13-representación-y-abi",
       "line_start": 1825,
@@ -12021,7 +12021,7 @@
     },
     {
       "id": "TL01-8-7-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "8.7 Aliases transparentes",
       "heading_anchor": "8-7-aliases-transparentes",
       "line_start": 1483,
@@ -12064,7 +12064,7 @@
     },
     {
       "id": "TL01-9-10-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "9.10 Tipos recursivos",
       "heading_anchor": "9-10-tipos-recursivos",
       "line_start": 2266,
@@ -12107,7 +12107,7 @@
     },
     {
       "id": "TL01-9-2-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "9.2 Records",
       "heading_anchor": "9-2-records",
       "line_start": 1922,
@@ -12150,7 +12150,7 @@
     },
     {
       "id": "TL01-9-3-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "9.3 Actualización de records",
       "heading_anchor": "9-3-actualización-de-records",
       "line_start": 1959,
@@ -12193,7 +12193,7 @@
     },
     {
       "id": "TL01-9-3-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "9.3 Actualización de records",
       "heading_anchor": "9-3-actualización-de-records",
       "line_start": 1960,
@@ -12236,7 +12236,7 @@
     },
     {
       "id": "TL01-9-3-R003",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "9.3 Actualización de records",
       "heading_anchor": "9-3-actualización-de-records",
       "line_start": 1961,
@@ -12279,7 +12279,7 @@
     },
     {
       "id": "TL01-9-3-R004",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "9.3 Actualización de records",
       "heading_anchor": "9-3-actualización-de-records",
       "line_start": 1970,
@@ -12322,7 +12322,7 @@
     },
     {
       "id": "TL01-9-5-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "9.5 Uniones estructurales",
       "heading_anchor": "9-5-uniones-estructurales",
       "line_start": 2051,
@@ -12365,7 +12365,7 @@
     },
     {
       "id": "TL01-9-5-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "9.5 Uniones estructurales",
       "heading_anchor": "9-5-uniones-estructurales",
       "line_start": 2052,
@@ -12408,11 +12408,11 @@
     },
     {
       "id": "TL01-APNDICE-D-LAYOUT-CONVENCIONAL-DE-PROYECTOS-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "Apéndice D. Layout convencional de proyectos",
       "heading_anchor": "apéndice-d-layout-convencional-de-proyectos",
-      "line_start": 10973,
-      "line_end": 10979,
+      "line_start": 10981,
+      "line_end": 10987,
       "text": "La configuración humana opcional es `tondo.toml`; define nombre de paquete, edición, target, perfil, capabilities, features y aliases de dependencias, pero no puede declarar módulos alternativos ni cambiar la semántica de imports. Un `tondo.lock.toml` generado fija las identidades externas. Estos archivos son toolchain inputs, no unidades de compilación Tondo y no se importan desde `.to`. El compilador recibe finalmente el grafo cerrado interno y conserva la misma semántica que tendría un manifiesto explícito.",
       "text_sha256": "54c76c7b983d3bf27278039a24aec2e178996e84e6ff3973f587b08df60bda48",
       "phase": "language-contract",
@@ -12463,7 +12463,7 @@
     },
     {
       "id": "TL01-BINDING-PRESTADO-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "Binding prestado",
       "heading_anchor": "binding-prestado",
       "line_start": 4927,
@@ -12506,7 +12506,7 @@
     },
     {
       "id": "TL01-BINDING-PRESTADO-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "Binding prestado",
       "heading_anchor": "binding-prestado",
       "line_start": 4930,
@@ -12549,7 +12549,7 @@
     },
     {
       "id": "TL01-BINDING-PRESTADO-R003",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "Binding prestado",
       "heading_anchor": "binding-prestado",
       "line_start": 4940,
@@ -12592,11 +12592,11 @@
     },
     {
       "id": "TL01-C-3-FIXTURES-ESPECIALIZADOS-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "C.3 Fixtures especializados",
       "heading_anchor": "c-3-fixtures-especializados",
-      "line_start": 10729,
-      "line_end": 10740,
+      "line_start": 10737,
+      "line_end": 10748,
       "text": "| Fixture | Declaraciones inyectadas | |---|---| | `spec.cursor` | `Query`, `Row`, `DatabaseError`, `RowCursor`, `Database.openRows`, `RowCursor.close` y su `impl Iterator[Row]`. | | `spec.resource` | `fn acquire(): Resource ! AcquireError`. | | `spec.domain` | `fn decodeUser(bytes: Bytes): User ! std.json.DecodeError`; `User` debe declararse en el propio fence. | | `spec.settings` | Binding de módulo `fs`; aliases `Path = fs.Path`, `IoError = fs.IoError`; tipos `DecodeError`, `Settings`; `fn decodeSettings(Bytes): Settings ! DecodeError`. | | `spec.user` | Tipos `UserId` y `User` definidos en C.4. | | `spec.console` | Binding de módulo `console = std.console`. | | `spec.jobs` | Tipos `Deque[T]`, `Job`, `JobError` y las operaciones de C.4. | | `spec.application` | Tipos y operaciones de aplicación de C.4; el import `std.process` permanece en el fence. | | `spec.async_page` | Binding `console = std.console`; tipos suspendibles de C.4. | | `spec.process` | Interfaces de proceso de C.2; los imports permanecen en el script. |",
       "text_sha256": "a2ee78e9e35d276011c83c97429aeac3cf7d81f3b54769f663a69a917765a2c4",
       "phase": "language-contract",
@@ -12604,7 +12604,7 @@
       "status": "draft-pending",
       "classification_reason": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:10729#c-3-fixtures-especializados"
+        "TONDO_LANGUAGE_SPEC.md:10737#c-3-fixtures-especializados"
       ],
       "dimensions": {
         "positive": {
@@ -12635,11 +12635,11 @@
     },
     {
       "id": "TL01-C-6-SERIALIZACIN-CANNICA-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "C.6 Serialización canónica",
       "heading_anchor": "c-6-serialización-canónica",
-      "line_start": 10957,
-      "line_end": 10961,
+      "line_start": 10965,
+      "line_end": 10969,
       "text": "El SHA-256 esperado de esos bytes es `714da31de9e190eed73361d6d3ded585661c9878a355994db1b160f913d529b8`. Un cambio de una firma, capability, requirement, binding, orden o byte exige publicar un hash nuevo y una nueva revisión del Markdown. De este modo dos runners no pueden usar stubs distintos y afirmar que comprobaron el mismo ejemplo.",
       "text_sha256": "191b2de6a7a4da398282c49bde84f223825e103a22acd4582dd60cc4e952a7bb",
       "phase": "language-contract",
@@ -12690,7 +12690,7 @@
     },
     {
       "id": "TL01-CONTRATO-NORMATIVO-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "Contrato normativo",
       "heading_anchor": "contrato-normativo",
       "line_start": 5687,
@@ -12733,7 +12733,7 @@
     },
     {
       "id": "TL01-CONTRATO-NORMATIVO-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "Contrato normativo",
       "heading_anchor": "contrato-normativo",
       "line_start": 5701,
@@ -12776,7 +12776,7 @@
     },
     {
       "id": "TL01-CONTRATO-NORMATIVO-R003",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "Contrato normativo",
       "heading_anchor": "contrato-normativo",
       "line_start": 5708,
@@ -12819,7 +12819,7 @@
     },
     {
       "id": "TL01-ESTRATEGIA-DE-LA-IMPLEMENTACIN-DE-REFERENCIA-NO-NORMATIVO-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "Estrategia de la implementación de referencia (no normativo)",
       "heading_anchor": "estrategia-de-la-implementación-de-referencia-no-normativo",
       "line_start": 5731,
@@ -12862,7 +12862,7 @@
     },
     {
       "id": "TL01-FRONTERA-DE-SEGURIDAD-Y-COMPORTAMIENTO-INDEFINIDO-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "Frontera de seguridad y comportamiento indefinido",
       "heading_anchor": "frontera-de-seguridad-y-comportamiento-indefinido",
       "line_start": 5923,
@@ -12905,7 +12905,7 @@
     },
     {
       "id": "TL01-FRONTERA-DE-SEGURIDAD-Y-COMPORTAMIENTO-INDEFINIDO-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "Frontera de seguridad y comportamiento indefinido",
       "heading_anchor": "frontera-de-seguridad-y-comportamiento-indefinido",
       "line_start": 5956,
@@ -12948,7 +12948,7 @@
     },
     {
       "id": "TL01-FRONTERA-DE-SEGURIDAD-Y-COMPORTAMIENTO-INDEFINIDO-R003",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "Frontera de seguridad y comportamiento indefinido",
       "heading_anchor": "frontera-de-seguridad-y-comportamiento-indefinido",
       "line_start": 5994,
@@ -12991,7 +12991,7 @@
     },
     {
       "id": "TL01-FRONTERA-DE-SEGURIDAD-Y-COMPORTAMIENTO-INDEFINIDO-R004",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "Frontera de seguridad y comportamiento indefinido",
       "heading_anchor": "frontera-de-seguridad-y-comportamiento-indefinido",
       "line_start": 5995,
@@ -13034,7 +13034,7 @@
     },
     {
       "id": "TL01-GARANTA-DE-PROGRESO-COOPERATIVO-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "Garantía de progreso cooperativo",
       "heading_anchor": "garantía-de-progreso-cooperativo",
       "line_start": 6077,
@@ -13077,7 +13077,7 @@
     },
     {
       "id": "TL01-GARANTA-DE-PROGRESO-COOPERATIVO-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "Garantía de progreso cooperativo",
       "heading_anchor": "garantía-de-progreso-cooperativo",
       "line_start": 6082,
@@ -13120,7 +13120,7 @@
     },
     {
       "id": "TL01-GARANTA-DE-PROGRESO-COOPERATIVO-R003",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "Garantía de progreso cooperativo",
       "heading_anchor": "garantía-de-progreso-cooperativo",
       "line_start": 6093,
@@ -13163,7 +13163,7 @@
     },
     {
       "id": "TL01-GARANTA-DE-PROGRESO-COOPERATIVO-R004",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "Garantía de progreso cooperativo",
       "heading_anchor": "garantía-de-progreso-cooperativo",
       "line_start": 6098,
@@ -13206,7 +13206,7 @@
     },
     {
       "id": "TL01-LOCAL-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "Local",
       "heading_anchor": "local",
       "line_start": 126,
@@ -13249,7 +13249,7 @@
     },
     {
       "id": "TL01-LXICO-Y-SINTAXIS-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "Léxico y sintaxis",
       "heading_anchor": "léxico-y-sintaxis",
       "line_start": 7567,
@@ -13329,11 +13329,11 @@
     },
     {
       "id": "TL01-MUTACIN-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "Mutación",
       "heading_anchor": "mutación",
-      "line_start": 10508,
-      "line_end": 10509,
+      "line_start": 10516,
+      "line_end": 10517,
       "text": "`var T` presta un lvalue completo y exclusivo; permite reemplazar sin conservar extensión o redimensionar colecciones y no puede recibir una región parcial.",
       "text_sha256": "c3855b243871558b52fd3ec33025014ddb016da9dc9fdd3e808d8d819b771caf",
       "phase": "language-contract",
@@ -13341,7 +13341,7 @@
       "status": "toolchain-limit",
       "classification_reason": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:10508#mutación"
+        "TONDO_LANGUAGE_SPEC.md:10516#mutación"
       ],
       "dimensions": {
         "positive": {
@@ -13372,7 +13372,7 @@
     },
     {
       "id": "TL01-OPTION-RESULT-Y-PROPAGACIN-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "Option, Result y propagación",
       "heading_anchor": "option-result-y-propagación",
       "line_start": 7624,
@@ -13440,7 +13440,7 @@
     },
     {
       "id": "TL01-OWNERSHIP-PRSTAMOS-Y-CLEANUP-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "Ownership, préstamos y cleanup",
       "heading_anchor": "ownership-préstamos-y-cleanup",
       "line_start": 7633,
@@ -13568,11 +13568,11 @@
     },
     {
       "id": "TL01-OWNERSHIP-Y-CAPACIDADES-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "Ownership y capacidades",
       "heading_anchor": "ownership-y-capacidades",
-      "line_start": 10530,
-      "line_end": 10530,
+      "line_start": 10538,
+      "line_end": 10538,
       "text": "Un valor con obligación terminal debe consumirse explícitamente o reservarse con `defer`.",
       "text_sha256": "2c650cd89af6257879f439561118973f5850a2ba57d1bd4aec356c7b8cead101",
       "phase": "language-contract",
@@ -13580,7 +13580,7 @@
       "status": "toolchain-limit",
       "classification_reason": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:10530#ownership-y-capacidades"
+        "TONDO_LANGUAGE_SPEC.md:10538#ownership-y-capacidades"
       ],
       "dimensions": {
         "positive": {
@@ -13611,7 +13611,7 @@
     },
     {
       "id": "TL01-PEQUEO-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "Pequeño",
       "heading_anchor": "pequeño",
       "line_start": 118,
@@ -13654,7 +13654,7 @@
     },
     {
       "id": "TL01-PREDECIBLE-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "Predecible",
       "heading_anchor": "predecible",
       "line_start": 122,
@@ -13697,7 +13697,7 @@
     },
     {
       "id": "TL01-PROTOCOLOS-DE-LLAMADA-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "Protocolos de llamada",
       "heading_anchor": "protocolos-de-llamada",
       "line_start": 3614,
@@ -13740,7 +13740,7 @@
     },
     {
       "id": "TL01-PROTOCOLOS-DE-LLAMADA-R002",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "Protocolos de llamada",
       "heading_anchor": "protocolos-de-llamada",
       "line_start": 3618,
@@ -13783,7 +13783,7 @@
     },
     {
       "id": "TL01-PROTOCOLOS-DE-LLAMADA-R003",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "Protocolos de llamada",
       "heading_anchor": "protocolos-de-llamada",
       "line_start": 3626,
@@ -13826,7 +13826,7 @@
     },
     {
       "id": "TL01-PROTOCOLOS-DE-LLAMADA-R004",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "Protocolos de llamada",
       "heading_anchor": "protocolos-de-llamada",
       "line_start": 3669,
@@ -13882,7 +13882,7 @@
     },
     {
       "id": "TL01-RECORD-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "Record",
       "heading_anchor": "record",
       "line_start": 4990,
@@ -13925,7 +13925,7 @@
     },
     {
       "id": "TL01-SEGURO-POR-DEFECTO-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "Seguro por defecto",
       "heading_anchor": "seguro-por-defecto",
       "line_start": 130,
@@ -13968,7 +13968,7 @@
     },
     {
       "id": "TL01-TIPOS-DECLARACIONES-GENRICOS-Y-TRAITS-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "Tipos, declaraciones, genéricos y traits",
       "heading_anchor": "tipos-declaraciones-genéricos-y-traits",
       "line_start": 7591,
@@ -14140,7 +14140,7 @@
     },
     {
       "id": "TL01-VISIBILIDAD-Y-API-R001",
-      "revision": "0.1@c85ebfbea9309bc2",
+      "revision": "0.1@241da23ea49c9303",
       "heading": "Visibilidad y API",
       "heading_anchor": "visibilidad-y-api",
       "line_start": 7649,

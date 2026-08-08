@@ -165,19 +165,21 @@ mod tests {
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_nanos();
-            let mut base = std::env::temp_dir();
+            let temp_root = std::env::temp_dir();
+            let mut base = temp_root.clone();
             // The SSD test profile deliberately places `TMPDIR` below the
             // checked-out repository.  A workspace-discovery test must not
             // accidentally inherit that repository's Cargo.toml, so escape
             // the nearest workspace before creating its isolated fixture.
-            while !base.join("Cargo.toml").is_file() {
-                let Some(parent) = base.parent() else {
+            let mut cursor = base.clone();
+            while !cursor.join("Cargo.toml").is_file() {
+                let Some(parent) = cursor.parent() else {
                     break;
                 };
-                base = parent.to_path_buf();
+                cursor = parent.to_path_buf();
             }
-            if base.join("Cargo.toml").is_file() {
-                base = base
+            if cursor.join("Cargo.toml").is_file() && temp_root.starts_with(&cursor) {
+                base = cursor
                     .parent()
                     .expect("a workspace directory must have a parent")
                     .to_path_buf();

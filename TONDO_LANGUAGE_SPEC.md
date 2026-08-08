@@ -10034,8 +10034,16 @@ a un generador general. El provider no puede enumerar otros tipos privados del
 módulo.
 
 La personalización que no pueda expresarse por el contrato normal del trait
-requiere un `impl` manual. Tondo 0.1 no añade field annotations ni una bolsa
-dinámica de opciones a `derive`.
+requiere un `impl` manual. Tondo 0.1 admite únicamente annotations de campo y
+variante con significado cerrado para los providers de serialization:
+`@name("wire_name")`, `@ignore`, `@json(base64)`,
+`@messagepack(...)` y `@proto(number)`. Se escriben dentro del cuerpo del
+record/variante y se retienen como CST lossless; el owner de serialization las
+valida en compile time, exige simetría encode/decode y rechaza nombres,
+argumentos, duplicados o combinaciones desconocidas. No existe una bolsa
+dinámica de opciones, reflexión de valores ni interpretación runtime de estas
+annotations. Los números Protobuf son literales enteros explícitos y nunca se
+infieren.
 
 ### 27.5 Generadores declarados por el manifiesto
 

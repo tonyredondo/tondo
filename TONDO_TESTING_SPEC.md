@@ -4,7 +4,7 @@
 - **Revisión:** 0.1-draft.3 — 2026-08-07.
 - **Edición objetivo:** Tondo 0.1.
 - **Especificación base:** [Tondo 0.1](./TONDO_LANGUAGE_SPEC.md).
-- **SHA-256 de la base:** `c85ebfbea9309bc2684292669086bd923b6f6b10c31cd8ef78b31067c61e683c`.
+- **SHA-256 de la base:** `241da23ea49c93038740d1037358dd1b09f7c5bf31c2152d7fff4810a0c65d64`.
 - **Formatos de tooling:** `tondo-test-report-0.1/7`,
   `tondo-test-list-0.1/6`, `tondo-junit-report-0.1/4`,
   `tondo-test-artifacts-0.1/1` y `tondo-snapshot-store-0.1/1`.

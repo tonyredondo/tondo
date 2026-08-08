@@ -422,6 +422,9 @@ impl Parser<'_> {
         } else {
             loop {
                 self.start(SyntaxKind::EnumVariant)?;
+                while self.at(TokenKind::At) {
+                    self.parse_attribute()?;
+                }
                 self.expect_identifier()?;
                 if self.at(TokenKind::LParen) {
                     self.parse_tuple_payload()?;
@@ -536,6 +539,32 @@ impl Parser<'_> {
         self.parse_type_path()?;
         self.finish();
         self.expect_line_end()?;
+        self.finish();
+        Ok(())
+    }
+
+    /// Parse a field/variant attribute without assigning it semantic meaning.
+    /// The syntax tree retains the complete argument expressions so the
+    /// serialization owner can validate the closed vocabulary at compile time.
+    fn parse_attribute(&mut self) -> ParseResult {
+        self.start(SyntaxKind::Attribute)?;
+        self.expect(TokenKind::At)?;
+        self.expect_identifier()?;
+        while self.eat(TokenKind::Dot) {
+            self.expect_identifier()?;
+        }
+        if self.eat(TokenKind::LParen) {
+            if !self.at(TokenKind::RParen) {
+                self.parse_expression()?;
+                while self.eat(TokenKind::Comma) {
+                    if self.at(TokenKind::RParen) {
+                        break;
+                    }
+                    self.parse_expression()?;
+                }
+            }
+            self.expect(TokenKind::RParen)?;
+        }
         self.finish();
         Ok(())
     }
@@ -1059,6 +1088,9 @@ impl Parser<'_> {
         }
         while !self.at_any(&[TokenKind::RBrace, TokenKind::Eof]) {
             self.start(SyntaxKind::RecordField)?;
+            while self.at(TokenKind::At) {
+                self.parse_attribute()?;
+            }
             if allow_priv && self.at(TokenKind::Priv) && self.nth(1) != TokenKind::Colon {
                 self.bump();
             }
@@ -4534,6 +4566,75 @@ derive[T] serialization.Serialize for Page[T]
         assert!(second.target().expect("target").path().is_some());
         assert!(second.generic_params().is_some());
         assert_lossless(&sources, file, &parsed, source);
+    }
+
+    #[test]
+    fn serialization_attributes_are_lossless_children_of_fields_and_variants() {
+        let source = br#"type User = {
+    @name("wire_name") @json(base64) payload: Bytes
+    @ignore private_value: Int
+}
+
+enum Outcome {
+    @proto(1) Accepted
+    @ignore Rejected
+}
+"#;
+        let (sources, file, parsed) = parse_source(source, ParseMode::Module);
+        assert!(parsed.diagnostics().is_empty(), "{:?}", codes(&parsed));
+        assert_lossless(&sources, file, &parsed, source);
+        assert_eq!(
+            parsed
+                .cst()
+                .nodes()
+                .iter()
+                .filter(|node| node.kind() == SyntaxKind::Attribute)
+                .count(),
+            5
+        );
+        let record_body = parsed
+            .cst()
+            .root_node()
+            .child_nodes()
+            .find(|node| node.kind() == SyntaxKind::TypeDecl)
+            .and_then(|declaration| {
+                declaration
+                    .child_nodes()
+                    .find(|node| node.kind() == SyntaxKind::RecordBody)
+            })
+            .expect("record body");
+        let fields = record_body
+            .child_nodes()
+            .filter(|node| node.kind() == SyntaxKind::RecordField)
+            .collect::<Vec<_>>();
+        assert_eq!(fields.len(), 2);
+        assert_eq!(
+            fields[0]
+                .child_nodes()
+                .filter(|node| node.kind() == SyntaxKind::Attribute)
+                .count(),
+            2
+        );
+        let first_attribute = fields[0]
+            .child_nodes()
+            .find(|node| node.kind() == SyntaxKind::Attribute)
+            .and_then(crate::syntax::ast::Attribute::cast)
+            .expect("attribute node has a typed view");
+        assert_eq!(
+            first_attribute
+                .name()
+                .expect("attribute has a root name")
+                .token()
+                .normalized_identifier(),
+            Some("name")
+        );
+        let formatted = format_parsed(&sources, file, &parsed)
+            .expect("attributes format")
+            .into_bytes();
+        let formatted_text = String::from_utf8(formatted).expect("formatter emits UTF-8");
+        assert!(formatted_text.contains("@name(\"wire_name\")"));
+        assert!(formatted_text.contains("@json(base64)"));
+        assert!(formatted_text.contains("@proto(1)"));
     }
 
     #[test]

@@ -146,6 +146,7 @@ define_ast_nodes! {
     ModulePath => ModulePath,
     TypePath => TypePath,
     ValuePath => ValuePath,
+    Attribute => Attribute,
     OutcomeAnnotation => OutcomeAnnotation,
     OpaqueOutcome => OpaqueOutcome,
     RecordBody => RecordBody,
@@ -492,6 +493,18 @@ impl<'a> DeriveDecl<'a> {
 
     pub fn target(self) -> Option<DeriveTarget<'a>> {
         self.child()
+    }
+}
+
+impl<'a> Attribute<'a> {
+    /// The first identifier is the attribute's canonical root name. Dotted
+    /// names and arguments remain lossless CST children so later semantic
+    /// owners can validate their closed vocabulary without the parser
+    /// accepting arbitrary metadata.
+    pub fn name(self) -> Option<SyntaxTokenRef<'a>> {
+        self.syntax()
+            .child_tokens()
+            .find(|token| token.kind() == TokenKind::Identifier)
     }
 }
 

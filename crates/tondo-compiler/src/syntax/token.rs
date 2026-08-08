@@ -90,6 +90,7 @@ pub enum TokenKind {
     RBrace,
     Comma,
     Dot,
+    At,
     Colon,
     Question,
     Bang,
@@ -253,6 +254,7 @@ impl TokenKind {
             self,
             Self::Comma
                 | Self::Dot
+                | Self::At
                 | Self::Colon
                 | Self::FatArrow
                 | Self::Bang

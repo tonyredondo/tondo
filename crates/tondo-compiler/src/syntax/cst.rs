@@ -189,6 +189,7 @@ pub enum SyntaxKind {
     ModulePath,
     TypePath,
     ValuePath,
+    Attribute,
     OutcomeAnnotation,
     OpaqueOutcome,
     RecordBody,

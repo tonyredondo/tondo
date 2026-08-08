@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 1.74
+**Versión del tracker:** 1.77
 
 **Última actualización:** 2026-08-08
 
@@ -5645,6 +5645,22 @@ se declara iniciada antes de esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 1.77 — 2026-08-08
+
+- El frontend acepta annotations cerradas de serialization en fields y enum
+  variants (`@name`, `@ignore`, `@json(...)`, `@messagepack(...)` y
+  `@proto(...)`). El lexer conserva `@`, el parser crea nodos `Attribute`
+  lossless dentro del owner estructural y la AST expone el nombre raíz; la
+  validación semántica y la expansión determinista siguen siendo trabajo de
+  `STD-DERIVE-SER-001`.
+- El fixture temporal de `tondo-reliability` solo escapa de un workspace cuando
+  `TMPDIR` está realmente dentro de él; en runners con `/tmp` conserva ese
+  directorio y no intenta crear carpetas bajo `/`, cerrando la regresión de
+  permisos de CI.
+- Evidencia observada: el test parser de annotations pasa en el target SSD;
+  el gate de reliability se reejecuta con `TMPDIR=/tmp` para cubrir el límite
+  de CI y la matriz/inventory se regeneran antes del siguiente gate.
 
 ### 1.76 — 2026-08-07
 
