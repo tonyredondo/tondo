@@ -1410,6 +1410,7 @@ fn is_prelude_name(namespace: Namespace, name: &Name) -> bool {
                 | "Set"
                 | "Range"
                 | "Iterator"
+                | "AsyncIterator"
                 | "Ref"
                 | "Pointer"
                 | "Join"

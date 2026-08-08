@@ -721,9 +721,9 @@ impl Parser<'_> {
 
     fn parse_module_path(&mut self) -> ParseResult {
         self.start(SyntaxKind::ModulePath)?;
-        self.expect_identifier()?;
+        self.expect_module_component()?;
         while self.eat(TokenKind::Dot) {
-            self.expect_identifier()?;
+            self.expect_module_component()?;
         }
         self.finish();
         Ok(())
@@ -1212,6 +1212,10 @@ impl Parser<'_> {
     fn parse_for_stmt_recursive(&mut self) -> ParseResult {
         self.start(SyntaxKind::ForStmt)?;
         self.expect(TokenKind::For)?;
+        // `for await` is an optional disambiguator for the AsyncIterator
+        // protocol.  Ordinary `for` still prefers Iterator and falls back to
+        // AsyncIterator when no synchronous witness exists.
+        self.eat(TokenKind::Await);
         self.start(SyntaxKind::ForHeader)?;
         if !self.at(TokenKind::LBrace) {
             if self.header_has_top_level_in() {
@@ -1234,6 +1238,7 @@ impl Parser<'_> {
         loop {
             self.start(SyntaxKind::ForStmt)?;
             self.expect(TokenKind::For)?;
+            self.eat(TokenKind::Await);
             self.start(SyntaxKind::ForHeader)?;
             if !self.at(TokenKind::LBrace) {
                 if self.header_has_top_level_in() {
@@ -1598,6 +1603,7 @@ impl Parser<'_> {
             TokenKind::Spawn => {
                 self.start(SyntaxKind::SpawnExpr)?;
                 self.bump();
+                self.eat(TokenKind::Thread);
                 let checkpoint = self.checkpoint();
                 self.parse_spilled_atom()?;
                 while is_plain_postfix_start(self.current()) {
@@ -2109,6 +2115,7 @@ impl Parser<'_> {
             TokenKind::Spawn => {
                 self.start(SyntaxKind::SpawnExpr)?;
                 self.bump();
+                self.eat(TokenKind::Thread);
                 self.parse_plain_postfix_expression()?;
                 self.finish();
                 Ok(ExprShape::closed())
@@ -3590,6 +3597,15 @@ impl Parser<'_> {
         self.expect(TokenKind::Identifier)
     }
 
+    fn expect_module_component(&mut self) -> ParseResult {
+        if self.at_any(&[TokenKind::Identifier, TokenKind::Async]) {
+            self.bump();
+            Ok(())
+        } else {
+            self.expect_identifier()
+        }
+    }
+
     fn expect_identifier_or_discard(&mut self) -> ParseResult {
         self.expect(TokenKind::Identifier)
     }
@@ -4925,6 +4941,7 @@ fn after(): Int {
         for source in [
             &b"await value?\n"[..],
             &b"spawn value\n"[..],
+            &b"spawn thread value\n"[..],
             &b"() { value }\n"[..],
             &b"match value { _ => value, }\n"[..],
             &b"if true { value } else { value }\n"[..],
@@ -5050,6 +5067,7 @@ fn after(): Int {
         let valid = [
             "await value?\n",
             "spawn value\n",
+            "spawn thread value\n",
             "Some(value)\n",
             "Ok(value)\n",
             "Err(value)\n",
@@ -5107,6 +5125,7 @@ fn after(): Int {
             wrap("value, value, value"),
             wrap("await value?"),
             wrap("spawn value"),
+            wrap("spawn thread value"),
             wrap("if true { value } else { value }"),
             wrap("scope { match value { _ => value\n } }"),
             wrap("async () { value }"),

@@ -205,11 +205,13 @@ fn terminator_text(terminator: &BytecodeTerminatorKind) -> String {
         BytecodeTerminatorKind::Spawn {
             operation,
             scope,
+            kind,
             target,
             unwind,
             ..
         } => format!(
-            "spawn scope{} {:?}:t{} -> b{} unwind b{}",
+            "spawn {:?} scope{} {:?}:t{} -> b{} unwind b{}",
+            kind,
             scope.index(),
             operation.kind,
             operation.ty.index(),
@@ -416,6 +418,7 @@ mod tests {
             BytecodeTerminatorKind::Spawn {
                 operation: operation(),
                 scope: BytecodeScopeId::new(0),
+                kind: crate::bytecode::BytecodeSpawnKind::Task,
                 destination: place(),
                 target: block,
                 unwind: block,

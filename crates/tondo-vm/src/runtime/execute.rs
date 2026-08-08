@@ -1,5 +1,5 @@
 use std::cmp::Ordering;
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 
 use crate::bytecode::{
     ArraySliceError, BytecodeAggregateKind, BytecodeArraySequenceKind, BytecodeAwaitable,
@@ -20,7 +20,9 @@ use crate::bytecode::{
 use crate::literal;
 
 use super::heap::{Heap, HeapHandle, HeapObject, IteratorAdapter};
-use super::value::{AggregatePayload, RuntimeJoin, RuntimeLoan, Value, snapshot_value};
+use super::value::{
+    AggregatePayload, RuntimeJoin, RuntimeLoan, TRANSFERRED_JOIN_SCOPE, Value, snapshot_value,
+};
 use super::{
     PanicCode, RuntimeHostValueKind, RuntimeValue, ValueCopyStrategy, VmError, VmLimits, VmPanic,
     VmStackFrame, VmStatistics,
@@ -482,7 +484,32 @@ enum TaskWait {
         call: u64,
         outcome: BytecodeTypeId,
     },
+    OneShot {
+        id: u64,
+        outcome: BytecodeTypeId,
+        destination: BytecodePlace,
+        target: BytecodeBlockId,
+        unwind: BytecodeBlockId,
+    },
+    OneShotTask {
+        id: u64,
+        outcome: BytecodeTypeId,
+    },
     Scope,
+}
+
+#[derive(Debug, Clone)]
+enum OneShotCompletion {
+    Ok(Value),
+    Err(Value),
+    Cancelled,
+}
+
+#[derive(Debug, Default)]
+struct OneShotState {
+    completion: Option<OneShotCompletion>,
+    waiter_tasks: Vec<usize>,
+    waiter_consumed: bool,
 }
 
 #[derive(Debug)]
@@ -530,6 +557,8 @@ struct Engine<'program, 'host> {
     runnable: VecDeque<usize>,
     current_task: usize,
     task_scopes: Vec<Option<RuntimeTaskScope>>,
+    oneshots: BTreeMap<u64, OneShotState>,
+    next_oneshot_id: u64,
     statistics: VmStatistics,
     callable_names: Vec<String>,
     nominal_names: Vec<String>,
@@ -557,6 +586,8 @@ impl<'program, 'host> Engine<'program, 'host> {
             runnable: VecDeque::new(),
             current_task: 0,
             task_scopes: Vec::new(),
+            oneshots: BTreeMap::new(),
+            next_oneshot_id: 1,
             statistics: VmStatistics::default(),
             callable_names: program
                 .callables
@@ -649,6 +680,93 @@ impl<'program, 'host> Engine<'program, 'host> {
             TaskWait::HostTask { .. } => Err(VmError::invariant(
                 "a host-only child task entered the runnable queue",
             )),
+            TaskWait::OneShot {
+                id,
+                outcome,
+                destination,
+                target,
+                unwind,
+            } => {
+                let frame =
+                    self.frames.len().checked_sub(1).ok_or_else(|| {
+                        VmError::invariant("a resumed one-shot await has no frame")
+                    })?;
+                if self.tasks[self.current_task].cancel_requested
+                    || self.current_scope_has_unobserved_panic(frame)?
+                {
+                    self.begin_cancel(frame, unwind)?;
+                    return Ok(true);
+                }
+                let completion = self
+                    .oneshots
+                    .get(&id)
+                    .ok_or_else(|| VmError::invariant("one-shot wait references an unknown id"))?
+                    .completion
+                    .clone();
+                match completion {
+                    None => {
+                        self.park_current(
+                            TaskWait::OneShot {
+                                id,
+                                outcome,
+                                destination,
+                                target,
+                                unwind,
+                            },
+                            &[],
+                        )?;
+                        Ok(false)
+                    }
+                    Some(OneShotCompletion::Ok(value)) => {
+                        let result = self.oneshot_result(outcome, Ok(value))?;
+                        self.write_place(frame, &destination, result)?;
+                        self.jump(frame, target);
+                        Ok(true)
+                    }
+                    Some(OneShotCompletion::Cancelled) => {
+                        self.begin_cancel(frame, unwind)?;
+                        Ok(true)
+                    }
+                    Some(OneShotCompletion::Err(error)) => {
+                        let result = self.oneshot_result(outcome, Err(error))?;
+                        self.write_place(frame, &destination, result)?;
+                        self.jump(frame, target);
+                        Ok(true)
+                    }
+                }
+            }
+            TaskWait::OneShotTask { id, outcome } => {
+                if self.tasks[self.current_task].cancel_requested {
+                    self.complete_current_task(TaskCompletion::Cancelled)?;
+                    return Ok(false);
+                }
+                let completion = self
+                    .oneshots
+                    .get(&id)
+                    .ok_or_else(|| VmError::invariant("one-shot task references an unknown id"))?
+                    .completion
+                    .clone();
+                match completion {
+                    None => {
+                        self.park_current(TaskWait::OneShotTask { id, outcome }, &[])?;
+                        Ok(false)
+                    }
+                    Some(OneShotCompletion::Ok(value)) => {
+                        let result = self.oneshot_result(outcome, Ok(value))?;
+                        self.complete_current_task(TaskCompletion::Returned(result))?;
+                        Ok(false)
+                    }
+                    Some(OneShotCompletion::Cancelled) => {
+                        self.complete_current_task(TaskCompletion::Cancelled)?;
+                        Ok(false)
+                    }
+                    Some(OneShotCompletion::Err(error)) => {
+                        let result = self.oneshot_result(outcome, Err(error))?;
+                        self.complete_current_task(TaskCompletion::Returned(result))?;
+                        Ok(false)
+                    }
+                }
+            }
             TaskWait::HostCall {
                 call,
                 outcome,
@@ -930,6 +1048,22 @@ impl<'program, 'host> Engine<'program, 'host> {
         Ok(())
     }
 
+    fn park_oneshot(&mut self, id: u64, wait: TaskWait) -> Result<(), VmError> {
+        let state = self
+            .oneshots
+            .get_mut(&id)
+            .ok_or_else(|| VmError::invariant("one-shot wait references an unknown id"))?;
+        if state.completion.is_some() {
+            return Err(VmError::invariant(
+                "one-shot wait was parked after completion",
+            ));
+        }
+        if !state.waiter_tasks.contains(&self.current_task) {
+            state.waiter_tasks.push(self.current_task);
+        }
+        self.park_current(wait, &[])
+    }
+
     fn wake_task(&mut self, task: usize) -> Result<(), VmError> {
         let record = self
             .tasks
@@ -1118,6 +1252,100 @@ impl<'program, 'host> Engine<'program, 'host> {
         Ok(task)
     }
 
+    fn spawn_completed_task(&mut self, value: Value, scope: usize) -> Result<usize, VmError> {
+        let task = self.tasks.len();
+        self.tasks.push(TaskRecord {
+            frames: Vec::new(),
+            pending_unwind: None,
+            status: TaskStatus::Complete(Some(TaskCompletion::Returned(value))),
+            resume: None,
+            queued: false,
+            cancel_requested: false,
+            waiters: Vec::new(),
+            parent_scope: Some(scope),
+            join_consumed: false,
+            panic_observed: false,
+        });
+        self.task_scopes
+            .get_mut(scope)
+            .and_then(Option::as_mut)
+            .ok_or_else(|| VmError::invariant("completed task targets a missing task scope"))?
+            .children
+            .push(task);
+        Ok(task)
+    }
+
+    fn spawn_oneshot_task(
+        &mut self,
+        id: u64,
+        outcome: BytecodeTypeId,
+        scope: usize,
+    ) -> Result<usize, VmError> {
+        let completion = self
+            .oneshots
+            .get(&id)
+            .ok_or_else(|| VmError::invariant("one-shot task references an unknown id"))?;
+        match completion.completion.as_ref() {
+            Some(OneShotCompletion::Cancelled) => {
+                return self.spawn_cancelled_task(scope);
+            }
+            Some(_) => {
+                return Err(VmError::invariant(
+                    "one-shot task was spawned after its wait completed",
+                ));
+            }
+            None => {}
+        }
+        let task = self.tasks.len();
+        self.oneshots
+            .get_mut(&id)
+            .expect("one-shot state was checked above")
+            .waiter_tasks
+            .push(task);
+        self.tasks.push(TaskRecord {
+            frames: Vec::new(),
+            pending_unwind: None,
+            status: TaskStatus::Waiting(TaskWait::OneShotTask { id, outcome }),
+            resume: None,
+            queued: false,
+            cancel_requested: false,
+            waiters: Vec::new(),
+            parent_scope: Some(scope),
+            join_consumed: false,
+            panic_observed: false,
+        });
+        self.task_scopes
+            .get_mut(scope)
+            .and_then(Option::as_mut)
+            .ok_or_else(|| VmError::invariant("one-shot task targets a missing task scope"))?
+            .children
+            .push(task);
+        Ok(task)
+    }
+
+    fn spawn_cancelled_task(&mut self, scope: usize) -> Result<usize, VmError> {
+        let task = self.tasks.len();
+        self.tasks.push(TaskRecord {
+            frames: Vec::new(),
+            pending_unwind: None,
+            status: TaskStatus::Complete(Some(TaskCompletion::Cancelled)),
+            resume: None,
+            queued: false,
+            cancel_requested: false,
+            waiters: Vec::new(),
+            parent_scope: Some(scope),
+            join_consumed: false,
+            panic_observed: false,
+        });
+        self.task_scopes
+            .get_mut(scope)
+            .and_then(Option::as_mut)
+            .ok_or_else(|| VmError::invariant("cancelled task targets a missing task scope"))?
+            .children
+            .push(task);
+        Ok(task)
+    }
+
     fn active_task_scope(&self, frame: usize, source: BytecodeScopeId) -> Result<usize, VmError> {
         let id = *self.frames[frame]
             .task_scopes
@@ -1196,22 +1424,70 @@ impl<'program, 'host> Engine<'program, 'host> {
         let Value::Join(join) = value else {
             return Err(VmError::invariant("await Join owner has no task handle"));
         };
-        if !self.frames[frame].task_scopes.contains(&join.scope) {
-            return Err(VmError::invariant(
-                "Join escaped its owning active task scope",
-            ));
-        }
+        let transferred = join.scope == TRANSFERRED_JOIN_SCOPE;
         let task = self
             .tasks
             .get_mut(join.task)
             .ok_or_else(|| VmError::invariant("Join references an invalid task"))?;
-        if task.parent_scope != Some(join.scope) || task.join_consumed {
+        if (!transferred
+            && (!self.frames[frame].task_scopes.contains(&join.scope)
+                || task.parent_scope != Some(join.scope)))
+            || (transferred && task.parent_scope.is_some())
+            || task.join_consumed
+        {
             return Err(VmError::invariant(
                 "Join was consumed twice or by the wrong task scope",
             ));
         }
         task.join_consumed = true;
         Ok(join)
+    }
+
+    /// Moves a direct `Join` return value out of the lexical task scope that
+    /// created it.  The child remains affine, but its ownership changes from
+    /// the scope ledger to the caller's return slot.  A sentinel scope keeps
+    /// the runtime representation compact without manufacturing a detached
+    /// task API: the caller still has to consume the handle with `await`.
+    fn transfer_return_join(&mut self, frame: usize, scope: usize) -> Result<(), VmError> {
+        let function = self
+            .program
+            .function(self.frames[frame].function)
+            .ok_or_else(|| VmError::invariant("task-scope frame has an invalid function"))?;
+        let return_slot = function.return_slot;
+        let join = match self.frames[frame].slots.get(return_slot.index() as usize) {
+            Some(SlotState::Value(Value::Join(join))) if join.scope == scope => *join,
+            _ => return Ok(()),
+        };
+        let task = self
+            .tasks
+            .get_mut(join.task)
+            .ok_or_else(|| VmError::invariant("returned Join references an invalid task"))?;
+        if task.parent_scope != Some(scope) || task.join_consumed {
+            return Err(VmError::invariant(
+                "returned Join was consumed twice or by the wrong task scope",
+            ));
+        }
+        task.parent_scope = None;
+        let scope_state = self
+            .task_scopes
+            .get_mut(scope)
+            .and_then(Option::as_mut)
+            .ok_or_else(|| VmError::invariant("returned Join scope state is missing"))?;
+        let Some(index) = scope_state
+            .children
+            .iter()
+            .position(|child| *child == join.task)
+        else {
+            return Err(VmError::invariant(
+                "returned Join is absent from its owning task scope",
+            ));
+        };
+        scope_state.children.remove(index);
+        *self.slot_mut(frame, return_slot)? = SlotState::Value(Value::Join(RuntimeJoin {
+            task: join.task,
+            scope: TRANSFERRED_JOIN_SCOPE,
+        }));
+        Ok(())
     }
 
     fn drain_task_scopes(
@@ -1256,6 +1532,10 @@ impl<'program, 'host> Engine<'program, 'host> {
                 return Err(VmError::invariant(
                     "task scopes are not drained in inner-to-outer order",
                 ));
+            }
+
+            if self.pending_unwind.is_none() {
+                self.transfer_return_join(frame, id)?;
             }
 
             let mut pending = Vec::new();
@@ -2117,6 +2397,9 @@ impl<'program, 'host> Engine<'program, 'host> {
                     }
                     BytecodeIntrinsicType::Ref
                     | BytecodeIntrinsicType::Pointer
+                    | BytecodeIntrinsicType::Waiter
+                    | BytecodeIntrinsicType::Completer
+                    | BytecodeIntrinsicType::AlreadyCompleted
                     | BytecodeIntrinsicType::Command
                     | BytecodeIntrinsicType::Pipeline
                     | BytecodeIntrinsicType::Bytes
@@ -2771,6 +3054,11 @@ impl<'program, 'host> Engine<'program, 'host> {
                             "an async host call appeared in a synchronous invocation",
                         ));
                     }
+                    OperationResult::OneShotWait { .. } => {
+                        return Err(VmError::invariant(
+                            "a one-shot wait appeared in a synchronous invocation",
+                        ));
+                    }
                     OperationResult::VirtualTimeBoundaryCall { .. } => {
                         return Err(VmError::invariant(
                             "an async virtual-time boundary appeared in a synchronous invocation",
@@ -2836,6 +3124,33 @@ impl<'program, 'host> Engine<'program, 'host> {
                                     &[],
                                 )?;
                             }
+                            OperationResult::OneShotWait { id, outcome } => {
+                                let cancelled = self
+                                    .oneshots
+                                    .get(&id)
+                                    .ok_or_else(|| {
+                                        VmError::invariant("one-shot wait references an unknown id")
+                                    })?
+                                    .completion
+                                    .as_ref()
+                                    .is_some_and(|completion| {
+                                        matches!(completion, OneShotCompletion::Cancelled)
+                                    });
+                                if cancelled {
+                                    self.begin_cancel(frame, *unwind)?;
+                                } else {
+                                    self.park_oneshot(
+                                        id,
+                                        TaskWait::OneShot {
+                                            id,
+                                            outcome,
+                                            destination: destination.clone(),
+                                            target: *target,
+                                            unwind: *unwind,
+                                        },
+                                    )?;
+                                }
+                            }
                             OperationResult::Panic(code, message) => {
                                 self.begin_panic(frame, code, message, span, *unwind)?;
                             }
@@ -2880,7 +3195,13 @@ impl<'program, 'host> Engine<'program, 'host> {
                             .tasks
                             .get(join.task)
                             .ok_or_else(|| VmError::invariant("Join references an invalid task"))?;
-                        if task.parent_scope != Some(join.scope) || task.join_consumed {
+                        let transferred = join.scope == TRANSFERRED_JOIN_SCOPE;
+                        if (!transferred
+                            && (task.parent_scope != Some(join.scope)
+                                || !self.frames[frame].task_scopes.contains(&join.scope)))
+                            || (transferred && task.parent_scope.is_some())
+                            || task.join_consumed
+                        {
                             return Err(VmError::invariant(
                                 "Join was consumed twice or by the wrong task scope",
                             ));
@@ -2923,10 +3244,15 @@ impl<'program, 'host> Engine<'program, 'host> {
             BytecodeTerminatorKind::Spawn {
                 operation,
                 scope,
+                kind,
                 destination,
                 target,
                 unwind,
             } => {
+                // The cooperative executor uses the same affine task record
+                // for both lanes.  A host/runtime may map `Thread` to a
+                // worker without changing Join ownership or cleanup.
+                let _thread_lane = kind;
                 if self.tasks[self.current_task].cancel_requested
                     || self.current_scope_has_unobserved_panic(frame)?
                 {
@@ -2963,13 +3289,28 @@ impl<'program, 'host> Engine<'program, 'host> {
                         )?;
                         self.jump(frame, *target);
                     }
+                    OperationResult::OneShotWait { id, outcome } => {
+                        let scope = self.active_task_scope(frame, *scope)?;
+                        let child = self.spawn_oneshot_task(id, outcome, scope)?;
+                        self.write_place(
+                            frame,
+                            destination,
+                            Value::Join(RuntimeJoin { task: child, scope }),
+                        )?;
+                        self.jump(frame, *target);
+                    }
                     OperationResult::Panic(code, message) => {
                         self.begin_panic(frame, code, message, span, *unwind)?;
                     }
-                    OperationResult::Value(_) => {
-                        return Err(VmError::invariant(
-                            "spawn operation did not produce an async child call",
-                        ));
+                    OperationResult::Value(value) => {
+                        let scope = self.active_task_scope(frame, *scope)?;
+                        let child = self.spawn_completed_task(value, scope)?;
+                        self.write_place(
+                            frame,
+                            destination,
+                            Value::Join(RuntimeJoin { task: child, scope }),
+                        )?;
+                        self.jump(frame, *target);
                     }
                     OperationResult::TestBoundaryCall { .. } => {
                         return Err(VmError::invariant("an internal test boundary was spawned"));
@@ -3148,6 +3489,11 @@ impl<'program, 'host> Engine<'program, 'host> {
                                     },
                                     &[],
                                 )?;
+                            }
+                            OperationResult::OneShotWait { .. } => {
+                                return Err(VmError::invariant(
+                                    "a one-shot wait cannot be used as deferred cleanup",
+                                ));
                             }
                             OperationResult::Panic(code, message) => {
                                 self.begin_panic(frame, code, message, span, continuation)?;
@@ -3359,6 +3705,11 @@ impl<'program, 'host> Engine<'program, 'host> {
                         },
                         &[],
                     )?;
+                }
+                OperationResult::OneShotWait { .. } => {
+                    return Err(VmError::invariant(
+                        "a one-shot wait cannot be used as deferred cleanup",
+                    ));
                 }
                 OperationResult::Panic(code, message) => {
                     self.begin_panic(frame, code, message, span, continuation)?;
@@ -3635,6 +3986,14 @@ impl<'program, 'host> Engine<'program, 'host> {
                 roots.push(value.clone());
             }
         }
+        for state in self.oneshots.values() {
+            match &state.completion {
+                Some(OneShotCompletion::Ok(value)) | Some(OneShotCompletion::Err(value)) => {
+                    roots.push(value.clone());
+                }
+                Some(OneShotCompletion::Cancelled) | None => {}
+            }
+        }
         Ok(roots)
     }
 
@@ -3756,9 +4115,22 @@ fn runtime_host_kind(constructor: BytecodeIntrinsicType) -> Option<RuntimeHostVa
         | BytecodeIntrinsicType::Ref
         | BytecodeIntrinsicType::Pointer
         | BytecodeIntrinsicType::Join
+        | BytecodeIntrinsicType::Waiter
+        | BytecodeIntrinsicType::Completer
+        | BytecodeIntrinsicType::AlreadyCompleted
         | BytecodeIntrinsicType::Duration
         | BytecodeIntrinsicType::NumericConversionError => return None,
     })
+}
+
+fn oneshot_handle(value: &Value, expected: RuntimeHostValueKind) -> Result<u64, VmError> {
+    let Value::Host(RuntimeValue::Host { kind, id }) = value else {
+        return Err(VmError::invariant("one-shot handle is not opaque"));
+    };
+    if *kind != expected || *id == 0 {
+        return Err(VmError::invariant("one-shot handle has the wrong kind"));
+    }
+    Ok(*id)
 }
 
 enum OperationResult {
@@ -3780,6 +4152,10 @@ enum OperationResult {
     HostAsync {
         name: String,
         arguments: Vec<RuntimeValue>,
+        outcome: BytecodeTypeId,
+    },
+    OneShotWait {
+        id: u64,
         outcome: BytecodeTypeId,
     },
     Panic(PanicCode, String),
@@ -7814,6 +8190,17 @@ impl Engine<'_, '_> {
                         value => Ok(value),
                     })
                     .collect::<Result<Vec<_>, VmError>>()?;
+                if metadata.name.starts_with("std.async.oneshot") {
+                    if !values.is_empty() {
+                        return Err(VmError::invariant(
+                            "async.oneshot received unexpected arguments",
+                        ));
+                    }
+                    return self.new_oneshot(metadata.outcome);
+                }
+                if let Some(result) = self.prepare_oneshot_method(&metadata, &values)? {
+                    return Ok(result);
+                }
                 if metadata.name.starts_with("std.collections.")
                     && let Some(result) = self.prepare_collection_call(&metadata, &values)?
                 {
@@ -7870,6 +8257,180 @@ impl Engine<'_, '_> {
         })();
         self.temporary_roots.truncate(marker);
         result
+    }
+
+    fn new_oneshot(&mut self, result_ty: BytecodeTypeId) -> Result<OperationResult, VmError> {
+        let id = self.next_oneshot_id;
+        self.next_oneshot_id =
+            self.next_oneshot_id
+                .checked_add(1)
+                .ok_or(VmError::ResourceLimit {
+                    resource: "one-shot handles",
+                    limit: u64::MAX,
+                })?;
+        self.oneshots.insert(id, OneShotState::default());
+        let waiter = Value::Host(RuntimeValue::Host {
+            kind: RuntimeHostValueKind::Waiter,
+            id,
+        });
+        let completer = Value::Host(RuntimeValue::Host {
+            kind: RuntimeHostValueKind::Completer,
+            id,
+        });
+        Ok(OperationResult::Value(self.allocate(
+            result_ty,
+            HeapObject::Tuple(vec![Some(waiter.clone()), Some(completer.clone())]),
+            &[waiter, completer],
+        )?))
+    }
+
+    fn prepare_oneshot_method(
+        &mut self,
+        metadata: &BytecodeCallable,
+        values: &[Value],
+    ) -> Result<Option<OperationResult>, VmError> {
+        let name = metadata.name.as_str();
+        if !matches!(
+            name,
+            name if name.starts_with("std.async.Waiter.wait")
+                || name.starts_with("std.async.Completer.complete")
+                || name.starts_with("std.async.Completer.fail")
+                || name.starts_with("std.async.Completer.cancel")
+        ) {
+            return Ok(None);
+        }
+        let receiver = metadata
+            .parameters
+            .iter()
+            .position(|parameter| parameter.receiver)
+            .ok_or_else(|| VmError::invariant("one-shot method has no receiver"))?;
+        let receiver_value = values
+            .get(receiver)
+            .ok_or_else(|| VmError::invariant("one-shot receiver is missing"))?;
+        if name.starts_with("std.async.Waiter.wait") {
+            let id = oneshot_handle(receiver_value, RuntimeHostValueKind::Waiter)?;
+            let state = self
+                .oneshots
+                .get_mut(&id)
+                .ok_or_else(|| VmError::invariant("waiter references an unknown one-shot"))?;
+            if state.waiter_consumed {
+                return Err(VmError::invariant("one-shot waiter was consumed twice"));
+            }
+            state.waiter_consumed = true;
+            let completion = state.completion.clone();
+            return match completion {
+                Some(OneShotCompletion::Ok(value)) => Ok(Some(OperationResult::Value(
+                    self.oneshot_result(metadata.outcome, Ok(value))?,
+                ))),
+                Some(OneShotCompletion::Err(value)) => Ok(Some(OperationResult::Value(
+                    self.oneshot_result(metadata.outcome, Err(value))?,
+                ))),
+                Some(OneShotCompletion::Cancelled) => Ok(Some(OperationResult::OneShotWait {
+                    id,
+                    outcome: metadata.outcome,
+                })),
+                None => Ok(Some(OperationResult::OneShotWait {
+                    id,
+                    outcome: metadata.outcome,
+                })),
+            };
+        }
+        let expected_kind = if name.starts_with("std.async.Completer.complete")
+            || name.starts_with("std.async.Completer.fail")
+            || name.starts_with("std.async.Completer.cancel")
+        {
+            Some(RuntimeHostValueKind::Completer)
+        } else {
+            None
+        };
+        let Some(expected_kind) = expected_kind else {
+            return Ok(None);
+        };
+        let id = oneshot_handle(receiver_value, expected_kind)?;
+        let completion = match name {
+            name if name.starts_with("std.async.Completer.complete") => {
+                let value = values
+                    .iter()
+                    .enumerate()
+                    .find_map(|(index, value)| (index != receiver).then_some(value))
+                    .ok_or_else(|| VmError::invariant("one-shot complete value is missing"))?;
+                OneShotCompletion::Ok(value.clone())
+            }
+            name if name.starts_with("std.async.Completer.fail") => {
+                let value = values
+                    .iter()
+                    .enumerate()
+                    .find_map(|(index, value)| (index != receiver).then_some(value))
+                    .ok_or_else(|| VmError::invariant("one-shot failure value is missing"))?;
+                OneShotCompletion::Err(value.clone())
+            }
+            name if name.starts_with("std.async.Completer.cancel") => OneShotCompletion::Cancelled,
+            _ => unreachable!("one-shot completer name was checked"),
+        };
+        let already_completed = self.complete_oneshot(id, completion);
+        let result = match already_completed? {
+            true => self.oneshot_result(
+                metadata.outcome,
+                Err(Value::Host(RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::AlreadyCompleted,
+                    id: 0,
+                })),
+            )?,
+            false => self.oneshot_result(metadata.outcome, Ok(Value::Unit))?,
+        };
+        Ok(Some(OperationResult::Value(result)))
+    }
+
+    fn complete_oneshot(
+        &mut self,
+        id: u64,
+        completion: OneShotCompletion,
+    ) -> Result<bool, VmError> {
+        let waiters = {
+            let state = self
+                .oneshots
+                .get_mut(&id)
+                .ok_or_else(|| VmError::invariant("completer references an unknown one-shot"))?;
+            if state.completion.is_some() {
+                return Ok(true);
+            }
+            state.completion = Some(completion);
+            std::mem::take(&mut state.waiter_tasks)
+        };
+        for task in waiters {
+            self.wake_task(task)?;
+        }
+        Ok(false)
+    }
+
+    fn oneshot_result(
+        &mut self,
+        result_ty: BytecodeTypeId,
+        result: Result<Value, Value>,
+    ) -> Result<Value, VmError> {
+        let kind = self
+            .program
+            .ty(result_ty)
+            .ok_or_else(|| VmError::invariant("one-shot result type is missing"))?
+            .kind
+            .clone();
+        if !matches!(kind, BytecodeTypeKind::Result { .. }) {
+            return Err(VmError::invariant(
+                "one-shot operation does not return Result",
+            ));
+        }
+        match result {
+            Ok(value) => self.allocate(
+                result_ty,
+                HeapObject::ResultOk(Some(value.clone())),
+                &[value],
+            ),
+            Err(error) => self.allocate(
+                result_ty,
+                HeapObject::ResultErr(Some(error.clone())),
+                &[error],
+            ),
+        }
     }
 
     fn collection_error_result(&mut self, result_ty: BytecodeTypeId) -> Result<Value, VmError> {
@@ -9111,6 +9672,9 @@ impl Engine<'_, '_> {
                 OperationResult::HostAsync { name, .. } => Err(VmError::invariant(format!(
                     "async iterator callback `{name}` is not allowed"
                 ))),
+                OperationResult::OneShotWait { .. } => Err(VmError::invariant(
+                    "one-shot iterator callback is not allowed",
+                )),
                 OperationResult::TestBoundaryCall { .. }
                 | OperationResult::VirtualTimeBoundaryCall { .. } => Err(VmError::invariant(
                     "iterator callback crossed an internal async/test boundary",
@@ -9892,10 +10456,11 @@ mod tests {
 
     use super::{
         AggregatePayload, DeferredOperation, DeferredValue, Engine, Frame, HeapObject,
-        IteratorAdapter, PanicCode, PlaceComponent, PlaceFailure, RejectingHost, ResolvedPlacePath,
-        RuntimeCleanup, RuntimeDefer, RuntimeFallback, RuntimeHostValueKind, RuntimeJoin,
-        RuntimeLoan, RuntimeType, RuntimeValue, SlotState, TaskCompletion, TaskRecord, TaskStatus,
-        TaskWait, Value, ValueCopyStrategy, VmError, VmHost, VmLimits, VmTestNodeKind,
+        IteratorAdapter, OneShotCompletion, OneShotState, OperationResult, PanicCode,
+        PlaceComponent, PlaceFailure, RejectingHost, ResolvedPlacePath, RuntimeCleanup,
+        RuntimeDefer, RuntimeFallback, RuntimeHostValueKind, RuntimeJoin, RuntimeLoan,
+        RuntimeTaskScope, RuntimeType, RuntimeValue, SlotState, TaskCompletion, TaskRecord,
+        TaskStatus, TaskWait, Value, ValueCopyStrategy, VmError, VmHost, VmLimits, VmTestNodeKind,
         VmTestNodeOutcome, clone_field, clone_index, clone_present, collection_length_fits_int,
         convert_numeric, integer_bounds, integer_shape, next_unicode_scalar,
         operand_materialized_slot, operation_access_place, paths_overlap, present,
@@ -10294,6 +10859,303 @@ mod tests {
             join_consumed: true,
             panic_observed: false,
         }
+    }
+
+    #[test]
+    fn completed_and_cancelled_tasks_register_in_their_parent_scope() {
+        let mut program = root_pressure_program();
+        let waiter_ty = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "Waiter".into(),
+            kind: BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::Waiter,
+                arguments: vec![BytecodeTypeId::new(5), BytecodeTypeId::new(0)],
+            },
+        });
+        let completer_ty = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "Completer".into(),
+            kind: BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::Completer,
+                arguments: vec![BytecodeTypeId::new(5), BytecodeTypeId::new(0)],
+            },
+        });
+        let pair_ty = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "(Waiter, Completer)".into(),
+            kind: BytecodeTypeKind::Tuple(vec![waiter_ty, completer_ty]),
+        });
+        let result_ty = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "Int ! Int".into(),
+            kind: BytecodeTypeKind::Result {
+                success: BytecodeTypeId::new(5),
+                error: BytecodeTypeId::new(5),
+            },
+        });
+        let trace = derive_trace_metadata(&program).unwrap();
+        let mut host = RejectingHost;
+        let mut engine = Engine::new(
+            &program,
+            &mut host,
+            VmLimits::default(),
+            ValueCopyStrategy::default(),
+            trace,
+        );
+        engine.task_scopes.push(Some(RuntimeTaskScope {
+            source: BytecodeScopeId::new(0),
+            owner: 0,
+            children: Vec::new(),
+            closed: false,
+        }));
+
+        let OperationResult::Value(Value::Heap(_)) = engine.new_oneshot(pair_ty).unwrap() else {
+            panic!("new one-shot did not return its pair")
+        };
+        engine.tasks.push(scheduler_task(TaskStatus::Running));
+        engine
+            .park_oneshot(
+                1,
+                TaskWait::OneShotTask {
+                    id: 1,
+                    outcome: result_ty,
+                },
+            )
+            .unwrap();
+        assert!(
+            engine
+                .park_oneshot(
+                    99,
+                    TaskWait::OneShotTask {
+                        id: 99,
+                        outcome: result_ty,
+                    },
+                )
+                .is_err()
+        );
+        assert!(
+            !engine
+                .complete_oneshot(1, OneShotCompletion::Ok(Value::Integer(7)))
+                .unwrap()
+        );
+        assert!(
+            engine
+                .complete_oneshot(1, OneShotCompletion::Cancelled)
+                .unwrap()
+        );
+        assert!(
+            engine
+                .oneshot_result(result_ty, Ok(Value::Integer(1)))
+                .is_ok()
+        );
+        assert!(engine.oneshot_result(result_ty, Err(Value::Unit)).is_ok());
+        assert!(
+            engine
+                .oneshot_result(BytecodeTypeId::new(5), Ok(Value::Unit))
+                .is_err()
+        );
+        assert!(
+            engine
+                .oneshot_result(BytecodeTypeId::new(999), Ok(Value::Unit))
+                .is_err()
+        );
+
+        engine.oneshots.insert(2, OneShotState::default());
+        let pending = engine.spawn_oneshot_task(2, result_ty, 0).unwrap();
+        assert!(matches!(
+            engine.tasks[pending].status,
+            TaskStatus::Waiting(_)
+        ));
+        assert!(engine.spawn_oneshot_task(2, result_ty, 99).is_err());
+        engine
+            .complete_oneshot(2, OneShotCompletion::Cancelled)
+            .unwrap();
+        let cancelled_child = engine.spawn_oneshot_task(2, result_ty, 0).unwrap();
+        assert!(matches!(
+            engine.tasks[cancelled_child].status,
+            TaskStatus::Complete(Some(TaskCompletion::Cancelled))
+        ));
+        engine.oneshots.insert(
+            3,
+            OneShotState {
+                completion: Some(OneShotCompletion::Ok(Value::Integer(1))),
+                ..OneShotState::default()
+            },
+        );
+        assert!(engine.spawn_oneshot_task(3, result_ty, 0).is_err());
+        assert!(engine.spawn_oneshot_task(999, result_ty, 0).is_err());
+        assert!(
+            engine
+                .complete_oneshot(999, OneShotCompletion::Cancelled)
+                .is_err()
+        );
+
+        let waiter = |name: &str, parameters: Vec<BytecodeParameter>| BytecodeCallable {
+            name: name.into(),
+            generic_arity: 0,
+            parameters,
+            outcome: result_ty,
+            function_type: result_ty,
+            implementation: None,
+            closure: None,
+        };
+        let receiver = BytecodeParameter {
+            mode: BytecodeParameterMode::Value,
+            ty: waiter_ty,
+            variadic_element: None,
+            receiver: true,
+        };
+        assert!(
+            engine
+                .prepare_oneshot_method(&waiter("std.async.Waiter.wait", Vec::new()), &[])
+                .is_err()
+        );
+        assert!(
+            engine
+                .prepare_oneshot_method(&waiter("std.async.Waiter.wait", vec![receiver]), &[])
+                .is_err()
+        );
+        let waiter_value = Value::Host(RuntimeValue::Host {
+            kind: RuntimeHostValueKind::Waiter,
+            id: 6,
+        });
+        engine.oneshots.insert(6, OneShotState::default());
+        assert!(matches!(
+            engine
+                .prepare_oneshot_method(
+                    &waiter("std.async.Waiter.wait", vec![receiver]),
+                    std::slice::from_ref(&waiter_value),
+                )
+                .unwrap(),
+            Some(OperationResult::OneShotWait { id: 6, .. })
+        ));
+        assert!(
+            engine
+                .prepare_oneshot_method(
+                    &waiter("std.async.Waiter.wait", vec![receiver]),
+                    &[waiter_value],
+                )
+                .is_err()
+        );
+        assert!(
+            engine
+                .prepare_oneshot_method(
+                    &waiter("std.async.Waiter.wait", vec![receiver]),
+                    &[Value::Host(RuntimeValue::Host {
+                        kind: RuntimeHostValueKind::Waiter,
+                        id: 99,
+                    })],
+                )
+                .is_err()
+        );
+
+        let completer_receiver = BytecodeParameter {
+            ty: completer_ty,
+            ..receiver
+        };
+        assert!(
+            engine
+                .prepare_oneshot_method(&waiter("std.async.Completer.complete", Vec::new()), &[],)
+                .is_err()
+        );
+        assert!(
+            engine
+                .prepare_oneshot_method(
+                    &waiter("std.async.Completer.complete", vec![completer_receiver]),
+                    &[],
+                )
+                .is_err()
+        );
+        engine.oneshots.insert(4, OneShotState::default());
+        let completer_value = Value::Host(RuntimeValue::Host {
+            kind: RuntimeHostValueKind::Completer,
+            id: 4,
+        });
+        assert!(
+            engine
+                .prepare_oneshot_method(
+                    &waiter("std.async.Completer.complete", vec![completer_receiver],),
+                    std::slice::from_ref(&completer_value),
+                )
+                .is_err()
+        );
+        assert!(
+            engine
+                .prepare_oneshot_method(
+                    &waiter(
+                        "std.async.Completer.complete",
+                        vec![completer_receiver, receiver],
+                    ),
+                    &[completer_value.clone(), Value::Integer(9)],
+                )
+                .unwrap()
+                .is_some()
+        );
+        engine.oneshots.insert(7, OneShotState::default());
+        assert!(
+            engine
+                .prepare_oneshot_method(
+                    &waiter(
+                        "std.async.Completer.fail",
+                        vec![completer_receiver, receiver],
+                    ),
+                    &[Value::Host(RuntimeValue::Host {
+                        kind: RuntimeHostValueKind::Completer,
+                        id: 7,
+                    })],
+                )
+                .is_err()
+        );
+        assert!(
+            engine
+                .prepare_oneshot_method(
+                    &waiter(
+                        "std.async.Completer.complete",
+                        vec![completer_receiver, receiver],
+                    ),
+                    &[completer_value.clone(), Value::Integer(9)],
+                )
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            engine
+                .prepare_oneshot_method(
+                    &waiter(
+                        "std.async.Completer.fail",
+                        vec![completer_receiver, receiver],
+                    ),
+                    &[completer_value.clone(), Value::Integer(0)],
+                )
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            engine
+                .prepare_oneshot_method(
+                    &waiter("std.async.Completer.cancel", vec![completer_receiver]),
+                    &[completer_value],
+                )
+                .unwrap()
+                .is_some()
+        );
+
+        let completed = engine.spawn_completed_task(Value::Integer(42), 0).unwrap();
+        let cancelled = engine.spawn_cancelled_task(0).unwrap();
+        assert!(engine.spawn_completed_task(Value::Unit, 99).is_err());
+        assert!(engine.spawn_cancelled_task(99).is_err());
+
+        assert!(matches!(
+            engine.tasks[completed].status,
+            TaskStatus::Complete(Some(TaskCompletion::Returned(Value::Integer(42))))
+        ));
+        assert!(matches!(
+            engine.tasks[cancelled].status,
+            TaskStatus::Complete(Some(TaskCompletion::Cancelled))
+        ));
+        let children = &engine.task_scopes[0].as_ref().unwrap().children;
+        assert!(children.contains(&completed));
+        assert!(children.contains(&cancelled));
     }
 
     #[test]

@@ -829,8 +829,13 @@ fn iterator_facts(
                 HirIterationProtocol::Trait {
                     element: _,
                     function_type,
+                    async_iteration,
                 } => (
-                    "Iterator",
+                    if *async_iteration {
+                        "AsyncIterator"
+                    } else {
+                        "Iterator"
+                    },
                     None,
                     Some(canonical_type(model, *function_type)?),
                 ),

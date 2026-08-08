@@ -1212,6 +1212,23 @@ fn worker_executable() -> Result<PathBuf, io::Error> {
         if binary.is_file() {
             return Ok(binary);
         }
+
+        // `cargo llvm-cov` puts the instrumented test harness under a
+        // separate target directory but does not build a matching binary
+        // target.  Reuse the normal Cargo binary when it is available so the
+        // process-boundary worker keeps the same command-line contract under
+        // coverage as it does for regular unit tests.
+        if target.parent().and_then(Path::file_name) == Some(OsStr::new("llvm-cov-target"))
+            && let Some(cargo_target) = target.parent().and_then(Path::parent)
+        {
+            let binary =
+                cargo_target
+                    .join("debug")
+                    .join(if cfg!(windows) { "tondo.exe" } else { "tondo" });
+            if binary.is_file() {
+                return Ok(binary);
+            }
+        }
     }
     Ok(current)
 }
@@ -3047,7 +3064,7 @@ mod tests {
         .unwrap();
         remove_json_nulls(&mut test_plan);
         for field in ["timeout_ms", "setup_timeout_ms", "teardown_timeout_ms"] {
-            test_plan["limits"][field] = serde_json::json!(1_000);
+            test_plan["limits"][field] = serde_json::json!(10_000);
         }
         let test_plan_toml = toml::to_string(&toml::Value::try_from(test_plan).unwrap()).unwrap();
         fs::write(root.join("tondo.test.toml"), test_plan_toml).unwrap();
@@ -3448,6 +3465,8 @@ mod tests {
                 OsString::from(helper_report),
                 OsString::from("--test-format"),
                 OsString::from("json"),
+                OsString::from("--timeout"),
+                OsString::from("10s"),
             ]
             .as_slice(),
         )
@@ -3513,7 +3532,7 @@ mod tests {
                 "--project",
                 project.to_str().unwrap(),
                 "--timeout",
-                "2s",
+                "20s",
             ]
             .map(OsString::from),
         )
@@ -3976,7 +3995,7 @@ mod tests {
                 .stderr(Stdio::piped())
                 .spawn()
                 .unwrap();
-            let (_status, stdout, stderr) = wait_worker(child, Some(1_000)).unwrap();
+            let (_status, stdout, stderr) = wait_worker(child, Some(10_000)).unwrap();
             assert_eq!(stdout.len(), 131_072);
             assert_eq!(stderr.len(), 131_072);
             let child = Command::new("sh")

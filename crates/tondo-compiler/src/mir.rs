@@ -10,7 +10,7 @@ use std::fmt;
 
 use crate::hir::{
     HirBinaryOperator, HirCallArgumentTarget, HirCallableId, HirClosureId, HirContainmentKind,
-    HirPrefixOperator, HirPreludeTraitMethod, HirRangeKind, HirScopeId,
+    HirPrefixOperator, HirPreludeTraitMethod, HirRangeKind, HirScopeId, HirSpawnKind,
 };
 use crate::resolve::{LocalId, MemberId, SymbolId};
 use crate::source::Span;
@@ -788,6 +788,7 @@ pub enum MirTerminatorKind {
     Spawn {
         operation: MirOperation,
         scope: HirScopeId,
+        kind: HirSpawnKind,
         destination: MirPlace,
         target: MirBlockId,
         unwind: MirBlockId,

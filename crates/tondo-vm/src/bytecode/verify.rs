@@ -449,6 +449,9 @@ impl<'a> TraceMetadataAnalysis<'a> {
                 },
                 BytecodeIntrinsicType::Pointer
                 | BytecodeIntrinsicType::Join
+                | BytecodeIntrinsicType::Waiter
+                | BytecodeIntrinsicType::Completer
+                | BytecodeIntrinsicType::AlreadyCompleted
                 | BytecodeIntrinsicType::Command
                 | BytecodeIntrinsicType::Pipeline
                 | BytecodeIntrinsicType::Bytes
@@ -1062,6 +1065,10 @@ fn intrinsic_capability(
             ClosedCapability::Copy | ClosedCapability::Discard
         )),
         BytecodeIntrinsicType::Join => fixed_capability(false),
+        BytecodeIntrinsicType::Waiter | BytecodeIntrinsicType::Completer => {
+            fixed_capability(capability == ClosedCapability::Send)
+        }
+        BytecodeIntrinsicType::AlreadyCompleted => fixed_capability(true),
         BytecodeIntrinsicType::Command | BytecodeIntrinsicType::Pipeline => {
             fixed_capability(matches!(
                 capability,
@@ -1483,6 +1490,9 @@ fn intrinsic_terminal(
         | BytecodeIntrinsicType::Range => dependent_terminal(arguments.to_vec()),
         BytecodeIntrinsicType::Ref
         | BytecodeIntrinsicType::Pointer
+        | BytecodeIntrinsicType::Waiter
+        | BytecodeIntrinsicType::Completer
+        | BytecodeIntrinsicType::AlreadyCompleted
         | BytecodeIntrinsicType::Command
         | BytecodeIntrinsicType::Pipeline
         | BytecodeIntrinsicType::Bytes
@@ -1661,6 +1671,9 @@ impl Verifier<'_> {
                 | BytecodeIntrinsicType::Range
                 | BytecodeIntrinsicType::Pointer
                 | BytecodeIntrinsicType::Join
+                | BytecodeIntrinsicType::Waiter
+                | BytecodeIntrinsicType::Completer
+                | BytecodeIntrinsicType::AlreadyCompleted
                 | BytecodeIntrinsicType::Command
                 | BytecodeIntrinsicType::Pipeline
                 | BytecodeIntrinsicType::Bytes
@@ -2160,6 +2173,13 @@ impl Verifier<'_> {
                 && !callable.name.starts_with("std.io.writeAll")
                 && !callable.name.starts_with("std.fs.File.")
                 && !callable.name.starts_with("std.fs.Directory.")
+                && !callable.name.starts_with("std.async.Waiter.wait")
+                // Source HIR admits an exclusive receiver only for the
+                // `AsyncIterator.next` implementation.  The bytecode table
+                // intentionally keeps implementation metadata opaque; HIR
+                // verification has already checked the closed protocol before
+                // this executable representation is built.
+                && !callable.name.starts_with("implementation#")
             {
                 return Err(BytecodeVerificationError::new(
                     &context,
@@ -2190,6 +2210,8 @@ impl Verifier<'_> {
                 && !callable.name.starts_with("std.fs.File.")
                 && !callable.name.starts_with("std.fs.Directory.")
                 && !callable.name.starts_with("std.collections.")
+                && !callable.name.starts_with("std.async.Waiter.wait")
+                && !callable.name.starts_with("std.async.Completer.")
             {
                 return Err(BytecodeVerificationError::new(
                     &context,
@@ -5211,15 +5233,22 @@ impl Verifier<'_> {
                 "spawn callee is not Send",
             ));
         }
+        let affine_wait = match callee.kind {
+            BytecodeOperandKind::Function { callable, .. } => self
+                .callable(callable, context)?
+                .name
+                .starts_with("std.async.Waiter.wait"),
+            _ => false,
+        };
         for argument in arguments {
             let send = self.capability(argument.value.ty, ClosedCapability::Send, context)?;
             let share = self.capability(argument.value.ty, ClosedCapability::Share, context)?;
             if !send
                 || argument.mode == BytecodeParameterMode::Ref && !share
-                || matches!(
+                || (matches!(
                     argument.mode,
                     BytecodeParameterMode::Mut | BytecodeParameterMode::Var
-                )
+                ) && !affine_wait)
             {
                 return Err(BytecodeVerificationError::new(
                     context,
@@ -9558,11 +9587,14 @@ fn block_exits_defer_scope(
     block: &BytecodeBlock,
     scope: BytecodeScopeId,
 ) -> bool {
-    let drains = |terminator: &BytecodeTerminatorKind| {
-        matches!(
-            terminator,
-            BytecodeTerminatorKind::DrainDefers { scopes, .. } if scopes.contains(&scope)
-        )
+    let drains = |terminator: &BytecodeTerminatorKind| match terminator {
+        BytecodeTerminatorKind::DrainDefers { scopes, .. } => scopes.contains(&scope),
+        BytecodeTerminatorKind::DrainScopes {
+            task_scopes,
+            defer_scopes,
+            ..
+        } => task_scopes.contains(&scope) || defer_scopes.contains(&scope),
+        _ => false,
     };
     if drains(&block.terminator.kind) {
         return true;
@@ -14569,6 +14601,10 @@ mod tests {
                 BytecodeIntrinsicType::Ref | BytecodeIntrinsicType::NumericConversionError => all,
                 BytecodeIntrinsicType::Pointer => [true, true, false, false, false, false],
                 BytecodeIntrinsicType::Join => [false; 6],
+                BytecodeIntrinsicType::Waiter | BytecodeIntrinsicType::Completer => {
+                    [false, true, false, false, true, false]
+                }
+                BytecodeIntrinsicType::AlreadyCompleted => all,
                 BytecodeIntrinsicType::Command
                 | BytecodeIntrinsicType::Pipeline
                 | BytecodeIntrinsicType::Bytes

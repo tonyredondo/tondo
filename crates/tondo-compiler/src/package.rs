@@ -48,6 +48,14 @@ pub struct Name(String);
 
 impl Name {
     pub fn new(value: impl AsRef<str>) -> Result<Self, NameError> {
+        Self::new_impl(value, false)
+    }
+
+    pub(crate) fn new_path_component(value: impl AsRef<str>) -> Result<Self, NameError> {
+        Self::new_impl(value, true)
+    }
+
+    fn new_impl(value: impl AsRef<str>, allow_async: bool) -> Result<Self, NameError> {
         let value = value.as_ref();
         if value.is_empty() {
             return Err(NameError::Empty);
@@ -56,7 +64,8 @@ impl Name {
         if normalized == "_" {
             return Err(NameError::Discard);
         }
-        if TokenKind::from_keyword(&normalized).is_some() {
+        if TokenKind::from_keyword(&normalized).is_some() && !(allow_async && normalized == "async")
+        {
             return Err(NameError::Keyword(normalized));
         }
         let mut characters = normalized.chars();
@@ -456,6 +465,7 @@ impl PackageGraph {
                 ModulePath::new("bytes")?,
                 ModulePath::new("console")?,
                 ModulePath::new("process")?,
+                ModulePath::new("async")?,
                 ModulePath::new("time")?,
                 ModulePath::new("env")?,
                 ModulePath::new("math")?,

@@ -3599,25 +3599,24 @@ fn main() {
             run.diagnostics().diagnostics()
         );
 
-        for (source, code) in [
-            (
-                &b"fn main() {\n    let operation = async (): Int { 1 }\n    _ = operation()\n}\n"
-                    [..],
-                "E1601",
-            ),
-            (
-                &b"fn main() {\n    let operation = unsafe (): Int { 1 }\n    _ = operation()\n}\n"
-                    [..],
-                "E1701",
-            ),
-            (
-                &b"async fn operation(): Int { 1 }\nfn main() {\n    _ = operation()\n}\n"[..],
-                "E1601",
-            ),
-            (
-                &b"unsafe fn operation(): Int { 1 }\nfn main() {\n    _ = operation()\n}\n"[..],
-                "E1701",
-            ),
+        for source in [
+            &b"fn main() {\n    let operation = async (): Int { 1 }\n    _ = operation()\n}\n"[..],
+            &b"async fn operation(): Int { 1 }\nfn main() {\n    _ = operation()\n}\n"[..],
+        ] {
+            let output = execute(operation_request(
+                Operation::Run,
+                source,
+                SourceForm::Script,
+                ResourceLimits::default(),
+            ))
+            .unwrap();
+            assert_eq!(output.status(), CompilationStatus::Success);
+            assert!(output.diagnostics().diagnostics().is_empty());
+        }
+
+        for source in [
+            &b"fn main() {\n    let operation = unsafe (): Int { 1 }\n    _ = operation()\n}\n"[..],
+            &b"unsafe fn operation(): Int { 1 }\nfn main() {\n    _ = operation()\n}\n"[..],
         ] {
             let output = execute(operation_request(
                 Operation::Run,
@@ -3627,7 +3626,7 @@ fn main() {
             ))
             .unwrap();
             assert_eq!(output.status(), CompilationStatus::Rejected);
-            assert_eq!(output.diagnostics().diagnostics()[0].code(), code);
+            assert_eq!(output.diagnostics().diagnostics()[0].code(), "E1701");
         }
     }
 
@@ -4075,6 +4074,202 @@ fn main() {
         .unwrap();
         assert_eq!(output.status(), CompilationStatus::Success);
         assert_eq!(output.exit_code(), 0);
+        assert!(output.diagnostics().diagnostics().is_empty());
+    }
+
+    #[test]
+    fn direct_suspension_is_inferred_and_join_can_cross_a_function_boundary() {
+        let output = execute(operation_request(
+            Operation::Run,
+            b"async fn work(): Int { 1 }\n\
+              fn prepare(): Join[Int, Never] {\n\
+                  scope {\n\
+                      return spawn thread work()\n\
+                  }\n\
+              }\n\
+              fn main() {\n\
+                  let job = prepare()\n\
+                  let value = await job\n\
+                  _ = value\n\
+              }\n",
+            SourceForm::Script,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(output.status(), CompilationStatus::Success);
+        assert_eq!(output.exit_code(), 0);
+        assert!(output.diagnostics().diagnostics().is_empty());
+    }
+
+    #[test]
+    fn async_iterator_for_awaits_each_poll_without_an_array_intermediate() {
+        let output = execute(operation_request(
+            Operation::Run,
+            b"type Counter = { value: Int }\n\
+              impl AsyncIterator[Int] for Counter {\n\
+                  async fn next(mut self): Int? { none }\n\
+              }\n\
+              fn consume(cursor: Counter) {\n\
+                  for item in cursor {\n\
+                      _ = item\n\
+                  }\n\
+              }\n\
+              fn main() { consume(Counter { value: 0 }) }\n",
+            SourceForm::Script,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(output.status(), CompilationStatus::Success);
+        assert_eq!(output.exit_code(), 0);
+        assert!(output.diagnostics().diagnostics().is_empty());
+    }
+
+    #[test]
+    fn async_oneshot_completes_pending_waiters_once_and_cancels_cleanly() {
+        let output = execute(operation_request(
+            Operation::Run,
+            b"import std.async\n\
+              fn direct() {\n\
+                  let pair = async.oneshot[Int, String]()\n\
+                  var (waiter, completer) = pair\n\
+                  _ = completer.complete(7)\n\
+                  let value = waiter.wait()\n\
+                  match value {\n\
+                      ok(7) => ()\n\
+                      ok(_) => panic(\"unexpected one-shot value\")\n\
+                      err(_) => panic(\"unexpected one-shot error\")\n\
+                  }\n\
+              }\n\
+              fn pending() {\n\
+                  let pair = async.oneshot[Int, String]()\n\
+                  var (waiter, completer) = pair\n\
+                  scope {\n\
+                      let job = spawn waiter.wait()\n\
+                      _ = completer.complete(9)\n\
+                      let value = await job\n\
+                      match value {\n\
+                          ok(9) => ()\n\
+                          ok(_) => panic(\"unexpected pending value\")\n\
+                          err(_) => panic(\"unexpected pending error\")\n\
+                      }\n\
+                  }\n\
+              }\n\
+              fn duplicate_result() {\n\
+                  let pair = async.oneshot[Int, String]()\n\
+                  var (waiter, completer) = pair\n\
+                  _ = completer.complete(1)\n\
+                  let duplicate = completer.complete(2)\n\
+                  match duplicate {\n\
+                      ok(_) => panic(\"duplicate completion succeeded\")\n\
+                      err(_) => ()\n\
+                  }\n\
+                  _ = waiter.wait()\n\
+              }\n\
+              fn failed_result() {\n\
+                  let pair = async.oneshot[Int, String]()\n\
+                  var (waiter, completer) = pair\n\
+                  _ = completer.fail(\"failed\")\n\
+                  let value = waiter.wait()\n\
+                  match value {\n\
+                      ok(_) => panic(\"one-shot failure succeeded\")\n\
+                      err(_) => ()\n\
+                  }\n\
+              }\n\
+              fn main() {\n\
+                  direct()\n\
+                  pending()\n\
+                  duplicate_result()\n\
+                  failed_result()\n\
+              }\n",
+            SourceForm::Script,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(output.status(), CompilationStatus::Success);
+        assert_eq!(output.exit_code(), 0);
+        assert!(output.diagnostics().diagnostics().is_empty());
+    }
+
+    #[test]
+    fn async_oneshot_cancellation_propagates_without_leaking_frames() {
+        let result = execute(operation_request(
+            Operation::Run,
+            b"import std.async\n\
+              fn main() {\n\
+                  let pair = async.oneshot[Int, String]()\n\
+                  var (waiter, completer) = pair\n\
+                  _ = completer.cancel()\n\
+                  let value = waiter.wait()\n\
+                  _ = value\n\
+              }\n",
+            SourceForm::Script,
+            ResourceLimits::default(),
+        ));
+        let Err(DriverError::Vm(VmError::Invariant(message))) = result else {
+            panic!("one-shot cancellation did not propagate as a VM cancellation: {result:?}");
+        };
+        assert!(message.contains("root task was cancelled"), "{message}");
+    }
+
+    #[test]
+    fn script_entry_infers_suspension_for_direct_waiter_calls() {
+        let output = execute(operation_request(
+            Operation::Run,
+            b"import std.async\n\
+              let pair = async.oneshot[Int, String]()\n\
+              var (waiter, completer) = pair\n\
+              _ = completer.complete(42)\n\
+              let value = waiter.wait()\n\
+              _ = value\n",
+            SourceForm::Script,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(output.status(), CompilationStatus::Success);
+        assert_eq!(output.exit_code(), 0);
+        assert!(output.diagnostics().diagnostics().is_empty());
+    }
+
+    #[test]
+    fn inferred_defer_await_runs_without_an_async_modifier() {
+        let output = execute(operation_request(
+            Operation::Run,
+            b"import std.async\n\
+              fn cleanup() {\n\
+                  let pair = async.oneshot[Int, String]()\n\
+                  var (waiter, completer) = pair\n\
+                  scope {\n\
+                      let job = spawn waiter.wait()\n\
+                      _ = completer.complete(1)\n\
+                      let value = await job\n\
+                      _ = value\n\
+                  }\n\
+              }\n\
+              fn main() {\n\
+                  defer await cleanup()\n\
+              }\n",
+            SourceForm::Script,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(output.status(), CompilationStatus::Success);
+        assert_eq!(output.exit_code(), 0);
+        assert!(output.diagnostics().diagnostics().is_empty());
+    }
+
+    #[test]
+    fn async_intrinsic_types_accept_explicit_generic_module_paths() {
+        let output = execute(operation_request(
+            Operation::Check,
+            b"import std.async\n\
+              type W = async.Waiter[Int, String]\n\
+              type C = async.Completer[Int, String]\n\
+              fn main() {}\n",
+            SourceForm::Module,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(output.status(), CompilationStatus::Success);
         assert!(output.diagnostics().diagnostics().is_empty());
     }
 

@@ -848,7 +848,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 }
                 flow
             }
-            HirExpressionKind::Spawn { operation } => {
+            HirExpressionKind::Spawn { operation, .. } => {
                 let reservations = match self
                     .program
                     .expression(*operation)
@@ -2820,10 +2820,17 @@ impl<'a, 'f> Analyzer<'a, 'f> {
     fn report_terminal_owner(&mut self, flow: &AvailabilityFlow, owner: TerminalOwner) {
         let mut origin = None;
         let mut structured_join = false;
+        // A function return is an ownership handoff only when the owner is
+        // definitely transferred on that exit.  Other exits (including an
+        // implicit return from a body that merely drops the value) must still
+        // report the outstanding terminal.  This keeps `return join` legal
+        // without weakening the ordinary affine-drop check.
         for state in flow
             .normal
             .iter()
-            .chain(flow.exits.iter())
+            .chain(flow.exits.iter().filter(|state| {
+                !matches!(owner, TerminalOwner::Local(local) if state.definitely_transferred.contains(&local))
+            }))
             .chain(flow.breaks.values())
             .chain(flow.continues.values())
         {
@@ -2946,7 +2953,6 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         for state in flow
             .normal
             .iter()
-            .chain(flow.exits.iter())
             .chain(flow.breaks.values())
             .chain(flow.continues.values())
         {
@@ -3725,7 +3731,6 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         for state in flow
             .normal
             .iter()
-            .chain(flow.exits.iter())
             .chain(flow.breaks.values())
             .chain(flow.continues.values())
         {
@@ -4278,7 +4283,7 @@ fn expression_children(kind: &HirExpressionKind) -> Vec<HirExpressionId> {
             children.push(*callee);
             children.extend(arguments.iter().map(super::HirCallArgument::value));
         }
-        HirExpressionKind::Await { operation } | HirExpressionKind::Spawn { operation } => {
+        HirExpressionKind::Await { operation } | HirExpressionKind::Spawn { operation, .. } => {
             children.push(*operation);
         }
         HirExpressionKind::Scope { body } => children.push(*body),

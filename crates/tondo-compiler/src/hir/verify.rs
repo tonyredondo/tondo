@@ -13,11 +13,11 @@ use super::capabilities::{CapabilityAnalysis, CapabilityAssumptions, bounds_impl
 use super::termination::{TraitTerminationEdge, analyze_trait_termination};
 use super::{
     AvailabilityFindingKind, HirAssignmentTarget, HirAssignmentTargetKind, HirBinaryOperator,
-    HirCallableId, HirCapability, HirCapabilityStatus, HirClosureId, HirConstantValue,
-    HirConstantValueKind, HirConstantVariantValue, HirContainmentKind, HirExpression,
-    HirExpressionId, HirExpressionKind, HirFlow, HirForKind, HirGenericParameter, HirIndexAccess,
-    HirIterationProtocol, HirPattern, HirPatternId, HirPatternKind, HirProgram, HirStatement,
-    HirTerminalStatus, HirTraitConstructor, HirTraitIdentity, HirTraitMethodKey,
+    HirBootstrapHostFunction, HirCallableId, HirCapability, HirCapabilityStatus, HirClosureId,
+    HirConstantValue, HirConstantValueKind, HirConstantVariantValue, HirContainmentKind,
+    HirExpression, HirExpressionId, HirExpressionKind, HirFlow, HirForKind, HirGenericParameter,
+    HirIndexAccess, HirIterationProtocol, HirPattern, HirPatternId, HirPatternKind, HirProgram,
+    HirStatement, HirTerminalStatus, HirTraitConstructor, HirTraitIdentity, HirTraitMethodKey,
     HirTypeDeclarationKind, HirValueCategory, HirVariantPayload, HirVariantValue, HirWriteKind,
     TerminalAnalysis, TraitQuery, TraitSelectionError, analyze_availability,
     analyze_closure_captures, select_implementation,
@@ -510,6 +510,9 @@ impl Verifier<'_> {
                         | IntrinsicType::Range
                         | IntrinsicType::Pointer
                         | IntrinsicType::Join
+                        | IntrinsicType::Waiter
+                        | IntrinsicType::Completer
+                        | IntrinsicType::AlreadyCompleted
                         | IntrinsicType::Command
                         | IntrinsicType::Pipeline
                         | IntrinsicType::Bytes
@@ -960,6 +963,7 @@ impl Verifier<'_> {
                 HirIterationProtocol::Trait {
                     element,
                     function_type,
+                    ..
                 } => self.verify_type_formations(
                     analysis,
                     [*element, *function_type],
@@ -1285,7 +1289,7 @@ impl Verifier<'_> {
                 HirTraitConstructor::Prelude(name) => {
                     let expected = match name.as_str() {
                         "Display" => 0,
-                        "Iterator" => 1,
+                        "Iterator" | "AsyncIterator" => 1,
                         _ => {
                             return Err(HirInvariantError::new(
                                 &context,
@@ -1456,6 +1460,9 @@ impl Verifier<'_> {
                     HirTraitConstructor::Prelude(name) if name.as_str() == "Iterator" => {
                         HirTraitMethodKey::Prelude(super::HirPreludeTraitMethod::IteratorNext)
                     }
+                    HirTraitConstructor::Prelude(name) if name.as_str() == "AsyncIterator" => {
+                        HirTraitMethodKey::Prelude(super::HirPreludeTraitMethod::AsyncIteratorNext)
+                    }
                     _ => unreachable!("only open prelude traits reach this branch"),
                 };
                 if !provided.contains(&required) {
@@ -1513,7 +1520,8 @@ impl Verifier<'_> {
                     let context = format!("implementation#{}", later.id.index());
                     if matches!(
                         &identity,
-                        HirTraitIdentity::Prelude(name) if name.as_str() == "Iterator"
+                        HirTraitIdentity::Prelude(name)
+                            if matches!(name.as_str(), "Iterator" | "AsyncIterator")
                     ) {
                         let earlier_element = earlier
                             .trait_reference
@@ -1841,6 +1849,7 @@ impl Verifier<'_> {
                 let (trait_name, method_name) = match method_key {
                     super::HirPreludeTraitMethod::Display => ("Display", "display"),
                     super::HirPreludeTraitMethod::IteratorNext => ("Iterator", "next"),
+                    super::HirPreludeTraitMethod::AsyncIteratorNext => ("AsyncIterator", "next"),
                 };
                 if !matches!(
                     &implementation.trait_reference.constructor,
@@ -1859,7 +1868,8 @@ impl Verifier<'_> {
                         ParameterMode::Ref,
                         contract_interner.scalar(ScalarType::String),
                     ),
-                    super::HirPreludeTraitMethod::IteratorNext => (
+                    super::HirPreludeTraitMethod::IteratorNext
+                    | super::HirPreludeTraitMethod::AsyncIteratorNext => (
                         ParameterMode::Mut,
                         contract_interner
                             .option(implementation.trait_reference.arguments[0])
@@ -1868,7 +1878,7 @@ impl Verifier<'_> {
                 };
                 let expected_function = contract_interner
                     .function(FunctionType::new(
-                        false,
+                        matches!(method_key, super::HirPreludeTraitMethod::AsyncIteratorNext),
                         false,
                         vec![FunctionParameter::new(mode, implementation.target)],
                         None,
@@ -2134,11 +2144,31 @@ impl Verifier<'_> {
                         || function.name().starts_with("std.fs.File.")
                         || function.name().starts_with("std.fs.Directory.")
             );
+            let async_oneshot_callable = matches!(
+                callable.id,
+                HirCallableId::Host(HirBootstrapHostFunction::AsyncWaiterWait)
+            );
+            let async_iterator_callable = matches!(
+                callable.id,
+                HirCallableId::Implementation(method)
+                    if self
+                        .program
+                        .implementation_method(method)
+                        .and_then(|method| method.contract())
+                        .is_some_and(|contract| {
+                            contract.method()
+                                == super::HirTraitMethodKey::Prelude(
+                                    super::HirPreludeTraitMethod::AsyncIteratorNext,
+                                )
+                        })
+            );
             if function.is_async()
                 && callable.parameters.iter().any(|parameter| {
                     matches!(parameter.mode, ParameterMode::Mut | ParameterMode::Var)
                 })
                 && !host_io_callable
+                && !async_oneshot_callable
+                && !async_iterator_callable
             {
                 return Err(HirInvariantError::new(
                     &context,
@@ -2986,7 +3016,7 @@ impl Verifier<'_> {
                     proof.memo.insert(query.clone(), false);
                     return Ok(false);
                 }
-                "Display" | "Iterator" => {}
+                "Display" | "Iterator" | "AsyncIterator" => {}
                 _ => {
                     proof.memo.insert(query.clone(), false);
                     return Ok(false);
@@ -3517,7 +3547,7 @@ impl Verifier<'_> {
                     if !matches!(
                         expression.kind,
                         HirExpressionKind::Await { operation }
-                            | HirExpressionKind::Spawn { operation }
+                            | HirExpressionKind::Spawn { operation, .. }
                             if operation == child
                     ) {
                         return Err(HirInvariantError::new(
@@ -4163,7 +4193,7 @@ impl Verifier<'_> {
                     }
                 }
             }
-            HirExpressionKind::Spawn { operation } => {
+            HirExpressionKind::Spawn { operation, .. } => {
                 let operation = self.expression(*operation, context)?;
                 if !matches!(operation.kind, HirExpressionKind::AsyncCall { .. }) {
                     return Err(HirInvariantError::new(
@@ -4817,6 +4847,7 @@ impl Verifier<'_> {
             HirIterationProtocol::Trait {
                 element,
                 function_type,
+                async_iteration,
             } => {
                 if self.pattern_loan_mode(pattern_id, context)?.is_some() {
                     return Err(HirInvariantError::new(
@@ -4827,14 +4858,19 @@ impl Verifier<'_> {
                 self.verify_type(*element, format!("{context} iterator element"))?;
                 self.verify_type(*function_type, format!("{context} iterator function"))?;
                 let mut interner = self.program.interner.clone();
-                let expected = super::HirPreludeTraitMethod::IteratorNext
+                let method = if *async_iteration {
+                    super::HirPreludeTraitMethod::AsyncIteratorNext
+                } else {
+                    super::HirPreludeTraitMethod::IteratorNext
+                };
+                let expected = method
                     .function_type(&mut interner, &[*element, source.ty])
                     .map_err(|error| HirInvariantError::new(context, error.to_string()))?
                     .expect("Iterator.next receives its element and Self types");
                 if expected != *function_type {
                     return Err(HirInvariantError::new(
                         context,
-                        "trait iterator protocol does not match the closed Iterator.next contract",
+                        "trait iterator protocol does not match the closed iterator.next contract",
                     ));
                 }
                 Some(*element)
@@ -6030,7 +6066,7 @@ fn expression_children(expression: &HirExpression) -> Vec<HirExpressionId> {
             children.push(*callee);
             children.extend(arguments.iter().map(|argument| argument.value));
         }
-        HirExpressionKind::Await { operation } | HirExpressionKind::Spawn { operation } => {
+        HirExpressionKind::Await { operation } | HirExpressionKind::Spawn { operation, .. } => {
             children.push(*operation);
         }
         HirExpressionKind::Scope { body } => children.push(*body),
@@ -7550,7 +7586,7 @@ mod tests {
             .expect("user iterator loop retains a trait protocol");
         *protocol = unit;
         let error = verify_typed_hir(&resolved, &invalid).unwrap_err();
-        assert!(error.message().contains("Iterator.next contract"));
+        assert!(error.message().contains("closed iterator.next contract"));
 
         let (resolved, mut wrong_intrinsic_cursor) = checked_program_from(SOURCE);
         let unit = wrong_intrinsic_cursor.interner.scalar(ScalarType::Unit);
@@ -9220,7 +9256,7 @@ mod tests {
             let spawn = expression_id(program, |kind| {
                 matches!(kind, HirExpressionKind::Spawn { .. })
             });
-            let HirExpressionKind::Spawn { operation } =
+            let HirExpressionKind::Spawn { operation, .. } =
                 &mut program.expressions[spawn.index() as usize].kind
             else {
                 unreachable!()

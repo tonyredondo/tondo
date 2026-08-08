@@ -40,6 +40,11 @@ pub(super) struct RuntimeJoin {
     pub(super) scope: usize,
 }
 
+/// Scope marker used after an explicit `return` transfers a `Join` to the
+/// caller.  The child remains affine and must still be consumed, but it is no
+/// longer owned by a lexical task scope.
+pub(super) const TRANSFERRED_JOIN_SCOPE: usize = usize::MAX;
+
 impl Value {
     pub(super) fn heap_handle(&self) -> Option<HeapHandle> {
         match self {

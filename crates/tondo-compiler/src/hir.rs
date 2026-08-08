@@ -101,6 +101,12 @@ fn bootstrap_process_intrinsic(module: &ModuleId, name: &Name) -> Option<Intrins
             "Utf8Error" => IntrinsicType::Utf8Error,
             _ => return None,
         }),
+        "async" => Some(match name.as_str() {
+            "Waiter" => IntrinsicType::Waiter,
+            "Completer" => IntrinsicType::Completer,
+            "AlreadyCompleted" => IntrinsicType::AlreadyCompleted,
+            _ => return None,
+        }),
         "time" => Some(match name.as_str() {
             "Duration" => IntrinsicType::Duration,
             "Instant" => IntrinsicType::Instant,
@@ -1185,6 +1191,7 @@ impl HirImplementationMethodId {
 pub enum HirPreludeTraitMethod {
     Display,
     IteratorNext,
+    AsyncIteratorNext,
 }
 
 impl HirPreludeTraitMethod {
@@ -1192,28 +1199,33 @@ impl HirPreludeTraitMethod {
         match self {
             Self::Display => "Display",
             Self::IteratorNext => "Iterator",
+            Self::AsyncIteratorNext => "AsyncIterator",
         }
     }
 
     pub(crate) fn method_name(self) -> &'static str {
         match self {
             Self::Display => "display",
-            Self::IteratorNext => "next",
+            Self::IteratorNext | Self::AsyncIteratorNext => "next",
         }
     }
 
     pub(crate) fn generic_arity(self) -> u32 {
         match self {
             Self::Display => 1,
-            Self::IteratorNext => 2,
+            Self::IteratorNext | Self::AsyncIteratorNext => 2,
         }
     }
 
     pub(crate) fn query(self, arguments: &[TypeId]) -> Option<TraitQuery> {
         let (trait_arguments, target) = match (self, arguments) {
             (Self::Display, [target]) => (Vec::new(), *target),
-            (Self::IteratorNext, [element, target]) => (vec![*element], *target),
-            (Self::Display, _) | (Self::IteratorNext, _) => return None,
+            (Self::IteratorNext | Self::AsyncIteratorNext, [element, target]) => {
+                (vec![*element], *target)
+            }
+            (Self::Display, _) | (Self::IteratorNext, _) | (Self::AsyncIteratorNext, _) => {
+                return None;
+            }
         };
         Some(TraitQuery::from_parts(
             HirTraitConstructor::Prelude(
@@ -1235,14 +1247,16 @@ impl HirPreludeTraitMethod {
                 *target,
                 interner.scalar(ScalarType::String),
             ),
-            (Self::IteratorNext, [element, target]) => {
+            (Self::IteratorNext | Self::AsyncIteratorNext, [element, target]) => {
                 (ParameterMode::Mut, *target, interner.option(*element)?)
             }
-            (Self::Display, _) | (Self::IteratorNext, _) => return Ok(None),
+            (Self::Display, _) | (Self::IteratorNext, _) | (Self::AsyncIteratorNext, _) => {
+                return Ok(None);
+            }
         };
         interner
             .function(FunctionType::new(
-                false,
+                matches!(self, Self::AsyncIteratorNext),
                 false,
                 vec![FunctionParameter::new(mode, receiver)],
                 None,
@@ -1258,7 +1272,7 @@ impl HirPreludeTraitMethod {
     ) -> Result<bool, TypeError> {
         Ok(match (self, arguments) {
             (Self::Display, [target]) => intrinsic_display_type(interner, *target)?,
-            (Self::Display, _) | (Self::IteratorNext, _) => false,
+            (Self::Display, _) | (Self::IteratorNext, _) | (Self::AsyncIteratorNext, _) => false,
         })
     }
 }
@@ -2016,6 +2030,7 @@ pub enum HirExpressionKind {
     },
     Spawn {
         operation: HirExpressionId,
+        kind: HirSpawnKind,
     },
     Scope {
         body: HirExpressionId,
@@ -2076,6 +2091,15 @@ pub enum HirExpressionKind {
     },
 }
 
+/// Execution lane selected by `spawn`.  Both lanes share the same affine
+/// `Join` contract; the hosted executor may schedule `Thread` on a worker
+/// while retaining identical cancellation and cleanup semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HirSpawnKind {
+    Task,
+    Thread,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum HirBootstrapHostFunction {
     ConsolePrint,
@@ -2112,6 +2136,11 @@ pub enum HirBootstrapHostFunction {
     ProcessHandleRun,
     ProcessHandleCheck,
     ProcessHandleCancel,
+    AsyncOneshot,
+    AsyncWaiterWait,
+    AsyncCompleterComplete,
+    AsyncCompleterFail,
+    AsyncCompleterCancel,
     BytesFromString,
     BytesToString,
     BytesEmpty,
@@ -2342,6 +2371,11 @@ impl HirBootstrapHostFunction {
             Self::ProcessHandleRun => "std.process.ProcessHandle.run",
             Self::ProcessHandleCheck => "std.process.ProcessHandle.check",
             Self::ProcessHandleCancel => "std.process.ProcessHandle.cancel",
+            Self::AsyncOneshot => "std.async.oneshot",
+            Self::AsyncWaiterWait => "std.async.Waiter.wait",
+            Self::AsyncCompleterComplete => "std.async.Completer.complete",
+            Self::AsyncCompleterFail => "std.async.Completer.fail",
+            Self::AsyncCompleterCancel => "std.async.Completer.cancel",
             Self::BytesFromString => "intrinsic.Bytes.fromString",
             Self::BytesToString => "intrinsic.String.fromBytes",
             Self::BytesEmpty => "std.bytes.empty",
@@ -2568,12 +2602,17 @@ impl HirBootstrapHostFunction {
                 | Self::ProcessHandleRun
                 | Self::ProcessHandleCheck
                 | Self::ProcessHandleCancel
+                | Self::AsyncWaiterWait
                 | Self::TimeSleep
                 | Self::TimerWait
                 | Self::TestingWithVirtualTime
                 | Self::VirtualTimeSettle
                 | Self::VirtualTimeAdvance
         )
+    }
+
+    pub const fn suspends(self) -> bool {
+        self.is_async()
     }
 }
 
@@ -2846,6 +2885,9 @@ pub enum HirIterationProtocol {
     Trait {
         element: TypeId,
         function_type: TypeId,
+        /// `true` when the witness is `AsyncIterator.next` and each poll
+        /// suspends before yielding the next option value.
+        async_iteration: bool,
     },
 }
 

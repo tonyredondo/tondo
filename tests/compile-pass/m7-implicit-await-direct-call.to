@@ -2,7 +2,7 @@ async fn compute(): Int {
     42
 }
 
-fn invalid() {
-    let value = await compute()
+fn main() {
+    let value = compute()
     assert(value == 42)
 }

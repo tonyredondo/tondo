@@ -33,10 +33,10 @@ use super::{
     HirGenericParameter, HirIndexAccess, HirIterationProtocol, HirLiteral, HirLoopId, HirMapEntry,
     HirMatchArm, HirMatchMode, HirMemberReference, HirNominalShape, HirParameter, HirPattern,
     HirPatternField, HirPatternId, HirPatternKind, HirPrefixOperator, HirPreludeTraitMethod,
-    HirProgram, HirRangeKind, HirRecordFieldValue, HirScopeId, HirStatement, HirTraitConstructor,
-    HirTypeDeclarationKind, HirValueCategory, HirVariantPayload, HirVariantValue, HirWriteKind,
-    TerminalAnalysis, TraitQuery, TraitSelectionError, analyze_availability,
-    analyze_closure_captures, select_implementation,
+    HirProgram, HirRangeKind, HirRecordFieldValue, HirScopeId, HirSpawnKind, HirStatement,
+    HirTraitConstructor, HirTypeDeclarationKind, HirValueCategory, HirVariantPayload,
+    HirVariantValue, HirWriteKind, TerminalAnalysis, TraitQuery, TraitSelectionError,
+    analyze_availability, analyze_closure_captures, select_implementation,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -291,6 +291,10 @@ struct BodyContext {
     receiver: Option<TypeId>,
     receiver_permission: PlacePermission,
     callable: Option<CallableContext>,
+    /// Source callable currently being checked.  This is separate from the
+    /// outcome context so an `AsyncIterator` fallback can promote a function
+    /// to `suspends` after type selection has identified its protocol.
+    callable_id: Option<HirCallableId>,
     contextual_self: Option<TypeId>,
     trait_body: Option<TraitBodyContext>,
     trait_assumptions: Vec<TraitQuery>,
@@ -819,6 +823,9 @@ impl<'a> ExpressionChecker<'a> {
                         | IntrinsicType::Range
                         | IntrinsicType::Pointer
                         | IntrinsicType::Join
+                        | IntrinsicType::Waiter
+                        | IntrinsicType::Completer
+                        | IntrinsicType::AlreadyCompleted
                         | IntrinsicType::Command
                         | IntrinsicType::Pipeline
                         | IntrinsicType::Bytes
@@ -1197,6 +1204,7 @@ impl<'a> ExpressionChecker<'a> {
                 error,
                 signature: callable.span,
             });
+            context.callable_id = Some(callable.id);
             let script_errors =
                 if callable.is_implicit_script() && error == Some(self.program.interner.error()) {
                     Some(Rc::new(RefCell::new(BTreeSet::new())))
@@ -2347,9 +2355,8 @@ impl<'a> ExpressionChecker<'a> {
                     &mut pending,
                     warnings,
                 ),
-                HirExpressionKind::Await { operation } | HirExpressionKind::Spawn { operation } => {
-                    pending.push(*operation)
-                }
+                HirExpressionKind::Await { operation }
+                | HirExpressionKind::Spawn { operation, .. } => pending.push(*operation),
                 HirExpressionKind::Scope { body } => pending.push(*body),
                 HirExpressionKind::PreludePanic { message } => pending.push(*message),
                 HirExpressionKind::PreludeAssert {
@@ -2741,7 +2748,7 @@ impl<'a> ExpressionChecker<'a> {
         expected: Option<ExpressionExpectation>,
         context: &mut BodyContext,
     ) -> Result<HirExpressionId, HirError> {
-        let is_async = node
+        let mut is_async = node
             .child_tokens()
             .any(|token| token.kind() == TokenKind::Async);
         let is_unsafe = node
@@ -3012,6 +3019,7 @@ impl<'a> ExpressionChecker<'a> {
         };
 
         let mut closure_context = context.clone();
+        closure_context.callable_id = None;
         closure_context.loops.clear();
         closure_context.defer_control_boundary = false;
         closure_context.script_errors = inferred_errors.clone();
@@ -3067,6 +3075,7 @@ impl<'a> ExpressionChecker<'a> {
         self.closure_body = suspended_closure;
         self.opaque_body = suspended_opaque;
         let (mut body_root, mut outcome) = checked_body?;
+        is_async |= closure_context.is_async;
         if let (Some(success), Some(errors)) = (inferred_error_success, inferred_errors) {
             let (root, inferred_outcome) = self.finish_inferred_error_region(
                 body_root,
@@ -3169,11 +3178,15 @@ impl<'a> ExpressionChecker<'a> {
         context: &mut BodyContext,
     ) -> Result<HirExpressionId, HirError> {
         let span = self.sources.span(file, node.range())?;
+        if !context.is_async && (context.callable_id.is_some() || context.callable.is_some()) {
+            context.is_async = true;
+            self.promote_callable_to_suspendible(context)?;
+        }
         if !context.is_async {
             self.emit(
                 span,
                 "E1610",
-                "`await` is only valid inside an async function or closure",
+                "`await` is only valid inside an inferred suspending function or closure",
                 Vec::new(),
                 None,
             )?;
@@ -3260,11 +3273,23 @@ impl<'a> ExpressionChecker<'a> {
         context: &mut BodyContext,
     ) -> Result<HirExpressionId, HirError> {
         let span = self.sources.span(file, node.range())?;
+        let kind = if node
+            .child_tokens()
+            .any(|token| token.kind() == TokenKind::Thread)
+        {
+            HirSpawnKind::Thread
+        } else {
+            HirSpawnKind::Task
+        };
+        if !context.is_async && (context.callable_id.is_some() || context.callable.is_some()) {
+            context.is_async = true;
+            self.promote_callable_to_suspendible(context)?;
+        }
         if !context.is_async {
             self.emit(
                 span,
                 "E1610",
-                "`spawn` is only valid inside an async function or closure",
+                "`spawn` is only valid inside an inferred suspending function or closure",
                 Vec::new(),
                 None,
             )?;
@@ -3323,7 +3348,7 @@ impl<'a> ExpressionChecker<'a> {
             span,
             ty: join,
             category: HirValueCategory::Value,
-            kind: HirExpressionKind::Spawn { operation },
+            kind: HirExpressionKind::Spawn { operation, kind },
         })
     }
 
@@ -3335,11 +3360,15 @@ impl<'a> ExpressionChecker<'a> {
         context: &mut BodyContext,
     ) -> Result<HirExpressionId, HirError> {
         let span = self.sources.span(file, node.range())?;
+        if !context.is_async && (context.callable_id.is_some() || context.callable.is_some()) {
+            context.is_async = true;
+            self.promote_callable_to_suspendible(context)?;
+        }
         if !context.is_async {
             self.emit(
                 span,
                 "E1610",
-                "`scope` is only valid inside an async function or closure",
+                "`scope` is only valid inside an inferred suspending function or closure",
                 Vec::new(),
                 None,
             )?;
@@ -7208,6 +7237,7 @@ impl<'a> ExpressionChecker<'a> {
 
         let unit = self.program.interner.scalar(ScalarType::Unit);
         let mut closure_context = context.clone();
+        closure_context.callable_id = None;
         closure_context.loops.clear();
         closure_context.script_errors = None;
         closure_context.receiver = None;
@@ -10162,12 +10192,15 @@ impl<'a> ExpressionChecker<'a> {
                 module,
                 namespace: Namespace::Type,
                 name,
-            } if arguments.is_empty() => {
+            } => {
                 let Some(constructor) = super::bootstrap_process_intrinsic(module, name) else {
                     return Ok(None);
                 };
+                if constructor.arity() != arguments.len() {
+                    return Ok(None);
+                }
                 Ok(Some(
-                    self.program.interner.intrinsic(constructor, Vec::new())?,
+                    self.program.interner.intrinsic(constructor, arguments)?,
                 ))
             }
             ResolvedName::External { .. }
@@ -10241,7 +10274,7 @@ impl<'a> ExpressionChecker<'a> {
                     TypeKind::Intrinsic {
                         constructor: actual,
                         arguments,
-                    } if *actual == constructor && arguments.is_empty()
+                    } if *actual == constructor && arguments.len() == constructor.arity()
                 ))
             }
             ResolvedName::External { .. } => Ok(false),
@@ -10635,7 +10668,7 @@ impl<'a> ExpressionChecker<'a> {
                     memo.insert(query.clone(), TraitProofStatus::Deferred);
                     return Ok(TraitProofStatus::Deferred);
                 }
-                "Display" | "Iterator" => {}
+                "Display" | "Iterator" | "AsyncIterator" => {}
                 _ => {
                     memo.insert(query.clone(), TraitProofStatus::Deferred);
                     return Ok(TraitProofStatus::Deferred);
@@ -11567,48 +11600,81 @@ impl<'a> ExpressionChecker<'a> {
             (Some(pattern_node), Some(source_node)) => {
                 let source = self.check_expression(file, source_node, None, context)?;
                 let source_type = self.expression_type(source);
+                let explicit_async = node
+                    .child_tokens()
+                    .any(|token| token.kind() == TokenKind::Await);
                 let element = self.iteration_element_type(source_type)?;
                 let (element, protocol) = if let Some(element) = element {
                     (element, None)
-                } else if let Some(query) = self.iterator_trait_query(
-                    source_type,
-                    self.sources.span(file, source_node.range())?,
-                    context,
-                )? {
-                    let element = query.arguments()[0];
-                    if self.require_trait_query(
-                        self.sources.span(file, source_node.range())?,
-                        query,
-                        context,
-                        TraitRequirementOrigin::Direct,
-                    )? {
-                        let function_type = HirPreludeTraitMethod::IteratorNext
-                            .function_type(&mut self.program.interner, &[element, source_type])?
-                            .expect("Iterator.next has one trait argument and Self");
-                        (
-                            element,
-                            Some(HirIterationProtocol::Trait {
-                                element,
-                                function_type,
-                            }),
-                        )
+                } else {
+                    let trait_query: Option<TraitQuery> = if explicit_async {
+                        self.async_iterator_trait_query(
+                            source_type,
+                            self.sources.span(file, source_node.range())?,
+                            context,
+                        )?
                     } else {
+                        self.iterator_trait_query(
+                            source_type,
+                            self.sources.span(file, source_node.range())?,
+                            context,
+                        )?
+                        .or(self.async_iterator_trait_query(
+                            source_type,
+                            self.sources.span(file, source_node.range())?,
+                            context,
+                        )?)
+                    };
+                    if let Some(query) = trait_query {
+                        let element = query.arguments()[0];
+                        let async_iteration = matches!(
+                            query.constructor(),
+                            HirTraitConstructor::Prelude(name) if name.as_str() == "AsyncIterator"
+                        );
+                        if async_iteration && !context.is_async {
+                            context.is_async = true;
+                            self.promote_callable_to_suspendible(context)?;
+                        }
+                        if self.require_trait_query(
+                            self.sources.span(file, source_node.range())?,
+                            query,
+                            context,
+                            TraitRequirementOrigin::Direct,
+                        )? {
+                            let method = if async_iteration {
+                                HirPreludeTraitMethod::AsyncIteratorNext
+                            } else {
+                                HirPreludeTraitMethod::IteratorNext
+                            };
+                            let function_type = method
+                                .function_type(&mut self.program.interner, &[element, source_type])?
+                                .expect("iterator next has one trait argument and Self");
+                            (
+                                element,
+                                Some(HirIterationProtocol::Trait {
+                                    element,
+                                    function_type,
+                                    async_iteration,
+                                }),
+                            )
+                        } else {
+                            (self.program.interner.error(), None)
+                        }
+                    } else {
+                        if source_type != self.program.interner.error() {
+                            self.emit(
+                                self.sources.span(file, source_node.range())?,
+                                "E1206",
+                                format!(
+                                    "`{}` is not iterable and has no `Iterator[T]` implementation",
+                                    self.program.interner.canonical(source_type)?
+                                ),
+                                Vec::new(),
+                                None,
+                            )?;
+                        }
                         (self.program.interner.error(), None)
                     }
-                } else {
-                    if source_type != self.program.interner.error() {
-                        self.emit(
-                            self.sources.span(file, source_node.range())?,
-                            "E1206",
-                            format!(
-                                "`{}` is not iterable and has no `Iterator[T]` implementation",
-                                self.program.interner.canonical(source_type)?
-                            ),
-                            Vec::new(),
-                            None,
-                        )?;
-                    }
-                    (self.program.interner.error(), None)
                 };
                 let pattern = self.check_binding_pattern(
                     file,
@@ -11677,6 +11743,40 @@ impl<'a> ExpressionChecker<'a> {
             kind,
             body,
         })
+    }
+
+    fn promote_callable_to_suspendible(&mut self, context: &BodyContext) -> Result<(), HirError> {
+        let Some(callable_id) = context.callable_id else {
+            return Ok(());
+        };
+        let Some(index) = self
+            .program
+            .callables
+            .iter()
+            .position(|callable| callable.id == callable_id)
+        else {
+            return Ok(());
+        };
+        let function = match self
+            .program
+            .interner
+            .kind(self.program.callables[index].function_type())?
+        {
+            TypeKind::Function(function) => function.clone(),
+            _ => return Ok(()),
+        };
+        if function.is_async() {
+            return Ok(());
+        }
+        self.program.callables[index].function_type =
+            self.program.interner.function(FunctionType::new(
+                true,
+                function.is_unsafe(),
+                function.parameters().to_vec(),
+                function.variadic(),
+                function.outcome(),
+            ))?;
+        Ok(())
     }
 
     fn iteration_element_type(&mut self, source: TypeId) -> Result<Option<TypeId>, HirError> {
@@ -11947,6 +12047,31 @@ impl<'a> ExpressionChecker<'a> {
         span: Span,
         context: &BodyContext,
     ) -> Result<Option<TraitQuery>, HirError> {
+        self.trait_iterator_query(source, span, context, HirPreludeTraitMethod::IteratorNext)
+    }
+
+    fn async_iterator_trait_query(
+        &mut self,
+        source: TypeId,
+        span: Span,
+        context: &BodyContext,
+    ) -> Result<Option<TraitQuery>, HirError> {
+        self.trait_iterator_query(
+            source,
+            span,
+            context,
+            HirPreludeTraitMethod::AsyncIteratorNext,
+        )
+    }
+
+    fn trait_iterator_query(
+        &mut self,
+        source: TypeId,
+        span: Span,
+        context: &BodyContext,
+        method: HirPreludeTraitMethod,
+    ) -> Result<Option<TraitQuery>, HirError> {
+        let trait_name = method.trait_name();
         let mut assumptions = context
             .trait_assumptions
             .iter()
@@ -11954,7 +12079,7 @@ impl<'a> ExpressionChecker<'a> {
                 query.target() == source
                     && matches!(
                         query.constructor(),
-                        HirTraitConstructor::Prelude(name) if name.as_str() == "Iterator"
+                        HirTraitConstructor::Prelude(name) if name.as_str() == trait_name
                     )
             })
             .cloned();
@@ -11977,7 +12102,7 @@ impl<'a> ExpressionChecker<'a> {
             self.emit(
                 span,
                 "E1113",
-                "visible `Iterator` constraints disagree on the element type",
+                format!("visible `{trait_name}` constraints disagree on the element type"),
                 Vec::new(),
                 Some((expected, actual)),
             )?;
@@ -11997,15 +12122,19 @@ impl<'a> ExpressionChecker<'a> {
                 else {
                     return None;
                 };
-                (implementation.contract_complete
-                    && name.as_str() == "Iterator"
-                    && implementation.trait_reference.arguments.len() == 1)
-                    .then_some((
+                if implementation.contract_complete
+                    && name.as_str() == trait_name
+                    && implementation.trait_reference.arguments.len() == 1
+                {
+                    Some((
                         implementation.id,
                         implementation.parameters.len(),
                         implementation.target,
                         implementation.trait_reference.arguments[0],
                     ))
+                } else {
+                    None
+                }
             })
             .collect::<Vec<_>>();
         let mut selected = None;
@@ -12021,12 +12150,14 @@ impl<'a> ExpressionChecker<'a> {
             };
             let element =
                 TypeSubstitution::new(arguments).apply(&mut self.program.interner, element)?;
-            let query = HirPreludeTraitMethod::IteratorNext
+            let query = method
                 .query(&[element, source])
-                .expect("Iterator queries contain the element and Self");
+                .expect("iterator queries contain the element and Self");
             if selected.replace((implementation, query)).is_some() {
                 return Err(HirError::TraitSelectionInvariant {
-                    message: "coherent Iterator table selected more than one target header".into(),
+                    message: format!(
+                        "coherent {trait_name} table selected more than one target header"
+                    ),
                 });
             }
         }
@@ -13804,6 +13935,7 @@ impl<'a> ExpressionChecker<'a> {
                     HirBootstrapHostFunction::MessagePackCanonicalize
                 }
                 ("protobuf", Some("validate")) => HirBootstrapHostFunction::ProtobufValidate,
+                ("async", Some("oneshot")) => HirBootstrapHostFunction::AsyncOneshot,
                 ("iter", Some("map")) => HirBootstrapHostFunction::IterMap,
                 ("iter", Some("filter")) => HirBootstrapHostFunction::IterFilter,
                 ("iter", Some("take")) => HirBootstrapHostFunction::IterTake,
@@ -13931,7 +14063,10 @@ impl<'a> ExpressionChecker<'a> {
                 ),
                 _ => false,
             });
-        if !external_value && static_type == 0 && module.path().as_str() != "iter" {
+        if !external_value
+            && static_type == 0
+            && !matches!(module.path().as_str(), "iter" | "async")
+        {
             return Ok(None);
         }
         if !matches!(
@@ -13942,7 +14077,7 @@ impl<'a> ExpressionChecker<'a> {
                 host_function,
                 self.sources.span(file, base_path.range())?,
             )?;
-            let explicit_generics = if module.path().as_str() == "iter" {
+            let explicit_generics = if matches!(module.path().as_str(), "iter" | "async") {
                 explicit_bracket
                     .map(|bracket| {
                         self.expression_generic_arguments(file, bracket, Some(context))?
@@ -15821,6 +15956,7 @@ impl<'a> ExpressionChecker<'a> {
         let (method_name, method, trait_arity) = match name.as_str() {
             "Display" => ("display", HirPreludeTraitMethod::Display, 0usize),
             "Iterator" => ("next", HirPreludeTraitMethod::IteratorNext, 1usize),
+            "AsyncIterator" => ("next", HirPreludeTraitMethod::AsyncIteratorNext, 1usize),
             _ => return Ok(None),
         };
         if resolved_index + 2 != tokens.len() {
@@ -16321,6 +16457,7 @@ impl<'a> ExpressionChecker<'a> {
                     let method = match (name.as_str(), member_name.as_str()) {
                         ("Display", "display") => Some(HirPreludeTraitMethod::Display),
                         ("Iterator", "next") => Some(HirPreludeTraitMethod::IteratorNext),
+                        ("AsyncIterator", "next") => Some(HirPreludeTraitMethod::AsyncIteratorNext),
                         _ => None,
                     };
                     if let Some(method) = method {
@@ -17092,6 +17229,14 @@ impl<'a> ExpressionChecker<'a> {
                 (IntrinsicType::Instant, "isAfter") => HirBootstrapHostFunction::InstantIsAfter,
                 (IntrinsicType::Timer, "wait") => HirBootstrapHostFunction::TimerWait,
                 (IntrinsicType::Timer, "cancel") => HirBootstrapHostFunction::TimerCancel,
+                (IntrinsicType::Waiter, "wait") => HirBootstrapHostFunction::AsyncWaiterWait,
+                (IntrinsicType::Completer, "complete") => {
+                    HirBootstrapHostFunction::AsyncCompleterComplete
+                }
+                (IntrinsicType::Completer, "fail") => HirBootstrapHostFunction::AsyncCompleterFail,
+                (IntrinsicType::Completer, "cancel") => {
+                    HirBootstrapHostFunction::AsyncCompleterCancel
+                }
                 (IntrinsicType::VirtualTime, "settle") => {
                     HirBootstrapHostFunction::VirtualTimeSettle
                 }
@@ -17177,6 +17322,10 @@ impl<'a> ExpressionChecker<'a> {
                 | HirBootstrapHostFunction::CollectionMapInsert
                 | HirBootstrapHostFunction::CollectionSetInsert
                 | HirBootstrapHostFunction::CollectionSetRemove
+                | HirBootstrapHostFunction::AsyncWaiterWait
+                | HirBootstrapHostFunction::AsyncCompleterComplete
+                | HirBootstrapHostFunction::AsyncCompleterFail
+                | HirBootstrapHostFunction::AsyncCompleterCancel
         ) {
             self.check_method_receiver(receiver, ParameterMode::Var, Some(receiver_type), context)?;
         }
@@ -18303,6 +18452,22 @@ impl<'a> ExpressionChecker<'a> {
             )?;
             return self.recovery_expression(file, range);
         }
+        if contract.function.is_async()
+            && async_initiation.is_none()
+            && !context.in_defer_body
+            && !context.is_async
+        {
+            // Effect inference is intentionally performed at the consuming
+            // call site as well as in the type-lowering fixed point.  This
+            // covers protocol-selected suspension (notably AsyncIterator)
+            // whose source call name is not visible to the early pass.
+            context.is_async = true;
+            self.promote_callable_to_suspendible(context)?;
+        }
+        let implicit_await = contract.function.is_async()
+            && async_initiation.is_none()
+            && !context.in_defer_body
+            && context.is_async;
         if contract.function.is_async() {
             if context.in_defer_body
                 && !matches!(
@@ -18316,17 +18481,17 @@ impl<'a> ExpressionChecker<'a> {
                 self.emit(
                     call_span,
                     "E1608",
-                    "a deferred cleanup cannot call an async function",
+                    "a deferred cleanup cannot call a suspending function directly",
                     Vec::new(),
                     None,
                 )?;
                 return self.recovery_expression(file, range);
             }
-            if async_initiation.is_none() {
+            if async_initiation.is_none() && !implicit_await {
                 self.emit(
                     call_span,
                     "E1601",
-                    "an async call must be initiated by `await` or `spawn`",
+                    "a suspending call is not permitted in this non-suspending context",
                     Vec::new(),
                     None,
                 )?;
@@ -18983,12 +19148,23 @@ impl<'a> ExpressionChecker<'a> {
                 unsafe_call,
             }
         };
-        self.allocate_expression(HirExpression {
+        let operation = self.allocate_expression(HirExpression {
             span: self.sources.span(file, range)?,
             ty: shape.outcome,
             category: HirValueCategory::Value,
             kind,
-        })
+        })?;
+        if implicit_await {
+            self.validate_async_boundary(operation, AsyncInitiationKind::Await, context)?;
+            self.allocate_expression(HirExpression {
+                span: self.sources.span(file, range)?,
+                ty: shape.outcome,
+                category: HirValueCategory::Value,
+                kind: HirExpressionKind::Await { operation },
+            })
+        } else {
+            Ok(operation)
+        }
     }
 
     fn resolve_inference_type(
@@ -19682,7 +19858,7 @@ impl<'a> ExpressionChecker<'a> {
                 }
                 summary
             }
-            HirExpressionKind::Await { operation } | HirExpressionKind::Spawn { operation } => {
+            HirExpressionKind::Await { operation } | HirExpressionKind::Spawn { operation, .. } => {
                 self.expression_summary(*operation)
             }
             HirExpressionKind::Scope { body } => self.expression_summary(*body),
@@ -20194,7 +20370,7 @@ fn closure_protocol_expression_children(kind: &HirExpressionKind) -> Vec<HirExpr
             children.extend(step);
         }
         HirExpressionKind::PreludePanic { message } => children.push(*message),
-        HirExpressionKind::Await { operation } | HirExpressionKind::Spawn { operation } => {
+        HirExpressionKind::Await { operation } | HirExpressionKind::Spawn { operation, .. } => {
             children.push(*operation);
         }
         HirExpressionKind::Scope { body } => children.push(*body),
@@ -20706,6 +20882,7 @@ fn collect_statement_type_roots(statement: &HirStatement, roots: &mut BTreeSet<T
                     HirIterationProtocol::Trait {
                         element,
                         function_type,
+                        ..
                     } => {
                         roots.insert(*element);
                         roots.insert(*function_type);
@@ -20778,6 +20955,7 @@ fn rewrite_statement_types(statement: &mut HirStatement, replacements: &BTreeMap
                     HirIterationProtocol::Trait {
                         element,
                         function_type,
+                        ..
                     } => {
                         *element = replaced_type(*element, replacements);
                         *function_type = replaced_type(*function_type, replacements);
@@ -21567,7 +21745,7 @@ mod tests {
     }
 
     #[test]
-    fn async_closures_reject_exclusive_parameters_and_require_explicit_initiation() {
+    fn async_closures_reject_exclusive_parameters_and_await_direct_calls() {
         for source in [
             "fn invalid() {\n    let operation = async (value: mut Int) { () }\n    _ = operation\n}\n",
             "fn invalid() {\n    let operation = async (value: var Int) { () }\n    _ = operation\n}\n",
@@ -21579,7 +21757,11 @@ mod tests {
         let async_source =
             "fn invalid() {\n    let operation = async (): Int { 1 }\n    _ = operation()\n}\n";
         let (_, _, output) = check(async_source);
-        assert_eq!(codes(&output), ["E1601"]);
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
         assert!(output.is_complete());
         assert_eq!(output.program().closures().count(), 1);
 
@@ -21589,6 +21771,108 @@ mod tests {
         assert_eq!(codes(&output), ["E1701"], "{unsafe_source}");
         assert!(output.is_complete(), "{unsafe_source}");
         assert_eq!(output.program().closures().count(), 1, "{unsafe_source}");
+    }
+
+    #[test]
+    fn source_calls_infer_suspension_and_insert_implicit_awaits() {
+        let (_, _, output) = check(
+            "async fn leaf(): Int { 1 }\n\
+             fn middle(): Int { leaf() }\n\
+             fn top(): Int { middle() }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        let async_functions = output
+            .program()
+            .callables()
+            .filter(|callable| {
+                matches!(
+                    output.program().interner().kind(callable.function_type()),
+                    Ok(TypeKind::Function(function)) if function.is_async()
+                )
+            })
+            .count();
+        assert_eq!(async_functions, 3);
+        assert!(
+            output
+                .program()
+                .expressions()
+                .any(|expression| matches!(expression.kind(), HirExpressionKind::Await { .. }))
+        );
+    }
+
+    #[test]
+    fn async_iterator_for_infers_suspension_and_awaits_each_next() {
+        let (_, _, output) = check(
+            "type Counter = { value: Int }\n\
+             impl AsyncIterator[Int] for Counter {\n\
+                 async fn next(mut self): Int? { none }\n\
+             }\n\
+             fn consume(cursor: Counter) {\n\
+                 for item in cursor {\n\
+                     _ = item\n\
+                 }\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+        let async_count = output
+            .program()
+            .callables()
+            .filter(|callable| {
+                matches!(
+                    output.program().interner().kind(callable.function_type()),
+                    Ok(TypeKind::Function(function)) if function.is_async()
+                )
+            })
+            .count();
+        assert!(async_count >= 2, "{async_count}");
+        let has_async_iterator_loop = output.program().expressions().any(|expression| {
+            let HirExpressionKind::Block { statements, .. } = expression.kind() else {
+                return false;
+            };
+            statements.iter().any(|statement| {
+                matches!(
+                    statement,
+                    HirStatement::For {
+                        kind: HirForKind::Iterate {
+                            protocol: HirIterationProtocol::Trait {
+                                async_iteration: true,
+                                ..
+                            },
+                            ..
+                        },
+                        ..
+                    }
+                )
+            })
+        });
+        assert!(has_async_iterator_loop);
+    }
+
+    #[test]
+    fn join_can_be_returned_as_an_explicit_scope_handoff() {
+        let (_, _, output) = check(
+            "async fn work(): Int { 1 }\n\
+             fn prepare(): Join[Int, Never] {\n\
+                 scope {\n\
+                     return spawn work()\n\
+                 }\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
     }
 
     #[test]
@@ -27621,6 +27905,7 @@ fn build(input: Int, flag: Bool) {
                                     HirIterationProtocol::Trait {
                                         element,
                                         function_type,
+                                        ..
                                     },
                                 ..
                             },
@@ -28837,10 +29122,6 @@ fn build(input: Int, flag: Bool) {
             (
                 "fn invalid(): Int {\n    1()\n}\n",
                 "value of type `Int` is not callable",
-            ),
-            (
-                "async fn operation(): Int { 1 }\nasync fn invalid() {\n    _ = operation()\n}\n",
-                "async call must be initiated by `await` or `spawn`",
             ),
             (
                 "fn add(left: Int, right: Int): Int { left + right }\nfn invalid(): Int {\n    add(left: 1, left: 2, right: 3)\n}\n",

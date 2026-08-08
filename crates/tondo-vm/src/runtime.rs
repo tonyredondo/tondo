@@ -162,6 +162,9 @@ pub enum RuntimeHostValueKind {
     EnvValue,
     EnvError,
     VirtualTime,
+    Waiter,
+    Completer,
+    AlreadyCompleted,
 }
 
 /// Per-run counters useful for testing limits and collector behavior.

@@ -234,6 +234,9 @@ pub enum BytecodeIntrinsicType {
     Ref,
     Pointer,
     Join,
+    Waiter,
+    Completer,
+    AlreadyCompleted,
     Command,
     Pipeline,
     Bytes,
@@ -390,7 +393,7 @@ pub struct BytecodeTerminalContract {
 impl BytecodeIntrinsicType {
     pub const fn arity(self) -> usize {
         match self {
-            Self::Map | Self::Join => 2,
+            Self::Map | Self::Join | Self::Waiter | Self::Completer => 2,
             Self::Array | Self::Set | Self::Range | Self::Ref | Self::Pointer => 1,
             Self::Command
             | Self::Pipeline
@@ -428,6 +431,7 @@ impl BytecodeIntrinsicType {
             | Self::ProcessError
             | Self::ProcessExitError
             | Self::Utf8Error
+            | Self::AlreadyCompleted
             | Self::NumericConversionError
             | Self::Duration
             | Self::Instant
@@ -469,6 +473,9 @@ impl BytecodeIntrinsicType {
             | Self::Range
             | Self::Ref
             | Self::Pointer
+            | Self::Waiter
+            | Self::Completer
+            | Self::AlreadyCompleted
             | Self::Command
             | Self::Pipeline
             | Self::Bytes
@@ -1290,6 +1297,7 @@ pub enum BytecodeTerminatorKind {
     Spawn {
         operation: BytecodeOperation,
         scope: BytecodeScopeId,
+        kind: BytecodeSpawnKind,
         destination: BytecodePlace,
         target: BytecodeBlockId,
         unwind: BytecodeBlockId,
@@ -1334,6 +1342,14 @@ pub enum BytecodeTerminatorKind {
     Return,
     ResumePanic,
     Unreachable,
+}
+
+/// Structured spawn lane.  Both lanes return the same affine `Join`; the
+/// runtime decides whether a worker thread is needed for the selected host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BytecodeSpawnKind {
+    Task,
+    Thread,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

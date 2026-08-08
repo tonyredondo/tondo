@@ -3092,12 +3092,17 @@ fn lower_terminator(
         MirTerminatorKind::Spawn {
             operation,
             scope,
+            kind,
             destination,
             target,
             unwind,
         } => bc::BytecodeTerminatorKind::Spawn {
             operation: lower_operation(operation, true, context, type_map)?,
             scope: bc::BytecodeScopeId::new(scope.index()),
+            kind: match kind {
+                crate::hir::HirSpawnKind::Task => bc::BytecodeSpawnKind::Task,
+                crate::hir::HirSpawnKind::Thread => bc::BytecodeSpawnKind::Thread,
+            },
             destination: lower_place(destination, context, type_map)?,
             target: block_id(*target),
             unwind: block_id(*unwind),
@@ -4152,6 +4157,9 @@ fn intrinsic_type(value: IntrinsicType) -> bc::BytecodeIntrinsicType {
         IntrinsicType::Ref => bc::BytecodeIntrinsicType::Ref,
         IntrinsicType::Pointer => bc::BytecodeIntrinsicType::Pointer,
         IntrinsicType::Join => bc::BytecodeIntrinsicType::Join,
+        IntrinsicType::Waiter => bc::BytecodeIntrinsicType::Waiter,
+        IntrinsicType::Completer => bc::BytecodeIntrinsicType::Completer,
+        IntrinsicType::AlreadyCompleted => bc::BytecodeIntrinsicType::AlreadyCompleted,
         IntrinsicType::Command => bc::BytecodeIntrinsicType::Command,
         IntrinsicType::Pipeline => bc::BytecodeIntrinsicType::Pipeline,
         IntrinsicType::Bytes => bc::BytecodeIntrinsicType::Bytes,

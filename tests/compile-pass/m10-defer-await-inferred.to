@@ -1,5 +1,5 @@
 async fn cleanup() {}
 
-fn invalid() {
+fn main() {
     defer await cleanup()
 }

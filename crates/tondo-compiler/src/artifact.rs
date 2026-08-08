@@ -1196,7 +1196,10 @@ fn public_api_hash(
             record.push_str(method.name().as_str());
             if let Some(contract) = method.contract() {
                 record.push('=');
-                record.push_str(&hir.interner().canonical(contract.function_type())?);
+                record.push_str(
+                    &hir.interner()
+                        .canonical_interface(contract.function_type())?,
+                );
             }
         }
         records.push(record);
@@ -1213,7 +1216,10 @@ fn append_callable(
     hir: &HirProgram,
 ) -> Result<(), ArtifactError> {
     output.push('|');
-    output.push_str(&hir.interner().canonical(callable.function_type())?);
+    output.push_str(
+        &hir.interner()
+            .canonical_interface(callable.function_type())?,
+    );
     append_generics(output, callable.generics(), resolved, hir)?;
     output.push_str("|parameters=");
     for (index, parameter) in callable.parameters().iter().enumerate() {

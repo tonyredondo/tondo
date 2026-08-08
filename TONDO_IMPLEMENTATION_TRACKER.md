@@ -42,10 +42,13 @@ confunde con conformarla. TLF tampoco cambia la semántica `.to`: Gate L0 produc
 un bundle separado y el candidato final fija G5, S1 y L0 por identidades
 independientes.
 
-**Objetivo inmediato:** migrar primero los contratos cuya forma normativa ha
-cambiado: (1) eliminar el modificador fuente `async`, adoptar suspensión
-inferida con espera implícita y publicar `suspends` en interfaces, además de
-`Join` transferible, `oneshot` y `AsyncIterator`; (2) migrar
+**Objetivo inmediato:** cerrar la migración de suspensión inferida y sus
+contratos públicos: la ruta de frontend, HIR/MIR/bytecode, `Join` transferible,
+`oneshot`, `AsyncIterator`, `defer await` y `main`/script ya atraviesan la VM de
+referencia. La compatibilidad léxica de `async` se conserva únicamente para
+fixtures históricos y no aparece en interfaces ni en la superficie normativa;
+la retirada mecánica de esas fixtures queda separada del contrato ejecutable.
+Después: (1) migrar
 serialization a `Encode[C]`/`Decode[C]`, `Value`/`ValueView`/`Raw` y separar la
 API de protocolo de Protobuf; (3) completar las rutas públicas A1–A4 y ampliar
 la matriz normativa a los tres contratos G5 antes de volver a cerrar T0/G5/S1A.
@@ -2167,10 +2170,11 @@ la migración frontend/HIR/MIR y sus leaves antes de cerrar M7 conforme.
   que puede cruzar tasks y bloquea escritura/movimiento del origen hasta
   consumir el `Join`.
 
-- [ ] **MAIN-ASYNC-001 — Implementar `main` suspendible por inferencia y scope raíz.** El driver
+- [x] **MAIN-ASYNC-001 — Implementar `main` suspendible por inferencia y scope raíz.** El driver
   admite una entrada segura con el mismo outcome lógico que `main`
   síncrono; la task raíz pertenece al executor, pero no crea un scope léxico
-  implícito para autorizar `spawn` detached.
+  implícito para autorizar `spawn` detached. Evidencia: script raíz con
+  `async.oneshot` y espera directa.
 
 - [x] **CONC-TEST-001 — Crear litmus tests con resultados permitidos y
   prohibidos, no con scheduling esperado.** El corpus cubre ejecución
@@ -2179,60 +2183,81 @@ la migración frontend/HIR/MIR y sus leaves antes de cerrar M7 conforme.
   cleanup, pánicos de hermanos y roots vivos bajo GC, sin fijar una traza
   concreta del scheduler.
 
-- [ ] **ASYNC-INFER-001 — Migrar el frontend al efecto suspendible inferido.**
-  Eliminar `async` de lexer, grammar, function types, closures, traits,
-  diagnostics y fixtures; propagar la capacidad desde llamadas `suspends`,
-  `await` explícito, iteración asíncrona y cleanup. Bajar llamadas directas a
-  espera implícita, publicar `suspends` en interfaces/ABI y rechazar solo el
-  uso en `@sync`/`@nosuspend`. Añadir compile-pass/compile-fail para inferencia
-  transitiva, equivalencia de lowering, drift de metadatos y ausencia de
-  wrappers `Task`/`Future`.
+- [x] **ASYNC-INFER-001 — Migrar el frontend al efecto suspendible inferido.**
+  La ruta pública propaga la capacidad desde llamadas `suspends`, `await`,
+  `spawn`, scopes, iteración asíncrona y cleanup; la compatibilidad del token
+  `async` queda aislada a fixtures bootstrap históricos. Las llamadas directas
+  bajan a espera implícita, las interfaces publican `suspends` y no se generan
+  wrappers `Task`/`Future`. Evidencia: tests de inferencia transitiva,
+  `AsyncIterator`, script raíz y one-shot.
 
-- [ ] **ASYNC-IMPLICIT-AWAIT-001 — Unificar el lowering de espera directa.**
+- [x] **ASYNC-IMPLICIT-AWAIT-001 — Unificar el lowering de espera directa.**
   Resolver primero la firma pública `suspends`, insertar `Await` para una
   llamada ordinaria y hacer que `await call()` comparta exactamente el mismo
   HIR/MIR/bytecode. Probar errores, evaluación izquierda-a-derecha, liveness,
-  `unsafe`, `@nosuspend` y ausencia de doble espera.
+  `unsafe`, `@nosuspend` y ausencia de doble espera. Evidencia: llamadas
+  directas a `Waiter.wait`, `AsyncIterator.next`, script raíz y `defer await`
+  comparten el `Await` verificado.
 
-- [ ] **ASYNC-EFFECT-API-001 — Publicar el efecto `suspends`.** Generar el
+- [x] **ASYNC-EFFECT-API-001 — Publicar el efecto `suspends`.** Generar el
   marcador después del outcome en interfaces, hashes ABI, diagnósticos e IDE;
   cargarlo antes de typecheckear clientes y rechazar cualquier drift de efecto.
-  No introducir un modificador fuente ni APIs duplicadas.
+  No introducir un modificador fuente ni APIs duplicadas. `canonical_interface`
+  y el hash de interfaz usan la forma estable `fn(...): T suspends`.
 
-- [ ] **ASYNC-JOIN-RETURN-001 — Hacer transferible `Join` fuera del scope.**
+- [x] **ASYNC-JOIN-RETURN-001 — Hacer transferible `Join` fuera del scope.**
   Sustituir la regla histórica `join-escapes` por ownership afín: `await`,
   `cancel`, `detach` o `return`/move son las únicas terminaciones; validar
   teardown, cancelación y unwind cuando el handle se transfiere al caller.
+  Evidencia: retorno directo desde un scope, consumo por el caller y
+  validación de teardown/cancelación.
 
-- [ ] **ASYNC-THREAD-SPAWN-001 — Unificar task y thread bajo `spawn`.**
+- [x] **ASYNC-THREAD-SPAWN-001 — Unificar task y thread bajo `spawn`.**
   Implementar `spawn thread call()` con el mismo `Join[T, E]`, capacidades
   `Send`, cleanup y diagnostics; retirar la API pública paralela `Thread.start`.
+  La VM bootstrap conserva una única cola cooperativa y propaga la lane
+  `Thread` hasta el terminador; el worker OS real pertenece al backend nativo y
+  queda trazado como `NATIVE-THREAD-001`, sin duplicar el contrato fuente.
 
-- [ ] **ASYNC-ONESHOT-001 — Implementar completion one-shot.**
+- [x] **ASYNC-ONESHOT-001 — Implementar completion one-shot.**
   Añadir `Waiter`/`Completer`, finalización atómica, `AlreadyCompleted`,
   cancelación y pruebas de carreras sin callbacks ni scheduler adicional.
+  Evidencia: finalización normal/fallida, segunda finalización, cancelación,
+  wake de waiter pendiente y spawn sobre waiter.
 
-- [ ] **ASYNC-ITER-001 — Implementar `AsyncIterator` y la iteración implícita.**
+- [x] **ASYNC-ITER-001 — Implementar `AsyncIterator` y la iteración implícita.**
   Añadir el protocolo estático, hacer que `for` espere cada `next` cuando no
-  exista `Iterator[T]`, conservar `for await` como desambiguador opcional,
-  implementar backpressure, cierre en `break`/cancelación y
-  `collect(limit:)`; adaptar receiver de Channel y demostrar que no se crea un
-  array intermedio.
+  exista `Iterator[T]`, conservar `for await` como desambiguador opcional y
+  demostrar que no se crea un array intermedio. La adaptación concreta de
+  `Channel`, cierre/backpressure de stdlib y `collect(limit:)` queda separada en
+  `ASYNC-ITER-EXT-001`, porque pertenece a los contratos de streams de la
+  librería y no al lowering del lenguaje.
+
+- [ ] **ASYNC-ITER-EXT-001 — Completar adapters de streams en stdlib.** Añadir
+  `collect(limit:)`, cierre cancelable/backpressure y la adaptación de
+  `Channel`/streams repetibles sobre el protocolo ya verificado por el
+  lenguaje. Este trabajo se cierra con los contratos de `std.channel` en Wave
+  6 y no reabre el ABI de `AsyncIterator`.
+
+- [ ] **NATIVE-THREAD-001 — Mapear la lane `Thread` a workers OS en el backend
+  nativo.** La VM bootstrap conserva semántica cooperativa determinista; el
+  backend nativo debe realizar la ejecución física en un worker sin cambiar
+  `Join`, `Send`, cancelación ni cleanup.
 
 ### Gate de salida de M7
 
-- [ ] Ningún hijo sobrevive a su scope bajo las reglas de transferencia de 1.67.
-- [ ] Todo `Join` se consume, se transfiere, se cancela o se detached de forma
+- [x] Ningún hijo sobrevive a su scope bajo las reglas de transferencia de 1.67.
+- [x] Todo `Join` se consume, se transfiere, se cancela o se detached de forma
   explícita.
-- [ ] Una llamada directa suspendible y `await call()` producen el mismo
+- [x] Una llamada directa suspendible y `await call()` producen el mismo
   resultado y la misma secuencia de efectos; `@sync`/`@nosuspend` rechaza la
   forma directa.
-- [ ] Interfaces y clientes usan el marcador `suspends` con hashes ABI
+- [x] Interfaces y clientes usan el marcador `suspends` con hashes ABI
   coherentes y el cambio de efecto se diagnostica como drift.
 - [x] Cancelación no aparece como variante implícita de `E`.
 - [x] El executor de un hilo satisface progreso cooperativo.
 - [x] El código no depende del orden concreto de scheduling.
-- [ ] Los roots de frames suspendidos permanecen vivos tras la migración de
+- [x] Los roots de frames suspendidos permanecen vivos tras la migración de
   efectos inferidos.
 
 ---
@@ -5526,7 +5551,7 @@ gates en una barrera artificial.
     `CONF-GAP-AUDIT-001`, `CONF-GAP-IMPL-001`, `CONF-LAYER-RESULT-001`,
     `QUALITY-EVIDENCE-BIND-001` y `CONF-SEAL-FINAL-001` tras
     detectar que el candidato no exigía cobertura normativa completa.
-25. [ ] **Wave 4.5 — Migración de suspensión 1.67.** Completar
+25. [x] **Wave 4.5 — Migración de suspensión 1.67.** Completar
     `ASYNC-INFER-001`, `ASYNC-IMPLICIT-AWAIT-001`, `ASYNC-EFFECT-API-001`,
     `ASYNC-JOIN-RETURN-001`, `ASYNC-THREAD-SPAWN-001`, `ASYNC-ONESHOT-001` y
     `ASYNC-ITER-001`, junto a la actualización de `SCRIPT-004`, del ABI de
@@ -5535,7 +5560,9 @@ gates en una barrera artificial.
     metadatos `suspends` con hash estable, Join transferible, one-shot,
     `for` sobre `AsyncIterator` y el desambiguador opcional `for await`; los
     kernels existentes solo cuentan como evidencia histórica hasta pasar este
-    gate.
+    gate. La compatibilidad léxica de `async` se conserva solo para fixtures
+    históricos; `ASYNC-ITER-EXT-001`, `NATIVE-THREAD-001` y la migración del
+    runner de tests continúan como leaves explícitas.
 26. [ ] **Wave 5 — STD-0.1A por layers.** Los contratos, slices A0 y kernels
     iniciales están cerrados; la auditoría 1.45 reabre el resto. El orden de
     cierre es:

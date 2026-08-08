@@ -640,6 +640,28 @@ fn intrinsic_node(
             }
         }
         IntrinsicType::Join => fixed(HirCapabilityStatus::Unsatisfied),
+        IntrinsicType::Waiter | IntrinsicType::Completer => {
+            if capability == HirCapability::Send {
+                satisfied(Vec::new())
+            } else {
+                fixed(HirCapabilityStatus::Unsatisfied)
+            }
+        }
+        IntrinsicType::AlreadyCompleted => {
+            if matches!(
+                capability,
+                HirCapability::Copy
+                    | HirCapability::Discard
+                    | HirCapability::Equatable
+                    | HirCapability::Key
+                    | HirCapability::Send
+                    | HirCapability::Share
+            ) {
+                satisfied(Vec::new())
+            } else {
+                fixed(HirCapabilityStatus::Unsatisfied)
+            }
+        }
         IntrinsicType::Command | IntrinsicType::Pipeline => {
             if matches!(
                 capability,

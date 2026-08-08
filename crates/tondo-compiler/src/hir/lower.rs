@@ -64,12 +64,15 @@ pub fn lower_types<'a>(
         derive_requests: Vec::new(),
         annotations: BTreeMap::new(),
         generic_types: BTreeMap::new(),
+        inferred_suspendible: BTreeSet::new(),
+        suspendible_names: BTreeSet::new(),
     };
     lowerer.index_declarations()?;
     lowerer.index_implementations()?;
     lowerer.analyze_aliases()?;
     lowerer.lower_aliases()?;
     lowerer.lower_declarations()?;
+    lowerer.infer_suspendible_callables()?;
     lowerer.lower_remaining_source()?;
     lowerer.lower_bootstrap_host_contracts()?;
     lowerer.validate_productivity()?;
@@ -180,6 +183,12 @@ struct TypeLowerer<'a> {
     derive_requests: Vec<HirDeriveRequest>,
     annotations: BTreeMap<(FileId, u32, u32), TypeId>,
     generic_types: BTreeMap<LocalId, TypeId>,
+    /// Source callables whose suspension effect is inferred from their body.
+    /// The parser still accepts the historical `async` modifier while the
+    /// language migrates to effect inference; keeping the set keyed by source
+    /// range avoids conflating same-named methods in different declarations.
+    inferred_suspendible: BTreeSet<(FileId, u32, u32)>,
+    suspendible_names: BTreeSet<String>,
 }
 
 impl<'a> TypeLowerer<'a> {
@@ -201,10 +210,14 @@ impl<'a> TypeLowerer<'a> {
         let console_module = self.packages.module(self.packages.standard(), &console);
         let io_module = self.packages.module(self.packages.standard(), &io);
         let process = ModulePath::new("process")?;
+        let async_module = ModulePath::new("async")?;
         let bytes_module = self
             .packages
             .module(self.packages.standard(), &bytes_module);
         let process_module = self.packages.module(self.packages.standard(), &process);
+        let async_module = self
+            .packages
+            .module(self.packages.standard(), &async_module);
         let time = ModulePath::new("time")?;
         let time_module = self.packages.module(self.packages.standard(), &time);
         let env = ModulePath::new("env")?;
@@ -242,6 +255,14 @@ impl<'a> TypeLowerer<'a> {
                 matches!(
                     reference.entity(),
                     ResolvedEntity::Module(module) if module == process_module
+                )
+            })
+        });
+        let async_referenced = async_module.as_ref().is_some_and(|async_module| {
+            self.resolved.references().any(|reference| {
+                matches!(
+                    reference.entity(),
+                    ResolvedEntity::Module(module) if module == async_module
                 )
             })
         });
@@ -345,6 +366,7 @@ impl<'a> TypeLowerer<'a> {
             && !io_referenced
             && !console_referenced
             && !process_referenced
+            && !async_referenced
             && !time_referenced
             && !env_referenced
             && !math_referenced
@@ -476,6 +498,69 @@ impl<'a> TypeLowerer<'a> {
         let writer_unit_outcome = self.interner.result(unit, io_error)?;
         let io_limits_outcome = self.interner.result(io_limits, io_error)?;
         let io_bytes_outcome = self.interner.result(bytes, io_error)?;
+
+        if async_referenced {
+            let waiter_value = self.interner.generic_parameter(0)?;
+            let waiter_error = self.interner.generic_parameter(1)?;
+            let waiter = self
+                .interner
+                .intrinsic(IntrinsicType::Waiter, vec![waiter_value, waiter_error])?;
+            let completer = self
+                .interner
+                .intrinsic(IntrinsicType::Completer, vec![waiter_value, waiter_error])?;
+            let already_completed = self
+                .interner
+                .intrinsic(IntrinsicType::AlreadyCompleted, Vec::new())?;
+            let waiter_result = self.interner.result(waiter_value, waiter_error)?;
+            let completion_result = self.interner.result(unit, already_completed)?;
+            let oneshot_outcome = self.interner.tuple(vec![waiter, completer])?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::AsyncOneshot,
+                Vec::new(),
+                oneshot_outcome,
+                2,
+                Vec::new(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::AsyncWaiterWait,
+                vec![(waiter, ParameterMode::Var, true)],
+                waiter_result,
+                2,
+                Vec::new(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::AsyncCompleterComplete,
+                vec![
+                    (completer, ParameterMode::Var, true),
+                    (waiter_value, ParameterMode::Value, false),
+                ],
+                completion_result,
+                2,
+                Vec::new(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::AsyncCompleterFail,
+                vec![
+                    (completer, ParameterMode::Var, true),
+                    (waiter_error, ParameterMode::Value, false),
+                ],
+                completion_result,
+                2,
+                Vec::new(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::AsyncCompleterCancel,
+                vec![(completer, ParameterMode::Var, true)],
+                completion_result,
+                2,
+                Vec::new(),
+            )?;
+        }
 
         if console_referenced {
             for (function, outcome) in [
@@ -3349,10 +3434,19 @@ impl<'a> TypeLowerer<'a> {
                     return Ok(self.interner.error());
                 }
                 if let Some(constructor) = super::bootstrap_process_intrinsic(&module, &name) {
-                    if !self.check_arity(file, range, name.as_str(), 0, arguments.len())? {
+                    if !self.check_arity(
+                        file,
+                        range,
+                        name.as_str(),
+                        constructor.arity(),
+                        arguments.len(),
+                    )? {
                         return Ok(self.interner.error());
                     }
-                    return Ok(self.interner.intrinsic(constructor, Vec::new())?);
+                    if self.types_have_recovery(arguments.iter().copied())? {
+                        return Ok(self.interner.error());
+                    }
+                    return Ok(self.interner.intrinsic(constructor, arguments)?);
                 }
                 if module.package().as_str() == "toolchain:std:0.1-bootstrap"
                     && module.path().as_str() == "process"
@@ -3872,6 +3966,60 @@ impl<'a> TypeLowerer<'a> {
         Ok(variants)
     }
 
+    fn infer_suspendible_callables(&mut self) -> Result<(), HirError> {
+        let mut callables = Vec::new();
+        for (file, parsed) in &self.parsed {
+            collect_source_callables(parsed.cst().root_node(), *file, &mut callables);
+        }
+
+        // Start with effects that are syntactically unambiguous.  A fixed
+        // point below then propagates the effect through ordinary calls.  The
+        // source range, rather than only the name, is the identity here so
+        // overloaded/member declarations cannot accidentally rewrite one
+        // another's function type.
+        let mut suspendible_names = callables
+            .iter()
+            // A signature-only trait method can carry the historical `async`
+            // token without owning a body to analyse.  It must not seed the
+            // name-based fixed point and accidentally make an unrelated
+            // implementation method with the same name suspendible.
+            .filter(|callable| callable.has_body && callable.direct_suspendible)
+            .map(|callable| callable.name.clone())
+            .collect::<BTreeSet<_>>();
+        for callable in &callables {
+            if callable
+                .called_names
+                .iter()
+                .any(|name| inferred_host_suspendible(name))
+            {
+                suspendible_names.insert(callable.name.clone());
+            }
+        }
+        loop {
+            let before = suspendible_names.len();
+            for callable in &callables {
+                if callable
+                    .called_names
+                    .iter()
+                    .any(|name| suspendible_names.contains(name))
+                {
+                    suspendible_names.insert(callable.name.clone());
+                }
+            }
+            if suspendible_names.len() == before {
+                break;
+            }
+        }
+        self.inferred_suspendible.extend(
+            callables
+                .iter()
+                .filter(|callable| suspendible_names.contains(&callable.name))
+                .map(|callable| (callable.file, callable.range.start(), callable.range.end())),
+        );
+        self.suspendible_names = suspendible_names;
+        Ok(())
+    }
+
     fn lower_remaining_source(&mut self) -> Result<(), HirError> {
         let files = self.parsed.keys().copied().collect::<Vec<_>>();
         for file in files {
@@ -3978,8 +4126,13 @@ impl<'a> TypeLowerer<'a> {
         };
         let id = HirCallableId::Symbol(symbol.id());
         let is_async = script_body_contains(root, |kind| {
-            matches!(kind, SyntaxKind::AwaitExpr | SyntaxKind::ScopeExpr)
-        });
+            matches!(
+                kind,
+                SyntaxKind::AwaitExpr | SyntaxKind::SpawnExpr | SyntaxKind::ScopeExpr
+            )
+        }) || called_names(root)
+            .iter()
+            .any(|name| self.suspendible_names.contains(name) || inferred_host_suspendible(name));
         let infers_errors = script_body_contains(root, |kind| {
             matches!(kind, SyntaxKind::FailStmt | SyntaxKind::PropagateSuffix)
         });
@@ -4155,7 +4308,7 @@ impl<'a> TypeLowerer<'a> {
             )?;
             return Ok(());
         };
-        self.lower_callable(file, declaration, name.range(), id, environment, generics)
+        self.lower_callable(file, declaration, id, environment, generics, false)
     }
 
     fn lower_trait_declaration(
@@ -4195,10 +4348,10 @@ impl<'a> TypeLowerer<'a> {
             self.lower_callable(
                 file,
                 method,
-                method_name.range(),
                 HirCallableId::Member(member.id()),
                 environment,
                 generics,
+                false,
             )?;
         }
         Ok(())
@@ -4238,6 +4391,10 @@ impl<'a> TypeLowerer<'a> {
                 arguments: Vec::new(),
             }
         };
+        let allow_async_mut_receiver = matches!(
+            &trait_reference.constructor,
+            HirTraitConstructor::Prelude(name) if name.as_str() == "AsyncIterator"
+        );
         self.finish_generic_bounds(
             file,
             &generic_declarations,
@@ -4268,10 +4425,10 @@ impl<'a> TypeLowerer<'a> {
             self.lower_callable(
                 file,
                 method,
-                method_name.range(),
                 HirCallableId::Implementation(method_id),
                 method_environment,
                 generics,
+                allow_async_mut_receiver,
             )?;
             methods.push(HirImplementationMethod {
                 id: method_id,
@@ -4410,7 +4567,8 @@ impl<'a> TypeLowerer<'a> {
                     let later = &self.implementations[later_index];
                     let conflict = if matches!(
                         &identity,
-                        HirTraitIdentity::Prelude(name) if name.as_str() == "Iterator"
+                        HirTraitIdentity::Prelude(name)
+                            if matches!(name.as_str(), "Iterator" | "AsyncIterator")
                     ) {
                         let Some(earlier_element) =
                             earlier.trait_reference.arguments.first().copied()
@@ -4817,7 +4975,7 @@ impl<'a> TypeLowerer<'a> {
     ) -> Result<Option<Vec<ExpectedTraitMethod>>, HirError> {
         let expected_arity = match name.as_str() {
             "Display" => 0,
-            "Iterator" => 1,
+            "Iterator" | "AsyncIterator" => 1,
             _ => implementation.trait_reference.arguments.len(),
         };
         if implementation.trait_reference.arguments.len() != expected_arity {
@@ -4843,6 +5001,19 @@ impl<'a> TypeLowerer<'a> {
                         .unwrap_or_else(|| self.interner.error()),
                 )?,
             ),
+            "AsyncIterator" => (
+                "next",
+                HirPreludeTraitMethod::AsyncIteratorNext,
+                ParameterMode::Mut,
+                self.interner.option(
+                    implementation
+                        .trait_reference
+                        .arguments
+                        .first()
+                        .copied()
+                        .unwrap_or_else(|| self.interner.error()),
+                )?,
+            ),
             "Copy" | "Discard" | "Equatable" | "Key" | "Send" | "Share" | "Call" | "CallMut"
             | "CallOnce" => {
                 self.emit(
@@ -4858,7 +5029,7 @@ impl<'a> TypeLowerer<'a> {
             _ => return Ok(None),
         };
         let function_type = self.interner.function(FunctionType::new(
-            false,
+            matches!(key, HirPreludeTraitMethod::AsyncIteratorNext),
             false,
             vec![FunctionParameter::new(mode, implementation.target)],
             None,
@@ -5072,13 +5243,19 @@ impl<'a> TypeLowerer<'a> {
         &mut self,
         file: FileId,
         callable: SyntaxNodeRef<'a>,
-        name_range: TextRange,
         id: HirCallableId,
         environment: TypeEnvironment,
         generics: Vec<HirGenericParameter>,
+        allow_async_mut_receiver: bool,
     ) -> Result<(), HirError> {
+        let name_range = callable_name_range(callable).unwrap_or_else(|| callable.range());
         let generic_arity = environment.next_position;
-        let is_async = has_direct_token(callable, TokenKind::Async);
+        let is_async = has_direct_token(callable, TokenKind::Async)
+            || self.inferred_suspendible.contains(&(
+                file,
+                callable.range().start(),
+                callable.range().end(),
+            ));
         let is_unsafe = has_direct_token(callable, TokenKind::Unsafe);
         let mut parameters = Vec::new();
         let mut function_parameters = Vec::new();
@@ -5112,7 +5289,10 @@ impl<'a> TypeLowerer<'a> {
                     } else {
                         ParameterMode::Ref
                     };
-                    if is_async && matches!(mode, ParameterMode::Mut | ParameterMode::Var) {
+                    if is_async
+                        && matches!(mode, ParameterMode::Mut | ParameterMode::Var)
+                        && !allow_async_mut_receiver
+                    {
                         self.emit(
                             file,
                             parameter.range(),
@@ -5636,6 +5816,9 @@ impl<'a> TypeLowerer<'a> {
                         | IntrinsicType::Range
                         | IntrinsicType::Pointer
                         | IntrinsicType::Join
+                        | IntrinsicType::Waiter
+                        | IntrinsicType::Completer
+                        | IntrinsicType::AlreadyCompleted
                         | IntrinsicType::Command
                         | IntrinsicType::Pipeline
                         | IntrinsicType::Bytes
@@ -5822,6 +6005,170 @@ fn first_identifier(node: SyntaxNodeRef<'_>) -> Option<SyntaxTokenRef<'_>> {
         .find(|token| token.kind() == TokenKind::Identifier)
 }
 
+fn callable_name_range(node: SyntaxNodeRef<'_>) -> Option<TextRange> {
+    node.child_nodes()
+        .find(|child| child.kind() == SyntaxKind::FunctionHead)
+        .and_then(|head| {
+            head.child_tokens()
+                .filter(|token| token.kind() == TokenKind::Identifier)
+                .last()
+                .map(|name| name.range())
+        })
+        .or_else(|| first_identifier(node).map(|name| name.range()))
+}
+
+struct SourceCallableInfo {
+    file: FileId,
+    range: TextRange,
+    name: String,
+    has_body: bool,
+    direct_suspendible: bool,
+    called_names: BTreeSet<String>,
+}
+
+fn collect_source_callables<'a>(
+    node: SyntaxNodeRef<'a>,
+    file: FileId,
+    output: &mut Vec<SourceCallableInfo>,
+) {
+    if matches!(
+        node.kind(),
+        SyntaxKind::FunctionDecl | SyntaxKind::TraitMethod | SyntaxKind::ImplementationMethod
+    ) {
+        let name = if node.kind() == SyntaxKind::FunctionDecl {
+            node.child_nodes()
+                .find(|child| child.kind() == SyntaxKind::FunctionHead)
+                .and_then(|head| {
+                    head.child_tokens()
+                        .filter(|token| token.kind() == TokenKind::Identifier)
+                        .last()
+                })
+        } else {
+            first_identifier(node)
+        };
+        if let Some(name) = name.and_then(|token| token.token().normalized_identifier()) {
+            let body = node
+                .child_nodes()
+                .find(|child| child.kind() == SyntaxKind::Block);
+            let (direct_suspendible, called_names) = body
+                .map(|body| {
+                    (
+                        syntax_contains_any(
+                            body,
+                            &[
+                                SyntaxKind::AwaitExpr,
+                                SyntaxKind::SpawnExpr,
+                                SyntaxKind::ScopeExpr,
+                            ],
+                        ),
+                        called_names(body),
+                    )
+                })
+                .unwrap_or((false, BTreeSet::new()));
+            output.push(SourceCallableInfo {
+                file,
+                range: node.range(),
+                name: name.to_owned(),
+                has_body: body.is_some(),
+                direct_suspendible: direct_suspendible || has_direct_token(node, TokenKind::Async),
+                called_names,
+            });
+        }
+    }
+    for child in node.child_nodes() {
+        collect_source_callables(child, file, output);
+    }
+}
+
+fn syntax_contains_any(node: SyntaxNodeRef<'_>, kinds: &[SyntaxKind]) -> bool {
+    if kinds.contains(&node.kind()) {
+        return true;
+    }
+    node.child_nodes()
+        .any(|child| syntax_contains_any(child, kinds))
+}
+
+fn called_names(node: SyntaxNodeRef<'_>) -> BTreeSet<String> {
+    let tokens = node
+        .descendant_tokens()
+        .filter(|token| !token.kind().is_trivia())
+        .collect::<Vec<_>>();
+    let mut output = BTreeSet::new();
+    for (index, window) in tokens.windows(2).enumerate() {
+        let [name, open] = window else {
+            continue;
+        };
+        if name.kind() != TokenKind::Identifier || open.kind() != TokenKind::LParen {
+            continue;
+        }
+        let Some(name) = name.token().normalized_identifier() else {
+            continue;
+        };
+        output.insert(name.to_owned());
+
+        // Keep the nearest qualifier as well as the bare function name.  A
+        // call such as `values.remove()` must not be mistaken for the
+        // compiler-owned `std.fs.remove`, while `time.sleep()` remains an
+        // unambiguous source-level suspension marker.
+        if index >= 2
+            && tokens[index - 1].kind() == TokenKind::Dot
+            && tokens[index - 2].kind() == TokenKind::Identifier
+            && let Some(module) = tokens[index - 2].token().normalized_identifier()
+        {
+            output.insert(format!("{module}.{name}"));
+        }
+    }
+    output
+}
+
+/// Names of compiler-owned operations whose function type carries `suspends`.
+/// This intentionally mirrors the bootstrap host contract at the source
+/// boundary; ordinary source-to-source calls are propagated by the fixed
+/// point in `infer_suspendible_callables`.
+fn inferred_host_suspendible(name: &str) -> bool {
+    matches!(
+        name,
+        "console.readLine"
+            | "io.readAll"
+            | "io.writeAll"
+            | "fs.readAll"
+            | "fs.writeAll"
+            | "fs.open"
+            | "fs.openDirectory"
+            | "fs.createDirectory"
+            | "fs.remove"
+            | "fs.metadata"
+            | "fs.list"
+            | "fs.rename"
+            | "fs.atomicWrite"
+            | "time.sleep"
+            | "testing.withVirtualTime"
+            | "VirtualTime.settle"
+            | "VirtualTime.advance"
+            | "Reader.read"
+            | "Writer.write"
+            | "Writer.flush"
+            | "File.read"
+            | "File.write"
+            | "File.flush"
+            | "Directory.list"
+            | "Command.status"
+            | "Command.output"
+            | "Command.run"
+            | "Command.check"
+            | "Pipeline.status"
+            | "Pipeline.output"
+            | "Pipeline.run"
+            | "Pipeline.check"
+            | "ProcessHandle.status"
+            | "ProcessHandle.output"
+            | "ProcessHandle.run"
+            | "ProcessHandle.check"
+            | "ProcessHandle.cancel"
+            | "Timer.wait"
+    )
+}
+
 fn field_name_token(node: SyntaxNodeRef<'_>) -> Option<SyntaxTokenRef<'_>> {
     let mut tokens = node
         .child_tokens()
@@ -5898,7 +6245,7 @@ fn intrinsic_type(name: &str) -> Option<IntrinsicType> {
 fn prelude_trait_arity(name: &str) -> Option<usize> {
     Some(match name {
         "Copy" | "Discard" | "Equatable" | "Key" | "Send" | "Share" | "Display" => 0,
-        "Iterator" | "Call" | "CallMut" | "CallOnce" => 1,
+        "Iterator" | "AsyncIterator" | "Call" | "CallMut" | "CallOnce" => 1,
         _ => return None,
     })
 }

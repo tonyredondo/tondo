@@ -507,7 +507,18 @@ impl Scanner<'_> {
         let spelling = str::from_utf8(&self.bytes[start..self.position])
             .expect("identifier scanning only crosses valid UTF-8 scalars");
         let normalized = spelling.nfc().collect::<String>();
-        if let Some(keyword) = TokenKind::from_keyword(&normalized) {
+        let preceding_dot = self.bytes[..start]
+            .iter()
+            .rev()
+            .find(|byte| !matches!(byte, b' ' | b'\t'))
+            == Some(&b'.');
+        let following_dot = self.bytes.get(self.position..).is_some_and(|tail| {
+            tail.iter().find(|byte| !matches!(byte, b' ' | b'\t')) == Some(&b'.')
+        });
+        let async_module_component = normalized == "async" && (preceding_dot || following_dot);
+        if let Some(keyword) = TokenKind::from_keyword(&normalized)
+            && !async_module_component
+        {
             self.emit(keyword, start, self.position)
         } else {
             self.ensure_token_capacity(start)?;
@@ -1633,8 +1644,8 @@ mod tests {
             "alias", "and", "as", "async", "await", "break", "const", "continue", "defer", "else",
             "enum", "err", "fail", "false", "fn", "for", "if", "impl", "import", "in", "let",
             "match", "mut", "none", "not", "ok", "or", "priv", "pub", "ref", "return", "scope",
-            "self", "some", "spawn", "suite", "test", "trait", "true", "type", "unsafe", "var",
-            "with",
+            "self", "some", "spawn", "suite", "test", "thread", "trait", "true", "type", "unsafe",
+            "var", "with",
         ];
         let input = spellings.join(" ");
         let (_, _, lexed) = lex_bytes(input.as_bytes(), LexMode::Module);

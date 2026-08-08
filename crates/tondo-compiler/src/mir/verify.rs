@@ -4,12 +4,12 @@ use std::error::Error;
 use std::fmt;
 
 use crate::hir::{
-    CapabilityAnalysis, CapabilityAssumptions, HirBinaryOperator, HirCallProtocol, HirCallableId,
-    HirCapability, HirCapabilityStatus, HirClosureProtocols, HirContainmentKind,
-    HirGenericParameter, HirIndexAccess, HirNominalShape, HirPrefixOperator, HirPreludeTraitMethod,
-    HirProgram, HirTerminalStatus, HirTraitConstructor, HirTypeDeclarationKind, HirVariantPayload,
-    StaticCollectionRegion, StaticRegionRelation, StaticSlice, TerminalAnalysis,
-    static_collection_relation,
+    CapabilityAnalysis, CapabilityAssumptions, HirBinaryOperator, HirBootstrapHostFunction,
+    HirCallProtocol, HirCallableId, HirCapability, HirCapabilityStatus, HirClosureProtocols,
+    HirContainmentKind, HirGenericParameter, HirIndexAccess, HirNominalShape, HirPrefixOperator,
+    HirPreludeTraitMethod, HirProgram, HirTerminalStatus, HirTraitConstructor,
+    HirTypeDeclarationKind, HirVariantPayload, StaticCollectionRegion, StaticRegionRelation,
+    StaticSlice, TerminalAnalysis, static_collection_relation,
 };
 use crate::resolve::{MemberKind, MemberOwner, ResolvedProgram, SymbolId};
 use crate::types::{
@@ -553,11 +553,14 @@ fn block_exits_defer_scope(
     block: &MirBasicBlock,
     scope: crate::hir::HirScopeId,
 ) -> bool {
-    let drains = |terminator: &MirTerminatorKind| {
-        matches!(
-            terminator,
-            MirTerminatorKind::DrainDefers { scopes, .. } if scopes.contains(&scope)
-        )
+    let drains = |terminator: &MirTerminatorKind| match terminator {
+        MirTerminatorKind::DrainDefers { scopes, .. } => scopes.contains(&scope),
+        MirTerminatorKind::DrainScopes {
+            task_scopes,
+            defer_scopes,
+            ..
+        } => task_scopes.contains(&scope) || defer_scopes.contains(&scope),
+        _ => false,
     };
     if drains(&block.terminator.kind) {
         return true;
@@ -5121,6 +5124,13 @@ impl Verifier<'_> {
                 "spawn does not contain a call operation",
             ));
         };
+        let affine_host_wait = matches!(
+            callee.kind(),
+            MirOperandKind::Function {
+                callable: HirCallableId::Host(HirBootstrapHostFunction::AsyncWaiterWait),
+                ..
+            }
+        );
         self.require_capability(function.id, callee.ty(), HirCapability::Send, context)?;
         for argument in arguments {
             match argument.mode() {
@@ -5147,10 +5157,18 @@ impl Verifier<'_> {
                     )?;
                 }
                 ParameterMode::Mut | ParameterMode::Var => {
-                    return Err(MirInvariantError::new(
+                    if !affine_host_wait {
+                        return Err(MirInvariantError::new(
+                            context,
+                            "spawn carries an exclusive argument loan",
+                        ));
+                    }
+                    self.require_capability(
+                        function.id,
+                        argument.value().ty(),
+                        HirCapability::Send,
                         context,
-                        "spawn carries an exclusive argument loan",
-                    ));
+                    )?;
                 }
             }
         }
@@ -6599,10 +6617,16 @@ impl Verifier<'_> {
                     destination,
                     target,
                     unwind,
-                    ..
+                    awaitable,
                 } => {
+                    let suspendible_receiver = match awaitable {
+                        MirAwaitable::Call(operation) => async_iterator_receiver_loan(operation),
+                        MirAwaitable::Join(_) => None,
+                    };
                     for loan in &state.active {
-                        if self.loan(function, *loan, &block_context)?.mode != ParameterMode::Ref {
+                        if self.loan(function, *loan, &block_context)?.mode != ParameterMode::Ref
+                            && suspendible_receiver != Some(*loan)
+                        {
                             return Err(MirInvariantError::new(
                                 &block_context,
                                 "exclusive loan crosses an await suspension",
@@ -7970,6 +7994,37 @@ fn operation_access_place<'a>(
         kind: projection,
     });
     Ok(Some((place, against)))
+}
+
+/// A small closed set of compiler-owned operations may retain their exclusive
+/// receiver over suspension. Each operation consumes/replaces that receiver
+/// atomically at the runtime boundary.
+fn async_iterator_receiver_loan(operation: &MirOperation) -> Option<MirLoanId> {
+    let MirOperationKind::Call {
+        callee, arguments, ..
+    } = &operation.kind
+    else {
+        return None;
+    };
+    let allowed = match &callee.kind {
+        MirOperandKind::PreludeTraitFunction { method, .. } => {
+            *method == HirPreludeTraitMethod::AsyncIteratorNext
+        }
+        MirOperandKind::Function {
+            callable: HirCallableId::Host(function),
+            ..
+        } => *function == HirBootstrapHostFunction::AsyncWaiterWait,
+        _ => false,
+    };
+    if !allowed {
+        return None;
+    }
+    arguments
+        .first()
+        .and_then(|argument| match argument.value.kind {
+            MirOperandKind::Loan(loan) if argument.mode == ParameterMode::Mut => Some(loan),
+            _ => None,
+        })
 }
 
 fn operand_materialized_local(

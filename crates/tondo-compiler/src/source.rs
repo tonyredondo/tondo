@@ -109,7 +109,7 @@ impl ModulePath {
                 return Err(SourceError::InvalidModulePath(value.to_owned()));
             };
             if component == "_"
-                || is_keyword(&component)
+                || (is_keyword(&component) && component != "async")
                 || !(first == '_' || unicode_ident::is_xid_start(first))
                 || !characters.all(unicode_ident::is_xid_continue)
             {
@@ -164,6 +164,7 @@ fn is_keyword(value: &str) -> bool {
             | "self"
             | "some"
             | "spawn"
+            | "thread"
             | "trait"
             | "true"
             | "type"
@@ -563,11 +564,13 @@ mod tests {
     fn module_paths_are_nfc_identifier_sequences_representable_by_import_syntax() {
         let path = ModulePath::new("cafe\u{301}.httpClient").unwrap();
         assert_eq!(path.as_str(), "café.httpClient");
+        assert_eq!(ModulePath::new("std.async").unwrap().as_str(), "std.async");
 
         for path in [
             "_",
             "app._",
             "app.type",
+            "app.fn",
             "app.invalid-name",
             "app.9invalid",
             "app..models",

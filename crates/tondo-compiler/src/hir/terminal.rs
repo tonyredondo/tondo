@@ -95,6 +95,9 @@ pub(crate) const fn intrinsic_terminal_contract(
         | IntrinsicType::Range
         | IntrinsicType::Ref
         | IntrinsicType::Pointer
+        | IntrinsicType::Waiter
+        | IntrinsicType::Completer
+        | IntrinsicType::AlreadyCompleted
         | IntrinsicType::Command
         | IntrinsicType::Pipeline
         | IntrinsicType::Bytes
@@ -458,6 +461,9 @@ fn intrinsic_node(constructor: IntrinsicType, arguments: Vec<TypeId>) -> Termina
         }
         IntrinsicType::Ref
         | IntrinsicType::Pointer
+        | IntrinsicType::Waiter
+        | IntrinsicType::Completer
+        | IntrinsicType::AlreadyCompleted
         | IntrinsicType::Command
         | IntrinsicType::Pipeline
         | IntrinsicType::Bytes

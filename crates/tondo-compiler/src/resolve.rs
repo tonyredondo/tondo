@@ -1208,7 +1208,7 @@ pub(crate) const fn is_script_statement(kind: SyntaxKind) -> bool {
 }
 
 fn normalized_name(token: SyntaxTokenRef<'_>) -> Result<Name, NameError> {
-    Name::new(
+    Name::new_path_component(
         token
             .token()
             .normalized_identifier()
@@ -1245,6 +1245,7 @@ fn is_reserved_unqualified(name: &Name) -> bool {
             | "Set"
             | "Range"
             | "Iterator"
+            | "AsyncIterator"
             | "Ref"
             | "Pointer"
             | "Join"

@@ -1236,7 +1236,7 @@ impl<'a> FunctionBuilder<'a> {
                 self.register_fallback(target, span, destination)?;
                 Ok(Some(target))
             }
-            HirExpressionKind::Spawn { operation } => {
+            HirExpressionKind::Spawn { operation, kind } => {
                 let operation_expression = self.expression(*operation)?.clone();
                 let HirExpressionKind::AsyncCall {
                     callee,
@@ -1281,6 +1281,7 @@ impl<'a> FunctionBuilder<'a> {
                     MirTerminatorKind::Spawn {
                         operation,
                         scope,
+                        kind: *kind,
                         destination: destination.clone(),
                         target,
                         unwind,
@@ -2244,6 +2245,7 @@ impl<'a> FunctionBuilder<'a> {
                 HirIterationProtocol::Trait {
                     element,
                     function_type,
+                    async_iteration,
                 } => self.lower_trait_iterating_for(
                     span,
                     id,
@@ -2251,6 +2253,7 @@ impl<'a> FunctionBuilder<'a> {
                     *source,
                     *element,
                     *function_type,
+                    *async_iteration,
                     body,
                     block,
                 ),
@@ -2527,6 +2530,7 @@ impl<'a> FunctionBuilder<'a> {
         source: HirExpressionId,
         element: TypeId,
         function_type: TypeId,
+        async_iteration: bool,
         body: HirExpressionId,
         block: MirBlockId,
     ) -> Result<Option<MirBlockId>, MirError> {
@@ -2571,31 +2575,52 @@ impl<'a> FunctionBuilder<'a> {
         }];
         self.consume_call_loans(&arguments, loan_depth, span)?;
         let unwind = self.current_unwind(span)?;
-        self.terminate(
-            header,
-            span,
-            MirTerminatorKind::Invoke {
-                operation: MirOperation {
-                    ty: outcome,
-                    kind: MirOperationKind::Call {
-                        callee: MirOperand {
-                            ty: function_type,
-                            kind: MirOperandKind::PreludeTraitFunction {
-                                method: HirPreludeTraitMethod::IteratorNext,
-                                arguments: vec![element, source_type],
-                            },
+        let operation = MirOperation {
+            ty: outcome,
+            kind: MirOperationKind::Call {
+                callee: MirOperand {
+                    ty: function_type,
+                    kind: MirOperandKind::PreludeTraitFunction {
+                        method: if async_iteration {
+                            HirPreludeTraitMethod::AsyncIteratorNext
+                        } else {
+                            HirPreludeTraitMethod::IteratorNext
                         },
-                        arguments,
-                        signature: function_type,
-                        protocol: HirCallProtocol::Call,
-                        unsafe_call: false,
+                        arguments: vec![element, source_type],
                     },
                 },
-                destination: Some(self.local_place(next)),
-                target: Some(inspect),
-                unwind,
+                arguments,
+                signature: function_type,
+                protocol: HirCallProtocol::Call,
+                unsafe_call: false,
             },
-        )?;
+        };
+        if async_iteration {
+            for place in operation_move_places(&operation) {
+                self.push_statement(header, span, MirStatementKind::DisarmCleanup(place))?;
+            }
+            self.terminate(
+                header,
+                span,
+                MirTerminatorKind::Await {
+                    awaitable: MirAwaitable::Call(operation),
+                    destination: self.local_place(next),
+                    target: inspect,
+                    unwind,
+                },
+            )?;
+        } else {
+            self.terminate(
+                header,
+                span,
+                MirTerminatorKind::Invoke {
+                    operation,
+                    destination: Some(self.local_place(next)),
+                    target: Some(inspect),
+                    unwind,
+                },
+            )?;
+        }
         self.terminate(
             inspect,
             span,
@@ -5380,12 +5405,14 @@ impl<'a> FunctionBuilder<'a> {
             MirTerminatorKind::Spawn {
                 operation,
                 scope,
+                kind,
                 destination,
                 target: next,
                 unwind,
             } => MirTerminatorKind::Spawn {
                 operation,
                 scope,
+                kind,
                 destination,
                 target: target(self, next)?,
                 unwind,

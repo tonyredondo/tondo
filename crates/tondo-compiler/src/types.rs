@@ -111,6 +111,9 @@ pub enum IntrinsicType {
     Ref,
     Pointer,
     Join,
+    Waiter,
+    Completer,
+    AlreadyCompleted,
     Command,
     Pipeline,
     Bytes,
@@ -170,6 +173,9 @@ impl IntrinsicType {
             Self::Ref => "Ref",
             Self::Pointer => "Pointer",
             Self::Join => "Join",
+            Self::Waiter => "Waiter",
+            Self::Completer => "Completer",
+            Self::AlreadyCompleted => "AlreadyCompleted",
             Self::Command => "Command",
             Self::Pipeline => "Pipeline",
             Self::Bytes => "Bytes",
@@ -222,7 +228,7 @@ impl IntrinsicType {
 
     pub fn arity(self) -> usize {
         match self {
-            Self::Map | Self::Join => 2,
+            Self::Map | Self::Join | Self::Waiter | Self::Completer => 2,
             Self::Array | Self::Set | Self::Range | Self::Ref | Self::Pointer => 1,
             Self::Command
             | Self::Pipeline
@@ -270,6 +276,7 @@ impl IntrinsicType {
             | Self::EnvName
             | Self::EnvValue
             | Self::EnvError
+            | Self::AlreadyCompleted
             | Self::VirtualTime => 0,
         }
     }
@@ -404,6 +411,13 @@ impl FunctionType {
     }
 
     pub fn is_async(&self) -> bool {
+        self.is_async
+    }
+
+    /// Tondo 0.1 terminology for the inferred suspension effect.  The
+    /// internal field remains named `is_async` while legacy bootstrap syntax
+    /// is accepted during the migration, but public contracts use `suspends`.
+    pub fn suspends(&self) -> bool {
         self.is_async
     }
 
@@ -896,6 +910,14 @@ impl TypeInterner {
         self.render_iterative(ty)
     }
 
+    /// Renders the public interface spelling of a type.  Source compatibility
+    /// keeps the historical `async fn` representation available to bootstrap
+    /// fixtures through [`Self::canonical`], while exported interfaces use the
+    /// effect vocabulary of Tondo 0.1: `fn(...): T suspends`.
+    pub fn canonical_interface(&self, ty: TypeId) -> Result<String, TypeError> {
+        self.render_iterative_with_effects(ty, true)
+    }
+
     /// Classifies the closed, top-level assignment relation from Tondo 0.1.
     ///
     /// This deliberately does not recurse through generic applications,
@@ -1348,6 +1370,14 @@ impl TypeInterner {
     }
 
     fn render_iterative(&self, root: TypeId) -> Result<String, TypeError> {
+        self.render_iterative_with_effects(root, false)
+    }
+
+    fn render_iterative_with_effects(
+        &self,
+        root: TypeId,
+        public_effects: bool,
+    ) -> Result<String, TypeError> {
         self.kind(root)?;
         let mut output = String::new();
         let mut pending = vec![RenderTask::Type(root, Precedence::Union)];
@@ -1380,12 +1410,26 @@ impl TypeInterner {
                     push_render_sequence(&mut pending, &items, Precedence::Union, ", ");
                 }
                 TypeKind::Function(function) => {
-                    output.push_str(match (function.is_async, function.is_unsafe) {
-                        (false, false) => "fn(",
-                        (true, false) => "async fn(",
-                        (false, true) => "unsafe fn(",
-                        (true, true) => "async unsafe fn(",
-                    });
+                    if public_effects {
+                        output.push_str(if function.is_unsafe {
+                            "unsafe fn("
+                        } else {
+                            "fn("
+                        });
+                    } else {
+                        output.push_str(match (function.is_async, function.is_unsafe) {
+                            (false, false) => "fn(",
+                            (true, false) => "async fn(",
+                            (false, true) => "unsafe fn(",
+                            (true, true) => "async unsafe fn(",
+                        });
+                    }
+                    if public_effects && function.is_async {
+                        // The render stack is consumed in reverse order;
+                        // enqueue the effect before the return annotation so
+                        // it is emitted after the complete function type.
+                        pending.push(RenderTask::Text(" suspends".into()));
+                    }
                     if function.outcome != self.scalar(ScalarType::Unit) {
                         pending.push(RenderTask::Type(function.outcome, Precedence::Union));
                         pending.push(RenderTask::Text(": ".into()));
@@ -3031,6 +3075,10 @@ mod tests {
         assert_eq!(
             interner.canonical(function).unwrap(),
             "async unsafe fn(ref (Int | String), Int?, ...Int): Int? ! String"
+        );
+        assert_eq!(
+            interner.canonical_interface(function).unwrap(),
+            "unsafe fn(ref (Int | String), Int?, ...Int): Int? ! String suspends"
         );
     }
 
