@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 1.78
+**Versión del tracker:** 1.79
 
 **Última actualización:** 2026-08-08
 
@@ -5645,6 +5645,14 @@ se declara iniciada antes de esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 1.79 — 2026-08-08
+
+- El contrato de adaptación serialization→Protobuf queda probado para todos
+  los errores comunes, incluyendo el mapeo de `DuplicateField` a
+  `SchemaMismatch` y la ausencia de offset en errores terminales.
+- La evidencia se vuelve a generar tras el cambio de fuente y conserva 2.284
+  tests lógicos y 308 requisitos.
 
 ### 1.78 — 2026-08-08
 

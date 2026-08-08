@@ -2347,6 +2347,41 @@ mod tests {
         let build = build_error(ProtoBuildErrorKind::ProtoNameCollision, "User", "field");
         assert!(build.to_string().contains("ProtoNameCollision"));
 
+        for (error, kind) in [
+            (
+                serialization::SerializationError::EndOfInput,
+                ProtoErrorKind::UnexpectedEof,
+            ),
+            (
+                serialization::SerializationError::LimitExceeded,
+                ProtoErrorKind::LimitExceeded,
+            ),
+            (
+                serialization::SerializationError::TypeMismatch,
+                ProtoErrorKind::TypeMismatch,
+            ),
+            (
+                serialization::SerializationError::UnexpectedEvent,
+                ProtoErrorKind::TypeMismatch,
+            ),
+            (
+                serialization::SerializationError::UnbalancedContainer,
+                ProtoErrorKind::TypeMismatch,
+            ),
+            (
+                serialization::SerializationError::InvalidContainerLength,
+                ProtoErrorKind::TypeMismatch,
+            ),
+            (
+                serialization::SerializationError::DuplicateField,
+                ProtoErrorKind::SchemaMismatch,
+            ),
+        ] {
+            let converted = ProtoError::from(error);
+            assert_eq!(converted.kind, kind);
+            assert!(converted.offset.is_none());
+        }
+
         let defaults = ProtoLimits::default();
         for limits in [
             ProtoLimits {
