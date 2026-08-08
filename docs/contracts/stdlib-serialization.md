@@ -1,7 +1,9 @@
 # Contrato de `std.serialization`
 
-**Estado:** contrato común normativo de STD-0.1A; la implementación conforme
-queda pendiente de migrar desde el prototipo anterior.
+**Estado:** contrato común normativo de STD-0.1A. El bridge Rust ya expone el
+ABI estático y los providers derive canónicos; queda pendiente conectar estos
+símbolos a la superficie ejecutable de Tondo y cerrar las anotaciones de cada
+codec.
 Este documento define la frontera pública que deben implementar JSON,
 MessagePack y Protobuf; no es una API dinámica ni una sustitución de los
 contratos específicos de cada formato.
@@ -183,18 +185,17 @@ generator publica impls ordinarios compatibles con estos traits.
 
 ## Implementación portable del protocolo
 
-`crates/tondo-stdlib/src/serialization.rs` contiene el prototipo pre-ABI del
-protocolo común. `EventEncoder` aplica el límite de eventos y
-publica el vector únicamente después de `validate_events`; `EventDecoder`
-mantiene un cursor acotado, soporta `peek_event` para composiciones genéricas y
-solo termina con consumo completo. Los impls estáticos de `Encode` y
-`Decode` cubren scalars, `String`, `Option[T]` y `Array[T]` sin trait
-objects, reflection ni DOM. `encode_value`/`decode_value` son los
-adaptadores de prueba y de los codecs; el lowering de estas operaciones a
-símbolos Tondo públicos permanece como un gate separado del kernel y de los
-providers derive. La migración a `Encode[C]`/`Decode[C]`, `Value` común y los
-codecs separados es un trabajo pendiente del tracker; estas rutas no se anuncian
-como implementación conforme.
+`crates/tondo-stdlib/src/serialization.rs` contiene ahora el kernel común y el
+ABI estático. `EventSerializer` aplica el límite de eventos y publica el vector
+únicamente después de `validate_events`; `EventDeserializer` mantiene un cursor
+acotado, soporta `peek_event` para composiciones genéricas y solo termina con
+consumo completo. `Encoder[C, E]`/`Decoder[C, E]` adaptan ese vocabulario a cada
+formato sin trait objects, reflection ni DOM. Los impls estáticos de `Encode`
+y `Decode` cubren scalars, `String`, `Bytes`, `Unit`, `Option[T]`, `Array[T]` y
+`Map[K, V]`; JSON, MessagePack y Protobuf ofrecen entradas typed directas que
+consumen estos protocolos. `Value`/`ValueView`/`Raw` son tipos comunes y los
+owners conservan aliases dinámicos de compatibilidad mientras termina la
+migración de la superficie fuente.
 
 ## Providers derive build-only
 
@@ -204,6 +205,12 @@ identidades exactas:
 
 - std.derive.serialization.Encode para serialization.Encode[C];
 - std.derive.serialization.Decode para serialization.Decode[C].
+
+Los nombres históricos `Serialize`/`Deserialize` siguen registrados como
+bridges durante la transición. Los providers canónicos generan métodos
+`encode`/`decode` con bounds `Encoder[C, E]`/`Decoder[C, E]` para records, enums,
+newtypes y parámetros genéricos; el parser valida el impl generado antes de su
+publicación atómica.
 
 Cada provider recibe únicamente el MetaSnapshot sellado y devuelve un body de
 impl Tondo ordinario. meta_derive añade el header nominal, conserva los

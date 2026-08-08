@@ -4,6 +4,8 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
+cargo_target_dir="${CARGO_TARGET_DIR:-target}"
+
 evidence="target/reliability/evidence"
 logs="$evidence/logs"
 mkdir -p "$logs"
@@ -80,7 +82,7 @@ run_step conformance-run \
     --root . \
     --manifest conformance/draft/manifest.json \
     --lineage draft \
-    --adapter target/debug/tondo-reference-adapter \
+    --adapter "$cargo_target_dir/debug/tondo-reference-adapter" \
     --output "$evidence/conformance-result.json"
 run_step conformance-compare \
     cmp "$evidence/conformance-result.json" \

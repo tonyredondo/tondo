@@ -3,8 +3,35 @@ use std::process::Command;
 
 use tondo_conformance::lineage::{DRAFT_LINEAGE_PATH, DraftLineage};
 
-fn executable() -> &'static str {
-    env!("CARGO_BIN_EXE_tondo-conformance")
+fn executable() -> PathBuf {
+    let cargo_path = PathBuf::from(env!("CARGO_BIN_EXE_tondo-conformance"));
+
+    // Cargo's compile-time `CARGO_BIN_EXE_*` value is rooted at the
+    // workspace's conventional `target` directory.  A caller may redirect
+    // build artifacts with `CARGO_TARGET_DIR` (the reliability gate does so
+    // on the SSD), in which case that path is still valid as a fallback but
+    // does not name the executable that was actually built.  Resolve the
+    // runtime target directory first while retaining the normal Cargo path
+    // for CI and direct test invocations.
+    let Some(target_dir) = std::env::var_os("CARGO_TARGET_DIR") else {
+        return cargo_path;
+    };
+    let profile = if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    };
+    let binary_name = if cfg!(windows) {
+        "tondo-conformance.exe"
+    } else {
+        "tondo-conformance"
+    };
+    let redirected = PathBuf::from(target_dir).join(profile).join(binary_name);
+    if redirected.is_file() {
+        redirected
+    } else {
+        cargo_path
+    }
 }
 
 fn repository_root() -> PathBuf {

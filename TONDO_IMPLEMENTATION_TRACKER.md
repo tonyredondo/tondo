@@ -9,9 +9,9 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 1.67
+**Versión del tracker:** 1.74
 
-**Última actualización:** 2026-08-07
+**Última actualización:** 2026-08-08
 
 **Especificaciones normativas:**
 
@@ -48,9 +48,9 @@ contratos públicos: la ruta de frontend, HIR/MIR/bytecode, `Join` transferible,
 referencia. La compatibilidad léxica de `async` se conserva únicamente para
 fixtures históricos y no aparece en interfaces ni en la superficie normativa;
 la retirada mecánica de esas fixtures queda separada del contrato ejecutable.
-Después: (1) migrar
-serialization a `Encode[C]`/`Decode[C]`, `Value`/`ValueView`/`Raw` y separar la
-API de protocolo de Protobuf; (3) completar las rutas públicas A1–A4 y ampliar
+Después: (1) conectar el ABI estático de serialization y sus providers derive a
+la superficie ejecutable de Tondo, incluyendo anotaciones y lowering; (2)
+completar las rutas públicas A1–A4 y ampliar
 la matriz normativa a los tres contratos G5 antes de volver a cerrar T0/G5/S1A.
 Los contratos
 runtime-facing de STD-0.1B y M11 esperan esos gates. Todo pertenece a la primera
@@ -5687,6 +5687,26 @@ se declara iniciada antes de esos cierres.
 - La matriz pasa a 112/203 firmas verificadas y 94 gaps explícitos (91 de
   firmas y 3 owners de compilación sin callable indexable). El
   baseline de cobertura continúa en 9059 bp.
+
+### 1.74 — 2026-08-08
+
+- El bridge común de `std.serialization` publica `Encode[C]`/`Decode[C]` y
+  `Encoder[C, E]`/`Decoder[C, E]` con dispatch estático y validación atómica.
+  Los impls host cubren scalars, `String`, `Bytes`, `Unit`, `Option[T]`,
+  `Array[T]` y `Map[K, V]`; `Value`, `ValueView` y `Raw[C]` fijan la frontera
+  dinámica/opaque sin trait objects ni DOM en typed.
+- JSON, MessagePack y Protobuf conectan entradas typed directas al ABI común y
+  validan `Raw` con sus límites propios. Se mantienen `Serialize`/`Deserialize`
+  y los aliases dinámicos únicamente como bridges de compatibilidad.
+- `std.derive.serialization.Encode` y `Decode` ya están registrados como
+  providers herméticos y generan records, enums y newtypes con bounds de codec
+  genéricos, source maps y validación normal del parser. La conexión del output
+  a la ruta pública Tondo y las anotaciones `@name`/`@ignore`/`@json(base64)`/
+  `@proto` siguen pendientes en `STD-DERIVE-SER-001`.
+- Evidencia observada: `cargo test -p tondo-stdlib --locked` (93/93) y los
+  seis tests de `serialization_derive` pasan usando target/tmp del SSD.
+  `STD-SER-IMPL-001`, `STD-DERIVE-SER-001` y los tres `*-IMPL` permanecen
+  abiertos hasta cerrar lowering Tondo, streaming completo y registros de API.
 
 ### 1.72 — 2026-08-07
 

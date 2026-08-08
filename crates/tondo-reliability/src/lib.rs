@@ -165,7 +165,24 @@ mod tests {
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_nanos();
-            let path = std::env::temp_dir().join(format!(
+            let mut base = std::env::temp_dir();
+            // The SSD test profile deliberately places `TMPDIR` below the
+            // checked-out repository.  A workspace-discovery test must not
+            // accidentally inherit that repository's Cargo.toml, so escape
+            // the nearest workspace before creating its isolated fixture.
+            while !base.join("Cargo.toml").is_file() {
+                let Some(parent) = base.parent() else {
+                    break;
+                };
+                base = parent.to_path_buf();
+            }
+            if base.join("Cargo.toml").is_file() {
+                base = base
+                    .parent()
+                    .expect("a workspace directory must have a parent")
+                    .to_path_buf();
+            }
+            let path = base.join(format!(
                 "tondo-reliability-{label}-{}-{nonce}",
                 std::process::id()
             ));
