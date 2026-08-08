@@ -10,7 +10,10 @@ use std::cmp::Ordering;
 use std::fmt;
 use std::io::Read;
 
-use crate::serialization::{self, Deserialize, Event, SerializationError, Serialize};
+use crate::serialization::{
+    self, Decode, Decoder, Deserialize, Encode, Encoder, Event, Json as JsonCodec, Raw as RawCodec,
+    SerializationError, Serialize, ValueView as SerializationValueView,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JsonKind {
@@ -40,6 +43,11 @@ pub enum JsonValue {
 
 /// Compatibility name for code that used the provisional kernel.
 pub type Value = JsonValue;
+
+/// Common ownership view shared with MessagePack's dynamic API.
+pub type CommonValue = serialization::Value;
+pub type ValueView<'a> = SerializationValueView<'a>;
+pub type Raw = RawCodec<JsonCodec>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JsonNumber {
@@ -136,6 +144,12 @@ impl fmt::Display for JsonError {
 }
 
 impl std::error::Error for JsonError {}
+
+impl From<SerializationError> for JsonError {
+    fn from(error: SerializationError) -> Self {
+        map_serialization_error(error)
+    }
+}
 
 impl fmt::Display for JsonPath {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -528,6 +542,7 @@ enum Frame {
     },
 }
 
+#[derive(Clone)]
 pub struct JsonReader<'a> {
     input: Cow<'a, [u8]>,
     cursor: usize,
@@ -1117,6 +1132,17 @@ impl<'a> JsonReader<'a> {
             }
         }
         path
+    }
+}
+
+impl Raw {
+    /// Validate and retain a JSON document without decoding it into a dynamic
+    /// tree.  The returned bytes are immutable and preserve their exact input
+    /// representation.
+    pub fn from_bytes(input: &[u8], options: JsonDecodeOptions) -> Result<Self, JsonError> {
+        let mut reader = JsonReader::from_bytes(input, options)?;
+        reader.finish()?;
+        Ok(RawCodec::from_validated(input.to_vec()))
     }
 }
 
@@ -1748,6 +1774,28 @@ pub fn decode_typed<T: Deserialize>(
     serialization::deserialize_value::<T>(&events, limits).map_err(map_serialization_error)
 }
 
+/// Canonical typed JSON entry point for the `Encode[Json]`/`Decode[Json]` ABI.
+/// This path writes events directly to the format writer and never builds a
+/// dynamic `Value` tree or a compatibility event vector.
+pub fn encode_static<T: Encode<JsonCodec>>(
+    value: &T,
+    options: JsonEncodeOptions,
+) -> Result<Vec<u8>, JsonError> {
+    let mut writer = JsonWriter::to_writer(options)?;
+    value.encode(&mut writer)?;
+    writer.finish()
+}
+
+pub fn decode_static<T: Decode<JsonCodec>>(
+    input: &[u8],
+    options: JsonDecodeOptions,
+) -> Result<T, JsonError> {
+    let mut reader = JsonReader::from_bytes(input, options)?;
+    let value = T::decode(&mut reader)?;
+    reader.finish()?;
+    Ok(value)
+}
+
 fn event_to_json(event: Event) -> Result<JsonEvent, JsonError> {
     match event {
         Event::Null => Ok(JsonEvent::Null),
@@ -1801,6 +1849,37 @@ fn json_to_event(event: JsonEvent) -> Result<Event, JsonError> {
     }
 }
 
+impl Encoder<JsonCodec, JsonError> for JsonWriter {
+    fn write_event(&mut self, event: Event) -> Result<(), JsonError> {
+        self.write(event_to_json(event)?)?;
+        Ok(())
+    }
+}
+
+impl Decoder<JsonCodec, JsonError> for JsonReader<'_> {
+    fn limits(&self) -> serialization::Limits {
+        serialization::Limits {
+            max_depth: self.options.limits.max_depth,
+            max_events: self.options.limits.max_events,
+            max_bytes: self.options.limits.max_document_bytes,
+            max_container_items: self
+                .options
+                .limits
+                .max_array_items
+                .max(self.options.limits.max_object_members),
+        }
+    }
+
+    fn peek_event(&mut self) -> Result<Option<Event>, JsonError> {
+        let mut lookahead = self.clone();
+        lookahead.next()?.map(json_to_event).transpose()
+    }
+
+    fn next(&mut self) -> Result<Option<Event>, JsonError> {
+        JsonReader::next(self)?.map(json_to_event).transpose()
+    }
+}
+
 fn map_serialization_error(error: SerializationError) -> JsonError {
     let kind = match error {
         SerializationError::LimitExceeded => JsonErrorKind::LimitExceeded,
@@ -1814,6 +1893,71 @@ fn map_serialization_error(error: SerializationError) -> JsonError {
         SerializationError::InvalidContainerLength => JsonErrorKind::LimitExceeded,
     };
     JsonError::at_zero(kind)
+}
+
+impl From<JsonValue> for serialization::Value {
+    fn from(value: JsonValue) -> Self {
+        match value {
+            JsonValue::Null => Self::Null,
+            JsonValue::Bool(value) => Self::Bool(value),
+            JsonValue::Number(value) => Self::Number(value.token),
+            JsonValue::String(value) => Self::String(value),
+            JsonValue::Array(values) => Self::Array(values.into_iter().map(Self::from).collect()),
+            JsonValue::Object(members) => Self::Object(
+                members
+                    .into_iter()
+                    .map(|member| (member.key, Self::from(member.value)))
+                    .collect(),
+            ),
+        }
+    }
+}
+
+impl TryFrom<serialization::Value> for JsonValue {
+    type Error = JsonError;
+
+    fn try_from(value: serialization::Value) -> Result<Self, Self::Error> {
+        match value {
+            serialization::Value::Null => Ok(Self::Null),
+            serialization::Value::Bool(value) => Ok(Self::Bool(value)),
+            serialization::Value::Number(token) => Ok(Self::Number(JsonNumber::parse(&token)?)),
+            serialization::Value::Int(value) => {
+                Ok(Self::Number(JsonNumber::parse(&value.to_string())?))
+            }
+            serialization::Value::UInt(value) => {
+                Ok(Self::Number(JsonNumber::parse(&value.to_string())?))
+            }
+            serialization::Value::Float32(bits) => Ok(Self::Number(JsonNumber::parse(
+                &f32::from_bits(bits).to_string(),
+            )?)),
+            serialization::Value::Float64(bits) => Ok(Self::Number(JsonNumber::parse(
+                &f64::from_bits(bits).to_string(),
+            )?)),
+            serialization::Value::String(value) => Ok(Self::String(value)),
+            serialization::Value::Array(values) => Ok(Self::Array(
+                values
+                    .into_iter()
+                    .map(Self::try_from)
+                    .collect::<Result<Vec<_>, _>>()?,
+            )),
+            serialization::Value::Object(members) => Ok(Self::Object(
+                members
+                    .into_iter()
+                    .map(|(key, value)| {
+                        Ok(JsonMember {
+                            key,
+                            value: Self::try_from(value)?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, JsonError>>()?,
+            )),
+            serialization::Value::Bytes(_)
+            | serialization::Value::Map(_)
+            | serialization::Value::Extension { .. } => {
+                Err(JsonError::at_zero(JsonErrorKind::TypeMismatch))
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -2062,6 +2206,24 @@ mod tests {
         );
         assert!(encode_typed(&vec![1_i64, 2], JsonEncodeOptions::default()).is_ok());
         assert!(decode_typed::<i64>(b"true", JsonDecodeOptions::default()).is_err());
+    }
+
+    #[test]
+    fn canonical_static_path_round_trips_without_compatibility_events() {
+        let options = JsonEncodeOptions::default();
+        assert_eq!(
+            encode_static(&vec![1_i32, 2, 3], options).unwrap(),
+            b"[1,2,3]"
+        );
+        assert_eq!(
+            decode_static::<Option<Vec<i32>>>(b"[1,2,3]", JsonDecodeOptions::default()).unwrap(),
+            Some(vec![1, 2, 3])
+        );
+        assert_eq!(
+            decode_static::<Option<i64>>(b"null", JsonDecodeOptions::default()).unwrap(),
+            None
+        );
+        assert!(decode_static::<Vec<i64>>(b"[1]", JsonDecodeOptions::default()).is_ok());
     }
 
     #[test]

@@ -11,7 +11,10 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::io::Read;
 
-use crate::serialization::{self, Deserialize, Event, Serialize};
+use crate::serialization::{
+    self, Decode, Decoder, Deserialize, Encode, Encoder, Event, MessagePack as MessagePackCodec,
+    Raw as RawCodec, SerializationError, Serialize, ValueView as SerializationValueView,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MessagePackEntry {
@@ -39,6 +42,9 @@ pub enum MessagePackValue {
 }
 
 pub type Value = MessagePackValue;
+pub type CommonValue = serialization::Value;
+pub type ValueView<'a> = SerializationValueView<'a>;
+pub type Raw = RawCodec<MessagePackCodec>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MessagePackExt {
@@ -139,6 +145,21 @@ impl fmt::Display for MessagePackError {
 }
 
 impl std::error::Error for MessagePackError {}
+
+impl From<SerializationError> for MessagePackError {
+    fn from(error: SerializationError) -> Self {
+        let kind = match error {
+            SerializationError::EndOfInput => MessagePackErrorKind::UnexpectedEof,
+            SerializationError::LimitExceeded => MessagePackErrorKind::LimitExceeded,
+            SerializationError::DuplicateField => MessagePackErrorKind::DuplicateKey,
+            SerializationError::TypeMismatch
+            | SerializationError::UnexpectedEvent
+            | SerializationError::UnbalancedContainer
+            | SerializationError::InvalidContainerLength => MessagePackErrorKind::TypeMismatch,
+        };
+        MessagePackError::new(kind, 0)
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MessagePackDuplicatePolicy {
@@ -1047,6 +1068,7 @@ fn to_events(
     Ok(events)
 }
 
+#[derive(Clone)]
 pub struct MessagePackReader<'a> {
     input: Cow<'a, [u8]>,
     options: MessagePackDecodeOptions,
@@ -1180,6 +1202,19 @@ impl<'a> MessagePackReader<'a> {
     pub fn finish(&mut self) -> Result<(), MessagePackError> {
         while self.next()?.is_some() {}
         Ok(())
+    }
+}
+
+impl Raw {
+    /// Validate and retain an exact MessagePack document without materialising
+    /// its dynamic value tree.
+    pub fn from_bytes(
+        input: &[u8],
+        options: MessagePackDecodeOptions,
+    ) -> Result<Self, MessagePackError> {
+        let mut reader = MessagePackReader::from_bytes(input, options)?;
+        reader.finish()?;
+        Ok(RawCodec::from_validated(input.to_vec()))
     }
 }
 
@@ -1674,6 +1709,148 @@ impl MessagePackTimestamp {
     }
 }
 
+fn messagepack_event_to_common(event: MessagePackEvent) -> Result<Event, MessagePackError> {
+    Ok(match event {
+        MessagePackEvent::Nil => Event::Null,
+        MessagePackEvent::Bool(value) => Event::Bool(value),
+        MessagePackEvent::Int(value) => Event::Int(i128::from(value)),
+        MessagePackEvent::UInt(value) => Event::UInt(u128::from(value)),
+        MessagePackEvent::Float32(value) => Event::Float32(value),
+        MessagePackEvent::Float64(value) => Event::Float64(value),
+        MessagePackEvent::String(value) => Event::String(value),
+        MessagePackEvent::Binary(value) => Event::Bytes(value),
+        MessagePackEvent::StartArray(length) => Event::StartArray(length),
+        MessagePackEvent::EndArray => Event::EndArray,
+        MessagePackEvent::StartMap(length) => Event::StartMap(length),
+        MessagePackEvent::MapKey => Event::MapKey,
+        MessagePackEvent::EndMap => Event::EndMap,
+        MessagePackEvent::Ext(_) => return Err(error(MessagePackErrorKind::TypeMismatch, 0)),
+    })
+}
+
+impl From<MessagePackValue> for serialization::Value {
+    fn from(value: MessagePackValue) -> Self {
+        match value {
+            MessagePackValue::Nil => Self::Null,
+            MessagePackValue::Bool(value) => Self::Bool(value),
+            MessagePackValue::Int(value) => Self::Int(value),
+            MessagePackValue::UInt(value) => Self::UInt(value),
+            MessagePackValue::Float32(bits) => Self::Float32(bits),
+            MessagePackValue::Float64(bits) => Self::Float64(bits),
+            MessagePackValue::String(value) => Self::String(value),
+            MessagePackValue::Binary(value) => Self::Bytes(value),
+            MessagePackValue::Array(values) => {
+                Self::Array(values.into_iter().map(Self::from).collect())
+            }
+            MessagePackValue::Map(entries) => Self::Map(
+                entries
+                    .into_iter()
+                    .map(|entry| (Self::from(entry.key), Self::from(entry.value)))
+                    .collect(),
+            ),
+            MessagePackValue::Ext(extension) => Self::Extension {
+                type_code: extension.type_code,
+                payload: extension.payload,
+            },
+        }
+    }
+}
+
+impl TryFrom<serialization::Value> for MessagePackValue {
+    type Error = MessagePackError;
+
+    fn try_from(value: serialization::Value) -> Result<Self, Self::Error> {
+        Ok(match value {
+            serialization::Value::Null => Self::Nil,
+            serialization::Value::Bool(value) => Self::Bool(value),
+            serialization::Value::Int(value) => Self::Int(value),
+            serialization::Value::UInt(value) => Self::UInt(value),
+            serialization::Value::Float32(bits) => Self::Float32(bits),
+            serialization::Value::Float64(bits) => Self::Float64(bits),
+            serialization::Value::String(value) => Self::String(value),
+            serialization::Value::Bytes(value) => Self::Binary(value),
+            serialization::Value::Array(values) => Self::Array(
+                values
+                    .into_iter()
+                    .map(Self::try_from)
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
+            serialization::Value::Map(entries) => Self::Map(
+                entries
+                    .into_iter()
+                    .map(|(key, value)| {
+                        Ok(MessagePackEntry {
+                            key: Self::try_from(key)?,
+                            value: Self::try_from(value)?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, MessagePackError>>()?,
+            ),
+            serialization::Value::Extension { type_code, payload } => {
+                Self::Ext(MessagePackExt { type_code, payload })
+            }
+            serialization::Value::Number(_) | serialization::Value::Object(_) => {
+                return Err(error(MessagePackErrorKind::TypeMismatch, 0));
+            }
+        })
+    }
+}
+
+impl Encoder<MessagePackCodec, MessagePackError> for MessagePackWriter {
+    fn write_event(&mut self, event: Event) -> Result<(), MessagePackError> {
+        self.write(serialization_event(&event)?)
+    }
+}
+
+impl Decoder<MessagePackCodec, MessagePackError> for MessagePackReader<'_> {
+    fn limits(&self) -> serialization::Limits {
+        serialization::Limits {
+            max_depth: self.options.limits.max_depth,
+            max_events: self.options.limits.max_events,
+            max_bytes: self.options.limits.max_document_bytes,
+            max_container_items: self
+                .options
+                .limits
+                .max_array_items
+                .max(self.options.limits.max_map_pairs),
+        }
+    }
+
+    fn peek_event(&mut self) -> Result<Option<Event>, MessagePackError> {
+        let mut lookahead = self.clone();
+        lookahead
+            .next()?
+            .map(messagepack_event_to_common)
+            .transpose()
+    }
+
+    fn next(&mut self) -> Result<Option<Event>, MessagePackError> {
+        MessagePackReader::next(self)?
+            .map(messagepack_event_to_common)
+            .transpose()
+    }
+}
+
+/// Canonical typed MessagePack entry points for the static codec ABI.
+pub fn encode_static<T: Encode<MessagePackCodec>>(
+    value: &T,
+    options: MessagePackEncodeOptions,
+) -> Result<Vec<u8>, MessagePackError> {
+    let mut writer = MessagePackWriter::new(options);
+    value.encode(&mut writer)?;
+    writer.finish()
+}
+
+pub fn decode_static<T: Decode<MessagePackCodec>>(
+    input: &[u8],
+    options: MessagePackDecodeOptions,
+) -> Result<T, MessagePackError> {
+    let mut reader = MessagePackReader::from_bytes(input, options)?;
+    let value = T::decode(&mut reader)?;
+    reader.finish()?;
+    Ok(value)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1939,6 +2116,25 @@ mod tests {
             )
             .unwrap(),
             value
+        );
+    }
+
+    #[test]
+    fn canonical_static_path_round_trips_scalars_and_arrays() {
+        let options = MessagePackEncodeOptions::default();
+        let bytes = encode_static(&vec![1_i32, 2, 3], options).unwrap();
+        assert_eq!(bytes, vec![0x93, 1, 2, 3]);
+        assert_eq!(
+            decode_static::<Vec<i32>>(&bytes, MessagePackDecodeOptions::default()).unwrap(),
+            vec![1, 2, 3]
+        );
+        assert_eq!(
+            encode_static(&Option::<String>::None, options).unwrap(),
+            vec![0xc0]
+        );
+        assert_eq!(
+            decode_static::<Option<String>>(&[0xc0], MessagePackDecodeOptions::default()).unwrap(),
+            None
         );
     }
 

@@ -1,6 +1,134 @@
 //! Portable event protocol shared by typed serializers and dynamic codecs.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+use std::marker::PhantomData;
+
+/// Codec identities used by the static serialization protocols.
+///
+/// These are zero-sized type-level values.  They deliberately carry no
+/// runtime registry or format-specific state: the concrete encoder/decoder
+/// determines the wire representation and the compiler monomorphizes the
+/// `Encode[C]`/`Decode[C]` implementation.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct Json;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct MessagePack;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct Protobuf;
+
+/// A common owned value for the dynamic JSON/MessagePack path.
+///
+/// Protobuf intentionally keeps its wire-oriented `ProtoValue` model instead
+/// of converting messages into this tree.  Typed encoders never need to
+/// construct `Value`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Value {
+    Null,
+    Bool(bool),
+    Int(i64),
+    UInt(u64),
+    Float32(u32),
+    Float64(u64),
+    /// A validated decimal token whose exact spelling is significant to JSON.
+    Number(String),
+    String(String),
+    Bytes(Vec<u8>),
+    Array(Vec<Value>),
+    Map(Vec<(Value, Value)>),
+    Object(Vec<(String, Value)>),
+    Extension {
+        type_code: i8,
+        payload: Vec<u8>,
+    },
+}
+
+/// A borrowed, immutable view of a dynamic value.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ValueView<'a> {
+    value: &'a Value,
+}
+
+impl<'a> ValueView<'a> {
+    pub fn new(value: &'a Value) -> Self {
+        Self { value }
+    }
+
+    pub fn as_value(self) -> &'a Value {
+        self.value
+    }
+
+    pub fn clone_value(self) -> Value {
+        self.value.clone()
+    }
+}
+
+/// Validated, codec-specific opaque bytes.  Construction is intentionally
+/// owned by each codec module so `Raw<C>` can never be created without that
+/// codec's validation step (apart from the explicitly unsafe escape hatch).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Raw<C> {
+    bytes: Vec<u8>,
+    _codec: PhantomData<fn() -> C>,
+}
+
+/// Owned bytes used by the common typed protocol.
+///
+/// `Vec<u8>` deliberately remains an `Array[UInt8]`; a caller that wants a
+/// format binary/string payload uses this explicit wrapper.  That keeps the
+/// wire shape visible in generic code and avoids a surprising codec-specific
+/// special case for every `Vec` implementation.
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Bytes(Vec<u8>);
+
+impl Bytes {
+    pub fn new(value: Vec<u8>) -> Self {
+        Self(value)
+    }
+
+    pub fn from_slice(value: &[u8]) -> Self {
+        Self(value.to_vec())
+    }
+
+    pub fn as_slice(&self) -> &[u8] {
+        &self.0
+    }
+
+    pub fn into_vec(self) -> Vec<u8> {
+        self.0
+    }
+}
+
+impl AsRef<[u8]> for Bytes {
+    fn as_ref(&self) -> &[u8] {
+        self.as_slice()
+    }
+}
+
+impl<C> Raw<C> {
+    pub(crate) fn from_validated(bytes: Vec<u8>) -> Self {
+        Self {
+            bytes,
+            _codec: PhantomData,
+        }
+    }
+
+    /// Construct raw bytes without validation.  The source language exposes
+    /// this operation only from its `unsafe` surface; the Rust host bridge is
+    /// memory-safe and therefore models it as an explicitly named operation.
+    pub fn from_unchecked(bytes: Vec<u8>) -> Self {
+        Self::from_validated(bytes)
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.bytes
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Event {
@@ -77,6 +205,125 @@ pub trait Deserializer {
     fn next_event(&mut self) -> Result<Option<Event>, Self::Error>;
 }
 
+/// Public static encoder protocol from the 0.1 standard-library ABI.
+///
+/// `write_event` is the small primitive implemented by a format owner.  The
+/// named operations are deliberately defaults so a codec cannot accidentally
+/// diverge in the event vocabulary.  There is no `Any`, registration table or
+/// trait object in this boundary.
+pub trait Encoder<C, E> {
+    fn write_event(&mut self, event: Event) -> Result<(), E>;
+
+    fn null(&mut self) -> Result<(), E> {
+        self.write_event(Event::Null)
+    }
+
+    fn bool(&mut self, value: bool) -> Result<(), E> {
+        self.write_event(Event::Bool(value))
+    }
+
+    fn int(&mut self, value: i64) -> Result<(), E> {
+        self.write_event(Event::Int(i128::from(value)))
+    }
+
+    fn uint(&mut self, value: u64) -> Result<(), E> {
+        self.write_event(Event::UInt(u128::from(value)))
+    }
+
+    fn float32(&mut self, value: f32) -> Result<(), E> {
+        self.write_event(Event::Float32(value.to_bits()))
+    }
+
+    fn float64(&mut self, value: f64) -> Result<(), E> {
+        self.write_event(Event::Float64(value.to_bits()))
+    }
+
+    fn string(&mut self, value: &str) -> Result<(), E> {
+        self.write_event(Event::String(value.to_owned()))
+    }
+
+    fn bytes(&mut self, value: &[u8]) -> Result<(), E> {
+        self.write_event(Event::Bytes(value.to_vec()))
+    }
+
+    fn start_array(&mut self, length: Option<usize>) -> Result<(), E> {
+        self.write_event(Event::StartArray(length))
+    }
+
+    fn end_array(&mut self) -> Result<(), E> {
+        self.write_event(Event::EndArray)
+    }
+
+    fn start_map(&mut self, length: Option<usize>) -> Result<(), E> {
+        self.write_event(Event::StartMap(length))
+    }
+
+    fn map_key(&mut self) -> Result<(), E> {
+        self.write_event(Event::MapKey)
+    }
+
+    fn end_map(&mut self) -> Result<(), E> {
+        self.write_event(Event::EndMap)
+    }
+
+    fn start_record(&mut self, name: &str, fields: Option<usize>) -> Result<(), E> {
+        self.write_event(Event::StartRecord {
+            name: name.to_owned(),
+            fields,
+        })
+    }
+
+    fn field(&mut self, name: &str) -> Result<(), E> {
+        self.write_event(Event::Field(name.to_owned()))
+    }
+
+    fn end_record(&mut self) -> Result<(), E> {
+        self.write_event(Event::EndRecord)
+    }
+
+    fn start_enum(&mut self, name: &str, variant: &str) -> Result<(), E> {
+        self.write_event(Event::StartEnum {
+            name: name.to_owned(),
+            variant: variant.to_owned(),
+        })
+    }
+
+    fn end_enum(&mut self) -> Result<(), E> {
+        self.write_event(Event::EndEnum)
+    }
+}
+
+/// Public static decoder protocol from the 0.1 standard-library ABI.
+pub trait Decoder<C, E> {
+    fn limits(&self) -> Limits;
+
+    fn peek_event(&mut self) -> Result<Option<Event>, E>;
+
+    fn next(&mut self) -> Result<Option<Event>, E>;
+
+    fn own(&mut self, event: Event) -> Result<Event, E> {
+        Ok(event)
+    }
+}
+
+/// A statically dispatched typed encoder.  `C` is a zero-sized codec identity
+/// such as [`Json`], [`MessagePack`] or [`Protobuf`].
+pub trait Encode<C> {
+    fn encode<E, S>(&self, encoder: &mut S) -> Result<(), E>
+    where
+        E: From<SerializationError>,
+        S: Encoder<C, E>;
+}
+
+/// A statically dispatched typed decoder.  Implementations construct their
+/// result only after all nested events have been validated by the decoder.
+pub trait Decode<C>: Sized {
+    fn decode<E, D>(decoder: &mut D) -> Result<Self, E>
+    where
+        E: From<SerializationError>,
+        D: Decoder<C, E>;
+}
+
 /// A value that can be encoded into the common event protocol.
 pub trait Serialize {
     fn serialize<S: Serializer<Error = SerializationError>>(
@@ -126,6 +373,12 @@ impl Serializer for EventSerializer {
         }
         self.events.push(event);
         Ok(())
+    }
+}
+
+impl<C> Encoder<C, SerializationError> for EventSerializer {
+    fn write_event(&mut self, event: Event) -> Result<(), SerializationError> {
+        <Self as Serializer>::write_event(self, event)
     }
 }
 
@@ -184,6 +437,20 @@ impl Deserializer for EventDeserializer<'_> {
     }
 }
 
+impl<C> Decoder<C, SerializationError> for EventDeserializer<'_> {
+    fn limits(&self) -> Limits {
+        self.limits
+    }
+
+    fn peek_event(&mut self) -> Result<Option<Event>, SerializationError> {
+        <Self as Deserializer>::peek_event(self)
+    }
+
+    fn next(&mut self) -> Result<Option<Event>, SerializationError> {
+        <Self as Deserializer>::next_event(self)
+    }
+}
+
 pub fn serialize_value<T: Serialize>(
     value: &T,
     limits: Limits,
@@ -201,6 +468,394 @@ pub fn deserialize_value<T: Deserialize>(
     let value = T::deserialize(&mut deserializer)?;
     deserializer.finish()?;
     Ok(value)
+}
+
+fn next_required<C, E, D>(decoder: &mut D) -> Result<Event, E>
+where
+    E: From<SerializationError>,
+    D: Decoder<C, E>,
+{
+    decoder
+        .next()?
+        .ok_or_else(|| E::from(SerializationError::EndOfInput))
+}
+
+fn type_mismatch<E>() -> E
+where
+    E: From<SerializationError>,
+{
+    E::from(SerializationError::TypeMismatch)
+}
+
+macro_rules! static_scalar_codec {
+    ($ty:ty, $encode:ident, $pattern:pat => $value:expr) => {
+        impl<C> Encode<C> for $ty {
+            fn encode<E, S>(&self, encoder: &mut S) -> Result<(), E>
+            where
+                E: From<SerializationError>,
+                S: Encoder<C, E>,
+            {
+                encoder.$encode(*self)
+            }
+        }
+
+        impl<C> Decode<C> for $ty {
+            fn decode<E, D>(decoder: &mut D) -> Result<Self, E>
+            where
+                E: From<SerializationError>,
+                D: Decoder<C, E>,
+            {
+                match next_required(decoder)? {
+                    $pattern => Ok($value),
+                    _ => Err(type_mismatch()),
+                }
+            }
+        }
+    };
+}
+
+static_scalar_codec!(bool, bool, Event::Bool(value) => value);
+macro_rules! signed_scalar_codec {
+    ($($ty:ty),+ $(,)?) => {
+        $(
+            impl<C> Encode<C> for $ty {
+                fn encode<E, S>(&self, encoder: &mut S) -> Result<(), E>
+                where
+                    E: From<SerializationError>,
+                    S: Encoder<C, E>,
+                {
+                    encoder.int(i64::from(*self))
+                }
+            }
+
+            impl<C> Decode<C> for $ty {
+                fn decode<E, D>(decoder: &mut D) -> Result<Self, E>
+                where
+                    E: From<SerializationError>,
+                    D: Decoder<C, E>,
+                {
+                    match next_required(decoder)? {
+                        Event::Int(value) => <$ty>::try_from(value).map_err(|_| type_mismatch()),
+                        Event::UInt(value) => <$ty>::try_from(value).map_err(|_| type_mismatch()),
+                        _ => Err(type_mismatch()),
+                    }
+                }
+            }
+        )+
+    };
+}
+
+macro_rules! unsigned_scalar_codec {
+    ($($ty:ty),+ $(,)?) => {
+        $(
+            impl<C> Encode<C> for $ty {
+                fn encode<E, S>(&self, encoder: &mut S) -> Result<(), E>
+                where
+                    E: From<SerializationError>,
+                    S: Encoder<C, E>,
+                {
+                    encoder.uint(u64::from(*self))
+                }
+            }
+
+            impl<C> Decode<C> for $ty {
+                fn decode<E, D>(decoder: &mut D) -> Result<Self, E>
+                where
+                    E: From<SerializationError>,
+                    D: Decoder<C, E>,
+                {
+                    match next_required(decoder)? {
+                        Event::UInt(value) => <$ty>::try_from(value).map_err(|_| type_mismatch()),
+                        Event::Int(value) => <$ty>::try_from(value).map_err(|_| type_mismatch()),
+                        _ => Err(type_mismatch()),
+                    }
+                }
+            }
+        )+
+    };
+}
+
+signed_scalar_codec!(i8, i16, i32, i64);
+unsigned_scalar_codec!(u8, u16, u32, u64);
+
+impl<C> Encode<C> for f32 {
+    fn encode<E, S>(&self, encoder: &mut S) -> Result<(), E>
+    where
+        E: From<SerializationError>,
+        S: Encoder<C, E>,
+    {
+        encoder.float32(*self)
+    }
+}
+
+impl<C> Decode<C> for f32 {
+    fn decode<E, D>(decoder: &mut D) -> Result<Self, E>
+    where
+        E: From<SerializationError>,
+        D: Decoder<C, E>,
+    {
+        match next_required(decoder)? {
+            Event::Float32(bits) => Ok(f32::from_bits(bits)),
+            Event::Float64(bits) => Ok(f64::from_bits(bits) as f32),
+            Event::Int(value) => Ok(value as f32),
+            Event::UInt(value) => Ok(value as f32),
+            _ => Err(type_mismatch()),
+        }
+    }
+}
+
+impl<C> Encode<C> for f64 {
+    fn encode<E, S>(&self, encoder: &mut S) -> Result<(), E>
+    where
+        E: From<SerializationError>,
+        S: Encoder<C, E>,
+    {
+        encoder.float64(*self)
+    }
+}
+
+impl<C> Decode<C> for f64 {
+    fn decode<E, D>(decoder: &mut D) -> Result<Self, E>
+    where
+        E: From<SerializationError>,
+        D: Decoder<C, E>,
+    {
+        match next_required(decoder)? {
+            Event::Float64(bits) => Ok(f64::from_bits(bits)),
+            Event::Float32(bits) => Ok(f32::from_bits(bits) as f64),
+            Event::Int(value) => Ok(value as f64),
+            Event::UInt(value) => Ok(value as f64),
+            _ => Err(type_mismatch()),
+        }
+    }
+}
+
+impl<C> Encode<C> for String {
+    fn encode<E, S>(&self, encoder: &mut S) -> Result<(), E>
+    where
+        E: From<SerializationError>,
+        S: Encoder<C, E>,
+    {
+        encoder.string(self)
+    }
+}
+
+impl<C> Decode<C> for String {
+    fn decode<E, D>(decoder: &mut D) -> Result<Self, E>
+    where
+        E: From<SerializationError>,
+        D: Decoder<C, E>,
+    {
+        match next_required(decoder)? {
+            Event::String(value) => Ok(value),
+            _ => Err(type_mismatch()),
+        }
+    }
+}
+
+impl<C> Encode<C> for &str {
+    fn encode<E, S>(&self, encoder: &mut S) -> Result<(), E>
+    where
+        E: From<SerializationError>,
+        S: Encoder<C, E>,
+    {
+        encoder.string(self)
+    }
+}
+
+impl<C> Encode<C> for Bytes {
+    fn encode<E, S>(&self, encoder: &mut S) -> Result<(), E>
+    where
+        E: From<SerializationError>,
+        S: Encoder<C, E>,
+    {
+        encoder.bytes(self.as_slice())
+    }
+}
+
+impl<C> Decode<C> for Bytes {
+    fn decode<E, D>(decoder: &mut D) -> Result<Self, E>
+    where
+        E: From<SerializationError>,
+        D: Decoder<C, E>,
+    {
+        match next_required(decoder)? {
+            Event::Bytes(value) => Ok(Self::new(value)),
+            _ => Err(type_mismatch()),
+        }
+    }
+}
+
+impl<C> Encode<C> for () {
+    fn encode<E, S>(&self, encoder: &mut S) -> Result<(), E>
+    where
+        E: From<SerializationError>,
+        S: Encoder<C, E>,
+    {
+        encoder.null()
+    }
+}
+
+impl<C> Decode<C> for () {
+    fn decode<E, D>(decoder: &mut D) -> Result<Self, E>
+    where
+        E: From<SerializationError>,
+        D: Decoder<C, E>,
+    {
+        match next_required(decoder)? {
+            Event::Null => Ok(()),
+            _ => Err(type_mismatch()),
+        }
+    }
+}
+
+impl<C, T: Encode<C>> Encode<C> for Vec<T> {
+    fn encode<E, S>(&self, encoder: &mut S) -> Result<(), E>
+    where
+        E: From<SerializationError>,
+        S: Encoder<C, E>,
+    {
+        encoder.start_array(Some(self.len()))?;
+        for value in self {
+            value.encode(encoder)?;
+        }
+        encoder.end_array()
+    }
+}
+
+impl<C, T: Decode<C>> Decode<C> for Vec<T> {
+    fn decode<E, D>(decoder: &mut D) -> Result<Self, E>
+    where
+        E: From<SerializationError>,
+        D: Decoder<C, E>,
+    {
+        let declared = match next_required(decoder)? {
+            Event::StartArray(length) => length,
+            _ => return Err(type_mismatch()),
+        };
+        if declared.is_some_and(|length| length > decoder.limits().max_container_items) {
+            return Err(E::from(SerializationError::LimitExceeded));
+        }
+        let mut values = Vec::new();
+        if let Some(length) = declared {
+            values.reserve(length);
+        }
+        loop {
+            match decoder.peek_event()? {
+                Some(Event::EndArray) => {
+                    let _ = decoder.next()?;
+                    break;
+                }
+                Some(_) => {
+                    if values.len() >= decoder.limits().max_container_items {
+                        return Err(E::from(SerializationError::LimitExceeded));
+                    }
+                    values.push(T::decode(decoder)?);
+                }
+                None => return Err(E::from(SerializationError::EndOfInput)),
+            }
+        }
+        if declared.is_some_and(|length| length != values.len()) {
+            return Err(E::from(SerializationError::InvalidContainerLength));
+        }
+        Ok(values)
+    }
+}
+
+impl<C, K, V> Encode<C> for BTreeMap<K, V>
+where
+    K: Encode<C>,
+    V: Encode<C>,
+{
+    fn encode<E, S>(&self, encoder: &mut S) -> Result<(), E>
+    where
+        E: From<SerializationError>,
+        S: Encoder<C, E>,
+    {
+        encoder.start_map(Some(self.len()))?;
+        for (key, value) in self {
+            encoder.map_key()?;
+            key.encode(encoder)?;
+            value.encode(encoder)?;
+        }
+        encoder.end_map()
+    }
+}
+
+impl<C, K, V> Decode<C> for BTreeMap<K, V>
+where
+    K: Decode<C> + Ord,
+    V: Decode<C>,
+{
+    fn decode<E, D>(decoder: &mut D) -> Result<Self, E>
+    where
+        E: From<SerializationError>,
+        D: Decoder<C, E>,
+    {
+        let declared = match next_required(decoder)? {
+            Event::StartMap(length) => length,
+            _ => return Err(type_mismatch()),
+        };
+        if declared.is_some_and(|length| length > decoder.limits().max_container_items) {
+            return Err(E::from(SerializationError::LimitExceeded));
+        }
+        let mut values = BTreeMap::new();
+        loop {
+            match decoder.peek_event()? {
+                Some(Event::EndMap) => {
+                    let _ = decoder.next()?;
+                    break;
+                }
+                Some(Event::MapKey) => {
+                    let _ = decoder.next()?;
+                    if values.len() >= decoder.limits().max_container_items {
+                        return Err(E::from(SerializationError::LimitExceeded));
+                    }
+                    let key = K::decode(decoder)?;
+                    let value = V::decode(decoder)?;
+                    if values.insert(key, value).is_some() {
+                        return Err(E::from(SerializationError::DuplicateField));
+                    }
+                }
+                Some(_) => return Err(E::from(SerializationError::UnexpectedEvent)),
+                None => return Err(E::from(SerializationError::EndOfInput)),
+            }
+        }
+        if declared.is_some_and(|length| length != values.len()) {
+            return Err(E::from(SerializationError::InvalidContainerLength));
+        }
+        Ok(values)
+    }
+}
+
+impl<C, T: Encode<C>> Encode<C> for Option<T> {
+    fn encode<E, S>(&self, encoder: &mut S) -> Result<(), E>
+    where
+        E: From<SerializationError>,
+        S: Encoder<C, E>,
+    {
+        match self {
+            Some(value) => value.encode(encoder),
+            None => encoder.null(),
+        }
+    }
+}
+
+impl<C, T: Decode<C>> Decode<C> for Option<T> {
+    fn decode<E, D>(decoder: &mut D) -> Result<Self, E>
+    where
+        E: From<SerializationError>,
+        D: Decoder<C, E>,
+    {
+        match decoder.peek_event()? {
+            Some(Event::Null) => {
+                let _ = decoder.next()?;
+                Ok(None)
+            }
+            Some(_) => T::decode(decoder).map(Some),
+            None => Err(E::from(SerializationError::EndOfInput)),
+        }
+    }
 }
 
 fn write_scalar<S: Serializer<Error = SerializationError>>(
@@ -901,5 +1556,92 @@ mod tests {
             deserialize_value::<bool>(&trailing, Limits::default()),
             Err(SerializationError::UnexpectedEvent)
         );
+    }
+
+    #[test]
+    fn canonical_encode_decode_protocol_is_static_and_codec_parameterized() {
+        let value = Some(vec![1_i16, -2_i16, 3_i16]);
+        let mut encoder = EventSerializer::new(Limits::default());
+        <Option<Vec<i16>> as Encode<Json>>::encode::<SerializationError, _>(&value, &mut encoder)
+            .unwrap();
+        let events = encoder.finish().unwrap();
+        assert_eq!(
+            events,
+            vec![
+                Event::StartArray(Some(3)),
+                Event::Int(1),
+                Event::Int(-2),
+                Event::Int(3),
+                Event::EndArray,
+            ]
+        );
+
+        let mut decoder = EventDeserializer::new(&events, Limits::default()).unwrap();
+        let decoded = <Option<Vec<i16>> as Decode<MessagePack>>::decode::<SerializationError, _>(
+            &mut decoder,
+        )
+        .unwrap();
+        decoder.finish().unwrap();
+        assert_eq!(decoded, value);
+    }
+
+    #[test]
+    fn canonical_protocol_rejects_declared_array_length_mismatch_atomically() {
+        let events = [Event::StartArray(Some(2)), Event::Int(7), Event::EndArray];
+        let mut decoder = EventDeserializer::new(&events, Limits::default()).unwrap();
+        let result = <Vec<i64> as Decode<Protobuf>>::decode::<SerializationError, _>(&mut decoder);
+        assert_eq!(result, Err(SerializationError::InvalidContainerLength));
+    }
+
+    #[test]
+    fn dynamic_value_views_and_raw_bytes_are_owned_or_borrowed_explicitly() {
+        let value = Value::Object(vec![("answer".into(), Value::Int(42))]);
+        let view = ValueView::new(&value);
+        assert_eq!(view.as_value(), &value);
+        assert_eq!(view.clone_value(), value);
+
+        let raw = Raw::<Json>::from_validated(vec![b'{', b'}']);
+        assert_eq!(raw.as_bytes(), b"{}");
+        assert_eq!(raw.clone().into_bytes(), b"{}");
+        let unchecked = Raw::<MessagePack>::from_unchecked(vec![0xc0]);
+        assert_eq!(unchecked.as_bytes(), &[0xc0]);
+    }
+
+    #[test]
+    fn canonical_protocol_keeps_bytes_unit_and_maps_explicit() {
+        let mut values = BTreeMap::new();
+        values.insert("payload".to_owned(), Bytes::from_slice(&[1, 2, 3]));
+        let mut encoder = EventSerializer::new(Limits::default());
+        <BTreeMap<String, Bytes> as Encode<Json>>::encode::<SerializationError, _>(
+            &values,
+            &mut encoder,
+        )
+        .unwrap();
+        let events = encoder.finish().unwrap();
+        assert_eq!(
+            events,
+            vec![
+                Event::StartMap(Some(1)),
+                Event::MapKey,
+                Event::String("payload".into()),
+                Event::Bytes(vec![1, 2, 3]),
+                Event::EndMap,
+            ]
+        );
+        let mut decoder = EventDeserializer::new(&events, Limits::default()).unwrap();
+        let decoded = <BTreeMap<String, Bytes> as Decode<Json>>::decode::<SerializationError, _>(
+            &mut decoder,
+        )
+        .unwrap();
+        decoder.finish().unwrap();
+        assert_eq!(decoded.get("payload").unwrap().as_slice(), &[1, 2, 3]);
+
+        let mut unit_encoder = EventSerializer::new(Limits::default());
+        <() as Encode<Json>>::encode::<SerializationError, _>(&(), &mut unit_encoder).unwrap();
+        let unit_events = unit_encoder.finish().unwrap();
+        assert_eq!(unit_events, vec![Event::Null]);
+        let mut unit_decoder = EventDeserializer::new(&unit_events, Limits::default()).unwrap();
+        <() as Decode<Json>>::decode::<SerializationError, _>(&mut unit_decoder).unwrap();
+        unit_decoder.finish().unwrap();
     }
 }

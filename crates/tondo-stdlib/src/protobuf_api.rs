@@ -11,12 +11,17 @@ use std::fmt;
 use std::io::{Read, Write};
 use std::marker::PhantomData;
 
-use crate::serialization::{self, Deserialize, Event, Serialize};
+use crate::serialization::{
+    self, Decode, Deserialize, Encode, Event, EventDeserializer, EventSerializer,
+    Protobuf as ProtobufCodec, Raw as RawCodec, SerializationError, Serialize,
+};
 
 const MAX_FIELD_NUMBER: u32 = 536_870_911;
 const RESERVED_FIELD_START: u32 = 19_000;
 const RESERVED_FIELD_END: u32 = 19_999;
 const MAX_LENGTH: u64 = 2_147_483_647;
+
+pub type Raw = RawCodec<ProtobufCodec>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
@@ -242,6 +247,21 @@ impl fmt::Display for ProtoError {
 }
 
 impl std::error::Error for ProtoError {}
+
+impl From<SerializationError> for ProtoError {
+    fn from(error: SerializationError) -> Self {
+        let kind = match error {
+            SerializationError::EndOfInput => ProtoErrorKind::UnexpectedEof,
+            SerializationError::LimitExceeded => ProtoErrorKind::LimitExceeded,
+            SerializationError::TypeMismatch
+            | SerializationError::UnexpectedEvent
+            | SerializationError::UnbalancedContainer
+            | SerializationError::InvalidContainerLength => ProtoErrorKind::TypeMismatch,
+            SerializationError::DuplicateField => ProtoErrorKind::SchemaMismatch,
+        };
+        ProtoError::terminal(kind)
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProtoBuildErrorKind {
@@ -919,6 +939,16 @@ impl<'a, T> ProtoReader<'a, T> {
     }
 }
 
+impl Raw {
+    /// Validate a complete Protobuf wire document and retain its exact bytes.
+    /// Schema-aware validation remains the responsibility of `ProtoReader[T]`;
+    /// this raw constructor only checks the bounded wire envelope.
+    pub fn from_bytes(input: &[u8], options: ProtoDecodeOptions) -> Result<Self, ProtoError> {
+        parse_fields(input, options)?;
+        Ok(RawCodec::from_validated(input.to_vec()))
+    }
+}
+
 #[derive(Debug)]
 struct MessageFrame {
     bytes: Vec<u8>,
@@ -1459,6 +1489,51 @@ pub fn encodeDeterministic<T: Serialize>(
     limits: ProtoLimits,
 ) -> Result<Vec<u8>, ProtoError> {
     encode_deterministic(value, limits)
+}
+
+/// Canonical typed Protobuf entry points for the static codec ABI.
+///
+/// Protobuf field numbers and wire shapes remain schema-owned.  The common
+/// event stream is therefore validated and lowered through the existing
+/// schema-aware wire adapter rather than exposing a dynamic `Value` tree.
+pub fn encode_static<T: Encode<ProtobufCodec>>(
+    value: &T,
+    options: ProtoEncodeOptions,
+) -> Result<Vec<u8>, ProtoError> {
+    let mut events = EventSerializer::new(serialization::Limits {
+        max_depth: options.limits.max_depth,
+        max_events: options.limits.max_events,
+        max_bytes: options.limits.max_output_bytes,
+        max_container_items: options.limits.max_repeated_items,
+    });
+    value.encode(&mut events)?;
+    let events = events.finish()?;
+    let proto_events = serialization_events_to_proto(&events)?;
+    let mut writer = ProtoWriter::new(options);
+    for event in proto_events {
+        writer.write(event)?;
+    }
+    writer.finish()
+}
+
+pub fn decode_static<T: Decode<ProtobufCodec>>(
+    input: &[u8],
+    options: ProtoDecodeOptions,
+) -> Result<T, ProtoError> {
+    let fields = parse_fields(input, options)?;
+    let events = serialization_events_from_fields(&fields, options)?;
+    let mut decoder = EventDeserializer::new(
+        &events,
+        serialization::Limits {
+            max_depth: options.limits.max_depth,
+            max_events: options.limits.max_events,
+            max_bytes: options.limits.max_message_bytes,
+            max_container_items: options.limits.max_repeated_items,
+        },
+    )?;
+    let value = T::decode(&mut decoder)?;
+    decoder.finish()?;
+    Ok(value)
 }
 
 pub fn validate<T>(input: &[u8], options: ProtoDecodeOptions) -> Result<(), ProtoError> {
@@ -2184,6 +2259,16 @@ mod tests {
         assert_eq!(deterministic, bytes);
         validate::<i64>(&bytes, options()).unwrap();
         assert_eq!(descriptor::<i64>().name(), "i64");
+    }
+
+    #[test]
+    fn canonical_static_path_round_trips_scalar_through_wire_adapter() {
+        let bytes = encode_static(&150_i64, ProtoEncodeOptions::default()).unwrap();
+        assert_eq!(bytes, vec![0x08, 0x96, 0x01]);
+        assert_eq!(
+            decode_static::<i64>(&bytes, ProtoDecodeOptions::default()).unwrap(),
+            150
+        );
     }
 
     #[test]
