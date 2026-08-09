@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 1.86
+**Versión del tracker:** 1.87
 
 **Última actualización:** 2026-08-09
 
@@ -48,9 +48,8 @@ contratos públicos: la ruta de frontend, HIR/MIR/bytecode, `Join` transferible,
 referencia. La compatibilidad léxica de `async` se conserva únicamente para
 fixtures históricos y no aparece en interfaces ni en la superficie normativa;
 la retirada mecánica de esas fixtures queda separada del contrato ejecutable.
-Después: (1) cerrar `STD-PROTOBUF-API-001`; (2) cerrar
-`STD-CODEC-CONF-001` para JSON, MessagePack y Protobuf; (3) completar las
-rutas públicas A1–A4 y ampliar
+Después: (1) cerrar `STD-CODEC-CONF-001` para JSON, MessagePack y Protobuf;
+(2) completar las rutas públicas A1–A4 y ampliar
 la matriz normativa a los tres contratos G5 antes de volver a cerrar T0/G5/S1A.
 Los contratos
 runtime-facing de STD-0.1B y M11 esperan esos gates. Todo pertenece a la primera
@@ -4282,12 +4281,19 @@ tests. Antes de volver a marcarlas `[x]` deben cumplirse todos estos puntos:
   público sigue visible para `STD-MSGPACK-IMPL-001` y no se sustituye por ese
   bridge.
 
-- [ ] **STD-PROTOBUF-API-001 — Fijar la API fuente y de build de Protobuf.**
+- [x] **STD-PROTOBUF-API-001 — Fijar la API fuente y de build de Protobuf.**
   Publicar `[[protobuf.schema]]` en `tondo.toml`, mapping hermético, baseline
   de evolución, descriptor root explícito, tipos generated,
   `Encode[Protobuf]`/`Decode[Protobuf]`, `ProtoReader[T]`/`ProtoWriter[T]`,
-  `ProtoEvent`, options, limits, errors y terminalidad. El contrato de wire no
-  introduce un alias dinámico a `serialization.Value`.
+  `ProtoEvent`, options, limits, errors y terminalidad. Cerrado con la sección
+  14.11, el contrato machine-readable `testing/stdlib-protobuf.json` y el
+  checker del owner: el input es exclusivamente `tondo.toml`, la identidad del
+  schema y baseline es hermética y la ruta estática
+  `Encode[Protobuf]`/`Decode[Protobuf]` queda separada de
+  `serialization.Value`. `ProtoEvent`/`UnknownField` son la inspección wire;
+  `ProtoValue`/`Raw<Protobuf>` y los helpers Rust son solo bridge de
+  compatibilidad. La ruta HIR/lowering/caso público permanece visible para
+  `STD-PROTOBUF-IMPL-001` y no se sustituye por el bridge.
 
 - [x] **STD-CORE-IMPL-001 — Publicar los protocolos Core completos.** Conectar
   por dispatch estático las operaciones cerradas de `Option` y `Result`, junto
@@ -5681,6 +5687,17 @@ se declara iniciada antes de esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 1.87 — 2026-08-09
+
+- Se fija y cierra `STD-PROTOBUF-API-001`: build TOML, grafo declarado,
+  baseline, descriptor root, tipos generados y API schema-bound quedan
+  registrados de forma única en spec, contrato JSON y checker.
+- La frontera estática `Encode[Protobuf]`/`Decode[Protobuf]` y los eventos
+  `ProtoEvent`/`UnknownField` son la única superficie Tondo; `ProtoValue`,
+  `Raw<Protobuf>` y los helpers heredados permanecen aislados como bridge Rust.
+- El siguiente gate es `STD-CODEC-CONF-001`, que todavía requiere vectores
+  externos, fragmentación, fuzzing e interoperabilidad independiente.
 
 ### 1.86 — 2026-08-09
 

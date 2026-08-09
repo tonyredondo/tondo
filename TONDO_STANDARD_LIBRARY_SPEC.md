@@ -2467,7 +2467,9 @@ el checker schema-first, el parser/reader y el writer usan límites y stacks
 explícitos, y `encode_static`/`decode_static` atraviesan
 `Encode[Protobuf]`/`Decode[Protobuf]` sin materializar `serialization.Value`.
 Los helpers Rust `encode`/`decode` son únicamente el bridge de compatibilidad;
-la conformance oficial e interoperabilidad independiente siguen siendo gates de
+`ProtoValue` y `Raw<Protobuf>` también quedan limitados a ese bridge y no
+introducen un alias dinámico de `serialization.Value`. La conformance oficial e
+interoperabilidad independiente siguen siendo gates de
 `STD-CODEC-CONF-001`.
 
 El mapping generado, el descriptor explícito, la evolución contra baseline TOML,

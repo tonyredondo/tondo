@@ -281,6 +281,10 @@ source="$root/crates/tondo-stdlib/src/protobuf_api.rs"
 }
 for symbol in \
     'pub enum ProtoWireType' \
+    'pub struct ProtoDescriptor' \
+    'pub struct UnknownField' \
+    'pub struct UnknownFields' \
+    'pub enum ProtoEvent' \
     'pub struct ProtoReader' \
     'pub struct ProtoWriter' \
     'pub enum ProtoValue' \
@@ -298,5 +302,12 @@ for symbol in \
         exit 1
     }
 done
+
+# The Rust compatibility bridge may retain wire-specific helper values, but
+# the Tondo owner must not publish a dynamic serialization.Value alias.
+if grep -Eq '^pub type Value =|^pub type CommonValue =' "$source"; then
+    echo "Protobuf owner must not publish a dynamic Value alias" >&2
+    exit 1
+fi
 
 echo "std.protobuf owner contract: OK"
