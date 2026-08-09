@@ -721,19 +721,40 @@ fn parsed_to_events(
     fields: &[ParsedField],
     options: ProtoDecodeOptions,
 ) -> Result<Vec<ProtoEvent>, ProtoError> {
-    let mut events = Vec::new();
-    events.push(ProtoEvent::StartMessage("root".to_owned()));
-    let mut unknown_bytes = 0usize;
-    for field in fields {
-        if events.len() >= options.limits.max_events {
+    fn push_event(
+        events: &mut Vec<ProtoEvent>,
+        event: ProtoEvent,
+        limit: usize,
+    ) -> Result<(), ProtoError> {
+        if events.len() >= limit {
             return Err(ProtoError::new(ProtoErrorKind::LimitExceeded, events.len()));
         }
+        events.push(event);
+        Ok(())
+    }
+
+    let mut events = Vec::new();
+    push_event(
+        &mut events,
+        ProtoEvent::StartMessage("root".to_owned()),
+        options.limits.max_events,
+    )?;
+    let mut unknown_bytes = 0usize;
+    for field in fields {
         match field.wire_type {
             ProtoWireType::Varint => {
                 let mut cursor = 0;
                 let (value, _) = read_varint(&field.payload, &mut cursor, options)?;
-                events.push(ProtoEvent::Field(field.number, field.wire_type));
-                events.push(ProtoEvent::Varint(value));
+                push_event(
+                    &mut events,
+                    ProtoEvent::Field(field.number, field.wire_type),
+                    options.limits.max_events,
+                )?;
+                push_event(
+                    &mut events,
+                    ProtoEvent::Varint(value),
+                    options.limits.max_events,
+                )?;
             }
             ProtoWireType::Fixed32 => {
                 let value = u32::from_le_bytes(
@@ -743,8 +764,16 @@ fn parsed_to_events(
                         .try_into()
                         .map_err(|_| ProtoError::new(ProtoErrorKind::InvalidLength, 0))?,
                 );
-                events.push(ProtoEvent::Field(field.number, field.wire_type));
-                events.push(ProtoEvent::Fixed32(value));
+                push_event(
+                    &mut events,
+                    ProtoEvent::Field(field.number, field.wire_type),
+                    options.limits.max_events,
+                )?;
+                push_event(
+                    &mut events,
+                    ProtoEvent::Fixed32(value),
+                    options.limits.max_events,
+                )?;
             }
             ProtoWireType::Fixed64 => {
                 let value = u64::from_le_bytes(
@@ -754,16 +783,36 @@ fn parsed_to_events(
                         .try_into()
                         .map_err(|_| ProtoError::new(ProtoErrorKind::InvalidLength, 0))?,
                 );
-                events.push(ProtoEvent::Field(field.number, field.wire_type));
-                events.push(ProtoEvent::Fixed64(value));
+                push_event(
+                    &mut events,
+                    ProtoEvent::Field(field.number, field.wire_type),
+                    options.limits.max_events,
+                )?;
+                push_event(
+                    &mut events,
+                    ProtoEvent::Fixed64(value),
+                    options.limits.max_events,
+                )?;
             }
             ProtoWireType::LengthDelimited => {
                 if field.payload.len() > options.limits.max_packed_bytes {
                     return Err(ProtoError::new(ProtoErrorKind::LimitExceeded, 0));
                 }
-                events.push(ProtoEvent::StartLengthDelimited(field.number));
-                events.push(ProtoEvent::Bytes(field.payload.clone()));
-                events.push(ProtoEvent::EndLengthDelimited);
+                push_event(
+                    &mut events,
+                    ProtoEvent::StartLengthDelimited(field.number),
+                    options.limits.max_events,
+                )?;
+                push_event(
+                    &mut events,
+                    ProtoEvent::Bytes(field.payload.clone()),
+                    options.limits.max_events,
+                )?;
+                push_event(
+                    &mut events,
+                    ProtoEvent::EndLengthDelimited,
+                    options.limits.max_events,
+                )?;
             }
             ProtoWireType::StartGroup => {
                 unknown_bytes = unknown_bytes.saturating_add(field.raw_after_tag.len());
@@ -771,7 +820,11 @@ fn parsed_to_events(
                     return Err(ProtoError::new(ProtoErrorKind::LimitExceeded, 0));
                 }
                 if options.unknown_fields == ProtoUnknownPolicy::Preserve {
-                    events.push(ProtoEvent::Unknown(unknown_from(field)));
+                    push_event(
+                        &mut events,
+                        ProtoEvent::Unknown(unknown_from(field)),
+                        options.limits.max_events,
+                    )?;
                 }
             }
             ProtoWireType::EndGroup => {
@@ -779,7 +832,11 @@ fn parsed_to_events(
             }
         }
     }
-    events.push(ProtoEvent::EndMessage);
+    push_event(
+        &mut events,
+        ProtoEvent::EndMessage,
+        options.limits.max_events,
+    )?;
     Ok(events)
 }
 
@@ -974,6 +1031,7 @@ pub struct ProtoWriter {
     output: Option<Vec<u8>>,
     sink: Option<Box<dyn Write>>,
     terminal: Option<ProtoError>,
+    events: usize,
     finished: bool,
 }
 
@@ -985,6 +1043,7 @@ impl ProtoWriter {
             output: None,
             sink: None,
             terminal: None,
+            events: 0,
             finished: false,
         }
     }
@@ -1067,6 +1126,10 @@ impl ProtoWriter {
         if self.finished {
             return self.fail(ProtoError::terminal(ProtoErrorKind::TrailingData));
         }
+        if self.events >= self.options.limits.max_events {
+            return self.fail(ProtoError::new(ProtoErrorKind::LimitExceeded, self.events));
+        }
+        self.events += 1;
         if let Err(error) =
             checked_limits(self.options.limits).and_then(|()| self.write_inner(event))
         {
@@ -2758,6 +2821,21 @@ mod tests {
             event_limit.next().unwrap_err().kind,
             ProtoErrorKind::LimitExceeded
         );
+        let mut length_event_limit = ProtoReader::<()>::from_bytes(
+            &[0x0a, 1, b'x'],
+            ProtoDecodeOptions {
+                limits: ProtoLimits {
+                    max_events: 2,
+                    ..Default::default()
+                },
+                ..options()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            length_event_limit.next().unwrap_err().kind,
+            ProtoErrorKind::LimitExceeded
+        );
         let mut preserved_group = ProtoReader::<()>::from_bytes(&[0x53, 0x54], options()).unwrap();
         let mut preserved = Vec::new();
         while let Some(event) = preserved_group.next().unwrap() {
@@ -2816,6 +2894,23 @@ mod tests {
             .unwrap();
         assert_eq!(
             limited.write(ProtoEvent::Varint(1)).unwrap_err().kind,
+            ProtoErrorKind::LimitExceeded
+        );
+        let mut event_limited_writer = ProtoWriter::new(ProtoEncodeOptions {
+            limits: ProtoLimits {
+                max_events: 1,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        event_limited_writer
+            .write(ProtoEvent::StartMessage("root".into()))
+            .unwrap();
+        assert_eq!(
+            event_limited_writer
+                .write(ProtoEvent::EndMessage)
+                .unwrap_err()
+                .kind,
             ProtoErrorKind::LimitExceeded
         );
 

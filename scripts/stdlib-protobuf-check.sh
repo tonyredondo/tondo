@@ -287,6 +287,8 @@ for symbol in \
     'pub fn from_chunks' \
     'pub fn decode_message' \
     'pub fn encode_message' \
+    'pub fn encode_static' \
+    'pub fn decode_static' \
     'pub fn parse_schema' \
     'pub fn parse_schema_graph' \
     'pub fn generate_tondo' \

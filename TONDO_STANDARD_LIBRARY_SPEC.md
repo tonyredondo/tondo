@@ -2455,6 +2455,14 @@ pub fn ProtoWriter[T].write(var self, event: ProtoEvent): Unit ! ProtoError
 pub fn ProtoWriter[T].finish(var self): Unit ! ProtoError
 ~~~
 
+La implementación portable vive en `crates/tondo-stdlib/src/protobuf_api.rs`:
+el checker schema-first, el parser/reader y el writer usan límites y stacks
+explícitos, y `encode_static`/`decode_static` atraviesan
+`Encode[Protobuf]`/`Decode[Protobuf]` sin materializar `serialization.Value`.
+Los helpers Rust `encode`/`decode` son únicamente el bridge de compatibilidad;
+la conformance oficial e interoperabilidad independiente siguen siendo gates de
+`STD-CODEC-CONF-001`.
+
 El mapping generado, el descriptor explícito, la evolución contra baseline TOML,
 los eventos y los errores de wire/build están cerrados en el [contrato fuente de
 `std.protobuf`](./docs/contracts/stdlib-protobuf.md).

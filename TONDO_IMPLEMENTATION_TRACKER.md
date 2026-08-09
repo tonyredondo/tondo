@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 1.84
+**Versión del tracker:** 1.85
 
 **Última actualización:** 2026-08-09
 
@@ -48,9 +48,8 @@ contratos públicos: la ruta de frontend, HIR/MIR/bytecode, `Join` transferible,
 referencia. La compatibilidad léxica de `async` se conserva únicamente para
 fixtures históricos y no aparece en interfaces ni en la superficie normativa;
 la retirada mecánica de esas fixtures queda separada del contrato ejecutable.
-Después: (1) cerrar las rutas typed/dynamic/streaming de MessagePack y
-Protobuf partiendo de sus APIs únicas; (2)
-completar las rutas públicas A1–A4 y ampliar
+Después: (1) cerrar `STD-CODEC-CONF-001` para JSON, MessagePack y Protobuf;
+(2) completar las rutas públicas A1–A4 y ampliar
 la matriz normativa a los tres contratos G5 antes de volver a cerrar T0/G5/S1A.
 Los contratos
 runtime-facing de STD-0.1B y M11 esperan esos gates. Todo pertenece a la primera
@@ -4416,14 +4415,19 @@ tests. Antes de volver a marcarlas `[x]` deben cumplirse todos estos puntos:
   mientras los helpers Rust `encode_typed`/`decode_typed` permanecen como
   bridge de compatibilidad explícito.
 
-- [ ] **STD-PROTOBUF-IMPL-001 — Implementar Protobuf schema-first.** Publicar
+- [x] **STD-PROTOBUF-IMPL-001 — Implementar Protobuf schema-first.** Publicar
   `Encode[Protobuf]`/`Decode[Protobuf]`, `ProtoReader[T]`/`ProtoWriter[T]`,
   `ProtoEvent` y `UnknownField` como API de wire separada, sin convertir
   Protobuf en `serialization.Value`. El checker proto3 valida números y
   evolución por baseline TOML; el encoder/reader usan frames explícitos,
   límites finitos, atomicidad terminal y preservación de unknown fields. La
   conformance externa y la integración del generator son gates posteriores;
-  los kernels pre-ABI solo cuentan como evidencia histórica.
+  los kernels pre-ABI solo cuentan como evidencia histórica. Cerrado con el
+  owner portable de `protobuf_api.rs`, la ruta estática
+  `Encode[Protobuf]`/`Decode[Protobuf]`, checker schema-first y generator
+  determinista; `ProtoReader` y `ProtoWriter` aplican ahora `max_events` a cada
+  evento antes de materializarlo o aceptarlo, manteniendo terminalidad y
+  preservación de unknown fields.
 
 - [x] **STD-TESTING-SHRINK-001 — Completar generación y shrinking público.**
   `crates/tondo-compiler/src/test_generation.rs` conecta los helpers públicos
@@ -5669,6 +5673,20 @@ se declara iniciada antes de esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 1.85 — 2026-08-09
+
+- Se completa `STD-PROTOBUF-IMPL-001` como owner portable schema-first:
+  `encode_static`/`decode_static` atraviesan los traits ABI comunes sin
+  `serialization.Value`, y `ProtoReader[T]`/`ProtoWriter[T]` mantienen frames
+  explícitos, unknown fields raw, determinismo, límites y terminalidad.
+- Se corrige la aplicación de `max_events` para que cubra cada evento del
+  reader (incluidos los tres eventos de un length-delimited) y cada evento del
+  writer antes de crecer buffers. El checker proto3, baseline TOML, generator
+  determinista y corpus del owner pasan; la conformance oficial queda en
+  `STD-CODEC-CONF-001`.
+- La siguiente coordinación es `STD-CODEC-CONF-001`, seguida por la auditoría
+  pública de firmas y la promoción S1A.
 
 ### 1.84 — 2026-08-09
 

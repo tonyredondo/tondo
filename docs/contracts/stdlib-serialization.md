@@ -2,9 +2,10 @@
 
 **Estado:** contrato común normativo de STD-0.1A. El bridge Rust expone el ABI
 estático y el compilador conecta ahora los cuatro protocolos canónicos a la
-superficie Tondo mediante contratos HIR y dispatch estático. Los adaptadores de
-formato, los entry points `json`/`messagepack`/`protobuf` y las anotaciones de
-derive siguen siendo leaves posteriores de este contrato.
+superficie Tondo mediante contratos HIR y dispatch estático. Los providers de
+derive y los owners portables de `json`/`messagepack`/`protobuf` ya consumen
+esta frontera; la conformance externa y la auditoría pública completa siguen
+siendo gates posteriores.
 Este documento define la frontera pública que deben implementar JSON,
 MessagePack y Protobuf; no es una API dinámica ni una sustitución de los
 contratos específicos de cada formato.
@@ -317,5 +318,6 @@ El registro machine-readable de este contrato es
 [`testing/stdlib-serialization.json`](../../testing/stdlib-serialization.json)
 y el check ejecutable es
 [`scripts/stdlib-serialization-check.sh`](../../scripts/stdlib-serialization-check.sh).
-El siguiente cierre de la cadena es `STD-DERIVE-SER-001`, seguido por las
-implementaciones typed/streaming de JSON, MessagePack y Protobuf.
+La siguiente coordinación de la cadena es `STD-CODEC-CONF-001`, seguida por la
+auditoría pública sin gaps y la promoción S1A; esos gates no se sustituyen por
+round-trips contra el propio bridge.

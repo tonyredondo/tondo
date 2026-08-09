@@ -1,9 +1,9 @@
 # Contrato de `std.protobuf`
 
-**Estado:** contrato normativo para `STD-0.1A`. El runtime wire, reader/writer y
-generator existentes son un prototipo pre-ABI; la migración a
-`Encode[Protobuf]`/`Decode[Protobuf]` y la integración final del generator siguen
-pendientes.
+**Estado:** contrato normativo e implementación portable cerrada para
+`STD-0.1A`. El owner runtime wire, reader/writer, schema checker y generator
+usan la frontera `Encode[Protobuf]`/`Decode[Protobuf]`; la conformance externa y
+la integración final del generator en el driver siguen siendo gates posteriores.
 
 `std.protobuf` es el único owner de la generación schema-first y del wire
 protocol Protocol Buffers. Comparte los traits estáticos `Encode[Protobuf]` y
@@ -351,6 +351,19 @@ Cada error contiene byte offset cuando existe, path estructural y contexto de
 schema; no copia payloads grandes, raw unknowns ni secretos en el diagnóstico.
 El path raíz es `$`, con segmentos `message`, `field-number`, `repeated-index`,
 `map-key`, `map-value`, `oneof-case` y `unknown-field`.
+
+## Implementación del owner
+
+`crates/tondo-stdlib/src/protobuf_api.rs` contiene la implementación portable
+del owner. `parse_fields` valida tags, varints, longitudes, grupos y límites con
+frames explícitos; `ProtoReader[T]` y `ProtoWriter[T]` comparten la misma
+máquina bounded y quedan terminales tras error o `finish`. La ruta canónica
+`encode_static`/`decode_static` usa `Encode[Protobuf]`/`Decode[Protobuf]` y el
+adaptador de eventos schema-bound sin construir `serialization.Value`. Los
+helpers Rust `encode`/`decode` conservan la compatibilidad del bridge y no son
+la superficie Tondo normativa. Los límites de eventos se comprueban tanto al
+materializar eventos del reader como al aceptar eventos del writer, antes de
+crecer las colecciones.
 
 ## Corpus, interoperabilidad y promoción
 
