@@ -33,6 +33,12 @@ metadata-only implementation has no runtime host adapter, and its roots,
 privacy, artifact-local identity and no-value-reflection evidence are kept in
 the same per-owner cell record. Link-work and descriptor-size budgets remain
 pending promotion capture rather than being inferred from unit-test timing.
+The intrinsic `std.bytes` owner is closed by
+[`testing/stdlib-bytes.json`](../../testing/stdlib-bytes.json) and its
+`STD-A-BYTES-EVIDENCE-001` cell record. Its evidence covers identity,
+immutable snapshots, strict UTF-8, builder atomicity, limits/ranges and the
+scalar-oracle hot paths; `HOST` is explicitly `not-applicable`, while dedicated
+performance and fuzz promotion remain pending.
 
 The hosted bridge is intentionally a draft distribution boundary: the VM
 validates the typed operation before invoking the host, and the host returns a
@@ -87,7 +93,7 @@ the six required cells `SPEC → IMPL/HOST → MODEL/TEST/FUZZ → PERF → CONF
 DOC`, including explicit reasons for every pending or partial cell. The
 matrix currently has 22 owners (the intrinsic `std.bytes` is intentionally
 visible even though the bootstrap implementation manifest still lacks its
-dedicated owner record), 207 public signatures and 150 owner requirements.
+dedicated owner record), 207 public signatures and 155 owner requirements.
 This is coordination evidence, not a publication or a claim that all rows are
 green.
 

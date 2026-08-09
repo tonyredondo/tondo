@@ -155,9 +155,14 @@
       "id": "std.bytes",
       "implementation_indexed": false,
       "layer": "A0",
-      "owner_contract": null,
+      "owner_contract": "testing/stdlib-bytes.json",
       "requirement_rows": [
-        "requirement:std.bytes:owner-contract"
+        "requirement:std.bytes:builder-atomicity",
+        "requirement:std.bytes:catalog-shape",
+        "requirement:std.bytes:limits-and-ranges",
+        "requirement:std.bytes:ownership-and-snapshots",
+        "requirement:std.bytes:properties-and-hot-paths",
+        "requirement:std.bytes:utf8-conversion"
       ],
       "signature_rows": [],
       "source_set": "stdlib-core",
@@ -171,56 +176,62 @@
       ],
       "stages": {
         "CONF": {
-          "reason": "STD-CONF-001 remains open until the owner has complete public evidence",
+          "reason": "compiler and VM byte-boundary tests cover the intrinsic contract; STD-CONF-001 has not yet promoted every standard-library owner",
           "refs": [
-            "TONDO_IMPLEMENTATION_TRACKER.md#STD-CONF-001"
+            "crates/tondo-compiler/src/process_host.rs",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
           ],
-          "status": "pending"
+          "status": "partial"
         },
         "DOC": {
           "reason": null,
           "refs": [
-            "docs/contracts/stdlib-bytes.md"
+            "docs/contracts/stdlib-bytes.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md",
+            "docs/contracts/stdlib-s1a.md"
           ],
           "status": "verified"
         },
         "IMPL/HOST": {
-          "reason": "intrinsic owner is not indexed in testing/stdlib-implementation.json; STD-A-BYTES-EVIDENCE-001 remains open",
+          "reason": null,
+          "refs": [
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-vm/src/runtime/execute.rs",
+            "docs/contracts/stdlib-bytes.md",
+            "testing/stdlib-bytes.json"
+          ],
+          "status": "verified"
+        },
+        "MODEL/TEST/FUZZ": {
+          "reason": "the bounded byte and UTF-8 corpora are declared and boundary tests are executable, but no dedicated bytes fuzz target has been promoted",
+          "refs": [
+            "crates/tondo-compiler/src/driver.rs",
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-vm/src/bytecode/verify.rs",
+            "scripts/stdlib-bytes-test.sh",
+            "testing/stdlib-bytes.json"
+          ],
+          "status": "partial"
+        },
+        "PERF": {
+          "reason": "copy, comparison, hashing and builder workloads are declared, but owner hot-path baselines remain pending promotion capture",
+          "refs": [
+            "testing/stdlib-performance.json",
+            "testing/stdlib-performance-conformance.json",
+            "docs/contracts/stdlib-performance.md"
+          ],
+          "status": "partial"
+        },
+        "SPEC": {
+          "reason": null,
           "refs": [
             "docs/contracts/stdlib-bytes.md",
             "TONDO_STANDARD_LIBRARY_SPEC.md"
           ],
-          "status": "partial"
-        },
-        "MODEL/TEST/FUZZ": {
-          "reason": "no owner implementation record exists",
-          "refs": [],
-          "status": "pending"
-        },
-        "PERF": {
-          "observed_dimensions": [],
-          "pending_dimensions": [
-            "allocations_per_operation",
-            "allocated_bytes_per_operation",
-            "code_size",
-            "compile_time",
-            "peak_memory",
-            "startup",
-            "tail_latency",
-            "throughput"
-          ],
-          "reason": "The bytes owner has no reviewed operation/workload identity in its public contract yet.",
-          "refs": [
-            "testing/stdlib-performance-conformance.json#owners/std.bytes"
-          ],
-          "status": "pending"
-        },
-        "SPEC": {
-          "reason": "no executable owner test_matrix entry exists; the placeholder makes the missing contract explicit",
-          "refs": [
-            "docs/contracts/stdlib-bytes.md"
-          ],
-          "status": "partial"
+          "status": "verified"
         }
       },
       "status": "open-gaps"
@@ -2817,20 +2828,183 @@
     },
     {
       "dimensions_ref": "owner:std.bytes",
-      "id": "requirement:std.bytes:owner-contract",
+      "id": "requirement:std.bytes:builder-atomicity",
       "kind": "requirement",
       "layer": "A0",
       "owner": "std.bytes",
       "requirement": {
-        "id": "owner-contract",
-        "observables": [],
-        "required": true,
-        "synthetic": true
+        "id": "builder-atomicity",
+        "observables": [
+          "append-byte",
+          "append-bytes",
+          "append-array",
+          "finish",
+          "failure-no-mutation"
+        ],
+        "required": true
       },
       "scope": "STD-0.1A",
       "source": {
         "contract": "docs/contracts/stdlib-bytes.md",
-        "owner_contract": null
+        "owner_contract": "testing/stdlib-bytes.json"
+      },
+      "stage_refs": {
+        "CONF": "owner:std.bytes:CONF",
+        "DOC": "owner:std.bytes:DOC",
+        "IMPL/HOST": "owner:std.bytes:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "owner:std.bytes:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.bytes:PERF",
+        "SPEC": "owner:std.bytes:SPEC"
+      },
+      "status": "open-gaps"
+    },
+    {
+      "dimensions_ref": "owner:std.bytes",
+      "id": "requirement:std.bytes:catalog-shape",
+      "kind": "requirement",
+      "layer": "A0",
+      "owner": "std.bytes",
+      "requirement": {
+        "id": "catalog-shape",
+        "observables": [
+          "Bytes",
+          "BytesBuilder",
+          "BytesError",
+          "Utf8Error",
+          "closed-method-set"
+        ],
+        "required": true
+      },
+      "scope": "STD-0.1A",
+      "source": {
+        "contract": "docs/contracts/stdlib-bytes.md",
+        "owner_contract": "testing/stdlib-bytes.json"
+      },
+      "stage_refs": {
+        "CONF": "owner:std.bytes:CONF",
+        "DOC": "owner:std.bytes:DOC",
+        "IMPL/HOST": "owner:std.bytes:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "owner:std.bytes:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.bytes:PERF",
+        "SPEC": "owner:std.bytes:SPEC"
+      },
+      "status": "open-gaps"
+    },
+    {
+      "dimensions_ref": "owner:std.bytes",
+      "id": "requirement:std.bytes:limits-and-ranges",
+      "kind": "requirement",
+      "layer": "A0",
+      "owner": "std.bytes",
+      "requirement": {
+        "id": "limits-and-ranges",
+        "observables": [
+          "negative-index",
+          "out-of-range",
+          "slice-bounds",
+          "heap-budget",
+          "overflow"
+        ],
+        "required": true
+      },
+      "scope": "STD-0.1A",
+      "source": {
+        "contract": "docs/contracts/stdlib-bytes.md",
+        "owner_contract": "testing/stdlib-bytes.json"
+      },
+      "stage_refs": {
+        "CONF": "owner:std.bytes:CONF",
+        "DOC": "owner:std.bytes:DOC",
+        "IMPL/HOST": "owner:std.bytes:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "owner:std.bytes:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.bytes:PERF",
+        "SPEC": "owner:std.bytes:SPEC"
+      },
+      "status": "open-gaps"
+    },
+    {
+      "dimensions_ref": "owner:std.bytes",
+      "id": "requirement:std.bytes:ownership-and-snapshots",
+      "kind": "requirement",
+      "layer": "A0",
+      "owner": "std.bytes",
+      "requirement": {
+        "id": "ownership-and-snapshots",
+        "observables": [
+          "constructor-copy",
+          "array-copy",
+          "finish-snapshot",
+          "no-builder-alias"
+        ],
+        "required": true
+      },
+      "scope": "STD-0.1A",
+      "source": {
+        "contract": "docs/contracts/stdlib-bytes.md",
+        "owner_contract": "testing/stdlib-bytes.json"
+      },
+      "stage_refs": {
+        "CONF": "owner:std.bytes:CONF",
+        "DOC": "owner:std.bytes:DOC",
+        "IMPL/HOST": "owner:std.bytes:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "owner:std.bytes:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.bytes:PERF",
+        "SPEC": "owner:std.bytes:SPEC"
+      },
+      "status": "open-gaps"
+    },
+    {
+      "dimensions_ref": "owner:std.bytes",
+      "id": "requirement:std.bytes:properties-and-hot-paths",
+      "kind": "requirement",
+      "layer": "A0",
+      "owner": "std.bytes",
+      "requirement": {
+        "id": "properties-and-hot-paths",
+        "observables": [
+          "ordered-equality",
+          "fnv1a-64",
+          "copy-throughput",
+          "scalar-oracle",
+          "optimized-fallback"
+        ],
+        "required": true
+      },
+      "scope": "STD-0.1A",
+      "source": {
+        "contract": "docs/contracts/stdlib-bytes.md",
+        "owner_contract": "testing/stdlib-bytes.json"
+      },
+      "stage_refs": {
+        "CONF": "owner:std.bytes:CONF",
+        "DOC": "owner:std.bytes:DOC",
+        "IMPL/HOST": "owner:std.bytes:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "owner:std.bytes:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.bytes:PERF",
+        "SPEC": "owner:std.bytes:SPEC"
+      },
+      "status": "open-gaps"
+    },
+    {
+      "dimensions_ref": "owner:std.bytes",
+      "id": "requirement:std.bytes:utf8-conversion",
+      "kind": "requirement",
+      "layer": "A0",
+      "owner": "std.bytes",
+      "requirement": {
+        "id": "utf8-conversion",
+        "observables": [
+          "string-to-bytes",
+          "strict-decoding",
+          "invalid-utf8",
+          "no-replacement"
+        ],
+        "required": true
+      },
+      "scope": "STD-0.1A",
+      "source": {
+        "contract": "docs/contracts/stdlib-bytes.md",
+        "owner_contract": "testing/stdlib-bytes.json"
       },
       "stage_refs": {
         "CONF": "owner:std.bytes:CONF",
@@ -11979,7 +12153,8 @@
     "integration": "testing/stdlib-spec.json",
     "owner_contracts": [
       "testing/stdlib-meta.json",
-      "testing/stdlib-reflect.json"
+      "testing/stdlib-reflect.json",
+      "testing/stdlib-bytes.json"
     ],
     "owner_evidence": "testing/stdlib-owner-evidence.json",
     "performance_contract": "testing/stdlib-performance.json",
@@ -11988,35 +12163,34 @@
   },
   "status": "open-gaps",
   "summary": {
-    "open_rows": 357,
+    "open_rows": 362,
     "owners": 22,
-    "requirements": 150,
-    "rows": 357,
+    "requirements": 155,
+    "rows": 362,
     "signatures": 207,
     "stage_counts": {
       "CONF": {
-        "partial": 108,
-        "pending": 249
+        "partial": 114,
+        "pending": 248
       },
       "DOC": {
-        "verified": 357
+        "verified": 362
       },
       "IMPL/HOST": {
-        "partial": 28,
-        "verified": 329
+        "partial": 27,
+        "verified": 335
       },
       "MODEL/TEST/FUZZ": {
-        "partial": 350,
-        "pending": 1,
+        "partial": 356,
         "verified": 6
       },
       "PERF": {
-        "partial": 150,
-        "pending": 207
+        "partial": 156,
+        "pending": 206
       },
       "SPEC": {
-        "partial": 4,
-        "verified": 353
+        "partial": 3,
+        "verified": 359
       }
     },
     "verified_rows": 0

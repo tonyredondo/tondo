@@ -10,9 +10,10 @@ y validada por
 
 La matriz incluye exactamente los 21 owners del contrato de integración y el
 owner intrínseco `std.bytes`, 207 firmas indexadas por la auditoría pública y
-150 requisitos de owner. `std.meta` y `std.reflect` añaden sus contratos
-executable A0 y seis requisitos de evidencia cada uno sin crear una segunda
-API pública. `std.0.1B` permanece
+155 requisitos de owner. `std.meta`, `std.reflect` y `std.bytes` añaden sus
+contratos executable A0 y seis requisitos de evidencia cada uno sin crear una
+segunda API pública; el placeholder sintético anterior de `std.bytes` queda
+reemplazado por sus seis filas reales. `std.0.1B` permanece
 como catálogo futuro cerrado:
 sus módulos aparecen solo en `catalogs.future_modules` y no se convierten en
 requisitos implícitos de la fase actual.

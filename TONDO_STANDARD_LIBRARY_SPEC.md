@@ -1022,6 +1022,15 @@ Una ruta SIMD, de palabra ancha o específica del target puede acelerar copias,
 comparación y hashing siempre que preserve exactamente el resultado, el orden,
 los errores, los límites y el número observable de operaciones de ownership.
 
+La evidencia executable de este contrato vive en
+[`testing/stdlib-bytes.json`](testing/stdlib-bytes.json) y en el registro por
+celdas [`testing/stdlib-owner-evidence.json`](testing/stdlib-owner-evidence.json)
+(`STD-A-BYTES-EVIDENCE-001`). Sus seis dimensiones cubren forma del catálogo,
+ownership/snapshots, UTF-8, atomicidad de builders, límites/rangos y
+properties/hot paths. `HOST` es explícitamente `not-applicable` porque el
+owner es un intrinsic del compilador/VM, sin provider separado; la captura
+dedicada de rendimiento y la promoción de fuzz siguen pendientes.
+
 #### 10.2.2 Contrato cerrado de `std.text`
 
 `std.text` mantiene una sola representación: `String` inmutable y siempre

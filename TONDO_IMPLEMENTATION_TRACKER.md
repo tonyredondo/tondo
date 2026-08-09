@@ -4517,9 +4517,13 @@ administrativas que no implementan comportamiento.
   `not-applicable` por la frontera metadata-only; link-work y tamaño de
   descriptores quedan como presupuestos de promoción pendientes, y la
   conformidad global continúa visible en la matriz.
-- [ ] **STD-A-BYTES-EVIDENCE-001 — Cerrar evidencia de `std.bytes`.** Cubrir
-  identidad, builders, conversión UTF-8, límites, propiedades, hot paths,
-  conformidad y docs; HOST es no aplicable.
+- [x] **STD-A-BYTES-EVIDENCE-001 — Cerrar evidencia de `std.bytes`.**
+  `testing/stdlib-bytes.json` fija el contrato A0, sus límites, invariantes,
+  corpora y seis requisitos ejecutables; `testing/stdlib-owner-evidence.json`
+  separa identidad/snapshots, builders, UTF-8, límites/rangos,
+  properties/hot paths, conformidad y docs. `HOST` es explícitamente
+  `not-applicable` por ser un intrinsic compiler/VM-owned; fuzz dedicado y
+  captura de rendimiento siguen como promoción pendiente sin inventar métricas.
 - [ ] **STD-A-TIME-EVIDENCE-001 — Cerrar evidencia del time-base.** Separar
   modelo, provider HOST real/virtual, tests/fuzz, precisión/rendimiento,
   conformidad por capability y docs.
@@ -4577,7 +4581,7 @@ administrativas que no implementan comportamiento.
 
 - [x] **STD-MATRIX-ALL-001 — Construir la matriz normativa de stdlib.**
   `testing/stdlib-matrix.json` contiene 22 owners (incluido el owner
-  intrínseco `std.bytes`), 207 firmas y 150 requisitos de owner. Cada fila
+  intrínseco `std.bytes`), 207 firmas y 155 requisitos de owner. Cada fila
   enlaza explícitamente `SPEC → IMPL/HOST → MODEL/TEST/FUZZ → PERF → CONF →
   DOC`, conserva las dimensiones públicas de PERF y queda `open-gaps` cuando
   una celda es `partial`, `pending`, `gap` o `not-applicable` sin
@@ -5730,6 +5734,40 @@ se declara iniciada antes de esos cierres.
 
 ## 25. Historial del tracker
 
+### 1.94 — 2026-08-09
+
+- Se cierra `STD-A-BYTES-EVIDENCE-001` con el contrato executable
+  `testing/stdlib-bytes.json` y el registro por celdas de
+  `testing/stdlib-owner-evidence.json`. La evidencia separa identidad y
+  snapshots, builders, UTF-8 estricto, límites/rangos, properties/hot paths,
+  conformidad y docs; `HOST` es `not-applicable` por la frontera intrinsic
+  compiler/VM-owned. Fuzz dedicado y captura de rendimiento permanecen como
+  promoción pendiente y la matriz sustituye el placeholder sintético por seis
+  requisitos reales, pasando a 155 requisitos totales.
+
+### 1.93 — 2026-08-09
+
+- Se cierra `STD-A-REFLECT-EVIDENCE-001` con el contrato executable
+  `testing/stdlib-reflect.json`, que formaliza metadata estática retenida por
+  roots, clausura pública, privacidad, identidad local al artefacto y ausencia
+  de reflection de valores o acceso ambiental. El registro de owners separa
+  las nueve celdas y marca `HOST` como `not-applicable`; link-work y tamaño de
+  descriptores permanecen como presupuestos de promoción pendientes.
+- La matriz normativa sustituye la fila sintética previa de `std.reflect` por
+  sus seis requisitos A0, pasando a 150 requisitos totales y manteniendo
+  `open-gaps` por rendimiento y conformidad global todavía no promovidos.
+
+### 1.92 — 2026-08-09
+
+- Se cierra `STD-A-META-EVIDENCE-001` con el contrato executable
+  `testing/stdlib-meta.json` y el registro por celda
+  `testing/stdlib-owner-evidence.json`. `std.meta` conserva su frontera
+  build-only: `HOST` es `not-applicable`, mientras `MODEL`, `TEST` y `FUZZ`
+  enlazan pruebas y probing acotado de protocolos.
+- La matriz normativa integra los seis requisitos A0 de `std.meta`, pasando a
+  145 requisitos totales y manteniendo `open-gaps` por los presupuestos de
+  compilación/generación y la conformidad global aún pendientes.
+
 ### 1.91 — 2026-08-09
 
 - Se completa `STD-TESTING-IMPL-001` con la ruta pública de
@@ -5744,29 +5782,6 @@ se declara iniciada antes de esos cierres.
 - La auditoría pública queda en 156/207 firmas verificadas con 54 gaps; este
   cierre no promueve `std.testing` ni cierra `STD-TEST-001`, `STD-CONF-001` o
   `STD-DOC-001`.
-
-### 1.92 — 2026-08-09
-
-- Se cierra `STD-A-META-EVIDENCE-001` con el contrato executable
-  `testing/stdlib-meta.json` y el registro por celda
-  `testing/stdlib-owner-evidence.json`. `std.meta` conserva su frontera
-  build-only: `HOST` es `not-applicable`, mientras `MODEL`, `TEST` y `FUZZ`
-  enlazan pruebas y probing acotado de protocolos.
-- La matriz normativa integra los seis requisitos A0 de `std.meta`, pasando a
-  145 requisitos totales y manteniendo `open-gaps` por los presupuestos de
-  compilación/generación y la conformidad global aún pendientes.
-
-### 1.93 — 2026-08-09
-
-- Se cierra `STD-A-REFLECT-EVIDENCE-001` con el contrato executable
-  `testing/stdlib-reflect.json`, que formaliza metadata estática retenida por
-  roots, clausura pública, privacidad, identidad local al artefacto y ausencia
-  de reflection de valores o acceso ambiental. El registro de owners separa
-  las nueve celdas y marca `HOST` como `not-applicable`; link-work y tamaño de
-  descriptores permanecen como presupuestos de promoción pendientes.
-- La matriz normativa sustituye la fila sintética previa de `std.reflect` por
-  sus seis requisitos A0, pasando a 150 requisitos totales y manteniendo
-  `open-gaps` por rendimiento y conformidad global todavía no promovidos.
 
 ### 1.90 — 2026-08-09
 

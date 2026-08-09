@@ -1,0 +1,136 @@
+{
+  "format": "tondo-stdlib-owner-contract/1",
+  "owner": "std.bytes",
+  "edition": "0.1",
+  "phase": "STD-0.1A",
+  "status": "draft-contract",
+  "contract": "docs/contracts/stdlib-bytes.md",
+  "layer": "A0",
+  "kind": "intrinsic",
+  "target": "tondo-vm-hosted",
+  "profile": "bytes",
+  "api": "tondo-std-bytes-0.1/1",
+  "source": {
+    "path": "crates/tondo-compiler/src/process_host.rs",
+    "sha256": "sha256:d68042965808d33f6290e07b03e969872e9926dc9c22a2f41e14e909cbad0c5e"
+  },
+  "capabilities": {
+    "required": [],
+    "forbidden": [
+      "filesystem",
+      "environment",
+      "process",
+      "clock",
+      "entropy",
+      "network",
+      "threads",
+      "dynamic-loading",
+      "runtime-value-reflection",
+      "ambient-host"
+    ]
+  },
+  "invariants": [
+    "one-binary-owner",
+    "immutable-snapshots",
+    "explicit-utf8",
+    "builder-exclusive-mutation",
+    "atomic-budget-failure",
+    "total-indexing",
+    "portable-fnv1a",
+    "scalar-oracle-for-optimized-routes"
+  ],
+  "limits": [
+    {
+      "id": "array_copy_bytes",
+      "unit": "bytes",
+      "source": "ResourceLimits.max_vm_heap_bytes"
+    },
+    {
+      "id": "builder_append_bytes",
+      "unit": "bytes",
+      "source": "ResourceLimits.max_vm_heap_bytes"
+    },
+    {
+      "id": "hash_work_units",
+      "unit": "work-units",
+      "source": "owner operation budget"
+    },
+    {
+      "id": "index",
+      "unit": "elements",
+      "source": "Int index domain"
+    },
+    {
+      "id": "materialized_bytes",
+      "unit": "bytes",
+      "source": "ResourceLimits.max_vm_heap_bytes"
+    },
+    {
+      "id": "slice_extent",
+      "unit": "elements",
+      "source": "Bytes.length"
+    }
+  ],
+  "test_matrix": [
+    {
+      "id": "catalog-shape",
+      "required": true,
+      "observables": ["Bytes", "BytesBuilder", "BytesError", "Utf8Error", "closed-method-set"]
+    },
+    {
+      "id": "ownership-and-snapshots",
+      "required": true,
+      "observables": ["constructor-copy", "array-copy", "finish-snapshot", "no-builder-alias"]
+    },
+    {
+      "id": "utf8-conversion",
+      "required": true,
+      "observables": ["string-to-bytes", "strict-decoding", "invalid-utf8", "no-replacement"]
+    },
+    {
+      "id": "builder-atomicity",
+      "required": true,
+      "observables": ["append-byte", "append-bytes", "append-array", "finish", "failure-no-mutation"]
+    },
+    {
+      "id": "limits-and-ranges",
+      "required": true,
+      "observables": ["negative-index", "out-of-range", "slice-bounds", "heap-budget", "overflow"]
+    },
+    {
+      "id": "properties-and-hot-paths",
+      "required": true,
+      "observables": ["ordered-equality", "fnv1a-64", "copy-throughput", "scalar-oracle", "optimized-fallback"]
+    }
+  ],
+  "corpora": [
+    {
+      "id": "bytes-boundaries",
+      "source": "owner-generated",
+      "required": true,
+      "focus": ["empty", "zero", "max-int", "negative", "slice-endpoints"]
+    },
+    {
+      "id": "builder-failure-atomicity",
+      "source": "owner-generated",
+      "required": true,
+      "focus": ["append-over-limit", "append-array-over-limit", "finish-after-failure", "continued-use"]
+    },
+    {
+      "id": "utf8-corpus",
+      "source": "owner-generated",
+      "required": true,
+      "focus": ["ascii", "multibyte", "empty", "truncated-sequence", "invalid-continuation"]
+    }
+  ],
+  "promotion": {
+    "gates": [
+      {"id": "design", "required": true},
+      {"id": "implementation", "required": true},
+      {"id": "conformance", "required": true},
+      {"id": "performance", "required": true},
+      {"id": "promote", "required": true}
+    ],
+    "next_coordination": "STD-A-TIME-EVIDENCE-001"
+  }
+}

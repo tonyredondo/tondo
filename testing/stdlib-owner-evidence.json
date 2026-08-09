@@ -13,6 +13,11 @@
       "id": "STD-A-REFLECT-EVIDENCE-001",
       "contract": "testing/stdlib-reflect.json",
       "owners": ["std.reflect"]
+    },
+    {
+      "id": "STD-A-BYTES-EVIDENCE-001",
+      "contract": "testing/stdlib-bytes.json",
+      "owners": ["std.bytes"]
     }
   ],
   "owners": [
@@ -157,6 +162,82 @@
         "scripts/stdlib-reflect-check.sh",
         "scripts/stdlib-reflect-test.sh",
         "cargo test -p tondo-compiler --locked --lib reflect::tests"
+      ]
+    },
+    {
+      "id": "std.bytes",
+      "layer": "A0",
+      "cells": {
+        "SPEC": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["docs/contracts/stdlib-bytes.md", "TONDO_STANDARD_LIBRARY_SPEC.md"]
+        },
+        "IMPL": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/hir/check.rs", "crates/tondo-vm/src/runtime/execute.rs"]
+        },
+        "HOST": {
+          "status": "not-applicable",
+          "reason": "std.bytes is an intrinsic portable owner; its compiler-owned bridge has no separate capability provider or ambient host dependency",
+          "refs": ["docs/contracts/stdlib-bytes.md", "testing/stdlib-bytes.json"]
+        },
+        "MODEL": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs", "crates/tondo-vm/src/bytecode/verify.rs"]
+        },
+        "TEST": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/driver.rs"]
+        },
+        "FUZZ": {
+          "status": "partial",
+          "reason": "the bounded byte and UTF-8 corpora are declared and boundary tests are executable, but no dedicated bytes fuzz target has been promoted",
+          "refs": ["testing/stdlib-bytes.json", "scripts/stdlib-bytes-test.sh"]
+        },
+        "PERF": {
+          "status": "partial",
+          "reason": "copy, comparison, hashing and builder workloads are declared, but owner hot-path baselines remain pending promotion capture",
+          "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
+        },
+        "CONF": {
+          "status": "partial",
+          "reason": "compiler and VM byte-boundary tests cover the intrinsic contract; STD-CONF-001 has not yet promoted every standard-library owner",
+          "refs": ["crates/tondo-compiler/src/process_host.rs", "TONDO_IMPLEMENTATION_TRACKER.md"]
+        },
+        "DOC": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["docs/contracts/stdlib-bytes.md", "TONDO_STANDARD_LIBRARY_SPEC.md", "docs/contracts/stdlib-s1a.md"]
+        }
+      },
+      "budgets": {
+        "copy_bytes": {
+          "unit": "bytes",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 500,
+          "state": "declared-baseline-pending"
+        },
+        "hash_work_units": {
+          "unit": "work-units",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 1000,
+          "state": "declared-baseline-pending"
+        },
+        "builder_append_bytes": {
+          "unit": "bytes",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 500,
+          "state": "declared-baseline-pending"
+        }
+      },
+      "commands": [
+        "scripts/stdlib-bytes-check.sh",
+        "scripts/stdlib-bytes-test.sh",
+        "cargo test -p tondo-compiler --locked --lib process_host::tests"
       ]
     }
   ],

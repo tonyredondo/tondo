@@ -58,12 +58,16 @@ run_step stdlib-meta-contract \
     scripts/stdlib-meta-check.sh
 run_step stdlib-reflect-contract \
     scripts/stdlib-reflect-check.sh
+run_step stdlib-bytes-contract \
+    scripts/stdlib-bytes-check.sh
 run_step stdlib-owner-evidence \
     scripts/stdlib-owner-evidence-check.sh
 run_step stdlib-meta-tests \
     scripts/stdlib-meta-test.sh
 run_step stdlib-reflect-tests \
     scripts/stdlib-reflect-test.sh
+run_step stdlib-bytes-tests \
+    scripts/stdlib-bytes-test.sh
 run_step stdlib-core-contract \
     scripts/stdlib-core-check.sh
 run_step stdlib-serialization-contract \

@@ -37,3 +37,24 @@ opaque payload registry. Builder receivers arrive at the host as a verified
 exclusive loan, are resolved to the same opaque token, and never become a
 source-visible alias. Process output uses the same `String(Bytes)` conversion;
 there is no process-specific text method.
+
+## Evidence and budgets
+
+The executable owner contract is [`testing/stdlib-bytes.json`](../../testing/stdlib-bytes.json);
+its per-cell record is kept in [`testing/stdlib-owner-evidence.json`](../../testing/stdlib-owner-evidence.json)
+under `STD-A-BYTES-EVIDENCE-001`. The evidence covers catalog shape,
+ownership/snapshots, strict UTF-8, builder failure atomicity, limits/ranges and
+properties/hot paths. `HOST` is explicitly `not-applicable`: `std.bytes` is an
+intrinsic compiler/VM-owned value and has no separate provider capability.
+
+The scalar implementation is the correctness oracle. SIMD or word-wide routes
+may be promoted only after the same results, errors, limits and ownership
+observables are demonstrated. Dedicated performance capture and fuzz promotion
+remain pending; no throughput or allocation claim is inferred from unit-test
+timing. Run the contract, negative, and owner-evidence checks with:
+
+```text
+scripts/stdlib-bytes-check.sh
+scripts/stdlib-bytes-test.sh
+scripts/stdlib-owner-evidence-check.sh
+```

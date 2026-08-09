@@ -47,7 +47,7 @@
       "id": "std.bytes",
       "group": "a0-foundation",
       "state": "awaiting-owner-hot-path",
-      "reason": "The bytes owner has no reviewed operation/workload identity in its public contract yet."
+      "reason": "The bytes contract now names copy, comparison, hashing and builder workloads; owner-specific baseline capture remains pending promotion."
     },
     {
       "id": "std.collections",
