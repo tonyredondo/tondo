@@ -4079,13 +4079,6 @@ impl<'a> TypeLowerer<'a> {
         file: FileId,
         node: SyntaxNodeRef<'a>,
     ) -> Result<(), HirError> {
-        let path = |path_node: SyntaxNodeRef<'a>| {
-            path_node
-                .descendant_tokens()
-                .filter_map(|token| token.token().normalized_identifier())
-                .collect::<Vec<_>>()
-                .join(".")
-        };
         let generic_parameters = node
             .child_nodes()
             .find(|child| child.kind() == SyntaxKind::GenericParams)
@@ -4107,8 +4100,8 @@ impl<'a> TypeLowerer<'a> {
         let traits = traits_node
             .child_nodes()
             .filter(|child| child.kind() == SyntaxKind::TypePath)
-            .map(path)
-            .collect::<Vec<_>>();
+            .map(|path| canonical_derive_path(self.sources, file, path))
+            .collect::<Result<Vec<_>, _>>()?;
         let Some(target_node) = node
             .child_nodes()
             .find(|child| child.kind() == SyntaxKind::DeriveTarget)
@@ -4121,11 +4114,16 @@ impl<'a> TypeLowerer<'a> {
         else {
             return Ok(());
         };
+        let target = canonical_derive_path(self.sources, file, target_path)?;
+        let target = target
+            .split_once('[')
+            .map_or(target.as_str(), |(identity, _)| identity)
+            .to_owned();
         self.derive_requests.push(HirDeriveRequest {
             span: self.sources.span(file, node.range())?,
             generic_parameters,
             traits,
-            target: path(target_path),
+            target,
         });
         Ok(())
     }
@@ -6165,6 +6163,65 @@ fn first_identifier(node: SyntaxNodeRef<'_>) -> Option<SyntaxTokenRef<'_>> {
         .find(|token| token.kind() == TokenKind::Identifier)
 }
 
+/// Render a derive type path without dropping its generic codec arguments.
+///
+/// The ordinary resolver intentionally stores only the nominal path for type
+/// lookup.  Derive providers additionally need the exact requested trait
+/// instance (`serialization.Encode[Json]`), so this small canonical renderer
+/// keeps the bracketed type arguments while remaining independent of source
+/// whitespace and comments.
+fn canonical_derive_path(
+    sources: &SourceDatabase,
+    file: FileId,
+    node: SyntaxNodeRef<'_>,
+) -> Result<String, HirError> {
+    let source = sources.get(file)?.bytes();
+    let mut output = String::new();
+    for token in node.descendant_tokens() {
+        let kind = token.kind();
+        if kind.is_trivia()
+            || token.is_synthetic()
+            || matches!(kind, TokenKind::Nl | TokenKind::Eof)
+        {
+            continue;
+        }
+        let text = token
+            .token()
+            .normalized_identifier()
+            .map(str::to_owned)
+            .unwrap_or_else(|| {
+                let range = token.range();
+                String::from_utf8_lossy(&source[range.start() as usize..range.end() as usize])
+                    .into_owned()
+            });
+        match kind {
+            TokenKind::Dot => {
+                output.push('.');
+            }
+            TokenKind::LBracket => {
+                output.push('[');
+            }
+            TokenKind::RBracket => {
+                output.push(']');
+            }
+            TokenKind::Comma => {
+                output.push_str(", ");
+            }
+            TokenKind::Pipe => {
+                output.push_str(" | ");
+            }
+            TokenKind::Plus => {
+                output.push_str(" + ");
+            }
+            TokenKind::Colon => {
+                output.push_str(": ");
+            }
+            _ => output.push_str(&text),
+        }
+    }
+    Ok(output.trim().to_owned())
+}
+
 fn callable_name_range(node: SyntaxNodeRef<'_>) -> Option<TextRange> {
     node.child_nodes()
         .find(|child| child.kind() == SyntaxKind::FunctionHead)
@@ -6716,6 +6773,18 @@ mod tests {
         let validated =
             crate::meta::validate_hir_derive_requests("main", output.program(), &context).unwrap();
         assert_eq!(validated[0].traits().len(), 2);
+    }
+
+    #[test]
+    fn derive_requests_retain_specialized_codec_identity_and_nominal_target() {
+        let (_, _, output) = lower(
+            "trait Encode[C] {}\ntype Json = Int\ntype User = Int\nderive Encode[Json] for User\n",
+        );
+        let requests = output.program().derive_requests();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].traits(), ["Encode[Json]"]);
+        assert_eq!(requests[0].target(), "User");
+        assert!(requests[0].generic_parameters().is_empty());
     }
 
     type LoweringSnapshot = (Vec<String>, Vec<(String, String, String, u32)>);

@@ -179,7 +179,11 @@ es un error antes de reservar o publicar datos.
 ## Derive y personalización
 
 El provider de `derive serialization.Encode[C] + serialization.Decode[C]`
-genera output Tondo ordinario y determinista:
+genera output Tondo ordinario y determinista. La identidad completa del trait
+(`serialization.Encode[Json]`, `serialization.Encode[MessagePack]` o
+`serialization.Encode[Protobuf]`) se conserva desde el CST hasta el provider;
+el registro puede reutilizar el provider base, pero nunca sustituye el codec
+seleccionado por un `C` implícito:
 
 - records visitan fields en orden de declaración;
 - enums conservan nombre de tipo, variant y payload;
@@ -190,9 +194,14 @@ genera output Tondo ordinario y determinista:
 - los fields privados solo se incluyen cuando el provider tiene autorización
   explícita para el tipo objetivo; nunca se hacen públicos por accidente; y
 - `@name("wire_name")` establece el nombre común;
-- `@json(...)`, `@messagepack(...)` y `@proto(number)` afinan un codec;
-- `@proto(number)` es obligatorio y nunca se infiere;
-- `@ignore` omite simétricamente al codificar y decodificar; y
+- `@json(base64)` y `@messagepack(binary)` son las políticas cerradas de los
+  owners correspondientes;
+- `@proto(number)` fija explícitamente un field number válido (1..2^29-1,
+  excluyendo 19000..19999), es obligatorio para cada field Protobuf y nunca se
+  infiere;
+- `@ignore` omite simétricamente al codificar y decodificar; como Tondo no
+  inventa defaults, un field ignorado debe ser `Option[T]` y el decode publica
+  `none`; y
 - `@json(base64)` convierte `Bytes` tipado a/desde Base64 RFC 4648. Renombrar,
   aplanar, transformar o cualquier regla no cubierta requiere un `impl` manual
   o un DTO declarado.
@@ -242,6 +251,12 @@ impl Tondo ordinario. meta_derive añade el header nominal, conserva los
 parámetros genéricos y sus bounds mínimos, valida el resultado con el parser y
 lo publica atómicamente mediante MetaSourceBuilder. La respuesta incluye un
 source map que asocia el output generado con el span del target autorizado.
+Los fields se proyectan de forma determinista: `@name` cambia el evento
+`Field`, `@ignore` reduce la cardinalidad del record y el constructor de decode
+usa `none`; el provider valida además las políticas específicas de JSON,
+MessagePack y Protobuf. La transformación de bytes Base64 y la interpretación
+del número Protobuf pertenecen al owner de cada codec, no a un runtime
+reflection global.
 
 La expansión es determinista: records y payloads de variantes siguen el orden
 ordinal del snapshot; los newtypes usan su campo sintético .value; el decode

@@ -9,9 +9,9 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 1.80
+**Versión del tracker:** 1.81
 
-**Última actualización:** 2026-08-08
+**Última actualización:** 2026-08-09
 
 **Especificaciones normativas:**
 
@@ -48,9 +48,8 @@ contratos públicos: la ruta de frontend, HIR/MIR/bytecode, `Join` transferible,
 referencia. La compatibilidad léxica de `async` se conserva únicamente para
 fixtures históricos y no aparece en interfaces ni en la superficie normativa;
 la retirada mecánica de esas fixtures queda separada del contrato ejecutable.
-Después: (1) conectar los providers derive y los entry points de codecs al ABI
-estático de serialization ya publicado en la superficie Tondo, incluyendo
-anotaciones y lowering; (2)
+Después: (1) conectar los entry points de codecs al ABI estático de
+serialization ya publicado en la superficie Tondo; (2)
 completar las rutas públicas A1–A4 y ampliar
 la matriz normativa a los tres contratos G5 antes de volver a cerrar T0/G5/S1A.
 Los contratos
@@ -4373,14 +4372,20 @@ tests. Antes de volver a marcarlas `[x]` deben cumplirse todos estos puntos:
   providers derive se cierran en sus leaves posteriores. Evidencia: tests HIR
   de lowering y de comprobación de implementaciones/calls en SSD.
 
-- [ ] **STD-DERIVE-SER-001 — Implementar providers de derive de
+- [x] **STD-DERIVE-SER-001 — Implementar providers de derive de
   serialization.** Registrar providers build-only para
   `Encode[C]`/`Decode[C]`, generar impls Tondo deterministas para
   records/enums/newtypes/genéricos y probar diagnostics, source maps, límites,
   campos privados y ausencia de reflection runtime. Resolver en compile time
   `@name`, `@json(...)`, `@messagepack(...)`, `@proto(number)`, `@ignore` y
   `@json(base64)` de forma simétrica; no inferir números Protobuf ni leer el
-  entorno. El provider recibe solo el MetaSnapshot sellado.
+  entorno. El provider recibe solo el MetaSnapshot sellado. Cerrado con
+  identidad especializada (`Encode[Json]`, `Encode[MessagePack]`,
+  `Encode[Protobuf]` y sus decoders), headers y bounds codec-específicos,
+  source maps atómicos y políticas de fields `@name`/`@ignore`; las
+  anotaciones `@json(base64)`, `@messagepack(binary)` y `@proto(number)` quedan
+  validadas en el snapshot para que sus owners de codec consuman la política
+  sin reflection ni DOM.
 
 - [ ] **STD-JSON-IMPL-001 — Implementar las tres rutas de JSON.** Publicar
   `parse -> Value`, `decode[T: Decode[Json]]` y
@@ -5650,6 +5655,22 @@ se declara iniciada antes de esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 1.81 — 2026-08-09
+
+- Los providers derive de serialization consumen la identidad especializada
+  del codec sin perderla durante el lowering (`Encode[Json]`,
+  `Encode[MessagePack]`, `Encode[Protobuf]` y equivalentes `Decode`). La
+  selección sigue reutilizando el provider base sellado, pero el impl generado
+  recibe el bound `Encoder[C, E]`/`Decoder[C, E]` concreto.
+- El MetaSnapshot conserva annotations inertes y canónicas por field/variant.
+  El provider valida `@name`, `@ignore` (con `Option` obligatorio),
+  `@json(base64)`, `@messagepack(binary)` y `@proto(number)`, rechaza números
+  reservados o inferidos y publica solo output formateado con source map.
+- Tests nuevos cubren codecs especializados, fields ignorados/renombrados,
+  headers genéricos, diagnósticos cerrados y retención lossless de paths; el
+  siguiente trabajo son las APIs/implementaciones de JSON, MessagePack y
+  Protobuf que consumen estas políticas.
 
 ### 1.80 — 2026-08-08
 

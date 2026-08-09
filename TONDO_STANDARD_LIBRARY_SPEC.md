@@ -2032,12 +2032,14 @@ pub trait Decode[C] {
 ~~~
 
 Un mismo tipo puede implementar varios codecs. `@name("wire_name")` cambia el
-nombre común; `@json(...)`, `@messagepack(...)` y `@proto(number)` afinan un
-codec concreto. `@proto(number)` es obligatorio para cada field Protobuf y los
-números nunca se infieren. `@ignore` es simétrico y omite el field al codificar y
-decodificar. `@json(base64)` convierte `Bytes` tipado a/desde texto Base64
-(RFC 4648; URL-safe debe nombrarse explícitamente); `parse` dinámico conserva el
-texto original. Las anotaciones se resuelven en compile time y no requieren
+nombre común; `@json(base64)`, `@messagepack(binary)` y `@proto(number)` afinan
+un codec concreto. `@proto(number)` es obligatorio para cada field Protobuf y
+los números nunca se infieren; los números 19000..19999 están reservados.
+`@ignore` es simétrico y omite el field al codificar y decodificar, por lo que
+un field ignorado debe ser `Option[T]` y se reconstruye como `none`.
+`@json(base64)` convierte `Bytes` tipado a/desde texto Base64 (RFC 4648;
+URL-safe debe nombrarse explícitamente); `parse` dinámico conserva el texto
+original. Las anotaciones se resuelven en compile time y no requieren
 reflection de valores.
 
 ### 14.6 `std.serialization`

@@ -58,10 +58,6 @@ impl SerializationDirection {
             Self::Decode => DECODE_PROVIDER,
         }
     }
-
-    const fn required_bound(self) -> &'static str {
-        self.trait_identity()
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -120,12 +116,33 @@ impl DeriveProviderCompiler for SerializationDeriveProvider {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SerializationDeriveError {
-    TraitMismatch { expected: String, found: String },
-    ProviderMismatch { expected: String, found: String },
-    TargetMissing { module: String, target: String },
+    TraitMismatch {
+        expected: String,
+        found: String,
+    },
+    ProviderMismatch {
+        expected: String,
+        found: String,
+    },
+    TargetMissing {
+        module: String,
+        target: String,
+    },
     UnsupportedTargetKind(String),
     MissingGenericBound(String),
     InvalidMemberName(String),
+    InvalidCodec(String),
+    InvalidAttribute {
+        name: String,
+        argument: Option<String>,
+    },
+    AttributeCodecMismatch {
+        name: String,
+        codec: String,
+    },
+    IgnoredFieldRequiresOption(String),
+    JsonBase64RequiresBytes(String),
+    InvalidProtoNumber(String),
 }
 
 impl fmt::Display for SerializationDeriveError {
@@ -167,6 +184,35 @@ impl fmt::Display for SerializationDeriveError {
                     "serialization derive cannot use member name `{name}`"
                 )
             }
+            Self::InvalidCodec(codec) => {
+                write!(formatter, "serialization derive cannot use codec `{codec}`")
+            }
+            Self::InvalidAttribute { name, argument } => {
+                write!(
+                    formatter,
+                    "serialization derive does not support attribute `@{name}`"
+                )?;
+                if let Some(argument) = argument {
+                    write!(formatter, "({argument})")?;
+                }
+                Ok(())
+            }
+            Self::AttributeCodecMismatch { name, codec } => {
+                write!(
+                    formatter,
+                    "serialization attribute `@{name}` is not valid for codec `{codec}`"
+                )
+            }
+            Self::IgnoredFieldRequiresOption(name) => write!(
+                formatter,
+                "ignored serialization field `{name}` must have an Option type"
+            ),
+            Self::JsonBase64RequiresBytes(name) => {
+                write!(formatter, "@json(base64) requires Bytes field `{name}`")
+            }
+            Self::InvalidProtoNumber(value) => {
+                write!(formatter, "invalid @proto field number `{value}`")
+            }
         }
     }
 }
@@ -179,12 +225,7 @@ pub fn render_serialization_body(
     request: &DeriveProviderRequest<'_>,
     direction: SerializationDirection,
 ) -> Result<String, SerializationDeriveError> {
-    if request.trait_identity() != direction.trait_identity() {
-        return Err(SerializationDeriveError::TraitMismatch {
-            expected: direction.trait_identity().into(),
-            found: request.trait_identity().into(),
-        });
-    }
+    let codec = codec_for_request(request.trait_identity(), direction)?;
     if request.provider_identity() != direction.provider_identity() {
         return Err(SerializationDeriveError::ProviderMismatch {
             expected: direction.provider_identity().into(),
@@ -216,13 +257,70 @@ pub fn render_serialization_body(
             render_deserialize_impl(&mut output, declaration, &target_type)?;
         }
         SerializationDirection::Encode => {
-            render_encode_impl(&mut output, declaration)?;
+            render_encode_impl(&mut output, declaration, &codec)?;
         }
         SerializationDirection::Decode => {
-            render_decode_impl(&mut output, declaration, &target_type)?;
+            render_decode_impl(&mut output, declaration, &target_type, &codec)?;
         }
     }
+    if codec != "C" {
+        output = output
+            .replace(
+                "serialization.Encoder[C, E]",
+                &format!("serialization.Encoder[{codec}, E]"),
+            )
+            .replace(
+                "serialization.Decoder[C, E]",
+                &format!("serialization.Decoder[{codec}, E]"),
+            )
+            .replace(
+                "serialization.Encode[C]",
+                &format!("serialization.Encode[{codec}]"),
+            )
+            .replace(
+                "serialization.Decode[C]",
+                &format!("serialization.Decode[{codec}]"),
+            );
+    }
     Ok(output)
+}
+
+fn codec_for_request(
+    identity: &str,
+    direction: SerializationDirection,
+) -> Result<String, SerializationDeriveError> {
+    if !matches!(
+        direction,
+        SerializationDirection::Encode | SerializationDirection::Decode
+    ) {
+        return Ok("C".into());
+    }
+    let base = direction.trait_identity();
+    if identity == base {
+        return Ok("C".into());
+    }
+    let prefix = format!("{base}[");
+    let Some(codec) = identity
+        .strip_prefix(&prefix)
+        .and_then(|value| value.strip_suffix(']'))
+    else {
+        return Err(SerializationDeriveError::TraitMismatch {
+            expected: base.into(),
+            found: identity.into(),
+        });
+    };
+    if codec.is_empty()
+        || codec.split('.').any(|part| {
+            part.is_empty()
+                || part.chars().enumerate().any(|(index, character)| {
+                    !(character == '_' || character.is_alphanumeric())
+                        || (index == 0 && !character.is_alphabetic() && character != '_')
+                })
+        })
+    {
+        return Err(SerializationDeriveError::InvalidCodec(codec.into()));
+    }
+    Ok(codec.into())
 }
 
 fn target_type(declaration: &MetaDeclaration) -> String {
@@ -245,7 +343,7 @@ fn target_type(declaration: &MetaDeclaration) -> String {
 fn generic_header(
     declaration: &MetaDeclaration,
     request: &DeriveProviderRequest<'_>,
-    direction: SerializationDirection,
+    _direction: SerializationDirection,
 ) -> Result<String, SerializationDeriveError> {
     if declaration.generic_parameters().is_empty() {
         return Ok(String::new());
@@ -254,9 +352,7 @@ fn generic_header(
     for parameter in declaration.generic_parameters() {
         let mut bounds = parameter.bounds().to_vec();
         if declaration_uses_parameter(declaration, parameter.name())
-            && !bounds
-                .iter()
-                .any(|bound| bound == direction.required_bound())
+            && !bounds.iter().any(|bound| bound == request.trait_identity())
         {
             if !request
                 .introduced_bounds()
@@ -267,7 +363,7 @@ fn generic_header(
                     parameter.name().into(),
                 ));
             }
-            bounds.push(direction.required_bound().into());
+            bounds.push(request.trait_identity().into());
         }
         bounds.sort();
         bounds.dedup();
@@ -350,6 +446,7 @@ fn render_serialize_impl(
 fn render_encode_impl(
     output: &mut String,
     declaration: &MetaDeclaration,
+    codec: &str,
 ) -> Result<(), SerializationDeriveError> {
     line(output, 0, "{");
     writeln!(
@@ -359,10 +456,10 @@ fn render_encode_impl(
     .expect("writing to String cannot fail");
     match declaration.kind() {
         MetaDeclarationKind::Record(fields) => {
-            render_record_encode_static(output, declaration, fields, "self")?
+            render_record_encode_static(output, declaration, fields, "self", codec)?
         }
         MetaDeclarationKind::Enum(variants) => {
-            render_enum_encode_static(output, declaration, variants)?
+            render_enum_encode_static(output, declaration, variants, codec)?
         }
         MetaDeclarationKind::Newtype(_) => {
             line(
@@ -387,22 +484,27 @@ fn render_record_encode_static(
     declaration: &MetaDeclaration,
     fields: &[MetaField],
     receiver: &str,
+    codec: &str,
 ) -> Result<(), SerializationDeriveError> {
+    let fields = field_policies(fields, codec)?;
     line(
         output,
         2,
         &format!(
             "encoder.startRecord({}, {})?",
             quote(declaration.identity()),
-            fields.len()
+            fields.iter().filter(|(_, policy)| !policy.ignored).count()
         ),
     );
-    for field in fields {
+    for (field, policy) in fields {
+        if policy.ignored {
+            continue;
+        }
         member_name(field.name())?;
         line(
             output,
             2,
-            &format!("encoder.field({})?", quote(field.name())),
+            &format!("encoder.field({})?", quote(&policy.wire_name)),
         );
         line(
             output,
@@ -422,6 +524,7 @@ fn render_enum_encode_static(
     output: &mut String,
     declaration: &MetaDeclaration,
     variants: &[MetaVariant],
+    codec: &str,
 ) -> Result<(), SerializationDeriveError> {
     line(output, 2, "match self {");
     for variant in variants {
@@ -430,7 +533,7 @@ fn render_enum_encode_static(
         match variant.payload() {
             MetaVariantPayload::Unit => {
                 line(output, 3, &format!("{} => {{", path));
-                render_enum_start_end_static(output, declaration, variant, 4, None)?;
+                render_enum_start_end_static(output, declaration, variant, 4, None, codec)?;
                 line(output, 3, "}");
             }
             MetaVariantPayload::Tuple(types) => {
@@ -438,7 +541,7 @@ fn render_enum_encode_static(
                     .map(|index| format!("value_{index}"))
                     .collect::<Vec<_>>();
                 line(output, 3, &format!("{}({}) => {{", path, names.join(", ")));
-                render_enum_start_end_static(output, declaration, variant, 4, Some(&names))?;
+                render_enum_start_end_static(output, declaration, variant, 4, Some(&names), codec)?;
                 line(output, 3, "}");
             }
             MetaVariantPayload::Record(fields) => {
@@ -454,7 +557,7 @@ fn render_enum_encode_static(
                     3,
                     &format!("{} {{ {} }} => {{", path, names.join(", ")),
                 );
-                render_enum_start_end_static(output, declaration, variant, 4, Some(&names))?;
+                render_enum_start_end_static(output, declaration, variant, 4, Some(&names), codec)?;
                 line(output, 3, "}");
             }
         }
@@ -469,6 +572,7 @@ fn render_enum_start_end_static(
     variant: &MetaVariant,
     indent: usize,
     payload_names: Option<&[String]>,
+    _codec: &str,
 ) -> Result<(), SerializationDeriveError> {
     line(
         output,
@@ -649,6 +753,7 @@ fn render_decode_impl(
     output: &mut String,
     declaration: &MetaDeclaration,
     target_type: &str,
+    codec: &str,
 ) -> Result<(), SerializationDeriveError> {
     line(output, 0, "{");
     writeln!(
@@ -659,10 +764,10 @@ fn render_decode_impl(
     .expect("writing to String cannot fail");
     match declaration.kind() {
         MetaDeclarationKind::Record(fields) => {
-            render_record_decode_static(output, declaration, fields)?
+            render_record_decode_static(output, declaration, fields, codec)?
         }
         MetaDeclarationKind::Enum(variants) => {
-            render_enum_decode_static(output, declaration, variants)?
+            render_enum_decode_static(output, declaration, variants, codec)?
         }
         MetaDeclarationKind::Newtype(underlying) => {
             line(
@@ -690,7 +795,9 @@ fn render_record_decode_static(
     output: &mut String,
     declaration: &MetaDeclaration,
     fields: &[MetaField],
+    codec: &str,
 ) -> Result<(), SerializationDeriveError> {
+    let fields = field_policies(fields, codec)?;
     line(output, 2, "let start = decoder.next()?");
     line(output, 2, "match start {");
     line(
@@ -698,7 +805,10 @@ fn render_record_decode_static(
         3,
         "serialization.SerializationEvent.StartRecord(_, _) => {",
     );
-    for field in fields {
+    for (field, policy) in &fields {
+        if policy.ignored {
+            continue;
+        }
         member_name(field.name())?;
         line(output, 4, "match decoder.next()? {");
         line(
@@ -706,7 +816,7 @@ fn render_record_decode_static(
             5,
             &format!(
                 "serialization.SerializationEvent.Field({}) => ()",
-                quote(field.name())
+                quote(&policy.wire_name)
             ),
         );
         line(
@@ -737,18 +847,20 @@ fn render_record_decode_static(
         "_ => fail serialization.SerializationError.TypeMismatch",
     );
     line(output, 4, "}");
+    let values = fields
+        .iter()
+        .map(|(field, policy)| {
+            if policy.ignored {
+                format!("{}: none", field.name())
+            } else {
+                field.name().to_owned()
+            }
+        })
+        .collect::<Vec<_>>();
     line(
         output,
         4,
-        &format!(
-            "{} {{ {} }}",
-            declaration.identity(),
-            fields
-                .iter()
-                .map(|field| field.name())
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
+        &format!("{} {{ {} }}", declaration.identity(), values.join(", ")),
     );
     line(output, 3, "}");
     line(
@@ -764,6 +876,7 @@ fn render_enum_decode_static(
     output: &mut String,
     declaration: &MetaDeclaration,
     variants: &[MetaVariant],
+    codec: &str,
 ) -> Result<(), SerializationDeriveError> {
     line(output, 2, "let start = decoder.next()?");
     line(output, 2, "match start {");
@@ -811,7 +924,11 @@ fn render_enum_decode_static(
                 )?;
             }
             MetaVariantPayload::Record(fields) => {
-                for field in fields {
+                let fields = field_policies(fields, codec)?;
+                for (field, policy) in &fields {
+                    if policy.ignored {
+                        continue;
+                    }
                     member_name(field.name())?;
                     line(output, 4, "match decoder.next()? {");
                     line(
@@ -819,7 +936,7 @@ fn render_enum_decode_static(
                         5,
                         &format!(
                             "serialization.SerializationEvent.Field({}) => ()",
-                            quote(field.name())
+                            quote(&policy.wire_name)
                         ),
                     );
                     line(
@@ -838,15 +955,21 @@ fn render_enum_decode_static(
                         ),
                     );
                 }
+                let values = fields
+                    .iter()
+                    .map(|(field, policy)| {
+                        if policy.ignored {
+                            format!("{}: none", field.name())
+                        } else {
+                            field.name().to_owned()
+                        }
+                    })
+                    .collect::<Vec<_>>();
                 let value = format!(
                     "{}.{} {{ {} }}",
                     declaration.identity(),
                     variant.name(),
-                    fields
-                        .iter()
-                        .map(|field| field.name())
-                        .collect::<Vec<_>>()
-                        .join(", ")
+                    values.join(", ")
                 );
                 render_enum_end_static(output, 4, &value)?;
             }
@@ -1049,6 +1172,155 @@ fn render_enum_end(
     Ok(())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FieldPolicy {
+    wire_name: String,
+    ignored: bool,
+    json_base64: bool,
+    proto_number: Option<u32>,
+}
+
+fn field_policies<'a>(
+    fields: &'a [MetaField],
+    codec: &str,
+) -> Result<Vec<(&'a MetaField, FieldPolicy)>, SerializationDeriveError> {
+    fields
+        .iter()
+        .map(|field| {
+            member_name(field.name())?;
+            let mut wire_name = field.name().to_owned();
+            let mut ignored = false;
+            let mut json_base64 = false;
+            let mut proto_number = None;
+            let mut seen_name = false;
+            let mut seen_ignore = false;
+            for attribute in field.attributes() {
+                let name = attribute.name();
+                match name {
+                    "name" => {
+                        if seen_name || attribute.argument().is_none() {
+                            return Err(SerializationDeriveError::InvalidAttribute {
+                                name: name.into(),
+                                argument: attribute.argument().map(str::to_owned),
+                            });
+                        }
+                        let value = attribute.argument().unwrap();
+                        if value.is_empty() {
+                            return Err(SerializationDeriveError::InvalidAttribute {
+                                name: name.into(),
+                                argument: Some(value.into()),
+                            });
+                        }
+                        wire_name = value.to_owned();
+                        seen_name = true;
+                    }
+                    "ignore" => {
+                        if seen_ignore || attribute.argument().is_some() {
+                            return Err(SerializationDeriveError::InvalidAttribute {
+                                name: name.into(),
+                                argument: attribute.argument().map(str::to_owned),
+                            });
+                        }
+                        ignored = true;
+                        seen_ignore = true;
+                    }
+                    "json" => {
+                        let Some(argument) = attribute.argument() else {
+                            return Err(SerializationDeriveError::InvalidAttribute {
+                                name: name.into(),
+                                argument: None,
+                            });
+                        };
+                        if argument != "base64" {
+                            return Err(SerializationDeriveError::InvalidAttribute {
+                                name: name.into(),
+                                argument: Some(argument.into()),
+                            });
+                        }
+                        if codec == "Json" {
+                            if field.ty() != "Bytes" {
+                                return Err(SerializationDeriveError::JsonBase64RequiresBytes(
+                                    field.name().into(),
+                                ));
+                            }
+                            json_base64 = true;
+                        }
+                    }
+                    "messagepack" => {
+                        let Some(argument) = attribute.argument() else {
+                            return Err(SerializationDeriveError::InvalidAttribute {
+                                name: name.into(),
+                                argument: None,
+                            });
+                        };
+                        if argument != "binary" {
+                            return Err(SerializationDeriveError::InvalidAttribute {
+                                name: name.into(),
+                                argument: Some(argument.into()),
+                            });
+                        }
+                        if codec == "MessagePack" && field.ty() != "Bytes" {
+                            return Err(SerializationDeriveError::AttributeCodecMismatch {
+                                name: name.into(),
+                                codec: codec.into(),
+                            });
+                        }
+                    }
+                    "proto" => {
+                        let Some(argument) = attribute.argument() else {
+                            return Err(SerializationDeriveError::InvalidProtoNumber(
+                                "missing".into(),
+                            ));
+                        };
+                        let number = argument
+                            .parse::<u32>()
+                            .ok()
+                            .filter(|number| *number > 0 && *number <= 536_870_911)
+                            .filter(|number| !(19_000..=19_999).contains(number))
+                            .ok_or_else(|| {
+                                SerializationDeriveError::InvalidProtoNumber(argument.into())
+                            })?;
+                        if codec == "Protobuf" {
+                            proto_number = Some(number);
+                        }
+                    }
+                    _ => {
+                        return Err(SerializationDeriveError::InvalidAttribute {
+                            name: name.into(),
+                            argument: attribute.argument().map(str::to_owned),
+                        });
+                    }
+                }
+            }
+            if ignored && !is_option_type(field.ty()) {
+                return Err(SerializationDeriveError::IgnoredFieldRequiresOption(
+                    field.name().into(),
+                ));
+            }
+            if codec == "Protobuf" && !ignored && proto_number.is_none() {
+                return Err(SerializationDeriveError::InvalidProtoNumber(format!(
+                    "missing for `{}`",
+                    field.name()
+                )));
+            }
+            Ok((
+                field,
+                FieldPolicy {
+                    wire_name,
+                    ignored,
+                    json_base64,
+                    proto_number,
+                },
+            ))
+        })
+        .collect()
+}
+
+fn is_option_type(ty: &str) -> bool {
+    let ty = ty.trim();
+    ty.ends_with('?') || ty.starts_with("Option[")
+}
+
 fn member_name(name: &str) -> Result<(), SerializationDeriveError> {
     let mut characters = name.chars();
     let valid = characters
@@ -1092,8 +1364,8 @@ mod tests {
     use super::*;
     use crate::meta::{
         DeriveContext, DeriveProvider, DeriveRequest, DeriveTarget, DeriveTargetKind,
-        MetaDeclaration, MetaDeclarationKind, MetaField, MetaGenericParameter, MetaLimits,
-        MetaSnapshot, MetaSpan, MetaVisibility, validate_derive_requests,
+        MetaAttribute, MetaDeclaration, MetaDeclarationKind, MetaField, MetaGenericParameter,
+        MetaLimits, MetaSnapshot, MetaSpan, MetaVisibility, validate_derive_requests,
     };
     use crate::meta_derive::execute_derive_plan;
 
@@ -1220,6 +1492,26 @@ mod tests {
         introduced_bounds: &[&str],
         kind: DeriveTargetKind,
     ) -> Result<crate::meta_derive::DeriveExecution, crate::meta_derive::DeriveExecutionError> {
+        derive_named_codec(
+            target,
+            snapshot,
+            direction,
+            generics,
+            introduced_bounds,
+            kind,
+            None,
+        )
+    }
+
+    fn derive_named_codec(
+        target: &str,
+        snapshot: MetaSnapshot,
+        direction: SerializationDirection,
+        generics: &[&str],
+        introduced_bounds: &[&str],
+        kind: DeriveTargetKind,
+        codec: Option<&str>,
+    ) -> Result<crate::meta_derive::DeriveExecution, crate::meta_derive::DeriveExecutionError> {
         let mut context = DeriveContext::new("app");
         context.add_target(DeriveTarget::new(
             target,
@@ -1227,18 +1519,17 @@ mod tests {
             generics.iter().copied(),
             kind,
         ));
-        context.add_trait(direction.trait_identity());
+        let trait_identity = codec.map_or_else(
+            || direction.trait_identity().to_owned(),
+            |codec| format!("{}[{codec}]", direction.trait_identity()),
+        );
+        context.add_trait(&trait_identity);
         context.add_provider(DeriveProvider::new(
             direction.trait_identity(),
             direction.provider_identity(),
             introduced_bounds.iter().copied(),
         ));
-        let request = DeriveRequest::new(
-            "app",
-            target,
-            generics.iter().copied(),
-            [direction.trait_identity()],
-        );
+        let request = DeriveRequest::new("app", target, generics.iter().copied(), [trait_identity]);
         let plan = validate_derive_requests(&[request], &context).unwrap();
         let mut registry = DeriveProviderRegistry::default();
         register_serialization_providers(&mut registry).unwrap();
@@ -1356,6 +1647,128 @@ mod tests {
         let generic_source = std::str::from_utf8(generic.response().outputs()[0].bytes()).unwrap();
         assert!(generic_source.contains("impl [T: serialization.Encode]serialization.Encode"));
         assert!(generic_source.contains("for Boxed[T]"));
+    }
+
+    #[test]
+    fn specialized_codecs_and_field_annotations_are_deterministic() {
+        let payload = field("payload", "Bytes", 0)
+            .with_attributes([
+                MetaAttribute::new("name", Some("wire_payload")).unwrap(),
+                MetaAttribute::new("json", Some("base64")).unwrap(),
+            ])
+            .unwrap();
+        let hidden = field("hidden", "Option[Int]", 1)
+            .with_attributes([MetaAttribute::new("ignore", None::<String>).unwrap()])
+            .unwrap();
+        let snapshot = MetaSnapshot::new(
+            [],
+            [],
+            [MetaDeclaration::new(
+                "Annotated",
+                "app",
+                MetaVisibility::Public,
+                [],
+                [],
+                span(300, 350),
+                None::<String>,
+                MetaDeclarationKind::record([payload, hidden]),
+            )
+            .unwrap()],
+        )
+        .unwrap();
+        let execution = derive_named_codec(
+            "Annotated",
+            snapshot,
+            SerializationDirection::Encode,
+            &[],
+            &[],
+            DeriveTargetKind::Record,
+            Some("Json"),
+        )
+        .unwrap();
+        let source = std::str::from_utf8(execution.response().outputs()[0].bytes()).unwrap();
+        assert!(source.contains("Encoder[Json, E]"));
+        assert!(source.contains("Encode[Json].encode"));
+        assert!(source.contains("encoder.startRecord(\"Annotated\", 1)"));
+        assert!(source.contains("encoder.field(\"wire_payload\")"));
+        assert!(!source.contains("hidden"));
+
+        let decoded = derive_named_codec(
+            "Annotated",
+            MetaSnapshot::new(
+                [],
+                [],
+                [MetaDeclaration::new(
+                    "Annotated",
+                    "app",
+                    MetaVisibility::Public,
+                    [],
+                    [],
+                    span(300, 350),
+                    None::<String>,
+                    MetaDeclarationKind::record([
+                        field("payload", "Bytes", 0)
+                            .with_attributes([
+                                MetaAttribute::new("name", Some("wire_payload")).unwrap(),
+                                MetaAttribute::new("json", Some("base64")).unwrap(),
+                            ])
+                            .unwrap(),
+                        field("hidden", "Option[Int]", 1)
+                            .with_attributes(
+                                [MetaAttribute::new("ignore", None::<String>).unwrap()],
+                            )
+                            .unwrap(),
+                    ]),
+                )
+                .unwrap()],
+            )
+            .unwrap(),
+            SerializationDirection::Decode,
+            &[],
+            &[],
+            DeriveTargetKind::Record,
+            Some("Json"),
+        )
+        .unwrap();
+        let decoded_source = std::str::from_utf8(decoded.response().outputs()[0].bytes()).unwrap();
+        assert!(decoded_source.contains("Decoder[Json, E]"));
+        assert!(decoded_source.contains("wire_payload"));
+        assert!(decoded_source.contains("hidden: none"));
+
+        let protobuf_field = field("id", "Int", 0)
+            .with_attributes([MetaAttribute::new("proto", Some("7")).unwrap()])
+            .unwrap();
+        let protobuf_snapshot = MetaSnapshot::new(
+            [],
+            [],
+            [MetaDeclaration::new(
+                "ProtoUser",
+                "app",
+                MetaVisibility::Public,
+                [],
+                [],
+                span(360, 390),
+                None::<String>,
+                MetaDeclarationKind::record([protobuf_field]),
+            )
+            .unwrap()],
+        )
+        .unwrap();
+        let protobuf = derive_named_codec(
+            "ProtoUser",
+            protobuf_snapshot,
+            SerializationDirection::Encode,
+            &[],
+            &[],
+            DeriveTargetKind::Record,
+            Some("Protobuf"),
+        )
+        .unwrap();
+        assert!(
+            std::str::from_utf8(protobuf.response().outputs()[0].bytes())
+                .unwrap()
+                .contains("Encoder[Protobuf, E]")
+        );
     }
 
     #[test]
@@ -1524,6 +1937,33 @@ mod tests {
         assert!(matches!(
             invalid,
             crate::meta_derive::DeriveExecutionError::ProviderFailed { .. }
+        ));
+    }
+
+    #[test]
+    fn annotation_and_codec_validation_is_closed_before_source_publication() {
+        assert_eq!(
+            codec_for_request("serialization.Encode[Json]", SerializationDirection::Encode)
+                .unwrap(),
+            "Json"
+        );
+        assert!(matches!(
+            codec_for_request("serialization.Encode[]", SerializationDirection::Encode),
+            Err(SerializationDeriveError::InvalidCodec(_))
+        ));
+        let invalid = field("value", "Int", 0)
+            .with_attributes([MetaAttribute::new("unknown", None::<String>).unwrap()])
+            .unwrap();
+        assert!(matches!(
+            field_policies(&[invalid], "Json"),
+            Err(SerializationDeriveError::InvalidAttribute { .. })
+        ));
+        let invalid_ignored = field("value", "Int", 0)
+            .with_attributes([MetaAttribute::new("ignore", None::<String>).unwrap()])
+            .unwrap();
+        assert!(matches!(
+            field_policies(&[invalid_ignored], "Json"),
+            Err(SerializationDeriveError::IgnoredFieldRequiresOption(_))
         ));
     }
 }

@@ -190,6 +190,40 @@ impl MetaBound {
     }
 }
 
+/// A compile-time annotation retained for a derive provider.
+///
+/// The meta model intentionally keeps annotations as inert, canonical data.
+/// Providers validate the closed vocabulary for their owner; no executable
+/// callback or host value can cross this boundary.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MetaAttribute {
+    name: String,
+    argument: Option<String>,
+}
+
+impl MetaAttribute {
+    pub fn new(
+        name: impl Into<String>,
+        argument: Option<impl Into<String>>,
+    ) -> Result<Self, MetaModelError> {
+        let name = required_text("attribute.name", name.into())?;
+        let argument = argument
+            .map(Into::into)
+            .map(|value| required_text("attribute.argument", value))
+            .transpose()?;
+        Ok(Self { name, argument })
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn argument(&self) -> Option<&str> {
+        self.argument.as_deref()
+    }
+}
+
 /// A public or target-authorized field. `ordinal` preserves source order while
 /// allowing canonical serialization independent of insertion order.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -201,6 +235,8 @@ pub struct MetaField {
     ordinal: u32,
     span: MetaSpan,
     docs: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    attributes: Vec<MetaAttribute>,
 }
 
 impl MetaField {
@@ -219,7 +255,17 @@ impl MetaField {
             ordinal,
             span,
             docs: canonical_docs(docs.map(Into::into))?,
+            attributes: Vec::new(),
         })
+    }
+
+    pub fn with_attributes(
+        mut self,
+        attributes: impl IntoIterator<Item = MetaAttribute>,
+    ) -> Result<Self, MetaModelError> {
+        self.attributes = attributes.into_iter().collect();
+        self.canonicalize_attributes()?;
+        Ok(self)
     }
 
     pub fn name(&self) -> &str {
@@ -244,6 +290,31 @@ impl MetaField {
 
     pub fn docs(&self) -> Option<&str> {
         self.docs.as_deref()
+    }
+
+    pub fn attributes(&self) -> &[MetaAttribute] {
+        &self.attributes
+    }
+
+    fn canonicalize_attributes(&mut self) -> Result<(), MetaModelError> {
+        for attribute in &self.attributes {
+            required_text("attribute.name", attribute.name.clone())?;
+            if let Some(argument) = &attribute.argument {
+                required_text("attribute.argument", argument.clone())?;
+            }
+        }
+        self.attributes.sort();
+        if self
+            .attributes
+            .windows(2)
+            .any(|window| window[0] == window[1])
+        {
+            return Err(MetaModelError::Duplicate {
+                kind: "field attribute".into(),
+                identity: self.attributes[0].name.clone(),
+            });
+        }
+        Ok(())
     }
 }
 
@@ -299,6 +370,8 @@ pub struct MetaVariant {
     ordinal: u32,
     span: MetaSpan,
     docs: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    attributes: Vec<MetaAttribute>,
 }
 
 impl MetaVariant {
@@ -315,7 +388,17 @@ impl MetaVariant {
             ordinal,
             span,
             docs: canonical_docs(docs.map(Into::into))?,
+            attributes: Vec::new(),
         })
+    }
+
+    pub fn with_attributes(
+        mut self,
+        attributes: impl IntoIterator<Item = MetaAttribute>,
+    ) -> Result<Self, MetaModelError> {
+        self.attributes = attributes.into_iter().collect();
+        self.canonicalize_attributes()?;
+        Ok(self)
     }
 
     pub fn name(&self) -> &str {
@@ -338,9 +421,35 @@ impl MetaVariant {
         self.docs.as_deref()
     }
 
+    pub fn attributes(&self) -> &[MetaAttribute] {
+        &self.attributes
+    }
+
     fn canonicalize(&mut self) -> Result<(), MetaModelError> {
         required_text("variant.name", self.name.clone())?;
+        self.canonicalize_attributes()?;
         self.payload.canonicalize()
+    }
+
+    fn canonicalize_attributes(&mut self) -> Result<(), MetaModelError> {
+        for attribute in &self.attributes {
+            required_text("attribute.name", attribute.name.clone())?;
+            if let Some(argument) = &attribute.argument {
+                required_text("attribute.argument", argument.clone())?;
+            }
+        }
+        self.attributes.sort();
+        if self
+            .attributes
+            .windows(2)
+            .any(|window| window[0] == window[1])
+        {
+            return Err(MetaModelError::Duplicate {
+                kind: "variant attribute".into(),
+                identity: self.attributes[0].name.clone(),
+            });
+        }
+        Ok(())
     }
 }
 
@@ -1283,9 +1392,10 @@ fn canonical_docs(docs: Option<String>) -> Result<Option<String>, MetaModelError
 }
 
 fn canonicalize_fields(fields: &mut [MetaField]) -> Result<(), MetaModelError> {
-    for field in fields.iter() {
+    for field in fields.iter_mut() {
         required_text("field.name", field.name.clone())?;
         required_text("field.type", field.ty.clone())?;
+        field.canonicalize_attributes()?;
     }
     fields.sort_by_key(|field| (field.ordinal, field.name.clone()));
     ensure_unique_ordinals_and_names(
@@ -1724,7 +1834,10 @@ pub fn validate_derive_requests(
                 ));
                 continue;
             }
-            if !context.traits.contains(trait_identity) {
+            let base_trait_identity = derive_trait_base_identity(trait_identity);
+            if !context.traits.contains(trait_identity)
+                && !context.traits.contains(base_trait_identity.as_str())
+            {
                 diagnostics.push(invalid_request(
                     request_index,
                     request,
@@ -1733,7 +1846,11 @@ pub fn validate_derive_requests(
                 ));
                 continue;
             }
-            let Some(provider) = context.providers.get(trait_identity) else {
+            let Some(provider) = context
+                .providers
+                .get(trait_identity)
+                .or_else(|| context.providers.get(base_trait_identity.as_str()))
+            else {
                 diagnostics.push(MetaDiagnostic {
                     code: MetaDiagnosticCode::MissingDeriveProvider,
                     request_index,
@@ -1743,7 +1860,7 @@ pub fn validate_derive_requests(
                 });
                 continue;
             };
-            if provider.trait_identity() != trait_identity
+            if derive_trait_base_identity(provider.trait_identity()) != base_trait_identity
                 || provider.provider_identity().is_empty()
                 || provider
                     .introduced_bounds()
@@ -1805,6 +1922,16 @@ pub fn validate_derive_requests(
         });
         Err(MetaSemanticError { diagnostics })
     }
+}
+
+/// Return the nominal trait identity for an optionally specialized derive
+/// request.  The generic codec arguments remain in `ValidatedTrait::identity`;
+/// provider lookup may reuse the locked provider for the unspecialized trait.
+fn derive_trait_base_identity(identity: &str) -> String {
+    identity
+        .split_once('[')
+        .map_or(identity, |(base, _)| base)
+        .to_owned()
 }
 
 /// Convert the HIR requests before passing them to the semantic validator.
@@ -2042,6 +2169,35 @@ mod tests {
             MetaDiagnosticCode::InvalidDeriveTarget
                 .as_str()
                 .starts_with('E')
+        );
+    }
+
+    #[test]
+    fn specialized_trait_requests_reuse_the_locked_base_provider() {
+        let mut context = DeriveContext::new("main");
+        context.add_target(DeriveTarget::new(
+            "User",
+            "main",
+            std::iter::empty::<String>(),
+            DeriveTargetKind::Record,
+        ));
+        context.add_trait("serialization.Encode");
+        context.add_provider(DeriveProvider::new(
+            "serialization.Encode",
+            "std.derive.serialization.Encode",
+            std::iter::empty::<String>(),
+        ));
+        let request = DeriveRequest::new(
+            "main",
+            "User",
+            std::iter::empty::<String>(),
+            ["serialization.Encode[Json]"],
+        );
+        let plan = validate_derive_requests(&[request], &context).unwrap();
+        assert_eq!(plan[0].traits()[0].identity(), "serialization.Encode[Json]");
+        assert_eq!(
+            plan[0].traits()[0].provider(),
+            "std.derive.serialization.Encode"
         );
     }
 
