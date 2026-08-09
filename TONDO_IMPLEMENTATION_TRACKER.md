@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 1.87
+**Versión del tracker:** 1.88
 
 **Última actualización:** 2026-08-09
 
@@ -48,8 +48,8 @@ contratos públicos: la ruta de frontend, HIR/MIR/bytecode, `Join` transferible,
 referencia. La compatibilidad léxica de `async` se conserva únicamente para
 fixtures históricos y no aparece en interfaces ni en la superficie normativa;
 la retirada mecánica de esas fixtures queda separada del contrato ejecutable.
-Después: (1) cerrar `STD-CODEC-CONF-001` para JSON, MessagePack y Protobuf;
-(2) completar las rutas públicas A1–A4 y ampliar
+Después: (1) cerrar `STD-PERF-CONF-001` por owner, empezando por los tres
+codecs; (2) completar las rutas públicas A1–A4 y ampliar
 la matriz normativa a los tres contratos G5 antes de volver a cerrar T0/G5/S1A.
 Los contratos
 runtime-facing de STD-0.1B y M11 esperan esos gates. Todo pertenece a la primera
@@ -4572,10 +4572,17 @@ administrativas que no implementan comportamiento.
   `scripts/stdlib-codec-conformance.sh` prueba los kernels materializados y el
   bridge `validate/canonicalize`; esta evidencia se conserva como oracle parcial.
 
-- [ ] **STD-CODEC-CONF-001 — Cerrar evidencia de serialization y formatos.**
-  Después de las cinco tareas A3, ejecutar typed/dynamic/streaming, derives y
-  schema-first con interoperabilidad externa, fragmentación, fuzzing, límites,
-  paths, preservación y ausencia de DOM/reflection donde lo prohíbe el contrato.
+- [x] **STD-CODEC-CONF-001 — Cerrar evidencia de serialization y formatos.**
+  Después de las cinco tareas A3, `scripts/stdlib-codec-conformance.sh` ejecuta
+  las rutas typed/dynamic/streaming y los casos derive/schema-first de los
+  owners, además del harness externo bidireccional
+  [`crates/tondo-stdlib/tests/codec_conformance.rs`](./crates/tondo-stdlib/tests/codec_conformance.rs).
+  `serde_json`, `rmpv` y `prost` prueban bytes externos y bytes de Tondo; el
+  corpus cubre fragmentación de un byte, truncación, rechazo, límites,
+  paths, preservación de extensiones/unknown fields y ausencia de DOM o
+  reflection en las rutas typed. El target `stdlib_codecs` añade un smoke de
+  fuzzing bounded y la evidencia se registra en
+  [`testing/stdlib-codec-conformance.json`](./testing/stdlib-codec-conformance.json).
 
 - [x] **STD-PERF-KERNEL-001 — Conservar el probe escalar inicial.** Nueve
   muestras por proceso, tres procesos y cinco kernels proporcionan una baseline
@@ -5687,6 +5694,23 @@ se declara iniciada antes de esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 1.88 — 2026-08-09
+
+- Se cierra `STD-CODEC-CONF-001` con una prueba de interoperabilidad externa
+  en ambas direcciones: `serde_json` para JSON, `rmpv` para MessagePack y
+  `prost` para Protobuf. La prueba no reutiliza el kernel Tondo como oracle y
+  cubre wire model, binary/ext, packed repeated, unknown raw bytes, una
+  fragmentación de un byte, truncaciones, trailing/duplicados y límites
+  finitos.
+- Se añade el registro canónico `testing/stdlib-codec-conformance.json`, que
+  fija las versiones, fuentes, observables y comando reproducible. El nuevo
+  fuzz target `stdlib_codecs` ejerce los tres parsers y sus readers
+  fragmentados sin consumir el stack del host; el gate estricto ejecuta ambos
+  niveles de evidencia.
+- Los tres contratos de owner avanzan su `next_coordination` a
+  `STD-PERF-CONF-001`; el histórico de conformance sigue separado del
+  manifest vivo de `conformance/draft`.
 
 ### 1.87 — 2026-08-09
 

@@ -1,7 +1,8 @@
 # Contrato de `std.json`
 
-**Estado:** contrato de API fuente normativo para `STD-0.1A`; la implementación
-typed/dynamic/streaming debe migrar al ABI `Encode[C]`/`Decode[C]`.
+**Estado:** contrato de API fuente normativo e implementación portable conforme
+para `STD-0.1A`; las rutas typed/dynamic/streaming consumen el ABI
+`Encode[C]`/`Decode[C]` y tienen evidencia externa reproducible.
 
 `std.json` implementa el modelo JSON de RFC 8259 sobre UTF-8 y reutiliza los
 traits estáticos de `std.serialization`. La política canónica y las invariantes
@@ -278,11 +279,13 @@ no copia automáticamente el input ni secretos potenciales.
 
 ## Corpus y promoción
 
-El owner ya está implementado contra este contrato y sus identidades
-reproducibles viven en el corpus y en las pruebas de `tondo-stdlib`. El gate
-`STD-CODEC-CONF-001` añadirá vectores oficiales y comparación con al menos dos
-implementaciones independientes cuando estén disponibles; ese gate no puede
-sustituirse por round-trips internos.
+El owner está implementado contra este contrato y sus identidades reproducibles
+viven en el corpus y en las pruebas de `tondo-stdlib`. El gate
+`STD-CODEC-CONF-001` compara en ambas direcciones con `serde_json`, comprueba
+fragmentación de un byte, truncación, duplicados, trailing data y límites, y
+registra la evidencia en
+[`testing/stdlib-codec-conformance.json`](../../testing/stdlib-codec-conformance.json).
+El gate no se sustituye por round-trips internos.
 
 La aceptación de `STD-JSON-001` exige que el contrato machine-readable pase,
 que cada clase de corpus tenga un owner y que la implementación demuestre

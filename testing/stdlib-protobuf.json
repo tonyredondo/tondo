@@ -429,6 +429,6 @@
         "requires": ["generated-output-stability", "wire-compatibility", "finite-limits", "STD-PERF-001-report"]
       }
     ],
-    "next_coordination": "STD-CODEC-CONF-001"
+    "next_coordination": "STD-PERF-CONF-001"
   }
 }

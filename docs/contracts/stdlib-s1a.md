@@ -49,8 +49,11 @@ channels and typed errors without publishing partial values.
 
 ## Conformance, performance and lineage
 
-`scripts/stdlib-codec-conformance.sh` runs the three portable codec suites and
-the hosted bridge test, while `scripts/stdlib-performance-report.sh` captures
+`scripts/stdlib-codec-conformance.sh` runs the three portable codec suites, the
+hosted bridge test and a bidirectional external interoperability harness
+against `serde_json`, `rmpv` and `prost`. The harness also records one-byte
+fragmentation, truncation, finite limits and unknown-wire preservation in
+`testing/stdlib-codec-conformance.json`. `scripts/stdlib-performance-report.sh` captures
 27 independent samples per hot-path module from three processes. The strict
 gate runs both reports together with the complete workspace tests and draft
 conformance adapter.

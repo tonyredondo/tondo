@@ -1,9 +1,9 @@
 # Contrato de `std.messagepack`
 
-**Estado:** contrato de API fuente normativo e implementación portable cerrada
+**Estado:** contrato de API fuente normativo e implementación portable conforme
 para `STD-0.1A`. Las rutas typed, dynamic y streaming consumen el ABI
-`Encode[C]`/`Decode[C]`; la conformance externa y la interoperabilidad
-independiente permanecen como gates posteriores.
+`Encode[C]`/`Decode[C]`; la interoperabilidad bidireccional con `rmpv` queda
+registrada en el gate coordinado de codecs.
 
 `std.messagepack` implementa el modelo binario de la especificación MessagePack
 y reutiliza los traits estáticos de `std.serialization`. El registro
@@ -239,13 +239,13 @@ fragmentación, límites, determinismo, terminalidad y round-trip typed.
 
 ## Corpus e interoperabilidad
 
-Antes de implementar el owner deben existir identidades reproducibles para el
-modelo completo de MessagePack, tags y longitudes no mínimas, floats y bits,
-UTF-8 frente a binary, maps con claves arbitrarias, ext/timestamp, fragmentos,
-límite y determinismo. `STD-CODEC-CONF-001` añadirá vectores de la
-especificación y comparación con al menos dos implementaciones independientes.
-Los round-trips contra el propio codec no bastan para demostrar wire
-compatibility.
+Las identidades reproducibles del owner cubren el modelo completo de
+MessagePack, tags y longitudes no mínimas, floats y bits, UTF-8 frente a
+binary, maps con claves arbitrarias, ext/timestamp, fragmentos, límite y
+determinismo. `STD-CODEC-CONF-001` compara en ambas direcciones con `rmpv`,
+incluye una extensión desconocida, fragmentación de un byte, truncación y
+límite de documento, y publica la evidencia en el registro coordinado. Los
+round-trips contra el propio codec no bastan para demostrar wire compatibility.
 
 La promoción exige que typed y dynamic coincidan en los observables declarados,
 que los eventos sean independientes del chunking, que el modo determinista sea

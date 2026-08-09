@@ -1,0 +1,74 @@
+{
+  "format": "tondo-stdlib-codec-conformance/1",
+  "edition": "0.1",
+  "owner": "std.serialization",
+  "status": "closed",
+  "test": {
+    "source": "crates/tondo-stdlib/tests/codec_conformance.rs",
+    "command": "cargo test -p tondo-stdlib --test codec_conformance --locked",
+    "directions": ["external-to-tondo", "tondo-to-external"],
+    "fragmentation": "one-byte-chunks",
+    "malformed_inputs": true,
+    "truncation": true,
+    "finite_limits": true,
+    "unknown_preservation": true
+  },
+  "implementations": {
+    "json": [
+      {
+        "id": "serde_json",
+        "version": "1.0.151",
+        "role": "external-parser-and-writer",
+        "source": "https://crates.io/crates/serde_json"
+      }
+    ],
+    "messagepack": [
+      {
+        "id": "rmpv",
+        "version": "1.3.1",
+        "role": "external-parser-and-writer",
+        "source": "https://crates.io/crates/rmpv"
+      }
+    ],
+    "protobuf": [
+      {
+        "id": "prost",
+        "version": "0.14.4",
+        "role": "external-schema-bound-parser-and-writer",
+        "source": "https://crates.io/crates/prost"
+      }
+    ]
+  },
+  "cases": [
+    {
+      "id": "json-bidirectional-rfc-shape",
+      "format": "json",
+      "observables": ["external-parse", "external-encode", "unicode", "duplicate-rejection", "trailing-rejection"]
+    },
+    {
+      "id": "json-fragment-and-limit",
+      "format": "json",
+      "observables": ["one-byte-fragments", "document-limit", "terminal-invalid-input"]
+    },
+    {
+      "id": "messagepack-bidirectional-wire-model",
+      "format": "messagepack",
+      "observables": ["arbitrary-map-keys", "binary", "extension", "signed-integer", "float-width"]
+    },
+    {
+      "id": "messagepack-fragment-and-limit",
+      "format": "messagepack",
+      "observables": ["one-byte-fragments", "truncation", "document-limit", "terminal-invalid-input"]
+    },
+    {
+      "id": "protobuf-bidirectional-schema-wire",
+      "format": "protobuf",
+      "observables": ["varint", "length-delimited", "packed-repeated", "external-decode", "external-encode"]
+    },
+    {
+      "id": "protobuf-unknown-fragment-and-limit",
+      "format": "protobuf",
+      "observables": ["unknown-raw-bytes", "prost-unknown-skip", "one-byte-fragments", "truncation", "message-limit"]
+    }
+  ]
+}

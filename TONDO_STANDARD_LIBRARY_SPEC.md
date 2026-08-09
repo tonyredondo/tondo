@@ -2468,9 +2468,10 @@ explícitos, y `encode_static`/`decode_static` atraviesan
 `Encode[Protobuf]`/`Decode[Protobuf]` sin materializar `serialization.Value`.
 Los helpers Rust `encode`/`decode` son únicamente el bridge de compatibilidad;
 `ProtoValue` y `Raw<Protobuf>` también quedan limitados a ese bridge y no
-introducen un alias dinámico de `serialization.Value`. La conformance oficial e
-interoperabilidad independiente siguen siendo gates de
-`STD-CODEC-CONF-001`.
+introducen un alias dinámico de `serialization.Value`. La conformance oficial
+e interoperabilidad independiente están cerradas por
+`STD-CODEC-CONF-001`, cuyo registro coordina `serde_json`, `rmpv` y `prost`,
+fragmentación, truncación, límites y preservación de unknown fields.
 
 El mapping generado, el descriptor explícito, la evolución contra baseline TOML,
 los eventos y los errores de wire/build están cerrados en el [contrato fuente de
@@ -2489,7 +2490,10 @@ Los tres codecs:
   copias de bytes;
 - pueden usar SIMD o kernels nativos bajo las reglas de 11.6; y
 - demuestran equivalencia mediante vectores oficiales, fuzzing diferencial,
-  round trips, corpus adversario y comparación scalar/optimized.
+  round trips, corpus adversario, implementaciones externas y comparación
+  scalar/optimized. La identidad ejecutable de la conformance de codecs queda
+  en `testing/stdlib-codec-conformance.json` y no se confunde con un round-trip
+  contra el propio bridge.
 
 Los benchmarks separan parse, validate, typed decode, dynamic decode, encode,
 streaming y allocation. También miden profundidad hostil, strings con escapes,

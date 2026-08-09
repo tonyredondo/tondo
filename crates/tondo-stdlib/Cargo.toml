@@ -8,6 +8,10 @@ publish.workspace = true
 [dependencies]
 serde_json.workspace = true
 
+[dev-dependencies]
+prost.workspace = true
+rmpv.workspace = true
+
 [lints]
 workspace = true
 

@@ -1,9 +1,10 @@
 # Contrato de `std.protobuf`
 
-**Estado:** contrato normativo e implementación portable cerrada para
+**Estado:** contrato normativo e implementación portable conforme para
 `STD-0.1A`. El owner runtime wire, reader/writer, schema checker y generator
-usan la frontera `Encode[Protobuf]`/`Decode[Protobuf]`; la conformance externa y
-la integración final del generator en el driver siguen siendo gates posteriores.
+usan la frontera `Encode[Protobuf]`/`Decode[Protobuf]`; la interoperabilidad
+wire bidireccional con `prost` queda cerrada en el gate coordinado. La
+integración final del generator en el driver sigue siendo un gate posterior.
 
 `std.protobuf` es el único owner de la generación schema-first y del wire
 protocol Protocol Buffers. Comparte los traits estáticos `Encode[Protobuf]` y
@@ -373,10 +374,11 @@ varints de frontera, UTF-8/bytes, nested, presence, repeated packed/unpacked,
 maps, oneof, open enums desconocidos, duplicate/merge, unknown fields y grupos,
 frames y fragmentación, límites, evolución segura/insegura y determinismo.
 
-`STD-CODEC-CONF-001` añadirá vectores de la especificación y comparación con al
-menos dos implementaciones independientes. Un round-trip contra el propio
-generator no prueba wire compatibility; también se exige parsear bytes
-externos y que un implementador externo pueda parsear los bytes de Tondo.
+`STD-CODEC-CONF-001` usa el modelo oficial y compara en ambas direcciones con
+`prost`: parsea bytes externos, permite que `prost` parse los bytes de Tondo,
+comprueba packed repeated, truncación, fragmentación y límites, y conserva el
+registro raw de un field desconocido. Un round-trip contra el propio generator
+no prueba wire compatibility.
 
 La promoción requiere equivalencia entre generated typed decode y el reader
 streaming, preservación de unknowns y open enums, aceptación packed/unpacked,

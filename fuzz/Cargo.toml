@@ -13,6 +13,7 @@ serde_json = "1.0.151"
 tondo-compiler = { path = "../crates/tondo-compiler" }
 tondo-conformance = { path = "../crates/tondo-conformance" }
 tondo-reliability = { path = "../crates/tondo-reliability" }
+tondo-stdlib = { path = "../crates/tondo-stdlib" }
 tondo-vm = { path = "../crates/tondo-vm" }
 
 [[bin]]
@@ -32,6 +33,13 @@ bench = false
 [[bin]]
 name = "admission"
 path = "fuzz_targets/admission.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "stdlib_codecs"
+path = "fuzz_targets/stdlib_codecs.rs"
 test = false
 doc = false
 bench = false

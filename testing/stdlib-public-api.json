@@ -3992,10 +3992,10 @@
       "status": "verified"
     },
     {
-      "id": "std.json:132",
+      "id": "std.json:133",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 132,
+      "line": 133,
       "signature": "pub fn parse(input: Bytes, options: JsonDecodeOptions): Value ! JsonError",
       "symbol": "std.json.parse",
       "operation": "parse",
@@ -4043,10 +4043,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:133",
+      "id": "std.json:134",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 133,
+      "line": 134,
       "signature": "pub fn parseView(input: Bytes, options: JsonDecodeOptions): ValueView ! JsonError",
       "symbol": "std.json.parseView",
       "operation": "parseView",
@@ -4097,10 +4097,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:134",
+      "id": "std.json:135",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 134,
+      "line": 135,
       "signature": "pub fn decode[T: Decode[Json]](input: Bytes, options: JsonDecodeOptions): T ! JsonError",
       "symbol": "std.json.decode",
       "operation": "decode",
@@ -4148,10 +4148,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:135",
+      "id": "std.json:136",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 135,
+      "line": 136,
       "signature": "pub fn encode[T: Encode[Json]](value: T, options: JsonEncodeOptions): Bytes ! JsonError",
       "symbol": "std.json.encode",
       "operation": "encode",
@@ -4199,10 +4199,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:136",
+      "id": "std.json:137",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 136,
+      "line": 137,
       "signature": "pub fn validate(input: Bytes, options: JsonDecodeOptions): Unit ! JsonError",
       "symbol": "std.json.validate",
       "operation": "validate",
@@ -4248,10 +4248,10 @@
       "status": "verified"
     },
     {
-      "id": "std.json:137",
+      "id": "std.json:138",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 137,
+      "line": 138,
       "signature": "pub fn canonicalize(input: Bytes, options: JsonDecodeOptions): Bytes ! JsonError",
       "symbol": "std.json.canonicalize",
       "operation": "canonicalize",
@@ -4297,10 +4297,10 @@
       "status": "verified"
     },
     {
-      "id": "std.json:138",
+      "id": "std.json:139",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 138,
+      "line": 139,
       "signature": "pub fn encodeCanonical(value: Value, limits: JsonLimits): Bytes ! JsonError",
       "symbol": "std.json.encodeCanonical",
       "operation": "encodeCanonical",
@@ -4351,10 +4351,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:139",
+      "id": "std.json:140",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 139,
+      "line": 140,
       "signature": "pub fn raw(input: Bytes): Raw ! JsonError",
       "symbol": "std.json.raw",
       "operation": "raw",
@@ -4402,10 +4402,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:142",
+      "id": "std.json:143",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 142,
+      "line": 143,
       "signature": "pub fn JsonNumber.parse(text: String): JsonNumber ! JsonError",
       "symbol": "std.json.JsonNumber.parse",
       "operation": "parse",
@@ -4453,10 +4453,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:143",
+      "id": "std.json:144",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 143,
+      "line": 144,
       "signature": "pub fn JsonNumber.text(self): String",
       "symbol": "std.json.JsonNumber.text",
       "operation": "text",
@@ -4504,10 +4504,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:144",
+      "id": "std.json:145",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 144,
+      "line": 145,
       "signature": "pub fn JsonNumber.toInt(self): Int64 ! JsonError",
       "symbol": "std.json.JsonNumber.toInt",
       "operation": "toInt",
@@ -4558,10 +4558,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:145",
+      "id": "std.json:146",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 145,
+      "line": 146,
       "signature": "pub fn JsonNumber.toUInt(self): UInt64 ! JsonError",
       "symbol": "std.json.JsonNumber.toUInt",
       "operation": "toUInt",
@@ -4612,10 +4612,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:146",
+      "id": "std.json:147",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 146,
+      "line": 147,
       "signature": "pub fn JsonNumber.toFloat32(self): Float32 ! JsonError",
       "symbol": "std.json.JsonNumber.toFloat32",
       "operation": "toFloat32",
@@ -4666,10 +4666,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:147",
+      "id": "std.json:148",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 147,
+      "line": 148,
       "signature": "pub fn JsonNumber.toFloat64(self): Float64 ! JsonError",
       "symbol": "std.json.JsonNumber.toFloat64",
       "operation": "toFloat64",
@@ -4720,10 +4720,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:149",
+      "id": "std.json:150",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 149,
+      "line": 150,
       "signature": "pub fn JsonReader.fromBytes(input: Bytes, options: JsonDecodeOptions): JsonReader ! JsonError",
       "symbol": "std.json.JsonReader.fromBytes",
       "operation": "fromBytes",
@@ -4772,10 +4772,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:150",
+      "id": "std.json:151",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 150,
+      "line": 151,
       "signature": "pub fn JsonReader.fromReader(var input: Reader, options: JsonDecodeOptions): JsonReader ! JsonError",
       "symbol": "std.json.JsonReader.fromReader",
       "operation": "fromReader",
@@ -4826,10 +4826,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:151",
+      "id": "std.json:152",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 151,
+      "line": 152,
       "signature": "pub fn JsonReader.next(var self): JsonEvent? ! JsonError",
       "symbol": "std.json.JsonReader.next",
       "operation": "next",
@@ -4877,10 +4877,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:152",
+      "id": "std.json:153",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 152,
+      "line": 153,
       "signature": "pub fn JsonReader.own(var self, event: JsonEvent): JsonEvent ! JsonError",
       "symbol": "std.json.JsonReader.own",
       "operation": "own",
@@ -4928,10 +4928,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:153",
+      "id": "std.json:154",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 153,
+      "line": 154,
       "signature": "pub fn JsonReader.finish(var self): Unit ! JsonError",
       "symbol": "std.json.JsonReader.finish",
       "operation": "finish",
@@ -4979,10 +4979,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:155",
+      "id": "std.json:156",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 155,
+      "line": 156,
       "signature": "pub fn JsonWriter.toWriter(var output: Writer, options: JsonEncodeOptions): JsonWriter ! JsonError",
       "symbol": "std.json.JsonWriter.toWriter",
       "operation": "toWriter",
@@ -5033,10 +5033,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:156",
+      "id": "std.json:157",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 156,
+      "line": 157,
       "signature": "pub fn JsonWriter.write(var self, event: JsonEvent): Unit ! JsonError",
       "symbol": "std.json.JsonWriter.write",
       "operation": "write",
@@ -5084,10 +5084,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:157",
+      "id": "std.json:158",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 157,
+      "line": 158,
       "signature": "pub fn JsonWriter.finish(var self): Unit ! JsonError",
       "symbol": "std.json.JsonWriter.finish",
       "operation": "finish",
@@ -7795,10 +7795,10 @@
       "status": "verified"
     },
     {
-      "id": "std.protobuf:112",
+      "id": "std.protobuf:113",
       "owner": "std.protobuf",
       "contract": "docs/contracts/stdlib-protobuf.md",
-      "line": 112,
+      "line": 113,
       "signature": "pub fn decode[T: Decode[Protobuf]](input: Bytes, options: ProtoDecodeOptions): T ! ProtoError",
       "symbol": "std.protobuf.decode",
       "operation": "decode",
@@ -7846,10 +7846,10 @@
       "status": "gap"
     },
     {
-      "id": "std.protobuf:113",
+      "id": "std.protobuf:114",
       "owner": "std.protobuf",
       "contract": "docs/contracts/stdlib-protobuf.md",
-      "line": 113,
+      "line": 114,
       "signature": "pub fn encode[T: Encode[Protobuf]](value: T, options: ProtoEncodeOptions): Bytes ! ProtoError",
       "symbol": "std.protobuf.encode",
       "operation": "encode",
@@ -7897,10 +7897,10 @@
       "status": "gap"
     },
     {
-      "id": "std.protobuf:114",
+      "id": "std.protobuf:115",
       "owner": "std.protobuf",
       "contract": "docs/contracts/stdlib-protobuf.md",
-      "line": 114,
+      "line": 115,
       "signature": "pub fn encodeDeterministic[T: Encode[Protobuf]](value: T, limits: ProtoLimits): Bytes ! ProtoError",
       "symbol": "std.protobuf.encodeDeterministic",
       "operation": "encodeDeterministic",
@@ -7950,10 +7950,10 @@
       "status": "gap"
     },
     {
-      "id": "std.protobuf:115",
+      "id": "std.protobuf:116",
       "owner": "std.protobuf",
       "contract": "docs/contracts/stdlib-protobuf.md",
-      "line": 115,
+      "line": 116,
       "signature": "pub fn validate[T](input: Bytes, options: ProtoDecodeOptions): Unit ! ProtoError",
       "symbol": "std.protobuf.validate",
       "operation": "validate",
@@ -7999,10 +7999,10 @@
       "status": "verified"
     },
     {
-      "id": "std.protobuf:116",
+      "id": "std.protobuf:117",
       "owner": "std.protobuf",
       "contract": "docs/contracts/stdlib-protobuf.md",
-      "line": 116,
+      "line": 117,
       "signature": "pub fn descriptor[T](): ProtoDescriptor[T]",
       "symbol": "std.protobuf.descriptor",
       "operation": "descriptor",
@@ -8052,64 +8052,11 @@
       "status": "gap"
     },
     {
-      "id": "std.protobuf:118",
-      "owner": "std.protobuf",
-      "contract": "docs/contracts/stdlib-protobuf.md",
-      "line": 118,
-      "signature": "pub fn ProtoReader[T].fromBytes(input: Bytes, options: ProtoDecodeOptions): ProtoReader[T] ! ProtoError",
-      "symbol": "std.protobuf.ProtoReader",
-      "operation": "ProtoReader",
-      "evidence": {
-        "hir": {
-          "paths": [
-            "crates/tondo-compiler/src/hir/check.rs"
-          ],
-          "symbol": "ProtoReader",
-          "symbols": [
-            "ProtoReader"
-          ]
-        },
-        "lowering": {
-          "paths": [
-            "crates/tondo-compiler/src/hir/lower.rs"
-          ],
-          "symbol": "ProtoReader",
-          "symbols": [
-            "ProtoReader"
-          ]
-        },
-        "host_vm": {
-          "kind": "host",
-          "paths": [
-            "crates/tondo-compiler/src/process_host.rs",
-            "crates/tondo-stdlib/src/protobuf_api.rs"
-          ],
-          "reason": null,
-          "symbol": "std.protobuf.ProtoReader",
-          "symbols": [
-            "ProtoReader"
-          ]
-        },
-        "public_case": {
-          "path": "tests/runtime/m11-std-codecs-001.to",
-          "kind": "runtime",
-          "call": "ProtoReader",
-          "bootstrap_alias": false
-        }
-      },
-      "missing": [
-        "hir-symbol",
-        "lowering-symbol",
-        "public-case-call"
-      ],
-      "status": "gap"
-    },
-    {
       "id": "std.protobuf:119",
       "owner": "std.protobuf",
       "contract": "docs/contracts/stdlib-protobuf.md",
       "line": 119,
-      "signature": "pub fn ProtoReader[T].fromReader(var input: Reader, options: ProtoDecodeOptions): ProtoReader[T] ! ProtoError",
+      "signature": "pub fn ProtoReader[T].fromBytes(input: Bytes, options: ProtoDecodeOptions): ProtoReader[T] ! ProtoError",
       "symbol": "std.protobuf.ProtoReader",
       "operation": "ProtoReader",
       "evidence": {
@@ -8162,7 +8109,7 @@
       "owner": "std.protobuf",
       "contract": "docs/contracts/stdlib-protobuf.md",
       "line": 120,
-      "signature": "pub fn ProtoReader[T].next(var self): ProtoEvent? ! ProtoError",
+      "signature": "pub fn ProtoReader[T].fromReader(var input: Reader, options: ProtoDecodeOptions): ProtoReader[T] ! ProtoError",
       "symbol": "std.protobuf.ProtoReader",
       "operation": "ProtoReader",
       "evidence": {
@@ -8215,7 +8162,7 @@
       "owner": "std.protobuf",
       "contract": "docs/contracts/stdlib-protobuf.md",
       "line": 121,
-      "signature": "pub fn ProtoReader[T].own(var self, event: ProtoEvent): ProtoEvent ! ProtoError",
+      "signature": "pub fn ProtoReader[T].next(var self): ProtoEvent? ! ProtoError",
       "symbol": "std.protobuf.ProtoReader",
       "operation": "ProtoReader",
       "evidence": {
@@ -8268,6 +8215,59 @@
       "owner": "std.protobuf",
       "contract": "docs/contracts/stdlib-protobuf.md",
       "line": 122,
+      "signature": "pub fn ProtoReader[T].own(var self, event: ProtoEvent): ProtoEvent ! ProtoError",
+      "symbol": "std.protobuf.ProtoReader",
+      "operation": "ProtoReader",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/check.rs"
+          ],
+          "symbol": "ProtoReader",
+          "symbols": [
+            "ProtoReader"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/lower.rs"
+          ],
+          "symbol": "ProtoReader",
+          "symbols": [
+            "ProtoReader"
+          ]
+        },
+        "host_vm": {
+          "kind": "host",
+          "paths": [
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-stdlib/src/protobuf_api.rs"
+          ],
+          "reason": null,
+          "symbol": "std.protobuf.ProtoReader",
+          "symbols": [
+            "ProtoReader"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-codecs-001.to",
+          "kind": "runtime",
+          "call": "ProtoReader",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [
+        "hir-symbol",
+        "lowering-symbol",
+        "public-case-call"
+      ],
+      "status": "gap"
+    },
+    {
+      "id": "std.protobuf:123",
+      "owner": "std.protobuf",
+      "contract": "docs/contracts/stdlib-protobuf.md",
+      "line": 123,
       "signature": "pub fn ProtoReader[T].finish(var self): Unit ! ProtoError",
       "symbol": "std.protobuf.ProtoReader",
       "operation": "ProtoReader",
@@ -8317,64 +8317,11 @@
       "status": "gap"
     },
     {
-      "id": "std.protobuf:124",
-      "owner": "std.protobuf",
-      "contract": "docs/contracts/stdlib-protobuf.md",
-      "line": 124,
-      "signature": "pub fn ProtoWriter[T].toWriter(var output: Writer, options: ProtoEncodeOptions): ProtoWriter[T] ! ProtoError",
-      "symbol": "std.protobuf.ProtoWriter",
-      "operation": "ProtoWriter",
-      "evidence": {
-        "hir": {
-          "paths": [
-            "crates/tondo-compiler/src/hir/check.rs"
-          ],
-          "symbol": "ProtoWriter",
-          "symbols": [
-            "ProtoWriter"
-          ]
-        },
-        "lowering": {
-          "paths": [
-            "crates/tondo-compiler/src/hir/lower.rs"
-          ],
-          "symbol": "ProtoWriter",
-          "symbols": [
-            "ProtoWriter"
-          ]
-        },
-        "host_vm": {
-          "kind": "host",
-          "paths": [
-            "crates/tondo-compiler/src/process_host.rs",
-            "crates/tondo-stdlib/src/protobuf_api.rs"
-          ],
-          "reason": null,
-          "symbol": "std.protobuf.ProtoWriter",
-          "symbols": [
-            "ProtoWriter"
-          ]
-        },
-        "public_case": {
-          "path": "tests/runtime/m11-std-codecs-001.to",
-          "kind": "runtime",
-          "call": "ProtoWriter",
-          "bootstrap_alias": false
-        }
-      },
-      "missing": [
-        "hir-symbol",
-        "lowering-symbol",
-        "public-case-call"
-      ],
-      "status": "gap"
-    },
-    {
       "id": "std.protobuf:125",
       "owner": "std.protobuf",
       "contract": "docs/contracts/stdlib-protobuf.md",
       "line": 125,
-      "signature": "pub fn ProtoWriter[T].write(var self, event: ProtoEvent): Unit ! ProtoError",
+      "signature": "pub fn ProtoWriter[T].toWriter(var output: Writer, options: ProtoEncodeOptions): ProtoWriter[T] ! ProtoError",
       "symbol": "std.protobuf.ProtoWriter",
       "operation": "ProtoWriter",
       "evidence": {
@@ -8427,6 +8374,59 @@
       "owner": "std.protobuf",
       "contract": "docs/contracts/stdlib-protobuf.md",
       "line": 126,
+      "signature": "pub fn ProtoWriter[T].write(var self, event: ProtoEvent): Unit ! ProtoError",
+      "symbol": "std.protobuf.ProtoWriter",
+      "operation": "ProtoWriter",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/check.rs"
+          ],
+          "symbol": "ProtoWriter",
+          "symbols": [
+            "ProtoWriter"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/lower.rs"
+          ],
+          "symbol": "ProtoWriter",
+          "symbols": [
+            "ProtoWriter"
+          ]
+        },
+        "host_vm": {
+          "kind": "host",
+          "paths": [
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-stdlib/src/protobuf_api.rs"
+          ],
+          "reason": null,
+          "symbol": "std.protobuf.ProtoWriter",
+          "symbols": [
+            "ProtoWriter"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-codecs-001.to",
+          "kind": "runtime",
+          "call": "ProtoWriter",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [
+        "hir-symbol",
+        "lowering-symbol",
+        "public-case-call"
+      ],
+      "status": "gap"
+    },
+    {
+      "id": "std.protobuf:127",
+      "owner": "std.protobuf",
+      "contract": "docs/contracts/stdlib-protobuf.md",
+      "line": 127,
       "signature": "pub fn ProtoWriter[T].finish(var self): Unit ! ProtoError",
       "symbol": "std.protobuf.ProtoWriter",
       "operation": "ProtoWriter",
@@ -8476,10 +8476,10 @@
       "status": "gap"
     },
     {
-      "id": "std.protobuf:128",
+      "id": "std.protobuf:129",
       "owner": "std.protobuf",
       "contract": "docs/contracts/stdlib-protobuf.md",
-      "line": 128,
+      "line": 129,
       "signature": "pub fn UnknownFields.count(self): Int",
       "symbol": "std.protobuf.UnknownFields.count",
       "operation": "count",
@@ -8527,10 +8527,10 @@
       "status": "gap"
     },
     {
-      "id": "std.protobuf:129",
+      "id": "std.protobuf:130",
       "owner": "std.protobuf",
       "contract": "docs/contracts/stdlib-protobuf.md",
-      "line": 129,
+      "line": 130,
       "signature": "pub fn UnknownFields.discard(var self): Unit",
       "symbol": "std.protobuf.UnknownFields.discard",
       "operation": "discard",
