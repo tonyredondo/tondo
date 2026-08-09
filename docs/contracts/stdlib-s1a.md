@@ -68,6 +68,17 @@ results remain historical and immutable; S1A never mixes them with the live
 draft. Generated reports stay under `target/reliability/evidence` and are
 reproducible from the commands recorded in the owner manifest.
 
+The complete owner/signature/requirement coordination is kept separately in
+[`docs/contracts/stdlib-matrix.md`](./stdlib-matrix.md) and
+[`testing/stdlib-matrix.json`](../../testing/stdlib-matrix.json). It records
+the six required cells `SPEC → IMPL/HOST → MODEL/TEST/FUZZ → PERF → CONF →
+DOC`, including explicit reasons for every pending or partial cell. The
+matrix currently has 22 owners (the intrinsic `std.bytes` is intentionally
+visible even though the bootstrap implementation manifest still lacks its
+dedicated owner record), 207 public signatures and 140 owner requirements.
+This is coordination evidence, not a publication or a claim that all rows are
+green.
+
 ## Coverage and release boundary
 
 The non-regression floor is the reviewed global line baseline of 9025 basis

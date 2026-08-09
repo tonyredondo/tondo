@@ -68,6 +68,10 @@ run_step stdlib-public-api-audit \
     scripts/stdlib-public-api-audit.sh --check
 run_step stdlib-public-api-audit-tests \
     scripts/stdlib-public-api-audit-test.sh
+run_step stdlib-normative-matrix \
+    scripts/stdlib-matrix-check.sh
+run_step stdlib-normative-matrix-tests \
+    scripts/stdlib-matrix-test.sh
 run_step stdlib-codec-conformance \
     scripts/stdlib-codec-conformance.sh
 run_step stdlib-performance-report \

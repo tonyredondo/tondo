@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 1.89
+**Versión del tracker:** 1.90
 
 **Última actualización:** 2026-08-09
 
@@ -28,6 +28,7 @@ desarrollo y no ha sido publicado.
 - [Contrato de owner de `std.protobuf`](./docs/contracts/stdlib-protobuf.md)
 - [Contrato de owner de `std.serialization`](./docs/contracts/stdlib-serialization.md)
 - [Contrato de owner de `std.testing`](./docs/contracts/stdlib-testing.md)
+- [Matriz normativa de owners y firmas de stdlib](./docs/contracts/stdlib-matrix.md)
 - [Contrato de campañas de generación del runner](./docs/contracts/test-generation.md)
 - [Contrato de owners Core STD-0.1A](./docs/contracts/stdlib-core.md)
 - [Contrato de owners Hosted STD-0.1A](./docs/contracts/stdlib-hosted.md)
@@ -4557,10 +4558,18 @@ administrativas que no implementan comportamiento.
   Cubrir helpers, generators/shrinking, temp resources, control sellado,
   bridge test-only, dogfooding, límites/rendimiento, conformidad y docs.
 
-- [ ] **STD-MATRIX-ALL-001 — Construir la matriz normativa de stdlib.** Unir
-  cada firma y requisito A/B con su record de owner y dimensiones públicas sin
-  introducir requisitos de stdlib en G5. S1A/S1 fallan ante cualquier celda
-  aplicable ausente o `not-applicable` sin razón.
+- [x] **STD-MATRIX-ALL-001 — Construir la matriz normativa de stdlib.**
+  `testing/stdlib-matrix.json` contiene 22 owners (incluido el owner
+  intrínseco `std.bytes`), 207 firmas y 140 requisitos de owner. Cada fila
+  enlaza explícitamente `SPEC → IMPL/HOST → MODEL/TEST/FUZZ → PERF → CONF →
+  DOC`, conserva las dimensiones públicas de PERF y queda `open-gaps` cuando
+  una celda es `partial`, `pending`, `gap` o `not-applicable` sin
+  sobreafirmar evidencia. `scripts/stdlib-matrix-check.sh` regenera y
+  compara byte a byte la matriz, valida owners, firmas, requisitos, stages,
+  razones y paths; `scripts/stdlib-matrix-test.sh` conserva dos fixtures
+  negativos. La matriz coordina STD-0.1A sin introducir el catálogo cerrado
+  STD-0.1B en G5; `STD-CONF-001`, `STD-TEST-001` y `STD-DOC-001` siguen
+  abiertos por sus celdas explícitas.
 
 - [ ] **STD-TEST-001 — Coordinar modelos y properties por owner.** Reejecutar y
   completar los campos `MODEL`, `TEST` y `FUZZ` de cada leaf `STD-A-*-EVIDENCE`
@@ -5703,6 +5712,24 @@ se declara iniciada antes de esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 1.90 — 2026-08-09
+
+- Se cierra `STD-MATRIX-ALL-001` como coordinación, no como promoción:
+  `testing/stdlib-matrix.json` materializa 22 owners, 207 firmas y 140
+  requisitos de owner con seis celdas explícitas
+  `SPEC → IMPL/HOST → MODEL/TEST/FUZZ → PERF → CONF → DOC`.
+- Las filas de firma conservan la identidad de
+  `testing/stdlib-public-api.json`; los requisitos de los contratos owner y
+  el owner intrínseco `std.bytes` quedan visibles. Las dimensiones PERF se
+  enlazan por owner y se corrige el grupo de performance de valores para
+  incluir `std.async`, `std.core` y `std.iter`, que antes no tenían
+  dimensiones declaradas.
+- `scripts/stdlib-matrix-generate.sh`, `stdlib-matrix-check.sh` y su test
+  negativo entran en el gate estricto. La regeneración byte a byte y las
+  razones obligatorias impiden omitir celdas o convertir gaps actuales en
+  evidencia verde; `STD-CONF-001`, `STD-TEST-001` y `STD-DOC-001` siguen
+  pendientes.
 
 ### 1.89 — 2026-08-09
 

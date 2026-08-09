@@ -72,3 +72,13 @@ Es una señal fail-closed para el tracker, no un waiver.
 La matriz no sustituye la ejecución del caso. La ejecución, coverage,
 mutation, conformidad y performance siguen siendo gates separados y deben
 apuntar a la misma identidad de fila cuando el owner se promueva.
+
+## Coordinación normativa
+
+La auditoría por firma alimenta la matriz normativa de
+[`STD-MATRIX-ALL-001`](./stdlib-matrix.md). Esa matriz añade los requisitos
+de los contratos de owner, `std.bytes` y las dimensiones públicas de PERF, y
+expone las seis celdas `SPEC → IMPL/HOST → MODEL/TEST/FUZZ → PERF → CONF →
+DOC`. Por eso una fila de esta auditoría puede estar `verified` y seguir
+`open-gaps` en la matriz: la implementación de la firma no demuestra todavía
+su modelo, fuzz, presupuesto de coste, conformance o documentación de owner.

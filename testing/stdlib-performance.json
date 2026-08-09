@@ -180,9 +180,12 @@
     {
       "id": "a1-values-protocols",
       "owners": [
+        "std.async",
         "std.collections",
+        "std.core",
         "std.format",
         "std.io",
+        "std.iter",
         "std.math",
         "std.serialization",
         "std.text"

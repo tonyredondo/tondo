@@ -1943,6 +1943,15 @@ un path Rust, una prueba documental o un alias bootstrap no son evidencia
 suficiente. Mientras existan filas `open-gaps`, el catálogo sigue siendo un
 contrato de desarrollo y no una publicación.
 
+La coordinación normativa completa de STD-0.1A vive en
+[`docs/contracts/stdlib-matrix.md`](./docs/contracts/stdlib-matrix.md) y
+[`testing/stdlib-matrix.json`](./testing/stdlib-matrix.json). Incluye una fila
+por firma y por requisito de owner, el owner intrínseco `std.bytes`, las
+dimensiones públicas de performance y las seis celdas
+`SPEC → IMPL/HOST → MODEL/TEST/FUZZ → PERF → CONF → DOC`. Las celdas
+pendientes exigen razón y referencia; la matriz no adelanta requisitos de
+STD-0.1B ni convierte evidencia de kernel en una API publicada.
+
 | Owner | Source set | Estado | Dependencias directas |
 |---|---|---|---|
 | `std.core` (intrínsecos) | `stdlib-core` | cerrado | lenguaje |
