@@ -1188,10 +1188,37 @@ impl HirImplementationMethodId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum HirSerializationTraitMethod {
+    Encode,
+    Decode,
+    EncoderNull,
+    EncoderBool,
+    EncoderInt,
+    EncoderUInt,
+    EncoderFloat32,
+    EncoderFloat64,
+    EncoderString,
+    EncoderBytes,
+    EncoderStartArray,
+    EncoderEndArray,
+    EncoderStartMap,
+    EncoderMapKey,
+    EncoderEndMap,
+    EncoderStartRecord,
+    EncoderField,
+    EncoderEndRecord,
+    EncoderStartEnum,
+    EncoderEndEnum,
+    DecoderNext,
+    DecoderOwn,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum HirPreludeTraitMethod {
     Display,
     IteratorNext,
     AsyncIteratorNext,
+    Serialization(HirSerializationTraitMethod),
 }
 
 impl HirPreludeTraitMethod {
@@ -1200,6 +1227,30 @@ impl HirPreludeTraitMethod {
             Self::Display => "Display",
             Self::IteratorNext => "Iterator",
             Self::AsyncIteratorNext => "AsyncIterator",
+            Self::Serialization(method) => match method {
+                HirSerializationTraitMethod::Encode => "Encode",
+                HirSerializationTraitMethod::Decode => "Decode",
+                HirSerializationTraitMethod::EncoderNull
+                | HirSerializationTraitMethod::EncoderBool
+                | HirSerializationTraitMethod::EncoderInt
+                | HirSerializationTraitMethod::EncoderUInt
+                | HirSerializationTraitMethod::EncoderFloat32
+                | HirSerializationTraitMethod::EncoderFloat64
+                | HirSerializationTraitMethod::EncoderString
+                | HirSerializationTraitMethod::EncoderBytes
+                | HirSerializationTraitMethod::EncoderStartArray
+                | HirSerializationTraitMethod::EncoderEndArray
+                | HirSerializationTraitMethod::EncoderStartMap
+                | HirSerializationTraitMethod::EncoderMapKey
+                | HirSerializationTraitMethod::EncoderEndMap
+                | HirSerializationTraitMethod::EncoderStartRecord
+                | HirSerializationTraitMethod::EncoderField
+                | HirSerializationTraitMethod::EncoderEndRecord
+                | HirSerializationTraitMethod::EncoderStartEnum
+                | HirSerializationTraitMethod::EncoderEndEnum => "Encoder",
+                HirSerializationTraitMethod::DecoderNext
+                | HirSerializationTraitMethod::DecoderOwn => "Decoder",
+            },
         }
     }
 
@@ -1207,6 +1258,30 @@ impl HirPreludeTraitMethod {
         match self {
             Self::Display => "display",
             Self::IteratorNext | Self::AsyncIteratorNext => "next",
+            Self::Serialization(method) => match method {
+                HirSerializationTraitMethod::Encode => "encode",
+                HirSerializationTraitMethod::Decode => "decode",
+                HirSerializationTraitMethod::EncoderNull => "null",
+                HirSerializationTraitMethod::EncoderBool => "bool",
+                HirSerializationTraitMethod::EncoderInt => "int",
+                HirSerializationTraitMethod::EncoderUInt => "uint",
+                HirSerializationTraitMethod::EncoderFloat32 => "float32",
+                HirSerializationTraitMethod::EncoderFloat64 => "float64",
+                HirSerializationTraitMethod::EncoderString => "string",
+                HirSerializationTraitMethod::EncoderBytes => "bytes",
+                HirSerializationTraitMethod::EncoderStartArray => "startArray",
+                HirSerializationTraitMethod::EncoderEndArray => "endArray",
+                HirSerializationTraitMethod::EncoderStartMap => "startMap",
+                HirSerializationTraitMethod::EncoderMapKey => "mapKey",
+                HirSerializationTraitMethod::EncoderEndMap => "endMap",
+                HirSerializationTraitMethod::EncoderStartRecord => "startRecord",
+                HirSerializationTraitMethod::EncoderField => "field",
+                HirSerializationTraitMethod::EncoderEndRecord => "endRecord",
+                HirSerializationTraitMethod::EncoderStartEnum => "startEnum",
+                HirSerializationTraitMethod::EncoderEndEnum => "endEnum",
+                HirSerializationTraitMethod::DecoderNext => "next",
+                HirSerializationTraitMethod::DecoderOwn => "own",
+            },
         }
     }
 
@@ -1214,6 +1289,10 @@ impl HirPreludeTraitMethod {
         match self {
             Self::Display => 1,
             Self::IteratorNext | Self::AsyncIteratorNext => 2,
+            Self::Serialization(
+                HirSerializationTraitMethod::Encode | HirSerializationTraitMethod::Decode,
+            ) => 4,
+            Self::Serialization(_) => 3,
         }
     }
 
@@ -1223,9 +1302,17 @@ impl HirPreludeTraitMethod {
             (Self::IteratorNext | Self::AsyncIteratorNext, [element, target]) => {
                 (vec![*element], *target)
             }
+            (
+                Self::Serialization(
+                    HirSerializationTraitMethod::Encode | HirSerializationTraitMethod::Decode,
+                ),
+                [codec, target, _, _],
+            ) => (vec![*codec], *target),
+            (Self::Serialization(_), [codec, error, target]) => (vec![*codec, *error], *target),
             (Self::Display, _) | (Self::IteratorNext, _) | (Self::AsyncIteratorNext, _) => {
                 return None;
             }
+            (Self::Serialization(_), _) => return None,
         };
         Some(TraitQuery::from_parts(
             HirTraitConstructor::Prelude(
@@ -1250,9 +1337,121 @@ impl HirPreludeTraitMethod {
             (Self::IteratorNext | Self::AsyncIteratorNext, [element, target]) => {
                 (ParameterMode::Mut, *target, interner.option(*element)?)
             }
+            (
+                Self::Serialization(
+                    HirSerializationTraitMethod::Encode | HirSerializationTraitMethod::Decode,
+                ),
+                [_, target, error, codec],
+            ) => {
+                let unit = interner.scalar(ScalarType::Unit);
+                let result = match self {
+                    Self::Serialization(HirSerializationTraitMethod::Encode) => {
+                        interner.result(unit, *error)?
+                    }
+                    Self::Serialization(HirSerializationTraitMethod::Decode) => {
+                        interner.result(*target, *error)?
+                    }
+                    _ => unreachable!(),
+                };
+                let parameters = match self {
+                    Self::Serialization(HirSerializationTraitMethod::Encode) => vec![
+                        FunctionParameter::new(ParameterMode::Ref, *target),
+                        FunctionParameter::new(ParameterMode::Var, *codec),
+                    ],
+                    Self::Serialization(HirSerializationTraitMethod::Decode) => {
+                        vec![FunctionParameter::new(ParameterMode::Var, *codec)]
+                    }
+                    _ => unreachable!(),
+                };
+                return interner
+                    .function(FunctionType::new(false, false, parameters, None, result))
+                    .map(Some);
+            }
+            (Self::Serialization(method), [_, error, target]) => {
+                let unit = interner.scalar(ScalarType::Unit);
+                let result = interner.result(unit, *error)?;
+                let bytes = interner.intrinsic(IntrinsicType::Bytes, Vec::new())?;
+                let int = interner.scalar(ScalarType::Int);
+                let int64 = interner.scalar(ScalarType::Int);
+                let uint64 = interner.scalar(ScalarType::UInt64);
+                let float32 = interner.scalar(ScalarType::Float32);
+                let float64 = interner.scalar(ScalarType::Float);
+                let string = interner.scalar(ScalarType::String);
+                let bool_ = interner.scalar(ScalarType::Bool);
+                let optional_int = interner.option(int)?;
+                let event = interner.nominal(
+                    SymbolIdentity::bootstrap_standard("serialization", "SerializationEvent"),
+                    Vec::new(),
+                )?;
+                let mut parameters = vec![FunctionParameter::new(ParameterMode::Var, *target)];
+                parameters.extend(match method {
+                    HirSerializationTraitMethod::EncoderNull
+                    | HirSerializationTraitMethod::EncoderEndArray
+                    | HirSerializationTraitMethod::EncoderMapKey
+                    | HirSerializationTraitMethod::EncoderEndMap
+                    | HirSerializationTraitMethod::EncoderEndRecord
+                    | HirSerializationTraitMethod::EncoderEndEnum => Vec::new(),
+                    HirSerializationTraitMethod::EncoderBool => {
+                        vec![FunctionParameter::new(ParameterMode::Value, bool_)]
+                    }
+                    HirSerializationTraitMethod::EncoderInt => {
+                        vec![FunctionParameter::new(ParameterMode::Value, int64)]
+                    }
+                    HirSerializationTraitMethod::EncoderUInt => {
+                        vec![FunctionParameter::new(ParameterMode::Value, uint64)]
+                    }
+                    HirSerializationTraitMethod::EncoderFloat32 => {
+                        vec![FunctionParameter::new(ParameterMode::Value, float32)]
+                    }
+                    HirSerializationTraitMethod::EncoderFloat64 => {
+                        vec![FunctionParameter::new(ParameterMode::Value, float64)]
+                    }
+                    HirSerializationTraitMethod::EncoderString => {
+                        vec![FunctionParameter::new(ParameterMode::Value, string)]
+                    }
+                    HirSerializationTraitMethod::EncoderBytes => {
+                        vec![FunctionParameter::new(ParameterMode::Value, bytes)]
+                    }
+                    HirSerializationTraitMethod::EncoderStartArray
+                    | HirSerializationTraitMethod::EncoderStartMap => {
+                        vec![FunctionParameter::new(ParameterMode::Value, optional_int)]
+                    }
+                    HirSerializationTraitMethod::EncoderStartRecord => vec![
+                        FunctionParameter::new(ParameterMode::Value, string),
+                        FunctionParameter::new(ParameterMode::Value, optional_int),
+                    ],
+                    HirSerializationTraitMethod::EncoderField => {
+                        vec![FunctionParameter::new(ParameterMode::Value, string)]
+                    }
+                    HirSerializationTraitMethod::EncoderStartEnum => vec![
+                        FunctionParameter::new(ParameterMode::Value, string),
+                        FunctionParameter::new(ParameterMode::Value, string),
+                    ],
+                    HirSerializationTraitMethod::DecoderNext => Vec::new(),
+                    HirSerializationTraitMethod::DecoderOwn => {
+                        vec![FunctionParameter::new(ParameterMode::Value, event)]
+                    }
+                    HirSerializationTraitMethod::Encode | HirSerializationTraitMethod::Decode => {
+                        unreachable!()
+                    }
+                });
+                let outcome = if matches!(
+                    method,
+                    HirSerializationTraitMethod::DecoderNext
+                        | HirSerializationTraitMethod::DecoderOwn
+                ) {
+                    interner.result(event, *error)?
+                } else {
+                    result
+                };
+                return interner
+                    .function(FunctionType::new(false, false, parameters, None, outcome))
+                    .map(Some);
+            }
             (Self::Display, _) | (Self::IteratorNext, _) | (Self::AsyncIteratorNext, _) => {
                 return Ok(None);
             }
+            (Self::Serialization(_), _) => return Ok(None),
         };
         interner
             .function(FunctionType::new(
@@ -1272,7 +1471,10 @@ impl HirPreludeTraitMethod {
     ) -> Result<bool, TypeError> {
         Ok(match (self, arguments) {
             (Self::Display, [target]) => intrinsic_display_type(interner, *target)?,
-            (Self::Display, _) | (Self::IteratorNext, _) | (Self::AsyncIteratorNext, _) => false,
+            (Self::Display, _)
+            | (Self::IteratorNext, _)
+            | (Self::AsyncIteratorNext, _)
+            | (Self::Serialization(_), _) => false,
         })
     }
 }
@@ -3073,5 +3275,104 @@ mod error_tests {
             HirError::from(InferenceError::Type(TypeError::CyclicOpaqueRepresentation)),
             HirError::Inference(InferenceError::Type(TypeError::CyclicOpaqueRepresentation))
         ));
+    }
+}
+
+#[cfg(test)]
+mod serialization_catalog_tests {
+    use super::*;
+
+    #[test]
+    fn serialization_prelude_method_catalog_is_closed_and_typed() {
+        let mut interner = TypeInterner::default();
+        let codec = interner.scalar(ScalarType::String);
+        let target = interner.scalar(ScalarType::Int);
+        let error = interner.scalar(ScalarType::String);
+        let methods = [
+            HirSerializationTraitMethod::Encode,
+            HirSerializationTraitMethod::Decode,
+            HirSerializationTraitMethod::EncoderNull,
+            HirSerializationTraitMethod::EncoderBool,
+            HirSerializationTraitMethod::EncoderInt,
+            HirSerializationTraitMethod::EncoderUInt,
+            HirSerializationTraitMethod::EncoderFloat32,
+            HirSerializationTraitMethod::EncoderFloat64,
+            HirSerializationTraitMethod::EncoderString,
+            HirSerializationTraitMethod::EncoderBytes,
+            HirSerializationTraitMethod::EncoderStartArray,
+            HirSerializationTraitMethod::EncoderEndArray,
+            HirSerializationTraitMethod::EncoderStartMap,
+            HirSerializationTraitMethod::EncoderMapKey,
+            HirSerializationTraitMethod::EncoderEndMap,
+            HirSerializationTraitMethod::EncoderStartRecord,
+            HirSerializationTraitMethod::EncoderField,
+            HirSerializationTraitMethod::EncoderEndRecord,
+            HirSerializationTraitMethod::EncoderStartEnum,
+            HirSerializationTraitMethod::EncoderEndEnum,
+            HirSerializationTraitMethod::DecoderNext,
+            HirSerializationTraitMethod::DecoderOwn,
+        ];
+        for method in methods {
+            let prelude = HirPreludeTraitMethod::Serialization(method);
+            assert!(!prelude.trait_name().is_empty());
+            assert!(!prelude.method_name().is_empty());
+            let arguments = if matches!(
+                method,
+                HirSerializationTraitMethod::Encode | HirSerializationTraitMethod::Decode
+            ) {
+                vec![codec, target, error, codec]
+            } else {
+                vec![codec, error, target]
+            };
+            assert_eq!(prelude.generic_arity() as usize, arguments.len());
+            assert!(prelude.query(&arguments).is_some());
+            assert!(
+                prelude
+                    .function_type(&mut interner, &arguments)
+                    .unwrap()
+                    .is_some()
+            );
+            assert!(
+                !prelude
+                    .has_intrinsic_implementation(&interner, &arguments)
+                    .unwrap()
+            );
+        }
+
+        for (prelude, arguments) in [
+            (HirPreludeTraitMethod::Display, vec![target]),
+            (HirPreludeTraitMethod::IteratorNext, vec![target, target]),
+            (
+                HirPreludeTraitMethod::AsyncIteratorNext,
+                vec![target, target],
+            ),
+        ] {
+            assert!(!prelude.trait_name().is_empty());
+            assert!(!prelude.method_name().is_empty());
+            assert!(prelude.query(&arguments).is_some());
+            assert!(
+                prelude
+                    .function_type(&mut interner, &arguments)
+                    .unwrap()
+                    .is_some()
+            );
+            assert!(
+                prelude
+                    .has_intrinsic_implementation(&interner, &arguments)
+                    .is_ok()
+            );
+            assert!(prelude.query(&[]).is_none());
+            assert!(prelude.function_type(&mut interner, &[]).unwrap().is_none());
+        }
+
+        let serialization =
+            HirPreludeTraitMethod::Serialization(HirSerializationTraitMethod::EncoderNull);
+        assert!(serialization.query(&[]).is_none());
+        assert!(
+            serialization
+                .function_type(&mut interner, &[])
+                .unwrap()
+                .is_none()
+        );
     }
 }

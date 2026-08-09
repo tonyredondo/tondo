@@ -33,10 +33,10 @@ use super::{
     HirGenericParameter, HirIndexAccess, HirIterationProtocol, HirLiteral, HirLoopId, HirMapEntry,
     HirMatchArm, HirMatchMode, HirMemberReference, HirNominalShape, HirParameter, HirPattern,
     HirPatternField, HirPatternId, HirPatternKind, HirPrefixOperator, HirPreludeTraitMethod,
-    HirProgram, HirRangeKind, HirRecordFieldValue, HirScopeId, HirSpawnKind, HirStatement,
-    HirTraitConstructor, HirTypeDeclarationKind, HirValueCategory, HirVariantPayload,
-    HirVariantValue, HirWriteKind, TerminalAnalysis, TraitQuery, TraitSelectionError,
-    analyze_availability, analyze_closure_captures, select_implementation,
+    HirProgram, HirRangeKind, HirRecordFieldValue, HirScopeId, HirSerializationTraitMethod,
+    HirSpawnKind, HirStatement, HirTraitConstructor, HirTypeDeclarationKind, HirValueCategory,
+    HirVariantPayload, HirVariantValue, HirWriteKind, TerminalAnalysis, TraitQuery,
+    TraitSelectionError, analyze_availability, analyze_closure_captures, select_implementation,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -471,6 +471,38 @@ enum ConstrainedTraitMethod {
         query: TraitQuery,
         method: HirPreludeTraitMethod,
     },
+}
+
+fn serialization_prelude_method(
+    trait_name: &str,
+    method_name: &str,
+) -> Option<HirPreludeTraitMethod> {
+    let method = match (trait_name, method_name) {
+        ("Encode", "encode") => HirSerializationTraitMethod::Encode,
+        ("Decode", "decode") => HirSerializationTraitMethod::Decode,
+        ("Encoder", "null") => HirSerializationTraitMethod::EncoderNull,
+        ("Encoder", "bool") => HirSerializationTraitMethod::EncoderBool,
+        ("Encoder", "int") => HirSerializationTraitMethod::EncoderInt,
+        ("Encoder", "uint") => HirSerializationTraitMethod::EncoderUInt,
+        ("Encoder", "float32") => HirSerializationTraitMethod::EncoderFloat32,
+        ("Encoder", "float64") => HirSerializationTraitMethod::EncoderFloat64,
+        ("Encoder", "string") => HirSerializationTraitMethod::EncoderString,
+        ("Encoder", "bytes") => HirSerializationTraitMethod::EncoderBytes,
+        ("Encoder", "startArray") => HirSerializationTraitMethod::EncoderStartArray,
+        ("Encoder", "endArray") => HirSerializationTraitMethod::EncoderEndArray,
+        ("Encoder", "startMap") => HirSerializationTraitMethod::EncoderStartMap,
+        ("Encoder", "mapKey") => HirSerializationTraitMethod::EncoderMapKey,
+        ("Encoder", "endMap") => HirSerializationTraitMethod::EncoderEndMap,
+        ("Encoder", "startRecord") => HirSerializationTraitMethod::EncoderStartRecord,
+        ("Encoder", "field") => HirSerializationTraitMethod::EncoderField,
+        ("Encoder", "endRecord") => HirSerializationTraitMethod::EncoderEndRecord,
+        ("Encoder", "startEnum") => HirSerializationTraitMethod::EncoderStartEnum,
+        ("Encoder", "endEnum") => HirSerializationTraitMethod::EncoderEndEnum,
+        ("Decoder", "next") => HirSerializationTraitMethod::DecoderNext,
+        ("Decoder", "own") => HirSerializationTraitMethod::DecoderOwn,
+        _ => return None,
+    };
+    Some(HirPreludeTraitMethod::Serialization(method))
 }
 
 struct GenericCallInference {
@@ -10668,7 +10700,8 @@ impl<'a> ExpressionChecker<'a> {
                     memo.insert(query.clone(), TraitProofStatus::Deferred);
                     return Ok(TraitProofStatus::Deferred);
                 }
-                "Display" | "Iterator" | "AsyncIterator" => {}
+                "Display" | "Iterator" | "AsyncIterator" | "Encode" | "Decode" | "Encoder"
+                | "Decoder" => {}
                 _ => {
                     memo.insert(query.clone(), TraitProofStatus::Deferred);
                     return Ok(TraitProofStatus::Deferred);
@@ -15946,23 +15979,72 @@ impl<'a> ExpressionChecker<'a> {
         expected: Option<ExpressionExpectation>,
         context: &mut BodyContext,
     ) -> Result<Option<HirExpressionId>, HirError> {
-        let ResolvedName::Prelude {
-            namespace: Namespace::Type,
-            name,
-        } = resolved
-        else {
-            return Ok(None);
+        let name = match resolved {
+            ResolvedName::Prelude {
+                namespace: Namespace::Type,
+                name,
+            } => name,
+            ResolvedName::External {
+                module,
+                namespace: Namespace::Type,
+                name,
+            } if module.package().as_str() == "toolchain:std:0.1-bootstrap"
+                && module.path().as_str() == "serialization" =>
+            {
+                name
+            }
+            _ => return Ok(None),
         };
-        let (method_name, method, trait_arity) = match name.as_str() {
+        let (mut method_name, mut method, trait_arity) = match name.as_str() {
             "Display" => ("display", HirPreludeTraitMethod::Display, 0usize),
             "Iterator" => ("next", HirPreludeTraitMethod::IteratorNext, 1usize),
             "AsyncIterator" => ("next", HirPreludeTraitMethod::AsyncIteratorNext, 1usize),
+            "Encode" => (
+                "encode",
+                serialization_prelude_method("Encode", "encode")
+                    .expect("canonical serialization method is registered"),
+                1usize,
+            ),
+            "Decode" => (
+                "decode",
+                serialization_prelude_method("Decode", "decode")
+                    .expect("canonical serialization method is registered"),
+                1usize,
+            ),
+            "Encoder" => (
+                "",
+                HirPreludeTraitMethod::Serialization(HirSerializationTraitMethod::EncoderNull),
+                2usize,
+            ),
+            "Decoder" => (
+                "",
+                HirPreludeTraitMethod::Serialization(HirSerializationTraitMethod::DecoderNext),
+                2usize,
+            ),
             _ => return Ok(None),
         };
         if resolved_index + 2 != tokens.len() {
             return Ok(None);
         }
         let member_token = *tokens.last().expect("a qualified call has a member token");
+        if matches!(name.as_str(), "Encoder" | "Decoder") {
+            let Some(actual_name) = member_token.token().normalized_identifier() else {
+                return Ok(None);
+            };
+            let Some(actual_method) = serialization_prelude_method(name.as_str(), actual_name)
+            else {
+                self.emit(
+                    self.sources.span(file, member_token.range())?,
+                    "E1102",
+                    format!("`{name}` has no callable member with this name"),
+                    Vec::new(),
+                    None,
+                )?;
+                return Ok(Some(self.recovery_expression(file, range)?));
+            };
+            method_name = actual_name;
+            method = actual_method;
+        }
         if member_token.token().normalized_identifier() != Some(method_name) {
             self.emit(
                 self.sources.span(file, member_token.range())?,
@@ -16003,11 +16085,46 @@ impl<'a> ExpressionChecker<'a> {
             )?;
             return Ok(Some(self.recovery_expression(file, range)?));
         }
-        if let Some(bracket) = method_brackets.first() {
+        let method_arguments = if let Some(bracket) = method_brackets.first().copied() {
+            let supports_method_generics = matches!(
+                method,
+                HirPreludeTraitMethod::Serialization(
+                    HirSerializationTraitMethod::Encode | HirSerializationTraitMethod::Decode
+                )
+            );
+            if !supports_method_generics {
+                self.emit(
+                    self.sources.span(file, bracket.range())?,
+                    "E1104",
+                    "this prelude trait method has no method-local generic parameters",
+                    Vec::new(),
+                    None,
+                )?;
+                return Ok(Some(self.recovery_expression(file, range)?));
+            }
+            let Some(arguments) =
+                self.expression_generic_arguments(file, bracket, Some(context))?
+            else {
+                return Ok(Some(self.recovery_expression(file, range)?));
+            };
+            arguments
+        } else {
+            Vec::new()
+        };
+        let expected_method_arity = match method {
+            HirPreludeTraitMethod::Serialization(
+                HirSerializationTraitMethod::Encode | HirSerializationTraitMethod::Decode,
+            ) => 2,
+            _ => 0,
+        };
+        if method_arguments.len() != expected_method_arity {
             self.emit(
-                self.sources.span(file, bracket.range())?,
+                self.sources.span(file, member_token.range())?,
                 "E1104",
-                "this prelude trait method has no method-local generic parameters",
+                format!(
+                    "qualified `{name}` method expects {expected_method_arity} type arguments, found {}",
+                    method_arguments.len()
+                ),
                 Vec::new(),
                 None,
             )?;
@@ -16047,7 +16164,7 @@ impl<'a> ExpressionChecker<'a> {
                 arguments: Vec::new(),
             },
         })?;
-        let fixed = trait_arguments
+        let mut fixed = trait_arguments
             .into_iter()
             .enumerate()
             .map(|(position, argument)| {
@@ -16056,7 +16173,19 @@ impl<'a> ExpressionChecker<'a> {
                     argument,
                 )
             })
-            .collect();
+            .collect::<BTreeMap<_, _>>();
+        if expected_method_arity != 0 {
+            let method_start = u32::try_from(trait_arity + 1)
+                .expect("serialization receiver generic position fits in u32");
+            for (index, argument) in method_arguments.into_iter().enumerate() {
+                fixed.insert(
+                    method_start
+                        .checked_add(u32::try_from(index).expect("method arity fits in u32"))
+                        .expect("method generic position fits in u32"),
+                    argument,
+                );
+            }
+        }
         self.check_call(
             CallSite {
                 file,
@@ -16458,6 +16587,12 @@ impl<'a> ExpressionChecker<'a> {
                         ("Display", "display") => Some(HirPreludeTraitMethod::Display),
                         ("Iterator", "next") => Some(HirPreludeTraitMethod::IteratorNext),
                         ("AsyncIterator", "next") => Some(HirPreludeTraitMethod::AsyncIteratorNext),
+                        ("Encode", method)
+                        | ("Decode", method)
+                        | ("Encoder", method)
+                        | ("Decoder", method) => {
+                            serialization_prelude_method(name.as_str(), method)
+                        }
                         _ => None,
                     };
                     if let Some(method) = method {
@@ -23706,6 +23841,56 @@ fn build(input: Int, flag: Bool) {
     }
 
     #[test]
+    fn serialization_traits_support_qualified_and_constraint_calls() {
+        let (_, _, output) = check(
+            "import std.serialization\n\
+             type User = { value: Int }\n\
+             impl serialization.Encode[String] for User {\n\
+                 fn encode[E, S: serialization.Encoder[String, E]](self, encoder: var S): Unit ! E {\n\
+                     encoder.int(self.value)?\n\
+                 }\n\
+             }\n\
+             impl serialization.Decode[String] for User {\n\
+                 fn decode[E, D: serialization.Decoder[String, E]](decoder: var D): User ! E {\n\
+                     panic(\"decode body supplied by the codec\")\n\
+                 }\n\
+             }\n\
+             fn encode_field[E, S: serialization.Encoder[String, E]](encoder: var S): Unit ! E {\n\
+                 encoder.startRecord(\"User\", none)?\n\
+                 encoder.field(\"value\")?\n\
+                 encoder.endRecord()?\n\
+             }\n\
+             fn encode_qualified[E, S: serialization.Encoder[String, E]](value: User, encoder: var S): Unit ! E {\n\
+                 serialization.Encode[String].encode[E, S](value, var encoder)?\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+        let methods = output
+            .program()
+            .expressions()
+            .filter_map(|expression| {
+                let HirExpressionKind::PreludeTraitFunction { method, arguments } =
+                    expression.kind()
+                else {
+                    return None;
+                };
+                (!arguments.is_empty()).then_some(*method)
+            })
+            .collect::<BTreeSet<_>>();
+        assert!(methods.contains(&HirPreludeTraitMethod::Serialization(
+            HirSerializationTraitMethod::EncoderStartRecord
+        )));
+        assert!(methods.contains(&HirPreludeTraitMethod::Serialization(
+            HirSerializationTraitMethod::EncoderField
+        )));
+    }
+
+    #[test]
     fn prelude_trait_calls_require_proof_and_disambiguate_by_qualification() {
         let (_, _, missing) = check(
             "type Label = { text: String }\n\
@@ -30045,5 +30230,96 @@ fn build(input: Int, flag: Bool) {
             assert_eq!(arguments.len(), 1);
             assert_eq!(contract.witness(), Some(arguments[0]));
         }
+    }
+
+    #[test]
+    fn serialization_method_lookup_catalog_is_closed() {
+        for (trait_name, method_name) in [
+            ("Encode", "encode"),
+            ("Decode", "decode"),
+            ("Encoder", "null"),
+            ("Encoder", "bool"),
+            ("Encoder", "int"),
+            ("Encoder", "uint"),
+            ("Encoder", "float32"),
+            ("Encoder", "float64"),
+            ("Encoder", "string"),
+            ("Encoder", "bytes"),
+            ("Encoder", "startArray"),
+            ("Encoder", "endArray"),
+            ("Encoder", "startMap"),
+            ("Encoder", "mapKey"),
+            ("Encoder", "endMap"),
+            ("Encoder", "startRecord"),
+            ("Encoder", "field"),
+            ("Encoder", "endRecord"),
+            ("Encoder", "startEnum"),
+            ("Encoder", "endEnum"),
+            ("Decoder", "next"),
+            ("Decoder", "own"),
+        ] {
+            assert!(serialization_prelude_method(trait_name, method_name).is_some());
+        }
+        assert!(serialization_prelude_method("Encoder", "missing").is_none());
+    }
+
+    #[test]
+    fn qualified_serialization_calls_reject_closed_invalid_shapes() {
+        let (_, _, unknown_member) = check(
+            "import std.serialization\n\
+             fn invalid[E, S: serialization.Encoder[String, E]](encoder: var S): Unit ! E {\n\
+                 serialization.Encoder[String, E].missing(var encoder)\n\
+             }\n",
+        );
+        assert_eq!(codes(&unknown_member), ["E1102"]);
+
+        let (_, _, method_generics) = check(
+            "import std.serialization\n\
+             fn invalid[E, S: serialization.Encoder[String, E]](encoder: var S): Unit ! E {\n\
+                 serialization.Encoder[String, E].int[Int](var encoder, 1)\n\
+             }\n",
+        );
+        assert_eq!(codes(&method_generics), ["E1104"]);
+
+        let (_, _, trait_arity) = check(
+            "import std.serialization\n\
+             fn invalid[E, S: serialization.Encoder[String, E]](encoder: var S): Unit ! E {\n\
+                 serialization.Encoder.int(var encoder, 1)\n\
+             }\n",
+        );
+        assert_eq!(codes(&trait_arity), ["E1104"]);
+
+        let (_, _, valid) = check(
+            "import std.serialization\n\
+             fn valid[E, S: serialization.Encoder[String, E]](encoder: var S): Unit ! E {\n\
+                 serialization.Encoder[String, E].int(var encoder, 1)?\n\
+             }\n",
+        );
+        assert!(valid.diagnostics().is_empty(), "{:#?}", valid.diagnostics());
+        assert!(valid.is_complete());
+
+        let (_, _, decode_arity) = check(
+            "import std.serialization\n\
+             fn invalid[E, D: serialization.Decoder[String, E]](decoder: var D): Unit ! E {\n\
+                 serialization.Decode[String].decode(var decoder)\n\
+             }\n",
+        );
+        assert_eq!(codes(&decode_arity), ["E1104"]);
+
+        let (_, _, decode_method_arity) = check(
+            "import std.serialization\n\
+             fn invalid[E, D: serialization.Decoder[String, E]](decoder: var D): Unit ! E {\n\
+                 serialization.Decode[String].decode[E](var decoder)\n\
+             }\n",
+        );
+        assert_eq!(codes(&decode_method_arity), ["E1104"]);
+
+        let (_, _, duplicate_brackets) = check(
+            "import std.serialization\n\
+             fn invalid[E, S: serialization.Encoder[String, E]](encoder: var S): Unit ! E {\n\
+                 serialization.Encoder[String][Int].int(var encoder, 1)\n\
+             }\n",
+        );
+        assert_eq!(codes(&duplicate_brackets), ["E1104"]);
     }
 }

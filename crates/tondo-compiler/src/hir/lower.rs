@@ -21,9 +21,9 @@ use super::{
     HirDeriveRequest, HirError, HirField, HirGenericParameter, HirImplementation,
     HirImplementationId, HirImplementationMethod, HirImplementationMethodContract,
     HirImplementationMethodId, HirNominalDefinition, HirNominalShape, HirOpaqueResult, HirOutput,
-    HirParameter, HirPreludeTraitMethod, HirProgram, HirTraitConstructor, HirTraitDefinition,
-    HirTraitIdentity, HirTraitMethod, HirTraitMethodKey, HirTraitReference, HirTypeDeclaration,
-    HirTypeDeclarationKind, HirVariant, HirVariantPayload,
+    HirParameter, HirPreludeTraitMethod, HirProgram, HirSerializationTraitMethod,
+    HirTraitConstructor, HirTraitDefinition, HirTraitIdentity, HirTraitMethod, HirTraitMethodKey,
+    HirTraitReference, HirTypeDeclaration, HirTypeDeclarationKind, HirVariant, HirVariantPayload,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -140,6 +140,12 @@ enum ExpectedTraitMethodSignature {
     Concrete {
         function_type: TypeId,
         has_receiver: bool,
+    },
+    Serialization {
+        function_type: TypeId,
+        has_receiver: bool,
+        generic_bounds: Vec<Vec<HirTraitReference>>,
+        local_arity: u32,
     },
 }
 
@@ -2965,6 +2971,18 @@ impl<'a> TypeLowerer<'a> {
                 HirTraitConstructor::Prelude(name)
             }
             ResolvedName::External { module, name, .. } => {
+                if module.package().as_str() == "toolchain:std:0.1-bootstrap"
+                    && module.path().as_str() == "serialization"
+                    && prelude_trait_arity(name.as_str()).is_some()
+                {
+                    let expected = prelude_trait_arity(name.as_str())
+                        .expect("serialization prelude traits have a fixed arity");
+                    self.check_arity(file, token.range(), name.as_str(), expected, actual)?;
+                    return Ok(HirTraitReference {
+                        constructor: HirTraitConstructor::Prelude(name),
+                        arguments,
+                    });
+                }
                 let identity = self.packages.symbol_identity(
                     module,
                     Namespace::Type,
@@ -4981,6 +4999,126 @@ impl<'a> TypeLowerer<'a> {
         if implementation.trait_reference.arguments.len() != expected_arity {
             return Ok(None);
         }
+        if matches!(name.as_str(), "Encode" | "Decode" | "Encoder" | "Decoder") {
+            let outer_arity = u32::try_from(implementation.parameters.len())
+                .map_err(|_| crate::types::TypeError::ResourceLimit { limit: u32::MAX })?;
+            let target = implementation.target;
+            let trait_arguments = &implementation.trait_reference.arguments;
+            let mut expected = Vec::new();
+            match name.as_str() {
+                "Encode" | "Decode" => {
+                    let method = if name.as_str() == "Encode" {
+                        HirSerializationTraitMethod::Encode
+                    } else {
+                        HirSerializationTraitMethod::Decode
+                    };
+                    let codec = trait_arguments
+                        .first()
+                        .copied()
+                        .unwrap_or_else(|| self.interner.error());
+                    let error = self.interner.generic_parameter(outer_arity)?;
+                    let encoder = self.interner.generic_parameter(outer_arity + 1)?;
+                    let function_type = HirPreludeTraitMethod::Serialization(method)
+                        .function_type(&mut self.interner, &[codec, target, error, encoder])?
+                        .expect("serialization method has a fixed signature");
+                    let protocol = if name.as_str() == "Encode" {
+                        "Encoder"
+                    } else {
+                        "Decoder"
+                    };
+                    let bound = HirTraitReference {
+                        constructor: HirTraitConstructor::Prelude(
+                            Name::new(protocol).expect("serialization protocol names are valid"),
+                        ),
+                        arguments: vec![codec, error],
+                    };
+                    expected.push(ExpectedTraitMethod {
+                        name: Name::new(if name.as_str() == "Encode" {
+                            "encode"
+                        } else {
+                            "decode"
+                        })
+                        .expect("serialization method names are valid"),
+                        key: HirTraitMethodKey::Prelude(HirPreludeTraitMethod::Serialization(
+                            method,
+                        )),
+                        declaration_span: None,
+                        has_default: false,
+                        requires_self_send: false,
+                        signature: ExpectedTraitMethodSignature::Serialization {
+                            function_type,
+                            has_receiver: name.as_str() == "Encode",
+                            generic_bounds: vec![Vec::new(), vec![bound]],
+                            local_arity: 2,
+                        },
+                    });
+                }
+                "Encoder" | "Decoder" => {
+                    let codec = trait_arguments
+                        .first()
+                        .copied()
+                        .unwrap_or_else(|| self.interner.error());
+                    let error = trait_arguments
+                        .get(1)
+                        .copied()
+                        .unwrap_or_else(|| self.interner.error());
+                    let methods: &[(&str, HirSerializationTraitMethod)] =
+                        if name.as_str() == "Encoder" {
+                            &[
+                                ("null", HirSerializationTraitMethod::EncoderNull),
+                                ("bool", HirSerializationTraitMethod::EncoderBool),
+                                ("int", HirSerializationTraitMethod::EncoderInt),
+                                ("uint", HirSerializationTraitMethod::EncoderUInt),
+                                ("float32", HirSerializationTraitMethod::EncoderFloat32),
+                                ("float64", HirSerializationTraitMethod::EncoderFloat64),
+                                ("string", HirSerializationTraitMethod::EncoderString),
+                                ("bytes", HirSerializationTraitMethod::EncoderBytes),
+                                ("startArray", HirSerializationTraitMethod::EncoderStartArray),
+                                ("endArray", HirSerializationTraitMethod::EncoderEndArray),
+                                ("startMap", HirSerializationTraitMethod::EncoderStartMap),
+                                ("mapKey", HirSerializationTraitMethod::EncoderMapKey),
+                                ("endMap", HirSerializationTraitMethod::EncoderEndMap),
+                                (
+                                    "startRecord",
+                                    HirSerializationTraitMethod::EncoderStartRecord,
+                                ),
+                                ("field", HirSerializationTraitMethod::EncoderField),
+                                ("endRecord", HirSerializationTraitMethod::EncoderEndRecord),
+                                ("startEnum", HirSerializationTraitMethod::EncoderStartEnum),
+                                ("endEnum", HirSerializationTraitMethod::EncoderEndEnum),
+                            ]
+                        } else {
+                            &[
+                                ("next", HirSerializationTraitMethod::DecoderNext),
+                                ("own", HirSerializationTraitMethod::DecoderOwn),
+                            ]
+                        };
+                    for (method_name, method) in methods {
+                        let function_type = HirPreludeTraitMethod::Serialization(*method)
+                            .function_type(&mut self.interner, &[codec, error, target])?
+                            .expect("serialization method has a fixed signature");
+                        expected.push(ExpectedTraitMethod {
+                            name: Name::new(method_name)
+                                .expect("serialization method names are valid"),
+                            key: HirTraitMethodKey::Prelude(HirPreludeTraitMethod::Serialization(
+                                *method,
+                            )),
+                            declaration_span: None,
+                            has_default: false,
+                            requires_self_send: false,
+                            signature: ExpectedTraitMethodSignature::Serialization {
+                                function_type,
+                                has_receiver: true,
+                                generic_bounds: Vec::new(),
+                                local_arity: 0,
+                            },
+                        });
+                    }
+                }
+                _ => unreachable!("guarded serialization protocol"),
+            }
+            return Ok(Some(expected));
+        }
         let (method_name, key, mode, outcome) = match name.as_str() {
             "Display" => (
                 "display",
@@ -5164,6 +5302,28 @@ impl<'a> TypeLowerer<'a> {
                     return Ok(None);
                 }
                 (*function_type, *has_receiver, Vec::new())
+            }
+            ExpectedTraitMethodSignature::Serialization {
+                function_type,
+                has_receiver,
+                generic_bounds,
+                local_arity,
+            } => {
+                if actual_local_arity != *local_arity {
+                    self.emit(
+                        span.file(),
+                        span.range(),
+                        "E1114",
+                        format!(
+                            "method `{}` declares the wrong number of generic parameters",
+                            expected.name
+                        ),
+                        None,
+                        Some((local_arity.to_string(), actual_local_arity.to_string())),
+                    )?;
+                    return Ok(None);
+                }
+                (*function_type, *has_receiver, generic_bounds.clone())
             }
         };
         let contract = HirImplementationMethodContract {
@@ -6246,6 +6406,8 @@ fn prelude_trait_arity(name: &str) -> Option<usize> {
     Some(match name {
         "Copy" | "Discard" | "Equatable" | "Key" | "Send" | "Share" | "Display" => 0,
         "Iterator" | "AsyncIterator" | "Call" | "CallMut" | "CallOnce" => 1,
+        "Encode" | "Decode" => 1,
+        "Encoder" | "Decoder" => 2,
         _ => return None,
     })
 }
@@ -7596,6 +7758,83 @@ mod tests {
             *error,
             output.program().interner().scalar(ScalarType::String)
         );
+    }
+
+    #[test]
+    fn serialization_protocols_lower_as_static_prelude_contracts() {
+        let (_, _, output) = lower(
+            "import std.serialization\n\
+             type User = { value: Int }\n\
+             impl serialization.Encode[String] for User {\n\
+                 fn encode[E, S: serialization.Encoder[String, E]](self, encoder: var S): Unit ! E {\n\
+                     encoder.int(self.value)?\n\
+                 }\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        let implementation = output.program().implementations().next().unwrap();
+        assert_eq!(
+            implementation.trait_reference().constructor(),
+            &HirTraitConstructor::Prelude(Name::new("Encode").unwrap())
+        );
+        assert!(implementation.contract_complete());
+        let method = implementation.methods().first().unwrap();
+        assert_eq!(
+            method.contract().unwrap().method(),
+            HirTraitMethodKey::Prelude(HirPreludeTraitMethod::Serialization(
+                HirSerializationTraitMethod::Encode
+            ))
+        );
+        assert_eq!(method.contract().unwrap().generic_bounds().len(), 2);
+        assert_eq!(method.contract().unwrap().generic_bounds()[1].len(), 1);
+    }
+
+    #[test]
+    fn serialization_encoder_and_decoder_contracts_enumerate_every_event_method() {
+        let (_, _, output) = lower(
+            "import std.serialization\n\
+             type Sink = { marker: Unit }\n\
+             impl serialization.Encoder[String, Int] for Sink {}\n\
+             impl serialization.Decoder[String, Int] for Sink {}\n",
+        );
+        let messages = output
+            .diagnostics()
+            .iter()
+            .map(|diagnostic| diagnostic.message().to_owned())
+            .collect::<Vec<_>>();
+        for required in [
+            "null",
+            "bool",
+            "int",
+            "uint",
+            "float32",
+            "float64",
+            "string",
+            "bytes",
+            "startArray",
+            "endArray",
+            "startMap",
+            "mapKey",
+            "endMap",
+            "startRecord",
+            "field",
+            "endRecord",
+            "startEnum",
+            "endEnum",
+            "next",
+            "own",
+        ] {
+            assert!(
+                messages
+                    .iter()
+                    .any(|message| message.contains(&format!("`{required}`"))),
+                "missing diagnostic for `{required}`: {messages:#?}"
+            );
+        }
     }
 
     #[test]

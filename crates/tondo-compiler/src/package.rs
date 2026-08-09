@@ -779,6 +779,20 @@ pub struct SymbolIdentity {
 }
 
 impl SymbolIdentity {
+    pub(crate) fn bootstrap_standard(module: &str, declaration: &str) -> Self {
+        Self {
+            package: PackageId::new("toolchain:std:0.1-bootstrap")
+                .expect("bootstrap package identity is valid"),
+            source_id: SourceId::new("toolchain:std:0.1-bootstrap")
+                .expect("bootstrap source identity is valid"),
+            module: ModulePath::new(module).expect("bootstrap module identity is valid"),
+            namespace: Namespace::Type,
+            declaration: DeclarationPath::single(
+                Name::new(declaration).expect("bootstrap declaration identity is valid"),
+            ),
+        }
+    }
+
     pub fn package(&self) -> &PackageId {
         &self.package
     }

@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
-use crate::package::{ModuleId, SymbolIdentity};
+use crate::package::{ModuleId, Name, SymbolIdentity};
 use crate::resolve::{LocalKind, MemberKind, MemberOwner, ResolvedProgram, SymbolKind};
 use crate::types::{
     CursorMode, FunctionParameter, FunctionType, GeneratedTypeKind, IntrinsicType, ParameterMode,
@@ -1290,6 +1290,8 @@ impl Verifier<'_> {
                     let expected = match name.as_str() {
                         "Display" => 0,
                         "Iterator" | "AsyncIterator" => 1,
+                        "Encode" | "Decode" => 1,
+                        "Encoder" | "Decoder" => 2,
                         _ => {
                             return Err(HirInvariantError::new(
                                 &context,
@@ -1454,18 +1456,25 @@ impl Verifier<'_> {
                     .any(|method| method.requires_self_send)
             } else {
                 let required = match &implementation.trait_reference.constructor {
-                    HirTraitConstructor::Prelude(name) if name.as_str() == "Display" => {
-                        HirTraitMethodKey::Prelude(super::HirPreludeTraitMethod::Display)
-                    }
-                    HirTraitConstructor::Prelude(name) if name.as_str() == "Iterator" => {
-                        HirTraitMethodKey::Prelude(super::HirPreludeTraitMethod::IteratorNext)
-                    }
-                    HirTraitConstructor::Prelude(name) if name.as_str() == "AsyncIterator" => {
-                        HirTraitMethodKey::Prelude(super::HirPreludeTraitMethod::AsyncIteratorNext)
+                    HirTraitConstructor::Prelude(name) if name.as_str() == "Display" => Some(
+                        HirTraitMethodKey::Prelude(super::HirPreludeTraitMethod::Display),
+                    ),
+                    HirTraitConstructor::Prelude(name) if name.as_str() == "Iterator" => Some(
+                        HirTraitMethodKey::Prelude(super::HirPreludeTraitMethod::IteratorNext),
+                    ),
+                    HirTraitConstructor::Prelude(name) if name.as_str() == "AsyncIterator" => Some(
+                        HirTraitMethodKey::Prelude(super::HirPreludeTraitMethod::AsyncIteratorNext),
+                    ),
+                    HirTraitConstructor::Prelude(name)
+                        if matches!(name.as_str(), "Encode" | "Decode" | "Encoder" | "Decoder") =>
+                    {
+                        None
                     }
                     _ => unreachable!("only open prelude traits reach this branch"),
                 };
-                if !provided.contains(&required) {
+                if let Some(required) = required
+                    && !provided.contains(&required)
+                {
                     return Err(HirInvariantError::new(
                         &context,
                         "required prelude trait method is missing",
@@ -1846,10 +1855,124 @@ impl Verifier<'_> {
                 }
             }
             (HirTraitMethodKey::Prelude(method_key), None) => {
+                if let super::HirPreludeTraitMethod::Serialization(serialization_method) =
+                    method_key
+                {
+                    let trait_name = method_key.trait_name();
+                    let method_name = method_key.method_name();
+                    if !matches!(
+                        &implementation.trait_reference.constructor,
+                        HirTraitConstructor::Prelude(name) if name.as_str() == trait_name
+                    ) || method.name.as_str() != method_name
+                        || contract.has_default
+                        || contract.requires_self_send
+                    {
+                        return Err(HirInvariantError::new(
+                            context,
+                            "serialization method metadata does not match its contract",
+                        ));
+                    }
+                    let outer_arity =
+                        u32::try_from(implementation.parameters.len()).map_err(|_| {
+                            HirInvariantError::new(
+                                context,
+                                "implementation generic arity exceeds u32",
+                            )
+                        })?;
+                    let local_arity = match serialization_method {
+                        super::HirSerializationTraitMethod::Encode
+                        | super::HirSerializationTraitMethod::Decode => 2,
+                        _ => 0,
+                    };
+                    if contract.generic_bounds.len() != local_arity {
+                        return Err(HirInvariantError::new(
+                            context,
+                            "serialization method has the wrong generic arity",
+                        ));
+                    }
+                    let mut arguments = match serialization_method {
+                        super::HirSerializationTraitMethod::Encode
+                        | super::HirSerializationTraitMethod::Decode => vec![
+                            implementation.trait_reference.arguments[0],
+                            implementation.target,
+                        ],
+                        _ => vec![
+                            implementation.trait_reference.arguments[0],
+                            implementation.trait_reference.arguments[1],
+                            implementation.target,
+                        ],
+                    };
+                    for position in outer_arity..outer_arity + local_arity as u32 {
+                        arguments.push(
+                            contract_interner
+                                .generic_parameter(position)
+                                .map_err(|error| {
+                                    HirInvariantError::new(context, error.to_string())
+                                })?,
+                        );
+                    }
+                    let expected_function = method_key
+                        .function_type(contract_interner, &arguments)
+                        .map_err(|error| HirInvariantError::new(context, error.to_string()))?
+                        .ok_or_else(|| {
+                            HirInvariantError::new(
+                                context,
+                                "serialization method has an invalid specialization arity",
+                            )
+                        })?;
+                    let expected_receiver = !matches!(
+                        serialization_method,
+                        super::HirSerializationTraitMethod::Decode
+                    );
+                    let expected_bounds = if matches!(
+                        serialization_method,
+                        super::HirSerializationTraitMethod::Encode
+                            | super::HirSerializationTraitMethod::Decode
+                    ) {
+                        let error = contract_interner
+                            .generic_parameter(outer_arity)
+                            .map_err(|error| HirInvariantError::new(context, error.to_string()))?;
+                        let protocol = if matches!(
+                            serialization_method,
+                            super::HirSerializationTraitMethod::Encode
+                        ) {
+                            "Encoder"
+                        } else {
+                            "Decoder"
+                        };
+                        vec![
+                            Vec::new(),
+                            vec![super::HirTraitReference {
+                                constructor: HirTraitConstructor::Prelude(
+                                    Name::new(protocol)
+                                        .expect("serialization protocol names are valid"),
+                                ),
+                                arguments: vec![implementation.trait_reference.arguments[0], error],
+                            }],
+                        ]
+                    } else {
+                        Vec::new()
+                    };
+                    if expected_function != contract.function_type
+                        || contract.has_receiver != expected_receiver
+                        || !same_generic_bound_groups(&expected_bounds, &contract.generic_bounds)
+                    {
+                        return Err(HirInvariantError::new(
+                            context,
+                            "serialization method signature was not derived from its closed contract",
+                        ));
+                    }
+                    return Ok(());
+                }
                 let (trait_name, method_name) = match method_key {
                     super::HirPreludeTraitMethod::Display => ("Display", "display"),
                     super::HirPreludeTraitMethod::IteratorNext => ("Iterator", "next"),
                     super::HirPreludeTraitMethod::AsyncIteratorNext => ("AsyncIterator", "next"),
+                    super::HirPreludeTraitMethod::Serialization(_) => {
+                        unreachable!(
+                            "serialization methods return through their dedicated verifier"
+                        )
+                    }
                 };
                 if !matches!(
                     &implementation.trait_reference.constructor,
@@ -1875,6 +1998,11 @@ impl Verifier<'_> {
                             .option(implementation.trait_reference.arguments[0])
                             .map_err(|error| HirInvariantError::new(context, error.to_string()))?,
                     ),
+                    super::HirPreludeTraitMethod::Serialization(_) => {
+                        unreachable!(
+                            "serialization methods return through their dedicated verifier"
+                        )
+                    }
                 };
                 let expected_function = contract_interner
                     .function(FunctionType::new(
@@ -6274,8 +6402,9 @@ mod tests {
 
     use crate::hir::{
         ExpressionCheckLimits, HirArraySequenceKind, HirBootstrapHostFunction,
-        HirCallArgumentTarget, HirCallProtocol, HirExpressionKind, HirLiteral, HirMatchMode,
-        HirNominalShape, HirPrefixOperator, TypeLoweringLimits, check_expressions, lower_types,
+        HirCallArgumentTarget, HirCallProtocol, HirError, HirExpressionKind, HirLiteral, HirLoopId,
+        HirMatchMode, HirNominalShape, HirPrefixOperator, TypeLoweringLimits, check_expressions,
+        lower_types,
     };
     use crate::package::PackageGraph;
     use crate::resolve::{ResolvedProgram, resolve};
@@ -6999,6 +7128,47 @@ mod tests {
         wrong_send.implementations[0].requires_self_send = false;
         let error = verify_typed_hir(&resolved, &wrong_send).unwrap_err();
         assert!(error.message().contains("inconsistent Self: Send"));
+    }
+
+    #[test]
+    fn serialization_encode_implementation_is_verified_from_its_closed_contract() {
+        const SOURCE: &str = "import std.serialization\n\
+             type User = { value: Int }\n\
+             impl serialization.Encode[String] for User {\n\
+                 fn encode[E, S: serialization.Encoder[String, E]](self, encoder: var S): Unit ! E {\n\
+                     encoder.int(self.value)?\n\
+                 }\n\
+             }\n\
+             impl serialization.Decode[String] for User {\n\
+                 fn decode[E, D: serialization.Decoder[String, E]](decoder: var D): User ! E {\n\
+                     panic(\"decode body supplied by the codec\")\n\
+                 }\n\
+             }\n\
+             fn main() {}\n";
+
+        let (resolved, program) = checked_program_from(SOURCE);
+        verify_typed_hir(&resolved, &program).unwrap();
+    }
+
+    #[test]
+    fn serialization_method_metadata_mismatch_is_rejected_before_mir() {
+        const SOURCE: &str = "import std.serialization\n\
+             type User = { value: Int }\n\
+             impl serialization.Encode[String] for User {\n\
+                 fn encode[E, S: serialization.Encoder[String, E]](self, encoder: var S): Unit ! E {\n\
+                     encoder.int(self.value)?\n\
+                 }\n\
+             }\n\
+             fn main() {}\n";
+
+        let (resolved, mut program) = checked_program_from(SOURCE);
+        program.implementations[0].methods[0].name = Name::new("wrong").unwrap();
+        let error = verify_typed_hir(&resolved, &program).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("serialization method metadata does not match")
+        );
     }
 
     #[test]
@@ -9818,5 +9988,91 @@ mod tests {
             program.bodies.remove(&HirCallableId::Symbol(identity));
         });
         assert!(error.message().contains("no checked HIR body"), "{error}");
+    }
+
+    #[test]
+    fn public_hir_metadata_accessors_are_observable() {
+        let (_, constants) = checked_program_from("const Limit: Int = 1\nfn main() {}\n");
+        assert_eq!(constants.unsafe_regions().count(), 0);
+        let (_, constant) = constants.constants().next().expect("constant metadata");
+        let _ = constant.symbol();
+        let _ = constant.span();
+        let _ = constant.declared_type();
+        let _ = constant.initializer();
+
+        assert!(!HirBootstrapHostFunction::ConsolePrint.suspends());
+        assert!(HirBootstrapHostFunction::AsyncWaiterWait.suspends());
+        assert_eq!(HirLoopId(7).index(), 7);
+
+        let (_, calls) =
+            checked_program_from("fn note(value: Int) {}\nfn main() {\n    note(1)\n}\n");
+        let mut argument = None;
+        for expression in calls.expressions() {
+            if let HirExpressionKind::Call { arguments, .. } = expression.kind() {
+                argument = arguments.first();
+                break;
+            }
+        }
+        let argument = argument.expect("call argument metadata");
+        let _ = argument.label();
+        let _ = argument.is_spread();
+
+        let (_, declarations) = checked_program_from(
+            "type Box[T] = { value: T }\n\
+             trait Contract {\n\
+                 fn required(self): Int\n\
+             }\n\
+             impl Contract for Box[Int] {\n\
+                 fn required(self): Int { 1 }\n\
+             }\n",
+        );
+        let (_, declaration) = declarations
+            .declarations()
+            .next()
+            .expect("declaration metadata");
+        let _ = declaration.symbol();
+        let _ = declaration.span();
+        let mut generic = None;
+        for callable in declarations.callables() {
+            if let Some(parameter) = callable.generics().first() {
+                generic = Some(parameter);
+                break;
+            }
+        }
+        let generic = generic.expect("generic parameter metadata");
+        let _ = generic.local();
+
+        let implementation = declarations
+            .implementations()
+            .next()
+            .expect("implementation metadata");
+        let method = implementation.methods().first().expect("method metadata");
+        let contract = method.contract().expect("method contract metadata");
+        let _ = contract.has_receiver();
+        let _ = contract.requires_self_send();
+
+        let (_, opaque_program) = checked_program_from(
+            "fn opaqueCall(): impl Discard + Call[fn(Int): Int] {\n\
+                 (value: Int): Int { value + 1 }\n\
+             }\n",
+        );
+        let mut opaque = None;
+        for callable in opaque_program.callables() {
+            if let Some(result) = callable.opaque_result.as_ref() {
+                opaque = Some(result);
+                break;
+            }
+        }
+        let opaque = opaque.expect("opaque result metadata");
+        let _ = opaque.span();
+
+        let (_, closure_program) = checked_program_from(
+            "fn main() {\n    let operation: fn(Int): Int = (value) { value }\n}\n",
+        );
+        let closure = closure_program.closures().next().expect("closure metadata");
+        let _ = closure.identity();
+
+        let error = HirError::from(HirInvariantError::new("metadata", "probe"));
+        assert!(matches!(error, HirError::Invariant(_)));
     }
 }

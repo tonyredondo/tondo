@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 1.79
+**Versión del tracker:** 1.80
 
 **Última actualización:** 2026-08-08
 
@@ -48,8 +48,9 @@ contratos públicos: la ruta de frontend, HIR/MIR/bytecode, `Join` transferible,
 referencia. La compatibilidad léxica de `async` se conserva únicamente para
 fixtures históricos y no aparece en interfaces ni en la superficie normativa;
 la retirada mecánica de esas fixtures queda separada del contrato ejecutable.
-Después: (1) conectar el ABI estático de serialization y sus providers derive a
-la superficie ejecutable de Tondo, incluyendo anotaciones y lowering; (2)
+Después: (1) conectar los providers derive y los entry points de codecs al ABI
+estático de serialization ya publicado en la superficie Tondo, incluyendo
+anotaciones y lowering; (2)
 completar las rutas públicas A1–A4 y ampliar
 la matriz normativa a los tres contratos G5 antes de volver a cerrar T0/G5/S1A.
 Los contratos
@@ -4359,14 +4360,18 @@ tests. Antes de volver a marcarlas `[x]` deben cumplirse todos estos puntos:
   la prueba host cubre argumentos exactos, streams separados, combined,
   redirección, formas de pipeline, backpressure y errores nominales.
 
-- [ ] **STD-SER-IMPL-001 — Implementar `std.serialization` tipada.** Publicar
-  `Encode[C]`/`Decode[C]` y los protocolos `Encoder[C, E]`/`Decoder[C, E]`
-  por la ruta fuente de Tondo. Los adaptadores typed deben escribir y leer sin
-  `Value`, reflection runtime ni trait objects; los errores y los estados
-  terminales se validan antes de publicar el resultado. Scalar, `String`,
-  `Option[T]`, `Array[T]` y records/enums se componen mediante dispatch estático.
-  Los símbolos Rust del prototipo anterior son bridges internos y no cuentan
-  como API cerrada.
+- [x] **STD-SER-IMPL-001 — Implementar `std.serialization` tipada.** La ruta
+  fuente del compilador publica `Encode[C]`/`Decode[C]` y los protocolos
+  `Encoder[C, E]`/`Decoder[C, E]` como contratos prelude abiertos del módulo
+  compiler-owned `std.serialization`. Cada método conserva aridad, receiver,
+  modos `var`/`ref`, resultado `Result` y bounds del codec; las llamadas
+  cualificadas y por constraint usan la selección HIR/MIR estática sin
+  `Value`, reflection runtime, vtables ni lookup por nombre. El verificador HIR
+  deriva de nuevo las firmas de Encode/Decode y de los 20 métodos de
+  Encoder/Decoder antes de producir MIR. Los kernels Rust siguen siendo
+  adaptadores internos; los entry points de JSON/MessagePack/Protobuf y los
+  providers derive se cierran en sus leaves posteriores. Evidencia: tests HIR
+  de lowering y de comprobación de implementaciones/calls en SSD.
 
 - [ ] **STD-DERIVE-SER-001 — Implementar providers de derive de
   serialization.** Registrar providers build-only para
@@ -5645,6 +5650,22 @@ se declara iniciada antes de esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 1.80 — 2026-08-08
+
+- Se conecta el ABI fuente de `std.serialization` al frontend: los nombres
+  canónicos de `std.serialization` se convierten únicamente en los protocolos
+  prelude abiertos `Encode`, `Decode`, `Encoder` y `Decoder`, conservando
+  aridades y la identidad del módulo estándar.
+- HIR publica las firmas de `encode`, `decode` y los 20 métodos de
+  Encoder/Decoder; las implementaciones validan receiver, modos, resultados y
+  bounds de codec. Las llamadas cualificadas y por constraint atraviesan la
+  misma selección estática que el resto de traits, sin DOM, reflection,
+  vtables ni lookup por nombre.
+- Evidencia observada en SSD: los tests de lowering y checking cubren una
+  implementación `Encode`, una `Decode`, bounds de `Encoder`/`Decoder` y
+  llamadas a `startRecord`/`field`/`endRecord`. Los providers derive y los
+  entry points de cada codec permanecen abiertos en sus leaves dedicadas.
 
 ### 1.79 — 2026-08-08
 

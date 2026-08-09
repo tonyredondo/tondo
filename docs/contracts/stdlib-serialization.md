@@ -1,9 +1,10 @@
 # Contrato de `std.serialization`
 
-**Estado:** contrato común normativo de STD-0.1A. El bridge Rust ya expone el
-ABI estático y los providers derive canónicos; queda pendiente conectar estos
-símbolos a la superficie ejecutable de Tondo y cerrar las anotaciones de cada
-codec.
+**Estado:** contrato común normativo de STD-0.1A. El bridge Rust expone el ABI
+estático y el compilador conecta ahora los cuatro protocolos canónicos a la
+superficie Tondo mediante contratos HIR y dispatch estático. Los adaptadores de
+formato, los entry points `json`/`messagepack`/`protobuf` y las anotaciones de
+derive siguen siendo leaves posteriores de este contrato.
 Este documento define la frontera pública que deben implementar JSON,
 MessagePack y Protobuf; no es una API dinámica ni una sustitución de los
 contratos específicos de cada formato.
@@ -83,6 +84,28 @@ después de un error de input, límite, I/O o secuencia; volver a llamar a
 `next` no puede producir un valor parcial nuevo. El codec decide la forma
 concreta del error `E`, pero debe conservar la clase, offset y path estructural
 que exige su contrato.
+
+### Integración del compilador
+
+`std.serialization` es un módulo estándar compiler-owned: no necesita una
+fuente Tondo instalada para resolver sus contratos. El frontend convierte
+únicamente los nombres canónicos del módulo `std.serialization` en protocolos
+prelude abiertos (`Encode`, `Decode`, `Encoder` y `Decoder`); cualquier otro
+trait externo continúa requiriendo una declaración importada real. La
+conversión conserva la aridad y la identidad del módulo, por lo que no crea un
+alias de usuario ni permite implementar otro símbolo con el mismo nombre.
+
+Cada método del protocolo tiene una firma HIR cerrada. Las llamadas a
+`encoder.*`, `decoder.*` y las formas cualificadas
+`std.serialization.Encode[C].encode[E, S]`/`Decode[C].decode[E, D]` pasan por la
+misma selección de implementación estática que los traits abiertos del
+lenguaje. `E` y el tipo concreto del cursor se escriben explícitamente en una
+llamada cualificada: no se intenta inferir un error únicamente a partir del
+bound `Encoder[C, E]`/`Decoder[C, E]`.
+Una implementación debe conservar receiver, modos `var`/`ref`, resultado
+`Result` y los bounds `Encoder[C, E]`/`Decoder[C, E]`; el verificador HIR vuelve
+a derivar esa firma antes de producir MIR. No hay trait objects, tablas de
+registro ni lookup por nombre en este puente.
 
 ## Value dinámico, vistas y Raw
 
@@ -209,8 +232,10 @@ identidades exactas:
 Los nombres históricos `Serialize`/`Deserialize` siguen registrados como
 bridges durante la transición. Los providers canónicos generan métodos
 `encode`/`decode` con bounds `Encoder[C, E]`/`Decoder[C, E]` para records, enums,
-newtypes y parámetros genéricos; el parser valida el impl generado antes de su
-publicación atómica.
+newtypes y parámetros genéricos. Las llamadas recursivas generadas fijan
+`[C]` y `[E, S]`/`[E, D]` de forma explícita para que la expansión no dependa de
+inferir `E` desde un bound de protocolo; el parser valida el impl generado
+antes de su publicación atómica.
 
 Cada provider recibe únicamente el MetaSnapshot sellado y devuelve un body de
 impl Tondo ordinario. meta_derive añade el header nominal, conserva los

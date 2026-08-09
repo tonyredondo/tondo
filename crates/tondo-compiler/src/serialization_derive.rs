@@ -368,7 +368,7 @@ fn render_encode_impl(
             line(
                 output,
                 2,
-                "serialization.Encode.encode(self.value, var encoder)?",
+                "serialization.Encode[C].encode[E, S](self.value, var encoder)?",
             );
         }
         MetaDeclarationKind::Trait(_) => {
@@ -408,7 +408,7 @@ fn render_record_encode_static(
             output,
             2,
             &format!(
-                "serialization.Encode.encode({}.{}, var encoder)?",
+                "serialization.Encode[C].encode[E, S]({}.{}, var encoder)?",
                 receiver,
                 field.name()
             ),
@@ -484,7 +484,10 @@ fn render_enum_start_end_static(
             line(
                 output,
                 indent,
-                &format!("serialization.Encode.encode({}, var encoder)?", name),
+                &format!(
+                    "serialization.Encode[C].encode[E, S]({}, var encoder)?",
+                    name
+                ),
             );
         }
     }
@@ -666,7 +669,7 @@ fn render_decode_impl(
                 output,
                 2,
                 &format!(
-                    "let value: {} = serialization.Decode.decode(var decoder)?",
+                    "let value: {} = serialization.Decode[C].decode[E, D](var decoder)?",
                     underlying
                 ),
             );
@@ -716,7 +719,7 @@ fn render_record_decode_static(
             output,
             4,
             &format!(
-                "let {}: {} = serialization.Decode.decode(var decoder)?",
+                "let {}: {} = serialization.Decode[C].decode[E, D](var decoder)?",
                 field.name(),
                 field.ty()
             ),
@@ -790,7 +793,7 @@ fn render_enum_decode_static(
                         output,
                         4,
                         &format!(
-                            "let {}: {} = serialization.Decode.decode(var decoder)?",
+                            "let {}: {} = serialization.Decode[C].decode[E, D](var decoder)?",
                             name, ty
                         ),
                     );
@@ -829,7 +832,7 @@ fn render_enum_decode_static(
                         output,
                         4,
                         &format!(
-                            "let {}: {} = serialization.Decode.decode(var decoder)?",
+                            "let {}: {} = serialization.Decode[C].decode[E, D](var decoder)?",
                             field.name(),
                             field.ty()
                         ),
@@ -1325,7 +1328,7 @@ mod tests {
         .unwrap();
         let encoded_source = std::str::from_utf8(encoded.response().outputs()[0].bytes()).unwrap();
         assert!(encoded_source.contains("fn encode[E, S: serialization.Encoder[C, E]]"));
-        assert!(encoded_source.contains("serialization.Encode.encode(self.id"));
+        assert!(encoded_source.contains("serialization.Encode[C].encode[E, S](self.id"));
         assert!(encoded_source.contains("encoder.startRecord(\"User\", 2)"));
 
         let decoded = derive(
@@ -1338,7 +1341,7 @@ mod tests {
         .unwrap();
         let decoded_source = std::str::from_utf8(decoded.response().outputs()[0].bytes()).unwrap();
         assert!(decoded_source.contains("fn decode[E, D: serialization.Decoder[C, E]]"));
-        assert!(decoded_source.contains("serialization.Decode.decode(var decoder)"));
+        assert!(decoded_source.contains("serialization.Decode[C].decode[E, D](var decoder)"));
         assert!(decoded_source.contains("serialization.SerializationEvent.EndRecord"));
 
         let generic = derive_named(
