@@ -60,8 +60,10 @@ fn json_matches_serde_in_both_directions_and_across_fragments() {
     assert!(json::parse(br#"{"name":"#).is_err());
     assert!(json::parse(br#"{"name":1} trailing"#).is_err());
 
-    let mut limits = json::JsonLimits::default();
-    limits.max_document_bytes = external_bytes.len() - 1;
+    let limits = json::JsonLimits {
+        max_document_bytes: external_bytes.len() - 1,
+        ..Default::default()
+    };
     let options = json::JsonDecodeOptions {
         limits,
         ..Default::default()
@@ -163,8 +165,10 @@ fn messagepack_matches_rmpv_in_both_directions_and_preserves_extensions() {
     for end in 0..external_bytes.len() {
         assert!(messagepack::validate(&external_bytes[..end], Default::default()).is_err());
     }
-    let mut limits = messagepack::MessagePackLimits::default();
-    limits.max_document_bytes = external_bytes.len() - 1;
+    let limits = messagepack::MessagePackLimits {
+        max_document_bytes: external_bytes.len() - 1,
+        ..Default::default()
+    };
     let options = messagepack::MessagePackDecodeOptions {
         limits,
         ..Default::default()
@@ -299,8 +303,10 @@ fn protobuf_matches_prost_and_preserves_unknown_wire_records() {
         .is_err()
     );
     assert!(protobuf::validate::<()>(&[0x0a, 0x05, b'T'], Default::default()).is_err());
-    let mut limits = protobuf::ProtoLimits::default();
-    limits.max_message_bytes = external_bytes.len() - 1;
+    let limits = protobuf::ProtoLimits {
+        max_message_bytes: external_bytes.len() - 1,
+        ..Default::default()
+    };
     let options = protobuf::ProtoDecodeOptions {
         limits,
         ..Default::default()
