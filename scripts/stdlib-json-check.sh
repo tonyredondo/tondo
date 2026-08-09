@@ -157,7 +157,7 @@ jq -e '
         "no-dom-typed-proof", "limits-proven-finite", "reviewed-errors-and-paths",
         "STD-PERF-001-report"
     ]
-    and .promotion.next_coordination == "STD-PERF-CONF-001"
+    and .promotion.next_coordination == "STD-CONF-001"
 ' "$contract" >/dev/null
 
 source="$root/crates/tondo-stdlib/src/json_api.rs"

@@ -54,9 +54,13 @@ hosted bridge test and a bidirectional external interoperability harness
 against `serde_json`, `rmpv` and `prost`. The harness also records one-byte
 fragmentation, truncation, finite limits and unknown-wire preservation in
 `testing/stdlib-codec-conformance.json`. `scripts/stdlib-performance-report.sh` captures
-27 independent samples per hot-path module from three processes. The strict
-gate runs both reports together with the complete workspace tests and draft
-conformance adapter.
+27 independent samples per hot-path module from three processes, including the
+recorded environment and measured dimensions. The owner coordinator in
+`testing/stdlib-performance-conformance.json` rejects omitted owners and
+overstated dimensions; deferred owners carry an explicit reason until their
+workload identity is reviewed. The strict gate runs the report, coordinator,
+negative coordinator tests, complete workspace tests and draft conformance
+adapter together.
 
 The live conformance lineage is explicitly
 `conformance/draft/manifest.json`. `conformance/0.1/manifest.json` and its

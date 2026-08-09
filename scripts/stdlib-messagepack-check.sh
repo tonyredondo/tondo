@@ -169,7 +169,7 @@ jq -e '
         "arbitrary-key-proof", "unknown-ext-preservation", "limits-proven-finite",
         "STD-PERF-001-report"
     ]
-    and .promotion.next_coordination == "STD-PERF-CONF-001"
+    and .promotion.next_coordination == "STD-CONF-001"
 ' "$contract" >/dev/null
 
 source="$root/crates/tondo-stdlib/src/messagepack_api.rs"

@@ -324,6 +324,6 @@ y el check ejecutable es
 La conformance coordinada `STD-CODEC-CONF-001` ya está cerrada mediante
 implementaciones externas independientes (`serde_json`, `rmpv` y `prost`),
 vectores bidireccionales y pruebas de fragmentación/truncación. La siguiente
-coordinación es `STD-PERF-CONF-001`, seguida por la auditoría pública sin gaps y
+coordinación es `STD-CONF-001`, seguida por la auditoría pública sin gaps y
 la promoción S1A; ningún gate se sustituye por round-trips contra el propio
 bridge.

@@ -24,7 +24,14 @@ jq -e '
   and (.owners | length) == 21
   and ([.owners[].id] | unique | length) == 21
   and all(.owners[]; (.layer | test("^A[0-4]$")) and (.implementation | length > 0) and (.tests | length > 0) and (.proof | length > 0))
-  and (.evidence_commands | length) == 4
+  and .evidence_commands == [
+    "scripts/stdlib-implementation-check.sh",
+    "scripts/stdlib-codec-conformance.sh",
+    "scripts/stdlib-performance-report.sh",
+    "scripts/stdlib-performance-conformance.sh",
+    "scripts/stdlib-performance-conformance-test.sh",
+    "TONDO_TEST_TARGET=linux-x86_64 bash scripts/test-gate.sh"
+  ]
   and .conformance_lineage == "conformance/draft/manifest.json"
   and .historical_manifest_immutable == true
   and .coverage_floor_basis_points == 9025

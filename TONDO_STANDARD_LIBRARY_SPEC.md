@@ -1356,11 +1356,14 @@ módulo crítico publica workloads representativos y gates para:
 - tiempo de compilación añadido por generadores y monomorfización; y
 - comportamiento de inputs pequeños, medianos, grandes y adversarios.
 
-Los benchmarks registran hardware, OS, target, backend, toolchain, flags, corpus
-y varianza. Una optimización se acepta solo con tests de equivalencia y sin una
-regresión material no justificada en otra dimensión publicada. Los números
-concretos pertenecen al contrato de cada módulo y al tracker; esta arquitectura
-no inventa un umbral universal.
+Los benchmarks registran hardware, OS, target, backend, perfil, toolchain, flags,
+corpus, revisión de fuente y varianza. El coordinador machine-readable de S1A
+mantiene una fila por owner: una fila capturada solo puede declarar las
+dimensiones observadas y una fila diferida debe justificar por qué aún no existe
+una identidad de hot path revisada. Una optimización se acepta solo con tests de
+equivalencia y sin una regresión material no justificada en otra dimensión
+publicada. Los números concretos pertenecen al contrato de cada módulo y al
+tracker; esta arquitectura no inventa un umbral universal.
 
 ---
 

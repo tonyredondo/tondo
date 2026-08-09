@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 1.88
+**Versión del tracker:** 1.89
 
 **Última actualización:** 2026-08-09
 
@@ -48,8 +48,7 @@ contratos públicos: la ruta de frontend, HIR/MIR/bytecode, `Join` transferible,
 referencia. La compatibilidad léxica de `async` se conserva únicamente para
 fixtures históricos y no aparece en interfaces ni en la superficie normativa;
 la retirada mecánica de esas fixtures queda separada del contrato ejecutable.
-Después: (1) cerrar `STD-PERF-CONF-001` por owner, empezando por los tres
-codecs; (2) completar las rutas públicas A1–A4 y ampliar
+Después: (1) completar las rutas públicas A1–A4 y ampliar
 la matriz normativa a los tres contratos G5 antes de volver a cerrar T0/G5/S1A.
 Los contratos
 runtime-facing de STD-0.1B y M11 esperan esos gates. Todo pertenece a la primera
@@ -4588,10 +4587,20 @@ administrativas que no implementan comportamiento.
   muestras por proceso, tres procesos y cinco kernels proporcionan una baseline
   reproducible para el código ya existente.
 
-- [ ] **STD-PERF-CONF-001 — Coordinar performance por owner.** Ampliar el gate
-  al campo `PERF` de cada leaf A aplicable tras su implementación, incluyendo throughput,
-  tail latency, allocations/memoria, startup, code size y compile time; exigir
-  equivalencia exacta de cualquier SIMD/multiversioning con fallback portable.
+- [x] **STD-PERF-CONF-001 — Coordinar performance por owner.**
+  [`testing/stdlib-performance-conformance.json`](./testing/stdlib-performance-conformance.json)
+  contiene exactamente una fila por cada owner stdlib: las cinco rutas que el
+  probe ya puede capturar (`std.json`, `std.messagepack`, `std.protobuf`,
+  `std.math` y `std.testing`) declaran operación, workload, oracle y las
+  dimensiones realmente observadas (throughput y tail latency); cada owner
+  restante queda diferido con una razón explícita hasta tener identidad de hot
+  path y baseline revisados. `scripts/stdlib-performance-conformance.sh`
+  rechaza owners omitidos, dimensiones sobreafirmadas, entornos incompletos y
+  muestras insuficientes; su test negativo conserva esas fronteras. La
+  implementación sigue pendiente de los campos PERF completos por owner
+  (allocations/memoria, startup, code size y compile time), comparación contra
+  baselines revisadas y promoción, pero ya no existe una coordinación implícita
+  ni una cifra verde agregada entre targets incompatibles.
 
 - [ ] **STD-CONF-001 — Coordinar conformidad por owner.** Cierra solo cuando la
   `STD-MATRIX-ALL-001` contiene cada requisito A aplicable con evidencia pública
@@ -5694,6 +5703,22 @@ se declara iniciada antes de esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 1.89 — 2026-08-09
+
+- Se cierra la coordinación de `STD-PERF-CONF-001` sin sobreafirmar la
+  evidencia: `testing/stdlib-performance-conformance.json` contiene una fila
+  por cada owner de stdlib, cinco owners con captura parcial del probe y todos
+  los demás con una razón explícita de aplazamiento.
+- El probe adopta el protocolo monotónico completo de tres warmups, nueve
+  mediciones por proceso y tres procesos, y el reporte registra CPU/features,
+  memoria, OS/kernel, target, backend, perfil, toolchain, flags y revisión.
+  El coordinador comprueba identidad de operación/workload, 27 muestras,
+  dimensiones observadas y no mezcla targets incompatibles.
+- El gate estricto ejecuta el coordinador y dos fixtures negativos que prueban
+  que no se pueden omitir owners ni declarar dimensiones no medidas. Las
+  dimensiones de allocations/memoria, startup, code size y compile time siguen
+  siendo trabajo de promoción por owner, no un cierre ficticio.
 
 ### 1.88 — 2026-08-09
 

@@ -128,10 +128,20 @@ Each owner passes four gates:
 4. **Promote:** the baseline and report are reproducible, reviewed and free of
    unexplained regressions.
 
-`STD-PERF-CONF-001` later coordinates these owner reports. It does not replace
-the owner gates, accept a missing report, or average incompatible targets into a
-green number. VM and native backends are compared by semantic observation first;
-their performance baselines remain separate.
+`STD-PERF-CONF-001` coordinates these owner reports through
+[`testing/stdlib-performance-conformance.json`](../../testing/stdlib-performance-conformance.json)
+and `scripts/stdlib-performance-conformance.sh`. The coordinator has one row
+for every stdlib owner: a captured row names its operation, workload, scalar
+oracle and measured dimensions; an owner without a reviewed hot-path identity is
+explicitly deferred with a reason. It never accepts an omitted owner, a report
+that claims dimensions it did not measure, a missing environment field, or a
+sample set shorter than the protocol. The current probe captures throughput and
+tail latency for five portable kernels; allocations, memory, startup, code size
+and compile-time remain explicit owner-promotion work until their workloads and
+baselines are reviewed. The coordinator does not replace the owner gates, accept
+a missing report, or average incompatible targets into a green number. VM and
+native backends are compared by semantic observation first; their performance
+baselines remain separate.
 
 ## What is not a guarantee
 

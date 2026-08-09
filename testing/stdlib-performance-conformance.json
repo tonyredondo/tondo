@@ -1,0 +1,256 @@
+{
+  "format": "tondo-stdlib-performance-conformance/1",
+  "edition": "0.1",
+  "phase": "STD-0.1A",
+  "status": "coordinated",
+  "contract": "testing/stdlib-performance.json",
+  "report": "target/reliability/evidence/stdlib-performance-report.json",
+  "protocol": {
+    "clock": "monotonic",
+    "warmup_iterations": 3,
+    "measurement_repetitions": 9,
+    "independent_processes": 3,
+    "minimum_sample_count": 27,
+    "required_environment": [
+      "cpu_model",
+      "cpu_features",
+      "memory_bytes",
+      "os",
+      "kernel",
+      "target",
+      "backend",
+      "profile",
+      "rustc",
+      "llvm",
+      "cargo",
+      "flags",
+      "git_revision"
+    ]
+  },
+  "measured_dimensions": ["throughput", "tail_latency"],
+  "deferred_dimensions": [
+    "allocations_per_operation",
+    "allocated_bytes_per_operation",
+    "peak_memory",
+    "startup",
+    "code_size",
+    "compile_time"
+  ],
+  "owners": [
+    {
+      "id": "std.async",
+      "group": "a1-values-protocols",
+      "state": "awaiting-owner-hot-path",
+      "reason": "No stable std.async public hot-path identity exists while the inferred-suspension ABI is still being migrated."
+    },
+    {
+      "id": "std.bytes",
+      "group": "a0-foundation",
+      "state": "awaiting-owner-hot-path",
+      "reason": "The bytes owner has no reviewed operation/workload identity in its public contract yet."
+    },
+    {
+      "id": "std.collections",
+      "group": "a1-values-protocols",
+      "state": "awaiting-owner-hot-path",
+      "reason": "Collection operations still need a reviewed workload set covering COW, ordering and capacity behavior."
+    },
+    {
+      "id": "std.console",
+      "group": "a2-host",
+      "state": "awaiting-owner-hot-path",
+      "reason": "Hosted stream operations require a target-specific I/O workload and capability fixture before capture."
+    },
+    {
+      "id": "std.core",
+      "group": "a0-foundation",
+      "state": "awaiting-owner-hot-path",
+      "reason": "Core language operations do not yet have an owner-specific benchmark identity separate from compiler tests."
+    },
+    {
+      "id": "std.env",
+      "group": "a0-foundation",
+      "state": "awaiting-owner-hot-path",
+      "reason": "Environment snapshots need a sealed fixture and capability-scoped workload before timing is meaningful."
+    },
+    {
+      "id": "std.fs",
+      "group": "a2-host",
+      "state": "awaiting-owner-hot-path",
+      "reason": "Filesystem workloads require a bounded temporary tree and target-specific cleanup proof before capture."
+    },
+    {
+      "id": "std.format",
+      "group": "a1-values-protocols",
+      "state": "awaiting-owner-hot-path",
+      "reason": "Formatting needs reviewed empty, representative and adversarial builder identities before capture."
+    },
+    {
+      "id": "std.io",
+      "group": "a1-values-protocols",
+      "state": "awaiting-owner-hot-path",
+      "reason": "Reader/Writer partial-I/O workloads need a bounded stream fixture and allocation contract."
+    },
+    {
+      "id": "std.iter",
+      "group": "a1-values-protocols",
+      "state": "awaiting-owner-hot-path",
+      "reason": "Lazy iterator composition needs a reviewed consumption workload and allocation identity."
+    },
+    {
+      "id": "std.math",
+      "group": "a1-values-protocols",
+      "state": "captured-partial",
+      "operation": "std.math.fma",
+      "module": "math",
+      "workload": "representative",
+      "oracle": "portable-scalar",
+      "dimensions": ["throughput", "tail_latency"],
+      "pending_dimensions": [
+        "allocations_per_operation",
+        "allocated_bytes_per_operation",
+        "peak_memory",
+        "startup",
+        "code_size",
+        "compile_time"
+      ],
+      "promotion": "owner-baseline-review-pending"
+    },
+    {
+      "id": "std.messagepack",
+      "group": "a3-codecs",
+      "state": "captured-partial",
+      "operation": "std.messagepack.decode_encode",
+      "module": "messagepack",
+      "workload": "representative",
+      "oracle": "portable-scalar",
+      "dimensions": ["throughput", "tail_latency"],
+      "pending_dimensions": [
+        "allocations_per_operation",
+        "allocated_bytes_per_operation",
+        "peak_memory",
+        "startup",
+        "code_size",
+        "compile_time"
+      ],
+      "promotion": "owner-baseline-review-pending"
+    },
+    {
+      "id": "std.meta",
+      "group": "a0-foundation",
+      "state": "awaiting-owner-hot-path",
+      "reason": "Meta is build-time only; its compile-time workload and generated-code size identity are not yet reviewed."
+    },
+    {
+      "id": "std.path",
+      "group": "a2-host",
+      "state": "awaiting-owner-hot-path",
+      "reason": "Path operations need a portable/native byte corpus and normalization workload identity before capture."
+    },
+    {
+      "id": "std.protobuf",
+      "group": "a3-codecs",
+      "state": "captured-partial",
+      "operation": "std.protobuf.decode_message",
+      "module": "protobuf",
+      "workload": "representative",
+      "oracle": "portable-scalar",
+      "dimensions": ["throughput", "tail_latency"],
+      "pending_dimensions": [
+        "allocations_per_operation",
+        "allocated_bytes_per_operation",
+        "peak_memory",
+        "startup",
+        "code_size",
+        "compile_time"
+      ],
+      "promotion": "owner-baseline-review-pending"
+    },
+    {
+      "id": "std.process",
+      "group": "a2-host",
+      "state": "awaiting-owner-hot-path",
+      "reason": "Process and pipe benchmarks need deterministic child fixtures, stream routing and reaping identities before capture."
+    },
+    {
+      "id": "std.reflect",
+      "group": "a0-foundation",
+      "state": "awaiting-owner-hot-path",
+      "reason": "Reflection metadata needs a compile-time size/cost workload; runtime timing would violate its contract."
+    },
+    {
+      "id": "std.serialization",
+      "group": "a1-values-protocols",
+      "state": "awaiting-owner-hot-path",
+      "reason": "The shared event protocol needs typed and streaming operation identities before codec-specific capture can be generalized."
+    },
+    {
+      "id": "std.testing",
+      "group": "a4-testing",
+      "state": "captured-partial",
+      "operation": "std.testing.generate_diff",
+      "module": "testing",
+      "workload": "representative",
+      "oracle": "portable-scalar",
+      "dimensions": ["throughput", "tail_latency"],
+      "pending_dimensions": [
+        "allocations_per_operation",
+        "allocated_bytes_per_operation",
+        "peak_memory",
+        "startup",
+        "code_size",
+        "compile_time"
+      ],
+      "promotion": "owner-baseline-review-pending"
+    },
+    {
+      "id": "std.text",
+      "group": "a1-values-protocols",
+      "state": "awaiting-owner-hot-path",
+      "reason": "Text needs Unicode, invalid UTF-8 and slicing workload identities before capture."
+    },
+    {
+      "id": "std.time",
+      "group": "a0-foundation",
+      "state": "awaiting-owner-hot-path",
+      "reason": "Time measurements must distinguish real and virtual providers and therefore need a provider-scoped workload identity."
+    },
+    {
+      "id": "std.json",
+      "group": "a3-codecs",
+      "state": "captured-partial",
+      "operation": "std.json.parse_encode",
+      "module": "json",
+      "workload": "representative",
+      "oracle": "portable-scalar",
+      "dimensions": ["throughput", "tail_latency"],
+      "pending_dimensions": [
+        "allocations_per_operation",
+        "allocated_bytes_per_operation",
+        "peak_memory",
+        "startup",
+        "code_size",
+        "compile_time"
+      ],
+      "promotion": "owner-baseline-review-pending"
+    }
+  ],
+  "gates": [
+    {
+      "id": "design",
+      "requires": ["owner-contract", "workload-identity", "scalar-oracle"]
+    },
+    {
+      "id": "capture",
+      "requires": ["clean-workspace", "recorded-environment", "repeated-samples"]
+    },
+    {
+      "id": "compare",
+      "requires": ["exact-observations", "regression-budgets", "same-identity"]
+    },
+    {
+      "id": "promote",
+      "requires": ["reviewed-baseline", "no-unexplained-regression", "reproducible-report"]
+    }
+  ]
+}

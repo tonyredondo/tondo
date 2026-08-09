@@ -271,7 +271,7 @@ jq -e '
     and .promotion.gates[4].requires == [
         "generated-output-stability", "wire-compatibility", "finite-limits", "STD-PERF-001-report"
     ]
-    and .promotion.next_coordination == "STD-PERF-CONF-001"
+    and .promotion.next_coordination == "STD-CONF-001"
 ' "$contract" >/dev/null
 
 source="$root/crates/tondo-stdlib/src/protobuf_api.rs"
