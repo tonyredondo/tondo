@@ -124,11 +124,14 @@ pub enum JsonErrorKind {
 pub type JsonError = { kind: JsonErrorKind, location: JsonLocation, path: JsonPath }
 
 pub fn parse(input: Bytes, options: JsonDecodeOptions): Value ! JsonError
+pub fn parseView(input: Bytes, options: JsonDecodeOptions): ValueView ! JsonError
 pub fn decode[T: Decode[Json]](input: Bytes, options: JsonDecodeOptions): T ! JsonError
 pub fn encode[T: Encode[Json]](value: T, options: JsonEncodeOptions): Bytes ! JsonError
 pub fn validate(input: Bytes, options: JsonDecodeOptions): Unit ! JsonError
 pub fn canonicalize(input: Bytes, options: JsonDecodeOptions): Bytes ! JsonError
 pub fn encodeCanonical(value: Value, limits: JsonLimits): Bytes ! JsonError
+pub fn raw(input: Bytes): Raw ! JsonError
+pub unsafe fn rawUnchecked(input: Bytes): Raw
 
 pub fn JsonNumber.parse(text: String): JsonNumber ! JsonError
 pub fn JsonNumber.text(self): String
@@ -165,9 +168,10 @@ payloads de `JsonEvent` son vistas hasta el siguiente `next`; `own` es la única
 materialización estable. `JsonError` siempre incluye `JsonPath` y posición sin
 copiar el documento en el diagnóstico.
 
-`ValueView`/`parseView` son la ruta prestada e inmutable. `Raw`/`RawView` son
-bytes JSON opacos; `raw(bytes)` valida y `rawUnchecked(bytes)` solo está
-disponible en `unsafe`. `@name`, `@json(...)`, `@ignore` y `@json(base64)` se
+`ValueView`/`parseView` son la ruta prestada e inmutable; la vista no puede
+escapar del `Bytes` de entrada y `clone()` es la única forma de obtener un
+`Value` poseído. `Raw`/`RawView` son bytes JSON opacos; `raw(bytes)` valida y
+`rawUnchecked(bytes)` solo está disponible en `unsafe`. `@name`, `@json(...)`, `@ignore` y `@json(base64)` se
 resuelven por derive en compile time; `@json(base64)` convierte `Bytes` tipado
 a texto Base64 RFC 4648, pero `parse` dinámico conserva el texto original.
 

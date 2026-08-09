@@ -2314,11 +2314,14 @@ La API fuente única de 0.1 es:
 
 ~~~tondo pseudocode
 pub fn parse(input: Bytes, options: JsonDecodeOptions): Value ! JsonError
+pub fn parseView(input: Bytes, options: JsonDecodeOptions): ValueView ! JsonError
 pub fn decode[T: Decode[Json]](input: Bytes, options: JsonDecodeOptions): T ! JsonError
 pub fn encode[T: Encode[Json]](value: T, options: JsonEncodeOptions): Bytes ! JsonError
 pub fn validate(input: Bytes, options: JsonDecodeOptions): Unit ! JsonError
 pub fn canonicalize(input: Bytes, options: JsonDecodeOptions): Bytes ! JsonError
 pub fn encodeCanonical(value: Value, limits: JsonLimits): Bytes ! JsonError
+pub fn raw(input: Bytes): Raw ! JsonError
+pub unsafe fn rawUnchecked(input: Bytes): Raw
 pub fn JsonReader.next(var self): JsonEvent? ! JsonError
 pub fn JsonReader.own(var self, event: JsonEvent): JsonEvent ! JsonError
 pub fn JsonWriter.write(var self, event: JsonEvent): Unit ! JsonError

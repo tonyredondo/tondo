@@ -74,7 +74,7 @@
     "policies": ["JsonDuplicatePolicy", "JsonUnknownFieldPolicy", "JsonNumberPolicy"],
     "error_type": "JsonError",
     "error_kind": "JsonErrorKind",
-    "functions": ["parse", "decode", "encode", "validate", "canonicalize", "encodeCanonical"],
+    "functions": ["parse", "parseView", "decode", "encode", "validate", "canonicalize", "encodeCanonical", "raw", "rawUnchecked"],
     "number_methods": ["parse", "text", "toInt", "toUInt", "toFloat32", "toFloat64"],
     "reader_methods": ["fromBytes", "fromReader", "next", "own", "finish"],
     "writer_methods": ["toWriter", "write", "finish"],

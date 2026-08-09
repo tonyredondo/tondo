@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 1.81
+**Versión del tracker:** 1.82
 
 **Última actualización:** 2026-08-09
 
@@ -48,8 +48,8 @@ contratos públicos: la ruta de frontend, HIR/MIR/bytecode, `Join` transferible,
 referencia. La compatibilidad léxica de `async` se conserva únicamente para
 fixtures históricos y no aparece en interfaces ni en la superficie normativa;
 la retirada mecánica de esas fixtures queda separada del contrato ejecutable.
-Después: (1) conectar los entry points de codecs al ABI estático de
-serialization ya publicado en la superficie Tondo; (2)
+Después: (1) cerrar las rutas typed/dynamic/streaming de los owners de codecs
+partiendo de sus APIs únicas; (2)
 completar las rutas públicas A1–A4 y ampliar
 la matriz normativa a los tres contratos G5 antes de volver a cerrar T0/G5/S1A.
 Los contratos
@@ -4258,12 +4258,16 @@ tests. Antes de volver a marcarlas `[x]` deben cumplirse todos estos puntos:
   `JsonValue`/`MessagePackValue` son solo bridges de compatibilidad hasta cerrar
   estas leaves.
 
-- [ ] **STD-JSON-API-001 — Fijar la API fuente exacta de JSON.** Publicar
+- [x] **STD-JSON-API-001 — Fijar la API fuente exacta de JSON.** Publicar
   `parse -> Value`, `decode[T: Decode[Json]]`, `encode[T: Encode[Json]]`,
   `ValueView`/`parseView`, `Raw`, `JsonReader`/`JsonWriter`, options y limits
   nominales, errores con path y estado terminal; no hay aliases ni defaults
-  ambientales. La implementación solo puede cerrar la tarea tras actualizar
-  el registro de firma por firma.
+  ambientales. Cerrado con el catálogo de firmas único en la sección 14.9, el
+  contrato machine-readable `testing/stdlib-json.json`, el check owner y la
+  matriz de auditoría por firma. `parseView` y `raw`/`rawUnchecked` quedan como
+  entry points explícitos (la última variante solo en `unsafe`); sus rutas HIR,
+  lowering y caso público se mantienen abiertas, de forma visible, para
+  `STD-JSON-IMPL-001` y no se sustituyen por aliases del bridge Rust.
 
 - [ ] **STD-MSGPACK-API-001 — Fijar la API fuente exacta de MessagePack.**
   Publicar `parse -> Value`, `decode[T: Decode[MessagePack]]`,
@@ -5655,6 +5659,19 @@ se declara iniciada antes de esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 1.82 — 2026-08-09
+
+- Se fija la API fuente única de `std.json` sobre el ABI común: `parse`,
+  `parseView`, `decode`, `encode`, `validate`, `canonicalize`,
+  `encodeCanonical`, `raw` y `unsafe rawUnchecked`, además de las superficies
+  nominales de número, reader, writer, options, límites y errores.
+- El contrato prohíbe aliases ambientales y conserva la frontera entre `Value`
+  poseído, `ValueView` prestado y `Raw` validado. La auditoría por firma se
+  regenera y mantiene explícitamente los gaps de HIR/lowering/caso público que
+  debe cerrar la implementación del owner.
+- La siguiente leaf es `STD-JSON-IMPL-001`; el cambio no adelanta la promoción
+  de JSON ni confunde el contrato de API con la evidencia de ejecución.
 
 ### 1.81 — 2026-08-09
 

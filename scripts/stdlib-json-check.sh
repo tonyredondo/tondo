@@ -71,7 +71,7 @@ jq -e '
     and .api.policies == ["JsonDuplicatePolicy", "JsonUnknownFieldPolicy", "JsonNumberPolicy"]
     and .api.error_type == "JsonError"
     and .api.error_kind == "JsonErrorKind"
-    and .api.functions == ["parse", "decode", "encode", "validate", "canonicalize", "encodeCanonical"]
+    and .api.functions == ["parse", "parseView", "decode", "encode", "validate", "canonicalize", "encodeCanonical", "raw", "rawUnchecked"]
     and .api.number_methods == ["parse", "text", "toInt", "toUInt", "toFloat32", "toFloat64"]
     and .api.reader_methods == ["fromBytes", "fromReader", "next", "own", "finish"]
     and .api.writer_methods == ["toWriter", "write", "finish"]
@@ -166,5 +166,11 @@ for symbol in 'pub struct JsonNumber' 'pub struct JsonReader' 'pub struct JsonWr
     grep -q "$symbol" "$source" || { echo "missing JSON implementation symbol: $symbol" >&2; exit 1; }
 done
 grep -q 'enum Frame' "$source" || { echo "JSON reader must use explicit frames" >&2; exit 1; }
+
+# The source-level names are deliberately checked independently from the Rust
+# compatibility spellings.  This keeps the public API single and explicit
+# while the implementation bridge can remain snake_case internally.
+grep -Fq 'pub type Value = JsonValue' "$source" || { echo "JSON Value alias is missing" >&2; exit 1; }
+grep -Fq 'pub type Raw = RawCodec<JsonCodec>' "$source" || { echo "JSON Raw type is missing" >&2; exit 1; }
 
 echo "std.json owner contract: OK"

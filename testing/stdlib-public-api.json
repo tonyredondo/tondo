@@ -547,11 +547,19 @@
           "crates/tondo-compiler/src/process_host.rs",
           "crates/tondo-stdlib/src/json_api.rs"
         ],
-        "reason": null
+        "reason": null,
+        "symbols": {
+          "std.json.validate": [
+            "std.json.validate"
+          ],
+          "std.json.canonicalize": [
+            "std.json.canonicalize"
+          ]
+        }
       },
-      "signature_count": 20,
-      "verified_count": 1,
-      "gap_count": 19,
+      "signature_count": 22,
+      "verified_count": 2,
+      "gap_count": 20,
       "owner_missing": [],
       "status": "open-gaps"
     },
@@ -4039,6 +4047,60 @@
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
       "line": 127,
+      "signature": "pub fn parseView(input: Bytes, options: JsonDecodeOptions): ValueView ! JsonError",
+      "symbol": "std.json.parseView",
+      "operation": "parseView",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/check.rs"
+          ],
+          "symbol": "parseView",
+          "symbols": [
+            "parseView"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/lower.rs"
+          ],
+          "symbol": "parseView",
+          "symbols": [
+            "parseView"
+          ]
+        },
+        "host_vm": {
+          "kind": "host",
+          "paths": [
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-stdlib/src/json_api.rs"
+          ],
+          "reason": null,
+          "symbol": "std.json.parseView",
+          "symbols": [
+            "parseView"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-codecs-001.to",
+          "kind": "runtime",
+          "call": "parseView",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [
+        "hir-symbol",
+        "host-symbol",
+        "lowering-symbol",
+        "public-case-call"
+      ],
+      "status": "gap"
+    },
+    {
+      "id": "std.json:128",
+      "owner": "std.json",
+      "contract": "docs/contracts/stdlib-json.md",
+      "line": 128,
       "signature": "pub fn decode[T: Decode[Json]](input: Bytes, options: JsonDecodeOptions): T ! JsonError",
       "symbol": "std.json.decode",
       "operation": "decode",
@@ -4086,10 +4148,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:128",
+      "id": "std.json:129",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 128,
+      "line": 129,
       "signature": "pub fn encode[T: Encode[Json]](value: T, options: JsonEncodeOptions): Bytes ! JsonError",
       "symbol": "std.json.encode",
       "operation": "encode",
@@ -4137,10 +4199,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:129",
+      "id": "std.json:130",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 129,
+      "line": 130,
       "signature": "pub fn validate(input: Bytes, options: JsonDecodeOptions): Unit ! JsonError",
       "symbol": "std.json.validate",
       "operation": "validate",
@@ -4151,7 +4213,7 @@
           ],
           "symbol": "validate",
           "symbols": [
-            "validate"
+            "JsonValidate"
           ]
         },
         "lowering": {
@@ -4160,7 +4222,7 @@
           ],
           "symbol": "validate",
           "symbols": [
-            "validate"
+            "JsonValidate"
           ]
         },
         "host_vm": {
@@ -4172,7 +4234,7 @@
           "reason": null,
           "symbol": "std.json.validate",
           "symbols": [
-            "validate"
+            "std.json.validate"
           ]
         },
         "public_case": {
@@ -4186,10 +4248,10 @@
       "status": "verified"
     },
     {
-      "id": "std.json:130",
+      "id": "std.json:131",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 130,
+      "line": 131,
       "signature": "pub fn canonicalize(input: Bytes, options: JsonDecodeOptions): Bytes ! JsonError",
       "symbol": "std.json.canonicalize",
       "operation": "canonicalize",
@@ -4200,7 +4262,7 @@
           ],
           "symbol": "canonicalize",
           "symbols": [
-            "canonicalize"
+            "JsonCanonicalize"
           ]
         },
         "lowering": {
@@ -4209,7 +4271,7 @@
           ],
           "symbol": "canonicalize",
           "symbols": [
-            "canonicalize"
+            "JsonCanonicalize"
           ]
         },
         "host_vm": {
@@ -4221,7 +4283,7 @@
           "reason": null,
           "symbol": "std.json.canonicalize",
           "symbols": [
-            "canonicalize"
+            "std.json.canonicalize"
           ]
         },
         "public_case": {
@@ -4231,16 +4293,14 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
-      "id": "std.json:131",
+      "id": "std.json:132",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 131,
+      "line": 132,
       "signature": "pub fn encodeCanonical(value: Value, limits: JsonLimits): Bytes ! JsonError",
       "symbol": "std.json.encodeCanonical",
       "operation": "encodeCanonical",
@@ -4295,6 +4355,57 @@
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
       "line": 133,
+      "signature": "pub fn raw(input: Bytes): Raw ! JsonError",
+      "symbol": "std.json.raw",
+      "operation": "raw",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/check.rs"
+          ],
+          "symbol": "raw",
+          "symbols": [
+            "raw"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/lower.rs"
+          ],
+          "symbol": "raw",
+          "symbols": [
+            "raw"
+          ]
+        },
+        "host_vm": {
+          "kind": "host",
+          "paths": [
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-stdlib/src/json_api.rs"
+          ],
+          "reason": null,
+          "symbol": "std.json.raw",
+          "symbols": [
+            "raw"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-codecs-001.to",
+          "kind": "runtime",
+          "call": "raw",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [
+        "public-case-call"
+      ],
+      "status": "gap"
+    },
+    {
+      "id": "std.json:136",
+      "owner": "std.json",
+      "contract": "docs/contracts/stdlib-json.md",
+      "line": 136,
       "signature": "pub fn JsonNumber.parse(text: String): JsonNumber ! JsonError",
       "symbol": "std.json.JsonNumber.parse",
       "operation": "parse",
@@ -4342,10 +4453,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:134",
+      "id": "std.json:137",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 134,
+      "line": 137,
       "signature": "pub fn JsonNumber.text(self): String",
       "symbol": "std.json.JsonNumber.text",
       "operation": "text",
@@ -4393,10 +4504,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:135",
+      "id": "std.json:138",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 135,
+      "line": 138,
       "signature": "pub fn JsonNumber.toInt(self): Int64 ! JsonError",
       "symbol": "std.json.JsonNumber.toInt",
       "operation": "toInt",
@@ -4447,10 +4558,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:136",
+      "id": "std.json:139",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 136,
+      "line": 139,
       "signature": "pub fn JsonNumber.toUInt(self): UInt64 ! JsonError",
       "symbol": "std.json.JsonNumber.toUInt",
       "operation": "toUInt",
@@ -4501,10 +4612,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:137",
+      "id": "std.json:140",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 137,
+      "line": 140,
       "signature": "pub fn JsonNumber.toFloat32(self): Float32 ! JsonError",
       "symbol": "std.json.JsonNumber.toFloat32",
       "operation": "toFloat32",
@@ -4555,10 +4666,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:138",
+      "id": "std.json:141",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 138,
+      "line": 141,
       "signature": "pub fn JsonNumber.toFloat64(self): Float64 ! JsonError",
       "symbol": "std.json.JsonNumber.toFloat64",
       "operation": "toFloat64",
@@ -4609,10 +4720,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:140",
+      "id": "std.json:143",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 140,
+      "line": 143,
       "signature": "pub fn JsonReader.fromBytes(input: Bytes, options: JsonDecodeOptions): JsonReader ! JsonError",
       "symbol": "std.json.JsonReader.fromBytes",
       "operation": "fromBytes",
@@ -4661,10 +4772,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:141",
+      "id": "std.json:144",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 141,
+      "line": 144,
       "signature": "pub fn JsonReader.fromReader(var input: Reader, options: JsonDecodeOptions): JsonReader ! JsonError",
       "symbol": "std.json.JsonReader.fromReader",
       "operation": "fromReader",
@@ -4715,10 +4826,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:142",
+      "id": "std.json:145",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 142,
+      "line": 145,
       "signature": "pub fn JsonReader.next(var self): JsonEvent? ! JsonError",
       "symbol": "std.json.JsonReader.next",
       "operation": "next",
@@ -4766,10 +4877,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:143",
+      "id": "std.json:146",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 143,
+      "line": 146,
       "signature": "pub fn JsonReader.own(var self, event: JsonEvent): JsonEvent ! JsonError",
       "symbol": "std.json.JsonReader.own",
       "operation": "own",
@@ -4817,10 +4928,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:144",
+      "id": "std.json:147",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 144,
+      "line": 147,
       "signature": "pub fn JsonReader.finish(var self): Unit ! JsonError",
       "symbol": "std.json.JsonReader.finish",
       "operation": "finish",
@@ -4868,10 +4979,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:146",
+      "id": "std.json:149",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 146,
+      "line": 149,
       "signature": "pub fn JsonWriter.toWriter(var output: Writer, options: JsonEncodeOptions): JsonWriter ! JsonError",
       "symbol": "std.json.JsonWriter.toWriter",
       "operation": "toWriter",
@@ -4922,10 +5033,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:147",
+      "id": "std.json:150",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 147,
+      "line": 150,
       "signature": "pub fn JsonWriter.write(var self, event: JsonEvent): Unit ! JsonError",
       "symbol": "std.json.JsonWriter.write",
       "operation": "write",
@@ -4973,10 +5084,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:148",
+      "id": "std.json:151",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 148,
+      "line": 151,
       "signature": "pub fn JsonWriter.finish(var self): Unit ! JsonError",
       "symbol": "std.json.JsonWriter.finish",
       "operation": "finish",
@@ -10764,10 +10875,10 @@
   ],
   "summary": {
     "owners": 20,
-    "signatures": 203,
-    "verified": 135,
-    "signature_gaps": 68,
+    "signatures": 205,
+    "verified": 136,
+    "signature_gaps": 69,
     "owner_gaps": 3,
-    "gaps": 71
+    "gaps": 72
   }
 }
