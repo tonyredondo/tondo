@@ -1141,6 +1141,7 @@ impl HirTraitIdentity {
                         | "Call"
                         | "CallMut"
                         | "CallOnce"
+                        | "Shrink"
                 )
         )
     }
@@ -1218,6 +1219,11 @@ pub enum HirPreludeTraitMethod {
     Display,
     IteratorNext,
     AsyncIteratorNext,
+    /// Compiler-sealed deterministic shrinking for the built-in shrinkable
+    /// value shapes.  It is a prelude protocol rather than a user-defined
+    /// dispatch point so the public testing helper can remain host-free and
+    /// bounded for every accepted type.
+    ShrinkCandidates,
     Serialization(HirSerializationTraitMethod),
 }
 
@@ -1227,6 +1233,7 @@ impl HirPreludeTraitMethod {
             Self::Display => "Display",
             Self::IteratorNext => "Iterator",
             Self::AsyncIteratorNext => "AsyncIterator",
+            Self::ShrinkCandidates => "Shrink",
             Self::Serialization(method) => match method {
                 HirSerializationTraitMethod::Encode => "Encode",
                 HirSerializationTraitMethod::Decode => "Decode",
@@ -1258,6 +1265,7 @@ impl HirPreludeTraitMethod {
         match self {
             Self::Display => "display",
             Self::IteratorNext | Self::AsyncIteratorNext => "next",
+            Self::ShrinkCandidates => "candidates",
             Self::Serialization(method) => match method {
                 HirSerializationTraitMethod::Encode => "encode",
                 HirSerializationTraitMethod::Decode => "decode",
@@ -1289,6 +1297,7 @@ impl HirPreludeTraitMethod {
         match self {
             Self::Display => 1,
             Self::IteratorNext | Self::AsyncIteratorNext => 2,
+            Self::ShrinkCandidates => 1,
             Self::Serialization(
                 HirSerializationTraitMethod::Encode | HirSerializationTraitMethod::Decode,
             ) => 4,
@@ -1302,6 +1311,7 @@ impl HirPreludeTraitMethod {
             (Self::IteratorNext | Self::AsyncIteratorNext, [element, target]) => {
                 (vec![*element], *target)
             }
+            (Self::ShrinkCandidates, [target]) => (Vec::new(), *target),
             (
                 Self::Serialization(
                     HirSerializationTraitMethod::Encode | HirSerializationTraitMethod::Decode,
@@ -1312,6 +1322,7 @@ impl HirPreludeTraitMethod {
             (Self::Display, _) | (Self::IteratorNext, _) | (Self::AsyncIteratorNext, _) => {
                 return None;
             }
+            (Self::ShrinkCandidates, _) => return None,
             (Self::Serialization(_), _) => return None,
         };
         Some(TraitQuery::from_parts(
@@ -1336,6 +1347,27 @@ impl HirPreludeTraitMethod {
             ),
             (Self::IteratorNext | Self::AsyncIteratorNext, [element, target]) => {
                 (ParameterMode::Mut, *target, interner.option(*element)?)
+            }
+            (Self::ShrinkCandidates, [target]) => {
+                let array = interner.intrinsic(IntrinsicType::Array, vec![*target])?;
+                let generation_error =
+                    interner.intrinsic(IntrinsicType::GenerationError, Vec::new())?;
+                let outcome = interner.result(array, generation_error)?;
+                return interner
+                    .function(FunctionType::new(
+                        false,
+                        false,
+                        vec![
+                            FunctionParameter::new(ParameterMode::Ref, *target),
+                            FunctionParameter::new(
+                                ParameterMode::Value,
+                                interner.scalar(ScalarType::Int),
+                            ),
+                        ],
+                        None,
+                        outcome,
+                    ))
+                    .map(Some);
             }
             (
                 Self::Serialization(
@@ -1448,7 +1480,10 @@ impl HirPreludeTraitMethod {
                     .function(FunctionType::new(false, false, parameters, None, outcome))
                     .map(Some);
             }
-            (Self::Display, _) | (Self::IteratorNext, _) | (Self::AsyncIteratorNext, _) => {
+            (Self::Display, _)
+            | (Self::IteratorNext, _)
+            | (Self::AsyncIteratorNext, _)
+            | (Self::ShrinkCandidates, _) => {
                 return Ok(None);
             }
             (Self::Serialization(_), _) => return Ok(None),
@@ -1471,12 +1506,45 @@ impl HirPreludeTraitMethod {
     ) -> Result<bool, TypeError> {
         Ok(match (self, arguments) {
             (Self::Display, [target]) => intrinsic_display_type(interner, *target)?,
+            (Self::ShrinkCandidates, [target]) => intrinsic_shrink_type(interner, *target)?,
             (Self::Display, _)
             | (Self::IteratorNext, _)
             | (Self::AsyncIteratorNext, _)
+            | (Self::ShrinkCandidates, _)
             | (Self::Serialization(_), _) => false,
         })
     }
+}
+
+fn intrinsic_shrink_type(interner: &TypeInterner, root: TypeId) -> Result<bool, TypeError> {
+    let mut pending = vec![root];
+    let mut visited = BTreeSet::new();
+    while let Some(ty) = pending.pop() {
+        if !visited.insert(ty) {
+            continue;
+        }
+        match interner.kind(ty)? {
+            TypeKind::Scalar(
+                ScalarType::Int
+                | ScalarType::Int8
+                | ScalarType::Int16
+                | ScalarType::Int32
+                | ScalarType::UInt8
+                | ScalarType::UInt16
+                | ScalarType::UInt32
+                | ScalarType::UInt64
+                | ScalarType::Float
+                | ScalarType::Float32
+                | ScalarType::String,
+            ) => {}
+            TypeKind::Intrinsic {
+                constructor: IntrinsicType::Array,
+                arguments,
+            } if arguments.len() == 1 => pending.push(arguments[0]),
+            _ => return Ok(false),
+        }
+    }
+    Ok(true)
 }
 
 fn intrinsic_display_type(interner: &TypeInterner, root: TypeId) -> Result<bool, TypeError> {
@@ -2519,6 +2587,7 @@ pub enum HirBootstrapHostFunction {
     TestingGeneratorNextBytes,
     TestingGeneratorNextText,
     TestingGeneratorDrawCount,
+    TestingShrink,
     TestingAssertSome,
     TestingAssertNone,
     TestingAssertOk,
@@ -2751,6 +2820,7 @@ impl HirBootstrapHostFunction {
             Self::TestingGeneratorNextBytes => "std.testing.Generator.nextBytes",
             Self::TestingGeneratorNextText => "std.testing.Generator.nextText",
             Self::TestingGeneratorDrawCount => "std.testing.Generator.drawCount",
+            Self::TestingShrink => "std.testing.shrink",
             Self::TestingAssertSome => "std.testing.assertSome",
             Self::TestingAssertNone => "std.testing.assertNone",
             Self::TestingAssertOk => "std.testing.assertOk",

@@ -2428,22 +2428,21 @@
         "requirement:std.testing:text-diff"
       ],
       "signature_rows": [
-        "signature:std.testing:68",
         "signature:std.testing:69",
         "signature:std.testing:70",
         "signature:std.testing:71",
         "signature:std.testing:72",
-        "signature:std.testing:147",
+        "signature:std.testing:73",
         "signature:std.testing:148",
         "signature:std.testing:149",
-        "signature:std.testing:186",
+        "signature:std.testing:150",
         "signature:std.testing:187",
         "signature:std.testing:188",
         "signature:std.testing:189",
-        "signature:std.testing:237",
+        "signature:std.testing:190",
         "signature:std.testing:238",
         "signature:std.testing:239",
-        "signature:std.testing:281",
+        "signature:std.testing:240",
         "signature:std.testing:282",
         "signature:std.testing:283",
         "signature:std.testing:284",
@@ -2452,7 +2451,8 @@
         "signature:std.testing:287",
         "signature:std.testing:288",
         "signature:std.testing:289",
-        "signature:std.testing:295"
+        "signature:std.testing:290",
+        "signature:std.testing:296"
       ],
       "source_set": "stdlib-testing",
       "stage_order": [
@@ -10258,36 +10258,12 @@
     },
     {
       "dimensions_ref": "owner:std.testing",
-      "id": "signature:std.testing:68",
-      "kind": "signature",
-      "layer": "A4",
-      "owner": "std.testing",
-      "scope": "STD-0.1A",
-      "signature": "pub fn assertEqual[T: Equatable + Display](expected: ref T, actual: ref T)",
-      "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.testing:68",
-        "contract": "docs/contracts/stdlib-testing.md",
-        "line": 68
-      },
-      "stage_refs": {
-        "CONF": "owner:std.testing:CONF",
-        "DOC": "owner:std.testing:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.testing:68:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.testing:68:MODEL/TEST/FUZZ",
-        "PERF": "owner:std.testing:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:68:SPEC"
-      },
-      "status": "open-gaps",
-      "symbol": "std.testing.assertEqual"
-    },
-    {
-      "dimensions_ref": "owner:std.testing",
       "id": "signature:std.testing:69",
       "kind": "signature",
       "layer": "A4",
       "owner": "std.testing",
       "scope": "STD-0.1A",
-      "signature": "pub fn assertNotEqual[T: Equatable + Display](expected: ref T, actual: ref T)",
+      "signature": "pub fn assertEqual[T: Equatable + Display](expected: ref T, actual: ref T)",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.testing:69",
         "contract": "docs/contracts/stdlib-testing.md",
@@ -10302,7 +10278,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:69:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.testing.assertNotEqual"
+      "symbol": "std.testing.assertEqual"
     },
     {
       "dimensions_ref": "owner:std.testing",
@@ -10311,7 +10287,7 @@
       "layer": "A4",
       "owner": "std.testing",
       "scope": "STD-0.1A",
-      "signature": "pub fn assertTextEqual(expected: String, actual: String)",
+      "signature": "pub fn assertNotEqual[T: Equatable + Display](expected: ref T, actual: ref T)",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.testing:70",
         "contract": "docs/contracts/stdlib-testing.md",
@@ -10326,7 +10302,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:70:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.testing.assertTextEqual"
+      "symbol": "std.testing.assertNotEqual"
     },
     {
       "dimensions_ref": "owner:std.testing",
@@ -10335,7 +10311,7 @@
       "layer": "A4",
       "owner": "std.testing",
       "scope": "STD-0.1A",
-      "signature": "pub fn diffText(expected: String, actual: String): TextDiff",
+      "signature": "pub fn assertTextEqual(expected: String, actual: String)",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.testing:71",
         "contract": "docs/contracts/stdlib-testing.md",
@@ -10350,7 +10326,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:71:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.testing.diffText"
+      "symbol": "std.testing.assertTextEqual"
     },
     {
       "dimensions_ref": "owner:std.testing",
@@ -10359,7 +10335,7 @@
       "layer": "A4",
       "owner": "std.testing",
       "scope": "STD-0.1A",
-      "signature": "pub fn TextDiff.render(ref self): String",
+      "signature": "pub fn diffText(expected: String, actual: String): TextDiff",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.testing:72",
         "contract": "docs/contracts/stdlib-testing.md",
@@ -10374,31 +10350,31 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:72:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.testing.TextDiff.render"
+      "symbol": "std.testing.diffText"
     },
     {
       "dimensions_ref": "owner:std.testing",
-      "id": "signature:std.testing:147",
+      "id": "signature:std.testing:73",
       "kind": "signature",
       "layer": "A4",
       "owner": "std.testing",
       "scope": "STD-0.1A",
-      "signature": "pub fn FloatTolerance.from(absolute: Float, relative: Float): FloatTolerance ! FloatToleranceError",
+      "signature": "pub fn TextDiff.render(ref self): String",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.testing:147",
+        "audit": "testing/stdlib-public-api.json#rows/std.testing:73",
         "contract": "docs/contracts/stdlib-testing.md",
-        "line": 147
+        "line": 73
       },
       "stage_refs": {
         "CONF": "owner:std.testing:CONF",
         "DOC": "owner:std.testing:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.testing:147:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.testing:147:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.testing:73:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.testing:73:MODEL/TEST/FUZZ",
         "PERF": "owner:std.testing:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:147:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:73:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.testing.FloatTolerance.from"
+      "symbol": "std.testing.TextDiff.render"
     },
     {
       "dimensions_ref": "owner:std.testing",
@@ -10407,7 +10383,7 @@
       "layer": "A4",
       "owner": "std.testing",
       "scope": "STD-0.1A",
-      "signature": "pub fn assertFloatNear(expected: Float, actual: Float, tolerance: ref FloatTolerance)",
+      "signature": "pub fn FloatTolerance.from(absolute: Float, relative: Float): FloatTolerance ! FloatToleranceError",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.testing:148",
         "contract": "docs/contracts/stdlib-testing.md",
@@ -10422,7 +10398,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:148:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.testing.assertFloatNear"
+      "symbol": "std.testing.FloatTolerance.from"
     },
     {
       "dimensions_ref": "owner:std.testing",
@@ -10431,7 +10407,7 @@
       "layer": "A4",
       "owner": "std.testing",
       "scope": "STD-0.1A",
-      "signature": "pub fn assertFloat32Near(expected: Float32, actual: Float32, tolerance: ref FloatTolerance)",
+      "signature": "pub fn assertFloatNear(expected: Float, actual: Float, tolerance: ref FloatTolerance)",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.testing:149",
         "contract": "docs/contracts/stdlib-testing.md",
@@ -10446,31 +10422,31 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:149:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.testing.assertFloat32Near"
+      "symbol": "std.testing.assertFloatNear"
     },
     {
       "dimensions_ref": "owner:std.testing",
-      "id": "signature:std.testing:186",
+      "id": "signature:std.testing:150",
       "kind": "signature",
       "layer": "A4",
       "owner": "std.testing",
       "scope": "STD-0.1A",
-      "signature": "pub fn assertSome[T](value: T?): T",
+      "signature": "pub fn assertFloat32Near(expected: Float32, actual: Float32, tolerance: ref FloatTolerance)",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.testing:186",
+        "audit": "testing/stdlib-public-api.json#rows/std.testing:150",
         "contract": "docs/contracts/stdlib-testing.md",
-        "line": 186
+        "line": 150
       },
       "stage_refs": {
         "CONF": "owner:std.testing:CONF",
         "DOC": "owner:std.testing:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.testing:186:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.testing:186:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.testing:150:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.testing:150:MODEL/TEST/FUZZ",
         "PERF": "owner:std.testing:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:186:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:150:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.testing.assertSome"
+      "symbol": "std.testing.assertFloat32Near"
     },
     {
       "dimensions_ref": "owner:std.testing",
@@ -10479,7 +10455,7 @@
       "layer": "A4",
       "owner": "std.testing",
       "scope": "STD-0.1A",
-      "signature": "pub fn assertNone[T](value: T?): Unit",
+      "signature": "pub fn assertSome[T](value: T?): T",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.testing:187",
         "contract": "docs/contracts/stdlib-testing.md",
@@ -10494,7 +10470,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:187:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.testing.assertNone"
+      "symbol": "std.testing.assertSome"
     },
     {
       "dimensions_ref": "owner:std.testing",
@@ -10503,7 +10479,7 @@
       "layer": "A4",
       "owner": "std.testing",
       "scope": "STD-0.1A",
-      "signature": "pub fn assertOk[T, E: Display](value: T ! E): T",
+      "signature": "pub fn assertNone[T](value: T?): Unit",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.testing:188",
         "contract": "docs/contracts/stdlib-testing.md",
@@ -10518,7 +10494,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:188:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.testing.assertOk"
+      "symbol": "std.testing.assertNone"
     },
     {
       "dimensions_ref": "owner:std.testing",
@@ -10527,7 +10503,7 @@
       "layer": "A4",
       "owner": "std.testing",
       "scope": "STD-0.1A",
-      "signature": "pub fn assertErr[T: Display, E](value: T ! E): E",
+      "signature": "pub fn assertOk[T, E: Display](value: T ! E): T",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.testing:189",
         "contract": "docs/contracts/stdlib-testing.md",
@@ -10542,31 +10518,31 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:189:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.testing.assertErr"
+      "symbol": "std.testing.assertOk"
     },
     {
       "dimensions_ref": "owner:std.testing",
-      "id": "signature:std.testing:237",
+      "id": "signature:std.testing:190",
       "kind": "signature",
       "layer": "A4",
       "owner": "std.testing",
       "scope": "STD-0.1A",
-      "signature": "pub fn tempDirectory(prefix: String): TempDirectory ! TempError",
+      "signature": "pub fn assertErr[T: Display, E](value: T ! E): E",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.testing:237",
+        "audit": "testing/stdlib-public-api.json#rows/std.testing:190",
         "contract": "docs/contracts/stdlib-testing.md",
-        "line": 237
+        "line": 190
       },
       "stage_refs": {
         "CONF": "owner:std.testing:CONF",
         "DOC": "owner:std.testing:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.testing:237:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.testing:237:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.testing:190:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.testing:190:MODEL/TEST/FUZZ",
         "PERF": "owner:std.testing:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:237:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:190:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.testing.tempDirectory"
+      "symbol": "std.testing.assertErr"
     },
     {
       "dimensions_ref": "owner:std.testing",
@@ -10575,7 +10551,7 @@
       "layer": "A4",
       "owner": "std.testing",
       "scope": "STD-0.1A",
-      "signature": "pub fn TempDirectory.path(ref self): Path",
+      "signature": "pub fn tempDirectory(prefix: String): TempDirectory ! TempError",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.testing:238",
         "contract": "docs/contracts/stdlib-testing.md",
@@ -10590,7 +10566,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:238:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.testing.TempDirectory.path"
+      "symbol": "std.testing.tempDirectory"
     },
     {
       "dimensions_ref": "owner:std.testing",
@@ -10599,7 +10575,7 @@
       "layer": "A4",
       "owner": "std.testing",
       "scope": "STD-0.1A",
-      "signature": "pub fn TempDirectory.cleanup(self)",
+      "signature": "pub fn TempDirectory.path(ref self): Path",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.testing:239",
         "contract": "docs/contracts/stdlib-testing.md",
@@ -10614,31 +10590,31 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:239:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.testing.TempDirectory.cleanup"
+      "symbol": "std.testing.TempDirectory.path"
     },
     {
       "dimensions_ref": "owner:std.testing",
-      "id": "signature:std.testing:281",
+      "id": "signature:std.testing:240",
       "kind": "signature",
       "layer": "A4",
       "owner": "std.testing",
       "scope": "STD-0.1A",
-      "signature": "pub fn Generator.new(seed: UInt64): Generator",
+      "signature": "pub fn TempDirectory.cleanup(self)",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.testing:281",
+        "audit": "testing/stdlib-public-api.json#rows/std.testing:240",
         "contract": "docs/contracts/stdlib-testing.md",
-        "line": 281
+        "line": 240
       },
       "stage_refs": {
         "CONF": "owner:std.testing:CONF",
         "DOC": "owner:std.testing:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.testing:281:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.testing:281:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.testing:240:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.testing:240:MODEL/TEST/FUZZ",
         "PERF": "owner:std.testing:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:281:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:240:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.testing.Generator.new"
+      "symbol": "std.testing.TempDirectory.cleanup"
     },
     {
       "dimensions_ref": "owner:std.testing",
@@ -10647,7 +10623,7 @@
       "layer": "A4",
       "owner": "std.testing",
       "scope": "STD-0.1A",
-      "signature": "pub fn Generator.forCase(seed: UInt64, caseIndex: UInt64): Generator",
+      "signature": "pub fn Generator.new(seed: UInt64): Generator",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.testing:282",
         "contract": "docs/contracts/stdlib-testing.md",
@@ -10662,7 +10638,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:282:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.testing.Generator.forCase"
+      "symbol": "std.testing.Generator.new"
     },
     {
       "dimensions_ref": "owner:std.testing",
@@ -10671,7 +10647,7 @@
       "layer": "A4",
       "owner": "std.testing",
       "scope": "STD-0.1A",
-      "signature": "pub fn Generator.id(ref self): GenerationId",
+      "signature": "pub fn Generator.forCase(seed: UInt64, caseIndex: UInt64): Generator",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.testing:283",
         "contract": "docs/contracts/stdlib-testing.md",
@@ -10686,7 +10662,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:283:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.testing.Generator.id"
+      "symbol": "std.testing.Generator.forCase"
     },
     {
       "dimensions_ref": "owner:std.testing",
@@ -10695,7 +10671,7 @@
       "layer": "A4",
       "owner": "std.testing",
       "scope": "STD-0.1A",
-      "signature": "pub fn Generator.drawCount(ref self): UInt64",
+      "signature": "pub fn Generator.id(ref self): GenerationId",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.testing:284",
         "contract": "docs/contracts/stdlib-testing.md",
@@ -10710,7 +10686,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:284:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.testing.Generator.drawCount"
+      "symbol": "std.testing.Generator.id"
     },
     {
       "dimensions_ref": "owner:std.testing",
@@ -10719,7 +10695,7 @@
       "layer": "A4",
       "owner": "std.testing",
       "scope": "STD-0.1A",
-      "signature": "pub fn Generator.nextUInt(mut self): UInt64 ! GenerationError",
+      "signature": "pub fn Generator.drawCount(ref self): UInt64",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.testing:285",
         "contract": "docs/contracts/stdlib-testing.md",
@@ -10734,7 +10710,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:285:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.testing.Generator.nextUInt"
+      "symbol": "std.testing.Generator.drawCount"
     },
     {
       "dimensions_ref": "owner:std.testing",
@@ -10743,7 +10719,7 @@
       "layer": "A4",
       "owner": "std.testing",
       "scope": "STD-0.1A",
-      "signature": "pub fn Generator.nextBool(mut self): Bool ! GenerationError",
+      "signature": "pub fn Generator.nextUInt(mut self): UInt64 ! GenerationError",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.testing:286",
         "contract": "docs/contracts/stdlib-testing.md",
@@ -10758,7 +10734,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:286:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.testing.Generator.nextBool"
+      "symbol": "std.testing.Generator.nextUInt"
     },
     {
       "dimensions_ref": "owner:std.testing",
@@ -10767,7 +10743,7 @@
       "layer": "A4",
       "owner": "std.testing",
       "scope": "STD-0.1A",
-      "signature": "pub fn Generator.nextInt(mut self, minimum: Int, maximum: Int): Int ! GenerationError",
+      "signature": "pub fn Generator.nextBool(mut self): Bool ! GenerationError",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.testing:287",
         "contract": "docs/contracts/stdlib-testing.md",
@@ -10782,7 +10758,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:287:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.testing.Generator.nextInt"
+      "symbol": "std.testing.Generator.nextBool"
     },
     {
       "dimensions_ref": "owner:std.testing",
@@ -10791,7 +10767,7 @@
       "layer": "A4",
       "owner": "std.testing",
       "scope": "STD-0.1A",
-      "signature": "pub fn Generator.nextBytes(mut self, maximumLength: Int): Bytes ! GenerationError",
+      "signature": "pub fn Generator.nextInt(mut self, minimum: Int, maximum: Int): Int ! GenerationError",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.testing:288",
         "contract": "docs/contracts/stdlib-testing.md",
@@ -10806,7 +10782,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:288:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.testing.Generator.nextBytes"
+      "symbol": "std.testing.Generator.nextInt"
     },
     {
       "dimensions_ref": "owner:std.testing",
@@ -10815,7 +10791,7 @@
       "layer": "A4",
       "owner": "std.testing",
       "scope": "STD-0.1A",
-      "signature": "pub fn Generator.nextText(mut self, maximumBytes: Int): String ! GenerationError",
+      "signature": "pub fn Generator.nextBytes(mut self, maximumLength: Int): Bytes ! GenerationError",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.testing:289",
         "contract": "docs/contracts/stdlib-testing.md",
@@ -10830,28 +10806,52 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:289:SPEC"
       },
       "status": "open-gaps",
+      "symbol": "std.testing.Generator.nextBytes"
+    },
+    {
+      "dimensions_ref": "owner:std.testing",
+      "id": "signature:std.testing:290",
+      "kind": "signature",
+      "layer": "A4",
+      "owner": "std.testing",
+      "scope": "STD-0.1A",
+      "signature": "pub fn Generator.nextText(mut self, maximumBytes: Int): String ! GenerationError",
+      "source": {
+        "audit": "testing/stdlib-public-api.json#rows/std.testing:290",
+        "contract": "docs/contracts/stdlib-testing.md",
+        "line": 290
+      },
+      "stage_refs": {
+        "CONF": "owner:std.testing:CONF",
+        "DOC": "owner:std.testing:DOC",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.testing:290:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.testing:290:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.testing:PERF",
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:290:SPEC"
+      },
+      "status": "open-gaps",
       "symbol": "std.testing.Generator.nextText"
     },
     {
       "dimensions_ref": "owner:std.testing",
-      "id": "signature:std.testing:295",
+      "id": "signature:std.testing:296",
       "kind": "signature",
       "layer": "A4",
       "owner": "std.testing",
       "scope": "STD-0.1A",
       "signature": "pub fn shrink[T: Shrink + Equatable](value: ref T): Array[T] ! GenerationError",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.testing:295",
+        "audit": "testing/stdlib-public-api.json#rows/std.testing:296",
         "contract": "docs/contracts/stdlib-testing.md",
-        "line": 295
+        "line": 296
       },
       "stage_refs": {
         "CONF": "owner:std.testing:CONF",
         "DOC": "owner:std.testing:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.testing:295:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.testing:295:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.testing:296:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.testing:296:MODEL/TEST/FUZZ",
         "PERF": "owner:std.testing:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:295:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:296:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.testing.shrink"
@@ -11660,8 +11660,8 @@
         "verified": 347
       },
       "IMPL/HOST": {
-        "partial": 48,
-        "verified": 299
+        "partial": 28,
+        "verified": 319
       },
       "MODEL/TEST/FUZZ": {
         "partial": 346,

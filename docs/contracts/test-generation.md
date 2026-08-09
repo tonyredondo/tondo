@@ -38,10 +38,10 @@ decimal fijo únicamente para la frontera interna; no se publican como
 
 `run_with_shrink` busca el primer caso fallido en orden de generación y llama al
 `std.testing::shrink` público en cada nivel. Consume candidatos en el orden que
-entrega `Shrink`, conserva la primera mejora que sigue fallando y repite hasta
-que no haya mejora o se alcance `shrink_depth`. Cada candidato vuelve a pasar
-por `RuntimeRunner`, de modo que no comparte estado, recursos, snapshots,
-tags, logs ni memoria con el caso anterior.
+entrega el protocolo `Shrink` sellado, conserva la primera mejora que sigue
+fallando y repite hasta que no haya mejora o se alcance `shrink_depth`. Cada
+candidato vuelve a pasar por `RuntimeRunner`, de modo que no comparte estado,
+recursos, snapshots, tags, logs ni memoria con el caso anterior.
 
 La operación no captura pánicos dentro del helper `shrink`; si la propiedad
 pánica al ejecutarse, el runtime la reporta como fallo y el candidato puede
@@ -54,9 +54,9 @@ adjuntar o presentar la evidencia.
 
 `GenerationLimits` valida antes de reservar o ejecutar: máximo de 100.000
 casos, 4.096 candidatos por nivel y 64 niveles. `std.testing::shrink` aplica
-el mismo máximo de candidatos y rechaza implementaciones de `Shrink` que
-devuelvan más elementos que el límite solicitado. Un límite inválido no
-materializa un prefijo parcial.
+el mismo máximo de candidatos y solo acepta las formas intrínsecas del
+protocolo sellado; un tipo de usuario no puede instalar una implementación
+alternativa. Un límite inválido no materializa un prefijo parcial.
 
 La campaña no cambia `tondo-test-report-0.1/7`, JUnit, snapshots, tags,
 retries ni repeat. Es una API de tooling sobre el runner; un proyecto Tondo

@@ -10684,6 +10684,17 @@ impl<'a> ExpressionChecker<'a> {
             return Ok(TraitProofStatus::Satisfied);
         }
 
+        if matches!(
+            query.constructor(),
+            HirTraitConstructor::Prelude(name) if name.as_str() == "Shrink"
+        ) && query.arguments().is_empty()
+            && HirPreludeTraitMethod::ShrinkCandidates
+                .has_intrinsic_implementation(&self.program.interner, &[query.target()])?
+        {
+            memo.insert(query.clone(), TraitProofStatus::Satisfied);
+            return Ok(TraitProofStatus::Satisfied);
+        }
+
         if let Some(status) = self.concrete_call_trait_status(query)? {
             memo.insert(query.clone(), status);
             return Ok(status);
@@ -10700,8 +10711,8 @@ impl<'a> ExpressionChecker<'a> {
                     memo.insert(query.clone(), TraitProofStatus::Deferred);
                     return Ok(TraitProofStatus::Deferred);
                 }
-                "Display" | "Iterator" | "AsyncIterator" | "Encode" | "Decode" | "Encoder"
-                | "Decoder" => {}
+                "Display" | "Iterator" | "AsyncIterator" | "Shrink" | "Encode" | "Decode"
+                | "Encoder" | "Decoder" => {}
                 _ => {
                     memo.insert(query.clone(), TraitProofStatus::Deferred);
                     return Ok(TraitProofStatus::Deferred);
@@ -14013,6 +14024,7 @@ impl<'a> ExpressionChecker<'a> {
                 ("testing", Some("assertNone")) => HirBootstrapHostFunction::TestingAssertNone,
                 ("testing", Some("assertOk")) => HirBootstrapHostFunction::TestingAssertOk,
                 ("testing", Some("assertErr")) => HirBootstrapHostFunction::TestingAssertErr,
+                ("testing", Some("shrink")) => HirBootstrapHostFunction::TestingShrink,
                 ("testing", Some("tags")) => HirBootstrapHostFunction::TestingTags,
                 ("testing", Some("failNow")) => HirBootstrapHostFunction::TestingFailNow,
                 ("testing", Some("skip")) => HirBootstrapHostFunction::TestingSkip,

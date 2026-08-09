@@ -1426,6 +1426,7 @@ fn is_prelude_name(namespace: Namespace, name: &Name) -> bool {
                 | "CallMut"
                 | "CallOnce"
                 | "Display"
+                | "Shrink"
                 | "NumericConversionError"
         ),
         Namespace::Value => matches!(name.as_str(), "panic" | "assert"),

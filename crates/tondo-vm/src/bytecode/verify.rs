@@ -2212,6 +2212,7 @@ impl Verifier<'_> {
                 && !callable.name.starts_with("std.collections.")
                 && !callable.name.starts_with("std.async.Waiter.wait")
                 && !callable.name.starts_with("std.async.Completer.")
+                && !callable.name.starts_with("std.testing.shrink")
             {
                 return Err(BytecodeVerificationError::new(
                     &context,

@@ -134,6 +134,9 @@ jq -e '
     and .generation.text_encoding == "valid-unicode-scalars-canonical-utf8"
     and .generation.shrink_trait == "Shrink"
     and .generation.shrink_function == "shrink(ref value)"
+    and .generation.shrink_protocol == "compiler-sealed-intrinsic"
+    and .generation.custom_shrink_implementations == false
+    and .generation.custom_shrink_rejection == "E1114-closed-protocol"
     and .generation.shrink_builtins == ["integers", "floats", "String", "Array[T]"]
     and .generation.shrink_order == "lowest-complexity-first"
     and .generation.shrink_duplicates == "remove-preserve-first"

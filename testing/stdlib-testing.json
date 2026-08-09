@@ -166,6 +166,9 @@
     "text_encoding": "valid-unicode-scalars-canonical-utf8",
     "shrink_trait": "Shrink",
     "shrink_function": "shrink(ref value)",
+    "shrink_protocol": "compiler-sealed-intrinsic",
+    "custom_shrink_implementations": false,
+    "custom_shrink_rejection": "E1114-closed-protocol",
     "shrink_builtins": ["integers", "floats", "String", "Array[T]"],
     "shrink_order": "lowest-complexity-first",
     "shrink_duplicates": "remove-preserve-first",
@@ -224,7 +227,7 @@
     {"id": "option-result-consumption", "source": "owner-generated", "required": true, "focus": ["Some", "None", "Ok", "Err", "affine-payload", "nested-wrapper", "explicit-consume"]},
     {"id": "temporary-resources", "source": "owner-generated", "required": true, "focus": ["prefix", "root-isolation", "path", "cleanup", "defer", "symlink-escape", "timeout-cleanup"]},
     {"id": "generation-replay", "source": "owner-generated", "required": true, "focus": ["seed", "case-index", "algorithm", "draws", "range", "bytes", "utf8", "replay"]},
-    {"id": "generation-shrink", "source": "owner-generated", "required": true, "focus": ["builtins", "custom-trait", "order", "dedupe", "limits", "no-panic-capture"]},
+    {"id": "generation-shrink", "source": "owner-generated", "required": true, "focus": ["builtins", "sealed-protocol-rejection", "order", "dedupe", "limits", "no-panic-capture"]},
     {"id": "capability-and-boundary", "source": "owner-generated", "required": true, "focus": ["test-only", "production-reject", "filesystem-only-temp", "no-reflection", "no-registration", "sealed-core"]}
   ],
   "test_matrix": [

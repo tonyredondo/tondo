@@ -1261,6 +1261,7 @@ fn is_reserved_unqualified(name: &Name) -> bool {
             | "CallMut"
             | "CallOnce"
             | "Display"
+            | "Shrink"
             | "NumericConversionError"
             | "panic"
             | "assert"

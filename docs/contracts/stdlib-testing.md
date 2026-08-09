@@ -1,9 +1,10 @@
 # Contrato de `std.testing`
 
 **Estado:** contrato de owner aceptado para `STD-0.1A`; el núcleo sellado del
-runner ya está fijado por [`TONDO_TESTING_SPEC.md`](../../TONDO_TESTING_SPEC.md),
-pero estos helpers todavía no se publican como implementación de la Standard
-Library.
+runner ya está fijado por [`TONDO_TESTING_SPEC.md`](../../TONDO_TESTING_SPEC.md)
+y la implementación T0 de estos helpers está integrada en compiler, VM y
+runner. La promoción del owner y la conformance completa siguen siendo gates
+posteriores de la matriz de la Standard Library.
 
 Este documento cierra la superficie ordinaria que el núcleo de testing deja
 pendiente: assertions con valores útiles, diffs de texto, comparación de
@@ -320,13 +321,16 @@ entropy, environment, filesystem, proceso, red ni threads y no debe utilizarse
 para secretos, tokens o claves.
 
 `Shrink` es un protocolo estático para proponer candidatos, no un executor de
-tests. Los implementadores deben ser puros, terminantes y deterministas. La
-implementación estándar cubre los escalares enteros, floats, `String` y
-colecciones cuyos elementos tienen `Shrink`; elimina duplicados conservando la
-primera aparición y devuelve candidatos en orden de menor complejidad. `shrink`
-aplica un límite finito y rechaza una implementación que publique más
-candidatos que el límite pedido; no ejecuta una predicate, no captura pánicos y
-no convierte fallos en excepciones recuperables.
+tests. En Tondo 0.1 es un protocolo de prelude sellado por el compilador: no se
+puede declarar `impl Shrink` en código de usuario y una implementación manual
+produce `E1114` (`closed protocol`). El compilador solo admite las formas
+intrínsecas acotadas de enteros, floats, `String` y `Array[T]` cuyos elementos
+también sean shrinkables. La implementación es pura, terminante y
+determinista; elimina duplicados conservando la primera aparición y devuelve
+candidatos en orden de menor complejidad. `shrink` aplica un límite finito y
+devuelve `GenerationError` de forma atómica cuando el tipo o el límite no son
+válidos; no ejecuta una predicate, no captura pánicos y no convierte fallos en
+excepciones recuperables.
 
 El runner de tooling conecta este helper mediante
 [`test-generation.md`](./test-generation.md): materializa una campaña con

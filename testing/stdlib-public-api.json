@@ -646,10 +646,10 @@
         "reason": null
       },
       "signature_count": 25,
-      "verified_count": 5,
-      "gap_count": 20,
+      "verified_count": 25,
+      "gap_count": 0,
       "owner_missing": [],
-      "status": "open-gaps"
+      "status": "verified"
     }
   ],
   "rows": [
@@ -8578,10 +8578,10 @@
       "status": "gap"
     },
     {
-      "id": "std.testing:68",
+      "id": "std.testing:69",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 68,
+      "line": 69,
       "signature": "pub fn assertEqual[T: Equatable + Display](expected: ref T, actual: ref T)",
       "symbol": "std.testing.assertEqual",
       "operation": "assertEqual",
@@ -8603,7 +8603,7 @@
           ],
           "symbol": "assertEqual",
           "symbols": [
-            "assertEqual"
+            "TestingAssertEqual"
           ]
         },
         "host_vm": {
@@ -8624,16 +8624,14 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
-      "id": "std.testing:69",
+      "id": "std.testing:70",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 69,
+      "line": 70,
       "signature": "pub fn assertNotEqual[T: Equatable + Display](expected: ref T, actual: ref T)",
       "symbol": "std.testing.assertNotEqual",
       "operation": "assertNotEqual",
@@ -8655,7 +8653,7 @@
           ],
           "symbol": "assertNotEqual",
           "symbols": [
-            "assertNotEqual"
+            "TestingAssertNotEqual"
           ]
         },
         "host_vm": {
@@ -8676,16 +8674,14 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
-      "id": "std.testing:70",
+      "id": "std.testing:71",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 70,
+      "line": 71,
       "signature": "pub fn assertTextEqual(expected: String, actual: String)",
       "symbol": "std.testing.assertTextEqual",
       "operation": "assertTextEqual",
@@ -8707,7 +8703,7 @@
           ],
           "symbol": "assertTextEqual",
           "symbols": [
-            "assertTextEqual"
+            "TestingAssertTextEqual"
           ]
         },
         "host_vm": {
@@ -8728,16 +8724,14 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
-      "id": "std.testing:71",
+      "id": "std.testing:72",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 71,
+      "line": 72,
       "signature": "pub fn diffText(expected: String, actual: String): TextDiff",
       "symbol": "std.testing.diffText",
       "operation": "diffText",
@@ -8759,7 +8753,7 @@
           ],
           "symbol": "diffText",
           "symbols": [
-            "diffText"
+            "TestingDiffText"
           ]
         },
         "host_vm": {
@@ -8780,16 +8774,14 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
-      "id": "std.testing:72",
+      "id": "std.testing:73",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 72,
+      "line": 73,
       "signature": "pub fn TextDiff.render(ref self): String",
       "symbol": "std.testing.TextDiff.render",
       "operation": "render",
@@ -8811,7 +8803,7 @@
           ],
           "symbol": "render",
           "symbols": [
-            "render"
+            "TestingTextDiffRender"
           ]
         },
         "host_vm": {
@@ -8836,10 +8828,10 @@
       "status": "verified"
     },
     {
-      "id": "std.testing:147",
+      "id": "std.testing:148",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 147,
+      "line": 148,
       "signature": "pub fn FloatTolerance.from(absolute: Float, relative: Float): FloatTolerance ! FloatToleranceError",
       "symbol": "std.testing.FloatTolerance.from",
       "operation": "from",
@@ -8861,7 +8853,7 @@
           ],
           "symbol": "from",
           "symbols": [
-            "from"
+            "TestingFloatToleranceFrom"
           ]
         },
         "host_vm": {
@@ -8886,10 +8878,10 @@
       "status": "verified"
     },
     {
-      "id": "std.testing:148",
+      "id": "std.testing:149",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 148,
+      "line": 149,
       "signature": "pub fn assertFloatNear(expected: Float, actual: Float, tolerance: ref FloatTolerance)",
       "symbol": "std.testing.assertFloatNear",
       "operation": "assertFloatNear",
@@ -8911,7 +8903,7 @@
           ],
           "symbol": "assertFloatNear",
           "symbols": [
-            "assertFloatNear"
+            "TestingAssertFloatNear"
           ]
         },
         "host_vm": {
@@ -8932,16 +8924,14 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
-      "id": "std.testing:149",
+      "id": "std.testing:150",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 149,
+      "line": 150,
       "signature": "pub fn assertFloat32Near(expected: Float32, actual: Float32, tolerance: ref FloatTolerance)",
       "symbol": "std.testing.assertFloat32Near",
       "operation": "assertFloat32Near",
@@ -8963,7 +8953,7 @@
           ],
           "symbol": "assertFloat32Near",
           "symbols": [
-            "assertFloat32Near"
+            "TestingAssertFloat32Near"
           ]
         },
         "host_vm": {
@@ -8984,16 +8974,14 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
-      "id": "std.testing:186",
+      "id": "std.testing:187",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 186,
+      "line": 187,
       "signature": "pub fn assertSome[T](value: T?): T",
       "symbol": "std.testing.assertSome",
       "operation": "assertSome",
@@ -9015,7 +9003,7 @@
           ],
           "symbol": "assertSome",
           "symbols": [
-            "assertSome"
+            "TestingAssertSome"
           ]
         },
         "host_vm": {
@@ -9036,16 +9024,14 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
-      "id": "std.testing:187",
+      "id": "std.testing:188",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 187,
+      "line": 188,
       "signature": "pub fn assertNone[T](value: T?): Unit",
       "symbol": "std.testing.assertNone",
       "operation": "assertNone",
@@ -9067,7 +9053,7 @@
           ],
           "symbol": "assertNone",
           "symbols": [
-            "assertNone"
+            "TestingAssertNone"
           ]
         },
         "host_vm": {
@@ -9088,16 +9074,14 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
-      "id": "std.testing:188",
+      "id": "std.testing:189",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 188,
+      "line": 189,
       "signature": "pub fn assertOk[T, E: Display](value: T ! E): T",
       "symbol": "std.testing.assertOk",
       "operation": "assertOk",
@@ -9119,7 +9103,7 @@
           ],
           "symbol": "assertOk",
           "symbols": [
-            "assertOk"
+            "TestingAssertOk"
           ]
         },
         "host_vm": {
@@ -9140,16 +9124,14 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
-      "id": "std.testing:189",
+      "id": "std.testing:190",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 189,
+      "line": 190,
       "signature": "pub fn assertErr[T: Display, E](value: T ! E): E",
       "symbol": "std.testing.assertErr",
       "operation": "assertErr",
@@ -9171,7 +9153,7 @@
           ],
           "symbol": "assertErr",
           "symbols": [
-            "assertErr"
+            "TestingAssertErr"
           ]
         },
         "host_vm": {
@@ -9192,16 +9174,14 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
-      "id": "std.testing:237",
+      "id": "std.testing:238",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 237,
+      "line": 238,
       "signature": "pub fn tempDirectory(prefix: String): TempDirectory ! TempError",
       "symbol": "std.testing.tempDirectory",
       "operation": "tempDirectory",
@@ -9223,7 +9203,7 @@
           ],
           "symbol": "tempDirectory",
           "symbols": [
-            "tempDirectory"
+            "TestingTempDirectory"
           ]
         },
         "host_vm": {
@@ -9244,16 +9224,14 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
-      "id": "std.testing:238",
+      "id": "std.testing:239",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 238,
+      "line": 239,
       "signature": "pub fn TempDirectory.path(ref self): Path",
       "symbol": "std.testing.TempDirectory.path",
       "operation": "path",
@@ -9275,7 +9253,7 @@
           ],
           "symbol": "path",
           "symbols": [
-            "path"
+            "TestingTempDirectoryPath"
           ]
         },
         "host_vm": {
@@ -9300,10 +9278,10 @@
       "status": "verified"
     },
     {
-      "id": "std.testing:239",
+      "id": "std.testing:240",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 239,
+      "line": 240,
       "signature": "pub fn TempDirectory.cleanup(self)",
       "symbol": "std.testing.TempDirectory.cleanup",
       "operation": "cleanup",
@@ -9325,7 +9303,7 @@
           ],
           "symbol": "cleanup",
           "symbols": [
-            "cleanup"
+            "TestingTempDirectoryCleanup"
           ]
         },
         "host_vm": {
@@ -9346,16 +9324,14 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
-      "id": "std.testing:281",
+      "id": "std.testing:282",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 281,
+      "line": 282,
       "signature": "pub fn Generator.new(seed: UInt64): Generator",
       "symbol": "std.testing.Generator.new",
       "operation": "new",
@@ -9377,7 +9353,7 @@
           ],
           "symbol": "new",
           "symbols": [
-            "new"
+            "TestingGeneratorNew"
           ]
         },
         "host_vm": {
@@ -9402,10 +9378,10 @@
       "status": "verified"
     },
     {
-      "id": "std.testing:282",
+      "id": "std.testing:283",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 282,
+      "line": 283,
       "signature": "pub fn Generator.forCase(seed: UInt64, caseIndex: UInt64): Generator",
       "symbol": "std.testing.Generator.forCase",
       "operation": "forCase",
@@ -9427,7 +9403,7 @@
           ],
           "symbol": "forCase",
           "symbols": [
-            "forCase"
+            "TestingGeneratorForCase"
           ]
         },
         "host_vm": {
@@ -9448,17 +9424,14 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol",
-        "public-case-call"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
-      "id": "std.testing:283",
+      "id": "std.testing:284",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 283,
+      "line": 284,
       "signature": "pub fn Generator.id(ref self): GenerationId",
       "symbol": "std.testing.Generator.id",
       "operation": "id",
@@ -9480,7 +9453,7 @@
           ],
           "symbol": "id",
           "symbols": [
-            "id"
+            "TestingGeneratorId"
           ]
         },
         "host_vm": {
@@ -9505,10 +9478,10 @@
       "status": "verified"
     },
     {
-      "id": "std.testing:284",
+      "id": "std.testing:285",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 284,
+      "line": 285,
       "signature": "pub fn Generator.drawCount(ref self): UInt64",
       "symbol": "std.testing.Generator.drawCount",
       "operation": "drawCount",
@@ -9530,7 +9503,7 @@
           ],
           "symbol": "drawCount",
           "symbols": [
-            "drawCount"
+            "TestingGeneratorDrawCount"
           ]
         },
         "host_vm": {
@@ -9551,17 +9524,14 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol",
-        "public-case-call"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
-      "id": "std.testing:285",
+      "id": "std.testing:286",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 285,
+      "line": 286,
       "signature": "pub fn Generator.nextUInt(mut self): UInt64 ! GenerationError",
       "symbol": "std.testing.Generator.nextUInt",
       "operation": "nextUInt",
@@ -9583,7 +9553,7 @@
           ],
           "symbol": "nextUInt",
           "symbols": [
-            "nextUInt"
+            "TestingGeneratorNextUInt"
           ]
         },
         "host_vm": {
@@ -9604,16 +9574,14 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
-      "id": "std.testing:286",
+      "id": "std.testing:287",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 286,
+      "line": 287,
       "signature": "pub fn Generator.nextBool(mut self): Bool ! GenerationError",
       "symbol": "std.testing.Generator.nextBool",
       "operation": "nextBool",
@@ -9635,7 +9603,7 @@
           ],
           "symbol": "nextBool",
           "symbols": [
-            "nextBool"
+            "TestingGeneratorNextBool"
           ]
         },
         "host_vm": {
@@ -9656,17 +9624,14 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol",
-        "public-case-call"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
-      "id": "std.testing:287",
+      "id": "std.testing:288",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 287,
+      "line": 288,
       "signature": "pub fn Generator.nextInt(mut self, minimum: Int, maximum: Int): Int ! GenerationError",
       "symbol": "std.testing.Generator.nextInt",
       "operation": "nextInt",
@@ -9688,7 +9653,7 @@
           ],
           "symbol": "nextInt",
           "symbols": [
-            "nextInt"
+            "TestingGeneratorNextInt"
           ]
         },
         "host_vm": {
@@ -9709,17 +9674,14 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol",
-        "public-case-call"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
-      "id": "std.testing:288",
+      "id": "std.testing:289",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 288,
+      "line": 289,
       "signature": "pub fn Generator.nextBytes(mut self, maximumLength: Int): Bytes ! GenerationError",
       "symbol": "std.testing.Generator.nextBytes",
       "operation": "nextBytes",
@@ -9741,7 +9703,7 @@
           ],
           "symbol": "nextBytes",
           "symbols": [
-            "nextBytes"
+            "TestingGeneratorNextBytes"
           ]
         },
         "host_vm": {
@@ -9762,17 +9724,14 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol",
-        "public-case-call"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
-      "id": "std.testing:289",
+      "id": "std.testing:290",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 289,
+      "line": 290,
       "signature": "pub fn Generator.nextText(mut self, maximumBytes: Int): String ! GenerationError",
       "symbol": "std.testing.Generator.nextText",
       "operation": "nextText",
@@ -9794,7 +9753,7 @@
           ],
           "symbol": "nextText",
           "symbols": [
-            "nextText"
+            "TestingGeneratorNextText"
           ]
         },
         "host_vm": {
@@ -9815,16 +9774,14 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
-      "id": "std.testing:295",
+      "id": "std.testing:296",
       "owner": "std.testing",
       "contract": "docs/contracts/stdlib-testing.md",
-      "line": 295,
+      "line": 296,
       "signature": "pub fn shrink[T: Shrink + Equatable](value: ref T): Array[T] ! GenerationError",
       "symbol": "std.testing.shrink",
       "operation": "shrink",
@@ -9846,7 +9803,7 @@
           ],
           "symbol": "shrink",
           "symbols": [
-            "shrink"
+            "TestingShrink"
           ]
         },
         "host_vm": {
@@ -9867,11 +9824,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "host-symbol",
-        "public-case-call"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.text:91",
@@ -10981,9 +10935,9 @@
   "summary": {
     "owners": 20,
     "signatures": 207,
-    "verified": 136,
-    "signature_gaps": 71,
+    "verified": 156,
+    "signature_gaps": 51,
     "owner_gaps": 3,
-    "gaps": 74
+    "gaps": 54
   }
 }

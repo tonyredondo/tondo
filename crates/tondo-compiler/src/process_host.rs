@@ -15,7 +15,9 @@ use std::os::unix::ffi::OsStringExt;
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 
 use os_pipe::pipe;
-use tondo_stdlib::testing::{FloatTolerance, Generator, TextDiff, diff_text};
+use tondo_stdlib::testing::{
+    FloatTolerance, Generator, MAX_SHRINK_CANDIDATES, TextDiff, diff_text,
+};
 use tondo_stdlib::{io as stdlib_io, json, math, messagepack, path, protobuf};
 use tondo_vm::runtime::{
     RuntimeHostValueKind, RuntimeValue, VmError, VmHost, VmTestNodeKind, VmTestNodeOutcome,
@@ -34,6 +36,7 @@ static NEXT_CLOCK_DOMAIN: AtomicU64 = AtomicU64::new(1);
 static NEXT_ATOMIC_TEMP: AtomicU64 = AtomicU64::new(1);
 static NEXT_TEMP_DIRECTORY: AtomicU64 = AtomicU64::new(1);
 const MAX_TEMP_DIRECTORY_ENTRIES: usize = 1_048_576;
+const MAX_SHRINK_DEPTH: usize = 64;
 
 fn testing_value_text(value: &RuntimeValue) -> String {
     const MAX_BYTES: usize = 1_024;
@@ -43,6 +46,101 @@ fn testing_value_text(value: &RuntimeValue) -> String {
         text.push_str("...<truncated>");
     }
     text
+}
+
+fn push_shrink_candidate(
+    candidates: &mut Vec<RuntimeValue>,
+    candidate: RuntimeValue,
+    limit: usize,
+) {
+    if candidates.len() < limit && !candidates.contains(&candidate) {
+        candidates.push(candidate);
+    }
+}
+
+/// Mirrors the sealed `Shrink` prelude protocol for runtime values.  The
+/// compiler proves the same shape before a Tondo call reaches this host
+/// boundary; keeping the check here as well makes stale or forged bytecode
+/// fail atomically instead of producing a partial candidate list.
+fn shrink_runtime_value(
+    value: &RuntimeValue,
+    limit: usize,
+    depth: usize,
+) -> Result<Vec<RuntimeValue>, &'static str> {
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+    if limit > MAX_SHRINK_CANDIDATES {
+        return Err("shrink candidate limit exceeded");
+    }
+    if depth > MAX_SHRINK_DEPTH {
+        return Err("shrink depth limit exceeded");
+    }
+
+    let mut candidates = Vec::new();
+    match value {
+        RuntimeValue::Integer(original) => {
+            let mut current = *original;
+            while current != 0 && candidates.len() < limit {
+                current /= 2;
+                push_shrink_candidate(&mut candidates, RuntimeValue::Integer(current), limit);
+            }
+        }
+        RuntimeValue::Float(original) => {
+            if !original.is_nan() {
+                for candidate in [0.0, *original / 2.0, -*original / 2.0] {
+                    if candidates.len() == limit {
+                        break;
+                    }
+                    push_shrink_candidate(&mut candidates, RuntimeValue::Float(candidate), limit);
+                }
+            }
+        }
+        RuntimeValue::String(text) => {
+            for length in 0..=text.len() {
+                if candidates.len() == limit {
+                    break;
+                }
+                let end = text.floor_char_boundary(length);
+                push_shrink_candidate(
+                    &mut candidates,
+                    RuntimeValue::String(text[..end].to_owned()),
+                    limit,
+                );
+            }
+        }
+        RuntimeValue::Array(values) => {
+            for length in 0..=values.len() {
+                if candidates.len() == limit {
+                    break;
+                }
+                push_shrink_candidate(
+                    &mut candidates,
+                    RuntimeValue::Array(values[..length].to_vec()),
+                    limit,
+                );
+            }
+            for index in 0..values.len() {
+                if candidates.len() == limit {
+                    break;
+                }
+                let remaining = limit.saturating_sub(candidates.len());
+                let element_candidates =
+                    shrink_runtime_value(&values[index], remaining, depth + 1)?;
+                for element in element_candidates {
+                    if candidates.len() == limit {
+                        break;
+                    }
+                    let mut candidate = values.clone();
+                    candidate[index] = element;
+                    push_shrink_candidate(&mut candidates, RuntimeValue::Array(candidate), limit);
+                }
+            }
+        }
+        _ => return Err("value does not implement the sealed Shrink protocol"),
+    }
+
+    Ok(candidates)
 }
 
 #[derive(Clone)]
@@ -2616,6 +2714,15 @@ impl VmHost for BootstrapHost {
             ("std.testing.Generator.drawCount", [generator]) => Ok(RuntimeValue::Integer(
                 i128::from(self.generator_mut(generator)?.draw_count()),
             )),
+            ("std.testing.shrink", [value]) => {
+                let candidates = match shrink_runtime_value(value, MAX_SHRINK_CANDIDATES, 0) {
+                    Ok(candidates) => candidates,
+                    Err(message) => return Ok(self.generation_result_error(message)),
+                };
+                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Array(
+                    candidates,
+                ))))
+            }
             ("std.testing.assertSome", [RuntimeValue::OptionSome(value)]) => Ok((**value).clone()),
             ("std.testing.assertSome", [RuntimeValue::OptionNone]) => {
                 let envelope = self.testing_envelope()?;
@@ -6509,6 +6616,64 @@ mod tests {
                     }
                 )
         ));
+    }
+
+    #[test]
+    fn testing_shrink_is_deterministic_bounded_and_atomic() {
+        let mut host = BootstrapHost::default();
+        let first = host
+            .invoke("std.testing.shrink", &[RuntimeValue::Integer(-13)])
+            .unwrap();
+        let second = host
+            .invoke("std.testing.shrink", &[RuntimeValue::Integer(-13)])
+            .unwrap();
+        assert_eq!(first, second);
+        assert_eq!(
+            first,
+            RuntimeValue::ResultOk(Box::new(RuntimeValue::Array(vec![
+                RuntimeValue::Integer(-6),
+                RuntimeValue::Integer(-3),
+                RuntimeValue::Integer(-1),
+                RuntimeValue::Integer(0),
+            ])))
+        );
+
+        let nested = RuntimeValue::Array(vec![
+            RuntimeValue::Integer(8),
+            RuntimeValue::String("ab".into()),
+        ]);
+        let RuntimeValue::ResultOk(candidates) = host
+            .invoke("std.testing.shrink", std::slice::from_ref(&nested))
+            .unwrap()
+        else {
+            panic!("shrink must return Ok for a built-in array")
+        };
+        let RuntimeValue::Array(candidates) = candidates.as_ref() else {
+            panic!("shrink must return an Array payload")
+        };
+        assert!(!candidates.is_empty());
+        assert!(candidates.len() <= MAX_SHRINK_CANDIDATES);
+        assert!(shrink_runtime_value(&nested, MAX_SHRINK_CANDIDATES + 1, 0).is_err());
+
+        let unsupported = host
+            .invoke("std.testing.shrink", &[RuntimeValue::Map(Vec::new())])
+            .unwrap();
+        assert!(matches!(
+            unsupported,
+            RuntimeValue::ResultErr(value)
+                if matches!(
+                    value.as_ref(),
+                    RuntimeValue::Host {
+                        kind: RuntimeHostValueKind::GenerationError,
+                        ..
+                    }
+                )
+        ));
+        assert!(
+            shrink_runtime_value(&RuntimeValue::Float(f64::NAN), 16, 0)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

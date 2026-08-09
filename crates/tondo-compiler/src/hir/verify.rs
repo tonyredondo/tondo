@@ -1289,6 +1289,7 @@ impl Verifier<'_> {
                 HirTraitConstructor::Prelude(name) => {
                     let expected = match name.as_str() {
                         "Display" => 0,
+                        "Shrink" => 0,
                         "Iterator" | "AsyncIterator" => 1,
                         "Encode" | "Decode" => 1,
                         "Encoder" | "Decoder" => 2,
@@ -1968,6 +1969,7 @@ impl Verifier<'_> {
                     super::HirPreludeTraitMethod::Display => ("Display", "display"),
                     super::HirPreludeTraitMethod::IteratorNext => ("Iterator", "next"),
                     super::HirPreludeTraitMethod::AsyncIteratorNext => ("AsyncIterator", "next"),
+                    super::HirPreludeTraitMethod::ShrinkCandidates => ("Shrink", "candidates"),
                     super::HirPreludeTraitMethod::Serialization(_) => {
                         unreachable!(
                             "serialization methods return through their dedicated verifier"
@@ -1998,6 +2000,31 @@ impl Verifier<'_> {
                             .option(implementation.trait_reference.arguments[0])
                             .map_err(|error| HirInvariantError::new(context, error.to_string()))?,
                     ),
+                    super::HirPreludeTraitMethod::ShrinkCandidates => {
+                        let array = match contract_interner
+                            .intrinsic(IntrinsicType::Array, vec![implementation.target])
+                        {
+                            Ok(array) => array,
+                            Err(error) => {
+                                return Err(HirInvariantError::new(context, error.to_string()));
+                            }
+                        };
+                        let generation_error = match contract_interner
+                            .intrinsic(IntrinsicType::GenerationError, Vec::new())
+                        {
+                            Ok(generation_error) => generation_error,
+                            Err(error) => {
+                                return Err(HirInvariantError::new(context, error.to_string()));
+                            }
+                        };
+                        let outcome = match contract_interner.result(array, generation_error) {
+                            Ok(outcome) => outcome,
+                            Err(error) => {
+                                return Err(HirInvariantError::new(context, error.to_string()));
+                            }
+                        };
+                        (ParameterMode::Ref, outcome)
+                    }
                     super::HirPreludeTraitMethod::Serialization(_) => {
                         unreachable!(
                             "serialization methods return through their dedicated verifier"
@@ -3144,7 +3171,7 @@ impl Verifier<'_> {
                     proof.memo.insert(query.clone(), false);
                     return Ok(false);
                 }
-                "Display" | "Iterator" | "AsyncIterator" => {}
+                "Display" | "Iterator" | "AsyncIterator" | "Shrink" => {}
                 _ => {
                     proof.memo.insert(query.clone(), false);
                     return Ok(false);

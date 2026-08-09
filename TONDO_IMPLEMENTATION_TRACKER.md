@@ -4457,9 +4457,9 @@ tests. Antes de volver a marcarlas `[x]` deben cumplirse todos estos puntos:
   HIR → lowering → host/VM → caso público. `--check` detecta drift y mantiene
   visibles los huecos; `--strict` falla ante cualquiera. No acepta un path Rust
   aislado, un fixture que llama otra operación, una prueba documental ni un
-  alias bootstrap. El resultado actual es deliberadamente `open-gaps` (131
-  filas/owners pendientes), que bloquea la promoción y alimenta los siguientes
-  leaves de implementación.
+  alias bootstrap. El resultado actual es deliberadamente `open-gaps` (156/207
+  firmas verificadas; 54 gaps), que bloquea la promoción y alimenta los
+  siguientes leaves de implementación.
 
 - [ ] **STD-IMPL-001 — Coordinar implementación Core por owner.** Cierra cuando
   `STD-CORE-IMPL-001`, `STD-TEXT-IMPL-001`, `STD-COLL-IMPL-001`,
@@ -4480,10 +4480,16 @@ tests. Antes de volver a marcarlas `[x]` deben cumplirse todos estos puntos:
   bridges correctos de path/console y capabilities. Las operaciones parciales
   existentes no prueban los handles y firmas ausentes.
 
-- [ ] **STD-TESTING-IMPL-001 — Implementar `std.testing` sobre T0.** El runtime,
-  temp resources, generators, diffs, tolerancias y control sellado se conservan;
-  cierra al añadir `STD-TESTING-SHRINK-001` y demostrar toda la superficie del
-  contrato mediante el runner público.
+- [x] **STD-TESTING-IMPL-001 — Implementar `std.testing` sobre T0.** El runtime,
+  temp resources, generators, diffs, tolerancias y control sellado se conservan.
+  `TestingShrink` está conectado desde la resolución HIR y lowering hasta el
+  host VM con el protocolo `Shrink` sellado, candidatos deterministas y límites
+  de 4.096 candidatos/64 niveles; una implementación de usuario se rechaza con
+  `E1114`. El runner público ejercita `shrink`, replay, `Generator.forCase`,
+  draws y los helpers de valor; la prueba de host cubre determinismo,
+  deduplicación, anidamiento, NaN, tipos no soportados y atomicidad. El owner
+  queda implementado, pero promoción/conformance y la auditoría global de
+  firmas siguen abiertas.
 
 #### 19.4.2 Evidencia leaf por owner
 
@@ -5712,6 +5718,21 @@ se declara iniciada antes de esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 1.91 — 2026-08-09
+
+- Se completa `STD-TESTING-IMPL-001` con la ruta pública de
+  `std.testing.shrink`: `Shrink.candidates` es un protocolo de prelude sellado
+  y el compilador admite únicamente enteros, floats, `String` y `Array[T]`
+  recursivos. Una declaración manual recibe `E1114`; el host VM conserva la
+  misma frontera, límites y resultado atómico.
+- El runner público ejecuta `shrink`, `Generator.forCase`, replay, draw count y
+  los draws restantes. Se añaden pruebas de determinismo, orden, dedupe,
+  nesting, NaN, tipo no soportado y límite, y el contrato machine-readable
+  registra explícitamente `compiler-sealed-intrinsic`.
+- La auditoría pública queda en 156/207 firmas verificadas con 54 gaps; este
+  cierre no promueve `std.testing` ni cierra `STD-TEST-001`, `STD-CONF-001` o
+  `STD-DOC-001`.
 
 ### 1.90 — 2026-08-09
 

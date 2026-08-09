@@ -898,6 +898,24 @@ impl<'a> TypeLowerer<'a> {
                 None,
                 uint64,
             )?;
+            let shrink_candidates = self
+                .interner
+                .intrinsic(IntrinsicType::Array, vec![testing_value])?;
+            let shrink_result = self.interner.result(shrink_candidates, generation_error)?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::TestingShrink,
+                vec![(testing_value, ParameterMode::Ref, false)],
+                shrink_result,
+                1,
+                vec![(
+                    0,
+                    vec![
+                        self.prelude_trait_bound("Shrink"),
+                        self.prelude_trait_bound("Equatable"),
+                    ],
+                )],
+            )?;
             self.push_bootstrap_host_callable_with_modes(
                 span,
                 HirBootstrapHostFunction::TestingTextDiffRender,
@@ -5151,7 +5169,7 @@ impl<'a> TypeLowerer<'a> {
                 )?,
             ),
             "Copy" | "Discard" | "Equatable" | "Key" | "Send" | "Share" | "Call" | "CallMut"
-            | "CallOnce" => {
+            | "CallOnce" | "Shrink" => {
                 self.emit(
                     implementation.span.file(),
                     implementation.span.range(),
@@ -6461,7 +6479,7 @@ fn intrinsic_type(name: &str) -> Option<IntrinsicType> {
 
 fn prelude_trait_arity(name: &str) -> Option<usize> {
     Some(match name {
-        "Copy" | "Discard" | "Equatable" | "Key" | "Send" | "Share" | "Display" => 0,
+        "Copy" | "Discard" | "Equatable" | "Key" | "Send" | "Share" | "Display" | "Shrink" => 0,
         "Iterator" | "AsyncIterator" | "Call" | "CallMut" | "CallOnce" => 1,
         "Encode" | "Decode" => 1,
         "Encoder" | "Decoder" => 2,
@@ -7469,6 +7487,21 @@ mod tests {
         assert_eq!(codes(&closed), ["E1114"]);
         assert!(
             closed.diagnostics()[0]
+                .message()
+                .contains("closed protocol")
+        );
+
+        let (_, _, shrink_closed) = lower(
+            "type Value = Int\n\
+             impl Shrink for Value {\n\
+                 fn candidates(self, limit: Int) {\n\
+                     []\n\
+                 }\n\
+             }\n",
+        );
+        assert_eq!(codes(&shrink_closed), ["E1114"]);
+        assert!(
+            shrink_closed.diagnostics()[0]
                 .message()
                 .contains("closed protocol")
         );

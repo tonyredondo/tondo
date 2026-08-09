@@ -2403,6 +2403,15 @@ debe considerar como mínimo:
   store ni otra política de actualización.
 - Datos generados con seed, shrinking, replay y seguridad reproducibles.
 
+El protocolo `Shrink` de los datos generados está sellado en Tondo 0.1. El
+compilador proporciona `Shrink.candidates` únicamente para escalares numéricos,
+`String` y `Array[T]` cuando sus elementos tienen la misma capacidad; un
+programa no puede declarar `impl Shrink` y recibe `E1114` si lo intenta. Esta
+decisión mantiene el orden, los límites y la atomicidad del shrinking
+deterministas en todos los backends. Los tipos nominales pueden participar
+envolviendo una forma intrínseca o exponiendo explícitamente sus datos para
+los casos de test, pero no pueden añadir dispatch de shrinking al prelude.
+
 Sus funciones pueden terminar mediante `assert`/pánico o devolver un error
 documentado. No reciben acceso reflectivo a valores privados ni pueden registrar
 suites o tests en runtime. La especificación estándar puede añadir helpers, pero
