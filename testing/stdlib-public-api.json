@@ -3992,10 +3992,10 @@
       "status": "verified"
     },
     {
-      "id": "std.json:126",
+      "id": "std.json:132",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 126,
+      "line": 132,
       "signature": "pub fn parse(input: Bytes, options: JsonDecodeOptions): Value ! JsonError",
       "symbol": "std.json.parse",
       "operation": "parse",
@@ -4043,10 +4043,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:127",
+      "id": "std.json:133",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 127,
+      "line": 133,
       "signature": "pub fn parseView(input: Bytes, options: JsonDecodeOptions): ValueView ! JsonError",
       "symbol": "std.json.parseView",
       "operation": "parseView",
@@ -4097,10 +4097,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:128",
+      "id": "std.json:134",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 128,
+      "line": 134,
       "signature": "pub fn decode[T: Decode[Json]](input: Bytes, options: JsonDecodeOptions): T ! JsonError",
       "symbol": "std.json.decode",
       "operation": "decode",
@@ -4148,10 +4148,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:129",
+      "id": "std.json:135",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 129,
+      "line": 135,
       "signature": "pub fn encode[T: Encode[Json]](value: T, options: JsonEncodeOptions): Bytes ! JsonError",
       "symbol": "std.json.encode",
       "operation": "encode",
@@ -4199,10 +4199,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:130",
+      "id": "std.json:136",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 130,
+      "line": 136,
       "signature": "pub fn validate(input: Bytes, options: JsonDecodeOptions): Unit ! JsonError",
       "symbol": "std.json.validate",
       "operation": "validate",
@@ -4248,10 +4248,10 @@
       "status": "verified"
     },
     {
-      "id": "std.json:131",
+      "id": "std.json:137",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 131,
+      "line": 137,
       "signature": "pub fn canonicalize(input: Bytes, options: JsonDecodeOptions): Bytes ! JsonError",
       "symbol": "std.json.canonicalize",
       "operation": "canonicalize",
@@ -4297,10 +4297,10 @@
       "status": "verified"
     },
     {
-      "id": "std.json:132",
+      "id": "std.json:138",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 132,
+      "line": 138,
       "signature": "pub fn encodeCanonical(value: Value, limits: JsonLimits): Bytes ! JsonError",
       "symbol": "std.json.encodeCanonical",
       "operation": "encodeCanonical",
@@ -4351,10 +4351,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:133",
+      "id": "std.json:139",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 133,
+      "line": 139,
       "signature": "pub fn raw(input: Bytes): Raw ! JsonError",
       "symbol": "std.json.raw",
       "operation": "raw",
@@ -4402,10 +4402,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:136",
+      "id": "std.json:142",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 136,
+      "line": 142,
       "signature": "pub fn JsonNumber.parse(text: String): JsonNumber ! JsonError",
       "symbol": "std.json.JsonNumber.parse",
       "operation": "parse",
@@ -4453,10 +4453,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:137",
+      "id": "std.json:143",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 137,
+      "line": 143,
       "signature": "pub fn JsonNumber.text(self): String",
       "symbol": "std.json.JsonNumber.text",
       "operation": "text",
@@ -4504,10 +4504,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:138",
+      "id": "std.json:144",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 138,
+      "line": 144,
       "signature": "pub fn JsonNumber.toInt(self): Int64 ! JsonError",
       "symbol": "std.json.JsonNumber.toInt",
       "operation": "toInt",
@@ -4558,10 +4558,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:139",
+      "id": "std.json:145",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 139,
+      "line": 145,
       "signature": "pub fn JsonNumber.toUInt(self): UInt64 ! JsonError",
       "symbol": "std.json.JsonNumber.toUInt",
       "operation": "toUInt",
@@ -4612,10 +4612,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:140",
+      "id": "std.json:146",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 140,
+      "line": 146,
       "signature": "pub fn JsonNumber.toFloat32(self): Float32 ! JsonError",
       "symbol": "std.json.JsonNumber.toFloat32",
       "operation": "toFloat32",
@@ -4666,10 +4666,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:141",
+      "id": "std.json:147",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 141,
+      "line": 147,
       "signature": "pub fn JsonNumber.toFloat64(self): Float64 ! JsonError",
       "symbol": "std.json.JsonNumber.toFloat64",
       "operation": "toFloat64",
@@ -4720,10 +4720,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:143",
+      "id": "std.json:149",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 143,
+      "line": 149,
       "signature": "pub fn JsonReader.fromBytes(input: Bytes, options: JsonDecodeOptions): JsonReader ! JsonError",
       "symbol": "std.json.JsonReader.fromBytes",
       "operation": "fromBytes",
@@ -4772,10 +4772,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:144",
+      "id": "std.json:150",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 144,
+      "line": 150,
       "signature": "pub fn JsonReader.fromReader(var input: Reader, options: JsonDecodeOptions): JsonReader ! JsonError",
       "symbol": "std.json.JsonReader.fromReader",
       "operation": "fromReader",
@@ -4826,10 +4826,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:145",
+      "id": "std.json:151",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 145,
+      "line": 151,
       "signature": "pub fn JsonReader.next(var self): JsonEvent? ! JsonError",
       "symbol": "std.json.JsonReader.next",
       "operation": "next",
@@ -4877,10 +4877,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:146",
+      "id": "std.json:152",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 146,
+      "line": 152,
       "signature": "pub fn JsonReader.own(var self, event: JsonEvent): JsonEvent ! JsonError",
       "symbol": "std.json.JsonReader.own",
       "operation": "own",
@@ -4928,10 +4928,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:147",
+      "id": "std.json:153",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 147,
+      "line": 153,
       "signature": "pub fn JsonReader.finish(var self): Unit ! JsonError",
       "symbol": "std.json.JsonReader.finish",
       "operation": "finish",
@@ -4979,10 +4979,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:149",
+      "id": "std.json:155",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 149,
+      "line": 155,
       "signature": "pub fn JsonWriter.toWriter(var output: Writer, options: JsonEncodeOptions): JsonWriter ! JsonError",
       "symbol": "std.json.JsonWriter.toWriter",
       "operation": "toWriter",
@@ -5033,10 +5033,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:150",
+      "id": "std.json:156",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 150,
+      "line": 156,
       "signature": "pub fn JsonWriter.write(var self, event: JsonEvent): Unit ! JsonError",
       "symbol": "std.json.JsonWriter.write",
       "operation": "write",
@@ -5084,10 +5084,10 @@
       "status": "gap"
     },
     {
-      "id": "std.json:151",
+      "id": "std.json:157",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 151,
+      "line": 157,
       "signature": "pub fn JsonWriter.finish(var self): Unit ! JsonError",
       "symbol": "std.json.JsonWriter.finish",
       "operation": "finish",

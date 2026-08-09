@@ -49,6 +49,12 @@ el collector dinámico). `JsonNumber` conserva
 el lexema decimal validado y las conversiones enteras calculan primero el
 valor matemático, sin pasar por `Float64`.
 
+`parse_view` valida el documento y devuelve una vista inmutable respaldada por
+los bytes de entrada; `clone_value` es la única frontera que materializa un
+`Value`. `raw` valida y conserva la representación exacta; el puente Rust
+`raw_unchecked` es memory-safe, pero el entry point Tondo equivalente solo se
+expone dentro de `unsafe`.
+
 `JsonWriter` valida la máquina root/array/object, orden canónico JCS,
 duplicados y límites de salida antes de completar el documento. El encoder
 usa una pila explícita de tareas para records, arrays y objetos y solo el

@@ -12,7 +12,7 @@ use std::io::Read;
 
 use crate::serialization::{
     self, Decode, Decoder, Deserialize, Encode, Encoder, Event, Json as JsonCodec, Raw as RawCodec,
-    SerializationError, Serialize, ValueView as SerializationValueView,
+    SerializationError, Serialize,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,7 +46,29 @@ pub type Value = JsonValue;
 
 /// Common ownership view shared with MessagePack's dynamic API.
 pub type CommonValue = serialization::Value;
-pub type ValueView<'a> = SerializationValueView<'a>;
+/// A validated, immutable JSON view backed by the caller's input bytes.
+///
+/// The view deliberately keeps the original bytes rather than a decoded DOM.
+/// `clone_value` is the explicit materialization boundary and reparses with
+/// the same bounded options, so the view cannot outlive the input or retain a
+/// hidden allocation from the parser.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct JsonValueView<'a> {
+    input: &'a [u8],
+    options: JsonDecodeOptions,
+}
+
+impl<'a> JsonValueView<'a> {
+    pub fn bytes(self) -> &'a [u8] {
+        self.input
+    }
+
+    pub fn clone_value(self) -> Result<JsonValue, JsonError> {
+        parse_with_options(self.input, self.options)
+    }
+}
+
+pub type ValueView<'a> = JsonValueView<'a>;
 pub type Raw = RawCodec<JsonCodec>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1249,6 +1271,13 @@ pub fn parse_with_options(
     root.ok_or_else(|| JsonError::at_zero(JsonErrorKind::UnexpectedEof))
 }
 
+/// Parse a document into an immutable input-backed view without allocating a
+/// dynamic value tree.  Materialization is explicit through `clone_value`.
+pub fn parse_view(input: &[u8], options: JsonDecodeOptions) -> Result<ValueView<'_>, JsonError> {
+    validate_with_options(input, options)?;
+    Ok(JsonValueView { input, options })
+}
+
 enum BuildFrame {
     Array(Vec<JsonValue>),
     Object {
@@ -1319,6 +1348,18 @@ pub fn canonicalize_with_options(
             limits: options.limits,
         },
     )
+}
+
+/// Validate and retain the exact JSON bytes as codec-owned `Raw` data.
+pub fn raw(input: &[u8], options: JsonDecodeOptions) -> Result<Raw, JsonError> {
+    Raw::from_bytes(input, options)
+}
+
+/// Construct JSON `Raw` bytes without validation.  The Tondo surface exposes
+/// this bridge only from `unsafe`; Rust itself keeps the wrapper memory-safe
+/// and names the invariant explicitly.
+pub fn raw_unchecked(input: &[u8]) -> Raw {
+    RawCodec::from_unchecked(input.to_vec())
 }
 
 pub fn encode(value: &JsonValue) -> Result<Vec<u8>, JsonError> {
@@ -2415,6 +2456,15 @@ mod tests {
             JsonErrorKind::NumberRange
         );
         assert!(parse_u128_digits(b"340282366920938463463374607431768211456").is_err());
+
+        let input = br#"{"view":true}"#;
+        let view = parse_view(input, JsonDecodeOptions::default()).unwrap();
+        assert_eq!(view.bytes(), input);
+        assert_eq!(view.clone_value().unwrap(), parse(input).unwrap());
+        let raw_value = raw(input, JsonDecodeOptions::default()).unwrap();
+        assert_eq!(raw_value.as_bytes(), input);
+        let unchecked = raw_unchecked(input);
+        assert_eq!(unchecked.as_bytes(), input);
     }
 
     #[test]

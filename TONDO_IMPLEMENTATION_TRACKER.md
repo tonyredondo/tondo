@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 1.82
+**Versión del tracker:** 1.83
 
 **Última actualización:** 2026-08-09
 
@@ -48,8 +48,8 @@ contratos públicos: la ruta de frontend, HIR/MIR/bytecode, `Join` transferible,
 referencia. La compatibilidad léxica de `async` se conserva únicamente para
 fixtures históricos y no aparece en interfaces ni en la superficie normativa;
 la retirada mecánica de esas fixtures queda separada del contrato ejecutable.
-Después: (1) cerrar las rutas typed/dynamic/streaming de los owners de codecs
-partiendo de sus APIs únicas; (2)
+Después: (1) cerrar las rutas typed/dynamic/streaming de MessagePack y
+Protobuf partiendo de sus APIs únicas; (2)
 completar las rutas públicas A1–A4 y ampliar
 la matriz normativa a los tres contratos G5 antes de volver a cerrar T0/G5/S1A.
 Los contratos
@@ -4391,12 +4391,17 @@ tests. Antes de volver a marcarlas `[x]` deben cumplirse todos estos puntos:
   validadas en el snapshot para que sus owners de codec consuman la política
   sin reflection ni DOM.
 
-- [ ] **STD-JSON-IMPL-001 — Implementar las tres rutas de JSON.** Publicar
+- [x] **STD-JSON-IMPL-001 — Implementar las tres rutas de JSON.** Publicar
   `parse -> Value`, `decode[T: Decode[Json]]` y
   `encode[T: Encode[Json]]`, además de `ValueView`/`parseView`, `Raw` y
   `JsonReader`/`JsonWriter` con stack explícito. Cubrir chunking, Unicode,
   paths, policies, RFC 8259/JCS, Base64 anotado, límites finitos y ausencia de
-  DOM en la ruta typed. El bridge `serde_json` no sustituye la API pública.
+  DOM en la ruta typed. Cerrado con `json_api.rs`: reader/writer de frames
+  explícitos, `JsonNumber` decimal exacto, vistas input-backed, `Raw` validado,
+  typed dispatch directo por `Encode[Json]`/`Decode[Json]`, políticas de
+  duplicados y errores terminales con path. `serde_json` permanece aislado en
+  el kernel compatibility y no sustituye la ruta typed; los gaps de exposición
+  HIR/VM quedan registrados por `STD-PUBLIC-API-AUDIT-001`.
 
 - [ ] **STD-MSGPACK-IMPL-001 — Implementar MessagePack completo.** Publicar
   `parse -> Value`, `decode[T: Decode[MessagePack]]`,
@@ -5659,6 +5664,18 @@ se declara iniciada antes de esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 1.83 — 2026-08-09
+
+- Se cierra `STD-JSON-IMPL-001` con la implementación portable de JSON: parser
+  y writer con pila explícita, `JsonNumber` lexical, typed encode/decode sin
+  DOM, `ValueView` respaldado por bytes, `Raw` validado y `raw_unchecked` con
+  frontera `unsafe` en la superficie Tondo.
+- Se añaden pruebas de materialización explícita de vistas, preservación exacta
+  de `Raw` y límites/terminalidad; el owner conserva 94 tests Rust y el gate
+  JSON sigue pasando.
+- La siguiente leaf de codec es `STD-MSGPACK-IMPL-001`; la auditoría pública
+  sigue separando símbolos Rust existentes de su futura exposición HIR/VM.
 
 ### 1.82 — 2026-08-09
 

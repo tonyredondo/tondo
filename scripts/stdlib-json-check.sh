@@ -162,7 +162,7 @@ jq -e '
 
 source="$root/crates/tondo-stdlib/src/json_api.rs"
 [[ -s "$source" ]] || { echo "missing typed JSON implementation: ${source#"$root"/}" >&2; exit 1; }
-for symbol in 'pub struct JsonNumber' 'pub struct JsonReader' 'pub struct JsonWriter' 'pub fn parse_with_options' 'pub fn encode_typed' 'pub fn decode_typed'; do
+for symbol in 'pub struct JsonNumber' 'pub struct JsonReader' 'pub struct JsonWriter' 'pub fn parse_with_options' 'pub fn parse_view' 'pub fn raw(' 'pub fn raw_unchecked' 'pub fn encode_typed' 'pub fn decode_typed'; do
     grep -q "$symbol" "$source" || { echo "missing JSON implementation symbol: $symbol" >&2; exit 1; }
 done
 grep -q 'enum Frame' "$source" || { echo "JSON reader must use explicit frames" >&2; exit 1; }
