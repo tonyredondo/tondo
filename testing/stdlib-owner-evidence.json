@@ -1,0 +1,91 @@
+{
+  "format": "tondo-stdlib-owner-evidence/1",
+  "edition": "0.1",
+  "phase": "STD-0.1A",
+  "status": "draft-evidence",
+  "leaf": "STD-A-META-EVIDENCE-001",
+  "contract": "testing/stdlib-meta.json",
+  "owners": [
+    {
+      "id": "std.meta",
+      "layer": "A0",
+      "cells": {
+        "SPEC": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["docs/contracts/std-meta.md", "TONDO_STANDARD_LIBRARY_SPEC.md"]
+        },
+        "IMPL": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-compiler/src/meta.rs", "crates/tondo-compiler/src/std_meta.rs", "crates/tondo-compiler/src/meta_vm.rs"]
+        },
+        "HOST": {
+          "status": "not-applicable",
+          "reason": "std.meta is build-only; provider execution is admitted by the separate tondo-meta VM boundary and has no runtime host adapter",
+          "refs": ["docs/contracts/std-meta.md", "crates/tondo-compiler/src/meta_vm.rs"]
+        },
+        "MODEL": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-compiler/src/meta.rs", "crates/tondo-compiler/src/meta_atomic.rs", "crates/tondo-compiler/src/meta_vm.rs"]
+        },
+        "TEST": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-compiler/src/meta.rs", "crates/tondo-compiler/src/std_meta.rs", "crates/tondo-compiler/tests/std_meta_conformance.rs"]
+        },
+        "FUZZ": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-compiler/src/meta_robust.rs", "fuzz/fuzz_targets/protocols.rs", "fuzz/corpus/protocols/empty-object"]
+        },
+        "PERF": {
+          "status": "partial",
+          "reason": "compile-time and generated-source-size workloads and baselines are declared, but owner promotion capture remains pending",
+          "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
+        },
+        "CONF": {
+          "status": "partial",
+          "reason": "the build-only contract is exercised by compiler and meta-target tests; STD-CONF-001 has not yet promoted every standard-library owner",
+          "refs": ["crates/tondo-compiler/tests/std_meta_conformance.rs", "TONDO_IMPLEMENTATION_TRACKER.md"]
+        },
+        "DOC": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["docs/contracts/std-meta.md", "TONDO_STANDARD_LIBRARY_SPEC.md", "docs/contracts/stdlib-s1a.md"]
+        }
+      },
+      "budgets": {
+        "compile_time": {
+          "unit": "milliseconds",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 1000,
+          "state": "declared-baseline-pending"
+        },
+        "generated_source_bytes": {
+          "unit": "bytes",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 500,
+          "state": "declared-baseline-pending"
+        }
+      },
+      "commands": [
+        "scripts/stdlib-meta-check.sh",
+        "scripts/stdlib-owner-evidence-check.sh",
+        "cargo test -p tondo-compiler --locked --lib meta::tests",
+        "cargo test -p tondo-compiler --locked --lib std_meta::tests",
+        "cargo test -p tondo-compiler --locked --lib meta_robust::tests",
+        "cargo test -p tondo-compiler --locked --test std_meta_conformance"
+      ]
+    }
+  ],
+  "evidence_commands": [
+    "scripts/stdlib-meta-check.sh",
+    "scripts/stdlib-owner-evidence-check.sh",
+    "scripts/stdlib-matrix-check.sh",
+    "TONDO_TEST_TARGET=linux-x86_64 bash scripts/test-gate.sh"
+  ],
+  "coverage_floor_basis_points": 9025,
+  "historical_manifest_immutable": true
+}

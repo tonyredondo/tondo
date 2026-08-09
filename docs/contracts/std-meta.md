@@ -42,3 +42,20 @@ requests have one traversal and one output order.
 The implementation lives in `crates/tondo-compiler/src/meta.rs`; it is a pure
 contract layer and does not execute a provider. Execution and sandbox admission
 belong to `META-VM-001`.
+
+## Evidence and budgets
+
+The owner contract is [`testing/stdlib-meta.json`](../../testing/stdlib-meta.json)
+and the current cell-by-cell record is
+[`testing/stdlib-owner-evidence.json`](../../testing/stdlib-owner-evidence.json).
+They keep `MODEL`, `TEST` and `FUZZ` separate from the implementation proof.
+`HOST` is explicitly `not-applicable`: this package is admitted to the
+build-only `tondo-meta` graph and has no runtime host adapter. Compile-time and
+generated-source-size budgets are declared with the standard performance
+regression budgets; capture remains a promotion gate rather than an invented
+runtime benchmark.
+
+The executable evidence is bounded by `meta_steps`, `meta_memory_bytes`,
+`meta_output_bytes`, renderer indentation, and the protocol probe input limit.
+Run `scripts/stdlib-meta-check.sh` and
+`scripts/stdlib-owner-evidence-check.sh` before the normative matrix check.

@@ -4500,9 +4500,15 @@ Los campos aplicables enlazan artefactos y casos exactos, no solo directorios o
 tests vecinos. Así se conserva granularidad por owner sin multiplicar tareas
 administrativas que no implementan comportamiento.
 
-- [ ] **STD-A-META-EVIDENCE-001 — Cerrar evidencia de `std.meta`.** Registrar
-  build-only HOST como no aplicable y separar modelo, tests/fuzz, presupuestos
-  compile-time, conformidad y docs sobre la ruta pública existente.
+- [x] **STD-A-META-EVIDENCE-001 — Cerrar evidencia de `std.meta`.**
+  `testing/stdlib-meta.json` fija el contrato A0, los seis requisitos del
+  owner y los límites de compilación/generación; `testing/stdlib-owner-evidence.json`
+  registra por separado `SPEC`, `IMPL`, `HOST`, `MODEL`, `TEST`, `FUZZ`, `PERF`,
+  `CONF` y `DOC`. `HOST` es explícitamente `not-applicable` por la frontera
+  build-only `tondo-meta`; el modelo, las pruebas y el corpus de fuzz enlazan
+  `meta.rs`, `std_meta.rs`, `meta_robust.rs` y el test de conformance. Los
+  presupuestos compile-time/generados quedan declarados como promoción
+  pendiente, sin inventar una captura runtime.
 - [ ] **STD-A-REFLECT-EVIDENCE-001 — Cerrar evidencia de `std.reflect`.** Cubrir
   metadata explícita, roots, privacidad, tamaño/coste, ausencia de reflection
   runtime ambiental, conformidad y docs; HOST es no aplicable.
@@ -5733,6 +5739,17 @@ se declara iniciada antes de esos cierres.
 - La auditoría pública queda en 156/207 firmas verificadas con 54 gaps; este
   cierre no promueve `std.testing` ni cierra `STD-TEST-001`, `STD-CONF-001` o
   `STD-DOC-001`.
+
+### 1.92 — 2026-08-09
+
+- Se cierra `STD-A-META-EVIDENCE-001` con el contrato executable
+  `testing/stdlib-meta.json` y el registro por celda
+  `testing/stdlib-owner-evidence.json`. `std.meta` conserva su frontera
+  build-only: `HOST` es `not-applicable`, mientras `MODEL`, `TEST` y `FUZZ`
+  enlazan pruebas y probing acotado de protocolos.
+- La matriz normativa integra los seis requisitos A0 de `std.meta`, pasando a
+  145 requisitos totales y manteniendo `open-gaps` por los presupuestos de
+  compilación/generación y la conformidad global aún pendientes.
 
 ### 1.90 — 2026-08-09
 

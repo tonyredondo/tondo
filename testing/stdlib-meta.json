@@ -1,0 +1,75 @@
+{
+  "format": "tondo-stdlib-owner-contract/1",
+  "owner": "std.meta",
+  "edition": "0.1",
+  "phase": "STD-0.1A",
+  "status": "draft-contract",
+  "contract": "docs/contracts/std-meta.md",
+  "layer": "A0",
+  "kind": "build-only",
+  "target": "tondo-meta",
+  "profile": "meta",
+  "api": "tondo-std-meta-0.1/1",
+  "package": {
+    "format": "tondo-std-meta-package-draft",
+    "package_id": "toolchain:std-meta:draft",
+    "source": "stdlib/meta/src/meta.to",
+    "descriptor": "stdlib/meta/descriptor.json",
+    "source_hash": "sha256:fabe9032853ea18c6ac0089f57e6efffa555e92507378214df4bf5c361947e4f",
+    "content_hash": "sha256:0ca6b7cd70d4aaca4f3c222f8d681620f7fa937955e4328f25c7088634bc7226"
+  },
+  "capabilities": {
+    "required": [],
+    "forbidden": [
+      "filesystem",
+      "environment",
+      "process",
+      "clock",
+      "entropy",
+      "network",
+      "threads",
+      "dynamic-linking",
+      "unsafe"
+    ]
+  },
+  "invariants": [
+    "snapshot-is-immutable-and-canonical",
+    "roots-are-explicit-and-closed",
+    "source-builder-publishes-atomically",
+    "source-maps-are-bounded-and-byte-based",
+    "renderer-is-deterministic",
+    "no-ambient-host-lookup",
+    "no-runtime-value-reflection",
+    "meta-target-rejects-effects-and-unsafe"
+  ],
+  "limits": [
+    {"id": "meta_steps", "unit": "steps", "scope": "one-meta-invocation", "check": "before-execution"},
+    {"id": "meta_memory_bytes", "unit": "bytes", "scope": "one-meta-invocation", "check": "before-execution"},
+    {"id": "meta_output_bytes", "unit": "bytes", "scope": "one-meta-response", "check": "before-publish"},
+    {"id": "renderer_indentation_level", "unit": "levels", "scope": "one-render", "check": "before-repeat"},
+    {"id": "fuzz_input_bytes", "unit": "bytes", "scope": "one-protocol-probe", "check": "before-decode"}
+  ],
+  "test_matrix": [
+    {"id": "snapshot-model", "required": true, "observables": ["canonical-order", "hash", "public-structure", "privacy", "no-runtime-values"]},
+    {"id": "request-response", "required": true, "observables": ["api-version", "owned-inputs", "canonical-codec", "hash", "atomic-response"]},
+    {"id": "source-builder", "required": true, "observables": ["declared-outputs", "utf8", "source-maps", "duplicates", "output-limit", "missing-output"]},
+    {"id": "meta-target-boundary", "required": true, "observables": ["capability-rejection", "unsafe-rejection", "no-ambient-host", "closed-target"]},
+    {"id": "canonical-rendering", "required": true, "observables": ["identifier", "escaping", "indentation", "render-limit", "reproducibility"]},
+    {"id": "compile-time-budget", "required": true, "observables": ["steps", "memory-bytes", "output-bytes", "generated-source-size", "no-unbounded-work"]}
+  ],
+  "corpora": [
+    {"id": "meta-protocols", "source": "owner-generated", "required": true, "focus": ["empty", "canonical", "revision", "unknown-fields", "byte-mutation", "truncation"]},
+    {"id": "source-builder-boundaries", "source": "owner-generated", "required": true, "focus": ["utf8", "source-map", "duplicate-output", "missing-output", "output-limit", "atomicity"]},
+    {"id": "target-boundary", "source": "owner-generated", "required": true, "focus": ["capabilities", "unsafe", "environment", "filesystem", "process", "network"]}
+  ],
+  "promotion": {
+    "gates": [
+      {"id": "design", "requires": ["closed-api", "explicit-roots", "finite-limits", "build-only-target"]},
+      {"id": "implementation", "requires": ["canonical-model", "owned-builder", "source-maps", "deterministic-renderer"]},
+      {"id": "conformance", "requires": ["owner-corpus", "target-rejection", "format-stability", "cross-platform-source"]},
+      {"id": "performance", "requires": ["compile-time-workload", "generated-size-workload", "budget-record"]},
+      {"id": "promote", "requires": ["STD-CONF-001", "META-VM-001", "STD-TEST-001", "coverage-baseline"]}
+    ],
+    "next_coordination": "STD-TEST-001"
+  }
+}

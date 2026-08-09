@@ -99,4 +99,5 @@ while IFS= read -r ref; do
     [[ -e "$root/$base" ]] || die "matrix references missing path: $ref"
 done < <(jq -r '.owners[].stages[] | .refs[]' "$matrix")
 
-echo "stdlib normative matrix: OK (22 owners; 207 signatures; 140 requirements; open gaps explicit)"
+summary="$(jq -r '"\(.summary.owners) owners; \(.summary.signatures) signatures; \(.summary.requirements) requirements"' "$matrix")"
+echo "stdlib normative matrix: OK ($summary; open gaps explicit)"

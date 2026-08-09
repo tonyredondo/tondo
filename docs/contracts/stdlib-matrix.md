@@ -10,7 +10,9 @@ y validada por
 
 La matriz incluye exactamente los 21 owners del contrato de integración y el
 owner intrínseco `std.bytes`, 207 firmas indexadas por la auditoría pública y
-140 requisitos de owner. `std.0.1B` permanece como catálogo futuro cerrado:
+145 requisitos de owner. `std.meta` añade su contrato executable A0 y sus seis
+requisitos de evidencia sin crear una segunda API pública. `std.0.1B` permanece
+como catálogo futuro cerrado:
 sus módulos aparecen solo en `catalogs.future_modules` y no se convierten en
 requisitos implícitos de la fase actual.
 

@@ -2291,6 +2291,14 @@ callbacks ni mutación del AST que produjo el modelo. Crear un documento fuente
 es construir un valor nuevo; el toolchain decide si lo admite, lo formatea y lo
 compila.
 
+La evidencia executable de este owner se registra en
+`testing/stdlib-meta.json` y `testing/stdlib-owner-evidence.json`. El registro
+mantiene separadas las celdas `MODEL`, `TEST` y `FUZZ`, marca `HOST` como
+`not-applicable` por la naturaleza build-only de `tondo-meta` y deja visibles
+los presupuestos de compile-time y tamaño de fuente generada hasta su captura
+de promoción. No se interpreta esta evidencia como una publicación de la
+stdlib ni como una API runtime.
+
 ### 14.9 `std.json`
 
 `std.json` implementa JSON UTF-8 conforme a

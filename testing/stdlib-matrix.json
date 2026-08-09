@@ -1682,9 +1682,14 @@
       "id": "std.meta",
       "implementation_indexed": true,
       "layer": "A0",
-      "owner_contract": null,
+      "owner_contract": "testing/stdlib-meta.json",
       "requirement_rows": [
-        "requirement:std.meta:owner-contract"
+        "requirement:std.meta:canonical-rendering",
+        "requirement:std.meta:compile-time-budget",
+        "requirement:std.meta:meta-target-boundary",
+        "requirement:std.meta:request-response",
+        "requirement:std.meta:snapshot-model",
+        "requirement:std.meta:source-builder"
       ],
       "signature_rows": [],
       "source_set": "stdlib-meta",
@@ -1698,16 +1703,19 @@
       ],
       "stages": {
         "CONF": {
-          "reason": "STD-CONF-001 remains open until the owner has complete public evidence",
+          "reason": "the build-only contract is exercised by compiler and meta-target tests; STD-CONF-001 has not yet promoted every standard-library owner",
           "refs": [
-            "TONDO_IMPLEMENTATION_TRACKER.md#STD-CONF-001"
+            "crates/tondo-compiler/tests/std_meta_conformance.rs",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
           ],
-          "status": "pending"
+          "status": "partial"
         },
         "DOC": {
           "reason": null,
           "refs": [
-            "docs/contracts/std-meta.md"
+            "docs/contracts/std-meta.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md",
+            "docs/contracts/stdlib-s1a.md"
           ],
           "status": "verified"
         },
@@ -1715,43 +1723,42 @@
           "reason": null,
           "refs": [
             "crates/tondo-compiler/src/meta.rs",
+            "crates/tondo-compiler/src/meta_vm.rs",
             "crates/tondo-compiler/src/std_meta.rs",
-            "crates/tondo-compiler/tests/std_meta_conformance.rs"
+            "docs/contracts/std-meta.md"
           ],
           "status": "verified"
         },
         "MODEL/TEST/FUZZ": {
-          "reason": "the owner has implementation tests, but no per-owner executable test matrix is declared",
+          "reason": null,
           "refs": [
             "crates/tondo-compiler/src/meta.rs",
-            "crates/tondo-compiler/tests/std_meta_conformance.rs"
+            "crates/tondo-compiler/src/meta_atomic.rs",
+            "crates/tondo-compiler/src/meta_robust.rs",
+            "crates/tondo-compiler/src/meta_vm.rs",
+            "crates/tondo-compiler/src/std_meta.rs",
+            "crates/tondo-compiler/tests/std_meta_conformance.rs",
+            "fuzz/corpus/protocols/empty-object",
+            "fuzz/fuzz_targets/protocols.rs"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "PERF": {
-          "observed_dimensions": [],
-          "pending_dimensions": [
-            "allocations_per_operation",
-            "allocated_bytes_per_operation",
-            "code_size",
-            "compile_time",
-            "peak_memory",
-            "startup",
-            "tail_latency",
-            "throughput"
-          ],
-          "reason": "Meta is build-time only; its compile-time workload and generated-code size identity are not yet reviewed.",
+          "reason": "compile-time and generated-source-size workloads and baselines are declared, but owner promotion capture remains pending",
           "refs": [
-            "testing/stdlib-performance-conformance.json#owners/std.meta"
-          ],
-          "status": "pending"
-        },
-        "SPEC": {
-          "reason": "no executable owner test_matrix entry exists; the placeholder makes the missing contract explicit",
-          "refs": [
-            "docs/contracts/std-meta.md"
+            "testing/stdlib-performance.json",
+            "testing/stdlib-performance-conformance.json",
+            "docs/contracts/stdlib-performance.md"
           ],
           "status": "partial"
+        },
+        "SPEC": {
+          "reason": null,
+          "refs": [
+            "docs/contracts/std-meta.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md"
+          ],
+          "status": "verified"
         }
       },
       "status": "open-gaps"
@@ -7845,20 +7852,185 @@
     },
     {
       "dimensions_ref": "owner:std.meta",
-      "id": "requirement:std.meta:owner-contract",
+      "id": "requirement:std.meta:canonical-rendering",
       "kind": "requirement",
       "layer": "A0",
       "owner": "std.meta",
       "requirement": {
-        "id": "owner-contract",
-        "observables": [],
-        "required": true,
-        "synthetic": true
+        "id": "canonical-rendering",
+        "observables": [
+          "identifier",
+          "escaping",
+          "indentation",
+          "render-limit",
+          "reproducibility"
+        ],
+        "required": true
       },
       "scope": "STD-0.1A",
       "source": {
         "contract": "docs/contracts/std-meta.md",
-        "owner_contract": null
+        "owner_contract": "testing/stdlib-meta.json"
+      },
+      "stage_refs": {
+        "CONF": "owner:std.meta:CONF",
+        "DOC": "owner:std.meta:DOC",
+        "IMPL/HOST": "owner:std.meta:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "owner:std.meta:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.meta:PERF",
+        "SPEC": "owner:std.meta:SPEC"
+      },
+      "status": "open-gaps"
+    },
+    {
+      "dimensions_ref": "owner:std.meta",
+      "id": "requirement:std.meta:compile-time-budget",
+      "kind": "requirement",
+      "layer": "A0",
+      "owner": "std.meta",
+      "requirement": {
+        "id": "compile-time-budget",
+        "observables": [
+          "steps",
+          "memory-bytes",
+          "output-bytes",
+          "generated-source-size",
+          "no-unbounded-work"
+        ],
+        "required": true
+      },
+      "scope": "STD-0.1A",
+      "source": {
+        "contract": "docs/contracts/std-meta.md",
+        "owner_contract": "testing/stdlib-meta.json"
+      },
+      "stage_refs": {
+        "CONF": "owner:std.meta:CONF",
+        "DOC": "owner:std.meta:DOC",
+        "IMPL/HOST": "owner:std.meta:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "owner:std.meta:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.meta:PERF",
+        "SPEC": "owner:std.meta:SPEC"
+      },
+      "status": "open-gaps"
+    },
+    {
+      "dimensions_ref": "owner:std.meta",
+      "id": "requirement:std.meta:meta-target-boundary",
+      "kind": "requirement",
+      "layer": "A0",
+      "owner": "std.meta",
+      "requirement": {
+        "id": "meta-target-boundary",
+        "observables": [
+          "capability-rejection",
+          "unsafe-rejection",
+          "no-ambient-host",
+          "closed-target"
+        ],
+        "required": true
+      },
+      "scope": "STD-0.1A",
+      "source": {
+        "contract": "docs/contracts/std-meta.md",
+        "owner_contract": "testing/stdlib-meta.json"
+      },
+      "stage_refs": {
+        "CONF": "owner:std.meta:CONF",
+        "DOC": "owner:std.meta:DOC",
+        "IMPL/HOST": "owner:std.meta:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "owner:std.meta:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.meta:PERF",
+        "SPEC": "owner:std.meta:SPEC"
+      },
+      "status": "open-gaps"
+    },
+    {
+      "dimensions_ref": "owner:std.meta",
+      "id": "requirement:std.meta:request-response",
+      "kind": "requirement",
+      "layer": "A0",
+      "owner": "std.meta",
+      "requirement": {
+        "id": "request-response",
+        "observables": [
+          "api-version",
+          "owned-inputs",
+          "canonical-codec",
+          "hash",
+          "atomic-response"
+        ],
+        "required": true
+      },
+      "scope": "STD-0.1A",
+      "source": {
+        "contract": "docs/contracts/std-meta.md",
+        "owner_contract": "testing/stdlib-meta.json"
+      },
+      "stage_refs": {
+        "CONF": "owner:std.meta:CONF",
+        "DOC": "owner:std.meta:DOC",
+        "IMPL/HOST": "owner:std.meta:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "owner:std.meta:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.meta:PERF",
+        "SPEC": "owner:std.meta:SPEC"
+      },
+      "status": "open-gaps"
+    },
+    {
+      "dimensions_ref": "owner:std.meta",
+      "id": "requirement:std.meta:snapshot-model",
+      "kind": "requirement",
+      "layer": "A0",
+      "owner": "std.meta",
+      "requirement": {
+        "id": "snapshot-model",
+        "observables": [
+          "canonical-order",
+          "hash",
+          "public-structure",
+          "privacy",
+          "no-runtime-values"
+        ],
+        "required": true
+      },
+      "scope": "STD-0.1A",
+      "source": {
+        "contract": "docs/contracts/std-meta.md",
+        "owner_contract": "testing/stdlib-meta.json"
+      },
+      "stage_refs": {
+        "CONF": "owner:std.meta:CONF",
+        "DOC": "owner:std.meta:DOC",
+        "IMPL/HOST": "owner:std.meta:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "owner:std.meta:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.meta:PERF",
+        "SPEC": "owner:std.meta:SPEC"
+      },
+      "status": "open-gaps"
+    },
+    {
+      "dimensions_ref": "owner:std.meta",
+      "id": "requirement:std.meta:source-builder",
+      "kind": "requirement",
+      "layer": "A0",
+      "owner": "std.meta",
+      "requirement": {
+        "id": "source-builder",
+        "observables": [
+          "declared-outputs",
+          "utf8",
+          "source-maps",
+          "duplicates",
+          "output-limit",
+          "missing-output"
+        ],
+        "required": true
+      },
+      "scope": "STD-0.1A",
+      "source": {
+        "contract": "docs/contracts/std-meta.md",
+        "owner_contract": "testing/stdlib-meta.json"
       },
       "stage_refs": {
         "CONF": "owner:std.meta:CONF",
@@ -11640,40 +11812,45 @@
     "codec_conformance": "testing/stdlib-codec-conformance.json",
     "implementation": "testing/stdlib-implementation.json",
     "integration": "testing/stdlib-spec.json",
+    "owner_contracts": [
+      "testing/stdlib-meta.json"
+    ],
+    "owner_evidence": "testing/stdlib-owner-evidence.json",
     "performance_contract": "testing/stdlib-performance.json",
     "performance_coordinator": "testing/stdlib-performance-conformance.json",
     "public_api": "testing/stdlib-public-api.json"
   },
   "status": "open-gaps",
   "summary": {
-    "open_rows": 347,
+    "open_rows": 352,
     "owners": 22,
-    "requirements": 140,
-    "rows": 347,
+    "requirements": 145,
+    "rows": 352,
     "signatures": 207,
     "stage_counts": {
       "CONF": {
-        "partial": 96,
-        "pending": 251
+        "partial": 102,
+        "pending": 250
       },
       "DOC": {
-        "verified": 347
+        "verified": 352
       },
       "IMPL/HOST": {
         "partial": 28,
-        "verified": 319
+        "verified": 324
       },
       "MODEL/TEST/FUZZ": {
-        "partial": 346,
-        "pending": 1
+        "partial": 345,
+        "pending": 1,
+        "verified": 6
       },
       "PERF": {
-        "partial": 138,
-        "pending": 209
+        "partial": 144,
+        "pending": 208
       },
       "SPEC": {
-        "partial": 6,
-        "verified": 341
+        "partial": 5,
+        "verified": 347
       }
     },
     "verified_rows": 0
