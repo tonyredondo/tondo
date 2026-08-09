@@ -3,8 +3,18 @@
   "edition": "0.1",
   "phase": "STD-0.1A",
   "status": "draft-evidence",
-  "leaf": "STD-A-META-EVIDENCE-001",
-  "contract": "testing/stdlib-meta.json",
+  "leaves": [
+    {
+      "id": "STD-A-META-EVIDENCE-001",
+      "contract": "testing/stdlib-meta.json",
+      "owners": ["std.meta"]
+    },
+    {
+      "id": "STD-A-REFLECT-EVIDENCE-001",
+      "contract": "testing/stdlib-reflect.json",
+      "owners": ["std.reflect"]
+    }
+  ],
   "owners": [
     {
       "id": "std.meta",
@@ -77,6 +87,76 @@
         "cargo test -p tondo-compiler --locked --lib std_meta::tests",
         "cargo test -p tondo-compiler --locked --lib meta_robust::tests",
         "cargo test -p tondo-compiler --locked --test std_meta_conformance"
+      ]
+    },
+    {
+      "id": "std.reflect",
+      "layer": "A0",
+      "cells": {
+        "SPEC": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["docs/contracts/std-reflect.md", "TONDO_STANDARD_LIBRARY_SPEC.md"]
+        },
+        "IMPL": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-compiler/src/reflect.rs"]
+        },
+        "HOST": {
+          "status": "not-applicable",
+          "reason": "std.reflect is metadata-only and has no runtime host adapter or ambient provider",
+          "refs": ["docs/contracts/std-reflect.md", "testing/stdlib-reflect.json"]
+        },
+        "MODEL": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-compiler/src/reflect.rs"]
+        },
+        "TEST": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-compiler/src/reflect.rs"]
+        },
+        "FUZZ": {
+          "status": "partial",
+          "reason": "the bounded catalog corpus is declared and negative tests are executable, but no dedicated reflection fuzz target has been promoted",
+          "refs": ["testing/stdlib-reflect.json", "scripts/stdlib-reflect-test.sh"]
+        },
+        "PERF": {
+          "status": "partial",
+          "reason": "link-work and descriptor-size workloads are declared, but owner promotion capture remains pending",
+          "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
+        },
+        "CONF": {
+          "status": "partial",
+          "reason": "compiler reflection tests cover the metadata boundary; STD-CONF-001 has not yet promoted every standard-library owner",
+          "refs": ["crates/tondo-compiler/src/reflect.rs", "TONDO_IMPLEMENTATION_TRACKER.md"]
+        },
+        "DOC": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["docs/contracts/std-reflect.md", "TONDO_STANDARD_LIBRARY_SPEC.md", "docs/contracts/stdlib-s1a.md"]
+        }
+      },
+      "budgets": {
+        "link_work": {
+          "unit": "work-units",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 1000,
+          "state": "declared-baseline-pending"
+        },
+        "descriptor_bytes": {
+          "unit": "bytes",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 500,
+          "state": "declared-baseline-pending"
+        }
+      },
+      "commands": [
+        "scripts/stdlib-reflect-check.sh",
+        "scripts/stdlib-reflect-test.sh",
+        "cargo test -p tondo-compiler --locked --lib reflect::tests"
       ]
     }
   ],

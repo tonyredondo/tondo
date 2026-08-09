@@ -2271,6 +2271,16 @@ Los usos previstos son diagnostics de aplicación, documentación y herramientas
 que necesitan describir un tipo conocido estáticamente. JSON, MessagePack y
 Protobuf no dependen de este módulo: usan impls generados y dispatch estático.
 
+La evidencia machine-readable de este contrato vive en
+`testing/stdlib-reflect.json` y en la matriz por celdas de
+`testing/stdlib-owner-evidence.json`, bajo
+`STD-A-REFLECT-EVIDENCE-001`. Esa evidencia separa las raíces explícitas, la
+clausura pública, privacidad, identidad local al artefacto, ausencia de
+reflection de valores y los límites de coste; `HOST` es
+`not-applicable` porque el módulo es metadata-only. La matriz no convierte
+estas pruebas en una promesa de reflection runtime ni cierra por sí sola los
+gates globales de conformidad o rendimiento.
+
 ### 14.8 `std.meta`
 
 `std.meta` solo está presente en `target = tondo-meta`. Define los valores

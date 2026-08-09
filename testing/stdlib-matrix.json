@@ -2202,9 +2202,14 @@
       "id": "std.reflect",
       "implementation_indexed": true,
       "layer": "A0",
-      "owner_contract": null,
+      "owner_contract": "testing/stdlib-reflect.json",
       "requirement_rows": [
-        "requirement:std.reflect:owner-contract"
+        "requirement:std.reflect:artifact-local-identity",
+        "requirement:std.reflect:catalog-shape",
+        "requirement:std.reflect:malformed-inputs-and-cost",
+        "requirement:std.reflect:no-runtime-reflection",
+        "requirement:std.reflect:privacy",
+        "requirement:std.reflect:root-closure"
       ],
       "signature_rows": [],
       "source_set": "stdlib-reflect",
@@ -2218,57 +2223,56 @@
       ],
       "stages": {
         "CONF": {
-          "reason": "STD-CONF-001 remains open until the owner has complete public evidence",
+          "reason": "compiler reflection tests cover the metadata boundary; STD-CONF-001 has not yet promoted every standard-library owner",
           "refs": [
-            "TONDO_IMPLEMENTATION_TRACKER.md#STD-CONF-001"
+            "crates/tondo-compiler/src/reflect.rs",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
           ],
-          "status": "pending"
+          "status": "partial"
         },
         "DOC": {
           "reason": null,
           "refs": [
-            "docs/contracts/std-reflect.md"
+            "docs/contracts/std-reflect.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md",
+            "docs/contracts/stdlib-s1a.md"
           ],
           "status": "verified"
         },
         "IMPL/HOST": {
           "reason": null,
           "refs": [
-            "crates/tondo-compiler/src/reflect.rs"
+            "crates/tondo-compiler/src/reflect.rs",
+            "docs/contracts/std-reflect.md",
+            "testing/stdlib-reflect.json"
           ],
           "status": "verified"
         },
         "MODEL/TEST/FUZZ": {
-          "reason": "the owner has implementation tests, but no per-owner executable test matrix is declared",
+          "reason": "the bounded catalog corpus is declared and negative tests are executable, but no dedicated reflection fuzz target has been promoted",
           "refs": [
-            "crates/tondo-compiler/src/reflect.rs"
+            "crates/tondo-compiler/src/reflect.rs",
+            "scripts/stdlib-reflect-test.sh",
+            "testing/stdlib-reflect.json"
           ],
           "status": "partial"
         },
         "PERF": {
-          "observed_dimensions": [],
-          "pending_dimensions": [
-            "allocations_per_operation",
-            "allocated_bytes_per_operation",
-            "code_size",
-            "compile_time",
-            "peak_memory",
-            "startup",
-            "tail_latency",
-            "throughput"
-          ],
-          "reason": "Reflection metadata needs a compile-time size/cost workload; runtime timing would violate its contract.",
+          "reason": "link-work and descriptor-size workloads are declared, but owner promotion capture remains pending",
           "refs": [
-            "testing/stdlib-performance-conformance.json#owners/std.reflect"
-          ],
-          "status": "pending"
-        },
-        "SPEC": {
-          "reason": "no executable owner test_matrix entry exists; the placeholder makes the missing contract explicit",
-          "refs": [
-            "docs/contracts/std-reflect.md"
+            "testing/stdlib-performance.json",
+            "testing/stdlib-performance-conformance.json",
+            "docs/contracts/stdlib-performance.md"
           ],
           "status": "partial"
+        },
+        "SPEC": {
+          "reason": null,
+          "refs": [
+            "docs/contracts/std-reflect.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md"
+          ],
+          "status": "verified"
         }
       },
       "status": "open-gaps"
@@ -9962,20 +9966,181 @@
     },
     {
       "dimensions_ref": "owner:std.reflect",
-      "id": "requirement:std.reflect:owner-contract",
+      "id": "requirement:std.reflect:artifact-local-identity",
       "kind": "requirement",
       "layer": "A0",
       "owner": "std.reflect",
       "requirement": {
-        "id": "owner-contract",
-        "observables": [],
-        "required": true,
-        "synthetic": true
+        "id": "artifact-local-identity",
+        "observables": [
+          "artifact-tag",
+          "slot",
+          "cross-artifact-rejection",
+          "no-public-bits"
+        ],
+        "required": true
       },
       "scope": "STD-0.1A",
       "source": {
         "contract": "docs/contracts/std-reflect.md",
-        "owner_contract": null
+        "owner_contract": "testing/stdlib-reflect.json"
+      },
+      "stage_refs": {
+        "CONF": "owner:std.reflect:CONF",
+        "DOC": "owner:std.reflect:DOC",
+        "IMPL/HOST": "owner:std.reflect:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "owner:std.reflect:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.reflect:PERF",
+        "SPEC": "owner:std.reflect:SPEC"
+      },
+      "status": "open-gaps"
+    },
+    {
+      "dimensions_ref": "owner:std.reflect",
+      "id": "requirement:std.reflect:catalog-shape",
+      "kind": "requirement",
+      "layer": "A0",
+      "owner": "std.reflect",
+      "requirement": {
+        "id": "catalog-shape",
+        "observables": [
+          "closed-kind",
+          "primitive-family",
+          "applied-family",
+          "reference-family",
+          "capabilities"
+        ],
+        "required": true
+      },
+      "scope": "STD-0.1A",
+      "source": {
+        "contract": "docs/contracts/std-reflect.md",
+        "owner_contract": "testing/stdlib-reflect.json"
+      },
+      "stage_refs": {
+        "CONF": "owner:std.reflect:CONF",
+        "DOC": "owner:std.reflect:DOC",
+        "IMPL/HOST": "owner:std.reflect:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "owner:std.reflect:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.reflect:PERF",
+        "SPEC": "owner:std.reflect:SPEC"
+      },
+      "status": "open-gaps"
+    },
+    {
+      "dimensions_ref": "owner:std.reflect",
+      "id": "requirement:std.reflect:malformed-inputs-and-cost",
+      "kind": "requirement",
+      "layer": "A0",
+      "owner": "std.reflect",
+      "requirement": {
+        "id": "malformed-inputs-and-cost",
+        "observables": [
+          "invalid-text",
+          "invalid-shape",
+          "duplicate-members",
+          "unknown-types",
+          "bounded-linking"
+        ],
+        "required": true
+      },
+      "scope": "STD-0.1A",
+      "source": {
+        "contract": "docs/contracts/std-reflect.md",
+        "owner_contract": "testing/stdlib-reflect.json"
+      },
+      "stage_refs": {
+        "CONF": "owner:std.reflect:CONF",
+        "DOC": "owner:std.reflect:DOC",
+        "IMPL/HOST": "owner:std.reflect:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "owner:std.reflect:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.reflect:PERF",
+        "SPEC": "owner:std.reflect:SPEC"
+      },
+      "status": "open-gaps"
+    },
+    {
+      "dimensions_ref": "owner:std.reflect",
+      "id": "requirement:std.reflect:no-runtime-reflection",
+      "kind": "requirement",
+      "layer": "A0",
+      "owner": "std.reflect",
+      "requirement": {
+        "id": "no-runtime-reflection",
+        "observables": [
+          "no-value-channel",
+          "no-get-set-invoke",
+          "no-global-registry",
+          "no-ambient-host"
+        ],
+        "required": true
+      },
+      "scope": "STD-0.1A",
+      "source": {
+        "contract": "docs/contracts/std-reflect.md",
+        "owner_contract": "testing/stdlib-reflect.json"
+      },
+      "stage_refs": {
+        "CONF": "owner:std.reflect:CONF",
+        "DOC": "owner:std.reflect:DOC",
+        "IMPL/HOST": "owner:std.reflect:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "owner:std.reflect:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.reflect:PERF",
+        "SPEC": "owner:std.reflect:SPEC"
+      },
+      "status": "open-gaps"
+    },
+    {
+      "dimensions_ref": "owner:std.reflect",
+      "id": "requirement:std.reflect:privacy",
+      "kind": "requirement",
+      "layer": "A0",
+      "owner": "std.reflect",
+      "requirement": {
+        "id": "privacy",
+        "observables": [
+          "private-fields",
+          "private-variant-fields",
+          "no-private-dependency-leak",
+          "public-ordinals"
+        ],
+        "required": true
+      },
+      "scope": "STD-0.1A",
+      "source": {
+        "contract": "docs/contracts/std-reflect.md",
+        "owner_contract": "testing/stdlib-reflect.json"
+      },
+      "stage_refs": {
+        "CONF": "owner:std.reflect:CONF",
+        "DOC": "owner:std.reflect:DOC",
+        "IMPL/HOST": "owner:std.reflect:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "owner:std.reflect:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.reflect:PERF",
+        "SPEC": "owner:std.reflect:SPEC"
+      },
+      "status": "open-gaps"
+    },
+    {
+      "dimensions_ref": "owner:std.reflect",
+      "id": "requirement:std.reflect:root-closure",
+      "kind": "requirement",
+      "layer": "A0",
+      "owner": "std.reflect",
+      "requirement": {
+        "id": "root-closure",
+        "observables": [
+          "explicit-roots",
+          "public-dependencies",
+          "dead-type-removal",
+          "deterministic-compaction"
+        ],
+        "required": true
+      },
+      "scope": "STD-0.1A",
+      "source": {
+        "contract": "docs/contracts/std-reflect.md",
+        "owner_contract": "testing/stdlib-reflect.json"
       },
       "stage_refs": {
         "CONF": "owner:std.reflect:CONF",
@@ -11813,7 +11978,8 @@
     "implementation": "testing/stdlib-implementation.json",
     "integration": "testing/stdlib-spec.json",
     "owner_contracts": [
-      "testing/stdlib-meta.json"
+      "testing/stdlib-meta.json",
+      "testing/stdlib-reflect.json"
     ],
     "owner_evidence": "testing/stdlib-owner-evidence.json",
     "performance_contract": "testing/stdlib-performance.json",
@@ -11822,35 +11988,35 @@
   },
   "status": "open-gaps",
   "summary": {
-    "open_rows": 352,
+    "open_rows": 357,
     "owners": 22,
-    "requirements": 145,
-    "rows": 352,
+    "requirements": 150,
+    "rows": 357,
     "signatures": 207,
     "stage_counts": {
       "CONF": {
-        "partial": 102,
-        "pending": 250
+        "partial": 108,
+        "pending": 249
       },
       "DOC": {
-        "verified": 352
+        "verified": 357
       },
       "IMPL/HOST": {
         "partial": 28,
-        "verified": 324
+        "verified": 329
       },
       "MODEL/TEST/FUZZ": {
-        "partial": 345,
+        "partial": 350,
         "pending": 1,
         "verified": 6
       },
       "PERF": {
-        "partial": 144,
-        "pending": 208
+        "partial": 150,
+        "pending": 207
       },
       "SPEC": {
-        "partial": 5,
-        "verified": 347
+        "partial": 4,
+        "verified": 353
       }
     },
     "verified_rows": 0

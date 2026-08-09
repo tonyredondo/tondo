@@ -1,0 +1,72 @@
+{
+  "format": "tondo-stdlib-owner-contract/1",
+  "owner": "std.reflect",
+  "edition": "0.1",
+  "phase": "STD-0.1A",
+  "status": "draft-contract",
+  "contract": "docs/contracts/std-reflect.md",
+  "layer": "A0",
+  "kind": "metadata-only",
+  "target": "tondo-compiler",
+  "profile": "reflect",
+  "api": "tondo-std-reflect-0.1/1",
+  "source": {
+    "path": "crates/tondo-compiler/src/reflect.rs",
+    "sha256": "sha256:8ad04e53b10072c6342b384672354040ac94a37f7b69d72f54bd8a0624f5b8fb"
+  },
+  "capabilities": {
+    "required": [],
+    "forbidden": [
+      "filesystem",
+      "environment",
+      "process",
+      "clock",
+      "entropy",
+      "network",
+      "threads",
+      "dynamic-loading",
+      "unsafe",
+      "runtime-value-reflection"
+    ]
+  },
+  "invariants": [
+    "type-info-is-static-and-immutable",
+    "roots-are-explicit-and-closed",
+    "public-descriptor-closure-excludes-private-members",
+    "type-ids-are-artifact-local",
+    "descriptors-carry-no-value-channel",
+    "no-global-registry-or-name-lookup",
+    "compaction-is-deterministic",
+    "metadata-has-no-ambient-host-boundary"
+  ],
+  "limits": [
+    {"id": "retained_type_count", "unit": "types", "scope": "one-linked-artifact", "check": "before-record-allocation"},
+    {"id": "descriptor_text_bytes", "unit": "bytes", "scope": "one-linked-artifact", "check": "before-publish"},
+    {"id": "generic_argument_count", "unit": "types", "scope": "one-type-info", "check": "before-record-allocation"},
+    {"id": "member_count", "unit": "members", "scope": "one-type-info", "check": "before-record-allocation"},
+    {"id": "link_work_units", "unit": "units", "scope": "one-link", "check": "before-repeat"}
+  ],
+  "test_matrix": [
+    {"id": "catalog-shape", "required": true, "observables": ["closed-kind", "primitive-family", "applied-family", "reference-family", "capabilities"]},
+    {"id": "root-closure", "required": true, "observables": ["explicit-roots", "public-dependencies", "dead-type-removal", "deterministic-compaction"]},
+    {"id": "privacy", "required": true, "observables": ["private-fields", "private-variant-fields", "no-private-dependency-leak", "public-ordinals"]},
+    {"id": "artifact-local-identity", "required": true, "observables": ["artifact-tag", "slot", "cross-artifact-rejection", "no-public-bits"]},
+    {"id": "no-runtime-reflection", "required": true, "observables": ["no-value-channel", "no-get-set-invoke", "no-global-registry", "no-ambient-host"]},
+    {"id": "malformed-inputs-and-cost", "required": true, "observables": ["invalid-text", "invalid-shape", "duplicate-members", "unknown-types", "bounded-linking"]}
+  ],
+  "corpora": [
+    {"id": "reflect-catalogs", "source": "owner-generated", "required": true, "focus": ["primitive", "records", "enums", "tuples", "functions", "applied", "references", "opaque"]},
+    {"id": "root-closures", "source": "owner-generated", "required": true, "focus": ["public-fields", "private-fields", "cycles", "dead-roots", "artifact-identity"]},
+    {"id": "reflect-boundaries", "source": "owner-generated", "required": true, "focus": ["invalid-text", "invalid-shape", "duplicate-members", "unknown-types", "no-runtime-access"]}
+  ],
+  "promotion": {
+    "gates": [
+      {"id": "design", "requires": ["closed-descriptors", "explicit-roots", "artifact-local-ids", "no-value-reflection"]},
+      {"id": "implementation", "requires": ["canonical-catalog", "privacy-closure", "deterministic-compaction"]},
+      {"id": "conformance", "requires": ["owner-corpus", "malformed-input-rejection", "cross-artifact-isolation", "cross-platform-source"]},
+      {"id": "performance", "requires": ["link-workload", "descriptor-size-workload", "budget-record"]},
+      {"id": "promote", "requires": ["STD-CONF-001", "STD-TEST-001", "coverage-baseline"]}
+    ],
+    "next_coordination": "STD-TEST-001"
+  }
+}
