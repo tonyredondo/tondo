@@ -77,6 +77,8 @@
     "terminal_state": "error-or-finish-terminal",
     "end_of_document": "next-returns-none-once",
     "typed_dispatch": "Encode-Decode-static-no-dynamic-dom",
+    "static_bridge": ["encode_static", "decode_static"],
+    "compatibility_bridge": ["encode_typed", "decode_typed"],
     "annotations": ["@name", "@messagepack", "@ignore"]
   },
   "streaming": {

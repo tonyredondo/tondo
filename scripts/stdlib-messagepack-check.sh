@@ -78,6 +78,8 @@ jq -e '
     and .api.terminal_state == "error-or-finish-terminal"
     and .api.end_of_document == "next-returns-none-once"
     and .api.typed_dispatch == "Encode-Decode-static-no-dynamic-dom"
+    and .api.static_bridge == ["encode_static", "decode_static"]
+    and .api.compatibility_bridge == ["encode_typed", "decode_typed"]
     and .streaming.event_kinds == [
         "nil", "bool", "int", "uint", "float32", "float64", "string", "binary",
         "start-array", "end-array", "start-map", "map-key", "end-map", "ext"
@@ -185,6 +187,8 @@ for symbol in \
     'pub fn parse_view' \
     'pub fn raw(' \
     'pub fn raw_unchecked' \
+    'pub fn encode_static' \
+    'pub fn decode_static' \
     'pub fn from_chunks' \
     'fn canonical_value'; do
     grep -q "$symbol" "$source" || {
@@ -192,5 +196,21 @@ for symbol in \
         exit 1
     }
 done
+
+# Keep the source-level aliases and the one static codec path explicit.  The
+# snake_case compatibility helpers remain a bridge and must not become a
+# second public Tondo surface.
+grep -Fq 'pub type Value = MessagePackValue' "$source" || {
+    echo "MessagePack Value alias is missing" >&2
+    exit 1
+}
+grep -Fq 'pub type ValueView' "$source" || {
+    echo "MessagePack ValueView alias is missing" >&2
+    exit 1
+}
+grep -Fq 'pub type Raw = RawCodec<MessagePackCodec>' "$source" || {
+    echo "MessagePack Raw type is missing" >&2
+    exit 1
+}
 
 echo "std.messagepack owner contract: OK"

@@ -1,8 +1,9 @@
 # Contrato de `std.messagepack`
 
-**Estado:** contrato de API fuente normativo para `STD-0.1A`; la implementación
-typed, dynamic y streaming debe migrar al ABI `Encode[C]`/`Decode[C]` antes de
-cerrar el owner.
+**Estado:** contrato de API fuente normativo e implementación portable cerrada
+para `STD-0.1A`. Las rutas typed, dynamic y streaming consumen el ABI
+`Encode[C]`/`Decode[C]`; la conformance externa y la interoperabilidad
+independiente permanecen como gates posteriores.
 
 `std.messagepack` implementa el modelo binario de la especificación MessagePack
 y reutiliza los traits estáticos de `std.serialization`. El registro
@@ -227,7 +228,10 @@ acepta bytes, chunks y el adaptador bounded de `Read`, y queda terminal tras un
 error o `finish`. `MessagePackWriter` valida la secuencia de eventos con otra
 pila explícita y solo publica bytes después de cerrar la raíz. Los adaptadores
 typed pasan por `std.serialization` y no introducen una tabla de reflection en
-runtime. `parseView` valida una vez y conserva el input sin construir el árbol;
+runtime. Los entry points internos `encode_static`/`decode_static` son la
+frontera del ABI común; `encode_typed`/`decode_typed` se conservan únicamente
+como nombres del bridge Rust y no constituyen una segunda API Tondo.
+`parseView` valida una vez y conserva el input sin construir el árbol;
 `ValueView.cloneValue()` materializa explícitamente. `raw` valida y conserva
 los bytes exactos, mientras `rawUnchecked` es únicamente la frontera `unsafe`
 del lenguaje. El corpus unitario cubre el modelo wire, políticas, timestamp,

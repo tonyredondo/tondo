@@ -2389,6 +2389,13 @@ pub fn MessagePackWriter.finish(var self): Unit ! MessagePackError
 El catálogo completo de `Value`, ext/timestamp, policies, limits,
 paths y errores está en el [contrato fuente de `std.messagepack`](./docs/contracts/stdlib-messagepack.md).
 
+La implementación portable de `std.messagepack` reside en
+`crates/tondo-stdlib/src/messagepack_api.rs`: `encode_static`/`decode_static`
+son la única frontera del ABI `Encode[MessagePack]`/`Decode[MessagePack]` y
+`encode_typed`/`decode_typed` quedan limitados al bridge Rust. El owner mantiene
+las alias `Value`, `ValueView` y `Raw` y no publica una segunda superficie por
+formato.
+
 ### 14.11 `std.protobuf`
 
 [Protobuf](https://protobuf.dev/programming-guides/encoding/) es schema-first.

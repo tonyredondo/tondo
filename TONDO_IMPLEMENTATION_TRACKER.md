@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 1.85
+**Versión del tracker:** 1.86
 
 **Última actualización:** 2026-08-09
 
@@ -48,8 +48,9 @@ contratos públicos: la ruta de frontend, HIR/MIR/bytecode, `Join` transferible,
 referencia. La compatibilidad léxica de `async` se conserva únicamente para
 fixtures históricos y no aparece en interfaces ni en la superficie normativa;
 la retirada mecánica de esas fixtures queda separada del contrato ejecutable.
-Después: (1) cerrar `STD-CODEC-CONF-001` para JSON, MessagePack y Protobuf;
-(2) completar las rutas públicas A1–A4 y ampliar
+Después: (1) cerrar `STD-PROTOBUF-API-001`; (2) cerrar
+`STD-CODEC-CONF-001` para JSON, MessagePack y Protobuf; (3) completar las
+rutas públicas A1–A4 y ampliar
 la matriz normativa a los tres contratos G5 antes de volver a cerrar T0/G5/S1A.
 Los contratos
 runtime-facing de STD-0.1B y M11 esperan esos gates. Todo pertenece a la primera
@@ -4268,11 +4269,18 @@ tests. Antes de volver a marcarlas `[x]` deben cumplirse todos estos puntos:
   lowering y caso público se mantienen abiertas, de forma visible, para
   `STD-JSON-IMPL-001` y no se sustituyen por aliases del bridge Rust.
 
-- [ ] **STD-MSGPACK-API-001 — Fijar la API fuente exacta de MessagePack.**
+- [x] **STD-MSGPACK-API-001 — Fijar la API fuente exacta de MessagePack.**
   Publicar `parse -> Value`, `decode[T: Decode[MessagePack]]`,
   `encode[T: Encode[MessagePack]]`, `ValueView`/`Raw`, ext/timestamp, policies,
   options/limits, eventos, readers/writers, ownership, errores y terminalidad
-  bajo el owner común de serialization e I/O.
+  bajo el owner común de serialization e I/O. Cerrado con el catálogo único de
+  firmas en la sección 14.10, el contrato machine-readable
+  `testing/stdlib-messagepack.json` y el checker del owner, incluyendo las
+  aliases `Value`/`ValueView`/`Raw` y la frontera estática
+  `Encode[MessagePack]`/`Decode[MessagePack]`. `encode_typed`/`decode_typed`
+  quedan explícitamente limitados al bridge Rust; la ruta HIR/lowering/caso
+  público sigue visible para `STD-MSGPACK-IMPL-001` y no se sustituye por ese
+  bridge.
 
 - [ ] **STD-PROTOBUF-API-001 — Fijar la API fuente y de build de Protobuf.**
   Publicar `[[protobuf.schema]]` en `tondo.toml`, mapping hermético, baseline
@@ -5673,6 +5681,17 @@ se declara iniciada antes de esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 1.86 — 2026-08-09
+
+- Se fija y cierra `STD-MSGPACK-API-001`: la sección 14.10, el contrato
+  machine-readable y el checker describen la misma API única, incluidas
+  `ValueView`, `Raw`, policies, eventos y la frontera estática del ABI común.
+- Los nombres `encode_static`/`decode_static` son el camino interno canónico;
+  `encode_typed`/`decode_typed` permanecen como bridge Rust y no duplican la
+  superficie Tondo. La implementación owner ya satisface esa separación.
+- El siguiente gate es `STD-PROTOBUF-API-001`, antes de
+  `STD-CODEC-CONF-001`.
 
 ### 1.85 — 2026-08-09
 
