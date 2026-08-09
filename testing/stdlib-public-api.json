@@ -4081,7 +4081,6 @@
         }
       },
       "missing": [
-        "lowering-symbol",
         "public-case-call"
       ],
       "status": "gap"
@@ -5554,7 +5553,6 @@
         }
       },
       "missing": [
-        "lowering-symbol",
         "public-case-call"
       ],
       "status": "gap"
@@ -7627,7 +7625,6 @@
         }
       },
       "missing": [
-        "lowering-symbol",
         "public-case-call"
       ],
       "status": "gap"
