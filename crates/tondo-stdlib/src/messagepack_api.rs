@@ -13,7 +13,7 @@ use std::io::Read;
 
 use crate::serialization::{
     self, Decode, Decoder, Deserialize, Encode, Encoder, Event, MessagePack as MessagePackCodec,
-    Raw as RawCodec, SerializationError, Serialize, ValueView as SerializationValueView,
+    Raw as RawCodec, SerializationError, Serialize,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -43,7 +43,30 @@ pub enum MessagePackValue {
 
 pub type Value = MessagePackValue;
 pub type CommonValue = serialization::Value;
-pub type ValueView<'a> = SerializationValueView<'a>;
+
+/// A borrowed, input-backed MessagePack view.
+///
+/// Validation is performed at construction time, but the dynamic value tree
+/// is not materialised until `clone_value` is requested.  Keeping the source
+/// bytes makes the lifetime and allocation boundary explicit for callers that
+/// only need to inspect or forward a validated document.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MessagePackValueView<'a> {
+    input: &'a [u8],
+    options: MessagePackDecodeOptions,
+}
+
+impl<'a> MessagePackValueView<'a> {
+    pub fn bytes(self) -> &'a [u8] {
+        self.input
+    }
+
+    pub fn clone_value(self) -> Result<MessagePackValue, MessagePackError> {
+        decode_value(self.input, self.options)
+    }
+}
+
+pub type ValueView<'a> = MessagePackValueView<'a>;
 pub type Raw = RawCodec<MessagePackCodec>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1533,6 +1556,34 @@ pub fn decode_value(
     )
 }
 
+/// Parse a complete dynamic document with the caller's explicit policies.
+/// This is the Rust bridge for the source-level `std.messagepack.parse` API.
+pub fn parse(input: &[u8], options: MessagePackDecodeOptions) -> Result<Value, MessagePackError> {
+    decode_value(input, options)
+}
+
+/// Validate a complete document and return an input-backed view without
+/// materialising its dynamic value tree.
+pub fn parse_view(
+    input: &[u8],
+    options: MessagePackDecodeOptions,
+) -> Result<ValueView<'_>, MessagePackError> {
+    validate(input, options)?;
+    Ok(MessagePackValueView { input, options })
+}
+
+/// Validate and retain exact wire bytes as an opaque MessagePack value.
+pub fn raw(input: &[u8], options: MessagePackDecodeOptions) -> Result<Raw, MessagePackError> {
+    Raw::from_bytes(input, options)
+}
+
+/// Rust-safe bridge for the source-level `unsafe rawUnchecked` operation.
+/// The Tondo surface exposes this only inside an `unsafe` block; the host
+/// representation itself does not require Rust `unsafe` code.
+pub fn raw_unchecked(input: &[u8]) -> Raw {
+    RawCodec::from_unchecked(input.to_vec())
+}
+
 #[allow(non_snake_case)]
 pub fn decodeValue(
     input: &[u8],
@@ -2208,6 +2259,29 @@ mod tests {
 
         let deterministic_array = MessagePackValue::Array(vec![MessagePackValue::UInt(1)]);
         assert!(encode_deterministic(&deterministic_array).is_ok());
+    }
+
+    #[test]
+    fn parse_view_and_raw_preserve_wire_bytes_until_materialization() {
+        // The non-minimal integer is deliberately retained by the view/raw
+        // paths while clone_value observes the normal dynamic value.
+        let input = [0xcc, 1_u8];
+        let options = MessagePackDecodeOptions {
+            limits: limits(),
+            ..Default::default()
+        };
+
+        let view = parse_view(&input, options).unwrap();
+        assert_eq!(view.bytes(), input);
+        assert_eq!(view.clone_value().unwrap(), MessagePackValue::UInt(1));
+
+        let raw_value = raw(&input, options).unwrap();
+        assert_eq!(raw_value.as_bytes(), input);
+
+        // The unchecked bridge is intentionally explicit and does not parse
+        // or copy any semantic value beyond retaining the supplied bytes.
+        let unchecked = raw_unchecked(&[0xc1]);
+        assert_eq!(unchecked.as_bytes(), &[0xc1]);
     }
 
     #[test]

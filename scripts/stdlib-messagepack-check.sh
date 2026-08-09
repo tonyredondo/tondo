@@ -71,7 +71,7 @@ jq -e '
     and .api.policies == ["MessagePackDuplicatePolicy", "MessagePackUnknownExtensionPolicy", "MessagePackNonMinimalPolicy"]
     and .api.error_type == "MessagePackError"
     and .api.error_kind == "MessagePackErrorKind"
-    and .api.functions == ["parse", "decode", "encode", "validate", "encodeDeterministic"]
+    and .api.functions == ["parse", "parseView", "decode", "encode", "validate", "encodeDeterministic", "raw", "rawUnchecked"]
     and .api.timestamp_methods == ["fromExt", "toExt"]
     and .api.reader_methods == ["fromBytes", "fromReader", "next", "own", "finish"]
     and .api.writer_methods == ["toWriter", "write", "finish"]
@@ -182,6 +182,9 @@ for symbol in \
     'enum Frame' \
     'pub fn decode_typed' \
     'pub fn encode_typed' \
+    'pub fn parse_view' \
+    'pub fn raw(' \
+    'pub fn raw_unchecked' \
     'pub fn from_chunks' \
     'fn canonical_value'; do
     grep -q "$symbol" "$source" || {

@@ -586,9 +586,9 @@
         ],
         "reason": null
       },
-      "signature_count": 16,
+      "signature_count": 18,
       "verified_count": 1,
-      "gap_count": 15,
+      "gap_count": 17,
       "owner_missing": [],
       "status": "open-gaps"
     },
@@ -5567,10 +5567,10 @@
       "status": "verified"
     },
     {
-      "id": "std.messagepack:82",
+      "id": "std.messagepack:84",
       "owner": "std.messagepack",
       "contract": "docs/contracts/stdlib-messagepack.md",
-      "line": 82,
+      "line": 84,
       "signature": "pub fn parse(input: Bytes, options: MessagePackDecodeOptions): Value ! MessagePackError",
       "symbol": "std.messagepack.parse",
       "operation": "parse",
@@ -5618,10 +5618,64 @@
       "status": "gap"
     },
     {
-      "id": "std.messagepack:83",
+      "id": "std.messagepack:85",
       "owner": "std.messagepack",
       "contract": "docs/contracts/stdlib-messagepack.md",
-      "line": 83,
+      "line": 85,
+      "signature": "pub fn parseView(input: Bytes, options: MessagePackDecodeOptions): ValueView ! MessagePackError",
+      "symbol": "std.messagepack.parseView",
+      "operation": "parseView",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/check.rs"
+          ],
+          "symbol": "parseView",
+          "symbols": [
+            "parseView"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/lower.rs"
+          ],
+          "symbol": "parseView",
+          "symbols": [
+            "parseView"
+          ]
+        },
+        "host_vm": {
+          "kind": "host",
+          "paths": [
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-stdlib/src/messagepack_api.rs"
+          ],
+          "reason": null,
+          "symbol": "std.messagepack.parseView",
+          "symbols": [
+            "parseView"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-codecs-001.to",
+          "kind": "runtime",
+          "call": "parseView",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [
+        "hir-symbol",
+        "host-symbol",
+        "lowering-symbol",
+        "public-case-call"
+      ],
+      "status": "gap"
+    },
+    {
+      "id": "std.messagepack:86",
+      "owner": "std.messagepack",
+      "contract": "docs/contracts/stdlib-messagepack.md",
+      "line": 86,
       "signature": "pub fn decode[T: Decode[MessagePack]](input: Bytes, options: MessagePackDecodeOptions): T ! MessagePackError",
       "symbol": "std.messagepack.decode",
       "operation": "decode",
@@ -5669,10 +5723,10 @@
       "status": "gap"
     },
     {
-      "id": "std.messagepack:84",
+      "id": "std.messagepack:87",
       "owner": "std.messagepack",
       "contract": "docs/contracts/stdlib-messagepack.md",
-      "line": 84,
+      "line": 87,
       "signature": "pub fn encode(value: Value, options: MessagePackEncodeOptions): Bytes ! MessagePackError",
       "symbol": "std.messagepack.encode",
       "operation": "encode",
@@ -5720,10 +5774,10 @@
       "status": "gap"
     },
     {
-      "id": "std.messagepack:85",
+      "id": "std.messagepack:88",
       "owner": "std.messagepack",
       "contract": "docs/contracts/stdlib-messagepack.md",
-      "line": 85,
+      "line": 88,
       "signature": "pub fn encode[T: Encode[MessagePack]](value: T, options: MessagePackEncodeOptions): Bytes ! MessagePackError",
       "symbol": "std.messagepack.encode",
       "operation": "encode",
@@ -5771,10 +5825,10 @@
       "status": "gap"
     },
     {
-      "id": "std.messagepack:86",
+      "id": "std.messagepack:89",
       "owner": "std.messagepack",
       "contract": "docs/contracts/stdlib-messagepack.md",
-      "line": 86,
+      "line": 89,
       "signature": "pub fn validate(input: Bytes, options: MessagePackDecodeOptions): Unit ! MessagePackError",
       "symbol": "std.messagepack.validate",
       "operation": "validate",
@@ -5820,10 +5874,10 @@
       "status": "verified"
     },
     {
-      "id": "std.messagepack:87",
+      "id": "std.messagepack:90",
       "owner": "std.messagepack",
       "contract": "docs/contracts/stdlib-messagepack.md",
-      "line": 87,
+      "line": 90,
       "signature": "pub fn encodeDeterministic(value: Value, limits: MessagePackLimits): Bytes ! MessagePackError",
       "symbol": "std.messagepack.encodeDeterministic",
       "operation": "encodeDeterministic",
@@ -5873,10 +5927,61 @@
       "status": "gap"
     },
     {
-      "id": "std.messagepack:89",
+      "id": "std.messagepack:91",
       "owner": "std.messagepack",
       "contract": "docs/contracts/stdlib-messagepack.md",
-      "line": 89,
+      "line": 91,
+      "signature": "pub fn raw(input: Bytes, options: MessagePackDecodeOptions): Raw ! MessagePackError",
+      "symbol": "std.messagepack.raw",
+      "operation": "raw",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/check.rs"
+          ],
+          "symbol": "raw",
+          "symbols": [
+            "raw"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/lower.rs"
+          ],
+          "symbol": "raw",
+          "symbols": [
+            "raw"
+          ]
+        },
+        "host_vm": {
+          "kind": "host",
+          "paths": [
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-stdlib/src/messagepack_api.rs"
+          ],
+          "reason": null,
+          "symbol": "std.messagepack.raw",
+          "symbols": [
+            "raw"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-codecs-001.to",
+          "kind": "runtime",
+          "call": "raw",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [
+        "public-case-call"
+      ],
+      "status": "gap"
+    },
+    {
+      "id": "std.messagepack:94",
+      "owner": "std.messagepack",
+      "contract": "docs/contracts/stdlib-messagepack.md",
+      "line": 94,
       "signature": "pub fn MessagePackTimestamp.fromExt(value: MessagePackExt): MessagePackTimestamp ! MessagePackError",
       "symbol": "std.messagepack.MessagePackTimestamp.fromExt",
       "operation": "fromExt",
@@ -5926,10 +6031,10 @@
       "status": "gap"
     },
     {
-      "id": "std.messagepack:90",
+      "id": "std.messagepack:95",
       "owner": "std.messagepack",
       "contract": "docs/contracts/stdlib-messagepack.md",
-      "line": 90,
+      "line": 95,
       "signature": "pub fn MessagePackTimestamp.toExt(self): MessagePackExt ! MessagePackError",
       "symbol": "std.messagepack.MessagePackTimestamp.toExt",
       "operation": "toExt",
@@ -5979,10 +6084,10 @@
       "status": "gap"
     },
     {
-      "id": "std.messagepack:92",
+      "id": "std.messagepack:97",
       "owner": "std.messagepack",
       "contract": "docs/contracts/stdlib-messagepack.md",
-      "line": 92,
+      "line": 97,
       "signature": "pub fn MessagePackReader.fromBytes(input: Bytes, options: MessagePackDecodeOptions): MessagePackReader ! MessagePackError",
       "symbol": "std.messagepack.MessagePackReader.fromBytes",
       "operation": "fromBytes",
@@ -6031,10 +6136,10 @@
       "status": "gap"
     },
     {
-      "id": "std.messagepack:93",
+      "id": "std.messagepack:98",
       "owner": "std.messagepack",
       "contract": "docs/contracts/stdlib-messagepack.md",
-      "line": 93,
+      "line": 98,
       "signature": "pub fn MessagePackReader.fromReader(var input: Reader, options: MessagePackDecodeOptions): MessagePackReader ! MessagePackError",
       "symbol": "std.messagepack.MessagePackReader.fromReader",
       "operation": "fromReader",
@@ -6085,10 +6190,10 @@
       "status": "gap"
     },
     {
-      "id": "std.messagepack:94",
+      "id": "std.messagepack:99",
       "owner": "std.messagepack",
       "contract": "docs/contracts/stdlib-messagepack.md",
-      "line": 94,
+      "line": 99,
       "signature": "pub fn MessagePackReader.next(var self): MessagePackEvent? ! MessagePackError",
       "symbol": "std.messagepack.MessagePackReader.next",
       "operation": "next",
@@ -6136,10 +6241,10 @@
       "status": "gap"
     },
     {
-      "id": "std.messagepack:95",
+      "id": "std.messagepack:100",
       "owner": "std.messagepack",
       "contract": "docs/contracts/stdlib-messagepack.md",
-      "line": 95,
+      "line": 100,
       "signature": "pub fn MessagePackReader.own(var self, event: MessagePackEvent): MessagePackEvent ! MessagePackError",
       "symbol": "std.messagepack.MessagePackReader.own",
       "operation": "own",
@@ -6187,10 +6292,10 @@
       "status": "gap"
     },
     {
-      "id": "std.messagepack:96",
+      "id": "std.messagepack:101",
       "owner": "std.messagepack",
       "contract": "docs/contracts/stdlib-messagepack.md",
-      "line": 96,
+      "line": 101,
       "signature": "pub fn MessagePackReader.finish(var self): Unit ! MessagePackError",
       "symbol": "std.messagepack.MessagePackReader.finish",
       "operation": "finish",
@@ -6238,10 +6343,10 @@
       "status": "gap"
     },
     {
-      "id": "std.messagepack:98",
+      "id": "std.messagepack:103",
       "owner": "std.messagepack",
       "contract": "docs/contracts/stdlib-messagepack.md",
-      "line": 98,
+      "line": 103,
       "signature": "pub fn MessagePackWriter.toWriter(var output: Writer, options: MessagePackEncodeOptions): MessagePackWriter ! MessagePackError",
       "symbol": "std.messagepack.MessagePackWriter.toWriter",
       "operation": "toWriter",
@@ -6292,10 +6397,10 @@
       "status": "gap"
     },
     {
-      "id": "std.messagepack:99",
+      "id": "std.messagepack:104",
       "owner": "std.messagepack",
       "contract": "docs/contracts/stdlib-messagepack.md",
-      "line": 99,
+      "line": 104,
       "signature": "pub fn MessagePackWriter.write(var self, event: MessagePackEvent): Unit ! MessagePackError",
       "symbol": "std.messagepack.MessagePackWriter.write",
       "operation": "write",
@@ -6343,10 +6448,10 @@
       "status": "gap"
     },
     {
-      "id": "std.messagepack:100",
+      "id": "std.messagepack:105",
       "owner": "std.messagepack",
       "contract": "docs/contracts/stdlib-messagepack.md",
-      "line": 100,
+      "line": 105,
       "signature": "pub fn MessagePackWriter.finish(var self): Unit ! MessagePackError",
       "symbol": "std.messagepack.MessagePackWriter.finish",
       "operation": "finish",
@@ -10875,10 +10980,10 @@
   ],
   "summary": {
     "owners": 20,
-    "signatures": 205,
+    "signatures": 207,
     "verified": 136,
-    "signature_gaps": 69,
+    "signature_gaps": 71,
     "owner_gaps": 3,
-    "gaps": 72
+    "gaps": 74
   }
 }

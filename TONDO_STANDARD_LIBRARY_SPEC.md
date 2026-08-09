@@ -2372,11 +2372,14 @@ La API fuente única de 0.1 es:
 
 ~~~tondo pseudocode
 pub fn parse(input: Bytes, options: MessagePackDecodeOptions): Value ! MessagePackError
+pub fn parseView(input: Bytes, options: MessagePackDecodeOptions): ValueView ! MessagePackError
 pub fn decode[T: Decode[MessagePack]](input: Bytes, options: MessagePackDecodeOptions): T ! MessagePackError
 pub fn encode(value: Value, options: MessagePackEncodeOptions): Bytes ! MessagePackError
 pub fn encode[T: Encode[MessagePack]](value: T, options: MessagePackEncodeOptions): Bytes ! MessagePackError
 pub fn validate(input: Bytes, options: MessagePackDecodeOptions): Unit ! MessagePackError
 pub fn encodeDeterministic(value: Value, limits: MessagePackLimits): Bytes ! MessagePackError
+pub fn raw(input: Bytes, options: MessagePackDecodeOptions): Raw ! MessagePackError
+pub unsafe fn rawUnchecked(input: Bytes): Raw
 pub fn MessagePackReader.next(var self): MessagePackEvent? ! MessagePackError
 pub fn MessagePackReader.own(var self, event: MessagePackEvent): MessagePackEvent ! MessagePackError
 pub fn MessagePackWriter.write(var self, event: MessagePackEvent): Unit ! MessagePackError

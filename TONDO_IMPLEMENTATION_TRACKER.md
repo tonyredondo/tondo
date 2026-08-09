@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 1.83
+**Versión del tracker:** 1.84
 
 **Última actualización:** 2026-08-09
 
@@ -4403,13 +4403,18 @@ tests. Antes de volver a marcarlas `[x]` deben cumplirse todos estos puntos:
   el kernel compatibility y no sustituye la ruta typed; los gaps de exposición
   HIR/VM quedan registrados por `STD-PUBLIC-API-AUDIT-001`.
 
-- [ ] **STD-MSGPACK-IMPL-001 — Implementar MessagePack completo.** Publicar
+- [x] **STD-MSGPACK-IMPL-001 — Implementar MessagePack completo.** Publicar
   `parse -> Value`, `decode[T: Decode[MessagePack]]`,
   `encode[T: Encode[MessagePack]]`, `ValueView`/`Raw` y streaming para todo el
   modelo wire, claves arbitrarias, ext/timestamp, floats bit-exact, policies y
   encoding determinista. El codec debe consumir los protocolos comunes sin
   materializar un `Value` en la ruta typed; el corpus cubre fragmentación,
-  non-minimal, duplicados, límites y terminalidad.
+  non-minimal, duplicados, límites y terminalidad. Cerrado con el owner
+  portable de `messagepack_api.rs`, la vista input-backed `parseView`, `Raw`
+  validado y `unsafe rawUnchecked`; la ruta canónica `Encode[MessagePack]` /
+  `Decode[MessagePack]` usa `MessagePackWriter`/`MessagePackReader` sin DOM,
+  mientras los helpers Rust `encode_typed`/`decode_typed` permanecen como
+  bridge de compatibilidad explícito.
 
 - [ ] **STD-PROTOBUF-IMPL-001 — Implementar Protobuf schema-first.** Publicar
   `Encode[Protobuf]`/`Decode[Protobuf]`, `ProtoReader[T]`/`ProtoWriter[T]`,
@@ -5664,6 +5669,20 @@ se declara iniciada antes de esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 1.84 — 2026-08-09
+
+- Se completa `STD-MSGPACK-IMPL-001` con la frontera portable del owner:
+  `parse` y `parseView` validan con policies y límites explícitos, `ValueView`
+  conserva los bytes de entrada hasta una materialización solicitada y `Raw`
+  conserva la representación wire exacta; `rawUnchecked` queda restringido a
+  la superficie `unsafe` de Tondo.
+- El reader/writer y los adapters `Encode[MessagePack]` /
+  `Decode[MessagePack]` mantienen stacks explícitos, terminalidad, claves
+  arbitrarias, ext/timestamp, floats bit-exact y determinismo. Se añaden tests
+  de vista, raw y bytes no mínimos; reliability pasa a 2298 tests y 308
+  requisitos, y la auditoría pública conserva los gaps HIR/VM visibles.
+- La siguiente leaf de codec es `STD-PROTOBUF-IMPL-001`.
 
 ### 1.83 — 2026-08-09
 

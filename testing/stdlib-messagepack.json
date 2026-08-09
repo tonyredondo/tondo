@@ -70,7 +70,7 @@
     "policies": ["MessagePackDuplicatePolicy", "MessagePackUnknownExtensionPolicy", "MessagePackNonMinimalPolicy"],
     "error_type": "MessagePackError",
     "error_kind": "MessagePackErrorKind",
-    "functions": ["parse", "decode", "encode", "validate", "encodeDeterministic"],
+    "functions": ["parse", "parseView", "decode", "encode", "validate", "encodeDeterministic", "raw", "rawUnchecked"],
     "timestamp_methods": ["fromExt", "toExt"],
     "reader_methods": ["fromBytes", "fromReader", "next", "own", "finish"],
     "writer_methods": ["toWriter", "write", "finish"],

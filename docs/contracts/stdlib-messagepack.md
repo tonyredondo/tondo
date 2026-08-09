@@ -41,6 +41,8 @@ pub enum Value {
 pub type MessagePackExt = { typeCode: Int8, payload: Bytes }
 pub type MessagePackTimestamp = { seconds: Int64, nanoseconds: Int32 }
 pub type MessagePackPath
+pub type ValueView
+pub type Raw
 
 pub enum MessagePackEvent {
     Nil, Bool(Bool), Int(Int64), UInt(UInt64), Float32(Float32), Float64(Float64),
@@ -80,11 +82,14 @@ pub enum MessagePackErrorKind {
 pub type MessagePackError = { kind: MessagePackErrorKind, offset: Int, path: MessagePackPath }
 
 pub fn parse(input: Bytes, options: MessagePackDecodeOptions): Value ! MessagePackError
+pub fn parseView(input: Bytes, options: MessagePackDecodeOptions): ValueView ! MessagePackError
 pub fn decode[T: Decode[MessagePack]](input: Bytes, options: MessagePackDecodeOptions): T ! MessagePackError
 pub fn encode(value: Value, options: MessagePackEncodeOptions): Bytes ! MessagePackError
 pub fn encode[T: Encode[MessagePack]](value: T, options: MessagePackEncodeOptions): Bytes ! MessagePackError
 pub fn validate(input: Bytes, options: MessagePackDecodeOptions): Unit ! MessagePackError
 pub fn encodeDeterministic(value: Value, limits: MessagePackLimits): Bytes ! MessagePackError
+pub fn raw(input: Bytes, options: MessagePackDecodeOptions): Raw ! MessagePackError
+pub unsafe fn rawUnchecked(input: Bytes): Raw
 
 pub fn MessagePackTimestamp.fromExt(value: MessagePackExt): MessagePackTimestamp ! MessagePackError
 pub fn MessagePackTimestamp.toExt(self): MessagePackExt ! MessagePackError
@@ -222,7 +227,10 @@ acepta bytes, chunks y el adaptador bounded de `Read`, y queda terminal tras un
 error o `finish`. `MessagePackWriter` valida la secuencia de eventos con otra
 pila explícita y solo publica bytes después de cerrar la raíz. Los adaptadores
 typed pasan por `std.serialization` y no introducen una tabla de reflection en
-runtime. El corpus unitario cubre el modelo wire, políticas, timestamp,
+runtime. `parseView` valida una vez y conserva el input sin construir el árbol;
+`ValueView.cloneValue()` materializa explícitamente. `raw` valida y conserva
+los bytes exactos, mientras `rawUnchecked` es únicamente la frontera `unsafe`
+del lenguaje. El corpus unitario cubre el modelo wire, políticas, timestamp,
 fragmentación, límites, determinismo, terminalidad y round-trip typed.
 
 ## Corpus e interoperabilidad
