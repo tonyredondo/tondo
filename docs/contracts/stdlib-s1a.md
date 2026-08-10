@@ -99,6 +99,16 @@ implementations prove that rejected appends do not mutate observable output.
 `HOST` is explicitly `not-applicable`; operation fuzz and owner allocation or
 materialization baselines remain pending promotion, while the public API and
 documentation links are verified.
+The portable `std.io` owner is closed by the shared group contract
+[`testing/stdlib-core.json`](../../testing/stdlib-core.json) and its
+`STD-A-IO-EVIDENCE-001` cell record. Reader/Writer, `IoLimits`, `readAll` and
+`writeAll` are traced through HIR/lowering, bytecode/VM and
+`m11-std-io-001.to`; deterministic chunk partitions, EOF, partial progress,
+invalid chunks, zero-progress writers, post-write flush failures and
+cancellation prove bounded atomic outcomes. `HOST` is explicitly
+`not-applicable` because console, filesystem and process own the hosted
+adapters; dedicated operation fuzz, owner cost baselines and global
+conformance promotion remain pending.
 The capability-gated `std.time` owner is closed for hosted evidence by
 [`testing/stdlib-time.json`](../../testing/stdlib-time.json) and its
 `STD-A-TIME-EVIDENCE-001` cell record. It separates the duration/instant/timer

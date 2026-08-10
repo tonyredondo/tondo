@@ -56,6 +56,7 @@ jq -e '
   and (any(.leaves[]; .id == "STD-A-ITER-EVIDENCE-001" and .owners == ["std.iter"]))
   and (any(.leaves[]; .id == "STD-A-MATH-EVIDENCE-001" and .owners == ["std.math"]))
   and (any(.leaves[]; .id == "STD-A-FMT-EVIDENCE-001" and .owners == ["std.format"]))
+  and (any(.leaves[]; .id == "STD-A-IO-EVIDENCE-001" and .owners == ["std.io"]))
   and (any(.leaves[]; .id == "STD-A-TIME-EVIDENCE-001" and .owners == ["std.time"]))
   and (any(.leaves[]; .id == "STD-A-ENV-EVIDENCE-001" and .owners == ["std.env"]))
   and (.owners[] | select(.id == "std.meta") | .cells.HOST.status == "not-applicable")
@@ -112,6 +113,15 @@ jq -e '
   and (.owners[] | select(.id == "std.format") | .cells.PERF.reason | contains("owner-specific"))
   and (.owners[] | select(.id == "std.format") | .cells.CONF.status == "partial")
   and (.owners[] | select(.id == "std.format") | .cells.DOC.status == "verified")
+  and (.owners[] | select(.id == "std.io") | .cells.HOST.status == "not-applicable")
+  and (.owners[] | select(.id == "std.io") | .cells.HOST.reason | contains("portable"))
+  and (.owners[] | select(.id == "std.io") | .cells.MODEL.status == "verified")
+  and (.owners[] | select(.id == "std.io") | .cells.TEST.status == "verified")
+  and (.owners[] | select(.id == "std.io") | .cells.FUZZ.status == "partial")
+  and (.owners[] | select(.id == "std.io") | .cells.PERF.status == "partial")
+  and (.owners[] | select(.id == "std.io") | .cells.PERF.reason | contains("owner-specific"))
+  and (.owners[] | select(.id == "std.io") | .cells.CONF.status == "partial")
+  and (.owners[] | select(.id == "std.io") | .cells.DOC.status == "verified")
   and (.owners[] | select(.id == "std.time") | .cells.HOST.status == "verified")
   and (.owners[] | select(.id == "std.time") | .cells.HOST.reason == null)
   and (.owners[] | select(.id == "std.time") | .cells.FUZZ.status == "partial")
@@ -147,4 +157,4 @@ while IFS= read -r command; do
     fi
 done < <(jq -r '.owners[].commands[]' "$evidence")
 
-echo "stdlib owner evidence: OK (std.meta + std.reflect + std.bytes + std.core + std.text + std.collections + std.iter + std.math + std.format + std.time + std.env; nine cells explicit per owner)"
+echo "stdlib owner evidence: OK (std.meta + std.reflect + std.bytes + std.core + std.text + std.collections + std.iter + std.math + std.format + std.io + std.time + std.env; nine cells explicit per owner)"

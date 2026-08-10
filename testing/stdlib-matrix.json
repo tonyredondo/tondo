@@ -1076,72 +1076,68 @@
       ],
       "stages": {
         "CONF": {
-          "reason": "STD-CONF-001 remains open until the owner has complete public evidence",
+          "reason": "the public API audit, portable kernel and std.io runtime fixture cover the four signatures; STD-CONF-001 has not yet promoted every standard-library owner",
           "refs": [
-            "TONDO_IMPLEMENTATION_TRACKER.md#STD-CONF-001"
+            "testing/stdlib-public-api.json",
+            "tests/runtime/m11-std-io-001.to",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
           ],
-          "status": "pending"
+          "status": "partial"
         },
         "DOC": {
           "reason": null,
           "refs": [
-            "docs/contracts/stdlib-core.md"
+            "docs/contracts/stdlib-core.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md",
+            "docs/contracts/stdlib-s1a.md",
+            "docs/contracts/stdlib-matrix.md"
           ],
           "status": "verified"
         },
         "IMPL/HOST": {
           "reason": null,
           "refs": [
-            "crates/tondo-compiler/src/bytecode/lower.rs",
-            "crates/tondo-compiler/src/hir.rs",
-            "crates/tondo-compiler/src/hir/capabilities.rs",
+            "TONDO_STANDARD_LIBRARY_SPEC.md",
             "crates/tondo-compiler/src/hir/check.rs",
             "crates/tondo-compiler/src/hir/lower.rs",
-            "crates/tondo-compiler/src/hir/terminal.rs",
-            "crates/tondo-compiler/src/hir/verify.rs",
+            "crates/tondo-compiler/src/mir/verify.rs",
             "crates/tondo-compiler/src/process_host.rs",
-            "crates/tondo-compiler/src/types.rs",
             "crates/tondo-stdlib/src/io.rs",
-            "crates/tondo-vm/src/bytecode.rs",
             "crates/tondo-vm/src/bytecode/verify.rs",
-            "crates/tondo-vm/src/runtime.rs",
             "crates/tondo-vm/src/runtime/execute.rs",
-            "tests/runtime/m11-std-io-001.to"
+            "docs/contracts/stdlib-core.md"
           ],
           "status": "verified"
         },
         "MODEL/TEST/FUZZ": {
-          "reason": "owner tests exist; per-leaf MODEL/TEST/FUZZ links and fuzz coverage remain to be coordinated by STD-TEST-001",
+          "reason": "the bounded chunk-partition property corpus exercises Reader/Writer fragmentation, but no dedicated std.io operation fuzz target has been promoted",
           "refs": [
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/process_host.rs",
             "crates/tondo-stdlib/src/io.rs",
+            "crates/tondo-vm/src/runtime/execute.rs",
+            "fuzz/fuzz_targets/admission.rs",
+            "scripts/stdlib-io-test.sh",
             "tests/runtime/m11-std-io-001.to"
           ],
           "status": "partial"
         },
         "PERF": {
-          "observed_dimensions": [],
-          "pending_dimensions": [
-            "allocations_per_operation",
-            "allocated_bytes_per_operation",
-            "code_size",
-            "compile_time",
-            "peak_memory",
-            "startup",
-            "tail_latency",
-            "throughput"
-          ],
-          "reason": "Reader/Writer partial-I/O workloads need a bounded stream fixture and allocation contract.",
+          "reason": "bytes, chunks and work-unit budgets are declared, but owner-specific partial-I/O baselines remain pending promotion",
           "refs": [
-            "testing/stdlib-performance-conformance.json#owners/std.io"
+            "testing/stdlib-performance.json",
+            "testing/stdlib-performance-conformance.json",
+            "docs/contracts/stdlib-performance.md"
           ],
-          "status": "pending"
+          "status": "partial"
         },
         "SPEC": {
           "reason": null,
           "refs": [
             "testing/stdlib-core.json",
-            "docs/contracts/stdlib-core.md"
+            "docs/contracts/stdlib-core.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md"
           ],
           "status": "verified"
         }
@@ -12532,8 +12528,8 @@
     "signatures": 207,
     "stage_counts": {
       "CONF": {
-        "partial": 243,
-        "pending": 129
+        "partial": 254,
+        "pending": 118
       },
       "DOC": {
         "verified": 372
@@ -12547,8 +12543,8 @@
         "verified": 6
       },
       "PERF": {
-        "partial": 269,
-        "pending": 103
+        "partial": 280,
+        "pending": 92
       },
       "SPEC": {
         "partial": 1,

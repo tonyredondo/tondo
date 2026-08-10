@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 2.02
+**Versión del tracker:** 2.03
 
 **Última actualización:** 2026-08-10
 
@@ -4611,9 +4611,16 @@ administrativas que no implementan comportamiento.
   permanecen visibles como promoción posterior, sin inventar métricas.
   `scripts/stdlib-format-test.sh` valida contrato, símbolos, corpus, docs y
   las 5/5 filas públicas.
-- [ ] **STD-A-IO-EVIDENCE-001 — Cerrar evidencia de I/O portable.** Cubrir
-  modelo Reader/Writer, partial I/O, EOF, cancelación, fuzz de chunks, límites,
-  coste, conformidad y docs; los adaptadores pertenecen a sus owners Hosted.
+- [x] **STD-A-IO-EVIDENCE-001 — Cerrar evidencia de I/O portable.** Las cuatro
+  firmas de `std.io` quedan trazadas en nueve celdas del owner portable:
+  Reader/Writer, `IoLimits`, `readAll` y `writeAll` pasan por HIR/lowering,
+  bytecode/VM, fixture público y auditoría de API. El kernel prueba particiones
+  deterministas de chunks, partial I/O, EOF, límites, progreso cero,
+  sobreescrituras, errores de `flush` y cancelación sin éxito parcial. `HOST` es
+  `not-applicable`; los adaptadores pertenecen a `std.console`, `std.fs` y
+  `std.process`. `scripts/stdlib-io-test.sh` valida contrato, símbolos, corpus,
+  docs y las 4/4 filas públicas; fuzz específico y baselines de coste quedan
+  visibles como promoción posterior.
 - [ ] **STD-A-PATH-EVIDENCE-001 — Cerrar evidencia de paths.** Cubrir modelo
   portable/native, bytes/Unicode, normalización, fuzz, coste, conformidad y
   docs sin consultar filesystem; HOST es no aplicable.
@@ -5797,6 +5804,20 @@ se declara iniciada antes de esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 2.03 — 2026-08-10
+
+- Se cierra `STD-A-IO-EVIDENCE-001` con nueve celdas explícitas para el owner
+  portable `std.io`. La evidencia enlaza Reader/Writer, `IoLimits`,
+  `readAll`/`writeAll`, HIR/lowering, bytecode/VM, el fixture
+  `m11-std-io-001.to` y la auditoría pública 4/4. El kernel añade un corpus
+  determinista de particiones de chunks, EOF, short I/O, límites, progreso,
+  errores después de datos aceptados, `flush` y cancelación.
+- `HOST` queda `not-applicable`: los adaptadores capability-gated siguen en
+  los owners de console, filesystem y process. El gate añade
+  `scripts/stdlib-io-test.sh`, actualiza el registro/matriz/documentación y
+  mantiene fuzz específico, baselines de bytes/chunks/work-units y
+  `STD-CONF-001` como promoción posterior.
 
 ### 2.02 — 2026-08-10
 

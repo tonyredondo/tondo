@@ -1275,6 +1275,15 @@ repetir una lectura o conservar datos después de cancelar. Cada capacidad
 adicional aparece como trait o método exacto, no como operación que falla
 siempre para ciertos handles.
 
+La evidencia ejecutable `STD-A-IO-EVIDENCE-001` mantiene esta separación:
+`std.io` aporta únicamente los protocolos portables y sus límites, mientras
+`std.console`, `std.fs` y `std.process` poseen los adaptadores capability-gated.
+El corpus de chunks deterministas prueba short I/O, EOF, progreso, errores de
+`flush`, límites y cancelación sin inventar una segunda API síncrona/asíncrona.
+Las dimensiones de coste son bytes copiados, chunks procesados y work-units;
+fuzz específico, baselines por owner y conformance global se promueven por sus
+gates propios.
+
 ### 10.4 Paths
 
 `std.path.Path` no es un alias de `String`. Debe poder representar paths nativos

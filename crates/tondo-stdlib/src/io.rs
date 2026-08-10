@@ -287,4 +287,123 @@ mod tests {
         let mut writer = CancelledWriter;
         assert_eq!(write_all(&mut writer, b"tondo"), Err(IoError::Cancelled));
     }
+
+    #[test]
+    fn chunk_partition_fuzz_is_bounded_and_deterministic() {
+        let source = b"tondo-io".to_vec();
+        for chunk in 1..=source.len() + 2 {
+            for max_read in 1..=source.len() + 2 {
+                let mut reader = SliceReader::new(source.clone(), chunk).unwrap();
+                let limits = IoLimits::new(source.len() + 1, max_read).unwrap();
+                assert_eq!(read_all(&mut reader, limits).unwrap(), source);
+            }
+        }
+    }
+
+    #[test]
+    fn read_all_rejects_empty_and_oversized_chunks() {
+        struct InvalidReader {
+            oversized: bool,
+        }
+
+        impl Reader for InvalidReader {
+            fn read(&mut self, max: usize) -> Result<ReadResult, IoError> {
+                if self.oversized {
+                    self.oversized = false;
+                    Ok(ReadResult::Data(vec![b'x'; max + 1]))
+                } else {
+                    Ok(ReadResult::Data(Vec::new()))
+                }
+            }
+        }
+
+        let limits = IoLimits {
+            max_bytes: 8,
+            max_read: 2,
+        };
+        let mut empty = InvalidReader { oversized: false };
+        assert_eq!(read_all(&mut empty, limits), Err(IoError::InvalidData));
+
+        let mut oversized = InvalidReader { oversized: true };
+        assert_eq!(read_all(&mut oversized, limits), Err(IoError::InvalidData));
+    }
+
+    #[test]
+    fn read_all_propagates_errors_after_consuming_a_data_chunk() {
+        struct FailingReader {
+            state: u8,
+        }
+
+        impl Reader for FailingReader {
+            fn read(&mut self, _max: usize) -> Result<ReadResult, IoError> {
+                self.state += 1;
+                match self.state {
+                    1 => Ok(ReadResult::Data(b"partial".to_vec())),
+                    _ => Err(IoError::Cancelled),
+                }
+            }
+        }
+
+        let mut reader = FailingReader { state: 0 };
+        assert_eq!(
+            read_all(&mut reader, IoLimits::default()),
+            Err(IoError::Cancelled)
+        );
+    }
+
+    #[test]
+    fn write_all_rejects_no_progress_and_overreported_writes() {
+        struct InvalidWriter {
+            reported: usize,
+        }
+
+        impl Writer for InvalidWriter {
+            fn write(&mut self, data: &[u8]) -> Result<usize, IoError> {
+                Ok(self.reported.min(data.len() + 1))
+            }
+
+            fn flush(&mut self) -> Result<(), IoError> {
+                Ok(())
+            }
+        }
+
+        let mut stalled = InvalidWriter { reported: 0 };
+        assert_eq!(write_all(&mut stalled, b"tondo"), Err(IoError::InvalidData));
+
+        let mut overreported = InvalidWriter { reported: 6 };
+        assert_eq!(
+            write_all(&mut overreported, b"tondo"),
+            Err(IoError::InvalidData)
+        );
+    }
+
+    #[test]
+    fn write_all_propagates_flush_errors_after_all_bytes_are_accepted() {
+        struct FlushErrorWriter {
+            bytes: Vec<u8>,
+        }
+
+        impl Writer for FlushErrorWriter {
+            fn write(&mut self, data: &[u8]) -> Result<usize, IoError> {
+                self.bytes.extend_from_slice(data);
+                Ok(data.len())
+            }
+
+            fn flush(&mut self) -> Result<(), IoError> {
+                Err(IoError::Cancelled)
+            }
+        }
+
+        let mut writer = FlushErrorWriter { bytes: Vec::new() };
+        assert_eq!(write_all(&mut writer, b"tondo"), Err(IoError::Cancelled));
+        assert_eq!(writer.bytes, b"tondo");
+    }
+
+    #[test]
+    fn default_writer_accepts_full_writes_and_flushes() {
+        let mut writer = VecWriter::default();
+        write_all(&mut writer, b"tondo").unwrap();
+        assert_eq!(writer.bytes(), b"tondo");
+        assert!(writer.flushed());
+    }
 }

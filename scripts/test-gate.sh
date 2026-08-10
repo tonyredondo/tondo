@@ -90,6 +90,8 @@ run_step stdlib-math-tests \
     scripts/stdlib-math-test.sh
 run_step stdlib-format-tests \
     scripts/stdlib-format-test.sh
+run_step stdlib-io-tests \
+    scripts/stdlib-io-test.sh
 run_step stdlib-serialization-contract \
     scripts/stdlib-serialization-check.sh
 run_step stdlib-integration-contract \

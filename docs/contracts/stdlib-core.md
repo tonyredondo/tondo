@@ -270,6 +270,18 @@ acepta short writes, exige progreso y hace `flush` al completar. La cancelación
 se propaga como `IoError.Cancelled` en cada punto de espera del backend y el
 writer no puede retener una vista del `Bytes` después de completar la operación.
 
+`STD-A-IO-EVIDENCE-001` cierra las cuatro firmas públicas del owner portable
+`std.io` mediante el contrato compartido [`testing/stdlib-core.json`](../../testing/stdlib-core.json).
+La evidencia enlaza Reader/Writer, `IoLimits`, HIR/lowering, bytecode, VM y el
+fixture `m11-std-io-001.to`; el kernel prueba particiones deterministas de
+chunks, short reads/writes, EOF, límites exactos, progreso cero, sobreescrituras,
+errores después de datos aceptados, `flush` y cancelación sin publicar éxito
+parcial. `HOST` es `not-applicable`: console, filesystem y process poseen los
+adaptadores capability-gated y solo reutilizan estos protocolos. Las dimensiones
+de coste declaradas son bytes copiados, chunks procesados y work-units; sus
+baselines por owner, fuzz dedicado y promoción global de conformance siguen
+visibles como trabajo posterior.
+
 ## `std.serialization`
 
 El contrato completo y único está en

@@ -95,6 +95,14 @@ verificación estática y la auditoría de las cinco firmas quedan enlazados por
 `STD-A-FMT-EVIDENCE-001`; fuzz de operaciones, baselines de allocations y
 materialización y `STD-CONF-001` siguen abiertos.
 
+`std.io` conserva `HOST` como `not-applicable`: Reader/Writer, `IoLimits`,
+`readAll` y `writeAll` son protocolos portables y no conceden capabilities por
+importarse. La fixture pública y el kernel cubren particiones de chunks, EOF,
+short I/O, límites, progreso, errores de `flush` y cancelación; la auditoría de
+las cuatro firmas queda enlazada por `STD-A-IO-EVIDENCE-001`. Fuzz dedicado,
+baselines de bytes/chunks/work-units y `STD-CONF-001` siguen abiertos; los
+adaptadores pertenecen a `std.console`, `std.fs` y `std.process`.
+
 Esta matriz no cierra `STD-CONF-001`, `STD-TEST-001` ni `STD-DOC-001`: registra
 sus celdas pendientes para que las siguientes coordinaciones puedan promover
 owners sin perder la identidad de requisito.
