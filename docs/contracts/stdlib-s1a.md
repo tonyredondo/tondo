@@ -146,6 +146,16 @@ handles and typed/redacted failures without publishing partial state. `HOST`
 is verified at the compiler/VM boundary. Dedicated operation fuzz, target
 hot-path cost baselines and global conformance promotion remain pending.
 
+The capability-gated `std.fs` owner is closed for hosted evidence by the same
+shared contract and the `STD-A-FS-EVIDENCE-001` cell record. Its fourteen public
+signatures are traced through the static `filesystem` capability gate, the
+affine `File`/`Directory` model, HIR/lowering, bytecode/VM and the process-host
+adapter. The runtime fixture covers native-byte paths, ordered directory
+listing, typed errors, short reads/writes, bounded materialization,
+`atomicWrite`, stale-token rejection, cancellation and cleanup on unwind;
+`HOST` is verified. Dedicated operation fuzz, target hot-path cost baselines and
+global conformance promotion remain pending.
+
 The hosted bridge is intentionally a draft distribution boundary: the VM
 validates the typed operation before invoking the host, and the host returns a
 nominal error or a complete value. Console streams use the same `Reader` and

@@ -59,6 +59,7 @@ jq -e '
   and (any(.leaves[]; .id == "STD-A-IO-EVIDENCE-001" and .owners == ["std.io"]))
   and (any(.leaves[]; .id == "STD-A-PATH-EVIDENCE-001" and .owners == ["std.path"]))
   and (any(.leaves[]; .id == "STD-A-CONSOLE-EVIDENCE-001" and .owners == ["std.console"]))
+  and (any(.leaves[]; .id == "STD-A-FS-EVIDENCE-001" and .owners == ["std.fs"]))
   and (any(.leaves[]; .id == "STD-A-TIME-EVIDENCE-001" and .owners == ["std.time"]))
   and (any(.leaves[]; .id == "STD-A-ENV-EVIDENCE-001" and .owners == ["std.env"]))
   and (.owners[] | select(.id == "std.meta") | .cells.HOST.status == "not-applicable")
@@ -141,6 +142,17 @@ jq -e '
   and (.owners[] | select(.id == "std.console") | .cells.PERF.status == "partial")
   and (.owners[] | select(.id == "std.console") | .cells.CONF.status == "partial")
   and (.owners[] | select(.id == "std.console") | .cells.DOC.status == "verified")
+  and (.owners[] | select(.id == "std.fs") | .cells.SPEC.status == "verified")
+  and (.owners[] | select(.id == "std.fs") | .cells.IMPL.status == "verified")
+  and (.owners[] | select(.id == "std.fs") | .cells.HOST.status == "verified")
+  and (.owners[] | select(.id == "std.fs") | .cells.HOST.reason == null)
+  and (.owners[] | select(.id == "std.fs") | .cells.MODEL.status == "verified")
+  and (.owners[] | select(.id == "std.fs") | .cells.TEST.status == "verified")
+  and (.owners[] | select(.id == "std.fs") | .cells.FUZZ.status == "partial")
+  and (.owners[] | select(.id == "std.fs") | .cells.PERF.status == "partial")
+  and (.owners[] | select(.id == "std.fs") | .cells.PERF.reason | contains("target-specific"))
+  and (.owners[] | select(.id == "std.fs") | .cells.CONF.status == "partial")
+  and (.owners[] | select(.id == "std.fs") | .cells.DOC.status == "verified")
   and (.owners[] | select(.id == "std.time") | .cells.HOST.status == "verified")
   and (.owners[] | select(.id == "std.time") | .cells.HOST.reason == null)
   and (.owners[] | select(.id == "std.time") | .cells.FUZZ.status == "partial")
@@ -176,4 +188,4 @@ while IFS= read -r command; do
     fi
 done < <(jq -r '.owners[].commands[]' "$evidence")
 
-echo "stdlib owner evidence: OK (std.meta + std.reflect + std.bytes + std.core + std.text + std.collections + std.iter + std.math + std.format + std.io + std.path + std.console + std.time + std.env; nine cells explicit per owner)"
+echo "stdlib owner evidence: OK (std.meta + std.reflect + std.bytes + std.core + std.text + std.collections + std.iter + std.math + std.format + std.io + std.path + std.console + std.fs + std.time + std.env; nine cells explicit per owner)"

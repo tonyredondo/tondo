@@ -2654,6 +2654,37 @@ mod tests {
     }
 
     #[test]
+    fn filesystem_module_requires_the_explicit_target_capability() {
+        let source = b"import std.path\nimport std.fs\nfn main(): !(path.PathError | fs.FsError) {\n    let file_path = path.fromString(\"Cargo.toml\")?\n    let contents = fs.readAll(file_path)?\n}\n";
+        let rejected = execute(operation_request_with_capabilities(
+            Operation::Check,
+            source,
+            SourceForm::Module,
+            ResourceLimits::default(),
+            BTreeSet::new(),
+        ))
+        .unwrap();
+        assert_eq!(rejected.status(), CompilationStatus::Rejected);
+        let diagnostic = &rejected.diagnostics().diagnostics()[0];
+        assert_eq!(diagnostic.code(), "E1008");
+        assert!(
+            diagnostic
+                .message()
+                .contains("capability `filesystem` is missing")
+        );
+
+        let accepted = execute(operation_request(
+            Operation::Check,
+            source,
+            SourceForm::Module,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(accepted.status(), CompilationStatus::Success);
+        assert!(accepted.diagnostics().diagnostics().is_empty());
+    }
+
+    #[test]
     fn time_module_requires_the_explicit_clock_capability() {
         let source =
             b"import std.time\nfn main(): !time.ClockError {\n    let instant = time.now()?\n}\n";

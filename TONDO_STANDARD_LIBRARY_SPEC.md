@@ -1319,7 +1319,9 @@ ocultos, extensiones vacías y separadores finales.
 
 `std.fs` es la frontera capability-gated para observar y mutar el filesystem.
 Todas sus operaciones que pueden tocar el host son `suspendible`; `std.path` sigue
-siendo puro y síncrono. El owner público es:
+siendo puro y síncrono. Importar `std.fs` no concede `filesystem`: el target debe
+declarar explícitamente esa capability y el compilador rechaza el módulo con
+`E1008` antes del lowering cuando falta. El owner público es:
 
 ```tondo
 type File
@@ -1343,8 +1345,15 @@ invaliden esa invariante. `File` conserva posición entre llamadas y no copia
 el descriptor; sus métodos ofrecen la semántica de `Reader`/`Writer`, mientras
 `std.io.readAll` y `std.io.writeAll` siguen recibiendo esos handles explícitos.
 `list` ordena por bytes nativos; `atomicWrite` usa un temporal en el mismo
-directorio, hace flush y rename. Los límites globales se comprueban antes de
-materializar bytes o entradas.
+directorio, hace flush y rename. Los límites globales de bytes, entradas y
+trabajo se comprueban antes de materializar bytes o entradas: un rechazo es
+atómico y no publica resultados parciales. El cleanup se ejecuta en las rutas
+normales, durante unwind y al cancelar una operación suspendible. El host no
+sigue enlaces simbólicos al eliminar un recurso temporal y no incluye paths
+físicos ni contenido en `FsError`; la operación de rename no promete
+durabilidad de hardware. La evidencia ejecutable de este contrato es
+`STD-A-FS-EVIDENCE-001`; su fuzz dedicado, los baselines por target y la
+conformance global siguen siendo promoción posterior.
 
 ### 10.6 Formato
 

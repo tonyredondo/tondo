@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 2.05
+**Versión del tracker:** 2.06
 
 **Última actualización:** 2026-08-10
 
@@ -4643,9 +4643,16 @@ administrativas que no implementan comportamiento.
   baselines de bytes/chunks/work-units y `STD-CONF-001` permanecen visibles como
   promoción posterior. `scripts/stdlib-console-test.sh` valida negativos,
   símbolos, corpus, capability, documentación y todas las filas públicas.
-- [ ] **STD-A-FS-EVIDENCE-001 — Cerrar evidencia de filesystem.** Separar
-  modelo, handles y adaptador HOST, corpus/fuzz, límites, cleanup/rendimiento,
-  conformidad por capability y docs.
+- [x] **STD-A-FS-EVIDENCE-001 — Cerrar evidencia de filesystem.** Las catorce
+  firmas públicas de `std.fs` quedan trazadas por contrato hosted, capability
+  `filesystem`, modelo de handles afines, HIR/lowering, bytecode/VM y el
+  adaptador `process_host`. El fixture `m11-std-fs-001.to` y las pruebas host
+  cubren bytes nativos, orden de directorios, modos, EOF/short I/O, errores
+  tipados y redactados, límites de materialización, `atomicWrite`, cancelación,
+  tokens stale y cleanup normal/unwind. La frontera estática rechaza imports
+  sin capability antes del lowering, y la auditoría pública mantiene 14/14.
+  `HOST` queda `verified`; fuzz dedicado, baselines por target y
+  `STD-CONF-001` permanecen visibles como promoción posterior.
 - [ ] **STD-A-PROC-EVIDENCE-001 — Cerrar evidencia de procesos.** Separar
   modelo de command/pipeline, adaptador HOST, backpressure/cancelación/reaping,
   stress, coste, conformidad y docs.
@@ -5820,6 +5827,17 @@ se declara iniciada antes de esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 2.06 — 2026-08-10
+
+- Se cierra `STD-A-FS-EVIDENCE-001` con nueve celdas explícitas y las catorce
+  firmas públicas de `std.fs`. La frontera estática ahora clasifica también la
+  ausencia de `filesystem` como capability faltante (`E1008`), manteniendo el
+  módulo fuera del target antes del lowering. La evidencia enlaza el modelo de
+  `File`/`Directory`, límites y atomicidad, cleanup/cancelación, orden nativo,
+  HIR/lowering, bytecode/VM, `process_host`, fixture runtime, auditoría 14/14
+  y contrato hosted. Fuzz de operaciones, captura hot-path por target y
+  `STD-CONF-001` quedan explícitamente pendientes de promoción.
 
 ### 2.05 — 2026-08-10
 

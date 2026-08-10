@@ -6979,10 +6979,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:131",
+      "id": "std.process:147",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 131,
+      "line": 147,
       "signature": "pub fn command(program: String, arguments: ...String): Command ! ProcessError",
       "symbol": "std.process.command",
       "operation": "command",
@@ -7027,10 +7027,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:132",
+      "id": "std.process:148",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 132,
+      "line": 148,
       "signature": "pub fn shell(command: String): Command ! ProcessError",
       "symbol": "std.process.shell",
       "operation": "shell",
@@ -7075,10 +7075,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:133",
+      "id": "std.process:149",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 133,
+      "line": 149,
       "signature": "pub fn pipe(left: Command, right: Command): Pipeline ! ProcessError",
       "symbol": "std.process.pipe",
       "operation": "pipe",
@@ -7123,10 +7123,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:134",
+      "id": "std.process:150",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 134,
+      "line": 150,
       "signature": "pub fn Command.mergeStderr(self): Command",
       "symbol": "std.process.Command.mergeStderr",
       "operation": "mergeStderr",
@@ -7171,10 +7171,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:135",
+      "id": "std.process:151",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 135,
+      "line": 151,
       "signature": "pub fn Pipeline.mergeStderr(self): Pipeline",
       "symbol": "std.process.Pipeline.mergeStderr",
       "operation": "mergeStderr",
@@ -7219,10 +7219,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:136",
+      "id": "std.process:152",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 136,
+      "line": 152,
       "signature": "pub fn Command.run(self): ExitStatus ! ProcessError",
       "symbol": "std.process.Command.run",
       "operation": "run",
@@ -7267,10 +7267,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:137",
+      "id": "std.process:153",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 137,
+      "line": 153,
       "signature": "pub fn Command.output(self): ProcessOutput ! ProcessError",
       "symbol": "std.process.Command.output",
       "operation": "output",
@@ -7315,10 +7315,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:138",
+      "id": "std.process:154",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 138,
+      "line": 154,
       "signature": "pub fn Command.check(self): ProcessOutput ! (ProcessError | ProcessExitError)",
       "symbol": "std.process.Command.check",
       "operation": "check",
@@ -7363,10 +7363,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:139",
+      "id": "std.process:155",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 139,
+      "line": 155,
       "signature": "pub fn Command.start(self): ProcessHandle ! ProcessError",
       "symbol": "std.process.Command.start",
       "operation": "start",
@@ -7411,10 +7411,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:140",
+      "id": "std.process:156",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 140,
+      "line": 156,
       "signature": "pub fn ProcessHandle.wait(var self): ExitStatus ! ProcessError",
       "symbol": "std.process.ProcessHandle.wait",
       "operation": "wait",
@@ -7459,10 +7459,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:141",
+      "id": "std.process:157",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 141,
+      "line": 157,
       "signature": "pub fn ProcessHandle.cancel(var self): Unit",
       "symbol": "std.process.ProcessHandle.cancel",
       "operation": "cancel",
@@ -7507,10 +7507,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:142",
+      "id": "std.process:158",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 142,
+      "line": 158,
       "signature": "pub fn ProcessOutput.stdout(self): Bytes",
       "symbol": "std.process.ProcessOutput.stdout",
       "operation": "stdout",
@@ -7555,10 +7555,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:143",
+      "id": "std.process:159",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 143,
+      "line": 159,
       "signature": "pub fn ProcessOutput.stderr(self): Bytes",
       "symbol": "std.process.ProcessOutput.stderr",
       "operation": "stderr",
@@ -7603,10 +7603,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:144",
+      "id": "std.process:160",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 144,
+      "line": 160,
       "signature": "pub fn ProcessOutput.combined(self): Bytes",
       "symbol": "std.process.ProcessOutput.combined",
       "operation": "combined",
@@ -7651,10 +7651,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:145",
+      "id": "std.process:161",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 145,
+      "line": 161,
       "signature": "pub fn ProcessOutput.statuses(self): Array[ExitStatus]",
       "symbol": "std.process.ProcessOutput.statuses",
       "operation": "statuses",
@@ -7699,10 +7699,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:146",
+      "id": "std.process:162",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 146,
+      "line": 162,
       "signature": "pub fn ExitStatus.code(self): Int?",
       "symbol": "std.process.ExitStatus.code",
       "operation": "code",
@@ -7747,10 +7747,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:147",
+      "id": "std.process:163",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 147,
+      "line": 163,
       "signature": "pub fn ExitStatus.success(self): Bool",
       "symbol": "std.process.ExitStatus.success",
       "operation": "success",

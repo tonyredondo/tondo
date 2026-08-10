@@ -107,6 +107,16 @@ devuelve los bytes escritos. `Write` y `ReadWrite` abren un archivo existente;
 `Create` trunca o crea y `CreateNew` exige que no exista. `Append` escribe
 siempre al final.
 
+La capability `filesystem` se comprueba estáticamente: importar `std.fs` no la
+concede y un target sin ella rechaza el módulo con `E1008` antes del lowering.
+Los límites de bytes y de entradas se validan antes de materializar el resultado;
+un exceso devuelve `FsError.ResourceLimit` sin publicar una escritura, una lista
+o un contenido parcial. El cleanup se ejecuta también durante unwind y
+cancelación. Los handles son tokens no forjables: usar un token stale devuelve
+un error tipado y no reabre ni recicla el recurso. `list` conserva el orden
+lexicográfico de bytes nativos, y sus errores no exponen rutas físicas ni
+fragmentos de contenido.
+
 El verificador de ownership impide que un programa seguro conserve un handle
 después de su cleanup; el host también rechaza tokens stale o forjados como
 una violación de la invariante de runtime. `FsError.Closed` queda reservado
@@ -117,6 +127,12 @@ invariante.
 rename; no promete durabilidad de hardware salvo una capability posterior. La
 iteración devuelve paths en orden lexicográfico de bytes para determinismo. Los
 errores no incluyen rutas físicas adicionales ni fragmentos de contenido.
+
+La evidencia ejecutable está identificada por `STD-A-FS-EVIDENCE-001`: cubre
+las 14 firmas públicas, el contrato de capability, el modelo de handles, el
+adaptador host, el fixture runtime y los límites/cleanup. Fuzz específico,
+captura de rendimiento por target y conformance global permanecen explícitos
+como promoción posterior.
 
 ## `std.process`
 

@@ -636,6 +636,7 @@ impl PackageGraph {
                     "process" => Some("process"),
                     "time" => Some("clock"),
                     "env" => Some("environment"),
+                    "fs" => Some("filesystem"),
                     _ => None,
                 };
                 if let Some(capability) = capability {

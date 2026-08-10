@@ -73,6 +73,11 @@
       "id": "STD-A-CONSOLE-EVIDENCE-001",
       "contract": "testing/stdlib-hosted.json",
       "owners": ["std.console"]
+    },
+    {
+      "id": "STD-A-FS-EVIDENCE-001",
+      "contract": "testing/stdlib-hosted.json",
+      "owners": ["std.fs"]
     }
   ],
   "owners": [
@@ -1148,6 +1153,85 @@
         "scripts/stdlib-path-test.sh",
         "cargo test -p tondo-stdlib --locked --lib path::tests",
         "cargo test -p tondo-compiler --locked --lib process_host::tests::path_host_boundary_preserves_native_bytes_and_lexical_semantics"
+      ]
+    },
+    {
+      "id": "std.fs",
+      "layer": "A2",
+      "cells": {
+        "SPEC": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["testing/stdlib-hosted.json", "docs/contracts/stdlib-hosted.md", "TONDO_STANDARD_LIBRARY_SPEC.md"]
+        },
+        "IMPL": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs", "crates/tondo-vm/src/bytecode.rs", "crates/tondo-vm/src/bytecode/verify.rs", "crates/tondo-vm/src/runtime/execute.rs"]
+        },
+        "HOST": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/driver.rs", "docs/contracts/stdlib-hosted.md"]
+        },
+        "MODEL": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/hir/capabilities.rs", "docs/contracts/stdlib-hosted.md"]
+        },
+        "TEST": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/driver.rs", "tests/runtime/m11-std-fs-001.to", "scripts/stdlib-fs-test.sh"]
+        },
+        "FUZZ": {
+          "status": "partial",
+          "reason": "The bounded native-path, directory-order, byte-limit and failure corpus is executable, but no dedicated std.fs operation fuzz target has been promoted.",
+          "refs": ["crates/tondo-compiler/src/process_host.rs", "fuzz/fuzz_targets/admission.rs", "scripts/stdlib-fs-test.sh"]
+        },
+        "PERF": {
+          "status": "partial",
+          "reason": "Bounded filesystem bytes, directory entries and work-unit budgets are declared; target-specific hot-path capture remains pending promotion.",
+          "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
+        },
+        "CONF": {
+          "status": "partial",
+          "reason": "The public API audit, explicit filesystem capability test and hosted runtime fixture cover all fourteen signatures; STD-CONF-001 has not yet promoted every standard-library owner.",
+          "refs": ["testing/stdlib-public-api.json", "tests/runtime/m11-std-fs-001.to", "crates/tondo-compiler/src/driver.rs", "TONDO_IMPLEMENTATION_TRACKER.md"]
+        },
+        "DOC": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["docs/contracts/stdlib-hosted.md", "TONDO_STANDARD_LIBRARY_SPEC.md", "docs/contracts/stdlib-s1a.md", "docs/contracts/stdlib-matrix.md"]
+        }
+      },
+      "budgets": {
+        "filesystem_bytes": {
+          "unit": "bytes",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 1000,
+          "state": "declared-baseline-pending"
+        },
+        "directory_entries": {
+          "unit": "entries",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 1000,
+          "state": "declared-baseline-pending"
+        },
+        "filesystem_work_units": {
+          "unit": "work-units",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 1000,
+          "state": "declared-baseline-pending"
+        }
+      },
+      "commands": [
+        "scripts/stdlib-hosted-check.sh",
+        "scripts/stdlib-fs-test.sh",
+        "cargo test -p tondo-compiler --locked --lib process_host::tests::filesystem_directory_operations_are_atomic_and_ordered",
+        "cargo test -p tondo-compiler --locked --lib process_host::tests::filesystem_handles_are_typed_async_and_cleanup_is_affine",
+        "cargo test -p tondo-compiler --locked --lib process_host::tests::filesystem_handles_cover_modes_errors_and_cancellation",
+        "cargo test -p tondo-compiler --locked --lib driver::tests::filesystem_module_requires_the_explicit_target_capability"
       ]
     }
   ],

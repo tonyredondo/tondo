@@ -23,7 +23,8 @@ evidencia por celda para sus cinco firmas de `Display` y builder; `std.io`
 añade evidencia por celda para sus cuatro firmas de Reader/Writer y límites;
 `std.path` añade evidencia por celda para sus diez firmas de paths léxicos y
 `std.console` añade evidencia por celda para sus siete firmas de streams y
-output capability-gated.
+output capability-gated; `std.fs` añade evidencia por celda para sus catorce
+firmas de filesystem, handles afines y operaciones atómicas capability-gated.
 Los placeholders sintéticos anteriores
 quedan reemplazados por filas reales.
 `std.0.1B` permanece
@@ -122,6 +123,14 @@ pruebas host cubren partial I/O, EOF, LF estable, errores de UTF-8 y handles
 incorrectos sin publicar estado parcial; la auditoría de las siete firmas queda
 enlazada por `STD-A-CONSOLE-EVIDENCE-001`. Fuzz dedicado, baselines de
 bytes/chunks/work-units y `STD-CONF-001` siguen abiertos explícitamente.
+
+`std.fs` conserva `HOST` como `verified`: la capability `filesystem` se
+comprueba antes del lowering y no se concede por importar el módulo. El fixture
+de filesystem y las pruebas host cubren handles afines, cleanup normal/unwind,
+cancelación, límites atómicos, errores tipados, orden lexicográfico de bytes y
+`atomicWrite`; las 14 firmas quedan enlazadas por
+`STD-A-FS-EVIDENCE-001`. Fuzz dedicado, baselines por target y `STD-CONF-001`
+siguen abiertos explícitamente.
 
 Esta matriz no cierra `STD-CONF-001`, `STD-TEST-001` ni `STD-DOC-001`: registra
 sus celdas pendientes para que las siguientes coordinaciones puedan promover

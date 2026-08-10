@@ -77,7 +77,7 @@
       "id": "std.fs",
       "group": "a2-host",
       "state": "awaiting-owner-hot-path",
-      "reason": "Filesystem workloads require a bounded temporary tree and target-specific cleanup proof before capture."
+      "reason": "The owner contract, bounded temporary-tree fixture and deterministic cleanup/handle tests are closed; target-specific filesystem hot-path capture remains pending promotion."
     },
     {
       "id": "std.format",
