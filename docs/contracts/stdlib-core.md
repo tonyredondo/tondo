@@ -333,3 +333,24 @@ admission fuzz aporta formas de cursor; `HOST` es `not-applicable` porque el
 owner es intrínseco portable sin capability ni consulta ambiental. El fuzz de
 operaciones, los baselines de retención/allocations/materialización y la
 promoción global de conformance permanecen explícitamente pendientes.
+
+## Evidencia del owner intrínseco `std.math`
+
+`STD-A-MATH-EVIDENCE-001` cierra la evidencia ejecutable de las nueve firmas
+escalares de `std.math`. El modelo numérico conserva IEEE-754: los kernels
+`floor`, `ceil`, `round`, `truncate`, `abs`, `min`, `max` y `fma` mantienen
+infinidades, NaN y cero con signo, mientras `sqrt` distingue `Domain` de
+`NonFinite` sin publicar un valor parcial. El lowering HIR y el puente
+`process_host` mantienen un dispatch estático por operación y materializan
+`MathError` con una frontera nominal.
+
+Las pruebas del owner combinan la matriz de límites del kernel, el fixture
+`m11-std-math-001.to`, el corpus IEEE de `m6-num-004-ieee.to`, las properties
+de redondeo de `Float32`, los diagnósticos de NaN/overflow de constantes y el
+runtime test de la frontera de `sqrt`. El kernel scalar es el scalar oracle
+canónico de 0.1: no existe una ruta SIMD alternativa ni fast-math observable;
+si un backend futuro vectoriza, debe demostrar equivalencia bit a bit con este
+oracle antes de cambiar la ruta. `HOST` es `not-applicable` porque el owner es
+intrínseco portable sin capability ni consulta ambiental. Fuzz específico,
+baselines de coste por owner y la promoción global de conformance siguen
+visibles como trabajo posterior.

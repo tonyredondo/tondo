@@ -77,6 +77,18 @@ exhaustion guards; the VM heap tests trace sources and callbacks and reject
 malformed iterator state. `HOST` is explicitly `not-applicable`; operation
 fuzz, owner retention/allocation/materialization baselines and global
 conformance promotion remain pending.
+The intrinsic `std.math` owner is closed by the shared group contract
+[`testing/stdlib-core.json`](../../testing/stdlib-core.json) and its
+`STD-A-MATH-EVIDENCE-001` cell record. All nine scalar signatures are traced
+through HIR static dispatch, the `process_host` bridge, the nominal
+`MathError` boundary and the public runtime fixture. Kernel tests and the
+`m6-num-004-ieee.to` corpus cover rounding ties, signed zero, infinities, NaN,
+subnormals, overflow and the `sqrt` domain/non-finite distinction; compiler
+properties cover Float32 rounding and compile-time NaN diagnostics. The
+portable scalar implementation is the 0.1 scalar oracle: there is no separate
+SIMD or fast-math path, and any future vectorized backend must prove bitwise
+equivalence before promotion. `HOST` is explicitly `not-applicable`; operation
+fuzz, owner cost baselines and global conformance promotion remain pending.
 The capability-gated `std.time` owner is closed for hosted evidence by
 [`testing/stdlib-time.json`](../../testing/stdlib-time.json) and its
 `STD-A-TIME-EVIDENCE-001` cell record. It separates the duration/instant/timer

@@ -1086,6 +1086,20 @@ capability ni dependencia ambiental. El fuzz de operaciones, baselines de
 retención/allocations/materialización y `STD-CONF-001` permanecen pendientes
 de promoción.
 
+El owner intrínseco `std.math` queda cerrado para la evidencia de STD-0.1A
+mediante el contrato de grupo [`testing/stdlib-core.json`](testing/stdlib-core.json)
+y su registro `STD-A-MATH-EVIDENCE-001` en
+[`testing/stdlib-owner-evidence.json`](testing/stdlib-owner-evidence.json).
+Las nueve firmas escalares se trazan por dispatch HIR estático, puente
+`process_host`, frontera nominal `MathError` y fixture público. Las pruebas
+cubren redondeo ties-to-even y signed zero, infinitudes, NaN, subnormales,
+overflow y dominio/no-finito de `sqrt`, apoyándose en `m6-num-004-ieee.to`,
+properties de Float32 y diagnósticos de constantes. La implementación scalar
+es el scalar oracle de 0.1 y no existe una ruta SIMD/fast-math separada; un
+backend vectorizado futuro sólo puede promocionarse tras demostrar equivalencia
+bit a bit. `HOST` es `not-applicable`; fuzz específico, baselines por owner y
+`STD-CONF-001` siguen pendientes de promoción.
+
 El owner capability-gated `std.time` queda cerrado para la evidencia de
 STD-0.1A mediante [`testing/stdlib-time.json`](testing/stdlib-time.json) y su
 registro de nueve celdas en [`testing/stdlib-owner-evidence.json`](testing/stdlib-owner-evidence.json)

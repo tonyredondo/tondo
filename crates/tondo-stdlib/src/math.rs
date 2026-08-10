@@ -87,4 +87,20 @@ mod tests {
         assert_eq!(min(f64::NAN, 1.0), 1.0);
         assert_eq!(max(f64::NEG_INFINITY, 2.0), 2.0);
     }
+
+    #[test]
+    fn scalar_kernels_cover_signed_zero_ties_and_nonfinite_boundaries() {
+        assert_eq!(ceil(-1.5), -1.0);
+        assert_eq!(round(-1.5), -2.0);
+        assert_eq!(truncate(-0.75), -0.0);
+        assert_eq!(abs(-0.0).to_bits(), 0.0_f64.to_bits());
+        assert_eq!(floor(f64::NEG_INFINITY), f64::NEG_INFINITY);
+        assert_eq!(ceil(f64::INFINITY), f64::INFINITY);
+        assert!(round(f64::NAN).is_nan());
+        assert!(truncate(f64::NAN).is_nan());
+        assert!(abs(f64::NAN).is_nan());
+        assert!(fma(f64::INFINITY, 0.0, 1.0).is_nan());
+        assert_eq!(min(1.0, f64::NAN), 1.0);
+        assert_eq!(max(1.0, f64::NAN), 1.0);
+    }
 }

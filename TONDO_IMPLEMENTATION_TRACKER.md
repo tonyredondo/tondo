@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 2.00
+**Versión del tracker:** 2.01
 
 **Última actualización:** 2026-08-10
 
@@ -4590,9 +4590,18 @@ administrativas que no implementan comportamiento.
   materialización y `STD-CONF-001` permanecen visibles como promoción posterior.
   `scripts/stdlib-iter-test.sh` valida negativos de contrato, símbolos, fixture,
   properties y las 4/4 filas de la auditoría pública.
-- [ ] **STD-A-MATH-EVIDENCE-001 — Cerrar evidencia matemática.** Cubrir modelo
-  numérico, dominios/overflow, properties/fuzz, equivalencia scalar/SIMD,
-  conformidad y docs; HOST es no aplicable.
+- [x] **STD-A-MATH-EVIDENCE-001 — Cerrar evidencia matemática.** `testing/stdlib-owner-evidence.json`
+  registra las nueve celdas del owner intrínseco `std.math` y enlaza sus nueve
+  firmas escalares con dispatch HIR, puente `process_host`, `MathError`, kernel
+  portable y fixture público. La evidencia cubre IEEE-754, ties-to-even, cero
+  con signo, infinitudes, NaN, subnormales, overflow, dominio/no-finito de
+  `sqrt`, properties Float32, diagnósticos de constantes y la auditoría 9/9.
+  El scalar oracle es la ruta normativa 0.1 y no existe un camino SIMD o
+  fast-math alternativo; cualquier vectorización futura deberá probar
+  equivalencia bit a bit. `HOST` es `not-applicable`; fuzz específico,
+  baselines de coste y `STD-CONF-001` siguen visibles como promoción posterior.
+  `scripts/stdlib-math-test.sh` valida contratos negativos, símbolos, corpus,
+  ausencia de rutas SIMD/fast-math y las 9/9 filas públicas.
 - [ ] **STD-A-FMT-EVIDENCE-001 — Cerrar evidencia de formatting.** Cubrir
   `Display`, builders, atomicidad, límites, properties/fuzz, allocations,
   conformidad y docs; HOST es no aplicable.
@@ -5797,6 +5806,20 @@ se declara iniciada antes de esos cierres.
 - La matriz conserva 22 owners, 207 firmas y 165 requisitos; `std.iter` añade
   su registro por celdas y el test de owner sin crear un contrato público
   duplicado.
+
+### 2.01 — 2026-08-10
+
+- Se cierra `STD-A-MATH-EVIDENCE-001` con nueve celdas explícitas para el owner
+  intrínseco `std.math`. El contrato y las pruebas fijan IEEE-754, dominios,
+  overflow/subnormales, signed zero, NaN, la frontera nominal de `MathError` y
+  la equivalencia futura obligatoria frente al scalar oracle; `HOST` es
+  `not-applicable` y no se inventa una implementación SIMD. El gate ejecuta el
+  nuevo `scripts/stdlib-math-test.sh`, el corpus `m6-num-004-ieee.to`, las
+  properties compiler/VM y la auditoría pública 9/9.
+- La matriz conserva 22 owners, 207 firmas y 165 requisitos; `std.math` añade
+  su registro por celdas sin crear una API duplicada. El rendimiento capturado
+  (throughput/tail latency de `fma`) y la conformance global siguen en estado
+  explícitamente pendiente.
 
 ### 1.99 — 2026-08-10
 

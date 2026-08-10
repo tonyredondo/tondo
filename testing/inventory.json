@@ -12,7 +12,7 @@
       "path": "TONDO_STANDARD_LIBRARY_SPEC.md",
       "edition": "0.1",
       "status": "draft-pending",
-      "sha256": "824f921f4141de6c6fc9e6d191b53ecfd96f9ae98232348eb4bd7b807c205985"
+      "sha256": "90f9b9970385b3f998c6f23198c789afdbb2fbb3ae2a65b341e8308b858859bf"
     },
     {
       "path": "TONDO_TESTING_SPEC.md",
@@ -34,8 +34,8 @@
     }
   ],
   "summary": {
-    "logical_tests": 2303,
-    "repetitions": 2522,
+    "logical_tests": 2304,
+    "repetitions": 2523,
     "physical_sources": 506,
     "unique_source_hashes": 849,
     "by_kind": {
@@ -44,13 +44,13 @@
       "draft-contract": 38,
       "fixture": 154,
       "fuzz-target": 4,
-      "rust-test": 1528,
+      "rust-test": 1529,
       "spec-fence": 310
     },
     "by_status": {
       "campaign": 4,
       "draft-pending": 38,
-      "executable": 2248,
+      "executable": 2249,
       "non-executable": 13
     },
     "by_phase": {
@@ -72,7 +72,7 @@
       "reliability": 68,
       "resolution": 27,
       "runtime": 209,
-      "semantic": 797,
+      "semantic": 798,
       "testing": 38,
       "tooling": 4
     }
@@ -40972,7 +40972,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "6879a7186eff57afee06199ab63353b91a28386138b2ef523f915015a1008eb4",
+      "source_sha256": "2edf40e98c5a7af7cd701f0d371a936f2ca5930abab3959b7e702499e6e7f373",
       "target": "host-rust",
       "document": null,
       "edition": "host",
@@ -40990,7 +40990,25 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "6879a7186eff57afee06199ab63353b91a28386138b2ef523f915015a1008eb4",
+      "source_sha256": "2edf40e98c5a7af7cd701f0d371a936f2ca5930abab3959b7e702499e6e7f373",
+      "target": "host-rust",
+      "document": null,
+      "edition": "host",
+      "status": "executable",
+      "sidecars": []
+    },
+    {
+      "id": "rust:tondo-stdlib:src::math:scalar_kernels_cover_signed_zero_ties_and_nonfinite_boundaries",
+      "kind": "rust-test",
+      "crate_name": "tondo-stdlib",
+      "phase": "semantic",
+      "source": "crates/tondo-stdlib/src/math.rs",
+      "fixture": null,
+      "group": "unit",
+      "requirements": [],
+      "oracle": "rust-assertions",
+      "repetitions": 1,
+      "source_sha256": "2edf40e98c5a7af7cd701f0d371a936f2ca5930abab3959b7e702499e6e7f373",
       "target": "host-rust",
       "document": null,
       "edition": "host",
@@ -41008,7 +41026,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "6879a7186eff57afee06199ab63353b91a28386138b2ef523f915015a1008eb4",
+      "source_sha256": "2edf40e98c5a7af7cd701f0d371a936f2ca5930abab3959b7e702499e6e7f373",
       "target": "host-rust",
       "document": null,
       "edition": "host",

@@ -1487,52 +1487,56 @@
       ],
       "stages": {
         "CONF": {
-          "reason": "STD-CONF-001 remains open until the owner has complete public evidence",
+          "reason": "the public API audit and IEEE/runtime fixtures cover all nine math signatures; STD-CONF-001 has not yet promoted every standard-library owner",
           "refs": [
-            "TONDO_IMPLEMENTATION_TRACKER.md#STD-CONF-001"
+            "testing/stdlib-public-api.json",
+            "tests/runtime/m11-std-math-001.to",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
           ],
-          "status": "pending"
+          "status": "partial"
         },
         "DOC": {
           "reason": null,
           "refs": [
-            "docs/contracts/stdlib-core.md"
+            "docs/contracts/stdlib-core.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md",
+            "docs/contracts/stdlib-s1a.md"
           ],
           "status": "verified"
         },
         "IMPL/HOST": {
           "reason": null,
           "refs": [
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/process_host.rs",
             "crates/tondo-stdlib/src/math.rs",
-            "tests/runtime/m11-std-math-001.to"
+            "crates/tondo-vm/src/runtime/execute.rs",
+            "docs/contracts/stdlib-core.md",
+            "testing/stdlib-core.json"
           ],
           "status": "verified"
         },
         "MODEL/TEST/FUZZ": {
-          "reason": "owner tests exist; per-leaf MODEL/TEST/FUZZ links and fuzz coverage remain to be coordinated by STD-TEST-001",
+          "reason": "the bounded IEEE and numeric compiler corpora exercise Float32/Float boundaries and NaN or overflow diagnostics, but no dedicated std.math operation fuzz target has been promoted",
           "refs": [
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/const_eval.rs",
+            "crates/tondo-compiler/src/process_host.rs",
             "crates/tondo-stdlib/src/math.rs",
-            "tests/runtime/m11-std-math-001.to"
+            "crates/tondo-vm/src/runtime/execute.rs",
+            "scripts/stdlib-math-test.sh",
+            "tests/runtime/m11-std-math-001.to",
+            "tests/runtime/m6-num-004-ieee.to"
           ],
           "status": "partial"
         },
         "PERF": {
-          "observed_dimensions": [
-            "throughput",
-            "tail_latency"
-          ],
-          "pending_dimensions": [
-            "allocations_per_operation",
-            "allocated_bytes_per_operation",
-            "peak_memory",
-            "startup",
-            "code_size",
-            "compile_time"
-          ],
-          "reason": "only the dimensions listed as observed are captured; promotion remains pending",
+          "reason": "scalar fma throughput and tail latency are captured, but owner-specific allocation, code-size and scalar/SIMD equivalence baselines remain pending promotion",
           "refs": [
-            "testing/stdlib-performance-conformance.json#owners/std.math"
+            "testing/stdlib-performance.json",
+            "testing/stdlib-performance-conformance.json",
+            "docs/contracts/stdlib-performance.md"
           ],
           "status": "partial"
         },
@@ -1540,7 +1544,8 @@
           "reason": null,
           "refs": [
             "testing/stdlib-core.json",
-            "docs/contracts/stdlib-core.md"
+            "docs/contracts/stdlib-core.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md"
           ],
           "status": "verified"
         }
@@ -12531,8 +12536,8 @@
     "signatures": 207,
     "stage_counts": {
       "CONF": {
-        "partial": 215,
-        "pending": 157
+        "partial": 231,
+        "pending": 141
       },
       "DOC": {
         "verified": 372

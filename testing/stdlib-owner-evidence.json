@@ -48,6 +48,11 @@
       "id": "STD-A-ITER-EVIDENCE-001",
       "contract": "testing/stdlib-core.json",
       "owners": ["std.iter"]
+    },
+    {
+      "id": "STD-A-MATH-EVIDENCE-001",
+      "contract": "testing/stdlib-core.json",
+      "owners": ["std.math"]
     }
   ],
   "owners": [
@@ -731,6 +736,84 @@
         "scripts/stdlib-iter-test.sh",
         "cargo test -p tondo-compiler --locked --lib bytecode::lower::tests",
         "cargo test -p tondo-compiler --locked --lib process_host::tests"
+      ]
+    },
+    {
+      "id": "std.math",
+      "layer": "A1",
+      "cells": {
+        "SPEC": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["testing/stdlib-core.json", "docs/contracts/stdlib-core.md", "TONDO_STANDARD_LIBRARY_SPEC.md"]
+        },
+        "IMPL": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-stdlib/src/math.rs", "crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs", "crates/tondo-compiler/src/process_host.rs", "crates/tondo-vm/src/runtime/execute.rs"]
+        },
+        "HOST": {
+          "status": "not-applicable",
+          "reason": "std.math is an intrinsic portable scalar owner; its compiler/VM bridge has no separate capability provider or ambient host dependency",
+          "refs": ["docs/contracts/stdlib-core.md", "testing/stdlib-core.json", "crates/tondo-compiler/src/process_host.rs"]
+        },
+        "MODEL": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-stdlib/src/math.rs", "crates/tondo-compiler/src/hir/const_eval.rs", "crates/tondo-compiler/src/hir/check.rs", "crates/tondo-vm/src/runtime/execute.rs"]
+        },
+        "TEST": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-stdlib/src/math.rs", "tests/runtime/m11-std-math-001.to", "tests/runtime/m6-num-004-ieee.to", "crates/tondo-compiler/src/process_host.rs", "crates/tondo-vm/src/runtime/execute.rs", "scripts/stdlib-math-test.sh"]
+        },
+        "FUZZ": {
+          "status": "partial",
+          "reason": "the bounded IEEE and numeric compiler corpora exercise Float32/Float boundaries and NaN or overflow diagnostics, but no dedicated std.math operation fuzz target has been promoted",
+          "refs": ["tests/runtime/m6-num-004-ieee.to", "crates/tondo-vm/src/runtime/execute.rs", "crates/tondo-compiler/src/hir/check.rs", "scripts/stdlib-math-test.sh"]
+        },
+        "PERF": {
+          "status": "partial",
+          "reason": "scalar fma throughput and tail latency are captured, but owner-specific allocation, code-size and scalar/SIMD equivalence baselines remain pending promotion",
+          "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
+        },
+        "CONF": {
+          "status": "partial",
+          "reason": "the public API audit and IEEE/runtime fixtures cover all nine math signatures; STD-CONF-001 has not yet promoted every standard-library owner",
+          "refs": ["testing/stdlib-public-api.json", "tests/runtime/m11-std-math-001.to", "TONDO_IMPLEMENTATION_TRACKER.md"]
+        },
+        "DOC": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["docs/contracts/stdlib-core.md", "TONDO_STANDARD_LIBRARY_SPEC.md", "docs/contracts/stdlib-s1a.md"]
+        }
+      },
+      "budgets": {
+        "scalar_work_units": {
+          "unit": "work-units",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 1000,
+          "state": "declared-baseline-pending"
+        },
+        "temporary_allocations": {
+          "unit": "allocations",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 1000,
+          "state": "declared-baseline-pending"
+        },
+        "native_code_bytes": {
+          "unit": "bytes",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 500,
+          "state": "declared-baseline-pending"
+        }
+      },
+      "commands": [
+        "scripts/stdlib-core-check.sh",
+        "scripts/stdlib-math-test.sh",
+        "cargo test -p tondo-stdlib --locked --lib math::tests",
+        "cargo test -p tondo-compiler --locked --lib process_host::tests::math_sqrt_uses_the_nominal_error_boundary",
+        "cargo test -p tondo-compiler --locked --lib hir::check::tests::compile_time_collection_duplicates_and_nan_comparisons_are_diagnosed"
       ]
     }
   ],
