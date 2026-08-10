@@ -28,6 +28,11 @@
       "id": "STD-A-ENV-EVIDENCE-001",
       "contract": "testing/stdlib-env.json",
       "owners": ["std.env"]
+    },
+    {
+      "id": "STD-A-CORE-EVIDENCE-001",
+      "contract": "testing/stdlib-core.json",
+      "owners": ["std.core"]
     }
   ],
   "owners": [
@@ -402,6 +407,84 @@
         "scripts/stdlib-env-test.sh",
         "cargo test -p tondo-compiler --locked --lib process_host::tests",
         "cargo test -p tondo-compiler --locked --lib driver::tests"
+      ]
+    },
+    {
+      "id": "std.core",
+      "layer": "A1",
+      "cells": {
+        "SPEC": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["testing/stdlib-core.json", "docs/contracts/stdlib-core.md", "TONDO_STANDARD_LIBRARY_SPEC.md"]
+        },
+        "IMPL": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs", "crates/tondo-compiler/src/hir/verify.rs", "crates/tondo-compiler/src/mir/lower.rs", "crates/tondo-vm/src/runtime/execute.rs"]
+        },
+        "HOST": {
+          "status": "not-applicable",
+          "reason": "std.core is an intrinsic compiler/VM-owned value boundary; it has no separate capability provider or ambient host adapter",
+          "refs": ["docs/contracts/stdlib-core.md", "testing/stdlib-core.json", "crates/tondo-vm/src/runtime/execute.rs"]
+        },
+        "MODEL": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs", "crates/tondo-compiler/src/mir/lower.rs", "crates/tondo-vm/src/runtime/execute.rs"]
+        },
+        "TEST": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["tests/runtime/m11-std-core-001.to", "tests/runtime/m11-std-core-002.to", "crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/mir/lower.rs", "scripts/stdlib-core-test.sh"]
+        },
+        "FUZZ": {
+          "status": "partial",
+          "reason": "the admission corpus and deterministic fuzz target generate Option/Result and generic protocol shapes, but no dedicated std.core operation fuzz target has been promoted",
+          "refs": ["fuzz/fuzz_targets/admission.rs", "fuzz/corpus/admission/scalar-seed", "fuzz/corpus/admission/structural-seed", "scripts/stdlib-core-test.sh"]
+        },
+        "PERF": {
+          "status": "partial",
+          "reason": "core value construction, mapping and dispatch workloads are declared, but owner-specific baseline capture remains pending promotion",
+          "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
+        },
+        "CONF": {
+          "status": "partial",
+          "reason": "the public API audit and hosted runtime fixtures cover all nine core signatures; STD-CONF-001 has not yet promoted every standard-library owner",
+          "refs": ["testing/stdlib-public-api.json", "tests/runtime/m11-std-core-002.to", "TONDO_IMPLEMENTATION_TRACKER.md"]
+        },
+        "DOC": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["docs/contracts/stdlib-core.md", "TONDO_STANDARD_LIBRARY_SPEC.md", "docs/contracts/stdlib-s1a.md"]
+        }
+      },
+      "budgets": {
+        "generic_instantiations": {
+          "unit": "instances",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 1000,
+          "state": "declared-baseline-pending"
+        },
+        "aggregate_steps": {
+          "unit": "work-units",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 1000,
+          "state": "declared-baseline-pending"
+        },
+        "dispatch_code_bytes": {
+          "unit": "bytes",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 500,
+          "state": "declared-baseline-pending"
+        }
+      },
+      "commands": [
+        "scripts/stdlib-core-check.sh",
+        "scripts/stdlib-core-test.sh",
+        "cargo test -p tondo-compiler --locked --lib result_construction_fail_and_both_propagation_channels_are_typed",
+        "cargo test -p tondo-compiler --locked --lib explicit_generic_calls_materialize_their_specialization",
+        "cargo test -p tondo-compiler --locked --lib option_and_result_propagation_branch_to_payload_or_early_return"
       ]
     }
   ],

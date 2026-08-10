@@ -78,6 +78,8 @@ run_step stdlib-env-tests \
     scripts/stdlib-env-test.sh
 run_step stdlib-core-contract \
     scripts/stdlib-core-check.sh
+run_step stdlib-core-tests \
+    scripts/stdlib-core-test.sh
 run_step stdlib-serialization-contract \
     scripts/stdlib-serialization-check.sh
 run_step stdlib-integration-contract \

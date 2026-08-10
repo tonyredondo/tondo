@@ -1031,6 +1031,20 @@ properties/hot paths. `HOST` es explícitamente `not-applicable` porque el
 owner es un intrinsic del compilador/VM, sin provider separado; la captura
 dedicada de rendimiento y la promoción de fuzz siguen pendientes.
 
+El owner intrínseco `std.core` queda cerrado para la evidencia de STD-0.1A
+mediante el contrato de grupo [`testing/stdlib-core.json`](testing/stdlib-core.json)
+y su registro de nueve celdas en
+[`testing/stdlib-owner-evidence.json`](testing/stdlib-owner-evidence.json)
+(`STD-A-CORE-EVIDENCE-001`). La evidencia enlaza las nueve firmas de
+`Option`/`Result` con protocolos estáticos, instanciación genérica, composición
+de mapas y propagación, agregados bytecode y ejecución VM; las pruebas públicas
+incluyen los casos de éxito, error, ausencia, límites y especialización
+explícita. `HOST` es `not-applicable` porque el owner es compiler/VM-owned y no
+consulta capabilities ni el host. El corpus de admission fuzz cubre formas
+`Option`/`Result` y protocolos genéricos, mientras el fuzz específico de
+operaciones y los baselines de rendimiento por owner quedan pendientes de
+promoción.
+
 El owner capability-gated `std.time` queda cerrado para la evidencia de
 STD-0.1A mediante [`testing/stdlib-time.json`](testing/stdlib-time.json) y su
 registro de nueve celdas en [`testing/stdlib-owner-evidence.json`](testing/stdlib-owner-evidence.json)

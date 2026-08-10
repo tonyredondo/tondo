@@ -9,9 +9,9 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 1.90
+**Versión del tracker:** 1.97
 
-**Última actualización:** 2026-08-09
+**Última actualización:** 2026-08-10
 
 **Especificaciones normativas:**
 
@@ -4548,9 +4548,14 @@ administrativas que no implementan comportamiento.
   fuzz dedicado y captura de rendimiento por capability permanecen como
   promoción pendiente. `scripts/stdlib-env-check.sh` y
   `scripts/stdlib-env-test.sh` validan el contrato y sus negativos.
-- [ ] **STD-A-CORE-EVIDENCE-001 — Cerrar evidencia Core.** Cubrir protocolos,
-  genéricos, composición, properties/fuzz, dispatch/código generado,
-  conformidad y docs; HOST es no aplicable.
+- [x] **STD-A-CORE-EVIDENCE-001 — Cerrar evidencia Core.** `testing/stdlib-owner-evidence.json`
+  registra las nueve celdas del owner intrínseco `std.core`: protocolos y
+  genéricos en HIR, composición `Option`/`Result`, dispatch y agregados
+  bytecode/MIR, fixtures runtime y auditoría pública de las nueve firmas.
+  `HOST` es explícitamente `not-applicable` por la frontera compiler/VM-owned.
+  El corpus de admission fuzz cubre formas `Option`/`Result` y protocolos
+  genéricos; el fuzz específico de operaciones, la captura de rendimiento por
+  owner y la promoción global de conformance siguen visibles como pendientes.
 - [ ] **STD-A-TEXT-EVIDENCE-001 — Cerrar evidencia de texto.** Cubrir Unicode,
   UTF-8 inválido en fronteras, slicing, iteración, properties/fuzz, coste,
   conformidad y docs; HOST es no aplicable.
@@ -5752,6 +5757,18 @@ se declara iniciada antes de esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 1.97 — 2026-08-10
+
+- Se cierra `STD-A-CORE-EVIDENCE-001` sin confundir la implementación del
+  kernel con una API hosted: `std.core` queda trazado desde las nueve firmas
+  públicas de `Option`/`Result` hasta HIR, MIR, bytecode y VM. La evidencia
+  separa protocolos, genéricos, composición, semántica de valores, fixtures y
+  auditoría pública; `HOST` es `not-applicable` por ser compiler/VM-owned.
+- `scripts/stdlib-core-test.sh` añade negativos del contrato, pruebas de
+  frontera y comprobaciones del corpus de admission fuzz. Fuzz específico de
+  operaciones, baselines por owner y `STD-CONF-001` permanecen pendientes de
+  promoción; la matriz mantiene 165 requisitos y no crea una segunda API.
 
 ### 1.96 — 2026-08-10
 

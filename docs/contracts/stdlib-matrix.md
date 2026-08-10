@@ -13,8 +13,9 @@ owner adicional `std.bytes` (entre los 21 están `std.time` y `std.env`), 207
 firmas indexadas por la auditoría pública y 165 requisitos de owner. `std.meta`,
 `std.reflect`, `std.bytes`, `std.time` y `std.env` añaden sus contratos
 executable A0 y seis requisitos de evidencia cada uno sin crear una segunda
-API pública; los placeholders sintéticos anteriores quedan reemplazados por
-filas reales.
+API pública; `std.core` conserva su contrato de grupo y añade evidencia por
+celda para sus nueve firmas intrínsecas. Los placeholders sintéticos anteriores
+quedan reemplazados por filas reales.
 `std.0.1B` permanece
 como catálogo futuro cerrado:
 sus módulos aparecen solo en `catalogs.future_modules` y no se convierten en
@@ -50,6 +51,12 @@ auditoría pública estén presentes exactamente una vez, que cada requisito
 tenga owner, que las dimensiones PERF tengan owner group y que todas las
 referencias apunten a paths existentes. El test negativo elimina un owner y
 una razón de estado para demostrar que el gate falla cerrado.
+
+`std.core` conserva `HOST` como `not-applicable` porque sus valores
+`Option`/`Result` y su dispatch estático pertenecen al lowering compiler/VM.
+El corpus de admission fuzz, los fixtures runtime y la auditoría pública se
+enlazan desde su evidencia de owner; el fuzz específico de operaciones y la
+captura de rendimiento por owner siguen abiertos.
 
 Esta matriz no cierra `STD-CONF-001`, `STD-TEST-001` ni `STD-DOC-001`: registra
 sus celdas pendientes para que las siguientes coordinaciones puedan promover

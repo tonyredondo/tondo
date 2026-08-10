@@ -2692,10 +2692,10 @@
       "status": "verified"
     },
     {
-      "id": "std.format:215",
+      "id": "std.format:227",
       "owner": "std.format",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 215,
+      "line": 227,
       "signature": "pub fn Builder.new(): Builder",
       "symbol": "std.format.Builder.new",
       "operation": "new",
@@ -2740,10 +2740,10 @@
       "status": "verified"
     },
     {
-      "id": "std.format:216",
+      "id": "std.format:228",
       "owner": "std.format",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 216,
+      "line": 228,
       "signature": "pub fn Builder.append(var self, value: String): Unit ! FormatError",
       "symbol": "std.format.Builder.append",
       "operation": "append",
@@ -2788,10 +2788,10 @@
       "status": "verified"
     },
     {
-      "id": "std.format:217",
+      "id": "std.format:229",
       "owner": "std.format",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 217,
+      "line": 229,
       "signature": "pub fn Builder.finish(var self): String ! FormatError",
       "symbol": "std.format.Builder.finish",
       "operation": "finish",
@@ -2836,10 +2836,10 @@
       "status": "verified"
     },
     {
-      "id": "std.format:218",
+      "id": "std.format:230",
       "owner": "std.format",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 218,
+      "line": 230,
       "signature": "pub fn format[T: Display](value: T): String ! FormatError",
       "symbol": "std.format.format",
       "operation": "format",
@@ -2884,10 +2884,10 @@
       "status": "verified"
     },
     {
-      "id": "std.format:219",
+      "id": "std.format:231",
       "owner": "std.format",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 219,
+      "line": 231,
       "signature": "pub fn join[T: Display](values: Array[T], separator: String): String ! FormatError",
       "symbol": "std.format.join",
       "operation": "join",
@@ -3604,10 +3604,10 @@
       "status": "verified"
     },
     {
-      "id": "std.io:239",
+      "id": "std.io:251",
       "owner": "std.io",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 239,
+      "line": 251,
       "signature": "pub fn defaultLimits(): IoLimits",
       "symbol": "std.io.defaultLimits",
       "operation": "defaultLimits",
@@ -3652,10 +3652,10 @@
       "status": "verified"
     },
     {
-      "id": "std.io:240",
+      "id": "std.io:252",
       "owner": "std.io",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 240,
+      "line": 252,
       "signature": "pub fn limits(maxBytes: Int, maxRead: Int): IoLimits ! IoError",
       "symbol": "std.io.limits",
       "operation": "limits",
@@ -3700,10 +3700,10 @@
       "status": "verified"
     },
     {
-      "id": "std.io:241",
+      "id": "std.io:253",
       "owner": "std.io",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 241,
+      "line": 253,
       "signature": "pub fn readAll[R: Reader](var reader: R, limits: IoLimits): Bytes ! IoError",
       "symbol": "std.io.readAll",
       "operation": "readAll",
@@ -3748,10 +3748,10 @@
       "status": "verified"
     },
     {
-      "id": "std.io:242",
+      "id": "std.io:254",
       "owner": "std.io",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 242,
+      "line": 254,
       "signature": "pub fn writeAll(var writer: Writer, data: Bytes): Unit ! IoError",
       "symbol": "std.io.writeAll",
       "operation": "writeAll",
@@ -5135,10 +5135,10 @@
       "status": "gap"
     },
     {
-      "id": "std.math:195",
+      "id": "std.math:207",
       "owner": "std.math",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 195,
+      "line": 207,
       "signature": "pub fn floor(value: Float): Float",
       "symbol": "std.math.floor",
       "operation": "floor",
@@ -5183,10 +5183,10 @@
       "status": "verified"
     },
     {
-      "id": "std.math:196",
+      "id": "std.math:208",
       "owner": "std.math",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 196,
+      "line": 208,
       "signature": "pub fn ceil(value: Float): Float",
       "symbol": "std.math.ceil",
       "operation": "ceil",
@@ -5231,10 +5231,10 @@
       "status": "verified"
     },
     {
-      "id": "std.math:197",
+      "id": "std.math:209",
       "owner": "std.math",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 197,
+      "line": 209,
       "signature": "pub fn round(value: Float): Float",
       "symbol": "std.math.round",
       "operation": "round",
@@ -5279,10 +5279,10 @@
       "status": "verified"
     },
     {
-      "id": "std.math:198",
+      "id": "std.math:210",
       "owner": "std.math",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 198,
+      "line": 210,
       "signature": "pub fn truncate(value: Float): Float",
       "symbol": "std.math.truncate",
       "operation": "truncate",
@@ -5327,10 +5327,10 @@
       "status": "verified"
     },
     {
-      "id": "std.math:199",
+      "id": "std.math:211",
       "owner": "std.math",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 199,
+      "line": 211,
       "signature": "pub fn sqrt(value: Float): Float ! MathError",
       "symbol": "std.math.sqrt",
       "operation": "sqrt",
@@ -5375,10 +5375,10 @@
       "status": "verified"
     },
     {
-      "id": "std.math:200",
+      "id": "std.math:212",
       "owner": "std.math",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 200,
+      "line": 212,
       "signature": "pub fn fma(a: Float, b: Float, c: Float): Float",
       "symbol": "std.math.fma",
       "operation": "fma",
@@ -5423,10 +5423,10 @@
       "status": "verified"
     },
     {
-      "id": "std.math:201",
+      "id": "std.math:213",
       "owner": "std.math",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 201,
+      "line": 213,
       "signature": "pub fn abs(value: Float): Float",
       "symbol": "std.math.abs",
       "operation": "abs",
@@ -5471,10 +5471,10 @@
       "status": "verified"
     },
     {
-      "id": "std.math:202",
+      "id": "std.math:214",
       "owner": "std.math",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 202,
+      "line": 214,
       "signature": "pub fn min(a: Float, b: Float): Float",
       "symbol": "std.math.min",
       "operation": "min",
@@ -5519,10 +5519,10 @@
       "status": "verified"
     },
     {
-      "id": "std.math:203",
+      "id": "std.math:215",
       "owner": "std.math",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 203,
+      "line": 215,
       "signature": "pub fn max(a: Float, b: Float): Float",
       "symbol": "std.math.max",
       "operation": "max",

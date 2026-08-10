@@ -186,6 +186,18 @@ objetos COW del runtime y `Map.entries`/`Set.values` devuelven cursores propios
 lazy. El conformance hosted está cubierto por
 `tests/runtime/m11-std-collections-001.to` y sus sidecars.
 
+## Evidencia del owner intrínseco
+
+`STD-A-CORE-EVIDENCE-001` mantiene la frontera sin host de `std.core` y enlaza
+las nueve firmas públicas de `Option` y `Result` con sus símbolos HIR, lowering
+MIR, agregados bytecode y ejecución VM. Las pruebas cubren instanciación
+genérica explícita e inferida, composición `map`/`mapErr`/`unwrapOr`, patrones
+de éxito y error, propagación y semántica de valores. El corpus de admission
+fuzz genera formas `Option`/`Result` y protocolos genéricos; la captura de fuzz
+específica de operaciones y los baselines de rendimiento por owner permanecen
+pendientes de promoción. `HOST` es `not-applicable`: el owner es intrínseco y
+compiler/VM-owned, sin capability ni consulta ambiental.
+
 ## `std.math`
 
 Las funciones respetan IEEE-754, no habilitan fast-math y nunca cambian una

@@ -39,6 +39,14 @@ The intrinsic `std.bytes` owner is closed by
 immutable snapshots, strict UTF-8, builder atomicity, limits/ranges and the
 scalar-oracle hot paths; `HOST` is explicitly `not-applicable`, while dedicated
 performance and fuzz promotion remain pending.
+The intrinsic `std.core` owner is closed for hosted evidence by the group
+contract [`testing/stdlib-core.json`](../../testing/stdlib-core.json) and its
+`STD-A-CORE-EVIDENCE-001` cell record. The nine `Option`/`Result` signatures
+are traced through static protocol checks, generic specialization, composition,
+bytecode aggregates and VM execution. `HOST` is explicitly `not-applicable`
+because the owner is compiler/VM-owned; admission fuzz covers the generated
+Option/Result and protocol shapes, while operation-specific fuzz and
+owner-specific performance baselines remain pending promotion.
 The capability-gated `std.time` owner is closed for hosted evidence by
 [`testing/stdlib-time.json`](../../testing/stdlib-time.json) and its
 `STD-A-TIME-EVIDENCE-001` cell record. It separates the duration/instant/timer

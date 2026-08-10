@@ -2,7 +2,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-contract="$root/testing/stdlib-core.json"
+contract="${TONDO_STDLIB_CORE_CONTRACT:-$root/testing/stdlib-core.json}"
 [[ -f "$contract" ]] || { echo "missing core owner contract" >&2; exit 1; }
 tail -c 1 "$contract" | cmp -s <(printf '\n') || { echo "core contract must end with LF" >&2; exit 1; }
 ! grep -nE $'\r|[[:blank:]]$' "$contract" >/dev/null || { echo "core contract has whitespace" >&2; exit 1; }

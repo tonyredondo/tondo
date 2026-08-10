@@ -50,6 +50,7 @@ jq -e '
   and (any(.leaves[]; .id == "STD-A-META-EVIDENCE-001" and .owners == ["std.meta"]))
   and (any(.leaves[]; .id == "STD-A-REFLECT-EVIDENCE-001" and .owners == ["std.reflect"]))
   and (any(.leaves[]; .id == "STD-A-BYTES-EVIDENCE-001" and .owners == ["std.bytes"]))
+  and (any(.leaves[]; .id == "STD-A-CORE-EVIDENCE-001" and .owners == ["std.core"]))
   and (any(.leaves[]; .id == "STD-A-TIME-EVIDENCE-001" and .owners == ["std.time"]))
   and (any(.leaves[]; .id == "STD-A-ENV-EVIDENCE-001" and .owners == ["std.env"]))
   and (.owners[] | select(.id == "std.meta") | .cells.HOST.status == "not-applicable")
@@ -62,6 +63,13 @@ jq -e '
   and (.owners[] | select(.id == "std.bytes") | .cells.HOST.status == "not-applicable")
   and (.owners[] | select(.id == "std.bytes") | .cells.HOST.reason | contains("intrinsic"))
   and (.owners[] | select(.id == "std.bytes") | .cells.PERF.status == "partial")
+  and (.owners[] | select(.id == "std.core") | .cells.HOST.status == "not-applicable")
+  and (.owners[] | select(.id == "std.core") | .cells.HOST.reason | contains("intrinsic"))
+  and (.owners[] | select(.id == "std.core") | .cells.MODEL.status == "verified")
+  and (.owners[] | select(.id == "std.core") | .cells.TEST.status == "verified")
+  and (.owners[] | select(.id == "std.core") | .cells.FUZZ.status == "partial")
+  and (.owners[] | select(.id == "std.core") | .cells.PERF.status == "partial")
+  and (.owners[] | select(.id == "std.core") | .cells.PERF.reason | contains("owner-specific"))
   and (.owners[] | select(.id == "std.time") | .cells.HOST.status == "verified")
   and (.owners[] | select(.id == "std.time") | .cells.HOST.reason == null)
   and (.owners[] | select(.id == "std.time") | .cells.FUZZ.status == "partial")
@@ -78,7 +86,10 @@ while IFS=$'\t' read -r leaf contract owner; do
     [[ -f "$root/$contract" ]] || die "missing owner contract: $contract"
     jq -e --arg owner "$owner" '
       .format == "tondo-stdlib-owner-contract/1"
-      and .owner == $owner
+      and (
+        .owner == $owner
+        or ((.owners // []) | (type == "array" and (index($owner) != null)))
+      )
       and (.test_matrix | type == "array" and length > 0)
     ' "$root/$contract" >/dev/null || die "owner contract does not match evidence leaf: $leaf"
 done < <(jq -r '.leaves[] | . as $leaf | .owners[] | [$leaf.id, $leaf.contract, .] | @tsv' "$evidence")
@@ -94,4 +105,4 @@ while IFS= read -r command; do
     fi
 done < <(jq -r '.owners[].commands[]' "$evidence")
 
-echo "stdlib owner evidence: OK (std.meta + std.reflect + std.bytes + std.time + std.env; nine cells explicit per owner)"
+echo "stdlib owner evidence: OK (std.meta + std.reflect + std.bytes + std.core + std.time + std.env; nine cells explicit per owner)"
