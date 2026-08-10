@@ -66,3 +66,15 @@ explicitly copies into logs, tags, snapshots, artifacts, or output.
 Importing `std.env` without `environment` is rejected at the module boundary
 with `E1008`. A test target does not gain a missing production capability merely
 because the code is test code.
+
+The executable owner contract is
+[`testing/stdlib-env.json`](../../testing/stdlib-env.json), and its nine-cell
+record is in [`testing/stdlib-owner-evidence.json`](../../testing/stdlib-owner-evidence.json)
+under `STD-A-ENV-EVIDENCE-001`. The six requirements separate capability and
+availability, sealed snapshot identity, ordered arguments, strict names and
+raw/text values, missing-entry and copy semantics, and atomic limits. The
+owner corpora cover invalid names, injected inputs and budget failures without
+consulting the ambient process environment. `HOST` is verified at the single
+`process_host` boundary; dedicated fuzz and capability-scoped performance
+promotion remain explicitly pending. The contract and its negative fixtures
+are checked by `scripts/stdlib-env-check.sh` and `scripts/stdlib-env-test.sh`.

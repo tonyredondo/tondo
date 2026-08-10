@@ -4536,9 +4536,18 @@ administrativas que no implementan comportamiento.
   `verified`; fuzz dedicado y captura de rendimiento por provider permanecen
   como promoción pendiente. `scripts/stdlib-time-check.sh` y
   `scripts/stdlib-time-test.sh` validan el contrato y sus negativos.
-- [ ] **STD-A-ENV-EVIDENCE-001 — Cerrar evidencia de `std.env`.** Separar
-  snapshot/modelo, adaptador HOST, inputs hostiles, límites, coste,
-  conformidad/capability y docs sin lectura ambiental directa.
+- [x] **STD-A-ENV-EVIDENCE-001 — Cerrar evidencia de `std.env`.**
+  `testing/stdlib-env.json` fija el contrato A0 capability-gated, sus tres
+  límites, nueve invariantes, tres corpora y seis requisitos ejecutables.
+  `testing/stdlib-owner-evidence.json` separa snapshot/modelo, adaptador HOST,
+  argv ordenado, nombres y valores raw/text, ausencia mediante `Option`, copias,
+  límites atómicos, aislamiento ambiental y documentación. `process_host` usa
+  solo el plan de inputs entregado en runtime; las pruebas cubren proveedor
+  unavailable, nombres inválidos, entradas inyectadas, límites sin estado
+  parcial y ausencia de lecturas de `PATH`/`HOME`. `HOST` queda `verified`;
+  fuzz dedicado y captura de rendimiento por capability permanecen como
+  promoción pendiente. `scripts/stdlib-env-check.sh` y
+  `scripts/stdlib-env-test.sh` validan el contrato y sus negativos.
 - [ ] **STD-A-CORE-EVIDENCE-001 — Cerrar evidencia Core.** Cubrir protocolos,
   genéricos, composición, properties/fuzz, dispatch/código generado,
   conformidad y docs; HOST es no aplicable.
@@ -4590,7 +4599,7 @@ administrativas que no implementan comportamiento.
 
 - [x] **STD-MATRIX-ALL-001 — Construir la matriz normativa de stdlib.**
   `testing/stdlib-matrix.json` contiene 22 owners (incluidos los owners
-  intrínsecos `std.bytes` y capability-gated `std.time`), 207 firmas y 160
+  intrínsecos `std.bytes` y capability-gated `std.time`/`std.env`), 207 firmas y 165
   requisitos de owner. Cada fila
   enlaza explícitamente `SPEC → IMPL/HOST → MODEL/TEST/FUZZ → PERF → CONF →
   DOC`, conserva las dimensiones públicas de PERF y queda `open-gaps` cuando
@@ -5743,6 +5752,21 @@ se declara iniciada antes de esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 1.96 — 2026-08-10
+
+- Se cierra `STD-A-ENV-EVIDENCE-001` con el contrato executable
+  `testing/stdlib-env.json` y el registro por celdas de
+  `testing/stdlib-owner-evidence.json`. La evidencia separa capability y
+  disponibilidad, snapshot sellado, argv ordenado, nombres y valores raw/text,
+  ausencia mediante `Option`, copias independientes, límites atómicos,
+  aislamiento ambiental y documentación; `HOST` queda verificado en la
+  frontera única de `process_host`. Fuzz dedicado y baselines de rendimiento
+  por capability siguen como promoción pendiente, sin leer el entorno del
+  proceso de compilación.
+- La matriz sustituye el placeholder sintético de `std.env` por seis
+  requisitos ejecutables y pasa a 165 requisitos totales, manteniendo los
+  placeholders únicamente para owners sin contrato executable.
 
 ### 1.95 — 2026-08-10
 

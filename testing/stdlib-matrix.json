@@ -650,9 +650,14 @@
       "id": "std.env",
       "implementation_indexed": true,
       "layer": "A0",
-      "owner_contract": null,
+      "owner_contract": "testing/stdlib-env.json",
       "requirement_rows": [
-        "requirement:std.env:owner-contract"
+        "requirement:std.env:arguments-and-order",
+        "requirement:std.env:capability-and-availability",
+        "requirement:std.env:limits-and-atomicity",
+        "requirement:std.env:missing-and-copying",
+        "requirement:std.env:names-and-values",
+        "requirement:std.env:snapshot-identity-and-sealing"
       ],
       "signature_rows": [
         "signature:std.env:28",
@@ -674,58 +679,63 @@
       ],
       "stages": {
         "CONF": {
-          "reason": "STD-CONF-001 remains open until the owner has complete public evidence",
+          "reason": "the hosted runtime fixture and explicit environment capability tests cover the snapshot boundary; STD-CONF-001 has not yet promoted every standard-library owner",
           "refs": [
-            "TONDO_IMPLEMENTATION_TRACKER.md#STD-CONF-001"
+            "tests/runtime/m10-std-env-001.to",
+            "crates/tondo-compiler/src/driver.rs",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
           ],
-          "status": "pending"
+          "status": "partial"
         },
         "DOC": {
           "reason": null,
           "refs": [
-            "docs/contracts/stdlib-env.md"
+            "docs/contracts/stdlib-env.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md",
+            "docs/contracts/stdlib-s1a.md"
           ],
           "status": "verified"
         },
         "IMPL/HOST": {
           "reason": null,
           "refs": [
+            "crates/tondo-compiler/src/driver.rs",
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/process_host.rs",
-            "tests/runtime/m10-std-env-001.to"
+            "docs/contracts/stdlib-env.md"
           ],
           "status": "verified"
         },
         "MODEL/TEST/FUZZ": {
-          "reason": "the owner has implementation tests, but no per-owner executable test matrix is declared",
+          "reason": "the name-boundary, snapshot-input and budget-atomicity corpora are declared and executable, but no dedicated environment fuzz target has been promoted",
           "refs": [
+            "crates/tondo-compiler/src/driver.rs",
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-vm/src/runtime/execute.rs",
+            "docs/contracts/stdlib-env.md",
+            "scripts/stdlib-env-test.sh",
+            "testing/stdlib-env.json",
             "tests/runtime/m10-std-env-001.to"
           ],
           "status": "partial"
         },
         "PERF": {
-          "observed_dimensions": [],
-          "pending_dimensions": [
-            "allocations_per_operation",
-            "allocated_bytes_per_operation",
-            "code_size",
-            "compile_time",
-            "peak_memory",
-            "startup",
-            "tail_latency",
-            "throughput"
-          ],
-          "reason": "Environment snapshots need a sealed fixture and capability-scoped workload before timing is meaningful.",
+          "reason": "sealed snapshot, name validation and value-copy workloads are declared, but capability-scoped owner baseline capture remains pending promotion",
           "refs": [
-            "testing/stdlib-performance-conformance.json#owners/std.env"
-          ],
-          "status": "pending"
-        },
-        "SPEC": {
-          "reason": "no executable owner test_matrix entry exists; the placeholder makes the missing contract explicit",
-          "refs": [
-            "docs/contracts/stdlib-env.md"
+            "testing/stdlib-performance.json",
+            "testing/stdlib-performance-conformance.json",
+            "docs/contracts/stdlib-performance.md"
           ],
           "status": "partial"
+        },
+        "SPEC": {
+          "reason": null,
+          "refs": [
+            "docs/contracts/stdlib-env.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md"
+          ],
+          "status": "verified"
         }
       },
       "status": "open-gaps"
@@ -4441,20 +4451,180 @@
     },
     {
       "dimensions_ref": "owner:std.env",
-      "id": "requirement:std.env:owner-contract",
+      "id": "requirement:std.env:arguments-and-order",
       "kind": "requirement",
       "layer": "A0",
       "owner": "std.env",
       "requirement": {
-        "id": "owner-contract",
-        "observables": [],
-        "required": true,
-        "synthetic": true
+        "id": "arguments-and-order",
+        "observables": [
+          "empty-arguments",
+          "exact-order",
+          "text-arguments",
+          "independent-array-results"
+        ],
+        "required": true
       },
       "scope": "STD-0.1A",
       "source": {
         "contract": "docs/contracts/stdlib-env.md",
-        "owner_contract": null
+        "owner_contract": "testing/stdlib-env.json"
+      },
+      "stage_refs": {
+        "CONF": "owner:std.env:CONF",
+        "DOC": "owner:std.env:DOC",
+        "IMPL/HOST": "owner:std.env:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "owner:std.env:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.env:PERF",
+        "SPEC": "owner:std.env:SPEC"
+      },
+      "status": "open-gaps"
+    },
+    {
+      "dimensions_ref": "owner:std.env",
+      "id": "requirement:std.env:capability-and-availability",
+      "kind": "requirement",
+      "layer": "A0",
+      "owner": "std.env",
+      "requirement": {
+        "id": "capability-and-availability",
+        "observables": [
+          "environment-capability",
+          "unavailable-provider",
+          "E1008",
+          "no-ambient-read"
+        ],
+        "required": true
+      },
+      "scope": "STD-0.1A",
+      "source": {
+        "contract": "docs/contracts/stdlib-env.md",
+        "owner_contract": "testing/stdlib-env.json"
+      },
+      "stage_refs": {
+        "CONF": "owner:std.env:CONF",
+        "DOC": "owner:std.env:DOC",
+        "IMPL/HOST": "owner:std.env:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "owner:std.env:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.env:PERF",
+        "SPEC": "owner:std.env:SPEC"
+      },
+      "status": "open-gaps"
+    },
+    {
+      "dimensions_ref": "owner:std.env",
+      "id": "requirement:std.env:limits-and-atomicity",
+      "kind": "requirement",
+      "layer": "A0",
+      "owner": "std.env",
+      "requirement": {
+        "id": "limits-and-atomicity",
+        "observables": [
+          "aggregate-byte-limit",
+          "invalid-provider",
+          "no-partial-snapshot",
+          "retry-after-limit"
+        ],
+        "required": true
+      },
+      "scope": "STD-0.1A",
+      "source": {
+        "contract": "docs/contracts/stdlib-env.md",
+        "owner_contract": "testing/stdlib-env.json"
+      },
+      "stage_refs": {
+        "CONF": "owner:std.env:CONF",
+        "DOC": "owner:std.env:DOC",
+        "IMPL/HOST": "owner:std.env:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "owner:std.env:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.env:PERF",
+        "SPEC": "owner:std.env:SPEC"
+      },
+      "status": "open-gaps"
+    },
+    {
+      "dimensions_ref": "owner:std.env",
+      "id": "requirement:std.env:missing-and-copying",
+      "kind": "requirement",
+      "layer": "A0",
+      "owner": "std.env",
+      "requirement": {
+        "id": "missing-and-copying",
+        "observables": [
+          "option-none",
+          "text-value",
+          "raw-value",
+          "as-text",
+          "as-bytes-copy"
+        ],
+        "required": true
+      },
+      "scope": "STD-0.1A",
+      "source": {
+        "contract": "docs/contracts/stdlib-env.md",
+        "owner_contract": "testing/stdlib-env.json"
+      },
+      "stage_refs": {
+        "CONF": "owner:std.env:CONF",
+        "DOC": "owner:std.env:DOC",
+        "IMPL/HOST": "owner:std.env:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "owner:std.env:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.env:PERF",
+        "SPEC": "owner:std.env:SPEC"
+      },
+      "status": "open-gaps"
+    },
+    {
+      "dimensions_ref": "owner:std.env",
+      "id": "requirement:std.env:names-and-values",
+      "kind": "requirement",
+      "layer": "A0",
+      "owner": "std.env",
+      "requirement": {
+        "id": "names-and-values",
+        "observables": [
+          "valid-text-name",
+          "valid-raw-name",
+          "invalid-nul",
+          "invalid-equals",
+          "strict-utf8"
+        ],
+        "required": true
+      },
+      "scope": "STD-0.1A",
+      "source": {
+        "contract": "docs/contracts/stdlib-env.md",
+        "owner_contract": "testing/stdlib-env.json"
+      },
+      "stage_refs": {
+        "CONF": "owner:std.env:CONF",
+        "DOC": "owner:std.env:DOC",
+        "IMPL/HOST": "owner:std.env:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "owner:std.env:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.env:PERF",
+        "SPEC": "owner:std.env:SPEC"
+      },
+      "status": "open-gaps"
+    },
+    {
+      "dimensions_ref": "owner:std.env",
+      "id": "requirement:std.env:snapshot-identity-and-sealing",
+      "kind": "requirement",
+      "layer": "A0",
+      "owner": "std.env",
+      "requirement": {
+        "id": "snapshot-identity-and-sealing",
+        "observables": [
+          "single-snapshot-token",
+          "repeatable-reads",
+          "immutable-inputs"
+        ],
+        "required": true
+      },
+      "scope": "STD-0.1A",
+      "source": {
+        "contract": "docs/contracts/stdlib-env.md",
+        "owner_contract": "testing/stdlib-env.json"
       },
       "stage_refs": {
         "CONF": "owner:std.env:CONF",
@@ -12326,7 +12496,8 @@
       "testing/stdlib-meta.json",
       "testing/stdlib-reflect.json",
       "testing/stdlib-bytes.json",
-      "testing/stdlib-time.json"
+      "testing/stdlib-time.json",
+      "testing/stdlib-env.json"
     ],
     "owner_evidence": "testing/stdlib-owner-evidence.json",
     "performance_contract": "testing/stdlib-performance.json",
@@ -12335,34 +12506,34 @@
   },
   "status": "open-gaps",
   "summary": {
-    "open_rows": 367,
+    "open_rows": 372,
     "owners": 22,
-    "requirements": 160,
-    "rows": 367,
+    "requirements": 165,
+    "rows": 372,
     "signatures": 207,
     "stage_counts": {
       "CONF": {
-        "partial": 128,
-        "pending": 239
+        "partial": 141,
+        "pending": 231
       },
       "DOC": {
-        "verified": 367
+        "verified": 372
       },
       "IMPL/HOST": {
         "partial": 27,
-        "verified": 340
+        "verified": 345
       },
       "MODEL/TEST/FUZZ": {
-        "partial": 361,
+        "partial": 366,
         "verified": 6
       },
       "PERF": {
-        "partial": 170,
-        "pending": 197
+        "partial": 183,
+        "pending": 189
       },
       "SPEC": {
-        "partial": 2,
-        "verified": 365
+        "partial": 1,
+        "verified": 371
       }
     },
     "verified_rows": 0

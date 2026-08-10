@@ -71,7 +71,7 @@
       "id": "std.env",
       "group": "a0-foundation",
       "state": "awaiting-owner-hot-path",
-      "reason": "Environment snapshots need a sealed fixture and capability-scoped workload before timing is meaningful."
+      "reason": "The environment contract names sealed snapshot, name-validation and value-copy workloads; capability-scoped owner baseline capture remains pending promotion."
     },
     {
       "id": "std.fs",

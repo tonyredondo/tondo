@@ -23,6 +23,11 @@
       "id": "STD-A-TIME-EVIDENCE-001",
       "contract": "testing/stdlib-time.json",
       "owners": ["std.time"]
+    },
+    {
+      "id": "STD-A-ENV-EVIDENCE-001",
+      "contract": "testing/stdlib-env.json",
+      "owners": ["std.env"]
     }
   ],
   "owners": [
@@ -318,6 +323,83 @@
       "commands": [
         "scripts/stdlib-time-check.sh",
         "scripts/stdlib-time-test.sh",
+        "cargo test -p tondo-compiler --locked --lib process_host::tests",
+        "cargo test -p tondo-compiler --locked --lib driver::tests"
+      ]
+    },
+    {
+      "id": "std.env",
+      "layer": "A0",
+      "cells": {
+        "SPEC": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["docs/contracts/stdlib-env.md", "TONDO_STANDARD_LIBRARY_SPEC.md"]
+        },
+        "IMPL": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs"]
+        },
+        "HOST": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/driver.rs", "docs/contracts/stdlib-env.md"]
+        },
+        "MODEL": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-compiler/src/process_host.rs", "crates/tondo-vm/src/runtime/execute.rs", "docs/contracts/stdlib-env.md"]
+        },
+        "TEST": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/driver.rs", "tests/runtime/m10-std-env-001.to"]
+        },
+        "FUZZ": {
+          "status": "partial",
+          "reason": "the name-boundary, snapshot-input and budget-atomicity corpora are declared and executable, but no dedicated environment fuzz target has been promoted",
+          "refs": ["testing/stdlib-env.json", "scripts/stdlib-env-test.sh"]
+        },
+        "PERF": {
+          "status": "partial",
+          "reason": "sealed snapshot, name validation and value-copy workloads are declared, but capability-scoped owner baseline capture remains pending promotion",
+          "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
+        },
+        "CONF": {
+          "status": "partial",
+          "reason": "the hosted runtime fixture and explicit environment capability tests cover the snapshot boundary; STD-CONF-001 has not yet promoted every standard-library owner",
+          "refs": ["tests/runtime/m10-std-env-001.to", "crates/tondo-compiler/src/driver.rs", "TONDO_IMPLEMENTATION_TRACKER.md"]
+        },
+        "DOC": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["docs/contracts/stdlib-env.md", "TONDO_STANDARD_LIBRARY_SPEC.md", "docs/contracts/stdlib-s1a.md"]
+        }
+      },
+      "budgets": {
+        "snapshot_bytes": {
+          "unit": "bytes",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 1000,
+          "state": "declared-baseline-pending"
+        },
+        "name_validation_bytes": {
+          "unit": "bytes",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 1000,
+          "state": "declared-baseline-pending"
+        },
+        "value_copy_bytes": {
+          "unit": "bytes",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 1000,
+          "state": "declared-baseline-pending"
+        }
+      },
+      "commands": [
+        "scripts/stdlib-env-check.sh",
+        "scripts/stdlib-env-test.sh",
         "cargo test -p tondo-compiler --locked --lib process_host::tests",
         "cargo test -p tondo-compiler --locked --lib driver::tests"
       ]

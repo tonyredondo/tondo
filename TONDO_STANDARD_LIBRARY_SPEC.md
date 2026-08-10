@@ -1044,6 +1044,18 @@ capability `clock` se comprueba en el límite del módulo y el fixture
 host. `HOST` es `verified`; fuzz dedicado y baselines de rendimiento por
 provider permanecen como promoción pendiente y no se inventan métricas.
 
+El owner capability-gated `std.env` queda cerrado para la evidencia de
+STD-0.1A mediante [`testing/stdlib-env.json`](testing/stdlib-env.json) y su
+registro de nueve celdas en [`testing/stdlib-owner-evidence.json`](testing/stdlib-owner-evidence.json)
+(`STD-A-ENV-EVIDENCE-001`). Sus seis requisitos separan capability y
+disponibilidad, snapshot sellado, argv ordenado, nombres/valores textuales y
+binarios, ausencia mediante `Option`, copias independientes y límites
+atómicos. El proveedor solo recibe un plan runtime explícito: los tests cubren
+inputs inyectados, names inválidos, hosts unavailable y aislamiento de `PATH`,
+`HOME` y otras variables ambientales. `HOST` es `verified`; fuzz dedicado y
+baselines de rendimiento por capability permanecen como promoción pendiente y
+no se confunden con lectura del entorno del proceso de compilación.
+
 #### 10.2.2 Contrato cerrado de `std.text`
 
 `std.text` mantiene una sola representación: `String` inmutable y siempre

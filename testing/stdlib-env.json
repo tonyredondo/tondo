@@ -1,0 +1,121 @@
+{
+  "format": "tondo-stdlib-owner-contract/1",
+  "owner": "std.env",
+  "edition": "0.1",
+  "phase": "STD-0.1A",
+  "status": "draft-contract",
+  "contract": "docs/contracts/stdlib-env.md",
+  "layer": "A0",
+  "kind": "capability-gated",
+  "target": "tondo-vm-hosted",
+  "profile": "environment",
+  "api": "tondo-std-env-0.1/1",
+  "source": {
+    "path": "crates/tondo-compiler/src/process_host.rs",
+    "sha256": "sha256:d68042965808d33f6290e07b03e969872e9926dc9c22a2f41e14e909cbad0c5e"
+  },
+  "capabilities": {
+    "required": ["environment"],
+    "forbidden": [
+      "filesystem",
+      "process",
+      "clock",
+      "entropy",
+      "network",
+      "threads",
+      "dynamic-loading",
+      "runtime-value-reflection",
+      "ambient-host"
+    ]
+  },
+  "invariants": [
+    "single-sealed-snapshot",
+    "runtime-only-input",
+    "ordered-arguments",
+    "byte-preserving-values",
+    "strict-name-validation",
+    "option-for-missing",
+    "atomic-budget-failure",
+    "copying-value-boundaries",
+    "no-ambient-fallback"
+  ],
+  "limits": [
+    {
+      "id": "snapshot_bytes",
+      "unit": "bytes",
+      "source": "ResourceLimits.max_vm_heap_bytes"
+    },
+    {
+      "id": "name_bytes",
+      "unit": "bytes",
+      "source": "ResourceLimits.max_vm_heap_bytes"
+    },
+    {
+      "id": "value_copy_bytes",
+      "unit": "bytes",
+      "source": "ResourceLimits.max_vm_heap_bytes"
+    }
+  ],
+  "test_matrix": [
+    {
+      "id": "capability-and-availability",
+      "required": true,
+      "observables": ["environment-capability", "unavailable-provider", "E1008", "no-ambient-read"]
+    },
+    {
+      "id": "snapshot-identity-and-sealing",
+      "required": true,
+      "observables": ["single-snapshot-token", "repeatable-reads", "immutable-inputs"]
+    },
+    {
+      "id": "arguments-and-order",
+      "required": true,
+      "observables": ["empty-arguments", "exact-order", "text-arguments", "independent-array-results"]
+    },
+    {
+      "id": "names-and-values",
+      "required": true,
+      "observables": ["valid-text-name", "valid-raw-name", "invalid-nul", "invalid-equals", "strict-utf8"]
+    },
+    {
+      "id": "missing-and-copying",
+      "required": true,
+      "observables": ["option-none", "text-value", "raw-value", "as-text", "as-bytes-copy"]
+    },
+    {
+      "id": "limits-and-atomicity",
+      "required": true,
+      "observables": ["aggregate-byte-limit", "invalid-provider", "no-partial-snapshot", "retry-after-limit"]
+    }
+  ],
+  "corpora": [
+    {
+      "id": "name-boundaries",
+      "source": "owner-generated",
+      "required": true,
+      "focus": ["empty", "nul", "equals", "utf8", "raw-bytes"]
+    },
+    {
+      "id": "snapshot-inputs",
+      "source": "owner-generated",
+      "required": true,
+      "focus": ["empty", "ordered-argv", "text-entry", "invalid-utf8-entry", "missing-entry"]
+    },
+    {
+      "id": "budget-atomicity",
+      "source": "owner-generated",
+      "required": true,
+      "focus": ["over-limit", "invalid-provider", "no-partial-state", "successful-retry"]
+    }
+  ],
+  "promotion": {
+    "gates": [
+      {"id": "design", "required": true},
+      {"id": "implementation", "required": true},
+      {"id": "conformance", "required": true},
+      {"id": "performance", "required": true},
+      {"id": "promote", "required": true}
+    ],
+    "next_coordination": "STD-A-CORE-EVIDENCE-001"
+  }
+}
