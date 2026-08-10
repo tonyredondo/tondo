@@ -4524,9 +4524,18 @@ administrativas que no implementan comportamiento.
   properties/hot paths, conformidad y docs. `HOST` es explícitamente
   `not-applicable` por ser un intrinsic compiler/VM-owned; fuzz dedicado y
   captura de rendimiento siguen como promoción pendiente sin inventar métricas.
-- [ ] **STD-A-TIME-EVIDENCE-001 — Cerrar evidencia del time-base.** Separar
-  modelo, provider HOST real/virtual, tests/fuzz, precisión/rendimiento,
-  conformidad por capability y docs.
+- [x] **STD-A-TIME-EVIDENCE-001 — Cerrar evidencia del time-base.**
+  `testing/stdlib-time.json` fija el contrato A0 capability-gated, sus cinco
+  límites, nueve invariantes, tres corpora y seis requisitos ejecutables.
+  `testing/stdlib-owner-evidence.json` separa modelo, provider HOST real y
+  virtual, límites/errores, ciclo de vida de timers, conformidad por `clock` y
+  documentación. El provider real usa `std::time::Instant`; el virtual es
+  sellado, parte de cero y solo avanza explícitamente. `process_host` ejecuta
+  el corpus común para ambos providers y `driver` prueba capability ausente,
+  sustitución virtual, settle, cancelación, dominios y cleanup. `HOST` queda
+  `verified`; fuzz dedicado y captura de rendimiento por provider permanecen
+  como promoción pendiente. `scripts/stdlib-time-check.sh` y
+  `scripts/stdlib-time-test.sh` validan el contrato y sus negativos.
 - [ ] **STD-A-ENV-EVIDENCE-001 — Cerrar evidencia de `std.env`.** Separar
   snapshot/modelo, adaptador HOST, inputs hostiles, límites, coste,
   conformidad/capability y docs sin lectura ambiental directa.
@@ -4580,8 +4589,9 @@ administrativas que no implementan comportamiento.
   bridge test-only, dogfooding, límites/rendimiento, conformidad y docs.
 
 - [x] **STD-MATRIX-ALL-001 — Construir la matriz normativa de stdlib.**
-  `testing/stdlib-matrix.json` contiene 22 owners (incluido el owner
-  intrínseco `std.bytes`), 207 firmas y 155 requisitos de owner. Cada fila
+  `testing/stdlib-matrix.json` contiene 22 owners (incluidos los owners
+  intrínsecos `std.bytes` y capability-gated `std.time`), 207 firmas y 160
+  requisitos de owner. Cada fila
   enlaza explícitamente `SPEC → IMPL/HOST → MODEL/TEST/FUZZ → PERF → CONF →
   DOC`, conserva las dimensiones públicas de PERF y queda `open-gaps` cuando
   una celda es `partial`, `pending`, `gap` o `not-applicable` sin
@@ -5733,6 +5743,19 @@ se declara iniciada antes de esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 1.95 — 2026-08-10
+
+- Se cierra `STD-A-TIME-EVIDENCE-001` con el contrato executable
+  `testing/stdlib-time.json` y el registro por celdas de
+  `testing/stdlib-owner-evidence.json`. La evidencia separa el modelo
+  monotónico, providers real/virtual, capability `clock`, límites y errores,
+  timers/cancelación, conformidad y documentación; `HOST` queda verificado en
+  la frontera única de `process_host`. Fuzz dedicado y baselines de rendimiento
+  por provider siguen como promoción pendiente, sin sobreafirmar métricas.
+- La matriz sustituye el placeholder sintético de `std.time` por seis
+  requisitos ejecutables y pasa a 160 requisitos totales, manteniendo los
+  placeholders únicamente para owners sin contrato executable.
 
 ### 1.94 — 2026-08-09
 

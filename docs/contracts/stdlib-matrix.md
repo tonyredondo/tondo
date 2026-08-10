@@ -9,11 +9,12 @@ y validada por
 [`scripts/stdlib-matrix-check.sh`](../../scripts/stdlib-matrix-check.sh).
 
 La matriz incluye exactamente los 21 owners del contrato de integración y el
-owner intrínseco `std.bytes`, 207 firmas indexadas por la auditoría pública y
-155 requisitos de owner. `std.meta`, `std.reflect` y `std.bytes` añaden sus
-contratos executable A0 y seis requisitos de evidencia cada uno sin crear una
-segunda API pública; el placeholder sintético anterior de `std.bytes` queda
-reemplazado por sus seis filas reales. `std.0.1B` permanece
+owner adicional `std.bytes` (entre los 21 está `std.time`), 207 firmas
+indexadas por la auditoría pública y 160 requisitos de owner. `std.meta`,
+`std.reflect`, `std.bytes` y `std.time` añaden sus contratos executable A0 y
+seis requisitos de evidencia cada uno sin crear una segunda API pública; los
+placeholders sintéticos anteriores quedan reemplazados por filas reales.
+`std.0.1B` permanece
 como catálogo futuro cerrado:
 sus módulos aparecen solo en `catalogs.future_modules` y no se convierten en
 requisitos implícitos de la fase actual.

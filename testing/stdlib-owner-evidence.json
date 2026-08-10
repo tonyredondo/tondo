@@ -18,6 +18,11 @@
       "id": "STD-A-BYTES-EVIDENCE-001",
       "contract": "testing/stdlib-bytes.json",
       "owners": ["std.bytes"]
+    },
+    {
+      "id": "STD-A-TIME-EVIDENCE-001",
+      "contract": "testing/stdlib-time.json",
+      "owners": ["std.time"]
     }
   ],
   "owners": [
@@ -238,6 +243,83 @@
         "scripts/stdlib-bytes-check.sh",
         "scripts/stdlib-bytes-test.sh",
         "cargo test -p tondo-compiler --locked --lib process_host::tests"
+      ]
+    },
+    {
+      "id": "std.time",
+      "layer": "A0",
+      "cells": {
+        "SPEC": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["docs/contracts/stdlib-time.md", "TONDO_STANDARD_LIBRARY_SPEC.md"]
+        },
+        "IMPL": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs"]
+        },
+        "HOST": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/driver.rs", "docs/contracts/stdlib-time.md"]
+        },
+        "MODEL": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-compiler/src/process_host.rs", "crates/tondo-vm/src/runtime/execute.rs"]
+        },
+        "TEST": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/driver.rs", "tests/runtime/m10-std-time-001.to"]
+        },
+        "FUZZ": {
+          "status": "partial",
+          "reason": "the time arithmetic, provider-equivalence and timer lifecycle corpora are declared and executable, but no dedicated time fuzz target has been promoted",
+          "refs": ["testing/stdlib-time.json", "scripts/stdlib-time-test.sh"]
+        },
+        "PERF": {
+          "status": "partial",
+          "reason": "real and virtual provider workloads are declared, but provider-scoped owner baseline capture remains pending promotion",
+          "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
+        },
+        "CONF": {
+          "status": "partial",
+          "reason": "the hosted runtime fixture and explicit clock capability tests cover the time boundary; STD-CONF-001 has not yet promoted every standard-library owner",
+          "refs": ["tests/runtime/m10-std-time-001.to", "crates/tondo-compiler/src/driver.rs", "TONDO_IMPLEMENTATION_TRACKER.md"]
+        },
+        "DOC": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["docs/contracts/stdlib-time.md", "TONDO_STANDARD_LIBRARY_SPEC.md", "docs/contracts/stdlib-s1a.md"]
+        }
+      },
+      "budgets": {
+        "now_latency": {
+          "unit": "nanoseconds",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 1000,
+          "state": "declared-baseline-pending"
+        },
+        "timer_registration": {
+          "unit": "operations",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 1000,
+          "state": "declared-baseline-pending"
+        },
+        "virtual_advance": {
+          "unit": "work-units",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 1000,
+          "state": "declared-baseline-pending"
+        }
+      },
+      "commands": [
+        "scripts/stdlib-time-check.sh",
+        "scripts/stdlib-time-test.sh",
+        "cargo test -p tondo-compiler --locked --lib process_host::tests",
+        "cargo test -p tondo-compiler --locked --lib driver::tests"
       ]
     }
   ],

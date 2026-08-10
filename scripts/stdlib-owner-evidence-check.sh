@@ -50,6 +50,7 @@ jq -e '
   and (any(.leaves[]; .id == "STD-A-META-EVIDENCE-001" and .owners == ["std.meta"]))
   and (any(.leaves[]; .id == "STD-A-REFLECT-EVIDENCE-001" and .owners == ["std.reflect"]))
   and (any(.leaves[]; .id == "STD-A-BYTES-EVIDENCE-001" and .owners == ["std.bytes"]))
+  and (any(.leaves[]; .id == "STD-A-TIME-EVIDENCE-001" and .owners == ["std.time"]))
   and (.owners[] | select(.id == "std.meta") | .cells.HOST.status == "not-applicable")
   and (.owners[] | select(.id == "std.meta") | .cells.HOST.reason | contains("build-only"))
   and (.owners[] | select(.id == "std.meta") | .cells.PERF.status == "partial")
@@ -60,6 +61,11 @@ jq -e '
   and (.owners[] | select(.id == "std.bytes") | .cells.HOST.status == "not-applicable")
   and (.owners[] | select(.id == "std.bytes") | .cells.HOST.reason | contains("intrinsic"))
   and (.owners[] | select(.id == "std.bytes") | .cells.PERF.status == "partial")
+  and (.owners[] | select(.id == "std.time") | .cells.HOST.status == "verified")
+  and (.owners[] | select(.id == "std.time") | .cells.HOST.reason == null)
+  and (.owners[] | select(.id == "std.time") | .cells.FUZZ.status == "partial")
+  and (.owners[] | select(.id == "std.time") | .cells.PERF.status == "partial")
+  and (.owners[] | select(.id == "std.time") | .cells.PERF.reason | contains("provider-scoped"))
 ' "$evidence" >/dev/null || die "invalid evidence registry"
 
 while IFS=$'\t' read -r leaf contract owner; do
@@ -82,4 +88,4 @@ while IFS= read -r command; do
     fi
 done < <(jq -r '.owners[].commands[]' "$evidence")
 
-echo "stdlib owner evidence: OK (std.meta + std.reflect + std.bytes; nine cells explicit per owner)"
+echo "stdlib owner evidence: OK (std.meta + std.reflect + std.bytes + std.time; nine cells explicit per owner)"

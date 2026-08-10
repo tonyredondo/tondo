@@ -99,3 +99,16 @@ The final conformance gate still requires the reproducible source-set,
 interface, privileged-unit and virtual-provider hashes described in the
 standard-library specification; these tests do not weaken that distribution
 requirement.
+
+The executable owner contract is
+[`testing/stdlib-time.json`](../../testing/stdlib-time.json), and its nine-cell
+record is in [`testing/stdlib-owner-evidence.json`](../../testing/stdlib-owner-evidence.json)
+under `STD-A-TIME-EVIDENCE-001`. The six requirements separate the portable
+model from the real and virtual providers, checked limits and errors, timer
+lifecycle, and capability/conformance identity. The owner corpus is split into
+arithmetic boundaries, provider equivalence and timer lifecycle. `HOST` is
+verified because both providers are implemented at the single hosted
+`process_host` boundary; dedicated fuzz and provider-scoped performance
+promotion remain explicitly pending rather than inferred from unit-test timing.
+The contract and its negative fixtures are checked by
+`scripts/stdlib-time-check.sh` and `scripts/stdlib-time-test.sh`.

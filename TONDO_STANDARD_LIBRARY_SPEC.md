@@ -1031,6 +1031,19 @@ properties/hot paths. `HOST` es explícitamente `not-applicable` porque el
 owner es un intrinsic del compilador/VM, sin provider separado; la captura
 dedicada de rendimiento y la promoción de fuzz siguen pendientes.
 
+El owner capability-gated `std.time` queda cerrado para la evidencia de
+STD-0.1A mediante [`testing/stdlib-time.json`](testing/stdlib-time.json) y su
+registro de nueve celdas en [`testing/stdlib-owner-evidence.json`](testing/stdlib-owner-evidence.json)
+(`STD-A-TIME-EVIDENCE-001`). Sus seis requisitos separan el modelo de
+`Duration`/`Instant`/`Timer`, los providers real y virtual, errores y límites,
+ciclo de vida de timers y conformidad por capability. El provider real usa el
+reloj monotónico de `std::time::Instant`; el virtual está sellado en
+`std.testing`, avanza explícitamente y ejecuta el mismo corpus semántico. La
+capability `clock` se comprueba en el límite del módulo y el fixture
+`tests/runtime/m10-std-time-001.to` atraviesa parser, checker, bytecode, VM y
+host. `HOST` es `verified`; fuzz dedicado y baselines de rendimiento por
+provider permanecen como promoción pendiente y no se inventan métricas.
+
 #### 10.2.2 Contrato cerrado de `std.text`
 
 `std.text` mantiene una sola representación: `String` inmutable y siempre

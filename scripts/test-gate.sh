@@ -60,6 +60,8 @@ run_step stdlib-reflect-contract \
     scripts/stdlib-reflect-check.sh
 run_step stdlib-bytes-contract \
     scripts/stdlib-bytes-check.sh
+run_step stdlib-time-contract \
+    scripts/stdlib-time-check.sh
 run_step stdlib-owner-evidence \
     scripts/stdlib-owner-evidence-check.sh
 run_step stdlib-meta-tests \
@@ -68,6 +70,8 @@ run_step stdlib-reflect-tests \
     scripts/stdlib-reflect-test.sh
 run_step stdlib-bytes-tests \
     scripts/stdlib-bytes-test.sh
+run_step stdlib-time-tests \
+    scripts/stdlib-time-test.sh
 run_step stdlib-core-contract \
     scripts/stdlib-core-check.sh
 run_step stdlib-serialization-contract \
