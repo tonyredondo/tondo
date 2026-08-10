@@ -273,3 +273,19 @@ arrays, maps con claves arbitrarias, records y enums, además de `own`, límites
 atomicidad y reglas de `derive`. Los codecs concretos no construyen un DOM en
 la ruta typed y la deserialización publica un valor solo después de validar
 todos sus componentes.
+
+## Evidencia del owner intrínseco `std.text`
+
+`STD-A-TEXT-EVIDENCE-001` cierra la evidencia ejecutable de las quince firmas
+de `String` descritas arriba. El contrato de grupo
+[`testing/stdlib-core.json`](../../testing/stdlib-core.json) conserva la
+superficie común; `hir/check.rs` y `hir/lower.rs` comprueban y especializan el
+dispatch, mientras `process_host.rs`/la VM materializan los valores UTF-8
+válidos, límites de scalar y errores de frontera. Los fixtures
+`m11-std-text-001.to` y `m11-std-text-002.to` cubren Unicode, índices y slicing
+por scalar, iteración sin cursor adicional, transforms ASCII y rechazo
+atómico de UTF-8 inválido. `HOST` es `not-applicable`: no hay capability ni
+lectura ambiental separada. El corpus bounded de bytes/UTF-8 y el admission
+fuzz aportan cobertura de frontera; el fuzz específico de operaciones, los
+baselines de coste por owner y la promoción global de conformance siguen
+visibles como trabajo posterior.

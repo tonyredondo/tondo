@@ -47,6 +47,15 @@ bytecode aggregates and VM execution. `HOST` is explicitly `not-applicable`
 because the owner is compiler/VM-owned; admission fuzz covers the generated
 Option/Result and protocol shapes, while operation-specific fuzz and
 owner-specific performance baselines remain pending promotion.
+The intrinsic `std.text` owner is closed by the shared group contract
+[`testing/stdlib-core.json`](../../testing/stdlib-core.json) and its
+`STD-A-TEXT-EVIDENCE-001` cell record. All fifteen `String` signatures are
+traced through static protocol checking, generic specialization, compiler/VM
+value construction and the Unicode runtime fixtures: scalar indexing and
+slicing, iteration, search/replace, ASCII transforms and atomic invalid UTF-8
+rejection are covered. `HOST` is explicitly `not-applicable`; bounded UTF-8
+corpora are linked, while an operation-specific fuzz target and owner cost
+baseline remain pending promotion.
 The capability-gated `std.time` owner is closed for hosted evidence by
 [`testing/stdlib-time.json`](../../testing/stdlib-time.json) and its
 `STD-A-TIME-EVIDENCE-001` cell record. It separates the duration/instant/timer

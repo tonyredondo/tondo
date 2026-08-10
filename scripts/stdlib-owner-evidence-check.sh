@@ -51,6 +51,7 @@ jq -e '
   and (any(.leaves[]; .id == "STD-A-REFLECT-EVIDENCE-001" and .owners == ["std.reflect"]))
   and (any(.leaves[]; .id == "STD-A-BYTES-EVIDENCE-001" and .owners == ["std.bytes"]))
   and (any(.leaves[]; .id == "STD-A-CORE-EVIDENCE-001" and .owners == ["std.core"]))
+  and (any(.leaves[]; .id == "STD-A-TEXT-EVIDENCE-001" and .owners == ["std.text"]))
   and (any(.leaves[]; .id == "STD-A-TIME-EVIDENCE-001" and .owners == ["std.time"]))
   and (any(.leaves[]; .id == "STD-A-ENV-EVIDENCE-001" and .owners == ["std.env"]))
   and (.owners[] | select(.id == "std.meta") | .cells.HOST.status == "not-applicable")
@@ -70,6 +71,13 @@ jq -e '
   and (.owners[] | select(.id == "std.core") | .cells.FUZZ.status == "partial")
   and (.owners[] | select(.id == "std.core") | .cells.PERF.status == "partial")
   and (.owners[] | select(.id == "std.core") | .cells.PERF.reason | contains("owner-specific"))
+  and (.owners[] | select(.id == "std.text") | .cells.HOST.status == "not-applicable")
+  and (.owners[] | select(.id == "std.text") | .cells.HOST.reason | contains("intrinsic"))
+  and (.owners[] | select(.id == "std.text") | .cells.MODEL.status == "verified")
+  and (.owners[] | select(.id == "std.text") | .cells.TEST.status == "verified")
+  and (.owners[] | select(.id == "std.text") | .cells.FUZZ.status == "partial")
+  and (.owners[] | select(.id == "std.text") | .cells.PERF.status == "partial")
+  and (.owners[] | select(.id == "std.text") | .cells.PERF.reason | contains("owner-specific"))
   and (.owners[] | select(.id == "std.time") | .cells.HOST.status == "verified")
   and (.owners[] | select(.id == "std.time") | .cells.HOST.reason == null)
   and (.owners[] | select(.id == "std.time") | .cells.FUZZ.status == "partial")
@@ -105,4 +113,4 @@ while IFS= read -r command; do
     fi
 done < <(jq -r '.owners[].commands[]' "$evidence")
 
-echo "stdlib owner evidence: OK (std.meta + std.reflect + std.bytes + std.core + std.time + std.env; nine cells explicit per owner)"
+echo "stdlib owner evidence: OK (std.meta + std.reflect + std.bytes + std.core + std.text + std.time + std.env; nine cells explicit per owner)"

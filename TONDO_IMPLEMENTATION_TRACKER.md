@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 1.97
+**Versión del tracker:** 1.98
 
 **Última actualización:** 2026-08-10
 
@@ -4556,9 +4556,16 @@ administrativas que no implementan comportamiento.
   El corpus de admission fuzz cubre formas `Option`/`Result` y protocolos
   genéricos; el fuzz específico de operaciones, la captura de rendimiento por
   owner y la promoción global de conformance siguen visibles como pendientes.
-- [ ] **STD-A-TEXT-EVIDENCE-001 — Cerrar evidencia de texto.** Cubrir Unicode,
-  UTF-8 inválido en fronteras, slicing, iteración, properties/fuzz, coste,
-  conformidad y docs; HOST es no aplicable.
+- [x] **STD-A-TEXT-EVIDENCE-001 — Cerrar evidencia de texto.**
+  `testing/stdlib-owner-evidence.json` registra las nueve celdas del owner
+  intrínseco `std.text` y enlaza las quince firmas de `String` con el contrato
+  de grupo, HIR/lowering, puente compiler/VM, fixtures Unicode, slicing por
+  scalar, iteración y rechazo atómico de UTF-8 inválido. `HOST` es explícitamente
+  `not-applicable`; el corpus bounded de UTF-8/admission fuzz y la auditoría
+  pública quedan verificados como evidencia disponible, mientras el fuzz de
+  operaciones, baselines de coste y `STD-CONF-001` permanecen pendientes de
+  promoción. `scripts/stdlib-text-test.sh` cubre negativos de contrato y
+  forma/cobertura de la API.
 - [ ] **STD-A-COLL-EVIDENCE-001 — Cerrar evidencia de colecciones.** Cubrir
   COW, orden, hashing, iteración, modelos/properties/fuzz, memoria/rendimiento,
   conformidad y docs; HOST es no aplicable.
@@ -5757,6 +5764,18 @@ se declara iniciada antes de esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 1.98 — 2026-08-10
+
+- Se cierra `STD-A-TEXT-EVIDENCE-001` con evidencia explícita para las quince
+  operaciones públicas de `String`: Unicode y UTF-8 válido, índices y slicing
+  por scalar, iteración, búsquedas, transforms ASCII y fronteras inválidas.
+  `HOST` queda `not-applicable` por la frontera intrínseca compiler/VM; los
+  corpora bounded, negativos de contrato y auditoría pública se ejecutan en el
+  gate, mientras fuzz específico, baselines de coste y `STD-CONF-001` siguen
+  visibles como promoción posterior.
+- La matriz conserva 22 owners, 207 firmas y 165 requisitos; `std.text` añade
+  su registro por celdas sin crear una API o contrato de grupo duplicado.
 
 ### 1.97 — 2026-08-10
 

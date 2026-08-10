@@ -9,12 +9,13 @@ y validada por
 [`scripts/stdlib-matrix-check.sh`](../../scripts/stdlib-matrix-check.sh).
 
 La matriz incluye exactamente los 21 owners del contrato de integración y el
-owner adicional `std.bytes` (entre los 21 están `std.time` y `std.env`), 207
+owner adicional `std.bytes` (22 en total; incluidos `std.time` y `std.env`), 207
 firmas indexadas por la auditoría pública y 165 requisitos de owner. `std.meta`,
 `std.reflect`, `std.bytes`, `std.time` y `std.env` añaden sus contratos
 executable A0 y seis requisitos de evidencia cada uno sin crear una segunda
 API pública; `std.core` conserva su contrato de grupo y añade evidencia por
-celda para sus nueve firmas intrínsecas. Los placeholders sintéticos anteriores
+celda para sus nueve firmas intrínsecas; `std.text` añade evidencia por celda
+para sus quince firmas Unicode y UTF-8. Los placeholders sintéticos anteriores
 quedan reemplazados por filas reales.
 `std.0.1B` permanece
 como catálogo futuro cerrado:
@@ -57,6 +58,12 @@ una razón de estado para demostrar que el gate falla cerrado.
 El corpus de admission fuzz, los fixtures runtime y la auditoría pública se
 enlazan desde su evidencia de owner; el fuzz específico de operaciones y la
 captura de rendimiento por owner siguen abiertos.
+
+`std.text` conserva también `HOST` como `not-applicable`: `String` es un valor
+intrínseco portable y sus quince operaciones no consultan capabilities ni el
+entorno. Los fixtures Unicode/UTF-8, el corpus bounded y la auditoría pública
+quedan enlazados por `STD-A-TEXT-EVIDENCE-001`; el fuzz de operaciones y el
+baseline de coste por owner siguen abiertos.
 
 Esta matriz no cierra `STD-CONF-001`, `STD-TEST-001` ni `STD-DOC-001`: registra
 sus celdas pendientes para que las siguientes coordinaciones puedan promover

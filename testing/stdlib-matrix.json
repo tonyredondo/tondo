@@ -2638,62 +2638,65 @@
       ],
       "stages": {
         "CONF": {
-          "reason": "STD-CONF-001 remains open until the owner has complete public evidence",
+          "reason": "the public API audit and Unicode/invalid-UTF-8 runtime fixtures cover all fifteen text signatures; STD-CONF-001 has not yet promoted every standard-library owner",
           "refs": [
-            "TONDO_IMPLEMENTATION_TRACKER.md#STD-CONF-001"
+            "testing/stdlib-public-api.json",
+            "tests/runtime/m11-std-text-002.to",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
           ],
-          "status": "pending"
+          "status": "partial"
         },
         "DOC": {
           "reason": null,
           "refs": [
-            "docs/contracts/stdlib-core.md"
+            "docs/contracts/stdlib-core.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md",
+            "docs/contracts/stdlib-s1a.md"
           ],
           "status": "verified"
         },
         "IMPL/HOST": {
           "reason": null,
           "refs": [
-            "crates/tondo-compiler/src/hir.rs",
             "crates/tondo-compiler/src/hir/check.rs",
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/process_host.rs",
-            "tests/runtime/m11-std-text-001.to",
-            "tests/runtime/m11-std-text-002.to"
+            "crates/tondo-vm/src/runtime/execute.rs",
+            "docs/contracts/stdlib-core.md",
+            "testing/stdlib-core.json"
           ],
           "status": "verified"
         },
         "MODEL/TEST/FUZZ": {
-          "reason": "owner tests exist; per-leaf MODEL/TEST/FUZZ links and fuzz coverage remain to be coordinated by STD-TEST-001",
+          "reason": "the bounded Unicode and UTF-8 boundary corpora are declared and executable, but no dedicated std.text operation fuzz target has been promoted",
           "refs": [
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-vm/src/runtime/execute.rs",
+            "fuzz/fuzz_targets/admission.rs",
+            "scripts/stdlib-text-test.sh",
+            "testing/stdlib-bytes.json",
             "tests/runtime/m11-std-text-001.to",
             "tests/runtime/m11-std-text-002.to"
           ],
           "status": "partial"
         },
         "PERF": {
-          "observed_dimensions": [],
-          "pending_dimensions": [
-            "allocations_per_operation",
-            "allocated_bytes_per_operation",
-            "code_size",
-            "compile_time",
-            "peak_memory",
-            "startup",
-            "tail_latency",
-            "throughput"
-          ],
-          "reason": "Text needs Unicode, invalid UTF-8 and slicing workload identities before capture.",
+          "reason": "scalar indexing, UTF-8 scanning and bounded transform workloads are declared, but owner-specific baseline capture remains pending promotion",
           "refs": [
-            "testing/stdlib-performance-conformance.json#owners/std.text"
+            "testing/stdlib-performance.json",
+            "testing/stdlib-performance-conformance.json",
+            "docs/contracts/stdlib-performance.md"
           ],
-          "status": "pending"
+          "status": "partial"
         },
         "SPEC": {
           "reason": null,
           "refs": [
             "testing/stdlib-core.json",
-            "docs/contracts/stdlib-core.md"
+            "docs/contracts/stdlib-core.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md"
           ],
           "status": "verified"
         }
@@ -12518,8 +12521,8 @@
     "signatures": 207,
     "stage_counts": {
       "CONF": {
-        "partial": 157,
-        "pending": 215
+        "partial": 179,
+        "pending": 193
       },
       "DOC": {
         "verified": 372
@@ -12533,8 +12536,8 @@
         "verified": 6
       },
       "PERF": {
-        "partial": 199,
-        "pending": 173
+        "partial": 221,
+        "pending": 151
       },
       "SPEC": {
         "partial": 1,

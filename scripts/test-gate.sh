@@ -80,6 +80,8 @@ run_step stdlib-core-contract \
     scripts/stdlib-core-check.sh
 run_step stdlib-core-tests \
     scripts/stdlib-core-test.sh
+run_step stdlib-text-tests \
+    scripts/stdlib-text-test.sh
 run_step stdlib-serialization-contract \
     scripts/stdlib-serialization-check.sh
 run_step stdlib-integration-contract \

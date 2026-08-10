@@ -1045,6 +1045,19 @@ consulta capabilities ni el host. El corpus de admission fuzz cubre formas
 operaciones y los baselines de rendimiento por owner quedan pendientes de
 promoción.
 
+El owner intrínseco `std.text` queda cerrado para la evidencia de STD-0.1A
+mediante el contrato de grupo [`testing/stdlib-core.json`](testing/stdlib-core.json)
+y su registro `STD-A-TEXT-EVIDENCE-001` en
+[`testing/stdlib-owner-evidence.json`](testing/stdlib-owner-evidence.json).
+Las quince firmas de `String` quedan trazadas desde el chequeo y la
+especialización HIR hasta el puente compiler/VM: Unicode válido, índices y
+slicing por scalar, iteración, búsquedas, transformaciones ASCII y rechazo
+atómico de UTF-8 inválido tienen fixtures ejecutables. `HOST` es
+`not-applicable` por ser un owner intrínseco sin capability ni host ambiental;
+el corpus bounded de UTF-8/admission fuzz está enlazado, mientras el fuzz
+específico de operaciones, los baselines de coste y `STD-CONF-001` permanecen
+pendientes de promoción.
+
 El owner capability-gated `std.time` queda cerrado para la evidencia de
 STD-0.1A mediante [`testing/stdlib-time.json`](testing/stdlib-time.json) y su
 registro de nueve celdas en [`testing/stdlib-owner-evidence.json`](testing/stdlib-owner-evidence.json)
