@@ -289,3 +289,22 @@ lectura ambiental separada. El corpus bounded de bytes/UTF-8 y el admission
 fuzz aportan cobertura de frontera; el fuzz específico de operaciones, los
 baselines de coste por owner y la promoción global de conformance siguen
 visibles como trabajo posterior.
+
+## Evidencia del owner intrínseco `std.collections`
+
+`STD-A-COLL-EVIDENCE-001` cierra la evidencia ejecutable de las dieciocho
+firmas públicas de `Array`, `Map` y `Set`. El contrato de grupo mantiene la
+semántica de valor y permite COW interno: el lowering HIR/MIR, el bytecode y la
+VM comparten las mismas operaciones y preservan la independencia observable
+entre copias. El fixture `m11-std-collections-001.to` cubre capacidades y
+errores atómicos, índices, slicing, inserción/reemplazo/eliminación, orden de
+inserción, pertenencia e iteración lazy de mapas y sets.
+
+Las claves se comprueban mediante el protocolo `Key`; el runtime conserva el
+orden normativo sin usar el layout interno como observable. Las properties de
+lowering comparan las rutas eager y COW sobre el mismo corpus y prueban el
+detach antes de escribir; el admission fuzz genera las formas intrínsecas de
+Array/Map/Set y sus límites. `HOST` es `not-applicable`: las colecciones son un
+owner intrínseco portable sin capability ni consulta ambiental. El fuzz de
+operaciones, los baselines de memoria/hash por owner y la promoción global de
+conformance permanecen explícitamente pendientes.

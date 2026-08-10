@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 1.98
+**Versión del tracker:** 1.99
 
 **Última actualización:** 2026-08-10
 
@@ -4566,9 +4566,18 @@ administrativas que no implementan comportamiento.
   operaciones, baselines de coste y `STD-CONF-001` permanecen pendientes de
   promoción. `scripts/stdlib-text-test.sh` cubre negativos de contrato y
   forma/cobertura de la API.
-- [ ] **STD-A-COLL-EVIDENCE-001 — Cerrar evidencia de colecciones.** Cubrir
-  COW, orden, hashing, iteración, modelos/properties/fuzz, memoria/rendimiento,
-  conformidad y docs; HOST es no aplicable.
+- [x] **STD-A-COLL-EVIDENCE-001 — Cerrar evidencia de colecciones.**
+  `testing/stdlib-owner-evidence.json` registra las nueve celdas del owner
+  intrínseco `std.collections` y enlaza las dieciocho firmas de `Array`, `Map`
+  y `Set` con HIR/MIR, intrinsics bootstrap, bytecode, VM y el fixture
+  `m11-std-collections-001.to`. La evidencia cubre COW y semántica de valor,
+  capacidad/errores atómicos, protocolo `Key`, hashing, orden de inserción,
+  membership, reemplazo/eliminación e iteración lazy. `HOST` es explícitamente
+  `not-applicable`; admission fuzz y properties eager/COW quedan ejecutables,
+  mientras fuzz de operaciones, baselines de memoria/hash y `STD-CONF-001`
+  permanecen visibles como promoción posterior. `scripts/stdlib-collections-test.sh`
+  valida negativos del contrato, símbolos, runtime, properties y las 18/18 filas
+  de la auditoría pública.
 - [ ] **STD-A-ITER-EVIDENCE-001 — Cerrar evidencia de iteradores.** Cubrir
   laziness, consumo, composición, modelos/fuzz, coste, conformidad y docs; HOST
   es no aplicable.
@@ -5764,6 +5773,19 @@ se declara iniciada antes de esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 1.99 — 2026-08-10
+
+- Se cierra `STD-A-COLL-EVIDENCE-001` con evidencia explícita para las dieciocho
+  operaciones públicas de `Array`, `Map` y `Set`: semántica de valor/COW,
+  capacidad y errores atómicos, claves/hash, orden observable e iteradores
+  lazy. `HOST` queda `not-applicable` por la frontera intrínseca compiler/VM;
+  el fixture runtime, properties eager/COW, admission fuzz y auditoría pública
+  se ejecutan en el gate, mientras fuzz específico, baselines de memoria/hash y
+  `STD-CONF-001` siguen visibles como promoción posterior.
+- La matriz conserva 22 owners, 207 firmas y 165 requisitos; `std.collections`
+  añade su registro por celdas y el test de owner sin crear un contrato público
+  duplicado.
 
 ### 1.98 — 2026-08-10
 

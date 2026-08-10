@@ -38,6 +38,11 @@
       "id": "STD-A-TEXT-EVIDENCE-001",
       "contract": "testing/stdlib-core.json",
       "owners": ["std.text"]
+    },
+    {
+      "id": "STD-A-COLL-EVIDENCE-001",
+      "contract": "testing/stdlib-core.json",
+      "owners": ["std.collections"]
     }
   ],
   "owners": [
@@ -567,6 +572,83 @@
         "scripts/stdlib-text-test.sh",
         "cargo test -p tondo-compiler --locked --lib process_host::tests",
         "cargo test -p tondo-compiler --locked --lib driver::tests"
+      ]
+    },
+    {
+      "id": "std.collections",
+      "layer": "A1",
+      "cells": {
+        "SPEC": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["testing/stdlib-core.json", "docs/contracts/stdlib-core.md", "TONDO_STANDARD_LIBRARY_SPEC.md"]
+        },
+        "IMPL": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs", "crates/tondo-compiler/src/hir/verify.rs", "crates/tondo-compiler/src/mir/lower.rs", "crates/tondo-compiler/src/process_host.rs", "crates/tondo-vm/src/bytecode.rs", "crates/tondo-vm/src/bytecode/verify.rs", "crates/tondo-vm/src/runtime.rs", "crates/tondo-vm/src/runtime/execute.rs"]
+        },
+        "HOST": {
+          "status": "not-applicable",
+          "reason": "std.collections is an intrinsic portable owner; its compiler/VM collection bridge has no separate capability provider or ambient host dependency",
+          "refs": ["docs/contracts/stdlib-core.md", "testing/stdlib-core.json", "crates/tondo-vm/src/runtime/execute.rs"]
+        },
+        "MODEL": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs", "crates/tondo-compiler/src/mir/lower.rs", "crates/tondo-vm/src/runtime/execute.rs"]
+        },
+        "TEST": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["tests/runtime/m11-std-collections-001.to", "crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/bytecode/lower.rs", "scripts/stdlib-collections-test.sh"]
+        },
+        "FUZZ": {
+          "status": "partial",
+          "reason": "the admission corpus and collection property corpus exercise Array/Map/Set shapes, but no dedicated std.collections operation fuzz target has been promoted",
+          "refs": ["fuzz/fuzz_targets/admission.rs", "fuzz/corpus/admission/scalar-seed", "fuzz/corpus/admission/structural-seed", "crates/tondo-compiler/src/bytecode/lower.rs", "scripts/stdlib-collections-test.sh"]
+        },
+        "PERF": {
+          "status": "partial",
+          "reason": "COW copy, insertion-order hashing and bounded collection workloads are declared, but owner-specific baseline capture remains pending promotion",
+          "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
+        },
+        "CONF": {
+          "status": "partial",
+          "reason": "the public API audit and collection runtime fixture cover all eighteen collection signatures; STD-CONF-001 has not yet promoted every standard-library owner",
+          "refs": ["testing/stdlib-public-api.json", "tests/runtime/m11-std-collections-001.to", "TONDO_IMPLEMENTATION_TRACKER.md"]
+        },
+        "DOC": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["docs/contracts/stdlib-core.md", "TONDO_STANDARD_LIBRARY_SPEC.md", "docs/contracts/stdlib-s1a.md"]
+        }
+      },
+      "budgets": {
+        "element_count": {
+          "unit": "elements",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 1000,
+          "state": "declared-baseline-pending"
+        },
+        "copied_bytes": {
+          "unit": "bytes",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 1000,
+          "state": "declared-baseline-pending"
+        },
+        "hash_work_units": {
+          "unit": "work-units",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 1000,
+          "state": "declared-baseline-pending"
+        }
+      },
+      "commands": [
+        "scripts/stdlib-core-check.sh",
+        "scripts/stdlib-collections-test.sh",
+        "cargo test -p tondo-compiler --locked --lib bytecode::lower::tests",
+        "cargo test -p tondo-compiler --locked --lib process_host::tests"
       ]
     }
   ],

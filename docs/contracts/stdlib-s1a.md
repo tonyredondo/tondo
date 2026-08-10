@@ -56,6 +56,16 @@ slicing, iteration, search/replace, ASCII transforms and atomic invalid UTF-8
 rejection are covered. `HOST` is explicitly `not-applicable`; bounded UTF-8
 corpora are linked, while an operation-specific fuzz target and owner cost
 baseline remain pending promotion.
+The intrinsic `std.collections` owner is closed by the shared group contract
+[`testing/stdlib-core.json`](../../testing/stdlib-core.json) and its
+`STD-A-COLL-EVIDENCE-001` cell record. All eighteen `Array`, `Map` and `Set`
+signatures are traced through HIR/MIR, bootstrap intrinsics, bytecode and VM
+execution. The runtime fixture covers value semantics with internal COW,
+atomic capacity errors, insertion order, key membership, replacement/removal
+and lazy map/set iteration; lowering properties compare eager and COW copies
+and the admission corpus exercises the intrinsic collection shapes. `HOST` is
+explicitly `not-applicable`; operation-specific fuzz, owner memory/hash
+baselines and global conformance promotion remain pending.
 The capability-gated `std.time` owner is closed for hosted evidence by
 [`testing/stdlib-time.json`](../../testing/stdlib-time.json) and its
 `STD-A-TIME-EVIDENCE-001` cell record. It separates the duration/instant/timer

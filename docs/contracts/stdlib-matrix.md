@@ -15,7 +15,8 @@ firmas indexadas por la auditoría pública y 165 requisitos de owner. `std.meta
 executable A0 y seis requisitos de evidencia cada uno sin crear una segunda
 API pública; `std.core` conserva su contrato de grupo y añade evidencia por
 celda para sus nueve firmas intrínsecas; `std.text` añade evidencia por celda
-para sus quince firmas Unicode y UTF-8. Los placeholders sintéticos anteriores
+para sus quince firmas Unicode y UTF-8; `std.collections` añade evidencia por
+celda para sus dieciocho firmas de `Array`, `Map` y `Set`. Los placeholders sintéticos anteriores
 quedan reemplazados por filas reales.
 `std.0.1B` permanece
 como catálogo futuro cerrado:
@@ -64,6 +65,12 @@ intrínseco portable y sus quince operaciones no consultan capabilities ni el
 entorno. Los fixtures Unicode/UTF-8, el corpus bounded y la auditoría pública
 quedan enlazados por `STD-A-TEXT-EVIDENCE-001`; el fuzz de operaciones y el
 baseline de coste por owner siguen abiertos.
+
+`std.collections` conserva `HOST` como `not-applicable`: `Array`, `Map` y `Set`
+son valores intrínsecos portables. El fixture de runtime, las properties de
+COW eager/compartido, el orden de inserción y el admission corpus enlazan las
+dieciocho firmas; el fuzz de operaciones y los baselines de memoria/hash por
+owner siguen abiertos.
 
 Esta matriz no cierra `STD-CONF-001`, `STD-TEST-001` ni `STD-DOC-001`: registra
 sus celdas pendientes para que las siguientes coordinaciones puedan promover

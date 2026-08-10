@@ -1058,6 +1058,19 @@ el corpus bounded de UTF-8/admission fuzz está enlazado, mientras el fuzz
 específico de operaciones, los baselines de coste y `STD-CONF-001` permanecen
 pendientes de promoción.
 
+El owner intrínseco `std.collections` queda cerrado para la evidencia de
+STD-0.1A mediante el contrato de grupo [`testing/stdlib-core.json`](testing/stdlib-core.json)
+y su registro `STD-A-COLL-EVIDENCE-001` en
+[`testing/stdlib-owner-evidence.json`](testing/stdlib-owner-evidence.json).
+Las dieciocho firmas de `Array`, `Map` y `Set` quedan trazadas desde HIR/MIR y
+los intrinsics bootstrap hasta bytecode, VM y el fixture de runtime: semántica
+de valor con COW interno, capacidad y errores atómicos, orden de inserción,
+hashing de claves, membership, reemplazo/eliminación e iteración lazy están
+cubiertos. `HOST` es `not-applicable` porque el owner es intrínseco y portable;
+el admission fuzz y las properties eager/COW aportan cobertura de formas y
+ownership, mientras el fuzz de operaciones, baselines de memoria/hash y
+`STD-CONF-001` permanecen pendientes de promoción.
+
 El owner capability-gated `std.time` queda cerrado para la evidencia de
 STD-0.1A mediante [`testing/stdlib-time.json`](testing/stdlib-time.json) y su
 registro de nueve celdas en [`testing/stdlib-owner-evidence.json`](testing/stdlib-owner-evidence.json)
