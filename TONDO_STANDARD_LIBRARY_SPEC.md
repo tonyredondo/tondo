@@ -1071,6 +1071,21 @@ el admission fuzz y las properties eager/COW aportan cobertura de formas y
 ownership, mientras el fuzz de operaciones, baselines de memoria/hash y
 `STD-CONF-001` permanecen pendientes de promoción.
 
+El owner intrínseco `std.iter` queda cerrado para la evidencia de STD-0.1A
+mediante el contrato de grupo [`testing/stdlib-core.json`](testing/stdlib-core.json)
+y su registro `STD-A-ITER-EVIDENCE-001` en
+[`testing/stdlib-owner-evidence.json`](testing/stdlib-owner-evidence.json).
+Las cuatro firmas de `Iterator` (`map`, `filter`, `take` y `collect`) quedan
+trazadas por el protocolo estático HIR, lowering MIR/bytecode y ejecución VM.
+El fixture `m11-std-iter-001.to` cubre laziness, consumo único, composición,
+callbacks síncronos, closures, rutas calificadas/genéricas, `take(-1)` y
+materialización acotada. Las properties y tests de runtime cubren cursores
+prestados, dispatch de iteradores de usuario, agotamiento, trazado de fuente y
+callbacks, y estados corruptos; `HOST` es `not-applicable` porque no hay
+capability ni dependencia ambiental. El fuzz de operaciones, baselines de
+retención/allocations/materialización y `STD-CONF-001` permanecen pendientes
+de promoción.
+
 El owner capability-gated `std.time` queda cerrado para la evidencia de
 STD-0.1A mediante [`testing/stdlib-time.json`](testing/stdlib-time.json) y su
 registro de nueve celdas en [`testing/stdlib-owner-evidence.json`](testing/stdlib-owner-evidence.json)

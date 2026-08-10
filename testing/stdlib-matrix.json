@@ -1210,16 +1210,20 @@
       ],
       "stages": {
         "CONF": {
-          "reason": "STD-CONF-001 remains open until the owner has complete public evidence",
+          "reason": "the public API audit and iterator runtime fixture cover all four iterator signatures; STD-CONF-001 has not yet promoted every standard-library owner",
           "refs": [
-            "TONDO_IMPLEMENTATION_TRACKER.md#STD-CONF-001"
+            "testing/stdlib-public-api.json",
+            "tests/runtime/m11-std-iter-001.to",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
           ],
-          "status": "pending"
+          "status": "partial"
         },
         "DOC": {
           "reason": null,
           "refs": [
-            "docs/contracts/stdlib-core.md"
+            "docs/contracts/stdlib-core.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md",
+            "docs/contracts/stdlib-s1a.md"
           ],
           "status": "verified"
         },
@@ -1231,42 +1235,43 @@
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-vm/src/runtime/execute.rs",
             "crates/tondo-vm/src/runtime/heap.rs",
-            "tests/runtime/m11-std-core-001.to",
-            "tests/runtime/m11-std-iter-001.to"
+            "docs/contracts/stdlib-core.md",
+            "testing/stdlib-core.json"
           ],
           "status": "verified"
         },
         "MODEL/TEST/FUZZ": {
-          "reason": "owner tests exist; per-leaf MODEL/TEST/FUZZ links and fuzz coverage remain to be coordinated by STD-TEST-001",
+          "reason": "the admission corpus and iterator property/model tests exercise cursor shapes and adapter state, but no dedicated std.iter operation fuzz target has been promoted",
           "refs": [
+            "crates/tondo-compiler/src/bytecode/lower.rs",
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-vm/src/runtime/execute.rs",
+            "crates/tondo-vm/src/runtime/heap.rs",
+            "fuzz/corpus/admission/scalar-seed",
+            "fuzz/corpus/admission/structural-seed",
+            "fuzz/fuzz_targets/admission.rs",
+            "scripts/stdlib-iter-test.sh",
             "tests/runtime/m11-std-core-001.to",
             "tests/runtime/m11-std-iter-001.to"
           ],
           "status": "partial"
         },
         "PERF": {
-          "observed_dimensions": [],
-          "pending_dimensions": [
-            "allocations_per_operation",
-            "allocated_bytes_per_operation",
-            "code_size",
-            "compile_time",
-            "peak_memory",
-            "startup",
-            "tail_latency",
-            "throughput"
-          ],
-          "reason": "Lazy iterator composition needs a reviewed consumption workload and allocation identity.",
+          "reason": "lazy adapter, callback retention and collect materialization workloads are declared, but owner-specific baseline capture remains pending promotion",
           "refs": [
-            "testing/stdlib-performance-conformance.json#owners/std.iter"
+            "testing/stdlib-performance.json",
+            "testing/stdlib-performance-conformance.json",
+            "docs/contracts/stdlib-performance.md"
           ],
-          "status": "pending"
+          "status": "partial"
         },
         "SPEC": {
           "reason": null,
           "refs": [
             "testing/stdlib-core.json",
-            "docs/contracts/stdlib-core.md"
+            "docs/contracts/stdlib-core.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md"
           ],
           "status": "verified"
         }
@@ -12526,8 +12531,8 @@
     "signatures": 207,
     "stage_counts": {
       "CONF": {
-        "partial": 204,
-        "pending": 168
+        "partial": 215,
+        "pending": 157
       },
       "DOC": {
         "verified": 372
@@ -12541,8 +12546,8 @@
         "verified": 6
       },
       "PERF": {
-        "partial": 246,
-        "pending": 126
+        "partial": 257,
+        "pending": 115
       },
       "SPEC": {
         "partial": 1,

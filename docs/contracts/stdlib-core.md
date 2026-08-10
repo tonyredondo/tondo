@@ -308,3 +308,28 @@ Array/Map/Set y sus límites. `HOST` es `not-applicable`: las colecciones son un
 owner intrínseco portable sin capability ni consulta ambiental. El fuzz de
 operaciones, los baselines de memoria/hash por owner y la promoción global de
 conformance permanecen explícitamente pendientes.
+
+## Evidencia del owner intrínseco `std.iter`
+
+`STD-A-ITER-EVIDENCE-001` cierra la evidencia ejecutable de las cuatro firmas
+públicas de `Iterator`: `map`, `filter`, `take` y `collect`. El protocolo
+`Iterator[T]` mantiene un cursor own con `next(var self): T?`; el chequeo HIR,
+el lowering y la terminación bytecode preservan ese protocolo, mientras la VM
+traza la fuente y los callbacks de cada adaptador.
+
+El fixture `m11-std-iter-001.to` cubre composición `map → filter → take`,
+callbacks nombrados y closures síncronas, las rutas calificadas y genéricas
+estáticas, el consumo acotado de `take(-1)` y la materialización final de
+`collect`. Los adaptadores son lazy y de consumo único: crear la cadena no
+consume la fuente, cada `next` avanza exactamente el cursor y `collect` publica
+un `Array` solo después de terminar sin superar el límite de objetos. Los
+callbacks no suspenden implícitamente y un error de materialización no expone
+un array parcial.
+
+Las properties de lowering y los tests de runtime cubren iteración intrínseca
+prestada, dispatch estático de iteradores de usuario, guards de agotamiento,
+trazado de fuente/callbacks y rechazo de descriptores o estados corruptos. El
+admission fuzz aporta formas de cursor; `HOST` es `not-applicable` porque el
+owner es intrínseco portable sin capability ni consulta ambiental. El fuzz de
+operaciones, los baselines de retención/allocations/materialización y la
+promoción global de conformance permanecen explícitamente pendientes.

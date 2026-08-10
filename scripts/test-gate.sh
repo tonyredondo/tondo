@@ -6,7 +6,7 @@ cd "$root"
 
 cargo_target_dir="${CARGO_TARGET_DIR:-target}"
 
-evidence="target/reliability/evidence"
+evidence="$cargo_target_dir/reliability/evidence"
 logs="$evidence/logs"
 mkdir -p "$logs"
 
@@ -84,6 +84,8 @@ run_step stdlib-text-tests \
     scripts/stdlib-text-test.sh
 run_step stdlib-collections-tests \
     scripts/stdlib-collections-test.sh
+run_step stdlib-iter-tests \
+    scripts/stdlib-iter-test.sh
 run_step stdlib-serialization-contract \
     scripts/stdlib-serialization-check.sh
 run_step stdlib-integration-contract \

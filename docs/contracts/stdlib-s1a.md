@@ -66,6 +66,17 @@ and lazy map/set iteration; lowering properties compare eager and COW copies
 and the admission corpus exercises the intrinsic collection shapes. `HOST` is
 explicitly `not-applicable`; operation-specific fuzz, owner memory/hash
 baselines and global conformance promotion remain pending.
+The intrinsic `std.iter` owner is closed by the shared group contract
+[`testing/stdlib-core.json`](../../testing/stdlib-core.json) and its
+`STD-A-ITER-EVIDENCE-001` cell record. All four `Iterator` signatures are
+traced through static HIR protocol checking, MIR/bytecode lowering and VM
+execution. The runtime fixture covers lazy single-consumption composition,
+synchronous callbacks and closures, qualified/generic dispatch, negative
+`take`, bounded `collect`, borrowed cursors, user-iterator dispatch and
+exhaustion guards; the VM heap tests trace sources and callbacks and reject
+malformed iterator state. `HOST` is explicitly `not-applicable`; operation
+fuzz, owner retention/allocation/materialization baselines and global
+conformance promotion remain pending.
 The capability-gated `std.time` owner is closed for hosted evidence by
 [`testing/stdlib-time.json`](../../testing/stdlib-time.json) and its
 `STD-A-TIME-EVIDENCE-001` cell record. It separates the duration/instant/timer

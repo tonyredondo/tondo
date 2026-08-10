@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 1.99
+**Versión del tracker:** 2.00
 
 **Última actualización:** 2026-08-10
 
@@ -4578,9 +4578,18 @@ administrativas que no implementan comportamiento.
   permanecen visibles como promoción posterior. `scripts/stdlib-collections-test.sh`
   valida negativos del contrato, símbolos, runtime, properties y las 18/18 filas
   de la auditoría pública.
-- [ ] **STD-A-ITER-EVIDENCE-001 — Cerrar evidencia de iteradores.** Cubrir
-  laziness, consumo, composición, modelos/fuzz, coste, conformidad y docs; HOST
-  es no aplicable.
+- [x] **STD-A-ITER-EVIDENCE-001 — Cerrar evidencia de iteradores.** `testing/stdlib-owner-evidence.json`
+  registra las nueve celdas del owner intrínseco `std.iter` y enlaza las cuatro
+  firmas de `Iterator` (`map`, `filter`, `take`, `collect`) con el protocolo HIR,
+  lowering MIR/bytecode, VM, fixture runtime y auditoría pública. La evidencia
+  cubre laziness, consumo único, composición, callbacks síncronos, closures,
+  rutas calificadas/genéricas, `take` negativo, `collect` acotado, cursores
+  prestados, iteradores de usuario, agotamiento y trazado de callbacks. `HOST`
+  es explícitamente `not-applicable`; admission fuzz y properties de cursor son
+  ejecutables, mientras fuzz de operaciones, baselines de retención/allocations/
+  materialización y `STD-CONF-001` permanecen visibles como promoción posterior.
+  `scripts/stdlib-iter-test.sh` valida negativos de contrato, símbolos, fixture,
+  properties y las 4/4 filas de la auditoría pública.
 - [ ] **STD-A-MATH-EVIDENCE-001 — Cerrar evidencia matemática.** Cubrir modelo
   numérico, dominios/overflow, properties/fuzz, equivalencia scalar/SIMD,
   conformidad y docs; HOST es no aplicable.
@@ -5773,6 +5782,21 @@ se declara iniciada antes de esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 2.00 — 2026-08-10
+
+- Se cierra `STD-A-ITER-EVIDENCE-001` con evidencia explícita para las cuatro
+  operaciones públicas de `Iterator`: `map`, `filter`, `take` y `collect`. La
+  evidencia traza el protocolo estático y la ruta HIR/MIR/bytecode/VM, prueba
+  laziness, consumo único, composición, callbacks y closures síncronas, rutas
+  calificadas/genéricas, `take(-1)`, materialización acotada, cursores prestados,
+  iteradores de usuario, agotamiento y trazado de callbacks. `HOST` queda
+  `not-applicable` por la frontera intrínseca compiler/VM; fuzz específico,
+  baselines de retención/allocations/materialización y `STD-CONF-001` siguen
+  visibles como promoción posterior.
+- La matriz conserva 22 owners, 207 firmas y 165 requisitos; `std.iter` añade
+  su registro por celdas y el test de owner sin crear un contrato público
+  duplicado.
 
 ### 1.99 — 2026-08-10
 
