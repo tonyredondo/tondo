@@ -4621,9 +4621,18 @@ administrativas que no implementan comportamiento.
   `std.process`. `scripts/stdlib-io-test.sh` valida contrato, símbolos, corpus,
   docs y las 4/4 filas públicas; fuzz específico y baselines de coste quedan
   visibles como promoción posterior.
-- [ ] **STD-A-PATH-EVIDENCE-001 — Cerrar evidencia de paths.** Cubrir modelo
-  portable/native, bytes/Unicode, normalización, fuzz, coste, conformidad y
-  docs sin consultar filesystem; HOST es no aplicable.
+- [x] **STD-A-PATH-EVIDENCE-001 — Cerrar evidencia de paths.** Las diez
+  firmas de `std.path` quedan trazadas por contrato hosted, HIR/lowering,
+  bytecode/VM, kernel portable, fixture público y auditoría de API. `Path` es
+  un snapshot léxico de bytes con límite de 32 KiB: el corpus determinista
+  cubre bytes nativos inválidos, UTF-8, NFC/NFD, `.`/`..`, raíces, archivos
+  ocultos, extensiones vacías, separadores finales, joins rechazados y
+  atomicidad de errores sin consultar el filesystem. `toBytes` devuelve una
+  copia exacta y la prueba de host confirma que la frontera conserva esos
+  bytes. `HOST` es `not-applicable`; fuzz específico, baselines por owner y
+  `STD-CONF-001` permanecen visibles como promoción posterior.
+  `scripts/stdlib-path-test.sh` valida contrato, símbolos, corpus, ausencia de
+  capability, docs y las 10/10 filas públicas.
 - [ ] **STD-A-CONSOLE-EVIDENCE-001 — Cerrar evidencia de consola.** Separar
   modelo de streams, adaptador HOST/capability, partial I/O, fallos, coste,
   conformidad y docs.
@@ -5804,6 +5813,22 @@ se declara iniciada antes de esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 2.04 — 2026-08-10
+
+- Se cierra `STD-A-PATH-EVIDENCE-001` con nueve celdas explícitas para el
+  owner puro `std.path` y sus diez firmas. La evidencia enlaza el snapshot de
+  bytes nativos, UTF-8 estricto, NFC/NFD sin normalización, límites, consultas
+  léxicas y joins atómicos con `tondo-stdlib`, HIR/lowering, bytecode/VM, el
+  host bootstrap y `m11-std-path-001.to`. El corpus determinista recorre bytes
+  válidos e inválidos, raíces, archivos ocultos, extensiones vacías,
+  separadores finales y errores sin consultar el filesystem; `HOST` queda
+  `not-applicable`.
+- El gate añade `scripts/stdlib-path-test.sh`, el contrato hosted ahora acepta
+  contratos temporales para sus pruebas negativas, y la matriz/owner registry
+  enlazan las 10/10 filas públicas. Fuzz específico, baselines de
+  bytes/componentes/work-units y `STD-CONF-001` permanecen visibles como
+  promoción posterior.
 
 ### 2.03 — 2026-08-10
 

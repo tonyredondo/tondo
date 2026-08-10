@@ -2932,10 +2932,10 @@
       "status": "verified"
     },
     {
-      "id": "std.fs:56",
+      "id": "std.fs:67",
       "owner": "std.fs",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 56,
+      "line": 67,
       "signature": "pub fn open(path: Path, mode: OpenMode): File ! FsError",
       "symbol": "std.fs.open",
       "operation": "open",
@@ -2980,10 +2980,10 @@
       "status": "verified"
     },
     {
-      "id": "std.fs:57",
+      "id": "std.fs:68",
       "owner": "std.fs",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 57,
+      "line": 68,
       "signature": "pub fn openDirectory(path: Path): Directory ! FsError",
       "symbol": "std.fs.openDirectory",
       "operation": "openDirectory",
@@ -3028,10 +3028,10 @@
       "status": "verified"
     },
     {
-      "id": "std.fs:58",
+      "id": "std.fs:69",
       "owner": "std.fs",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 58,
+      "line": 69,
       "signature": "pub fn readAll(path: Path): Bytes ! FsError",
       "symbol": "std.fs.readAll",
       "operation": "readAll",
@@ -3076,10 +3076,10 @@
       "status": "verified"
     },
     {
-      "id": "std.fs:59",
+      "id": "std.fs:70",
       "owner": "std.fs",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 59,
+      "line": 70,
       "signature": "pub fn writeAll(path: Path, data: Bytes): Unit ! FsError",
       "symbol": "std.fs.writeAll",
       "operation": "writeAll",
@@ -3124,10 +3124,10 @@
       "status": "verified"
     },
     {
-      "id": "std.fs:60",
+      "id": "std.fs:71",
       "owner": "std.fs",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 60,
+      "line": 71,
       "signature": "pub fn createDirectory(path: Path, parents: Bool): Unit ! FsError",
       "symbol": "std.fs.createDirectory",
       "operation": "createDirectory",
@@ -3172,10 +3172,10 @@
       "status": "verified"
     },
     {
-      "id": "std.fs:61",
+      "id": "std.fs:72",
       "owner": "std.fs",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 61,
+      "line": 72,
       "signature": "pub fn remove(path: Path): Unit ! FsError",
       "symbol": "std.fs.remove",
       "operation": "remove",
@@ -3220,10 +3220,10 @@
       "status": "verified"
     },
     {
-      "id": "std.fs:62",
+      "id": "std.fs:73",
       "owner": "std.fs",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 62,
+      "line": 73,
       "signature": "pub fn metadata(path: Path): Metadata ! FsError",
       "symbol": "std.fs.metadata",
       "operation": "metadata",
@@ -3268,10 +3268,10 @@
       "status": "verified"
     },
     {
-      "id": "std.fs:63",
+      "id": "std.fs:74",
       "owner": "std.fs",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 63,
+      "line": 74,
       "signature": "pub fn list(path: Path): Array[Path] ! FsError",
       "symbol": "std.fs.list",
       "operation": "list",
@@ -3316,10 +3316,10 @@
       "status": "verified"
     },
     {
-      "id": "std.fs:64",
+      "id": "std.fs:75",
       "owner": "std.fs",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 64,
+      "line": 75,
       "signature": "pub fn rename(from: Path, to: Path): Unit ! FsError",
       "symbol": "std.fs.rename",
       "operation": "rename",
@@ -3364,10 +3364,10 @@
       "status": "verified"
     },
     {
-      "id": "std.fs:65",
+      "id": "std.fs:76",
       "owner": "std.fs",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 65,
+      "line": 76,
       "signature": "pub fn atomicWrite(path: Path, data: Bytes): Unit ! FsError",
       "symbol": "std.fs.atomicWrite",
       "operation": "atomicWrite",
@@ -3412,10 +3412,10 @@
       "status": "verified"
     },
     {
-      "id": "std.fs:66",
+      "id": "std.fs:77",
       "owner": "std.fs",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 66,
+      "line": 77,
       "signature": "pub fn File.read(var self, max: Int): Option[Bytes] ! FsError",
       "symbol": "std.fs.File.read",
       "operation": "read",
@@ -3460,10 +3460,10 @@
       "status": "verified"
     },
     {
-      "id": "std.fs:67",
+      "id": "std.fs:78",
       "owner": "std.fs",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 67,
+      "line": 78,
       "signature": "pub fn File.write(var self, data: Bytes): Int ! FsError",
       "symbol": "std.fs.File.write",
       "operation": "write",
@@ -3508,10 +3508,10 @@
       "status": "verified"
     },
     {
-      "id": "std.fs:68",
+      "id": "std.fs:79",
       "owner": "std.fs",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 68,
+      "line": 79,
       "signature": "pub fn File.flush(var self): Unit ! FsError",
       "symbol": "std.fs.File.flush",
       "operation": "flush",
@@ -3556,10 +3556,10 @@
       "status": "verified"
     },
     {
-      "id": "std.fs:69",
+      "id": "std.fs:80",
       "owner": "std.fs",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 69,
+      "line": 80,
       "signature": "pub fn Directory.list(var self): Array[Path] ! FsError",
       "symbol": "std.fs.Directory.list",
       "operation": "list",
@@ -6499,10 +6499,10 @@
       "status": "gap"
     },
     {
-      "id": "std.path:30",
+      "id": "std.path:29",
       "owner": "std.path",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 30,
+      "line": 29,
       "signature": "pub fn Path.fromString(value: String): Path ! PathError",
       "symbol": "std.path.Path.fromString",
       "operation": "fromString",
@@ -6547,10 +6547,10 @@
       "status": "verified"
     },
     {
-      "id": "std.path:31",
+      "id": "std.path:30",
       "owner": "std.path",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 31,
+      "line": 30,
       "signature": "pub fn Path.fromBytes(value: Bytes): Path ! PathError",
       "symbol": "std.path.Path.fromBytes",
       "operation": "fromBytes",
@@ -6595,10 +6595,10 @@
       "status": "verified"
     },
     {
-      "id": "std.path:32",
+      "id": "std.path:31",
       "owner": "std.path",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 32,
+      "line": 31,
       "signature": "pub fn Path.join(self, component: String): Path ! PathError",
       "symbol": "std.path.Path.join",
       "operation": "join",
@@ -6643,10 +6643,10 @@
       "status": "verified"
     },
     {
-      "id": "std.path:33",
+      "id": "std.path:32",
       "owner": "std.path",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 33,
+      "line": 32,
       "signature": "pub fn Path.parent(self): Path?",
       "symbol": "std.path.Path.parent",
       "operation": "parent",
@@ -6691,10 +6691,10 @@
       "status": "verified"
     },
     {
-      "id": "std.path:34",
+      "id": "std.path:33",
       "owner": "std.path",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 34,
+      "line": 33,
       "signature": "pub fn Path.fileName(self): String?",
       "symbol": "std.path.Path.fileName",
       "operation": "fileName",
@@ -6739,10 +6739,10 @@
       "status": "verified"
     },
     {
-      "id": "std.path:35",
+      "id": "std.path:34",
       "owner": "std.path",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 35,
+      "line": 34,
       "signature": "pub fn Path.extension(self): String?",
       "symbol": "std.path.Path.extension",
       "operation": "extension",
@@ -6787,11 +6787,11 @@
       "status": "verified"
     },
     {
-      "id": "std.path:36",
+      "id": "std.path:35",
       "owner": "std.path",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 36,
-      "signature": "pub fn Path.kind(self): PathKind",
+      "line": 35,
+      "signature": "pub fn Path.kind(self): Bool",
       "symbol": "std.path.Path.kind",
       "operation": "kind",
       "evidence": {
@@ -6835,10 +6835,10 @@
       "status": "verified"
     },
     {
-      "id": "std.path:37",
+      "id": "std.path:36",
       "owner": "std.path",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 37,
+      "line": 36,
       "signature": "pub fn Path.isEmpty(self): Bool",
       "symbol": "std.path.Path.isEmpty",
       "operation": "isEmpty",
@@ -6883,10 +6883,10 @@
       "status": "verified"
     },
     {
-      "id": "std.path:38",
+      "id": "std.path:37",
       "owner": "std.path",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 38,
+      "line": 37,
       "signature": "pub fn Path.toString(self): String ! PathError",
       "symbol": "std.path.Path.toString",
       "operation": "toString",
@@ -6931,10 +6931,10 @@
       "status": "verified"
     },
     {
-      "id": "std.path:39",
+      "id": "std.path:38",
       "owner": "std.path",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 39,
+      "line": 38,
       "signature": "pub fn Path.toBytes(self): Bytes",
       "symbol": "std.path.Path.toBytes",
       "operation": "toBytes",
@@ -6979,10 +6979,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:103",
+      "id": "std.process:114",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 103,
+      "line": 114,
       "signature": "pub fn command(program: String, arguments: ...String): Command ! ProcessError",
       "symbol": "std.process.command",
       "operation": "command",
@@ -7027,10 +7027,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:104",
+      "id": "std.process:115",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 104,
+      "line": 115,
       "signature": "pub fn shell(command: String): Command ! ProcessError",
       "symbol": "std.process.shell",
       "operation": "shell",
@@ -7075,10 +7075,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:105",
+      "id": "std.process:116",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 105,
+      "line": 116,
       "signature": "pub fn pipe(left: Command, right: Command): Pipeline ! ProcessError",
       "symbol": "std.process.pipe",
       "operation": "pipe",
@@ -7123,10 +7123,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:106",
+      "id": "std.process:117",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 106,
+      "line": 117,
       "signature": "pub fn Command.mergeStderr(self): Command",
       "symbol": "std.process.Command.mergeStderr",
       "operation": "mergeStderr",
@@ -7171,10 +7171,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:107",
+      "id": "std.process:118",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 107,
+      "line": 118,
       "signature": "pub fn Pipeline.mergeStderr(self): Pipeline",
       "symbol": "std.process.Pipeline.mergeStderr",
       "operation": "mergeStderr",
@@ -7219,10 +7219,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:108",
+      "id": "std.process:119",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 108,
+      "line": 119,
       "signature": "pub fn Command.run(self): ExitStatus ! ProcessError",
       "symbol": "std.process.Command.run",
       "operation": "run",
@@ -7267,10 +7267,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:109",
+      "id": "std.process:120",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 109,
+      "line": 120,
       "signature": "pub fn Command.output(self): ProcessOutput ! ProcessError",
       "symbol": "std.process.Command.output",
       "operation": "output",
@@ -7315,10 +7315,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:110",
+      "id": "std.process:121",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 110,
+      "line": 121,
       "signature": "pub fn Command.check(self): ProcessOutput ! (ProcessError | ProcessExitError)",
       "symbol": "std.process.Command.check",
       "operation": "check",
@@ -7363,10 +7363,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:111",
+      "id": "std.process:122",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 111,
+      "line": 122,
       "signature": "pub fn Command.start(self): ProcessHandle ! ProcessError",
       "symbol": "std.process.Command.start",
       "operation": "start",
@@ -7411,10 +7411,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:112",
+      "id": "std.process:123",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 112,
+      "line": 123,
       "signature": "pub fn ProcessHandle.wait(var self): ExitStatus ! ProcessError",
       "symbol": "std.process.ProcessHandle.wait",
       "operation": "wait",
@@ -7459,10 +7459,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:113",
+      "id": "std.process:124",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 113,
+      "line": 124,
       "signature": "pub fn ProcessHandle.cancel(var self): Unit",
       "symbol": "std.process.ProcessHandle.cancel",
       "operation": "cancel",
@@ -7507,10 +7507,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:114",
+      "id": "std.process:125",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 114,
+      "line": 125,
       "signature": "pub fn ProcessOutput.stdout(self): Bytes",
       "symbol": "std.process.ProcessOutput.stdout",
       "operation": "stdout",
@@ -7555,10 +7555,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:115",
+      "id": "std.process:126",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 115,
+      "line": 126,
       "signature": "pub fn ProcessOutput.stderr(self): Bytes",
       "symbol": "std.process.ProcessOutput.stderr",
       "operation": "stderr",
@@ -7603,10 +7603,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:116",
+      "id": "std.process:127",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 116,
+      "line": 127,
       "signature": "pub fn ProcessOutput.combined(self): Bytes",
       "symbol": "std.process.ProcessOutput.combined",
       "operation": "combined",
@@ -7651,10 +7651,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:117",
+      "id": "std.process:128",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 117,
+      "line": 128,
       "signature": "pub fn ProcessOutput.statuses(self): Array[ExitStatus]",
       "symbol": "std.process.ProcessOutput.statuses",
       "operation": "statuses",
@@ -7699,10 +7699,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:118",
+      "id": "std.process:129",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 118,
+      "line": 129,
       "signature": "pub fn ExitStatus.code(self): Int?",
       "symbol": "std.process.ExitStatus.code",
       "operation": "code",
@@ -7747,10 +7747,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:119",
+      "id": "std.process:130",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 119,
+      "line": 130,
       "signature": "pub fn ExitStatus.success(self): Bool",
       "symbol": "std.process.ExitStatus.success",
       "operation": "success",

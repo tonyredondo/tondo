@@ -1289,6 +1289,13 @@ gates propios.
 `std.path.Path` no es un alias de `String`. Debe poder representar paths nativos
 que el host admite aunque no sean Unicode.
 
+La representación es un snapshot de bytes con un límite de 32 KiB. `fromBytes`
+acepta bytes nativos salvo NUL, `toBytes` devuelve una copia exacta y
+`fromString`/`toString` solo aplican la validación UTF-8 necesaria para cruzar
+la frontera textual. No hay normalización Unicode, case-folding, resolución de
+`.`/`..`, expansión de separadores ni consulta implícita al filesystem:
+secuencias NFC/NFD y componentes literales permanecen observables.
+
 La separación es:
 
 - `std.path`: representación y operaciones léxicas.
@@ -1298,6 +1305,15 @@ Formatear un path para diagnóstico no garantiza una representación reversible.
 Convertirlo a texto puede fallar o exigir una política explícita. Normalizar
 léxicamente no consulta el filesystem, no resuelve enlaces y no afirma
 canonicalidad física.
+
+`kind` devuelve `Bool`: `true` para un snapshot absoluto y `false` para uno
+relativo. No existe un enum paralelo para esta propiedad binaria.
+
+`join` es una operación atómica sobre un único componente y rechaza un
+componente vacío, cualquier `/`, NUL o el resultado que supere el límite. Las
+consultas `parent`, `fileName`, `extension`, `kind` e `isEmpty` son puramente
+léxicas y tienen resultados deterministas para raíz, path vacío, archivos
+ocultos, extensiones vacías y separadores finales.
 
 ### 10.5 Filesystem hosted
 

@@ -2,7 +2,10 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-contract="$root/testing/stdlib-hosted.json"
+contract="${TONDO_STDLIB_HOSTED_CONTRACT:-$root/testing/stdlib-hosted.json}"
+if [[ "$contract" != /* ]]; then
+    contract="$root/${contract#./}"
+fi
 [[ -f "$contract" ]] || { echo "missing hosted owner contract" >&2; exit 1; }
 tail -c 1 "$contract" | cmp -s <(printf '\n') || { echo "hosted contract must end with LF" >&2; exit 1; }
 ! grep -nE $'\r|[[:blank:]]$' "$contract" >/dev/null || { echo "hosted contract has whitespace" >&2; exit 1; }

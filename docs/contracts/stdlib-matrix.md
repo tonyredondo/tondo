@@ -19,7 +19,10 @@ para sus quince firmas Unicode y UTF-8; `std.collections` añade evidencia por
 celda para sus dieciocho firmas de `Array`, `Map` y `Set`; `std.iter` añade
 evidencia por celda para sus cuatro firmas de `Iterator`; `std.math` añade
 evidencia por celda para sus nueve firmas escalares; `std.format` añade
-evidencia por celda para sus cinco firmas de `Display` y builder. Los placeholders sintéticos anteriores
+evidencia por celda para sus cinco firmas de `Display` y builder; `std.io`
+añade evidencia por celda para sus cuatro firmas de Reader/Writer y límites;
+`std.path` añade evidencia por celda para sus diez firmas de paths léxicos.
+Los placeholders sintéticos anteriores
 quedan reemplazados por filas reales.
 `std.0.1B` permanece
 como catálogo futuro cerrado:
@@ -102,6 +105,13 @@ short I/O, límites, progreso, errores de `flush` y cancelación; la auditoría 
 las cuatro firmas queda enlazada por `STD-A-IO-EVIDENCE-001`. Fuzz dedicado,
 baselines de bytes/chunks/work-units y `STD-CONF-001` siguen abiertos; los
 adaptadores pertenecen a `std.console`, `std.fs` y `std.process`.
+
+`std.path` conserva `HOST` como `not-applicable`: es una representación léxica
+portable que no consulta el filesystem. El kernel y el fixture público cubren
+bytes nativos, UTF-8 estricto, NFC/NFD sin normalización, `.`/`..`, raíces,
+extensiones, joins atómicos y el límite de 32 KiB; la auditoría de sus diez
+firmas queda enlazada por `STD-A-PATH-EVIDENCE-001`. Fuzz dedicado, baselines de
+bytes/componentes/work-units y `STD-CONF-001` siguen abiertos.
 
 Esta matriz no cierra `STD-CONF-001`, `STD-TEST-001` ni `STD-DOC-001`: registra
 sus celdas pendientes para que las siguientes coordinaciones puedan promover

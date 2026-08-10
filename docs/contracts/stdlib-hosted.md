@@ -26,14 +26,13 @@ es necesaria para adquirir los tres handles y para las comodidades de output.
 
 ```tondo
 pub type Path
-pub enum PathKind { Relative, Absolute }
 pub fn Path.fromString(value: String): Path ! PathError
 pub fn Path.fromBytes(value: Bytes): Path ! PathError
 pub fn Path.join(self, component: String): Path ! PathError
 pub fn Path.parent(self): Path?
 pub fn Path.fileName(self): String?
 pub fn Path.extension(self): String?
-pub fn Path.kind(self): PathKind
+pub fn Path.kind(self): Bool
 pub fn Path.isEmpty(self): Bool
 pub fn Path.toString(self): String ! PathError
 pub fn Path.toBytes(self): Bytes
@@ -44,6 +43,18 @@ Las operaciones de esta sección son léxicas y no consultan el filesystem.
 `Path` conserva los bytes nativos cuando el target los admite; `toString` solo
 falla si esos bytes no son UTF-8. No normaliza symlinks, no resuelve `..` y no
 promete igualdad entre raíces de targets distintos.
+
+`kind` devuelve `true` si el snapshot es absoluto y `false` si es relativo; no
+introduce un enum paralelo para una propiedad binaria.
+
+La representación conserva exactamente los bytes entregados a `fromBytes` y
+los devuelve mediante `toBytes`; no aplica NFC/NFD, case-folding, expansión de
+separadores ni otra normalización Unicode. `join` acepta un único componente,
+rechaza separadores, NUL y entradas que exceden el límite de 32 KiB, y deja el
+path original intacto cuando falla. `parent`, `fileName` y `extension` son
+consultas puras sobre los separadores `/`; no consultan existencia, permisos,
+symlinks ni el directorio de trabajo. El corpus de bytes nativos y UTF-8 se
+ejecuta sin capability `filesystem` y es determinista en todos los targets.
 
 ## `std.fs`
 

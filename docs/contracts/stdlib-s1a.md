@@ -126,6 +126,16 @@ strict names, missing-entry options, independent copies and atomic limits.
 explicitly, while dedicated fuzz and capability-scoped performance promotion
 remain pending.
 
+The pure `std.path` owner is closed for hosted evidence by its shared contract
+[`testing/stdlib-hosted.json`](../../testing/stdlib-hosted.json) and the
+`STD-A-PATH-EVIDENCE-001` cell record. Its model keeps native bytes and UTF-8
+as an exact lexical snapshot, makes NFC/NFD and `.`/`..` preservation explicit,
+and rejects NUL, separators in components and the 32 KiB resource boundary
+atomically. The bounded deterministic corpus and compiler/VM host fixture
+exercise every public operation without touching the filesystem; `HOST` is
+explicitly `not-applicable`. A dedicated operation fuzz target, owner cost
+baselines and global conformance promotion remain pending.
+
 The hosted bridge is intentionally a draft distribution boundary: the VM
 validates the typed operation before invoking the host, and the host returns a
 nominal error or a complete value. Console streams use the same `Reader` and

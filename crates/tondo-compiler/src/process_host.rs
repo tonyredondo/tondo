@@ -1992,10 +1992,10 @@ impl VmHost for BootstrapHost {
                 )))),
                 Err(error) => Ok(self.path_result_error(format!("{error:?}"))),
             },
-            ("std.path.Path.toBytes", [receiver]) => Ok(self.allocate(
-                RuntimeHostValueKind::Bytes,
-                HostValue::Bytes(self.path(receiver)?.as_bytes().to_vec()),
-            )),
+            ("std.path.Path.toBytes", [receiver]) => {
+                let bytes = self.path(receiver)?.to_bytes();
+                Ok(self.allocate(RuntimeHostValueKind::Bytes, HostValue::Bytes(bytes)))
+            }
             ("std.fs.OpenMode.Read", []) => Ok(self.allocate(
                 RuntimeHostValueKind::OpenMode,
                 HostValue::OpenMode(FsOpenMode::Read),
@@ -4412,6 +4412,78 @@ mod tests {
             RuntimeValue::ResultErr(value)
                 if matches!(value.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::FsError, .. })
         ));
+    }
+
+    #[test]
+    fn path_host_boundary_preserves_native_bytes_and_lexical_semantics() {
+        let mut host = BootstrapHost::default();
+        let native_bytes = host.allocate(
+            RuntimeHostValueKind::Bytes,
+            HostValue::Bytes(vec![0xff, b'/', b'n']),
+        );
+        let native = ok(host
+            .invoke(
+                "std.path.Path.fromBytes",
+                std::slice::from_ref(&native_bytes),
+            )
+            .unwrap());
+        let round_trip = host
+            .invoke("std.path.Path.toBytes", std::slice::from_ref(&native))
+            .unwrap();
+        assert_eq!(host.bytes(&round_trip).unwrap(), &[0xff, b'/', b'n']);
+        assert!(matches!(
+            host.invoke("std.path.Path.toString", std::slice::from_ref(&native))
+                .unwrap(),
+            RuntimeValue::ResultErr(error)
+                if matches!(error.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::PathError, .. })
+        ));
+
+        let base = ok(host
+            .invoke(
+                "std.path.Path.fromString",
+                &[RuntimeValue::String("a/../b.txt".into())],
+            )
+            .unwrap());
+        assert_eq!(
+            host.invoke("std.path.Path.kind", std::slice::from_ref(&base))
+                .unwrap(),
+            RuntimeValue::Bool(false)
+        );
+        let parent = match host
+            .invoke("std.path.Path.parent", std::slice::from_ref(&base))
+            .unwrap()
+        {
+            RuntimeValue::OptionSome(parent) => parent,
+            other => panic!("expected parent path, got {other:?}"),
+        };
+        let parent_text = ok(host
+            .invoke("std.path.Path.toString", std::slice::from_ref(&parent))
+            .unwrap());
+        assert_eq!(parent_text, RuntimeValue::String("a/..".into()));
+
+        let joined = ok(host
+            .invoke(
+                "std.path.Path.join",
+                &[base.clone(), RuntimeValue::String("next".into())],
+            )
+            .unwrap());
+        let joined_text = ok(host
+            .invoke("std.path.Path.toString", std::slice::from_ref(&joined))
+            .unwrap());
+        assert_eq!(joined_text, RuntimeValue::String("a/../b.txt/next".into()));
+        assert!(matches!(
+            host.invoke(
+                "std.path.Path.join",
+                &[base.clone(), RuntimeValue::String("bad/component".into())],
+            )
+            .unwrap(),
+            RuntimeValue::ResultErr(error)
+                if matches!(error.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::PathError, .. })
+        ));
+        let unchanged = ok(host
+            .invoke("std.path.Path.toString", std::slice::from_ref(&base))
+            .unwrap());
+        assert_eq!(unchanged, RuntimeValue::String("a/../b.txt".into()));
     }
 
     #[test]
