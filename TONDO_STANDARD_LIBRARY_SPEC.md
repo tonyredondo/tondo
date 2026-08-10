@@ -63,7 +63,9 @@ Esta revisión no fija todavía:
 
 - Las declaraciones completas de cada módulo.
 - El conjunto exacto de variantes y payloads de cada error.
-- Los formatos concretos de `std.format`.
+- Las variantes culturales o dependientes de locale de `std.format`; el
+  formatting estático sobre `Display`, sus builders y sus límites están fijados
+  en `docs/contracts/stdlib-core.md`.
 - Los métodos concretos de strings, colecciones e iteradores.
 - Las declaraciones exhaustivas de consola, filesystem, procesos,
   networking, concurrencia, calendario civil, codecs adicionales, regex, UUID
@@ -1334,6 +1336,15 @@ puede añadir formato controlado mediante `std.format`, pero:
 Una API de console recibe texto o bytes ya definidos por su contrato. La
 decisión de añadir newline, separator, flushing o encoding pertenece a esa
 operación y nunca es implícita por terminal.
+
+El contrato executable de `std.format` está en
+`docs/contracts/stdlib-core.md`: `Builder`, `format` y `join` son una única
+superficie estática sobre `Display`. Los builders comprueban el límite antes de
+mutar, y el caso de error no expone materialización parcial. La evidencia
+`STD-A-FMT-EVIDENCE-001` enlaza las cinco firmas con HIR/MIR/bytecode/VM, el
+fixture runtime, properties de límites y la auditoría pública; fuzz de
+operaciones y baselines de allocations/materialización se mantienen como
+promoción posterior, no como garantías inventadas.
 
 ---
 

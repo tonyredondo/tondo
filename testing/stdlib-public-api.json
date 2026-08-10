@@ -3604,10 +3604,10 @@
       "status": "verified"
     },
     {
-      "id": "std.io:251",
+      "id": "std.io:257",
       "owner": "std.io",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 251,
+      "line": 257,
       "signature": "pub fn defaultLimits(): IoLimits",
       "symbol": "std.io.defaultLimits",
       "operation": "defaultLimits",
@@ -3652,10 +3652,10 @@
       "status": "verified"
     },
     {
-      "id": "std.io:252",
+      "id": "std.io:258",
       "owner": "std.io",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 252,
+      "line": 258,
       "signature": "pub fn limits(maxBytes: Int, maxRead: Int): IoLimits ! IoError",
       "symbol": "std.io.limits",
       "operation": "limits",
@@ -3700,10 +3700,10 @@
       "status": "verified"
     },
     {
-      "id": "std.io:253",
+      "id": "std.io:259",
       "owner": "std.io",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 253,
+      "line": 259,
       "signature": "pub fn readAll[R: Reader](var reader: R, limits: IoLimits): Bytes ! IoError",
       "symbol": "std.io.readAll",
       "operation": "readAll",
@@ -3748,10 +3748,10 @@
       "status": "verified"
     },
     {
-      "id": "std.io:254",
+      "id": "std.io:260",
       "owner": "std.io",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 254,
+      "line": 260,
       "signature": "pub fn writeAll(var writer: Writer, data: Bytes): Unit ! IoError",
       "symbol": "std.io.writeAll",
       "operation": "writeAll",

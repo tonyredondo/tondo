@@ -233,8 +233,14 @@ pub enum FormatError { ResourceLimit, InvalidFormat }
 ```
 
 El builder crece con límites comprobados y reutiliza `BytesBuilder` cuando el
-target lo permite. `format` no usa reflection, no inspecciona privados y no
-introduce una segunda sintaxis de interpolación.
+target lo permite. Cada append comprueba el límite antes de mutar el estado;
+un error nunca expone una salida parcial. `format` y `join` usan `Display`
+estático, no reflection, no inspeccionan privados y no introducen una segunda
+sintaxis de interpolación. El caso vacío, los límites exactos, los separadores,
+los errores de `Display` y los receivers inválidos forman parte del corpus
+portable. Las dimensiones de coste son bytes materializados, allocations del
+builder y work-units; sus baselines por owner se capturan por separado, sin
+convertir el número de allocations en una garantía semántica.
 
 ## `std.io`
 

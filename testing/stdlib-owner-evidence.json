@@ -53,6 +53,11 @@
       "id": "STD-A-MATH-EVIDENCE-001",
       "contract": "testing/stdlib-core.json",
       "owners": ["std.math"]
+    },
+    {
+      "id": "STD-A-FMT-EVIDENCE-001",
+      "contract": "testing/stdlib-core.json",
+      "owners": ["std.format"]
     }
   ],
   "owners": [
@@ -814,6 +819,86 @@
         "cargo test -p tondo-stdlib --locked --lib math::tests",
         "cargo test -p tondo-compiler --locked --lib process_host::tests::math_sqrt_uses_the_nominal_error_boundary",
         "cargo test -p tondo-compiler --locked --lib hir::check::tests::compile_time_collection_duplicates_and_nan_comparisons_are_diagnosed"
+      ]
+    },
+    {
+      "id": "std.format",
+      "layer": "A1",
+      "cells": {
+        "SPEC": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["testing/stdlib-core.json", "docs/contracts/stdlib-core.md", "TONDO_STANDARD_LIBRARY_SPEC.md"]
+        },
+        "IMPL": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-stdlib/src/format.rs", "crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs", "crates/tondo-compiler/src/mir/verify.rs", "crates/tondo-compiler/src/bytecode/lower.rs", "crates/tondo-compiler/src/process_host.rs", "crates/tondo-vm/src/runtime/execute.rs"]
+        },
+        "HOST": {
+          "status": "not-applicable",
+          "reason": "std.format is an intrinsic portable formatting owner; its compiler/VM bridge has no separate capability provider or ambient host dependency",
+          "refs": ["docs/contracts/stdlib-core.md", "testing/stdlib-core.json", "crates/tondo-compiler/src/process_host.rs"]
+        },
+        "MODEL": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-stdlib/src/format.rs", "crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/mir/verify.rs", "crates/tondo-compiler/src/bytecode/lower.rs", "crates/tondo-vm/src/runtime/execute.rs"]
+        },
+        "TEST": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-stdlib/src/format.rs", "crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/mir/verify.rs", "crates/tondo-compiler/src/bytecode/lower.rs", "crates/tondo-vm/src/runtime/execute.rs", "tests/runtime/m11-std-format-001.to", "scripts/stdlib-format-test.sh"]
+        },
+        "FUZZ": {
+          "status": "partial",
+          "reason": "the bounded builder, Display and limit-boundary property corpus is executable, but no dedicated std.format operation fuzz target has been promoted",
+          "refs": ["crates/tondo-stdlib/src/format.rs", "tests/runtime/m11-std-format-001.to", "scripts/stdlib-format-test.sh"]
+        },
+        "PERF": {
+          "status": "partial",
+          "reason": "empty, representative and adversarial builder workloads plus allocation budgets are declared, but owner-specific allocation and materialization baselines remain pending promotion",
+          "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
+        },
+        "CONF": {
+          "status": "partial",
+          "reason": "the public API audit and formatting runtime fixture cover all five signatures; STD-CONF-001 has not yet promoted every standard-library owner",
+          "refs": ["testing/stdlib-public-api.json", "tests/runtime/m11-std-format-001.to", "TONDO_IMPLEMENTATION_TRACKER.md"]
+        },
+        "DOC": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["docs/contracts/stdlib-core.md", "TONDO_STANDARD_LIBRARY_SPEC.md", "docs/contracts/stdlib-s1a.md", "docs/contracts/stdlib-matrix.md"]
+        }
+      },
+      "budgets": {
+        "formatted_bytes": {
+          "unit": "bytes",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 500,
+          "state": "declared-baseline-pending"
+        },
+        "builder_allocations": {
+          "unit": "allocations",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 1000,
+          "state": "declared-baseline-pending"
+        },
+        "format_work_units": {
+          "unit": "work-units",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 1000,
+          "state": "declared-baseline-pending"
+        }
+      },
+      "commands": [
+        "scripts/stdlib-core-check.sh",
+        "scripts/stdlib-format-test.sh",
+        "cargo test -p tondo-stdlib --locked --lib format::tests",
+        "cargo test -p tondo-compiler --locked --lib process_host::tests::format_builder_is_bounded_and_rejects_append_atomically",
+        "cargo test -p tondo-compiler --locked --lib mir::verify::tests::format_operations_are_explicitly_verified_and_reject_corruption",
+        "cargo test -p tondo-compiler --locked --lib bytecode::lower::tests::format_operations_lower_to_verified_bytecode_with_static_and_custom_display",
+        "cargo test -p tondo-vm --locked --lib runtime::execute::tests::format_builder_host_boundaries_are_materialized_atomically"
       ]
     }
   ],

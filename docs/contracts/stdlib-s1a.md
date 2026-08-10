@@ -89,6 +89,16 @@ portable scalar implementation is the 0.1 scalar oracle: there is no separate
 SIMD or fast-math path, and any future vectorized backend must prove bitwise
 equivalence before promotion. `HOST` is explicitly `not-applicable`; operation
 fuzz, owner cost baselines and global conformance promotion remain pending.
+The intrinsic `std.format` owner is closed by the shared group contract
+[`testing/stdlib-core.json`](../../testing/stdlib-core.json) and its
+`STD-A-FMT-EVIDENCE-001` cell record. All five signatures are traced through
+static `Display` dispatch, bounded builders, HIR/MIR/bytecode verification,
+the compiler/VM bridge and `m11-std-format-001.to`. Exact-limit properties,
+separator boundaries, empty inputs, invalid receivers and failing `Display`
+implementations prove that rejected appends do not mutate observable output.
+`HOST` is explicitly `not-applicable`; operation fuzz and owner allocation or
+materialization baselines remain pending promotion, while the public API and
+documentation links are verified.
 The capability-gated `std.time` owner is closed for hosted evidence by
 [`testing/stdlib-time.json`](../../testing/stdlib-time.json) and its
 `STD-A-TIME-EVIDENCE-001` cell record. It separates the duration/instant/timer

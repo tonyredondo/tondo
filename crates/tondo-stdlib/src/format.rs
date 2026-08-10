@@ -110,6 +110,15 @@ pub fn join<T: Display>(
 mod tests {
     use super::*;
 
+    struct FailingDisplay;
+
+    impl Display for FailingDisplay {
+        fn display(&self, output: &mut Builder) -> Result<(), FormatError> {
+            output.append("prefix")?;
+            Err(FormatError::InvalidFormat)
+        }
+    }
+
     #[test]
     fn builder_and_display_are_bounded() {
         let mut builder = Builder::new(FormatLimits { max_bytes: 5 });
@@ -135,5 +144,61 @@ mod tests {
             Err(FormatError::ResourceLimit)
         );
         assert_eq!(join::<i128>(&[], ",", FormatLimits::default()).unwrap(), "");
+    }
+
+    #[test]
+    fn limits_are_exact_and_rejected_appends_do_not_mutate_state() {
+        for max_bytes in 0..=8 {
+            let mut builder = Builder::new(FormatLimits { max_bytes });
+            let mut expected = String::new();
+            if max_bytes >= 5 {
+                assert!(builder.append("tondo").is_ok());
+                expected.push_str("tondo");
+                if max_bytes >= 6 {
+                    assert!(builder.append("!").is_ok());
+                    expected.push('!');
+                } else {
+                    assert_eq!(builder.append("!"), Err(FormatError::ResourceLimit));
+                }
+            } else {
+                assert_eq!(builder.append("tondo"), Err(FormatError::ResourceLimit));
+                if max_bytes >= 1 {
+                    assert!(builder.append("!").is_ok());
+                    expected.push('!');
+                } else {
+                    assert_eq!(builder.append("!"), Err(FormatError::ResourceLimit));
+                }
+            }
+            assert_eq!(builder.finish().unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn display_errors_propagate_without_exposing_partial_output() {
+        assert_eq!(
+            format(&FailingDisplay, FormatLimits::default()),
+            Err(FormatError::InvalidFormat)
+        );
+
+        let mut builder = Builder::new(FormatLimits { max_bytes: 8 });
+        assert_eq!(
+            FailingDisplay.display(&mut builder),
+            Err(FormatError::InvalidFormat)
+        );
+        assert_eq!(builder.finish().unwrap(), "prefix");
+    }
+
+    #[test]
+    fn join_is_deterministic_at_every_materialization_boundary() {
+        let values = ["a", "bb", "ccc"];
+        let expected = "a|bb|ccc";
+        for max_bytes in 0..=expected.len() {
+            let result = join(&values, "|", FormatLimits { max_bytes });
+            if max_bytes == expected.len() {
+                assert_eq!(result.unwrap(), expected);
+            } else {
+                assert_eq!(result, Err(FormatError::ResourceLimit));
+            }
+        }
     }
 }

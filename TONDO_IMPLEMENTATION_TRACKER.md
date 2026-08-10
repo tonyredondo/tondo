@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 2.01
+**Versión del tracker:** 2.02
 
 **Última actualización:** 2026-08-10
 
@@ -4602,9 +4602,15 @@ administrativas que no implementan comportamiento.
   baselines de coste y `STD-CONF-001` siguen visibles como promoción posterior.
   `scripts/stdlib-math-test.sh` valida contratos negativos, símbolos, corpus,
   ausencia de rutas SIMD/fast-math y las 9/9 filas públicas.
-- [ ] **STD-A-FMT-EVIDENCE-001 — Cerrar evidencia de formatting.** Cubrir
-  `Display`, builders, atomicidad, límites, properties/fuzz, allocations,
-  conformidad y docs; HOST es no aplicable.
+- [x] **STD-A-FMT-EVIDENCE-001 — Cerrar evidencia de formatting.** `std.format`
+  queda trazado en nueve celdas del owner intrínseco: las cinco firmas de
+  `Display`/builder pasan por HIR/MIR/bytecode/VM, fixture público y auditoría
+  de API. El corpus cubre vacío, límites exactos, separadores, errores de
+  `Display`, receivers inválidos y atomicidad; `HOST` es `not-applicable`.
+  Properties/fuzz de operaciones y baselines de allocations/materialización
+  permanecen visibles como promoción posterior, sin inventar métricas.
+  `scripts/stdlib-format-test.sh` valida contrato, símbolos, corpus, docs y
+  las 5/5 filas públicas.
 - [ ] **STD-A-IO-EVIDENCE-001 — Cerrar evidencia de I/O portable.** Cubrir
   modelo Reader/Writer, partial I/O, EOF, cancelación, fuzz de chunks, límites,
   coste, conformidad y docs; los adaptadores pertenecen a sus owners Hosted.
@@ -5791,6 +5797,20 @@ se declara iniciada antes de esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 2.02 — 2026-08-10
+
+- Se cierra `STD-A-FMT-EVIDENCE-001` con nueve celdas explícitas para el owner
+  intrínseco `std.format`. La evidencia enlaza las cinco firmas de `Builder`,
+  `format` y `join` con `Display` estático, HIR/MIR/bytecode/VM, el puente de
+  compilador, el fixture `m11-std-format-001.to` y la auditoría pública 5/5.
+  Las properties prueban casos vacíos, límites exactos, separadores, errores de
+  `Display`, receivers inválidos y que un append rechazado no muta el estado.
+  `HOST` queda `not-applicable`; fuzz específico y baselines de allocations o
+  materialización siguen visibles como promoción posterior.
+- El gate añade `scripts/stdlib-format-test.sh`, el owner evidence registry y
+  la documentación de coste/atomicidad; la matriz conserva 22 owners, 207
+  firmas y 165 requisitos sin crear una API duplicada.
 
 ### 2.00 — 2026-08-10
 

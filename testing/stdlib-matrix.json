@@ -809,16 +809,21 @@
       ],
       "stages": {
         "CONF": {
-          "reason": "STD-CONF-001 remains open until the owner has complete public evidence",
+          "reason": "the public API audit and formatting runtime fixture cover all five signatures; STD-CONF-001 has not yet promoted every standard-library owner",
           "refs": [
-            "TONDO_IMPLEMENTATION_TRACKER.md#STD-CONF-001"
+            "testing/stdlib-public-api.json",
+            "tests/runtime/m11-std-format-001.to",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
           ],
-          "status": "pending"
+          "status": "partial"
         },
         "DOC": {
           "reason": null,
           "refs": [
-            "docs/contracts/stdlib-core.md"
+            "docs/contracts/stdlib-core.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md",
+            "docs/contracts/stdlib-s1a.md",
+            "docs/contracts/stdlib-matrix.md"
           ],
           "status": "verified"
         },
@@ -826,55 +831,46 @@
           "reason": null,
           "refs": [
             "crates/tondo-compiler/src/bytecode/lower.rs",
-            "crates/tondo-compiler/src/hir.rs",
             "crates/tondo-compiler/src/hir/check.rs",
             "crates/tondo-compiler/src/hir/lower.rs",
-            "crates/tondo-compiler/src/mir.rs",
-            "crates/tondo-compiler/src/mir/lower.rs",
             "crates/tondo-compiler/src/mir/verify.rs",
             "crates/tondo-compiler/src/process_host.rs",
-            "crates/tondo-compiler/src/types.rs",
             "crates/tondo-stdlib/src/format.rs",
-            "crates/tondo-vm/src/bytecode.rs",
-            "crates/tondo-vm/src/bytecode/verify.rs",
-            "crates/tondo-vm/src/runtime.rs",
             "crates/tondo-vm/src/runtime/execute.rs",
-            "tests/runtime/m11-std-format-001.to"
+            "docs/contracts/stdlib-core.md",
+            "testing/stdlib-core.json"
           ],
           "status": "verified"
         },
         "MODEL/TEST/FUZZ": {
-          "reason": "owner tests exist; per-leaf MODEL/TEST/FUZZ links and fuzz coverage remain to be coordinated by STD-TEST-001",
+          "reason": "the bounded builder, Display and limit-boundary property corpus is executable, but no dedicated std.format operation fuzz target has been promoted",
           "refs": [
+            "crates/tondo-compiler/src/bytecode/lower.rs",
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/mir/verify.rs",
             "crates/tondo-compiler/src/process_host.rs",
             "crates/tondo-stdlib/src/format.rs",
+            "crates/tondo-vm/src/runtime/execute.rs",
+            "scripts/stdlib-format-test.sh",
             "tests/runtime/m11-std-format-001.to"
           ],
           "status": "partial"
         },
         "PERF": {
-          "observed_dimensions": [],
-          "pending_dimensions": [
-            "allocations_per_operation",
-            "allocated_bytes_per_operation",
-            "code_size",
-            "compile_time",
-            "peak_memory",
-            "startup",
-            "tail_latency",
-            "throughput"
-          ],
-          "reason": "Formatting needs reviewed empty, representative and adversarial builder identities before capture.",
+          "reason": "empty, representative and adversarial builder workloads plus allocation budgets are declared, but owner-specific allocation and materialization baselines remain pending promotion",
           "refs": [
-            "testing/stdlib-performance-conformance.json#owners/std.format"
+            "testing/stdlib-performance.json",
+            "testing/stdlib-performance-conformance.json",
+            "docs/contracts/stdlib-performance.md"
           ],
-          "status": "pending"
+          "status": "partial"
         },
         "SPEC": {
           "reason": null,
           "refs": [
             "testing/stdlib-core.json",
-            "docs/contracts/stdlib-core.md"
+            "docs/contracts/stdlib-core.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md"
           ],
           "status": "verified"
         }
@@ -1064,10 +1060,10 @@
         "requirement:std.io:ownership"
       ],
       "signature_rows": [
-        "signature:std.io:251",
-        "signature:std.io:252",
-        "signature:std.io:253",
-        "signature:std.io:254"
+        "signature:std.io:257",
+        "signature:std.io:258",
+        "signature:std.io:259",
+        "signature:std.io:260"
       ],
       "source_set": "stdlib-core",
       "stage_order": [
@@ -5883,96 +5879,96 @@
     },
     {
       "dimensions_ref": "owner:std.io",
-      "id": "signature:std.io:251",
+      "id": "signature:std.io:257",
       "kind": "signature",
       "layer": "A1",
       "owner": "std.io",
       "scope": "STD-0.1A",
       "signature": "pub fn defaultLimits(): IoLimits",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.io:251",
+        "audit": "testing/stdlib-public-api.json#rows/std.io:257",
         "contract": "docs/contracts/stdlib-core.md",
-        "line": 251
+        "line": 257
       },
       "stage_refs": {
         "CONF": "owner:std.io:CONF",
         "DOC": "owner:std.io:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.io:251:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.io:251:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.io:257:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.io:257:MODEL/TEST/FUZZ",
         "PERF": "owner:std.io:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.io:251:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.io:257:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.io.defaultLimits"
     },
     {
       "dimensions_ref": "owner:std.io",
-      "id": "signature:std.io:252",
+      "id": "signature:std.io:258",
       "kind": "signature",
       "layer": "A1",
       "owner": "std.io",
       "scope": "STD-0.1A",
       "signature": "pub fn limits(maxBytes: Int, maxRead: Int): IoLimits ! IoError",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.io:252",
+        "audit": "testing/stdlib-public-api.json#rows/std.io:258",
         "contract": "docs/contracts/stdlib-core.md",
-        "line": 252
+        "line": 258
       },
       "stage_refs": {
         "CONF": "owner:std.io:CONF",
         "DOC": "owner:std.io:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.io:252:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.io:252:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.io:258:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.io:258:MODEL/TEST/FUZZ",
         "PERF": "owner:std.io:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.io:252:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.io:258:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.io.limits"
     },
     {
       "dimensions_ref": "owner:std.io",
-      "id": "signature:std.io:253",
+      "id": "signature:std.io:259",
       "kind": "signature",
       "layer": "A1",
       "owner": "std.io",
       "scope": "STD-0.1A",
       "signature": "pub fn readAll[R: Reader](var reader: R, limits: IoLimits): Bytes ! IoError",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.io:253",
+        "audit": "testing/stdlib-public-api.json#rows/std.io:259",
         "contract": "docs/contracts/stdlib-core.md",
-        "line": 253
+        "line": 259
       },
       "stage_refs": {
         "CONF": "owner:std.io:CONF",
         "DOC": "owner:std.io:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.io:253:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.io:253:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.io:259:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.io:259:MODEL/TEST/FUZZ",
         "PERF": "owner:std.io:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.io:253:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.io:259:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.io.readAll"
     },
     {
       "dimensions_ref": "owner:std.io",
-      "id": "signature:std.io:254",
+      "id": "signature:std.io:260",
       "kind": "signature",
       "layer": "A1",
       "owner": "std.io",
       "scope": "STD-0.1A",
       "signature": "pub fn writeAll(var writer: Writer, data: Bytes): Unit ! IoError",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.io:254",
+        "audit": "testing/stdlib-public-api.json#rows/std.io:260",
         "contract": "docs/contracts/stdlib-core.md",
-        "line": 254
+        "line": 260
       },
       "stage_refs": {
         "CONF": "owner:std.io:CONF",
         "DOC": "owner:std.io:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.io:254:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.io:254:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.io:260:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.io:260:MODEL/TEST/FUZZ",
         "PERF": "owner:std.io:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.io:254:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.io:260:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.io.writeAll"
@@ -12536,8 +12532,8 @@
     "signatures": 207,
     "stage_counts": {
       "CONF": {
-        "partial": 231,
-        "pending": 141
+        "partial": 243,
+        "pending": 129
       },
       "DOC": {
         "verified": 372
@@ -12551,8 +12547,8 @@
         "verified": 6
       },
       "PERF": {
-        "partial": 257,
-        "pending": 115
+        "partial": 269,
+        "pending": 103
       },
       "SPEC": {
         "partial": 1,

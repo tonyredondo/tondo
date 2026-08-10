@@ -18,7 +18,8 @@ celda para sus nueve firmas intrínsecas; `std.text` añade evidencia por celda
 para sus quince firmas Unicode y UTF-8; `std.collections` añade evidencia por
 celda para sus dieciocho firmas de `Array`, `Map` y `Set`; `std.iter` añade
 evidencia por celda para sus cuatro firmas de `Iterator`; `std.math` añade
-evidencia por celda para sus nueve firmas escalares. Los placeholders sintéticos anteriores
+evidencia por celda para sus nueve firmas escalares; `std.format` añade
+evidencia por celda para sus cinco firmas de `Display` y builder. Los placeholders sintéticos anteriores
 quedan reemplazados por filas reales.
 `std.0.1B` permanece
 como catálogo futuro cerrado:
@@ -86,6 +87,13 @@ el corpus de overflow/subnormales, las properties de redondeo y la auditoría
 pública enlazan las nueve firmas; el scalar oracle es la referencia normativa y
 no hay una ruta SIMD alternativa en 0.1. Fuzz específico, baselines de coste y
 conformance global siguen abiertos.
+
+`std.format` conserva `HOST` como `not-applicable`: `Display`, `Builder`,
+`format` y `join` son intrínsecos portables y no consultan capabilities ni el
+entorno. El fixture público, las properties de límites exactos/atomicidad, la
+verificación estática y la auditoría de las cinco firmas quedan enlazados por
+`STD-A-FMT-EVIDENCE-001`; fuzz de operaciones, baselines de allocations y
+materialización y `STD-CONF-001` siguen abiertos.
 
 Esta matriz no cierra `STD-CONF-001`, `STD-TEST-001` ni `STD-DOC-001`: registra
 sus celdas pendientes para que las siguientes coordinaciones puedan promover
