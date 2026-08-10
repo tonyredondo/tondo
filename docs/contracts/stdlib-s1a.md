@@ -136,6 +136,16 @@ exercise every public operation without touching the filesystem; `HOST` is
 explicitly `not-applicable`. A dedicated operation fuzz target, owner cost
 baselines and global conformance promotion remain pending.
 
+The capability-gated `std.console` owner is closed for hosted evidence by the
+same shared contract and the `STD-A-CONSOLE-EVIDENCE-001` cell record. Its
+seven public signatures reuse the single `std.io` Reader/Writer model while
+keeping stdin, stdout and stderr as distinct tokens. The static capability
+check rejects a target without `console`; the host fixture covers partial
+reads, EOF, stable LF output, explicit flush, invalid UTF-8, wrong-stream
+handles and typed/redacted failures without publishing partial state. `HOST`
+is verified at the compiler/VM boundary. Dedicated operation fuzz, target
+hot-path cost baselines and global conformance promotion remain pending.
+
 The hosted bridge is intentionally a draft distribution boundary: the VM
 validates the typed operation before invoking the host, and the host returns a
 nominal error or a complete value. Console streams use the same `Reader` and

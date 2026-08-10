@@ -4296,6 +4296,67 @@ mod tests {
     }
 
     #[test]
+    fn console_failures_are_typed_atomic_and_redacted() {
+        let mut host = BootstrapHost::with_stdin(vec![0xff, b'\n']);
+        let reader = ok(host.invoke("std.console.stdin", &[]).unwrap());
+        let invalid = host
+            .invoke("std.console.readLine", std::slice::from_ref(&reader))
+            .unwrap();
+        let RuntimeValue::ResultErr(error) = &invalid else {
+            panic!("invalid stdin must produce ConsoleError");
+        };
+        let RuntimeValue::Host {
+            kind: RuntimeHostValueKind::ConsoleError,
+            id,
+        } = error.as_ref()
+        else {
+            panic!("invalid stdin must preserve the nominal ConsoleError kind");
+        };
+        assert!(matches!(
+            host.values.get(id),
+            Some(HostValue::ConsoleError { _message })
+                if !_message.contains('/') && !_message.contains('\\')
+        ));
+
+        // UTF-8 rejection is atomic: retrying observes the same invalid byte
+        // instead of silently advancing the reader past a failed line.
+        let retry = host
+            .invoke("std.console.readLine", std::slice::from_ref(&reader))
+            .unwrap();
+        assert!(matches!(
+            retry,
+            RuntimeValue::ResultErr(value)
+                if matches!(value.as_ref(), RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::ConsoleError,
+                    ..
+                })
+        ));
+
+        // A forged reader token for stdout is still a typed public error, not
+        // a host panic or an accidental read from another stream. Safe Tondo
+        // code cannot construct this token because the compiler fixes the
+        // stream identity at the acquisition boundary.
+        let wrong_reader = host.allocate(
+            RuntimeHostValueKind::Reader,
+            HostValue::Reader {
+                stream: StreamKind::Stdout,
+                offset: 0,
+            },
+        );
+        let wrong_stream = host
+            .invoke("std.console.readLine", std::slice::from_ref(&wrong_reader))
+            .unwrap();
+        assert!(matches!(
+            wrong_stream,
+            RuntimeValue::ResultErr(value)
+                if matches!(value.as_ref(), RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::ConsoleError,
+                    ..
+                })
+        ));
+    }
+
+    #[test]
     fn io_limits_helpers_are_bounded_and_atomic_at_the_public_host_boundary() {
         let mut host = BootstrapHost::with_stdin(b"abcdef".to_vec());
         let reader = ok(host.invoke("std.console.stdin", &[]).unwrap());

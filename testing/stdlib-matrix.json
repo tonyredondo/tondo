@@ -443,59 +443,65 @@
       ],
       "stages": {
         "CONF": {
-          "reason": "STD-CONF-001 remains open until the owner has complete public evidence",
+          "reason": "the public API audit, explicit console capability checks, stream fixture and typed failures cover the seven signatures; STD-CONF-001 has not yet promoted every standard-library owner",
           "refs": [
-            "TONDO_IMPLEMENTATION_TRACKER.md#STD-CONF-001"
+            "testing/stdlib-public-api.json",
+            "tests/runtime/m11-std-console-001.to",
+            "crates/tondo-compiler/src/driver.rs",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
           ],
-          "status": "pending"
+          "status": "partial"
         },
         "DOC": {
           "reason": null,
           "refs": [
-            "docs/contracts/stdlib-hosted.md"
+            "docs/contracts/stdlib-hosted.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md",
+            "docs/contracts/stdlib-s1a.md",
+            "docs/contracts/stdlib-matrix.md"
           ],
           "status": "verified"
         },
         "IMPL/HOST": {
           "reason": null,
           "refs": [
+            "crates/tondo-compiler/src/driver.rs",
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/process_host.rs",
             "crates/tondo-vm/src/runtime/execute.rs",
-            "tests/runtime/m11-std-console-001.to"
+            "docs/contracts/stdlib-hosted.md"
           ],
           "status": "verified"
         },
         "MODEL/TEST/FUZZ": {
-          "reason": "owner tests exist; per-leaf MODEL/TEST/FUZZ links and fuzz coverage remain to be coordinated by STD-TEST-001",
+          "reason": "the bounded stream, UTF-8 and capability corpus is executable, but no dedicated std.console operation fuzz target has been promoted",
           "refs": [
+            "crates/tondo-compiler/src/driver.rs",
+            "crates/tondo-compiler/src/hir/check.rs",
             "crates/tondo-compiler/src/process_host.rs",
+            "docs/contracts/stdlib-hosted.md",
+            "fuzz/fuzz_targets/admission.rs",
+            "scripts/stdlib-console-test.sh",
             "tests/runtime/m11-std-console-001.to"
           ],
           "status": "partial"
         },
         "PERF": {
-          "observed_dimensions": [],
-          "pending_dimensions": [
-            "allocations_per_operation",
-            "allocated_bytes_per_operation",
-            "code_size",
-            "compile_time",
-            "peak_memory",
-            "startup",
-            "tail_latency",
-            "throughput"
-          ],
-          "reason": "Hosted stream operations require a target-specific I/O workload and capability fixture before capture.",
+          "reason": "stream bytes, chunks and work-unit budgets are declared, but target-specific console hot-path baselines remain pending promotion",
           "refs": [
-            "testing/stdlib-performance-conformance.json#owners/std.console"
+            "testing/stdlib-performance.json",
+            "testing/stdlib-performance-conformance.json",
+            "docs/contracts/stdlib-performance.md"
           ],
-          "status": "pending"
+          "status": "partial"
         },
         "SPEC": {
           "reason": null,
           "refs": [
             "testing/stdlib-hosted.json",
-            "docs/contracts/stdlib-hosted.md"
+            "docs/contracts/stdlib-hosted.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md"
           ],
           "status": "verified"
         }
@@ -922,20 +928,20 @@
         "requirement:std.fs:pipeline-redirection"
       ],
       "signature_rows": [
-        "signature:std.fs:67",
-        "signature:std.fs:68",
-        "signature:std.fs:69",
-        "signature:std.fs:70",
-        "signature:std.fs:71",
-        "signature:std.fs:72",
-        "signature:std.fs:73",
-        "signature:std.fs:74",
-        "signature:std.fs:75",
-        "signature:std.fs:76",
-        "signature:std.fs:77",
-        "signature:std.fs:78",
-        "signature:std.fs:79",
-        "signature:std.fs:80"
+        "signature:std.fs:84",
+        "signature:std.fs:85",
+        "signature:std.fs:86",
+        "signature:std.fs:87",
+        "signature:std.fs:88",
+        "signature:std.fs:89",
+        "signature:std.fs:90",
+        "signature:std.fs:91",
+        "signature:std.fs:92",
+        "signature:std.fs:93",
+        "signature:std.fs:94",
+        "signature:std.fs:95",
+        "signature:std.fs:96",
+        "signature:std.fs:97"
       ],
       "source_set": "stdlib-hosted",
       "stage_order": [
@@ -1840,16 +1846,16 @@
         "requirement:std.path:pipeline-redirection"
       ],
       "signature_rows": [
-        "signature:std.path:29",
-        "signature:std.path:30",
-        "signature:std.path:31",
-        "signature:std.path:32",
-        "signature:std.path:33",
-        "signature:std.path:34",
-        "signature:std.path:35",
-        "signature:std.path:36",
-        "signature:std.path:37",
-        "signature:std.path:38"
+        "signature:std.path:46",
+        "signature:std.path:47",
+        "signature:std.path:48",
+        "signature:std.path:49",
+        "signature:std.path:50",
+        "signature:std.path:51",
+        "signature:std.path:52",
+        "signature:std.path:53",
+        "signature:std.path:54",
+        "signature:std.path:55"
       ],
       "source_set": "stdlib-hosted",
       "stage_order": [
@@ -1970,23 +1976,23 @@
         "requirement:std.process:pipeline-redirection"
       ],
       "signature_rows": [
-        "signature:std.process:114",
-        "signature:std.process:115",
-        "signature:std.process:116",
-        "signature:std.process:117",
-        "signature:std.process:118",
-        "signature:std.process:119",
-        "signature:std.process:120",
-        "signature:std.process:121",
-        "signature:std.process:122",
-        "signature:std.process:123",
-        "signature:std.process:124",
-        "signature:std.process:125",
-        "signature:std.process:126",
-        "signature:std.process:127",
-        "signature:std.process:128",
-        "signature:std.process:129",
-        "signature:std.process:130"
+        "signature:std.process:131",
+        "signature:std.process:132",
+        "signature:std.process:133",
+        "signature:std.process:134",
+        "signature:std.process:135",
+        "signature:std.process:136",
+        "signature:std.process:137",
+        "signature:std.process:138",
+        "signature:std.process:139",
+        "signature:std.process:140",
+        "signature:std.process:141",
+        "signature:std.process:142",
+        "signature:std.process:143",
+        "signature:std.process:144",
+        "signature:std.process:145",
+        "signature:std.process:146",
+        "signature:std.process:147"
       ],
       "source_set": "stdlib-hosted",
       "stage_order": [
@@ -5363,336 +5369,336 @@
     },
     {
       "dimensions_ref": "owner:std.fs",
-      "id": "signature:std.fs:67",
+      "id": "signature:std.fs:84",
       "kind": "signature",
       "layer": "A2",
       "owner": "std.fs",
       "scope": "STD-0.1A",
       "signature": "pub fn open(path: Path, mode: OpenMode): File ! FsError",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.fs:67",
+        "audit": "testing/stdlib-public-api.json#rows/std.fs:84",
         "contract": "docs/contracts/stdlib-hosted.md",
-        "line": 67
+        "line": 84
       },
       "stage_refs": {
         "CONF": "owner:std.fs:CONF",
         "DOC": "owner:std.fs:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.fs:67:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.fs:67:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.fs:84:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.fs:84:MODEL/TEST/FUZZ",
         "PERF": "owner:std.fs:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:67:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:84:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.fs.open"
     },
     {
       "dimensions_ref": "owner:std.fs",
-      "id": "signature:std.fs:68",
+      "id": "signature:std.fs:85",
       "kind": "signature",
       "layer": "A2",
       "owner": "std.fs",
       "scope": "STD-0.1A",
       "signature": "pub fn openDirectory(path: Path): Directory ! FsError",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.fs:68",
+        "audit": "testing/stdlib-public-api.json#rows/std.fs:85",
         "contract": "docs/contracts/stdlib-hosted.md",
-        "line": 68
+        "line": 85
       },
       "stage_refs": {
         "CONF": "owner:std.fs:CONF",
         "DOC": "owner:std.fs:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.fs:68:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.fs:68:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.fs:85:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.fs:85:MODEL/TEST/FUZZ",
         "PERF": "owner:std.fs:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:68:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:85:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.fs.openDirectory"
     },
     {
       "dimensions_ref": "owner:std.fs",
-      "id": "signature:std.fs:69",
+      "id": "signature:std.fs:86",
       "kind": "signature",
       "layer": "A2",
       "owner": "std.fs",
       "scope": "STD-0.1A",
       "signature": "pub fn readAll(path: Path): Bytes ! FsError",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.fs:69",
+        "audit": "testing/stdlib-public-api.json#rows/std.fs:86",
         "contract": "docs/contracts/stdlib-hosted.md",
-        "line": 69
+        "line": 86
       },
       "stage_refs": {
         "CONF": "owner:std.fs:CONF",
         "DOC": "owner:std.fs:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.fs:69:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.fs:69:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.fs:86:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.fs:86:MODEL/TEST/FUZZ",
         "PERF": "owner:std.fs:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:69:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:86:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.fs.readAll"
     },
     {
       "dimensions_ref": "owner:std.fs",
-      "id": "signature:std.fs:70",
+      "id": "signature:std.fs:87",
       "kind": "signature",
       "layer": "A2",
       "owner": "std.fs",
       "scope": "STD-0.1A",
       "signature": "pub fn writeAll(path: Path, data: Bytes): Unit ! FsError",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.fs:70",
+        "audit": "testing/stdlib-public-api.json#rows/std.fs:87",
         "contract": "docs/contracts/stdlib-hosted.md",
-        "line": 70
+        "line": 87
       },
       "stage_refs": {
         "CONF": "owner:std.fs:CONF",
         "DOC": "owner:std.fs:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.fs:70:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.fs:70:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.fs:87:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.fs:87:MODEL/TEST/FUZZ",
         "PERF": "owner:std.fs:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:70:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:87:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.fs.writeAll"
     },
     {
       "dimensions_ref": "owner:std.fs",
-      "id": "signature:std.fs:71",
+      "id": "signature:std.fs:88",
       "kind": "signature",
       "layer": "A2",
       "owner": "std.fs",
       "scope": "STD-0.1A",
       "signature": "pub fn createDirectory(path: Path, parents: Bool): Unit ! FsError",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.fs:71",
+        "audit": "testing/stdlib-public-api.json#rows/std.fs:88",
         "contract": "docs/contracts/stdlib-hosted.md",
-        "line": 71
+        "line": 88
       },
       "stage_refs": {
         "CONF": "owner:std.fs:CONF",
         "DOC": "owner:std.fs:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.fs:71:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.fs:71:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.fs:88:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.fs:88:MODEL/TEST/FUZZ",
         "PERF": "owner:std.fs:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:71:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:88:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.fs.createDirectory"
     },
     {
       "dimensions_ref": "owner:std.fs",
-      "id": "signature:std.fs:72",
+      "id": "signature:std.fs:89",
       "kind": "signature",
       "layer": "A2",
       "owner": "std.fs",
       "scope": "STD-0.1A",
       "signature": "pub fn remove(path: Path): Unit ! FsError",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.fs:72",
+        "audit": "testing/stdlib-public-api.json#rows/std.fs:89",
         "contract": "docs/contracts/stdlib-hosted.md",
-        "line": 72
+        "line": 89
       },
       "stage_refs": {
         "CONF": "owner:std.fs:CONF",
         "DOC": "owner:std.fs:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.fs:72:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.fs:72:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.fs:89:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.fs:89:MODEL/TEST/FUZZ",
         "PERF": "owner:std.fs:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:72:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:89:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.fs.remove"
     },
     {
       "dimensions_ref": "owner:std.fs",
-      "id": "signature:std.fs:73",
+      "id": "signature:std.fs:90",
       "kind": "signature",
       "layer": "A2",
       "owner": "std.fs",
       "scope": "STD-0.1A",
       "signature": "pub fn metadata(path: Path): Metadata ! FsError",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.fs:73",
+        "audit": "testing/stdlib-public-api.json#rows/std.fs:90",
         "contract": "docs/contracts/stdlib-hosted.md",
-        "line": 73
+        "line": 90
       },
       "stage_refs": {
         "CONF": "owner:std.fs:CONF",
         "DOC": "owner:std.fs:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.fs:73:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.fs:73:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.fs:90:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.fs:90:MODEL/TEST/FUZZ",
         "PERF": "owner:std.fs:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:73:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:90:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.fs.metadata"
     },
     {
       "dimensions_ref": "owner:std.fs",
-      "id": "signature:std.fs:74",
+      "id": "signature:std.fs:91",
       "kind": "signature",
       "layer": "A2",
       "owner": "std.fs",
       "scope": "STD-0.1A",
       "signature": "pub fn list(path: Path): Array[Path] ! FsError",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.fs:74",
+        "audit": "testing/stdlib-public-api.json#rows/std.fs:91",
         "contract": "docs/contracts/stdlib-hosted.md",
-        "line": 74
+        "line": 91
       },
       "stage_refs": {
         "CONF": "owner:std.fs:CONF",
         "DOC": "owner:std.fs:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.fs:74:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.fs:74:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.fs:91:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.fs:91:MODEL/TEST/FUZZ",
         "PERF": "owner:std.fs:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:74:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:91:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.fs.list"
     },
     {
       "dimensions_ref": "owner:std.fs",
-      "id": "signature:std.fs:75",
+      "id": "signature:std.fs:92",
       "kind": "signature",
       "layer": "A2",
       "owner": "std.fs",
       "scope": "STD-0.1A",
       "signature": "pub fn rename(from: Path, to: Path): Unit ! FsError",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.fs:75",
+        "audit": "testing/stdlib-public-api.json#rows/std.fs:92",
         "contract": "docs/contracts/stdlib-hosted.md",
-        "line": 75
+        "line": 92
       },
       "stage_refs": {
         "CONF": "owner:std.fs:CONF",
         "DOC": "owner:std.fs:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.fs:75:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.fs:75:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.fs:92:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.fs:92:MODEL/TEST/FUZZ",
         "PERF": "owner:std.fs:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:75:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:92:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.fs.rename"
     },
     {
       "dimensions_ref": "owner:std.fs",
-      "id": "signature:std.fs:76",
+      "id": "signature:std.fs:93",
       "kind": "signature",
       "layer": "A2",
       "owner": "std.fs",
       "scope": "STD-0.1A",
       "signature": "pub fn atomicWrite(path: Path, data: Bytes): Unit ! FsError",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.fs:76",
+        "audit": "testing/stdlib-public-api.json#rows/std.fs:93",
         "contract": "docs/contracts/stdlib-hosted.md",
-        "line": 76
+        "line": 93
       },
       "stage_refs": {
         "CONF": "owner:std.fs:CONF",
         "DOC": "owner:std.fs:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.fs:76:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.fs:76:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.fs:93:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.fs:93:MODEL/TEST/FUZZ",
         "PERF": "owner:std.fs:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:76:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:93:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.fs.atomicWrite"
     },
     {
       "dimensions_ref": "owner:std.fs",
-      "id": "signature:std.fs:77",
+      "id": "signature:std.fs:94",
       "kind": "signature",
       "layer": "A2",
       "owner": "std.fs",
       "scope": "STD-0.1A",
       "signature": "pub fn File.read(var self, max: Int): Option[Bytes] ! FsError",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.fs:77",
+        "audit": "testing/stdlib-public-api.json#rows/std.fs:94",
         "contract": "docs/contracts/stdlib-hosted.md",
-        "line": 77
+        "line": 94
       },
       "stage_refs": {
         "CONF": "owner:std.fs:CONF",
         "DOC": "owner:std.fs:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.fs:77:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.fs:77:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.fs:94:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.fs:94:MODEL/TEST/FUZZ",
         "PERF": "owner:std.fs:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:77:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:94:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.fs.File.read"
     },
     {
       "dimensions_ref": "owner:std.fs",
-      "id": "signature:std.fs:78",
+      "id": "signature:std.fs:95",
       "kind": "signature",
       "layer": "A2",
       "owner": "std.fs",
       "scope": "STD-0.1A",
       "signature": "pub fn File.write(var self, data: Bytes): Int ! FsError",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.fs:78",
+        "audit": "testing/stdlib-public-api.json#rows/std.fs:95",
         "contract": "docs/contracts/stdlib-hosted.md",
-        "line": 78
+        "line": 95
       },
       "stage_refs": {
         "CONF": "owner:std.fs:CONF",
         "DOC": "owner:std.fs:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.fs:78:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.fs:78:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.fs:95:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.fs:95:MODEL/TEST/FUZZ",
         "PERF": "owner:std.fs:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:78:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:95:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.fs.File.write"
     },
     {
       "dimensions_ref": "owner:std.fs",
-      "id": "signature:std.fs:79",
+      "id": "signature:std.fs:96",
       "kind": "signature",
       "layer": "A2",
       "owner": "std.fs",
       "scope": "STD-0.1A",
       "signature": "pub fn File.flush(var self): Unit ! FsError",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.fs:79",
+        "audit": "testing/stdlib-public-api.json#rows/std.fs:96",
         "contract": "docs/contracts/stdlib-hosted.md",
-        "line": 79
+        "line": 96
       },
       "stage_refs": {
         "CONF": "owner:std.fs:CONF",
         "DOC": "owner:std.fs:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.fs:79:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.fs:79:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.fs:96:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.fs:96:MODEL/TEST/FUZZ",
         "PERF": "owner:std.fs:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:79:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:96:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.fs.File.flush"
     },
     {
       "dimensions_ref": "owner:std.fs",
-      "id": "signature:std.fs:80",
+      "id": "signature:std.fs:97",
       "kind": "signature",
       "layer": "A2",
       "owner": "std.fs",
       "scope": "STD-0.1A",
       "signature": "pub fn Directory.list(var self): Array[Path] ! FsError",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.fs:80",
+        "audit": "testing/stdlib-public-api.json#rows/std.fs:97",
         "contract": "docs/contracts/stdlib-hosted.md",
-        "line": 80
+        "line": 97
       },
       "stage_refs": {
         "CONF": "owner:std.fs:CONF",
         "DOC": "owner:std.fs:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.fs:80:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.fs:80:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.fs:97:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.fs:97:MODEL/TEST/FUZZ",
         "PERF": "owner:std.fs:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:80:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:97:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.fs.Directory.list"
@@ -8656,240 +8662,240 @@
     },
     {
       "dimensions_ref": "owner:std.path",
-      "id": "signature:std.path:29",
+      "id": "signature:std.path:46",
       "kind": "signature",
       "layer": "A2",
       "owner": "std.path",
       "scope": "STD-0.1A",
       "signature": "pub fn Path.fromString(value: String): Path ! PathError",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.path:29",
+        "audit": "testing/stdlib-public-api.json#rows/std.path:46",
         "contract": "docs/contracts/stdlib-hosted.md",
-        "line": 29
+        "line": 46
       },
       "stage_refs": {
         "CONF": "owner:std.path:CONF",
         "DOC": "owner:std.path:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.path:29:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.path:29:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.path:46:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.path:46:MODEL/TEST/FUZZ",
         "PERF": "owner:std.path:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.path:29:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.path:46:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.path.Path.fromString"
     },
     {
       "dimensions_ref": "owner:std.path",
-      "id": "signature:std.path:30",
+      "id": "signature:std.path:47",
       "kind": "signature",
       "layer": "A2",
       "owner": "std.path",
       "scope": "STD-0.1A",
       "signature": "pub fn Path.fromBytes(value: Bytes): Path ! PathError",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.path:30",
+        "audit": "testing/stdlib-public-api.json#rows/std.path:47",
         "contract": "docs/contracts/stdlib-hosted.md",
-        "line": 30
+        "line": 47
       },
       "stage_refs": {
         "CONF": "owner:std.path:CONF",
         "DOC": "owner:std.path:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.path:30:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.path:30:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.path:47:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.path:47:MODEL/TEST/FUZZ",
         "PERF": "owner:std.path:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.path:30:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.path:47:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.path.Path.fromBytes"
     },
     {
       "dimensions_ref": "owner:std.path",
-      "id": "signature:std.path:31",
+      "id": "signature:std.path:48",
       "kind": "signature",
       "layer": "A2",
       "owner": "std.path",
       "scope": "STD-0.1A",
       "signature": "pub fn Path.join(self, component: String): Path ! PathError",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.path:31",
+        "audit": "testing/stdlib-public-api.json#rows/std.path:48",
         "contract": "docs/contracts/stdlib-hosted.md",
-        "line": 31
+        "line": 48
       },
       "stage_refs": {
         "CONF": "owner:std.path:CONF",
         "DOC": "owner:std.path:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.path:31:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.path:31:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.path:48:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.path:48:MODEL/TEST/FUZZ",
         "PERF": "owner:std.path:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.path:31:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.path:48:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.path.Path.join"
     },
     {
       "dimensions_ref": "owner:std.path",
-      "id": "signature:std.path:32",
+      "id": "signature:std.path:49",
       "kind": "signature",
       "layer": "A2",
       "owner": "std.path",
       "scope": "STD-0.1A",
       "signature": "pub fn Path.parent(self): Path?",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.path:32",
+        "audit": "testing/stdlib-public-api.json#rows/std.path:49",
         "contract": "docs/contracts/stdlib-hosted.md",
-        "line": 32
+        "line": 49
       },
       "stage_refs": {
         "CONF": "owner:std.path:CONF",
         "DOC": "owner:std.path:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.path:32:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.path:32:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.path:49:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.path:49:MODEL/TEST/FUZZ",
         "PERF": "owner:std.path:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.path:32:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.path:49:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.path.Path.parent"
     },
     {
       "dimensions_ref": "owner:std.path",
-      "id": "signature:std.path:33",
+      "id": "signature:std.path:50",
       "kind": "signature",
       "layer": "A2",
       "owner": "std.path",
       "scope": "STD-0.1A",
       "signature": "pub fn Path.fileName(self): String?",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.path:33",
+        "audit": "testing/stdlib-public-api.json#rows/std.path:50",
         "contract": "docs/contracts/stdlib-hosted.md",
-        "line": 33
+        "line": 50
       },
       "stage_refs": {
         "CONF": "owner:std.path:CONF",
         "DOC": "owner:std.path:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.path:33:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.path:33:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.path:50:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.path:50:MODEL/TEST/FUZZ",
         "PERF": "owner:std.path:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.path:33:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.path:50:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.path.Path.fileName"
     },
     {
       "dimensions_ref": "owner:std.path",
-      "id": "signature:std.path:34",
+      "id": "signature:std.path:51",
       "kind": "signature",
       "layer": "A2",
       "owner": "std.path",
       "scope": "STD-0.1A",
       "signature": "pub fn Path.extension(self): String?",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.path:34",
+        "audit": "testing/stdlib-public-api.json#rows/std.path:51",
         "contract": "docs/contracts/stdlib-hosted.md",
-        "line": 34
+        "line": 51
       },
       "stage_refs": {
         "CONF": "owner:std.path:CONF",
         "DOC": "owner:std.path:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.path:34:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.path:34:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.path:51:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.path:51:MODEL/TEST/FUZZ",
         "PERF": "owner:std.path:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.path:34:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.path:51:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.path.Path.extension"
     },
     {
       "dimensions_ref": "owner:std.path",
-      "id": "signature:std.path:35",
+      "id": "signature:std.path:52",
       "kind": "signature",
       "layer": "A2",
       "owner": "std.path",
       "scope": "STD-0.1A",
       "signature": "pub fn Path.kind(self): Bool",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.path:35",
+        "audit": "testing/stdlib-public-api.json#rows/std.path:52",
         "contract": "docs/contracts/stdlib-hosted.md",
-        "line": 35
+        "line": 52
       },
       "stage_refs": {
         "CONF": "owner:std.path:CONF",
         "DOC": "owner:std.path:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.path:35:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.path:35:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.path:52:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.path:52:MODEL/TEST/FUZZ",
         "PERF": "owner:std.path:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.path:35:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.path:52:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.path.Path.kind"
     },
     {
       "dimensions_ref": "owner:std.path",
-      "id": "signature:std.path:36",
+      "id": "signature:std.path:53",
       "kind": "signature",
       "layer": "A2",
       "owner": "std.path",
       "scope": "STD-0.1A",
       "signature": "pub fn Path.isEmpty(self): Bool",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.path:36",
+        "audit": "testing/stdlib-public-api.json#rows/std.path:53",
         "contract": "docs/contracts/stdlib-hosted.md",
-        "line": 36
+        "line": 53
       },
       "stage_refs": {
         "CONF": "owner:std.path:CONF",
         "DOC": "owner:std.path:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.path:36:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.path:36:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.path:53:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.path:53:MODEL/TEST/FUZZ",
         "PERF": "owner:std.path:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.path:36:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.path:53:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.path.Path.isEmpty"
     },
     {
       "dimensions_ref": "owner:std.path",
-      "id": "signature:std.path:37",
+      "id": "signature:std.path:54",
       "kind": "signature",
       "layer": "A2",
       "owner": "std.path",
       "scope": "STD-0.1A",
       "signature": "pub fn Path.toString(self): String ! PathError",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.path:37",
+        "audit": "testing/stdlib-public-api.json#rows/std.path:54",
         "contract": "docs/contracts/stdlib-hosted.md",
-        "line": 37
+        "line": 54
       },
       "stage_refs": {
         "CONF": "owner:std.path:CONF",
         "DOC": "owner:std.path:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.path:37:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.path:37:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.path:54:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.path:54:MODEL/TEST/FUZZ",
         "PERF": "owner:std.path:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.path:37:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.path:54:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.path.Path.toString"
     },
     {
       "dimensions_ref": "owner:std.path",
-      "id": "signature:std.path:38",
+      "id": "signature:std.path:55",
       "kind": "signature",
       "layer": "A2",
       "owner": "std.path",
       "scope": "STD-0.1A",
       "signature": "pub fn Path.toBytes(self): Bytes",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.path:38",
+        "audit": "testing/stdlib-public-api.json#rows/std.path:55",
         "contract": "docs/contracts/stdlib-hosted.md",
-        "line": 38
+        "line": 55
       },
       "stage_refs": {
         "CONF": "owner:std.path:CONF",
         "DOC": "owner:std.path:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.path:38:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.path:38:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.path:55:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.path:55:MODEL/TEST/FUZZ",
         "PERF": "owner:std.path:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.path:38:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.path:55:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.path.Path.toBytes"
@@ -9130,408 +9136,408 @@
     },
     {
       "dimensions_ref": "owner:std.process",
-      "id": "signature:std.process:114",
+      "id": "signature:std.process:131",
       "kind": "signature",
       "layer": "A2",
       "owner": "std.process",
       "scope": "STD-0.1A",
       "signature": "pub fn command(program: String, arguments: ...String): Command ! ProcessError",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.process:114",
+        "audit": "testing/stdlib-public-api.json#rows/std.process:131",
         "contract": "docs/contracts/stdlib-hosted.md",
-        "line": 114
+        "line": 131
       },
       "stage_refs": {
         "CONF": "owner:std.process:CONF",
         "DOC": "owner:std.process:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.process:114:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.process:114:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.process:131:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.process:131:MODEL/TEST/FUZZ",
         "PERF": "owner:std.process:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:114:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:131:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.process.command"
     },
     {
       "dimensions_ref": "owner:std.process",
-      "id": "signature:std.process:115",
+      "id": "signature:std.process:132",
       "kind": "signature",
       "layer": "A2",
       "owner": "std.process",
       "scope": "STD-0.1A",
       "signature": "pub fn shell(command: String): Command ! ProcessError",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.process:115",
+        "audit": "testing/stdlib-public-api.json#rows/std.process:132",
         "contract": "docs/contracts/stdlib-hosted.md",
-        "line": 115
+        "line": 132
       },
       "stage_refs": {
         "CONF": "owner:std.process:CONF",
         "DOC": "owner:std.process:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.process:115:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.process:115:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.process:132:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.process:132:MODEL/TEST/FUZZ",
         "PERF": "owner:std.process:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:115:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:132:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.process.shell"
     },
     {
       "dimensions_ref": "owner:std.process",
-      "id": "signature:std.process:116",
+      "id": "signature:std.process:133",
       "kind": "signature",
       "layer": "A2",
       "owner": "std.process",
       "scope": "STD-0.1A",
       "signature": "pub fn pipe(left: Command, right: Command): Pipeline ! ProcessError",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.process:116",
+        "audit": "testing/stdlib-public-api.json#rows/std.process:133",
         "contract": "docs/contracts/stdlib-hosted.md",
-        "line": 116
+        "line": 133
       },
       "stage_refs": {
         "CONF": "owner:std.process:CONF",
         "DOC": "owner:std.process:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.process:116:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.process:116:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.process:133:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.process:133:MODEL/TEST/FUZZ",
         "PERF": "owner:std.process:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:116:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:133:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.process.pipe"
     },
     {
       "dimensions_ref": "owner:std.process",
-      "id": "signature:std.process:117",
+      "id": "signature:std.process:134",
       "kind": "signature",
       "layer": "A2",
       "owner": "std.process",
       "scope": "STD-0.1A",
       "signature": "pub fn Command.mergeStderr(self): Command",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.process:117",
+        "audit": "testing/stdlib-public-api.json#rows/std.process:134",
         "contract": "docs/contracts/stdlib-hosted.md",
-        "line": 117
+        "line": 134
       },
       "stage_refs": {
         "CONF": "owner:std.process:CONF",
         "DOC": "owner:std.process:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.process:117:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.process:117:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.process:134:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.process:134:MODEL/TEST/FUZZ",
         "PERF": "owner:std.process:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:117:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:134:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.process.Command.mergeStderr"
     },
     {
       "dimensions_ref": "owner:std.process",
-      "id": "signature:std.process:118",
+      "id": "signature:std.process:135",
       "kind": "signature",
       "layer": "A2",
       "owner": "std.process",
       "scope": "STD-0.1A",
       "signature": "pub fn Pipeline.mergeStderr(self): Pipeline",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.process:118",
+        "audit": "testing/stdlib-public-api.json#rows/std.process:135",
         "contract": "docs/contracts/stdlib-hosted.md",
-        "line": 118
+        "line": 135
       },
       "stage_refs": {
         "CONF": "owner:std.process:CONF",
         "DOC": "owner:std.process:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.process:118:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.process:118:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.process:135:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.process:135:MODEL/TEST/FUZZ",
         "PERF": "owner:std.process:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:118:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:135:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.process.Pipeline.mergeStderr"
     },
     {
       "dimensions_ref": "owner:std.process",
-      "id": "signature:std.process:119",
+      "id": "signature:std.process:136",
       "kind": "signature",
       "layer": "A2",
       "owner": "std.process",
       "scope": "STD-0.1A",
       "signature": "pub fn Command.run(self): ExitStatus ! ProcessError",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.process:119",
+        "audit": "testing/stdlib-public-api.json#rows/std.process:136",
         "contract": "docs/contracts/stdlib-hosted.md",
-        "line": 119
+        "line": 136
       },
       "stage_refs": {
         "CONF": "owner:std.process:CONF",
         "DOC": "owner:std.process:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.process:119:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.process:119:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.process:136:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.process:136:MODEL/TEST/FUZZ",
         "PERF": "owner:std.process:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:119:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:136:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.process.Command.run"
     },
     {
       "dimensions_ref": "owner:std.process",
-      "id": "signature:std.process:120",
+      "id": "signature:std.process:137",
       "kind": "signature",
       "layer": "A2",
       "owner": "std.process",
       "scope": "STD-0.1A",
       "signature": "pub fn Command.output(self): ProcessOutput ! ProcessError",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.process:120",
+        "audit": "testing/stdlib-public-api.json#rows/std.process:137",
         "contract": "docs/contracts/stdlib-hosted.md",
-        "line": 120
+        "line": 137
       },
       "stage_refs": {
         "CONF": "owner:std.process:CONF",
         "DOC": "owner:std.process:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.process:120:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.process:120:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.process:137:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.process:137:MODEL/TEST/FUZZ",
         "PERF": "owner:std.process:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:120:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:137:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.process.Command.output"
     },
     {
       "dimensions_ref": "owner:std.process",
-      "id": "signature:std.process:121",
+      "id": "signature:std.process:138",
       "kind": "signature",
       "layer": "A2",
       "owner": "std.process",
       "scope": "STD-0.1A",
       "signature": "pub fn Command.check(self): ProcessOutput ! (ProcessError | ProcessExitError)",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.process:121",
+        "audit": "testing/stdlib-public-api.json#rows/std.process:138",
         "contract": "docs/contracts/stdlib-hosted.md",
-        "line": 121
+        "line": 138
       },
       "stage_refs": {
         "CONF": "owner:std.process:CONF",
         "DOC": "owner:std.process:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.process:121:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.process:121:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.process:138:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.process:138:MODEL/TEST/FUZZ",
         "PERF": "owner:std.process:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:121:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:138:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.process.Command.check"
     },
     {
       "dimensions_ref": "owner:std.process",
-      "id": "signature:std.process:122",
+      "id": "signature:std.process:139",
       "kind": "signature",
       "layer": "A2",
       "owner": "std.process",
       "scope": "STD-0.1A",
       "signature": "pub fn Command.start(self): ProcessHandle ! ProcessError",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.process:122",
+        "audit": "testing/stdlib-public-api.json#rows/std.process:139",
         "contract": "docs/contracts/stdlib-hosted.md",
-        "line": 122
+        "line": 139
       },
       "stage_refs": {
         "CONF": "owner:std.process:CONF",
         "DOC": "owner:std.process:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.process:122:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.process:122:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.process:139:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.process:139:MODEL/TEST/FUZZ",
         "PERF": "owner:std.process:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:122:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:139:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.process.Command.start"
     },
     {
       "dimensions_ref": "owner:std.process",
-      "id": "signature:std.process:123",
+      "id": "signature:std.process:140",
       "kind": "signature",
       "layer": "A2",
       "owner": "std.process",
       "scope": "STD-0.1A",
       "signature": "pub fn ProcessHandle.wait(var self): ExitStatus ! ProcessError",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.process:123",
+        "audit": "testing/stdlib-public-api.json#rows/std.process:140",
         "contract": "docs/contracts/stdlib-hosted.md",
-        "line": 123
+        "line": 140
       },
       "stage_refs": {
         "CONF": "owner:std.process:CONF",
         "DOC": "owner:std.process:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.process:123:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.process:123:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.process:140:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.process:140:MODEL/TEST/FUZZ",
         "PERF": "owner:std.process:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:123:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:140:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.process.ProcessHandle.wait"
     },
     {
       "dimensions_ref": "owner:std.process",
-      "id": "signature:std.process:124",
+      "id": "signature:std.process:141",
       "kind": "signature",
       "layer": "A2",
       "owner": "std.process",
       "scope": "STD-0.1A",
       "signature": "pub fn ProcessHandle.cancel(var self): Unit",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.process:124",
+        "audit": "testing/stdlib-public-api.json#rows/std.process:141",
         "contract": "docs/contracts/stdlib-hosted.md",
-        "line": 124
+        "line": 141
       },
       "stage_refs": {
         "CONF": "owner:std.process:CONF",
         "DOC": "owner:std.process:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.process:124:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.process:124:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.process:141:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.process:141:MODEL/TEST/FUZZ",
         "PERF": "owner:std.process:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:124:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:141:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.process.ProcessHandle.cancel"
     },
     {
       "dimensions_ref": "owner:std.process",
-      "id": "signature:std.process:125",
+      "id": "signature:std.process:142",
       "kind": "signature",
       "layer": "A2",
       "owner": "std.process",
       "scope": "STD-0.1A",
       "signature": "pub fn ProcessOutput.stdout(self): Bytes",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.process:125",
+        "audit": "testing/stdlib-public-api.json#rows/std.process:142",
         "contract": "docs/contracts/stdlib-hosted.md",
-        "line": 125
+        "line": 142
       },
       "stage_refs": {
         "CONF": "owner:std.process:CONF",
         "DOC": "owner:std.process:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.process:125:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.process:125:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.process:142:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.process:142:MODEL/TEST/FUZZ",
         "PERF": "owner:std.process:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:125:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:142:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.process.ProcessOutput.stdout"
     },
     {
       "dimensions_ref": "owner:std.process",
-      "id": "signature:std.process:126",
+      "id": "signature:std.process:143",
       "kind": "signature",
       "layer": "A2",
       "owner": "std.process",
       "scope": "STD-0.1A",
       "signature": "pub fn ProcessOutput.stderr(self): Bytes",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.process:126",
+        "audit": "testing/stdlib-public-api.json#rows/std.process:143",
         "contract": "docs/contracts/stdlib-hosted.md",
-        "line": 126
+        "line": 143
       },
       "stage_refs": {
         "CONF": "owner:std.process:CONF",
         "DOC": "owner:std.process:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.process:126:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.process:126:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.process:143:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.process:143:MODEL/TEST/FUZZ",
         "PERF": "owner:std.process:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:126:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:143:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.process.ProcessOutput.stderr"
     },
     {
       "dimensions_ref": "owner:std.process",
-      "id": "signature:std.process:127",
+      "id": "signature:std.process:144",
       "kind": "signature",
       "layer": "A2",
       "owner": "std.process",
       "scope": "STD-0.1A",
       "signature": "pub fn ProcessOutput.combined(self): Bytes",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.process:127",
+        "audit": "testing/stdlib-public-api.json#rows/std.process:144",
         "contract": "docs/contracts/stdlib-hosted.md",
-        "line": 127
+        "line": 144
       },
       "stage_refs": {
         "CONF": "owner:std.process:CONF",
         "DOC": "owner:std.process:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.process:127:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.process:127:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.process:144:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.process:144:MODEL/TEST/FUZZ",
         "PERF": "owner:std.process:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:127:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:144:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.process.ProcessOutput.combined"
     },
     {
       "dimensions_ref": "owner:std.process",
-      "id": "signature:std.process:128",
+      "id": "signature:std.process:145",
       "kind": "signature",
       "layer": "A2",
       "owner": "std.process",
       "scope": "STD-0.1A",
       "signature": "pub fn ProcessOutput.statuses(self): Array[ExitStatus]",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.process:128",
+        "audit": "testing/stdlib-public-api.json#rows/std.process:145",
         "contract": "docs/contracts/stdlib-hosted.md",
-        "line": 128
+        "line": 145
       },
       "stage_refs": {
         "CONF": "owner:std.process:CONF",
         "DOC": "owner:std.process:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.process:128:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.process:128:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.process:145:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.process:145:MODEL/TEST/FUZZ",
         "PERF": "owner:std.process:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:128:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:145:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.process.ProcessOutput.statuses"
     },
     {
       "dimensions_ref": "owner:std.process",
-      "id": "signature:std.process:129",
+      "id": "signature:std.process:146",
       "kind": "signature",
       "layer": "A2",
       "owner": "std.process",
       "scope": "STD-0.1A",
       "signature": "pub fn ExitStatus.code(self): Int?",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.process:129",
+        "audit": "testing/stdlib-public-api.json#rows/std.process:146",
         "contract": "docs/contracts/stdlib-hosted.md",
-        "line": 129
+        "line": 146
       },
       "stage_refs": {
         "CONF": "owner:std.process:CONF",
         "DOC": "owner:std.process:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.process:129:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.process:129:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.process:146:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.process:146:MODEL/TEST/FUZZ",
         "PERF": "owner:std.process:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:129:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:146:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.process.ExitStatus.code"
     },
     {
       "dimensions_ref": "owner:std.process",
-      "id": "signature:std.process:130",
+      "id": "signature:std.process:147",
       "kind": "signature",
       "layer": "A2",
       "owner": "std.process",
       "scope": "STD-0.1A",
       "signature": "pub fn ExitStatus.success(self): Bool",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.process:130",
+        "audit": "testing/stdlib-public-api.json#rows/std.process:147",
         "contract": "docs/contracts/stdlib-hosted.md",
-        "line": 130
+        "line": 147
       },
       "stage_refs": {
         "CONF": "owner:std.process:CONF",
         "DOC": "owner:std.process:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.process:130:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.process:130:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.process:147:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.process:147:MODEL/TEST/FUZZ",
         "PERF": "owner:std.process:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:130:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:147:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.process.ExitStatus.success"
@@ -12534,8 +12540,8 @@
     "signatures": 207,
     "stage_counts": {
       "CONF": {
-        "partial": 273,
-        "pending": 99
+        "partial": 289,
+        "pending": 83
       },
       "DOC": {
         "verified": 372
@@ -12549,8 +12555,8 @@
         "verified": 6
       },
       "PERF": {
-        "partial": 299,
-        "pending": 73
+        "partial": 315,
+        "pending": 57
       },
       "SPEC": {
         "partial": 1,

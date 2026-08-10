@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 2.03
+**Versión del tracker:** 2.05
 
 **Última actualización:** 2026-08-10
 
@@ -4633,9 +4633,16 @@ administrativas que no implementan comportamiento.
   `STD-CONF-001` permanecen visibles como promoción posterior.
   `scripts/stdlib-path-test.sh` valida contrato, símbolos, corpus, ausencia de
   capability, docs y las 10/10 filas públicas.
-- [ ] **STD-A-CONSOLE-EVIDENCE-001 — Cerrar evidencia de consola.** Separar
-  modelo de streams, adaptador HOST/capability, partial I/O, fallos, coste,
-  conformidad y docs.
+- [x] **STD-A-CONSOLE-EVIDENCE-001 — Cerrar evidencia de consola.** Las siete
+  firmas de `std.console` quedan trazadas con el modelo único de
+  `std.io.Reader`/`Writer`, tokens distintos para stdin/stdout/stderr, frontera
+  estática de capability `console`, partial I/O, EOF, LF estable, flush
+  explícito, errores UTF-8 atómicos y mensajes host opacos. HIR/lowering,
+  bytecode/VM, host, fixture `m11-std-console-001.to`, auditoría pública 7/7 y
+  la matriz de evidencia quedan enlazados. `HOST` es `verified`; fuzz dedicado,
+  baselines de bytes/chunks/work-units y `STD-CONF-001` permanecen visibles como
+  promoción posterior. `scripts/stdlib-console-test.sh` valida negativos,
+  símbolos, corpus, capability, documentación y todas las filas públicas.
 - [ ] **STD-A-FS-EVIDENCE-001 — Cerrar evidencia de filesystem.** Separar
   modelo, handles y adaptador HOST, corpus/fuzz, límites, cleanup/rendimiento,
   conformidad por capability y docs.
@@ -5813,6 +5820,21 @@ se declara iniciada antes de esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 2.05 — 2026-08-10
+
+- Se cierra `STD-A-CONSOLE-EVIDENCE-001` con nueve celdas explícitas y las
+  siete firmas públicas de `std.console`. El contrato documenta la frontera
+  capability-gated, los tokens independientes de stdin/stdout/stderr,
+  reutilización de `std.io`, partial I/O, EOF, LF estable, flush explícito y
+  errores de UTF-8 o handles incorrectos sin estado parcial ni detalles del
+  host.
+- La evidencia enlaza HIR/lowering, bytecode/VM, `process_host`, la prueba de
+  capability ausente, el fixture `m11-std-console-001.to`, la auditoría 7/7 y
+  la matriz normativa. Se añade un corpus host de fallos atómicos y
+  redactados, más `scripts/stdlib-console-test.sh`; fuzz específico,
+  baselines de bytes/chunks/work-units y `STD-CONF-001` siguen explícitamente
+  pendientes de promoción.
 
 ### 2.04 — 2026-08-10
 

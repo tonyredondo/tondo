@@ -22,6 +22,23 @@ locale ni newline de plataforma (`println` usa LF). El orden de varias writes
 solo es el orden de invocación dentro del mismo writer. La capability `console`
 es necesaria para adquirir los tres handles y para las comodidades de output.
 
+La frontera es estática: importar `std.console` no concede `console`, y un
+target sin esa capability rechaza el programa con `E1008` antes de generar
+bytecode. `stdin`, `stdout` y `stderr` son tokens distintos que reutilizan los
+protocolos `std.io.Reader`/`std.io.Writer`; no existe un terminal implícito ni
+un locale ambiental. Los lectores pueden entregar partial I/O y
+`readLine` conserva su offset hasta aceptar una línea UTF-8 completa. EOF
+devuelve `none`; una línea con UTF-8 inválido o un reader que no sea stdin
+devuelve `ConsoleError` sin avanzar el cursor ni publicar un valor parcial.
+
+`print` escribe exactamente los bytes UTF-8 de `String`, `println` añade un
+único byte LF y ninguna de las dos operaciones hace flush implícito. `flush`
+es explícito y terminal dentro del writer correspondiente. Los errores del
+host se convierten a `ConsoleError` nominal y no exponen rutas, mensajes o
+detalles dependientes del sistema operativo. Los límites de bytes, chunks,
+progreso y cancelación pertenecen al protocolo `std.io`; el adaptador de
+console no crea buffers duplicados ni otra API síncrona/suspendible.
+
 ## `std.path`
 
 ```tondo

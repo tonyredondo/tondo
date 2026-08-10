@@ -2959,18 +2959,39 @@ línea de la librería.
 
 ### 19.1 `std.console`
 
-El bootstrap expone exactamente:
+`std.console` es el owner capability-gated de los tres streams del proceso.
+Importar el módulo no concede la capability `console`; un target que no la
+declare rechaza el programa estáticamente con `E1008`. La superficie pública
+única es:
 
-~~~tondo pseudocode
-fn print(value: String)
+~~~tondo
+pub fn stdin(): std.io.Reader ! ConsoleError
+pub fn stdout(): std.io.Writer ! ConsoleError
+pub fn stderr(): std.io.Writer ! ConsoleError
+pub fn readLine(var input: std.io.Reader): String? ! ConsoleError
+pub fn print(value: String): Unit ! ConsoleError
+pub fn println(value: String): Unit ! ConsoleError
+pub fn flush(): Unit ! ConsoleError
+pub enum ConsoleError { Unavailable, Closed, Cancelled, Io(std.io.IoError) }
 ~~~
 
-Es infallible, no añade newline y solo escribe stdout. STD-0.1 deberá fijar
-texto, bytes, stdin/stdout/stderr, flushing, error, suspensión y terminal
-independiente antes de decidir si conserva esa firma.
+Los handles son tokens distintos y reutilizan los protocolos de `std.io`; no
+hay terminal, locale, encoding o newline ambiental implícito. `readLine` solo
+avanza el cursor después de aceptar una línea UTF-8 completa, devuelve `none`
+en EOF y devuelve un `ConsoleError` tipado sin consumir datos cuando recibe
+UTF-8 inválido o un handle de output. `print` conserva el texto exacto,
+`println` añade un único LF y ninguna operación hace flush implícito: el flush
+es explícito y terminal para el writer correspondiente. Partial I/O, límites,
+progreso, cancelación y cleanup siguen las reglas de `std.io`; el adaptador no
+introduce una segunda API sync/async ni duplica buffers. Los mensajes del host
+se mantienen opacos y nunca publican rutas o detalles dependientes del sistema
+operativo.
 
-No existe obligación de compatibilidad entre el shim provisional y 0.1.0 de la
-stdlib. La migración sí debe ser explícita, documentada y comprobable.
+El shim bootstrap histórico queda como bridge interno de compatibilidad y no
+es una segunda identidad pública. La evidencia `STD-A-CONSOLE-EVIDENCE-001`
+debe enlazar las siete firmas con HIR/lowering, bytecode/VM, el adaptador de
+capability, partial I/O, errores atómicos, fixture, coste y documentación antes
+de la promoción de S1A.
 
 ### 19.2 `std.process`
 

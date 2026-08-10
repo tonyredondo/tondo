@@ -68,6 +68,11 @@
       "id": "STD-A-PATH-EVIDENCE-001",
       "contract": "testing/stdlib-hosted.json",
       "owners": ["std.path"]
+    },
+    {
+      "id": "STD-A-CONSOLE-EVIDENCE-001",
+      "contract": "testing/stdlib-hosted.json",
+      "owners": ["std.console"]
     }
   ],
   "owners": [
@@ -987,6 +992,85 @@
         "cargo test -p tondo-stdlib --locked --lib io::tests",
         "cargo test -p tondo-compiler --locked --lib process_host::tests::io_limits_helpers_are_bounded_and_atomic_at_the_public_host_boundary",
         "cargo test -p tondo-vm --locked --lib runtime::execute::tests::host_materialization_accepts_every_supported_shape_and_rejects_drift"
+      ]
+    },
+    {
+      "id": "std.console",
+      "layer": "A2",
+      "cells": {
+        "SPEC": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["testing/stdlib-hosted.json", "docs/contracts/stdlib-hosted.md", "TONDO_STANDARD_LIBRARY_SPEC.md"]
+        },
+        "IMPL": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs", "crates/tondo-vm/src/runtime/execute.rs"]
+        },
+        "HOST": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/driver.rs", "docs/contracts/stdlib-hosted.md"]
+        },
+        "MODEL": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/hir/check.rs", "docs/contracts/stdlib-hosted.md"]
+        },
+        "TEST": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/driver.rs", "tests/runtime/m11-std-console-001.to", "scripts/stdlib-console-test.sh"]
+        },
+        "FUZZ": {
+          "status": "partial",
+          "reason": "the bounded stream, UTF-8 and capability corpus is executable, but no dedicated std.console operation fuzz target has been promoted",
+          "refs": ["crates/tondo-compiler/src/process_host.rs", "scripts/stdlib-console-test.sh", "fuzz/fuzz_targets/admission.rs"]
+        },
+        "PERF": {
+          "status": "partial",
+          "reason": "stream bytes, chunks and work-unit budgets are declared, but target-specific console hot-path baselines remain pending promotion",
+          "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
+        },
+        "CONF": {
+          "status": "partial",
+          "reason": "the public API audit, explicit console capability checks, stream fixture and typed failures cover the seven signatures; STD-CONF-001 has not yet promoted every standard-library owner",
+          "refs": ["testing/stdlib-public-api.json", "tests/runtime/m11-std-console-001.to", "crates/tondo-compiler/src/driver.rs", "TONDO_IMPLEMENTATION_TRACKER.md"]
+        },
+        "DOC": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["docs/contracts/stdlib-hosted.md", "TONDO_STANDARD_LIBRARY_SPEC.md", "docs/contracts/stdlib-s1a.md", "docs/contracts/stdlib-matrix.md"]
+        }
+      },
+      "budgets": {
+        "stream_bytes": {
+          "unit": "bytes",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 1000,
+          "state": "declared-baseline-pending"
+        },
+        "stream_chunks": {
+          "unit": "chunks",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 1000,
+          "state": "declared-baseline-pending"
+        },
+        "console_work_units": {
+          "unit": "work-units",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 1000,
+          "state": "declared-baseline-pending"
+        }
+      },
+      "commands": [
+        "scripts/stdlib-hosted-check.sh",
+        "scripts/stdlib-console-test.sh",
+        "cargo test -p tondo-compiler --locked --lib process_host::tests::console_println_uses_a_stable_lf_newline",
+        "cargo test -p tondo-compiler --locked --lib process_host::tests::console_streams_preserve_partial_reads_and_separate_output_channels",
+        "cargo test -p tondo-compiler --locked --lib process_host::tests::console_failures_are_typed_atomic_and_redacted",
+        "cargo test -p tondo-compiler --locked --lib driver::tests::bootstrap_standard_modules_follow_the_closed_target_capabilities"
       ]
     },
     {

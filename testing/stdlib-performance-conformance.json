@@ -59,7 +59,7 @@
       "id": "std.console",
       "group": "a2-host",
       "state": "awaiting-owner-hot-path",
-      "reason": "Hosted stream operations require a target-specific I/O workload and capability fixture before capture."
+      "reason": "The owner contract and deterministic capability/stream fixture are closed; target-specific hot-path capture remains pending promotion."
     },
     {
       "id": "std.core",

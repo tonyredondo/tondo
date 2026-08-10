@@ -21,7 +21,9 @@ evidencia por celda para sus cuatro firmas de `Iterator`; `std.math` añade
 evidencia por celda para sus nueve firmas escalares; `std.format` añade
 evidencia por celda para sus cinco firmas de `Display` y builder; `std.io`
 añade evidencia por celda para sus cuatro firmas de Reader/Writer y límites;
-`std.path` añade evidencia por celda para sus diez firmas de paths léxicos.
+`std.path` añade evidencia por celda para sus diez firmas de paths léxicos y
+`std.console` añade evidencia por celda para sus siete firmas de streams y
+output capability-gated.
 Los placeholders sintéticos anteriores
 quedan reemplazados por filas reales.
 `std.0.1B` permanece
@@ -112,6 +114,14 @@ bytes nativos, UTF-8 estricto, NFC/NFD sin normalización, `.`/`..`, raíces,
 extensiones, joins atómicos y el límite de 32 KiB; la auditoría de sus diez
 firmas queda enlazada por `STD-A-PATH-EVIDENCE-001`. Fuzz dedicado, baselines de
 bytes/componentes/work-units y `STD-CONF-001` siguen abiertos.
+
+`std.console` conserva `HOST` como `verified`: la capability `console` se
+comprueba antes del lowering y el adaptador conserva tokens separados para
+stdin, stdout y stderr sobre los protocolos de `std.io`. El fixture y las
+pruebas host cubren partial I/O, EOF, LF estable, errores de UTF-8 y handles
+incorrectos sin publicar estado parcial; la auditoría de las siete firmas queda
+enlazada por `STD-A-CONSOLE-EVIDENCE-001`. Fuzz dedicado, baselines de
+bytes/chunks/work-units y `STD-CONF-001` siguen abiertos explícitamente.
 
 Esta matriz no cierra `STD-CONF-001`, `STD-TEST-001` ni `STD-DOC-001`: registra
 sus celdas pendientes para que las siguientes coordinaciones puedan promover
