@@ -4,6 +4,7 @@ pub mod generator;
 pub mod harness;
 pub mod inventory;
 pub mod matrix;
+pub mod provenance;
 pub mod quality;
 pub mod ratchet;
 pub mod regression;

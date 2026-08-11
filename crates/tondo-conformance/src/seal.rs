@@ -140,6 +140,7 @@ struct ScopeEvidence {
     status: String,
     reason: String,
     report_sha256: Option<String>,
+    provenance_sha256: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -433,6 +434,7 @@ fn validate_ratchet(
         if scope.status != "validated"
             || scope.reason.is_empty()
             || !scope.report_sha256.as_deref().is_some_and(is_sha256)
+            || !scope.provenance_sha256.as_deref().is_some_and(is_sha256)
         {
             return invalid(format!("ratchet {name} evidence is not validated"));
         }
@@ -642,6 +644,16 @@ fn verify_promotion_proof_closure(
         || !ratchet.pending_tasks.is_empty()
         || ratchet.coverage.status != "validated"
         || ratchet.mutation.status != "validated"
+        || !ratchet
+            .coverage
+            .provenance_sha256
+            .as_deref()
+            .is_some_and(is_sha256)
+        || !ratchet
+            .mutation
+            .provenance_sha256
+            .as_deref()
+            .is_some_and(is_sha256)
     {
         return invalid("embedded ratchet differs from the sealed draft");
     }

@@ -4,6 +4,7 @@ use std::process::ExitCode;
 
 use tondo_reliability::inventory;
 use tondo_reliability::matrix;
+use tondo_reliability::provenance::{QualityProvenance, ReportBinding};
 use tondo_reliability::quality::{QualityBaseline, capture, parse_llvm_cov, parse_mutation_report};
 use tondo_reliability::ratchet;
 use tondo_reliability::regression::RegressionLedger;
@@ -20,10 +21,12 @@ Usage:
   tondo-reliability check [--root <directory>]
   tondo-reliability inventory <generate|check> [--root <directory>]
   tondo-reliability matrix <generate|check> [--root <directory>]
-  tondo-reliability ratchet <generate|check> [--coverage <json>] [--mutants <json>] [--root <directory>]
+  tondo-reliability ratchet <generate|check> [--coverage <json>] [--mutants <json>] [--coverage-binding <json>] [--mutants-binding <json>] [--root <directory>]
   tondo-reliability quality check [--root <directory>]
+  tondo-reliability quality provenance [--root <directory>]
   tondo-reliability quality capture --coverage <json> --mutants <json> --revision <id> [--root <directory>]
-  tondo-reliability quality verify --coverage <json> [--mutants <json>] [--root <directory>]";
+  tondo-reliability quality bind --kind <coverage|mutation> --report <json> --before <json> --after <json> --output <json> [--root <directory>]
+  tondo-reliability quality verify --coverage <json> --coverage-binding <json> [--mutants <json> --mutants-binding <json>] [--root <directory>]";
 
 fn main() -> ExitCode {
     match run(env::args().skip(1).collect()) {
@@ -71,7 +74,47 @@ fn run(arguments: Vec<String>) -> Result<String, String> {
             QualityBaseline::load(&path)?;
             Ok(format!("quality baseline is valid: {}", path.display()))
         }
+        [area, command] if area == "quality" && command == "provenance" => {
+            reject_quality_options(&arguments)?;
+            Ok(
+                String::from_utf8(canonical_json(&QualityProvenance::current(&root)?)?)
+                    .map_err(|error| format!("quality provenance is not UTF-8: {error}"))?
+                    .trim_end()
+                    .to_owned(),
+            )
+        }
+        [area, command] if area == "quality" && command == "bind" => {
+            reject_binding_options(&arguments)?;
+            let kind = arguments
+                .kind
+                .as_deref()
+                .ok_or_else(|| "`--kind` is required".to_owned())?;
+            let report = required_path(&arguments.report, "--report")?;
+            let before = load_provenance(required_path(&arguments.before, "--before")?)?;
+            let after = load_provenance(required_path(&arguments.after, "--after")?)?;
+            if after != QualityProvenance::current(&root)? {
+                return Err(
+                    "the `--after` provenance snapshot does not describe the current workspace"
+                        .into(),
+                );
+            }
+            let output = required_path(&arguments.output, "--output")?;
+            let binding = ReportBinding::new(
+                kind,
+                &std::fs::read(report)
+                    .map_err(|error| format!("cannot read `{}`: {error}", report.display()))?,
+                before,
+                after,
+            )?;
+            let changed = write_if_changed(output, &canonical_json(&binding)?)?;
+            Ok(format!(
+                "quality {kind} binding {}: {}",
+                change(changed),
+                output.display()
+            ))
+        }
         [area, command] if area == "quality" && command == "capture" => {
+            reject_capture_options(&arguments)?;
             let coverage = required_path(&arguments.coverage, "--coverage")?;
             let mutants = required_path(&arguments.mutants, "--mutants")?;
             let revision = arguments
@@ -79,6 +122,7 @@ fn run(arguments: Vec<String>) -> Result<String, String> {
                 .as_deref()
                 .ok_or_else(|| "`--revision` is required".to_owned())?;
             let baseline = capture(
+                &root,
                 revision,
                 &std::fs::read(coverage)
                     .map_err(|error| format!("cannot read `{}`: {error}", coverage.display()))?,
@@ -97,10 +141,15 @@ fn run(arguments: Vec<String>) -> Result<String, String> {
             ))
         }
         [area, command] if area == "quality" && command == "verify" => {
+            reject_verify_options(&arguments)?;
             if arguments.revision.is_some() {
                 return Err("quality verify does not accept `--revision`".into());
             }
             let coverage_path = required_path(&arguments.coverage, "--coverage")?;
+            let coverage_binding =
+                required_path(&arguments.coverage_binding, "--coverage-binding")?;
+            let binding = ReportBinding::load(coverage_binding)?;
+            binding.verify(&root, coverage_path, "coverage")?;
             let coverage =
                 parse_llvm_cov(&std::fs::read(coverage_path).map_err(|error| {
                     format!("cannot read `{}`: {error}", coverage_path.display())
@@ -108,6 +157,10 @@ fn run(arguments: Vec<String>) -> Result<String, String> {
             let baseline = QualityBaseline::load(&root.join(QUALITY_BASELINE_PATH))?;
             baseline.verify_coverage_report(&coverage)?;
             if let Some(mutants_path) = &arguments.mutants {
+                let mutants_binding =
+                    required_path(&arguments.mutants_binding, "--mutants-binding")?;
+                let binding = ReportBinding::load(mutants_binding)?;
+                binding.verify(&root, mutants_path, "mutation")?;
                 let mutation =
                     parse_mutation_report(&std::fs::read(mutants_path).map_err(|error| {
                         format!("cannot read `{}`: {error}", mutants_path.display())
@@ -134,7 +187,14 @@ struct Arguments {
     root: PathBuf,
     coverage: Option<PathBuf>,
     mutants: Option<PathBuf>,
+    coverage_binding: Option<PathBuf>,
+    mutants_binding: Option<PathBuf>,
     revision: Option<String>,
+    kind: Option<String>,
+    report: Option<PathBuf>,
+    before: Option<PathBuf>,
+    after: Option<PathBuf>,
+    output: Option<PathBuf>,
 }
 
 fn parse_arguments(arguments: Vec<String>) -> Result<Arguments, String> {
@@ -142,12 +202,29 @@ fn parse_arguments(arguments: Vec<String>) -> Result<Arguments, String> {
     let mut root = None;
     let mut coverage = None;
     let mut mutants = None;
+    let mut coverage_binding = None;
+    let mut mutants_binding = None;
     let mut revision = None;
+    let mut kind = None;
+    let mut report = None;
+    let mut before = None;
+    let mut after = None;
+    let mut output = None;
     let mut index = 0;
     while index < arguments.len() {
         if matches!(
             arguments[index].as_str(),
-            "--root" | "--coverage" | "--mutants" | "--revision"
+            "--root"
+                | "--coverage"
+                | "--mutants"
+                | "--coverage-binding"
+                | "--mutants-binding"
+                | "--revision"
+                | "--kind"
+                | "--report"
+                | "--before"
+                | "--after"
+                | "--output"
         ) {
             let option = arguments[index].as_str();
             let value = arguments
@@ -157,7 +234,14 @@ fn parse_arguments(arguments: Vec<String>) -> Result<Arguments, String> {
                 "--root" => root.replace(PathBuf::from(value)).is_some(),
                 "--coverage" => coverage.replace(PathBuf::from(value)).is_some(),
                 "--mutants" => mutants.replace(PathBuf::from(value)).is_some(),
+                "--coverage-binding" => coverage_binding.replace(PathBuf::from(value)).is_some(),
+                "--mutants-binding" => mutants_binding.replace(PathBuf::from(value)).is_some(),
                 "--revision" => revision.replace(value.clone()).is_some(),
+                "--kind" => kind.replace(value.clone()).is_some(),
+                "--report" => report.replace(PathBuf::from(value)).is_some(),
+                "--before" => before.replace(PathBuf::from(value)).is_some(),
+                "--after" => after.replace(PathBuf::from(value)).is_some(),
+                "--output" => output.replace(PathBuf::from(value)).is_some(),
                 _ => unreachable!(),
             };
             if duplicate {
@@ -176,12 +260,29 @@ fn parse_arguments(arguments: Vec<String>) -> Result<Arguments, String> {
         root: root.unwrap_or(env::current_dir().map_err(|error| error.to_string())?),
         coverage,
         mutants,
+        coverage_binding,
+        mutants_binding,
         revision,
+        kind,
+        report,
+        before,
+        after,
+        output,
     })
 }
 
 fn reject_quality_options(arguments: &Arguments) -> Result<(), String> {
-    if arguments.coverage.is_some() || arguments.mutants.is_some() || arguments.revision.is_some() {
+    if arguments.coverage.is_some()
+        || arguments.mutants.is_some()
+        || arguments.coverage_binding.is_some()
+        || arguments.mutants_binding.is_some()
+        || arguments.revision.is_some()
+        || arguments.kind.is_some()
+        || arguments.report.is_some()
+        || arguments.before.is_some()
+        || arguments.after.is_some()
+        || arguments.output.is_some()
+    {
         Err("this command does not accept quality report options".into())
     } else {
         Ok(())
@@ -189,16 +290,72 @@ fn reject_quality_options(arguments: &Arguments) -> Result<(), String> {
 }
 
 fn reject_ratchet_options(arguments: &Arguments) -> Result<(), String> {
-    if arguments.revision.is_some() {
+    if arguments.revision.is_some()
+        || arguments.kind.is_some()
+        || arguments.report.is_some()
+        || arguments.before.is_some()
+        || arguments.after.is_some()
+        || arguments.output.is_some()
+    {
         return Err("ratchet does not accept revision".into());
     }
     Ok(())
+}
+
+fn reject_binding_options(arguments: &Arguments) -> Result<(), String> {
+    if arguments.coverage.is_some()
+        || arguments.mutants.is_some()
+        || arguments.coverage_binding.is_some()
+        || arguments.mutants_binding.is_some()
+        || arguments.revision.is_some()
+    {
+        Err("quality bind does not accept coverage, mutation, binding, or revision options".into())
+    } else {
+        Ok(())
+    }
+}
+
+fn reject_capture_options(arguments: &Arguments) -> Result<(), String> {
+    if arguments.coverage_binding.is_some()
+        || arguments.mutants_binding.is_some()
+        || arguments.kind.is_some()
+        || arguments.report.is_some()
+        || arguments.before.is_some()
+        || arguments.after.is_some()
+        || arguments.output.is_some()
+    {
+        Err("quality capture does not accept binding command options".into())
+    } else {
+        Ok(())
+    }
+}
+
+fn reject_verify_options(arguments: &Arguments) -> Result<(), String> {
+    if arguments.kind.is_some()
+        || arguments.report.is_some()
+        || arguments.before.is_some()
+        || arguments.after.is_some()
+        || arguments.output.is_some()
+    {
+        Err("quality verify does not accept binding command options".into())
+    } else {
+        Ok(())
+    }
 }
 
 fn required_path<'a>(value: &'a Option<PathBuf>, name: &str) -> Result<&'a Path, String> {
     value
         .as_deref()
         .ok_or_else(|| format!("`{name}` is required"))
+}
+
+fn load_provenance(path: &Path) -> Result<QualityProvenance, String> {
+    let bytes = std::fs::read(path)
+        .map_err(|error| format!("cannot read `{}`: {error}", path.display()))?;
+    let provenance: QualityProvenance = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("invalid quality provenance `{}`: {error}", path.display()))?;
+    provenance.validate()?;
+    Ok(provenance)
 }
 
 fn generate_all(root: &Path) -> Result<String, String> {
@@ -286,6 +443,8 @@ fn generate_ratchet(root: &Path, arguments: &Arguments) -> Result<String, String
         root,
         arguments.coverage.as_deref(),
         arguments.mutants.as_deref(),
+        arguments.coverage_binding.as_deref(),
+        arguments.mutants_binding.as_deref(),
     )?;
     let changed = write_if_changed(&root.join(ratchet::PATH), &canonical_json(&record)?)?;
     Ok(format!(
@@ -301,6 +460,8 @@ fn check_ratchet(root: &Path, arguments: &Arguments) -> Result<String, String> {
         root,
         arguments.coverage.as_deref(),
         arguments.mutants.as_deref(),
+        arguments.coverage_binding.as_deref(),
+        arguments.mutants_binding.as_deref(),
     )?;
     check_bytes(&root.join(ratchet::PATH), &canonical_json(&expected)?)?;
     Ok(format!(

@@ -40,6 +40,7 @@ impl TemporaryWorkspace {
         ));
         fs::create_dir_all(path.join("testing")).unwrap();
         fs::write(path.join("Cargo.toml"), "[workspace]\nmembers = []\n").unwrap();
+        fs::write(path.join("Cargo.lock"), "version = 4\n").unwrap();
         Self(path)
     }
 }
@@ -168,15 +169,83 @@ fn quality_capture_and_verify_are_reproducible_in_an_isolated_workspace() {
     assert!(baseline.ends_with('\n'));
     assert!(baseline.contains("\"revision\": \"test-revision\""));
 
+    let before_coverage = workspace.0.join("coverage.before.json");
+    let after_coverage = workspace.0.join("coverage.after.json");
+    let before_mutation = workspace.0.join("mutation.before.json");
+    let after_mutation = workspace.0.join("mutation.after.json");
+    for path in [
+        &before_coverage,
+        &after_coverage,
+        &before_mutation,
+        &after_mutation,
+    ] {
+        let output = run(&["quality", "provenance", "--root", root]);
+        assert!(output.status.success(), "{}", text(&output.stderr));
+        fs::write(path, output.stdout).unwrap();
+    }
+    let coverage_binding = workspace.0.join("coverage.binding.json");
+    let mutation_binding = workspace.0.join("mutation.binding.json");
+    for (kind, report, before, after, output) in [
+        (
+            "coverage",
+            coverage,
+            &before_coverage,
+            &after_coverage,
+            &coverage_binding,
+        ),
+        (
+            "mutation",
+            mutants,
+            &before_mutation,
+            &after_mutation,
+            &mutation_binding,
+        ),
+    ] {
+        let output_path = run(&[
+            "quality",
+            "bind",
+            "--kind",
+            kind,
+            "--report",
+            report,
+            "--before",
+            before.to_str().unwrap(),
+            "--after",
+            after.to_str().unwrap(),
+            "--output",
+            output.to_str().unwrap(),
+            "--root",
+            root,
+        ]);
+        assert!(
+            output_path.status.success(),
+            "{}",
+            text(&output_path.stderr)
+        );
+    }
+
     for arguments in [
-        vec!["quality", "verify", "--coverage", coverage, "--root", root],
         vec![
             "quality",
             "verify",
             "--coverage",
             coverage,
+            "--coverage-binding",
+            coverage_binding.to_str().unwrap(),
+            "--root",
+            root,
+        ],
+        vec![
+            "quality",
+            "verify",
+            "--coverage",
+            coverage,
+            "--coverage-binding",
+            coverage_binding.to_str().unwrap(),
             "--mutants",
             mutants,
+            "--mutants-binding",
+            mutation_binding.to_str().unwrap(),
             "--root",
             root,
         ],

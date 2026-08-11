@@ -7,6 +7,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::provenance::QualityProvenance;
 use crate::sha256;
 
 pub const FORMAT: &str = "tondo-quality-baseline/1";
@@ -16,6 +17,7 @@ pub const FORMAT: &str = "tondo-quality-baseline/1";
 pub struct QualityBaseline {
     pub format: String,
     pub revision: String,
+    pub provenance: QualityProvenance,
     pub coverage: CoverageBaseline,
     pub mutation: MutationBaseline,
 }
@@ -104,6 +106,7 @@ impl QualityBaseline {
         {
             return Err("quality baseline contains incomplete provenance".into());
         }
+        self.provenance.validate()?;
         validate_metrics("global", &self.coverage.global)?;
         let mut scope_names = BTreeSet::new();
         for scope in &self.coverage.risk_scopes {
@@ -267,6 +270,7 @@ pub struct MutationReport {
 }
 
 pub fn capture(
+    root: &Path,
     revision: impl Into<String>,
     coverage_bytes: &[u8],
     mutation_bytes: &[u8],
@@ -288,6 +292,7 @@ pub fn capture(
     let baseline = QualityBaseline {
         format: FORMAT.into(),
         revision: revision.into(),
+        provenance: QualityProvenance::current(root)?,
         coverage: CoverageBaseline {
             tool: "cargo-llvm-cov 0.8.7".into(),
             command:
@@ -708,6 +713,17 @@ mod tests {
         QualityBaseline {
             format: FORMAT.into(),
             revision: "test".into(),
+            provenance: QualityProvenance {
+                format: crate::provenance::FORMAT.into(),
+                tree_sha256: "a".repeat(64),
+                input_set_sha256: "b".repeat(64),
+                file_count: 4,
+                flags: Vec::new(),
+                toolchain: crate::provenance::Toolchain {
+                    rustc: "rustc test".into(),
+                    cargo: "cargo test".into(),
+                },
+            },
             coverage: CoverageBaseline {
                 tool: "cargo-llvm-cov".into(),
                 command: "cargo llvm-cov".into(),
@@ -1077,7 +1093,11 @@ mod tests {
         let parsed = parse_mutation_report(mutation).unwrap();
         assert_eq!(parsed.total, 4);
         assert_eq!(parsed.missed_ids, ["fallback-id"]);
-        let captured = capture("revision", &coverage, mutation).unwrap();
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .unwrap();
+        let captured = capture(root, "revision", &coverage, mutation).unwrap();
         assert_eq!(captured.revision, "revision");
         assert_eq!(captured.mutation.selected_paths, mutation_paths());
         assert_eq!(captured.mutation.survivors[0].id, "fallback-id");

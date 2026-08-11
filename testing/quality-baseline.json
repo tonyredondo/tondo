@@ -198,5 +198,18 @@
     "score_basis_points": 10000,
     "minimum_score_basis_points": 10000,
     "survivors": []
+  },
+  "provenance": {
+    "format": "tondo-quality-provenance/1",
+    "tree_sha256": "73276fb54e2078d3ac54c18dcee8f140f25a672204d7fbff985e82522121a98a",
+    "input_set_sha256": "3f6d3b33f565eb185006e6f20774ff06638016e8a7ce06fb408b617667f91d0e",
+    "file_count": 678,
+    "flags": [
+      "RUSTUP_TOOLCHAIN=1.93.0-x86_64-unknown-linux-gnu"
+    ],
+    "toolchain": {
+      "rustc": "rustc 1.93.0 (254b59607 2026-01-19)\nbinary: rustc\ncommit-hash: 254b59607d4417e9dffbc307138ae5c86280fe4c\ncommit-date: 2026-01-19\nhost: x86_64-unknown-linux-gnu\nrelease: 1.93.0\nLLVM version: 21.1.8",
+      "cargo": "cargo 1.93.0 (083ac5135 2025-12-15)"
+    }
   }
 }

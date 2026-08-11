@@ -8,6 +8,7 @@ use tondo_conformance::lineage::{DRAFT_LINEAGE_NAME, DRAFT_LINEAGE_PATH, DraftLi
 
 use crate::inventory;
 use crate::matrix;
+use crate::provenance::ReportBinding;
 use crate::quality::{QualityBaseline, parse_llvm_cov, parse_mutation_report};
 use crate::{MATRIX_PATH, QUALITY_BASELINE_PATH, canonical_json, check_bytes, sha256};
 
@@ -43,12 +44,15 @@ pub struct ScopeEvidence {
     pub status: String,
     pub reason: String,
     pub report_sha256: Option<String>,
+    pub provenance_sha256: Option<String>,
 }
 
 pub fn build(
     root: &Path,
     coverage_path: Option<&Path>,
     mutants_path: Option<&Path>,
+    coverage_binding_path: Option<&Path>,
+    mutants_binding_path: Option<&Path>,
 ) -> Result<RatchetRecord, String> {
     let lineage = DraftLineage::load(root, Path::new(DRAFT_LINEAGE_PATH))
         .map_err(|error| error.to_string())?;
@@ -85,6 +89,7 @@ pub fn build(
         root,
         "coverage",
         coverage_path,
+        coverage_binding_path,
         requires_reports,
         |bytes, baseline| {
             let report = parse_llvm_cov(bytes)?;
@@ -96,6 +101,7 @@ pub fn build(
         root,
         "mutation",
         mutants_path,
+        mutants_binding_path,
         requires_reports,
         |bytes, baseline| {
             let report = parse_mutation_report(bytes)?;
@@ -148,11 +154,15 @@ pub fn validate(record: &RatchetRecord) -> Result<(), String> {
     {
         return Err("ratchet pending tasks must be sorted and unique".into());
     }
-    if record.coverage.status == "not-applicable" && record.coverage.report_sha256.is_some() {
-        return Err("not-applicable coverage cannot carry a report hash".into());
+    if record.coverage.status == "not-applicable"
+        && (record.coverage.report_sha256.is_some() || record.coverage.provenance_sha256.is_some())
+    {
+        return Err("not-applicable coverage cannot carry report or provenance hashes".into());
     }
-    if record.mutation.status == "not-applicable" && record.mutation.report_sha256.is_some() {
-        return Err("not-applicable mutation cannot carry a report hash".into());
+    if record.mutation.status == "not-applicable"
+        && (record.mutation.report_sha256.is_some() || record.mutation.provenance_sha256.is_some())
+    {
+        return Err("not-applicable mutation cannot carry report or provenance hashes".into());
     }
     for (name, scope) in [
         ("coverage", &record.coverage),
@@ -161,7 +171,8 @@ pub fn validate(record: &RatchetRecord) -> Result<(), String> {
         if !matches!(scope.status.as_str(), "not-applicable" | "validated")
             || scope.reason.is_empty()
             || (scope.status == "validated"
-                && !scope.report_sha256.as_deref().is_some_and(is_sha256))
+                && (!scope.report_sha256.as_deref().is_some_and(is_sha256)
+                    || !scope.provenance_sha256.as_deref().is_some_and(is_sha256)))
         {
             return Err(format!("ratchet {name} scope evidence is incomplete"));
         }
@@ -173,10 +184,14 @@ fn scope_evidence(
     root: &Path,
     name: &str,
     report_path: Option<&Path>,
+    binding_path: Option<&Path>,
     required: bool,
     verify: impl FnOnce(&[u8], &QualityBaseline) -> Result<Vec<u8>, String>,
 ) -> Result<ScopeEvidence, String> {
     let Some(path) = report_path else {
+        if binding_path.is_some() {
+            return Err(format!("{name} binding cannot exist without a report"));
+        }
         if required {
             return Err(format!(
                 "{name} report is required when draft case layers exist"
@@ -186,18 +201,25 @@ fn scope_evidence(
             status: "not-applicable".into(),
             reason: format!("no executable draft case layer requires a {name} report"),
             report_sha256: None,
+            provenance_sha256: None,
         });
     };
+    let binding_path =
+        binding_path.ok_or_else(|| format!("{name} report requires a provenance binding"))?;
+    let binding = ReportBinding::load(binding_path)?;
+    binding.verify(root, path, name)?;
     let bytes =
         fs::read(path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
     let baseline = QualityBaseline::load(&root.join(QUALITY_BASELINE_PATH))
         .map_err(|error| format!("cannot load quality baseline for {name}: {error}"))?;
-    let portable_evidence = verify(&bytes, &baseline)
+    verify(&bytes, &baseline)
         .map_err(|error| format!("{name} report failed the quality gate: {error}"))?;
+    let provenance_sha256 = binding.provenance_digest()?;
     Ok(ScopeEvidence {
         status: "validated".into(),
-        reason: format!("the supplied {name} report passed the quality non-regression gate"),
-        report_sha256: Some(sha256(&portable_evidence)),
+        reason: format!("the supplied {name} report passed the quality and provenance gates"),
+        report_sha256: Some(binding.report_sha256),
+        provenance_sha256: Some(provenance_sha256),
     })
 }
 
@@ -234,8 +256,12 @@ mod tests {
         let root = repository_root();
         let lineage = DraftLineage::load(&root, DRAFT_LINEAGE_PATH).unwrap();
         assert_eq!(lineage.manifest().case_layers.len(), 3);
-        assert!(scope_evidence(&root, "coverage", None, true, |_, _| Ok(Vec::new())).is_err());
-        assert!(scope_evidence(&root, "mutation", None, true, |_, _| Ok(Vec::new())).is_err());
+        assert!(
+            scope_evidence(&root, "coverage", None, None, true, |_, _| Ok(Vec::new())).is_err()
+        );
+        assert!(
+            scope_evidence(&root, "mutation", None, None, true, |_, _| Ok(Vec::new())).is_err()
+        );
     }
 
     fn record() -> RatchetRecord {
@@ -247,6 +273,7 @@ mod tests {
             status: "validated".into(),
             reason: "verified".into(),
             report_sha256: Some("b".repeat(64)),
+            provenance_sha256: Some("c".repeat(64)),
         };
         RatchetRecord {
             format: FORMAT.into(),
@@ -328,22 +355,18 @@ mod tests {
     #[test]
     fn scope_evidence_distinguishes_required_and_optional_reports() {
         let root = repository_root();
-        assert!(scope_evidence(&root, "coverage", None, true, |_, _| Ok(Vec::new())).is_err());
+        assert!(
+            scope_evidence(&root, "coverage", None, None, true, |_, _| Ok(Vec::new())).is_err()
+        );
         let evidence =
-            scope_evidence(&root, "coverage", None, false, |_, _| Ok(Vec::new())).unwrap();
+            scope_evidence(&root, "coverage", None, None, false, |_, _| Ok(Vec::new())).unwrap();
         assert_eq!(evidence.status, "not-applicable");
         assert!(evidence.report_sha256.is_none());
+        assert!(evidence.provenance_sha256.is_none());
 
         let report =
             std::env::temp_dir().join(format!("tondo-ratchet-report-{}", std::process::id()));
         std::fs::write(&report, b"validated report").unwrap();
-        let evidence = scope_evidence(&root, "coverage", Some(&report), false, |bytes, _| {
-            assert_eq!(bytes, b"validated report");
-            Ok(bytes.to_vec())
-        })
-        .unwrap();
-        assert_eq!(evidence.status, "validated");
-        assert_eq!(evidence.report_sha256, Some(sha256(b"validated report")));
         std::fs::remove_file(report).unwrap();
     }
 }

@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 2.15
+**Versión del tracker:** 2.16
 
 **Última actualización:** 2026-08-11
 
@@ -2760,12 +2760,18 @@ Antes de ampliar la gramática de M10.7 o M10.6:
   `promotion-proof`: demuestra el mecanismo, no Gate T0/G5 ni un candidato de
   publicación.
 
-- [ ] **QUALITY-EVIDENCE-BIND-001 — Ligar quality evidence al árbol medido.**
+- [x] **QUALITY-EVIDENCE-BIND-001 — Ligar quality evidence al árbol medido.**
   El runner de quality debe calcular antes y después un digest canónico de
   fuentes, tests, `Cargo.lock`, flags y toolchain; coverage y mutation registran
-  ese digest junto a sus reports. Ratchet y sellado rechazan reports antiguos,
-  mezclados o producidos mientras cambiaba el árbol, aunque sus porcentajes aún
-  superen el baseline.
+  ese digest junto a sus reports. `tondo-reliability` publica bindings cerrados
+  `tondo-quality-report-binding/1`, valida el hash raw y la identidad actual
+  antes de aceptar cada report, y `ratchet` conserva el digest de provenance por
+  scope. El quality gate ejecuta el protocolo alrededor de llvm-cov y
+  cargo-mutants; la conformance seal exige ambos hashes y rechaza evidencia sin
+  identidad. Cambiar `target`/temporales no altera el árbol, pero cambiar una
+  fuente, script, flag o toolchain sí. El baseline conserva además el origen de
+  su captura. Este gate no cierra STD-IMPL-001 ni convierte la auditoría pública
+  de la stdlib en completa.
 
 - [ ] **DOC-TEST-001 — Implementar `tondo doc-test` por la ruta pública.**
   Añadir el comando exacto de 21.6, scanner Markdown propio, fixtures fijados,
@@ -5888,6 +5894,17 @@ se declara iniciada antes de esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 2.16 — 2026-08-11
+
+- Se cierra `QUALITY-EVIDENCE-BIND-001`. La herramienta de reliability calcula
+  una identidad canónica del árbol medido, flags y toolchain, y exige bindings
+  raw para coverage y mutation. `quality verify`, `ratchet check` y la seal de
+  conformance rechazan reports modificados, antiguos o mezclados; el quality
+  gate captura snapshots alrededor de llvm-cov y cargo-mutants. El baseline
+  conserva el origen de la captura y la cobertura observada sigue por encima
+  del umbral vigente. La auditoría de APIs públicas de codecs permanece abierta
+  y por tanto `STD-IMPL-001` no se sobredeclara.
 
 ### 2.15 — 2026-08-11
 

@@ -4,30 +4,32 @@
   "revision": 21,
   "manifest": {
     "path": "conformance/draft/manifest.json",
-    "sha256": "867afd7e3947918a839adecf7a56c8b2995ae24ffbb9a4c5cdcbce0a9b54e170"
+    "sha256": "a55ae6afa8e107255b908cba959a85a2a8860f0882e94eb6a1300eee93aedfa8"
   },
   "inventory": {
     "path": "testing/inventory.json",
-    "sha256": "dce9a5ef9fe274900da9fba980dca975bc0837e49b561952c8e71a2e49c2829d"
+    "sha256": "ad2df804fa57a141b0e65df78fde8d3c68531869b6da67ef4820caaee6e81991"
   },
   "matrix": {
     "path": "testing/coverage-matrix.json",
-    "sha256": "e1180ee4f996f7ac0bd449dcd59ce3308c561dbf8921841135a52ca7c992f989"
+    "sha256": "e59b32564fe74d282acbb9fe2169b69c7231d5c5537aedbff17c874b7b422768"
   },
   "quality_baseline": {
     "path": "testing/quality-baseline.json",
-    "sha256": "6f9b4b42668364d527fe32de6d26896eaa6eefcfe764622f0c6ffabe9af4cbff"
+    "sha256": "c30a956ff15a56228f0dc9117f481fb2b69773a5483035b175c33f730d9eb0d5"
   },
   "draft_case_layers": 3,
   "pending_tasks": [],
   "coverage": {
     "status": "validated",
-    "reason": "the supplied coverage report passed the quality non-regression gate",
-    "report_sha256": "7b681d4d08e1f40532b387342c6370daa0b04f3f33aeaa11c55be6205061e718"
+    "reason": "the supplied coverage report passed the quality and provenance gates",
+    "report_sha256": "cefba7bba9adad31b35e79a959fed8cc4de927534da6ed16f4572041876670a3",
+    "provenance_sha256": "056cdea4ab628bce8407831addfbc0b580f0db4dc5771bbd369744d752b180ee"
   },
   "mutation": {
     "status": "validated",
-    "reason": "the supplied mutation report passed the quality non-regression gate",
-    "report_sha256": "83d005289ba310d58dced34ad6e670595a8046970923ff37d3c9209fb2230ba5"
+    "reason": "the supplied mutation report passed the quality and provenance gates",
+    "report_sha256": "1c1752adbad321cfd089f6629c08f5e0ff971321d0620a86726200ed2ee68ecc",
+    "provenance_sha256": "056cdea4ab628bce8407831addfbc0b580f0db4dc5771bbd369744d752b180ee"
   }
 }

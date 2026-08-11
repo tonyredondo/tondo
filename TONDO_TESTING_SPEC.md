@@ -2787,6 +2787,36 @@ Benchmarks, coverage, fuzzing, mutation testing y property testing son modos de
 tooling construidos sobre fuentes y artefactos explícitos. No cambian la
 semántica de `test`.
 
+### 13.1 Identidad de quality evidence
+
+Coverage y mutation son artefactos de tooling, no una propiedad que pueda
+inferirse únicamente de un porcentaje. Cada ejecución que vaya a entrar en un
+baseline o en el ratchet debe publicar, junto al report raw, un binding JSON
+`tondo-quality-report-binding/1` con:
+
+- `report_sha256`, hash de los bytes exactos del report;
+- `before` y `after`, snapshots iguales de `tondo-quality-provenance/1`;
+- el digest del árbol de inputs canónicos (fuentes de `crates`, `tests`,
+  `fuzz`, `scripts`, workflows, `conformance/draft`, `.cargo`, `Cargo.toml` y
+  `Cargo.lock`);
+- flags de compilación relevantes y las versiones completas de `rustc` y
+  `cargo`.
+
+El runner toma el snapshot `before`, ejecuta el instrumento, toma `after` y
+rechaza cualquier cambio entre ambos. `tondo-reliability quality verify` exige
+el binding correspondiente a cada report y vuelve a calcular la identidad
+actual antes de aceptar coverage o mutation. `ratchet check` conserva ambos
+digests por scope y rechaza un report antiguo, mezclado, modificado o generado
+con otro toolchain aunque sus métricas superen el baseline. `quality capture`
+guarda la identidad de la captura en el baseline histórico; ese dato describe
+su origen y no convierte el baseline en una excepción al gate actual.
+
+Los paths de `target`, los directorios temporales y los propios reportes no
+forman parte del árbol medido: cambiar la ubicación de build no invalida la
+evidencia, mientras que cambiar una fuente, un script o un flag sí. El binding
+es canónico, de campos cerrados y debe acompañar al report en CI y en cualquier
+ratchet o proof que lo consuma.
+
 ## 14. Diagnósticos nuevos
 
 Tondo 0.1 incluye estos códigos en su registro normativo:
