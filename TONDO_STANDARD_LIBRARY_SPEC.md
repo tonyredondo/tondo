@@ -2648,6 +2648,21 @@ fila ni convierte la coordinación en promoción. `std.async` permanece
 completos permanecen `partial`. La promoción sigue `not-promoted` hasta
 `STD-DOC-001` y la conformance pública completa.
 
+La coordinación `STD-DOC-001` queda registrada en
+`testing/stdlib-documentation.json`. Cada owner tiene un contrato normativo y
+una lista de documentos, además de tres fronteras que nunca se mezclan:
+`kernel` describe la implementación portable o intrínseca, `bridge` describe
+el adaptador compiler/VM/host (o `not-applicable`) y `public_api` refleja
+únicamente las firmas de la auditoría pública. Una API con firmas ausentes o
+gaps conserva `partial`; una superficie intrínseca/build-only sin filas de
+firma declara `not-applicable` con razón. El registro enlaza 31 ejemplos
+verificables: cada caso runtime exige su fixture `.exit` y `.stdout`/`.codes`,
+los casos externos apuntan al harness independiente y los providers
+compiler/meta apuntan a sus tests de build. `std.meta` y `std.reflect` no
+tienen caso runtime por diseño y lo declaran de forma explícita. Esta clausura
+documental describe el draft actual, no publica una release ni promueve las
+matrices de implementación, rendimiento o conformance.
+
 ### 14.11 `std.protobuf`
 
 [Protobuf](https://protobuf.dev/programming-guides/encoding/) es schema-first.
@@ -2864,6 +2879,13 @@ directorio, un kernel o un test vecino. Cada estado `partial`, `pending` o
 y únicamente cuando el adaptador público haya producido la observación
 correspondiente. `testing/stdlib-conformance-coordination.json` y su checker
 son la fuente ejecutable de esta clausura administrativa.
+
+La documentación mantiene la misma disciplina: un ejemplo debe ser
+reproducible desde un comando registrado y, si es un fixture runtime, conservar
+sus sidecars de salida y estado. La existencia de una implementación Rust o de
+un documento no convierte por sí sola una firma en API completa; el estado
+`public_api` se deriva de `testing/stdlib-public-api.json` y no se puede
+promover desde la documentación.
 
 ### 16.2 Tests adicionales por clase
 

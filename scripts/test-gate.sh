@@ -136,6 +136,10 @@ run_step stdlib-conformance-coordination \
     scripts/stdlib-conformance-coordination-check.sh
 run_step stdlib-conformance-coordination-tests \
     scripts/stdlib-conformance-coordination-test.sh
+run_step stdlib-documentation \
+    scripts/stdlib-documentation-check.sh
+run_step stdlib-documentation-tests \
+    scripts/stdlib-documentation-test.sh
 run_step stdlib-performance-report \
     scripts/stdlib-performance-report.sh
 run_step stdlib-performance-conformance \

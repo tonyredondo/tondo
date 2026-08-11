@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 2.14
+**Versión del tracker:** 2.15
 
 **Última actualización:** 2026-08-11
 
@@ -4783,11 +4783,20 @@ administrativas que no implementan comportamiento.
   `promotion.status=not-promoted` y la matriz siguen `open-gaps`; la siguiente
   coordinación es `STD-DOC-001`.
 
-- [ ] **STD-DOC-001 — Cerrar documentación por owner y programas
-  representativos.** Corregir `docs/contracts/stdlib-s1a.md` y el manifiesto de
-  evidencia para distinguir kernel, bridge parcial y API completa; después
-  añadir ejemplos verificables y casos de aceptación runtime enlazados para
-  cada owner sin afirmar una publicación.
+- [x] **STD-DOC-001 — Cerrar documentación por owner y programas
+  representativos.** `testing/stdlib-documentation.json` registra los 22 owners
+  con contrato, documentación normativa, estado de `kernel`/`bridge`/`public_api`
+  y 31 ejemplos verificables. Hay 25 casos runtime/acceptance con sidecars
+  `.exit` y `.stdout`/`.codes`, cuatro casos externos de codecs y dos casos de
+  compiler/meta; `std.meta` y `std.reflect` declaran explícitamente que no les
+  aplica un caso runtime. El registro distingue 14 APIs auditadas completas,
+  cuatro parciales (incluidos los codecs y `std.serialization`) y cuatro
+  intrínsecas/build-only sin filas públicas, sin promover gaps. El checker
+  regenera el JSON, cruza matriz/conformance/API/owner evidence, valida
+  comandos y sidecars, y sus negativos rechazan owners, ejemplos, sidecars o
+  claims de API ausentes; `stdlib_documentation` replica la clausura en Rust.
+  `docs/contracts/stdlib-s1a.md` fija el vocabulario de fronteras y mantiene el
+  claim de draft no publicado; no se afirma una release ni una matriz verde.
 
 ### Gate S1A — Standard Library 0.1 foundation
 
@@ -5879,6 +5888,19 @@ se declara iniciada antes de esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 2.15 — 2026-08-11
+
+- Se cierra `STD-DOC-001` como trazabilidad documental del draft. El registro
+  generado `testing/stdlib-documentation.json` cubre 22 owners, 31 ejemplos,
+  25 casos runtime/acceptance con sidecars, cuatro harnesses externos y dos
+  casos compiler/meta. Cada owner separa kernel, bridge y estado de API pública;
+  los cuatro owners con gaps de auditoría permanecen `partial` y
+  `std.meta`/`std.reflect` declaran el runtime como no aplicable. El checker,
+  los negativos y `stdlib_documentation` validan paths, comandos, sidecars y
+  ausencia de claims de release. S1A sigue siendo un gate técnico del Tondo 0.1
+  no publicado; la siguiente coordinación es la que marque el tracker tras
+  revisar las leaves de implementación abiertas.
 
 ### 2.14 — 2026-08-11
 

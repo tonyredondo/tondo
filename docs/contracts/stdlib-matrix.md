@@ -200,3 +200,11 @@ referencias existentes y mantiene `promotion.status=not-promoted`; los tests
 negativos y el test Rust `stdlib_conformance_coordination` rechazan omisiones,
 sobreclaims y drift. La matriz sigue `open-gaps` y `STD-DOC-001` es la siguiente
 coordinación.
+
+`STD-DOC-001` añade `testing/stdlib-documentation.json`, el índice que enlaza
+cada owner con sus documentos, fronteras `kernel`/`bridge`/`public_api` y
+programas representativos. La auditoría de API conserva `complete`/`partial`/
+`not-applicable` sin inferir estados desde el kernel; los fixtures runtime
+exigen sidecars y los providers sin runtime aplicable llevan una razón. Esta
+documentación es para el draft no publicado y no cambia el estado `open-gaps`
+de la matriz.

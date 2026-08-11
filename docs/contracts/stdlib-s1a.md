@@ -4,6 +4,29 @@ Status: `implemented-draft`. This document closes the technical Wave 5/S1A
 gate for the current Tondo draft; it does not publish `STD-0.1.0` and does not
 replace the publication checklist in `TONDO_STANDARD_LIBRARY_SPEC.md`.
 
+## Documentation registry and boundary vocabulary
+
+`testing/stdlib-documentation.json` is the executable documentation index for
+the current unpublished draft. It deliberately separates three surfaces for
+every owner:
+
+- `kernel` is the portable or intrinsic implementation boundary;
+- `bridge` is the compiler/VM/host adapter, or `not-applicable` when no adapter
+  exists; and
+- `public_api` is derived only from the public-signature audit. `complete` means
+  every indexed signature is verified, `partial` preserves audit gaps, and
+  `not-applicable` is reserved for intrinsic, metadata-only, or build-only
+  owners without public signature rows. `std.serialization` remains `partial`
+  until its public protocol rows are audited.
+
+Each owner links at least one verifiable example. Runtime fixtures must retain
+their `.exit` and `.stdout`/`.codes` sidecars; codec examples additionally link
+the independent external harness; compiler/meta examples link their build
+tests. `std.meta` and `std.reflect` explicitly have no runtime example because
+they are build-only and metadata-only respectively. This registry documents
+the draft and never turns a partial API, implementation, performance or
+conformance cell into a release claim.
+
 ## One owner, one implementation boundary
 
 `testing/stdlib-implementation.json` is the machine-readable owner closure.
@@ -294,6 +317,12 @@ visible even though the bootstrap implementation manifest still lacks its
 dedicated owner record), 207 public signatures and 165 owner requirements.
 This is coordination evidence, not a publication or a claim that all rows are
 green.
+
+The documentation coordination is kept in
+[`testing/stdlib-documentation.json`](../../testing/stdlib-documentation.json).
+Its checker validates every owner contract, boundary reference, example source,
+runtime sidecar and recorded command; the negative tests and
+`stdlib_documentation` Rust test reject missing examples and API overclaims.
 
 ## Coverage and release boundary
 

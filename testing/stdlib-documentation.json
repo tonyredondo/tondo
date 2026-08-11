@@ -1,0 +1,1955 @@
+{
+  "format": "tondo-stdlib-documentation/1",
+  "edition": "0.1",
+  "phase": "STD-0.1A",
+  "status": "closed-coordination",
+  "sources": {
+    "standard_spec": "TONDO_STANDARD_LIBRARY_SPEC.md",
+    "s1a_contract": "docs/contracts/stdlib-s1a.md",
+    "owner_evidence": "testing/stdlib-owner-evidence.json",
+    "public_api": "testing/stdlib-public-api.json",
+    "conformance_coordination": "testing/stdlib-conformance-coordination.json",
+    "normative_matrix": "testing/stdlib-matrix.json"
+  },
+  "rules": {
+    "one_owner_per_record": true,
+    "every_owner_has_contract": true,
+    "every_owner_has_example": true,
+    "runtime_examples_require_sidecar": true,
+    "non_runtime_examples_require_reason": true,
+    "boundary_statuses_are_explicit": true,
+    "api_gaps_are_not_promoted": true,
+    "unpublished_claim_is_required": true
+  },
+  "owners": [
+    {
+      "id": "std.async",
+      "layer": "A1",
+      "status": "documented-draft",
+      "contract": "docs/contracts/stdlib-core.md",
+      "docs": [
+        "TONDO_STANDARD_LIBRARY_SPEC.md",
+        "docs/contracts/stdlib-core.md",
+        "docs/contracts/stdlib-s1a.md"
+      ],
+      "boundary": {
+        "kernel": {
+          "status": "partial",
+          "reason": "the owner record explicitly retains the inferred-suspension ABI migration as pending",
+          "refs": [
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-vm/src/runtime.rs",
+            "crates/tondo-vm/src/runtime/execute.rs",
+            "tests/runtime/m7-async-closure.to",
+            "tests/runtime/m7-async-structured.to",
+            "tests/runtime/m7-cancellation-cleanup.to"
+          ]
+        },
+        "bridge": {
+          "status": "partial",
+          "reason": "no separate owner evidence exists; the owner remains compiler/VM or draft-bound",
+          "refs": [
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-vm/src/runtime.rs",
+            "crates/tondo-vm/src/runtime/execute.rs",
+            "tests/runtime/m7-async-closure.to",
+            "tests/runtime/m7-async-structured.to",
+            "tests/runtime/m7-cancellation-cleanup.to"
+          ]
+        },
+        "public_api": {
+          "status": "not-applicable",
+          "reason": "the owner has no public signature rows; its contract is intrinsic, metadata-only, or build-only",
+          "signatures": [],
+          "verified_signatures": [],
+          "refs": [
+            "testing/stdlib-public-api.json"
+          ]
+        }
+      },
+      "runtime_applicable": true,
+      "runtime_reason": null,
+      "examples": [
+        {
+          "id": "async-cancellation",
+          "kind": "runtime",
+          "source": "tests/runtime/m7-cancellation-cleanup.to",
+          "command": "scripts/test-gate.sh",
+          "status": "verified",
+          "verification": "fixture-sidecars"
+        },
+        {
+          "id": "async-structured",
+          "kind": "runtime",
+          "source": "tests/runtime/m7-async-structured.to",
+          "command": "scripts/test-gate.sh",
+          "status": "verified",
+          "verification": "fixture-sidecars"
+        }
+      ],
+      "conformance": {
+        "status": "pending",
+        "reason": "STD-CONF-001 remains open until the owner has complete public evidence",
+        "refs": [
+          "TONDO_IMPLEMENTATION_TRACKER.md#STD-CONF-001",
+          "testing/stdlib-matrix.json"
+        ]
+      },
+      "documentation_claim": "This record documents the unpublished draft only; it is not a release or a claim that the owner matrix is green."
+    },
+    {
+      "id": "std.bytes",
+      "layer": "A0",
+      "status": "documented-draft",
+      "contract": "docs/contracts/stdlib-bytes.md",
+      "docs": [
+        "TONDO_STANDARD_LIBRARY_SPEC.md",
+        "docs/contracts/stdlib-bytes.md",
+        "docs/contracts/stdlib-s1a.md"
+      ],
+      "boundary": {
+        "kernel": {
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ]
+        },
+        "bridge": {
+          "status": "not-applicable",
+          "reason": "std.bytes is an intrinsic portable owner; its compiler-owned bridge has no separate capability provider or ambient host dependency",
+          "refs": [
+            "docs/contracts/stdlib-bytes.md",
+            "testing/stdlib-bytes.json"
+          ]
+        },
+        "public_api": {
+          "status": "not-applicable",
+          "reason": "the owner has no public signature rows; its contract is intrinsic, metadata-only, or build-only",
+          "signatures": [],
+          "verified_signatures": [],
+          "refs": [
+            "testing/stdlib-public-api.json"
+          ]
+        }
+      },
+      "runtime_applicable": true,
+      "runtime_reason": null,
+      "examples": [
+        {
+          "id": "bytes-public",
+          "kind": "runtime",
+          "source": "tests/runtime/m10-std-bytes-001.to",
+          "command": "scripts/stdlib-bytes-test.sh",
+          "status": "verified",
+          "verification": "fixture-sidecars"
+        }
+      ],
+      "conformance": {
+        "status": "partial",
+        "reason": "compiler and VM byte-boundary tests cover the intrinsic contract; STD-CONF-001 has not yet promoted every standard-library owner",
+        "refs": [
+          "TONDO_IMPLEMENTATION_TRACKER.md",
+          "crates/tondo-compiler/src/process_host.rs",
+          "testing/stdlib-matrix.json"
+        ]
+      },
+      "documentation_claim": "This record documents the unpublished draft only; it is not a release or a claim that the owner matrix is green."
+    },
+    {
+      "id": "std.collections",
+      "layer": "A1",
+      "status": "documented-draft",
+      "contract": "docs/contracts/stdlib-core.md",
+      "docs": [
+        "TONDO_STANDARD_LIBRARY_SPEC.md",
+        "docs/contracts/stdlib-core.md",
+        "docs/contracts/stdlib-s1a.md"
+      ],
+      "boundary": {
+        "kernel": {
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-compiler/src/hir/verify.rs",
+            "crates/tondo-compiler/src/mir/lower.rs",
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-vm/src/bytecode.rs",
+            "crates/tondo-vm/src/bytecode/verify.rs",
+            "crates/tondo-vm/src/runtime.rs",
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ]
+        },
+        "bridge": {
+          "status": "not-applicable",
+          "reason": "std.collections is an intrinsic portable owner; its compiler/VM collection bridge has no separate capability provider or ambient host dependency",
+          "refs": [
+            "crates/tondo-vm/src/runtime/execute.rs",
+            "docs/contracts/stdlib-core.md",
+            "testing/stdlib-core.json"
+          ]
+        },
+        "public_api": {
+          "status": "complete",
+          "reason": null,
+          "signatures": [
+            "std.collections:126",
+            "std.collections:127",
+            "std.collections:128",
+            "std.collections:129",
+            "std.collections:130",
+            "std.collections:131",
+            "std.collections:132",
+            "std.collections:134",
+            "std.collections:135",
+            "std.collections:136",
+            "std.collections:137",
+            "std.collections:138",
+            "std.collections:139",
+            "std.collections:141",
+            "std.collections:142",
+            "std.collections:143",
+            "std.collections:144",
+            "std.collections:145"
+          ],
+          "verified_signatures": [
+            "std.collections:126",
+            "std.collections:127",
+            "std.collections:128",
+            "std.collections:129",
+            "std.collections:130",
+            "std.collections:131",
+            "std.collections:132",
+            "std.collections:134",
+            "std.collections:135",
+            "std.collections:136",
+            "std.collections:137",
+            "std.collections:138",
+            "std.collections:139",
+            "std.collections:141",
+            "std.collections:142",
+            "std.collections:143",
+            "std.collections:144",
+            "std.collections:145"
+          ],
+          "refs": [
+            "testing/stdlib-public-api.json"
+          ]
+        }
+      },
+      "runtime_applicable": true,
+      "runtime_reason": null,
+      "examples": [
+        {
+          "id": "collections-public",
+          "kind": "runtime",
+          "source": "tests/runtime/m11-std-collections-001.to",
+          "command": "scripts/stdlib-collections-test.sh",
+          "status": "verified",
+          "verification": "fixture-sidecars"
+        }
+      ],
+      "conformance": {
+        "status": "partial",
+        "reason": "the public API audit and collection runtime fixture cover all eighteen collection signatures; STD-CONF-001 has not yet promoted every standard-library owner",
+        "refs": [
+          "TONDO_IMPLEMENTATION_TRACKER.md",
+          "testing/stdlib-matrix.json",
+          "testing/stdlib-public-api.json",
+          "tests/runtime/m11-std-collections-001.to"
+        ]
+      },
+      "documentation_claim": "This record documents the unpublished draft only; it is not a release or a claim that the owner matrix is green."
+    },
+    {
+      "id": "std.console",
+      "layer": "A2",
+      "status": "documented-draft",
+      "contract": "docs/contracts/stdlib-hosted.md",
+      "docs": [
+        "TONDO_STANDARD_LIBRARY_SPEC.md",
+        "docs/contracts/stdlib-hosted.md",
+        "docs/contracts/stdlib-matrix.md",
+        "docs/contracts/stdlib-s1a.md"
+      ],
+      "boundary": {
+        "kernel": {
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ]
+        },
+        "bridge": {
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "crates/tondo-compiler/src/driver.rs",
+            "crates/tondo-compiler/src/process_host.rs",
+            "docs/contracts/stdlib-hosted.md"
+          ]
+        },
+        "public_api": {
+          "status": "complete",
+          "reason": null,
+          "signatures": [
+            "std.console:10",
+            "std.console:11",
+            "std.console:12",
+            "std.console:13",
+            "std.console:14",
+            "std.console:15",
+            "std.console:16"
+          ],
+          "verified_signatures": [
+            "std.console:10",
+            "std.console:11",
+            "std.console:12",
+            "std.console:13",
+            "std.console:14",
+            "std.console:15",
+            "std.console:16"
+          ],
+          "refs": [
+            "testing/stdlib-public-api.json"
+          ]
+        }
+      },
+      "runtime_applicable": true,
+      "runtime_reason": null,
+      "examples": [
+        {
+          "id": "console-public",
+          "kind": "runtime",
+          "source": "tests/runtime/m11-std-console-001.to",
+          "command": "scripts/stdlib-console-test.sh",
+          "status": "verified",
+          "verification": "fixture-sidecars"
+        }
+      ],
+      "conformance": {
+        "status": "partial",
+        "reason": "the public API audit, explicit console capability checks, stream fixture and typed failures cover the seven signatures; STD-CONF-001 has not yet promoted every standard-library owner",
+        "refs": [
+          "TONDO_IMPLEMENTATION_TRACKER.md",
+          "crates/tondo-compiler/src/driver.rs",
+          "testing/stdlib-matrix.json",
+          "testing/stdlib-public-api.json",
+          "tests/runtime/m11-std-console-001.to"
+        ]
+      },
+      "documentation_claim": "This record documents the unpublished draft only; it is not a release or a claim that the owner matrix is green."
+    },
+    {
+      "id": "std.core",
+      "layer": "A1",
+      "status": "documented-draft",
+      "contract": "docs/contracts/stdlib-core.md",
+      "docs": [
+        "TONDO_STANDARD_LIBRARY_SPEC.md",
+        "docs/contracts/stdlib-core.md",
+        "docs/contracts/stdlib-s1a.md"
+      ],
+      "boundary": {
+        "kernel": {
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-compiler/src/hir/verify.rs",
+            "crates/tondo-compiler/src/mir/lower.rs",
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ]
+        },
+        "bridge": {
+          "status": "not-applicable",
+          "reason": "std.core is an intrinsic compiler/VM-owned value boundary; it has no separate capability provider or ambient host adapter",
+          "refs": [
+            "crates/tondo-vm/src/runtime/execute.rs",
+            "docs/contracts/stdlib-core.md",
+            "testing/stdlib-core.json"
+          ]
+        },
+        "public_api": {
+          "status": "complete",
+          "reason": null,
+          "signatures": [
+            "std.core:28",
+            "std.core:29",
+            "std.core:30",
+            "std.core:31",
+            "std.core:33",
+            "std.core:34",
+            "std.core:35",
+            "std.core:36",
+            "std.core:37"
+          ],
+          "verified_signatures": [
+            "std.core:28",
+            "std.core:29",
+            "std.core:30",
+            "std.core:31",
+            "std.core:33",
+            "std.core:34",
+            "std.core:35",
+            "std.core:36",
+            "std.core:37"
+          ],
+          "refs": [
+            "testing/stdlib-public-api.json"
+          ]
+        }
+      },
+      "runtime_applicable": true,
+      "runtime_reason": null,
+      "examples": [
+        {
+          "id": "core-intrinsics",
+          "kind": "runtime",
+          "source": "tests/runtime/m11-std-core-001.to",
+          "command": "scripts/stdlib-core-test.sh",
+          "status": "verified",
+          "verification": "fixture-sidecars"
+        },
+        {
+          "id": "core-protocols",
+          "kind": "runtime",
+          "source": "tests/runtime/m11-std-core-002.to",
+          "command": "scripts/stdlib-core-test.sh",
+          "status": "verified",
+          "verification": "fixture-sidecars"
+        }
+      ],
+      "conformance": {
+        "status": "partial",
+        "reason": "the public API audit and hosted runtime fixtures cover all nine core signatures; STD-CONF-001 has not yet promoted every standard-library owner",
+        "refs": [
+          "TONDO_IMPLEMENTATION_TRACKER.md",
+          "testing/stdlib-matrix.json",
+          "testing/stdlib-public-api.json",
+          "tests/runtime/m11-std-core-002.to"
+        ]
+      },
+      "documentation_claim": "This record documents the unpublished draft only; it is not a release or a claim that the owner matrix is green."
+    },
+    {
+      "id": "std.env",
+      "layer": "A0",
+      "status": "documented-draft",
+      "contract": "docs/contracts/stdlib-env.md",
+      "docs": [
+        "TONDO_STANDARD_LIBRARY_SPEC.md",
+        "docs/contracts/stdlib-env.md",
+        "docs/contracts/stdlib-s1a.md"
+      ],
+      "boundary": {
+        "kernel": {
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-compiler/src/process_host.rs"
+          ]
+        },
+        "bridge": {
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "crates/tondo-compiler/src/driver.rs",
+            "crates/tondo-compiler/src/process_host.rs",
+            "docs/contracts/stdlib-env.md"
+          ]
+        },
+        "public_api": {
+          "status": "complete",
+          "reason": null,
+          "signatures": [
+            "std.env:28",
+            "std.env:29",
+            "std.env:30",
+            "std.env:31",
+            "std.env:32",
+            "std.env:33",
+            "std.env:34"
+          ],
+          "verified_signatures": [
+            "std.env:28",
+            "std.env:29",
+            "std.env:30",
+            "std.env:31",
+            "std.env:32",
+            "std.env:33",
+            "std.env:34"
+          ],
+          "refs": [
+            "testing/stdlib-public-api.json"
+          ]
+        }
+      },
+      "runtime_applicable": true,
+      "runtime_reason": null,
+      "examples": [
+        {
+          "id": "env-snapshot",
+          "kind": "runtime",
+          "source": "tests/runtime/m10-std-env-001.to",
+          "command": "scripts/stdlib-env-test.sh",
+          "status": "verified",
+          "verification": "fixture-sidecars"
+        }
+      ],
+      "conformance": {
+        "status": "partial",
+        "reason": "the hosted runtime fixture and explicit environment capability tests cover the snapshot boundary; STD-CONF-001 has not yet promoted every standard-library owner",
+        "refs": [
+          "TONDO_IMPLEMENTATION_TRACKER.md",
+          "crates/tondo-compiler/src/driver.rs",
+          "testing/stdlib-matrix.json",
+          "testing/stdlib-public-api.json",
+          "tests/runtime/m10-std-env-001.to"
+        ]
+      },
+      "documentation_claim": "This record documents the unpublished draft only; it is not a release or a claim that the owner matrix is green."
+    },
+    {
+      "id": "std.format",
+      "layer": "A1",
+      "status": "documented-draft",
+      "contract": "docs/contracts/stdlib-core.md",
+      "docs": [
+        "TONDO_STANDARD_LIBRARY_SPEC.md",
+        "docs/contracts/stdlib-core.md",
+        "docs/contracts/stdlib-matrix.md",
+        "docs/contracts/stdlib-s1a.md"
+      ],
+      "boundary": {
+        "kernel": {
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "crates/tondo-compiler/src/bytecode/lower.rs",
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-compiler/src/mir/verify.rs",
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-stdlib/src/format.rs",
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ]
+        },
+        "bridge": {
+          "status": "not-applicable",
+          "reason": "std.format is an intrinsic portable formatting owner; its compiler/VM bridge has no separate capability provider or ambient host dependency",
+          "refs": [
+            "crates/tondo-compiler/src/process_host.rs",
+            "docs/contracts/stdlib-core.md",
+            "testing/stdlib-core.json"
+          ]
+        },
+        "public_api": {
+          "status": "complete",
+          "reason": null,
+          "signatures": [
+            "std.format:227",
+            "std.format:228",
+            "std.format:229",
+            "std.format:230",
+            "std.format:231"
+          ],
+          "verified_signatures": [
+            "std.format:227",
+            "std.format:228",
+            "std.format:229",
+            "std.format:230",
+            "std.format:231"
+          ],
+          "refs": [
+            "testing/stdlib-public-api.json"
+          ]
+        }
+      },
+      "runtime_applicable": true,
+      "runtime_reason": null,
+      "examples": [
+        {
+          "id": "format-public",
+          "kind": "runtime",
+          "source": "tests/runtime/m11-std-format-001.to",
+          "command": "scripts/stdlib-format-test.sh",
+          "status": "verified",
+          "verification": "fixture-sidecars"
+        }
+      ],
+      "conformance": {
+        "status": "partial",
+        "reason": "the public API audit and formatting runtime fixture cover all five signatures; STD-CONF-001 has not yet promoted every standard-library owner",
+        "refs": [
+          "TONDO_IMPLEMENTATION_TRACKER.md",
+          "testing/stdlib-matrix.json",
+          "testing/stdlib-public-api.json",
+          "tests/runtime/m11-std-format-001.to"
+        ]
+      },
+      "documentation_claim": "This record documents the unpublished draft only; it is not a release or a claim that the owner matrix is green."
+    },
+    {
+      "id": "std.fs",
+      "layer": "A2",
+      "status": "documented-draft",
+      "contract": "docs/contracts/stdlib-hosted.md",
+      "docs": [
+        "TONDO_STANDARD_LIBRARY_SPEC.md",
+        "docs/contracts/stdlib-hosted.md",
+        "docs/contracts/stdlib-matrix.md",
+        "docs/contracts/stdlib-s1a.md"
+      ],
+      "boundary": {
+        "kernel": {
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-vm/src/bytecode.rs",
+            "crates/tondo-vm/src/bytecode/verify.rs",
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ]
+        },
+        "bridge": {
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "crates/tondo-compiler/src/driver.rs",
+            "crates/tondo-compiler/src/process_host.rs",
+            "docs/contracts/stdlib-hosted.md"
+          ]
+        },
+        "public_api": {
+          "status": "complete",
+          "reason": null,
+          "signatures": [
+            "std.fs:84",
+            "std.fs:85",
+            "std.fs:86",
+            "std.fs:87",
+            "std.fs:88",
+            "std.fs:89",
+            "std.fs:90",
+            "std.fs:91",
+            "std.fs:92",
+            "std.fs:93",
+            "std.fs:94",
+            "std.fs:95",
+            "std.fs:96",
+            "std.fs:97"
+          ],
+          "verified_signatures": [
+            "std.fs:84",
+            "std.fs:85",
+            "std.fs:86",
+            "std.fs:87",
+            "std.fs:88",
+            "std.fs:89",
+            "std.fs:90",
+            "std.fs:91",
+            "std.fs:92",
+            "std.fs:93",
+            "std.fs:94",
+            "std.fs:95",
+            "std.fs:96",
+            "std.fs:97"
+          ],
+          "refs": [
+            "testing/stdlib-public-api.json"
+          ]
+        }
+      },
+      "runtime_applicable": true,
+      "runtime_reason": null,
+      "examples": [
+        {
+          "id": "filesystem-public",
+          "kind": "runtime",
+          "source": "tests/runtime/m11-std-fs-001.to",
+          "command": "scripts/stdlib-fs-test.sh",
+          "status": "verified",
+          "verification": "fixture-sidecars"
+        }
+      ],
+      "conformance": {
+        "status": "partial",
+        "reason": "The public API audit, explicit filesystem capability test and hosted runtime fixture cover all fourteen signatures; STD-CONF-001 has not yet promoted every standard-library owner.",
+        "refs": [
+          "TONDO_IMPLEMENTATION_TRACKER.md",
+          "crates/tondo-compiler/src/driver.rs",
+          "testing/stdlib-matrix.json",
+          "testing/stdlib-public-api.json",
+          "tests/runtime/m11-std-fs-001.to"
+        ]
+      },
+      "documentation_claim": "This record documents the unpublished draft only; it is not a release or a claim that the owner matrix is green."
+    },
+    {
+      "id": "std.io",
+      "layer": "A1",
+      "status": "documented-draft",
+      "contract": "docs/contracts/stdlib-core.md",
+      "docs": [
+        "TONDO_STANDARD_LIBRARY_SPEC.md",
+        "docs/contracts/stdlib-core.md",
+        "docs/contracts/stdlib-matrix.md",
+        "docs/contracts/stdlib-s1a.md"
+      ],
+      "boundary": {
+        "kernel": {
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-compiler/src/mir/verify.rs",
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-stdlib/src/io.rs",
+            "crates/tondo-vm/src/bytecode/verify.rs",
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ]
+        },
+        "bridge": {
+          "status": "not-applicable",
+          "reason": "std.io owns portable Reader/Writer protocols; console, filesystem and process own the capability-gated adapters",
+          "refs": [
+            "TONDO_STANDARD_LIBRARY_SPEC.md",
+            "crates/tondo-compiler/src/process_host.rs",
+            "docs/contracts/stdlib-core.md"
+          ]
+        },
+        "public_api": {
+          "status": "complete",
+          "reason": null,
+          "signatures": [
+            "std.io:257",
+            "std.io:258",
+            "std.io:259",
+            "std.io:260"
+          ],
+          "verified_signatures": [
+            "std.io:257",
+            "std.io:258",
+            "std.io:259",
+            "std.io:260"
+          ],
+          "refs": [
+            "testing/stdlib-public-api.json"
+          ]
+        }
+      },
+      "runtime_applicable": true,
+      "runtime_reason": null,
+      "examples": [
+        {
+          "id": "io-public",
+          "kind": "runtime",
+          "source": "tests/runtime/m11-std-io-001.to",
+          "command": "scripts/stdlib-io-test.sh",
+          "status": "verified",
+          "verification": "fixture-sidecars"
+        }
+      ],
+      "conformance": {
+        "status": "partial",
+        "reason": "the public API audit, portable kernel and std.io runtime fixture cover the four signatures; STD-CONF-001 has not yet promoted every standard-library owner",
+        "refs": [
+          "TONDO_IMPLEMENTATION_TRACKER.md",
+          "testing/stdlib-matrix.json",
+          "testing/stdlib-public-api.json",
+          "tests/runtime/m11-std-io-001.to"
+        ]
+      },
+      "documentation_claim": "This record documents the unpublished draft only; it is not a release or a claim that the owner matrix is green."
+    },
+    {
+      "id": "std.iter",
+      "layer": "A1",
+      "status": "documented-draft",
+      "contract": "docs/contracts/stdlib-core.md",
+      "docs": [
+        "TONDO_STANDARD_LIBRARY_SPEC.md",
+        "docs/contracts/stdlib-core.md",
+        "docs/contracts/stdlib-s1a.md"
+      ],
+      "boundary": {
+        "kernel": {
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "crates/tondo-compiler/src/hir.rs",
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-vm/src/runtime/execute.rs",
+            "crates/tondo-vm/src/runtime/heap.rs"
+          ]
+        },
+        "bridge": {
+          "status": "not-applicable",
+          "reason": "std.iter is an intrinsic portable owner; its compiler/VM iterator adapters have no separate capability provider or ambient host dependency",
+          "refs": [
+            "crates/tondo-vm/src/runtime/execute.rs",
+            "docs/contracts/stdlib-core.md",
+            "testing/stdlib-core.json"
+          ]
+        },
+        "public_api": {
+          "status": "complete",
+          "reason": null,
+          "signatures": [
+            "std.iter:151",
+            "std.iter:152",
+            "std.iter:153",
+            "std.iter:154"
+          ],
+          "verified_signatures": [
+            "std.iter:151",
+            "std.iter:152",
+            "std.iter:153",
+            "std.iter:154"
+          ],
+          "refs": [
+            "testing/stdlib-public-api.json"
+          ]
+        }
+      },
+      "runtime_applicable": true,
+      "runtime_reason": null,
+      "examples": [
+        {
+          "id": "iter-public",
+          "kind": "runtime",
+          "source": "tests/runtime/m11-std-iter-001.to",
+          "command": "scripts/stdlib-iter-test.sh",
+          "status": "verified",
+          "verification": "fixture-sidecars"
+        }
+      ],
+      "conformance": {
+        "status": "partial",
+        "reason": "the public API audit and iterator runtime fixture cover all four iterator signatures; STD-CONF-001 has not yet promoted every standard-library owner",
+        "refs": [
+          "TONDO_IMPLEMENTATION_TRACKER.md",
+          "testing/stdlib-matrix.json",
+          "testing/stdlib-public-api.json",
+          "tests/runtime/m11-std-iter-001.to"
+        ]
+      },
+      "documentation_claim": "This record documents the unpublished draft only; it is not a release or a claim that the owner matrix is green."
+    },
+    {
+      "id": "std.json",
+      "layer": "A3",
+      "status": "documented-draft",
+      "contract": "docs/contracts/stdlib-json.md",
+      "docs": [
+        "TONDO_STANDARD_LIBRARY_SPEC.md",
+        "docs/contracts/stdlib-json.md",
+        "docs/contracts/stdlib-matrix.md",
+        "docs/contracts/stdlib-s1a.md"
+      ],
+      "boundary": {
+        "kernel": {
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-stdlib/src/json.rs",
+            "crates/tondo-stdlib/src/json_api.rs"
+          ]
+        },
+        "bridge": {
+          "status": "not-applicable",
+          "reason": "std.json is a portable codec; its compiler bridge has no ambient capability provider or target-specific host semantics",
+          "refs": [
+            "crates/tondo-compiler/src/process_host.rs",
+            "docs/contracts/stdlib-json.md",
+            "testing/stdlib-json.json"
+          ]
+        },
+        "public_api": {
+          "status": "partial",
+          "reason": "public API audit retains gaps for this owner",
+          "signatures": [
+            "std.json:133",
+            "std.json:134",
+            "std.json:135",
+            "std.json:136",
+            "std.json:137",
+            "std.json:138",
+            "std.json:139",
+            "std.json:140",
+            "std.json:143",
+            "std.json:144",
+            "std.json:145",
+            "std.json:146",
+            "std.json:147",
+            "std.json:148",
+            "std.json:150",
+            "std.json:151",
+            "std.json:152",
+            "std.json:153",
+            "std.json:154",
+            "std.json:156",
+            "std.json:157",
+            "std.json:158"
+          ],
+          "verified_signatures": [
+            "std.json:137",
+            "std.json:138"
+          ],
+          "refs": [
+            "testing/stdlib-public-api.json"
+          ]
+        }
+      },
+      "runtime_applicable": true,
+      "runtime_reason": null,
+      "examples": [
+        {
+          "id": "codecs-json",
+          "kind": "runtime",
+          "source": "tests/runtime/m11-std-codecs-001.to",
+          "command": "scripts/stdlib-json-test.sh",
+          "status": "verified",
+          "verification": "fixture-sidecars"
+        },
+        {
+          "id": "codecs-json-external",
+          "kind": "external",
+          "source": "crates/tondo-stdlib/tests/codec_conformance.rs",
+          "command": "scripts/stdlib-codec-conformance.sh",
+          "status": "verified",
+          "verification": "external-harness"
+        }
+      ],
+      "conformance": {
+        "status": "partial",
+        "reason": "The serde_json bidirectional and fragmented harness covers the portable codec; STD-CONF-001 has not yet promoted every standard-library owner.",
+        "refs": [
+          "TONDO_IMPLEMENTATION_TRACKER.md",
+          "scripts/stdlib-codec-conformance.sh",
+          "testing/stdlib-codec-conformance.json",
+          "testing/stdlib-matrix.json",
+          "testing/stdlib-public-api.json"
+        ]
+      },
+      "documentation_claim": "This record documents the unpublished draft only; it is not a release or a claim that the owner matrix is green."
+    },
+    {
+      "id": "std.math",
+      "layer": "A1",
+      "status": "documented-draft",
+      "contract": "docs/contracts/stdlib-core.md",
+      "docs": [
+        "TONDO_STANDARD_LIBRARY_SPEC.md",
+        "docs/contracts/stdlib-core.md",
+        "docs/contracts/stdlib-s1a.md"
+      ],
+      "boundary": {
+        "kernel": {
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-stdlib/src/math.rs",
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ]
+        },
+        "bridge": {
+          "status": "not-applicable",
+          "reason": "std.math is an intrinsic portable scalar owner; its compiler/VM bridge has no separate capability provider or ambient host dependency",
+          "refs": [
+            "crates/tondo-compiler/src/process_host.rs",
+            "docs/contracts/stdlib-core.md",
+            "testing/stdlib-core.json"
+          ]
+        },
+        "public_api": {
+          "status": "complete",
+          "reason": null,
+          "signatures": [
+            "std.math:207",
+            "std.math:208",
+            "std.math:209",
+            "std.math:210",
+            "std.math:211",
+            "std.math:212",
+            "std.math:213",
+            "std.math:214",
+            "std.math:215"
+          ],
+          "verified_signatures": [
+            "std.math:207",
+            "std.math:208",
+            "std.math:209",
+            "std.math:210",
+            "std.math:211",
+            "std.math:212",
+            "std.math:213",
+            "std.math:214",
+            "std.math:215"
+          ],
+          "refs": [
+            "testing/stdlib-public-api.json"
+          ]
+        }
+      },
+      "runtime_applicable": true,
+      "runtime_reason": null,
+      "examples": [
+        {
+          "id": "math-ieee",
+          "kind": "runtime",
+          "source": "tests/runtime/m6-num-004-ieee.to",
+          "command": "scripts/stdlib-math-test.sh",
+          "status": "verified",
+          "verification": "fixture-sidecars"
+        },
+        {
+          "id": "math-public",
+          "kind": "runtime",
+          "source": "tests/runtime/m11-std-math-001.to",
+          "command": "scripts/stdlib-math-test.sh",
+          "status": "verified",
+          "verification": "fixture-sidecars"
+        }
+      ],
+      "conformance": {
+        "status": "partial",
+        "reason": "the public API audit and IEEE/runtime fixtures cover all nine math signatures; STD-CONF-001 has not yet promoted every standard-library owner",
+        "refs": [
+          "TONDO_IMPLEMENTATION_TRACKER.md",
+          "testing/stdlib-matrix.json",
+          "testing/stdlib-public-api.json",
+          "tests/runtime/m11-std-math-001.to"
+        ]
+      },
+      "documentation_claim": "This record documents the unpublished draft only; it is not a release or a claim that the owner matrix is green."
+    },
+    {
+      "id": "std.messagepack",
+      "layer": "A3",
+      "status": "documented-draft",
+      "contract": "docs/contracts/stdlib-messagepack.md",
+      "docs": [
+        "TONDO_STANDARD_LIBRARY_SPEC.md",
+        "docs/contracts/stdlib-matrix.md",
+        "docs/contracts/stdlib-messagepack.md",
+        "docs/contracts/stdlib-s1a.md"
+      ],
+      "boundary": {
+        "kernel": {
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-stdlib/src/messagepack.rs",
+            "crates/tondo-stdlib/src/messagepack_api.rs"
+          ]
+        },
+        "bridge": {
+          "status": "not-applicable",
+          "reason": "std.messagepack is a portable binary codec; its compiler bridge has no ambient capability provider or target-specific wire semantics",
+          "refs": [
+            "crates/tondo-compiler/src/process_host.rs",
+            "docs/contracts/stdlib-messagepack.md",
+            "testing/stdlib-messagepack.json"
+          ]
+        },
+        "public_api": {
+          "status": "partial",
+          "reason": "public API audit retains gaps for this owner",
+          "signatures": [
+            "std.messagepack:100",
+            "std.messagepack:101",
+            "std.messagepack:102",
+            "std.messagepack:104",
+            "std.messagepack:105",
+            "std.messagepack:106",
+            "std.messagepack:85",
+            "std.messagepack:86",
+            "std.messagepack:87",
+            "std.messagepack:88",
+            "std.messagepack:89",
+            "std.messagepack:90",
+            "std.messagepack:91",
+            "std.messagepack:92",
+            "std.messagepack:95",
+            "std.messagepack:96",
+            "std.messagepack:98",
+            "std.messagepack:99"
+          ],
+          "verified_signatures": [
+            "std.messagepack:90"
+          ],
+          "refs": [
+            "testing/stdlib-public-api.json"
+          ]
+        }
+      },
+      "runtime_applicable": true,
+      "runtime_reason": null,
+      "examples": [
+        {
+          "id": "codecs-messagepack",
+          "kind": "runtime",
+          "source": "tests/runtime/m11-std-codecs-001.to",
+          "command": "scripts/stdlib-messagepack-test.sh",
+          "status": "verified",
+          "verification": "fixture-sidecars"
+        },
+        {
+          "id": "codecs-messagepack-external",
+          "kind": "external",
+          "source": "crates/tondo-stdlib/tests/codec_conformance.rs",
+          "command": "scripts/stdlib-codec-conformance.sh",
+          "status": "verified",
+          "verification": "external-harness"
+        }
+      ],
+      "conformance": {
+        "status": "partial",
+        "reason": "The rmpv bidirectional and fragmented harness covers the portable codec and extension preservation; STD-CONF-001 has not yet promoted every standard-library owner.",
+        "refs": [
+          "TONDO_IMPLEMENTATION_TRACKER.md",
+          "scripts/stdlib-codec-conformance.sh",
+          "testing/stdlib-codec-conformance.json",
+          "testing/stdlib-matrix.json",
+          "testing/stdlib-public-api.json"
+        ]
+      },
+      "documentation_claim": "This record documents the unpublished draft only; it is not a release or a claim that the owner matrix is green."
+    },
+    {
+      "id": "std.meta",
+      "layer": "A0",
+      "status": "documented-draft",
+      "contract": "docs/contracts/std-meta.md",
+      "docs": [
+        "TONDO_STANDARD_LIBRARY_SPEC.md",
+        "docs/contracts/std-meta.md",
+        "docs/contracts/stdlib-s1a.md"
+      ],
+      "boundary": {
+        "kernel": {
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "crates/tondo-compiler/src/meta.rs",
+            "crates/tondo-compiler/src/meta_vm.rs",
+            "crates/tondo-compiler/src/std_meta.rs"
+          ]
+        },
+        "bridge": {
+          "status": "not-applicable",
+          "reason": "std.meta is build-only; provider execution is admitted by the separate tondo-meta VM boundary and has no runtime host adapter",
+          "refs": [
+            "crates/tondo-compiler/src/meta_vm.rs",
+            "docs/contracts/std-meta.md"
+          ]
+        },
+        "public_api": {
+          "status": "not-applicable",
+          "reason": "the owner has no public signature rows; its contract is intrinsic, metadata-only, or build-only",
+          "signatures": [],
+          "verified_signatures": [],
+          "refs": [
+            "testing/stdlib-public-api.json"
+          ]
+        }
+      },
+      "runtime_applicable": false,
+      "runtime_reason": "build-only provider; conformance runs in the compiler/meta VM boundary",
+      "examples": [
+        {
+          "id": "meta-conformance",
+          "kind": "compiler",
+          "source": "crates/tondo-compiler/tests/std_meta_conformance.rs",
+          "command": "scripts/stdlib-meta-test.sh",
+          "status": "verified",
+          "verification": "compiler-test"
+        }
+      ],
+      "conformance": {
+        "status": "partial",
+        "reason": "the build-only contract is exercised by compiler and meta-target tests; STD-CONF-001 has not yet promoted every standard-library owner",
+        "refs": [
+          "TONDO_IMPLEMENTATION_TRACKER.md",
+          "crates/tondo-compiler/tests/std_meta_conformance.rs",
+          "testing/stdlib-matrix.json"
+        ]
+      },
+      "documentation_claim": "This record documents the unpublished draft only; it is not a release or a claim that the owner matrix is green."
+    },
+    {
+      "id": "std.path",
+      "layer": "A2",
+      "status": "documented-draft",
+      "contract": "docs/contracts/stdlib-hosted.md",
+      "docs": [
+        "TONDO_STANDARD_LIBRARY_SPEC.md",
+        "docs/contracts/stdlib-hosted.md",
+        "docs/contracts/stdlib-matrix.md",
+        "docs/contracts/stdlib-s1a.md"
+      ],
+      "boundary": {
+        "kernel": {
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-stdlib/src/path.rs",
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ]
+        },
+        "bridge": {
+          "status": "not-applicable",
+          "reason": "std.path is purely lexical; it preserves native bytes and does not consult the filesystem or an ambient capability",
+          "refs": [
+            "TONDO_STANDARD_LIBRARY_SPEC.md",
+            "crates/tondo-stdlib/src/path.rs",
+            "docs/contracts/stdlib-hosted.md"
+          ]
+        },
+        "public_api": {
+          "status": "complete",
+          "reason": null,
+          "signatures": [
+            "std.path:46",
+            "std.path:47",
+            "std.path:48",
+            "std.path:49",
+            "std.path:50",
+            "std.path:51",
+            "std.path:52",
+            "std.path:53",
+            "std.path:54",
+            "std.path:55"
+          ],
+          "verified_signatures": [
+            "std.path:46",
+            "std.path:47",
+            "std.path:48",
+            "std.path:49",
+            "std.path:50",
+            "std.path:51",
+            "std.path:52",
+            "std.path:53",
+            "std.path:54",
+            "std.path:55"
+          ],
+          "refs": [
+            "testing/stdlib-public-api.json"
+          ]
+        }
+      },
+      "runtime_applicable": true,
+      "runtime_reason": null,
+      "examples": [
+        {
+          "id": "path-public",
+          "kind": "runtime",
+          "source": "tests/runtime/m11-std-path-001.to",
+          "command": "scripts/stdlib-path-test.sh",
+          "status": "verified",
+          "verification": "fixture-sidecars"
+        }
+      ],
+      "conformance": {
+        "status": "partial",
+        "reason": "the public API audit, portable path kernel, native-byte corpus and runtime fixture cover all ten signatures; STD-CONF-001 has not yet promoted every standard-library owner",
+        "refs": [
+          "TONDO_IMPLEMENTATION_TRACKER.md",
+          "testing/stdlib-matrix.json",
+          "testing/stdlib-public-api.json",
+          "tests/runtime/m11-std-path-001.to"
+        ]
+      },
+      "documentation_claim": "This record documents the unpublished draft only; it is not a release or a claim that the owner matrix is green."
+    },
+    {
+      "id": "std.process",
+      "layer": "A2",
+      "status": "documented-draft",
+      "contract": "docs/contracts/stdlib-hosted.md",
+      "docs": [
+        "TONDO_STANDARD_LIBRARY_SPEC.md",
+        "docs/contracts/process-host.md",
+        "docs/contracts/stdlib-hosted.md",
+        "docs/contracts/stdlib-matrix.md",
+        "docs/contracts/stdlib-s1a.md"
+      ],
+      "boundary": {
+        "kernel": {
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "crates/tondo-compiler/src/bytecode/lower.rs",
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-vm/src/bytecode.rs",
+            "crates/tondo-vm/src/bytecode/verify.rs",
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ]
+        },
+        "bridge": {
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "crates/tondo-compiler/src/driver.rs",
+            "crates/tondo-compiler/src/process_host.rs",
+            "docs/contracts/process-host.md"
+          ]
+        },
+        "public_api": {
+          "status": "complete",
+          "reason": null,
+          "signatures": [
+            "std.process:147",
+            "std.process:148",
+            "std.process:149",
+            "std.process:150",
+            "std.process:151",
+            "std.process:152",
+            "std.process:153",
+            "std.process:154",
+            "std.process:155",
+            "std.process:156",
+            "std.process:157",
+            "std.process:158",
+            "std.process:159",
+            "std.process:160",
+            "std.process:161",
+            "std.process:162",
+            "std.process:163"
+          ],
+          "verified_signatures": [
+            "std.process:147",
+            "std.process:148",
+            "std.process:149",
+            "std.process:150",
+            "std.process:151",
+            "std.process:152",
+            "std.process:153",
+            "std.process:154",
+            "std.process:155",
+            "std.process:156",
+            "std.process:157",
+            "std.process:158",
+            "std.process:159",
+            "std.process:160",
+            "std.process:161",
+            "std.process:162",
+            "std.process:163"
+          ],
+          "refs": [
+            "testing/stdlib-public-api.json"
+          ]
+        }
+      },
+      "runtime_applicable": true,
+      "runtime_reason": null,
+      "examples": [
+        {
+          "id": "process-cancellation",
+          "kind": "runtime",
+          "source": "tests/runtime/m8-process-cancel.to",
+          "command": "scripts/stdlib-process-test.sh",
+          "status": "verified",
+          "verification": "fixture-sidecars"
+        },
+        {
+          "id": "process-public",
+          "kind": "runtime",
+          "source": "tests/runtime/m8-process-001.to",
+          "command": "scripts/stdlib-process-test.sh",
+          "status": "verified",
+          "verification": "fixture-sidecars"
+        }
+      ],
+      "conformance": {
+        "status": "partial",
+        "reason": "The public API audit, capability test and hosted M8 fixtures cover all seventeen public signatures; STD-CONF-001 has not yet promoted every standard-library owner.",
+        "refs": [
+          "TONDO_IMPLEMENTATION_TRACKER.md",
+          "crates/tondo-compiler/src/driver.rs",
+          "testing/stdlib-matrix.json",
+          "testing/stdlib-public-api.json",
+          "tests/runtime/m8-process-001.to",
+          "tests/runtime/m8-process-cancel.to"
+        ]
+      },
+      "documentation_claim": "This record documents the unpublished draft only; it is not a release or a claim that the owner matrix is green."
+    },
+    {
+      "id": "std.protobuf",
+      "layer": "A3",
+      "status": "documented-draft",
+      "contract": "docs/contracts/stdlib-protobuf.md",
+      "docs": [
+        "TONDO_STANDARD_LIBRARY_SPEC.md",
+        "docs/contracts/stdlib-matrix.md",
+        "docs/contracts/stdlib-protobuf.md",
+        "docs/contracts/stdlib-s1a.md"
+      ],
+      "boundary": {
+        "kernel": {
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-stdlib/src/protobuf.rs",
+            "crates/tondo-stdlib/src/protobuf_api.rs"
+          ]
+        },
+        "bridge": {
+          "status": "not-applicable",
+          "reason": "std.protobuf wire and schema generation are portable or build-only; the compiler bridge has no ambient capability provider or target-specific wire semantics",
+          "refs": [
+            "crates/tondo-compiler/src/process_host.rs",
+            "docs/contracts/stdlib-protobuf.md",
+            "testing/stdlib-protobuf.json"
+          ]
+        },
+        "public_api": {
+          "status": "partial",
+          "reason": "public API audit retains gaps for this owner",
+          "signatures": [
+            "std.protobuf:113",
+            "std.protobuf:114",
+            "std.protobuf:115",
+            "std.protobuf:116",
+            "std.protobuf:117",
+            "std.protobuf:119",
+            "std.protobuf:120",
+            "std.protobuf:121",
+            "std.protobuf:122",
+            "std.protobuf:123",
+            "std.protobuf:125",
+            "std.protobuf:126",
+            "std.protobuf:127",
+            "std.protobuf:129",
+            "std.protobuf:130"
+          ],
+          "verified_signatures": [
+            "std.protobuf:116"
+          ],
+          "refs": [
+            "testing/stdlib-public-api.json"
+          ]
+        }
+      },
+      "runtime_applicable": true,
+      "runtime_reason": null,
+      "examples": [
+        {
+          "id": "codecs-protobuf",
+          "kind": "runtime",
+          "source": "tests/runtime/m11-std-codecs-001.to",
+          "command": "scripts/stdlib-protobuf-test.sh",
+          "status": "verified",
+          "verification": "fixture-sidecars"
+        },
+        {
+          "id": "codecs-protobuf-external",
+          "kind": "external",
+          "source": "crates/tondo-stdlib/tests/codec_conformance.rs",
+          "command": "scripts/stdlib-codec-conformance.sh",
+          "status": "verified",
+          "verification": "external-harness"
+        }
+      ],
+      "conformance": {
+        "status": "partial",
+        "reason": "The prost bidirectional and fragmented harness covers the portable wire and unknown records; STD-CONF-001 has not yet promoted every standard-library owner.",
+        "refs": [
+          "TONDO_IMPLEMENTATION_TRACKER.md",
+          "scripts/stdlib-codec-conformance.sh",
+          "testing/stdlib-codec-conformance.json",
+          "testing/stdlib-matrix.json",
+          "testing/stdlib-public-api.json"
+        ]
+      },
+      "documentation_claim": "This record documents the unpublished draft only; it is not a release or a claim that the owner matrix is green."
+    },
+    {
+      "id": "std.reflect",
+      "layer": "A0",
+      "status": "documented-draft",
+      "contract": "docs/contracts/std-reflect.md",
+      "docs": [
+        "TONDO_STANDARD_LIBRARY_SPEC.md",
+        "docs/contracts/std-reflect.md",
+        "docs/contracts/stdlib-s1a.md"
+      ],
+      "boundary": {
+        "kernel": {
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "crates/tondo-compiler/src/reflect.rs"
+          ]
+        },
+        "bridge": {
+          "status": "not-applicable",
+          "reason": "std.reflect is metadata-only and has no runtime host adapter or ambient provider",
+          "refs": [
+            "docs/contracts/std-reflect.md",
+            "testing/stdlib-reflect.json"
+          ]
+        },
+        "public_api": {
+          "status": "not-applicable",
+          "reason": "the owner has no public signature rows; its contract is intrinsic, metadata-only, or build-only",
+          "signatures": [],
+          "verified_signatures": [],
+          "refs": [
+            "testing/stdlib-public-api.json"
+          ]
+        }
+      },
+      "runtime_applicable": false,
+      "runtime_reason": "metadata-only provider; no runtime value or host adapter exists",
+      "examples": [
+        {
+          "id": "reflect-metadata",
+          "kind": "compiler",
+          "source": "crates/tondo-compiler/src/reflect.rs",
+          "command": "scripts/stdlib-reflect-test.sh",
+          "status": "verified",
+          "verification": "compiler-test"
+        }
+      ],
+      "conformance": {
+        "status": "partial",
+        "reason": "compiler reflection tests cover the metadata boundary; STD-CONF-001 has not yet promoted every standard-library owner",
+        "refs": [
+          "TONDO_IMPLEMENTATION_TRACKER.md",
+          "crates/tondo-compiler/src/reflect.rs",
+          "testing/stdlib-matrix.json"
+        ]
+      },
+      "documentation_claim": "This record documents the unpublished draft only; it is not a release or a claim that the owner matrix is green."
+    },
+    {
+      "id": "std.serialization",
+      "layer": "A3",
+      "status": "documented-draft",
+      "contract": "docs/contracts/stdlib-serialization.md",
+      "docs": [
+        "TONDO_STANDARD_LIBRARY_SPEC.md",
+        "docs/contracts/stdlib-core.md",
+        "docs/contracts/stdlib-matrix.md",
+        "docs/contracts/stdlib-s1a.md",
+        "docs/contracts/stdlib-serialization.md"
+      ],
+      "boundary": {
+        "kernel": {
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-compiler/src/meta_derive.rs",
+            "crates/tondo-compiler/src/serialization_derive.rs",
+            "crates/tondo-stdlib/src/serialization.rs"
+          ]
+        },
+        "bridge": {
+          "status": "not-applicable",
+          "reason": "std.serialization is a portable event protocol and hermetic build-only derive boundary; it has no capability-gated runtime host adapter",
+          "refs": [
+            "crates/tondo-compiler/src/meta_vm.rs",
+            "docs/contracts/stdlib-serialization.md",
+            "testing/stdlib-serialization.json"
+          ]
+        },
+        "public_api": {
+          "status": "partial",
+          "reason": "the owner contract has public protocols but no public-audit signature rows yet",
+          "signatures": [],
+          "verified_signatures": [],
+          "refs": [
+            "testing/stdlib-public-api.json"
+          ]
+        }
+      },
+      "runtime_applicable": true,
+      "runtime_reason": null,
+      "examples": [
+        {
+          "id": "serialization-codec-entry",
+          "kind": "runtime",
+          "source": "tests/runtime/m11-std-codecs-001.to",
+          "command": "scripts/stdlib-serialization-test.sh",
+          "status": "verified",
+          "verification": "fixture-sidecars"
+        },
+        {
+          "id": "serialization-external",
+          "kind": "external",
+          "source": "crates/tondo-stdlib/tests/codec_conformance.rs",
+          "command": "scripts/stdlib-codec-conformance.sh",
+          "status": "verified",
+          "verification": "external-harness"
+        }
+      ],
+      "conformance": {
+        "status": "partial",
+        "reason": "The external codec harness validates the shared bridge and independent format owners; STD-CONF-001 has not yet promoted every standard-library owner.",
+        "refs": [
+          "TONDO_IMPLEMENTATION_TRACKER.md",
+          "scripts/stdlib-codec-conformance.sh",
+          "testing/stdlib-codec-conformance.json",
+          "testing/stdlib-matrix.json"
+        ]
+      },
+      "documentation_claim": "This record documents the unpublished draft only; it is not a release or a claim that the owner matrix is green."
+    },
+    {
+      "id": "std.testing",
+      "layer": "A4",
+      "status": "documented-draft",
+      "contract": "docs/contracts/stdlib-testing.md",
+      "docs": [
+        "TONDO_STANDARD_LIBRARY_SPEC.md",
+        "TONDO_TESTING_SPEC.md",
+        "docs/contracts/stdlib-matrix.md",
+        "docs/contracts/stdlib-s1a.md",
+        "docs/contracts/stdlib-testing.md"
+      ],
+      "boundary": {
+        "kernel": {
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-compiler/src/test_generation.rs",
+            "crates/tondo-compiler/src/test_runtime.rs",
+            "crates/tondo-stdlib/src/testing.rs"
+          ]
+        },
+        "bridge": {
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "crates/tondo-cli/tests/acceptance_projects.rs",
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-compiler/src/test_runtime.rs"
+          ]
+        },
+        "public_api": {
+          "status": "complete",
+          "reason": null,
+          "signatures": [
+            "std.testing:148",
+            "std.testing:149",
+            "std.testing:150",
+            "std.testing:187",
+            "std.testing:188",
+            "std.testing:189",
+            "std.testing:190",
+            "std.testing:238",
+            "std.testing:239",
+            "std.testing:240",
+            "std.testing:282",
+            "std.testing:283",
+            "std.testing:284",
+            "std.testing:285",
+            "std.testing:286",
+            "std.testing:287",
+            "std.testing:288",
+            "std.testing:289",
+            "std.testing:290",
+            "std.testing:296",
+            "std.testing:69",
+            "std.testing:70",
+            "std.testing:71",
+            "std.testing:72",
+            "std.testing:73"
+          ],
+          "verified_signatures": [
+            "std.testing:148",
+            "std.testing:149",
+            "std.testing:150",
+            "std.testing:187",
+            "std.testing:188",
+            "std.testing:189",
+            "std.testing:190",
+            "std.testing:238",
+            "std.testing:239",
+            "std.testing:240",
+            "std.testing:282",
+            "std.testing:283",
+            "std.testing:284",
+            "std.testing:285",
+            "std.testing:286",
+            "std.testing:287",
+            "std.testing:288",
+            "std.testing:289",
+            "std.testing:290",
+            "std.testing:296",
+            "std.testing:69",
+            "std.testing:70",
+            "std.testing:71",
+            "std.testing:72",
+            "std.testing:73"
+          ],
+          "refs": [
+            "testing/stdlib-public-api.json"
+          ]
+        }
+      },
+      "runtime_applicable": true,
+      "runtime_reason": null,
+      "examples": [
+        {
+          "id": "testing-acceptance",
+          "kind": "acceptance",
+          "source": "crates/tondo-cli/tests/acceptance_projects.rs",
+          "command": "cargo test -p tondo-cli --locked --test acceptance_projects",
+          "status": "verified",
+          "verification": "acceptance-test"
+        }
+      ],
+      "conformance": {
+        "status": "partial",
+        "reason": "The runner and owner corpus are exercised by acceptance tests, but STD-CONF-001 has not promoted complete conformance evidence for every std.testing requirement.",
+        "refs": [
+          "TONDO_IMPLEMENTATION_TRACKER.md",
+          "crates/tondo-cli/tests/acceptance_projects.rs",
+          "testing/stdlib-matrix.json",
+          "testing/stdlib-public-api.json"
+        ]
+      },
+      "documentation_claim": "This record documents the unpublished draft only; it is not a release or a claim that the owner matrix is green."
+    },
+    {
+      "id": "std.text",
+      "layer": "A1",
+      "status": "documented-draft",
+      "contract": "docs/contracts/stdlib-core.md",
+      "docs": [
+        "TONDO_STANDARD_LIBRARY_SPEC.md",
+        "docs/contracts/stdlib-core.md",
+        "docs/contracts/stdlib-s1a.md"
+      ],
+      "boundary": {
+        "kernel": {
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ]
+        },
+        "bridge": {
+          "status": "not-applicable",
+          "reason": "std.text is an intrinsic portable owner; its compiler-owned String bridge has no separate capability provider or ambient host dependency",
+          "refs": [
+            "docs/contracts/stdlib-core.md",
+            "testing/stdlib-core.json"
+          ]
+        },
+        "public_api": {
+          "status": "complete",
+          "reason": null,
+          "signatures": [
+            "std.text:100",
+            "std.text:101",
+            "std.text:102",
+            "std.text:103",
+            "std.text:104",
+            "std.text:108",
+            "std.text:91",
+            "std.text:92",
+            "std.text:93",
+            "std.text:94",
+            "std.text:95",
+            "std.text:96",
+            "std.text:97",
+            "std.text:98",
+            "std.text:99"
+          ],
+          "verified_signatures": [
+            "std.text:100",
+            "std.text:101",
+            "std.text:102",
+            "std.text:103",
+            "std.text:104",
+            "std.text:108",
+            "std.text:91",
+            "std.text:92",
+            "std.text:93",
+            "std.text:94",
+            "std.text:95",
+            "std.text:96",
+            "std.text:97",
+            "std.text:98",
+            "std.text:99"
+          ],
+          "refs": [
+            "testing/stdlib-public-api.json"
+          ]
+        }
+      },
+      "runtime_applicable": true,
+      "runtime_reason": null,
+      "examples": [
+        {
+          "id": "text-index-slice",
+          "kind": "runtime",
+          "source": "tests/runtime/m11-std-text-002.to",
+          "command": "scripts/stdlib-text-test.sh",
+          "status": "verified",
+          "verification": "fixture-sidecars"
+        },
+        {
+          "id": "text-public",
+          "kind": "runtime",
+          "source": "tests/runtime/m11-std-text-001.to",
+          "command": "scripts/stdlib-text-test.sh",
+          "status": "verified",
+          "verification": "fixture-sidecars"
+        }
+      ],
+      "conformance": {
+        "status": "partial",
+        "reason": "the public API audit and Unicode/invalid-UTF-8 runtime fixtures cover all fifteen text signatures; STD-CONF-001 has not yet promoted every standard-library owner",
+        "refs": [
+          "TONDO_IMPLEMENTATION_TRACKER.md",
+          "testing/stdlib-matrix.json",
+          "testing/stdlib-public-api.json",
+          "tests/runtime/m11-std-text-002.to"
+        ]
+      },
+      "documentation_claim": "This record documents the unpublished draft only; it is not a release or a claim that the owner matrix is green."
+    },
+    {
+      "id": "std.time",
+      "layer": "A0",
+      "status": "documented-draft",
+      "contract": "docs/contracts/stdlib-time.md",
+      "docs": [
+        "TONDO_STANDARD_LIBRARY_SPEC.md",
+        "docs/contracts/stdlib-s1a.md",
+        "docs/contracts/stdlib-time.md"
+      ],
+      "boundary": {
+        "kernel": {
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-compiler/src/process_host.rs"
+          ]
+        },
+        "bridge": {
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "crates/tondo-compiler/src/driver.rs",
+            "crates/tondo-compiler/src/process_host.rs",
+            "docs/contracts/stdlib-time.md"
+          ]
+        },
+        "public_api": {
+          "status": "complete",
+          "reason": null,
+          "signatures": [
+            "std.time:40",
+            "std.time:41",
+            "std.time:42",
+            "std.time:43",
+            "std.time:45",
+            "std.time:46",
+            "std.time:47",
+            "std.time:48"
+          ],
+          "verified_signatures": [
+            "std.time:40",
+            "std.time:41",
+            "std.time:42",
+            "std.time:43",
+            "std.time:45",
+            "std.time:46",
+            "std.time:47",
+            "std.time:48"
+          ],
+          "refs": [
+            "testing/stdlib-public-api.json"
+          ]
+        }
+      },
+      "runtime_applicable": true,
+      "runtime_reason": null,
+      "examples": [
+        {
+          "id": "time-monotonic",
+          "kind": "runtime",
+          "source": "tests/runtime/m10-std-time-001.to",
+          "command": "scripts/stdlib-time-test.sh",
+          "status": "verified",
+          "verification": "fixture-sidecars"
+        }
+      ],
+      "conformance": {
+        "status": "partial",
+        "reason": "the hosted runtime fixture and explicit clock capability tests cover the time boundary; STD-CONF-001 has not yet promoted every standard-library owner",
+        "refs": [
+          "TONDO_IMPLEMENTATION_TRACKER.md",
+          "crates/tondo-compiler/src/driver.rs",
+          "testing/stdlib-matrix.json",
+          "testing/stdlib-public-api.json",
+          "tests/runtime/m10-std-time-001.to"
+        ]
+      },
+      "documentation_claim": "This record documents the unpublished draft only; it is not a release or a claim that the owner matrix is green."
+    }
+  ],
+  "summary": {
+    "owners": 22,
+    "examples": 31,
+    "runtime_examples": 25,
+    "external_examples": 4,
+    "compiler_examples": 2,
+    "api_complete": 14,
+    "api_partial": 4,
+    "api_not_applicable": 4
+  },
+  "promotion": {
+    "status": "not-published",
+    "reason": "documentation closes traceability for the current unpublished draft; it does not promote implementation, conformance, performance, or a language release"
+  }
+}
