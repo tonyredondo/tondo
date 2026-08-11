@@ -184,3 +184,13 @@ contenido. La salida combinada no convierte ni elimina bytes.
 huérfanos. Las rutas suspendible tienen puntos de cancelación definidos antes de
 publicar output. `ProcessExitError` conserva el output capturado sin depender
 de códigos o mensajes concretos del sistema operativo.
+
+La evidencia ejecutable de este owner es `STD-A-PROC-EVIDENCE-001`: enlaza las
+diecisiete firmas públicas con el contrato de capability, el modelo de planes
+inertes y handles terminales, HIR/lowering, bytecode/VM y el adaptador
+`process_host`. Las pruebas M8 cubren argv literal, shell explícito, las cuatro
+formas de pipe, backpressure con salida superior a la ventana del kernel,
+stdout/stderr separados, `combined`, redirección `mergeStderr`, estados de
+salida, errores de spawn, cancelación, panic/unwind y reaping. Fuzz dedicado,
+capturas de coste por target y `STD-CONF-001` permanecen explícitos como
+promoción posterior.

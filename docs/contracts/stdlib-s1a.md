@@ -156,6 +156,17 @@ listing, typed errors, short reads/writes, bounded materialization,
 `HOST` is verified. Dedicated operation fuzz, target hot-path cost baselines and
 global conformance promotion remain pending.
 
+The capability-gated `std.process` owner is closed for hosted evidence by the
+`STD-A-PROC-EVIDENCE-001` cell record. Its seventeen public signatures are
+traced through the explicit `process` capability, inert `Command`/`Pipeline`
+plans, terminal `ProcessHandle`, HIR/lowering, bytecode/VM and the
+`process_host` adapter. M8 fixtures and host tests cover exact argv, explicit
+shell use, all four pipe shapes, bounded backpressure, separate and combined
+output, typed stderr redirection, exit data versus recoverable errors,
+cancellation, panic/unwind cleanup and child reaping; `HOST` is verified.
+Dedicated operation fuzz, target hot-path cost baselines and global conformance
+promotion remain pending.
+
 The hosted bridge is intentionally a draft distribution boundary: the VM
 validates the typed operation before invoking the host, and the host returns a
 nominal error or a complete value. Console streams use the same `Reader` and

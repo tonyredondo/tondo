@@ -132,6 +132,15 @@ cancelación, límites atómicos, errores tipados, orden lexicográfico de bytes
 `STD-A-FS-EVIDENCE-001`. Fuzz dedicado, baselines por target y `STD-CONF-001`
 siguen abiertos explícitamente.
 
+`std.process` conserva `HOST` como `verified`: la capability `process` se
+comprueba antes del lowering y no se concede por importar el módulo. Los planes
+inertes, handles terminales y el adaptador host quedan enlazados con las 17
+firmas públicas por `STD-A-PROC-EVIDENCE-001`; los fixtures cubren argv literal,
+shell explícito, las cuatro formas de pipe, backpressure, streams separados y
+`combined`, redirección `mergeStderr`, errores, cancelación, cleanup y reaping.
+Fuzz dedicado, baselines por target y `STD-CONF-001` siguen abiertos
+explícitamente.
+
 Esta matriz no cierra `STD-CONF-001`, `STD-TEST-001` ni `STD-DOC-001`: registra
 sus celdas pendientes para que las siguientes coordinaciones puedan promover
 owners sin perder la identidad de requisito.

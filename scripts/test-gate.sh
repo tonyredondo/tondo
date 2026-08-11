@@ -98,6 +98,8 @@ run_step stdlib-console-tests \
     scripts/stdlib-console-test.sh
 run_step stdlib-fs-tests \
     scripts/stdlib-fs-test.sh
+run_step stdlib-process-tests \
+    scripts/stdlib-process-test.sh
 run_step stdlib-serialization-contract \
     scripts/stdlib-serialization-check.sh
 run_step stdlib-integration-contract \

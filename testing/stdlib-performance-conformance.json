@@ -170,7 +170,7 @@
       "id": "std.process",
       "group": "a2-host",
       "state": "awaiting-owner-hot-path",
-      "reason": "Process and pipe benchmarks need deterministic child fixtures, stream routing and reaping identities before capture."
+      "reason": "The owner contract, deterministic child fixtures, stream routing, bounded backpressure and reaping tests are closed; target-specific process hot-path capture remains pending promotion."
     },
     {
       "id": "std.reflect",

@@ -3026,6 +3026,14 @@ El bootstrap expone una superficie cerrada de procesos, `Bytes` opaco y
 El corpus bootstrap no se reescribe. Un proyecto adopta STD-0.1
 seleccionando el nuevo PackageId y lockfile.
 
+La evidencia ejecutable de esta frontera es `STD-A-PROC-EVIDENCE-001`: enlaza
+las diecisiete firmas públicas con el contrato hosted, la capability estática,
+los planes inertes y handles terminales, HIR/lowering, bytecode/VM, el host de
+procesos y los fixtures M8. El gate cubre backpressure, streams separados y
+`combined`, redirección de stderr, estados/errores, cancelación y reaping;
+fuzz dedicado, baselines por target y `STD-CONF-001` siguen siendo promoción
+posterior.
+
 ### 19.3 Implementación transitoria
 
 Durante la migración, el compilador puede conservar opcodes o bridges bootstrap

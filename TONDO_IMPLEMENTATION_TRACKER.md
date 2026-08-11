@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 2.06
+**Versión del tracker:** 2.07
 
 **Última actualización:** 2026-08-10
 
@@ -4653,9 +4653,16 @@ administrativas que no implementan comportamiento.
   sin capability antes del lowering, y la auditoría pública mantiene 14/14.
   `HOST` queda `verified`; fuzz dedicado, baselines por target y
   `STD-CONF-001` permanecen visibles como promoción posterior.
-- [ ] **STD-A-PROC-EVIDENCE-001 — Cerrar evidencia de procesos.** Separar
-  modelo de command/pipeline, adaptador HOST, backpressure/cancelación/reaping,
-  stress, coste, conformidad y docs.
+- [x] **STD-A-PROC-EVIDENCE-001 — Cerrar evidencia de procesos.** Las diecisiete
+  firmas públicas quedan trazadas por el contrato hosted, capability `process`,
+  planes inertes `Command`/`Pipeline`, handles terminales, HIR/lowering,
+  bytecode/VM y el adaptador `process_host`. Las pruebas M8 cubren argv literal,
+  shell explícito, las cuatro formas de pipe, backpressure por encima de la
+  ventana del kernel, stdout/stderr separados, `combined`, redirección
+  `mergeStderr`, estados de salida, errores de spawn, cancelación, panic/unwind
+  y reaping. La auditoría pública mantiene 17/17 y `HOST` queda `verified`;
+  fuzz dedicado, baselines por target y `STD-CONF-001` permanecen visibles
+  como promoción posterior.
 - [ ] **STD-A-SER-EVIDENCE-001 — Cerrar evidencia de serialization.** Cubrir
   máquina de eventos, derives, paths, construcción atómica, streaming,
   properties/fuzz, coste, conformidad y docs; HOST es no aplicable.
@@ -5827,6 +5834,17 @@ se declara iniciada antes de esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 2.07 — 2026-08-11
+
+- Se cierra `STD-A-PROC-EVIDENCE-001` con nueve celdas explícitas y las
+  diecisiete firmas públicas de `std.process`. La evidencia enlaza la
+  capability estática, planes inertes, los cuatro shapes de pipe, backpressure,
+  streams separados/combined, `mergeStderr`, estados y errores, cancelación,
+  cleanup de panic/unwind, grupos de procesos y reaping, además de HIR/lowering,
+  bytecode/VM, fixtures M8, host tests y auditoría 17/17. Fuzz de operaciones,
+  captura hot-path por target y `STD-CONF-001` quedan explícitamente pendientes
+  de promoción.
 
 ### 2.06 — 2026-08-10
 

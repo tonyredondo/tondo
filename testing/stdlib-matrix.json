@@ -2002,16 +2002,24 @@
       ],
       "stages": {
         "CONF": {
-          "reason": "STD-CONF-001 remains open until the owner has complete public evidence",
+          "reason": "The public API audit, capability test and hosted M8 fixtures cover all seventeen public signatures; STD-CONF-001 has not yet promoted every standard-library owner.",
           "refs": [
-            "TONDO_IMPLEMENTATION_TRACKER.md#STD-CONF-001"
+            "testing/stdlib-public-api.json",
+            "tests/runtime/m8-process-001.to",
+            "tests/runtime/m8-process-cancel.to",
+            "crates/tondo-compiler/src/driver.rs",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
           ],
-          "status": "pending"
+          "status": "partial"
         },
         "DOC": {
           "reason": null,
           "refs": [
-            "docs/contracts/stdlib-hosted.md"
+            "docs/contracts/stdlib-hosted.md",
+            "docs/contracts/process-host.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md",
+            "docs/contracts/stdlib-s1a.md",
+            "docs/contracts/stdlib-matrix.md"
           ],
           "status": "verified"
         },
@@ -2019,53 +2027,51 @@
           "reason": null,
           "refs": [
             "crates/tondo-compiler/src/bytecode/lower.rs",
-            "crates/tondo-compiler/src/hir.rs",
+            "crates/tondo-compiler/src/driver.rs",
             "crates/tondo-compiler/src/hir/check.rs",
             "crates/tondo-compiler/src/hir/lower.rs",
-            "crates/tondo-compiler/src/hir/verify.rs",
-            "crates/tondo-compiler/src/mir.rs",
-            "crates/tondo-compiler/src/mir/lower.rs",
-            "crates/tondo-compiler/src/mir/verify.rs",
             "crates/tondo-compiler/src/process_host.rs",
             "crates/tondo-vm/src/bytecode.rs",
             "crates/tondo-vm/src/bytecode/verify.rs",
-            "tests/runtime/m8-process-001.to",
-            "tests/runtime/m8-process-cancel.to"
+            "crates/tondo-vm/src/runtime/execute.rs",
+            "docs/contracts/process-host.md"
           ],
           "status": "verified"
         },
         "MODEL/TEST/FUZZ": {
-          "reason": "owner tests exist; per-leaf MODEL/TEST/FUZZ links and fuzz coverage remain to be coordinated by STD-TEST-001",
+          "reason": "The bounded process, pipe, stream and failure corpus is executable, but no dedicated std.process operation fuzz target has been promoted.",
           "refs": [
+            "crates/tondo-compiler/src/driver.rs",
+            "crates/tondo-compiler/src/hir/terminal.rs",
             "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-vm/src/bytecode.rs",
+            "docs/contracts/process-host.md",
+            "fuzz/fuzz_targets/admission.rs",
+            "scripts/stdlib-process-test.sh",
             "tests/runtime/m8-process-001.to",
-            "tests/runtime/m8-process-cancel.to"
+            "tests/runtime/m8-process-cancel.to",
+            "tests/runtime/m8-process-check-error.to",
+            "tests/runtime/m8-process-panic-cleanup.to",
+            "tests/runtime/m8-process-spawn-error.to"
           ],
           "status": "partial"
         },
         "PERF": {
-          "observed_dimensions": [],
-          "pending_dimensions": [
-            "allocations_per_operation",
-            "allocated_bytes_per_operation",
-            "code_size",
-            "compile_time",
-            "peak_memory",
-            "startup",
-            "tail_latency",
-            "throughput"
-          ],
-          "reason": "Process and pipe benchmarks need deterministic child fixtures, stream routing and reaping identities before capture.",
+          "reason": "Deterministic child fixtures, stream-routing and reaping budgets are declared; target-specific process hot-path capture remains pending promotion.",
           "refs": [
-            "testing/stdlib-performance-conformance.json#owners/std.process"
+            "testing/stdlib-performance.json",
+            "testing/stdlib-performance-conformance.json",
+            "docs/contracts/stdlib-performance.md"
           ],
-          "status": "pending"
+          "status": "partial"
         },
         "SPEC": {
           "reason": null,
           "refs": [
             "testing/stdlib-hosted.json",
-            "docs/contracts/stdlib-hosted.md"
+            "docs/contracts/stdlib-hosted.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md",
+            "docs/contracts/process-host.md"
           ],
           "status": "verified"
         }
@@ -12537,8 +12543,8 @@
     "signatures": 207,
     "stage_counts": {
       "CONF": {
-        "partial": 312,
-        "pending": 60
+        "partial": 338,
+        "pending": 34
       },
       "DOC": {
         "verified": 372
@@ -12552,8 +12558,8 @@
         "verified": 6
       },
       "PERF": {
-        "partial": 338,
-        "pending": 34
+        "partial": 364,
+        "pending": 8
       },
       "SPEC": {
         "partial": 1,

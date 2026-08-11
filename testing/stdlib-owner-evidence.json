@@ -78,6 +78,11 @@
       "id": "STD-A-FS-EVIDENCE-001",
       "contract": "testing/stdlib-hosted.json",
       "owners": ["std.fs"]
+    },
+    {
+      "id": "STD-A-PROC-EVIDENCE-001",
+      "contract": "testing/stdlib-hosted.json",
+      "owners": ["std.process"]
     }
   ],
   "owners": [
@@ -1232,6 +1237,95 @@
         "cargo test -p tondo-compiler --locked --lib process_host::tests::filesystem_handles_are_typed_async_and_cleanup_is_affine",
         "cargo test -p tondo-compiler --locked --lib process_host::tests::filesystem_handles_cover_modes_errors_and_cancellation",
         "cargo test -p tondo-compiler --locked --lib driver::tests::filesystem_module_requires_the_explicit_target_capability"
+      ]
+    },
+    {
+      "id": "std.process",
+      "layer": "A2",
+      "cells": {
+        "SPEC": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["testing/stdlib-hosted.json", "docs/contracts/stdlib-hosted.md", "TONDO_STANDARD_LIBRARY_SPEC.md", "docs/contracts/process-host.md"]
+        },
+        "IMPL": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs", "crates/tondo-compiler/src/bytecode/lower.rs", "crates/tondo-vm/src/bytecode.rs", "crates/tondo-vm/src/bytecode/verify.rs", "crates/tondo-vm/src/runtime/execute.rs"]
+        },
+        "HOST": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/driver.rs", "docs/contracts/process-host.md"]
+        },
+        "MODEL": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/hir/terminal.rs", "crates/tondo-vm/src/bytecode.rs", "docs/contracts/process-host.md"]
+        },
+        "TEST": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/driver.rs", "tests/runtime/m8-process-001.to", "tests/runtime/m8-process-cancel.to", "tests/runtime/m8-process-panic-cleanup.to", "tests/runtime/m8-process-check-error.to", "tests/runtime/m8-process-spawn-error.to", "scripts/stdlib-process-test.sh"]
+        },
+        "FUZZ": {
+          "status": "partial",
+          "reason": "The bounded process, pipe, stream and failure corpus is executable, but no dedicated std.process operation fuzz target has been promoted.",
+          "refs": ["crates/tondo-compiler/src/process_host.rs", "fuzz/fuzz_targets/admission.rs", "scripts/stdlib-process-test.sh"]
+        },
+        "PERF": {
+          "status": "partial",
+          "reason": "Deterministic child fixtures, stream-routing and reaping budgets are declared; target-specific process hot-path capture remains pending promotion.",
+          "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
+        },
+        "CONF": {
+          "status": "partial",
+          "reason": "The public API audit, capability test and hosted M8 fixtures cover all seventeen public signatures; STD-CONF-001 has not yet promoted every standard-library owner.",
+          "refs": ["testing/stdlib-public-api.json", "tests/runtime/m8-process-001.to", "tests/runtime/m8-process-cancel.to", "crates/tondo-compiler/src/driver.rs", "TONDO_IMPLEMENTATION_TRACKER.md"]
+        },
+        "DOC": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["docs/contracts/stdlib-hosted.md", "docs/contracts/process-host.md", "TONDO_STANDARD_LIBRARY_SPEC.md", "docs/contracts/stdlib-s1a.md", "docs/contracts/stdlib-matrix.md"]
+        }
+      },
+      "budgets": {
+        "captured_output_bytes": {
+          "unit": "bytes",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 1000,
+          "state": "declared-baseline-pending"
+        },
+        "pipeline_stages": {
+          "unit": "stages",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 1000,
+          "state": "declared-baseline-pending"
+        },
+        "child_processes": {
+          "unit": "processes",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 1000,
+          "state": "declared-baseline-pending"
+        },
+        "process_work_units": {
+          "unit": "work-units",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 1000,
+          "state": "declared-baseline-pending"
+        }
+      },
+      "commands": [
+        "scripts/stdlib-hosted-check.sh",
+        "scripts/stdlib-process-test.sh",
+        "cargo test -p tondo-compiler --locked --lib process_host::tests::plan_construction_is_inert_and_exact_arguments_bypass_the_shell",
+        "cargo test -p tondo-compiler --locked --lib process_host::tests::all_four_pipe_shapes_preserve_stage_order",
+        "cargo test -p tondo-compiler --locked --lib process_host::tests::kernel_pipes_drain_output_larger_than_their_backpressure_window",
+        "cargo test -p tondo-compiler --locked --lib process_host::tests::process_output_preserves_separate_streams_and_terminal_combined_bytes",
+        "cargo test -p tondo-compiler --locked --lib process_host::tests::merge_stderr_feeds_the_next_stage_like_bash_pipe_ampersand",
+        "cargo test -p tondo-compiler --locked --lib process_host::tests::exit_status_is_data_while_check_and_spawn_failures_are_typed_errors",
+        "cargo test -p tondo-compiler --locked --lib process_host::tests::cancel_and_host_drop_reap_started_children",
+        "cargo test -p tondo-compiler --locked --lib driver::tests::bootstrap_standard_modules_follow_the_closed_target_capabilities"
       ]
     }
   ],
