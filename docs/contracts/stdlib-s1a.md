@@ -209,6 +209,17 @@ is not applicable because wire execution is portable and generation is
 hermetic build-only; dedicated schema/operation fuzz, allocation/memory and
 target baselines, and global conformance promotion remain pending.
 
+The test-only `std.testing` owner is closed for evidence by
+`STD-A-TESTING-EVIDENCE-001`. Its typed assertions, bounded text diffs and
+float tolerances, affine Option/Result consumption, isolated temporary roots,
+deterministic generators, compiler-sealed shrinking and sealed runner bridge
+are traced through stdlib, compiler and VM paths. Acceptance projects dogfood
+control terminals, retries/repeats, selection/sharding, JSON/JUnit reports and
+the production-import rejection; `HOST` is verified at the worker bridge.
+There is no dedicated `std.testing` fuzz target yet, and the full owner
+performance/conformance promotions remain explicit partial cells rather than
+being inferred from unit-test execution.
+
 The hosted bridge is intentionally a draft distribution boundary: the VM
 validates the typed operation before invoking the host, and the host returns a
 nominal error or a complete value. Console streams use the same `Reader` and

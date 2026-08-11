@@ -2617,6 +2617,16 @@ estables y errores de schema sin inputs ambientales. `HOST` es
 allocations/memoria por target y `STD-CONF-001` siguen como promoción
 posterior.
 
+La evidencia ejecutable de `std.testing` es `STD-A-TESTING-EVIDENCE-001`.
+El módulo es test-only y su bridge `HOST` verificado pertenece al worker del
+runner: no concede capabilities ni puede importarse desde producción. La
+evidencia enlaza las 25 firmas públicas con assertions de ownership prestado,
+diffs acotados, tolerancias finitas, consumo explícito de `Option`/`Result`,
+temporales afines bajo raíz privada, generators replayables, shrinking sellado,
+control terminal, virtual time y los fixtures de dogfooding del runner. No se
+promueve un fuzz target dedicado ni baselines completos de coste o
+`STD-CONF-001`; esas celdas permanecen parciales y visibles en la matriz.
+
 ### 14.11 `std.protobuf`
 
 [Protobuf](https://protobuf.dev/programming-guides/encoding/) es schema-first.
@@ -3103,7 +3113,7 @@ STD-0.1 puede publicarse como 0.1.0 únicamente cuando:
 - [ ] Los ejemplos son ejecutables.
 - [ ] La matriz de evidencia cubre las seis dimensiones.
 - [ ] La suite estándar pasa sobre la VM.
-- [ ] `std.testing` se prueba mediante `tondo test`.
+- [x] `std.testing` se prueba mediante `tondo test`.
 - [ ] Los programas representativos de texto, colecciones, archivos y procesos
       pasan el gate estricto.
 - [ ] La distribución es reproducible byte a byte.

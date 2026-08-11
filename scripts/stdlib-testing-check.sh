@@ -2,7 +2,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-contract="$root/testing/stdlib-testing.json"
+contract="${TONDO_STDLIB_TESTING_CONTRACT:-$root/testing/stdlib-testing.json}"
 
 if [[ ! -f "$contract" ]]; then
     echo "missing std.testing owner contract: ${contract#"$root"/}" >&2
@@ -26,7 +26,7 @@ jq -e '
     and .owner == "std.testing"
     and .edition == "0.1"
     and .phase == "STD-0.1A"
-    and .status == "draft-contract"
+    and .status == "closed-contract"
     and .base.normative_document == "TONDO_TESTING_SPEC.md"
     and .base.sealed_core == [
       "log", "tags", "failNow", "skip", "attach", "snapshot",
@@ -191,7 +191,7 @@ jq -e '
     and .promotion.gates[2].requires == ["owner-corpus", "cross-backend", "format-stability", "capability-rejection", "failure-precedence"]
     and .promotion.gates[3].requires == ["no-host-entropy", "no-secret-generator", "root-bounded-cleanup", "no-reflection", "no-panic-capture"]
     and .promotion.gates[4].requires == ["all-required-matrix", "report-and-snapshot-compatibility", "coverage-baseline", "STD-PERF-001-report"]
-    and .promotion.next_coordination == "STD-TESTING-IMPL-001"
+    and .promotion.next_coordination == "STD-TEST-001"
 ' "$contract" >/dev/null
 
 echo "std.testing owner contract: OK"

@@ -174,6 +174,14 @@ fragmentos de un byte, fuzz compartido e interoperabilidad `prost`. Las
 pruebas por operación/schema y los baselines de allocations/memoria por target
 permanecen parciales, al igual que `STD-CONF-001`.
 
+`std.testing` es test-only y conserva `HOST` como `verified`: el worker bridge
+es el único adaptador y la producción no puede importar el módulo. El leaf
+`STD-A-TESTING-EVIDENCE-001` enlaza las 25 firmas públicas con assertions,
+diffs, tolerancias, consumo de `Option`/`Result`, temporales aislados,
+generación determinista, shrinking sellado, control del runner y fixtures de
+dogfooding. `FUZZ`, las dimensiones de coste no capturadas y `STD-CONF-001`
+siguen marcadas como partial con razones explícitas.
+
 Esta matriz no cierra `STD-CONF-001`, `STD-TEST-001` ni `STD-DOC-001`: registra
 sus celdas pendientes para que las siguientes coordinaciones puedan promover
 owners sin perder la identidad de requisito.

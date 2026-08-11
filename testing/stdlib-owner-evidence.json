@@ -103,6 +103,11 @@
       "id": "STD-A-PROTOBUF-EVIDENCE-001",
       "contract": "testing/stdlib-protobuf.json",
       "owners": ["std.protobuf"]
+    },
+    {
+      "id": "STD-A-TESTING-EVIDENCE-001",
+      "contract": "testing/stdlib-testing.json",
+      "owners": ["std.testing"]
     }
   ],
   "owners": [
@@ -1668,6 +1673,93 @@
         "cargo test -p tondo-stdlib --locked --lib protobuf_api::tests",
         "cargo test -p tondo-stdlib --locked --lib protobuf::tests",
         "cargo test -p tondo-stdlib --locked --test codec_conformance"
+      ]
+    },
+    {
+      "id": "std.testing",
+      "layer": "A4",
+      "cells": {
+        "SPEC": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["testing/stdlib-testing.json", "docs/contracts/stdlib-testing.md", "TONDO_TESTING_SPEC.md"]
+        },
+        "IMPL": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-stdlib/src/testing.rs", "crates/tondo-compiler/src/test_runtime.rs", "crates/tondo-compiler/src/test_generation.rs", "crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs"]
+        },
+        "HOST": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/test_runtime.rs", "crates/tondo-cli/tests/acceptance_projects.rs"]
+        },
+        "MODEL": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-stdlib/src/testing.rs", "crates/tondo-compiler/src/test_generation.rs", "crates/tondo-compiler/src/test_runtime.rs", "testing/stdlib-testing.json"]
+        },
+        "TEST": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-stdlib/src/testing.rs", "crates/tondo-compiler/src/test_generation.rs", "crates/tondo-compiler/src/test_runtime.rs", "crates/tondo-compiler/src/process_host.rs", "crates/tondo-cli/tests/acceptance_projects.rs", "scripts/stdlib-testing-test.sh"]
+        },
+        "FUZZ": {
+          "status": "partial",
+          "reason": "No dedicated std.testing fuzz target is promoted; deterministic generators and shrinking, finite limits and isolated acceptance runs are covered by unit and runner tests while fuzz promotion remains explicit.",
+          "refs": ["testing/stdlib-testing.json", "crates/tondo-compiler/src/test_generation.rs", "crates/tondo-compiler/src/process_host.rs", "scripts/stdlib-testing-test.sh"]
+        },
+        "PERF": {
+          "status": "partial",
+          "reason": "The representative diff workload captures throughput and tail latency; allocation, memory, startup, compile-time and code-size baselines remain pending owner promotion.",
+          "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
+        },
+        "CONF": {
+          "status": "partial",
+          "reason": "The runner and owner corpus are exercised by acceptance tests, but STD-CONF-001 has not promoted complete conformance evidence for every std.testing requirement.",
+          "refs": ["crates/tondo-cli/tests/acceptance_projects.rs", "TONDO_IMPLEMENTATION_TRACKER.md"]
+        },
+        "DOC": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["docs/contracts/stdlib-testing.md", "TONDO_TESTING_SPEC.md", "TONDO_STANDARD_LIBRARY_SPEC.md", "docs/contracts/stdlib-s1a.md", "docs/contracts/stdlib-matrix.md"]
+        }
+      },
+      "budgets": {
+        "assertion_message_bytes": {
+          "unit": "bytes",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 1000,
+          "state": "declared-baseline-pending"
+        },
+        "diff_input_bytes": {
+          "unit": "bytes",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 1000,
+          "state": "declared-baseline-pending"
+        },
+        "generated_bytes": {
+          "unit": "bytes",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 1000,
+          "state": "declared-baseline-pending"
+        },
+        "shrink_candidates": {
+          "unit": "candidates",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 1000,
+          "state": "declared-baseline-pending"
+        }
+      },
+      "commands": [
+        "scripts/stdlib-testing-check.sh",
+        "scripts/stdlib-testing-test.sh",
+        "scripts/stdlib-owner-evidence-check.sh",
+        "cargo test -p tondo-stdlib --locked --lib testing::tests",
+        "cargo test -p tondo-compiler --locked --lib test_generation::tests",
+        "cargo test -p tondo-compiler --locked --lib test_runtime::tests",
+        "cargo test -p tondo-compiler --locked --lib process_host::tests",
+        "cargo test -p tondo-cli --locked --test acceptance_projects"
       ]
     }
   ],

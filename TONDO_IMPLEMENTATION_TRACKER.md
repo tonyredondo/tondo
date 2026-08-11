@@ -9,9 +9,9 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 2.11
+**Versión del tracker:** 2.12
 
-**Última actualización:** 2026-08-10
+**Última actualización:** 2026-08-11
 
 **Especificaciones normativas:**
 
@@ -4694,9 +4694,15 @@ administrativas que no implementan comportamiento.
   `HOST` es no aplicable; fuzz dedicado de schema/operaciones, baselines de
   allocations/memoria por target y `STD-CONF-001` permanecen como promoción
   posterior.
-- [ ] **STD-A-TESTING-EVIDENCE-001 — Cerrar evidencia de `std.testing`.**
-  Cubrir helpers, generators/shrinking, temp resources, control sellado,
-  bridge test-only, dogfooding, límites/rendimiento, conformidad y docs.
+- [x] **STD-A-TESTING-EVIDENCE-001 — Cerrar evidencia de `std.testing`.**
+  El contrato pasa a `closed-contract` y el leaf de evidencia registra las
+  nueve celdas. Las 25 firmas públicas quedan enlazadas con assertions,
+  `TextDiff`, tolerancias, consumo de `Option`/`Result`, temporales aislados,
+  generación replayable, shrinking sellado, control terminal y virtual time.
+  El bridge `HOST` es verificado por el worker; los proyectos de aceptación
+  dogfoodéan importación test-only, hooks de control, retries/repeats,
+  selección/sharding y JSON/JUnit. Fuzz dedicado, dimensiones de coste aún no
+  capturadas y `STD-CONF-001` permanecen como celdas `partial` explícitas.
 
 - [x] **STD-MATRIX-ALL-001 — Construir la matriz normativa de stdlib.**
   `testing/stdlib-matrix.json` contiene 22 owners (incluidos los owners
@@ -5853,6 +5859,19 @@ se declara iniciada antes de esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 2.12 — 2026-08-11
+
+- Se cierra `STD-A-TESTING-EVIDENCE-001` con contrato `closed-contract`,
+  checker y test negativo ejecutables, y registro de nueve celdas para
+  `std.testing`. La evidencia enlaza las 25 firmas, el núcleo test-only
+  sellado, assertions y diagnostics, diffs y tolerancias acotados, consumo de
+  `Option`/`Result`, temporales afines, generators deterministas y shrinking
+  compiler-sealed, además del worker bridge y el corpus de aceptación que
+  dogfoodea control, retries/repeats, selección/sharding y reportes JSON/JUnit.
+  Fuzz dedicado, baselines completos de rendimiento y `STD-CONF-001` siguen
+  explícitos como promoción parcial; `STD-TEST-001` es la siguiente
+  coordinación.
 
 ### 2.11 — 2026-08-11
 

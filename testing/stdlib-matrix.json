@@ -2525,16 +2525,21 @@
       ],
       "stages": {
         "CONF": {
-          "reason": "STD-CONF-001 remains open until the owner has complete public evidence",
+          "reason": "The runner and owner corpus are exercised by acceptance tests, but STD-CONF-001 has not promoted complete conformance evidence for every std.testing requirement.",
           "refs": [
-            "TONDO_IMPLEMENTATION_TRACKER.md#STD-CONF-001"
+            "crates/tondo-cli/tests/acceptance_projects.rs",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
           ],
-          "status": "pending"
+          "status": "partial"
         },
         "DOC": {
           "reason": null,
           "refs": [
-            "docs/contracts/stdlib-testing.md"
+            "docs/contracts/stdlib-testing.md",
+            "TONDO_TESTING_SPEC.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md",
+            "docs/contracts/stdlib-s1a.md",
+            "docs/contracts/stdlib-matrix.md"
           ],
           "status": "verified"
         },
@@ -2542,42 +2547,34 @@
           "reason": null,
           "refs": [
             "crates/tondo-cli/tests/acceptance_projects.rs",
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/process_host.rs",
             "crates/tondo-compiler/src/test_generation.rs",
             "crates/tondo-compiler/src/test_runtime.rs",
-            "crates/tondo-stdlib/src/testing.rs",
-            "docs/contracts/stdlib-testing.md",
-            "docs/contracts/test-generation.md"
+            "crates/tondo-stdlib/src/testing.rs"
           ],
           "status": "verified"
         },
         "MODEL/TEST/FUZZ": {
-          "reason": "owner tests exist; per-leaf MODEL/TEST/FUZZ links and fuzz coverage remain to be coordinated by STD-TEST-001",
+          "reason": "No dedicated std.testing fuzz target is promoted; deterministic generators and shrinking, finite limits and isolated acceptance runs are covered by unit and runner tests while fuzz promotion remains explicit.",
           "refs": [
             "crates/tondo-cli/tests/acceptance_projects.rs",
             "crates/tondo-compiler/src/process_host.rs",
             "crates/tondo-compiler/src/test_generation.rs",
-            "docs/contracts/stdlib-testing.md",
-            "docs/contracts/test-generation.md"
+            "crates/tondo-compiler/src/test_runtime.rs",
+            "crates/tondo-stdlib/src/testing.rs",
+            "scripts/stdlib-testing-test.sh",
+            "testing/stdlib-testing.json"
           ],
           "status": "partial"
         },
         "PERF": {
-          "observed_dimensions": [
-            "throughput",
-            "tail_latency"
-          ],
-          "pending_dimensions": [
-            "allocations_per_operation",
-            "allocated_bytes_per_operation",
-            "peak_memory",
-            "startup",
-            "code_size",
-            "compile_time"
-          ],
-          "reason": "only the dimensions listed as observed are captured; promotion remains pending",
+          "reason": "The representative diff workload captures throughput and tail latency; allocation, memory, startup, compile-time and code-size baselines remain pending owner promotion.",
           "refs": [
-            "testing/stdlib-performance-conformance.json#owners/std.testing"
+            "testing/stdlib-performance.json",
+            "testing/stdlib-performance-conformance.json",
+            "docs/contracts/stdlib-performance.md"
           ],
           "status": "partial"
         },
@@ -2585,7 +2582,8 @@
           "reason": null,
           "refs": [
             "testing/stdlib-testing.json",
-            "docs/contracts/stdlib-testing.md"
+            "docs/contracts/stdlib-testing.md",
+            "TONDO_TESTING_SPEC.md"
           ],
           "status": "verified"
         }
@@ -12544,8 +12542,8 @@
     "signatures": 207,
     "stage_counts": {
       "CONF": {
-        "partial": 338,
-        "pending": 34
+        "partial": 371,
+        "pending": 1
       },
       "DOC": {
         "verified": 372

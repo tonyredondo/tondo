@@ -3,7 +3,7 @@
   "owner": "std.testing",
   "edition": "0.1",
   "phase": "STD-0.1A",
-  "status": "draft-contract",
+  "status": "closed-contract",
   "base": {
     "normative_document": "TONDO_TESTING_SPEC.md",
     "sealed_core": [
@@ -248,6 +248,6 @@
       {"id": "security", "requires": ["no-host-entropy", "no-secret-generator", "root-bounded-cleanup", "no-reflection", "no-panic-capture"]},
       {"id": "promote", "requires": ["all-required-matrix", "report-and-snapshot-compatibility", "coverage-baseline", "STD-PERF-001-report"]}
     ],
-    "next_coordination": "STD-TESTING-IMPL-001"
+    "next_coordination": "STD-TEST-001"
   }
 }
