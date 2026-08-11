@@ -191,7 +191,7 @@ jq -e '
     and .promotion.gates[2].requires == ["owner-corpus", "cross-backend", "format-stability", "capability-rejection", "failure-precedence"]
     and .promotion.gates[3].requires == ["no-host-entropy", "no-secret-generator", "root-bounded-cleanup", "no-reflection", "no-panic-capture"]
     and .promotion.gates[4].requires == ["all-required-matrix", "report-and-snapshot-compatibility", "coverage-baseline", "STD-PERF-001-report"]
-    and .promotion.next_coordination == "STD-TEST-001"
+    and .promotion.next_coordination == "STD-CONF-001"
 ' "$contract" >/dev/null
 
 echo "std.testing owner contract: OK"

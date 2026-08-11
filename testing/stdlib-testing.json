@@ -248,6 +248,6 @@
       {"id": "security", "requires": ["no-host-entropy", "no-secret-generator", "root-bounded-cleanup", "no-reflection", "no-panic-capture"]},
       {"id": "promote", "requires": ["all-required-matrix", "report-and-snapshot-compatibility", "coverage-baseline", "STD-PERF-001-report"]}
     ],
-    "next_coordination": "STD-TEST-001"
+    "next_coordination": "STD-CONF-001"
   }
 }

@@ -182,6 +182,14 @@ generación determinista, shrinking sellado, control del runner y fixtures de
 dogfooding. `FUZZ`, las dimensiones de coste no capturadas y `STD-CONF-001`
 siguen marcadas como partial con razones explícitas.
 
-Esta matriz no cierra `STD-CONF-001`, `STD-TEST-001` ni `STD-DOC-001`: registra
-sus celdas pendientes para que las siguientes coordinaciones puedan promover
-owners sin perder la identidad de requisito.
+`STD-TEST-001` añade `testing/stdlib-test-coordination.json`, un registro
+generado que liga las 207 firmas y 164 requisitos a 63 leyes de modelo,
+comandos de test y campañas de fuzz. El registro exige que cada superficie
+pública tenga una ley y que cualquier fuzz parcial conserve su razón; no
+convierte un corpus bounded en una promoción de fuzz dedicada. La prueba Rust
+`stdlib_owner_models` y los negativos del checker verifican la clausura sin
+crear un segundo owner ni una API alternativa.
+
+Esta matriz no cierra `STD-CONF-001` ni `STD-DOC-001`: registra sus celdas
+pendientes para que las siguientes coordinaciones puedan promover owners sin
+perder la identidad de requisito.

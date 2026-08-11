@@ -1,0 +1,2316 @@
+{
+  "format": "tondo-stdlib-test-coordination/1",
+  "edition": "0.1",
+  "phase": "STD-0.1A",
+  "status": "closed-coordination",
+  "sources": {
+    "owner_evidence": "testing/stdlib-owner-evidence.json",
+    "public_api": "testing/stdlib-public-api.json",
+    "normative_matrix": "testing/stdlib-matrix.json",
+    "model_test": "crates/tondo-reliability/tests/stdlib_owner_models.rs"
+  },
+  "rules": {
+    "one_owner_per_surface": true,
+    "every_surface_has_model_law": true,
+    "every_owner_has_test_commands": true,
+    "fuzz_gaps_require_reason": true,
+    "partial_fuzz_is_not_promotion": true
+  },
+  "owners": [
+    {
+      "id": "std.bytes",
+      "leaf": "STD-A-BYTES-EVIDENCE-001",
+      "contract": "testing/stdlib-bytes.json",
+      "public_api": [],
+      "requirements": [
+        "requirement:std.bytes:builder-atomicity",
+        "requirement:std.bytes:catalog-shape",
+        "requirement:std.bytes:limits-and-ranges",
+        "requirement:std.bytes:ownership-and-snapshots",
+        "requirement:std.bytes:properties-and-hot-paths",
+        "requirement:std.bytes:utf8-conversion"
+      ],
+      "model": {
+        "status": "verified",
+        "laws": [
+          "byte-identity",
+          "utf8-boundary",
+          "bounded-slicing"
+        ],
+        "refs": [
+          "crates/tondo-compiler/src/hir/check.rs",
+          "crates/tondo-compiler/src/hir/lower.rs",
+          "crates/tondo-reliability/tests/stdlib_owner_models.rs",
+          "crates/tondo-vm/src/bytecode/verify.rs"
+        ]
+      },
+      "test": {
+        "status": "verified",
+        "commands": [
+          "scripts/stdlib-bytes-check.sh",
+          "scripts/stdlib-bytes-test.sh",
+          "cargo test -p tondo-compiler --locked --lib process_host::tests"
+        ],
+        "refs": [
+          "crates/tondo-compiler/src/process_host.rs",
+          "crates/tondo-compiler/src/hir/check.rs",
+          "crates/tondo-compiler/src/driver.rs"
+        ]
+      },
+      "fuzz": {
+        "status": "partial",
+        "reason": "the bounded byte and UTF-8 corpora are declared and boundary tests are executable, but no dedicated bytes fuzz target has been promoted",
+        "campaigns": [
+          "bounded-owner-corpus"
+        ],
+        "refs": [
+          "testing/stdlib-bytes.json",
+          "scripts/stdlib-bytes-test.sh"
+        ]
+      }
+    },
+    {
+      "id": "std.collections",
+      "leaf": "STD-A-COLL-EVIDENCE-001",
+      "contract": "testing/stdlib-core.json",
+      "public_api": [
+        {
+          "id": "std.collections:126",
+          "symbol": "std.collections.Array.new",
+          "signature": "pub fn Array.new[T](): Array[T]"
+        },
+        {
+          "id": "std.collections:127",
+          "symbol": "std.collections.Array.withCapacity",
+          "signature": "pub fn Array.withCapacity[T](capacity: Int): Array[T] ! CollectionError"
+        },
+        {
+          "id": "std.collections:128",
+          "symbol": "std.collections.Array.length",
+          "signature": "pub fn Array.length[T](self): Int"
+        },
+        {
+          "id": "std.collections:129",
+          "symbol": "std.collections.Array.get",
+          "signature": "pub fn Array.get[T](self, index: Int): T?"
+        },
+        {
+          "id": "std.collections:130",
+          "symbol": "std.collections.Array.slice",
+          "signature": "pub fn Array.slice[T](self, start: Int, end: Int): Array[T] ! CollectionError"
+        },
+        {
+          "id": "std.collections:131",
+          "symbol": "std.collections.Array.push",
+          "signature": "pub fn Array.push[T](var self, value: T): Unit ! CollectionError"
+        },
+        {
+          "id": "std.collections:132",
+          "symbol": "std.collections.Array.pop",
+          "signature": "pub fn Array.pop[T](var self): T?"
+        },
+        {
+          "id": "std.collections:134",
+          "symbol": "std.collections.Map.new",
+          "signature": "pub fn Map.new[K: Key, V](): Map[K, V]"
+        },
+        {
+          "id": "std.collections:135",
+          "symbol": "std.collections.Map.get",
+          "signature": "pub fn Map.get[K: Key, V](self, key: K): V?"
+        },
+        {
+          "id": "std.collections:136",
+          "symbol": "std.collections.Map.insert",
+          "signature": "pub fn Map.insert[K: Key, V](var self, key: K, value: V): V?"
+        },
+        {
+          "id": "std.collections:137",
+          "symbol": "std.collections.Map.remove",
+          "signature": "pub fn Map.remove[K: Key, V](var self, key: K): V?"
+        },
+        {
+          "id": "std.collections:138",
+          "symbol": "std.collections.Map.contains",
+          "signature": "pub fn Map.contains[K: Key, V](self, key: K): Bool"
+        },
+        {
+          "id": "std.collections:139",
+          "symbol": "std.collections.Map.entries",
+          "signature": "pub fn Map.entries[K: Key, V](self): Iterator[(K, V)]"
+        },
+        {
+          "id": "std.collections:141",
+          "symbol": "std.collections.Set.new",
+          "signature": "pub fn Set.new[K: Key](): Set[K]"
+        },
+        {
+          "id": "std.collections:142",
+          "symbol": "std.collections.Set.insert",
+          "signature": "pub fn Set.insert[K: Key](var self, value: K): Bool"
+        },
+        {
+          "id": "std.collections:143",
+          "symbol": "std.collections.Set.remove",
+          "signature": "pub fn Set.remove[K: Key](var self, value: K): Bool"
+        },
+        {
+          "id": "std.collections:144",
+          "symbol": "std.collections.Set.contains",
+          "signature": "pub fn Set.contains[K: Key](self, value: K): Bool"
+        },
+        {
+          "id": "std.collections:145",
+          "symbol": "std.collections.Set.values",
+          "signature": "pub fn Set.values[K: Key](self): Iterator[K]"
+        }
+      ],
+      "requirements": [
+        "requirement:std.collections:async-cancellation",
+        "requirement:std.collections:composition",
+        "requirement:std.collections:determinism",
+        "requirement:std.collections:empty-values",
+        "requirement:std.collections:error-priority",
+        "requirement:std.collections:limits",
+        "requirement:std.collections:ownership"
+      ],
+      "model": {
+        "status": "verified",
+        "laws": [
+          "value-copy-cow",
+          "insertion-order",
+          "key-membership"
+        ],
+        "refs": [
+          "crates/tondo-compiler/src/hir/check.rs",
+          "crates/tondo-compiler/src/hir/lower.rs",
+          "crates/tondo-compiler/src/mir/lower.rs",
+          "crates/tondo-reliability/tests/stdlib_owner_models.rs",
+          "crates/tondo-vm/src/runtime/execute.rs"
+        ]
+      },
+      "test": {
+        "status": "verified",
+        "commands": [
+          "scripts/stdlib-core-check.sh",
+          "scripts/stdlib-collections-test.sh",
+          "cargo test -p tondo-compiler --locked --lib bytecode::lower::tests",
+          "cargo test -p tondo-compiler --locked --lib process_host::tests"
+        ],
+        "refs": [
+          "tests/runtime/m11-std-collections-001.to",
+          "crates/tondo-compiler/src/process_host.rs",
+          "crates/tondo-compiler/src/bytecode/lower.rs",
+          "scripts/stdlib-collections-test.sh"
+        ]
+      },
+      "fuzz": {
+        "status": "partial",
+        "reason": "the admission corpus and collection property corpus exercise Array/Map/Set shapes, but no dedicated std.collections operation fuzz target has been promoted",
+        "campaigns": [
+          "admission"
+        ],
+        "refs": [
+          "fuzz/fuzz_targets/admission.rs",
+          "fuzz/corpus/admission/scalar-seed",
+          "fuzz/corpus/admission/structural-seed",
+          "crates/tondo-compiler/src/bytecode/lower.rs",
+          "scripts/stdlib-collections-test.sh"
+        ]
+      }
+    },
+    {
+      "id": "std.console",
+      "leaf": "STD-A-CONSOLE-EVIDENCE-001",
+      "contract": "testing/stdlib-hosted.json",
+      "public_api": [
+        {
+          "id": "std.console:10",
+          "symbol": "std.console.stdin",
+          "signature": "pub fn stdin(): std.io.Reader ! ConsoleError"
+        },
+        {
+          "id": "std.console:11",
+          "symbol": "std.console.stdout",
+          "signature": "pub fn stdout(): std.io.Writer ! ConsoleError"
+        },
+        {
+          "id": "std.console:12",
+          "symbol": "std.console.stderr",
+          "signature": "pub fn stderr(): std.io.Writer ! ConsoleError"
+        },
+        {
+          "id": "std.console:13",
+          "symbol": "std.console.readLine",
+          "signature": "pub fn readLine(var input: std.io.Reader): String? ! ConsoleError"
+        },
+        {
+          "id": "std.console:14",
+          "symbol": "std.console.print",
+          "signature": "pub fn print(value: String): Unit ! ConsoleError"
+        },
+        {
+          "id": "std.console:15",
+          "symbol": "std.console.println",
+          "signature": "pub fn println(value: String): Unit ! ConsoleError"
+        },
+        {
+          "id": "std.console:16",
+          "symbol": "std.console.flush",
+          "signature": "pub fn flush(): Unit ! ConsoleError"
+        }
+      ],
+      "requirements": [
+        "requirement:std.console:cancellation",
+        "requirement:std.console:capability-absent",
+        "requirement:std.console:capability-present",
+        "requirement:std.console:cleanup-on-unwind",
+        "requirement:std.console:combined-output-order",
+        "requirement:std.console:empty-input",
+        "requirement:std.console:host-error-redaction",
+        "requirement:std.console:partial-io",
+        "requirement:std.console:pipeline-redirection"
+      ],
+      "model": {
+        "status": "verified",
+        "laws": [
+          "stream-separation",
+          "line-termination",
+          "capability-boundary"
+        ],
+        "refs": [
+          "crates/tondo-compiler/src/hir/check.rs",
+          "crates/tondo-compiler/src/process_host.rs",
+          "crates/tondo-reliability/tests/stdlib_owner_models.rs",
+          "docs/contracts/stdlib-hosted.md"
+        ]
+      },
+      "test": {
+        "status": "verified",
+        "commands": [
+          "scripts/stdlib-hosted-check.sh",
+          "scripts/stdlib-console-test.sh",
+          "cargo test -p tondo-compiler --locked --lib process_host::tests::console_println_uses_a_stable_lf_newline",
+          "cargo test -p tondo-compiler --locked --lib process_host::tests::console_streams_preserve_partial_reads_and_separate_output_channels",
+          "cargo test -p tondo-compiler --locked --lib process_host::tests::console_failures_are_typed_atomic_and_redacted",
+          "cargo test -p tondo-compiler --locked --lib driver::tests::bootstrap_standard_modules_follow_the_closed_target_capabilities"
+        ],
+        "refs": [
+          "crates/tondo-compiler/src/process_host.rs",
+          "crates/tondo-compiler/src/driver.rs",
+          "tests/runtime/m11-std-console-001.to",
+          "scripts/stdlib-console-test.sh"
+        ]
+      },
+      "fuzz": {
+        "status": "partial",
+        "reason": "the bounded stream, UTF-8 and capability corpus is executable, but no dedicated std.console operation fuzz target has been promoted",
+        "campaigns": [
+          "bounded-owner-corpus"
+        ],
+        "refs": [
+          "crates/tondo-compiler/src/process_host.rs",
+          "scripts/stdlib-console-test.sh",
+          "fuzz/fuzz_targets/admission.rs"
+        ]
+      }
+    },
+    {
+      "id": "std.core",
+      "leaf": "STD-A-CORE-EVIDENCE-001",
+      "contract": "testing/stdlib-core.json",
+      "public_api": [
+        {
+          "id": "std.core:28",
+          "symbol": "std.core.Option.some",
+          "signature": "pub fn Option.some[T](value: T): T?"
+        },
+        {
+          "id": "std.core:29",
+          "symbol": "std.core.Option.none",
+          "signature": "pub fn Option.none[T](): T?"
+        },
+        {
+          "id": "std.core:30",
+          "symbol": "std.core.Option.unwrapOr",
+          "signature": "pub fn Option.unwrapOr[T](self: T?, fallback: T): T"
+        },
+        {
+          "id": "std.core:31",
+          "symbol": "std.core.Option.map",
+          "signature": "pub fn Option.map[T, U](self: T?, fn(T): U): U?"
+        },
+        {
+          "id": "std.core:33",
+          "symbol": "std.core.Result.ok",
+          "signature": "pub fn Result.ok[T, E](value: T): T ! E"
+        },
+        {
+          "id": "std.core:34",
+          "symbol": "std.core.Result.err",
+          "signature": "pub fn Result.err[T, E](error: E): T ! E"
+        },
+        {
+          "id": "std.core:35",
+          "symbol": "std.core.Result.map",
+          "signature": "pub fn Result.map[T, U, E](self: T ! E, fn(T): U): U ! E"
+        },
+        {
+          "id": "std.core:36",
+          "symbol": "std.core.Result.mapErr",
+          "signature": "pub fn Result.mapErr[T, E, F](self: T ! E, fn(E): F): T ! F"
+        },
+        {
+          "id": "std.core:37",
+          "symbol": "std.core.Result.unwrapOr",
+          "signature": "pub fn Result.unwrapOr[T, E](self: T ! E, fallback: T): T"
+        }
+      ],
+      "requirements": [
+        "requirement:std.core:async-cancellation",
+        "requirement:std.core:composition",
+        "requirement:std.core:determinism",
+        "requirement:std.core:empty-values",
+        "requirement:std.core:error-priority",
+        "requirement:std.core:limits",
+        "requirement:std.core:ownership"
+      ],
+      "model": {
+        "status": "verified",
+        "laws": [
+          "option-result-algebra",
+          "generic-protocols",
+          "terminal-composition"
+        ],
+        "refs": [
+          "crates/tondo-compiler/src/hir/check.rs",
+          "crates/tondo-compiler/src/hir/lower.rs",
+          "crates/tondo-compiler/src/mir/lower.rs",
+          "crates/tondo-reliability/tests/stdlib_owner_models.rs",
+          "crates/tondo-vm/src/runtime/execute.rs"
+        ]
+      },
+      "test": {
+        "status": "verified",
+        "commands": [
+          "scripts/stdlib-core-check.sh",
+          "scripts/stdlib-core-test.sh",
+          "cargo test -p tondo-compiler --locked --lib result_construction_fail_and_both_propagation_channels_are_typed",
+          "cargo test -p tondo-compiler --locked --lib explicit_generic_calls_materialize_their_specialization",
+          "cargo test -p tondo-compiler --locked --lib option_and_result_propagation_branch_to_payload_or_early_return"
+        ],
+        "refs": [
+          "tests/runtime/m11-std-core-001.to",
+          "tests/runtime/m11-std-core-002.to",
+          "crates/tondo-compiler/src/hir/check.rs",
+          "crates/tondo-compiler/src/mir/lower.rs",
+          "scripts/stdlib-core-test.sh"
+        ]
+      },
+      "fuzz": {
+        "status": "partial",
+        "reason": "the admission corpus and deterministic fuzz target generate Option/Result and generic protocol shapes, but no dedicated std.core operation fuzz target has been promoted",
+        "campaigns": [
+          "admission"
+        ],
+        "refs": [
+          "fuzz/fuzz_targets/admission.rs",
+          "fuzz/corpus/admission/scalar-seed",
+          "fuzz/corpus/admission/structural-seed",
+          "scripts/stdlib-core-test.sh"
+        ]
+      }
+    },
+    {
+      "id": "std.env",
+      "leaf": "STD-A-ENV-EVIDENCE-001",
+      "contract": "testing/stdlib-env.json",
+      "public_api": [
+        {
+          "id": "std.env:28",
+          "symbol": "std.env.snapshot",
+          "signature": "pub fn snapshot(): Snapshot ! EnvError"
+        },
+        {
+          "id": "std.env:29",
+          "symbol": "std.env.Name.fromText",
+          "signature": "pub fn Name.fromText(value: String): Name ! EnvError"
+        },
+        {
+          "id": "std.env:30",
+          "symbol": "std.env.Name.fromBytes",
+          "signature": "pub fn Name.fromBytes(value: bytes.Bytes): Name ! EnvError"
+        },
+        {
+          "id": "std.env:31",
+          "symbol": "std.env.Snapshot.arguments",
+          "signature": "pub fn Snapshot.arguments(ref self): Array[Value]"
+        },
+        {
+          "id": "std.env:32",
+          "symbol": "std.env.Snapshot.get",
+          "signature": "pub fn Snapshot.get(ref self, name: Name): Option[Value] ! EnvError"
+        },
+        {
+          "id": "std.env:33",
+          "symbol": "std.env.Value.asText",
+          "signature": "pub fn Value.asText(ref self): Option[String]"
+        },
+        {
+          "id": "std.env:34",
+          "symbol": "std.env.Value.asBytes",
+          "signature": "pub fn Value.asBytes(ref self): bytes.Bytes"
+        }
+      ],
+      "requirements": [
+        "requirement:std.env:arguments-and-order",
+        "requirement:std.env:capability-and-availability",
+        "requirement:std.env:limits-and-atomicity",
+        "requirement:std.env:missing-and-copying",
+        "requirement:std.env:names-and-values",
+        "requirement:std.env:snapshot-identity-and-sealing"
+      ],
+      "model": {
+        "status": "verified",
+        "laws": [
+          "snapshot-isolation",
+          "name-encoding",
+          "budget-atomicity"
+        ],
+        "refs": [
+          "crates/tondo-compiler/src/process_host.rs",
+          "crates/tondo-reliability/tests/stdlib_owner_models.rs",
+          "crates/tondo-vm/src/runtime/execute.rs",
+          "docs/contracts/stdlib-env.md"
+        ]
+      },
+      "test": {
+        "status": "verified",
+        "commands": [
+          "scripts/stdlib-env-check.sh",
+          "scripts/stdlib-env-test.sh",
+          "cargo test -p tondo-compiler --locked --lib process_host::tests",
+          "cargo test -p tondo-compiler --locked --lib driver::tests"
+        ],
+        "refs": [
+          "crates/tondo-compiler/src/process_host.rs",
+          "crates/tondo-compiler/src/driver.rs",
+          "tests/runtime/m10-std-env-001.to"
+        ]
+      },
+      "fuzz": {
+        "status": "partial",
+        "reason": "the name-boundary, snapshot-input and budget-atomicity corpora are declared and executable, but no dedicated environment fuzz target has been promoted",
+        "campaigns": [
+          "bounded-owner-corpus"
+        ],
+        "refs": [
+          "testing/stdlib-env.json",
+          "scripts/stdlib-env-test.sh"
+        ]
+      }
+    },
+    {
+      "id": "std.format",
+      "leaf": "STD-A-FMT-EVIDENCE-001",
+      "contract": "testing/stdlib-core.json",
+      "public_api": [
+        {
+          "id": "std.format:227",
+          "symbol": "std.format.Builder.new",
+          "signature": "pub fn Builder.new(): Builder"
+        },
+        {
+          "id": "std.format:228",
+          "symbol": "std.format.Builder.append",
+          "signature": "pub fn Builder.append(var self, value: String): Unit ! FormatError"
+        },
+        {
+          "id": "std.format:229",
+          "symbol": "std.format.Builder.finish",
+          "signature": "pub fn Builder.finish(var self): String ! FormatError"
+        },
+        {
+          "id": "std.format:230",
+          "symbol": "std.format.format",
+          "signature": "pub fn format[T: Display](value: T): String ! FormatError"
+        },
+        {
+          "id": "std.format:231",
+          "symbol": "std.format.join",
+          "signature": "pub fn join[T: Display](values: Array[T], separator: String): String ! FormatError"
+        }
+      ],
+      "requirements": [
+        "requirement:std.format:async-cancellation",
+        "requirement:std.format:composition",
+        "requirement:std.format:determinism",
+        "requirement:std.format:empty-values",
+        "requirement:std.format:error-priority",
+        "requirement:std.format:limits",
+        "requirement:std.format:ownership"
+      ],
+      "model": {
+        "status": "verified",
+        "laws": [
+          "bounded-builder",
+          "display-atomicity",
+          "join-order"
+        ],
+        "refs": [
+          "crates/tondo-compiler/src/bytecode/lower.rs",
+          "crates/tondo-compiler/src/hir/check.rs",
+          "crates/tondo-compiler/src/mir/verify.rs",
+          "crates/tondo-reliability/tests/stdlib_owner_models.rs",
+          "crates/tondo-stdlib/src/format.rs",
+          "crates/tondo-vm/src/runtime/execute.rs"
+        ]
+      },
+      "test": {
+        "status": "verified",
+        "commands": [
+          "scripts/stdlib-core-check.sh",
+          "scripts/stdlib-format-test.sh",
+          "cargo test -p tondo-stdlib --locked --lib format::tests",
+          "cargo test -p tondo-compiler --locked --lib process_host::tests::format_builder_is_bounded_and_rejects_append_atomically",
+          "cargo test -p tondo-compiler --locked --lib mir::verify::tests::format_operations_are_explicitly_verified_and_reject_corruption",
+          "cargo test -p tondo-compiler --locked --lib bytecode::lower::tests::format_operations_lower_to_verified_bytecode_with_static_and_custom_display",
+          "cargo test -p tondo-vm --locked --lib runtime::execute::tests::format_builder_host_boundaries_are_materialized_atomically"
+        ],
+        "refs": [
+          "crates/tondo-stdlib/src/format.rs",
+          "crates/tondo-compiler/src/process_host.rs",
+          "crates/tondo-compiler/src/mir/verify.rs",
+          "crates/tondo-compiler/src/bytecode/lower.rs",
+          "crates/tondo-vm/src/runtime/execute.rs",
+          "tests/runtime/m11-std-format-001.to",
+          "scripts/stdlib-format-test.sh"
+        ]
+      },
+      "fuzz": {
+        "status": "partial",
+        "reason": "the bounded builder, Display and limit-boundary property corpus is executable, but no dedicated std.format operation fuzz target has been promoted",
+        "campaigns": [
+          "bounded-owner-corpus"
+        ],
+        "refs": [
+          "crates/tondo-stdlib/src/format.rs",
+          "tests/runtime/m11-std-format-001.to",
+          "scripts/stdlib-format-test.sh"
+        ]
+      }
+    },
+    {
+      "id": "std.fs",
+      "leaf": "STD-A-FS-EVIDENCE-001",
+      "contract": "testing/stdlib-hosted.json",
+      "public_api": [
+        {
+          "id": "std.fs:84",
+          "symbol": "std.fs.open",
+          "signature": "pub fn open(path: Path, mode: OpenMode): File ! FsError"
+        },
+        {
+          "id": "std.fs:85",
+          "symbol": "std.fs.openDirectory",
+          "signature": "pub fn openDirectory(path: Path): Directory ! FsError"
+        },
+        {
+          "id": "std.fs:86",
+          "symbol": "std.fs.readAll",
+          "signature": "pub fn readAll(path: Path): Bytes ! FsError"
+        },
+        {
+          "id": "std.fs:87",
+          "symbol": "std.fs.writeAll",
+          "signature": "pub fn writeAll(path: Path, data: Bytes): Unit ! FsError"
+        },
+        {
+          "id": "std.fs:88",
+          "symbol": "std.fs.createDirectory",
+          "signature": "pub fn createDirectory(path: Path, parents: Bool): Unit ! FsError"
+        },
+        {
+          "id": "std.fs:89",
+          "symbol": "std.fs.remove",
+          "signature": "pub fn remove(path: Path): Unit ! FsError"
+        },
+        {
+          "id": "std.fs:90",
+          "symbol": "std.fs.metadata",
+          "signature": "pub fn metadata(path: Path): Metadata ! FsError"
+        },
+        {
+          "id": "std.fs:91",
+          "symbol": "std.fs.list",
+          "signature": "pub fn list(path: Path): Array[Path] ! FsError"
+        },
+        {
+          "id": "std.fs:92",
+          "symbol": "std.fs.rename",
+          "signature": "pub fn rename(from: Path, to: Path): Unit ! FsError"
+        },
+        {
+          "id": "std.fs:93",
+          "symbol": "std.fs.atomicWrite",
+          "signature": "pub fn atomicWrite(path: Path, data: Bytes): Unit ! FsError"
+        },
+        {
+          "id": "std.fs:94",
+          "symbol": "std.fs.File.read",
+          "signature": "pub fn File.read(var self, max: Int): Option[Bytes] ! FsError"
+        },
+        {
+          "id": "std.fs:95",
+          "symbol": "std.fs.File.write",
+          "signature": "pub fn File.write(var self, data: Bytes): Int ! FsError"
+        },
+        {
+          "id": "std.fs:96",
+          "symbol": "std.fs.File.flush",
+          "signature": "pub fn File.flush(var self): Unit ! FsError"
+        },
+        {
+          "id": "std.fs:97",
+          "symbol": "std.fs.Directory.list",
+          "signature": "pub fn Directory.list(var self): Array[Path] ! FsError"
+        }
+      ],
+      "requirements": [
+        "requirement:std.fs:cancellation",
+        "requirement:std.fs:capability-absent",
+        "requirement:std.fs:capability-present",
+        "requirement:std.fs:cleanup-on-unwind",
+        "requirement:std.fs:combined-output-order",
+        "requirement:std.fs:empty-input",
+        "requirement:std.fs:host-error-redaction",
+        "requirement:std.fs:partial-io",
+        "requirement:std.fs:pipeline-redirection"
+      ],
+      "model": {
+        "status": "verified",
+        "laws": [
+          "handle-lifecycle",
+          "directory-order",
+          "atomic-write"
+        ],
+        "refs": [
+          "crates/tondo-compiler/src/hir/capabilities.rs",
+          "crates/tondo-compiler/src/process_host.rs",
+          "crates/tondo-reliability/tests/stdlib_owner_models.rs",
+          "docs/contracts/stdlib-hosted.md"
+        ]
+      },
+      "test": {
+        "status": "verified",
+        "commands": [
+          "scripts/stdlib-hosted-check.sh",
+          "scripts/stdlib-fs-test.sh",
+          "cargo test -p tondo-compiler --locked --lib process_host::tests::filesystem_directory_operations_are_atomic_and_ordered",
+          "cargo test -p tondo-compiler --locked --lib process_host::tests::filesystem_handles_are_typed_async_and_cleanup_is_affine",
+          "cargo test -p tondo-compiler --locked --lib process_host::tests::filesystem_handles_cover_modes_errors_and_cancellation",
+          "cargo test -p tondo-compiler --locked --lib driver::tests::filesystem_module_requires_the_explicit_target_capability"
+        ],
+        "refs": [
+          "crates/tondo-compiler/src/process_host.rs",
+          "crates/tondo-compiler/src/driver.rs",
+          "tests/runtime/m11-std-fs-001.to",
+          "scripts/stdlib-fs-test.sh"
+        ]
+      },
+      "fuzz": {
+        "status": "partial",
+        "reason": "The bounded native-path, directory-order, byte-limit and failure corpus is executable, but no dedicated std.fs operation fuzz target has been promoted.",
+        "campaigns": [
+          "bounded-owner-corpus"
+        ],
+        "refs": [
+          "crates/tondo-compiler/src/process_host.rs",
+          "fuzz/fuzz_targets/admission.rs",
+          "scripts/stdlib-fs-test.sh"
+        ]
+      }
+    },
+    {
+      "id": "std.io",
+      "leaf": "STD-A-IO-EVIDENCE-001",
+      "contract": "testing/stdlib-core.json",
+      "public_api": [
+        {
+          "id": "std.io:257",
+          "symbol": "std.io.defaultLimits",
+          "signature": "pub fn defaultLimits(): IoLimits"
+        },
+        {
+          "id": "std.io:258",
+          "symbol": "std.io.limits",
+          "signature": "pub fn limits(maxBytes: Int, maxRead: Int): IoLimits ! IoError"
+        },
+        {
+          "id": "std.io:259",
+          "symbol": "std.io.readAll",
+          "signature": "pub fn readAll[R: Reader](var reader: R, limits: IoLimits): Bytes ! IoError"
+        },
+        {
+          "id": "std.io:260",
+          "symbol": "std.io.writeAll",
+          "signature": "pub fn writeAll(var writer: Writer, data: Bytes): Unit ! IoError"
+        }
+      ],
+      "requirements": [
+        "requirement:std.io:async-cancellation",
+        "requirement:std.io:composition",
+        "requirement:std.io:determinism",
+        "requirement:std.io:empty-values",
+        "requirement:std.io:error-priority",
+        "requirement:std.io:limits",
+        "requirement:std.io:ownership"
+      ],
+      "model": {
+        "status": "verified",
+        "laws": [
+          "short-io-progress",
+          "limit-boundary",
+          "flush-atomicity"
+        ],
+        "refs": [
+          "crates/tondo-compiler/src/hir/check.rs",
+          "crates/tondo-compiler/src/hir/lower.rs",
+          "crates/tondo-reliability/tests/stdlib_owner_models.rs",
+          "crates/tondo-stdlib/src/io.rs",
+          "crates/tondo-vm/src/runtime/execute.rs"
+        ]
+      },
+      "test": {
+        "status": "verified",
+        "commands": [
+          "scripts/stdlib-core-check.sh",
+          "scripts/stdlib-io-test.sh",
+          "cargo test -p tondo-stdlib --locked --lib io::tests",
+          "cargo test -p tondo-compiler --locked --lib process_host::tests::io_limits_helpers_are_bounded_and_atomic_at_the_public_host_boundary",
+          "cargo test -p tondo-vm --locked --lib runtime::execute::tests::host_materialization_accepts_every_supported_shape_and_rejects_drift"
+        ],
+        "refs": [
+          "crates/tondo-stdlib/src/io.rs",
+          "crates/tondo-compiler/src/process_host.rs",
+          "tests/runtime/m11-std-io-001.to",
+          "scripts/stdlib-io-test.sh"
+        ]
+      },
+      "fuzz": {
+        "status": "partial",
+        "reason": "the bounded chunk-partition property corpus exercises Reader/Writer fragmentation, but no dedicated std.io operation fuzz target has been promoted",
+        "campaigns": [
+          "bounded-owner-corpus"
+        ],
+        "refs": [
+          "crates/tondo-stdlib/src/io.rs",
+          "scripts/stdlib-io-test.sh",
+          "fuzz/fuzz_targets/admission.rs"
+        ]
+      }
+    },
+    {
+      "id": "std.iter",
+      "leaf": "STD-A-ITER-EVIDENCE-001",
+      "contract": "testing/stdlib-core.json",
+      "public_api": [
+        {
+          "id": "std.iter:151",
+          "symbol": "std.iter.Iterator.map",
+          "signature": "pub fn Iterator.map[T, U](self, fn(T): U): Iterator[U]"
+        },
+        {
+          "id": "std.iter:152",
+          "symbol": "std.iter.Iterator.filter",
+          "signature": "pub fn Iterator.filter[T](self, fn(T): Bool): Iterator[T]"
+        },
+        {
+          "id": "std.iter:153",
+          "symbol": "std.iter.Iterator.take",
+          "signature": "pub fn Iterator.take[T](self, count: Int): Iterator[T]"
+        },
+        {
+          "id": "std.iter:154",
+          "symbol": "std.iter.Iterator.collect",
+          "signature": "pub fn Iterator.collect[T](self): Array[T] ! CollectionError"
+        }
+      ],
+      "requirements": [
+        "requirement:std.iter:async-cancellation",
+        "requirement:std.iter:composition",
+        "requirement:std.iter:determinism",
+        "requirement:std.iter:empty-values",
+        "requirement:std.iter:error-priority",
+        "requirement:std.iter:limits",
+        "requirement:std.iter:ownership"
+      ],
+      "model": {
+        "status": "verified",
+        "laws": [
+          "lazy-consumption",
+          "adapter-composition",
+          "bounded-materialization"
+        ],
+        "refs": [
+          "crates/tondo-compiler/src/bytecode/lower.rs",
+          "crates/tondo-compiler/src/hir/check.rs",
+          "crates/tondo-compiler/src/hir/lower.rs",
+          "crates/tondo-reliability/tests/stdlib_owner_models.rs",
+          "crates/tondo-vm/src/runtime/execute.rs",
+          "crates/tondo-vm/src/runtime/heap.rs"
+        ]
+      },
+      "test": {
+        "status": "verified",
+        "commands": [
+          "scripts/stdlib-core-check.sh",
+          "scripts/stdlib-iter-test.sh",
+          "cargo test -p tondo-compiler --locked --lib bytecode::lower::tests",
+          "cargo test -p tondo-compiler --locked --lib process_host::tests"
+        ],
+        "refs": [
+          "tests/runtime/m11-std-iter-001.to",
+          "tests/runtime/m11-std-core-001.to",
+          "crates/tondo-compiler/src/bytecode/lower.rs",
+          "crates/tondo-vm/src/runtime/heap.rs",
+          "crates/tondo-vm/src/runtime/execute.rs",
+          "scripts/stdlib-iter-test.sh"
+        ]
+      },
+      "fuzz": {
+        "status": "partial",
+        "reason": "the admission corpus and iterator property/model tests exercise cursor shapes and adapter state, but no dedicated std.iter operation fuzz target has been promoted",
+        "campaigns": [
+          "admission"
+        ],
+        "refs": [
+          "fuzz/fuzz_targets/admission.rs",
+          "fuzz/corpus/admission/scalar-seed",
+          "fuzz/corpus/admission/structural-seed",
+          "crates/tondo-compiler/src/bytecode/lower.rs",
+          "crates/tondo-vm/src/runtime/heap.rs",
+          "scripts/stdlib-iter-test.sh"
+        ]
+      }
+    },
+    {
+      "id": "std.json",
+      "leaf": "STD-A-JSON-EVIDENCE-001",
+      "contract": "testing/stdlib-json.json",
+      "public_api": [
+        {
+          "id": "std.json:133",
+          "symbol": "std.json.parse",
+          "signature": "pub fn parse(input: Bytes, options: JsonDecodeOptions): Value ! JsonError"
+        },
+        {
+          "id": "std.json:134",
+          "symbol": "std.json.parseView",
+          "signature": "pub fn parseView(input: Bytes, options: JsonDecodeOptions): ValueView ! JsonError"
+        },
+        {
+          "id": "std.json:135",
+          "symbol": "std.json.decode",
+          "signature": "pub fn decode[T: Decode[Json]](input: Bytes, options: JsonDecodeOptions): T ! JsonError"
+        },
+        {
+          "id": "std.json:136",
+          "symbol": "std.json.encode",
+          "signature": "pub fn encode[T: Encode[Json]](value: T, options: JsonEncodeOptions): Bytes ! JsonError"
+        },
+        {
+          "id": "std.json:137",
+          "symbol": "std.json.validate",
+          "signature": "pub fn validate(input: Bytes, options: JsonDecodeOptions): Unit ! JsonError"
+        },
+        {
+          "id": "std.json:138",
+          "symbol": "std.json.canonicalize",
+          "signature": "pub fn canonicalize(input: Bytes, options: JsonDecodeOptions): Bytes ! JsonError"
+        },
+        {
+          "id": "std.json:139",
+          "symbol": "std.json.encodeCanonical",
+          "signature": "pub fn encodeCanonical(value: Value, limits: JsonLimits): Bytes ! JsonError"
+        },
+        {
+          "id": "std.json:140",
+          "symbol": "std.json.raw",
+          "signature": "pub fn raw(input: Bytes): Raw ! JsonError"
+        },
+        {
+          "id": "std.json:143",
+          "symbol": "std.json.JsonNumber.parse",
+          "signature": "pub fn JsonNumber.parse(text: String): JsonNumber ! JsonError"
+        },
+        {
+          "id": "std.json:144",
+          "symbol": "std.json.JsonNumber.text",
+          "signature": "pub fn JsonNumber.text(self): String"
+        },
+        {
+          "id": "std.json:145",
+          "symbol": "std.json.JsonNumber.toInt",
+          "signature": "pub fn JsonNumber.toInt(self): Int64 ! JsonError"
+        },
+        {
+          "id": "std.json:146",
+          "symbol": "std.json.JsonNumber.toUInt",
+          "signature": "pub fn JsonNumber.toUInt(self): UInt64 ! JsonError"
+        },
+        {
+          "id": "std.json:147",
+          "symbol": "std.json.JsonNumber.toFloat32",
+          "signature": "pub fn JsonNumber.toFloat32(self): Float32 ! JsonError"
+        },
+        {
+          "id": "std.json:148",
+          "symbol": "std.json.JsonNumber.toFloat64",
+          "signature": "pub fn JsonNumber.toFloat64(self): Float64 ! JsonError"
+        },
+        {
+          "id": "std.json:150",
+          "symbol": "std.json.JsonReader.fromBytes",
+          "signature": "pub fn JsonReader.fromBytes(input: Bytes, options: JsonDecodeOptions): JsonReader ! JsonError"
+        },
+        {
+          "id": "std.json:151",
+          "symbol": "std.json.JsonReader.fromReader",
+          "signature": "pub fn JsonReader.fromReader(var input: Reader, options: JsonDecodeOptions): JsonReader ! JsonError"
+        },
+        {
+          "id": "std.json:152",
+          "symbol": "std.json.JsonReader.next",
+          "signature": "pub fn JsonReader.next(var self): JsonEvent? ! JsonError"
+        },
+        {
+          "id": "std.json:153",
+          "symbol": "std.json.JsonReader.own",
+          "signature": "pub fn JsonReader.own(var self, event: JsonEvent): JsonEvent ! JsonError"
+        },
+        {
+          "id": "std.json:154",
+          "symbol": "std.json.JsonReader.finish",
+          "signature": "pub fn JsonReader.finish(var self): Unit ! JsonError"
+        },
+        {
+          "id": "std.json:156",
+          "symbol": "std.json.JsonWriter.toWriter",
+          "signature": "pub fn JsonWriter.toWriter(var output: Writer, options: JsonEncodeOptions): JsonWriter ! JsonError"
+        },
+        {
+          "id": "std.json:157",
+          "symbol": "std.json.JsonWriter.write",
+          "signature": "pub fn JsonWriter.write(var self, event: JsonEvent): Unit ! JsonError"
+        },
+        {
+          "id": "std.json:158",
+          "symbol": "std.json.JsonWriter.finish",
+          "signature": "pub fn JsonWriter.finish(var self): Unit ! JsonError"
+        }
+      ],
+      "requirements": [
+        "requirement:std.json:canonical",
+        "requirement:std.json:dynamic-value",
+        "requirement:std.json:interoperability",
+        "requirement:std.json:limits",
+        "requirement:std.json:numbers",
+        "requirement:std.json:streaming",
+        "requirement:std.json:syntax",
+        "requirement:std.json:typed-direct",
+        "requirement:std.json:unicode"
+      ],
+      "model": {
+        "status": "verified",
+        "laws": [
+          "rfc-value-model",
+          "canonical-order",
+          "fragmented-streaming"
+        ],
+        "refs": [
+          "crates/tondo-reliability/tests/stdlib_owner_models.rs",
+          "crates/tondo-stdlib/src/json_api.rs",
+          "testing/stdlib-json.json"
+        ]
+      },
+      "test": {
+        "status": "verified",
+        "commands": [
+          "scripts/stdlib-json-check.sh",
+          "scripts/stdlib-json-test.sh",
+          "scripts/stdlib-codec-conformance.sh",
+          "cargo test -p tondo-stdlib --locked --lib json_api::tests",
+          "cargo test -p tondo-stdlib --locked --lib json::tests",
+          "cargo test -p tondo-stdlib --locked --test codec_conformance"
+        ],
+        "refs": [
+          "crates/tondo-stdlib/src/json_api.rs",
+          "crates/tondo-stdlib/tests/codec_conformance.rs",
+          "scripts/stdlib-json-test.sh"
+        ]
+      },
+      "fuzz": {
+        "status": "partial",
+        "reason": "The shared codec fuzz target covers JSON validation and one-byte reader fragments, but no dedicated std.json operation fuzz target has been promoted.",
+        "campaigns": [
+          "stdlib_codecs"
+        ],
+        "refs": [
+          "fuzz/fuzz_targets/stdlib_codecs.rs",
+          "testing/stdlib-codec-conformance.json",
+          "scripts/stdlib-json-test.sh"
+        ]
+      }
+    },
+    {
+      "id": "std.math",
+      "leaf": "STD-A-MATH-EVIDENCE-001",
+      "contract": "testing/stdlib-core.json",
+      "public_api": [
+        {
+          "id": "std.math:207",
+          "symbol": "std.math.floor",
+          "signature": "pub fn floor(value: Float): Float"
+        },
+        {
+          "id": "std.math:208",
+          "symbol": "std.math.ceil",
+          "signature": "pub fn ceil(value: Float): Float"
+        },
+        {
+          "id": "std.math:209",
+          "symbol": "std.math.round",
+          "signature": "pub fn round(value: Float): Float"
+        },
+        {
+          "id": "std.math:210",
+          "symbol": "std.math.truncate",
+          "signature": "pub fn truncate(value: Float): Float"
+        },
+        {
+          "id": "std.math:211",
+          "symbol": "std.math.sqrt",
+          "signature": "pub fn sqrt(value: Float): Float ! MathError"
+        },
+        {
+          "id": "std.math:212",
+          "symbol": "std.math.fma",
+          "signature": "pub fn fma(a: Float, b: Float, c: Float): Float"
+        },
+        {
+          "id": "std.math:213",
+          "symbol": "std.math.abs",
+          "signature": "pub fn abs(value: Float): Float"
+        },
+        {
+          "id": "std.math:214",
+          "symbol": "std.math.min",
+          "signature": "pub fn min(a: Float, b: Float): Float"
+        },
+        {
+          "id": "std.math:215",
+          "symbol": "std.math.max",
+          "signature": "pub fn max(a: Float, b: Float): Float"
+        }
+      ],
+      "requirements": [
+        "requirement:std.math:async-cancellation",
+        "requirement:std.math:composition",
+        "requirement:std.math:determinism",
+        "requirement:std.math:empty-values",
+        "requirement:std.math:error-priority",
+        "requirement:std.math:limits",
+        "requirement:std.math:ownership"
+      ],
+      "model": {
+        "status": "verified",
+        "laws": [
+          "ieee-rounding",
+          "domain-boundary",
+          "deterministic-special-values"
+        ],
+        "refs": [
+          "crates/tondo-compiler/src/hir/check.rs",
+          "crates/tondo-compiler/src/hir/const_eval.rs",
+          "crates/tondo-reliability/tests/stdlib_owner_models.rs",
+          "crates/tondo-stdlib/src/math.rs",
+          "crates/tondo-vm/src/runtime/execute.rs"
+        ]
+      },
+      "test": {
+        "status": "verified",
+        "commands": [
+          "scripts/stdlib-core-check.sh",
+          "scripts/stdlib-math-test.sh",
+          "cargo test -p tondo-stdlib --locked --lib math::tests",
+          "cargo test -p tondo-compiler --locked --lib process_host::tests::math_sqrt_uses_the_nominal_error_boundary",
+          "cargo test -p tondo-compiler --locked --lib hir::check::tests::compile_time_collection_duplicates_and_nan_comparisons_are_diagnosed"
+        ],
+        "refs": [
+          "crates/tondo-stdlib/src/math.rs",
+          "tests/runtime/m11-std-math-001.to",
+          "tests/runtime/m6-num-004-ieee.to",
+          "crates/tondo-compiler/src/process_host.rs",
+          "crates/tondo-vm/src/runtime/execute.rs",
+          "scripts/stdlib-math-test.sh"
+        ]
+      },
+      "fuzz": {
+        "status": "partial",
+        "reason": "the bounded IEEE and numeric compiler corpora exercise Float32/Float boundaries and NaN or overflow diagnostics, but no dedicated std.math operation fuzz target has been promoted",
+        "campaigns": [
+          "bounded-owner-corpus"
+        ],
+        "refs": [
+          "tests/runtime/m6-num-004-ieee.to",
+          "crates/tondo-vm/src/runtime/execute.rs",
+          "crates/tondo-compiler/src/hir/check.rs",
+          "scripts/stdlib-math-test.sh"
+        ]
+      }
+    },
+    {
+      "id": "std.messagepack",
+      "leaf": "STD-A-MSGPACK-EVIDENCE-001",
+      "contract": "testing/stdlib-messagepack.json",
+      "public_api": [
+        {
+          "id": "std.messagepack:100",
+          "symbol": "std.messagepack.MessagePackReader.next",
+          "signature": "pub fn MessagePackReader.next(var self): MessagePackEvent? ! MessagePackError"
+        },
+        {
+          "id": "std.messagepack:101",
+          "symbol": "std.messagepack.MessagePackReader.own",
+          "signature": "pub fn MessagePackReader.own(var self, event: MessagePackEvent): MessagePackEvent ! MessagePackError"
+        },
+        {
+          "id": "std.messagepack:102",
+          "symbol": "std.messagepack.MessagePackReader.finish",
+          "signature": "pub fn MessagePackReader.finish(var self): Unit ! MessagePackError"
+        },
+        {
+          "id": "std.messagepack:104",
+          "symbol": "std.messagepack.MessagePackWriter.toWriter",
+          "signature": "pub fn MessagePackWriter.toWriter(var output: Writer, options: MessagePackEncodeOptions): MessagePackWriter ! MessagePackError"
+        },
+        {
+          "id": "std.messagepack:105",
+          "symbol": "std.messagepack.MessagePackWriter.write",
+          "signature": "pub fn MessagePackWriter.write(var self, event: MessagePackEvent): Unit ! MessagePackError"
+        },
+        {
+          "id": "std.messagepack:106",
+          "symbol": "std.messagepack.MessagePackWriter.finish",
+          "signature": "pub fn MessagePackWriter.finish(var self): Unit ! MessagePackError"
+        },
+        {
+          "id": "std.messagepack:85",
+          "symbol": "std.messagepack.parse",
+          "signature": "pub fn parse(input: Bytes, options: MessagePackDecodeOptions): Value ! MessagePackError"
+        },
+        {
+          "id": "std.messagepack:86",
+          "symbol": "std.messagepack.parseView",
+          "signature": "pub fn parseView(input: Bytes, options: MessagePackDecodeOptions): ValueView ! MessagePackError"
+        },
+        {
+          "id": "std.messagepack:87",
+          "symbol": "std.messagepack.decode",
+          "signature": "pub fn decode[T: Decode[MessagePack]](input: Bytes, options: MessagePackDecodeOptions): T ! MessagePackError"
+        },
+        {
+          "id": "std.messagepack:88",
+          "symbol": "std.messagepack.encode",
+          "signature": "pub fn encode(value: Value, options: MessagePackEncodeOptions): Bytes ! MessagePackError"
+        },
+        {
+          "id": "std.messagepack:89",
+          "symbol": "std.messagepack.encode",
+          "signature": "pub fn encode[T: Encode[MessagePack]](value: T, options: MessagePackEncodeOptions): Bytes ! MessagePackError"
+        },
+        {
+          "id": "std.messagepack:90",
+          "symbol": "std.messagepack.validate",
+          "signature": "pub fn validate(input: Bytes, options: MessagePackDecodeOptions): Unit ! MessagePackError"
+        },
+        {
+          "id": "std.messagepack:91",
+          "symbol": "std.messagepack.encodeDeterministic",
+          "signature": "pub fn encodeDeterministic(value: Value, limits: MessagePackLimits): Bytes ! MessagePackError"
+        },
+        {
+          "id": "std.messagepack:92",
+          "symbol": "std.messagepack.raw",
+          "signature": "pub fn raw(input: Bytes, options: MessagePackDecodeOptions): Raw ! MessagePackError"
+        },
+        {
+          "id": "std.messagepack:95",
+          "symbol": "std.messagepack.MessagePackTimestamp.fromExt",
+          "signature": "pub fn MessagePackTimestamp.fromExt(value: MessagePackExt): MessagePackTimestamp ! MessagePackError"
+        },
+        {
+          "id": "std.messagepack:96",
+          "symbol": "std.messagepack.MessagePackTimestamp.toExt",
+          "signature": "pub fn MessagePackTimestamp.toExt(self): MessagePackExt ! MessagePackError"
+        },
+        {
+          "id": "std.messagepack:98",
+          "symbol": "std.messagepack.MessagePackReader.fromBytes",
+          "signature": "pub fn MessagePackReader.fromBytes(input: Bytes, options: MessagePackDecodeOptions): MessagePackReader ! MessagePackError"
+        },
+        {
+          "id": "std.messagepack:99",
+          "symbol": "std.messagepack.MessagePackReader.fromReader",
+          "signature": "pub fn MessagePackReader.fromReader(var input: Reader, options: MessagePackDecodeOptions): MessagePackReader ! MessagePackError"
+        }
+      ],
+      "requirements": [
+        "requirement:std.messagepack:deterministic",
+        "requirement:std.messagepack:extensions",
+        "requirement:std.messagepack:interoperability",
+        "requirement:std.messagepack:limits",
+        "requirement:std.messagepack:maps",
+        "requirement:std.messagepack:minimal-forms",
+        "requirement:std.messagepack:numeric-bits",
+        "requirement:std.messagepack:streaming",
+        "requirement:std.messagepack:text-and-binary",
+        "requirement:std.messagepack:typed-direct",
+        "requirement:std.messagepack:wire-model"
+      ],
+      "model": {
+        "status": "verified",
+        "laws": [
+          "wire-value-model",
+          "minimal-forms",
+          "fragmented-streaming"
+        ],
+        "refs": [
+          "crates/tondo-reliability/tests/stdlib_owner_models.rs",
+          "crates/tondo-stdlib/src/messagepack_api.rs",
+          "testing/stdlib-messagepack.json"
+        ]
+      },
+      "test": {
+        "status": "verified",
+        "commands": [
+          "scripts/stdlib-messagepack-check.sh",
+          "scripts/stdlib-messagepack-test.sh",
+          "scripts/stdlib-codec-conformance.sh",
+          "cargo test -p tondo-stdlib --locked --lib messagepack_api::tests",
+          "cargo test -p tondo-stdlib --locked --lib messagepack::tests",
+          "cargo test -p tondo-stdlib --locked --test codec_conformance"
+        ],
+        "refs": [
+          "crates/tondo-stdlib/src/messagepack_api.rs",
+          "crates/tondo-stdlib/tests/codec_conformance.rs",
+          "scripts/stdlib-messagepack-test.sh"
+        ]
+      },
+      "fuzz": {
+        "status": "partial",
+        "reason": "The shared codec fuzz target covers MessagePack validation and one-byte reader fragments, but no dedicated std.messagepack operation fuzz target has been promoted.",
+        "campaigns": [
+          "stdlib_codecs"
+        ],
+        "refs": [
+          "fuzz/fuzz_targets/stdlib_codecs.rs",
+          "testing/stdlib-codec-conformance.json",
+          "scripts/stdlib-messagepack-test.sh"
+        ]
+      }
+    },
+    {
+      "id": "std.meta",
+      "leaf": "STD-A-META-EVIDENCE-001",
+      "contract": "testing/stdlib-meta.json",
+      "public_api": [],
+      "requirements": [
+        "requirement:std.meta:canonical-rendering",
+        "requirement:std.meta:compile-time-budget",
+        "requirement:std.meta:meta-target-boundary",
+        "requirement:std.meta:request-response",
+        "requirement:std.meta:snapshot-model",
+        "requirement:std.meta:source-builder"
+      ],
+      "model": {
+        "status": "verified",
+        "laws": [
+          "canonical-structure",
+          "source-builder",
+          "budgeted-generation"
+        ],
+        "refs": [
+          "crates/tondo-compiler/src/meta.rs",
+          "crates/tondo-compiler/src/meta_atomic.rs",
+          "crates/tondo-compiler/src/meta_vm.rs",
+          "crates/tondo-reliability/tests/stdlib_owner_models.rs"
+        ]
+      },
+      "test": {
+        "status": "verified",
+        "commands": [
+          "scripts/stdlib-meta-check.sh",
+          "scripts/stdlib-owner-evidence-check.sh",
+          "cargo test -p tondo-compiler --locked --lib meta::tests",
+          "cargo test -p tondo-compiler --locked --lib std_meta::tests",
+          "cargo test -p tondo-compiler --locked --lib meta_robust::tests",
+          "cargo test -p tondo-compiler --locked --test std_meta_conformance"
+        ],
+        "refs": [
+          "crates/tondo-compiler/src/meta.rs",
+          "crates/tondo-compiler/src/std_meta.rs",
+          "crates/tondo-compiler/tests/std_meta_conformance.rs"
+        ]
+      },
+      "fuzz": {
+        "status": "verified",
+        "reason": null,
+        "campaigns": [
+          "protocols"
+        ],
+        "refs": [
+          "crates/tondo-compiler/src/meta_robust.rs",
+          "fuzz/fuzz_targets/protocols.rs",
+          "fuzz/corpus/protocols/empty-object"
+        ]
+      }
+    },
+    {
+      "id": "std.path",
+      "leaf": "STD-A-PATH-EVIDENCE-001",
+      "contract": "testing/stdlib-hosted.json",
+      "public_api": [
+        {
+          "id": "std.path:46",
+          "symbol": "std.path.Path.fromString",
+          "signature": "pub fn Path.fromString(value: String): Path ! PathError"
+        },
+        {
+          "id": "std.path:47",
+          "symbol": "std.path.Path.fromBytes",
+          "signature": "pub fn Path.fromBytes(value: Bytes): Path ! PathError"
+        },
+        {
+          "id": "std.path:48",
+          "symbol": "std.path.Path.join",
+          "signature": "pub fn Path.join(self, component: String): Path ! PathError"
+        },
+        {
+          "id": "std.path:49",
+          "symbol": "std.path.Path.parent",
+          "signature": "pub fn Path.parent(self): Path?"
+        },
+        {
+          "id": "std.path:50",
+          "symbol": "std.path.Path.fileName",
+          "signature": "pub fn Path.fileName(self): String?"
+        },
+        {
+          "id": "std.path:51",
+          "symbol": "std.path.Path.extension",
+          "signature": "pub fn Path.extension(self): String?"
+        },
+        {
+          "id": "std.path:52",
+          "symbol": "std.path.Path.kind",
+          "signature": "pub fn Path.kind(self): Bool"
+        },
+        {
+          "id": "std.path:53",
+          "symbol": "std.path.Path.isEmpty",
+          "signature": "pub fn Path.isEmpty(self): Bool"
+        },
+        {
+          "id": "std.path:54",
+          "symbol": "std.path.Path.toString",
+          "signature": "pub fn Path.toString(self): String ! PathError"
+        },
+        {
+          "id": "std.path:55",
+          "symbol": "std.path.Path.toBytes",
+          "signature": "pub fn Path.toBytes(self): Bytes"
+        }
+      ],
+      "requirements": [
+        "requirement:std.path:cancellation",
+        "requirement:std.path:capability-absent",
+        "requirement:std.path:capability-present",
+        "requirement:std.path:cleanup-on-unwind",
+        "requirement:std.path:combined-output-order",
+        "requirement:std.path:empty-input",
+        "requirement:std.path:host-error-redaction",
+        "requirement:std.path:partial-io",
+        "requirement:std.path:pipeline-redirection"
+      ],
+      "model": {
+        "status": "verified",
+        "laws": [
+          "byte-snapshot",
+          "lexical-normalization",
+          "join-boundary"
+        ],
+        "refs": [
+          "crates/tondo-compiler/src/hir/check.rs",
+          "crates/tondo-compiler/src/hir/lower.rs",
+          "crates/tondo-compiler/src/process_host.rs",
+          "crates/tondo-reliability/tests/stdlib_owner_models.rs",
+          "crates/tondo-stdlib/src/path.rs"
+        ]
+      },
+      "test": {
+        "status": "verified",
+        "commands": [
+          "scripts/stdlib-hosted-check.sh",
+          "scripts/stdlib-path-test.sh",
+          "cargo test -p tondo-stdlib --locked --lib path::tests",
+          "cargo test -p tondo-compiler --locked --lib process_host::tests::path_host_boundary_preserves_native_bytes_and_lexical_semantics"
+        ],
+        "refs": [
+          "crates/tondo-stdlib/src/path.rs",
+          "crates/tondo-compiler/src/process_host.rs",
+          "tests/runtime/m11-std-path-001.to",
+          "scripts/stdlib-path-test.sh"
+        ]
+      },
+      "fuzz": {
+        "status": "partial",
+        "reason": "the bounded deterministic native-byte corpus exercises UTF-8 rejection, exact snapshots and lexical boundaries, but no dedicated std.path operation fuzz target has been promoted",
+        "campaigns": [
+          "bounded-owner-corpus"
+        ],
+        "refs": [
+          "crates/tondo-stdlib/src/path.rs",
+          "scripts/stdlib-path-test.sh"
+        ]
+      }
+    },
+    {
+      "id": "std.process",
+      "leaf": "STD-A-PROC-EVIDENCE-001",
+      "contract": "testing/stdlib-hosted.json",
+      "public_api": [
+        {
+          "id": "std.process:147",
+          "symbol": "std.process.command",
+          "signature": "pub fn command(program: String, arguments: ...String): Command ! ProcessError"
+        },
+        {
+          "id": "std.process:148",
+          "symbol": "std.process.shell",
+          "signature": "pub fn shell(command: String): Command ! ProcessError"
+        },
+        {
+          "id": "std.process:149",
+          "symbol": "std.process.pipe",
+          "signature": "pub fn pipe(left: Command, right: Command): Pipeline ! ProcessError"
+        },
+        {
+          "id": "std.process:150",
+          "symbol": "std.process.Command.mergeStderr",
+          "signature": "pub fn Command.mergeStderr(self): Command"
+        },
+        {
+          "id": "std.process:151",
+          "symbol": "std.process.Pipeline.mergeStderr",
+          "signature": "pub fn Pipeline.mergeStderr(self): Pipeline"
+        },
+        {
+          "id": "std.process:152",
+          "symbol": "std.process.Command.run",
+          "signature": "pub fn Command.run(self): ExitStatus ! ProcessError"
+        },
+        {
+          "id": "std.process:153",
+          "symbol": "std.process.Command.output",
+          "signature": "pub fn Command.output(self): ProcessOutput ! ProcessError"
+        },
+        {
+          "id": "std.process:154",
+          "symbol": "std.process.Command.check",
+          "signature": "pub fn Command.check(self): ProcessOutput ! (ProcessError | ProcessExitError)"
+        },
+        {
+          "id": "std.process:155",
+          "symbol": "std.process.Command.start",
+          "signature": "pub fn Command.start(self): ProcessHandle ! ProcessError"
+        },
+        {
+          "id": "std.process:156",
+          "symbol": "std.process.ProcessHandle.wait",
+          "signature": "pub fn ProcessHandle.wait(var self): ExitStatus ! ProcessError"
+        },
+        {
+          "id": "std.process:157",
+          "symbol": "std.process.ProcessHandle.cancel",
+          "signature": "pub fn ProcessHandle.cancel(var self): Unit"
+        },
+        {
+          "id": "std.process:158",
+          "symbol": "std.process.ProcessOutput.stdout",
+          "signature": "pub fn ProcessOutput.stdout(self): Bytes"
+        },
+        {
+          "id": "std.process:159",
+          "symbol": "std.process.ProcessOutput.stderr",
+          "signature": "pub fn ProcessOutput.stderr(self): Bytes"
+        },
+        {
+          "id": "std.process:160",
+          "symbol": "std.process.ProcessOutput.combined",
+          "signature": "pub fn ProcessOutput.combined(self): Bytes"
+        },
+        {
+          "id": "std.process:161",
+          "symbol": "std.process.ProcessOutput.statuses",
+          "signature": "pub fn ProcessOutput.statuses(self): Array[ExitStatus]"
+        },
+        {
+          "id": "std.process:162",
+          "symbol": "std.process.ExitStatus.code",
+          "signature": "pub fn ExitStatus.code(self): Int?"
+        },
+        {
+          "id": "std.process:163",
+          "symbol": "std.process.ExitStatus.success",
+          "signature": "pub fn ExitStatus.success(self): Bool"
+        }
+      ],
+      "requirements": [
+        "requirement:std.process:cancellation",
+        "requirement:std.process:capability-absent",
+        "requirement:std.process:capability-present",
+        "requirement:std.process:cleanup-on-unwind",
+        "requirement:std.process:combined-output-order",
+        "requirement:std.process:empty-input",
+        "requirement:std.process:host-error-redaction",
+        "requirement:std.process:partial-io",
+        "requirement:std.process:pipeline-redirection"
+      ],
+      "model": {
+        "status": "verified",
+        "laws": [
+          "pipe-topology",
+          "stream-separation",
+          "reaping-lifecycle"
+        ],
+        "refs": [
+          "crates/tondo-compiler/src/hir/terminal.rs",
+          "crates/tondo-compiler/src/process_host.rs",
+          "crates/tondo-reliability/tests/stdlib_owner_models.rs",
+          "crates/tondo-vm/src/bytecode.rs",
+          "docs/contracts/process-host.md"
+        ]
+      },
+      "test": {
+        "status": "verified",
+        "commands": [
+          "scripts/stdlib-hosted-check.sh",
+          "scripts/stdlib-process-test.sh",
+          "cargo test -p tondo-compiler --locked --lib process_host::tests::plan_construction_is_inert_and_exact_arguments_bypass_the_shell",
+          "cargo test -p tondo-compiler --locked --lib process_host::tests::all_four_pipe_shapes_preserve_stage_order",
+          "cargo test -p tondo-compiler --locked --lib process_host::tests::kernel_pipes_drain_output_larger_than_their_backpressure_window",
+          "cargo test -p tondo-compiler --locked --lib process_host::tests::process_output_preserves_separate_streams_and_terminal_combined_bytes",
+          "cargo test -p tondo-compiler --locked --lib process_host::tests::merge_stderr_feeds_the_next_stage_like_bash_pipe_ampersand",
+          "cargo test -p tondo-compiler --locked --lib process_host::tests::exit_status_is_data_while_check_and_spawn_failures_are_typed_errors",
+          "cargo test -p tondo-compiler --locked --lib process_host::tests::cancel_and_host_drop_reap_started_children",
+          "cargo test -p tondo-compiler --locked --lib driver::tests::bootstrap_standard_modules_follow_the_closed_target_capabilities"
+        ],
+        "refs": [
+          "crates/tondo-compiler/src/process_host.rs",
+          "crates/tondo-compiler/src/driver.rs",
+          "tests/runtime/m8-process-001.to",
+          "tests/runtime/m8-process-cancel.to",
+          "tests/runtime/m8-process-panic-cleanup.to",
+          "tests/runtime/m8-process-check-error.to",
+          "tests/runtime/m8-process-spawn-error.to",
+          "scripts/stdlib-process-test.sh"
+        ]
+      },
+      "fuzz": {
+        "status": "partial",
+        "reason": "The bounded process, pipe, stream and failure corpus is executable, but no dedicated std.process operation fuzz target has been promoted.",
+        "campaigns": [
+          "bounded-owner-corpus"
+        ],
+        "refs": [
+          "crates/tondo-compiler/src/process_host.rs",
+          "fuzz/fuzz_targets/admission.rs",
+          "scripts/stdlib-process-test.sh"
+        ]
+      }
+    },
+    {
+      "id": "std.protobuf",
+      "leaf": "STD-A-PROTOBUF-EVIDENCE-001",
+      "contract": "testing/stdlib-protobuf.json",
+      "public_api": [
+        {
+          "id": "std.protobuf:113",
+          "symbol": "std.protobuf.decode",
+          "signature": "pub fn decode[T: Decode[Protobuf]](input: Bytes, options: ProtoDecodeOptions): T ! ProtoError"
+        },
+        {
+          "id": "std.protobuf:114",
+          "symbol": "std.protobuf.encode",
+          "signature": "pub fn encode[T: Encode[Protobuf]](value: T, options: ProtoEncodeOptions): Bytes ! ProtoError"
+        },
+        {
+          "id": "std.protobuf:115",
+          "symbol": "std.protobuf.encodeDeterministic",
+          "signature": "pub fn encodeDeterministic[T: Encode[Protobuf]](value: T, limits: ProtoLimits): Bytes ! ProtoError"
+        },
+        {
+          "id": "std.protobuf:116",
+          "symbol": "std.protobuf.validate",
+          "signature": "pub fn validate[T](input: Bytes, options: ProtoDecodeOptions): Unit ! ProtoError"
+        },
+        {
+          "id": "std.protobuf:117",
+          "symbol": "std.protobuf.descriptor",
+          "signature": "pub fn descriptor[T](): ProtoDescriptor[T]"
+        },
+        {
+          "id": "std.protobuf:119",
+          "symbol": "std.protobuf.ProtoReader",
+          "signature": "pub fn ProtoReader[T].fromBytes(input: Bytes, options: ProtoDecodeOptions): ProtoReader[T] ! ProtoError"
+        },
+        {
+          "id": "std.protobuf:120",
+          "symbol": "std.protobuf.ProtoReader",
+          "signature": "pub fn ProtoReader[T].fromReader(var input: Reader, options: ProtoDecodeOptions): ProtoReader[T] ! ProtoError"
+        },
+        {
+          "id": "std.protobuf:121",
+          "symbol": "std.protobuf.ProtoReader",
+          "signature": "pub fn ProtoReader[T].next(var self): ProtoEvent? ! ProtoError"
+        },
+        {
+          "id": "std.protobuf:122",
+          "symbol": "std.protobuf.ProtoReader",
+          "signature": "pub fn ProtoReader[T].own(var self, event: ProtoEvent): ProtoEvent ! ProtoError"
+        },
+        {
+          "id": "std.protobuf:123",
+          "symbol": "std.protobuf.ProtoReader",
+          "signature": "pub fn ProtoReader[T].finish(var self): Unit ! ProtoError"
+        },
+        {
+          "id": "std.protobuf:125",
+          "symbol": "std.protobuf.ProtoWriter",
+          "signature": "pub fn ProtoWriter[T].toWriter(var output: Writer, options: ProtoEncodeOptions): ProtoWriter[T] ! ProtoError"
+        },
+        {
+          "id": "std.protobuf:126",
+          "symbol": "std.protobuf.ProtoWriter",
+          "signature": "pub fn ProtoWriter[T].write(var self, event: ProtoEvent): Unit ! ProtoError"
+        },
+        {
+          "id": "std.protobuf:127",
+          "symbol": "std.protobuf.ProtoWriter",
+          "signature": "pub fn ProtoWriter[T].finish(var self): Unit ! ProtoError"
+        },
+        {
+          "id": "std.protobuf:129",
+          "symbol": "std.protobuf.UnknownFields.count",
+          "signature": "pub fn UnknownFields.count(self): Int"
+        },
+        {
+          "id": "std.protobuf:130",
+          "symbol": "std.protobuf.UnknownFields.discard",
+          "signature": "pub fn UnknownFields.discard(var self): Unit"
+        }
+      ],
+      "requirements": [
+        "requirement:std.protobuf:deterministic",
+        "requirement:std.protobuf:evolution",
+        "requirement:std.protobuf:interoperability",
+        "requirement:std.protobuf:limits",
+        "requirement:std.protobuf:maps",
+        "requirement:std.protobuf:open-enums",
+        "requirement:std.protobuf:presence",
+        "requirement:std.protobuf:repeated-and-packed",
+        "requirement:std.protobuf:scalar-mapping",
+        "requirement:std.protobuf:schema-inputs",
+        "requirement:std.protobuf:streaming",
+        "requirement:std.protobuf:typed-direct",
+        "requirement:std.protobuf:unknown-fields",
+        "requirement:std.protobuf:wire-model"
+      ],
+      "model": {
+        "status": "verified",
+        "laws": [
+          "schema-wire-model",
+          "unknown-preservation",
+          "fragmented-streaming"
+        ],
+        "refs": [
+          "crates/tondo-reliability/tests/stdlib_owner_models.rs",
+          "crates/tondo-stdlib/src/protobuf_api.rs",
+          "testing/stdlib-protobuf.json"
+        ]
+      },
+      "test": {
+        "status": "verified",
+        "commands": [
+          "scripts/stdlib-protobuf-check.sh",
+          "scripts/stdlib-protobuf-test.sh",
+          "scripts/stdlib-codec-conformance.sh",
+          "cargo test -p tondo-stdlib --locked --lib protobuf_api::tests",
+          "cargo test -p tondo-stdlib --locked --lib protobuf::tests",
+          "cargo test -p tondo-stdlib --locked --test codec_conformance"
+        ],
+        "refs": [
+          "crates/tondo-stdlib/src/protobuf_api.rs",
+          "crates/tondo-stdlib/tests/codec_conformance.rs",
+          "scripts/stdlib-protobuf-test.sh"
+        ]
+      },
+      "fuzz": {
+        "status": "partial",
+        "reason": "The shared codec fuzz target covers Protobuf validation, unknown records and one-byte reader fragments, but no dedicated std.protobuf operation or schema fuzz target has been promoted.",
+        "campaigns": [
+          "stdlib_codecs"
+        ],
+        "refs": [
+          "fuzz/fuzz_targets/stdlib_codecs.rs",
+          "testing/stdlib-codec-conformance.json",
+          "scripts/stdlib-protobuf-test.sh"
+        ]
+      }
+    },
+    {
+      "id": "std.reflect",
+      "leaf": "STD-A-REFLECT-EVIDENCE-001",
+      "contract": "testing/stdlib-reflect.json",
+      "public_api": [],
+      "requirements": [
+        "requirement:std.reflect:artifact-local-identity",
+        "requirement:std.reflect:catalog-shape",
+        "requirement:std.reflect:malformed-inputs-and-cost",
+        "requirement:std.reflect:no-runtime-reflection",
+        "requirement:std.reflect:privacy",
+        "requirement:std.reflect:root-closure"
+      ],
+      "model": {
+        "status": "verified",
+        "laws": [
+          "public-closure",
+          "privacy-boundary",
+          "artifact-identity"
+        ],
+        "refs": [
+          "crates/tondo-compiler/src/reflect.rs",
+          "crates/tondo-reliability/tests/stdlib_owner_models.rs"
+        ]
+      },
+      "test": {
+        "status": "verified",
+        "commands": [
+          "scripts/stdlib-reflect-check.sh",
+          "scripts/stdlib-reflect-test.sh",
+          "cargo test -p tondo-compiler --locked --lib reflect::tests"
+        ],
+        "refs": [
+          "crates/tondo-compiler/src/reflect.rs"
+        ]
+      },
+      "fuzz": {
+        "status": "partial",
+        "reason": "the bounded catalog corpus is declared and negative tests are executable, but no dedicated reflection fuzz target has been promoted",
+        "campaigns": [
+          "bounded-owner-corpus"
+        ],
+        "refs": [
+          "testing/stdlib-reflect.json",
+          "scripts/stdlib-reflect-test.sh"
+        ]
+      }
+    },
+    {
+      "id": "std.serialization",
+      "leaf": "STD-A-SER-EVIDENCE-001",
+      "contract": "testing/stdlib-core.json",
+      "public_api": [],
+      "requirements": [
+        "requirement:std.serialization:async-cancellation",
+        "requirement:std.serialization:composition",
+        "requirement:std.serialization:determinism",
+        "requirement:std.serialization:empty-values",
+        "requirement:std.serialization:error-priority",
+        "requirement:std.serialization:limits",
+        "requirement:std.serialization:ownership"
+      ],
+      "model": {
+        "status": "verified",
+        "laws": [
+          "event-protocol",
+          "path-diagnostics",
+          "atomic-publication"
+        ],
+        "refs": [
+          "crates/tondo-compiler/src/meta_derive.rs",
+          "crates/tondo-compiler/src/serialization_derive.rs",
+          "crates/tondo-reliability/tests/stdlib_owner_models.rs",
+          "crates/tondo-stdlib/src/serialization.rs"
+        ]
+      },
+      "test": {
+        "status": "verified",
+        "commands": [
+          "scripts/stdlib-core-check.sh",
+          "scripts/stdlib-serialization-check.sh",
+          "scripts/stdlib-serialization-test.sh",
+          "cargo test -p tondo-stdlib --locked --lib serialization::tests",
+          "cargo test -p tondo-compiler --locked --lib serialization_derive::tests",
+          "cargo test -p tondo-compiler --locked --lib meta_derive::tests"
+        ],
+        "refs": [
+          "crates/tondo-stdlib/src/serialization.rs",
+          "crates/tondo-compiler/src/meta_derive.rs",
+          "crates/tondo-compiler/src/serialization_derive.rs",
+          "scripts/stdlib-serialization-test.sh"
+        ]
+      },
+      "fuzz": {
+        "status": "partial",
+        "reason": "The bounded codec and one-byte-fragment fuzz corpus exercises the shared boundary indirectly, but no dedicated std.serialization event-protocol fuzz target has been promoted.",
+        "campaigns": [
+          "stdlib_codecs"
+        ],
+        "refs": [
+          "fuzz/fuzz_targets/stdlib_codecs.rs",
+          "fuzz/fuzz_targets/protocols.rs",
+          "scripts/stdlib-serialization-test.sh"
+        ]
+      }
+    },
+    {
+      "id": "std.testing",
+      "leaf": "STD-A-TESTING-EVIDENCE-001",
+      "contract": "testing/stdlib-testing.json",
+      "public_api": [
+        {
+          "id": "std.testing:148",
+          "symbol": "std.testing.FloatTolerance.from",
+          "signature": "pub fn FloatTolerance.from(absolute: Float, relative: Float): FloatTolerance ! FloatToleranceError"
+        },
+        {
+          "id": "std.testing:149",
+          "symbol": "std.testing.assertFloatNear",
+          "signature": "pub fn assertFloatNear(expected: Float, actual: Float, tolerance: ref FloatTolerance)"
+        },
+        {
+          "id": "std.testing:150",
+          "symbol": "std.testing.assertFloat32Near",
+          "signature": "pub fn assertFloat32Near(expected: Float32, actual: Float32, tolerance: ref FloatTolerance)"
+        },
+        {
+          "id": "std.testing:187",
+          "symbol": "std.testing.assertSome",
+          "signature": "pub fn assertSome[T](value: T?): T"
+        },
+        {
+          "id": "std.testing:188",
+          "symbol": "std.testing.assertNone",
+          "signature": "pub fn assertNone[T](value: T?): Unit"
+        },
+        {
+          "id": "std.testing:189",
+          "symbol": "std.testing.assertOk",
+          "signature": "pub fn assertOk[T, E: Display](value: T ! E): T"
+        },
+        {
+          "id": "std.testing:190",
+          "symbol": "std.testing.assertErr",
+          "signature": "pub fn assertErr[T: Display, E](value: T ! E): E"
+        },
+        {
+          "id": "std.testing:238",
+          "symbol": "std.testing.tempDirectory",
+          "signature": "pub fn tempDirectory(prefix: String): TempDirectory ! TempError"
+        },
+        {
+          "id": "std.testing:239",
+          "symbol": "std.testing.TempDirectory.path",
+          "signature": "pub fn TempDirectory.path(ref self): Path"
+        },
+        {
+          "id": "std.testing:240",
+          "symbol": "std.testing.TempDirectory.cleanup",
+          "signature": "pub fn TempDirectory.cleanup(self)"
+        },
+        {
+          "id": "std.testing:282",
+          "symbol": "std.testing.Generator.new",
+          "signature": "pub fn Generator.new(seed: UInt64): Generator"
+        },
+        {
+          "id": "std.testing:283",
+          "symbol": "std.testing.Generator.forCase",
+          "signature": "pub fn Generator.forCase(seed: UInt64, caseIndex: UInt64): Generator"
+        },
+        {
+          "id": "std.testing:284",
+          "symbol": "std.testing.Generator.id",
+          "signature": "pub fn Generator.id(ref self): GenerationId"
+        },
+        {
+          "id": "std.testing:285",
+          "symbol": "std.testing.Generator.drawCount",
+          "signature": "pub fn Generator.drawCount(ref self): UInt64"
+        },
+        {
+          "id": "std.testing:286",
+          "symbol": "std.testing.Generator.nextUInt",
+          "signature": "pub fn Generator.nextUInt(mut self): UInt64 ! GenerationError"
+        },
+        {
+          "id": "std.testing:287",
+          "symbol": "std.testing.Generator.nextBool",
+          "signature": "pub fn Generator.nextBool(mut self): Bool ! GenerationError"
+        },
+        {
+          "id": "std.testing:288",
+          "symbol": "std.testing.Generator.nextInt",
+          "signature": "pub fn Generator.nextInt(mut self, minimum: Int, maximum: Int): Int ! GenerationError"
+        },
+        {
+          "id": "std.testing:289",
+          "symbol": "std.testing.Generator.nextBytes",
+          "signature": "pub fn Generator.nextBytes(mut self, maximumLength: Int): Bytes ! GenerationError"
+        },
+        {
+          "id": "std.testing:290",
+          "symbol": "std.testing.Generator.nextText",
+          "signature": "pub fn Generator.nextText(mut self, maximumBytes: Int): String ! GenerationError"
+        },
+        {
+          "id": "std.testing:296",
+          "symbol": "std.testing.shrink",
+          "signature": "pub fn shrink[T: Shrink + Equatable](value: ref T): Array[T] ! GenerationError"
+        },
+        {
+          "id": "std.testing:69",
+          "symbol": "std.testing.assertEqual",
+          "signature": "pub fn assertEqual[T: Equatable + Display](expected: ref T, actual: ref T)"
+        },
+        {
+          "id": "std.testing:70",
+          "symbol": "std.testing.assertNotEqual",
+          "signature": "pub fn assertNotEqual[T: Equatable + Display](expected: ref T, actual: ref T)"
+        },
+        {
+          "id": "std.testing:71",
+          "symbol": "std.testing.assertTextEqual",
+          "signature": "pub fn assertTextEqual(expected: String, actual: String)"
+        },
+        {
+          "id": "std.testing:72",
+          "symbol": "std.testing.diffText",
+          "signature": "pub fn diffText(expected: String, actual: String): TextDiff"
+        },
+        {
+          "id": "std.testing:73",
+          "symbol": "std.testing.TextDiff.render",
+          "signature": "pub fn TextDiff.render(ref self): String"
+        }
+      ],
+      "requirements": [
+        "requirement:std.testing:assertions",
+        "requirement:std.testing:core-compatibility",
+        "requirement:std.testing:float-tolerance",
+        "requirement:std.testing:generation",
+        "requirement:std.testing:option-result",
+        "requirement:std.testing:shrinking",
+        "requirement:std.testing:temporary",
+        "requirement:std.testing:text-diff"
+      ],
+      "model": {
+        "status": "verified",
+        "laws": [
+          "assertion-observations",
+          "replayable-generation",
+          "isolated-cleanup"
+        ],
+        "refs": [
+          "crates/tondo-compiler/src/test_generation.rs",
+          "crates/tondo-compiler/src/test_runtime.rs",
+          "crates/tondo-reliability/tests/stdlib_owner_models.rs",
+          "crates/tondo-stdlib/src/testing.rs",
+          "testing/stdlib-testing.json"
+        ]
+      },
+      "test": {
+        "status": "verified",
+        "commands": [
+          "scripts/stdlib-testing-check.sh",
+          "scripts/stdlib-testing-test.sh",
+          "scripts/stdlib-owner-evidence-check.sh",
+          "cargo test -p tondo-stdlib --locked --lib testing::tests",
+          "cargo test -p tondo-compiler --locked --lib test_generation::tests",
+          "cargo test -p tondo-compiler --locked --lib test_runtime::tests",
+          "cargo test -p tondo-compiler --locked --lib process_host::tests",
+          "cargo test -p tondo-cli --locked --test acceptance_projects"
+        ],
+        "refs": [
+          "crates/tondo-stdlib/src/testing.rs",
+          "crates/tondo-compiler/src/test_generation.rs",
+          "crates/tondo-compiler/src/test_runtime.rs",
+          "crates/tondo-compiler/src/process_host.rs",
+          "crates/tondo-cli/tests/acceptance_projects.rs",
+          "scripts/stdlib-testing-test.sh"
+        ]
+      },
+      "fuzz": {
+        "status": "partial",
+        "reason": "No dedicated std.testing fuzz target is promoted; deterministic generators and shrinking, finite limits and isolated acceptance runs are covered by unit and runner tests while fuzz promotion remains explicit.",
+        "campaigns": [
+          "bounded-owner-corpus"
+        ],
+        "refs": [
+          "testing/stdlib-testing.json",
+          "crates/tondo-compiler/src/test_generation.rs",
+          "crates/tondo-compiler/src/process_host.rs",
+          "scripts/stdlib-testing-test.sh"
+        ]
+      }
+    },
+    {
+      "id": "std.text",
+      "leaf": "STD-A-TEXT-EVIDENCE-001",
+      "contract": "testing/stdlib-core.json",
+      "public_api": [
+        {
+          "id": "std.text:100",
+          "symbol": "std.text.String.find",
+          "signature": "pub fn String.find(self, needle: String): Int?"
+        },
+        {
+          "id": "std.text:101",
+          "symbol": "std.text.String.replace",
+          "signature": "pub fn String.replace(self, old: String, new: String): String"
+        },
+        {
+          "id": "std.text:102",
+          "symbol": "std.text.String.trim",
+          "signature": "pub fn String.trim(self): String"
+        },
+        {
+          "id": "std.text:103",
+          "symbol": "std.text.String.toLowerAscii",
+          "signature": "pub fn String.toLowerAscii(self): String"
+        },
+        {
+          "id": "std.text:104",
+          "symbol": "std.text.String.toUpperAscii",
+          "signature": "pub fn String.toUpperAscii(self): String"
+        },
+        {
+          "id": "std.text:108",
+          "symbol": "std.text.String.chars",
+          "signature": "pub fn String.chars(self): String"
+        },
+        {
+          "id": "std.text:91",
+          "symbol": "std.text.String.empty",
+          "signature": "pub fn String.empty(): String"
+        },
+        {
+          "id": "std.text:92",
+          "symbol": "std.text.String.fromChars",
+          "signature": "pub fn String.fromChars(chars: Array[Char]): String ! TextError"
+        },
+        {
+          "id": "std.text:93",
+          "symbol": "std.text.String.length",
+          "signature": "pub fn String.length(self): Int"
+        },
+        {
+          "id": "std.text:94",
+          "symbol": "std.text.String.byteLength",
+          "signature": "pub fn String.byteLength(self): Int"
+        },
+        {
+          "id": "std.text:95",
+          "symbol": "std.text.String.get",
+          "signature": "pub fn String.get(self, index: Int): Char?"
+        },
+        {
+          "id": "std.text:96",
+          "symbol": "std.text.String.slice",
+          "signature": "pub fn String.slice(self, start: Int, end: Int): String ! TextError"
+        },
+        {
+          "id": "std.text:97",
+          "symbol": "std.text.String.contains",
+          "signature": "pub fn String.contains(self, needle: String): Bool"
+        },
+        {
+          "id": "std.text:98",
+          "symbol": "std.text.String.startsWith",
+          "signature": "pub fn String.startsWith(self, prefix: String): Bool"
+        },
+        {
+          "id": "std.text:99",
+          "symbol": "std.text.String.endsWith",
+          "signature": "pub fn String.endsWith(self, suffix: String): Bool"
+        }
+      ],
+      "requirements": [
+        "requirement:std.text:async-cancellation",
+        "requirement:std.text:composition",
+        "requirement:std.text:determinism",
+        "requirement:std.text:empty-values",
+        "requirement:std.text:error-priority",
+        "requirement:std.text:limits",
+        "requirement:std.text:ownership"
+      ],
+      "model": {
+        "status": "verified",
+        "laws": [
+          "scalar-indexing",
+          "utf8-boundary",
+          "ascii-transform"
+        ],
+        "refs": [
+          "crates/tondo-compiler/src/hir/check.rs",
+          "crates/tondo-compiler/src/hir/lower.rs",
+          "crates/tondo-reliability/tests/stdlib_owner_models.rs",
+          "crates/tondo-vm/src/runtime/execute.rs"
+        ]
+      },
+      "test": {
+        "status": "verified",
+        "commands": [
+          "scripts/stdlib-core-check.sh",
+          "scripts/stdlib-text-test.sh",
+          "cargo test -p tondo-compiler --locked --lib process_host::tests",
+          "cargo test -p tondo-compiler --locked --lib driver::tests"
+        ],
+        "refs": [
+          "tests/runtime/m11-std-text-001.to",
+          "tests/runtime/m11-std-text-002.to",
+          "crates/tondo-compiler/src/process_host.rs",
+          "scripts/stdlib-text-test.sh"
+        ]
+      },
+      "fuzz": {
+        "status": "partial",
+        "reason": "the bounded Unicode and UTF-8 boundary corpora are declared and executable, but no dedicated std.text operation fuzz target has been promoted",
+        "campaigns": [
+          "admission",
+          "bounded-owner-corpus"
+        ],
+        "refs": [
+          "testing/stdlib-bytes.json",
+          "fuzz/fuzz_targets/admission.rs",
+          "scripts/stdlib-text-test.sh"
+        ]
+      }
+    },
+    {
+      "id": "std.time",
+      "leaf": "STD-A-TIME-EVIDENCE-001",
+      "contract": "testing/stdlib-time.json",
+      "public_api": [
+        {
+          "id": "std.time:40",
+          "symbol": "std.time.now",
+          "signature": "pub fn now(): Instant ! ClockError"
+        },
+        {
+          "id": "std.time:41",
+          "symbol": "std.time.resolution",
+          "signature": "pub fn resolution(): Duration ! ClockError"
+        },
+        {
+          "id": "std.time:42",
+          "symbol": "std.time.deadline",
+          "signature": "pub fn deadline(after: Duration): Instant ! ClockError"
+        },
+        {
+          "id": "std.time:43",
+          "symbol": "std.time.sleep",
+          "signature": "pub fn sleep(delay: Duration): Unit ! ClockError"
+        },
+        {
+          "id": "std.time:45",
+          "symbol": "std.time.Timer.after",
+          "signature": "pub fn Timer.after(delay: Duration): Timer ! ClockError"
+        },
+        {
+          "id": "std.time:46",
+          "symbol": "std.time.Timer.at",
+          "signature": "pub fn Timer.at(deadline: Instant): Timer ! ClockError"
+        },
+        {
+          "id": "std.time:47",
+          "symbol": "std.time.Timer.wait",
+          "signature": "pub fn Timer.wait(self): Unit ! ClockError"
+        },
+        {
+          "id": "std.time:48",
+          "symbol": "std.time.Timer.cancel",
+          "signature": "pub fn Timer.cancel(self): Unit"
+        }
+      ],
+      "requirements": [
+        "requirement:std.time:capability-and-conformance",
+        "requirement:std.time:limits-and-errors",
+        "requirement:std.time:model-and-identity",
+        "requirement:std.time:real-provider",
+        "requirement:std.time:timers-and-cancellation",
+        "requirement:std.time:virtual-provider"
+      ],
+      "model": {
+        "status": "verified",
+        "laws": [
+          "monotonic-order",
+          "provider-equivalence",
+          "timer-lifecycle"
+        ],
+        "refs": [
+          "crates/tondo-compiler/src/process_host.rs",
+          "crates/tondo-reliability/tests/stdlib_owner_models.rs",
+          "crates/tondo-vm/src/runtime/execute.rs"
+        ]
+      },
+      "test": {
+        "status": "verified",
+        "commands": [
+          "scripts/stdlib-time-check.sh",
+          "scripts/stdlib-time-test.sh",
+          "cargo test -p tondo-compiler --locked --lib process_host::tests",
+          "cargo test -p tondo-compiler --locked --lib driver::tests"
+        ],
+        "refs": [
+          "crates/tondo-compiler/src/process_host.rs",
+          "crates/tondo-compiler/src/driver.rs",
+          "tests/runtime/m10-std-time-001.to"
+        ]
+      },
+      "fuzz": {
+        "status": "partial",
+        "reason": "the time arithmetic, provider-equivalence and timer lifecycle corpora are declared and executable, but no dedicated time fuzz target has been promoted",
+        "campaigns": [
+          "bounded-owner-corpus"
+        ],
+        "refs": [
+          "testing/stdlib-time.json",
+          "scripts/stdlib-time-test.sh"
+        ]
+      }
+    }
+  ],
+  "summary": {
+    "owners": 21,
+    "public_signatures": 207,
+    "owner_requirements": 164,
+    "model_laws": 63,
+    "fuzz_verified": 1,
+    "fuzz_partial": 20
+  },
+  "next_coordination": "STD-CONF-001"
+}

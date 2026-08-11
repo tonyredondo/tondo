@@ -220,6 +220,13 @@ There is no dedicated `std.testing` fuzz target yet, and the full owner
 performance/conformance promotions remain explicit partial cells rather than
 being inferred from unit-test execution.
 
+`STD-TEST-001` closes the cross-owner test coordination in
+`testing/stdlib-test-coordination.json`: all 207 public signatures and 164
+owner requirements have a model law, executable test commands and an explicit
+fuzz campaign or bounded-corpus reason. The generated registry is checked
+against the public API, normative matrix and owner evidence; partial fuzz
+cells remain visible and are not promoted by this coordination step.
+
 The hosted bridge is intentionally a draft distribution boundary: the VM
 validates the typed operation before invoking the host, and the host returns a
 nominal error or a complete value. Console streams use the same `Reader` and

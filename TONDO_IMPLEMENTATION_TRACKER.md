@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 2.12
+**Versión del tracker:** 2.13
 
 **Última actualización:** 2026-08-11
 
@@ -4718,10 +4718,19 @@ administrativas que no implementan comportamiento.
   STD-0.1B en G5; `STD-CONF-001`, `STD-TEST-001` y `STD-DOC-001` siguen
   abiertos por sus celdas explícitas.
 
-- [ ] **STD-TEST-001 — Coordinar modelos y properties por owner.** Reejecutar y
-  completar los campos `MODEL`, `TEST` y `FUZZ` de cada leaf `STD-A-*-EVIDENCE`
-  después de su implementación. Cada modelo cubre la API pública del owner, no
-  solo su kernel Rust o una operación de validación.
+- [x] **STD-TEST-001 — Coordinar modelos y properties por owner.**
+  `testing/stdlib-test-coordination.json` liga los 21 owners A, las 207 firmas
+  públicas y los 164 requisitos de owner a 63 leyes de modelo, comandos de test
+  y campañas de fuzz. `scripts/stdlib-test-coordination-check.sh` regenera el
+  registro y lo compara con la auditoría pública, la matriz normativa y
+  `stdlib-owner-evidence`; sus tests negativos rechazan superficies sin ley,
+  owners sin comandos, firmas ausentes o fuzz parcial sin razón. El test Rust
+  `stdlib_owner_models` ejecuta la misma clausura y verifica que cada superficie
+  pública tenga un modelo, incluyendo requisitos de owners sin filas de firma.
+  Los campos `MODEL` y `TEST` quedan verificados; los 20 campos `FUZZ` sin
+  target dedicado permanecen `partial` con corpus y razón explícitos, por lo
+  que esta coordinación no los promociona de forma ficticia. La siguiente
+  coordinación es `STD-CONF-001`.
 
 - [x] **STD-CODEC-KERNEL-001 — Validar los kernels de formatos existentes.**
   `scripts/stdlib-codec-conformance.sh` prueba los kernels materializados y el
@@ -5859,6 +5868,18 @@ se declara iniciada antes de esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 2.13 — 2026-08-11
+
+- Se cierra `STD-TEST-001` como coordinación de evidencia, no como promoción
+  global de fuzz. El registro generado `testing/stdlib-test-coordination.json`
+  cubre los 21 owners A, 207 firmas, 164 requisitos y 63 leyes de modelo; cada
+  owner conserva comandos de test, referencias y una campaña fuzz dedicada o
+  un corpus bounded con razón de aplazamiento. El checker cruza API, matriz y
+  owner evidence, y `stdlib_owner_models` comprueba la clausura en Rust.
+  `STD-CONF-001` pasa a ser la siguiente coordinación; los gaps de fuzz,
+  rendimiento y conformidad siguen visibles y no se convierten en claims
+  verdes.
 
 ### 2.12 — 2026-08-11
 

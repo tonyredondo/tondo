@@ -47,7 +47,7 @@ jq '.limits = []' testing/stdlib-testing.json \
 expect_failure missing-limits env TONDO_STDLIB_TESTING_CONTRACT="$tmp_dir/missing-limits.json" \
     scripts/stdlib-testing-check.sh
 
-jq '.promotion.next_coordination = "STD-TESTING-IMPL-001"' testing/stdlib-testing.json \
+jq '.promotion.next_coordination = "STD-TEST-001"' testing/stdlib-testing.json \
     > "$tmp_dir/stale-coordination.json"
 expect_failure stale-coordination env TONDO_STDLIB_TESTING_CONTRACT="$tmp_dir/stale-coordination.json" \
     scripts/stdlib-testing-check.sh

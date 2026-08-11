@@ -2627,6 +2627,14 @@ control terminal, virtual time y los fixtures de dogfooding del runner. No se
 promueve un fuzz target dedicado ni baselines completos de coste o
 `STD-CONF-001`; esas celdas permanecen parciales y visibles en la matriz.
 
+La coordinación `STD-TEST-001` queda registrada en
+`testing/stdlib-test-coordination.json`: sus 21 owners A, 207 firmas públicas y
+164 requisitos se vinculan a 63 leyes de modelo, comandos de test y campañas
+de fuzz. El registro se genera desde la evidencia de owners, la auditoría de
+API y la matriz normativa; cada superficie debe tener una ley de modelo y cada
+fuzz parcial debe conservar una razón explícita. Esta coordinación no convierte
+corpora bounded en fuzz dedicado ni cierra la conformidad global.
+
 ### 14.11 `std.protobuf`
 
 [Protobuf](https://protobuf.dev/programming-guides/encoding/) es schema-first.
