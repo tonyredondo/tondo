@@ -133,6 +133,7 @@
         "code_size",
         "compile_time"
       ],
+      "reason": "Typed, dynamic, streaming, extension and deterministic MessagePack workload identities are explicit; owner allocation, memory and target baselines remain pending promotion.",
       "promotion": "owner-baseline-review-pending"
     },
     {

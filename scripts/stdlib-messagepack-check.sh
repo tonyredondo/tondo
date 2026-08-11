@@ -2,7 +2,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-contract="$root/testing/stdlib-messagepack.json"
+contract="${TONDO_STDLIB_MESSAGEPACK_CONTRACT:-$root/testing/stdlib-messagepack.json}"
 
 if [[ ! -f "$contract" ]]; then
     echo "missing std.messagepack owner contract: ${contract#"$root"/}" >&2

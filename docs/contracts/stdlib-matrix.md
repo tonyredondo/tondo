@@ -157,6 +157,14 @@ byte, fuzz compartido e interoperabilidad `serde_json`. Las pruebas por
 operación y los baselines de allocations/memoria por target permanecen
 parciales, al igual que `STD-CONF-001`.
 
+`std.messagepack` conserva `HOST` como `not-applicable`: es un codec binario
+portable con frames explícitos, claves arbitrarias y extensiones preservadas.
+`STD-A-MSGPACK-EVIDENCE-001` enlaza sus 18 firmas con el modelo wire, formas
+no mínimas, floats, binary/UTF-8, ext/timestamp, determinismo, límites,
+fragmentos de un byte, fuzz compartido e interoperabilidad `rmpv`. Las pruebas
+por operación y los baselines de allocations/memoria por target permanecen
+parciales, al igual que `STD-CONF-001`.
+
 Esta matriz no cierra `STD-CONF-001`, `STD-TEST-001` ni `STD-DOC-001`: registra
 sus celdas pendientes para que las siguientes coordinaciones puedan promover
 owners sin perder la identidad de requisito.

@@ -2594,6 +2594,17 @@ son la única frontera del ABI `Encode[MessagePack]`/`Decode[MessagePack]` y
 las alias `Value`, `ValueView` y `Raw` y no publica una segunda superficie por
 formato.
 
+La evidencia ejecutable de `std.messagepack` es
+`STD-A-MSGPACK-EVIDENCE-001`. Cubre el modelo wire completo, formas no
+mínimas, enteros signed/unsigned, bits de floats, UTF-8 frente a binary,
+claves arbitrarias, ext/timestamp, policies de duplicados, streaming,
+determinismo y límites finitos. La suite verifica que el chunking de un byte no
+altera eventos, preserva extensiones desconocidas y compara en ambas
+direcciones con `rmpv`. `HOST` es `not-applicable`: el bridge del compilador no
+añade capabilities ni semántica de wire dependiente del target. Fuzz dedicado
+por operación, baselines de allocations/memoria por target y `STD-CONF-001`
+siguen como promoción posterior.
+
 ### 14.11 `std.protobuf`
 
 [Protobuf](https://protobuf.dev/programming-guides/encoding/) es schema-first.

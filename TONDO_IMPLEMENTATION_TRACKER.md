@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 2.09
+**Versión del tracker:** 2.10
 
 **Última actualización:** 2026-08-10
 
@@ -4679,9 +4679,13 @@ administrativas que no implementan comportamiento.
   `serde_json`. `HOST` es no aplicable; fuzz dedicado, baselines de
   allocations/memoria por target y `STD-CONF-001` permanecen como promoción
   posterior.
-- [ ] **STD-A-MSGPACK-EVIDENCE-001 — Cerrar evidencia de MessagePack.** Cubrir
-  typed/dynamic/streaming, modelo wire completo, interoperabilidad, chunks/fuzz,
-  límites/rendimiento, conformidad y docs; HOST es no aplicable.
+- [x] **STD-A-MSGPACK-EVIDENCE-001 — Cerrar evidencia de MessagePack.** Las
+  rutas typed/dynamic/streaming quedan trazadas por el modelo wire completo,
+  formas no mínimas, enteros y bits de floats, binary/UTF-8, claves arbitrarias,
+  ext/timestamp, determinismo, límites, fragmentos de un byte y la
+  interoperabilidad bidireccional con `rmpv`. `HOST` es no aplicable; fuzz
+  dedicado, baselines de allocations/memoria por target y `STD-CONF-001`
+  permanecen como promoción posterior.
 - [ ] **STD-A-PROTOBUF-EVIDENCE-001 — Cerrar evidencia de Protobuf.** Cubrir
   schema-first/generación, modelo wire/evolución, interoperabilidad, fuzz,
   límites/rendimiento, conformidad y docs; HOST runtime es no aplicable.
@@ -5844,6 +5848,17 @@ se declara iniciada antes de esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 2.10 — 2026-08-11
+
+- Se cierra `STD-A-MSGPACK-EVIDENCE-001` con nueve celdas explícitas. La
+  evidencia enlaza las rutas typed/dynamic/streaming, el modelo wire completo,
+  policies de forms no mínimas, claves arbitrarias, ext/timestamp,
+  determinismo, límites, terminalidad, fragmentación de un byte y la
+  interoperabilidad bidireccional con `rmpv`. `HOST` es `not-applicable` por
+  tratarse de un codec portable sin capability ambiental; fuzz dedicado,
+  baselines de allocations/memoria por target y `STD-CONF-001` siguen visibles
+  como promoción posterior.
 
 ### 2.09 — 2026-08-11
 

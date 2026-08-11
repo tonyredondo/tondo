@@ -93,6 +93,11 @@
       "id": "STD-A-JSON-EVIDENCE-001",
       "contract": "testing/stdlib-json.json",
       "owners": ["std.json"]
+    },
+    {
+      "id": "STD-A-MSGPACK-EVIDENCE-001",
+      "contract": "testing/stdlib-messagepack.json",
+      "owners": ["std.messagepack"]
     }
   ],
   "owners": [
@@ -1493,6 +1498,85 @@
         "scripts/stdlib-codec-conformance.sh",
         "cargo test -p tondo-stdlib --locked --lib json_api::tests",
         "cargo test -p tondo-stdlib --locked --lib json::tests",
+        "cargo test -p tondo-stdlib --locked --test codec_conformance"
+      ]
+    },
+    {
+      "id": "std.messagepack",
+      "layer": "A3",
+      "cells": {
+        "SPEC": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["testing/stdlib-messagepack.json", "docs/contracts/stdlib-messagepack.md", "TONDO_STANDARD_LIBRARY_SPEC.md"]
+        },
+        "IMPL": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-stdlib/src/messagepack_api.rs", "crates/tondo-stdlib/src/messagepack.rs", "crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs"]
+        },
+        "HOST": {
+          "status": "not-applicable",
+          "reason": "std.messagepack is a portable binary codec; its compiler bridge has no ambient capability provider or target-specific wire semantics",
+          "refs": ["testing/stdlib-messagepack.json", "docs/contracts/stdlib-messagepack.md", "crates/tondo-compiler/src/process_host.rs"]
+        },
+        "MODEL": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-stdlib/src/messagepack_api.rs", "testing/stdlib-messagepack.json"]
+        },
+        "TEST": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-stdlib/src/messagepack_api.rs", "crates/tondo-stdlib/tests/codec_conformance.rs", "scripts/stdlib-messagepack-test.sh"]
+        },
+        "FUZZ": {
+          "status": "partial",
+          "reason": "The shared codec fuzz target covers MessagePack validation and one-byte reader fragments, but no dedicated std.messagepack operation fuzz target has been promoted.",
+          "refs": ["fuzz/fuzz_targets/stdlib_codecs.rs", "testing/stdlib-codec-conformance.json", "scripts/stdlib-messagepack-test.sh"]
+        },
+        "PERF": {
+          "status": "partial",
+          "reason": "Typed, dynamic, streaming, extension and deterministic MessagePack workload identities are declared; owner allocation, memory and target baselines remain pending promotion.",
+          "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
+        },
+        "CONF": {
+          "status": "partial",
+          "reason": "The rmpv bidirectional and fragmented harness covers the portable codec and extension preservation; STD-CONF-001 has not yet promoted every standard-library owner.",
+          "refs": ["testing/stdlib-codec-conformance.json", "scripts/stdlib-codec-conformance.sh", "TONDO_IMPLEMENTATION_TRACKER.md"]
+        },
+        "DOC": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["docs/contracts/stdlib-messagepack.md", "TONDO_STANDARD_LIBRARY_SPEC.md", "docs/contracts/stdlib-s1a.md", "docs/contracts/stdlib-matrix.md"]
+        }
+      },
+      "budgets": {
+        "input_bytes": {
+          "unit": "bytes",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 1000,
+          "state": "declared-baseline-pending"
+        },
+        "events": {
+          "unit": "events",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 1000,
+          "state": "declared-baseline-pending"
+        },
+        "output_bytes": {
+          "unit": "bytes",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 1000,
+          "state": "declared-baseline-pending"
+        }
+      },
+      "commands": [
+        "scripts/stdlib-messagepack-check.sh",
+        "scripts/stdlib-messagepack-test.sh",
+        "scripts/stdlib-codec-conformance.sh",
+        "cargo test -p tondo-stdlib --locked --lib messagepack_api::tests",
+        "cargo test -p tondo-stdlib --locked --lib messagepack::tests",
         "cargo test -p tondo-stdlib --locked --test codec_conformance"
       ]
     }

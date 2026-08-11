@@ -187,6 +187,17 @@ bridge has no ambient capability or target-specific codec semantics. Dedicated
 operation fuzz, allocation/memory and target baselines, and global
 conformance promotion remain pending.
 
+The portable `std.messagepack` owner is closed for evidence by the
+`STD-A-MSGPACK-EVIDENCE-001` cell record. Its typed, dynamic and streaming
+routes cover every wire family, non-minimal forms, arbitrary map keys,
+float-bit policy, binary versus UTF-8, extension/timestamp preservation,
+deterministic ordering, finite limits and terminal errors. Tests prove
+one-byte fragmentation equivalence and bidirectional interoperability with
+`rmpv`; `HOST` is not applicable because the compiler bridge has no ambient
+capability or target-specific wire semantics. Dedicated operation fuzz,
+allocation/memory and target baselines, and global conformance promotion
+remain pending.
+
 The hosted bridge is intentionally a draft distribution boundary: the VM
 validates the typed operation before invoking the host, and the host returns a
 nominal error or a complete value. Console streams use the same `Reader` and
