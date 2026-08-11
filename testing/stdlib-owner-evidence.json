@@ -88,6 +88,11 @@
       "id": "STD-A-SER-EVIDENCE-001",
       "contract": "testing/stdlib-core.json",
       "owners": ["std.serialization"]
+    },
+    {
+      "id": "STD-A-JSON-EVIDENCE-001",
+      "contract": "testing/stdlib-json.json",
+      "owners": ["std.json"]
     }
   ],
   "owners": [
@@ -1410,6 +1415,85 @@
         "cargo test -p tondo-stdlib --locked --lib serialization::tests",
         "cargo test -p tondo-compiler --locked --lib serialization_derive::tests",
         "cargo test -p tondo-compiler --locked --lib meta_derive::tests"
+      ]
+    },
+    {
+      "id": "std.json",
+      "layer": "A3",
+      "cells": {
+        "SPEC": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["testing/stdlib-json.json", "docs/contracts/stdlib-json.md", "TONDO_STANDARD_LIBRARY_SPEC.md"]
+        },
+        "IMPL": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-stdlib/src/json_api.rs", "crates/tondo-stdlib/src/json.rs", "crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs"]
+        },
+        "HOST": {
+          "status": "not-applicable",
+          "reason": "std.json is a portable codec; its compiler bridge has no ambient capability provider or target-specific host semantics",
+          "refs": ["testing/stdlib-json.json", "docs/contracts/stdlib-json.md", "crates/tondo-compiler/src/process_host.rs"]
+        },
+        "MODEL": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-stdlib/src/json_api.rs", "testing/stdlib-json.json"]
+        },
+        "TEST": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-stdlib/src/json_api.rs", "crates/tondo-stdlib/tests/codec_conformance.rs", "scripts/stdlib-json-test.sh"]
+        },
+        "FUZZ": {
+          "status": "partial",
+          "reason": "The shared codec fuzz target covers JSON validation and one-byte reader fragments, but no dedicated std.json operation fuzz target has been promoted.",
+          "refs": ["fuzz/fuzz_targets/stdlib_codecs.rs", "testing/stdlib-codec-conformance.json", "scripts/stdlib-json-test.sh"]
+        },
+        "PERF": {
+          "status": "partial",
+          "reason": "Typed, dynamic, streaming and canonical JSON workload identities are declared; owner allocation, memory and target baselines remain pending promotion.",
+          "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
+        },
+        "CONF": {
+          "status": "partial",
+          "reason": "The serde_json bidirectional and fragmented harness covers the portable codec; STD-CONF-001 has not yet promoted every standard-library owner.",
+          "refs": ["testing/stdlib-codec-conformance.json", "scripts/stdlib-codec-conformance.sh", "TONDO_IMPLEMENTATION_TRACKER.md"]
+        },
+        "DOC": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["docs/contracts/stdlib-json.md", "TONDO_STANDARD_LIBRARY_SPEC.md", "docs/contracts/stdlib-s1a.md", "docs/contracts/stdlib-matrix.md"]
+        }
+      },
+      "budgets": {
+        "input_bytes": {
+          "unit": "bytes",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 1000,
+          "state": "declared-baseline-pending"
+        },
+        "events": {
+          "unit": "events",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 1000,
+          "state": "declared-baseline-pending"
+        },
+        "output_bytes": {
+          "unit": "bytes",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 1000,
+          "state": "declared-baseline-pending"
+        }
+      },
+      "commands": [
+        "scripts/stdlib-json-check.sh",
+        "scripts/stdlib-json-test.sh",
+        "scripts/stdlib-codec-conformance.sh",
+        "cargo test -p tondo-stdlib --locked --lib json_api::tests",
+        "cargo test -p tondo-stdlib --locked --lib json::tests",
+        "cargo test -p tondo-stdlib --locked --test codec_conformance"
       ]
     }
   ],

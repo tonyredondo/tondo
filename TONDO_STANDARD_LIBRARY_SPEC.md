@@ -2292,6 +2292,17 @@ reproducibles para records, enums, newtypes, genéricos y attributes. `HOST` es
 `not-applicable`; el fuzz específico del protocolo, los baselines de coste y
 `STD-CONF-001` continúan como promoción posterior.
 
+La evidencia ejecutable de `std.json` es `STD-A-JSON-EVIDENCE-001`. Cierra las
+rutas typed, dynamic y streaming sobre el mismo parser de frames explícitos,
+incluyendo `JsonNumber` exacto, `Value`/`ValueView`/`Raw`, límites antes de
+crecer, políticas de duplicados y errores terminales. La suite comprueba
+Unicode, números, JCS/RFC 8785, canonicalización, fragmentación de un byte,
+interoperabilidad bidireccional con `serde_json` y los adaptadores de
+`Encode`/`Decode` sin DOM. `HOST` es `not-applicable`: el bridge del compilador
+no introduce una capability ni semántica dependiente del target. El fuzz
+dedicado por operación, los baselines de allocations/memoria por target y
+`STD-CONF-001` siguen explícitamente como promoción posterior.
+
 ### 14.7 `std.reflect`
 
 `std.reflect` implementa reflection descriptiva, estática y retenida de forma

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-contract="$root/testing/stdlib-json.json"
+contract="${TONDO_STDLIB_JSON_CONTRACT:-$root/testing/stdlib-json.json}"
 
 if [[ ! -f "$contract" ]]; then
     echo "missing std.json owner contract: ${contract#"$root"/}" >&2

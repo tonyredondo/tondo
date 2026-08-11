@@ -177,6 +177,16 @@ newtypes and generics; tests cover limits, duplicate fields, lengths and
 atomic failures. `HOST` is not applicable; dedicated event-protocol fuzz,
 target hot-path baselines and global conformance promotion remain pending.
 
+The portable `std.json` owner is closed for evidence by the
+`STD-A-JSON-EVIDENCE-001` cell record. Its typed, dynamic and streaming routes
+share the explicit-frame parser and bounded writer; tests cover exact decimal
+numbers, Unicode, duplicate-field policies, JCS/RFC 8785 canonicalization,
+limits, terminal errors, one-byte fragmentation and bidirectional
+`serde_json` interoperability. `HOST` is not applicable because the compiler
+bridge has no ambient capability or target-specific codec semantics. Dedicated
+operation fuzz, allocation/memory and target baselines, and global
+conformance promotion remain pending.
+
 The hosted bridge is intentionally a draft distribution boundary: the VM
 validates the typed operation before invoking the host, and the host returns a
 nominal error or a complete value. Console streams use the same `Reader` and

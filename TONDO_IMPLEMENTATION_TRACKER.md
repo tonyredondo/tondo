@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 2.08
+**Versión del tracker:** 2.09
 
 **Última actualización:** 2026-08-10
 
@@ -4672,9 +4672,13 @@ administrativas que no implementan comportamiento.
   duplicados, longitudes, chunking y publicación sin valores parciales. `HOST`
   es `not-applicable`; fuzz dedicado del protocolo, baselines de coste y
   `STD-CONF-001` permanecen visibles como promoción posterior.
-- [ ] **STD-A-JSON-EVIDENCE-001 — Cerrar evidencia de JSON.** Cubrir rutas
-  typed/dynamic/streaming, interoperabilidad/JCS, chunks/fuzz, límites,
-  scalar/SIMD, conformidad y docs; HOST es no aplicable.
+- [x] **STD-A-JSON-EVIDENCE-001 — Cerrar evidencia de JSON.** Las rutas
+  typed/dynamic/streaming quedan trazadas por el parser y writer de frames
+  explícitos, `JsonNumber` exacto, límites, políticas, errores terminales,
+  JCS/RFC 8785, fragmentos de un byte y la interoperabilidad bidireccional con
+  `serde_json`. `HOST` es no aplicable; fuzz dedicado, baselines de
+  allocations/memoria por target y `STD-CONF-001` permanecen como promoción
+  posterior.
 - [ ] **STD-A-MSGPACK-EVIDENCE-001 — Cerrar evidencia de MessagePack.** Cubrir
   typed/dynamic/streaming, modelo wire completo, interoperabilidad, chunks/fuzz,
   límites/rendimiento, conformidad y docs; HOST es no aplicable.
@@ -5840,6 +5844,17 @@ se declara iniciada antes de esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 2.09 — 2026-08-11
+
+- Se cierra `STD-A-JSON-EVIDENCE-001` con nueve celdas explícitas. La
+  evidencia enlaza las rutas typed/dynamic/streaming de `std.json`, el parser y
+  writer de frames explícitos, números decimales exactos, JCS/RFC 8785,
+  límites, políticas de duplicados, errores terminales, fragmentación de un
+  byte y la interoperabilidad bidireccional con `serde_json`. `HOST` es
+  `not-applicable` por tratarse de un codec portable sin capability ambiental;
+  fuzz dedicado por operación, baselines de allocations/memoria por target y
+  `STD-CONF-001` siguen visibles como promoción posterior.
 
 ### 2.08 — 2026-08-11
 

@@ -1353,57 +1353,55 @@
       ],
       "stages": {
         "CONF": {
-          "reason": "the external codec harness is closed for the kernel and bridge, but the owner matrix still has public API gaps",
+          "reason": "The serde_json bidirectional and fragmented harness covers the portable codec; STD-CONF-001 has not yet promoted every standard-library owner.",
           "refs": [
             "testing/stdlib-codec-conformance.json",
-            "scripts/stdlib-codec-conformance.sh"
+            "scripts/stdlib-codec-conformance.sh",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
           ],
           "status": "partial"
         },
         "DOC": {
           "reason": null,
           "refs": [
-            "docs/contracts/stdlib-json.md"
+            "docs/contracts/stdlib-json.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md",
+            "docs/contracts/stdlib-s1a.md",
+            "docs/contracts/stdlib-matrix.md"
           ],
           "status": "verified"
         },
         "IMPL/HOST": {
           "reason": null,
           "refs": [
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/process_host.rs",
             "crates/tondo-stdlib/src/json.rs",
             "crates/tondo-stdlib/src/json_api.rs",
-            "scripts/stdlib-json-check.sh",
-            "tests/runtime/m11-std-codecs-001.to"
+            "docs/contracts/stdlib-json.md",
+            "testing/stdlib-json.json"
           ],
           "status": "verified"
         },
         "MODEL/TEST/FUZZ": {
-          "reason": "owner tests exist; per-leaf MODEL/TEST/FUZZ links and fuzz coverage remain to be coordinated by STD-TEST-001",
+          "reason": "The shared codec fuzz target covers JSON validation and one-byte reader fragments, but no dedicated std.json operation fuzz target has been promoted.",
           "refs": [
-            "crates/tondo-stdlib/src/json.rs",
             "crates/tondo-stdlib/src/json_api.rs",
-            "scripts/stdlib-json-check.sh",
-            "tests/runtime/m11-std-codecs-001.to"
+            "crates/tondo-stdlib/tests/codec_conformance.rs",
+            "fuzz/fuzz_targets/stdlib_codecs.rs",
+            "scripts/stdlib-json-test.sh",
+            "testing/stdlib-codec-conformance.json",
+            "testing/stdlib-json.json"
           ],
           "status": "partial"
         },
         "PERF": {
-          "observed_dimensions": [
-            "throughput",
-            "tail_latency"
-          ],
-          "pending_dimensions": [
-            "allocations_per_operation",
-            "allocated_bytes_per_operation",
-            "peak_memory",
-            "startup",
-            "code_size",
-            "compile_time"
-          ],
-          "reason": "only the dimensions listed as observed are captured; promotion remains pending",
+          "reason": "Typed, dynamic, streaming and canonical JSON workload identities are declared; owner allocation, memory and target baselines remain pending promotion.",
           "refs": [
-            "testing/stdlib-performance-conformance.json#owners/std.json"
+            "testing/stdlib-performance.json",
+            "testing/stdlib-performance-conformance.json",
+            "docs/contracts/stdlib-performance.md"
           ],
           "status": "partial"
         },
@@ -1411,7 +1409,8 @@
           "reason": null,
           "refs": [
             "testing/stdlib-json.json",
-            "docs/contracts/stdlib-json.md"
+            "docs/contracts/stdlib-json.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md"
           ],
           "status": "verified"
         }
@@ -12554,8 +12553,8 @@
         "verified": 372
       },
       "IMPL/HOST": {
-        "partial": 27,
-        "verified": 345
+        "partial": 18,
+        "verified": 354
       },
       "MODEL/TEST/FUZZ": {
         "partial": 366,

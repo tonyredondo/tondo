@@ -232,6 +232,7 @@
         "code_size",
         "compile_time"
       ],
+      "reason": "Typed, dynamic, streaming and canonical JSON workload identities are explicit; owner allocation, memory and target baselines remain pending promotion.",
       "promotion": "owner-baseline-review-pending"
     }
   ],

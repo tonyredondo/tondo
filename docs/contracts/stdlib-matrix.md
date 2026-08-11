@@ -149,6 +149,14 @@ genéricos, attributes, source maps y diagnostics con el kernel y sus tests.
 Fuzz específico del event protocol, baselines por target y `STD-CONF-001`
 siguen abiertos explícitamente.
 
+`std.json` conserva `HOST` como `not-applicable`: es un codec portable con
+parser y writer de frames explícitos, y el bridge del compilador no consulta
+capabilities ni el target. `STD-A-JSON-EVIDENCE-001` enlaza sus 22 firmas con
+las rutas typed/dynamic/streaming, `JsonNumber`, JCS, límites, fragmentos de un
+byte, fuzz compartido e interoperabilidad `serde_json`. Las pruebas por
+operación y los baselines de allocations/memoria por target permanecen
+parciales, al igual que `STD-CONF-001`.
+
 Esta matriz no cierra `STD-CONF-001`, `STD-TEST-001` ni `STD-DOC-001`: registra
 sus celdas pendientes para que las siguientes coordinaciones puedan promover
 owners sin perder la identidad de requisito.

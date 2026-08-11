@@ -104,6 +104,8 @@ run_step stdlib-serialization-tests \
     scripts/stdlib-serialization-test.sh
 run_step stdlib-serialization-contract \
     scripts/stdlib-serialization-check.sh
+run_step stdlib-json-tests \
+    scripts/stdlib-json-test.sh
 run_step stdlib-integration-contract \
     scripts/stdlib-spec-check.sh
 run_step stdlib-hosted-contract \

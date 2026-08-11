@@ -62,6 +62,7 @@ jq -e '
   and (any(.leaves[]; .id == "STD-A-FS-EVIDENCE-001" and .owners == ["std.fs"]))
   and (any(.leaves[]; .id == "STD-A-PROC-EVIDENCE-001" and .owners == ["std.process"]))
   and (any(.leaves[]; .id == "STD-A-SER-EVIDENCE-001" and .owners == ["std.serialization"]))
+  and (any(.leaves[]; .id == "STD-A-JSON-EVIDENCE-001" and .owners == ["std.json"]))
   and (any(.leaves[]; .id == "STD-A-TIME-EVIDENCE-001" and .owners == ["std.time"]))
   and (any(.leaves[]; .id == "STD-A-ENV-EVIDENCE-001" and .owners == ["std.env"]))
   and (.owners[] | select(.id == "std.meta") | .cells.HOST.status == "not-applicable")
@@ -177,6 +178,17 @@ jq -e '
   and (.owners[] | select(.id == "std.serialization") | .cells.PERF.reason | contains("baselines"))
   and (.owners[] | select(.id == "std.serialization") | .cells.CONF.status == "partial")
   and (.owners[] | select(.id == "std.serialization") | .cells.DOC.status == "verified")
+  and (.owners[] | select(.id == "std.json") | .cells.SPEC.status == "verified")
+  and (.owners[] | select(.id == "std.json") | .cells.IMPL.status == "verified")
+  and (.owners[] | select(.id == "std.json") | .cells.HOST.status == "not-applicable")
+  and (.owners[] | select(.id == "std.json") | .cells.HOST.reason | contains("portable"))
+  and (.owners[] | select(.id == "std.json") | .cells.MODEL.status == "verified")
+  and (.owners[] | select(.id == "std.json") | .cells.TEST.status == "verified")
+  and (.owners[] | select(.id == "std.json") | .cells.FUZZ.status == "partial")
+  and (.owners[] | select(.id == "std.json") | .cells.PERF.status == "partial")
+  and (.owners[] | select(.id == "std.json") | .cells.PERF.reason | contains("baselines"))
+  and (.owners[] | select(.id == "std.json") | .cells.CONF.status == "partial")
+  and (.owners[] | select(.id == "std.json") | .cells.DOC.status == "verified")
   and (.owners[] | select(.id == "std.time") | .cells.HOST.status == "verified")
   and (.owners[] | select(.id == "std.time") | .cells.HOST.reason == null)
   and (.owners[] | select(.id == "std.time") | .cells.FUZZ.status == "partial")
@@ -212,4 +224,4 @@ while IFS= read -r command; do
     fi
 done < <(jq -r '.owners[].commands[]' "$evidence")
 
-echo "stdlib owner evidence: OK (std.meta + std.reflect + std.bytes + std.core + std.text + std.collections + std.iter + std.math + std.format + std.io + std.path + std.console + std.fs + std.process + std.serialization + std.time + std.env; nine cells explicit per owner)"
+echo "stdlib owner evidence: OK (std.meta + std.reflect + std.bytes + std.core + std.text + std.collections + std.iter + std.math + std.format + std.io + std.path + std.console + std.fs + std.process + std.serialization + std.json + std.time + std.env; nine cells explicit per owner)"
