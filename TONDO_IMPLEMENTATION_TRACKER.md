@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 2.10
+**Versión del tracker:** 2.11
 
 **Última actualización:** 2026-08-10
 
@@ -4686,9 +4686,14 @@ administrativas que no implementan comportamiento.
   interoperabilidad bidireccional con `rmpv`. `HOST` es no aplicable; fuzz
   dedicado, baselines de allocations/memoria por target y `STD-CONF-001`
   permanecen como promoción posterior.
-- [ ] **STD-A-PROTOBUF-EVIDENCE-001 — Cerrar evidencia de Protobuf.** Cubrir
-  schema-first/generación, modelo wire/evolución, interoperabilidad, fuzz,
-  límites/rendimiento, conformidad y docs; HOST runtime es no aplicable.
+- [x] **STD-A-PROTOBUF-EVIDENCE-001 — Cerrar evidencia de Protobuf.** La
+  frontera TOML schema-first y las rutas wire typed/streaming quedan
+  trazadas por proto3, presencia, repeated/packed, maps, oneof, enums abiertos,
+  unknown fields/grupos, evolución, descriptor raíz, determinismo, límites,
+  fragmentos de un byte y la interoperabilidad bidireccional con `prost`.
+  `HOST` es no aplicable; fuzz dedicado de schema/operaciones, baselines de
+  allocations/memoria por target y `STD-CONF-001` permanecen como promoción
+  posterior.
 - [ ] **STD-A-TESTING-EVIDENCE-001 — Cerrar evidencia de `std.testing`.**
   Cubrir helpers, generators/shrinking, temp resources, control sellado,
   bridge test-only, dogfooding, límites/rendimiento, conformidad y docs.
@@ -5848,6 +5853,17 @@ se declara iniciada antes de esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 2.11 — 2026-08-11
+
+- Se cierra `STD-A-PROTOBUF-EVIDENCE-001` con nueve celdas explícitas. La
+  evidencia enlaza el generator schema-first hermético alimentado por TOML, el
+  wire proto3, presencia, repeated/packed, maps, oneof, enums abiertos,
+  unknown fields/grupos, evolución, descriptor raíz, determinismo, límites,
+  terminalidad, fragmentación de un byte y la interoperabilidad bidireccional
+  con `prost`. `HOST` es `not-applicable`; fuzz dedicado de schema/operaciones,
+  baselines de allocations/memoria por target y `STD-CONF-001` siguen visibles
+  como promoción posterior.
 
 ### 2.10 — 2026-08-11
 

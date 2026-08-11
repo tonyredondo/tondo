@@ -165,6 +165,7 @@
         "code_size",
         "compile_time"
       ],
+      "reason": "Schema, typed wire, streaming, unknown-field and deterministic Protobuf workload identities are explicit; owner allocation, memory and target baselines remain pending promotion.",
       "promotion": "owner-baseline-review-pending"
     },
     {

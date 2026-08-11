@@ -108,6 +108,8 @@ run_step stdlib-json-tests \
     scripts/stdlib-json-test.sh
 run_step stdlib-messagepack-tests \
     scripts/stdlib-messagepack-test.sh
+run_step stdlib-protobuf-tests \
+    scripts/stdlib-protobuf-test.sh
 run_step stdlib-integration-contract \
     scripts/stdlib-spec-check.sh
 run_step stdlib-hosted-contract \

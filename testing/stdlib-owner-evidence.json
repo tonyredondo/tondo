@@ -98,6 +98,11 @@
       "id": "STD-A-MSGPACK-EVIDENCE-001",
       "contract": "testing/stdlib-messagepack.json",
       "owners": ["std.messagepack"]
+    },
+    {
+      "id": "STD-A-PROTOBUF-EVIDENCE-001",
+      "contract": "testing/stdlib-protobuf.json",
+      "owners": ["std.protobuf"]
     }
   ],
   "owners": [
@@ -1577,6 +1582,91 @@
         "scripts/stdlib-codec-conformance.sh",
         "cargo test -p tondo-stdlib --locked --lib messagepack_api::tests",
         "cargo test -p tondo-stdlib --locked --lib messagepack::tests",
+        "cargo test -p tondo-stdlib --locked --test codec_conformance"
+      ]
+    },
+    {
+      "id": "std.protobuf",
+      "layer": "A3",
+      "cells": {
+        "SPEC": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["testing/stdlib-protobuf.json", "docs/contracts/stdlib-protobuf.md", "TONDO_STANDARD_LIBRARY_SPEC.md"]
+        },
+        "IMPL": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-stdlib/src/protobuf_api.rs", "crates/tondo-stdlib/src/protobuf.rs", "crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs"]
+        },
+        "HOST": {
+          "status": "not-applicable",
+          "reason": "std.protobuf wire and schema generation are portable or build-only; the compiler bridge has no ambient capability provider or target-specific wire semantics",
+          "refs": ["testing/stdlib-protobuf.json", "docs/contracts/stdlib-protobuf.md", "crates/tondo-compiler/src/process_host.rs"]
+        },
+        "MODEL": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-stdlib/src/protobuf_api.rs", "testing/stdlib-protobuf.json"]
+        },
+        "TEST": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-stdlib/src/protobuf_api.rs", "crates/tondo-stdlib/tests/codec_conformance.rs", "scripts/stdlib-protobuf-test.sh"]
+        },
+        "FUZZ": {
+          "status": "partial",
+          "reason": "The shared codec fuzz target covers Protobuf validation, unknown records and one-byte reader fragments, but no dedicated std.protobuf operation or schema fuzz target has been promoted.",
+          "refs": ["fuzz/fuzz_targets/stdlib_codecs.rs", "testing/stdlib-codec-conformance.json", "scripts/stdlib-protobuf-test.sh"]
+        },
+        "PERF": {
+          "status": "partial",
+          "reason": "Schema, typed wire, streaming, unknown-field and deterministic Protobuf workload identities are declared; owner allocation, memory and target baselines remain pending promotion.",
+          "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
+        },
+        "CONF": {
+          "status": "partial",
+          "reason": "The prost bidirectional and fragmented harness covers the portable wire and unknown records; STD-CONF-001 has not yet promoted every standard-library owner.",
+          "refs": ["testing/stdlib-codec-conformance.json", "scripts/stdlib-codec-conformance.sh", "TONDO_IMPLEMENTATION_TRACKER.md"]
+        },
+        "DOC": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["docs/contracts/stdlib-protobuf.md", "TONDO_STANDARD_LIBRARY_SPEC.md", "docs/contracts/stdlib-s1a.md", "docs/contracts/stdlib-matrix.md"]
+        }
+      },
+      "budgets": {
+        "schema_bytes": {
+          "unit": "bytes",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 1000,
+          "state": "declared-baseline-pending"
+        },
+        "input_bytes": {
+          "unit": "bytes",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 1000,
+          "state": "declared-baseline-pending"
+        },
+        "events": {
+          "unit": "events",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 1000,
+          "state": "declared-baseline-pending"
+        },
+        "output_bytes": {
+          "unit": "bytes",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 1000,
+          "state": "declared-baseline-pending"
+        }
+      },
+      "commands": [
+        "scripts/stdlib-protobuf-check.sh",
+        "scripts/stdlib-protobuf-test.sh",
+        "scripts/stdlib-codec-conformance.sh",
+        "cargo test -p tondo-stdlib --locked --lib protobuf_api::tests",
+        "cargo test -p tondo-stdlib --locked --lib protobuf::tests",
         "cargo test -p tondo-stdlib --locked --test codec_conformance"
       ]
     }

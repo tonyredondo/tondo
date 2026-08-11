@@ -2,7 +2,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-contract="$root/testing/stdlib-protobuf.json"
+contract="${TONDO_STDLIB_PROTOBUF_CONTRACT:-$root/testing/stdlib-protobuf.json}"
 
 if [[ ! -f "$contract" ]]; then
     echo "missing std.protobuf owner contract: ${contract#"$root"/}" >&2

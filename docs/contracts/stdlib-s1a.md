@@ -198,6 +198,17 @@ capability or target-specific wire semantics. Dedicated operation fuzz,
 allocation/memory and target baselines, and global conformance promotion
 remain pending.
 
+The portable/build-only `std.protobuf` owner is closed for evidence by the
+`STD-A-PROTOBUF-EVIDENCE-001` cell record. Its TOML schema-first boundary and
+proto3 wire routes cover closed imports, generated identities, presence,
+repeated/packed fields, maps, oneof, open enums, unknown fields/groups,
+deterministic encoding, bounded schema/message limits and safe versus unsafe
+evolution. Tests prove schema-bound streaming, one-byte fragmentation,
+atomic terminal failures and bidirectional `prost` interoperability. `HOST`
+is not applicable because wire execution is portable and generation is
+hermetic build-only; dedicated schema/operation fuzz, allocation/memory and
+target baselines, and global conformance promotion remain pending.
+
 The hosted bridge is intentionally a draft distribution boundary: the VM
 validates the typed operation before invoking the host, and the host returns a
 nominal error or a complete value. Console streams use the same `Reader` and

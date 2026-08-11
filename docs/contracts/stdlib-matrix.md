@@ -165,6 +165,15 @@ fragmentos de un byte, fuzz compartido e interoperabilidad `rmpv`. Las pruebas
 por operación y los baselines de allocations/memoria por target permanecen
 parciales, al igual que `STD-CONF-001`.
 
+`std.protobuf` conserva `HOST` como `not-applicable`: el wire es portable y el
+generator es build-only, hermético y alimentado únicamente por `tondo.toml` y
+su grafo declarado. `STD-A-PROTOBUF-EVIDENCE-001` enlaza sus 15 firmas con
+schema-first proto3, presencia, repeated/packed, maps, oneof, enums abiertos,
+unknown fields/grupos, evolución, descriptor raíz, determinismo, límites,
+fragmentos de un byte, fuzz compartido e interoperabilidad `prost`. Las
+pruebas por operación/schema y los baselines de allocations/memoria por target
+permanecen parciales, al igual que `STD-CONF-001`.
+
 Esta matriz no cierra `STD-CONF-001`, `STD-TEST-001` ni `STD-DOC-001`: registra
 sus celdas pendientes para que las siguientes coordinaciones puedan promover
 owners sin perder la identidad de requisito.

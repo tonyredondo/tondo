@@ -2605,6 +2605,18 @@ añade capabilities ni semántica de wire dependiente del target. Fuzz dedicado
 por operación, baselines de allocations/memoria por target y `STD-CONF-001`
 siguen como promoción posterior.
 
+La evidencia ejecutable de `std.protobuf` es `STD-A-PROTOBUF-EVIDENCE-001`.
+Combina el wire portable con la frontera build-only schema-first: TOML
+declarativo, grafo cerrado de imports, proto3, presencia, repeated/packed,
+maps, oneof, enums abiertos, unknown fields/grupos, evolución segura e
+incompatible, descriptor raíz, reader/writer schema-bound, determinismo y
+límites finitos. La suite comprueba fragmentación de un byte y compatibilidad
+bidireccional con `prost`, además de que el generator produzca identidades
+estables y errores de schema sin inputs ambientales. `HOST` es
+`not-applicable`; fuzz dedicado de schema/operaciones, baselines de
+allocations/memoria por target y `STD-CONF-001` siguen como promoción
+posterior.
+
 ### 14.11 `std.protobuf`
 
 [Protobuf](https://protobuf.dev/programming-guides/encoding/) es schema-first.
