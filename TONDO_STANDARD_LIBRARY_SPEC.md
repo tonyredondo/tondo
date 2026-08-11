@@ -2283,6 +2283,15 @@ tipo DTO explícito. Protobuf no utiliza este derive para inferir field numbers.
 El error común conserva tipo, path, offset y límites; cada codec puede añadir
 sus variantes nominales sin cambiar la máquina compartida.
 
+La evidencia ejecutable de este owner es `STD-A-SER-EVIDENCE-001`: enlaza el
+contrato común con los traits `Encoder`/`Decoder` y `Encode`/`Decode`, la máquina
+de eventos con frames explícitos, `Value`/`ValueView`/`Raw`, paths, límites,
+chunking y publicación atómica. Los providers herméticos de derive conservan
+la identidad del codec, generan output determinista, source maps y diagnostics
+reproducibles para records, enums, newtypes, genéricos y attributes. `HOST` es
+`not-applicable`; el fuzz específico del protocolo, los baselines de coste y
+`STD-CONF-001` continúan como promoción posterior.
+
 ### 14.7 `std.reflect`
 
 `std.reflect` implementa reflection descriptiva, estática y retenida de forma

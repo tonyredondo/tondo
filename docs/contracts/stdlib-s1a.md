@@ -167,6 +167,16 @@ cancellation, panic/unwind cleanup and child reaping; `HOST` is verified.
 Dedicated operation fuzz, target hot-path cost baselines and global conformance
 promotion remain pending.
 
+The portable `std.serialization` owner is closed for evidence by the
+`STD-A-SER-EVIDENCE-001` cell record. Its common `Encoder`/`Decoder` and
+`Encode`/`Decode` protocols, explicit event frames, dynamic value views, raw
+bytes, bounded chunking and publish-after-validation rule are traced through
+the stdlib kernel. The hermetic build-only providers preserve codec identity,
+field order, attributes, source maps and diagnostics for records, enums,
+newtypes and generics; tests cover limits, duplicate fields, lengths and
+atomic failures. `HOST` is not applicable; dedicated event-protocol fuzz,
+target hot-path baselines and global conformance promotion remain pending.
+
 The hosted bridge is intentionally a draft distribution boundary: the VM
 validates the typed operation before invoking the host, and the host returns a
 nominal error or a complete value. Console streams use the same `Reader` and

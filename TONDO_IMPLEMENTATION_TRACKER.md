@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 2.07
+**Versión del tracker:** 2.08
 
 **Última actualización:** 2026-08-10
 
@@ -4663,9 +4663,15 @@ administrativas que no implementan comportamiento.
   y reaping. La auditoría pública mantiene 17/17 y `HOST` queda `verified`;
   fuzz dedicado, baselines por target y `STD-CONF-001` permanecen visibles
   como promoción posterior.
-- [ ] **STD-A-SER-EVIDENCE-001 — Cerrar evidencia de serialization.** Cubrir
-  máquina de eventos, derives, paths, construcción atómica, streaming,
-  properties/fuzz, coste, conformidad y docs; HOST es no aplicable.
+- [x] **STD-A-SER-EVIDENCE-001 — Cerrar evidencia de serialization.** El
+  protocolo común queda trazado por `Encoder`/`Decoder`, `Encode`/`Decode`, la
+  máquina de eventos con frames explícitos, `Value`/`ValueView`/`Raw`, paths,
+  construcción atómica y streaming. Los providers de derive canónicos quedan
+  enlazados con la frontera `tondo-meta`, source maps y diagnostics reproducibles;
+  las pruebas cubren records, enums, newtypes, genéricos, attributes, límites,
+  duplicados, longitudes, chunking y publicación sin valores parciales. `HOST`
+  es `not-applicable`; fuzz dedicado del protocolo, baselines de coste y
+  `STD-CONF-001` permanecen visibles como promoción posterior.
 - [ ] **STD-A-JSON-EVIDENCE-001 — Cerrar evidencia de JSON.** Cubrir rutas
   typed/dynamic/streaming, interoperabilidad/JCS, chunks/fuzz, límites,
   scalar/SIMD, conformidad y docs; HOST es no aplicable.
@@ -5834,6 +5840,15 @@ se declara iniciada antes de esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 2.08 — 2026-08-11
+
+- Se cierra `STD-A-SER-EVIDENCE-001` con nueve celdas explícitas. La evidencia
+  enlaza el contrato común, event machine, límites y atomicidad, el kernel
+  portable, los providers `Encode`/`Decode` de `std.serialization`, source maps,
+  diagnostics y los tests de derive. La auditoría confirma que el owner no
+  tiene host runtime; fuzz específico del protocolo, baselines por target y
+  `STD-CONF-001` siguen explícitamente pendientes.
 
 ### 2.07 — 2026-08-11
 

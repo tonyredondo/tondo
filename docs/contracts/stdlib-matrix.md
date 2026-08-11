@@ -141,6 +141,14 @@ shell explícito, las cuatro formas de pipe, backpressure, streams separados y
 Fuzz dedicado, baselines por target y `STD-CONF-001` siguen abiertos
 explícitamente.
 
+`std.serialization` conserva `HOST` como `not-applicable`: es el protocolo de
+eventos portable compartido por los codecs y sus providers de derive son
+herméticos y build-only. `STD-A-SER-EVIDENCE-001` enlaza traits, frames,
+`Value`/`Raw`, límites, chunking, publicación atómica, records, enums,
+genéricos, attributes, source maps y diagnostics con el kernel y sus tests.
+Fuzz específico del event protocol, baselines por target y `STD-CONF-001`
+siguen abiertos explícitamente.
+
 Esta matriz no cierra `STD-CONF-001`, `STD-TEST-001` ni `STD-DOC-001`: registra
 sus celdas pendientes para que las siguientes coordinaciones puedan promover
 owners sin perder la identidad de requisito.

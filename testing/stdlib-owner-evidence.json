@@ -83,6 +83,11 @@
       "id": "STD-A-PROC-EVIDENCE-001",
       "contract": "testing/stdlib-hosted.json",
       "owners": ["std.process"]
+    },
+    {
+      "id": "STD-A-SER-EVIDENCE-001",
+      "contract": "testing/stdlib-core.json",
+      "owners": ["std.serialization"]
     }
   ],
   "owners": [
@@ -1326,6 +1331,85 @@
         "cargo test -p tondo-compiler --locked --lib process_host::tests::exit_status_is_data_while_check_and_spawn_failures_are_typed_errors",
         "cargo test -p tondo-compiler --locked --lib process_host::tests::cancel_and_host_drop_reap_started_children",
         "cargo test -p tondo-compiler --locked --lib driver::tests::bootstrap_standard_modules_follow_the_closed_target_capabilities"
+      ]
+    },
+    {
+      "id": "std.serialization",
+      "layer": "A3",
+      "cells": {
+        "SPEC": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["testing/stdlib-core.json", "testing/stdlib-serialization.json", "docs/contracts/stdlib-serialization.md", "TONDO_STANDARD_LIBRARY_SPEC.md"]
+        },
+        "IMPL": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-stdlib/src/serialization.rs", "crates/tondo-compiler/src/meta_derive.rs", "crates/tondo-compiler/src/serialization_derive.rs", "crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs"]
+        },
+        "HOST": {
+          "status": "not-applicable",
+          "reason": "std.serialization is a portable event protocol and hermetic build-only derive boundary; it has no capability-gated runtime host adapter",
+          "refs": ["testing/stdlib-serialization.json", "docs/contracts/stdlib-serialization.md", "crates/tondo-compiler/src/meta_vm.rs"]
+        },
+        "MODEL": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-stdlib/src/serialization.rs", "crates/tondo-compiler/src/meta_derive.rs", "crates/tondo-compiler/src/serialization_derive.rs"]
+        },
+        "TEST": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-stdlib/src/serialization.rs", "crates/tondo-compiler/src/meta_derive.rs", "crates/tondo-compiler/src/serialization_derive.rs", "scripts/stdlib-serialization-test.sh"]
+        },
+        "FUZZ": {
+          "status": "partial",
+          "reason": "The bounded codec and one-byte-fragment fuzz corpus exercises the shared boundary indirectly, but no dedicated std.serialization event-protocol fuzz target has been promoted.",
+          "refs": ["fuzz/fuzz_targets/stdlib_codecs.rs", "fuzz/fuzz_targets/protocols.rs", "scripts/stdlib-serialization-test.sh"]
+        },
+        "PERF": {
+          "status": "partial",
+          "reason": "Shared event, typed streaming and derive budgets are declared; owner-specific hot-path and generated-source baselines remain pending promotion.",
+          "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
+        },
+        "CONF": {
+          "status": "partial",
+          "reason": "The external codec harness validates the shared bridge and independent format owners; STD-CONF-001 has not yet promoted every standard-library owner.",
+          "refs": ["testing/stdlib-codec-conformance.json", "scripts/stdlib-codec-conformance.sh", "TONDO_IMPLEMENTATION_TRACKER.md"]
+        },
+        "DOC": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["docs/contracts/stdlib-serialization.md", "docs/contracts/stdlib-core.md", "TONDO_STANDARD_LIBRARY_SPEC.md", "docs/contracts/stdlib-s1a.md", "docs/contracts/stdlib-matrix.md"]
+        }
+      },
+      "budgets": {
+        "event_count": {
+          "unit": "events",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 1000,
+          "state": "declared-baseline-pending"
+        },
+        "payload_bytes": {
+          "unit": "bytes",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 1000,
+          "state": "declared-baseline-pending"
+        },
+        "generated_source_bytes": {
+          "unit": "bytes",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 500,
+          "state": "declared-baseline-pending"
+        }
+      },
+      "commands": [
+        "scripts/stdlib-core-check.sh",
+        "scripts/stdlib-serialization-check.sh",
+        "scripts/stdlib-serialization-test.sh",
+        "cargo test -p tondo-stdlib --locked --lib serialization::tests",
+        "cargo test -p tondo-compiler --locked --lib serialization_derive::tests",
+        "cargo test -p tondo-compiler --locked --lib meta_derive::tests"
       ]
     }
   ],

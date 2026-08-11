@@ -327,3 +327,11 @@ vectores bidireccionales y pruebas de fragmentación/truncación. La siguiente
 coordinación es `STD-CONF-001`, seguida por la auditoría pública sin gaps y
 la promoción S1A; ningún gate se sustituye por round-trips contra el propio
 bridge.
+
+La evidencia del owner se registra como `STD-A-SER-EVIDENCE-001`: las nueve
+celdas separan contrato, implementación, modelo, tests, fuzz, coste,
+conformance y documentación. `HOST` es `not-applicable` porque el protocolo es
+portable y los providers son build-only; el kernel y los providers de derive
+quedan cubiertos por sus tests de eventos, atomicidad, chunking, records,
+enums, genéricos, attributes, source maps y diagnostics. El fuzz dedicado del
+event protocol y los baselines por target siguen explícitamente pendientes.

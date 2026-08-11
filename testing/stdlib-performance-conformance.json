@@ -182,7 +182,7 @@
       "id": "std.serialization",
       "group": "a1-values-protocols",
       "state": "awaiting-owner-hot-path",
-      "reason": "The shared event protocol needs typed and streaming operation identities before codec-specific capture can be generalized."
+      "reason": "The shared event protocol, typed streaming and derive operation identities are now explicit; owner-specific hot-path and generated-source baseline capture remains pending promotion."
     },
     {
       "id": "std.testing",
