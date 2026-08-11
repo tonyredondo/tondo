@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 2.13
+**Versión del tracker:** 2.14
 
 **Última actualización:** 2026-08-11
 
@@ -4767,10 +4767,21 @@ administrativas que no implementan comportamiento.
   baselines revisadas y promoción, pero ya no existe una coordinación implícita
   ni una cifra verde agregada entre targets incompatibles.
 
-- [ ] **STD-CONF-001 — Coordinar conformidad por owner.** Cierra solo cuando la
-  `STD-MATRIX-ALL-001` contiene cada requisito A aplicable con evidencia pública
-  y todas las leaves registran `SPEC → IMPL/HOST → MODEL/TEST/FUZZ → PERF →
-  CONF → DOC` sin celdas implícitas.
+- [x] **STD-CONF-001 — Coordinar conformidad por owner.**
+  `testing/stdlib-conformance-coordination.json` materializa los 22 owners y
+  las 372 filas de `STD-MATRIX-ALL-001` (207 firmas y 165 requisitos), con una
+  entrada `CONF` explícita por fila, estado, razón, referencias y comandos.
+  `scripts/stdlib-conformance-coordination-check.sh` regenera el registro,
+  cruza matriz/API/owner evidence y exige que no existan filas implícitas,
+  razones vacías, referencias inexistentes o comandos de script no ejecutables;
+  su test negativo rechaza omisiones, sobreclaims y una coordinación siguiente
+  obsoleta. `stdlib_conformance_coordination` replica la clausura en Rust.
+  Los owners JSON/MessagePack/Protobuf/serialization conservan los seis casos
+  del harness externo; `std.async` queda `pending` por su requisito sintético y
+  los otros owners `partial` hasta obtener casos públicos completos. La
+  coordinación se cierra como `closed-coordination`, pero
+  `promotion.status=not-promoted` y la matriz siguen `open-gaps`; la siguiente
+  coordinación es `STD-DOC-001`.
 
 - [ ] **STD-DOC-001 — Cerrar documentación por owner y programas
   representativos.** Corregir `docs/contracts/stdlib-s1a.md` y el manifiesto de
@@ -5868,6 +5879,19 @@ se declara iniciada antes de esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 2.14 — 2026-08-11
+
+- Se cierra `STD-CONF-001` como coordinación explícita, sin convertir gaps en
+  conformance verde. `testing/stdlib-conformance-coordination.json` contiene
+  una fila `CONF` por cada una de las 372 filas normativas (22 owners, 207
+  firmas y 165 requisitos), conserva razones y referencias por estado y enlaza
+  el runner de la única lineage `conformance/draft`. Los cuatro owners de
+  codecs mantienen los casos bidireccionales/fragmentados del harness externo;
+  `std.async` permanece `pending` por su requisito sintético y los otros owners
+  `partial` hasta cerrar evidencia pública. El checker, los negativos y
+  `stdlib_conformance_coordination` bloquean omisiones, referencias rotas y
+  sobreclaims. `STD-DOC-001` pasa a ser la siguiente coordinación.
 
 ### 2.13 — 2026-08-11
 

@@ -227,6 +227,17 @@ fuzz campaign or bounded-corpus reason. The generated registry is checked
 against the public API, normative matrix and owner evidence; partial fuzz
 cells remain visible and are not promoted by this coordination step.
 
+`STD-CONF-001` closes the conformance coordination in
+`testing/stdlib-conformance-coordination.json`: every one of the 372 normative
+matrix rows has an explicit `CONF` record with status, reason, references and
+commands across all 22 owners. The registry is regenerated from the normative
+matrix and cross-checked against the public API and owner evidence. Codec
+owners retain their external bidirectional/fragmented cases, while
+`std.async` remains pending for its synthetic requirement and the other owners
+remain partial until public conformance cases are complete. This is an
+administrative closure only (`promotion.status=not-promoted`); it does not
+claim that the open matrix is green, and `STD-DOC-001` is the next coordination.
+
 The hosted bridge is intentionally a draft distribution boundary: the VM
 validates the typed operation before invoking the host, and the host returns a
 nominal error or a complete value. Console streams use the same `Reader` and

@@ -2635,6 +2635,19 @@ API y la matriz normativa; cada superficie debe tener una ley de modelo y cada
 fuzz parcial debe conservar una razón explícita. Esta coordinación no convierte
 corpora bounded en fuzz dedicado ni cierra la conformidad global.
 
+La coordinación `STD-CONF-001` queda registrada en
+`testing/stdlib-conformance-coordination.json`: contiene los 22 owners de
+`STD-0.1A` y una fila `CONF` explícita para cada firma o requisito de la matriz
+(207 firmas y 165 requisitos). Cada fila conserva el estado actual de la
+matriz, una razón obligatoria para `partial`/`pending`, referencias
+reproducibles y comandos. El registro cruza la matriz normativa, la auditoría
+de API, la evidencia de owners, la coordinación de modelos y el harness
+externo de codecs; no permite declarar `verified` sin la observación de la
+fila ni convierte la coordinación en promoción. `std.async` permanece
+`pending` por su requisito sintético y los demás owners sin casos públicos
+completos permanecen `partial`. La promoción sigue `not-promoted` hasta
+`STD-DOC-001` y la conformance pública completa.
+
 ### 14.11 `std.protobuf`
 
 [Protobuf](https://protobuf.dev/programming-guides/encoding/) es schema-first.
@@ -2843,6 +2856,14 @@ Cada API pública tiene evidencia en seis dimensiones:
 
 Una única prueba puede cubrir varias dimensiones solo cuando la matriz enlaza
 la observación exacta; proximidad de código no cuenta como evidencia.
+
+El coordinador de conformance debe tener una fila por cada fila normativa de la
+matriz y no puede inferir una observación desde la mera existencia de un
+directorio, un kernel o un test vecino. Cada estado `partial`, `pending` o
+`gap` lleva razón y referencias; solo `verified` puede entrar en una promoción,
+y únicamente cuando el adaptador público haya producido la observación
+correspondiente. `testing/stdlib-conformance-coordination.json` y su checker
+son la fuente ejecutable de esta clausura administrativa.
 
 ### 16.2 Tests adicionales por clase
 

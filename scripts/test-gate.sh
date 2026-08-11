@@ -132,6 +132,10 @@ run_step stdlib-normative-matrix-tests \
     scripts/stdlib-matrix-test.sh
 run_step stdlib-codec-conformance \
     scripts/stdlib-codec-conformance.sh
+run_step stdlib-conformance-coordination \
+    scripts/stdlib-conformance-coordination-check.sh
+run_step stdlib-conformance-coordination-tests \
+    scripts/stdlib-conformance-coordination-test.sh
 run_step stdlib-performance-report \
     scripts/stdlib-performance-report.sh
 run_step stdlib-performance-conformance \

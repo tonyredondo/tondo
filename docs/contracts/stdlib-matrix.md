@@ -190,6 +190,13 @@ convierte un corpus bounded en una promoción de fuzz dedicada. La prueba Rust
 `stdlib_owner_models` y los negativos del checker verifican la clausura sin
 crear un segundo owner ni una API alternativa.
 
-Esta matriz no cierra `STD-CONF-001` ni `STD-DOC-001`: registra sus celdas
-pendientes para que las siguientes coordinaciones puedan promover owners sin
-perder la identidad de requisito.
+`STD-CONF-001` añade `testing/stdlib-conformance-coordination.json`, que
+materializa una fila `CONF` por cada una de las 372 filas de esta matriz. Cada
+owner conserva sus comandos, referencias, casos de interoperabilidad cuando
+existen y el estado derivado de sus filas; `std.async` queda explícitamente
+`pending` y los demás gaps continúan `partial` sin sobreafirmar conformance.
+El checker regenera y cruza la identidad de todas las filas, exige razones y
+referencias existentes y mantiene `promotion.status=not-promoted`; los tests
+negativos y el test Rust `stdlib_conformance_coordination` rechazan omisiones,
+sobreclaims y drift. La matriz sigue `open-gaps` y `STD-DOC-001` es la siguiente
+coordinación.
