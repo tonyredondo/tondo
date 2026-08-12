@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 2.19
+**Versión del tracker:** 2.20
 
 **Última actualización:** 2026-08-12
 
@@ -43,15 +43,12 @@ confunde con conformarla. TLF tampoco cambia la semántica `.to`: Gate L0 produc
 un bundle separado y el candidato final fija G5, S1 y L0 por identidades
 independientes.
 
-**Objetivo inmediato:** cerrar la migración de suspensión inferida y sus
-contratos públicos: la ruta de frontend, HIR/MIR/bytecode, `Join` transferible,
-`oneshot`, `AsyncIterator`, `defer await` y `main`/script ya atraviesan la VM de
-referencia. La compatibilidad léxica de `async` se conserva únicamente para
-fixtures históricos y no aparece en interfaces ni en la superficie normativa;
-la retirada mecánica de esas fixtures queda separada del contrato ejecutable.
-Después: (1) completar las rutas públicas A1–A4 y ampliar
-la matriz normativa a los tres contratos G5 antes de volver a cerrar T0/G5/S1A.
-Los contratos
+**Objetivo inmediato:** cerrar `CONF-GAP-IMPL-001` añadiendo trazabilidad
+positiva, negativa, de borde, composición, oracle y frontera pública a las 364
+filas cuya implementación ya existe. La auditoría cerrada no ha encontrado
+funcionalidad ausente que requiera una leaf de implementación; dos requisitos
+son no aplicables por contrato. Después se ejecutan y atestan los resultados de
+layer de `CONF-LAYER-RESULT-001` antes de volver a cerrar T0/G5/S1A. Los contratos
 runtime-facing de STD-0.1B y M11 esperan esos gates. Todo pertenece a la primera
 versión 0.1; los slices son orden de implementación, no versiones públicas. La
 VM permanece como implementación de referencia y oracle diferencial del
@@ -2814,12 +2811,21 @@ Antes de ampliar la gramática de M10.7 o M10.6:
   auditoría enlace evidencia ejecutable; ni el hash del documento ni sus
   fences cuentan como cobertura.
 
-- [ ] **CONF-GAP-AUDIT-001 — Clasificar todos los límites existentes.** Revisar
+- [x] **CONF-GAP-AUDIT-001 — Clasificar todos los límites existentes.** Revisar
   individualmente los 344 `toolchain-limit` y los 22 `draft-pending` actuales y
   asignar una de tres salidas verificables: implementación existente sin
   trazabilidad, requisito no aplicable con razón normativa, o funcionalidad
   realmente ausente. No se permiten waivers agregadas por sección ni usar un
   ejemplo vecino como prueba implícita.
+  `testing/normative-gap-audit.json` conserva una fila ordenada por cada uno de
+  los 366 requisitos, ligada al hash exacto del texto y de las tres specs. El
+  resultado es 364 implementaciones existentes sin la traza completa de seis
+  dimensiones, dos no aplicables (`TL01-2-2-R001` y `TT01-13-R001`) con razón
+  normativa individual y cero ausencias. Cada fila implementada nombra una ruta
+  real y un ID ejecutable del inventario; el validador rechaza omisiones,
+  extras, drift, paths inválidos, tests no ejecutables y formas ambiguas. El
+  ratchet `/2` y el promotion proof fijan y revalidan el registro junto a matriz
+  e inventario sin convertir la clasificación en cobertura.
 
 - [ ] **CONF-GAP-IMPL-001 — Cerrar las ausencias descubiertas por la
   auditoría.** Cada ausencia genera una tarea leaf enlazada al requisito, una
@@ -5905,14 +5911,26 @@ M4, M5, M6, M7, M8, M9, el corpus bootstrap M10, M10.5, M10.5b y Gates G4/H0
 quedan cerrados como implementación/infraestructura. M10.7 y la implementación
 funcional de M10.6 permanecen cerradas. `CONF-DRAFT-001` también permanece
 cerrada. La auditoría reabre T0/G5 por trazabilidad normativa y Wave 5/S1A por APIs
-públicas ausentes. La acción inmediata es completar primero Wave 4.5, la
-migración de suspensión 1.67 que mantiene M7 abierto. Después se ejecutan las
-tareas leaf de Wave 5 junto a `DOC-TEST-CONF-001`/`CONF-MATRIX-ALL-001`; Wave 6 no
-se declara iniciada antes de esos cierres.
+públicas ausentes. La acción inmediata es `CONF-GAP-IMPL-001`: el audit no abrió
+leaves de implementación y el trabajo restante consiste en enlazar evidencia
+completa de las 364 filas aplicables. Después siguen `CONF-LAYER-RESULT-001` y
+el cierre final de G5; Wave 6 no se declara iniciada antes de esos gates.
 
 ---
 
 ## 25. Historial del tracker
+
+### 2.20 — 2026-08-12
+
+- Se cierra `CONF-GAP-AUDIT-001` con el registro machine-readable
+  `tondo-normative-gap-audit/1`: clasifica exactamente las 366 filas abiertas de
+  G5 en 364 implementaciones existentes sin traza multidimensional completa,
+  dos no aplicables por contrato y cero ausencias. La herramienta de fiabilidad
+  exige identidad y hash vigentes, razón individual, path real y test público
+  ejecutable; el sello repite la validación sobre matriz, audit e inventario
+  embebidos. El ratchet sube a `/2` porque el audit pasa a ser evidencia
+  obligatoria. `CONF-GAP-IMPL-001` queda acotado a cerrar trazabilidad, sin
+  inventar trabajo de implementación que la auditoría no encontró.
 
 ### 2.19 — 2026-08-12
 

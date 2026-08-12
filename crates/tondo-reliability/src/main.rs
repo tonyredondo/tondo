@@ -2,6 +2,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use tondo_reliability::gap_audit::GapAudit;
 use tondo_reliability::inventory;
 use tondo_reliability::matrix;
 use tondo_reliability::provenance::{QualityProvenance, ReportBinding};
@@ -364,6 +365,7 @@ fn generate_all(root: &Path) -> Result<String, String> {
     inventory::validate(&inventory)?;
     validate_regressions(root, &inventory)?;
     let matrix = matrix::build(root, &inventory)?;
+    validate_gap_audit(root, &matrix, &inventory)?;
     let inventory_changed =
         write_if_changed(&root.join(INVENTORY_PATH), &canonical_json(&inventory)?)?;
     let matrix_changed = write_if_changed(&root.join(MATRIX_PATH), &canonical_json(&matrix)?)?;
@@ -384,6 +386,7 @@ fn check_all(root: &Path) -> Result<String, String> {
     check_bytes(&root.join(INVENTORY_PATH), &canonical_json(&inventory)?)?;
     let matrix = matrix::build(root, &inventory)?;
     check_bytes(&root.join(MATRIX_PATH), &canonical_json(&matrix)?)?;
+    validate_gap_audit(root, &matrix, &inventory)?;
     QualityBaseline::load(&root.join(QUALITY_BASELINE_PATH))?;
     Ok(format!(
         "reliability evidence is current: {} tests, {} requirements",
@@ -393,6 +396,15 @@ fn check_all(root: &Path) -> Result<String, String> {
 
 fn validate_regressions(root: &Path, inventory: &inventory::Inventory) -> Result<(), String> {
     RegressionLedger::load(&root.join(REGRESSION_LEDGER_PATH))?.validate(root, inventory)
+}
+
+fn validate_gap_audit(
+    root: &Path,
+    matrix: &matrix::CoverageMatrix,
+    inventory: &inventory::Inventory,
+) -> Result<(), String> {
+    GapAudit::load(&root.join(tondo_reliability::gap_audit::PATH))?
+        .validate(root, matrix, inventory)
 }
 
 fn generate_inventory(root: &Path) -> Result<String, String> {

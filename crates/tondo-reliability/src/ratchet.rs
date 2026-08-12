@@ -6,13 +6,14 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use tondo_conformance::lineage::{DRAFT_LINEAGE_NAME, DRAFT_LINEAGE_PATH, DraftLineage};
 
+use crate::gap_audit::{GapAudit, PATH as GAP_AUDIT_PATH};
 use crate::inventory;
 use crate::matrix;
 use crate::provenance::ReportBinding;
 use crate::quality::{QualityBaseline, parse_llvm_cov, parse_mutation_report};
 use crate::{MATRIX_PATH, QUALITY_BASELINE_PATH, canonical_json, check_bytes, sha256};
 
-pub const FORMAT: &str = "tondo-conformance-ratchet/1";
+pub const FORMAT: &str = "tondo-conformance-ratchet/2";
 pub const PATH: &str = "testing/conformance-ratchet.json";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -24,6 +25,7 @@ pub struct RatchetRecord {
     pub manifest: EvidenceFile,
     pub inventory: EvidenceFile,
     pub matrix: EvidenceFile,
+    pub gap_audit: EvidenceFile,
     pub quality_baseline: EvidenceFile,
     pub draft_case_layers: u64,
     pub pending_tasks: Vec<String>,
@@ -81,6 +83,7 @@ pub fn build(
     )?;
     let matrix = matrix::build(root, &inventory)?;
     check_bytes(&root.join(MATRIX_PATH), &canonical_json(&matrix)?)?;
+    GapAudit::load(&root.join(GAP_AUDIT_PATH))?.validate(root, &matrix, &inventory)?;
     let quality_path = root.join(QUALITY_BASELINE_PATH);
     QualityBaseline::load(&quality_path)?;
 
@@ -120,6 +123,7 @@ pub fn build(
         },
         inventory: file_evidence(root, crate::INVENTORY_PATH)?,
         matrix: file_evidence(root, MATRIX_PATH)?,
+        gap_audit: file_evidence(root, GAP_AUDIT_PATH)?,
         quality_baseline: file_evidence(root, QUALITY_BASELINE_PATH)?,
         draft_case_layers: lineage.manifest().case_layers.len() as u64,
         pending_tasks: lineage.manifest().pending_tasks.clone(),
@@ -138,6 +142,7 @@ pub fn validate(record: &RatchetRecord) -> Result<(), String> {
         (&record.manifest, DRAFT_LINEAGE_PATH),
         (&record.inventory, crate::INVENTORY_PATH),
         (&record.matrix, MATRIX_PATH),
+        (&record.gap_audit, GAP_AUDIT_PATH),
         (&record.quality_baseline, QUALITY_BASELINE_PATH),
     ] {
         if evidence.0.path != evidence.1 || !is_sha256(&evidence.0.sha256) {
@@ -282,6 +287,7 @@ mod tests {
             manifest: evidence(DRAFT_LINEAGE_PATH),
             inventory: evidence(crate::INVENTORY_PATH),
             matrix: evidence(crate::MATRIX_PATH),
+            gap_audit: evidence(GAP_AUDIT_PATH),
             quality_baseline: evidence(crate::QUALITY_BASELINE_PATH),
             draft_case_layers: 2,
             pending_tasks: vec!["M10.6".into()],

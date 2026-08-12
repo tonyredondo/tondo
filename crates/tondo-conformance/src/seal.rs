@@ -23,7 +23,7 @@ pub const PROMOTION_PROOF_STATE: &str = "promotion-proof";
 pub const DEFAULT_PROOF_DIRECTORY: &str = "conformance/proofs";
 pub const RATCHET_PATH: &str = "testing/conformance-ratchet.json";
 
-const RATCHET_FORMAT: &str = "tondo-conformance-ratchet/1";
+const RATCHET_FORMAT: &str = "tondo-conformance-ratchet/2";
 const ADAPTER_PACKAGE: &str = "tondo-reference-adapter";
 const ADAPTER_SOURCES: [&str; 10] = [
     "crates/tondo-reference-adapter/Cargo.toml",
@@ -127,6 +127,7 @@ struct RatchetRecord {
     manifest: PinnedFile,
     inventory: PinnedFile,
     matrix: PinnedFile,
+    gap_audit: PinnedFile,
     quality_baseline: PinnedFile,
     draft_case_layers: u64,
     pending_tasks: Vec<String>,
@@ -181,6 +182,9 @@ struct ResultCase {
 #[derive(Debug, Deserialize)]
 struct CoverageMatrixRecord {
     format: String,
+    edition: String,
+    target: String,
+    documents: Vec<SpecificationIdentity>,
     summary: CoverageMatrixSummary,
     requirements: Vec<CoverageRequirement>,
 }
@@ -193,6 +197,56 @@ struct CoverageMatrixSummary {
 
 #[derive(Debug, Deserialize)]
 struct CoverageRequirement {
+    id: String,
+    text_sha256: String,
+    status: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GapAuditRecord {
+    format: String,
+    edition: String,
+    target: String,
+    documents: Vec<SpecificationIdentity>,
+    summary: GapAuditSummary,
+    entries: Vec<GapAuditEntry>,
+}
+
+#[derive(Debug, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SpecificationIdentity {
+    path: String,
+    sha256: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GapAuditSummary {
+    total: u64,
+    by_outcome: BTreeMap<String, u64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GapAuditEntry {
+    requirement: String,
+    text_sha256: String,
+    outcome: String,
+    reason: String,
+    implementation: Vec<String>,
+    tests: Vec<String>,
+    follow_up: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct InventoryRecord {
+    tests: Vec<InventoryTest>,
+}
+
+#[derive(Debug, Deserialize)]
+struct InventoryTest {
+    id: String,
     status: String,
 }
 
@@ -347,6 +401,7 @@ fn build_promotion_proof(
     for evidence in [
         &ratchet.inventory,
         &ratchet.matrix,
+        &ratchet.gap_audit,
         &ratchet.quality_baseline,
     ] {
         add_source(
@@ -442,6 +497,7 @@ fn validate_ratchet(
     for evidence in [
         &ratchet.inventory,
         &ratchet.matrix,
+        &ratchet.gap_audit,
         &ratchet.quality_baseline,
     ] {
         require_relative_path(Path::new(&evidence.path), "ratchet evidence path")?;
@@ -453,7 +509,13 @@ fn validate_ratchet(
             ));
         }
     }
-    validate_coverage_matrix(&read_regular(&root.join(&ratchet.matrix.path))?)?;
+    let matrix = read_regular(&root.join(&ratchet.matrix.path))?;
+    validate_coverage_matrix(&matrix)?;
+    validate_gap_audit(
+        &matrix,
+        &read_regular(&root.join(&ratchet.gap_audit.path))?,
+        &read_regular(&root.join(&ratchet.inventory.path))?,
+    )?;
     Ok(())
 }
 
@@ -478,6 +540,138 @@ fn validate_coverage_matrix(bytes: &[u8]) -> Result<(), SealError> {
         .is_some_and(|count| *count != 0)
     {
         return invalid("coverage matrix still contains draft-pending requirements");
+    }
+    Ok(())
+}
+
+fn validate_gap_audit(
+    matrix_bytes: &[u8],
+    audit_bytes: &[u8],
+    inventory_bytes: &[u8],
+) -> Result<(), SealError> {
+    let matrix: CoverageMatrixRecord =
+        serde_json::from_slice(matrix_bytes).map_err(|error| SealError::Json(error.to_string()))?;
+    let audit: GapAuditRecord =
+        serde_json::from_slice(audit_bytes).map_err(|error| SealError::Json(error.to_string()))?;
+    let inventory: InventoryRecord = serde_json::from_slice(inventory_bytes)
+        .map_err(|error| SealError::Json(error.to_string()))?;
+    if audit.format != "tondo-normative-gap-audit/1"
+        || audit.edition != matrix.edition
+        || audit.target != matrix.target
+        || audit.documents != matrix.documents
+    {
+        return invalid("normative gap audit differs from the coverage matrix identity");
+    }
+
+    let open = matrix
+        .requirements
+        .iter()
+        .filter(|requirement| {
+            matches!(
+                requirement.status.as_str(),
+                "toolchain-limit" | "draft-pending"
+            )
+        })
+        .map(|requirement| (requirement.id.as_str(), requirement))
+        .collect::<BTreeMap<_, _>>();
+    if audit.entries.len() != open.len()
+        || audit
+            .entries
+            .windows(2)
+            .any(|pair| pair[0].requirement >= pair[1].requirement)
+    {
+        return invalid("normative gap audit does not classify every open requirement once");
+    }
+    let executable = inventory
+        .tests
+        .iter()
+        .filter(|test| test.status == "executable")
+        .map(|test| test.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut outcomes = BTreeMap::new();
+    let mut observed = BTreeSet::new();
+    for entry in &audit.entries {
+        let requirement = open.get(entry.requirement.as_str()).ok_or_else(|| {
+            SealError::Invalid(format!(
+                "gap audit entry `{}` is not an open requirement",
+                entry.requirement
+            ))
+        })?;
+        if !observed.insert(entry.requirement.as_str())
+            || entry.text_sha256 != requirement.text_sha256
+            || entry.reason.trim().is_empty()
+            || !entry.reason.contains(&entry.requirement)
+        {
+            return invalid(format!(
+                "gap audit entry `{}` has stale or incomplete identity",
+                entry.requirement
+            ));
+        }
+        match entry.outcome.as_str() {
+            "implemented-without-trace" => {
+                if entry.implementation.is_empty()
+                    || entry.tests.is_empty()
+                    || entry.follow_up.is_some()
+                    || entry
+                        .implementation
+                        .windows(2)
+                        .any(|pair| pair[0] >= pair[1])
+                    || entry.tests.windows(2).any(|pair| pair[0] >= pair[1])
+                    || entry.implementation.iter().any(|path| {
+                        path.is_empty()
+                            || Path::new(path).is_absolute()
+                            || Path::new(path)
+                                .components()
+                                .any(|component| component == Component::ParentDir)
+                    })
+                    || entry
+                        .tests
+                        .iter()
+                        .any(|test| !executable.contains(test.as_str()))
+                {
+                    return invalid(format!(
+                        "implemented audit entry `{}` lacks closed evidence",
+                        entry.requirement
+                    ));
+                }
+            }
+            "not-applicable" => {
+                if !entry.implementation.is_empty()
+                    || !entry.tests.is_empty()
+                    || entry.follow_up.is_some()
+                {
+                    return invalid(format!(
+                        "not-applicable audit entry `{}` carries evidence",
+                        entry.requirement
+                    ));
+                }
+            }
+            "absent" => {
+                let expected = format!("CONF-GAP-IMPL-001:{}", entry.requirement);
+                if !entry.implementation.is_empty()
+                    || !entry.tests.is_empty()
+                    || entry.follow_up.as_deref() != Some(expected.as_str())
+                {
+                    return invalid(format!(
+                        "absent audit entry `{}` lacks its exact leaf follow-up",
+                        entry.requirement
+                    ));
+                }
+            }
+            _ => {
+                return invalid(format!(
+                    "gap audit entry `{}` has an unknown outcome",
+                    entry.requirement
+                ));
+            }
+        }
+        *outcomes.entry(entry.outcome.clone()).or_insert(0) += 1;
+    }
+    if observed != open.keys().copied().collect()
+        || audit.summary.total != audit.entries.len() as u64
+        || audit.summary.by_outcome != outcomes
+    {
+        return invalid("normative gap audit summary or requirement closure is inconsistent");
     }
     Ok(())
 }
@@ -665,6 +859,7 @@ fn verify_promotion_proof_closure(
     for evidence in [
         &ratchet.inventory,
         &ratchet.matrix,
+        &ratchet.gap_audit,
         &ratchet.quality_baseline,
     ] {
         let bytes = objects.get(evidence.path.as_str()).ok_or_else(|| {
@@ -677,10 +872,20 @@ fn verify_promotion_proof_closure(
             ));
         }
     }
-    validate_coverage_matrix(
-        objects.get(ratchet.matrix.path.as_str()).ok_or_else(|| {
-            SealError::Invalid("promotion proof omits its coverage matrix".into())
-        })?,
+    let matrix = objects
+        .get(ratchet.matrix.path.as_str())
+        .ok_or_else(|| SealError::Invalid("promotion proof omits its coverage matrix".into()))?;
+    validate_coverage_matrix(matrix)?;
+    validate_gap_audit(
+        matrix,
+        objects
+            .get(ratchet.gap_audit.path.as_str())
+            .ok_or_else(|| {
+                SealError::Invalid("promotion proof omits its normative gap audit".into())
+            })?,
+        objects
+            .get(ratchet.inventory.path.as_str())
+            .ok_or_else(|| SealError::Invalid("promotion proof omits its test inventory".into()))?,
     )?;
     for specification in &draft.specifications {
         require_object(objects, specification)?;
@@ -825,6 +1030,7 @@ fn validate_exact_provenance(
     for evidence in [
         &ratchet.inventory,
         &ratchet.matrix,
+        &ratchet.gap_audit,
         &ratchet.quality_baseline,
     ] {
         add("quality-evidence", &evidence.path);
@@ -1107,6 +1313,7 @@ mod tests {
             "TONDO_TOOLCHAIN_SPEC.md",
             "testing/inventory.json",
             "testing/coverage-matrix.json",
+            "testing/normative-gap-audit.json",
             "testing/quality-baseline.json",
             RATCHET_PATH,
         ] {
@@ -1122,11 +1329,11 @@ mod tests {
         let matrix_path = root.join("testing/coverage-matrix.json");
         let mut matrix: serde_json::Value =
             serde_json::from_slice(&fs::read(&matrix_path).unwrap()).unwrap();
-        let mut promoted = 0u64;
+        let mut promoted = BTreeSet::new();
         for requirement in matrix["requirements"].as_array_mut().unwrap() {
             if requirement["status"] == "draft-pending" {
+                promoted.insert(requirement["id"].as_str().unwrap().to_owned());
                 requirement["status"] = serde_json::Value::String("covered".into());
-                promoted += 1;
             }
         }
         let by_status = matrix["summary"]["by_status"].as_object_mut().unwrap();
@@ -1137,9 +1344,29 @@ mod tests {
             .unwrap_or(0);
         by_status.insert(
             "covered".into(),
-            serde_json::Value::from(covered + promoted),
+            serde_json::Value::from(covered + promoted.len() as u64),
         );
         fs::write(&matrix_path, serde_json::to_vec_pretty(&matrix).unwrap()).unwrap();
+        let audit_path = root.join("testing/normative-gap-audit.json");
+        let mut audit: serde_json::Value =
+            serde_json::from_slice(&fs::read(&audit_path).unwrap()).unwrap();
+        audit["entries"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|entry| !promoted.contains(entry["requirement"].as_str().unwrap()));
+        let mut by_outcome = serde_json::Map::new();
+        for entry in audit["entries"].as_array().unwrap() {
+            let outcome = entry["outcome"].as_str().unwrap();
+            let count = by_outcome
+                .get(outcome)
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            by_outcome.insert(outcome.into(), serde_json::Value::from(count + 1));
+        }
+        audit["summary"]["total"] =
+            serde_json::Value::from(audit["entries"].as_array().unwrap().len() as u64);
+        audit["summary"]["by_outcome"] = serde_json::Value::Object(by_outcome);
+        fs::write(&audit_path, serde_json::to_vec_pretty(&audit).unwrap()).unwrap();
         let mut ratchet: RatchetRecord =
             serde_json::from_slice(&fs::read(root.join(RATCHET_PATH)).unwrap()).unwrap();
         let lineage = DraftLineage::load(&root, DRAFT_LINEAGE_PATH).unwrap();
@@ -1152,6 +1379,7 @@ mod tests {
         for evidence in [
             &mut ratchet.inventory,
             &mut ratchet.matrix,
+            &mut ratchet.gap_audit,
             &mut ratchet.quality_baseline,
         ] {
             evidence.sha256 = sha256(&fs::read(root.join(&evidence.path)).unwrap());
@@ -1327,7 +1555,44 @@ mod tests {
         let ratchet_bytes = fs::read(root.join(RATCHET_PATH)).unwrap();
         let ratchet: RatchetRecord = serde_json::from_slice(&ratchet_bytes).unwrap();
         let matrix_bytes = fs::read(root.join(&ratchet.matrix.path)).unwrap();
+        let audit_bytes = fs::read(root.join(&ratchet.gap_audit.path)).unwrap();
+        let inventory_bytes = fs::read(root.join(&ratchet.inventory.path)).unwrap();
         validate_coverage_matrix(&matrix_bytes).unwrap();
+        validate_gap_audit(&matrix_bytes, &audit_bytes, &inventory_bytes).unwrap();
+
+        let mut stale_audit: serde_json::Value = serde_json::from_slice(&audit_bytes).unwrap();
+        stale_audit["entries"][0]["text_sha256"] = "0".repeat(64).into();
+        assert!(
+            validate_gap_audit(
+                &matrix_bytes,
+                &serde_json::to_vec(&stale_audit).unwrap(),
+                &inventory_bytes,
+            )
+            .is_err()
+        );
+
+        let mut unknown_test: serde_json::Value = serde_json::from_slice(&audit_bytes).unwrap();
+        unknown_test["entries"][0]["tests"][0] = "unknown:test".into();
+        assert!(
+            validate_gap_audit(
+                &matrix_bytes,
+                &serde_json::to_vec(&unknown_test).unwrap(),
+                &inventory_bytes,
+            )
+            .is_err()
+        );
+
+        let mut bad_audit_summary: serde_json::Value =
+            serde_json::from_slice(&audit_bytes).unwrap();
+        bad_audit_summary["summary"]["total"] = 0.into();
+        assert!(
+            validate_gap_audit(
+                &matrix_bytes,
+                &serde_json::to_vec(&bad_audit_summary).unwrap(),
+                &inventory_bytes,
+            )
+            .is_err()
+        );
         let mut pending_matrix: serde_json::Value = serde_json::from_slice(&matrix_bytes).unwrap();
         let original_status = pending_matrix["requirements"][0]["status"]
             .as_str()
