@@ -7347,6 +7347,17 @@ Las categorías tienen este procedimiento exacto:
   `related` y warnings no alteran ese conjunto.
 - `tondo pseudocode`: no se entrega al lexer, parser, formatter ni compilador.
 
+Un fence `tondo` afirma únicamente que sus bytes pertenecen a una producción
+sintáctica y nunca constituye evidencia de comportamiento runtime. Todo fence
+`fragment` o `script` de un documento normativo debe aparecer exactamente una
+vez en el registro `testing/doc-test-runtime-links.json`: se clasifica como
+`runtime` y enlaza al menos un caso público, ejecutable y estable de conformidad
+o de `tondo test`, o como `static-only` con una razón explícita cuando solo
+declara formas que no ejecuta. El gate compara el triple `(file, fence_byte,
+source_sha256)` con la salida del mismo runner documental y comprueba los IDs
+contra el inventario público. Este registro aporta trazabilidad, no un segundo
+harness: `doc-test` nunca ejecuta el ejemplo ni interpreta su comportamiento.
+
 Todo bloque salvo `pseudocode` que alcance un CST sintácticamente válido registra
 también `F(source)`; ante un error léxico o sintáctico esperado,
 `formatted_sha256` vale `null`. No se exige que la presentación didáctica ya

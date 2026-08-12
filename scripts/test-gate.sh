@@ -44,6 +44,8 @@ run_step conformance-build \
     cargo build -p tondo-conformance -p tondo-reference-adapter --bins --locked
 run_step doc-test \
     scripts/doc-test.sh
+run_step doc-test-conformance-tests \
+    scripts/doc-test-conformance-test.sh
 run_step reliability \
     cargo run -p tondo-reliability --locked -- check --root .
 run_step stdlib-performance-contract \

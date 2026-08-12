@@ -24,6 +24,18 @@
       "evidence": [
         "mutation:replace validate_line_endings with Ok"
       ]
+    },
+    {
+      "id": "REG-PARSER-001",
+      "confirmed_by": "DOC-TEST-CONF-001 normative document corpus",
+      "boundary": "tondo doc-test syntax production selection",
+      "reproducer": "Consecutive public function signatures without bodies followed by another declaration.",
+      "test_id": "rust:tondo-compiler:src::syntax::parser:missing_function_bodies_recover_without_consuming_following_signatures",
+      "source": "crates/tondo-compiler/src/syntax/parser.rs",
+      "fixed_in": "DOC-TEST-CONF-001",
+      "evidence": [
+        "TONDO_STANDARD_LIBRARY_SPEC.md:3080"
+      ]
     }
   ]
 }

@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 2.17
+**Versión del tracker:** 2.18
 
 **Última actualización:** 2026-08-12
 
@@ -2786,13 +2786,19 @@ Antes de ampliar la gramática de M10.7 o M10.6:
   output parcial; `DOC-TEST-CONF-001` conserva la conformidad exhaustiva como
   tarea separada.
 
-- [ ] **DOC-TEST-CONF-001 — Cerrar conformidad de ejemplos verificables.**
+- [x] **DOC-TEST-CONF-001 — Cerrar conformidad de ejemplos verificables.**
   Probar UTF-8 y CR/LF, headers, fences truncados, offsets de byte, fixtures,
   errores exactos, formatting, determinismo y ausencia de output parcial sobre
   los documentos normativos y un corpus hostil. El runner documental solo
   parsea, formatea y typecheckea; cada ejemplo que afirme comportamiento
   runtime enlaza además un caso de aceptación público de `tondo test` o de
-  conformidad. No existe un harness documental paralelo.
+  conformidad. No existe un harness documental paralelo. El gate ejecuta el
+  mismo comando público sobre lenguaje, testing, toolchain, stdlib y TLF: 365
+  fences pasan en el orden de sus documentos. Los 21 fences tipados están
+  clasificados por `(file, fence_byte, source_sha256)`; 20 enlazan evidencia
+  runtime pública ejecutable y uno declara de forma revisable que solo comprueba
+  superficie estática. El corpus hostil cubre errores exactos, UTF-8, CR/LF,
+  headers, cierres, offsets multibyte, formato, determinismo y output atómico.
 
 - [ ] **CONF-MATRIX-ALL-001 — Extender la matriz normativa a los tres contratos
   G5.** Inventariar requisitos estables de lenguaje, testing y toolchain con
@@ -5900,6 +5906,21 @@ se declara iniciada antes de esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 2.18 — 2026-08-12
+
+- Se cierra `DOC-TEST-CONF-001`. El gate público procesa 365 fences de las cinco
+  specs mediante el único scanner/adaptador documental, comprueba schema,
+  orden, hashes y publicación atómica, y rechaza enlaces ausentes, duplicados o
+  no ejecutables. `testing/doc-test-runtime-links.json` clasifica los 21 fences
+  tipados y liga 20 claims runtime con casos públicos de conformidad; el fence
+  de declaración de punteros permanece `static-only` con razón explícita. El
+  corpus hostil y las pruebas CLI fijan UTF-8, LF/CRLF, offsets, headers,
+  truncamiento, diagnósticos exactos, formatting, determinismo y ausencia de
+  JSON parcial. La pasada encontró y corrigió dos contradicciones de firmas
+  entre specs y una recuperación sin progreso del parser ante funciones sin
+  body. El manifest histórico `conformance/0.1/manifest.json` no se modifica:
+  continúa fijando su revisión archivada, separada del draft vivo.
 
 ### 2.17 — 2026-08-12
 

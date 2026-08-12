@@ -293,4 +293,89 @@ mod tests {
             assert!(extract_fences(document, &errors()).is_err());
         }
     }
+
+    #[test]
+    fn hostile_headers_report_exact_bytes_and_reasons() {
+        let cases = [
+            (
+                &b"prefix\n~~~tondo \n~~~\n"[..],
+                7,
+                "invalid documentation fence at byte 7: Tondo fence header has trailing whitespace",
+            ),
+            (
+                &b"~~~tondo\tfragment\n~~~\n"[..],
+                0,
+                "invalid documentation fence at byte 0: unknown Tondo fence header form",
+            ),
+            (
+                &b"~~~tondo  fragment\n~~~\n"[..],
+                0,
+                "invalid documentation fence at byte 0: Tondo fence header uses non-canonical whitespace",
+            ),
+            (
+                &b"~~~tondo fragment Bad\n~~~\n"[..],
+                0,
+                "invalid documentation fence at byte 0: invalid fixture name `Bad`",
+            ),
+            (
+                &b"~~~tondo compile-fail E04\n~~~\n"[..],
+                0,
+                "invalid documentation fence at byte 0: invalid compile-fail code `E04`",
+            ),
+            (
+                &b"~~~tondo compile-fail E9999\n~~~\n"[..],
+                0,
+                "invalid documentation fence at byte 0: unknown compile-fail code `E9999`",
+            ),
+            (
+                &b"~~~tondo compile-fail E0004 E0004\n~~~\n"[..],
+                0,
+                "invalid documentation fence at byte 0: compile-fail code `E0004` is repeated",
+            ),
+            (
+                &b"~~~tondo\nlet value = 1\n~~~ \n"[..],
+                0,
+                "invalid documentation fence at byte 0: Tondo fence is not closed",
+            ),
+        ];
+
+        for (document, byte, expected) in cases {
+            let error = extract_fences(document, &errors()).unwrap_err();
+            assert_eq!(error.byte(), byte);
+            assert_eq!(error.to_string(), expected);
+        }
+
+        let invalid_utf8 = extract_fences(b"ok\n\xff\n", &errors()).unwrap_err();
+        assert_eq!(invalid_utf8.byte(), 3);
+        assert_eq!(
+            invalid_utf8.to_string(),
+            "invalid documentation fence at byte 3: Markdown is not valid UTF-8"
+        );
+    }
+
+    #[test]
+    fn non_tondo_or_indented_fences_are_ignored_and_empty_sources_are_canonical() {
+        let document = b"```tondo\nignored\n```\n ~~~tondo\nignored\n~~~\n~~~tondo pseudocode\n~~~\n~~~tondo\nlet value=1\n~~~";
+        let fences = extract_fences(document, &errors()).unwrap();
+
+        assert_eq!(fences.len(), 2);
+        assert_eq!(fences[0].category, DocCategory::Pseudocode);
+        assert_eq!(fences[0].source, b"\n");
+        assert_eq!(fences[0].source_sha256, sha256(b"\n"));
+        assert_eq!(fences[1].source, b"let value=1\n");
+        assert!(fences[0].fence_byte < fences[1].fence_byte);
+    }
+
+    #[test]
+    fn unicode_prefixes_and_crlf_use_original_byte_offsets() {
+        let lf = "á\n~~~tondo\nvalue\n~~~\n".as_bytes();
+        let crlf = "á\r\n~~~tondo\r\nvalue\r\n~~~\r\n".as_bytes();
+        let lf_fence = extract_fences(lf, &errors()).unwrap();
+        let crlf_fence = extract_fences(crlf, &errors()).unwrap();
+
+        assert_eq!(lf_fence[0].fence_byte, 3);
+        assert_eq!(crlf_fence[0].fence_byte, 4);
+        assert_eq!(lf_fence[0].source, crlf_fence[0].source);
+        assert_eq!(lf_fence[0].source_sha256, crlf_fence[0].source_sha256);
+    }
 }

@@ -348,6 +348,77 @@ fn doc_test_reports_a_compile_fail_contract_mismatch_without_output() {
 }
 
 #[test]
+fn doc_test_is_byte_deterministic_and_hashes_canonical_formatting() {
+    let markdown = markdown_file_with(b"~~~tondo\nfn add( a:Int,b:Int):Int {a+b}\n~~~\n");
+    let run = || {
+        Command::new(env!("CARGO_BIN_EXE_tondo"))
+            .args(["doc-test", "--edition", "0.1"])
+            .arg(&markdown)
+            .output()
+            .unwrap()
+    };
+    let first = run();
+    let second = run();
+    fs::remove_file(markdown).unwrap();
+
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    assert!(first.stderr.is_empty());
+    assert_eq!(first.stdout, second.stdout);
+    assert_eq!(first.stderr, second.stderr);
+    let records: serde_json::Value = serde_json::from_slice(&first.stdout).unwrap();
+    let formatted = sha256(b"fn add(a: Int, b: Int): Int {\n    a + b\n}\n");
+    assert_eq!(
+        records[0]["formatted_sha256"],
+        formatted.strip_prefix("sha256:").unwrap()
+    );
+    assert_ne!(records[0]["source_sha256"], records[0]["formatted_sha256"]);
+}
+
+#[test]
+fn doc_test_reports_exact_container_errors_without_partial_json() {
+    let cases = [
+        (
+            &b"plain\rtext\n"[..],
+            "invalid documentation fence at byte 5: isolated CR line ending",
+        ),
+        (
+            &b"ok\n\xff\n"[..],
+            "invalid documentation fence at byte 3: Markdown is not valid UTF-8",
+        ),
+        (
+            &b"~~~tondo fragment Bad\n~~~\n"[..],
+            "invalid documentation fence at byte 0: invalid fixture name `Bad`",
+        ),
+        (
+            &b"~~~tondo compile-fail E9999\n~~~\n"[..],
+            "invalid documentation fence at byte 0: unknown compile-fail code `E9999`",
+        ),
+    ];
+
+    for (document, expected) in cases {
+        let markdown = markdown_file_with(document);
+        let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+            .args(["doc-test", "--edition", "0.1"])
+            .arg(&markdown)
+            .output()
+            .unwrap();
+        let diagnostic = String::from_utf8(output.stderr).unwrap();
+        fs::remove_file(markdown).unwrap();
+
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+        assert!(
+            diagnostic.ends_with(&format!("{expected}\n")),
+            "unexpected diagnostic: {diagnostic}"
+        );
+    }
+}
+
+#[test]
 fn test_command_defaults_to_the_conventional_project_directory() {
     let directory = test_project(b"test smoke { assert(true) }\n");
     fs::remove_file(directory.join("tondo.test.toml")).unwrap();

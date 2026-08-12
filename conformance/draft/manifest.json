@@ -21,11 +21,11 @@
   "specifications": [
     {
       "path": "TONDO_LANGUAGE_SPEC.md",
-      "sha256": "241da23ea49c93038740d1037358dd1b09f7c5bf31c2152d7fff4810a0c65d64"
+      "sha256": "0be283f1032d1a53f733a9b4d9e46f7be81dd14f86d751f05a5f2c53e69a7614"
     },
     {
       "path": "TONDO_TESTING_SPEC.md",
-      "sha256": "d29b555fe0556cf4e8d5d559d3401de37cbbbc7819b061475a5c6db8d384d805"
+      "sha256": "8ef9c6db7305b97ebf383c51c96b744884ea3fca9663935ec703df8fdeed2f65"
     },
     {
       "path": "TONDO_TOOLCHAIN_SPEC.md",

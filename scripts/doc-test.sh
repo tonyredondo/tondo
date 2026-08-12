@@ -10,10 +10,23 @@ mkdir -p "$evidence"
 output="${TONDO_DOC_TEST_OUTPUT:-$evidence/doc-test.json}"
 mkdir -p "$(dirname "$output")"
 temporary="${output}.tmp.$$.json"
-trap 'rm -f "$temporary"' EXIT
+parts="$(mktemp -d "${TMPDIR:-/tmp}/tondo-doc-test.XXXXXX")"
+trap 'rm -f "$temporary"; rm -rf "$parts"' EXIT
 
-cargo run -p tondo-cli --locked -- \
-    doc-test --edition 0.1 TONDO_LANGUAGE_SPEC.md > "$temporary"
+documents=(
+    TONDO_LANGUAGE_SPEC.md
+    TONDO_TESTING_SPEC.md
+    TONDO_TOOLCHAIN_SPEC.md
+    TONDO_STANDARD_LIBRARY_SPEC.md
+    TONDO_LLM_FORM_SPEC.md
+)
+
+for index in "${!documents[@]}"; do
+    cargo run -p tondo-cli --locked -- \
+        doc-test --edition 0.1 "${documents[$index]}" > "$parts/$index.json"
+done
+
+jq -s 'add' "$parts"/*.json > "$temporary"
 
 jq -e '
   type == "array"
@@ -22,9 +35,15 @@ jq -e '
     and (.category as $category | (["syntax", "fragment", "script", "compile-fail", "pseudocode"] | index($category) != null))
     and (.edition == "0.1")
   )
-  and ([.[].fence_byte] as $bytes | ($bytes == ($bytes | sort) and $bytes == ($bytes | unique)))
+  and (group_by(.file) | all(.[];
+    [.[].fence_byte] as $bytes
+    | ($bytes == ($bytes | sort) and $bytes == ($bytes | unique))
+  ))
 ' "$temporary" >/dev/null
 
+scripts/doc-test-links-check.sh "$temporary"
+
 mv -f "$temporary" "$output"
+rm -rf "$parts"
 trap - EXIT
-echo "doc-test: OK ($(jq 'length' "$output") fences; atomic output: ${output#"$root"/})"
+echo "doc-test: OK ($(jq 'length' "$output") fences across ${#documents[@]} documents; atomic output: ${output#"$root"/})"

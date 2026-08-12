@@ -2813,6 +2813,11 @@ impl Parser<'_> {
 
     fn parse_block(&mut self) -> ParseResult {
         self.start(SyntaxKind::Block)?;
+        if !self.at(TokenKind::LBrace) {
+            self.expect(TokenKind::LBrace)?;
+            self.finish();
+            return Ok(());
+        }
         self.expect(TokenKind::LBrace)?;
         while !self.at_any(&[TokenKind::RBrace, TokenKind::Eof]) {
             if self.eat(TokenKind::Nl) {
@@ -4444,6 +4449,40 @@ async suite invalid {
             parsed.diagnostics().is_empty(),
             "{:#?}",
             parsed.diagnostics()
+        );
+        assert_lossless(&sources, file, &parsed, source);
+    }
+
+    #[test]
+    fn missing_function_bodies_recover_without_consuming_following_signatures() {
+        let source = b"\
+pub fn stdin(): std.io.Reader ! ConsoleError\n\
+pub fn stdout(): std.io.Writer ! ConsoleError\n\
+pub fn stderr(): std.io.Writer ! ConsoleError\n\
+pub fn readLine(input: var std.io.Reader): String? ! ConsoleError\n\
+pub fn print(value: String): Unit ! ConsoleError\n\
+pub fn println(value: String): Unit ! ConsoleError\n\
+pub fn flush(): Unit ! ConsoleError\n\
+pub enum ConsoleError { Unavailable, Closed, Cancelled, Io(std.io.IoError) }\n";
+        let (sources, file, parsed) = parse_source_result(
+            source,
+            ParseMode::Module,
+            ParseLimits {
+                max_diagnostics: 32,
+                ..ParseLimits::default()
+            },
+        )
+        .expect("missing bodies must recover at their physical line boundaries");
+
+        assert_eq!(codes(&parsed), ["E0004"; 7]);
+        assert_eq!(
+            parsed
+                .cst()
+                .nodes()
+                .iter()
+                .filter(|node| node.kind() == SyntaxKind::FunctionDecl)
+                .count(),
+            7
         );
         assert_lossless(&sources, file, &parsed, source);
     }

@@ -2,30 +2,30 @@
   "format": "tondo-normative-coverage/1",
   "document": "TONDO_LANGUAGE_SPEC.md",
   "edition": "0.1",
-  "document_sha256": "241da23ea49c93038740d1037358dd1b09f7c5bf31c2152d7fff4810a0c65d64",
-  "inventory_sha256": "cf237a8c687cefabccedf7eab6e250d252c65837bf06411faee57c9997612dc2",
+  "document_sha256": "0be283f1032d1a53f733a9b4d9e46f7be81dd14f86d751f05a5f2c53e69a7614",
+  "inventory_sha256": "9a5ffdeb7abfa46f0d08ca7294e4ffbb67d988c6ca5104bbfe4f75b29096ac3b",
   "target": "tondo-vm-hosted",
   "summary": {
-    "total": 308,
+    "total": 309,
     "by_status": {
       "covered": 45,
-      "draft-pending": 20,
+      "draft-pending": 22,
       "stdlib-pending": 3,
       "target-not-applicable": 7,
-      "toolchain-limit": 233
+      "toolchain-limit": 232
     },
     "by_risk": {
       "critical": 171,
       "high": 84,
       "low": 39,
-      "medium": 14
+      "medium": 15
     },
     "with_executable_evidence": 45
   },
   "requirements": [
     {
       "id": "TL01-10-10-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "10.10 Consulta de maps",
       "heading_anchor": "10-10-consulta-de-maps",
       "line_start": 2685,
@@ -68,7 +68,7 @@
     },
     {
       "id": "TL01-10-12-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "10.12 Orden de maps",
       "heading_anchor": "10-12-orden-de-maps",
       "line_start": 2752,
@@ -111,7 +111,7 @@
     },
     {
       "id": "TL01-10-15-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "10.15 `Set[K]`",
       "heading_anchor": "10-15-set-k",
       "line_start": 2836,
@@ -154,7 +154,7 @@
     },
     {
       "id": "TL01-10-17-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "10.17 `Iterator[T]`",
       "heading_anchor": "10-17-iterator-t",
       "line_start": 2896,
@@ -197,7 +197,7 @@
     },
     {
       "id": "TL01-10-17-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "10.17 `Iterator[T]`",
       "heading_anchor": "10-17-iterator-t",
       "line_start": 2955,
@@ -240,7 +240,7 @@
     },
     {
       "id": "TL01-10-17-R003",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "10.17 `Iterator[T]`",
       "heading_anchor": "10-17-iterator-t",
       "line_start": 2971,
@@ -283,7 +283,7 @@
     },
     {
       "id": "TL01-10-17-R004",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "10.17 `Iterator[T]`",
       "heading_anchor": "10-17-iterator-t",
       "line_start": 2977,
@@ -326,7 +326,7 @@
     },
     {
       "id": "TL01-10-3-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "10.3 Indexación de arrays",
       "heading_anchor": "10-3-indexación-de-arrays",
       "line_start": 2359,
@@ -369,7 +369,7 @@
     },
     {
       "id": "TL01-10-3-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "10.3 Indexación de arrays",
       "heading_anchor": "10-3-indexación-de-arrays",
       "line_start": 2385,
@@ -412,7 +412,7 @@
     },
     {
       "id": "TL01-10-4-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "10.4 Slicing",
       "heading_anchor": "10-4-slicing",
       "line_start": 2413,
@@ -455,7 +455,7 @@
     },
     {
       "id": "TL01-10-4-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "10.4 Slicing",
       "heading_anchor": "10-4-slicing",
       "line_start": 2447,
@@ -498,7 +498,7 @@
     },
     {
       "id": "TL01-10-5-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "10.5 Mutación de arrays",
       "heading_anchor": "10-5-mutación-de-arrays",
       "line_start": 2484,
@@ -541,7 +541,7 @@
     },
     {
       "id": "TL01-10-6-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "10.6 Aritmética de arrays",
       "heading_anchor": "10-6-aritmética-de-arrays",
       "line_start": 2532,
@@ -584,7 +584,7 @@
     },
     {
       "id": "TL01-10-6-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "10.6 Aritmética de arrays",
       "heading_anchor": "10-6-aritmética-de-arrays",
       "line_start": 2546,
@@ -627,7 +627,7 @@
     },
     {
       "id": "TL01-10-6-R003",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "10.6 Aritmética de arrays",
       "heading_anchor": "10-6-aritmética-de-arrays",
       "line_start": 2562,
@@ -670,7 +670,7 @@
     },
     {
       "id": "TL01-10-7-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "10.7 Concatenación, repetición y producto algebraico",
       "heading_anchor": "10-7-concatenación-repetición-y-producto-algebraico",
       "line_start": 2594,
@@ -738,7 +738,7 @@
     },
     {
       "id": "TL01-10-9-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "10.9 `Map[K, V]`",
       "heading_anchor": "10-9-map-k-v",
       "line_start": 2675,
@@ -781,7 +781,7 @@
     },
     {
       "id": "TL01-11-10-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "11.10 Funciones y efectos de suspensión",
       "heading_anchor": "11-10-funciones-y-efectos-de-suspensión",
       "line_start": 3719,
@@ -824,7 +824,7 @@
     },
     {
       "id": "TL01-11-10-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "11.10 Funciones y efectos de suspensión",
       "heading_anchor": "11-10-funciones-y-efectos-de-suspensión",
       "line_start": 3743,
@@ -867,7 +867,7 @@
     },
     {
       "id": "TL01-11-10-R003",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "11.10 Funciones y efectos de suspensión",
       "heading_anchor": "11-10-funciones-y-efectos-de-suspensión",
       "line_start": 3751,
@@ -910,7 +910,7 @@
     },
     {
       "id": "TL01-11-11-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "11.11 `await`",
       "heading_anchor": "11-11-await",
       "line_start": 3773,
@@ -953,7 +953,7 @@
     },
     {
       "id": "TL01-11-12-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "11.12 Concurrencia estructurada",
       "heading_anchor": "11-12-concurrencia-estructurada",
       "line_start": 3800,
@@ -996,7 +996,7 @@
     },
     {
       "id": "TL01-11-3-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "11.3 Parámetros y argumentos",
       "heading_anchor": "11-3-parámetros-y-argumentos",
       "line_start": 3172,
@@ -1039,7 +1039,7 @@
     },
     {
       "id": "TL01-11-3-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "11.3 Parámetros y argumentos",
       "heading_anchor": "11-3-parámetros-y-argumentos",
       "line_start": 3174,
@@ -1082,7 +1082,7 @@
     },
     {
       "id": "TL01-11-3-R003",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "11.3 Parámetros y argumentos",
       "heading_anchor": "11-3-parámetros-y-argumentos",
       "line_start": 3179,
@@ -1125,7 +1125,7 @@
     },
     {
       "id": "TL01-11-3-R004",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "11.3 Parámetros y argumentos",
       "heading_anchor": "11-3-parámetros-y-argumentos",
       "line_start": 3222,
@@ -1168,7 +1168,7 @@
     },
     {
       "id": "TL01-11-3-R005",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "11.3 Parámetros y argumentos",
       "heading_anchor": "11-3-parámetros-y-argumentos",
       "line_start": 3238,
@@ -1211,7 +1211,7 @@
     },
     {
       "id": "TL01-11-3-R006",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "11.3 Parámetros y argumentos",
       "heading_anchor": "11-3-parámetros-y-argumentos",
       "line_start": 3246,
@@ -1254,7 +1254,7 @@
     },
     {
       "id": "TL01-11-4-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "11.4 Recursión",
       "heading_anchor": "11-4-recursión",
       "line_start": 3260,
@@ -1297,7 +1297,7 @@
     },
     {
       "id": "TL01-11-5-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "11.5 Métodos inherentes",
       "heading_anchor": "11-5-métodos-inherentes",
       "line_start": 3296,
@@ -1340,7 +1340,7 @@
     },
     {
       "id": "TL01-11-5-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "11.5 Métodos inherentes",
       "heading_anchor": "11-5-métodos-inherentes",
       "line_start": 3300,
@@ -1383,7 +1383,7 @@
     },
     {
       "id": "TL01-11-5-R003",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "11.5 Métodos inherentes",
       "heading_anchor": "11-5-métodos-inherentes",
       "line_start": 3341,
@@ -1426,7 +1426,7 @@
     },
     {
       "id": "TL01-11-6-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "11.6 Receptores `mut self` y `var self`",
       "heading_anchor": "11-6-receptores-mut-self-y-var-self",
       "line_start": 3360,
@@ -1469,7 +1469,7 @@
     },
     {
       "id": "TL01-11-7-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "11.7 Funciones como valores",
       "heading_anchor": "11-7-funciones-como-valores",
       "line_start": 3407,
@@ -1512,7 +1512,7 @@
     },
     {
       "id": "TL01-11-7-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "11.7 Funciones como valores",
       "heading_anchor": "11-7-funciones-como-valores",
       "line_start": 3420,
@@ -1555,7 +1555,7 @@
     },
     {
       "id": "TL01-11-7-R003",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "11.7 Funciones como valores",
       "heading_anchor": "11-7-funciones-como-valores",
       "line_start": 3431,
@@ -1598,7 +1598,7 @@
     },
     {
       "id": "TL01-11-8-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "11.8 Cierres",
       "heading_anchor": "11-8-cierres",
       "line_start": 3446,
@@ -1641,7 +1641,7 @@
     },
     {
       "id": "TL01-11-8-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "11.8 Cierres",
       "heading_anchor": "11-8-cierres",
       "line_start": 3479,
@@ -1684,7 +1684,7 @@
     },
     {
       "id": "TL01-11-8-R003",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "11.8 Cierres",
       "heading_anchor": "11-8-cierres",
       "line_start": 3537,
@@ -1727,7 +1727,7 @@
     },
     {
       "id": "TL01-11-9-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "11.9 Descarte de resultados",
       "heading_anchor": "11-9-descarte-de-resultados",
       "line_start": 3688,
@@ -1770,7 +1770,7 @@
     },
     {
       "id": "TL01-11-9-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "11.9 Descarte de resultados",
       "heading_anchor": "11-9-descarte-de-resultados",
       "line_start": 3699,
@@ -1813,7 +1813,7 @@
     },
     {
       "id": "TL01-12-1-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "12.1 Genéricos",
       "heading_anchor": "12-1-genéricos",
       "line_start": 3880,
@@ -1856,7 +1856,7 @@
     },
     {
       "id": "TL01-12-2-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "12.2 Invariancia",
       "heading_anchor": "12-2-invariancia",
       "line_start": 3886,
@@ -1899,7 +1899,7 @@
     },
     {
       "id": "TL01-12-3-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "12.3 Declaración de trait",
       "heading_anchor": "12-3-declaración-de-trait",
       "line_start": 3916,
@@ -1942,7 +1942,7 @@
     },
     {
       "id": "TL01-12-3-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "12.3 Declaración de trait",
       "heading_anchor": "12-3-declaración-de-trait",
       "line_start": 3920,
@@ -1985,7 +1985,7 @@
     },
     {
       "id": "TL01-12-4-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "12.4 Implementación explícita",
       "heading_anchor": "12-4-implementación-explícita",
       "line_start": 3946,
@@ -2028,7 +2028,7 @@
     },
     {
       "id": "TL01-12-4-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "12.4 Implementación explícita",
       "heading_anchor": "12-4-implementación-explícita",
       "line_start": 3958,
@@ -2084,7 +2084,7 @@
     },
     {
       "id": "TL01-12-4-R003",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "12.4 Implementación explícita",
       "heading_anchor": "12-4-implementación-explícita",
       "line_start": 3966,
@@ -2127,7 +2127,7 @@
     },
     {
       "id": "TL01-12-4-R004",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "12.4 Implementación explícita",
       "heading_anchor": "12-4-implementación-explícita",
       "line_start": 3969,
@@ -2170,7 +2170,7 @@
     },
     {
       "id": "TL01-12-4-R005",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "12.4 Implementación explícita",
       "heading_anchor": "12-4-implementación-explícita",
       "line_start": 3971,
@@ -2213,7 +2213,7 @@
     },
     {
       "id": "TL01-12-5-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "12.5 Constraints",
       "heading_anchor": "12-5-constraints",
       "line_start": 4002,
@@ -2273,7 +2273,7 @@
     },
     {
       "id": "TL01-12-6-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "12.6 Coherencia",
       "heading_anchor": "12-6-coherencia",
       "line_start": 4053,
@@ -2316,7 +2316,7 @@
     },
     {
       "id": "TL01-12-6-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "12.6 Coherencia",
       "heading_anchor": "12-6-coherencia",
       "line_start": 4068,
@@ -2359,7 +2359,7 @@
     },
     {
       "id": "TL01-12-6-R003",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "12.6 Coherencia",
       "heading_anchor": "12-6-coherencia",
       "line_start": 4100,
@@ -2402,7 +2402,7 @@
     },
     {
       "id": "TL01-12-6-R004",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "12.6 Coherencia",
       "heading_anchor": "12-6-coherencia",
       "line_start": 4111,
@@ -2445,7 +2445,7 @@
     },
     {
       "id": "TL01-12-8-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "12.8 Resultados opacos estáticos",
       "heading_anchor": "12-8-resultados-opacos-estáticos",
       "line_start": 4187,
@@ -2530,7 +2530,7 @@
     },
     {
       "id": "TL01-12-8-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "12.8 Resultados opacos estáticos",
       "heading_anchor": "12-8-resultados-opacos-estáticos",
       "line_start": 4193,
@@ -2615,7 +2615,7 @@
     },
     {
       "id": "TL01-12-8-R003",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "12.8 Resultados opacos estáticos",
       "heading_anchor": "12-8-resultados-opacos-estáticos",
       "line_start": 4200,
@@ -2700,7 +2700,7 @@
     },
     {
       "id": "TL01-12-8-R004",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "12.8 Resultados opacos estáticos",
       "heading_anchor": "12-8-resultados-opacos-estáticos",
       "line_start": 4228,
@@ -2785,7 +2785,7 @@
     },
     {
       "id": "TL01-13-1-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "13.1 Bloques",
       "heading_anchor": "13-1-bloques",
       "line_start": 4267,
@@ -2828,7 +2828,7 @@
     },
     {
       "id": "TL01-13-2-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "13.2 `if`",
       "heading_anchor": "13-2-if",
       "line_start": 4274,
@@ -2871,7 +2871,7 @@
     },
     {
       "id": "TL01-13-2-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "13.2 `if`",
       "heading_anchor": "13-2-if",
       "line_start": 4302,
@@ -2914,7 +2914,7 @@
     },
     {
       "id": "TL01-13-3-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "13.3 Un único bucle `for`",
       "heading_anchor": "13-3-un-único-bucle-for",
       "line_start": 4381,
@@ -2957,7 +2957,7 @@
     },
     {
       "id": "TL01-13-3-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "13.3 Un único bucle `for`",
       "heading_anchor": "13-3-un-único-bucle-for",
       "line_start": 4388,
@@ -3000,7 +3000,7 @@
     },
     {
       "id": "TL01-13-3-R003",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "13.3 Un único bucle `for`",
       "heading_anchor": "13-3-un-único-bucle-for",
       "line_start": 4395,
@@ -3043,7 +3043,7 @@
     },
     {
       "id": "TL01-13-3-R004",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "13.3 Un único bucle `for`",
       "heading_anchor": "13-3-un-único-bucle-for",
       "line_start": 4409,
@@ -3086,7 +3086,7 @@
     },
     {
       "id": "TL01-13-4-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "13.4 `break` y `continue`",
       "heading_anchor": "13-4-break-y-continue",
       "line_start": 4458,
@@ -3129,7 +3129,7 @@
     },
     {
       "id": "TL01-13-5-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "13.5 `return`",
       "heading_anchor": "13-5-return",
       "line_start": 4474,
@@ -3172,7 +3172,7 @@
     },
     {
       "id": "TL01-13-6-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "13.6 `fail`",
       "heading_anchor": "13-6-fail",
       "line_start": 4486,
@@ -3215,7 +3215,7 @@
     },
     {
       "id": "TL01-13-7-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "13.7 `defer`",
       "heading_anchor": "13-7-defer",
       "line_start": 4527,
@@ -3258,7 +3258,7 @@
     },
     {
       "id": "TL01-13-7-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "13.7 `defer`",
       "heading_anchor": "13-7-defer",
       "line_start": 4540,
@@ -3301,7 +3301,7 @@
     },
     {
       "id": "TL01-13-7-R003",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "13.7 `defer`",
       "heading_anchor": "13-7-defer",
       "line_start": 4545,
@@ -3344,7 +3344,7 @@
     },
     {
       "id": "TL01-13-7-R004",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "13.7 `defer`",
       "heading_anchor": "13-7-defer",
       "line_start": 4551,
@@ -3387,7 +3387,7 @@
     },
     {
       "id": "TL01-13-7-R005",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "13.7 `defer`",
       "heading_anchor": "13-7-defer",
       "line_start": 4557,
@@ -3430,7 +3430,7 @@
     },
     {
       "id": "TL01-13-7-R006",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "13.7 `defer`",
       "heading_anchor": "13-7-defer",
       "line_start": 4558,
@@ -3485,7 +3485,7 @@
     },
     {
       "id": "TL01-13-7-R007",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "13.7 `defer`",
       "heading_anchor": "13-7-defer",
       "line_start": 4570,
@@ -3540,7 +3540,7 @@
     },
     {
       "id": "TL01-13-7-R008",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "13.7 `defer`",
       "heading_anchor": "13-7-defer",
       "line_start": 4580,
@@ -3595,7 +3595,7 @@
     },
     {
       "id": "TL01-13-7-R009",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "13.7 `defer`",
       "heading_anchor": "13-7-defer",
       "line_start": 4581,
@@ -3650,7 +3650,7 @@
     },
     {
       "id": "TL01-13-7-R010",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "13.7 `defer`",
       "heading_anchor": "13-7-defer",
       "line_start": 4587,
@@ -3705,7 +3705,7 @@
     },
     {
       "id": "TL01-13-8-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "13.8 Asignación simple y múltiple",
       "heading_anchor": "13-8-asignación-simple-y-múltiple",
       "line_start": 4602,
@@ -3748,7 +3748,7 @@
     },
     {
       "id": "TL01-13-8-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "13.8 Asignación simple y múltiple",
       "heading_anchor": "13-8-asignación-simple-y-múltiple",
       "line_start": 4630,
@@ -3791,7 +3791,7 @@
     },
     {
       "id": "TL01-13-8-R003",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "13.8 Asignación simple y múltiple",
       "heading_anchor": "13-8-asignación-simple-y-múltiple",
       "line_start": 4642,
@@ -3834,7 +3834,7 @@
     },
     {
       "id": "TL01-13-8-R004",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "13.8 Asignación simple y múltiple",
       "heading_anchor": "13-8-asignación-simple-y-múltiple",
       "line_start": 4671,
@@ -3877,7 +3877,7 @@
     },
     {
       "id": "TL01-13-8-R005",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "13.8 Asignación simple y múltiple",
       "heading_anchor": "13-8-asignación-simple-y-múltiple",
       "line_start": 4715,
@@ -3933,7 +3933,7 @@
     },
     {
       "id": "TL01-14-1-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "14.1 `match` como expresión",
       "heading_anchor": "14-1-match-como-expresión",
       "line_start": 4876,
@@ -3976,7 +3976,7 @@
     },
     {
       "id": "TL01-14-2-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "14.2 Exhaustividad",
       "heading_anchor": "14-2-exhaustividad",
       "line_start": 4883,
@@ -4019,7 +4019,7 @@
     },
     {
       "id": "TL01-14-4-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "14.4 Guards",
       "heading_anchor": "14-4-guards",
       "line_start": 5052,
@@ -4062,7 +4062,7 @@
     },
     {
       "id": "TL01-15-2-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "15.2 Propagación con `?`",
       "heading_anchor": "15-2-propagación-con",
       "line_start": 5164,
@@ -4105,7 +4105,7 @@
     },
     {
       "id": "TL01-15-2-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "15.2 Propagación con `?`",
       "heading_anchor": "15-2-propagación-con",
       "line_start": 5168,
@@ -4148,7 +4148,7 @@
     },
     {
       "id": "TL01-15-2-R003",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "15.2 Propagación con `?`",
       "heading_anchor": "15-2-propagación-con",
       "line_start": 5189,
@@ -4191,7 +4191,7 @@
     },
     {
       "id": "TL01-15-3-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "15.3 Widening de uniones de error",
       "heading_anchor": "15-3-widening-de-uniones-de-error",
       "line_start": 5223,
@@ -4234,7 +4234,7 @@
     },
     {
       "id": "TL01-15-7-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "15.7 Pánicos",
       "heading_anchor": "15-7-pánicos",
       "line_start": 5298,
@@ -4295,7 +4295,7 @@
     },
     {
       "id": "TL01-15-7-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "15.7 Pánicos",
       "heading_anchor": "15-7-pánicos",
       "line_start": 5322,
@@ -4338,7 +4338,7 @@
     },
     {
       "id": "TL01-15-7-R003",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "15.7 Pánicos",
       "heading_anchor": "15-7-pánicos",
       "line_start": 5330,
@@ -4381,7 +4381,7 @@
     },
     {
       "id": "TL01-15-7-R004",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "15.7 Pánicos",
       "heading_anchor": "15-7-pánicos",
       "line_start": 5339,
@@ -4424,7 +4424,7 @@
     },
     {
       "id": "TL01-15-8-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "15.8 `assert`",
       "heading_anchor": "15-8-assert",
       "line_start": 5362,
@@ -4467,7 +4467,7 @@
     },
     {
       "id": "TL01-16-10-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "16.10 `Ref[T]`",
       "heading_anchor": "16-10-ref-t",
       "line_start": 5803,
@@ -4510,7 +4510,7 @@
     },
     {
       "id": "TL01-16-10-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "16.10 `Ref[T]`",
       "heading_anchor": "16-10-ref-t",
       "line_start": 5837,
@@ -4553,7 +4553,7 @@
     },
     {
       "id": "TL01-16-11-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "16.11 Handles con identidad",
       "heading_anchor": "16-11-handles-con-identidad",
       "line_start": 5848,
@@ -4596,7 +4596,7 @@
     },
     {
       "id": "TL01-16-11-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "16.11 Handles con identidad",
       "heading_anchor": "16-11-handles-con-identidad",
       "line_start": 5861,
@@ -4639,7 +4639,7 @@
     },
     {
       "id": "TL01-16-12-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "16.12 `Pointer[T]` y `unsafe`",
       "heading_anchor": "16-12-pointer-t-y-unsafe",
       "line_start": 5867,
@@ -4682,7 +4682,7 @@
     },
     {
       "id": "TL01-16-12-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "16.12 `Pointer[T]` y `unsafe`",
       "heading_anchor": "16-12-pointer-t-y-unsafe",
       "line_start": 5869,
@@ -4725,7 +4725,7 @@
     },
     {
       "id": "TL01-16-12-R003",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "16.12 `Pointer[T]` y `unsafe`",
       "heading_anchor": "16-12-pointer-t-y-unsafe",
       "line_start": 5878,
@@ -4768,7 +4768,7 @@
     },
     {
       "id": "TL01-16-13-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "16.13 Capacidades `Send` y `Share`",
       "heading_anchor": "16-13-capacidades-send-y-share",
       "line_start": 6032,
@@ -4811,7 +4811,7 @@
     },
     {
       "id": "TL01-16-13-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "16.13 Capacidades `Send` y `Share`",
       "heading_anchor": "16-13-capacidades-send-y-share",
       "line_start": 6036,
@@ -4854,7 +4854,7 @@
     },
     {
       "id": "TL01-16-13-R003",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "16.13 Capacidades `Send` y `Share`",
       "heading_anchor": "16-13-capacidades-send-y-share",
       "line_start": 6040,
@@ -4897,7 +4897,7 @@
     },
     {
       "id": "TL01-16-13-R004",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "16.13 Capacidades `Send` y `Share`",
       "heading_anchor": "16-13-capacidades-send-y-share",
       "line_start": 6048,
@@ -4940,7 +4940,7 @@
     },
     {
       "id": "TL01-16-14-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "16.14 Tasks, threads y canales",
       "heading_anchor": "16-14-tasks-threads-y-canales",
       "line_start": 6055,
@@ -4983,7 +4983,7 @@
     },
     {
       "id": "TL01-16-14-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "16.14 Tasks, threads y canales",
       "heading_anchor": "16-14-tasks-threads-y-canales",
       "line_start": 6069,
@@ -5026,7 +5026,7 @@
     },
     {
       "id": "TL01-16-14-R003",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "16.14 Tasks, threads y canales",
       "heading_anchor": "16-14-tasks-threads-y-canales",
       "line_start": 6071,
@@ -5069,7 +5069,7 @@
     },
     {
       "id": "TL01-16-15-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "16.15 Modelo de memoria concurrente",
       "heading_anchor": "16-15-modelo-de-memoria-concurrente",
       "line_start": 6108,
@@ -5112,7 +5112,7 @@
     },
     {
       "id": "TL01-16-15-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "16.15 Modelo de memoria concurrente",
       "heading_anchor": "16-15-modelo-de-memoria-concurrente",
       "line_start": 6115,
@@ -5155,7 +5155,7 @@
     },
     {
       "id": "TL01-16-15-R003",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "16.15 Modelo de memoria concurrente",
       "heading_anchor": "16-15-modelo-de-memoria-concurrente",
       "line_start": 6124,
@@ -5198,7 +5198,7 @@
     },
     {
       "id": "TL01-16-2-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "16.2 Parámetros inmutables",
       "heading_anchor": "16-2-parámetros-inmutables",
       "line_start": 5401,
@@ -5241,7 +5241,7 @@
     },
     {
       "id": "TL01-16-3-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "16.3 Parámetros `ref`, `mut` y `var`",
       "heading_anchor": "16-3-parámetros-ref-mut-y-var",
       "line_start": 5420,
@@ -5284,7 +5284,7 @@
     },
     {
       "id": "TL01-16-3-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "16.3 Parámetros `ref`, `mut` y `var`",
       "heading_anchor": "16-3-parámetros-ref-mut-y-var",
       "line_start": 5511,
@@ -5327,7 +5327,7 @@
     },
     {
       "id": "TL01-16-3-R003",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "16.3 Parámetros `ref`, `mut` y `var`",
       "heading_anchor": "16-3-parámetros-ref-mut-y-var",
       "line_start": 5532,
@@ -5370,7 +5370,7 @@
     },
     {
       "id": "TL01-16-3-R004",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "16.3 Parámetros `ref`, `mut` y `var`",
       "heading_anchor": "16-3-parámetros-ref-mut-y-var",
       "line_start": 5541,
@@ -5413,7 +5413,7 @@
     },
     {
       "id": "TL01-16-4-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "16.4 Préstamos de regiones",
       "heading_anchor": "16-4-préstamos-de-regiones",
       "line_start": 5558,
@@ -5456,7 +5456,7 @@
     },
     {
       "id": "TL01-16-4-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "16.4 Préstamos de regiones",
       "heading_anchor": "16-4-préstamos-de-regiones",
       "line_start": 5608,
@@ -5499,7 +5499,7 @@
     },
     {
       "id": "TL01-16-5-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "16.5 Vida de préstamos",
       "heading_anchor": "16-5-vida-de-préstamos",
       "line_start": 5617,
@@ -5542,7 +5542,7 @@
     },
     {
       "id": "TL01-16-5-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "16.5 Vida de préstamos",
       "heading_anchor": "16-5-vida-de-préstamos",
       "line_start": 5645,
@@ -5585,7 +5585,7 @@
     },
     {
       "id": "TL01-16-6-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "16.6 Copy-on-write",
       "heading_anchor": "16-6-copy-on-write",
       "line_start": 5668,
@@ -5628,7 +5628,7 @@
     },
     {
       "id": "TL01-17-1-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "17.1 Principio",
       "heading_anchor": "17-1-principio",
       "line_start": 6132,
@@ -5671,7 +5671,7 @@
     },
     {
       "id": "TL01-17-1-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "17.1 Principio",
       "heading_anchor": "17-1-principio",
       "line_start": 6139,
@@ -5714,7 +5714,7 @@
     },
     {
       "id": "TL01-17-4-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "17.4 Operadores aritméticos",
       "heading_anchor": "17-4-operadores-aritméticos",
       "line_start": 6215,
@@ -5757,7 +5757,7 @@
     },
     {
       "id": "TL01-17-5-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "17.5 Shifts",
       "heading_anchor": "17-5-shifts",
       "line_start": 6229,
@@ -5814,7 +5814,7 @@
     },
     {
       "id": "TL01-17-6-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "17.6 Bitwise y pipelines",
       "heading_anchor": "17-6-bitwise-y-pipelines",
       "line_start": 6258,
@@ -5857,7 +5857,7 @@
     },
     {
       "id": "TL01-18-2-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "18.2 Overflow",
       "heading_anchor": "18-2-overflow",
       "line_start": 6413,
@@ -5900,7 +5900,7 @@
     },
     {
       "id": "TL01-18-5-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "18.5 Floats",
       "heading_anchor": "18-5-floats",
       "line_start": 6465,
@@ -5943,7 +5943,7 @@
     },
     {
       "id": "TL01-18-5-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "18.5 Floats",
       "heading_anchor": "18-5-floats",
       "line_start": 6471,
@@ -5986,7 +5986,7 @@
     },
     {
       "id": "TL01-18-5-R003",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "18.5 Floats",
       "heading_anchor": "18-5-floats",
       "line_start": 6473,
@@ -6029,7 +6029,7 @@
     },
     {
       "id": "TL01-19-2-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "19.2 Longitud e indexación",
       "heading_anchor": "19-2-longitud-e-indexación",
       "line_start": 6568,
@@ -6072,7 +6072,7 @@
     },
     {
       "id": "TL01-19-2-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "19.2 Longitud e indexación",
       "heading_anchor": "19-2-longitud-e-indexación",
       "line_start": 6581,
@@ -6115,7 +6115,7 @@
     },
     {
       "id": "TL01-19-3-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "19.3 Slicing de strings",
       "heading_anchor": "19-3-slicing-de-strings",
       "line_start": 6596,
@@ -6158,7 +6158,7 @@
     },
     {
       "id": "TL01-19-6-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "19.6 Concatenación",
       "heading_anchor": "19-6-concatenación",
       "line_start": 6643,
@@ -6201,7 +6201,7 @@
     },
     {
       "id": "TL01-2-2-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "2.2 No objetivos",
       "heading_anchor": "2-2-no-objetivos",
       "line_start": 160,
@@ -6244,7 +6244,7 @@
     },
     {
       "id": "TL01-20-10-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "20.10 Terminación del programa",
       "heading_anchor": "20-10-terminación-del-programa",
       "line_start": 6919,
@@ -6287,7 +6287,7 @@
     },
     {
       "id": "TL01-20-2-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "20.2 Restricciones de `main`",
       "heading_anchor": "20-2-restricciones-de-main",
       "line_start": 6734,
@@ -6330,7 +6330,7 @@
     },
     {
       "id": "TL01-20-2-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "20.2 Restricciones de `main`",
       "heading_anchor": "20-2-restricciones-de-main",
       "line_start": 6736,
@@ -6373,7 +6373,7 @@
     },
     {
       "id": "TL01-20-2-R003",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "20.2 Restricciones de `main`",
       "heading_anchor": "20-2-restricciones-de-main",
       "line_start": 6737,
@@ -6416,7 +6416,7 @@
     },
     {
       "id": "TL01-20-3-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "20.3 Script raíz y `main` implícito",
       "heading_anchor": "20-3-script-raíz-y-main-implícito",
       "line_start": 6788,
@@ -6459,7 +6459,7 @@
     },
     {
       "id": "TL01-20-3-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "20.3 Script raíz y `main` implícito",
       "heading_anchor": "20-3-script-raíz-y-main-implícito",
       "line_start": 6791,
@@ -6502,7 +6502,7 @@
     },
     {
       "id": "TL01-20-3-R003",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "20.3 Script raíz y `main` implícito",
       "heading_anchor": "20-3-script-raíz-y-main-implícito",
       "line_start": 6792,
@@ -6545,7 +6545,7 @@
     },
     {
       "id": "TL01-20-5-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "20.5 Comandos como valores",
       "heading_anchor": "20-5-comandos-como-valores",
       "line_start": 6824,
@@ -6588,7 +6588,7 @@
     },
     {
       "id": "TL01-20-6-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "20.6 Pipelines",
       "heading_anchor": "20-6-pipelines",
       "line_start": 6851,
@@ -6631,7 +6631,7 @@
     },
     {
       "id": "TL01-20-6-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "20.6 Pipelines",
       "heading_anchor": "20-6-pipelines",
       "line_start": 6863,
@@ -6674,7 +6674,7 @@
     },
     {
       "id": "TL01-20-8-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "20.8 Inicio, salida y errores de procesos",
       "heading_anchor": "20-8-inicio-salida-y-errores-de-procesos",
       "line_start": 6888,
@@ -6717,7 +6717,7 @@
     },
     {
       "id": "TL01-20-9-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "20.9 Vida, cancelación y cleanup",
       "heading_anchor": "20-9-vida-cancelación-y-cleanup",
       "line_start": 6896,
@@ -6760,7 +6760,7 @@
     },
     {
       "id": "TL01-20-9-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "20.9 Vida, cancelación y cleanup",
       "heading_anchor": "20-9-vida-cancelación-y-cleanup",
       "line_start": 6903,
@@ -6803,7 +6803,7 @@
     },
     {
       "id": "TL01-21-5-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "21.5 Documentación pública",
       "heading_anchor": "21-5-documentación-pública",
       "line_start": 7258,
@@ -6846,7 +6846,7 @@
     },
     {
       "id": "TL01-21-5-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "21.5 Documentación pública",
       "heading_anchor": "21-5-documentación-pública",
       "line_start": 7268,
@@ -6889,7 +6889,7 @@
     },
     {
       "id": "TL01-21-5-R003",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "21.5 Documentación pública",
       "heading_anchor": "21-5-documentación-pública",
       "line_start": 7276,
@@ -6932,7 +6932,7 @@
     },
     {
       "id": "TL01-21-6-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "21.6 Ejemplos verificables",
       "heading_anchor": "21-6-ejemplos-verificables",
       "line_start": 7285,
@@ -6975,7 +6975,7 @@
     },
     {
       "id": "TL01-21-6-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "21.6 Ejemplos verificables",
       "heading_anchor": "21-6-ejemplos-verificables",
       "line_start": 7312,
@@ -7018,7 +7018,7 @@
     },
     {
       "id": "TL01-21-6-R003",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "21.6 Ejemplos verificables",
       "heading_anchor": "21-6-ejemplos-verificables",
       "line_start": 7322,
@@ -7061,7 +7061,7 @@
     },
     {
       "id": "TL01-21-6-R004",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "21.6 Ejemplos verificables",
       "heading_anchor": "21-6-ejemplos-verificables",
       "line_start": 7343,
@@ -7104,54 +7104,97 @@
     },
     {
       "id": "TL01-21-6-R005",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "21.6 Ejemplos verificables",
       "heading_anchor": "21-6-ejemplos-verificables",
-      "line_start": 7383,
-      "line_end": 7391,
-      "text": "Un fixture solo añade declaraciones externas: no puede reemplazar texto, cambiar keywords, habilitar reglas privadas, relajar tipos u ownership, silenciar un diagnóstico originado en el bloque ni introducir una implementación de trait que cambie una resolución ya presente. `production`, `formatted_sha256` o `typecheck_ok` valen `null` cuando la categoría o una fase anterior hacen que no correspondan. `fixture` y `fixture_sha256` valen `null` para `tondo` y `pseudocode`; las claves nunca se omiten. Todos los hashes son SHA-256 del byte string indicado, codificados como 64 dígitos hexadecimales ASCII en minúscula.",
-      "text_sha256": "14f2a0cb603a4a1a39fd59cd885b1484a266b93c59353d2e4e7a88b9319c6003",
+      "line_start": 7350,
+      "line_end": 7359,
+      "text": "Un fence `tondo` afirma únicamente que sus bytes pertenecen a una producción sintáctica y nunca constituye evidencia de comportamiento runtime. Todo fence `fragment` o `script` de un documento normativo debe aparecer exactamente una vez en el registro `testing/doc-test-runtime-links.json`: se clasifica como `runtime` y enlaza al menos un caso público, ejecutable y estable de conformidad o de `tondo test`, o como `static-only` con una razón explícita cuando solo declara formas que no ejecuta. El gate compara el triple `(file, fence_byte, source_sha256)` con la salida del mismo runner documental y comprueba los IDs contra el inventario público. Este registro aporta trazabilidad, no un segundo harness: `doc-test` nunca ejecuta el ejemplo ni interpreta su comportamiento.",
+      "text_sha256": "ad5b101b9c9ad08bd09e4b3e37ab7346f43e02ccc9a60d4251e3cfff421a5bc9",
       "phase": "formatter-documentation",
       "risk": "medium",
-      "status": "toolchain-limit",
-      "classification_reason": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage.",
+      "status": "draft-pending",
+      "classification_reason": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:7383#21-6-ejemplos-verificables"
+        "TONDO_LANGUAGE_SPEC.md:7350#21-6-ejemplos-verificables"
       ],
       "dimensions": {
         "positive": {
           "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
         },
         "rejection_or_failure": {
           "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
         },
         "boundary": {
           "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
         },
         "composition": {
           "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
         },
         "oracle": {
           "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
         },
         "public_boundary": {
           "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+        }
+      }
+    },
+    {
+      "id": "TL01-21-6-R006",
+      "revision": "0.1@0be283f1032d1a53",
+      "heading": "21.6 Ejemplos verificables",
+      "heading_anchor": "21-6-ejemplos-verificables",
+      "line_start": 7394,
+      "line_end": 7402,
+      "text": "Un fixture solo añade declaraciones externas: no puede reemplazar texto, cambiar keywords, habilitar reglas privadas, relajar tipos u ownership, silenciar un diagnóstico originado en el bloque ni introducir una implementación de trait que cambie una resolución ya presente. `production`, `formatted_sha256` o `typecheck_ok` valen `null` cuando la categoría o una fase anterior hacen que no correspondan. `fixture` y `fixture_sha256` valen `null` para `tondo` y `pseudocode`; las claves nunca se omiten. Todos los hashes son SHA-256 del byte string indicado, codificados como 64 dígitos hexadecimales ASCII en minúscula.",
+      "text_sha256": "14f2a0cb603a4a1a39fd59cd885b1484a266b93c59353d2e4e7a88b9319c6003",
+      "phase": "formatter-documentation",
+      "risk": "medium",
+      "status": "draft-pending",
+      "classification_reason": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation.",
+      "evidence": [
+        "TONDO_LANGUAGE_SPEC.md:7394#21-6-ejemplos-verificables"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [],
+          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+        },
+        "rejection_or_failure": {
+          "evidence": [],
+          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+        },
+        "boundary": {
+          "evidence": [],
+          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+        },
+        "composition": {
+          "evidence": [],
+          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+        },
+        "oracle": {
+          "evidence": [],
+          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+        },
+        "public_boundary": {
+          "evidence": [],
+          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
         }
       }
     },
     {
       "id": "TL01-21-7-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "21.7 Corpus mínimo de formato 0.1",
       "heading_anchor": "21-7-corpus-mínimo-de-formato-0-1",
-      "line_start": 7527,
-      "line_end": 7532,
+      "line_start": 7538,
+      "line_end": 7543,
       "text": "La suite oficial de una implementación debe incluir estos pares, el caso vacío de cada lista delimitada de la gramática y, para cada lista no vacía, tres casos generados cuya forma plana termina respectivamente en columnas 99, 100 y 101. La salida esperada se obtiene aplicando literalmente el test de anchura de 21.2: y 100 permanecen planos; 101 se parte. Así el límite no depende de un corpus binario no publicado.",
       "text_sha256": "7aa0c4d8a2c0bccb7f131a804cbe1ae96da92dab30db9c61d4f449a97e4d0f47",
       "phase": "formatter-documentation",
@@ -7159,7 +7202,7 @@
       "status": "toolchain-limit",
       "classification_reason": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:7527#21-7-corpus-mínimo-de-formato-0-1"
+        "TONDO_LANGUAGE_SPEC.md:7538#21-7-corpus-mínimo-de-formato-0-1"
       ],
       "dimensions": {
         "positive": {
@@ -7190,11 +7233,11 @@
     },
     {
       "id": "TL01-22-1-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "22.1 Principios de diagnóstico",
       "heading_anchor": "22-1-principios-de-diagnóstico",
-      "line_start": 7540,
-      "line_end": 7540,
+      "line_start": 7551,
+      "line_end": 7551,
       "text": "Un diagnóstico debe responder:",
       "text_sha256": "7a4339f52566bb18cc238c80af47a7d8069734d3d506f1e3029a67df35e90ae0",
       "phase": "diagnostics-tooling",
@@ -7202,7 +7245,7 @@
       "status": "toolchain-limit",
       "classification_reason": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:7540#22-1-principios-de-diagnóstico"
+        "TONDO_LANGUAGE_SPEC.md:7551#22-1-principios-de-diagnóstico"
       ],
       "dimensions": {
         "positive": {
@@ -7233,11 +7276,11 @@
     },
     {
       "id": "TL01-22-2-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "22.2 Códigos estables",
       "heading_anchor": "22-2-códigos-estables",
-      "line_start": 7553,
-      "line_end": 7557,
+      "line_start": 7564,
+      "line_end": 7568,
       "text": "Este es el registro normativo de la edición 0.1. `E` identifica errores de compilación, `W` warnings estáticos y `P` clases de pánico definidas por el lenguaje. Un modo estricto puede elevar la severidad de un `W`, pero conserva su código. Una implementación puede añadir notas y códigos propios con prefijo distinto; no puede reutilizar estos códigos ni cambiar su condición primaria.",
       "text_sha256": "ae76f61d921ef6d7509bb5a61e0924d347fabc4ddee815c3f89bc8b57b87dcde",
       "phase": "diagnostics-tooling",
@@ -7245,7 +7288,7 @@
       "status": "toolchain-limit",
       "classification_reason": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:7553#22-2-códigos-estables"
+        "TONDO_LANGUAGE_SPEC.md:7564#22-2-códigos-estables"
       ],
       "dimensions": {
         "positive": {
@@ -7276,11 +7319,11 @@
     },
     {
       "id": "TL01-22-3-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "22.3 Salida estructurada",
       "heading_anchor": "22-3-salida-estructurada",
-      "line_start": 7816,
-      "line_end": 7824,
+      "line_start": 7827,
+      "line_end": 7835,
       "text": "`source_id` identifica sin colisiones al propietario lógico del diagnóstico. Para un archivo de paquete deriva uno a uno de su `PackageId`; dos `PackageId` distintos producen siempre IDs distintos. Para una raíz suelta deriva de la identidad lógica declarada por la invocación. Para una condición de target utiliza la identidad estable de ese target. El formato concreto es opaco al lenguaje, pero el grafo de build debe proporcionar un string UTF-8 canónico, estable con las mismas entradas y sin `LF`. Paquetes, raíces sueltas y targets comparten un único namespace de IDs y nunca pueden colisionar entre categorías. El valor `pkg:example/app` del ejemplo es ilustrativo.",
       "text_sha256": "9d4e72c7e9830c39efb617e8501efdfb842bb7c03cc4a4a3f6d3b8331f55d463",
       "phase": "diagnostics-tooling",
@@ -7288,7 +7331,7 @@
       "status": "toolchain-limit",
       "classification_reason": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:7816#22-3-salida-estructurada"
+        "TONDO_LANGUAGE_SPEC.md:7827#22-3-salida-estructurada"
       ],
       "dimensions": {
         "positive": {
@@ -7319,11 +7362,11 @@
     },
     {
       "id": "TL01-22-3-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "22.3 Salida estructurada",
       "heading_anchor": "22-3-salida-estructurada",
-      "line_start": 7837,
-      "line_end": 7844,
+      "line_start": 7848,
+      "line_end": 7855,
       "text": "`id` es `diag:` seguido del SHA-256 hexadecimal minúsculo de la concatenación UTF-8 `edition LF source_id LF module_or_empty LF file_or_empty LF code LF start_or_empty LF end_or_empty LF`. En la edición actual, `edition` contiene exactamente los tres bytes ASCII `0.1`. En una ubicación de fuente, los bytes de inicio y fin son sus enteros decimales sin signo, sin ceros iniciales salvo `0`; en una ubicación nula, los cuatro componentes anulables se representan mediante strings vacíos. `module` y `file` son las cadenas canónicas de 22.6. Los componentes del hash no pueden contener `LF`.",
       "text_sha256": "b4c3cbe8b5a6b6d3d7d061d148229931de1097b4807e7d6c9e636652d9ca9b45",
       "phase": "diagnostics-tooling",
@@ -7331,7 +7374,7 @@
       "status": "toolchain-limit",
       "classification_reason": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:7837#22-3-salida-estructurada"
+        "TONDO_LANGUAGE_SPEC.md:7848#22-3-salida-estructurada"
       ],
       "dimensions": {
         "positive": {
@@ -7362,11 +7405,11 @@
     },
     {
       "id": "TL01-22-4-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "22.4 Fixes",
       "heading_anchor": "22-4-fixes",
-      "line_start": 7916,
-      "line_end": 7919,
+      "line_start": 7927,
+      "line_end": 7930,
       "text": "Si no puede demostrar todas esas condiciones, la reparación se marca `requires-decision`. Una reparación puede tocar varios archivos relacionados cuando el cambio es indivisible, pero nunca incluye ediciones ajenas a su propósito declarado.",
       "text_sha256": "be9abbc3b3289bc03dfa65aa3689c06b45eb953d3a3563a97558a97df4f9bfe3",
       "phase": "diagnostics-tooling",
@@ -7374,7 +7417,7 @@
       "status": "toolchain-limit",
       "classification_reason": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:7916#22-4-fixes"
+        "TONDO_LANGUAGE_SPEC.md:7927#22-4-fixes"
       ],
       "dimensions": {
         "positive": {
@@ -7405,11 +7448,11 @@
     },
     {
       "id": "TL01-22-5-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "22.5 Consultas semánticas",
       "heading_anchor": "22-5-consultas-semánticas",
-      "line_start": 7923,
-      "line_end": 7923,
+      "line_start": 7934,
+      "line_end": 7934,
       "text": "El tooling debe poder consultar de forma estructurada:",
       "text_sha256": "2c6cd242350c8083917161e383c9e3a578d378d9dd47be0c71c540ba521f0280",
       "phase": "diagnostics-tooling",
@@ -7417,7 +7460,7 @@
       "status": "toolchain-limit",
       "classification_reason": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:7923#22-5-consultas-semánticas"
+        "TONDO_LANGUAGE_SPEC.md:7934#22-5-consultas-semánticas"
       ],
       "dimensions": {
         "positive": {
@@ -7448,11 +7491,11 @@
     },
     {
       "id": "TL01-22-7-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "22.7 Modo LLM",
       "heading_anchor": "22-7-modo-llm",
-      "line_start": 8005,
-      "line_end": 8009,
+      "line_start": 8016,
+      "line_end": 8020,
       "text": "Esta sección solo fija la frontera del lenguaje base: una representación externa para agentes no añade sintaxis, semántica ni una edición Tondo. Si existe, debe producir fuente `.to` ordinaria antes del lexer y ningún paso de resolución, type checking o lowering la recibe directamente. El compilador de `.to` no autodetecta representaciones alternativas.",
       "text_sha256": "03e036d978b855fb49590e5309ff010c85ff37d2651b135544817407a4759aa0",
       "phase": "diagnostics-tooling",
@@ -7460,7 +7503,7 @@
       "status": "toolchain-limit",
       "classification_reason": "A draft case layer names this new or changed requirement, but no reviewed executable evidence claim covers it.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:8005#22-7-modo-llm"
+        "TONDO_LANGUAGE_SPEC.md:8016#22-7-modo-llm"
       ],
       "dimensions": {
         "positive": {
@@ -7491,11 +7534,11 @@
     },
     {
       "id": "TL01-22-8-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "22.8 Cobertura diagnóstica y perfiles",
       "heading_anchor": "22-8-cobertura-diagnóstica-y-perfiles",
-      "line_start": 8019,
-      "line_end": 8022,
+      "line_start": 8030,
+      "line_end": 8033,
       "text": "Toda condición `E` del registro 22.2 es obligatoria cuando aparece en un programa; la lista siguiente destaca comprobaciones que una implementación no puede degradar a lint. Además, toda distribución ofrece un perfil de warnings `core` con condiciones cerradas:",
       "text_sha256": "cc7a1b5727dd2ee7af14643d74262a0efb7c9686004c18c43cdf4a0d33d10335",
       "phase": "diagnostics-tooling",
@@ -7503,7 +7546,7 @@
       "status": "toolchain-limit",
       "classification_reason": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:8019#22-8-cobertura-diagnóstica-y-perfiles"
+        "TONDO_LANGUAGE_SPEC.md:8030#22-8-cobertura-diagnóstica-y-perfiles"
       ],
       "dimensions": {
         "positive": {
@@ -7534,11 +7577,11 @@
     },
     {
       "id": "TL01-22-9-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "22.9 Conformidad ejecutable",
       "heading_anchor": "22-9-conformidad-ejecutable",
-      "line_start": 8088,
-      "line_end": 8092,
+      "line_start": 8099,
+      "line_end": 8103,
       "text": "La conformidad del draft requiere la suite activa denominada `tondo-conformance-draft`. Los ejemplos y doc-tests de esta especificación ayudan a detectar inconsistencias editoriales, pero no sustituyen esa suite. Antes de publicar Tondo 0.1, su distribución oficial deberá incluir un manifiesto portátil de la suite y una versión pública de conformidad con:",
       "text_sha256": "a27a55e4b6c4e92f85534585792461d9aa849389d4f745e15699c8cbd3da5ccf",
       "phase": "diagnostics-tooling",
@@ -7589,11 +7632,11 @@
     },
     {
       "id": "TL01-22-9-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "22.9 Conformidad ejecutable",
       "heading_anchor": "22-9-conformidad-ejecutable",
-      "line_start": 8127,
-      "line_end": 8132,
+      "line_start": 8138,
+      "line_end": 8143,
       "text": "Un compilador que anuncie **conformidad completa Tondo 0.1** para un target debe pasar todos los grupos aplicables al perfil y capacidades declarados. Una implementación solo de frontend, formatter o análisis puede certificar esos componentes por separado, pero no presentarse como implementación completa del lenguaje. Una capacidad no soportada permite omitir sus casos operativos, pero obliga a pasar los casos que comprueban su rechazo temprano según 20.11.",
       "text_sha256": "c4e704ef4938496d39ea36af69ad7c4772db6ef05f13a18f4af3bf4930526914",
       "phase": "diagnostics-tooling",
@@ -7644,11 +7687,11 @@
     },
     {
       "id": "TL01-22-9-R003",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "22.9 Conformidad ejecutable",
       "heading_anchor": "22-9-conformidad-ejecutable",
-      "line_start": 8134,
-      "line_end": 8139,
+      "line_start": 8145,
+      "line_end": 8150,
       "text": "Los tests concurrentes no observan una planificación concreta. Cada caso define un conjunto de resultados permitidos, barreras de comienzo y una condición de progreso; un resultado fuera del conjunto o un wakeup perdido es fallo. Los timeouts son únicamente límites del runner y deben ser suficientemente holgados, calibrados y repetidos para distinguir una violación del lenguaje de una máquina saturada.",
       "text_sha256": "e1751385a65355390bb55231110866307c5f726c0731c3ffd61648054bdcecf5",
       "phase": "diagnostics-tooling",
@@ -7699,11 +7742,11 @@
     },
     {
       "id": "TL01-22-9-R004",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "22.9 Conformidad ejecutable",
       "heading_anchor": "22-9-conformidad-ejecutable",
-      "line_start": 8155,
-      "line_end": 8158,
+      "line_start": 8166,
+      "line_end": 8169,
       "text": "Ningún modo oculto de conformidad puede relajar checks, cambiar overflow, scheduling observable o sustituir una ruta real por un resultado prefabricado. Una implementación puede instrumentar ejecución, pero debe ejecutar el mismo programa y contrato público que distribuiría para ese target.",
       "text_sha256": "9ab5eecbe40c01097e311080bb5a9b246dfe60fb7f8cdde51c144bd5d2696b13",
       "phase": "diagnostics-tooling",
@@ -7754,11 +7797,11 @@
     },
     {
       "id": "TL01-23-11-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "23.11 Enums",
       "heading_anchor": "23-11-enums",
-      "line_start": 8507,
-      "line_end": 8511,
+      "line_start": 8518,
+      "line_end": 8522,
       "text": "El `record_body` de una variante no admite el modificador `priv`, debe contener al menos un campo y hereda la visibilidad del enum. Un field llamado `priv` continúa siendo válido como `priv: Type` según la excepción contextual. Una variante sin payload se escribe sin delimitadores; `Variant()` y `Variant {}` no declaran formas alternativas de unit variant.",
       "text_sha256": "09efa2fbf1aa3c45abe9ec231da0b8aa34503c31b83a1c60fe3a87a7d31ccc68",
       "phase": "grammar",
@@ -7766,7 +7809,7 @@
       "status": "toolchain-limit",
       "classification_reason": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:8507#23-11-enums"
+        "TONDO_LANGUAGE_SPEC.md:8518#23-11-enums"
       ],
       "dimensions": {
         "positive": {
@@ -7797,11 +7840,11 @@
     },
     {
       "id": "TL01-23-12-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "23.12 Traits e implementaciones",
       "heading_anchor": "23-12-traits-e-implementaciones",
-      "line_start": 8540,
-      "line_end": 8543,
+      "line_start": 8551,
+      "line_end": 8554,
       "text": "Un método de trait puede anteponer `unsafe` a `fn`; la implementación debe coincidir exactamente. La capacidad de suspensión se infiere desde el cuerpo y la implementación debe conservarla. El primer parámetro puede ser `self`, `mut self` o `var self`.",
       "text_sha256": "ac8dc6d77f510b5bcf798e9e3f8a54be1732817753c3af6784f03981c9c4366a",
       "phase": "grammar",
@@ -7809,7 +7852,7 @@
       "status": "draft-pending",
       "classification_reason": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:8540#23-12-traits-e-implementaciones"
+        "TONDO_LANGUAGE_SPEC.md:8551#23-12-traits-e-implementaciones"
       ],
       "dimensions": {
         "positive": {
@@ -7840,11 +7883,11 @@
     },
     {
       "id": "TL01-23-13-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "23.13 Funciones y métodos",
       "heading_anchor": "23-13-funciones-y-métodos",
-      "line_start": 8573,
-      "line_end": 8573,
+      "line_start": 8584,
+      "line_end": 8584,
       "text": "Una firma no puede expresar dos `!` superiores. El tipo completo después de `:` puede ser un éxito ordinario, `T ! E` o el shorthand `!E`.",
       "text_sha256": "b0a28254326d85cd3325454b511a14af83ab17958557623c83960324513d8e33",
       "phase": "grammar",
@@ -7852,7 +7895,7 @@
       "status": "toolchain-limit",
       "classification_reason": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:8573#23-13-funciones-y-métodos"
+        "TONDO_LANGUAGE_SPEC.md:8584#23-13-funciones-y-métodos"
       ],
       "dimensions": {
         "positive": {
@@ -7883,11 +7926,11 @@
     },
     {
       "id": "TL01-23-13-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "23.13 Funciones y métodos",
       "heading_anchor": "23-13-funciones-y-métodos",
-      "line_start": 8575,
-      "line_end": 8580,
+      "line_start": 8586,
+      "line_end": 8591,
       "text": "Una firma suspendible, también cuando sea `unsafe`, no puede contener parámetros ni receptores `mut` o `var`; cada parámetro `ref T` exige `T: Send`, y un receptor `self` exige `Self: Send`. Ambos adquieren además `Share` al lanzarse mediante `spawn`. `unsafe` no relaja esas condiciones. Un parámetro `...T` debe ser el último, no puede tener `parameter_modifier` y solo puede aparecer una vez. El identificador `_` sigue las reglas de descarte o préstamo sin binding de 11.3.",
       "text_sha256": "437264594631f346792ceac78e7cb1d96db580e372cff7ed367a75261c186d95",
       "phase": "grammar",
@@ -7895,7 +7938,7 @@
       "status": "draft-pending",
       "classification_reason": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:8575#23-13-funciones-y-métodos"
+        "TONDO_LANGUAGE_SPEC.md:8586#23-13-funciones-y-métodos"
       ],
       "dimensions": {
         "positive": {
@@ -7926,11 +7969,11 @@
     },
     {
       "id": "TL01-23-14-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "23.14 Bloques y sentencias",
       "heading_anchor": "23-14-bloques-y-sentencias",
-      "line_start": 8631,
-      "line_end": 8635,
+      "line_start": 8642,
+      "line_end": 8646,
       "text": "Fuera de la forma `defer { ... }`, tanto el `postfix_expression` ordinario como el `plain_postfix_expression` de `deferred_suspendible_call` deben terminar en un `call_suffix`; diferir un valor, un acceso de campo o un método sin llamarlo es error semántico. La segunda forma queda además restringida por 13.7 a una llamada suspendible infallible que devuelve `Unit`.",
       "text_sha256": "2cbf3c25fb81d6e65587506b98a363b1a9e5dd8ba26521c4ab4456294c29043e",
       "phase": "grammar",
@@ -7981,11 +8024,11 @@
     },
     {
       "id": "TL01-23-16-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "23.16 `for`",
       "heading_anchor": "23-16-for",
-      "line_start": 8679,
-      "line_end": 8679,
+      "line_start": 8690,
+      "line_end": 8690,
       "text": "En otro caso: la expresión debe ser `Bool`.",
       "text_sha256": "e23c1af75f9755949f3942e3b52989ca34f81803c25ddeb41df8e6da44b459c4",
       "phase": "grammar",
@@ -7993,7 +8036,7 @@
       "status": "toolchain-limit",
       "classification_reason": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:8679#23-16-for"
+        "TONDO_LANGUAGE_SPEC.md:8690#23-16-for"
       ],
       "dimensions": {
         "positive": {
@@ -8024,11 +8067,11 @@
     },
     {
       "id": "TL01-23-18-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "23.18 Cierres",
       "heading_anchor": "23-18-cierres",
-      "line_start": 8735,
-      "line_end": 8742,
+      "line_start": 8746,
+      "line_end": 8753,
       "text": "En cierres, una anotación de parámetro puede omitirse cuando hay tipo esperado. Un parámetro `ref`, `mut` o `var` siempre conserva su anotación completa. Un parámetro `...T` debe ser único, final, nombrado y no puede tener `parameter_modifier`; si el tipo esperado ya contiene esa posición variádica, el cierre puede escribir solo su nombre. `_` puede conservar un modificador explícito con las reglas de 11.3, pero nunca ser variádico. El parser reconoce una `closure_parameter_list` cuando una lista entre paréntesis aparece seguida de una anotación de resultado opcional y un bloque. `fn` no introduce cierres.",
       "text_sha256": "21b75b20eda09794cd92dfd3ff0e2f95d752884a5d0392c9149617d4fbdf9fd2",
       "phase": "grammar",
@@ -8036,7 +8079,7 @@
       "status": "toolchain-limit",
       "classification_reason": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:8735#23-18-cierres"
+        "TONDO_LANGUAGE_SPEC.md:8746#23-18-cierres"
       ],
       "dimensions": {
         "positive": {
@@ -8067,11 +8110,11 @@
     },
     {
       "id": "TL01-23-2-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "23.2 Tokens léxicos",
       "heading_anchor": "23-2-tokens-léxicos",
-      "line_start": 8250,
-      "line_end": 8253,
+      "line_start": 8261,
+      "line_end": 8264,
       "text": "Las alternativas keyword de `field_name` solo son válidas cuando el nombre introduce o resuelve realmente un field. La alternativa `identifier` continúa cubriendo también métodos y otros miembros ordinarios después de `.`. Una keyword no puede aprovechar esta producción para nombrar otro tipo de símbolo.",
       "text_sha256": "3b6864831fd63e6f2ddcf87babe5747701ca8e2d0068ef0b4372636eff8082e8",
       "phase": "grammar",
@@ -8079,7 +8122,7 @@
       "status": "toolchain-limit",
       "classification_reason": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:8250#23-2-tokens-léxicos"
+        "TONDO_LANGUAGE_SPEC.md:8261#23-2-tokens-léxicos"
       ],
       "dimensions": {
         "positive": {
@@ -8110,11 +8153,11 @@
     },
     {
       "id": "TL01-23-21-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "23.21 Llamadas",
       "heading_anchor": "23-21-llamadas",
-      "line_start": 8914,
-      "line_end": 8915,
+      "line_start": 8925,
+      "line_end": 8926,
       "text": "`ref` debe corresponder a un parámetro `ref`. Acepta un lvalue o un temporal poseído hasta terminar la llamada; con `spawn`, solo un lvalue estable.",
       "text_sha256": "e1c92aeea5d1c5b9b835730e1ab81796f4b6808ad485451521eaaecb500aa7fc",
       "phase": "grammar",
@@ -8122,7 +8165,7 @@
       "status": "toolchain-limit",
       "classification_reason": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:8914#23-21-llamadas"
+        "TONDO_LANGUAGE_SPEC.md:8925#23-21-llamadas"
       ],
       "dimensions": {
         "positive": {
@@ -8153,11 +8196,11 @@
     },
     {
       "id": "TL01-23-21-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "23.21 Llamadas",
       "heading_anchor": "23-21-llamadas",
-      "line_start": 8918,
-      "line_end": 8918,
+      "line_start": 8929,
+      "line_end": 8929,
       "text": "Los argumentos nombrados deben aparecer después de todos los posicionales.",
       "text_sha256": "b43d992f87da95c501cc48a5e481e0a61740dfe1d0794a45a78a7823f742164f",
       "phase": "grammar",
@@ -8165,7 +8208,7 @@
       "status": "toolchain-limit",
       "classification_reason": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:8918#23-21-llamadas"
+        "TONDO_LANGUAGE_SPEC.md:8929#23-21-llamadas"
       ],
       "dimensions": {
         "positive": {
@@ -8196,11 +8239,11 @@
     },
     {
       "id": "TL01-23-21-R003",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "23.21 Llamadas",
       "heading_anchor": "23-21-llamadas",
-      "line_start": 8919,
-      "line_end": 8920,
+      "line_start": 8930,
+      "line_end": 8931,
       "text": "Un argumento `...array` solo puede corresponder al parámetro variádico, debe ser el último y no puede combinarse con `parameter_modifier`.",
       "text_sha256": "52d1d29be99e58174b96efeea4a25bcb69e47d6083680982c080045eb0934d8c",
       "phase": "grammar",
@@ -8208,7 +8251,7 @@
       "status": "toolchain-limit",
       "classification_reason": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:8919#23-21-llamadas"
+        "TONDO_LANGUAGE_SPEC.md:8930#23-21-llamadas"
       ],
       "dimensions": {
         "positive": {
@@ -8239,11 +8282,11 @@
     },
     {
       "id": "TL01-23-21-R004",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "23.21 Llamadas",
       "heading_anchor": "23-21-llamadas",
-      "line_start": 8921,
-      "line_end": 8921,
+      "line_start": 8932,
+      "line_end": 8932,
       "text": "Un spread nombrado debe utilizar exactamente el nombre del parámetro variádico y es la única forma de proporcionar un variádico después de argumentos fijos nombrados.",
       "text_sha256": "fa743b7103deb0887f85e16952363a65f9e87724be069b0473ea3bdc525326af",
       "phase": "grammar",
@@ -8251,7 +8294,7 @@
       "status": "toolchain-limit",
       "classification_reason": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:8921#23-21-llamadas"
+        "TONDO_LANGUAGE_SPEC.md:8932#23-21-llamadas"
       ],
       "dimensions": {
         "positive": {
@@ -8282,11 +8325,11 @@
     },
     {
       "id": "TL01-23-24-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "23.24 Set",
       "heading_anchor": "23-24-set",
-      "line_start": 8968,
-      "line_end": 8970,
+      "line_start": 8979,
+      "line_end": 8981,
       "text": "`CONTEXT_SET` es el identificador intrínseco exacto `Set` utilizado en posición de expresión antes de `[`. No es una keyword y no puede redeclararse como nombre no calificado porque pertenece al prelude.",
       "text_sha256": "7f5a82850fa9fc9a7a64f262fc42d4e3c4bf7c321a09f9d4521436fa3280cf04",
       "phase": "grammar",
@@ -8294,7 +8337,7 @@
       "status": "toolchain-limit",
       "classification_reason": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:8968#23-24-set"
+        "TONDO_LANGUAGE_SPEC.md:8979#23-24-set"
       ],
       "dimensions": {
         "positive": {
@@ -8325,11 +8368,11 @@
     },
     {
       "id": "TL01-23-26-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "23.26 Patrones",
       "heading_anchor": "23-26-patrones",
-      "line_start": 9086,
-      "line_end": 9086,
+      "line_start": 9097,
+      "line_end": 9097,
       "text": "`unit_pattern` coincide con el único valor de `Unit`. Un `qualified_value_pattern` debe resolver a una variante de enum sin payload; las variantes de usuario siempre permanecen calificadas.",
       "text_sha256": "f1d971696a3fb7237f68ae9aed18cab4d41e5084a24348be28ee63d4a67e8508",
       "phase": "grammar",
@@ -8337,7 +8380,7 @@
       "status": "toolchain-limit",
       "classification_reason": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:9086#23-26-patrones"
+        "TONDO_LANGUAGE_SPEC.md:9097#23-26-patrones"
       ],
       "dimensions": {
         "positive": {
@@ -8368,99 +8411,13 @@
     },
     {
       "id": "TL01-23-26-R002",
-      "revision": "0.1@241da23ea49c9303",
-      "heading": "23.26 Patrones",
-      "heading_anchor": "23-26-patrones",
-      "line_start": 9088,
-      "line_end": 9088,
-      "text": "Un `constructor_pattern` puede resolver a una variante con payload, un newtype o el discriminador de un miembro de unión. En el último caso, `type_path` debe coincidir exactamente con uno de los miembros normalizados y los paréntesis contienen exactamente un patrón aplicado al valor completo.",
-      "text_sha256": "3a7b8ab86456773a595885b2b1a4126f4f0066c7ef1bdd83d42c911d30425024",
-      "phase": "grammar",
-      "risk": "high",
-      "status": "toolchain-limit",
-      "classification_reason": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage.",
-      "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:9088#23-26-patrones"
-      ],
-      "dimensions": {
-        "positive": {
-          "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
-        },
-        "rejection_or_failure": {
-          "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
-        },
-        "boundary": {
-          "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
-        },
-        "composition": {
-          "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
-        },
-        "oracle": {
-          "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
-        },
-        "public_boundary": {
-          "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
-        }
-      }
-    },
-    {
-      "id": "TL01-23-26-R003",
-      "revision": "0.1@241da23ea49c9303",
-      "heading": "23.26 Patrones",
-      "heading_anchor": "23-26-patrones",
-      "line_start": 9090,
-      "line_end": 9090,
-      "text": "`..` puede aparecer como máximo una vez en un patrón record y debe ser su último item.",
-      "text_sha256": "3b313ab24022c47f112d6aa28d4c811b371acc0a328ca3d5f31943a18e7c9763",
-      "phase": "grammar",
-      "risk": "high",
-      "status": "toolchain-limit",
-      "classification_reason": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage.",
-      "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:9090#23-26-patrones"
-      ],
-      "dimensions": {
-        "positive": {
-          "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
-        },
-        "rejection_or_failure": {
-          "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
-        },
-        "boundary": {
-          "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
-        },
-        "composition": {
-          "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
-        },
-        "oracle": {
-          "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
-        },
-        "public_boundary": {
-          "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
-        }
-      }
-    },
-    {
-      "id": "TL01-23-26-R004",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "23.26 Patrones",
       "heading_anchor": "23-26-patrones",
       "line_start": 9099,
-      "line_end": 9101,
-      "text": "En un record pattern, `ref:` comienza en cambio un field llamado `ref` y debe ir seguido por su patrón explícito. El lookahead de `:` distingue esta forma de `ref field`.",
-      "text_sha256": "15c2b7f82f7eda347037535c24256a03f7e716548587e767b6e6568328db0bd2",
+      "line_end": 9099,
+      "text": "Un `constructor_pattern` puede resolver a una variante con payload, un newtype o el discriminador de un miembro de unión. En el último caso, `type_path` debe coincidir exactamente con uno de los miembros normalizados y los paréntesis contienen exactamente un patrón aplicado al valor completo.",
+      "text_sha256": "3a7b8ab86456773a595885b2b1a4126f4f0066c7ef1bdd83d42c911d30425024",
       "phase": "grammar",
       "risk": "high",
       "status": "toolchain-limit",
@@ -8496,12 +8453,98 @@
       }
     },
     {
+      "id": "TL01-23-26-R003",
+      "revision": "0.1@0be283f1032d1a53",
+      "heading": "23.26 Patrones",
+      "heading_anchor": "23-26-patrones",
+      "line_start": 9101,
+      "line_end": 9101,
+      "text": "`..` puede aparecer como máximo una vez en un patrón record y debe ser su último item.",
+      "text_sha256": "3b313ab24022c47f112d6aa28d4c811b371acc0a328ca3d5f31943a18e7c9763",
+      "phase": "grammar",
+      "risk": "high",
+      "status": "toolchain-limit",
+      "classification_reason": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage.",
+      "evidence": [
+        "TONDO_LANGUAGE_SPEC.md:9101#23-26-patrones"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [],
+          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+        },
+        "rejection_or_failure": {
+          "evidence": [],
+          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+        },
+        "boundary": {
+          "evidence": [],
+          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+        },
+        "composition": {
+          "evidence": [],
+          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+        },
+        "oracle": {
+          "evidence": [],
+          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+        },
+        "public_boundary": {
+          "evidence": [],
+          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+        }
+      }
+    },
+    {
+      "id": "TL01-23-26-R004",
+      "revision": "0.1@0be283f1032d1a53",
+      "heading": "23.26 Patrones",
+      "heading_anchor": "23-26-patrones",
+      "line_start": 9110,
+      "line_end": 9112,
+      "text": "En un record pattern, `ref:` comienza en cambio un field llamado `ref` y debe ir seguido por su patrón explícito. El lookahead de `:` distingue esta forma de `ref field`.",
+      "text_sha256": "15c2b7f82f7eda347037535c24256a03f7e716548587e767b6e6568328db0bd2",
+      "phase": "grammar",
+      "risk": "high",
+      "status": "toolchain-limit",
+      "classification_reason": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage.",
+      "evidence": [
+        "TONDO_LANGUAGE_SPEC.md:9110#23-26-patrones"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [],
+          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+        },
+        "rejection_or_failure": {
+          "evidence": [],
+          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+        },
+        "boundary": {
+          "evidence": [],
+          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+        },
+        "composition": {
+          "evidence": [],
+          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+        },
+        "oracle": {
+          "evidence": [],
+          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+        },
+        "public_boundary": {
+          "evidence": [],
+          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+        }
+      }
+    },
+    {
       "id": "TL01-23-6-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "23.6 Constantes",
       "heading_anchor": "23-6-constantes",
-      "line_start": 8352,
-      "line_end": 8352,
+      "line_start": 8363,
+      "line_end": 8363,
       "text": "Una constante privada sin anotación debe tener tipo completamente inferible desde una expresión constante. Una constante `pub` exige anotación de tipo.",
       "text_sha256": "ed7ad50c2b8ec66ba4310c44e0c635fea0557064d43a1a7e7e3526455c3f5d4a",
       "phase": "grammar",
@@ -8509,7 +8552,7 @@
       "status": "toolchain-limit",
       "classification_reason": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:8352#23-6-constantes"
+        "TONDO_LANGUAGE_SPEC.md:8363#23-6-constantes"
       ],
       "dimensions": {
         "positive": {
@@ -8540,11 +8583,11 @@
     },
     {
       "id": "TL01-23-7-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "23.7 Parámetros genéricos",
       "heading_anchor": "23-7-parámetros-genéricos",
-      "line_start": 8367,
-      "line_end": 8370,
+      "line_start": 8378,
+      "line_end": 8381,
       "text": "Cada elemento de `generic_bound` debe resolver a un trait, una capacidad intrínseca cerrada como `Copy`, `Discard`, `Equatable`, `Key`, `Send` o `Share`, o un protocolo cerrado `Call[S]`, `CallMut[S]` o `CallOnce[S]` cuya `S` sea un `function_type`.",
       "text_sha256": "5f45d55dffc179dcb318333d63af6c102a987a572ef18a7146a62759ed271ca2",
       "phase": "grammar",
@@ -8552,7 +8595,7 @@
       "status": "toolchain-limit",
       "classification_reason": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:8367#23-7-parámetros-genéricos"
+        "TONDO_LANGUAGE_SPEC.md:8378#23-7-parámetros-genéricos"
       ],
       "dimensions": {
         "positive": {
@@ -8583,11 +8626,11 @@
     },
     {
       "id": "TL01-23-9-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "23.9 Expresiones de tipo",
       "heading_anchor": "23-9-expresiones-de-tipo",
-      "line_start": 8447,
-      "line_end": 8447,
+      "line_start": 8458,
+      "line_end": 8458,
       "text": "Una unión como error debe agruparse: `T ! (E1 | E2)`.",
       "text_sha256": "d90a85b7f5a75d2f4ce99268ea60efba491e2e545fe310236c17af94de0e7c49",
       "phase": "grammar",
@@ -8595,7 +8638,7 @@
       "status": "toolchain-limit",
       "classification_reason": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:8447#23-9-expresiones-de-tipo"
+        "TONDO_LANGUAGE_SPEC.md:8458#23-9-expresiones-de-tipo"
       ],
       "dimensions": {
         "positive": {
@@ -8626,11 +8669,11 @@
     },
     {
       "id": "TL01-23-9-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "23.9 Expresiones de tipo",
       "heading_anchor": "23-9-expresiones-de-tipo",
-      "line_start": 8449,
-      "line_end": 8451,
+      "line_start": 8460,
+      "line_end": 8462,
       "text": "`opaque_outcome` se limita semánticamente a las declaraciones enumeradas en .8. Su `generic_bound` debe demostrar `Discard`; el `!` opcional pertenece al canal exterior de la función y no al bound.",
       "text_sha256": "dd3f15343070e749ffa44690594c237aaed3b1cf9bb2f836ee859200cfc57b4c",
       "phase": "grammar",
@@ -8638,7 +8681,7 @@
       "status": "toolchain-limit",
       "classification_reason": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:8449#23-9-expresiones-de-tipo"
+        "TONDO_LANGUAGE_SPEC.md:8460#23-9-expresiones-de-tipo"
       ],
       "dimensions": {
         "positive": {
@@ -8669,11 +8712,11 @@
     },
     {
       "id": "TL01-23-9-R003",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "23.9 Expresiones de tipo",
       "heading_anchor": "23-9-expresiones-de-tipo",
-      "line_start": 8453,
-      "line_end": 8454,
+      "line_start": 8464,
+      "line_end": 8465,
       "text": "`ref T`, `mut T` y `var T` forman parte del tipo de función y no pueden combinarse con `...T`.",
       "text_sha256": "afebf1804e25ac2eb3482e713ed5443adfb5e295c143249c7dfa43d8c6ae8744",
       "phase": "grammar",
@@ -8681,7 +8724,7 @@
       "status": "toolchain-limit",
       "classification_reason": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:8453#23-9-expresiones-de-tipo"
+        "TONDO_LANGUAGE_SPEC.md:8464#23-9-expresiones-de-tipo"
       ],
       "dimensions": {
         "positive": {
@@ -8712,11 +8755,11 @@
     },
     {
       "id": "TL01-24-14-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "24.14 Concurrencia estructurada",
       "heading_anchor": "24-14-concurrencia-estructurada",
-      "line_start": 9463,
-      "line_end": 9463,
+      "line_start": 9474,
+      "line_end": 9474,
       "text": "Los dos fetches pueden progresar en paralelo, pero sus handles no pueden escapar del `scope`.",
       "text_sha256": "41173ee9d0d28a246d98f900ff58a52b5309ef2c9381d459c8adeebb14b13762",
       "phase": "integrated-examples",
@@ -8724,7 +8767,7 @@
       "status": "toolchain-limit",
       "classification_reason": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:9463#24-14-concurrencia-estructurada"
+        "TONDO_LANGUAGE_SPEC.md:9474#24-14-concurrencia-estructurada"
       ],
       "dimensions": {
         "positive": {
@@ -8755,11 +8798,11 @@
     },
     {
       "id": "TL01-24-16-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "24.16 Frontera raw con `Pointer[T]`",
       "heading_anchor": "24-16-frontera-raw-con-pointer-t",
-      "line_start": 9495,
-      "line_end": 9499,
+      "line_start": 9506,
+      "line_end": 9510,
       "text": "`readAddress` continúa siendo `unsafe` porque no puede validar procedencia, validez ni lifetime a partir del puntero. El llamador escribe `unsafe { readAddress(address) }` y hace visible el punto exacto donde acepta esas obligaciones. Una función segura solo podría ocultarlo tras recibir un handle seguro que mantuviera dichas invariantes.",
       "text_sha256": "daeba75b671046cbaf0397018f546d11b22e76e3547c9a095fe27c2c7665f4e7",
       "phase": "integrated-examples",
@@ -8767,7 +8810,7 @@
       "status": "toolchain-limit",
       "classification_reason": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:9495#24-16-frontera-raw-con-pointer-t"
+        "TONDO_LANGUAGE_SPEC.md:9506#24-16-frontera-raw-con-pointer-t"
       ],
       "dimensions": {
         "positive": {
@@ -8798,11 +8841,11 @@
     },
     {
       "id": "TL01-25-14-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "25.14 Punteros en código seguro y memoria manual implícita",
       "heading_anchor": "25-14-punteros-en-código-seguro-y-memoria-manual-implícita",
-      "line_start": 9611,
-      "line_end": 9611,
+      "line_start": 9622,
+      "line_end": 9622,
       "text": "Tondo seguro no expone lectura, escritura, offsets, casts, `malloc` ni `free` raw. `Pointer[T]` solo se opera dentro de `unsafe`; la capa FFI y los módulos de sistema deben encapsularlo tras APIs seguras siempre que sea posible. La identidad cotidiana utiliza `Ref[T]`, no direcciones.",
       "text_sha256": "e04bd65e28ebe83f67e3547d15de8634454cdd0482cbec2adc8bc874e7f234ca",
       "phase": "boundary",
@@ -8810,7 +8853,7 @@
       "status": "target-not-applicable",
       "classification_reason": "The requirement describes a deliberately absent or non-bootstrap target surface.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:9611#25-14-punteros-en-código-seguro-y-memoria-manual-implícita"
+        "TONDO_LANGUAGE_SPEC.md:9622#25-14-punteros-en-código-seguro-y-memoria-manual-implícita"
       ],
       "dimensions": {
         "positive": {
@@ -8841,11 +8884,11 @@
     },
     {
       "id": "TL01-25-22-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "25.22 Dispatch dinámico de traits",
       "heading_anchor": "25-22-dispatch-dinámico-de-traits",
-      "line_start": 9680,
-      "line_end": 9683,
+      "line_start": 9691,
+      "line_end": 9694,
       "text": "Los traits son constraints estáticos. Un resultado `impl Bound` conserva un único tipo concreto por declaración y tampoco introduce dispatch dinámico. La heterogeneidad dinámica debe ser cerrada y visible mediante enum, unión o callbacks.",
       "text_sha256": "d70976886642b8cce445610bba6a7292511c2adc32e10fab372c8a2a45129819",
       "phase": "boundary",
@@ -8853,7 +8896,7 @@
       "status": "target-not-applicable",
       "classification_reason": "The requirement describes a deliberately absent or non-bootstrap target surface.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:9680#25-22-dispatch-dinámico-de-traits"
+        "TONDO_LANGUAGE_SPEC.md:9691#25-22-dispatch-dinámico-de-traits"
       ],
       "dimensions": {
         "positive": {
@@ -8884,11 +8927,11 @@
     },
     {
       "id": "TL01-26-5-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "26.5 Criterio para añadir una característica al lenguaje",
       "heading_anchor": "26-5-criterio-para-añadir-una-característica-al-lenguaje",
-      "line_start": 9867,
-      "line_end": 9867,
+      "line_start": 9878,
+      "line_end": 9878,
       "text": "Una capacidad solo debe pasar de librería a lenguaje si cumple todos:",
       "text_sha256": "f16bcbd9180e3643845d04dfd9357f86e2e3d8b6b21f8d217ee4e05d8aa41bbb",
       "phase": "boundary",
@@ -8896,7 +8939,7 @@
       "status": "stdlib-pending",
       "classification_reason": "The requirement belongs to the standard-library contract, which is outside Tondo 0.1 language conformance.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:9867#26-5-criterio-para-añadir-una-característica-al-lenguaje"
+        "TONDO_LANGUAGE_SPEC.md:9878#26-5-criterio-para-añadir-una-característica-al-lenguaje"
       ],
       "dimensions": {
         "positive": {
@@ -8927,11 +8970,11 @@
     },
     {
       "id": "TL01-26-5-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "26.5 Criterio para añadir una característica al lenguaje",
       "heading_anchor": "26-5-criterio-para-añadir-una-característica-al-lenguaje",
-      "line_start": 9869,
-      "line_end": 9869,
+      "line_start": 9880,
+      "line_end": 9880,
       "text": "No puede expresarse con seguridad y ergonomía razonables como librería.",
       "text_sha256": "7e19191eb90ff67597c9d88e19f0d5456eb01cd570c312e1e609999aba447802",
       "phase": "boundary",
@@ -8939,7 +8982,7 @@
       "status": "stdlib-pending",
       "classification_reason": "The requirement belongs to the standard-library contract, which is outside Tondo 0.1 language conformance.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:9869#26-5-criterio-para-añadir-una-característica-al-lenguaje"
+        "TONDO_LANGUAGE_SPEC.md:9880#26-5-criterio-para-añadir-una-característica-al-lenguaje"
       ],
       "dimensions": {
         "positive": {
@@ -8970,11 +9013,11 @@
     },
     {
       "id": "TL01-26-6-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "26.6 Criterio de estabilidad",
       "heading_anchor": "26-6-criterio-de-estabilidad",
-      "line_start": 9917,
-      "line_end": 9918,
+      "line_start": 9928,
+      "line_end": 9929,
       "text": "El formateador y compilador deben poder indicar la edición del lenguaje y la versión exacta del formato o suite de conformidad que implementan.",
       "text_sha256": "2e659028be041b25b9466d6639d3d20c02fc80b4a79e29b8ccc0064843ccc717",
       "phase": "boundary",
@@ -8982,7 +9025,7 @@
       "status": "stdlib-pending",
       "classification_reason": "The requirement belongs to the standard-library contract, which is outside Tondo 0.1 language conformance.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:9917#26-6-criterio-de-estabilidad"
+        "TONDO_LANGUAGE_SPEC.md:9928#26-6-criterio-de-estabilidad"
       ],
       "dimensions": {
         "positive": {
@@ -9013,11 +9056,11 @@
     },
     {
       "id": "TL01-27-1-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "27.1 Modelo único",
       "heading_anchor": "27-1-modelo-único",
-      "line_start": 9940,
-      "line_end": 9942,
+      "line_start": 9951,
+      "line_end": 9953,
       "text": "La evaluación constante de 6.5 permanece deliberadamente pequeña. Un programa generador no es una función `comptime`: es un target separado del build y no puede llamarse desde fuente de aplicación.",
       "text_sha256": "58e0f18f5bc03888bcf7e08c78f5fd85d15bc4520697e2cae72a13f3b4ee337b",
       "phase": "metaprogramming",
@@ -9068,11 +9111,11 @@
     },
     {
       "id": "TL01-27-2-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "27.2 Declaración `derive`",
       "heading_anchor": "27-2-declaración-derive",
-      "line_start": 9962,
-      "line_end": 9967,
+      "line_start": 9973,
+      "line_end": 9978,
       "text": "`derive` es una declaración top-level. No tiene cuerpo, `pub`, `priv`, opciones, attributes ni forma abreviada sobre la declaración del tipo. La lista separada por `+` es semánticamente un conjunto de identidades nominales de trait; cada una debe aparecer una sola vez y la misma pareja trait/target no puede solicitarse en otra declaración del módulo. El formatter conserva el orden escrito y el toolchain normaliza la solicitud por identidad canónica antes de ejecutarla.",
       "text_sha256": "d4002c2988d217af9b436950b77bc72d344f49bcc0ef4a760b817f7dc525757e",
       "phase": "metaprogramming",
@@ -9123,11 +9166,11 @@
     },
     {
       "id": "TL01-27-2-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "27.2 Declaración `derive`",
       "heading_anchor": "27-2-declaración-derive",
-      "line_start": 9969,
-      "line_end": 9973,
+      "line_start": 9980,
+      "line_end": 9984,
       "text": "El target debe ser un record, enum o newtype nominal declarado en el mismo módulo. Sus argumentos deben ser exactamente los binders de `derive`, en el mismo orden y sin repetirlos. No se permite derivar para aliases, uniones, tuples, tipos intrínsecos ni tipos de otro módulo. Esta regla convierte la declaración en una autorización explícita del propietario.",
       "text_sha256": "51e6ff4eec595a94e0b61041f0c4487315a333eb603f75bd3122d8a2a6965b2f",
       "phase": "metaprogramming",
@@ -9178,11 +9221,11 @@
     },
     {
       "id": "TL01-27-2-R003",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "27.2 Declaración `derive`",
       "heading_anchor": "27-2-declaración-derive",
-      "line_start": 9975,
-      "line_end": 9984,
+      "line_start": 9986,
+      "line_end": 9995,
       "text": "Los bounds escritos en los binders son parte de la solicitud. Además, un provider puede introducir únicamente los bounds positivos mínimos necesarios sobre esos mismos binders; por ejemplo, el `impl Encode[Json] for Page[T]` generado puede requerir `T: Encode[Json] + Decode[Json]` cuando la expansión lo necesite. Los bounds y la cabecera exacta del `impl` aparecen en la expansión semántica y en la interfaz pública cuando sean observables. Para cada bound introducido, el compilador vuelve a comprobar la expansión sin ese bound; si continúa siendo válida, la salida se rechaza por redundante. Un provider no puede añadir parámetros genéricos, elegir tipos ocultos distintos según el entorno ni cambiar la declaración objetivo.",
       "text_sha256": "642303076c9986bc4187513849605707d86169c9e8cc0b9c0723e10636fedf80",
       "phase": "metaprogramming",
@@ -9233,11 +9276,11 @@
     },
     {
       "id": "TL01-27-3-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "27.3 Providers y resultado de `derive`",
       "heading_anchor": "27-3-providers-y-resultado-de-derive",
-      "line_start": 10000,
-      "line_end": 10006,
+      "line_start": 10011,
+      "line_end": 10017,
       "text": "No puede emitir helpers, tipos, globals, otra declaración `derive`, otra solicitud de generación ni un `impl` para un target o trait distinto. Puede utilizar paths completamente calificados dentro del body. La expansión completa se valida como fuente ordinaria. Orphan rules, terminación y coherencia continúan aplicándose; un `impl` manual solapado, dos providers que convergen en la misma cabecera o un impl generado que solape con otro impl válido producen `E1111`. Repetir la solicitud derive se detecta antes como `E2103`.",
       "text_sha256": "a5ec5a2ef68e541b09fedcf67865d35057b01b589638946a5ad751d0bad22c73",
       "phase": "metaprogramming",
@@ -9288,11 +9331,11 @@
     },
     {
       "id": "TL01-27-4-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "27.4 Acceso privado de un provider",
       "heading_anchor": "27-4-acceso-privado-de-un-provider",
-      "line_start": 10030,
-      "line_end": 10034,
+      "line_start": 10041,
+      "line_end": 10045,
       "text": "El `impl` generado se atribuye al mismo módulo a efectos de visibilidad. Esta concesión existe solo para la pareja exacta `(declaración derive, target, provider)` y no se propaga a helpers de otro paquete, a reflection en runtime ni a un generador general. El provider no puede enumerar otros tipos privados del módulo.",
       "text_sha256": "6b5b42d63f3754959455f61ae05c38a9142fa8f20776848b02e52b24da3e7071",
       "phase": "metaprogramming",
@@ -9343,11 +9386,11 @@
     },
     {
       "id": "TL01-27-5-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "27.5 Generadores declarados por el manifiesto",
       "heading_anchor": "27-5-generadores-declarados-por-el-manifiesto",
-      "line_start": 10064,
-      "line_end": 10068,
+      "line_start": 10075,
+      "line_end": 10079,
       "text": "Cada salida declarada debe aparecer exactamente una vez. Una salida adicional, ausente, duplicada, con otro módulo o fuera de su path produce `E2106` y descarta la generación completa. Los bytes aceptados se formatean canónicamente, reciben identidad de fuente generada y pasan por el lexer, parser, resolver y typechecker ordinarios.",
       "text_sha256": "ff77fa2408457ba146ea77e9d65df9dd25da2f16b5d3d1abbc37628ac242d1fe",
       "phase": "metaprogramming",
@@ -9398,11 +9441,11 @@
     },
     {
       "id": "TL01-27-5-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "27.5 Generadores declarados por el manifiesto",
       "heading_anchor": "27-5-generadores-declarados-por-el-manifiesto",
-      "line_start": 10070,
-      "line_end": 10074,
+      "line_start": 10081,
+      "line_end": 10085,
       "text": "Un generador general solo observa la clausura semántica pública de los roots declarados. Una lista vacía produce un modelo sin declaraciones y es la forma normal de un generador schema-first. No recibe bodies ni símbolos privados. Para generar a partir de un schema, descriptor o archivo de datos, ese contenido debe ser un input explícito; no puede abrir el archivo por su cuenta.",
       "text_sha256": "367ce2d42f26fd13cce8a88a5968c1f29d3fa18263d8e876af5535c831a4cab0",
       "phase": "metaprogramming",
@@ -9453,11 +9496,11 @@
     },
     {
       "id": "TL01-27-5-R003",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "27.5 Generadores declarados por el manifiesto",
       "heading_anchor": "27-5-generadores-declarados-por-el-manifiesto",
-      "line_start": 10076,
-      "line_end": 10080,
+      "line_start": 10087,
+      "line_end": 10091,
       "text": "Cada root, y toda declaración necesaria para resolver su firma o estructura, debe poder typecheckearse usando únicamente fuente escrita e interfaces de dependencias. Si depende de una salida de la ronda actual se produce `E2109`. Las declaraciones que no pertenezcan a esa clausura pueden referenciar fuente generada y se validan durante el typecheck completo posterior.",
       "text_sha256": "e96745bcd3edf815b7dde90d1e7ad503d121f713fc1e5d0bebf58833924b505e",
       "phase": "metaprogramming",
@@ -9508,11 +9551,11 @@
     },
     {
       "id": "TL01-27-7-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "27.7 Perfil hermético `meta`",
       "heading_anchor": "27-7-perfil-hermético-meta",
-      "line_start": 10125,
-      "line_end": 10129,
+      "line_start": 10136,
+      "line_end": 10140,
       "text": "Un run tiene presupuestos enteros declarados de pasos, memoria administrada y bytes de resultado. Alcanzar uno produce `E2107`; pedir una capacidad ausente produce `E2108`. El mismo programa, modelo, inputs, límites, toolchain y target debe producir exactamente los mismos bytes o los mismos diagnósticos ordenados. Un proveedor que no pueda cumplirlo no es válido para un build reproducible.",
       "text_sha256": "48bb98c8054411605e3c6b831e69661cb5f7751621046c8c3d989e5ef2712fd6",
       "phase": "metaprogramming",
@@ -9563,11 +9606,11 @@
     },
     {
       "id": "TL01-27-8-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "27.8 Fases y ausencia de ciclos",
       "heading_anchor": "27-8-fases-y-ausencia-de-ciclos",
-      "line_start": 10150,
-      "line_end": 10154,
+      "line_start": 10161,
+      "line_end": 10165,
       "text": "Ningún generador observa la salida de otro. La fuente generada no puede contener `derive`, registrar generadores ni crear una segunda ronda. Tampoco puede reemplazar un path escrito a mano o una salida de otro productor. Así, el grafo de generación es finito por construcción y su resultado no depende del orden de ejecución.",
       "text_sha256": "d116aee0949fd58076467a8a0bac9bad4c274df3c34cefb116afaf82672fd058",
       "phase": "metaprogramming",
@@ -9618,11 +9661,11 @@
     },
     {
       "id": "TL01-28-1-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "28.1 Un único contrato Tondo 0.1",
       "heading_anchor": "28-1-un-único-contrato-tondo-0-1",
-      "line_start": 10256,
-      "line_end": 10260,
+      "line_start": 10267,
+      "line_end": 10271,
       "text": "El corpus bootstrap y su suite de regresión conservan la evidencia que existía antes de integrar esta superficie. No constituyen una versión pública ni una edición alternativa: la primera publicación de Tondo 0.1 debe implementar el contrato consolidado y publicar nuevos hashes de conformidad.",
       "text_sha256": "afc5629402443b23dfbfea622891df90df53d1562c7ee66a6e793272726033c6",
       "phase": "testing",
@@ -9673,11 +9716,11 @@
     },
     {
       "id": "TL01-28-2-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "28.2 Árbol estático",
       "heading_anchor": "28-2-árbol-estático",
-      "line_start": 10287,
-      "line_end": 10288,
+      "line_start": 10298,
+      "line_end": 10299,
       "text": "no pueden aparecer en funciones, cierres, traits, `impl`, bloques ordinarios, scripts ni bodies de test; y",
       "text_sha256": "5925e8aa84d38434cdd47f9ef53792702a572152034ff3aeb13edeb1d6f0ad3c",
       "phase": "testing",
@@ -9728,11 +9771,11 @@
     },
     {
       "id": "TL01-28-3-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "28.3 Entradas ocultas e inferencia",
       "heading_anchor": "28-3-entradas-ocultas-e-inferencia",
-      "line_start": 10310,
-      "line_end": 10315,
+      "line_start": 10321,
+      "line_end": 10326,
       "text": "`E` es la unión cerrada inferida localmente y debe cumplir `Discard`; si no hay fallos, es `Never`. La entrada se vuelve suspendible cuando contiene una operación que exige suspensión, incluido `defer await`. No se escribe un modificador porque ninguna entrada es una API invocable. El body de test puede usar `return` sin valor, `fail` y `?`; el setup admite `fail` y `?`, pero un `return` que ocultaría descendientes produce `E1205`. Ninguna forma introduce `TestResult`.",
       "text_sha256": "695084a5fb930c2600ec3fabc0c995ce4409edd66e184b6209ac9a1efedf1dab",
       "phase": "testing",
@@ -9783,11 +9826,11 @@
     },
     {
       "id": "TL01-28-5-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "28.5 Frontera con producción",
       "heading_anchor": "28-5-frontera-con-producción",
-      "line_start": 10350,
-      "line_end": 10354,
+      "line_start": 10361,
+      "line_end": 10365,
       "text": "Una declaración de test en producción o script produce `E2001`. Alterar desde test la API sellada, exportar una declaración de test o importar `std.testing` desde producción produce `E2003`. La validez del producto se comprueba antes de aplicar el overlay: los tests no pueden reparar una unidad de producción inválida.",
       "text_sha256": "3d3ff001823cbee9f12a90e45e0830608dc7b2fc82660616b5219f703ed37f45",
       "phase": "testing",
@@ -9838,7 +9881,7 @@
     },
     {
       "id": "TL01-4-2-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "4.2 Inmutabilidad profunda por defecto",
       "heading_anchor": "4-2-inmutabilidad-profunda-por-defecto",
       "line_start": 366,
@@ -9881,7 +9924,7 @@
     },
     {
       "id": "TL01-4-3-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "4.3 Contratos visibles",
       "heading_anchor": "4-3-contratos-visibles",
       "line_start": 385,
@@ -9924,7 +9967,7 @@
     },
     {
       "id": "TL01-5-10-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "5.10 Literales de string",
       "heading_anchor": "5-10-literales-de-string",
       "line_start": 742,
@@ -9967,7 +10010,7 @@
     },
     {
       "id": "TL01-5-10-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "5.10 Literales de string",
       "heading_anchor": "5-10-literales-de-string",
       "line_start": 752,
@@ -10010,7 +10053,7 @@
     },
     {
       "id": "TL01-5-10-R003",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "5.10 Literales de string",
       "heading_anchor": "5-10-literales-de-string",
       "line_start": 784,
@@ -10053,7 +10096,7 @@
     },
     {
       "id": "TL01-5-11-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "5.11 Literales de colecciones",
       "heading_anchor": "5-11-literales-de-colecciones",
       "line_start": 828,
@@ -10096,7 +10139,7 @@
     },
     {
       "id": "TL01-5-4-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "5.4 Identificadores",
       "heading_anchor": "5-4-identificadores",
       "line_start": 522,
@@ -10139,7 +10182,7 @@
     },
     {
       "id": "TL01-5-4-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "5.4 Identificadores",
       "heading_anchor": "5-4-identificadores",
       "line_start": 538,
@@ -10182,7 +10225,7 @@
     },
     {
       "id": "TL01-5-4-R003",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "5.4 Identificadores",
       "heading_anchor": "5-4-identificadores",
       "line_start": 543,
@@ -10225,7 +10268,7 @@
     },
     {
       "id": "TL01-5-4-R004",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "5.4 Identificadores",
       "heading_anchor": "5-4-identificadores",
       "line_start": 553,
@@ -10268,7 +10311,7 @@
     },
     {
       "id": "TL01-5-5-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "5.5 Palabras reservadas",
       "heading_anchor": "5-5-palabras-reservadas",
       "line_start": 619,
@@ -10311,7 +10354,7 @@
     },
     {
       "id": "TL01-5-7-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "5.7 Literales enteros",
       "heading_anchor": "5-7-literales-enteros",
       "line_start": 676,
@@ -10354,7 +10397,7 @@
     },
     {
       "id": "TL01-5-7-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "5.7 Literales enteros",
       "heading_anchor": "5-7-literales-enteros",
       "line_start": 686,
@@ -10397,7 +10440,7 @@
     },
     {
       "id": "TL01-5-8-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "5.8 Literales flotantes",
       "heading_anchor": "5-8-literales-flotantes",
       "line_start": 704,
@@ -10440,7 +10483,7 @@
     },
     {
       "id": "TL01-5-9-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "5.9 Literales de caracteres",
       "heading_anchor": "5-9-literales-de-caracteres",
       "line_start": 718,
@@ -10483,7 +10526,7 @@
     },
     {
       "id": "TL01-5-9-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "5.9 Literales de caracteres",
       "heading_anchor": "5-9-literales-de-caracteres",
       "line_start": 720,
@@ -10526,7 +10569,7 @@
     },
     {
       "id": "TL01-6-3-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "6.3 Imports",
       "heading_anchor": "6-3-imports",
       "line_start": 907,
@@ -10569,7 +10612,7 @@
     },
     {
       "id": "TL01-6-5-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "6.5 Constantes",
       "heading_anchor": "6-5-constantes",
       "line_start": 939,
@@ -10612,7 +10655,7 @@
     },
     {
       "id": "TL01-6-5-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "6.5 Constantes",
       "heading_anchor": "6-5-constantes",
       "line_start": 957,
@@ -10655,7 +10698,7 @@
     },
     {
       "id": "TL01-6-6-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "6.6 Módulos ejecutables",
       "heading_anchor": "6-6-módulos-ejecutables",
       "line_start": 961,
@@ -10719,7 +10762,7 @@
     },
     {
       "id": "TL01-6-7-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "6.7 Identidad de paquete, edición y resolución",
       "heading_anchor": "6-7-identidad-de-paquete-edición-y-resolución",
       "line_start": 972,
@@ -10762,7 +10805,7 @@
     },
     {
       "id": "TL01-6-7-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "6.7 Identidad de paquete, edición y resolución",
       "heading_anchor": "6-7-identidad-de-paquete-edición-y-resolución",
       "line_start": 986,
@@ -10805,7 +10848,7 @@
     },
     {
       "id": "TL01-6-7-R003",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "6.7 Identidad de paquete, edición y resolución",
       "heading_anchor": "6-7-identidad-de-paquete-edición-y-resolución",
       "line_start": 999,
@@ -10848,7 +10891,7 @@
     },
     {
       "id": "TL01-6-8-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "6.8 Source sets, targets y generación",
       "heading_anchor": "6-8-source-sets-targets-y-generación",
       "line_start": 1029,
@@ -10891,7 +10934,7 @@
     },
     {
       "id": "TL01-6-8-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "6.8 Source sets, targets y generación",
       "heading_anchor": "6-8-source-sets-targets-y-generación",
       "line_start": 1044,
@@ -10946,7 +10989,7 @@
     },
     {
       "id": "TL01-7-10-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "7.10 Namespaces",
       "heading_anchor": "7-10-namespaces",
       "line_start": 1272,
@@ -10989,7 +11032,7 @@
     },
     {
       "id": "TL01-7-11-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "7.11 Alcance y orden de resolución",
       "heading_anchor": "7-11-alcance-y-orden-de-resolución",
       "line_start": 1306,
@@ -11032,7 +11075,7 @@
     },
     {
       "id": "TL01-7-2-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "7.2 Bindings mutables",
       "heading_anchor": "7-2-bindings-mutables",
       "line_start": 1078,
@@ -11075,7 +11118,7 @@
     },
     {
       "id": "TL01-7-3-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "7.3 Desestructuración",
       "heading_anchor": "7-3-desestructuración",
       "line_start": 1097,
@@ -11118,7 +11161,7 @@
     },
     {
       "id": "TL01-7-4-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "7.4 Ausencia de shadowing",
       "heading_anchor": "7-4-ausencia-de-shadowing",
       "line_start": 1103,
@@ -11161,7 +11204,7 @@
     },
     {
       "id": "TL01-7-4-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "7.4 Ausencia de shadowing",
       "heading_anchor": "7-4-ausencia-de-shadowing",
       "line_start": 1114,
@@ -11204,7 +11247,7 @@
     },
     {
       "id": "TL01-7-6-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "7.6 Visibilidad de records",
       "heading_anchor": "7-6-visibilidad-de-records",
       "line_start": 1169,
@@ -11247,7 +11290,7 @@
     },
     {
       "id": "TL01-7-6-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "7.6 Visibilidad de records",
       "heading_anchor": "7-6-visibilidad-de-records",
       "line_start": 1170,
@@ -11290,7 +11333,7 @@
     },
     {
       "id": "TL01-7-6-R003",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "7.6 Visibilidad de records",
       "heading_anchor": "7-6-visibilidad-de-records",
       "line_start": 1179,
@@ -11333,7 +11376,7 @@
     },
     {
       "id": "TL01-7-6-R004",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "7.6 Visibilidad de records",
       "heading_anchor": "7-6-visibilidad-de-records",
       "line_start": 1184,
@@ -11376,7 +11419,7 @@
     },
     {
       "id": "TL01-7-6-R005",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "7.6 Visibilidad de records",
       "heading_anchor": "7-6-visibilidad-de-records",
       "line_start": 1194,
@@ -11419,7 +11462,7 @@
     },
     {
       "id": "TL01-7-7-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "7.7 Visibilidad de enums",
       "heading_anchor": "7-7-visibilidad-de-enums",
       "line_start": 1214,
@@ -11462,7 +11505,7 @@
     },
     {
       "id": "TL01-7-9-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "7.9 APIs públicas bien formadas",
       "heading_anchor": "7-9-apis-públicas-bien-formadas",
       "line_start": 1234,
@@ -11505,7 +11548,7 @@
     },
     {
       "id": "TL01-7-9-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "7.9 APIs públicas bien formadas",
       "heading_anchor": "7-9-apis-públicas-bien-formadas",
       "line_start": 1245,
@@ -11548,7 +11591,7 @@
     },
     {
       "id": "TL01-8-10-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "8.10 Valores `Copy` y valores afines",
       "heading_anchor": "8-10-valores-copy-y-valores-afines",
       "line_start": 1562,
@@ -11591,7 +11634,7 @@
     },
     {
       "id": "TL01-8-10-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "8.10 Valores `Copy` y valores afines",
       "heading_anchor": "8-10-valores-copy-y-valores-afines",
       "line_start": 1587,
@@ -11634,7 +11677,7 @@
     },
     {
       "id": "TL01-8-10-R003",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "8.10 Valores `Copy` y valores afines",
       "heading_anchor": "8-10-valores-copy-y-valores-afines",
       "line_start": 1694,
@@ -11677,7 +11720,7 @@
     },
     {
       "id": "TL01-8-10-R004",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "8.10 Valores `Copy` y valores afines",
       "heading_anchor": "8-10-valores-copy-y-valores-afines",
       "line_start": 1716,
@@ -11720,7 +11763,7 @@
     },
     {
       "id": "TL01-8-11-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "8.11 Igualdad",
       "heading_anchor": "8-11-igualdad",
       "line_start": 1738,
@@ -11763,7 +11806,7 @@
     },
     {
       "id": "TL01-8-11-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "8.11 Igualdad",
       "heading_anchor": "8-11-igualdad",
       "line_start": 1744,
@@ -11806,7 +11849,7 @@
     },
     {
       "id": "TL01-8-12-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "8.12 Capacidad `Key`",
       "heading_anchor": "8-12-capacidad-key",
       "line_start": 1776,
@@ -11849,7 +11892,7 @@
     },
     {
       "id": "TL01-8-13-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "8.13 Representación y ABI",
       "heading_anchor": "8-13-representación-y-abi",
       "line_start": 1794,
@@ -11892,7 +11935,7 @@
     },
     {
       "id": "TL01-8-13-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "8.13 Representación y ABI",
       "heading_anchor": "8-13-representación-y-abi",
       "line_start": 1805,
@@ -11935,7 +11978,7 @@
     },
     {
       "id": "TL01-8-13-R003",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "8.13 Representación y ABI",
       "heading_anchor": "8-13-representación-y-abi",
       "line_start": 1810,
@@ -11978,7 +12021,7 @@
     },
     {
       "id": "TL01-8-13-R004",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "8.13 Representación y ABI",
       "heading_anchor": "8-13-representación-y-abi",
       "line_start": 1825,
@@ -12021,7 +12064,7 @@
     },
     {
       "id": "TL01-8-7-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "8.7 Aliases transparentes",
       "heading_anchor": "8-7-aliases-transparentes",
       "line_start": 1483,
@@ -12064,7 +12107,7 @@
     },
     {
       "id": "TL01-9-10-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "9.10 Tipos recursivos",
       "heading_anchor": "9-10-tipos-recursivos",
       "line_start": 2266,
@@ -12107,7 +12150,7 @@
     },
     {
       "id": "TL01-9-2-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "9.2 Records",
       "heading_anchor": "9-2-records",
       "line_start": 1922,
@@ -12150,7 +12193,7 @@
     },
     {
       "id": "TL01-9-3-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "9.3 Actualización de records",
       "heading_anchor": "9-3-actualización-de-records",
       "line_start": 1959,
@@ -12193,7 +12236,7 @@
     },
     {
       "id": "TL01-9-3-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "9.3 Actualización de records",
       "heading_anchor": "9-3-actualización-de-records",
       "line_start": 1960,
@@ -12236,7 +12279,7 @@
     },
     {
       "id": "TL01-9-3-R003",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "9.3 Actualización de records",
       "heading_anchor": "9-3-actualización-de-records",
       "line_start": 1961,
@@ -12279,7 +12322,7 @@
     },
     {
       "id": "TL01-9-3-R004",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "9.3 Actualización de records",
       "heading_anchor": "9-3-actualización-de-records",
       "line_start": 1970,
@@ -12322,7 +12365,7 @@
     },
     {
       "id": "TL01-9-5-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "9.5 Uniones estructurales",
       "heading_anchor": "9-5-uniones-estructurales",
       "line_start": 2051,
@@ -12365,7 +12408,7 @@
     },
     {
       "id": "TL01-9-5-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "9.5 Uniones estructurales",
       "heading_anchor": "9-5-uniones-estructurales",
       "line_start": 2052,
@@ -12408,11 +12451,11 @@
     },
     {
       "id": "TL01-APNDICE-D-LAYOUT-CONVENCIONAL-DE-PROYECTOS-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "Apéndice D. Layout convencional de proyectos",
       "heading_anchor": "apéndice-d-layout-convencional-de-proyectos",
-      "line_start": 10981,
-      "line_end": 10987,
+      "line_start": 10992,
+      "line_end": 10998,
       "text": "La configuración humana opcional es `tondo.toml`; define nombre de paquete, edición, target, perfil, capabilities, features y aliases de dependencias, pero no puede declarar módulos alternativos ni cambiar la semántica de imports. Un `tondo.lock.toml` generado fija las identidades externas. Estos archivos son toolchain inputs, no unidades de compilación Tondo y no se importan desde `.to`. El compilador recibe finalmente el grafo cerrado interno y conserva la misma semántica que tendría un manifiesto explícito.",
       "text_sha256": "54c76c7b983d3bf27278039a24aec2e178996e84e6ff3973f587b08df60bda48",
       "phase": "language-contract",
@@ -12463,7 +12506,7 @@
     },
     {
       "id": "TL01-BINDING-PRESTADO-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "Binding prestado",
       "heading_anchor": "binding-prestado",
       "line_start": 4927,
@@ -12506,7 +12549,7 @@
     },
     {
       "id": "TL01-BINDING-PRESTADO-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "Binding prestado",
       "heading_anchor": "binding-prestado",
       "line_start": 4930,
@@ -12549,7 +12592,7 @@
     },
     {
       "id": "TL01-BINDING-PRESTADO-R003",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "Binding prestado",
       "heading_anchor": "binding-prestado",
       "line_start": 4940,
@@ -12592,11 +12635,11 @@
     },
     {
       "id": "TL01-C-3-FIXTURES-ESPECIALIZADOS-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "C.3 Fixtures especializados",
       "heading_anchor": "c-3-fixtures-especializados",
-      "line_start": 10737,
-      "line_end": 10748,
+      "line_start": 10748,
+      "line_end": 10759,
       "text": "| Fixture | Declaraciones inyectadas | |---|---| | `spec.cursor` | `Query`, `Row`, `DatabaseError`, `RowCursor`, `Database.openRows`, `RowCursor.close` y su `impl Iterator[Row]`. | | `spec.resource` | `fn acquire(): Resource ! AcquireError`. | | `spec.domain` | `fn decodeUser(bytes: Bytes): User ! std.json.DecodeError`; `User` debe declararse en el propio fence. | | `spec.settings` | Binding de módulo `fs`; aliases `Path = fs.Path`, `IoError = fs.IoError`; tipos `DecodeError`, `Settings`; `fn decodeSettings(Bytes): Settings ! DecodeError`. | | `spec.user` | Tipos `UserId` y `User` definidos en C.4. | | `spec.console` | Binding de módulo `console = std.console`. | | `spec.jobs` | Tipos `Deque[T]`, `Job`, `JobError` y las operaciones de C.4. | | `spec.application` | Tipos y operaciones de aplicación de C.4; el import `std.process` permanece en el fence. | | `spec.async_page` | Binding `console = std.console`; tipos suspendibles de C.4. | | `spec.process` | Interfaces de proceso de C.2; los imports permanecen en el script. |",
       "text_sha256": "a2ee78e9e35d276011c83c97429aeac3cf7d81f3b54769f663a69a917765a2c4",
       "phase": "language-contract",
@@ -12604,7 +12647,7 @@
       "status": "draft-pending",
       "classification_reason": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:10737#c-3-fixtures-especializados"
+        "TONDO_LANGUAGE_SPEC.md:10748#c-3-fixtures-especializados"
       ],
       "dimensions": {
         "positive": {
@@ -12635,11 +12678,11 @@
     },
     {
       "id": "TL01-C-6-SERIALIZACIN-CANNICA-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "C.6 Serialización canónica",
       "heading_anchor": "c-6-serialización-canónica",
-      "line_start": 10965,
-      "line_end": 10969,
+      "line_start": 10976,
+      "line_end": 10980,
       "text": "El SHA-256 esperado de esos bytes es `714da31de9e190eed73361d6d3ded585661c9878a355994db1b160f913d529b8`. Un cambio de una firma, capability, requirement, binding, orden o byte exige publicar un hash nuevo y una nueva revisión del Markdown. De este modo dos runners no pueden usar stubs distintos y afirmar que comprobaron el mismo ejemplo.",
       "text_sha256": "191b2de6a7a4da398282c49bde84f223825e103a22acd4582dd60cc4e952a7bb",
       "phase": "language-contract",
@@ -12690,7 +12733,7 @@
     },
     {
       "id": "TL01-CONTRATO-NORMATIVO-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "Contrato normativo",
       "heading_anchor": "contrato-normativo",
       "line_start": 5687,
@@ -12733,7 +12776,7 @@
     },
     {
       "id": "TL01-CONTRATO-NORMATIVO-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "Contrato normativo",
       "heading_anchor": "contrato-normativo",
       "line_start": 5701,
@@ -12776,7 +12819,7 @@
     },
     {
       "id": "TL01-CONTRATO-NORMATIVO-R003",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "Contrato normativo",
       "heading_anchor": "contrato-normativo",
       "line_start": 5708,
@@ -12819,7 +12862,7 @@
     },
     {
       "id": "TL01-ESTRATEGIA-DE-LA-IMPLEMENTACIN-DE-REFERENCIA-NO-NORMATIVO-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "Estrategia de la implementación de referencia (no normativo)",
       "heading_anchor": "estrategia-de-la-implementación-de-referencia-no-normativo",
       "line_start": 5731,
@@ -12862,7 +12905,7 @@
     },
     {
       "id": "TL01-FRONTERA-DE-SEGURIDAD-Y-COMPORTAMIENTO-INDEFINIDO-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "Frontera de seguridad y comportamiento indefinido",
       "heading_anchor": "frontera-de-seguridad-y-comportamiento-indefinido",
       "line_start": 5923,
@@ -12905,7 +12948,7 @@
     },
     {
       "id": "TL01-FRONTERA-DE-SEGURIDAD-Y-COMPORTAMIENTO-INDEFINIDO-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "Frontera de seguridad y comportamiento indefinido",
       "heading_anchor": "frontera-de-seguridad-y-comportamiento-indefinido",
       "line_start": 5956,
@@ -12948,7 +12991,7 @@
     },
     {
       "id": "TL01-FRONTERA-DE-SEGURIDAD-Y-COMPORTAMIENTO-INDEFINIDO-R003",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "Frontera de seguridad y comportamiento indefinido",
       "heading_anchor": "frontera-de-seguridad-y-comportamiento-indefinido",
       "line_start": 5994,
@@ -12991,7 +13034,7 @@
     },
     {
       "id": "TL01-FRONTERA-DE-SEGURIDAD-Y-COMPORTAMIENTO-INDEFINIDO-R004",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "Frontera de seguridad y comportamiento indefinido",
       "heading_anchor": "frontera-de-seguridad-y-comportamiento-indefinido",
       "line_start": 5995,
@@ -13034,7 +13077,7 @@
     },
     {
       "id": "TL01-GARANTA-DE-PROGRESO-COOPERATIVO-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "Garantía de progreso cooperativo",
       "heading_anchor": "garantía-de-progreso-cooperativo",
       "line_start": 6077,
@@ -13077,7 +13120,7 @@
     },
     {
       "id": "TL01-GARANTA-DE-PROGRESO-COOPERATIVO-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "Garantía de progreso cooperativo",
       "heading_anchor": "garantía-de-progreso-cooperativo",
       "line_start": 6082,
@@ -13120,7 +13163,7 @@
     },
     {
       "id": "TL01-GARANTA-DE-PROGRESO-COOPERATIVO-R003",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "Garantía de progreso cooperativo",
       "heading_anchor": "garantía-de-progreso-cooperativo",
       "line_start": 6093,
@@ -13163,7 +13206,7 @@
     },
     {
       "id": "TL01-GARANTA-DE-PROGRESO-COOPERATIVO-R004",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "Garantía de progreso cooperativo",
       "heading_anchor": "garantía-de-progreso-cooperativo",
       "line_start": 6098,
@@ -13206,7 +13249,7 @@
     },
     {
       "id": "TL01-LOCAL-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "Local",
       "heading_anchor": "local",
       "line_start": 126,
@@ -13249,11 +13292,11 @@
     },
     {
       "id": "TL01-LXICO-Y-SINTAXIS-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "Léxico y sintaxis",
       "heading_anchor": "léxico-y-sintaxis",
-      "line_start": 7567,
-      "line_end": 7574,
+      "line_start": 7578,
+      "line_end": 7585,
       "text": "| Código | Nombre estable | Condición primaria | |---|---|---| | `E0001` | `invalid-utf8` | Byte no válido en una fuente que debe ser UTF-8. | | `E0002` | `invalid-token` | Carácter o secuencia sin token léxico. | | `E0003` | `malformed-literal` | Literal numérico, string, char o interpolación mal formado. | | `E0004` | `invalid-syntax` | Los tokens no forman la producción requerida. | | `E0005` | `invalid-operator-chain` | Cadena de operadores prohibida, incluida una comparación encadenada. | | `E0006` | `invalid-source-form` | Mezcla o selección inválida de forma módulo, script o snippet. |",
       "text_sha256": "47057eccf27d6971c37b9140aa7d3f03898f445676302818b3aab169a48c6c59",
       "phase": "language-contract",
@@ -13329,11 +13372,11 @@
     },
     {
       "id": "TL01-MUTACIN-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "Mutación",
       "heading_anchor": "mutación",
-      "line_start": 10516,
-      "line_end": 10517,
+      "line_start": 10527,
+      "line_end": 10528,
       "text": "`var T` presta un lvalue completo y exclusivo; permite reemplazar sin conservar extensión o redimensionar colecciones y no puede recibir una región parcial.",
       "text_sha256": "c3855b243871558b52fd3ec33025014ddb016da9dc9fdd3e808d8d819b771caf",
       "phase": "language-contract",
@@ -13341,7 +13384,7 @@
       "status": "toolchain-limit",
       "classification_reason": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:10516#mutación"
+        "TONDO_LANGUAGE_SPEC.md:10527#mutación"
       ],
       "dimensions": {
         "positive": {
@@ -13372,11 +13415,11 @@
     },
     {
       "id": "TL01-OPTION-RESULT-Y-PROPAGACIN-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "Option, Result y propagación",
       "heading_anchor": "option-result-y-propagación",
-      "line_start": 7624,
-      "line_end": 7629,
+      "line_start": 7635,
+      "line_end": 7640,
       "text": "| Código | Nombre estable | Condición primaria | |---|---|---| | `E1301` | `incompatible-error-propagation` | `?` no puede representar el canal propagado en la firma envolvente. | | `E1302` | `invalid-fail-context` | `fail` aparece sin error compatible. | | `E1303` | `discarded-result` | Expresión no `Unit` se abandona sin uso ni `_ =`. | | `E1304` | `invalid-result-construction` | `ok`, `err`, `some` o `none` carece de contexto único o payload válido. |",
       "text_sha256": "aa79ada27b4bf11108eb7756cbc9c4cda776a8447092eadbba3beb0bc4e8f890",
       "phase": "language-contract",
@@ -13440,11 +13483,11 @@
     },
     {
       "id": "TL01-OWNERSHIP-PRSTAMOS-Y-CLEANUP-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "Ownership, préstamos y cleanup",
       "heading_anchor": "ownership-préstamos-y-cleanup",
-      "line_start": 7633,
-      "line_end": 7645,
+      "line_start": 7644,
+      "line_end": 7656,
       "text": "| Código | Nombre estable | Condición primaria | |---|---|---| | `E1401` | `use-after-move` | Se usa un binding no disponible después de un movimiento. | | `E1402` | `invalid-borrow-lifetime` | Un préstamo escapa, sobrevive a su origen o cruza una frontera prohibida. | | `E1403` | `overlapping-mutable-borrow` | Solapamiento estáticamente demostrable entre préstamos incompatibles. | | `E1404` | `terminal-value-not-consumed` | Una obligación terminal alcanza final, `return`, `fail`, `?`, `break` o `continue` sin consumo o guard. | | `E1405` | `duplicate-assignment-destination` | Destinos que deben ser distintos se solapan estáticamente. | | `E1406` | `invalid-affine-transfer` | Movimiento parcial, duplicado o handoff afín no confirmable. | | `E1407` | `invalid-call-mode` | El callable requiere `CallMut` o `CallOnce` y el lvalue/ownership no lo permite. | | `E1408` | `terminal-overwrite` | Una escritura abandonaría el valor terminal anterior. | | `E1409` | `discard-requires-capability` | `_ =` o abandono genérico carece de `Discard`. | | `E1410` | `invalid-defer` | Registro diferido viola aridad afín, sincronía, resultado o consumo único. | | `E1411` | `invalid-assignment-target` | El lvalue no concede la escritura, preservación de extensión o presencia que exige la asignación. |",
       "text_sha256": "8655607d6db435e94e3ff378b33be5b9bcbaa05e8925f98782c3be709c5f4a32",
       "phase": "language-contract",
@@ -13568,11 +13611,11 @@
     },
     {
       "id": "TL01-OWNERSHIP-Y-CAPACIDADES-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "Ownership y capacidades",
       "heading_anchor": "ownership-y-capacidades",
-      "line_start": 10538,
-      "line_end": 10538,
+      "line_start": 10549,
+      "line_end": 10549,
       "text": "Un valor con obligación terminal debe consumirse explícitamente o reservarse con `defer`.",
       "text_sha256": "2c650cd89af6257879f439561118973f5850a2ba57d1bd4aec356c7b8cead101",
       "phase": "language-contract",
@@ -13580,7 +13623,7 @@
       "status": "toolchain-limit",
       "classification_reason": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:10538#ownership-y-capacidades"
+        "TONDO_LANGUAGE_SPEC.md:10549#ownership-y-capacidades"
       ],
       "dimensions": {
         "positive": {
@@ -13611,7 +13654,7 @@
     },
     {
       "id": "TL01-PEQUEO-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "Pequeño",
       "heading_anchor": "pequeño",
       "line_start": 118,
@@ -13654,7 +13697,7 @@
     },
     {
       "id": "TL01-PREDECIBLE-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "Predecible",
       "heading_anchor": "predecible",
       "line_start": 122,
@@ -13697,7 +13740,7 @@
     },
     {
       "id": "TL01-PROTOCOLOS-DE-LLAMADA-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "Protocolos de llamada",
       "heading_anchor": "protocolos-de-llamada",
       "line_start": 3614,
@@ -13740,7 +13783,7 @@
     },
     {
       "id": "TL01-PROTOCOLOS-DE-LLAMADA-R002",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "Protocolos de llamada",
       "heading_anchor": "protocolos-de-llamada",
       "line_start": 3618,
@@ -13783,7 +13826,7 @@
     },
     {
       "id": "TL01-PROTOCOLOS-DE-LLAMADA-R003",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "Protocolos de llamada",
       "heading_anchor": "protocolos-de-llamada",
       "line_start": 3626,
@@ -13826,7 +13869,7 @@
     },
     {
       "id": "TL01-PROTOCOLOS-DE-LLAMADA-R004",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "Protocolos de llamada",
       "heading_anchor": "protocolos-de-llamada",
       "line_start": 3669,
@@ -13882,7 +13925,7 @@
     },
     {
       "id": "TL01-RECORD-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "Record",
       "heading_anchor": "record",
       "line_start": 4990,
@@ -13925,7 +13968,7 @@
     },
     {
       "id": "TL01-SEGURO-POR-DEFECTO-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "Seguro por defecto",
       "heading_anchor": "seguro-por-defecto",
       "line_start": 130,
@@ -13968,11 +14011,11 @@
     },
     {
       "id": "TL01-TIPOS-DECLARACIONES-GENRICOS-Y-TRAITS-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "Tipos, declaraciones, genéricos y traits",
       "heading_anchor": "tipos-declaraciones-genéricos-y-traits",
-      "line_start": 7591,
-      "line_end": 7609,
+      "line_start": 7602,
+      "line_end": 7620,
       "text": "| Código | Nombre estable | Condición primaria | |---|---|---| | `E1101` | `missing-type-context` | Inferencia local sin solución única, incluido un literal vacío. | | `E1102` | `type-mismatch` | Tipo obtenido incompatible con el tipo exacto esperado. | | `E1103` | `invalid-conversion` | Conversión no permitida o constructor de conversión incompatible. | | `E1104` | `invalid-generic-arguments` | Aridad, orden o binder genérico inválido. | | `E1105` | `unsatisfied-bound` | Un tipo no satisface un trait, capacidad o protocolo requerido. | | `E1106` | `recursive-alias` | Ciclo en aliases transparentes. | | `E1107` | `nonproductive-type` | Tipo nominal recursivo sin base finita. | | `E1108` | `invalid-function-coercion` | Un cierre concreto no puede convertirse al `fn(...)` esperado. | | `E1109` | `uninitialized-binding` | Binding declarado sin inicializador. | | `E1110` | `trait-is-not-a-value` | Trait usado como tipo de valor fuera de un constraint. | | `E1111` | `overlapping-impl` | Dos cabeceras de `impl` se unifican según 12.6. | | `E1112` | `nonterminating-trait-resolution` | El análisis de cambio de tamaño rechaza un ciclo de bounds. | | `E1113` | `invalid-iterator-implementation` | Un target tendría más de un tipo de elemento `Iterator`. | | `E1114` | `invalid-impl-contract` | Un `impl` no coincide exactamente con su trait o viola orphan rules. | | `E1115` | `invalid-declaration` | Declaración semánticamente mal formada sin código más específico. | | `E1116` | `duplicate-map-key` | Un literal de map repite una clave constante. | | `E1117` | `invalid-opaque-result` | Un resultado opaco carece de testigo normal o viola `Discard`, unicidad concreta o bounds publicados. |",
       "text_sha256": "6551cf3de1e955b657a1df28f9a1dc9656f1b3e169bff1c57450be030bf0fb7e",
       "phase": "language-contract",
@@ -14140,11 +14183,11 @@
     },
     {
       "id": "TL01-VISIBILIDAD-Y-API-R001",
-      "revision": "0.1@241da23ea49c9303",
+      "revision": "0.1@0be283f1032d1a53",
       "heading": "Visibilidad y API",
       "heading_anchor": "visibilidad-y-api",
-      "line_start": 7649,
-      "line_end": 7655,
+      "line_start": 7660,
+      "line_end": 7666,
       "text": "| Código | Nombre estable | Condición primaria | |---|---|---| | `E1501` | `inaccessible-symbol` | Símbolo o campo existe, pero no es visible desde el módulo actual. | | `E1502` | `invalid-public-construction` | Construcción pública intenta nombrar o fijar estado privado. | | `E1503` | `private-type-in-public-api` | Firma pública expone un tipo no exportado. | | `E1504` | `invalid-method-owner` | El módulo no puede declarar el método inherente para ese owner. | | `E1505` | `member-name-conflict` | Campo, método o variante viola las reglas de unicidad del owner. |",
       "text_sha256": "73c2bb1086153e333da3e4350bea3bc23d5f434799ba4a99a863adfebf0eee13",
       "phase": "language-contract",

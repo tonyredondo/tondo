@@ -1997,10 +1997,10 @@ pub type Snapshot
 pub fn snapshot(): Snapshot ! EnvError
 pub fn Name.fromText(value: String): Name ! EnvError
 pub fn Name.fromBytes(value: bytes.Bytes): Name ! EnvError
-pub fn Snapshot.arguments(ref self): Array[Value]
-pub fn Snapshot.get(ref self, name: Name): Option[Value] ! EnvError
-pub fn Value.asText(ref self): Option[String]
-pub fn Value.asBytes(ref self): bytes.Bytes
+pub fn Snapshot.arguments(self): Array[Value]
+pub fn Snapshot.get(self, name: Name): Option[Value] ! EnvError
+pub fn Value.asText(self): Option[String]
+pub fn Value.asBytes(self): bytes.Bytes
 ~~~
 
 `Name.fromText` codifica el nombre en UTF-8 sin normalización Unicode;
@@ -3081,7 +3081,7 @@ declare rechaza el programa estáticamente con `E1008`. La superficie pública
 pub fn stdin(): std.io.Reader ! ConsoleError
 pub fn stdout(): std.io.Writer ! ConsoleError
 pub fn stderr(): std.io.Writer ! ConsoleError
-pub fn readLine(var input: std.io.Reader): String? ! ConsoleError
+pub fn readLine(input: var std.io.Reader): String? ! ConsoleError
 pub fn print(value: String): Unit ! ConsoleError
 pub fn println(value: String): Unit ! ConsoleError
 pub fn flush(): Unit ! ConsoleError
