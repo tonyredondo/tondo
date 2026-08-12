@@ -205,9 +205,20 @@ fn pseudocode_record(file: &str, fence: &tondo_conformance::document::DocumentFe
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     #[cfg(unix)]
     use std::os::unix::ffi::OsStringExt;
+
+    static TEMPORARY_ID: AtomicU64 = AtomicU64::new(0);
+
+    fn temporary_markdown_path(label: &str) -> PathBuf {
+        let id = TEMPORARY_ID.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "tondo-doc-test-unit-{label}-{}-{id}.md",
+            std::process::id()
+        ))
+    }
 
     #[cfg(unix)]
     #[test]
@@ -219,11 +230,7 @@ mod tests {
 
     #[test]
     fn execute_publishes_syntax_and_pseudocode_records() {
-        let path = std::env::temp_dir().join(format!(
-            "tondo-doc-test-unit-{}-{}.md",
-            std::process::id(),
-            std::thread::current().name().unwrap_or("worker")
-        ));
+        let path = temporary_markdown_path("success");
         fs::write(
             &path,
             b"~~~tondo\nlet value = 1\n~~~\n~~~tondo pseudocode\nnot Tondo\n~~~\n",
@@ -242,10 +249,7 @@ mod tests {
         assert_eq!(records.as_array().unwrap().len(), 2);
         assert_eq!(records[1]["category"], "pseudocode");
 
-        let missing = std::env::temp_dir().join(format!(
-            "tondo-doc-test-unit-missing-{}.md",
-            std::process::id()
-        ));
+        let missing = temporary_markdown_path("missing");
         let error = execute(&[
             OsString::from("doc-test"),
             OsString::from("--edition"),
@@ -283,11 +287,7 @@ mod tests {
 
     #[test]
     fn execute_rejects_a_compile_fail_contract_mismatch() {
-        let path = std::env::temp_dir().join(format!(
-            "tondo-doc-test-unit-fail-{}-{}.md",
-            std::process::id(),
-            std::thread::current().name().unwrap_or("worker")
-        ));
+        let path = temporary_markdown_path("fail");
         fs::write(
             &path,
             b"~~~tondo compile-fail E0005\nlet value: Int = \"text\"\n~~~\n",
