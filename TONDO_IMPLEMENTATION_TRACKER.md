@@ -9,9 +9,9 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 2.16
+**Versión del tracker:** 2.17
 
-**Última actualización:** 2026-08-11
+**Última actualización:** 2026-08-12
 
 **Especificaciones normativas:**
 
@@ -2773,12 +2773,18 @@ Antes de ampliar la gramática de M10.7 o M10.6:
   su captura. Este gate no cierra STD-IMPL-001 ni convierte la auditoría pública
   de la stdlib en completa.
 
-- [ ] **DOC-TEST-001 — Implementar `tondo doc-test` por la ruta pública.**
-  Añadir el comando exacto de 21.6, scanner Markdown propio, fixtures fijados,
-  categorías `tondo`/`fragment`/`script`/`compile-fail`/`pseudocode`, perfil
-  `core`, schema JSON ordenado y publicación atómica. Debe reutilizar lexer,
-  parser, formatter y checker ordinarios sin descubrir proyecto ni introducir
-  un parser Markdown general.
+- [x] **DOC-TEST-001 — Implementar `tondo doc-test` por la ruta pública.**
+  El comando exacto `tondo doc-test --edition 0.1 <markdown>` usa el scanner
+  Markdown interno de fences, el registry normativo y el fixture manifest
+  fijados por hash, y cubre `tondo`/`fragment`/`script`/`compile-fail`/
+  `pseudocode`. La ruta llama al mismo lexer, parser, formatter y checker de
+  referencia que conformance, no descubre proyectos ni introduce un parser
+  Markdown general. Publica un array JSON compacto, determinista y con el
+  orden de schema de 21.6 solo después de validar todos los fences; el script
+  de gate lo escribe mediante un temporal y rename atómico. Las pruebas del
+  CLI cubren opciones, UTF-8/CRLF, offsets, fixtures, errores y ausencia de
+  output parcial; `DOC-TEST-CONF-001` conserva la conformidad exhaustiva como
+  tarea separada.
 
 - [ ] **DOC-TEST-CONF-001 — Cerrar conformidad de ejemplos verificables.**
   Probar UTF-8 y CR/LF, headers, fences truncados, offsets de byte, fixtures,
@@ -5888,12 +5894,23 @@ funcional de M10.6 permanecen cerradas. `CONF-DRAFT-001` también permanece
 cerrada. La auditoría reabre T0/G5 por trazabilidad normativa y Wave 5/S1A por APIs
 públicas ausentes. La acción inmediata es completar primero Wave 4.5, la
 migración de suspensión 1.67 que mantiene M7 abierto. Después se ejecutan las
-tareas leaf de Wave 5 junto a `DOC-TEST-001`/`CONF-MATRIX-ALL-001`; Wave 6 no
+tareas leaf de Wave 5 junto a `DOC-TEST-CONF-001`/`CONF-MATRIX-ALL-001`; Wave 6 no
 se declara iniciada antes de esos cierres.
 
 ---
 
 ## 25. Historial del tracker
+
+### 2.17 — 2026-08-12
+
+- Se cierra `DOC-TEST-001`. `tondo doc-test --edition 0.1 <markdown>` queda
+  disponible por la CLI pública y valida los 310 fences del Markdown normativo
+  actual mediante el scanner y el adaptador de referencia compartidos. El
+  resultado conserva los 13 campos y el orden JSON normativos, normaliza CRLF
+  dentro del source, fija fixture/registry por SHA-256 y no emite bytes hasta
+  que el documento completo pasa; `scripts/doc-test.sh` añade la comprobación
+  de schema, orden y publicación atómica al test-gate. La conformidad hostil y
+  la matriz G5 siguen abiertas en `DOC-TEST-CONF-001` y sus leaves posteriores.
 
 ### 2.16 — 2026-08-11
 

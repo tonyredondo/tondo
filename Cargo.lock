@@ -362,7 +362,10 @@ dependencies = [
  "serde_json",
  "toml",
  "tondo-compiler",
+ "tondo-conformance",
+ "tondo-reference-adapter",
  "tondo-vm",
+ "unicode-normalization",
 ]
 
 [[package]]

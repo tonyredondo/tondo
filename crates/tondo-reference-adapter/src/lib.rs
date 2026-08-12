@@ -25,6 +25,16 @@ use tondo_vm::runtime::conformance::{MemoryScenario as VmMemoryScenario, run_mem
 #[derive(Debug, Default)]
 pub struct ReferenceAdapter;
 
+/// Runs one documentation fence through the same frontend and checker used by
+/// the conformance adapter. The CLI doc-test command uses this entry point so
+/// documentation examples never acquire a second compiler path.
+pub fn observe_document_fence(
+    request: &AdapterRequest,
+    action: &tondo_conformance::protocol::WireDocumentFenceAction,
+) -> Result<Observation, String> {
+    crate::document::observe_document_fence(request, action)
+}
+
 impl ReferenceAdapter {
     pub fn handle(&mut self, request: &AdapterRequest) -> AdapterResponse {
         let result = match self.observe(request) {

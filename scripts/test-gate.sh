@@ -42,6 +42,8 @@ run_step test cargo test --workspace --all-targets --locked
 run_step rustdoc env RUSTDOCFLAGS=-Dwarnings cargo doc --workspace --no-deps --locked
 run_step conformance-build \
     cargo build -p tondo-conformance -p tondo-reference-adapter --bins --locked
+run_step doc-test \
+    scripts/doc-test.sh
 run_step reliability \
     cargo run -p tondo-reliability --locked -- check --root .
 run_step stdlib-performance-contract \

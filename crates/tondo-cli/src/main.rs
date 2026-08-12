@@ -43,6 +43,7 @@ use tondo_compiler::test_schedule::{OrderMode, ScheduleNode, SchedulePlan, Seed}
 use tondo_compiler::test_shard::ShardSpec;
 use tondo_compiler::test_snapshots::{SnapshotPolicy, SnapshotStore, SnapshotUpdateStage};
 
+mod doc_test;
 mod project_discovery;
 mod test_cli;
 
@@ -65,6 +66,7 @@ Commands:
   fmt      Format one Tondo source file
   check    Analyze one Tondo source file
   run      Compile and run one Tondo script
+  doc-test Validate Tondo examples embedded in Markdown
   test     Discover, compile and run project tests
 
 Options:
@@ -113,6 +115,9 @@ fn run(arguments: Vec<OsString>) -> Result<ExitCode, String> {
     if arguments.first().and_then(|argument| argument.to_str()) == Some("test") {
         return run_test_command(&arguments);
     }
+    if arguments.first().and_then(|argument| argument.to_str()) == Some("doc-test") {
+        return run_doc_test_command(&arguments);
+    }
 
     let invocation = match parse_invocation(&arguments) {
         Ok(invocation) => invocation,
@@ -159,6 +164,26 @@ fn run(arguments: Vec<OsString>) -> Result<ExitCode, String> {
     } else {
         ExitCode::from(output.exit_code())
     })
+}
+
+fn run_doc_test_command(arguments: &[OsString]) -> Result<ExitCode, String> {
+    match doc_test::execute(arguments) {
+        Ok(output) => {
+            io::stdout()
+                .write_all(&output)
+                .map_err(|error| format!("cannot write doc-test output: {error}"))?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Err(doc_test::DocTestError::Usage(message)) => {
+            eprintln!("tondo: {message}\n\n{USAGE}");
+            Ok(ExitCode::from(EXIT_USAGE))
+        }
+        Err(doc_test::DocTestError::Diagnostic(message)) => {
+            eprintln!("tondo doc-test: {message}");
+            Ok(ExitCode::from(EXIT_DIAGNOSTIC))
+        }
+        Err(doc_test::DocTestError::Internal(message)) => Err(message),
+    }
 }
 
 fn run_test_command(arguments: &[OsString]) -> Result<ExitCode, String> {

@@ -1,7 +1,11 @@
+use std::ffi::OsString;
 use std::fs;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+#[cfg(unix)]
+use std::os::unix::ffi::OsStringExt;
 
 use tondo_compiler::artifact::{BuildArtifact, CAPABILITY_REGISTRY, CompiledInterface, sha256};
 use tondo_compiler::project::{
@@ -28,6 +32,20 @@ fn source_file_with(bytes: &[u8]) -> std::path::PathBuf {
 
 fn source_file() -> std::path::PathBuf {
     source_file_with(b"fn main() {}\n")
+}
+
+fn markdown_file_with(bytes: &[u8]) -> std::path::PathBuf {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock must follow the Unix epoch")
+        .as_nanos();
+    let id = TEMPORARY_ID.fetch_add(1, Ordering::Relaxed);
+    let path = std::env::temp_dir().join(format!(
+        "tondo-cli-doc-test-{}-{nonce}-{id}.md",
+        std::process::id()
+    ));
+    fs::write(&path, bytes).unwrap();
+    path
 }
 
 fn remove_json_nulls(value: &mut serde_json::Value) {
@@ -134,6 +152,198 @@ fn help_and_version_are_successful() {
         assert!(output.status.success(), "{argument} failed");
         assert!(output.stderr.is_empty());
     }
+}
+
+#[test]
+fn doc_test_publishes_an_ordered_json_array_only_after_all_fences_pass() {
+    let markdown = markdown_file_with(
+        b"# Examples\n\n~~~tondo\nfn add(a: Int, b: Int): Int { a + b }\n~~~\n\n~~~tondo pseudocode\nnot Tondo\n~~~\n",
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["doc-test", "--edition", "0.1"])
+        .arg(&markdown)
+        .output()
+        .unwrap();
+    fs::remove_file(markdown).unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    assert!(String::from_utf8_lossy(&output.stdout).starts_with("[{\"file\""));
+    assert!(output.stdout.ends_with(b"\n"));
+    let records: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let records = records.as_array().unwrap();
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0]["category"], "syntax");
+    assert_eq!(records[0]["parse_ok"], true);
+    assert_eq!(records[1]["category"], "pseudocode");
+    assert_eq!(records[1]["parse_ok"], serde_json::Value::Null);
+}
+
+#[test]
+fn doc_test_normalizes_crlf_inside_fences_without_changing_source_hash() {
+    let lf = markdown_file_with(b"x\n~~~tondo\nlet value = 1\n~~~\n");
+    let crlf = markdown_file_with(b"x\r\n~~~tondo\r\nlet value = 1\r\n~~~\r\n");
+    let run = |path: &std::path::Path| {
+        Command::new(env!("CARGO_BIN_EXE_tondo"))
+            .args(["doc-test", "--edition=0.1"])
+            .arg(path)
+            .output()
+            .unwrap()
+    };
+    let left = run(&lf);
+    let right = run(&crlf);
+    fs::remove_file(lf).unwrap();
+    fs::remove_file(crlf).unwrap();
+
+    assert!(
+        left.status.success(),
+        "{}",
+        String::from_utf8_lossy(&left.stderr)
+    );
+    assert!(
+        right.status.success(),
+        "{}",
+        String::from_utf8_lossy(&right.stderr)
+    );
+    let left: serde_json::Value = serde_json::from_slice(&left.stdout).unwrap();
+    let right: serde_json::Value = serde_json::from_slice(&right.stdout).unwrap();
+    assert_eq!(left[0]["source_sha256"], right[0]["source_sha256"]);
+    assert_ne!(left[0]["fence_byte"], right[0]["fence_byte"]);
+}
+
+#[test]
+fn doc_test_rejects_unterminated_fences_without_partial_output() {
+    let markdown = markdown_file_with(b"~~~tondo\nlet value = 1\n");
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["doc-test", "--edition", "0.1"])
+        .arg(&markdown)
+        .output()
+        .unwrap();
+    fs::remove_file(markdown).unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("not closed"));
+}
+
+#[test]
+fn doc_test_uses_the_normative_fixture_for_typed_fragments() {
+    let markdown = markdown_file_with(b"~~~tondo fragment spec.core\nlet value = 1\n~~~\n");
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["doc-test", "--edition", "0.1"])
+        .arg(&markdown)
+        .output()
+        .unwrap();
+    fs::remove_file(markdown).unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let records: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(records[0]["category"], "fragment");
+    assert_eq!(records[0]["fixture"], "spec.core");
+    assert_eq!(records[0]["typecheck_ok"], true);
+}
+
+#[test]
+fn doc_test_rejects_unknown_headers_without_partial_output() {
+    let markdown = markdown_file_with(b"~~~tondo unknown\nlet value = 1\n~~~\n");
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["doc-test", "--edition", "0.1"])
+        .arg(&markdown)
+        .output()
+        .unwrap();
+    fs::remove_file(markdown).unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("unknown Tondo fence header"));
+}
+
+#[test]
+fn doc_test_requires_the_normative_edition_and_one_markdown_path() {
+    let missing_edition = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["doc-test", "README.md"])
+        .output()
+        .unwrap();
+    assert_eq!(missing_edition.status.code(), Some(2));
+    assert!(missing_edition.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&missing_edition.stderr).contains("--edition 0.1"));
+
+    let missing_path = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["doc-test", "--edition", "0.1"])
+        .output()
+        .unwrap();
+    assert_eq!(missing_path.status.code(), Some(2));
+    assert!(missing_path.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&missing_path.stderr).contains("Markdown path"));
+}
+
+#[test]
+fn doc_test_rejects_a_missing_edition_value_before_reading_a_file() {
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["doc-test", "--edition"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("requires `0.1`"));
+}
+
+#[test]
+fn doc_test_rejects_a_missing_markdown_file_without_partial_output() {
+    let path = std::env::temp_dir().join(format!(
+        "tondo-cli-doc-test-missing-{}-{}.md",
+        std::process::id(),
+        TEMPORARY_ID.fetch_add(1, Ordering::Relaxed)
+    ));
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["doc-test", "--edition", "0.1"])
+        .arg(&path)
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("cannot read documentation Markdown"));
+}
+
+#[cfg(unix)]
+#[test]
+fn doc_test_rejects_non_utf8_paths_at_the_argument_boundary() {
+    let invalid = OsString::from_vec(vec![b'd', b'o', b'c', 0xff]);
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["doc-test", "--edition", "0.1"])
+        .arg(invalid)
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("valid UTF-8"));
+}
+
+#[test]
+fn doc_test_reports_a_compile_fail_contract_mismatch_without_output() {
+    let markdown =
+        markdown_file_with(b"~~~tondo compile-fail E0005\nlet value: Int = \"text\"\n~~~\n");
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["doc-test", "--edition", "0.1"])
+        .arg(&markdown)
+        .output()
+        .unwrap();
+    fs::remove_file(markdown).unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("did not satisfy"));
 }
 
 #[test]

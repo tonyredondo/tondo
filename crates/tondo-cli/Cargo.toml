@@ -9,7 +9,10 @@ publish.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
+unicode-normalization.workspace = true
 tondo-compiler = { path = "../tondo-compiler" }
+tondo-conformance = { path = "../tondo-conformance" }
+tondo-reference-adapter = { path = "../tondo-reference-adapter" }
 tondo-vm = { path = "../tondo-vm" }
 
 [lints]
