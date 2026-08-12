@@ -8,9 +8,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::inventory::Inventory;
 use crate::matrix::{CoverageMatrix, SpecificationIdentity};
+use crate::sha256;
 
 pub const FORMAT: &str = "tondo-normative-gap-audit/1";
 pub const PATH: &str = "testing/normative-gap-audit.json";
+const AUDITED_SCOPE_SHA256: &str =
+    "f28c16dd4b7cc1effeffbfb3238fd1f78c140b2403b1bdb3fee21132dd296bed";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -63,26 +66,27 @@ impl GapAudit {
             return Err("normative gap audit does not match the current G5 specifications".into());
         }
 
-        let open = matrix
+        let requirements = matrix
             .requirements
             .iter()
-            .filter(|requirement| {
-                matches!(
-                    requirement.status.as_str(),
-                    "toolchain-limit" | "draft-pending"
-                )
-            })
             .map(|requirement| (requirement.id.as_str(), requirement))
             .collect::<BTreeMap<_, _>>();
-        if self.entries.len() != open.len()
-            || self
-                .entries
-                .windows(2)
-                .any(|pair| pair[0].requirement >= pair[1].requirement)
+        if self
+            .entries
+            .windows(2)
+            .any(|pair| pair[0].requirement >= pair[1].requirement)
         {
-            return Err(
-                "normative gap audit must contain every open requirement exactly once".into(),
-            );
+            return Err("normative gap audit entries must be globally sorted and unique".into());
+        }
+        let mut audited_scope = String::new();
+        for entry in &self.entries {
+            audited_scope.push_str(&entry.requirement);
+            audited_scope.push('\t');
+            audited_scope.push_str(&entry.text_sha256);
+            audited_scope.push('\n');
+        }
+        if sha256(audited_scope.as_bytes()) != AUDITED_SCOPE_SHA256 {
+            return Err("normative gap audit differs from its reviewed requirement set".into());
         }
 
         let executable_tests = inventory
@@ -94,12 +98,14 @@ impl GapAudit {
         let mut by_outcome = BTreeMap::new();
         let mut observed = BTreeSet::new();
         for entry in &self.entries {
-            let requirement = open.get(entry.requirement.as_str()).ok_or_else(|| {
-                format!(
-                    "gap audit entry `{}` does not name an open requirement",
-                    entry.requirement
-                )
-            })?;
+            let requirement = requirements
+                .get(entry.requirement.as_str())
+                .ok_or_else(|| {
+                    format!(
+                        "gap audit entry `{}` does not name a current requirement",
+                        entry.requirement
+                    )
+                })?;
             if !observed.insert(entry.requirement.as_str())
                 || entry.text_sha256 != requirement.text_sha256
                 || entry.reason.trim().is_empty()
@@ -112,6 +118,15 @@ impl GapAudit {
             }
             match entry.outcome.as_str() {
                 "implemented-without-trace" => {
+                    if !matches!(
+                        requirement.status.as_str(),
+                        "toolchain-limit" | "draft-pending" | "covered"
+                    ) {
+                        return Err(format!(
+                            "implemented audit entry `{}` has incompatible matrix status `{}`",
+                            entry.requirement, requirement.status
+                        ));
+                    }
                     if entry.implementation.is_empty()
                         || entry.tests.is_empty()
                         || entry.follow_up.is_some()
@@ -147,6 +162,15 @@ impl GapAudit {
                     }
                 }
                 "not-applicable" => {
+                    if !matches!(
+                        requirement.status.as_str(),
+                        "toolchain-limit" | "draft-pending" | "target-not-applicable"
+                    ) {
+                        return Err(format!(
+                            "not-applicable audit entry `{}` has incompatible matrix status `{}`",
+                            entry.requirement, requirement.status
+                        ));
+                    }
                     if !entry.implementation.is_empty()
                         || !entry.tests.is_empty()
                         || entry.follow_up.is_some()
@@ -158,6 +182,15 @@ impl GapAudit {
                     }
                 }
                 "absent" => {
+                    if !matches!(
+                        requirement.status.as_str(),
+                        "toolchain-limit" | "draft-pending"
+                    ) {
+                        return Err(format!(
+                            "absent audit entry `{}` cannot resolve as `{}`",
+                            entry.requirement, requirement.status
+                        ));
+                    }
                     let expected = format!("CONF-GAP-IMPL-001:{}", entry.requirement);
                     if !entry.implementation.is_empty()
                         || !entry.tests.is_empty()
@@ -178,7 +211,17 @@ impl GapAudit {
             }
             *by_outcome.entry(entry.outcome.clone()).or_insert(0) += 1;
         }
-        if observed != open.keys().copied().collect() {
+        let open = requirements
+            .values()
+            .filter(|requirement| {
+                matches!(
+                    requirement.status.as_str(),
+                    "toolchain-limit" | "draft-pending"
+                )
+            })
+            .map(|requirement| requirement.id.as_str())
+            .collect::<BTreeSet<_>>();
+        if !open.is_subset(&observed) {
             return Err("normative gap audit omits an open requirement".into());
         }
         let summary = GapAuditSummary {
@@ -295,7 +338,20 @@ mod tests {
     #[test]
     fn every_outcome_has_one_unambiguous_shape() {
         let (root, inventory, matrix, audit) = repository_evidence();
-        let implemented = implemented_index(&audit);
+        let implemented = audit
+            .entries
+            .iter()
+            .position(|entry| {
+                entry.outcome == "implemented-without-trace"
+                    && matrix.requirements.iter().any(|requirement| {
+                        requirement.id == entry.requirement
+                            && matches!(
+                                requirement.status.as_str(),
+                                "toolchain-limit" | "draft-pending"
+                            )
+                    })
+            })
+            .unwrap();
         let not_applicable = not_applicable_index(&audit);
 
         let mut invalid = audit.clone();
@@ -327,5 +383,36 @@ mod tests {
         let mut invalid = audit.clone();
         invalid.summary.total -= 1;
         assert!(invalid.validate(&root, &matrix, &inventory).is_err());
+    }
+
+    #[test]
+    fn reviewed_entries_remain_valid_after_their_matrix_status_resolves() {
+        let (root, inventory, mut matrix, audit) = repository_evidence();
+        let implemented = implemented_index(&audit);
+        let not_applicable = not_applicable_index(&audit);
+        let implemented_id = &audit.entries[implemented].requirement;
+        let not_applicable_id = &audit.entries[not_applicable].requirement;
+
+        matrix
+            .requirements
+            .iter_mut()
+            .find(|requirement| requirement.id == *implemented_id)
+            .unwrap()
+            .status = "covered".into();
+        matrix
+            .requirements
+            .iter_mut()
+            .find(|requirement| requirement.id == *not_applicable_id)
+            .unwrap()
+            .status = "target-not-applicable".into();
+        audit.validate(&root, &matrix, &inventory).unwrap();
+
+        matrix
+            .requirements
+            .iter_mut()
+            .find(|requirement| requirement.id == *implemented_id)
+            .unwrap()
+            .status = "stdlib-pending".into();
+        assert!(audit.validate(&root, &matrix, &inventory).is_err());
     }
 }

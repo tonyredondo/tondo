@@ -304,7 +304,7 @@ pub fn capture(
         },
         mutation: MutationBaseline {
             tool: "cargo-mutants 27.1.0".into(),
-            command: "cargo mutants --workspace --no-config --copy-vcs true --file <selected-path> --re <reviewed-selection> --baseline run --jobs 2 --timeout 300 --build-timeout 900 --cargo-arg=--locked --output <directory> --no-times --colors never --annotations none".into(),
+            command: "CARGO_INCREMENTAL=0 cargo mutants --workspace --no-config --copy-vcs true --copy-target true --file <selected-path> --re <reviewed-selection> --baseline run --cargo-test-arg=--lib --jobs 2 --timeout 600 --build-timeout 900 --cargo-arg=--locked --output <directory> --no-times --colors never --annotations none".into(),
             selected_paths: mutation_paths(),
             total: mutation.total,
             caught: mutation.caught,

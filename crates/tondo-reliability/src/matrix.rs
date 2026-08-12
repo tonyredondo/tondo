@@ -1360,6 +1360,33 @@ El compilador debe aceptar el caso.
     }
 
     #[test]
+    fn toolchain_contract_has_complete_reviewed_six_dimension_traceability() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .unwrap();
+        let inventory = crate::inventory::build(root).unwrap();
+        let matrix = build(root, &inventory).unwrap();
+        let toolchain = matrix
+            .requirements
+            .iter()
+            .filter(|requirement| requirement.document == "TONDO_TOOLCHAIN_SPEC.md")
+            .collect::<Vec<_>>();
+
+        assert_eq!(toolchain.len(), 31);
+        for requirement in toolchain {
+            assert_eq!(requirement.status, "covered", "{}", requirement.id);
+            for (name, dimension) in claim_dimensions(&requirement.dimensions) {
+                assert!(
+                    !dimension.evidence.is_empty() && dimension.waiver.is_none(),
+                    "{} lacks {name} evidence",
+                    requirement.id
+                );
+            }
+        }
+    }
+
+    #[test]
     fn changed_draft_requirements_cannot_inherit_baseline_evidence() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()

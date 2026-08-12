@@ -4,6 +4,11 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
+# cargo-mutants repeatedly rewrites the same sources. Rust 1.93 can ICE while
+# reusing their incremental query cache, so quality runs use clean compiler
+# queries without changing incremental compilation for normal Tondo builds.
+export CARGO_INCREMENTAL=0
+
 cargo_target_dir="${CARGO_TARGET_DIR:-target}"
 if [[ "$cargo_target_dir" = /* ]]; then
     reports="$cargo_target_dir/reliability/quality"

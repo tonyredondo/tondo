@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 2.20
+**Versión del tracker:** 2.21
 
 **Última actualización:** 2026-08-12
 
@@ -43,10 +43,11 @@ confunde con conformarla. TLF tampoco cambia la semántica `.to`: Gate L0 produc
 un bundle separado y el candidato final fija G5, S1 y L0 por identidades
 independientes.
 
-**Objetivo inmediato:** cerrar `CONF-GAP-IMPL-001` añadiendo trazabilidad
-positiva, negativa, de borde, composición, oracle y frontera pública a las 364
-filas cuya implementación ya existe. La auditoría cerrada no ha encontrado
-funcionalidad ausente que requiera una leaf de implementación; dos requisitos
+**Objetivo inmediato:** continuar `CONF-GAP-IMPL-001` añadiendo trazabilidad
+positiva, negativa, de borde, composición, oracle y frontera pública a las 333
+filas aplicables que aún no la tienen. El contrato de toolchain ya cierra sus
+31 requisitos. La auditoría no ha encontrado funcionalidad ausente que requiera
+una leaf de implementación; dos requisitos
 son no aplicables por contrato. Después se ejecutan y atestan los resultados de
 layer de `CONF-LAYER-RESULT-001` antes de volver a cerrar T0/G5/S1A. Los contratos
 runtime-facing de STD-0.1B y M11 esperan esos gates. Todo pertenece a la primera
@@ -2827,11 +2828,24 @@ Antes de ampliar la gramática de M10.7 o M10.6:
   ratchet `/2` y el promotion proof fijan y revalidan el registro junto a matriz
   e inventario sin convertir la clasificación en cobertura.
 
-- [ ] **CONF-GAP-IMPL-001 — Cerrar las ausencias descubiertas por la
-  auditoría.** Cada ausencia genera una tarea leaf enlazada al requisito, una
-  ruta pública real y tests positivos, negativos, de borde y composición. Los
-  casos ya implementados solo requieren añadir identidad/evidencia, no
-  reescribir código que ya funciona.
+- [ ] **CONF-GAP-IMPL-001 — Cerrar la trazabilidad descubierta por la
+  auditoría.** Cada ausencia generaría una tarea leaf enlazada al requisito, una
+  ruta pública real y tests positivos, negativos, de borde y composición. La
+  auditoría no encontró ausencias: los casos ya implementados requieren añadir
+  identidad y evidencia revisada, sin reescribir código que ya funciona. El
+  registro conserva sus 366 decisiones y permite que una fila auditada avance
+  únicamente a `covered` o, para los dos no aplicables, a
+  `target-not-applicable`; eliminar una decisión auditada falla por identidad.
+
+  - [x] **CONF-GAP-IMPL-TC-001 — Toolchain.** Los 31 requisitos `TC01` tienen
+    evidencia explícita en las seis dimensiones. Los oracles ejercitan los
+    records cerrados, resolución, proyectos convencionales, planes de test,
+    inputs y meta-generación; la frontera pública usa las layers existentes de
+    finalización, meta y testing. La matriz pasa de 45 a 76 filas cubiertas.
+  - [ ] **CONF-GAP-IMPL-TT-001 — Testing.** Cerrar las 80 filas aplicables
+    `TT01` y promover su límite deliberado a `target-not-applicable`.
+  - [ ] **CONF-GAP-IMPL-TL-001 — Lenguaje.** Cerrar las 253 filas aplicables
+    `TL01` y promover su no-goal deliberado a `target-not-applicable`.
 
 - [ ] **CONF-LAYER-RESULT-001 — Ejecutar y atestar cada caso de layer.** El
   resultado de `tondo-conformance run` debe quedar ligado al hash y revisión
@@ -5913,12 +5927,24 @@ funcional de M10.6 permanecen cerradas. `CONF-DRAFT-001` también permanece
 cerrada. La auditoría reabre T0/G5 por trazabilidad normativa y Wave 5/S1A por APIs
 públicas ausentes. La acción inmediata es `CONF-GAP-IMPL-001`: el audit no abrió
 leaves de implementación y el trabajo restante consiste en enlazar evidencia
-completa de las 364 filas aplicables. Después siguen `CONF-LAYER-RESULT-001` y
-el cierre final de G5; Wave 6 no se declara iniciada antes de esos gates.
+completa de las 333 filas aplicables restantes. Después siguen
+`CONF-LAYER-RESULT-001` y el cierre final de G5; Wave 6 no se declara iniciada
+antes de esos gates.
 
 ---
 
 ## 25. Historial del tracker
+
+### 2.21 — 2026-08-12
+
+- Se cierra `CONF-GAP-IMPL-TC-001`: los 31 requisitos del toolchain pasan de
+  `toolchain-limit` a `covered` mediante claims ordenadas que separan positivo,
+  rechazo, borde, composición, oracle y frontera pública. La frontera reutiliza
+  las layers G5 que ya ejercitan proyectos, meta y testing; cada dimensión
+  interna apunta a un test ejecutable específico del contrato que afirma.
+  El audit conserva el conjunto revisado original mediante un digest fijado y
+  acepta solo transiciones compatibles, de modo que cerrar trazabilidad no
+  borra ni sustituye decisiones anteriores.
 
 ### 2.20 — 2026-08-12
 

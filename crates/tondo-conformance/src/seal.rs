@@ -24,6 +24,8 @@ pub const DEFAULT_PROOF_DIRECTORY: &str = "conformance/proofs";
 pub const RATCHET_PATH: &str = "testing/conformance-ratchet.json";
 
 const RATCHET_FORMAT: &str = "tondo-conformance-ratchet/2";
+const AUDITED_GAP_SCOPE_SHA256: &str =
+    "f28c16dd4b7cc1effeffbfb3238fd1f78c140b2403b1bdb3fee21132dd296bed";
 const ADAPTER_PACKAGE: &str = "tondo-reference-adapter";
 const ADAPTER_SOURCES: [&str; 10] = [
     "crates/tondo-reference-adapter/Cargo.toml",
@@ -563,24 +565,27 @@ fn validate_gap_audit(
         return invalid("normative gap audit differs from the coverage matrix identity");
     }
 
-    let open = matrix
+    let requirements = matrix
         .requirements
         .iter()
-        .filter(|requirement| {
-            matches!(
-                requirement.status.as_str(),
-                "toolchain-limit" | "draft-pending"
-            )
-        })
         .map(|requirement| (requirement.id.as_str(), requirement))
         .collect::<BTreeMap<_, _>>();
-    if audit.entries.len() != open.len()
-        || audit
-            .entries
-            .windows(2)
-            .any(|pair| pair[0].requirement >= pair[1].requirement)
+    if audit
+        .entries
+        .windows(2)
+        .any(|pair| pair[0].requirement >= pair[1].requirement)
     {
-        return invalid("normative gap audit does not classify every open requirement once");
+        return invalid("normative gap audit entries are not globally sorted and unique");
+    }
+    let mut audited_scope = String::new();
+    for entry in &audit.entries {
+        audited_scope.push_str(&entry.requirement);
+        audited_scope.push('\t');
+        audited_scope.push_str(&entry.text_sha256);
+        audited_scope.push('\n');
+    }
+    if sha256(audited_scope.as_bytes()) != AUDITED_GAP_SCOPE_SHA256 {
+        return invalid("normative gap audit differs from its reviewed requirement set");
     }
     let executable = inventory
         .tests
@@ -591,12 +596,14 @@ fn validate_gap_audit(
     let mut outcomes = BTreeMap::new();
     let mut observed = BTreeSet::new();
     for entry in &audit.entries {
-        let requirement = open.get(entry.requirement.as_str()).ok_or_else(|| {
-            SealError::Invalid(format!(
-                "gap audit entry `{}` is not an open requirement",
-                entry.requirement
-            ))
-        })?;
+        let requirement = requirements
+            .get(entry.requirement.as_str())
+            .ok_or_else(|| {
+                SealError::Invalid(format!(
+                    "gap audit entry `{}` is not a current requirement",
+                    entry.requirement
+                ))
+            })?;
         if !observed.insert(entry.requirement.as_str())
             || entry.text_sha256 != requirement.text_sha256
             || entry.reason.trim().is_empty()
@@ -609,7 +616,10 @@ fn validate_gap_audit(
         }
         match entry.outcome.as_str() {
             "implemented-without-trace" => {
-                if entry.implementation.is_empty()
+                if !matches!(
+                    requirement.status.as_str(),
+                    "toolchain-limit" | "draft-pending" | "covered"
+                ) || entry.implementation.is_empty()
                     || entry.tests.is_empty()
                     || entry.follow_up.is_some()
                     || entry
@@ -636,7 +646,10 @@ fn validate_gap_audit(
                 }
             }
             "not-applicable" => {
-                if !entry.implementation.is_empty()
+                if !matches!(
+                    requirement.status.as_str(),
+                    "toolchain-limit" | "draft-pending" | "target-not-applicable"
+                ) || !entry.implementation.is_empty()
                     || !entry.tests.is_empty()
                     || entry.follow_up.is_some()
                 {
@@ -648,7 +661,10 @@ fn validate_gap_audit(
             }
             "absent" => {
                 let expected = format!("CONF-GAP-IMPL-001:{}", entry.requirement);
-                if !entry.implementation.is_empty()
+                if !matches!(
+                    requirement.status.as_str(),
+                    "toolchain-limit" | "draft-pending"
+                ) || !entry.implementation.is_empty()
                     || !entry.tests.is_empty()
                     || entry.follow_up.as_deref() != Some(expected.as_str())
                 {
@@ -667,7 +683,17 @@ fn validate_gap_audit(
         }
         *outcomes.entry(entry.outcome.clone()).or_insert(0) += 1;
     }
-    if observed != open.keys().copied().collect()
+    let open = requirements
+        .values()
+        .filter(|requirement| {
+            matches!(
+                requirement.status.as_str(),
+                "toolchain-limit" | "draft-pending"
+            )
+        })
+        .map(|requirement| requirement.id.as_str())
+        .collect::<BTreeSet<_>>();
+    if !open.is_subset(&observed)
         || audit.summary.total != audit.entries.len() as u64
         || audit.summary.by_outcome != outcomes
     {
@@ -1347,26 +1373,6 @@ mod tests {
             serde_json::Value::from(covered + promoted.len() as u64),
         );
         fs::write(&matrix_path, serde_json::to_vec_pretty(&matrix).unwrap()).unwrap();
-        let audit_path = root.join("testing/normative-gap-audit.json");
-        let mut audit: serde_json::Value =
-            serde_json::from_slice(&fs::read(&audit_path).unwrap()).unwrap();
-        audit["entries"]
-            .as_array_mut()
-            .unwrap()
-            .retain(|entry| !promoted.contains(entry["requirement"].as_str().unwrap()));
-        let mut by_outcome = serde_json::Map::new();
-        for entry in audit["entries"].as_array().unwrap() {
-            let outcome = entry["outcome"].as_str().unwrap();
-            let count = by_outcome
-                .get(outcome)
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(0);
-            by_outcome.insert(outcome.into(), serde_json::Value::from(count + 1));
-        }
-        audit["summary"]["total"] =
-            serde_json::Value::from(audit["entries"].as_array().unwrap().len() as u64);
-        audit["summary"]["by_outcome"] = serde_json::Value::Object(by_outcome);
-        fs::write(&audit_path, serde_json::to_vec_pretty(&audit).unwrap()).unwrap();
         let mut ratchet: RatchetRecord =
             serde_json::from_slice(&fs::read(root.join(RATCHET_PATH)).unwrap()).unwrap();
         let lineage = DraftLineage::load(&root, DRAFT_LINEAGE_PATH).unwrap();

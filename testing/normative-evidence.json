@@ -19,6 +19,587 @@
   "claims": [
     {
       "requirements": [
+        "TC01-10-2-R001"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [
+            "rust:tondo-compiler:src::test_plan:defaults_materialize_from_the_closed_project_without_a_sidecar"
+          ],
+          "waiver": null
+        },
+        "rejection_or_failure": {
+          "evidence": [
+            "rust:tondo-compiler:src::test_plan:plan_rejects_unknown_fields_and_project_mismatches"
+          ],
+          "waiver": null
+        },
+        "boundary": {
+          "evidence": [
+            "rust:tondo-cli:tests::cli:test_command_cannot_disable_the_closed_sidecar_timeout"
+          ],
+          "waiver": null
+        },
+        "composition": {
+          "evidence": [
+            "rust:tondo-cli:tests::cli:test_command_executes_a_test_body_through_the_vm_backend"
+          ],
+          "waiver": null
+        },
+        "oracle": {
+          "evidence": [
+            "rust:tondo-compiler:src::test_plan:public_plan_views_are_stable_and_do_not_expose_source_contents"
+          ],
+          "waiver": null
+        },
+        "public_boundary": {
+          "evidence": [
+            "draft-layer:testing:testing-30-cli"
+          ],
+          "waiver": null
+        }
+      }
+    },
+    {
+      "requirements": [
+        "TC01-10-3-R001"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [
+            "rust:tondo-cli:tests::cli:project_check_uses_the_default_lockfile_and_emits_canonical_products"
+          ],
+          "waiver": null
+        },
+        "rejection_or_failure": {
+          "evidence": [
+            "rust:tondo-cli:src::main:project_products_cannot_overwrite_a_declared_input"
+          ],
+          "waiver": null
+        },
+        "boundary": {
+          "evidence": [
+            "rust:tondo-cli:tests::cli:source_io_and_product_write_failures_have_stable_exit_classes"
+          ],
+          "waiver": null
+        },
+        "composition": {
+          "evidence": [
+            "rust:tondo-compiler:src::project:identical_declared_inputs_produce_identical_interface_and_artifact_bytes"
+          ],
+          "waiver": null
+        },
+        "oracle": {
+          "evidence": [
+            "rust:tondo-cli:src::main:project_products_cannot_overwrite_a_declared_input"
+          ],
+          "waiver": null
+        },
+        "public_boundary": {
+          "evidence": [
+            "draft-layer:finalization:external-form-boundary"
+          ],
+          "waiver": null
+        }
+      }
+    },
+    {
+      "requirements": [
+        "TC01-13-R001"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [
+            "rust:tondo-compiler:src::project:project_plans_accept_only_declared_exact_bytes"
+          ],
+          "waiver": null
+        },
+        "rejection_or_failure": {
+          "evidence": [
+            "rust:tondo-compiler:src::meta_generate:ambient_input_and_snapshot_drift_are_rejected_before_execution"
+          ],
+          "waiver": null
+        },
+        "boundary": {
+          "evidence": [
+            "rust:tondo-compiler:src::project:project_planner_has_no_ambient_io_surface"
+          ],
+          "waiver": null
+        },
+        "composition": {
+          "evidence": [
+            "rust:tondo-compiler:src::project:identical_declared_inputs_produce_identical_interface_and_artifact_bytes"
+          ],
+          "waiver": null
+        },
+        "oracle": {
+          "evidence": [
+            "rust:tondo-compiler:src::toolchain:project_plan_validates_runtime_meta_and_generation_inputs"
+          ],
+          "waiver": null
+        },
+        "public_boundary": {
+          "evidence": [
+            "draft-layer:finalization:meta-hermeticity"
+          ],
+          "waiver": null
+        }
+      }
+    },
+    {
+      "requirements": [
+        "TC01-2-2-R001",
+        "TC01-2-3-R001",
+        "TC01-2-3-R002"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [
+            "rust:tondo-cli:src::project_discovery:discovers_conventional_sources_and_generates_a_closed_internal_graph"
+          ],
+          "waiver": null
+        },
+        "rejection_or_failure": {
+          "evidence": [
+            "rust:tondo-compiler:src::toolchain:primitive_contract_validators_cover_success_and_rejection_edges"
+          ],
+          "waiver": null
+        },
+        "boundary": {
+          "evidence": [
+            "rust:tondo-compiler:src::project:generator_inputs_cannot_collide_with_privileged_artifact_identities"
+          ],
+          "waiver": null
+        },
+        "composition": {
+          "evidence": [
+            "rust:tondo-compiler:src::toolchain:draft_plan_round_trips"
+          ],
+          "waiver": null
+        },
+        "oracle": {
+          "evidence": [
+            "rust:tondo-compiler:src::project:project_error_vocabulary_and_scalar_parsers_are_closed"
+          ],
+          "waiver": null
+        },
+        "public_boundary": {
+          "evidence": [
+            "draft-layer:finalization:project-conventions",
+            "draft-layer:meta:meta-toolchain"
+          ],
+          "waiver": null
+        }
+      }
+    },
+    {
+      "requirements": [
+        "TC01-3-1-R001",
+        "TC01-3-1-R002",
+        "TC01-3-1-R003",
+        "TC01-3-1-R004"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [
+            "rust:tondo-compiler:src::toolchain:project_plan_validates_runtime_meta_and_generation_inputs"
+          ],
+          "waiver": null
+        },
+        "rejection_or_failure": {
+          "evidence": [
+            "rust:tondo-compiler:src::toolchain:record_validators_cover_nested_contracts_and_errors"
+          ],
+          "waiver": null
+        },
+        "boundary": {
+          "evidence": [
+            "rust:tondo-compiler:src::toolchain:locked_record_validators_cover_hashes_ordering_and_generator_contracts"
+          ],
+          "waiver": null
+        },
+        "composition": {
+          "evidence": [
+            "rust:tondo-compiler:src::meta_generate:generator_receives_only_locked_values_and_publishes_formatted_outputs"
+          ],
+          "waiver": null
+        },
+        "oracle": {
+          "evidence": [
+            "rust:tondo-compiler:src::toolchain:project_plan_validates_runtime_meta_and_generation_inputs"
+          ],
+          "waiver": null
+        },
+        "public_boundary": {
+          "evidence": [
+            "draft-layer:meta:meta-toolchain"
+          ],
+          "waiver": null
+        }
+      }
+    },
+    {
+      "requirements": [
+        "TC01-3-3-R001",
+        "TC01-3-3-R002",
+        "TC01-3-4-R001"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [
+            "rust:tondo-compiler:src::toolchain:manifest_canonicalization_and_active_source_selection_cover_full_draft_shape"
+          ],
+          "waiver": null
+        },
+        "rejection_or_failure": {
+          "evidence": [
+            "rust:tondo-compiler:src::toolchain:graph_cycles_and_bad_hashes_are_rejected"
+          ],
+          "waiver": null
+        },
+        "boundary": {
+          "evidence": [
+            "rust:tondo-compiler:src::toolchain:manifest_rejections_cover_structural_and_cross_record_guards"
+          ],
+          "waiver": null
+        },
+        "composition": {
+          "evidence": [
+            "rust:tondo-compiler:src::toolchain:draft_plan_round_trips"
+          ],
+          "waiver": null
+        },
+        "oracle": {
+          "evidence": [
+            "rust:tondo-compiler:src::toolchain:project_plan_validates_runtime_meta_and_generation_inputs"
+          ],
+          "waiver": null
+        },
+        "public_boundary": {
+          "evidence": [
+            "draft-layer:finalization:project-conventions"
+          ],
+          "waiver": null
+        }
+      }
+    },
+    {
+      "requirements": [
+        "TC01-3-5-R001"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [
+            "rust:tondo-compiler:src::toolchain:locked_record_validators_cover_hashes_ordering_and_generator_contracts"
+          ],
+          "waiver": null
+        },
+        "rejection_or_failure": {
+          "evidence": [
+            "rust:tondo-compiler:src::meta_generate:locked_input_plan_and_provider_identity_fail_closed"
+          ],
+          "waiver": null
+        },
+        "boundary": {
+          "evidence": [
+            "rust:tondo-compiler:src::toolchain:project_plan_validates_runtime_meta_and_generation_inputs"
+          ],
+          "waiver": null
+        },
+        "composition": {
+          "evidence": [
+            "rust:tondo-compiler:src::meta_generate:generator_receives_only_locked_values_and_publishes_formatted_outputs"
+          ],
+          "waiver": null
+        },
+        "oracle": {
+          "evidence": [
+            "rust:tondo-compiler:src::toolchain:locked_record_validators_cover_hashes_ordering_and_generator_contracts"
+          ],
+          "waiver": null
+        },
+        "public_boundary": {
+          "evidence": [
+            "draft-layer:meta:meta-toolchain"
+          ],
+          "waiver": null
+        }
+      }
+    },
+    {
+      "requirements": [
+        "TC01-3-R001",
+        "TC01-3-R002",
+        "TC01-3-R003"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [
+            "rust:tondo-cli:src::project_discovery:discovers_conventional_sources_and_generates_a_closed_internal_graph"
+          ],
+          "waiver": null
+        },
+        "rejection_or_failure": {
+          "evidence": [
+            "rust:tondo-cli:src::project_discovery:rejects_unrecognized_project_shapes_before_package_validation"
+          ],
+          "waiver": null
+        },
+        "boundary": {
+          "evidence": [
+            "rust:tondo-cli:src::project_discovery:root_sources_and_ignored_directories_follow_conventions"
+          ],
+          "waiver": null
+        },
+        "composition": {
+          "evidence": [
+            "rust:tondo-cli:tests::cli:check_and_run_accept_a_conventional_project_without_json_configuration"
+          ],
+          "waiver": null
+        },
+        "oracle": {
+          "evidence": [
+            "rust:tondo-cli:src::project_discovery:toml_lockfiles_are_normalized_to_the_existing_pure_wire_boundary"
+          ],
+          "waiver": null
+        },
+        "public_boundary": {
+          "evidence": [
+            "draft-layer:finalization:project-conventions"
+          ],
+          "waiver": null
+        }
+      }
+    },
+    {
+      "requirements": [
+        "TC01-4-1-R001",
+        "TC01-4-2-R001"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [
+            "rust:tondo-compiler:src::toolchain:manifest_canonicalization_and_active_source_selection_cover_full_draft_shape"
+          ],
+          "waiver": null
+        },
+        "rejection_or_failure": {
+          "evidence": [
+            "rust:tondo-compiler:src::toolchain:manifest_rejections_cover_structural_and_cross_record_guards"
+          ],
+          "waiver": null
+        },
+        "boundary": {
+          "evidence": [
+            "rust:tondo-compiler:src::project:inactive_source_sets_are_resolved_before_lexing"
+          ],
+          "waiver": null
+        },
+        "composition": {
+          "evidence": [
+            "rust:tondo-compiler:src::project:closed_project_graph_exposes_all_capability_selected_bootstrap_modules"
+          ],
+          "waiver": null
+        },
+        "oracle": {
+          "evidence": [
+            "rust:tondo-compiler:src::project:manifest_schema_target_registry_and_active_logical_paths_are_closed"
+          ],
+          "waiver": null
+        },
+        "public_boundary": {
+          "evidence": [
+            "draft-layer:finalization:project-conventions"
+          ],
+          "waiver": null
+        }
+      }
+    },
+    {
+      "requirements": [
+        "TC01-4-3-R001",
+        "TC01-4-3-R002",
+        "TC01-4-3-R003"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [
+            "rust:tondo-compiler:src::test_plan:plan_normalizes_all_source_classes_and_execution_metadata"
+          ],
+          "waiver": null
+        },
+        "rejection_or_failure": {
+          "evidence": [
+            "rust:tondo-compiler:src::test_plan:plan_rejects_inferred_roots_duplicate_inputs_and_production_drift"
+          ],
+          "waiver": null
+        },
+        "boundary": {
+          "evidence": [
+            "rust:tondo-compiler:src::test_plan:plan_rejects_target_time_and_store_contract_drift"
+          ],
+          "waiver": null
+        },
+        "composition": {
+          "evidence": [
+            "rust:tondo-cli:tests::cli:test_command_repeats_in_fresh_attempts_and_emits_json_lists_and_owners"
+          ],
+          "waiver": null
+        },
+        "oracle": {
+          "evidence": [
+            "rust:tondo-compiler:src::test_plan:canonical_bytes_are_stable_and_normalize_seed_and_order"
+          ],
+          "waiver": null
+        },
+        "public_boundary": {
+          "evidence": [
+            "draft-layer:testing:testing-23-dev-dependencies",
+            "draft-layer:testing:testing-28-jobs",
+            "draft-layer:testing:testing-30-cli"
+          ],
+          "waiver": null
+        }
+      }
+    },
+    {
+      "requirements": [
+        "TC01-4-4-R001",
+        "TC01-4-4-R002",
+        "TC01-4-4-R003",
+        "TC01-4-4-R004"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [
+            "rust:tondo-compiler:src::test_inputs:input_plan_closes_public_hashes_and_references_without_values"
+          ],
+          "waiver": null
+        },
+        "rejection_or_failure": {
+          "evidence": [
+            "rust:tondo-compiler:src::test_inputs:input_plan_rejects_missing_references_collisions_and_secret_hashes"
+          ],
+          "waiver": null
+        },
+        "boundary": {
+          "evidence": [
+            "rust:tondo-compiler:src::test_inputs:input_plan_rejects_plan_hash_drift_capability_drift_and_unknown_fields"
+          ],
+          "waiver": null
+        },
+        "composition": {
+          "evidence": [
+            "rust:tondo-compiler:src::test_inputs:input_plan_computes_versioned_and_unversioned_secret_states"
+          ],
+          "waiver": null
+        },
+        "oracle": {
+          "evidence": [
+            "rust:tondo-compiler:src::test_inputs:input_plan_canonicalization_is_stable_and_has_no_secret_value_channel"
+          ],
+          "waiver": null
+        },
+        "public_boundary": {
+          "evidence": [
+            "draft-layer:testing:testing-47-inputs"
+          ],
+          "waiver": null
+        }
+      }
+    },
+    {
+      "requirements": [
+        "TC01-5-2-R001",
+        "TC01-5-2-R002",
+        "TC01-5-2-R003"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [
+            "rust:tondo-compiler:src::toolchain:project_plan_validates_runtime_meta_and_generation_inputs"
+          ],
+          "waiver": null
+        },
+        "rejection_or_failure": {
+          "evidence": [
+            "rust:tondo-compiler:src::toolchain:locked_record_validators_cover_hashes_ordering_and_generator_contracts"
+          ],
+          "waiver": null
+        },
+        "boundary": {
+          "evidence": [
+            "rust:tondo-compiler:src::project:dependency_interfaces_are_compatible_before_sources_are_lexed"
+          ],
+          "waiver": null
+        },
+        "composition": {
+          "evidence": [
+            "rust:tondo-compiler:src::project:identical_declared_inputs_produce_identical_interface_and_artifact_bytes"
+          ],
+          "waiver": null
+        },
+        "oracle": {
+          "evidence": [
+            "rust:tondo-compiler:src::project:exact_dependency_interfaces_link_and_pin_api_hashes"
+          ],
+          "waiver": null
+        },
+        "public_boundary": {
+          "evidence": [
+            "draft-layer:finalization:project-conventions",
+            "draft-layer:meta:meta-toolchain"
+          ],
+          "waiver": null
+        }
+      }
+    },
+    {
+      "requirements": [
+        "TC01-6-3-R001",
+        "TC01-6-5-R001"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [
+            "rust:tondo-compiler:src::meta_generate:generator_receives_only_locked_values_and_publishes_formatted_outputs"
+          ],
+          "waiver": null
+        },
+        "rejection_or_failure": {
+          "evidence": [
+            "rust:tondo-compiler:src::meta_generate:output_contract_rejects_paths_syntax_maps_and_budget_drift"
+          ],
+          "waiver": null
+        },
+        "boundary": {
+          "evidence": [
+            "rust:tondo-compiler:src::meta_generate:output_collisions_are_rejected_before_any_provider_runs"
+          ],
+          "waiver": null
+        },
+        "composition": {
+          "evidence": [
+            "rust:tondo-compiler:src::meta_generate:provider_failures_and_invalid_responses_publish_nothing"
+          ],
+          "waiver": null
+        },
+        "oracle": {
+          "evidence": [
+            "rust:tondo-compiler:src::meta_generate:locked_input_plan_and_provider_identity_fail_closed"
+          ],
+          "waiver": null
+        },
+        "public_boundary": {
+          "evidence": [
+            "draft-layer:meta:meta-toolchain"
+          ],
+          "waiver": null
+        }
+      }
+    },
+    {
+      "requirements": [
         "TL01-12-8-R001",
         "TL01-12-8-R002",
         "TL01-12-8-R003",
