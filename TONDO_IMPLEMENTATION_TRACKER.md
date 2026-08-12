@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 2.18
+**Versión del tracker:** 2.19
 
 **Última actualización:** 2026-08-12
 
@@ -2800,15 +2800,22 @@ Antes de ampliar la gramática de M10.7 o M10.6:
   superficie estática. El corpus hostil cubre errores exactos, UTF-8, CR/LF,
   headers, cierres, offsets multibyte, formato, determinismo y output atómico.
 
-- [ ] **CONF-MATRIX-ALL-001 — Extender la matriz normativa a los tres contratos
+- [x] **CONF-MATRIX-ALL-001 — Extender la matriz normativa a los tres contratos
   G5.** Inventariar requisitos estables de lenguaje, testing y toolchain con
   identidad, riesgo y seis dimensiones de evidencia. Un documento incluido en
   un proof no cuenta como cubierto solo por estar fijado por hash, y un fence no
   se considera test por ser parseable. La matriz de stdlib es
   `STD-MATRIX-ALL-001` y alimenta S1A/S1, no G5.
+  La matriz v2 fija el conjunto ordenado de las tres specs y asigna namespaces
+  `TL01`, `TT01` y `TC01`; cada fila conserva documento, hash/revisión, heading,
+  riesgo, fase, estado y seis dimensiones. El inventario resultante contiene
+  421 requisitos: 309 de lenguaje, 81 de testing y 31 de toolchain. Las 112
+  filas especializadas nuevas quedan como límites explícitos hasta que la
+  auditoría enlace evidencia ejecutable; ni el hash del documento ni sus
+  fences cuentan como cobertura.
 
 - [ ] **CONF-GAP-AUDIT-001 — Clasificar todos los límites existentes.** Revisar
-  individualmente los 260 `toolchain-limit` y los 38 `draft-pending` actuales y
+  individualmente los 344 `toolchain-limit` y los 22 `draft-pending` actuales y
   asignar una de tres salidas verificables: implementación existente sin
   trazabilidad, requisito no aplicable con razón normativa, o funcionalidad
   realmente ausente. No se permiten waivers agregadas por sección ni usar un
@@ -5906,6 +5913,18 @@ se declara iniciada antes de esos cierres.
 ---
 
 ## 25. Historial del tracker
+
+### 2.19 — 2026-08-12
+
+- Se cierra `CONF-MATRIX-ALL-001`. `tondo-normative-coverage/2` liga de forma
+  ordenada lenguaje, testing y toolchain, genera identidades estables separadas
+  (`TL01`, `TT01`, `TC01`) y registra por requisito el documento exacto, su
+  revisión content-addressed, riesgo, fase y las seis dimensiones de evidencia.
+  La matriz pasa de 309 a 421 filas (309/81/31) sin heredar cobertura por hash,
+  fence o proximidad. `tondo-normative-evidence/2` fija el mismo conjunto G5 y
+  conserva los claims revisados del lenguaje; los nuevos límites quedan
+  explícitos para `CONF-GAP-AUDIT-001`. La matriz independiente de stdlib no se
+  incorpora a G5.
 
 ### 2.18 — 2026-08-12
 

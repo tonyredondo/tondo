@@ -11,17 +11,48 @@ use tondo_conformance::manifest::{ConformanceCase, LoadedSuite};
 use crate::inventory::Inventory;
 use crate::{canonical_json, sha256};
 
-pub const FORMAT: &str = "tondo-normative-coverage/1";
-pub const EVIDENCE_FORMAT: &str = "tondo-normative-evidence/1";
+pub const FORMAT: &str = "tondo-normative-coverage/2";
+pub const EVIDENCE_FORMAT: &str = "tondo-normative-evidence/2";
 pub const EVIDENCE_PATH: &str = "testing/normative-evidence.json";
+
+const G5_SPECIFICATIONS: [Specification; 3] = [
+    Specification {
+        path: "TONDO_LANGUAGE_SPEC.md",
+        prefix: "TL01",
+        title: "Tondo: especificacion del lenguaje",
+    },
+    Specification {
+        path: "TONDO_TESTING_SPEC.md",
+        prefix: "TT01",
+        title: "Tondo: especificacion de testing",
+    },
+    Specification {
+        path: "TONDO_TOOLCHAIN_SPEC.md",
+        prefix: "TC01",
+        title: "Tondo: especificacion del toolchain",
+    },
+];
+
+#[derive(Debug, Clone, Copy)]
+struct Specification {
+    path: &'static str,
+    prefix: &'static str,
+    title: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SpecificationIdentity {
+    pub path: String,
+    pub sha256: String,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CoverageMatrix {
     pub format: String,
-    pub document: String,
     pub edition: String,
-    pub document_sha256: String,
+    pub documents: Vec<SpecificationIdentity>,
     pub inventory_sha256: String,
     pub target: String,
     pub summary: MatrixSummary,
@@ -32,6 +63,7 @@ pub struct CoverageMatrix {
 #[serde(deny_unknown_fields)]
 pub struct MatrixSummary {
     pub total: u64,
+    pub by_document: BTreeMap<String, u64>,
     pub by_status: BTreeMap<String, u64>,
     pub by_risk: BTreeMap<String, u64>,
     pub with_executable_evidence: u64,
@@ -41,6 +73,7 @@ pub struct MatrixSummary {
 #[serde(deny_unknown_fields)]
 pub struct Requirement {
     pub id: String,
+    pub document: String,
     pub revision: String,
     pub heading: String,
     pub heading_anchor: String,
@@ -78,9 +111,8 @@ pub struct Dimension {
 #[serde(deny_unknown_fields)]
 struct EvidenceMap {
     format: String,
-    document: String,
     edition: String,
-    document_sha256: String,
+    documents: Vec<SpecificationIdentity>,
     target: String,
     claims: Vec<EvidenceClaim>,
 }
@@ -112,24 +144,31 @@ impl Dimension {
 }
 
 pub fn build(root: &Path, inventory: &Inventory) -> Result<CoverageMatrix, String> {
-    let document_path = root.join("TONDO_LANGUAGE_SPEC.md");
-    let document_bytes = fs::read(&document_path)
-        .map_err(|error| format!("cannot read `{}`: {error}", document_path.display()))?;
-    let document = std::str::from_utf8(&document_bytes)
-        .map_err(|error| format!("TONDO_LANGUAGE_SPEC.md is not valid UTF-8: {error}"))?;
-    let document_sha256 = sha256(&document_bytes);
     let inventory_sha256 = sha256(&canonical_json(inventory)?);
     let lineage = DraftLineage::load(root, Path::new(DRAFT_LINEAGE_PATH))
         .map_err(|error| error.to_string())?;
     let suite = lineage.baseline_suite();
     let baseline_document = std::str::from_utf8(lineage.baseline_specification())
         .map_err(|error| format!("baseline language specification is not valid UTF-8: {error}"))?;
-    let baseline_requirements = extract_requirements(baseline_document)?
+    let baseline_requirements = extract_requirements(baseline_document, G5_SPECIFICATIONS[0])?
         .into_iter()
         .map(|requirement| (requirement.id, sha256(requirement.text.as_bytes())))
         .collect::<BTreeMap<_, _>>();
-    let extracted = extract_requirements(document)?;
-    let evidence = load_evidence(root, &document_sha256, inventory, &extracted)?;
+    let mut documents = Vec::new();
+    let mut extracted = Vec::new();
+    for specification in G5_SPECIFICATIONS {
+        let path = root.join(specification.path);
+        let bytes = fs::read(&path)
+            .map_err(|error| format!("cannot read `{}`: {error}", path.display()))?;
+        let document = std::str::from_utf8(&bytes)
+            .map_err(|error| format!("{} is not valid UTF-8: {error}", specification.path))?;
+        documents.push(SpecificationIdentity {
+            path: specification.path.into(),
+            sha256: sha256(&bytes),
+        });
+        extracted.extend(extract_requirements(document, specification)?);
+    }
+    let evidence = load_evidence(root, &documents, inventory, &extracted)?;
     let implemented_requirements = lineage.implemented_requirements();
     let current_ids = extracted
         .iter()
@@ -147,18 +186,13 @@ pub fn build(root: &Path, inventory: &Inventory) -> Result<CoverageMatrix, Strin
         .into_iter()
         .map(|item| {
             let claim = evidence.get(&item.id);
-            let inherited_unchanged = baseline_requirements
-                .get(&item.id)
-                .is_some_and(|hash| *hash == sha256(item.text.as_bytes()));
+            let inherited_unchanged = (item.document == G5_SPECIFICATIONS[0].path).then(|| {
+                baseline_requirements
+                    .get(&item.id)
+                    .is_some_and(|hash| *hash == sha256(item.text.as_bytes()))
+            });
             let implemented_draft = implemented_requirements.contains(item.id.as_str());
-            classify(
-                item,
-                &document_sha256,
-                suite,
-                claim,
-                inherited_unchanged,
-                implemented_draft,
-            )
+            classify(item, suite, claim, inherited_unchanged, implemented_draft)
         })
         .collect::<Vec<_>>();
     requirements.sort_by(|left, right| left.id.cmp(&right.id));
@@ -166,9 +200,8 @@ pub fn build(root: &Path, inventory: &Inventory) -> Result<CoverageMatrix, Strin
     let summary = summarize(&requirements);
     let matrix = CoverageMatrix {
         format: FORMAT.into(),
-        document: "TONDO_LANGUAGE_SPEC.md".into(),
         edition: "0.1".into(),
-        document_sha256,
+        documents,
         inventory_sha256,
         target: "tondo-vm-hosted".into(),
         summary,
@@ -188,15 +221,23 @@ pub fn validate(matrix: &CoverageMatrix) -> Result<(), String> {
     if matrix.edition != "0.1" || matrix.target != "tondo-vm-hosted" {
         return Err("coverage matrix targets an unsupported edition or target".into());
     }
-    if !is_sha256(&matrix.document_sha256) || !is_sha256(&matrix.inventory_sha256) {
+    if !is_sha256(&matrix.inventory_sha256) {
         return Err("coverage matrix has an invalid source hash".into());
     }
+    validate_specification_identities(&matrix.documents)?;
     if matrix.requirements.is_empty() {
         return Err("coverage matrix contains no requirements".into());
     }
     require_unique_ids(&matrix.requirements)?;
+    let documents = matrix
+        .documents
+        .iter()
+        .map(|document| (document.path.as_str(), document.sha256.as_str()))
+        .collect::<BTreeMap<_, _>>();
+    let mut requirement_documents = BTreeSet::new();
     for requirement in &matrix.requirements {
         if requirement.id.is_empty()
+            || requirement.document.is_empty()
             || requirement.revision.is_empty()
             || requirement.heading.is_empty()
             || requirement.heading_anchor.is_empty()
@@ -210,6 +251,32 @@ pub fn validate(matrix: &CoverageMatrix) -> Result<(), String> {
         {
             return Err(format!(
                 "requirement `{}` contains incomplete metadata",
+                requirement.id
+            ));
+        }
+        let document_sha256 = documents
+            .get(requirement.document.as_str())
+            .ok_or_else(|| {
+                format!(
+                    "requirement `{}` names unknown document `{}`",
+                    requirement.id, requirement.document
+                )
+            })?;
+        requirement_documents.insert(requirement.document.as_str());
+        let prefix = G5_SPECIFICATIONS
+            .iter()
+            .find(|specification| specification.path == requirement.document)
+            .map(|specification| specification.prefix)
+            .expect("validated G5 document has a requirement namespace");
+        if !requirement.id.starts_with(&format!("{prefix}-")) {
+            return Err(format!(
+                "requirement `{}` does not use the namespace for `{}`",
+                requirement.id, requirement.document
+            ));
+        }
+        if requirement.revision != format!("0.1@{}", &document_sha256[..16]) {
+            return Err(format!(
+                "requirement `{}` does not match its document revision",
                 requirement.id
             ));
         }
@@ -263,6 +330,9 @@ pub fn validate(matrix: &CoverageMatrix) -> Result<(), String> {
             ));
         }
     }
+    if requirement_documents != documents.keys().copied().collect() {
+        return Err("coverage matrix does not inventory every G5 specification".into());
+    }
     if matrix.summary != summarize(&matrix.requirements) {
         return Err("coverage matrix summary does not match its requirements".into());
     }
@@ -272,6 +342,8 @@ pub fn validate(matrix: &CoverageMatrix) -> Result<(), String> {
 #[derive(Debug)]
 struct ExtractedRequirement {
     id: String,
+    document: String,
+    document_sha256: String,
     heading: String,
     heading_anchor: String,
     line_start: u32,
@@ -280,10 +352,14 @@ struct ExtractedRequirement {
     section: String,
 }
 
-fn extract_requirements(document: &str) -> Result<Vec<ExtractedRequirement>, String> {
+fn extract_requirements(
+    document: &str,
+    specification: Specification,
+) -> Result<Vec<ExtractedRequirement>, String> {
     let mut requirements = Vec::new();
-    let mut heading = "Tondo: especificación del lenguaje".to_owned();
-    let mut heading_anchor = "tondo-especificacion-del-lenguaje".to_owned();
+    let document_sha256 = sha256(document.as_bytes());
+    let mut heading = specification.title.to_owned();
+    let mut heading_anchor = markdown_anchor(specification.title);
     let mut section = "root".to_owned();
     let mut ordinal_by_heading = BTreeMap::<String, u32>::new();
     let mut in_fence = false;
@@ -294,7 +370,8 @@ fn extract_requirements(document: &str) -> Result<Vec<ExtractedRequirement>, Str
                  heading: &str,
                  heading_anchor: &str,
                  section: &str,
-                 ordinal_by_heading: &mut BTreeMap<String, u32>|
+                 ordinal_by_heading: &mut BTreeMap<String, u32>,
+                 document_sha256: &str|
      -> Result<(), String> {
         if paragraph.is_empty() {
             return Ok(());
@@ -312,7 +389,9 @@ fn extract_requirements(document: &str) -> Result<Vec<ExtractedRequirement>, Str
         *ordinal += 1;
         let stable_section = stable_component(section);
         requirements.push(ExtractedRequirement {
-            id: format!("TL01-{stable_section}-R{ordinal:03}"),
+            id: format!("{}-{stable_section}-R{ordinal:03}", specification.prefix),
+            document: specification.path.into(),
+            document_sha256: document_sha256.into(),
             heading: heading.to_owned(),
             heading_anchor: heading_anchor.to_owned(),
             line_start,
@@ -334,6 +413,7 @@ fn extract_requirements(document: &str) -> Result<Vec<ExtractedRequirement>, Str
                 &heading_anchor,
                 &section,
                 &mut ordinal_by_heading,
+                &document_sha256,
             )?;
             in_fence = !in_fence;
             continue;
@@ -356,6 +436,7 @@ fn extract_requirements(document: &str) -> Result<Vec<ExtractedRequirement>, Str
                 &heading_anchor,
                 &section,
                 &mut ordinal_by_heading,
+                &document_sha256,
             )?;
             heading = title.trim().to_owned();
             heading_anchor = markdown_anchor(title);
@@ -371,6 +452,7 @@ fn extract_requirements(document: &str) -> Result<Vec<ExtractedRequirement>, Str
                 &heading_anchor,
                 &section,
                 &mut ordinal_by_heading,
+                &document_sha256,
             )?;
             continue;
         }
@@ -382,6 +464,7 @@ fn extract_requirements(document: &str) -> Result<Vec<ExtractedRequirement>, Str
                 &heading_anchor,
                 &section,
                 &mut ordinal_by_heading,
+                &document_sha256,
             )?;
         }
         paragraph.push((line_number, trimmed.to_owned()));
@@ -393,19 +476,19 @@ fn extract_requirements(document: &str) -> Result<Vec<ExtractedRequirement>, Str
         &heading_anchor,
         &section,
         &mut ordinal_by_heading,
+        &document_sha256,
     )?;
     if in_fence {
-        return Err("TONDO_LANGUAGE_SPEC.md contains an unclosed fence".into());
+        return Err(format!("{} contains an unclosed fence", specification.path));
     }
     Ok(requirements)
 }
 
 fn classify(
     extracted: ExtractedRequirement,
-    document_sha256: &str,
     suite: &LoadedSuite,
     claim: Option<&EvidenceClaim>,
-    inherited_unchanged: bool,
+    inherited_unchanged: Option<bool>,
     implemented_draft: bool,
 ) -> Requirement {
     let codes = diagnostic_codes(&extracted.text);
@@ -418,10 +501,10 @@ fn classify(
         .flat_map(|case| case.covers.iter().cloned())
         .collect::<BTreeSet<_>>();
     let location = format!(
-        "TONDO_LANGUAGE_SPEC.md:{}#{}",
-        extracted.line_start, extracted.heading_anchor
+        "{}:{}#{}",
+        extracted.document, extracted.line_start, extracted.heading_anchor
     );
-    let (status, reason, evidence, dimensions) = if !inherited_unchanged {
+    let (status, reason, evidence, dimensions) = if inherited_unchanged == Some(false) {
         if !implemented_draft {
             let reason = "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation.";
             (
@@ -452,6 +535,14 @@ fn classify(
             "The versioned normative evidence map links this requirement to executable public-boundary evidence.",
             claim_evidence(claim),
             claim.dimensions.clone(),
+        )
+    } else if inherited_unchanged.is_none() {
+        let reason = "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage.";
+        (
+            "toolchain-limit",
+            reason,
+            vec![location.clone()],
+            waived_dimensions(reason),
         )
     } else if target_not_applicable(&extracted.section, &extracted.text) {
         let reason =
@@ -510,15 +601,16 @@ fn classify(
     };
     Requirement {
         id: extracted.id,
-        revision: format!("0.1@{}", &document_sha256[..16]),
+        document: extracted.document.clone(),
+        revision: format!("0.1@{}", &extracted.document_sha256[..16]),
         heading: extracted.heading,
         heading_anchor: extracted.heading_anchor,
         line_start: extracted.line_start,
         line_end: extracted.line_end,
         text_sha256: sha256(extracted.text.as_bytes()),
         text: extracted.text,
-        phase: phase_for_section(&extracted.section).into(),
-        risk: risk_for_section(&extracted.section).into(),
+        phase: phase_for_requirement(&extracted.document, &extracted.section).into(),
+        risk: risk_for_requirement(&extracted.document, &extracted.section).into(),
         status: status.into(),
         classification_reason: reason.into(),
         evidence,
@@ -528,7 +620,7 @@ fn classify(
 
 fn load_evidence(
     root: &Path,
-    document_sha256: &str,
+    documents: &[SpecificationIdentity],
     inventory: &Inventory,
     requirements: &[ExtractedRequirement],
 ) -> Result<BTreeMap<String, EvidenceClaim>, String> {
@@ -539,7 +631,7 @@ fn load_evidence(
         .map_err(|error| format!("cannot decode `{}`: {error}", path.display()))?;
     validate_evidence(
         &evidence,
-        document_sha256,
+        documents,
         inventory,
         &requirements
             .iter()
@@ -550,19 +642,19 @@ fn load_evidence(
 
 fn validate_evidence(
     evidence: &EvidenceMap,
-    document_sha256: &str,
+    documents: &[SpecificationIdentity],
     inventory: &Inventory,
     requirements: &BTreeSet<&str>,
 ) -> Result<BTreeMap<String, EvidenceClaim>, String> {
     if evidence.format != EVIDENCE_FORMAT
-        || evidence.document != "TONDO_LANGUAGE_SPEC.md"
         || evidence.edition != "0.1"
         || evidence.target != "tondo-vm-hosted"
     {
-        return Err("normative evidence targets an unsupported format, document, or target".into());
+        return Err("normative evidence targets an unsupported format, edition, or target".into());
     }
-    if evidence.document_sha256 != document_sha256 {
-        return Err("normative evidence does not match the current language specification".into());
+    validate_specification_identities(&evidence.documents)?;
+    if evidence.documents != documents {
+        return Err("normative evidence does not match the current G5 specifications".into());
     }
 
     let inventory = inventory
@@ -710,10 +802,12 @@ fn validate_dimension(id: &str, name: &str, dimension: &Dimension) -> Result<(),
 }
 
 fn summarize(requirements: &[Requirement]) -> MatrixSummary {
+    let mut by_document = BTreeMap::new();
     let mut by_status = BTreeMap::new();
     let mut by_risk = BTreeMap::new();
     let mut with_executable_evidence = 0;
     for requirement in requirements {
+        *by_document.entry(requirement.document.clone()).or_insert(0) += 1;
         *by_status.entry(requirement.status.clone()).or_insert(0) += 1;
         *by_risk.entry(requirement.risk.clone()).or_insert(0) += 1;
         if requirement.status == "covered" {
@@ -722,10 +816,30 @@ fn summarize(requirements: &[Requirement]) -> MatrixSummary {
     }
     MatrixSummary {
         total: requirements.len() as u64,
+        by_document,
         by_status,
         by_risk,
         with_executable_evidence,
     }
+}
+
+fn validate_specification_identities(documents: &[SpecificationIdentity]) -> Result<(), String> {
+    let expected = G5_SPECIFICATIONS
+        .iter()
+        .map(|specification| specification.path)
+        .collect::<Vec<_>>();
+    if documents
+        .iter()
+        .map(|document| document.path.as_str())
+        .collect::<Vec<_>>()
+        != expected
+        || documents
+            .iter()
+            .any(|document| !is_sha256(&document.sha256))
+    {
+        return Err("normative matrix must bind the ordered G5 specification set".into());
+    }
+    Ok(())
 }
 
 fn normalize_markdown_paragraph(lines: &[(u32, String)]) -> String {
@@ -858,7 +972,19 @@ fn stdlib_pending(section: &str, text: &str) -> bool {
         || text.to_lowercase().contains("futura librería estándar")
 }
 
-fn phase_for_section(section: &str) -> &'static str {
+fn phase_for_requirement(document: &str, section: &str) -> &'static str {
+    if document == "TONDO_TESTING_SPEC.md" {
+        return "testing";
+    }
+    if document == "TONDO_TOOLCHAIN_SPEC.md" {
+        return match top_level_section(section) {
+            Some(2 | 5 | 6) => "resolution",
+            Some(3 | 4 | 10) => "cli",
+            Some(7 | 8 | 9 | 11) => "tooling",
+            Some(12) => "diagnostics-tooling",
+            _ => "toolchain-contract",
+        };
+    }
     match top_level_section(section) {
         Some(5) => "frontend",
         Some(6 | 7) => "resolution",
@@ -878,7 +1004,21 @@ fn phase_for_section(section: &str) -> &'static str {
     }
 }
 
-fn risk_for_section(section: &str) -> &'static str {
+fn risk_for_requirement(document: &str, section: &str) -> &'static str {
+    if document == "TONDO_TESTING_SPEC.md" {
+        return match top_level_section(section) {
+            Some(3..=11 | 14..=16) => "critical",
+            Some(2 | 12 | 13) => "high",
+            _ => "medium",
+        };
+    }
+    if document == "TONDO_TOOLCHAIN_SPEC.md" {
+        return match top_level_section(section) {
+            Some(2 | 4..=9 | 11 | 12) => "critical",
+            Some(3 | 10) => "high",
+            _ => "medium",
+        };
+    }
     match top_level_section(section) {
         Some(5 | 6 | 7 | 8 | 12 | 13 | 14 | 15 | 16 | 20 | 22) => "critical",
         Some(9 | 10 | 11 | 17 | 18 | 19 | 23) => "high",
@@ -934,7 +1074,7 @@ El compilador debe aceptar el caso.
 
 - El valor no puede escapar.
 ";
-        let requirements = extract_requirements(document).unwrap();
+        let requirements = extract_requirements(document, G5_SPECIFICATIONS[0]).unwrap();
         assert_eq!(requirements.len(), 2);
         assert_eq!(requirements[0].id, "TL01-1-R001");
         assert_eq!(requirements[1].id, "TL01-1-R002");
@@ -944,8 +1084,29 @@ El compilador debe aceptar el caso.
 
     #[test]
     fn extraction_rejects_an_unclosed_code_fence() {
-        let error = extract_requirements("~~~tondo\nlet value = 1\n").unwrap_err();
+        let error =
+            extract_requirements("~~~tondo\nlet value = 1\n", G5_SPECIFICATIONS[0]).unwrap_err();
         assert!(error.contains("unclosed fence"));
+    }
+
+    #[test]
+    fn each_g5_contract_has_a_distinct_stable_requirement_namespace() {
+        let document = "# Contract\n\n## 1. Rule\n\nEl toolchain debe preserve identity.\n";
+        let expected = [
+            ("TL01-1-R001", "TONDO_LANGUAGE_SPEC.md"),
+            ("TT01-1-R001", "TONDO_TESTING_SPEC.md"),
+            ("TC01-1-R001", "TONDO_TOOLCHAIN_SPEC.md"),
+        ];
+
+        for (specification, (id, path)) in G5_SPECIFICATIONS.into_iter().zip(expected) {
+            let requirement = extract_requirements(document, specification)
+                .unwrap()
+                .pop()
+                .unwrap();
+            assert_eq!(requirement.id, id);
+            assert_eq!(requirement.document, path);
+            assert_eq!(requirement.document_sha256, sha256(document.as_bytes()));
+        }
     }
 
     #[test]
@@ -984,10 +1145,28 @@ El compilador debe aceptar el caso.
         );
     }
 
+    fn test_documents(language_hash: &str) -> Vec<SpecificationIdentity> {
+        vec![
+            SpecificationIdentity {
+                path: "TONDO_LANGUAGE_SPEC.md".into(),
+                sha256: language_hash.repeat(64),
+            },
+            SpecificationIdentity {
+                path: "TONDO_TESTING_SPEC.md".into(),
+                sha256: "c".repeat(64),
+            },
+            SpecificationIdentity {
+                path: "TONDO_TOOLCHAIN_SPEC.md".into(),
+                sha256: "d".repeat(64),
+            },
+        ]
+    }
+
     fn valid_matrix() -> CoverageMatrix {
         let requirement = Requirement {
             id: "TL01-1-R001".into(),
-            revision: "0.1@test".into(),
+            document: "TONDO_LANGUAGE_SPEC.md".into(),
+            revision: "0.1@bbbbbbbbbbbbbbbb".into(),
             heading: "Core".into(),
             heading_anchor: "core".into(),
             line_start: 1,
@@ -1001,15 +1180,23 @@ El compilador debe aceptar el caso.
             evidence: vec!["conformance:case".into()],
             dimensions: evidence_dimensions("conformance:case"),
         };
+        let mut testing = requirement.clone();
+        testing.id = "TT01-1-R001".into();
+        testing.document = "TONDO_TESTING_SPEC.md".into();
+        testing.revision = "0.1@cccccccccccccccc".into();
+        let mut toolchain = requirement.clone();
+        toolchain.id = "TC01-1-R001".into();
+        toolchain.document = "TONDO_TOOLCHAIN_SPEC.md".into();
+        toolchain.revision = "0.1@dddddddddddddddd".into();
+        let requirements = vec![toolchain, requirement, testing];
         CoverageMatrix {
             format: FORMAT.into(),
-            document: "TONDO_LANGUAGE_SPEC.md".into(),
             edition: "0.1".into(),
-            document_sha256: "b".repeat(64),
+            documents: test_documents("b"),
             inventory_sha256: "c".repeat(64),
             target: "tondo-vm-hosted".into(),
-            summary: summarize(std::slice::from_ref(&requirement)),
-            requirements: vec![requirement],
+            summary: summarize(&requirements),
+            requirements,
         }
     }
 
@@ -1032,11 +1219,19 @@ El compilador debe aceptar el caso.
         );
 
         let mut matrix = valid_matrix();
-        matrix.document_sha256 = "not-a-hash".into();
+        matrix.documents[0].sha256 = "not-a-hash".into();
         assert!(
             validate(&matrix)
                 .unwrap_err()
-                .contains("invalid source hash")
+                .contains("ordered G5 specification set")
+        );
+
+        let mut matrix = valid_matrix();
+        matrix.documents.swap(0, 1);
+        assert!(
+            validate(&matrix)
+                .unwrap_err()
+                .contains("ordered G5 specification set")
         );
 
         let mut matrix = valid_matrix();
@@ -1053,6 +1248,33 @@ El compilador debe aceptar el caso.
             validate(&matrix)
                 .unwrap_err()
                 .contains("incomplete metadata")
+        );
+
+        let mut matrix = valid_matrix();
+        matrix.requirements[0].document = "UNKNOWN_SPEC.md".into();
+        assert!(validate(&matrix).unwrap_err().contains("unknown document"));
+
+        let mut matrix = valid_matrix();
+        matrix.requirements[0].id = "TL01-X-R999".into();
+        assert!(validate(&matrix).unwrap_err().contains("namespace"));
+
+        let mut matrix = valid_matrix();
+        matrix.requirements[0].revision = "0.1@aaaaaaaaaaaaaaaa".into();
+        assert!(
+            validate(&matrix)
+                .unwrap_err()
+                .contains("does not match its document revision")
+        );
+
+        let mut matrix = valid_matrix();
+        matrix
+            .requirements
+            .retain(|requirement| requirement.document != "TONDO_TOOLCHAIN_SPEC.md");
+        matrix.summary = summarize(&matrix.requirements);
+        assert!(
+            validate(&matrix)
+                .unwrap_err()
+                .contains("does not inventory every G5 specification")
         );
 
         let mut matrix = valid_matrix();
@@ -1094,6 +1316,47 @@ El compilador debe aceptar el caso.
                 .unwrap_err()
                 .contains("summary does not match")
         );
+        assert_eq!(
+            valid_matrix().summary.by_document,
+            BTreeMap::from([
+                ("TONDO_LANGUAGE_SPEC.md".into(), 1),
+                ("TONDO_TESTING_SPEC.md".into(), 1),
+                ("TONDO_TOOLCHAIN_SPEC.md".into(), 1),
+            ])
+        );
+    }
+
+    #[test]
+    fn specialized_contracts_require_explicit_evidence_in_all_six_dimensions() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .unwrap();
+        let lineage = DraftLineage::load(root, DRAFT_LINEAGE_PATH).unwrap();
+        let extracted = ExtractedRequirement {
+            id: "TT01-7-R001".into(),
+            document: "TONDO_TESTING_SPEC.md".into(),
+            document_sha256: "a".repeat(64),
+            heading: "Execution".into(),
+            heading_anchor: "execution".into(),
+            line_start: 7,
+            line_end: 7,
+            text: "El runner debe isolate attempts.".into(),
+            section: "7".into(),
+        };
+        let pending = classify(extracted, lineage.baseline_suite(), None, None, false);
+        assert_eq!(pending.status, "toolchain-limit");
+        assert_eq!(pending.phase, "testing");
+        assert_eq!(pending.risk, "critical");
+        for (_, dimension) in claim_dimensions(&pending.dimensions) {
+            assert!(dimension.evidence.is_empty());
+            assert!(
+                dimension
+                    .waiver
+                    .as_deref()
+                    .is_some_and(|reason| !reason.is_empty())
+            );
+        }
     }
 
     #[test]
@@ -1103,8 +1366,11 @@ El compilador debe aceptar el caso.
             .and_then(Path::parent)
             .unwrap();
         let lineage = DraftLineage::load(root, DRAFT_LINEAGE_PATH).unwrap();
+        let document_sha256 = "a".repeat(64);
         let extracted = || ExtractedRequirement {
             id: "TL01-LIVE-R001".into(),
+            document: "TONDO_LANGUAGE_SPEC.md".into(),
+            document_sha256: document_sha256.clone(),
             heading: "Draft requirement".into(),
             heading_anchor: "draft-requirement".into(),
             line_start: 1,
@@ -1112,24 +1378,21 @@ El compilador debe aceptar el caso.
             text: "El compilador debe aceptar la forma viva.".into(),
             section: "28".into(),
         };
-        let document_sha256 = "a".repeat(64);
 
         let pending = classify(
             extracted(),
-            &document_sha256,
             lineage.baseline_suite(),
             None,
-            false,
+            Some(false),
             false,
         );
         assert_eq!(pending.status, "draft-pending");
 
         let declared_without_evidence = classify(
             extracted(),
-            &document_sha256,
             lineage.baseline_suite(),
             None,
-            false,
+            Some(false),
             true,
         );
         assert_eq!(declared_without_evidence.status, "toolchain-limit");
@@ -1145,10 +1408,9 @@ El compilador debe aceptar el caso.
         };
         let covered = classify(
             extracted(),
-            &document_sha256,
             lineage.baseline_suite(),
             Some(&claim),
-            false,
+            Some(false),
             true,
         );
         assert_eq!(covered.status, "covered");
@@ -1157,15 +1419,14 @@ El compilador debe aceptar el caso.
 
     #[test]
     fn normative_evidence_is_closed_and_requires_a_real_public_test() {
-        let document_sha256 = "a".repeat(64);
+        let documents = test_documents("a");
         let requirement = "TL01-1-R001";
         let requirements = [requirement].into_iter().collect::<BTreeSet<_>>();
         let inventory = evidence_inventory("executable", "tondo-vm-hosted", "conformance-case");
         let mut evidence = EvidenceMap {
             format: EVIDENCE_FORMAT.into(),
-            document: "TONDO_LANGUAGE_SPEC.md".into(),
             edition: "0.1".into(),
-            document_sha256: document_sha256.clone(),
+            documents: documents.clone(),
             target: "tondo-vm-hosted".into(),
             claims: vec![EvidenceClaim {
                 requirements: vec![requirement.into()],
@@ -1174,7 +1435,7 @@ El compilador debe aceptar el caso.
         };
 
         let validated =
-            validate_evidence(&evidence, &document_sha256, &inventory, &requirements).unwrap();
+            validate_evidence(&evidence, &documents, &inventory, &requirements).unwrap();
         assert_eq!(
             validated.keys().map(String::as_str).collect::<Vec<_>>(),
             [requirement]
@@ -1186,17 +1447,17 @@ El compilador debe aceptar el caso.
         );
         assert_eq!(claim_evidence(claim), ["conformance:case"]);
 
-        evidence.document_sha256 = "b".repeat(64);
+        evidence.documents[0].sha256 = "b".repeat(64);
         assert!(
-            validate_evidence(&evidence, &document_sha256, &inventory, &requirements)
+            validate_evidence(&evidence, &documents, &inventory, &requirements)
                 .unwrap_err()
                 .contains("does not match")
         );
-        evidence.document_sha256 = document_sha256.clone();
+        evidence.documents = documents.clone();
 
         evidence.format = "future-evidence".into();
         assert!(
-            validate_evidence(&evidence, &document_sha256, &inventory, &requirements)
+            validate_evidence(&evidence, &documents, &inventory, &requirements)
                 .unwrap_err()
                 .contains("unsupported format")
         );
@@ -1204,7 +1465,7 @@ El compilador debe aceptar el caso.
 
         evidence.claims[0].requirements.clear();
         assert!(
-            validate_evidence(&evidence, &document_sha256, &inventory, &requirements)
+            validate_evidence(&evidence, &documents, &inventory, &requirements)
                 .unwrap_err()
                 .contains("require requirements")
         );
@@ -1212,7 +1473,7 @@ El compilador debe aceptar el caso.
 
         evidence.claims[0].requirements = vec!["TL01-UNKNOWN".into()];
         assert!(
-            validate_evidence(&evidence, &document_sha256, &inventory, &requirements)
+            validate_evidence(&evidence, &documents, &inventory, &requirements)
                 .unwrap_err()
                 .contains("unknown requirement")
         );
@@ -1220,7 +1481,7 @@ El compilador debe aceptar el caso.
 
         evidence.claims[0].dimensions.positive.evidence = vec!["conformance:missing".into()];
         assert!(
-            validate_evidence(&evidence, &document_sha256, &inventory, &requirements)
+            validate_evidence(&evidence, &documents, &inventory, &requirements)
                 .unwrap_err()
                 .contains("unknown test")
         );
@@ -1228,19 +1489,19 @@ El compilador debe aceptar el caso.
 
         evidence.claims[0].dimensions.boundary.evidence.clear();
         assert!(
-            validate_evidence(&evidence, &document_sha256, &inventory, &requirements)
+            validate_evidence(&evidence, &documents, &inventory, &requirements)
                 .unwrap_err()
                 .contains("needs evidence")
         );
         evidence.claims[0].dimensions.boundary.waiver =
             Some("The rule has no material boundary.".into());
-        validate_evidence(&evidence, &document_sha256, &inventory, &requirements).unwrap();
+        validate_evidence(&evidence, &documents, &inventory, &requirements).unwrap();
 
         evidence.claims[0].dimensions.oracle.evidence.clear();
         evidence.claims[0].dimensions.oracle.waiver =
             Some("The oracle is supplied by the adapter.".into());
         assert!(
-            validate_evidence(&evidence, &document_sha256, &inventory, &requirements)
+            validate_evidence(&evidence, &documents, &inventory, &requirements)
                 .unwrap_err()
                 .contains("requires executable oracle")
         );
@@ -1248,7 +1509,7 @@ El compilador debe aceptar el caso.
 
         evidence.claims.push(evidence.claims[0].clone());
         assert!(
-            validate_evidence(&evidence, &document_sha256, &inventory, &requirements)
+            validate_evidence(&evidence, &documents, &inventory, &requirements)
                 .unwrap_err()
                 .contains("globally sorted and unique")
         );
@@ -1256,13 +1517,13 @@ El compilador debe aceptar el caso.
 
         let internal = evidence_inventory("executable", "host-rust", "rust-test");
         assert!(
-            validate_evidence(&evidence, &document_sha256, &internal, &requirements)
+            validate_evidence(&evidence, &documents, &internal, &requirements)
                 .unwrap_err()
                 .contains("public-boundary")
         );
         let future = evidence_inventory("future-contract", "tondo-vm-hosted", "conformance-case");
         assert!(
-            validate_evidence(&evidence, &document_sha256, &future, &requirements)
+            validate_evidence(&evidence, &documents, &future, &requirements)
                 .unwrap_err()
                 .contains("not executable")
         );

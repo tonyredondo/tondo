@@ -460,17 +460,22 @@ fn validate_ratchet(
 fn validate_coverage_matrix(bytes: &[u8]) -> Result<(), SealError> {
     let matrix: CoverageMatrixRecord =
         serde_json::from_slice(bytes).map_err(|error| SealError::Json(error.to_string()))?;
-    if matrix.format != "tondo-normative-coverage/1"
-        || matrix.summary.total != matrix.requirements.len() as u64
-        || matrix
-            .summary
-            .by_status
-            .get("draft-pending")
-            .is_some_and(|count| *count != 0)
-        || matrix
-            .requirements
-            .iter()
-            .any(|requirement| requirement.status == "draft-pending")
+    if matrix.format != "tondo-normative-coverage/2" {
+        return invalid("coverage matrix uses an unsupported format");
+    }
+    if matrix.summary.total != matrix.requirements.len() as u64 {
+        return invalid("coverage matrix summary total is inconsistent");
+    }
+    let mut by_status = BTreeMap::new();
+    for requirement in &matrix.requirements {
+        *by_status.entry(requirement.status.clone()).or_insert(0) += 1;
+    }
+    if matrix.summary.by_status != by_status {
+        return invalid("coverage matrix status summary is inconsistent");
+    }
+    if by_status
+        .get("draft-pending")
+        .is_some_and(|count| *count != 0)
     {
         return invalid("coverage matrix still contains draft-pending requirements");
     }
@@ -1125,7 +1130,7 @@ mod tests {
             }
         }
         let by_status = matrix["summary"]["by_status"].as_object_mut().unwrap();
-        by_status.insert("draft-pending".into(), serde_json::Value::from(0u64));
+        by_status.remove("draft-pending");
         let covered = by_status
             .get("covered")
             .and_then(serde_json::Value::as_u64)
@@ -1324,9 +1329,29 @@ mod tests {
         let matrix_bytes = fs::read(root.join(&ratchet.matrix.path)).unwrap();
         validate_coverage_matrix(&matrix_bytes).unwrap();
         let mut pending_matrix: serde_json::Value = serde_json::from_slice(&matrix_bytes).unwrap();
+        let original_status = pending_matrix["requirements"][0]["status"]
+            .as_str()
+            .unwrap()
+            .to_owned();
         pending_matrix["requirements"][0]["status"] = "draft-pending".into();
+        let original_count = pending_matrix["summary"]["by_status"][&original_status]
+            .as_u64()
+            .unwrap();
+        pending_matrix["summary"]["by_status"][&original_status] = (original_count - 1).into();
         pending_matrix["summary"]["by_status"]["draft-pending"] = 1.into();
         assert!(validate_coverage_matrix(&serde_json::to_vec(&pending_matrix).unwrap()).is_err());
+
+        let mut old_format: serde_json::Value = serde_json::from_slice(&matrix_bytes).unwrap();
+        old_format["format"] = "tondo-normative-coverage/1".into();
+        assert!(validate_coverage_matrix(&serde_json::to_vec(&old_format).unwrap()).is_err());
+
+        let mut bad_total: serde_json::Value = serde_json::from_slice(&matrix_bytes).unwrap();
+        bad_total["summary"]["total"] = 0.into();
+        assert!(validate_coverage_matrix(&serde_json::to_vec(&bad_total).unwrap()).is_err());
+
+        let mut bad_summary: serde_json::Value = serde_json::from_slice(&matrix_bytes).unwrap();
+        bad_summary["summary"]["by_status"]["covered"] = 0.into();
+        assert!(validate_coverage_matrix(&serde_json::to_vec(&bad_summary).unwrap()).is_err());
 
         let mut incomplete = ratchet.clone();
         incomplete.pending_tasks.push("pending".into());

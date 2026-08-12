@@ -1,8 +1,20 @@
 {
-  "format": "tondo-normative-evidence/1",
-  "document": "TONDO_LANGUAGE_SPEC.md",
+  "format": "tondo-normative-evidence/2",
   "edition": "0.1",
-  "document_sha256": "0be283f1032d1a53f733a9b4d9e46f7be81dd14f86d751f05a5f2c53e69a7614",
+  "documents": [
+    {
+      "path": "TONDO_LANGUAGE_SPEC.md",
+      "sha256": "0be283f1032d1a53f733a9b4d9e46f7be81dd14f86d751f05a5f2c53e69a7614"
+    },
+    {
+      "path": "TONDO_TESTING_SPEC.md",
+      "sha256": "8ef9c6db7305b97ebf383c51c96b744884ea3fca9663935ec703df8fdeed2f65"
+    },
+    {
+      "path": "TONDO_TOOLCHAIN_SPEC.md",
+      "sha256": "b05e43544957eb3069cb3f97de7a7a12154daa9894ba9bdbfe7f363b9d0d10c9"
+    }
+  ],
   "target": "tondo-vm-hosted",
   "claims": [
     {
