@@ -536,6 +536,14 @@ fn classify(
             claim_evidence(claim),
             claim.dimensions.clone(),
         )
+    } else if audited_target_not_applicable(&extracted.id) {
+        let reason = "The normative gap audit identifies this exact requirement as a deliberate edition 0.1 non-goal.";
+        (
+            "target-not-applicable",
+            reason,
+            vec![location.clone()],
+            waived_dimensions(reason),
+        )
     } else if inherited_unchanged.is_none() {
         let reason = "The specialized G5 requirement has no reviewed executable evidence claim; document inclusion or a nearby test is not counted as coverage.";
         (
@@ -967,6 +975,10 @@ fn target_not_applicable(section: &str, text: &str) -> bool {
         || lower.contains("una futura edición")
 }
 
+fn audited_target_not_applicable(id: &str) -> bool {
+    id == "TT01-13-R001"
+}
+
 fn stdlib_pending(section: &str, text: &str) -> bool {
     top_level_section(section) == Some(26)
         || text.to_lowercase().contains("futura librería estándar")
@@ -1384,6 +1396,44 @@ El compilador debe aceptar el caso.
                 );
             }
         }
+    }
+
+    #[test]
+    fn testing_contract_has_complete_reviewed_traceability_except_its_exact_non_goal() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .unwrap();
+        let inventory = crate::inventory::build(root).unwrap();
+        let matrix = build(root, &inventory).unwrap();
+        let testing = matrix
+            .requirements
+            .iter()
+            .filter(|requirement| requirement.document == "TONDO_TESTING_SPEC.md")
+            .collect::<Vec<_>>();
+
+        assert_eq!(testing.len(), 81);
+        let covered = testing
+            .iter()
+            .filter(|requirement| requirement.status == "covered")
+            .collect::<Vec<_>>();
+        assert_eq!(covered.len(), 80);
+        for requirement in covered {
+            for (name, dimension) in claim_dimensions(&requirement.dimensions) {
+                assert!(
+                    !dimension.evidence.is_empty() && dimension.waiver.is_none(),
+                    "{} lacks {name} evidence",
+                    requirement.id
+                );
+            }
+        }
+
+        let non_goals = testing
+            .iter()
+            .filter(|requirement| requirement.status == "target-not-applicable")
+            .map(|requirement| requirement.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(non_goals, ["TT01-13-R001"]);
     }
 
     #[test]

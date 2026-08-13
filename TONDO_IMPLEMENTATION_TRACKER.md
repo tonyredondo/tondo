@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 2.21
+**Versión del tracker:** 2.22
 
 **Última actualización:** 2026-08-12
 
@@ -2842,8 +2842,12 @@ Antes de ampliar la gramática de M10.7 o M10.6:
     records cerrados, resolución, proyectos convencionales, planes de test,
     inputs y meta-generación; la frontera pública usa las layers existentes de
     finalización, meta y testing. La matriz pasa de 45 a 76 filas cubiertas.
-  - [ ] **CONF-GAP-IMPL-TT-001 — Testing.** Cerrar las 80 filas aplicables
-    `TT01` y promover su límite deliberado a `target-not-applicable`.
+  - [x] **CONF-GAP-IMPL-TT-001 — Testing.** Las 80 filas aplicables `TT01`
+    enlazan ahora su layer pública exacta y pruebas internas separadas de
+    rechazo, borde, composición y oracle. La fila `TT01-13-R001`, que enumera
+    funcionalidad deliberadamente ausente, se reconoce por identidad auditada
+    y avanza a `target-not-applicable`; una prueba estructural exige el reparto
+    exacto 80+1 y evidencia completa en las seis dimensiones aplicables.
   - [ ] **CONF-GAP-IMPL-TL-001 — Lenguaje.** Cerrar las 253 filas aplicables
     `TL01` y promover su no-goal deliberado a `target-not-applicable`.
 
