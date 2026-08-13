@@ -9,9 +9,9 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 2.22
+**Versión del tracker:** 2.23
 
-**Última actualización:** 2026-08-12
+**Última actualización:** 2026-08-13
 
 **Especificaciones normativas:**
 
@@ -43,13 +43,12 @@ confunde con conformarla. TLF tampoco cambia la semántica `.to`: Gate L0 produc
 un bundle separado y el candidato final fija G5, S1 y L0 por identidades
 independientes.
 
-**Objetivo inmediato:** continuar `CONF-GAP-IMPL-001` añadiendo trazabilidad
-positiva, negativa, de borde, composición, oracle y frontera pública a las 333
-filas aplicables que aún no la tienen. El contrato de toolchain ya cierra sus
-31 requisitos. La auditoría no ha encontrado funcionalidad ausente que requiera
-una leaf de implementación; dos requisitos
-son no aplicables por contrato. Después se ejecutan y atestan los resultados de
-layer de `CONF-LAYER-RESULT-001` antes de volver a cerrar T0/G5/S1A. Los contratos
+**Objetivo inmediato:** ejecutar y atestar los resultados compuestos de cada
+case layer mediante `CONF-LAYER-RESULT-001`. `CONF-GAP-IMPL-001` ya enlaza las
+364 implementaciones auditadas con evidencia positiva, negativa, de borde,
+composición, oracle y frontera pública, y clasifica sus dos no-goals exactos sin
+waivers agregadas. Solo después de ese resultado compuesto se vuelve a cerrar
+T0/G5/S1A. Los contratos
 runtime-facing de STD-0.1B y M11 esperan esos gates. Todo pertenece a la primera
 versión 0.1; los slices son orden de implementación, no versiones públicas. La
 VM permanece como implementación de referencia y oracle diferencial del
@@ -2828,7 +2827,7 @@ Antes de ampliar la gramática de M10.7 o M10.6:
   ratchet `/2` y el promotion proof fijan y revalidan el registro junto a matriz
   e inventario sin convertir la clasificación en cobertura.
 
-- [ ] **CONF-GAP-IMPL-001 — Cerrar la trazabilidad descubierta por la
+- [x] **CONF-GAP-IMPL-001 — Cerrar la trazabilidad descubierta por la
   auditoría.** Cada ausencia generaría una tarea leaf enlazada al requisito, una
   ruta pública real y tests positivos, negativos, de borde y composición. La
   auditoría no encontró ausencias: los casos ya implementados requieren añadir
@@ -2848,8 +2847,12 @@ Antes de ampliar la gramática de M10.7 o M10.6:
     funcionalidad deliberadamente ausente, se reconoce por identidad auditada
     y avanza a `target-not-applicable`; una prueba estructural exige el reparto
     exacto 80+1 y evidencia completa en las seis dimensiones aplicables.
-  - [ ] **CONF-GAP-IMPL-TL-001 — Lenguaje.** Cerrar las 253 filas aplicables
-    `TL01` y promover su no-goal deliberado a `target-not-applicable`.
+  - [x] **CONF-GAP-IMPL-TL-001 — Lenguaje.** Las 253 filas aplicables `TL01`
+    enlazan su prueba auditada con rechazo, borde, composición y oracle internos,
+    más casos públicos de conformidad elegidos por la sección normativa. El
+    no-goal `TL01-2-2-R001` se clasifica por identidad exacta. Una prueba
+    estructural exige 298 requisitos cubiertos, ocho no aplicables y tres
+    fronteras reservadas a la conformidad independiente de stdlib.
 
 - [ ] **CONF-LAYER-RESULT-001 — Ejecutar y atestar cada caso de layer.** El
   resultado de `tondo-conformance run` debe quedar ligado al hash y revisión
@@ -5929,15 +5932,36 @@ M4, M5, M6, M7, M8, M9, el corpus bootstrap M10, M10.5, M10.5b y Gates G4/H0
 quedan cerrados como implementación/infraestructura. M10.7 y la implementación
 funcional de M10.6 permanecen cerradas. `CONF-DRAFT-001` también permanece
 cerrada. La auditoría reabre T0/G5 por trazabilidad normativa y Wave 5/S1A por APIs
-públicas ausentes. La acción inmediata es `CONF-GAP-IMPL-001`: el audit no abrió
-leaves de implementación y el trabajo restante consiste en enlazar evidencia
-completa de las 333 filas aplicables restantes. Después siguen
-`CONF-LAYER-RESULT-001` y el cierre final de G5; Wave 6 no se declara iniciada
+públicas ausentes. `CONF-GAP-IMPL-001` ya cierra las 364 filas aplicables y
+conserva los dos no-goals exactos. La acción inmediata es
+`CONF-LAYER-RESULT-001` y después el cierre final de G5; Wave 6 no se declara iniciada
 antes de esos gates.
 
 ---
 
 ## 25. Historial del tracker
+
+### 2.23 — 2026-08-13
+
+- Se cierra `CONF-GAP-IMPL-TL-001` y, con él, el parent
+  `CONF-GAP-IMPL-001`. Las 253 obligaciones aplicables restantes del lenguaje
+  reciben claims individuales con las seis dimensiones ejecutables; sus
+  fronteras públicas enlazan casos de conformidad por sección en vez de tratar
+  tests Rust internos como superficie pública. `TL01-2-2-R001` pasa a
+  `target-not-applicable` por identidad auditada. La matriz queda repartida en
+  409 requisitos cubiertos, nueve no aplicables y tres fronteras de stdlib.
+  La revisión 22 del lineage añade `language-closure`, que declara y prueba las
+  22 obligaciones cambiadas desde el baseline en vez de permitir que un claim
+  de evidencia suplante la declaración de implementación del draft.
+  El gate de promotion proof espera además el resultado compuesto de case layers
+  para no intentar sustituir proofs históricos antes de `CONF-LAYER-RESULT-001`.
+
+### 2.22 — 2026-08-12
+
+- Se cierra `CONF-GAP-IMPL-TT-001`: las 80 obligaciones aplicables del contrato
+  de testing enlazan su layer pública exacta y pruebas internas distintas para
+  rechazo, borde, composición y oracle. `TT01-13-R001` queda como el único
+  no-goal exacto del contrato y una prueba estructural fija el reparto 80+1.
 
 ### 2.21 — 2026-08-12
 

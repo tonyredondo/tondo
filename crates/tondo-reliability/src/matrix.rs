@@ -976,7 +976,7 @@ fn target_not_applicable(section: &str, text: &str) -> bool {
 }
 
 fn audited_target_not_applicable(id: &str) -> bool {
-    id == "TT01-13-R001"
+    matches!(id, "TL01-2-2-R001" | "TT01-13-R001")
 }
 
 fn stdlib_pending(section: &str, text: &str) -> bool {
@@ -1434,6 +1434,81 @@ El compilador debe aceptar el caso.
             .map(|requirement| requirement.id.as_str())
             .collect::<Vec<_>>();
         assert_eq!(non_goals, ["TT01-13-R001"]);
+    }
+
+    #[test]
+    fn language_contract_has_complete_reviewed_traceability_except_exact_non_goals_and_stdlib_boundary()
+     {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .unwrap();
+        let inventory = crate::inventory::build(root).unwrap();
+        let matrix = build(root, &inventory).unwrap();
+        let language = matrix
+            .requirements
+            .iter()
+            .filter(|requirement| requirement.document == "TONDO_LANGUAGE_SPEC.md")
+            .collect::<Vec<_>>();
+
+        assert_eq!(language.len(), 309);
+        let by_status = language
+            .iter()
+            .fold(BTreeMap::new(), |mut counts, requirement| {
+                *counts.entry(requirement.status.as_str()).or_insert(0) += 1;
+                counts
+            });
+        assert_eq!(
+            by_status,
+            BTreeMap::from([
+                ("covered", 298),
+                ("stdlib-pending", 3),
+                ("target-not-applicable", 8),
+            ])
+        );
+
+        let audit = crate::gap_audit::GapAudit::load(&root.join(crate::gap_audit::PATH)).unwrap();
+        let audited_language = audit
+            .entries
+            .iter()
+            .filter(|entry| {
+                entry.outcome == "implemented-without-trace" && entry.requirement.starts_with("TL")
+            })
+            .map(|entry| entry.requirement.as_str())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(audited_language.len(), 253);
+        for requirement in language
+            .iter()
+            .filter(|requirement| audited_language.contains(requirement.id.as_str()))
+        {
+            assert_eq!(requirement.status, "covered", "{}", requirement.id);
+            for (name, dimension) in claim_dimensions(&requirement.dimensions) {
+                assert!(
+                    !dimension.evidence.is_empty() && dimension.waiver.is_none(),
+                    "{} lacks {name} evidence",
+                    requirement.id
+                );
+            }
+        }
+
+        let non_goals = language
+            .iter()
+            .filter(|requirement| requirement.status == "target-not-applicable")
+            .map(|requirement| requirement.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            non_goals,
+            [
+                "TL01-2-2-R001",
+                "TL01-25-14-R001",
+                "TL01-25-22-R001",
+                "TL01-5-4-R003",
+                "TL01-8-13-R002",
+                "TL01-8-13-R003",
+                "TL01-8-13-R004",
+                "TL01-ESTRATEGIA-DE-LA-IMPLEMENTACIN-DE-REFERENCIA-NO-NORMATIVO-R001",
+            ]
+        );
     }
 
     #[test]

@@ -337,21 +337,8 @@ mod tests {
 
     #[test]
     fn every_outcome_has_one_unambiguous_shape() {
-        let (root, inventory, matrix, audit) = repository_evidence();
-        let implemented = audit
-            .entries
-            .iter()
-            .position(|entry| {
-                entry.outcome == "implemented-without-trace"
-                    && matrix.requirements.iter().any(|requirement| {
-                        requirement.id == entry.requirement
-                            && matches!(
-                                requirement.status.as_str(),
-                                "toolchain-limit" | "draft-pending"
-                            )
-                    })
-            })
-            .unwrap();
+        let (root, inventory, mut matrix, audit) = repository_evidence();
+        let implemented = implemented_index(&audit);
         let not_applicable = not_applicable_index(&audit);
 
         let mut invalid = audit.clone();
@@ -370,6 +357,12 @@ mod tests {
             .by_outcome
             .get_mut("implemented-without-trace")
             .unwrap() -= 1;
+        matrix
+            .requirements
+            .iter_mut()
+            .find(|candidate| candidate.id == requirement)
+            .unwrap()
+            .status = "toolchain-limit".into();
         absent.validate(&root, &matrix, &inventory).unwrap();
 
         let mut invalid = absent.clone();

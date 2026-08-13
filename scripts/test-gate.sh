@@ -167,7 +167,9 @@ run_step conformance-compare \
     conformance/0.1/results/tondo-reference-draft-tondo-vm-hosted.json
 
 if jq -e '([.requirements[] | select(.status == "draft-pending")] | length) == 0' \
-    testing/coverage-matrix.json >/dev/null; then
+    testing/coverage-matrix.json >/dev/null \
+    && jq -e '([.case_layers[]?.cases[]?] | length) > 0' \
+        "$evidence/conformance-result.json" >/dev/null; then
     proof_directory="$(mktemp -d "$evidence/promotion-proof.XXXXXX")"
     rmdir "$proof_directory"
     run_step conformance-seal-proof \
@@ -186,5 +188,5 @@ if jq -e '([.requirements[] | select(.status == "draft-pending")] | length) == 0
         --root . \
         --proof "$checked_in_proof"
 else
-    echo "::notice:: conformance promotion proof skipped: the draft coverage matrix still has pending requirements"
+    echo "::notice:: conformance promotion proof skipped: normative coverage or the composed case-layer result is not ready"
 fi

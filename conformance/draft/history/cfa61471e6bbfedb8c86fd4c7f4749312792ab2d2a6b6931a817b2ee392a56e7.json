@@ -2,11 +2,11 @@
   "format": "tondo-conformance-draft-lineage",
   "lineage": "tondo-draft",
   "edition": "0.1",
-  "revision": 22,
+  "revision": 21,
   "state": "open",
   "parent": {
-    "path": "conformance/draft/history/cfa61471e6bbfedb8c86fd4c7f4749312792ab2d2a6b6931a817b2ee392a56e7.json",
-    "sha256": "cfa61471e6bbfedb8c86fd4c7f4749312792ab2d2a6b6931a817b2ee392a56e7"
+    "path": "conformance/draft/history/245d0085b35f6b93b71cbf0b562f4637cebd40f52d7e5a2b1da3d48ba823f70c.json",
+    "sha256": "245d0085b35f6b93b71cbf0b562f4637cebd40f52d7e5a2b1da3d48ba823f70c"
   },
   "baseline": {
     "manifest": {
@@ -61,46 +61,6 @@
         "TL01-6-8-R002",
         "TL01-APNDICE-D-LAYOUT-CONVENCIONAL-DE-PROYECTOS-R001",
         "TL01-C-6-SERIALIZACIN-CANNICA-R001"
-      ]
-    },
-    {
-      "id": "language-closure",
-      "manifest": {
-        "path": "conformance/draft/layers/language-closure.json",
-        "sha256": "d8f95545d7cbc03351740553eda1ed952c231807f5bfe896889ed0ef49e1a0ca"
-      },
-      "tasks": [
-        "ASYNC-EFFECT-API-001",
-        "ASYNC-IMPLICIT-AWAIT-001",
-        "ASYNC-INFER-001",
-        "ASYNC-JOIN-RETURN-001",
-        "ASYNC-THREAD-SPAWN-001",
-        "CONF-GAP-IMPL-TL-001",
-        "DOC-TEST-CONF-001"
-      ],
-      "requirements": [
-        "TL01-11-10-R001",
-        "TL01-11-10-R002",
-        "TL01-11-10-R003",
-        "TL01-11-12-R001",
-        "TL01-11-8-R002",
-        "TL01-12-3-R002",
-        "TL01-12-4-R005",
-        "TL01-16-14-R001",
-        "TL01-16-14-R003",
-        "TL01-16-5-R001",
-        "TL01-20-2-R002",
-        "TL01-20-2-R003",
-        "TL01-20-6-R002",
-        "TL01-21-5-R003",
-        "TL01-21-6-R005",
-        "TL01-21-6-R006",
-        "TL01-23-12-R001",
-        "TL01-23-13-R002",
-        "TL01-C-3-FIXTURES-ESPECIALIZADOS-R001",
-        "TL01-FRONTERA-DE-SEGURIDAD-Y-COMPORTAMIENTO-INDEFINIDO-R004",
-        "TL01-GARANTA-DE-PROGRESO-COOPERATIVO-R004",
-        "TL01-PROTOCOLOS-DE-LLAMADA-R003"
       ]
     },
     {
