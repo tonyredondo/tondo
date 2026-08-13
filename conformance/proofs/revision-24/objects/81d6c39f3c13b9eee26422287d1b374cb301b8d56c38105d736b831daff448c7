@@ -1,0 +1,10 @@
+async fn child(): Int {
+    42
+}
+
+async fn invalid(): Join[Int, Never]? {
+    scope {
+        let pending = spawn child()
+        some(pending)
+    }
+}

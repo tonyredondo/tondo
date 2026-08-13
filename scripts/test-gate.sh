@@ -59,6 +59,8 @@ run_step doc-test-conformance-tests \
     scripts/doc-test-conformance-test.sh
 run_step reliability \
     cargo run -p tondo-reliability --locked -- check --root .
+run_step mutation-infrastructure-check-tests \
+    scripts/mutation-infrastructure-check-test.sh
 run_step stdlib-performance-contract \
     scripts/stdlib-performance-check.sh
 run_step stdlib-json-contract \
@@ -205,6 +207,13 @@ if jq -e '([.requirements[] | select(.status == "draft-pending")] | length) == 0
         cargo run -p tondo-conformance --locked -- verify-proof \
         --root . \
         --proof "$checked_in_proof"
+    candidate="conformance/candidates/revision-$draft_revision"
+    if [[ -d "$candidate" ]]; then
+        run_step conformance-candidate-verify \
+            scripts/conformance-candidate.sh check
+    else
+        echo "::notice:: final conformance candidate is not present for revision $draft_revision"
+    fi
     rm -rf -- "$seal_stage"
     trap - EXIT
 else

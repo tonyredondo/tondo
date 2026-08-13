@@ -84,8 +84,13 @@ impl QualityBaseline {
     pub fn load(path: &Path) -> Result<Self, String> {
         let bytes =
             fs::read(path).map_err(|error| format!("cannot read `{}`: {error}", path.display()))?;
-        let baseline: Self = serde_json::from_slice(&bytes)
-            .map_err(|error| format!("invalid `{}`: {error}", path.display()))?;
+        Self::from_bytes(&bytes).map_err(|error| format!("invalid `{}`: {error}", path.display()))
+    }
+
+    /// Parses a baseline embedded in a self-contained evidence bundle.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
+        let baseline: Self = serde_json::from_slice(bytes)
+            .map_err(|error| format!("invalid quality baseline JSON: {error}"))?;
         baseline.validate()?;
         Ok(baseline)
     }
@@ -304,7 +309,7 @@ pub fn capture(
         },
         mutation: MutationBaseline {
             tool: "cargo-mutants 27.1.0".into(),
-            command: "CARGO_INCREMENTAL=0 cargo mutants --workspace --no-config --copy-vcs true --copy-target true --file <selected-path> --re <reviewed-selection> --baseline run --cargo-test-arg=--lib --jobs 2 --timeout 600 --build-timeout 900 --cargo-arg=--locked --output <directory> --no-times --colors never --annotations none".into(),
+            command: "CARGO_INCREMENTAL=0 cargo mutants --workspace --no-config --copy-vcs true --copy-target true --file <selected-path> --re <reviewed-selection> --baseline run --cargo-test-arg=--lib --jobs 1 --timeout 600 --build-timeout 900 --cargo-arg=--locked --output <directory> --no-times --colors never --annotations none".into(),
             selected_paths: mutation_paths(),
             total: mutation.total,
             caught: mutation.caught,

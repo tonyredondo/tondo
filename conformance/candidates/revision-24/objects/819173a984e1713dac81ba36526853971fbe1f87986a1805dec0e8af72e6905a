@@ -1,0 +1,33 @@
+{
+  "format": "tondo-quality-report-binding/1",
+  "kind": "mutation",
+  "report_sha256": "d23942d07b10259890abe448ef3f0447c0d1ecf5d3d52bedb9b7f1c8f4542b55",
+  "before": {
+    "format": "tondo-quality-provenance/1",
+    "tree_sha256": "f39ad7d4564d9afaeeb0a74abbc699aabf33c3e0b26f2aa7ded76855a2199cfe",
+    "input_set_sha256": "83e57a07027bd45f3e7ca00507c047d22e59697be1dd3d1f00148406e42572d8",
+    "file_count": 694,
+    "flags": [
+      "CARGO_INCREMENTAL=0",
+      "RUSTUP_TOOLCHAIN=1.93.0-x86_64-unknown-linux-gnu"
+    ],
+    "toolchain": {
+      "rustc": "rustc 1.93.0 (254b59607 2026-01-19)\nbinary: rustc\ncommit-hash: 254b59607d4417e9dffbc307138ae5c86280fe4c\ncommit-date: 2026-01-19\nhost: x86_64-unknown-linux-gnu\nrelease: 1.93.0\nLLVM version: 21.1.8",
+      "cargo": "cargo 1.93.0 (083ac5135 2025-12-15)"
+    }
+  },
+  "after": {
+    "format": "tondo-quality-provenance/1",
+    "tree_sha256": "f39ad7d4564d9afaeeb0a74abbc699aabf33c3e0b26f2aa7ded76855a2199cfe",
+    "input_set_sha256": "83e57a07027bd45f3e7ca00507c047d22e59697be1dd3d1f00148406e42572d8",
+    "file_count": 694,
+    "flags": [
+      "CARGO_INCREMENTAL=0",
+      "RUSTUP_TOOLCHAIN=1.93.0-x86_64-unknown-linux-gnu"
+    ],
+    "toolchain": {
+      "rustc": "rustc 1.93.0 (254b59607 2026-01-19)\nbinary: rustc\ncommit-hash: 254b59607d4417e9dffbc307138ae5c86280fe4c\ncommit-date: 2026-01-19\nhost: x86_64-unknown-linux-gnu\nrelease: 1.93.0\nLLVM version: 21.1.8",
+      "cargo": "cargo 1.93.0 (083ac5135 2025-12-15)"
+    }
+  }
+}

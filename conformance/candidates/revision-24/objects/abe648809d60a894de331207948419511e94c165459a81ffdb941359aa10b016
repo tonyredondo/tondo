@@ -1,0 +1,11 @@
+async fn failChild(): Int {
+    panic("child panic")
+}
+
+async fn main() {
+    scope {
+        let child = spawn failChild()
+        let value = await child
+        assert(value == 0)
+    }
+}

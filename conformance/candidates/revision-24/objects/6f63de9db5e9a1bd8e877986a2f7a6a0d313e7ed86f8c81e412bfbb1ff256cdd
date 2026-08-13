@@ -1,0 +1,105 @@
+{
+  "format": "tondo-conformance-case-layer/1",
+  "layer": "meta",
+  "edition": "0.1",
+  "tasks": [
+    "META-ATOMIC-001",
+    "META-CONF-001",
+    "META-DERIVE-001",
+    "META-DIAG-001",
+    "META-FORMAT-001",
+    "META-GEN-001",
+    "META-MODEL-001",
+    "META-QUERY-001",
+    "META-REPRO-001",
+    "META-ROBUST-001",
+    "META-SEM-001",
+    "META-SPEC-001",
+    "META-SYNTAX-001",
+    "META-TOOLCHAIN-SPEC-001",
+    "META-VM-001",
+    "REFLECT-ARCH-001",
+    "REFLECT-IMPL-001"
+  ],
+  "cases": [
+    {
+      "id": "meta-reproducibility",
+      "surface": "reproducibility",
+      "requirements": [
+        "TL01-27-7-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::meta_repro:complete_matrix_accepts_only_byte_identical_outputs",
+        "rust:tondo-compiler:src::meta_repro:denied_capability_catalog_is_closed_and_exact",
+        "rust:tondo-compiler:src::meta_repro:fresh_meta_vms_produce_identical_bytes_for_every_variation"
+      ]
+    },
+    {
+      "id": "meta-runtime-metadata",
+      "surface": "runtime-metadata",
+      "requirements": [
+        "TL01-27-1-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::reflect:explicit_roots_retain_only_the_public_descriptor_closure",
+        "rust:tondo-compiler:src::reflect:removed_roots_remove_metadata_and_ids_are_artifact_local"
+      ]
+    },
+    {
+      "id": "meta-semantics",
+      "surface": "semantics",
+      "requirements": [
+        "TL01-27-2-R002",
+        "TL01-27-2-R003",
+        "TL01-27-3-R001",
+        "TL01-27-4-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::meta:invalid_target_shapes_and_binders_use_e2101",
+        "rust:tondo-compiler:src::meta:valid_requests_are_resolved_in_source_order_and_provider_bounds_are_canonical",
+        "rust:tondo-compiler:src::meta_derive:failure_invalid_body_and_registry_drift_publish_nothing",
+        "rust:tondo-compiler:src::meta_derive:providers_return_only_validated_formatted_impl_bodies",
+        "rust:tondo-compiler:src::meta_diagnostics:every_meta_code_has_the_normative_identity_and_stable_name"
+      ]
+    },
+    {
+      "id": "meta-syntax",
+      "surface": "syntax",
+      "requirements": [
+        "TL01-27-2-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::syntax::parser:derive_declarations_are_lossless_and_have_typed_parts",
+        "rust:tondo-compiler:tests::formatter_spec:derive_declarations_have_one_canonical_layout"
+      ]
+    },
+    {
+      "id": "meta-toolchain",
+      "surface": "toolchain",
+      "requirements": [
+        "TL01-27-5-R001",
+        "TL01-27-5-R002",
+        "TL01-27-5-R003",
+        "TL01-27-8-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::meta_atomic:transaction_publishes_sources_interface_and_artifact_together",
+        "rust:tondo-compiler:src::meta_generate:generator_receives_only_locked_values_and_publishes_formatted_outputs",
+        "rust:tondo-compiler:src::meta_generate:output_collisions_are_rejected_before_any_provider_runs",
+        "rust:tondo-compiler:src::meta_robust:deterministic_arbitrary_protocol_corpus_never_panics",
+        "rust:tondo-compiler:src::meta_robust:hostile_outputs_maps_utf8_collisions_and_limits_are_atomic"
+      ]
+    },
+    {
+      "id": "meta-tooling",
+      "surface": "tooling",
+      "requirements": [
+        "TL01-27-1-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::meta_query:query_is_canonical_complete_and_does_not_carry_unrelated_private_symbols",
+        "rust:tondo-compiler:src::meta_query:source_map_projection_is_numeric_bounded_and_total"
+      ]
+    }
+  ]
+}

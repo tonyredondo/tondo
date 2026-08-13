@@ -1,0 +1,53 @@
+async fn observe(value: ref Int): Int {
+    value
+}
+
+async fn immediate(value: Int): Int {
+    value
+}
+
+async fn noop() {}
+
+async fn valid() {
+    scope {
+        var value = 1
+        let first = spawn observe(ref value)
+        let pending = first
+        let observed = await pending
+        value = 2
+        assert(observed == 1)
+        assert(value == 2)
+    }
+}
+
+async fn outerJoinMayCrossAnInnerScope() {
+    scope {
+        let outer = spawn immediate(1)
+        let carried = scope {
+            outer
+        }
+        assert(await carried == 1)
+    }
+}
+
+async fn wrappedJoinReleasesItsStructuredBorrow() {
+    scope {
+        var value = 1
+        let wrapped = some(spawn observe(ref value))
+        match wrapped {
+            some(pending) => {
+                assert(await pending == 1)
+            }
+            none => {}
+        }
+        value = 2
+        assert(value == 2)
+    }
+}
+
+async fn unitJoinMayBeAwaitedAsAStatement() {
+    scope {
+        let pending = spawn noop()
+        await pending
+    }
+}

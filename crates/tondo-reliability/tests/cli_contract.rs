@@ -5,6 +5,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use tondo_conformance::lineage::{DRAFT_LINEAGE_PATH, DraftLineage};
 
+#[path = "../src/tests/candidate_support.rs"]
+mod candidate_support;
+
+use candidate_support::CandidateFixture;
+
 fn binary() -> &'static str {
     env!("CARGO_BIN_EXE_tondo-reliability")
 }
@@ -168,7 +173,71 @@ fn repository_evidence_commands_are_readable_and_current_through_the_cli() {
         "{}",
         text(&attestation.stderr)
     );
-    assert!(text(&attestation.stdout).contains("106 observations"));
+    assert!(
+        text(&attestation.stdout).contains(&format!("{} observations", names.len())),
+        "{}",
+        text(&attestation.stdout)
+    );
+}
+
+#[test]
+fn candidate_cli_seals_reverifies_and_rejects_an_open_object_closure() {
+    let repository = workspace_root();
+    let fixture = CandidateFixture::new(&repository);
+    let root = fixture.root.to_str().unwrap();
+    let seal_arguments = [
+        "candidate",
+        "seal",
+        "--proof",
+        fixture.proof,
+        "--coverage",
+        fixture.coverage,
+        "--coverage-binding",
+        fixture.coverage_binding,
+        "--mutants",
+        fixture.mutation,
+        "--mutants-binding",
+        fixture.mutation_binding,
+        "--layer-evidence",
+        fixture.layer,
+        "--doc-test",
+        fixture.doc_test,
+        "--doc-test-links",
+        fixture.doc_links,
+        "--output",
+        fixture.output,
+        "--root",
+        root,
+    ];
+    let created = run(&seal_arguments);
+    assert!(created.status.success(), "{}", text(&created.stderr));
+    assert!(text(&created.stdout).contains("candidate created: revision 23, gates G5 and T0"));
+
+    let repeated = run(&seal_arguments);
+    assert!(repeated.status.success(), "{}", text(&repeated.stderr));
+    assert!(text(&repeated.stdout).contains("candidate already present"));
+    let verified = run(&[
+        "candidate",
+        "verify",
+        "--candidate",
+        fixture.output,
+        "--root",
+        root,
+    ]);
+    assert!(verified.status.success(), "{}", text(&verified.stderr));
+    assert!(text(&verified.stdout).contains("candidate verified offline"));
+
+    fs::write(fixture.root.join("candidate/objects/extra"), b"extra").unwrap();
+    let rejected = run(&[
+        "candidate",
+        "verify",
+        "--candidate",
+        fixture.output,
+        "--root",
+        root,
+    ]);
+    assert!(!rejected.status.success());
+    assert!(text(&rejected.stderr).contains("missing or contains extra files"));
 }
 
 #[test]

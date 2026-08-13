@@ -1,15 +1,15 @@
 # Tondo: tracker de implementación
 
-**Estado:** M0–M10.7 conservan su implementación y Gate H0 permanece cerrado
-para la infraestructura que valida. La auditoría 1.45 reabre los cierres de
-conformidad T0/G5 y STD-0.1A/S1A: existe un promotion proof content-addressed de
-la revisión actual y existen kernels/bridges útiles, pero la evidencia no prueba
-todo el contrato normativo ni varias APIs públicas de la stdlib. La forma TLF
+**Estado:** M0–M10.7 conservan su implementación y Gates H0, T0 y G5 están
+cerrados para el draft revision 24 mediante un candidato G5/T0 verificable
+offline. La auditoría 1.45 mantiene abierto STD-0.1A/S1A: existen
+kernels/bridges útiles, pero la evidencia todavía expone APIs públicas,
+properties/fuzz, rendimiento y conformidad parciales de la stdlib. La forma TLF
 para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps,
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 2.24
+**Versión del tracker:** 2.25
 
 **Última actualización:** 2026-08-13
 
@@ -43,14 +43,12 @@ confunde con conformarla. TLF tampoco cambia la semántica `.to`: Gate L0 produc
 un bundle separado y el candidato final fija G5, S1 y L0 por identidades
 independientes.
 
-**Objetivo inmediato:** promover el candidato normativamente completo mediante
-`CONF-SEAL-FINAL-001`. `CONF-GAP-IMPL-001` ya enlaza las
-364 implementaciones auditadas con evidencia positiva, negativa, de borde,
-composición, oracle y frontera pública, y clasifica sus dos no-goals exactos sin
-waivers agregadas. `CONF-LAYER-RESULT-001` ya liga cada case layer a ejecución
-real y al árbol exacto. Solo después del seal final se vuelve a cerrar
-T0/G5/S1A. Los contratos
-runtime-facing de STD-0.1B y M11 esperan esos gates. Todo pertenece a la primera
+**Objetivo inmediato:** completar Wave 5 y cerrar S1A empezando por los 54 gaps
+de la auditoría pública que mantienen abiertos `STD-IMPL-001` y
+`STD-IMPL-002`. `CONF-GAP-IMPL-001`, `CONF-LAYER-RESULT-001` y
+`CONF-SEAL-FINAL-001` ya cierran T0/G5 con 409 requisitos cubiertos, nueve
+no aplicables y las tres fronteras `TL01-26-*` reservadas a S1A. Los contratos
+runtime-facing de STD-0.1B y M11 esperan G5 y S1A. Todo pertenece a la primera
 versión 0.1; los slices son orden de implementación, no versiones públicas. La
 VM permanece como implementación de referencia y oracle diferencial del
 backend nativo. La lane TLF puede avanzar en paralelo porque solo depende del
@@ -459,9 +457,9 @@ necesaria; la fragmentación del workspace no.
 | **M9 — Unsafe, targets y toolchain** | Gate G4: preview 0.1 | Completado |
 | **M10 — Bootstrap regression corpus** | Baseline ejecutable pre-`derive` | Completado |
 | **M10.5 — Reliability y testing** | Infraestructura y hardening continuo de evidencia | Completado |
-| **M10.5c — Infraestructura de conformidad** | Una línea de draft, ratchet y candidato inmutable | Mecanismo completado; cierre normativo pendiente |
+| **M10.5c — Infraestructura de conformidad** | Una línea de draft, ratchet y candidato inmutable | Completado; cierre normativo G5/T0 sellado en revision 24 |
 | **M10.7 — Metaprogramación estática** | `derive`, generators, meta VM y contribución a G5 | Completado |
-| **M10.6 — Testing de usuario Tondo 0.1** | Implementación de `tondo test` y contribución a G5 | Implementación completada; cierre evidencial T0 pendiente |
+| **M10.6 — Testing de usuario Tondo 0.1** | Implementación de `tondo test` y contribución a G5 | Completado; cierre evidencial T0 incluido en revision 24 |
 | **STD-0.1A — Foundation + Hosted** | Base estándar necesaria para meta, testing y backend | Arquitectura/owners y slices tempranos cerrados; firmas A3 e implementación pública incompletas |
 | **M11 — Backend nativo y optimización** | Implementación de producción | Futuro |
 | **STD-0.1B — Concurrency + Application** | Contratos runtime antes de M11; implementación tras N1 | Arquitectura base cerrada; contratos y código pendientes |
@@ -476,17 +474,16 @@ Estado observado del workspace:
   `tondo-reference-adapter`, `tondo-reliability`, `tondo-stdlib` y `tondo-vm`.
 - Toolchain utilizado para la validación: Rust 1.93.0 y Cargo 1.93.0; la versión
   mínima soportada queda fijada en Rust 1.93.
-- La evidencia actual registra 2.175 tests lógicos y 2.394 repeticiones:
-  2.125 ejecutables, 38 contratos del spec de testing aún documentales, tres
-  campañas y nueve fences no ejecutables. La suite bootstrap conserva sus 205 casos y 424
+- La evidencia actual registra 2.379 tests lógicos y 2.598 repeticiones:
+  2.324 ejecutables, 38 contratos draft documentales, cuatro campañas y 13
+  entradas no ejecutables. La suite bootstrap conserva sus 205 casos y 424
   repeticiones byte-estables como regresión explícita.
-- La matriz única contiene 316 requisitos: 46 tienen evidencia ejecutable, tres
-  pertenecen a la stdlib pendiente, siete no aplican al target y 260 conservan
-  límites de evidencia del toolchain bootstrap. Además, la matriz solo indexa
-  `TONDO_LANGUAGE_SPEC.md`; testing, toolchain y stdlib todavía no tienen una
-  matriz normativa equivalente. La cobertura ratcheteada es 90,25 % de líneas
-  y mutation mantiene
-  100 % sobre los mutantes ejecutables seleccionados.
+- La matriz G5/T0 contiene 421 requisitos de lenguaje, testing y toolchain: 409
+  están cubiertos mediante evidencia ejecutable, nueve no aplican al target con
+  justificación individual y tres límites `TL01-26-*` permanecen
+  `stdlib-pending` porque pertenecen al gate separado S1A. La cobertura
+  ratcheteada es 90,61 % de líneas y mutation mantiene 100 % sobre los mutantes
+  ejecutables seleccionados.
 
 ### 4.1 Grafo de dependencias y ruta crítica
 
@@ -544,16 +541,17 @@ y M10.6 completo. La lane meta requiere la API build-only exacta de `std.meta`
 y el contrato de `std.reflect`; la lane testing requiere la identidad estable de
 `std.bytes`, el snapshot read-only de `std.env` y el time-base de producción.
 Plan/discovery, sintaxis de testing y `defer await` pueden avanzar antes de
-terminar esos slices; solo el typecheck que consume sus APIs, materialización de
-inputs, virtual time, lifecycle completo y Gate T0 los esperan.
+terminar esos slices; el typecheck que consume sus APIs, la materialización de
+inputs, virtual time, lifecycle completo y Gate T0 quedaron condicionados a su
+cierre y ya lo incorporan.
 
 M10.7 y M10.6 ratchetean evidencia al terminar cada wave, no únicamente en
-`META-CONF-001` o `UTEST-CONF-001`. La implementación funcional de testing ya
-existe, pero T0/G5 no vuelven a cerrarse hasta que la matriz cubra lenguaje,
-testing y toolchain, cada límite aplicable tenga caso ejecutable y
-`CONF-SEAL-FINAL-001` promueva exactamente ese cierre. El promotion proof
-demuestra el mecanismo de sellado, no sustituye esa prueba normativa. El resultado existente de
-`tondo test` permite completar y probar la propia stdlib.
+`META-CONF-001` o `UTEST-CONF-001`. La revision 24 demuestra ya T0/G5: la
+matriz cubre lenguaje, testing y toolchain, cada límite aplicable tiene caso
+ejecutable y `CONF-SEAL-FINAL-001` archiva exactamente ese cierre. El promotion
+proof demuestra el mecanismo; el candidato G5/T0 separado demuestra la
+suficiencia normativa. El resultado existente de `tondo test` permite
+completar y probar la propia stdlib.
 
 Cada API posterior de STD-0.1A se implementa como slice vertical y amplía
 matriz, conformidad y dogfooding. Antes de `NATIVE-001` deben estar cerrados los
@@ -2863,19 +2861,23 @@ Antes de ampliar la gramática de M10.7 o M10.6:
   layers/casos/evidencias ausentes, extra, duplicados, reordenados o ligados a
   otro árbol y el proof incluye el resultado compuesto exacto.
   La implementación captura el árbol antes de `cargo test`, exige un único
-  `ok` real para cada una de las 106 evidencias Rust únicas, conserva sus 111
+  `ok` real para cada una de las 117 evidencias Rust únicas, conserva sus 122
   enlaces dentro de 66 casos y compone las cuatro layers con los 205 casos
   bootstrap. El formato `/2` fija revisión, manifests, inventario, árbol y
   observaciones; el proof rechaza cualquier divergencia frente al ratchet.
 
-- [ ] **CONF-SEAL-FINAL-001 — Promover el candidato normativamente completo.**
+- [x] **CONF-SEAL-FINAL-001 — Promover el candidato normativamente completo.**
   Exigir que los requisitos aplicables a lenguaje, testing y toolchain no
   conserven `toolchain-limit`, `draft-pending` ni ausencias; ejecutar resultados
   frescos y compuestos de `CONF-LAYER-RESULT-001`,
   `QUALITY-EVIDENCE-BIND-001`, `DOC-TEST-CONF-001`, coverage/mutation y Gate
   T0; después crear un bundle `candidate` distinto de los promotion proofs y
   comprobarlo sin consultar el draft vivo. Solo esta tarea habilita el cierre
-  final de G5; S1A usa su propia matriz y su propio gate.
+  final de G5; S1A usa su propia matriz y su propio gate. La revision 24
+  publica un bundle `tondo-conformance-candidate/2` de 432 entradas con gates
+  exactos G5/T0. El verificador consume solo su cierre de objetos, revalida
+  proof, layers, matriz, ratchet, informes y 365 doc-tests, y rechaza objetos
+  extra, sustitución de procedencia o evidencia no ligada.
 
 ---
 
@@ -2901,16 +2903,15 @@ discovery/dev-dependencies, lexer/CST/formatter, árbol estático, algoritmos
 puros de selección y `defer await` pueden avanzar en lanes independientes.
 `PARSER-STACK-001` debe cerrarse antes de `UTEST-CST-001`, para que la nueva
 sintaxis no amplíe la ruta recursiva temporal.
-`UTEST-CHECK-001` y la ruta de attachments ya tienen la identidad binaria de
-`std.bytes`; el checker espera ahora la identidad implementada de `Duration` y
-`Instant` del time-base;
-la lectura de inputs declarados espera `STD-ENV-SPEC-001`,
-`STD-ENV-IMPL-001` y `STD-ENV-CONF-001`;
-`UTEST-VTIME-001`, lifecycle temporal y Gate T0 esperan
+`UTEST-CHECK-001` y la ruta de attachments usan la identidad binaria de
+`std.bytes`; el checker usa las identidades implementadas de `Duration` e
+`Instant` del time-base. La lectura de inputs declarados quedó cerrada por
+`STD-ENV-SPEC-001`, `STD-ENV-IMPL-001` y `STD-ENV-CONF-001`;
+`UTEST-VTIME-001`, el lifecycle temporal y Gate T0 quedaron cerrados sobre
 `STD-TIME-BASE-SPEC-001`, `STD-TIME-BASE-IMPL-001` y
 `STD-TIME-BASE-CONF-001`. Son APIs de producción de STD-0.1A, nunca shims
-privados del runner. `ASYNC-DEFER-IMPL-001` debe cerrar antes de conducir
-teardown de suite; testing no puede sustituirlo por un hook.
+privados del runner. `ASYNC-DEFER-IMPL-001` cerró antes de conducir el teardown
+de suite; testing no lo sustituye por un hook.
 
 **Compatibilidad:** el corpus bootstrap y sus hashes se conservan únicamente
 como regresión reproducible. El borrador actual `TONDO_LANGUAGE_SPEC.md`, su
@@ -3652,13 +3653,15 @@ reporters.
   producción `answerAfterBackoff` con `withVirtualTime`, `settle` y 25 ns
   virtuales, y la aceptación exige esa evidencia tanto en JSON como en JUnit.
 
-- [ ] **UTEST-SPEC-EVIDENCE-001 — Cerrar la trazabilidad completa del spec de
+- [x] **UTEST-SPEC-EVIDENCE-001 — Cerrar la trazabilidad completa del spec de
   testing.** Los 38 fences que el inventario clasifica hoy como
   `draft-contract` deben mapearse a casos públicos existentes, convertirse en
   aceptación ejecutable o declararse ilustrativos/no normativos con una razón
   individual. La matriz multi-spec debe demostrar cada contrato aplicable de
   `TONDO_TESTING_SPEC.md`; el número de grupos del manifest no sustituye esa
-  correspondencia.
+  correspondencia. La matriz revision 24 clasifica los 81 requisitos `TT01`:
+  80 quedan cubiertos con evidencia ejecutable y el único no-goal normativo
+  queda `target-not-applicable` por identidad exacta.
 
 ### Gate T0 — Testing first-class conforme
 
@@ -3719,18 +3722,16 @@ reporters.
   ejecución y policy con duración operacional real y tiempo virtual separado.
   La salida humana no intercala suites/tests o intentos y muestra owners, tags,
   evidence, tiempo virtual, logs, razones y fallos accionables.
-- [ ] El grupo de testing de `tondo-conformance-draft` pasa en la VM, la matriz
+- [x] El grupo de testing de `tondo-conformance-draft` pasa en la VM, la matriz
   de plataformas aplicable está verde y `UTEST-SPEC-EVIDENCE-001` demuestra
   todos los contratos normativos de testing sin `draft-pending`.
 - [x] Existe dogfooding escrito en Tondo que usa la superficie pública, sin
   registration APIs, `TestContext`, annotations, reflection, subtests dinámicos
   ni hooks ocultos.
 
-La implementación funcional de T0 está completa; el cierre de conformidad se
-reabre únicamente por la trazabilidad normativa anterior. Al cerrar T0 se
-vuelve a ejecutar la suite completa —incluida
-metaprogramación—, `CONF-SEAL-001` promueve el draft verificado y solo
-entonces puede cerrarse Gate G5 para el draft consolidado Tondo 0.1.
+La implementación funcional y el cierre evidencial de T0 están completos en la
+revision 24. La suite completa —incluida metaprogramación— alimenta el resultado
+compuesto, el promotion proof y el candidato G5/T0 separado.
 
 ---
 
@@ -3751,9 +3752,10 @@ cerrar además `STD-META-CONF-001`.
 formas sobre la recursión temporal del bootstrap.
 `STD-REFLECT-001` precede obligatoriamente a `REFLECT-IMPL-001`. Ninguno de
 estos contratos espera al resto de STD-0.1A ni introduce un shim provisional.
-La contribución de M10.7 a Gate G5 permanece pendiente hasta incorporar
-requisitos, diagnostics y casos en la conformidad viva; el Gate G5 final exige
-además M10.6/T0.
+La contribución de M10.7 y M10.6/T0 forma parte de la conformidad viva y está
+sellada en el candidato G5/T0 de revision 24. Cualquier cambio posterior de
+estos contratos exige una nueva revision y un nuevo candidato, sin reescribir
+el cierre histórico.
 
 **Orden interno:**
 
@@ -3883,12 +3885,12 @@ vez los errores de los slices anteriores.
 
 ### Gate G5 — Candidato completo del lenguaje
 
-- [ ] Todo el draft Tondo 0.1, incluidos M10.7 y M10.6, está implementado y
+- [x] Todo el draft Tondo 0.1, incluidos M10.7 y M10.6, está implementado y
   tiene conformidad aplicable sobre `tondo-vm-hosted`; la matriz multi-spec no
   conserva límites aplicables ni contratos pendientes.
-- [ ] Gate T0 está cerrado y el grupo de testing forma parte de
+- [x] Gate T0 está cerrado y el grupo de testing forma parte de
   `tondo-conformance-draft`, no de una edición o suite paralela.
-- [ ] `tondo doc-test` aplica el contrato completo de 21.6 y valida los
+- [x] `tondo doc-test` aplica el contrato completo de 21.6 y valida los
   ejemplos normativos sin harness paralelo ni resultados parciales.
 - [x] `CONF-SEAL-001` ha promovido exactamente el draft verificado, sin
   presentar la regresión bootstrap como requisitos nuevos. Este punto verifica
@@ -3897,7 +3899,7 @@ vez los errores de los slices anteriores.
   bootstrap de regresión.
 - [x] No existe una ruta de ejecución ambiental dentro del frontend ni del VM
   meta.
-- [ ] `CONF-GAP-AUDIT-001`, cualquier leaf de `CONF-GAP-IMPL-001`,
+- [x] `CONF-GAP-AUDIT-001`, cualquier leaf de `CONF-GAP-IMPL-001`,
   `CONF-LAYER-RESULT-001`, `QUALITY-EVIDENCE-BIND-001` y
   `CONF-SEAL-FINAL-001` están cerrados; solo entonces la distribución puede
   describirse como candidata a publicación. El gate no publica por sí solo.
@@ -5937,15 +5939,39 @@ G0 -> TLF spec + reproducible benchmark -> codec/maps/CLI
 M4, M5, M6, M7, M8, M9, el corpus bootstrap M10, M10.5, M10.5b y Gates G4/H0
 quedan cerrados como implementación/infraestructura. M10.7 y la implementación
 funcional de M10.6 permanecen cerradas. `CONF-DRAFT-001` también permanece
-cerrada. La auditoría reabre T0/G5 por trazabilidad normativa y Wave 5/S1A por APIs
-públicas ausentes. `CONF-GAP-IMPL-001` ya cierra las 364 filas aplicables y
-conserva los dos no-goals exactos. `CONF-LAYER-RESULT-001` ya produce el
-resultado compuesto de revisión 23. La acción inmediata es
-`CONF-SEAL-FINAL-001`; Wave 6 no se declara iniciada antes de ese gate.
+cerrada. La auditoría ya ha vuelto a cerrar T0/G5 en la revision 24 y mantiene
+Wave 5/S1A abierta por APIs públicas y dimensiones de evidencia parciales.
+`CONF-GAP-IMPL-001` cierra las 364 filas auditadas aplicables y conserva los dos
+no-goals exactos. `CONF-LAYER-RESULT-001` produce el resultado compuesto y
+`CONF-SEAL-FINAL-001` lo archiva con calidad y documentación en el candidato
+offline. La acción inmediata es cerrar `STD-IMPL-001` y `STD-IMPL-002`; Wave 6
+no se declara iniciada antes de S1A.
 
 ---
 
 ## 25. Historial del tracker
+
+### 2.25 — 2026-08-13
+
+- Se cierran `UTEST-SPEC-EVIDENCE-001`, Gate T0,
+  `CONF-SEAL-FINAL-001` y Gate G5. La revision 24 compone cuatro layers y 66
+  casos con 117 observaciones Rust únicas y 122 enlaces; la matriz fija 409
+  requisitos cubiertos, nueve no aplicables y solo tres fronteras de stdlib
+  `TL01-26-*` pendientes de su gate independiente.
+- El quality gate pasa con 90,611% de líneas, 86,450% de funciones y 88,827%
+  de regiones. La campaña evalúa los 30 mutantes revisados, detecta el 100 % de
+  los viables y conserva los inviables explícitos, sin supervivientes ni
+  timeouts. La campaña serializa los builds mutados y falla cerrada si los logs
+  contienen un crash de rustc/LLVM, evitando atribuir un fallo de
+  infraestructura como mutante semánticamente inviable; los informes fijan el
+  reparto observado y quedan ligados al mismo árbol e input set que el
+  resultado compuesto.
+- `tondo doc-test` valida 365 fences en los cinco documentos, con 20 enlaces
+  runtime y una razón static-only. El promotion proof revision 24 y el bundle
+  `tondo-conformance-candidate/2` de 432 entradas se verifican enteramente
+  offline y fallan ante objetos extra, sustituciones o evidencia incongruente.
+  Esto no publica Tondo ni cierra S1A; la cola vuelve a Wave 5 y a los 54 gaps
+  de la auditoría pública de stdlib.
 
 ### 2.24 — 2026-08-13
 

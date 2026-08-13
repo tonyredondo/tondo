@@ -326,24 +326,56 @@ pub fn verify_promotion_proof(
     let bytes = read_regular(&absolute)?;
     let manifest: PromotionProofManifest =
         serde_json::from_slice(&bytes).map_err(|error| SealError::Json(error.to_string()))?;
-    validate_promotion_proof_manifest(&manifest)?;
-    if canonical_json(&manifest)? != bytes {
-        return invalid("promotion-proof manifest is not canonical pretty JSON");
-    }
-    let mut objects = BTreeMap::new();
+    let mut archived_objects = BTreeMap::new();
     for file in &manifest.files {
         let path = directory.join(&file.object.path);
         let object = read_regular(&path)?;
-        let actual = sha256(&object);
+        archived_objects.insert(file.object.path.clone(), object);
+    }
+    verify_promotion_proof_directory(&directory, &manifest)?;
+    verify_promotion_proof_objects(&bytes, &archived_objects)
+}
+
+/// Verifies a promotion proof from its canonical manifest and immutable object
+/// closure without reading the live draft. This is the embedding boundary used
+/// by higher-level candidate bundles.
+pub fn verify_promotion_proof_objects(
+    manifest_bytes: &[u8],
+    archived_objects: &BTreeMap<String, Vec<u8>>,
+) -> Result<PromotionProofManifest, SealError> {
+    let manifest: PromotionProofManifest = serde_json::from_slice(manifest_bytes)
+        .map_err(|error| SealError::Json(error.to_string()))?;
+    validate_promotion_proof_manifest(&manifest)?;
+    if canonical_json(&manifest)? != manifest_bytes {
+        return invalid("promotion-proof manifest is not canonical pretty JSON");
+    }
+    let expected_paths = manifest
+        .files
+        .iter()
+        .map(|file| file.object.path.as_str())
+        .collect::<BTreeSet<_>>();
+    if archived_objects
+        .keys()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>()
+        != expected_paths
+    {
+        return invalid("promotion-proof object closure is missing or contains extra objects");
+    }
+    let mut objects = BTreeMap::new();
+    for file in &manifest.files {
+        let object = archived_objects.get(&file.object.path).ok_or_else(|| {
+            SealError::Invalid(format!("promotion proof omits `{}`", file.object.path))
+        })?;
+        let actual = sha256(object);
         if actual != file.object.sha256 {
             return invalid(format!(
                 "object `{}` has SHA-256 `{actual}`, expected `{}`",
                 file.object.path, file.object.sha256
             ));
         }
-        objects.insert(file.source_path.clone(), object);
+        objects.insert(file.source_path.clone(), object.clone());
     }
-    verify_promotion_proof_directory(&directory, &manifest)?;
     verify_promotion_proof_closure(&manifest, &objects)?;
     Ok(manifest)
 }
@@ -1651,6 +1683,34 @@ mod tests {
             ProofOutcome::AlreadyPresent
         );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn embedded_promotion_proof_verifies_without_live_draft_files() {
+        let bundle = repository_bundle();
+        let archived = bundle
+            .manifest
+            .files
+            .iter()
+            .map(|file| {
+                (
+                    file.object.path.clone(),
+                    bundle.objects[&file.object.sha256].clone(),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(
+            verify_promotion_proof_objects(&bundle.manifest_bytes, &archived).unwrap(),
+            bundle.manifest
+        );
+
+        let mut missing = archived.clone();
+        let first = missing.keys().next().unwrap().clone();
+        missing.remove(&first);
+        assert!(verify_promotion_proof_objects(&bundle.manifest_bytes, &missing).is_err());
+        let mut extra = archived;
+        extra.insert("objects/untracked".into(), b"extra".to_vec());
+        assert!(verify_promotion_proof_objects(&bundle.manifest_bytes, &extra).is_err());
     }
 
     #[test]

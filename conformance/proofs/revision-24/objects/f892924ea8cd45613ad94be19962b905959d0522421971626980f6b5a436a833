@@ -1,0 +1,3 @@
+fn invalid(start: Byte, end: Byte) {
+    _ = start .. end
+}

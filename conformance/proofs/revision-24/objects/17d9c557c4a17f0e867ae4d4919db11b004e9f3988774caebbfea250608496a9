@@ -1,0 +1,2 @@
+const InvalidIndex: Char = "a"[1]
+const InvalidSlice: String = "a"[::0]

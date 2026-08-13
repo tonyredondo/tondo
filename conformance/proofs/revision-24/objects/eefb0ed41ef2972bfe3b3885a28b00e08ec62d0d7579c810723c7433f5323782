@@ -1,0 +1,5 @@
+import std.process
+
+fn invalid(): Pipeline {
+    process.cmd("/usr/bin/true") | 1
+}

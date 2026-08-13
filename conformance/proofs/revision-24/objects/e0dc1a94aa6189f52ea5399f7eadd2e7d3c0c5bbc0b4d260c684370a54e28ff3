@@ -1,0 +1,5 @@
+fn main() {
+    let left = [[9223372036854775807, 0], [1]]
+    let right = [[1, 0], [1, 2]]
+    _ = left + right
+}

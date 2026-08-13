@@ -64,8 +64,9 @@ cargo run -p tondo-reliability --locked -- quality verify \
 cargo run -p tondo-reliability --locked -- quality provenance --root . > "$mutation_before"
 
 # The compiler test target is intentionally broad and can take several
-# minutes under a mutated build; keep the mutation gate strict without
-# classifying a valid caught mutant as a timeout.
+# minutes under a mutated build. Keep mutation builds serial: concurrent LLVM
+# codegen has produced intermittent rustc SIGILL failures on this runner, which
+# cargo-mutants would otherwise misclassify as semantically unviable mutants.
 TMPDIR="$mutation_tmp" env -u CARGO_TARGET_DIR cargo mutants \
     --workspace \
     --no-config \
@@ -78,7 +79,7 @@ TMPDIR="$mutation_tmp" env -u CARGO_TARGET_DIR cargo mutants \
     --re '(ProjectPlan::parse|PrivilegedUnit::validate|validate_line_endings|normalize_array_index|Heap::has_capacity|Heap::ensure_capacity)' \
     --baseline run \
     --cargo-test-arg=--lib \
-    --jobs 2 \
+    --jobs 1 \
     --timeout 600 \
     --build-timeout 900 \
     --cargo-arg=--locked \
@@ -86,6 +87,8 @@ TMPDIR="$mutation_tmp" env -u CARGO_TARGET_DIR cargo mutants \
     --no-times \
     --colors never \
     --annotations none
+
+scripts/mutation-infrastructure-check.sh "$mutation_output/mutants.out/log"
 
 cargo run -p tondo-reliability --locked -- quality provenance --root . > "$mutation_after"
 cargo run -p tondo-reliability --locked -- quality bind \

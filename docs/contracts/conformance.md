@@ -151,3 +151,54 @@ cargo run -p tondo-conformance --locked -- seal-proof \
 cargo run -p tondo-conformance --locked -- verify-proof \
   --root . --proof conformance/proofs/revision-<N>
 ~~~
+
+## Final candidate bundle
+
+A promotion proof demonstrates that the content-addressed sealing mechanism is
+closed and reproducible. It does not, by itself, attest that every applicable
+language, testing and toolchain requirement is covered. The final candidate is
+therefore a distinct `tondo-conformance-candidate/2` bundle. Its explicit state
+is `candidate`, its gates are exactly `G5` and `T0`, and creating it still does
+not publish Tondo or create a language release.
+
+The candidate embeds the complete promotion-proof object graph plus the fresh
+raw coverage and mutation reports, their provenance bindings, the composed
+layer-evidence report, the complete doc-test report and the typed-fence runtime
+link registry. Its verifier follows only these archived objects and fails
+closed unless all of the following hold together:
+
+- the embedded promotion proof verifies offline and has the same lineage,
+  target and adapter identity as the candidate;
+- the composed result, layer evidence and quality ratchet share the exact draft
+  revision, manifest, inventory, source tree and measured input set;
+- every applicable `TL01`, `TT01` and `TC01` requirement is `covered` or an
+  individually justified `target-not-applicable`; only the `TL01-26-*` Standard
+  Library boundary may remain `stdlib-pending`, because S1A/S1 is sealed
+  independently;
+- the raw quality reports match their bindings and the ratchet, then satisfy the
+  checked-in coverage and mutation baseline; and
+- every doc-test record has the required category-specific outcome, every typed
+  fence has exactly one typed link, and every runtime link names executable
+  inventoried evidence. A static-only link needs an explicit non-empty reason.
+
+The destination is immutable and content-addressed in the same way as a
+promotion proof: objects are synchronized before the manifest, publication is
+one atomic rename, identical regeneration is idempotent, and a partial,
+different, extra or symlinked destination is rejected. Each draft revision uses
+`conformance/candidates/revision-<N>`; no candidate overwrites another revision.
+
+After the ordinary quality, composed-conformance and doc-test gates have
+produced their fresh evidence, the repository wrapper seals and verifies the
+current revision:
+
+~~~text
+scripts/conformance-candidate.sh generate
+scripts/conformance-candidate.sh check
+~~~
+
+The equivalent explicit commands are `tondo-reliability candidate seal` with a
+workspace-relative path for every input and `tondo-reliability candidate
+verify --root . --candidate conformance/candidates/revision-<N>`. Requiring
+relative normal paths prevents the manifest from depending on a developer's
+machine layout while still allowing build artifacts to live on an external
+disk before they are copied into the repository-local staging directory.

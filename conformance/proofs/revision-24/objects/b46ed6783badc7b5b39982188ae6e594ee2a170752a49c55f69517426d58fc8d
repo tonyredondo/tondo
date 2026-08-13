@@ -1,0 +1,27 @@
+import std.console
+
+enum WorkError {
+    Failed
+}
+
+async fn tick() {}
+
+async fn child(): !WorkError {
+    defer console.print("child-cleanup\n")
+
+    for {
+        await tick()
+    }
+}
+
+async fn leaveScope(): !WorkError {
+    scope {
+        let pending = spawn child()
+        return
+    }
+}
+
+async fn main(): !WorkError {
+    await leaveScope()?
+    console.print("parent-complete\n")
+}

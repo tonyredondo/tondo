@@ -1,0 +1,37 @@
+import std.console
+
+const ConstantCharacter: Char = "añ🙂"[1]
+const ConstantReverse: String = "añ🙂"[::-1]
+
+fn characterAt(text: String, index: Int): Char {
+    text[index]
+}
+
+fn main() {
+    let text = "añ🙂e\u{301}"
+    let empty = ""
+    let minimum = -9223372036854775808
+    let maximum = 9223372036854775807
+
+    assert(characterAt(text, 0) == 'a')
+    assert(characterAt(text, 1) == 'ñ')
+    assert(characterAt(text, 2) == '🙂')
+    assert(characterAt(text, -1) == '\u{301}')
+    assert(ConstantCharacter == 'ñ')
+    assert(ConstantReverse == "🙂ña")
+
+    assert(text[:] == "añ🙂e\u{301}")
+    assert(text[1:4] == "ñ🙂e")
+    assert(text[-100:100] == text)
+    assert(text[::2] == "a🙂\u{301}")
+    assert(text[::-1] == "\u{301}e🙂ña")
+    assert(text[:-1:-1] == empty)
+    assert(text[4:0:-2] == "\u{301}🙂")
+    assert(text[-1:-6:-2] == "\u{301}🙂a")
+    assert(text[minimum:maximum] == text)
+    assert(text[maximum:minimum:-1] == "\u{301}e🙂ña")
+    assert(text[::minimum] == "\u{301}")
+    assert(empty[::-1] == empty)
+
+    console.print("text-index-slice\n")
+}
