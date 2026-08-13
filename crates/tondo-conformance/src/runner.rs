@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::document::extract_fences;
+use crate::lineage::DraftLineage;
 use crate::manifest::{
     CaseAction, ConformanceCase, DeterminismAction, Expectation, LoadedSuite, MemoryScenario,
     SemanticQuery, SourceAction, SourceForm, SourceOperation,
@@ -116,6 +117,67 @@ pub struct SuiteResult {
     pub cases: Vec<CaseResult>,
 }
 
+pub const COMPOSED_RESULT_FORMAT: &str = "tondo-conformance-result-draft/2";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ComposedSuiteResult {
+    pub format: String,
+    pub suite: String,
+    pub suite_version: String,
+    pub edition: String,
+    pub manifest_sha256: String,
+    pub adapter: Value,
+    pub target: TargetSelection,
+    pub passed: bool,
+    pub cases: Vec<CaseResult>,
+    pub lineage: String,
+    pub revision: u32,
+    pub lineage_manifest_sha256: String,
+    pub inventory_sha256: String,
+    pub tree_sha256: String,
+    pub input_set_sha256: String,
+    pub case_layers: Vec<LayerResult>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LayerResult {
+    pub id: String,
+    pub manifest_sha256: String,
+    pub cases: Vec<LayerCaseResult>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LayerCaseResult {
+    pub id: String,
+    pub evidence: Vec<LayerEvidenceObservation>,
+    pub observation_sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LayerEvidenceObservation {
+    pub id: String,
+    pub source_sha256: String,
+    pub observation_sha256: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LayerEvidenceReport {
+    format: String,
+    lineage: String,
+    revision: u32,
+    manifest_sha256: String,
+    inventory_sha256: String,
+    tree_sha256: String,
+    input_set_sha256: String,
+    passed: bool,
+    evidence: Vec<LayerEvidenceObservation>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ObservationExpectation {
@@ -213,6 +275,125 @@ pub fn run_suite(
         passed: true,
         cases: results,
     })
+}
+
+pub fn compose_suite_result(
+    lineage: &DraftLineage,
+    baseline: SuiteResult,
+    evidence_bytes: &[u8],
+) -> Result<ComposedSuiteResult, RunError> {
+    if baseline.cases.len() != lineage.baseline_suite().manifest().cases.len() {
+        return Err(RunError::Protocol(
+            "a composed result requires the complete bootstrap case set".into(),
+        ));
+    }
+    let report: LayerEvidenceReport = serde_json::from_slice(evidence_bytes)
+        .map_err(|error| RunError::Json(error.to_string()))?;
+    if report.format != "tondo-layer-evidence/1"
+        || report.lineage != lineage.manifest().lineage
+        || report.revision != lineage.manifest().revision
+        || report.manifest_sha256 != lineage.manifest_sha256()
+        || !report.passed
+        || !is_sha256(&report.inventory_sha256)
+        || !is_sha256(&report.tree_sha256)
+        || !is_sha256(&report.input_set_sha256)
+    {
+        return Err(RunError::Protocol(
+            "layer evidence does not match the active draft tree".into(),
+        ));
+    }
+    let observed = report
+        .evidence
+        .iter()
+        .map(|evidence| (evidence.id.as_str(), evidence))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    if observed.len() != report.evidence.len()
+        || report
+            .evidence
+            .windows(2)
+            .any(|pair| pair[0].id >= pair[1].id)
+    {
+        return Err(RunError::Protocol(
+            "layer evidence observations must be sorted and unique".into(),
+        ));
+    }
+    let mut consumed = std::collections::BTreeSet::new();
+    let mut case_layers = Vec::with_capacity(lineage.case_layers().len());
+    for (descriptor, layer) in lineage
+        .manifest()
+        .case_layers
+        .iter()
+        .zip(lineage.case_layers())
+    {
+        let mut cases = Vec::with_capacity(layer.cases.len());
+        for case in &layer.cases {
+            let mut evidence = Vec::with_capacity(case.evidence.len());
+            for id in &case.evidence {
+                let observation = observed.get(id.as_str()).ok_or_else(|| {
+                    RunError::Protocol(format!(
+                        "layer `{}` case `{}` lacks executed evidence `{id}`",
+                        layer.layer, case.id
+                    ))
+                })?;
+                if !is_sha256(&observation.source_sha256)
+                    || !is_sha256(&observation.observation_sha256)
+                {
+                    return Err(RunError::Protocol(format!(
+                        "layer evidence `{id}` has an invalid observation identity"
+                    )));
+                }
+                consumed.insert(id.as_str());
+                evidence.push((*observation).clone());
+            }
+            let observation_sha256 = canonical_json_hash(&evidence)?;
+            cases.push(LayerCaseResult {
+                id: case.id.clone(),
+                evidence,
+                observation_sha256,
+            });
+        }
+        case_layers.push(LayerResult {
+            id: layer.layer.clone(),
+            manifest_sha256: descriptor.manifest.sha256.clone(),
+            cases,
+        });
+    }
+    if consumed.len() != observed.len() {
+        return Err(RunError::Protocol(
+            "layer evidence contains observations outside the active draft".into(),
+        ));
+    }
+    Ok(ComposedSuiteResult {
+        format: COMPOSED_RESULT_FORMAT.into(),
+        suite: baseline.suite,
+        suite_version: baseline.suite_version,
+        edition: baseline.edition,
+        manifest_sha256: baseline.manifest_sha256,
+        adapter: baseline.adapter,
+        target: baseline.target,
+        passed: baseline.passed,
+        cases: baseline.cases,
+        lineage: report.lineage,
+        revision: report.revision,
+        lineage_manifest_sha256: report.manifest_sha256,
+        inventory_sha256: report.inventory_sha256,
+        tree_sha256: report.tree_sha256,
+        input_set_sha256: report.input_set_sha256,
+        case_layers,
+    })
+}
+
+fn canonical_json_hash<T: Serialize>(value: &T) -> Result<String, RunError> {
+    serde_json::to_vec(value)
+        .map(|bytes| crate::sha256(&bytes))
+        .map_err(|error| RunError::Json(error.to_string()))
+}
+
+fn is_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn execute_case(
@@ -2211,6 +2392,115 @@ mod tests {
         ))
         .expect("the published expectation must be JSON");
         expectation["exact_diagnostics"][0].clone()
+    }
+
+    #[test]
+    fn composed_result_closes_layer_identity_order_and_evidence() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let lineage = DraftLineage::load(&root, crate::lineage::DRAFT_LINEAGE_PATH).unwrap();
+        let baseline: SuiteResult = serde_json::from_slice(
+            &std::fs::read(
+                root.join("conformance/0.1/results/tondo-reference-draft-tondo-vm-hosted.json"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let inventory_bytes = std::fs::read(root.join("testing/inventory.json")).unwrap();
+        let inventory: Value = serde_json::from_slice(&inventory_bytes).unwrap();
+        let sources = inventory["tests"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| {
+                (
+                    entry["id"].as_str().unwrap(),
+                    entry["source_sha256"].as_str().unwrap(),
+                )
+            })
+            .collect::<std::collections::BTreeMap<_, _>>();
+        let ids = lineage
+            .case_layers()
+            .iter()
+            .flat_map(|layer| layer.cases.iter())
+            .flat_map(|case| case.evidence.iter().map(String::as_str))
+            .collect::<std::collections::BTreeSet<_>>();
+        let report = LayerEvidenceReport {
+            format: "tondo-layer-evidence/1".into(),
+            lineage: lineage.manifest().lineage.clone(),
+            revision: lineage.manifest().revision,
+            manifest_sha256: lineage.manifest_sha256(),
+            inventory_sha256: crate::sha256(&inventory_bytes),
+            tree_sha256: "a".repeat(64),
+            input_set_sha256: "b".repeat(64),
+            passed: true,
+            evidence: ids
+                .iter()
+                .map(|id| LayerEvidenceObservation {
+                    id: (*id).into(),
+                    source_sha256: sources[id].into(),
+                    observation_sha256: crate::sha256(id.as_bytes()),
+                })
+                .collect(),
+        };
+        let encoded = serde_json::to_vec(&report).unwrap();
+        let composed = compose_suite_result(&lineage, baseline.clone(), &encoded).unwrap();
+        assert_eq!(composed.cases.len(), baseline.cases.len());
+        assert_eq!(composed.case_layers.len(), lineage.case_layers().len());
+        assert_eq!(
+            composed
+                .case_layers
+                .iter()
+                .flat_map(|layer| &layer.cases)
+                .count(),
+            66
+        );
+
+        assert!(compose_suite_result(&lineage, baseline.clone(), b"not json").is_err());
+        let mut incomplete_baseline = baseline.clone();
+        incomplete_baseline.cases.pop();
+        assert!(compose_suite_result(&lineage, incomplete_baseline, &encoded).is_err());
+
+        let mut duplicate: LayerEvidenceReport = serde_json::from_slice(&encoded).unwrap();
+        duplicate.evidence.insert(1, duplicate.evidence[0].clone());
+        assert!(
+            compose_suite_result(
+                &lineage,
+                baseline.clone(),
+                &serde_json::to_vec(&duplicate).unwrap()
+            )
+            .is_err()
+        );
+
+        let mut invalid_hash: LayerEvidenceReport = serde_json::from_slice(&encoded).unwrap();
+        invalid_hash.evidence[0].observation_sha256 = "bad".into();
+        assert!(
+            compose_suite_result(
+                &lineage,
+                baseline.clone(),
+                &serde_json::to_vec(&invalid_hash).unwrap()
+            )
+            .is_err()
+        );
+
+        let mut missing = report;
+        missing.evidence.pop();
+        assert!(
+            compose_suite_result(
+                &lineage,
+                baseline.clone(),
+                &serde_json::to_vec(&missing).unwrap()
+            )
+            .is_err()
+        );
+        missing.evidence.push(LayerEvidenceObservation {
+            id: "unknown:evidence".into(),
+            source_sha256: "c".repeat(64),
+            observation_sha256: "d".repeat(64),
+        });
+        assert!(
+            compose_suite_result(&lineage, baseline, &serde_json::to_vec(&missing).unwrap())
+                .is_err()
+        );
     }
 
     fn assert_error_contains<T>(result: Result<T, String>, expected: &str) {

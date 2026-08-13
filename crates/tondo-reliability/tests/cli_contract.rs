@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use tondo_conformance::lineage::{DRAFT_LINEAGE_PATH, DraftLineage};
+
 fn binary() -> &'static str {
     env!("CARGO_BIN_EXE_tondo-reliability")
 }
@@ -125,6 +127,48 @@ fn repository_evidence_commands_are_readable_and_current_through_the_cli() {
     let ratchet = run(&["ratchet", "check", "--root", root]);
     assert!(!ratchet.status.success());
     assert!(text(&ratchet.stderr).contains("coverage report is required"));
+
+    let workspace = TemporaryWorkspace::new();
+    let before = workspace.0.join("before.json");
+    let test_log = workspace.0.join("tests.log");
+    let evidence = workspace.0.join("layer-evidence.json");
+    let provenance = run(&["quality", "provenance", "--root", root]);
+    assert!(provenance.status.success(), "{}", text(&provenance.stderr));
+    fs::write(&before, provenance.stdout).unwrap();
+    let lineage = DraftLineage::load(Path::new(root), DRAFT_LINEAGE_PATH).unwrap();
+    let names = lineage
+        .case_layers()
+        .iter()
+        .flat_map(|layer| layer.cases.iter())
+        .flat_map(|case| case.evidence.iter())
+        .map(|id| id.rsplit(':').next().unwrap())
+        .collect::<std::collections::BTreeSet<_>>();
+    fs::write(
+        &test_log,
+        names
+            .iter()
+            .map(|name| format!("test evidence::{name} ... ok\n"))
+            .collect::<String>(),
+    )
+    .unwrap();
+    let attestation = run(&[
+        "layer-evidence",
+        "attest",
+        "--test-log",
+        test_log.to_str().unwrap(),
+        "--before",
+        before.to_str().unwrap(),
+        "--output",
+        evidence.to_str().unwrap(),
+        "--root",
+        root,
+    ]);
+    assert!(
+        attestation.status.success(),
+        "{}",
+        text(&attestation.stderr)
+    );
+    assert!(text(&attestation.stdout).contains("106 observations"));
 }
 
 #[test]

@@ -19,6 +19,8 @@ coverage="$reports/coverage.json"
 coverage_before="$reports/coverage.before.json"
 coverage_after="$reports/coverage.after.json"
 coverage_binding="$reports/coverage.binding.json"
+coverage_test_log="$reports/coverage-tests.log"
+layer_evidence="$reports/layer-evidence.json"
 mutation_output="${TONDO_MUTATION_OUTPUT:-$reports/mutation}"
 mutation_report="$mutation_output/mutants.out/outcomes.json"
 mutation_before="$reports/mutation.before.json"
@@ -35,7 +37,14 @@ cargo llvm-cov \
     --workspace \
     --all-targets \
     --json \
-    --output-path "$coverage"
+    --output-path "$coverage" \
+    2>&1 | tee "$coverage_test_log"
+
+cargo run -p tondo-reliability --locked -- layer-evidence attest \
+    --root . \
+    --test-log "$coverage_test_log" \
+    --before "$coverage_before" \
+    --output "$layer_evidence"
 
 cargo run -p tondo-reliability --locked -- quality provenance --root . > "$coverage_after"
 cargo run -p tondo-reliability --locked -- quality bind \
@@ -45,6 +54,12 @@ cargo run -p tondo-reliability --locked -- quality bind \
     --before "$coverage_before" \
     --after "$coverage_after" \
     --output "$coverage_binding"
+
+# Fail before the expensive mutation campaign when coverage alone regresses.
+cargo run -p tondo-reliability --locked -- quality verify \
+    --root . \
+    --coverage "$coverage" \
+    --coverage-binding "$coverage_binding"
 
 cargo run -p tondo-reliability --locked -- quality provenance --root . > "$mutation_before"
 

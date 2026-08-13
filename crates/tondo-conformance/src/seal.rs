@@ -16,7 +16,8 @@ use crate::lineage::{
 use crate::manifest::{
     CaseGroup, PinnedFile, SuiteManifest, referenced_files, validate_embedded_suite,
 };
-use crate::{ADAPTER_PROTOCOL, RESULT_FORMAT, SUITE_NAME, sha256};
+use crate::runner::COMPOSED_RESULT_FORMAT;
+use crate::{ADAPTER_PROTOCOL, SUITE_NAME, sha256};
 
 pub const PROMOTION_PROOF_FORMAT: &str = "tondo-conformance-promotion-proof/1";
 pub const PROMOTION_PROOF_STATE: &str = "promotion-proof";
@@ -144,6 +145,8 @@ struct ScopeEvidence {
     reason: String,
     report_sha256: Option<String>,
     provenance_sha256: Option<String>,
+    tree_sha256: Option<String>,
+    input_set_sha256: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -158,6 +161,13 @@ struct ResultRecord {
     target: ProofTarget,
     passed: bool,
     cases: Vec<ResultCase>,
+    lineage: String,
+    revision: u32,
+    lineage_manifest_sha256: String,
+    inventory_sha256: String,
+    tree_sha256: String,
+    input_set_sha256: String,
+    case_layers: Vec<ResultLayer>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -179,6 +189,30 @@ struct ResultCase {
     group: CaseGroup,
     repetitions: u32,
     observation_sha256: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ResultLayer {
+    id: String,
+    manifest_sha256: String,
+    cases: Vec<ResultLayerCase>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ResultLayerCase {
+    id: String,
+    evidence: Vec<ResultLayerEvidence>,
+    observation_sha256: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ResultLayerEvidence {
+    id: String,
+    source_sha256: String,
+    observation_sha256: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -250,6 +284,7 @@ struct InventoryRecord {
 struct InventoryTest {
     id: String,
     status: String,
+    source_sha256: String,
 }
 
 /// Builds and atomically publishes a self-contained, content-addressed proof of
@@ -326,6 +361,11 @@ fn build_promotion_proof(
     let result_bytes = read_regular(result_path)?;
     let result = parse_result(&result_bytes)?;
     validate_result(lineage, &result)?;
+    if ratchet.coverage.tree_sha256.as_deref() != Some(result.tree_sha256.as_str())
+        || ratchet.coverage.input_set_sha256.as_deref() != Some(result.input_set_sha256.as_str())
+    {
+        return invalid("composed result was produced from a different quality source tree");
+    }
 
     let mut files = Vec::new();
     let mut objects = BTreeMap::new();
@@ -492,6 +532,8 @@ fn validate_ratchet(
             || scope.reason.is_empty()
             || !scope.report_sha256.as_deref().is_some_and(is_sha256)
             || !scope.provenance_sha256.as_deref().is_some_and(is_sha256)
+            || !scope.tree_sha256.as_deref().is_some_and(is_sha256)
+            || !scope.input_set_sha256.as_deref().is_some_and(is_sha256)
         {
             return invalid(format!("ratchet {name} evidence is not validated"));
         }
@@ -518,6 +560,11 @@ fn validate_ratchet(
         &read_regular(&root.join(&ratchet.gap_audit.path))?,
         &read_regular(&root.join(&ratchet.inventory.path))?,
     )?;
+    if ratchet.coverage.tree_sha256 != ratchet.mutation.tree_sha256
+        || ratchet.coverage.input_set_sha256 != ratchet.mutation.input_set_sha256
+    {
+        return invalid("ratchet quality scopes describe different source trees");
+    }
     Ok(())
 }
 
@@ -712,6 +759,13 @@ fn validate_result(lineage: &DraftLineage, result: &ResultRecord) -> Result<(), 
         lineage.baseline_suite().manifest_sha256().as_str(),
         lineage.baseline_suite().manifest(),
         result,
+    )?;
+    let inventory = read_regular(&lineage.root().join("testing/inventory.json"))?;
+    validate_layer_results(
+        lineage.manifest(),
+        lineage.case_layers(),
+        &inventory,
+        result,
     )
 }
 
@@ -721,7 +775,7 @@ fn validate_result_contract(
     suite: &SuiteManifest,
     result: &ResultRecord,
 ) -> Result<(), SealError> {
-    if result.format != RESULT_FORMAT
+    if result.format != COMPOSED_RESULT_FORMAT
         || result.suite != SUITE_NAME
         || result.suite_version != suite.version
         || result.edition != edition
@@ -765,6 +819,95 @@ fn validate_result_contract(
                 expected.id
             ));
         }
+    }
+    Ok(())
+}
+
+fn validate_layer_results(
+    draft: &DraftLineageManifest,
+    layers: &[DraftCaseLayerManifest],
+    inventory_bytes: &[u8],
+    result: &ResultRecord,
+) -> Result<(), SealError> {
+    if result.lineage != draft.lineage
+        || result.revision != draft.revision
+        || result.lineage_manifest_sha256 != sha256(&canonical_json(draft)?)
+        || result.inventory_sha256 != sha256(inventory_bytes)
+        || !is_sha256(&result.tree_sha256)
+        || !is_sha256(&result.input_set_sha256)
+        || result.case_layers.len() != layers.len()
+        || layers.len() != draft.case_layers.len()
+    {
+        return invalid("composed result does not match the active draft identity");
+    }
+    let inventory: InventoryRecord = serde_json::from_slice(inventory_bytes)
+        .map_err(|error| SealError::Json(error.to_string()))?;
+    let inventory = inventory
+        .tests
+        .iter()
+        .map(|entry| (entry.id.as_str(), entry))
+        .collect::<BTreeMap<_, _>>();
+    let mut expected_evidence = BTreeSet::new();
+    for ((descriptor, layer), observed_layer) in draft
+        .case_layers
+        .iter()
+        .zip(layers)
+        .zip(&result.case_layers)
+    {
+        if observed_layer.id != layer.layer
+            || observed_layer.id != descriptor.id
+            || observed_layer.manifest_sha256 != descriptor.manifest.sha256
+            || observed_layer.cases.len() != layer.cases.len()
+        {
+            return invalid(format!(
+                "composed layer `{}` differs from the draft",
+                descriptor.id
+            ));
+        }
+        for (case, observed_case) in layer.cases.iter().zip(&observed_layer.cases) {
+            if observed_case.id != case.id
+                || observed_case.evidence.len() != case.evidence.len()
+                || !is_sha256(&observed_case.observation_sha256)
+            {
+                return invalid(format!(
+                    "composed layer case `{}/{}` differs from the draft",
+                    layer.layer, case.id
+                ));
+            }
+            for (id, observed) in case.evidence.iter().zip(&observed_case.evidence) {
+                let entry = inventory.get(id.as_str()).ok_or_else(|| {
+                    SealError::Invalid(format!("composed evidence `{id}` is not inventoried"))
+                })?;
+                if observed.id != *id
+                    || observed.source_sha256 != entry.source_sha256
+                    || entry.status != "executable"
+                    || !is_sha256(&observed.observation_sha256)
+                {
+                    return invalid(format!(
+                        "composed evidence `{id}` is not executable or exact"
+                    ));
+                }
+                expected_evidence.insert(id.as_str());
+            }
+            let encoded = serde_json::to_vec(&observed_case.evidence)
+                .map_err(|error| SealError::Json(error.to_string()))?;
+            if observed_case.observation_sha256 != sha256(&encoded) {
+                return invalid(format!(
+                    "composed layer case `{}/{}` has a forged observation hash",
+                    layer.layer, case.id
+                ));
+            }
+        }
+    }
+    let observed_evidence = result
+        .case_layers
+        .iter()
+        .flat_map(|layer| layer.cases.iter())
+        .flat_map(|case| case.evidence.iter())
+        .map(|evidence| evidence.id.as_str())
+        .collect::<BTreeSet<_>>();
+    if observed_evidence != expected_evidence {
+        return invalid("composed result has missing, extra, or duplicated layer evidence");
     }
     Ok(())
 }
@@ -879,6 +1022,18 @@ fn verify_promotion_proof_closure(
             .provenance_sha256
             .as_deref()
             .is_some_and(is_sha256)
+        || !ratchet
+            .coverage
+            .tree_sha256
+            .as_deref()
+            .is_some_and(is_sha256)
+        || !ratchet
+            .mutation
+            .tree_sha256
+            .as_deref()
+            .is_some_and(is_sha256)
+        || ratchet.coverage.tree_sha256 != ratchet.mutation.tree_sha256
+        || ratchet.coverage.input_set_sha256 != ratchet.mutation.input_set_sha256
     {
         return invalid("embedded ratchet differs from the sealed draft");
     }
@@ -916,6 +1071,7 @@ fn verify_promotion_proof_closure(
     for specification in &draft.specifications {
         require_object(objects, specification)?;
     }
+    let mut embedded_layers = Vec::with_capacity(draft.case_layers.len());
     for layer in &draft.case_layers {
         require_object(objects, &layer.manifest)?;
         let bytes = &objects[layer.manifest.path.as_str()];
@@ -929,6 +1085,7 @@ fn verify_promotion_proof_closure(
                 layer.id
             ));
         }
+        embedded_layers.push(embedded);
     }
     require_object(objects, &draft.baseline.manifest)?;
     require_object(objects, &draft.baseline.specification_snapshot)?;
@@ -967,6 +1124,19 @@ fn verify_promotion_proof_closure(
         &baseline,
         &result,
     )?;
+    validate_layer_results(
+        &draft,
+        &embedded_layers,
+        objects
+            .get(ratchet.inventory.path.as_str())
+            .ok_or_else(|| SealError::Invalid("promotion proof omits its test inventory".into()))?,
+        &result,
+    )?;
+    if ratchet.coverage.tree_sha256.as_deref() != Some(result.tree_sha256.as_str())
+        || ratchet.coverage.input_set_sha256.as_deref() != Some(result.input_set_sha256.as_str())
+    {
+        return invalid("embedded conformance result differs from the quality source tree");
+    }
     if result.target != manifest.target
         || result.adapter.adapter_protocol != manifest.adapter.protocol
         || result.adapter.implementation != manifest.adapter.implementation
@@ -1382,6 +1552,10 @@ mod tests {
         ratchet.manifest.sha256 = lineage.manifest_sha256();
         ratchet.draft_case_layers = lineage.manifest().case_layers.len() as u64;
         ratchet.pending_tasks = lineage.manifest().pending_tasks.clone();
+        for scope in [&mut ratchet.coverage, &mut ratchet.mutation] {
+            scope.tree_sha256 = Some("d".repeat(64));
+            scope.input_set_sha256 = Some("e".repeat(64));
+        }
         for evidence in [
             &mut ratchet.inventory,
             &mut ratchet.matrix,
@@ -1391,7 +1565,56 @@ mod tests {
             evidence.sha256 = sha256(&fs::read(root.join(&evidence.path)).unwrap());
         }
         fs::write(root.join(RATCHET_PATH), canonical_json(&ratchet).unwrap()).unwrap();
+        write_composed_result(&root, &lineage, &ratchet);
         root
+    }
+
+    fn write_composed_result(root: &Path, lineage: &DraftLineage, ratchet: &RatchetRecord) {
+        let result_path =
+            root.join("conformance/0.1/results/tondo-reference-draft-tondo-vm-hosted.json");
+        let baseline: crate::runner::SuiteResult =
+            serde_json::from_slice(&fs::read(&result_path).unwrap()).unwrap();
+        let inventory_bytes = fs::read(root.join(&ratchet.inventory.path)).unwrap();
+        let inventory: serde_json::Value = serde_json::from_slice(&inventory_bytes).unwrap();
+        let sources = inventory["tests"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| {
+                (
+                    entry["id"].as_str().unwrap(),
+                    entry["source_sha256"].as_str().unwrap(),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let ids = lineage
+            .case_layers()
+            .iter()
+            .flat_map(|layer| layer.cases.iter())
+            .flat_map(|case| case.evidence.iter().map(String::as_str))
+            .collect::<BTreeSet<_>>();
+        let report = serde_json::json!({
+            "format": "tondo-layer-evidence/1",
+            "lineage": lineage.manifest().lineage,
+            "revision": lineage.manifest().revision,
+            "manifest_sha256": lineage.manifest_sha256(),
+            "inventory_sha256": sha256(&inventory_bytes),
+            "tree_sha256": ratchet.coverage.tree_sha256.as_deref().unwrap(),
+            "input_set_sha256": ratchet.coverage.input_set_sha256.as_deref().unwrap(),
+            "passed": true,
+            "evidence": ids.iter().map(|id| serde_json::json!({
+                "id": id,
+                "source_sha256": sources[id],
+                "observation_sha256": sha256(id.as_bytes()),
+            })).collect::<Vec<_>>(),
+        });
+        let composed = crate::runner::compose_suite_result(
+            lineage,
+            baseline,
+            &serde_json::to_vec(&report).unwrap(),
+        )
+        .unwrap();
+        fs::write(&result_path, serde_json::to_vec(&composed).unwrap()).unwrap();
     }
 
     fn copy_file(source: &Path, destination: &Path, relative: &str) {
@@ -1672,6 +1895,28 @@ mod tests {
         let mut invalid_observation = result.clone();
         invalid_observation.cases[0].observation_sha256[0] = "not-a-hash".into();
         assert!(validate_result(&lineage, &invalid_observation).is_err());
+
+        let mut missing_layer = result.clone();
+        missing_layer.case_layers.pop();
+        assert!(validate_result(&lineage, &missing_layer).is_err());
+
+        let mut reordered_layers = result.clone();
+        reordered_layers.case_layers.swap(0, 1);
+        assert!(validate_result(&lineage, &reordered_layers).is_err());
+
+        let mut missing_layer_evidence = result.clone();
+        missing_layer_evidence.case_layers[0].cases[0]
+            .evidence
+            .pop();
+        assert!(validate_result(&lineage, &missing_layer_evidence).is_err());
+
+        let mut wrong_layer_source = result.clone();
+        wrong_layer_source.case_layers[0].cases[0].evidence[0].source_sha256 = "f".repeat(64);
+        assert!(validate_result(&lineage, &wrong_layer_source).is_err());
+
+        let mut wrong_tree = result.clone();
+        wrong_tree.tree_sha256 = "not-a-hash".into();
+        assert!(validate_result(&lineage, &wrong_tree).is_err());
 
         let mut unknown_field: serde_json::Value = serde_json::from_slice(&result_bytes).unwrap();
         unknown_field["unexpected"] = true.into();

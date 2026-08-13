@@ -38,7 +38,18 @@ cp conformance/draft/manifest.json \
 run_step fmt cargo fmt --all -- --check
 run_step check cargo check --workspace --all-targets --locked
 run_step clippy cargo clippy --workspace --all-targets --locked -- -D warnings
+echo "::group::layer-evidence-before"
+cargo run -p tondo-reliability --locked -- quality provenance --root . \
+    > "$evidence/layer-evidence-before.json"
+cat "$evidence/layer-evidence-before.json"
+echo "::endgroup::"
 run_step test cargo test --workspace --all-targets --locked
+run_step layer-evidence-attest \
+    cargo run -p tondo-reliability --locked -- layer-evidence attest \
+    --root . \
+    --test-log "$logs/test.log" \
+    --before "$evidence/layer-evidence-before.json" \
+    --output "$evidence/layer-evidence.json"
 run_step rustdoc env RUSTDOCFLAGS=-Dwarnings cargo doc --workspace --no-deps --locked
 run_step conformance-build \
     cargo build -p tondo-conformance -p tondo-reference-adapter --bins --locked
@@ -161,23 +172,30 @@ run_step conformance-run \
     --manifest conformance/draft/manifest.json \
     --lineage draft \
     --adapter "$cargo_target_dir/debug/tondo-reference-adapter" \
+    --evidence "$evidence/layer-evidence.json" \
     --output "$evidence/conformance-result.json"
 run_step conformance-compare \
-    cmp "$evidence/conformance-result.json" \
+    scripts/conformance-bootstrap-compare.sh \
+    "$evidence/conformance-result.json" \
     conformance/0.1/results/tondo-reference-draft-tondo-vm-hosted.json
 
 if jq -e '([.requirements[] | select(.status == "draft-pending")] | length) == 0' \
     testing/coverage-matrix.json >/dev/null \
     && jq -e '([.case_layers[]?.cases[]?] | length) > 0' \
         "$evidence/conformance-result.json" >/dev/null; then
-    proof_directory="$(mktemp -d "$evidence/promotion-proof.XXXXXX")"
-    rmdir "$proof_directory"
+    # The seal boundary deliberately accepts only workspace-relative normal
+    # paths. Keep the large build and test evidence on CARGO_TARGET_DIR, but
+    # stage the small result and proof below the ignored local target tree.
+    seal_stage="$(mktemp -d target/reliability/conformance-seal.XXXXXX)"
+    trap 'rm -rf -- "$seal_stage"' EXIT
+    cp "$evidence/conformance-result.json" "$seal_stage/conformance-result.json"
+    proof_directory="$seal_stage/promotion-proof"
     run_step conformance-seal-proof \
         cargo run -p tondo-conformance --locked -- seal-proof \
         --root . \
         --manifest conformance/draft/manifest.json \
         --lineage draft \
-        --result "$evidence/conformance-result.json" \
+        --result "$seal_stage/conformance-result.json" \
         --output "$proof_directory"
     draft_revision="$(jq -r '.revision' conformance/draft/manifest.json)"
     checked_in_proof="conformance/proofs/revision-$draft_revision"
@@ -187,6 +205,8 @@ if jq -e '([.requirements[] | select(.status == "draft-pending")] | length) == 0
         cargo run -p tondo-conformance --locked -- verify-proof \
         --root . \
         --proof "$checked_in_proof"
+    rm -rf -- "$seal_stage"
+    trap - EXIT
 else
     echo "::notice:: conformance promotion proof skipped: normative coverage or the composed case-layer result is not ready"
 fi

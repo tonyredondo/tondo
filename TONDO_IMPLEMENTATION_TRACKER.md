@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 2.23
+**Versión del tracker:** 2.24
 
 **Última actualización:** 2026-08-13
 
@@ -43,11 +43,12 @@ confunde con conformarla. TLF tampoco cambia la semántica `.to`: Gate L0 produc
 un bundle separado y el candidato final fija G5, S1 y L0 por identidades
 independientes.
 
-**Objetivo inmediato:** ejecutar y atestar los resultados compuestos de cada
-case layer mediante `CONF-LAYER-RESULT-001`. `CONF-GAP-IMPL-001` ya enlaza las
+**Objetivo inmediato:** promover el candidato normativamente completo mediante
+`CONF-SEAL-FINAL-001`. `CONF-GAP-IMPL-001` ya enlaza las
 364 implementaciones auditadas con evidencia positiva, negativa, de borde,
 composición, oracle y frontera pública, y clasifica sus dos no-goals exactos sin
-waivers agregadas. Solo después de ese resultado compuesto se vuelve a cerrar
+waivers agregadas. `CONF-LAYER-RESULT-001` ya liga cada case layer a ejecución
+real y al árbol exacto. Solo después del seal final se vuelve a cerrar
 T0/G5/S1A. Los contratos
 runtime-facing de STD-0.1B y M11 esperan esos gates. Todo pertenece a la primera
 versión 0.1; los slices son orden de implementación, no versiones públicas. La
@@ -2854,13 +2855,18 @@ Antes de ampliar la gramática de M10.7 o M10.6:
     estructural exige 298 requisitos cubiertos, ocho no aplicables y tres
     fronteras reservadas a la conformidad independiente de stdlib.
 
-- [ ] **CONF-LAYER-RESULT-001 — Ejecutar y atestar cada caso de layer.** El
+- [x] **CONF-LAYER-RESULT-001 — Ejecutar y atestar cada caso de layer.** El
   resultado de `tondo-conformance run` debe quedar ligado al hash y revisión
   del draft e incluir, además del corpus bootstrap completo, una observación
   verificable por cada caso `meta`, `testing` y `finalization`. Referenciar un
   nombre existente en el inventario no acredita ejecución. El schema rechaza
   layers/casos/evidencias ausentes, extra, duplicados, reordenados o ligados a
   otro árbol y el proof incluye el resultado compuesto exacto.
+  La implementación captura el árbol antes de `cargo test`, exige un único
+  `ok` real para cada una de las 106 evidencias Rust únicas, conserva sus 111
+  enlaces dentro de 66 casos y compone las cuatro layers con los 205 casos
+  bootstrap. El formato `/2` fija revisión, manifests, inventario, árbol y
+  observaciones; el proof rechaza cualquier divergencia frente al ratchet.
 
 - [ ] **CONF-SEAL-FINAL-001 — Promover el candidato normativamente completo.**
   Exigir que los requisitos aplicables a lenguaje, testing y toolchain no
@@ -5933,13 +5939,23 @@ quedan cerrados como implementación/infraestructura. M10.7 y la implementación
 funcional de M10.6 permanecen cerradas. `CONF-DRAFT-001` también permanece
 cerrada. La auditoría reabre T0/G5 por trazabilidad normativa y Wave 5/S1A por APIs
 públicas ausentes. `CONF-GAP-IMPL-001` ya cierra las 364 filas aplicables y
-conserva los dos no-goals exactos. La acción inmediata es
-`CONF-LAYER-RESULT-001` y después el cierre final de G5; Wave 6 no se declara iniciada
-antes de esos gates.
+conserva los dos no-goals exactos. `CONF-LAYER-RESULT-001` ya produce el
+resultado compuesto de revisión 23. La acción inmediata es
+`CONF-SEAL-FINAL-001`; Wave 6 no se declara iniciada antes de ese gate.
 
 ---
 
 ## 25. Historial del tracker
+
+### 2.24 — 2026-08-13
+
+- Se cierra `CONF-LAYER-RESULT-001`. La revisión 23 elimina de la layer `meta`
+  el target de campaña `fuzz:protocols` como supuesto test individual y conserva
+  cinco witnesses Rust ejecutables para esa case. `layer-evidence attest`
+  comprueba 106 pruebas únicas contra el log real y el árbol inmutable; `run`
+  produce un resultado `/2` con 205 casos bootstrap y 66 casos de layer. El
+  sealing valida orden, cardinalidad, hashes de fuente, observaciones, draft,
+  inventario y la misma identidad de árbol usada por coverage/mutation.
 
 ### 2.23 — 2026-08-13
 

@@ -6,7 +6,7 @@ use std::process::ExitCode;
 
 use tondo_conformance::lineage::DraftLineage;
 use tondo_conformance::manifest::CaseGroup;
-use tondo_conformance::runner::{ProcessAdapter, run_suite};
+use tondo_conformance::runner::{ProcessAdapter, compose_suite_result, run_suite};
 use tondo_conformance::seal::{ProofOutcome, seal_promotion_proof, verify_promotion_proof};
 use tondo_conformance::sha256;
 
@@ -15,7 +15,7 @@ Tondo draft conformance runner
 
 Usage:
   tondo-conformance validate --root <directory> --manifest <draft-path> --lineage draft
-  tondo-conformance run --root <directory> --manifest <draft-path> --lineage draft --adapter <executable> [--group <group>] [--output <path>]
+  tondo-conformance run --root <directory> --manifest <draft-path> --lineage draft --adapter <executable> --evidence <json> [--output <path>]
   tondo-conformance seal-proof --root <directory> --manifest <draft-path> --lineage draft --result <path> --output <directory>
   tondo-conformance verify-proof --root <directory> --proof <directory>
 
@@ -45,6 +45,7 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
     let mut output = None;
     let mut result = None;
     let mut proof = None;
+    let mut evidence = None;
     let mut index = 1;
     while index < arguments.len() {
         let option = &arguments[index];
@@ -62,6 +63,7 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
             "--output" => set_once(&mut output, PathBuf::from(value), option)?,
             "--result" => set_once(&mut result, PathBuf::from(value), option)?,
             "--proof" => set_once(&mut proof, PathBuf::from(value), option)?,
+            "--evidence" => set_once(&mut evidence, PathBuf::from(value), option)?,
             _ => return Err(format!("unknown option `{option}`\n\n{USAGE}")),
         }
     }
@@ -73,6 +75,7 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
             || group.is_some()
             || output.is_some()
             || result.is_some()
+            || evidence.is_some()
         {
             return Err("verify-proof accepts only --root and --proof".into());
         }
@@ -99,7 +102,12 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
     let lineage = DraftLineage::load(&root, manifest).map_err(|error| error.to_string())?;
     match command.as_str() {
         "validate" => {
-            if adapter.is_some() || group.is_some() || output.is_some() || result.is_some() {
+            if adapter.is_some()
+                || group.is_some()
+                || output.is_some()
+                || result.is_some()
+                || evidence.is_some()
+            {
                 return Err("validate accepts only --root, --manifest, and --lineage".into());
             }
             let _ = selection;
@@ -117,10 +125,22 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
             if result.is_some() {
                 return Err("run does not accept --result".into());
             }
+            if group.is_some() {
+                return Err(
+                    "run no longer accepts partial groups; composed draft results are atomic"
+                        .into(),
+                );
+            }
             let adapter =
                 adapter.ok_or_else(|| "`--adapter` is required for the run command".to_owned())?;
+            let evidence = evidence
+                .ok_or_else(|| "`--evidence` is required for the run command".to_owned())?;
             let mut adapter = ProcessAdapter::spawn(adapter)?;
-            let result = run_suite(lineage.baseline_suite(), &mut adapter, group)
+            let baseline = run_suite(lineage.baseline_suite(), &mut adapter, None)
+                .map_err(|error| error.to_string())?;
+            let evidence_bytes = fs::read(&evidence)
+                .map_err(|error| format!("cannot read `{}`: {error}", evidence.display()))?;
+            let result = compose_suite_result(&lineage, baseline, &evidence_bytes)
                 .map_err(|error| error.to_string())?;
             let encoded = serde_json::to_vec(&result)
                 .map_err(|error| format!("cannot encode result: {error}"))?;
@@ -133,7 +153,7 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
             Ok(())
         }
         "seal-proof" => {
-            if adapter.is_some() || group.is_some() {
+            if adapter.is_some() || group.is_some() || evidence.is_some() {
                 return Err(
                     "seal-proof accepts --root, --manifest, --lineage, --result, and --output"
                         .into(),
@@ -294,6 +314,36 @@ mod tests {
         assert_eq!(
             run(suite_arguments("run")).unwrap_err(),
             "`--adapter` is required for the run command"
+        );
+        let mut run_without_evidence = suite_arguments("run");
+        run_without_evidence.extend(["--adapter".into(), "adapter".into()]);
+        assert_eq!(
+            run(run_without_evidence).unwrap_err(),
+            "`--evidence` is required for the run command"
+        );
+        let mut run_with_missing_adapter = suite_arguments("run");
+        run_with_missing_adapter.extend([
+            "--adapter".into(),
+            "definitely-not-a-tondo-adapter".into(),
+            "--evidence".into(),
+            "evidence.json".into(),
+        ]);
+        assert!(
+            run(run_with_missing_adapter)
+                .unwrap_err()
+                .contains("cannot start adapter")
+        );
+        let mut partial = suite_arguments("run");
+        partial.extend([
+            "--group".into(),
+            "runtime".into(),
+            "--adapter".into(),
+            "adapter".into(),
+        ]);
+        assert!(
+            run(partial)
+                .unwrap_err()
+                .contains("composed draft results are atomic")
         );
         assert!(
             run(suite_arguments("other"))

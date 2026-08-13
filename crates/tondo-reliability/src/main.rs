@@ -4,6 +4,7 @@ use std::process::ExitCode;
 
 use tondo_reliability::gap_audit::GapAudit;
 use tondo_reliability::inventory;
+use tondo_reliability::layer_evidence;
 use tondo_reliability::matrix;
 use tondo_reliability::provenance::{QualityProvenance, ReportBinding};
 use tondo_reliability::quality::{QualityBaseline, capture, parse_llvm_cov, parse_mutation_report};
@@ -22,6 +23,7 @@ Usage:
   tondo-reliability check [--root <directory>]
   tondo-reliability inventory <generate|check> [--root <directory>]
   tondo-reliability matrix <generate|check> [--root <directory>]
+  tondo-reliability layer-evidence attest --test-log <path> --before <json> --output <json> [--root <directory>]
   tondo-reliability ratchet <generate|check> [--coverage <json>] [--mutants <json>] [--coverage-binding <json>] [--mutants-binding <json>] [--root <directory>]
   tondo-reliability quality check [--root <directory>]
   tondo-reliability quality provenance [--root <directory>]
@@ -47,7 +49,7 @@ fn run(arguments: Vec<String>) -> Result<String, String> {
     let root = workspace_root(&arguments.root)?;
     if !matches!(
         arguments.positionals.first().map(String::as_str),
-        Some("quality" | "ratchet")
+        Some("quality" | "ratchet" | "layer-evidence")
     ) {
         reject_quality_options(&arguments)?;
     }
@@ -60,6 +62,19 @@ fn run(arguments: Vec<String>) -> Result<String, String> {
         [area, command] if area == "inventory" && command == "check" => check_inventory(&root),
         [area, command] if area == "matrix" && command == "generate" => generate_matrix(&root),
         [area, command] if area == "matrix" && command == "check" => check_matrix(&root),
+        [area, command] if area == "layer-evidence" && command == "attest" => {
+            reject_layer_evidence_options(&arguments)?;
+            let test_log = required_path(&arguments.test_log, "--test-log")?;
+            let before = load_provenance(required_path(&arguments.before, "--before")?)?;
+            let output = required_path(&arguments.output, "--output")?;
+            let report = layer_evidence::attest(&root, test_log, &before)?;
+            let changed = write_if_changed(output, &canonical_json(&report)?)?;
+            Ok(format!(
+                "layer evidence {}: {} observations",
+                change(changed),
+                report.evidence.len()
+            ))
+        }
         [area, command] if area == "ratchet" && command == "generate" => {
             reject_ratchet_options(&arguments)?;
             generate_all(&root)?;
@@ -196,6 +211,7 @@ struct Arguments {
     before: Option<PathBuf>,
     after: Option<PathBuf>,
     output: Option<PathBuf>,
+    test_log: Option<PathBuf>,
 }
 
 fn parse_arguments(arguments: Vec<String>) -> Result<Arguments, String> {
@@ -211,6 +227,7 @@ fn parse_arguments(arguments: Vec<String>) -> Result<Arguments, String> {
     let mut before = None;
     let mut after = None;
     let mut output = None;
+    let mut test_log = None;
     let mut index = 0;
     while index < arguments.len() {
         if matches!(
@@ -226,6 +243,7 @@ fn parse_arguments(arguments: Vec<String>) -> Result<Arguments, String> {
                 | "--before"
                 | "--after"
                 | "--output"
+                | "--test-log"
         ) {
             let option = arguments[index].as_str();
             let value = arguments
@@ -243,6 +261,7 @@ fn parse_arguments(arguments: Vec<String>) -> Result<Arguments, String> {
                 "--before" => before.replace(PathBuf::from(value)).is_some(),
                 "--after" => after.replace(PathBuf::from(value)).is_some(),
                 "--output" => output.replace(PathBuf::from(value)).is_some(),
+                "--test-log" => test_log.replace(PathBuf::from(value)).is_some(),
                 _ => unreachable!(),
             };
             if duplicate {
@@ -269,6 +288,7 @@ fn parse_arguments(arguments: Vec<String>) -> Result<Arguments, String> {
         before,
         after,
         output,
+        test_log,
     })
 }
 
@@ -283,8 +303,25 @@ fn reject_quality_options(arguments: &Arguments) -> Result<(), String> {
         || arguments.before.is_some()
         || arguments.after.is_some()
         || arguments.output.is_some()
+        || arguments.test_log.is_some()
     {
         Err("this command does not accept quality report options".into())
+    } else {
+        Ok(())
+    }
+}
+
+fn reject_layer_evidence_options(arguments: &Arguments) -> Result<(), String> {
+    if arguments.coverage.is_some()
+        || arguments.mutants.is_some()
+        || arguments.coverage_binding.is_some()
+        || arguments.mutants_binding.is_some()
+        || arguments.revision.is_some()
+        || arguments.kind.is_some()
+        || arguments.report.is_some()
+        || arguments.after.is_some()
+    {
+        Err("layer-evidence attest accepts only --root, --test-log, --before, and --output".into())
     } else {
         Ok(())
     }
@@ -297,6 +334,7 @@ fn reject_ratchet_options(arguments: &Arguments) -> Result<(), String> {
         || arguments.before.is_some()
         || arguments.after.is_some()
         || arguments.output.is_some()
+        || arguments.test_log.is_some()
     {
         return Err("ratchet does not accept revision".into());
     }
@@ -309,6 +347,7 @@ fn reject_binding_options(arguments: &Arguments) -> Result<(), String> {
         || arguments.coverage_binding.is_some()
         || arguments.mutants_binding.is_some()
         || arguments.revision.is_some()
+        || arguments.test_log.is_some()
     {
         Err("quality bind does not accept coverage, mutation, binding, or revision options".into())
     } else {
@@ -324,6 +363,7 @@ fn reject_capture_options(arguments: &Arguments) -> Result<(), String> {
         || arguments.before.is_some()
         || arguments.after.is_some()
         || arguments.output.is_some()
+        || arguments.test_log.is_some()
     {
         Err("quality capture does not accept binding command options".into())
     } else {
@@ -337,6 +377,7 @@ fn reject_verify_options(arguments: &Arguments) -> Result<(), String> {
         || arguments.before.is_some()
         || arguments.after.is_some()
         || arguments.output.is_some()
+        || arguments.test_log.is_some()
     {
         Err("quality verify does not accept binding command options".into())
     } else {
@@ -522,6 +563,21 @@ mod tests {
         assert!(generate_all(&root).unwrap().contains("inventory"));
         assert!(generate_inventory(&root).unwrap().contains("logical tests"));
         assert!(generate_matrix(&root).unwrap().contains("requirements"));
+        assert!(
+            check_all(&root)
+                .unwrap()
+                .contains("reliability evidence is current")
+        );
+        assert!(
+            check_inventory(&root)
+                .unwrap()
+                .contains("inventory is current")
+        );
+        assert!(
+            check_matrix(&root)
+                .unwrap()
+                .contains("coverage matrix is current")
+        );
         let arguments = parse_arguments(vec!["ratchet".into(), "generate".into()]).unwrap();
         assert!(generate_ratchet(&root, &arguments).is_err());
     }
@@ -564,6 +620,27 @@ mod tests {
             ])
             .is_err()
         );
+    }
+
+    #[test]
+    fn layer_evidence_options_are_explicit_and_command_scoped() {
+        let arguments = parse_arguments(vec![
+            "layer-evidence".into(),
+            "attest".into(),
+            "--test-log".into(),
+            "test.log".into(),
+            "--before".into(),
+            "before.json".into(),
+            "--output".into(),
+            "evidence.json".into(),
+        ])
+        .unwrap();
+        assert_eq!(arguments.test_log, Some(PathBuf::from("test.log")));
+        assert!(reject_layer_evidence_options(&arguments).is_ok());
+
+        let mut invalid = arguments;
+        invalid.coverage = Some("coverage.json".into());
+        assert!(reject_layer_evidence_options(&invalid).is_err());
     }
 
     #[test]

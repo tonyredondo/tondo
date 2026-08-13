@@ -4,6 +4,7 @@ pub mod gap_audit;
 pub mod generator;
 pub mod harness;
 pub mod inventory;
+pub mod layer_evidence;
 pub mod matrix;
 pub mod provenance;
 pub mod quality;
@@ -243,6 +244,22 @@ mod tests {
         assert!(write_if_changed(&path, &bytes).unwrap());
         assert!(!write_if_changed(&path, &bytes).unwrap());
         check_bytes(&path, &bytes).unwrap();
+
+        let parent_blocker = directory.0.join("parent-blocker");
+        fs::write(&parent_blocker, b"file").unwrap();
+        assert!(
+            write_if_changed(&parent_blocker.join("evidence.json"), &bytes)
+                .unwrap_err()
+                .contains("cannot create")
+        );
+
+        let temporary_blocker = directory.0.join("temporary-blocker.json");
+        fs::create_dir(temporary_blocker.with_extension("tmp")).unwrap();
+        assert!(
+            write_if_changed(&temporary_blocker, &bytes)
+                .unwrap_err()
+                .contains("cannot write")
+        );
         assert!(
             check_bytes(&path, b"different")
                 .unwrap_err()

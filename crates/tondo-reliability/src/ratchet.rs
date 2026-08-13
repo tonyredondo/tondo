@@ -47,6 +47,8 @@ pub struct ScopeEvidence {
     pub reason: String,
     pub report_sha256: Option<String>,
     pub provenance_sha256: Option<String>,
+    pub tree_sha256: Option<String>,
+    pub input_set_sha256: Option<String>,
 }
 
 pub fn build(
@@ -160,12 +162,18 @@ pub fn validate(record: &RatchetRecord) -> Result<(), String> {
         return Err("ratchet pending tasks must be sorted and unique".into());
     }
     if record.coverage.status == "not-applicable"
-        && (record.coverage.report_sha256.is_some() || record.coverage.provenance_sha256.is_some())
+        && (record.coverage.report_sha256.is_some()
+            || record.coverage.provenance_sha256.is_some()
+            || record.coverage.tree_sha256.is_some()
+            || record.coverage.input_set_sha256.is_some())
     {
         return Err("not-applicable coverage cannot carry report or provenance hashes".into());
     }
     if record.mutation.status == "not-applicable"
-        && (record.mutation.report_sha256.is_some() || record.mutation.provenance_sha256.is_some())
+        && (record.mutation.report_sha256.is_some()
+            || record.mutation.provenance_sha256.is_some()
+            || record.mutation.tree_sha256.is_some()
+            || record.mutation.input_set_sha256.is_some())
     {
         return Err("not-applicable mutation cannot carry report or provenance hashes".into());
     }
@@ -177,7 +185,9 @@ pub fn validate(record: &RatchetRecord) -> Result<(), String> {
             || scope.reason.is_empty()
             || (scope.status == "validated"
                 && (!scope.report_sha256.as_deref().is_some_and(is_sha256)
-                    || !scope.provenance_sha256.as_deref().is_some_and(is_sha256)))
+                    || !scope.provenance_sha256.as_deref().is_some_and(is_sha256)
+                    || !scope.tree_sha256.as_deref().is_some_and(is_sha256)
+                    || !scope.input_set_sha256.as_deref().is_some_and(is_sha256)))
         {
             return Err(format!("ratchet {name} scope evidence is incomplete"));
         }
@@ -207,6 +217,8 @@ fn scope_evidence(
             reason: format!("no executable draft case layer requires a {name} report"),
             report_sha256: None,
             provenance_sha256: None,
+            tree_sha256: None,
+            input_set_sha256: None,
         });
     };
     let binding_path =
@@ -225,6 +237,8 @@ fn scope_evidence(
         reason: format!("the supplied {name} report passed the quality and provenance gates"),
         report_sha256: Some(binding.report_sha256),
         provenance_sha256: Some(provenance_sha256),
+        tree_sha256: Some(binding.after.tree_sha256),
+        input_set_sha256: Some(binding.after.input_set_sha256),
     })
 }
 
@@ -279,6 +293,8 @@ mod tests {
             reason: "verified".into(),
             report_sha256: Some("b".repeat(64)),
             provenance_sha256: Some("c".repeat(64)),
+            tree_sha256: Some("d".repeat(64)),
+            input_set_sha256: Some("e".repeat(64)),
         };
         RatchetRecord {
             format: FORMAT.into(),
@@ -352,6 +368,10 @@ mod tests {
         record.coverage.report_sha256 = Some("bad".into());
         assert!(validate(&record).is_err());
 
+        let mut record = base.clone();
+        record.coverage.tree_sha256 = Some("bad".into());
+        assert!(validate(&record).is_err());
+
         let mut record = base;
         record.mutation.status = "validated".into();
         record.mutation.report_sha256 = Some("bad".into());
@@ -369,6 +389,8 @@ mod tests {
         assert_eq!(evidence.status, "not-applicable");
         assert!(evidence.report_sha256.is_none());
         assert!(evidence.provenance_sha256.is_none());
+        assert!(evidence.tree_sha256.is_none());
+        assert!(evidence.input_set_sha256.is_none());
 
         let report =
             std::env::temp_dir().join(format!("tondo-ratchet-report-{}", std::process::id()));

@@ -14,7 +14,9 @@ protocol. Its records use explicit `draft` identifiers:
 
 - `tondo-conformance-manifest-draft` for the suite manifest;
 - `tondo-conformance-adapter-draft` for the adapter protocol; and
-- `tondo-conformance-result-draft` for observations.
+- `tondo-conformance-result-draft/2` for composed observations. The unversioned
+  `tondo-conformance-result-draft` shape remains only as the immutable bootstrap
+  regression input.
 
 The manifest is compact canonical JSON. Identifying arrays and case IDs are
 sorted and unique. Every source, expectation, specification, and fixture is
@@ -52,11 +54,20 @@ without inventory evidence never turns a requirement green. Inventory identity
 alone does not attest execution: `CONF-LAYER-RESULT-001` must bind every layer
 case to a fresh composed result before final sealing.
 
-Until the new draft features have executable layers, `run --lineage draft`
-executes the pinned bootstrap regression suite and reports its exact result.
-The reliability matrix separately marks requirements added or changed since
-that corpus as pending; the regression run is not presented as complete
-language conformance.
+`tondo-reliability layer-evidence attest` consumes the fresh `cargo test` log,
+requires every Rust witness named by every active layer to have passed exactly
+once, and binds each observation to its inventoried source hash and the
+content-addressed source tree. The input tree is captured before the test run
+and must be unchanged afterward. A campaign-only identifier is never promoted
+as an individual execution witness.
+
+`run --lineage draft` then executes the complete pinned bootstrap regression
+suite and composes it atomically with that evidence report. The result fixes the
+draft lineage, revision, manifest hash, inventory hash, source-tree identity,
+all layers, all cases and every evidence observation in their canonical order.
+Missing, extra, duplicated, reordered, stale or cross-tree records fail closed.
+Removing the composed fields reproduces the immutable bootstrap result byte for
+byte; the regression input is never rewritten.
 
 The bootstrap suite is stored at `conformance/0.1/manifest.json` and uses the
 specification snapshot in `conformance/baseline/TONDO_LANGUAGE_SPEC.md`. Those
@@ -86,12 +97,22 @@ From a current checkout:
 
 ~~~text
 cargo build -p tondo-conformance -p tondo-reference-adapter --bins --locked
+cargo run -p tondo-reliability --locked -- quality provenance --root . \
+  > target/reliability/evidence/layer-evidence-before.json
+cargo test --workspace --all-targets --locked \
+  2>&1 | tee target/reliability/evidence/logs/test.log
+cargo run -p tondo-reliability --locked -- layer-evidence attest \
+  --root . \
+  --test-log target/reliability/evidence/logs/test.log \
+  --before target/reliability/evidence/layer-evidence-before.json \
+  --output target/reliability/evidence/layer-evidence.json
 cargo run -p tondo-conformance --locked -- validate \
   --root . --manifest conformance/draft/manifest.json --lineage draft
 cargo run -p tondo-conformance --locked -- run \
   --root . --manifest conformance/draft/manifest.json --lineage draft \
   --adapter target/debug/tondo-reference-adapter \
-  --output conformance/0.1/results/tondo-reference-draft-tondo-vm-hosted.json
+  --evidence target/reliability/evidence/layer-evidence.json \
+  --output target/reliability/evidence/conformance-result.json
 ~~~
 
 Repeated runs over an unchanged tree must produce byte-identical output. The
