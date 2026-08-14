@@ -4486,8 +4486,11 @@ tests. Antes de volver a marcarlas `[x]` deben cumplirse todos estos puntos:
   safe. `JsonLimits`, `JsonDecodeOptions`, `JsonEncodeOptions` y los tres enums
   de policy ya son tipos compiler-owned cerrados, construibles desde Tondo, y
   todas las operaciones salvo el dispatch typed respetan su aridad normativa y
-  aplican realmente límites y policies. Aún debe exponer los records/enums
-  nominales de error/path/location y eventos, y hacer que
+  aplican realmente límites y policies. `JsonEvent`, `JsonErrorKind`,
+  `JsonLocation`, `JsonPath` y `JsonError` usan ahora el sistema nominal normal
+  de Tondo de extremo a extremo; la representación intrínseca provisional se
+  eliminó y el host materializa records/enums por nombre público, ordinal y
+  orden de declaración verificados. Solo falta hacer que
   `decode[T: Decode[Json]]`/`encode[T: Encode[Json]]` despachen los providers
   derive de records/enums sin reflection ni DOM. Hasta entonces la auditoría
   conserva visibles sus gaps y no cuenta la mera presencia del nuevo bridge
@@ -5967,6 +5970,25 @@ no se declara iniciada antes de S1A.
 ---
 
 ## 25. Historial del tracker
+
+### 2.29 — 2026-08-14
+
+- `STD-JSON-PUBLIC-001` cierra la frontera nominal de streaming y errores:
+  `JsonEvent`, `JsonErrorKind`, `JsonLocation`, `JsonPath` y `JsonError` son
+  declaraciones compiler-owned normales, participan en construcción,
+  proyección y pattern matching y llegan al VM sin handles opacos ni IDs de
+  miembros propios del source.
+- El ABI host nominal separa el nombre público estable de la identidad canónica
+  interna, valida recursivamente forma, aridad, ordinales y tipos, y conserva
+  raíces temporales durante toda materialización. Se eliminan las variantes
+  intrínsecas antiguas de HIR, bytecode y runtime para que no exista una segunda
+  representación aceptable por accidente.
+- Los errores artificiales dejan de colapsarse en `IoError`: límites, tipos,
+  rangos numéricos, I/O y reutilización terminal producen respectivamente
+  `LimitExceeded`, `TypeMismatch`, `NumberRange`, `IoError` e `InvalidSyntax`.
+  Pruebas Rust recorren los nueve eventos, las quince clases de error y formas
+  host forjadas; la fixture CLI inspecciona kind y location. La leaf permanece
+  abierta exclusivamente por el dispatch derive typed de records/enums.
 
 ### 2.28 — 2026-08-14
 

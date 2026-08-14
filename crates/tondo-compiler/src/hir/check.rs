@@ -916,9 +916,7 @@ impl<'a> ExpressionChecker<'a> {
                         | IntrinsicType::JsonRaw
                         | IntrinsicType::JsonNumber
                         | IntrinsicType::JsonReader
-                        | IntrinsicType::JsonEvent
-                        | IntrinsicType::JsonWriter
-                        | IntrinsicType::JsonError => None,
+                        | IntrinsicType::JsonWriter => None,
                     };
                     if let Some((required, capability, context)) = requirement {
                         let _ = self.require_capability_with_generics(
@@ -10504,6 +10502,19 @@ impl<'a> ExpressionChecker<'a> {
                 namespace: Namespace::Type,
                 name,
             } => {
+                if let Some(symbol) = self.resolved.bootstrap_nominal(module, name) {
+                    let Some(symbol_info) = self.resolved.symbol(symbol) else {
+                        return Ok(None);
+                    };
+                    if symbol_info.generic_arity() as usize != arguments.len() {
+                        return Ok(None);
+                    }
+                    return Ok(Some(
+                        self.program
+                            .interner
+                            .nominal(symbol_info.identity().clone(), arguments)?,
+                    ));
+                }
                 let Some(constructor) = super::bootstrap_process_intrinsic(module, name) else {
                     return Ok(None);
                 };
@@ -10577,6 +10588,17 @@ impl<'a> ExpressionChecker<'a> {
                 namespace: Namespace::Type,
                 name,
             } => {
+                if let Some(symbol) = self.resolved.bootstrap_nominal(module, name) {
+                    let TypeKind::Nominal { identity, .. } =
+                        self.program.interner.kind(candidate)?
+                    else {
+                        return Ok(false);
+                    };
+                    return Ok(self
+                        .resolved
+                        .symbol(symbol)
+                        .is_some_and(|symbol| symbol.identity() == identity));
+                }
                 let Some(constructor) = super::bootstrap_process_intrinsic(module, name) else {
                     return Ok(false);
                 };
@@ -27068,6 +27090,47 @@ fn build(input: Int, flag: Bool) {
              }\n",
         );
         assert_eq!(codes(&old_arity), ["E1102"]);
+    }
+
+    #[test]
+    fn json_events_and_errors_use_the_normal_nominal_type_system() {
+        let (_, _, valid) = check(
+            "import std.json\n\
+             fn textEvent(value: String): json.JsonEvent { json.JsonEvent.String(value) }\n\
+             fn emptyEvent(): json.JsonEvent { json.JsonEvent.EndArray }\n\
+             fn inspect(event: json.JsonEvent): Int {\n\
+                 match event {\n\
+                     json.JsonEvent.StartArray(length) => match length {\n\
+                         some(value) => value\n\
+                         none => 0\n\
+                     }\n\
+                     json.JsonEvent.String(_) => 1\n\
+                     _ => -1\n\
+                 }\n\
+             }\n\
+             fn classify(error: json.JsonError): Int {\n\
+                 let offset = error.location.offset\n\
+                 match error.kind {\n\
+                     json.JsonErrorKind.InvalidUtf8 => offset\n\
+                     json.JsonErrorKind.LimitExceeded => error.location.line\n\
+                     _ => error.location.column\n\
+                 }\n\
+             }\n",
+        );
+        assert!(valid.diagnostics().is_empty(), "{:#?}", valid.diagnostics());
+        assert!(valid.is_complete());
+
+        let (_, _, wrong_payload) = check(
+            "import std.json\n\
+             fn invalid(): json.JsonEvent { json.JsonEvent.String }\n",
+        );
+        assert_eq!(codes(&wrong_payload), ["E1102"]);
+
+        let (_, _, wrong_variant) = check(
+            "import std.json\n\
+             fn invalid(): json.JsonEvent { json.JsonEvent.Unknown }\n",
+        );
+        assert_eq!(codes(&wrong_variant), ["E1102"]);
     }
 
     #[test]

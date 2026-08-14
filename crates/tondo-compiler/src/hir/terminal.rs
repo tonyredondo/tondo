@@ -154,9 +154,7 @@ pub(crate) const fn intrinsic_terminal_contract(
         | IntrinsicType::JsonRaw
         | IntrinsicType::JsonNumber
         | IntrinsicType::JsonReader
-        | IntrinsicType::JsonEvent
-        | IntrinsicType::JsonWriter
-        | IntrinsicType::JsonError => None,
+        | IntrinsicType::JsonWriter => None,
     }
 }
 
@@ -534,9 +532,7 @@ fn intrinsic_node(constructor: IntrinsicType, arguments: Vec<TypeId>) -> Termina
         | IntrinsicType::JsonRaw
         | IntrinsicType::JsonNumber
         | IntrinsicType::JsonReader
-        | IntrinsicType::JsonEvent
-        | IntrinsicType::JsonWriter
-        | IntrinsicType::JsonError => fixed(HirTerminalStatus::Absent),
+        | IntrinsicType::JsonWriter => fixed(HirTerminalStatus::Absent),
         IntrinsicType::Join | IntrinsicType::ProcessHandle | IntrinsicType::Timer => {
             unreachable!("registered terminal roots return above")
         }

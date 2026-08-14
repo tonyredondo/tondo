@@ -403,17 +403,13 @@ fn outcome_payload_bytes(outcome: &VmOutcome) -> Result<u64, MetaVmError> {
                 pending.push(value);
                 name.len() as u64
             }
-            RuntimeValue::Record { name, fields } => {
-                for (_, value) in fields {
-                    pending.push(value);
-                }
-                (name.len() as u64).saturating_add((fields.len() as u64).saturating_mul(4))
+            RuntimeValue::Record { name, values } => {
+                pending.extend(values);
+                name.len() as u64
             }
-            RuntimeValue::Variant { payload, .. } => {
-                for (_, value) in payload {
-                    pending.push(value);
-                }
-                4_u64.saturating_add((payload.len() as u64).saturating_mul(4))
+            RuntimeValue::Variant { name, values, .. } => {
+                pending.extend(values);
+                (name.len() as u64).saturating_add(4)
             }
             RuntimeValue::OptionSome(value)
             | RuntimeValue::ResultOk(value)

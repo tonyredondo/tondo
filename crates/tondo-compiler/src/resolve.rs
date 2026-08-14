@@ -398,6 +398,7 @@ pub struct ResolvedProgram {
     members_by_owner: BTreeMap<(MemberOwner, MemberName), Vec<MemberId>>,
     locals: Vec<LocalBinding>,
     references: BTreeMap<(FileId, u32, u32), ResolvedReference>,
+    bootstrap_nominals: BTreeMap<(ModuleId, Name), SymbolId>,
 }
 
 impl ResolvedProgram {
@@ -461,6 +462,15 @@ impl ResolvedProgram {
 
     pub fn references(&self) -> impl ExactSizeIterator<Item = &ResolvedReference> {
         self.references.values()
+    }
+
+    /// Returns a compiler-owned nominal that belongs to a bootstrap standard
+    /// module. References remain external during name resolution so the
+    /// bootstrap module does not pretend to contain source declarations.
+    pub fn bootstrap_nominal(&self, module: &ModuleId, name: &Name) -> Option<SymbolId> {
+        self.bootstrap_nominals
+            .get(&(module.clone(), name.clone()))
+            .copied()
     }
 }
 
@@ -557,6 +567,95 @@ struct Resolver<'a> {
     max_diagnostics: usize,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum BootstrapJsonShape {
+    Newtype,
+    Record(&'static [&'static str]),
+    Enum(&'static [&'static str]),
+}
+
+fn bootstrap_json_nominals() -> [(&'static str, SymbolKind, BootstrapJsonShape); 5] {
+    [
+        (
+            "JsonEvent",
+            SymbolKind::Enum,
+            BootstrapJsonShape::Enum(&[
+                "StartArray",
+                "EndArray",
+                "StartObject",
+                "EndObject",
+                "Key",
+                "Null",
+                "Bool",
+                "Number",
+                "String",
+            ]),
+        ),
+        (
+            "JsonErrorKind",
+            SymbolKind::Enum,
+            BootstrapJsonShape::Enum(&[
+                "InvalidUtf8",
+                "InvalidSyntax",
+                "UnexpectedEof",
+                "InvalidEscape",
+                "InvalidUnicodeScalar",
+                "InvalidNumber",
+                "DuplicateKey",
+                "UnknownField",
+                "MissingField",
+                "TypeMismatch",
+                "NumberRange",
+                "LimitExceeded",
+                "IoError",
+                "TrailingData",
+                "CanonicalizationError",
+            ]),
+        ),
+        (
+            "JsonLocation",
+            SymbolKind::Type,
+            BootstrapJsonShape::Record(&["offset", "line", "column"]),
+        ),
+        ("JsonPath", SymbolKind::Type, BootstrapJsonShape::Newtype),
+        (
+            "JsonError",
+            SymbolKind::Type,
+            BootstrapJsonShape::Record(&["kind", "location", "path"]),
+        ),
+    ]
+}
+
+fn install_bootstrap_member(
+    program: &mut ResolvedProgram,
+    owner: MemberOwner,
+    name: &'static str,
+    kind: MemberKind,
+    visibility: Visibility,
+    span: Span,
+) -> MemberId {
+    let name = MemberName::new(name).expect("bootstrap JSON members use valid identifiers");
+    let id = MemberId(
+        u32::try_from(program.members.len()).expect("member count is bounded by resolved syntax"),
+    );
+    program.members.push(Member {
+        id,
+        owner,
+        name: name.clone(),
+        kind,
+        visibility,
+        span,
+        generic_arity: 0,
+        synthetic: true,
+    });
+    program
+        .members_by_owner
+        .entry((owner, name))
+        .or_default()
+        .push(id);
+    id
+}
+
 pub fn resolve<'a>(
     packages: &'a PackageGraph,
     sources: &'a SourceDatabase,
@@ -595,6 +694,7 @@ impl Resolver<'_> {
             members_by_owner: BTreeMap::new(),
             locals: Vec::new(),
             references: BTreeMap::new(),
+            bootstrap_nominals: BTreeMap::new(),
         };
         members::collect_members(
             self.packages,
@@ -623,10 +723,103 @@ impl Resolver<'_> {
             &mut self.diagnostics,
             self.max_diagnostics,
         )?;
+        self.install_bootstrap_nominals(&ordered_files, &mut program)?;
         Ok(ResolveOutput {
             program,
             diagnostics: std::mem::take(&mut self.diagnostics),
         })
+    }
+
+    fn install_bootstrap_nominals(
+        &self,
+        ordered_files: &[FileId],
+        program: &mut ResolvedProgram,
+    ) -> Result<(), ResolveError> {
+        let Some(file) = ordered_files.first().copied() else {
+            return Ok(());
+        };
+        let json_path = crate::source::ModulePath::new("json")
+            .expect("the bootstrap JSON module path is valid");
+        let Some(module) = self.packages.module(self.packages.standard(), &json_path) else {
+            return Ok(());
+        };
+        let referenced = program.references.values().any(|reference| {
+            matches!(reference.entity(), ResolvedEntity::Module(reference) if reference == &module)
+                || matches!(
+                    reference.entity(),
+                    ResolvedEntity::Name(ResolvedName::External {
+                        module: reference,
+                        ..
+                    }) if reference == &module
+                )
+        });
+        if !referenced {
+            return Ok(());
+        }
+        let span = self.sources.span(file, TextRange::empty(0))?;
+        for (name, kind, shape) in bootstrap_json_nominals() {
+            let name = Name::new(name).expect("bootstrap JSON type names are valid");
+            let id = SymbolId(
+                u32::try_from(program.symbols.len())
+                    .expect("symbol count is bounded by resolved syntax"),
+            );
+            let identity = self.packages.symbol_identity(
+                module.clone(),
+                Namespace::Type,
+                DeclarationPath::single(name.clone()),
+            )?;
+            program.symbols.push(Symbol {
+                id,
+                identity,
+                name: name.clone(),
+                kind,
+                visibility: Visibility::Public,
+                span,
+                generic_arity: 0,
+                synthetic: true,
+            });
+            program
+                .bootstrap_nominals
+                .insert((module.clone(), name), id);
+
+            match shape {
+                BootstrapJsonShape::Newtype => {
+                    install_bootstrap_member(
+                        program,
+                        MemberOwner::Type(id),
+                        "value",
+                        MemberKind::NewtypeValue,
+                        Visibility::Private,
+                        span,
+                    );
+                }
+                BootstrapJsonShape::Record(fields) => {
+                    for field in fields {
+                        install_bootstrap_member(
+                            program,
+                            MemberOwner::Type(id),
+                            field,
+                            MemberKind::RecordField,
+                            Visibility::Public,
+                            span,
+                        );
+                    }
+                }
+                BootstrapJsonShape::Enum(variants) => {
+                    for variant in variants {
+                        install_bootstrap_member(
+                            program,
+                            MemberOwner::Type(id),
+                            variant,
+                            MemberKind::EnumVariant,
+                            Visibility::Public,
+                            span,
+                        );
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     fn ordered_files(&self) -> Result<Vec<FileId>, ResolveError> {

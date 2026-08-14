@@ -82,13 +82,21 @@ pub enum RuntimeValue {
         name: String,
         value: Box<Self>,
     },
+    /// Nominal record exchanged with a trusted host adapter in declaration order.
+    ///
+    /// Source member IDs are intentionally absent: they are local to one
+    /// compiled program and therefore are not a stable host ABI.
     Record {
         name: String,
-        fields: Vec<(u32, Self)>,
+        values: Vec<Self>,
     },
+    /// Nominal enum exchanged with a trusted host adapter. `variant` is the
+    /// zero-based declaration ordinal and payload values retain declaration
+    /// order, so the VM can bind them to the verified nominal descriptor.
     Variant {
+        name: String,
         variant: u32,
-        payload: Vec<(Option<u32>, Self)>,
+        values: Vec<Self>,
     },
     OptionNone,
     OptionSome(Box<Self>),
@@ -167,9 +175,7 @@ pub enum RuntimeHostValueKind {
     JsonRaw,
     JsonNumber,
     JsonReader,
-    JsonEvent,
     JsonWriter,
-    JsonError,
     Waiter,
     Completer,
     AlreadyCompleted,
@@ -317,10 +323,13 @@ impl From<BytecodeVerificationError> for VmError {
 
 #[cfg(test)]
 mod tests {
-    use crate::bytecode::{BytecodeCallableId, BytecodeTraceDescriptor, BytecodeTypeId};
+    use crate::bytecode::{
+        BytecodeCallableId, BytecodeTraceDescriptor, BytecodeTypeId, BytecodeVariant,
+        BytecodeVariantPayload,
+    };
 
     use super::heap::{Heap, HeapHandle, HeapObject, SharedBuffer};
-    use super::value::{Value, snapshot_value};
+    use super::value::{AggregatePayload, Value, snapshot_value};
     use super::*;
 
     fn limits() -> VmLimits {
@@ -340,6 +349,28 @@ mod tests {
         assert!(!buffer.is_unique());
         drop(alias);
         assert!(buffer.is_unique());
+
+        let mut managed = SharedBuffer::from(vec![Some(Value::Integer(1))]);
+        let original = managed.clone();
+        managed[0] = Some(Value::Integer(2));
+        assert_eq!(original[0], Some(Value::Integer(1)));
+        assert_eq!(managed[0], Some(Value::Integer(2)));
+
+        let values = original.clone().into_iter().collect::<Vec<_>>();
+        assert_eq!(values, [Some(Value::Integer(1))]);
+        let rebuilt = values.into_iter().collect::<SharedBuffer<_>>();
+        assert_eq!(rebuilt[0], Some(Value::Integer(1)));
+
+        let mut entries =
+            SharedBuffer::from(vec![(Some(Value::Integer(3)), Some(Value::Integer(4)))]);
+        let original_entries = entries.clone();
+        entries[0].1 = Some(Value::Integer(5));
+        assert_eq!(original_entries[0].1, Some(Value::Integer(4)));
+        assert_eq!(entries[0].1, Some(Value::Integer(5)));
+        assert_eq!(
+            original_entries.clone().into_iter().collect::<Vec<_>>(),
+            [(Some(Value::Integer(3)), Some(Value::Integer(4)))]
+        );
     }
 
     fn heap() -> Heap {
@@ -816,6 +847,11 @@ mod tests {
             )
             .unwrap();
         heap.collect(&[], &mut statistics).unwrap();
+        assert!(matches!(
+            heap.descriptor(old),
+            Err(VmError::Invariant(message))
+                if message == "heap handle refers to a collected object"
+        ));
         let new = heap
             .allocate(
                 BytecodeTypeId::new(0),
@@ -827,6 +863,11 @@ mod tests {
 
         assert_eq!(old.index(), new.index());
         assert!(heap.get(old).is_err());
+        assert!(matches!(
+            heap.descriptor(old),
+            Err(VmError::Invariant(message))
+                if message == "stale or invalid heap handle"
+        ));
         assert!(matches!(heap.get(new), Ok(HeapObject::String(value)) if value == "new"));
     }
 
@@ -926,6 +967,34 @@ mod tests {
         assert!(matches!(
             heap.get(string),
             Ok(HeapObject::String(value)) if value == "kept"
+        ));
+
+        let mut variant_heap = Heap::new(
+            limits(),
+            vec![BytecodeTraceDescriptor::Variant {
+                nominal: None,
+                arguments: Vec::new(),
+                variants: vec![BytecodeVariant {
+                    member: 0,
+                    payload: BytecodeVariantPayload::Unit,
+                }],
+            }],
+        );
+        let error = variant_heap
+            .allocate(
+                BytecodeTypeId::new(0),
+                HeapObject::Variant {
+                    variant: 0,
+                    payload: AggregatePayload::Tuple(Vec::new()),
+                },
+                &[],
+                &mut statistics,
+            )
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            VmError::Invariant(message)
+                if message == "heap variant payload does not match its trace descriptor"
         ));
     }
 }

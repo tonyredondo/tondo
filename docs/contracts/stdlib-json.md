@@ -175,6 +175,22 @@ payloads de `JsonEvent` son vistas hasta el siguiente `next`; `own` es la única
 materialización estable. `JsonError` siempre incluye `JsonPath` y posición sin
 copiar el documento en el diagnóstico.
 
+`JsonEvent`, `JsonErrorKind`, `JsonLocation`, `JsonPath` y `JsonError` son tipos
+nominales normales de Tondo: admiten pattern matching y proyección con las
+mismas reglas que un enum, record o newtype declarado por el usuario. La
+frontera host no publica handles opacos para ellos. Intercambia el nombre
+público, el ordinal de variante y los valores en orden de declaración; el VM
+los contrasta con la identidad y el descriptor nominal verificados antes de
+asignar memoria. Los IDs internos de símbolos y miembros nunca forman parte del
+ABI.
+
+Los fallos producidos antes de entrar al parser también conservan una clase
+precisa: configuración o salida fuera de límites es `LimitExceeded`, un valor
+typed incompatible es `TypeMismatch`, una conversión numérica imposible es
+`NumberRange`, un stream inadecuado es `IoError` y reutilizar un reader/writer
+terminal es `InvalidSyntax`. En todos esos casos la localización sintética es
+el inicio del documento y el path es la raíz.
+
 `ValueView`/`parseView` son la ruta prestada e inmutable; la vista no puede
 escapar del `Bytes` de entrada y `clone()` es la única forma de obtener un
 `Value` poseído. `Raw`/`RawView` son bytes JSON opacos; `raw(bytes)` valida y

@@ -172,9 +172,7 @@ pub enum IntrinsicType {
     JsonRaw,
     JsonNumber,
     JsonReader,
-    JsonEvent,
     JsonWriter,
-    JsonError,
 }
 
 impl IntrinsicType {
@@ -248,9 +246,7 @@ impl IntrinsicType {
             Self::JsonRaw => "Raw",
             Self::JsonNumber => "JsonNumber",
             Self::JsonReader => "JsonReader",
-            Self::JsonEvent => "JsonEvent",
             Self::JsonWriter => "JsonWriter",
-            Self::JsonError => "JsonError",
         }
     }
 
@@ -317,9 +313,7 @@ impl IntrinsicType {
             | Self::JsonRaw
             | Self::JsonNumber
             | Self::JsonReader
-            | Self::JsonEvent
-            | Self::JsonWriter
-            | Self::JsonError => 0,
+            | Self::JsonWriter => 0,
         }
     }
 }

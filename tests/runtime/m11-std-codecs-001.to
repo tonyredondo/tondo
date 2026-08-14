@@ -136,7 +136,13 @@ fn main(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | json.Js
     let duplicate = bytes.Bytes(r"""{"a":1,"a":2}""")?
     match json.validate(duplicate, json_decode_options()) {
         ok(_) => assert(false)
-        err(_) => ()
+        err(error) => match error.kind {
+            json.JsonErrorKind.DuplicateKey => {
+                assert(error.location.offset > 0)
+                assert(error.location.line == 1)
+            }
+            _ => assert(false)
+        }
     }
     let first = json.parse(
         duplicate,
@@ -155,7 +161,10 @@ fn main(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | json.Js
     )
     match json.validate(bytes.Bytes(r"""{}""")?, tiny_document) {
         ok(_) => assert(false)
-        err(_) => ()
+        err(error) => match error.kind {
+            json.JsonErrorKind.LimitExceeded => assert(error.location.line == 1)
+            _ => assert(false)
+        }
     }
     let tiny_output = json_limits_with(1048576, 1)
     match json.encodeCanonical(last, tiny_output) {

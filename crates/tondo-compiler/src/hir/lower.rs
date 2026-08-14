@@ -3,8 +3,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::diagnostics::{Diagnostic, DiagnosticCode, PrimaryLocation, Related, Severity};
 use crate::package::{DeclarationPath, ModuleId, Name, Namespace, PackageGraph, SymbolIdentity};
 use crate::resolve::{
-    LocalId, LocalKind, MemberKind, ResolvedEntity, ResolvedName, ResolvedProgram, SymbolId,
-    SymbolKind,
+    LocalId, LocalKind, MemberKind, MemberName, MemberOwner, ResolvedEntity, ResolvedName,
+    ResolvedProgram, SymbolId, SymbolKind,
 };
 use crate::source::{FileId, ModulePath, SourceDatabase, Span, TextRange};
 use crate::syntax::ast::Expression as AstExpression;
@@ -72,6 +72,7 @@ pub fn lower_types<'a>(
     lowerer.analyze_aliases()?;
     lowerer.lower_aliases()?;
     lowerer.lower_declarations()?;
+    lowerer.lower_bootstrap_nominal_declarations()?;
     lowerer.infer_suspendible_callables()?;
     lowerer.lower_remaining_source()?;
     lowerer.lower_bootstrap_host_contracts()?;
@@ -198,6 +199,169 @@ struct TypeLowerer<'a> {
 }
 
 impl<'a> TypeLowerer<'a> {
+    fn lower_bootstrap_nominal_declarations(&mut self) -> Result<(), HirError> {
+        let json = ModulePath::new("json")?;
+        let Some(module) = self.packages.module(self.packages.standard(), &json) else {
+            return Ok(());
+        };
+        let int = self.interner.scalar(ScalarType::Int);
+        let bool_type = self.interner.scalar(ScalarType::Bool);
+        let string = self.interner.scalar(ScalarType::String);
+        let optional_int = self.interner.option(int)?;
+        let json_number = self
+            .interner
+            .intrinsic(IntrinsicType::JsonNumber, Vec::new())?;
+        let path_values = self
+            .interner
+            .intrinsic(IntrinsicType::Array, vec![string])?;
+
+        for name in [
+            "JsonEvent",
+            "JsonErrorKind",
+            "JsonLocation",
+            "JsonPath",
+            "JsonError",
+        ] {
+            let type_name = Name::new(name).expect("bootstrap JSON type names are valid");
+            let Some(symbol) = self.resolved.bootstrap_nominal(&module, &type_name) else {
+                continue;
+            };
+            let declaration = self
+                .resolved
+                .symbol(symbol)
+                .expect("bootstrap nominal symbols are indexed");
+            let self_type = self
+                .interner
+                .nominal(declaration.identity().clone(), Vec::new())?;
+            let shape = match name {
+                "JsonEvent" => HirNominalShape::Enum {
+                    variants: vec![
+                        self.bootstrap_variant(symbol, "StartArray", vec![optional_int]),
+                        self.bootstrap_variant(symbol, "EndArray", Vec::new()),
+                        self.bootstrap_variant(symbol, "StartObject", vec![optional_int]),
+                        self.bootstrap_variant(symbol, "EndObject", Vec::new()),
+                        self.bootstrap_variant(symbol, "Key", vec![string]),
+                        self.bootstrap_variant(symbol, "Null", Vec::new()),
+                        self.bootstrap_variant(symbol, "Bool", vec![bool_type]),
+                        self.bootstrap_variant(symbol, "Number", vec![json_number]),
+                        self.bootstrap_variant(symbol, "String", vec![string]),
+                    ],
+                },
+                "JsonErrorKind" => HirNominalShape::Enum {
+                    variants: [
+                        "InvalidUtf8",
+                        "InvalidSyntax",
+                        "UnexpectedEof",
+                        "InvalidEscape",
+                        "InvalidUnicodeScalar",
+                        "InvalidNumber",
+                        "DuplicateKey",
+                        "UnknownField",
+                        "MissingField",
+                        "TypeMismatch",
+                        "NumberRange",
+                        "LimitExceeded",
+                        "IoError",
+                        "TrailingData",
+                        "CanonicalizationError",
+                    ]
+                    .into_iter()
+                    .map(|variant| self.bootstrap_variant(symbol, variant, Vec::new()))
+                    .collect(),
+                },
+                "JsonLocation" => HirNominalShape::Record {
+                    fields: [
+                        self.bootstrap_field(symbol, "offset", int),
+                        self.bootstrap_field(symbol, "line", int),
+                        self.bootstrap_field(symbol, "column", int),
+                    ]
+                    .into_iter()
+                    .collect(),
+                },
+                "JsonPath" => HirNominalShape::Newtype {
+                    underlying: path_values,
+                },
+                "JsonError" => {
+                    let kind = self.bootstrap_nominal_type(&module, "JsonErrorKind")?;
+                    let location = self.bootstrap_nominal_type(&module, "JsonLocation")?;
+                    let path = self.bootstrap_nominal_type(&module, "JsonPath")?;
+                    HirNominalShape::Record {
+                        fields: vec![
+                            self.bootstrap_field(symbol, "kind", kind),
+                            self.bootstrap_field(symbol, "location", location),
+                            self.bootstrap_field(symbol, "path", path),
+                        ],
+                    }
+                }
+                _ => unreachable!("the bootstrap JSON nominal list is closed"),
+            };
+            self.declarations.insert(
+                symbol,
+                HirTypeDeclaration {
+                    symbol,
+                    span: declaration.span(),
+                    parameters: Vec::new(),
+                    kind: HirTypeDeclarationKind::Nominal(HirNominalDefinition {
+                        self_type,
+                        shape,
+                    }),
+                },
+            );
+        }
+        Ok(())
+    }
+
+    fn bootstrap_nominal_type(
+        &mut self,
+        module: &ModuleId,
+        name: &'static str,
+    ) -> Result<TypeId, HirError> {
+        let name = Name::new(name).expect("bootstrap nominal names are valid");
+        let symbol = self
+            .resolved
+            .bootstrap_nominal(module, &name)
+            .expect("bootstrap nominal dependencies are installed together");
+        let declaration = self
+            .resolved
+            .symbol(symbol)
+            .expect("bootstrap nominal symbols are indexed");
+        Ok(self
+            .interner
+            .nominal(declaration.identity().clone(), Vec::new())?)
+    }
+
+    fn bootstrap_member(&self, owner: SymbolId, name: &'static str) -> crate::resolve::MemberId {
+        let name = MemberName::new(name).expect("bootstrap member names are valid");
+        self.resolved
+            .lookup_members(MemberOwner::Type(owner), &name)
+            .and_then(|members| members.first())
+            .copied()
+            .expect("bootstrap nominal members are installed with their owner")
+    }
+
+    fn bootstrap_field(&self, owner: SymbolId, name: &'static str, ty: TypeId) -> HirField {
+        HirField {
+            member: self.bootstrap_member(owner, name),
+            ty,
+        }
+    }
+
+    fn bootstrap_variant(
+        &self,
+        owner: SymbolId,
+        name: &'static str,
+        items: Vec<TypeId>,
+    ) -> HirVariant {
+        HirVariant {
+            member: self.bootstrap_member(owner, name),
+            payload: if items.is_empty() {
+                HirVariantPayload::Unit
+            } else {
+                HirVariantPayload::Tuple(items)
+            },
+        }
+    }
+
     fn lower_bootstrap_host_contracts(&mut self) -> Result<(), HirError> {
         let file = *self
             .parsed
@@ -1387,15 +1551,21 @@ impl<'a> TypeLowerer<'a> {
             let json_reader = self
                 .interner
                 .intrinsic(IntrinsicType::JsonReader, Vec::new())?;
-            let json_event = self
-                .interner
-                .intrinsic(IntrinsicType::JsonEvent, Vec::new())?;
+            let json_event = self.bootstrap_nominal_type(
+                json_module
+                    .as_ref()
+                    .expect("referenced JSON modules are installed"),
+                "JsonEvent",
+            )?;
             let json_writer = self
                 .interner
                 .intrinsic(IntrinsicType::JsonWriter, Vec::new())?;
-            let json_error = self
-                .interner
-                .intrinsic(IntrinsicType::JsonError, Vec::new())?;
+            let json_error = self.bootstrap_nominal_type(
+                json_module
+                    .as_ref()
+                    .expect("referenced JSON modules are installed"),
+                "JsonError",
+            )?;
             let json_limits = self
                 .interner
                 .intrinsic(IntrinsicType::JsonLimits, Vec::new())?;
@@ -3762,6 +3932,27 @@ impl<'a> TypeLowerer<'a> {
                     )?;
                     return Ok(self.interner.error());
                 }
+                if let Some(symbol) = self.resolved.bootstrap_nominal(&module, &name) {
+                    let declaration = self
+                        .resolved
+                        .symbol(symbol)
+                        .expect("bootstrap nominal references retain their symbol");
+                    if !self.check_arity(
+                        file,
+                        range,
+                        name.as_str(),
+                        declaration.generic_arity() as usize,
+                        arguments.len(),
+                    )? {
+                        return Ok(self.interner.error());
+                    }
+                    if self.types_have_recovery(arguments.iter().copied())? {
+                        return Ok(self.interner.error());
+                    }
+                    return Ok(self
+                        .interner
+                        .nominal(declaration.identity().clone(), arguments)?);
+                }
                 if let Some(constructor) = super::bootstrap_process_intrinsic(&module, &name) {
                     if !self.check_arity(
                         file,
@@ -4444,11 +4635,12 @@ impl<'a> TypeLowerer<'a> {
         file: FileId,
         root: SyntaxNodeRef<'a>,
     ) -> Result<(), HirError> {
-        let Some(symbol) = self
-            .resolved
-            .symbols()
-            .find(|symbol| symbol.is_synthetic() && symbol.span().file() == file)
-        else {
+        let Some(symbol) = self.resolved.symbols().find(|symbol| {
+            symbol.is_synthetic()
+                && symbol.span().file() == file
+                && symbol.kind() == SymbolKind::Function
+                && symbol.name().as_str() == "__tondo_script_main"
+        }) else {
             return Ok(());
         };
         let id = HirCallableId::Symbol(symbol.id());
@@ -6346,9 +6538,7 @@ impl<'a> TypeLowerer<'a> {
                         | IntrinsicType::JsonRaw
                         | IntrinsicType::JsonNumber
                         | IntrinsicType::JsonReader
-                        | IntrinsicType::JsonEvent
-                        | IntrinsicType::JsonWriter
-                        | IntrinsicType::JsonError => values.push(true),
+                        | IntrinsicType::JsonWriter => values.push(true),
                     },
                 },
                 ProductivityTask::Nominal(symbol, arguments) => {

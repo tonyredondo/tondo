@@ -105,7 +105,7 @@ pub fn lower_to_bytecode(
     )?;
     catalog.attach_nominal_ids(resolved, &nominal_ids);
 
-    let nominals = lower_nominals(hir, &catalog, &nominal_ids)?;
+    let nominals = lower_nominals(resolved, hir, &catalog, &nominal_ids)?;
     let callables = lower_callables(
         resolved,
         hir,
@@ -2292,6 +2292,7 @@ fn collect_terminator_function_references(
 }
 
 fn lower_nominals(
+    resolved: &ResolvedProgram,
     hir: &HirProgram,
     catalog: &TypeCatalog,
     ids: &BTreeMap<SymbolId, bc::BytecodeNominalId>,
@@ -2305,11 +2306,12 @@ fn lower_nominals(
             .get(symbol)
             .copied()
             .ok_or_else(|| BytecodeError::construction("nominal metadata", "missing nominal ID"))?;
-        let name = catalog
-            .types
-            .get(catalog.id(nominal.self_type())?.index() as usize)
-            .map(|ty| ty.name.clone())
-            .ok_or_else(|| BytecodeError::construction("nominal metadata", "missing self type"))?;
+        let name = resolved
+            .symbol(*symbol)
+            .map(|symbol| symbol.name().as_str().to_owned())
+            .ok_or_else(|| {
+                BytecodeError::construction("nominal metadata", "missing nominal symbol")
+            })?;
         let identity =
             match hir.interner().kind(nominal.self_type()).map_err(|error| {
                 BytecodeError::construction("nominal metadata", error.to_string())
@@ -4218,9 +4220,7 @@ fn intrinsic_type(value: IntrinsicType) -> bc::BytecodeIntrinsicType {
         IntrinsicType::JsonRaw => bc::BytecodeIntrinsicType::JsonRaw,
         IntrinsicType::JsonNumber => bc::BytecodeIntrinsicType::JsonNumber,
         IntrinsicType::JsonReader => bc::BytecodeIntrinsicType::JsonReader,
-        IntrinsicType::JsonEvent => bc::BytecodeIntrinsicType::JsonEvent,
         IntrinsicType::JsonWriter => bc::BytecodeIntrinsicType::JsonWriter,
-        IntrinsicType::JsonError => bc::BytecodeIntrinsicType::JsonError,
     }
 }
 
@@ -5290,6 +5290,17 @@ fn verifierTarget(start: Int, flag: Bool): Array[Int] {
                       }\n";
         let program = lowered(source);
         assert_eq!(program.nominals.len(), 2);
+        assert_eq!(
+            program
+                .nominals
+                .iter()
+                .map(|nominal| nominal.name.as_str())
+                .collect::<Vec<_>>(),
+            ["Choice", "User"]
+        );
+        assert!(program.nominals.iter().all(|nominal| {
+            nominal.identity != nominal.name && nominal.identity.ends_with(&nominal.name)
+        }));
         assert_eq!(program.constants.len(), 1);
         assert!(
             program

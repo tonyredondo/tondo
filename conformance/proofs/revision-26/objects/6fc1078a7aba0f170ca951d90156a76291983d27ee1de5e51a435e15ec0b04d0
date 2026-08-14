@@ -1,0 +1,6 @@
+import std.console
+
+fn main() {
+    let nested = [[1, 2], [3]]
+    console.print("{nested}\n")
+}

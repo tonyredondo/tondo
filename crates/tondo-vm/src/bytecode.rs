@@ -295,9 +295,7 @@ pub enum BytecodeIntrinsicType {
     JsonRaw,
     JsonNumber,
     JsonReader,
-    JsonEvent,
     JsonWriter,
-    JsonError,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -468,9 +466,7 @@ impl BytecodeIntrinsicType {
             | Self::JsonRaw
             | Self::JsonNumber
             | Self::JsonReader
-            | Self::JsonEvent
-            | Self::JsonWriter
-            | Self::JsonError => 0,
+            | Self::JsonWriter => 0,
         }
     }
 
@@ -560,9 +556,7 @@ impl BytecodeIntrinsicType {
             | Self::JsonRaw
             | Self::JsonNumber
             | Self::JsonReader
-            | Self::JsonEvent
-            | Self::JsonWriter
-            | Self::JsonError => None,
+            | Self::JsonWriter => None,
         }
     }
 }

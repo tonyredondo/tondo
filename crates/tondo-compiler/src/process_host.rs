@@ -84,7 +84,10 @@ fn generic_parts<'a>(name: &'a str, constructor: &str) -> Option<Vec<&'a str>> {
     Some(parts)
 }
 
-fn json_to_runtime(value: &json::JsonValue, expected: &str) -> Result<RuntimeValue, String> {
+fn json_to_runtime(
+    value: &json::JsonValue,
+    expected: &str,
+) -> Result<RuntimeValue, json::JsonErrorKind> {
     use json::JsonValue;
     let expected = expected.trim();
     match (expected, value) {
@@ -96,9 +99,9 @@ fn json_to_runtime(value: &json::JsonValue, expected: &str) -> Result<RuntimeVal
             .ok()
             .and_then(|value| u8::try_from(value).ok())
             .map(RuntimeValue::Byte)
-            .ok_or_else(|| "JSON number does not fit Byte".into()),
+            .ok_or(json::JsonErrorKind::NumberRange),
         ("Int" | "Int8" | "Int16" | "Int32" | "Int64", JsonValue::Number(number)) => {
-            let value = number.to_int().map_err(|error| error.to_string())?;
+            let value = number.to_int().map_err(|error| error.kind)?;
             let in_range = match expected {
                 "Int8" => i8::try_from(value).is_ok(),
                 "Int16" => i16::try_from(value).is_ok(),
@@ -108,10 +111,10 @@ fn json_to_runtime(value: &json::JsonValue, expected: &str) -> Result<RuntimeVal
             };
             in_range
                 .then_some(RuntimeValue::Integer(i128::from(value)))
-                .ok_or_else(|| format!("JSON number does not fit {expected}"))
+                .ok_or(json::JsonErrorKind::NumberRange)
         }
         ("UInt" | "UInt8" | "UInt16" | "UInt32" | "UInt64", JsonValue::Number(number)) => {
-            let value = number.to_uint().map_err(|error| error.to_string())?;
+            let value = number.to_uint().map_err(|error| error.kind)?;
             let in_range = match expected {
                 "UInt8" => u8::try_from(value).is_ok(),
                 "UInt16" => u16::try_from(value).is_ok(),
@@ -121,16 +124,16 @@ fn json_to_runtime(value: &json::JsonValue, expected: &str) -> Result<RuntimeVal
             };
             in_range
                 .then_some(RuntimeValue::Integer(i128::from(value)))
-                .ok_or_else(|| format!("JSON number does not fit {expected}"))
+                .ok_or(json::JsonErrorKind::NumberRange)
         }
         ("Float32", JsonValue::Number(number)) => number
             .to_float32()
             .map(|value| RuntimeValue::Float(f64::from(value)))
-            .map_err(|error| error.to_string()),
+            .map_err(|error| error.kind),
         ("Float" | "Float64", JsonValue::Number(number)) => number
             .to_float64()
             .map(RuntimeValue::Float)
-            .map_err(|error| error.to_string()),
+            .map_err(|error| error.kind),
         _ if expected.ends_with('?') => {
             if matches!(value, JsonValue::Null) {
                 Ok(RuntimeValue::OptionNone)
@@ -164,10 +167,10 @@ fn json_to_runtime(value: &json::JsonValue, expected: &str) -> Result<RuntimeVal
                             json_to_runtime(&member.value, item)?,
                         ))
                     })
-                    .collect::<Result<Vec<_>, String>>()
+                    .collect::<Result<Vec<_>, json::JsonErrorKind>>()
                     .map(RuntimeValue::Map);
             }
-            Err(format!("JSON value does not match `{expected}`"))
+            Err(json::JsonErrorKind::TypeMismatch)
         }
     }
 }
@@ -440,14 +443,10 @@ enum HostValue {
         reader: json::JsonReader<'static>,
         finished: bool,
     },
-    JsonEvent(json::JsonEvent),
     JsonWriter {
         writer: json::JsonWriter,
         stream: StreamKind,
         finished: bool,
-    },
-    JsonError {
-        _message: String,
     },
 }
 
@@ -456,6 +455,45 @@ enum StreamKind {
     Stdin,
     Stdout,
     Stderr,
+}
+
+fn json_error_kind_ordinal(kind: json::JsonErrorKind) -> u32 {
+    match kind {
+        json::JsonErrorKind::InvalidUtf8 => 0,
+        json::JsonErrorKind::InvalidSyntax => 1,
+        json::JsonErrorKind::UnexpectedEof => 2,
+        json::JsonErrorKind::InvalidEscape => 3,
+        json::JsonErrorKind::InvalidUnicodeScalar => 4,
+        json::JsonErrorKind::InvalidNumber => 5,
+        json::JsonErrorKind::DuplicateKey => 6,
+        json::JsonErrorKind::UnknownField => 7,
+        json::JsonErrorKind::MissingField => 8,
+        json::JsonErrorKind::TypeMismatch => 9,
+        json::JsonErrorKind::NumberRange => 10,
+        json::JsonErrorKind::LimitExceeded => 11,
+        json::JsonErrorKind::IoError => 12,
+        json::JsonErrorKind::TrailingData => 13,
+        json::JsonErrorKind::CanonicalizationError => 14,
+    }
+}
+
+fn runtime_json_length(value: &RuntimeValue) -> Result<Option<usize>, VmError> {
+    match value {
+        RuntimeValue::OptionNone => Ok(None),
+        RuntimeValue::OptionSome(value) => match value.as_ref() {
+            RuntimeValue::Integer(value) => usize::try_from(*value)
+                .map(Some)
+                .map_err(|_| VmError::Host("JsonEvent length is outside usize".into())),
+            _ => Err(VmError::Host("JsonEvent length is not an integer".into())),
+        },
+        _ => Err(VmError::Host("JsonEvent length is not optional".into())),
+    }
+}
+
+fn runtime_json_length_value(value: Option<usize>) -> RuntimeValue {
+    value.map_or(RuntimeValue::OptionNone, |value| {
+        RuntimeValue::OptionSome(Box::new(RuntimeValue::Integer(value as i128)))
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -773,17 +811,66 @@ impl BootstrapHost {
         RuntimeValue::ResultErr(Box::new(self.bytes_error(message)))
     }
 
-    fn json_error(&mut self, message: impl Into<String>) -> RuntimeValue {
-        self.allocate(
-            RuntimeHostValueKind::JsonError,
-            HostValue::JsonError {
-                _message: message.into(),
-            },
-        )
+    fn json_error(&self, error: &json::JsonError) -> RuntimeValue {
+        self.json_error_parts(error.kind, error.location, &error.path)
     }
 
-    fn json_result_error(&mut self, message: impl Into<String>) -> RuntimeValue {
-        RuntimeValue::ResultErr(Box::new(self.json_error(message)))
+    fn json_result_structured_error(&self, error: &json::JsonError) -> RuntimeValue {
+        RuntimeValue::ResultErr(Box::new(self.json_error(error)))
+    }
+
+    fn json_result_error(&self, kind: json::JsonErrorKind) -> RuntimeValue {
+        RuntimeValue::ResultErr(Box::new(self.json_error_parts(
+            kind,
+            json::JsonLocation {
+                offset: 0,
+                line: 1,
+                column: 1,
+            },
+            &json::JsonPath::root(),
+        )))
+    }
+
+    fn json_error_parts(
+        &self,
+        kind: json::JsonErrorKind,
+        location: json::JsonLocation,
+        path: &json::JsonPath,
+    ) -> RuntimeValue {
+        RuntimeValue::Record {
+            name: "JsonError".into(),
+            values: vec![
+                RuntimeValue::Variant {
+                    name: "JsonErrorKind".into(),
+                    variant: json_error_kind_ordinal(kind),
+                    values: Vec::new(),
+                },
+                RuntimeValue::Record {
+                    name: "JsonLocation".into(),
+                    values: vec![
+                        RuntimeValue::Integer(location.offset as i128),
+                        RuntimeValue::Integer(location.line as i128),
+                        RuntimeValue::Integer(location.column as i128),
+                    ],
+                },
+                RuntimeValue::Newtype {
+                    name: "JsonPath".into(),
+                    value: Box::new(RuntimeValue::Array(
+                        path.segments()
+                            .iter()
+                            .map(|segment| match segment {
+                                json::JsonPathSegment::Key(key) => {
+                                    RuntimeValue::String(key.clone())
+                                }
+                                json::JsonPathSegment::Index(index) => {
+                                    RuntimeValue::String(index.to_string())
+                                }
+                            })
+                            .collect(),
+                    )),
+                },
+            ],
+        }
     }
 
     fn format_error(&mut self, message: impl Into<String>) -> RuntimeValue {
@@ -1460,7 +1547,7 @@ impl BootstrapHost {
         }
     }
 
-    fn json_limits(&self, input: JsonLimitsInput) -> Result<json::JsonLimits, String> {
+    fn json_limits(&self, input: JsonLimitsInput) -> Result<json::JsonLimits, json::JsonErrorKind> {
         let [
             document,
             depth,
@@ -1471,19 +1558,17 @@ impl BootstrapHost {
             events,
             output,
         ] = input.values;
-        let convert = |name: &str, value: i128| {
-            usize::try_from(value)
-                .map_err(|_| format!("{name} is outside the supported non-negative range"))
-        };
+        let convert =
+            |value: i128| usize::try_from(value).map_err(|_| json::JsonErrorKind::LimitExceeded);
         Ok(json::JsonLimits {
-            max_document_bytes: convert("maxDocumentBytes", document)?,
-            max_depth: convert("maxDepth", depth)?,
-            max_array_items: convert("maxArrayItems", array)?,
-            max_object_members: convert("maxObjectMembers", object)?,
-            max_string_bytes: convert("maxStringBytes", string)?,
-            max_number_bytes: convert("maxNumberBytes", number)?,
-            max_events: convert("maxEvents", events)?,
-            max_output_bytes: convert("maxOutputBytes", output)?,
+            max_document_bytes: convert(document)?,
+            max_depth: convert(depth)?,
+            max_array_items: convert(array)?,
+            max_object_members: convert(object)?,
+            max_string_bytes: convert(string)?,
+            max_number_bytes: convert(number)?,
+            max_events: convert(events)?,
+            max_output_bytes: convert(output)?,
         })
     }
 
@@ -1539,16 +1624,19 @@ impl BootstrapHost {
         }
     }
 
-    fn json_decode_options(&self, value: &RuntimeValue) -> Result<json::JsonDecodeOptions, String> {
+    fn json_decode_options(
+        &self,
+        value: &RuntimeValue,
+    ) -> Result<json::JsonDecodeOptions, json::JsonErrorKind> {
         let RuntimeValue::Host {
             kind: RuntimeHostValueKind::JsonValue,
             id,
         } = value
         else {
-            return Err("JsonDecodeOptions value is invalid".into());
+            return Err(json::JsonErrorKind::TypeMismatch);
         };
         let Some(HostValue::JsonDecodeOptions(options)) = self.values.get(id) else {
-            return Err("JsonDecodeOptions token is stale".into());
+            return Err(json::JsonErrorKind::IoError);
         };
         Ok(json::JsonDecodeOptions {
             limits: self.json_limits(options.limits)?,
@@ -1558,16 +1646,19 @@ impl BootstrapHost {
         })
     }
 
-    fn json_encode_options(&self, value: &RuntimeValue) -> Result<json::JsonEncodeOptions, String> {
+    fn json_encode_options(
+        &self,
+        value: &RuntimeValue,
+    ) -> Result<json::JsonEncodeOptions, json::JsonErrorKind> {
         let RuntimeValue::Host {
             kind: RuntimeHostValueKind::JsonValue,
             id,
         } = value
         else {
-            return Err("JsonEncodeOptions value is invalid".into());
+            return Err(json::JsonErrorKind::TypeMismatch);
         };
         let Some(HostValue::JsonEncodeOptions(options)) = self.values.get(id) else {
-            return Err("JsonEncodeOptions token is stale".into());
+            return Err(json::JsonErrorKind::IoError);
         };
         Ok(json::JsonEncodeOptions {
             limits: self.json_limits(options.limits)?,
@@ -1590,37 +1681,79 @@ impl BootstrapHost {
     }
 
     fn json_event(&self, value: &RuntimeValue) -> Result<json::JsonEvent, VmError> {
-        let RuntimeValue::Host {
-            kind: RuntimeHostValueKind::JsonEvent,
-            id,
+        let RuntimeValue::Variant {
+            name,
+            variant,
+            values,
         } = value
         else {
             return Err(VmError::Host("JsonEvent value is invalid".into()));
         };
-        match self.values.get(id) {
-            Some(HostValue::JsonEvent(event)) => Ok(event.clone()),
-            _ => Err(VmError::Host("JsonEvent token is stale".into())),
+        if name != "JsonEvent" {
+            return Err(VmError::Host(
+                "JsonEvent value has the wrong nominal type".into(),
+            ));
+        }
+        match (*variant, values.as_slice()) {
+            (0, [length]) => Ok(json::JsonEvent::StartArray(runtime_json_length(length)?)),
+            (1, []) => Ok(json::JsonEvent::EndArray),
+            (2, [length]) => Ok(json::JsonEvent::StartObject(runtime_json_length(length)?)),
+            (3, []) => Ok(json::JsonEvent::EndObject),
+            (4, [RuntimeValue::String(key)]) => Ok(json::JsonEvent::Key(key.clone())),
+            (5, []) => Ok(json::JsonEvent::Null),
+            (6, [RuntimeValue::Bool(value)]) => Ok(json::JsonEvent::Bool(*value)),
+            (7, [number]) => Ok(json::JsonEvent::Number(self.json_number(number)?.clone())),
+            (8, [RuntimeValue::String(value)]) => Ok(json::JsonEvent::String(value.clone())),
+            _ => Err(VmError::Host("JsonEvent payload is invalid".into())),
         }
     }
 
-    fn runtime_json_value(&self, value: &RuntimeValue) -> Result<json::JsonValue, String> {
+    fn runtime_json_event(&mut self, event: json::JsonEvent) -> RuntimeValue {
+        let (variant, values) = match event {
+            json::JsonEvent::StartArray(length) => (0, vec![runtime_json_length_value(length)]),
+            json::JsonEvent::EndArray => (1, Vec::new()),
+            json::JsonEvent::StartObject(length) => (2, vec![runtime_json_length_value(length)]),
+            json::JsonEvent::EndObject => (3, Vec::new()),
+            json::JsonEvent::Key(key) => (4, vec![RuntimeValue::String(key)]),
+            json::JsonEvent::Null => (5, Vec::new()),
+            json::JsonEvent::Bool(value) => (6, vec![RuntimeValue::Bool(value)]),
+            json::JsonEvent::Number(number) => (
+                7,
+                vec![self.allocate(
+                    RuntimeHostValueKind::JsonNumber,
+                    HostValue::JsonNumber(number),
+                )],
+            ),
+            json::JsonEvent::String(value) => (8, vec![RuntimeValue::String(value)]),
+        };
+        RuntimeValue::Variant {
+            name: "JsonEvent".into(),
+            variant,
+            values,
+        }
+    }
+
+    fn runtime_json_value(
+        &self,
+        value: &RuntimeValue,
+    ) -> Result<json::JsonValue, json::JsonErrorKind> {
         use json::{JsonMember, JsonNumber, JsonValue};
         match value {
             RuntimeValue::Unit | RuntimeValue::OptionNone => Ok(JsonValue::Null),
             RuntimeValue::Bool(value) => Ok(JsonValue::Bool(*value)),
             RuntimeValue::Integer(value) => match JsonNumber::parse(&value.to_string()) {
                 Ok(number) => Ok(JsonValue::Number(number)),
-                Err(error) => Err(error.to_string()),
+                Err(error) => Err(error.kind),
             },
             RuntimeValue::Float(value) if value.is_finite() => {
                 match JsonNumber::parse(&value.to_string()) {
                     Ok(number) => Ok(JsonValue::Number(number)),
-                    Err(error) => Err(error.to_string()),
+                    Err(error) => Err(error.kind),
                 }
             }
             RuntimeValue::Byte(value) => match JsonNumber::parse(&value.to_string()) {
                 Ok(number) => Ok(JsonValue::Number(number)),
-                Err(error) => Err(error.to_string()),
+                Err(error) => Err(error.kind),
             },
             RuntimeValue::String(value) => Ok(JsonValue::String(value.clone())),
             RuntimeValue::Array(values) => values
@@ -1632,14 +1765,14 @@ impl BootstrapHost {
                 .iter()
                 .map(|(key, value)| {
                     let RuntimeValue::String(key) = key else {
-                        return Err("JSON object keys must be String".into());
+                        return Err(json::JsonErrorKind::TypeMismatch);
                     };
                     Ok(JsonMember {
                         key: key.clone(),
                         value: self.runtime_json_value(value)?,
                     })
                 })
-                .collect::<Result<Vec<_>, String>>()
+                .collect::<Result<Vec<_>, json::JsonErrorKind>>()
                 .map(JsonValue::Object),
             RuntimeValue::OptionSome(value) => self.runtime_json_value(value),
             RuntimeValue::Host {
@@ -1647,10 +1780,10 @@ impl BootstrapHost {
                 id,
             } => match self.values.get(id) {
                 Some(HostValue::JsonValue(value)) => Ok(value.clone()),
-                _ => Err("JSON Value token is stale".into()),
+                _ => Err(json::JsonErrorKind::IoError),
             },
-            RuntimeValue::Float(_) => Err("JSON cannot encode NaN or infinity".into()),
-            _ => Err("this runtime value has no static JSON encoder".into()),
+            RuntimeValue::Float(_) => Err(json::JsonErrorKind::NumberRange),
+            _ => Err(json::JsonErrorKind::TypeMismatch),
         }
     }
 
@@ -2384,7 +2517,7 @@ impl VmHost for BootstrapHost {
                 };
                 match json::validate_with_options(&input, options) {
                     Ok(()) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))),
-                    Err(error) => Ok(self.json_result_error(error.to_string())),
+                    Err(error) => Ok(self.json_result_structured_error(&error)),
                 }
             }
             ("std.json.canonicalize", [bytes, options]) => {
@@ -2395,15 +2528,15 @@ impl VmHost for BootstrapHost {
                 };
                 match json::canonicalize_with_options(&input, options) {
                     Ok(output) => {
-                        if let Err(message) = self.ensure_bytes_len(output.len()) {
-                            return Ok(self.json_result_error(message));
+                        if self.ensure_bytes_len(output.len()).is_err() {
+                            return Ok(self.json_result_error(json::JsonErrorKind::LimitExceeded));
                         }
                         Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
                             RuntimeHostValueKind::Bytes,
                             HostValue::Bytes(output),
                         ))))
                     }
-                    Err(error) => Ok(self.json_result_error(error.to_string())),
+                    Err(error) => Ok(self.json_result_structured_error(&error)),
                 }
             }
             ("std.json.parse", [bytes, options]) => {
@@ -2417,7 +2550,7 @@ impl VmHost for BootstrapHost {
                         RuntimeHostValueKind::JsonValue,
                         HostValue::JsonValue(value),
                     )))),
-                    Err(error) => Ok(self.json_result_error(error.to_string())),
+                    Err(error) => Ok(self.json_result_structured_error(&error)),
                 }
             }
             ("std.json.parseView", [bytes, options]) => {
@@ -2431,7 +2564,7 @@ impl VmHost for BootstrapHost {
                         RuntimeHostValueKind::JsonValueView,
                         HostValue::JsonValueView { _bytes: id },
                     )))),
-                    Err(error) => Ok(self.json_result_error(error.to_string())),
+                    Err(error) => Ok(self.json_result_structured_error(&error)),
                 }
             }
             ("std.json.decode", [bytes, options]) => {
@@ -2442,54 +2575,54 @@ impl VmHost for BootstrapHost {
                     Ok(options) => options,
                     Err(error) => return Ok(self.json_result_error(error)),
                 };
-                match json::parse_with_options(self.bytes(bytes)?, options)
-                    .map_err(|error| error.to_string())
-                    .and_then(|value| json_to_runtime(&value, expected))
-                {
-                    Ok(value) => Ok(RuntimeValue::ResultOk(Box::new(value))),
-                    Err(error) => Ok(self.json_result_error(error)),
+                match json::parse_with_options(self.bytes(bytes)?, options) {
+                    Ok(value) => match json_to_runtime(&value, expected) {
+                        Ok(value) => Ok(RuntimeValue::ResultOk(Box::new(value))),
+                        Err(kind) => Ok(self.json_result_error(kind)),
+                    },
+                    Err(error) => Ok(self.json_result_structured_error(&error)),
                 }
             }
             ("std.json.encode", [value, options]) => {
-                match self.json_encode_options(options).and_then(|options| {
-                    self.runtime_json_value(value).and_then(|value| {
-                        json::encode_with_options(&value, options)
-                            .map_err(|error| error.to_string())
-                    })
-                }) {
+                let options = match self.json_encode_options(options) {
+                    Ok(options) => options,
+                    Err(kind) => return Ok(self.json_result_error(kind)),
+                };
+                let value = match self.runtime_json_value(value) {
+                    Ok(value) => value,
+                    Err(kind) => return Ok(self.json_result_error(kind)),
+                };
+                match json::encode_with_options(&value, options) {
                     Ok(output) => {
-                        if let Err(message) = self.ensure_bytes_len(output.len()) {
-                            return Ok(self.json_result_error(message));
+                        if self.ensure_bytes_len(output.len()).is_err() {
+                            return Ok(self.json_result_error(json::JsonErrorKind::LimitExceeded));
                         }
                         Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
                             RuntimeHostValueKind::Bytes,
                             HostValue::Bytes(output),
                         ))))
                     }
-                    Err(error) => Ok(self.json_result_error(error)),
+                    Err(error) => Ok(self.json_result_structured_error(&error)),
                 }
             }
             ("std.json.encodeCanonical", [value, limits]) => {
                 let value = self.json_value(value)?.clone();
-                let limits = match self
-                    .json_limits_input(limits)
-                    .map_err(|error| error.to_string())
-                    .and_then(|limits| self.json_limits(limits))
-                {
+                let limits = self.json_limits_input(limits)?;
+                let limits = match self.json_limits(limits) {
                     Ok(limits) => limits,
-                    Err(error) => return Ok(self.json_result_error(error)),
+                    Err(kind) => return Ok(self.json_result_error(kind)),
                 };
                 match json::encode_canonical_with_limits(&value, limits) {
                     Ok(output) => {
-                        if let Err(message) = self.ensure_bytes_len(output.len()) {
-                            return Ok(self.json_result_error(message));
+                        if self.ensure_bytes_len(output.len()).is_err() {
+                            return Ok(self.json_result_error(json::JsonErrorKind::LimitExceeded));
                         }
                         Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
                             RuntimeHostValueKind::Bytes,
                             HostValue::Bytes(output),
                         ))))
                     }
-                    Err(error) => Ok(self.json_result_error(error.to_string())),
+                    Err(error) => Ok(self.json_result_structured_error(&error)),
                 }
             }
             ("std.json.raw", [bytes]) => {
@@ -2499,7 +2632,7 @@ impl VmHost for BootstrapHost {
                         RuntimeHostValueKind::JsonRaw,
                         HostValue::JsonRaw { _bytes: id },
                     )))),
-                    Err(error) => Ok(self.json_result_error(error.to_string())),
+                    Err(error) => Ok(self.json_result_structured_error(&error)),
                 }
             }
             ("std.json.rawUnchecked", [bytes]) => {
@@ -2516,7 +2649,7 @@ impl VmHost for BootstrapHost {
                         RuntimeHostValueKind::JsonNumber,
                         HostValue::JsonNumber(number),
                     )))),
-                    Err(error) => Ok(self.json_result_error(error.to_string())),
+                    Err(error) => Ok(self.json_result_structured_error(&error)),
                 }
             }
             ("std.json.JsonNumber.text", [number]) => {
@@ -2526,26 +2659,26 @@ impl VmHost for BootstrapHost {
                 Ok(value) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Integer(
                     i128::from(value),
                 )))),
-                Err(error) => Ok(self.json_result_error(error.to_string())),
+                Err(error) => Ok(self.json_result_structured_error(&error)),
             },
             ("std.json.JsonNumber.toUInt", [number]) => match self.json_number(number)?.to_uint() {
                 Ok(value) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Integer(
                     i128::from(value),
                 )))),
-                Err(error) => Ok(self.json_result_error(error.to_string())),
+                Err(error) => Ok(self.json_result_structured_error(&error)),
             },
             ("std.json.JsonNumber.toFloat32", [number]) => {
                 match self.json_number(number)?.to_float32() {
                     Ok(value) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Float(
                         f64::from(value),
                     )))),
-                    Err(error) => Ok(self.json_result_error(error.to_string())),
+                    Err(error) => Ok(self.json_result_structured_error(&error)),
                 }
             }
             ("std.json.JsonNumber.toFloat64", [number]) => {
                 match self.json_number(number)?.to_float64() {
                     Ok(value) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Float(value)))),
-                    Err(error) => Ok(self.json_result_error(error.to_string())),
+                    Err(error) => Ok(self.json_result_structured_error(&error)),
                 }
             }
             ("std.json.JsonReader.fromBytes", [bytes, options]) => {
@@ -2562,13 +2695,13 @@ impl VmHost for BootstrapHost {
                             finished: false,
                         },
                     )))),
-                    Err(error) => Ok(self.json_result_error(error.to_string())),
+                    Err(error) => Ok(self.json_result_structured_error(&error)),
                 }
             }
             ("std.json.JsonReader.fromReader", [reader, options]) => {
                 let (id, stream, offset) = self.reader_state(reader)?;
                 if stream != StreamKind::Stdin {
-                    return Ok(self.json_result_error("reader is not readable"));
+                    return Ok(self.json_result_error(json::JsonErrorKind::IoError));
                 }
                 let input = self.stdin[offset..].to_vec();
                 if let Some(HostValue::Reader { offset, .. }) = self.values.get_mut(&id) {
@@ -2586,7 +2719,7 @@ impl VmHost for BootstrapHost {
                             finished: false,
                         },
                     )))),
-                    Err(error) => Ok(self.json_result_error(error.to_string())),
+                    Err(error) => Ok(self.json_result_structured_error(&error)),
                 }
             }
             ("std.json.JsonReader.next", [reader]) => {
@@ -2599,7 +2732,7 @@ impl VmHost for BootstrapHost {
                 };
                 let result = match self.values.get_mut(id) {
                     Some(HostValue::JsonReader { finished: true, .. }) => {
-                        return Ok(self.json_result_error("JsonReader is already terminal"));
+                        return Ok(self.json_result_error(json::JsonErrorKind::InvalidSyntax));
                     }
                     Some(HostValue::JsonReader { reader, finished }) => {
                         let result = reader.next();
@@ -2612,14 +2745,13 @@ impl VmHost for BootstrapHost {
                 };
                 match result {
                     Ok(Some(event)) => {
-                        let event = self
-                            .allocate(RuntimeHostValueKind::JsonEvent, HostValue::JsonEvent(event));
+                        let event = self.runtime_json_event(event);
                         Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::OptionSome(
                             Box::new(event),
                         ))))
                     }
                     Ok(None) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::OptionNone))),
-                    Err(error) => Ok(self.json_result_error(error.to_string())),
+                    Err(error) => Ok(self.json_result_structured_error(&error)),
                 }
             }
             ("std.json.JsonReader.own", [reader, event]) => {
@@ -2633,7 +2765,7 @@ impl VmHost for BootstrapHost {
                 };
                 let result = match self.values.get_mut(id) {
                     Some(HostValue::JsonReader { finished: true, .. }) => {
-                        return Ok(self.json_result_error("JsonReader is already terminal"));
+                        return Ok(self.json_result_error(json::JsonErrorKind::InvalidSyntax));
                     }
                     Some(HostValue::JsonReader { reader, finished }) => {
                         let result = reader.own(event);
@@ -2645,11 +2777,10 @@ impl VmHost for BootstrapHost {
                     _ => return Err(VmError::Host("JsonReader token is stale".into())),
                 };
                 match result {
-                    Ok(event) => Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
-                        RuntimeHostValueKind::JsonEvent,
-                        HostValue::JsonEvent(event),
-                    )))),
-                    Err(error) => Ok(self.json_result_error(error.to_string())),
+                    Ok(event) => Ok(RuntimeValue::ResultOk(Box::new(
+                        self.runtime_json_event(event),
+                    ))),
+                    Err(error) => Ok(self.json_result_structured_error(&error)),
                 }
             }
             ("std.json.JsonReader.finish", [reader]) => {
@@ -2662,7 +2793,7 @@ impl VmHost for BootstrapHost {
                 };
                 let result = match self.values.get_mut(id) {
                     Some(HostValue::JsonReader { finished: true, .. }) => {
-                        return Ok(self.json_result_error("JsonReader is already terminal"));
+                        return Ok(self.json_result_error(json::JsonErrorKind::InvalidSyntax));
                     }
                     Some(HostValue::JsonReader { reader, finished }) => {
                         let result = reader.finish();
@@ -2673,13 +2804,13 @@ impl VmHost for BootstrapHost {
                 };
                 match result {
                     Ok(()) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))),
-                    Err(error) => Ok(self.json_result_error(error.to_string())),
+                    Err(error) => Ok(self.json_result_structured_error(&error)),
                 }
             }
             ("std.json.JsonWriter.toWriter", [writer, options]) => {
                 let stream = self.writer_stream(writer)?;
                 if stream == StreamKind::Stdin {
-                    return Ok(self.json_result_error("stdin is not writable"));
+                    return Ok(self.json_result_error(json::JsonErrorKind::IoError));
                 }
                 let options = match self.json_encode_options(options) {
                     Ok(options) => options,
@@ -2694,7 +2825,7 @@ impl VmHost for BootstrapHost {
                             finished: false,
                         },
                     )))),
-                    Err(error) => Ok(self.json_result_error(error.to_string())),
+                    Err(error) => Ok(self.json_result_structured_error(&error)),
                 }
             }
             ("std.json.JsonWriter.write", [writer, event]) => {
@@ -2708,7 +2839,7 @@ impl VmHost for BootstrapHost {
                 };
                 let result = match self.values.get_mut(id) {
                     Some(HostValue::JsonWriter { finished: true, .. }) => {
-                        return Ok(self.json_result_error("JsonWriter is already terminal"));
+                        return Ok(self.json_result_error(json::JsonErrorKind::InvalidSyntax));
                     }
                     Some(HostValue::JsonWriter {
                         writer, finished, ..
@@ -2723,7 +2854,7 @@ impl VmHost for BootstrapHost {
                 };
                 match result {
                     Ok(()) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))),
-                    Err(error) => Ok(self.json_result_error(error.to_string())),
+                    Err(error) => Ok(self.json_result_structured_error(&error)),
                 }
             }
             ("std.json.JsonWriter.finish", [writer]) => {
@@ -2736,7 +2867,7 @@ impl VmHost for BootstrapHost {
                 };
                 let (stream, result) = match self.values.get_mut(id) {
                     Some(HostValue::JsonWriter { finished: true, .. }) => {
-                        return Ok(self.json_result_error("JsonWriter is already terminal"));
+                        return Ok(self.json_result_error(json::JsonErrorKind::InvalidSyntax));
                     }
                     Some(HostValue::JsonWriter {
                         writer,
@@ -2751,8 +2882,8 @@ impl VmHost for BootstrapHost {
                 };
                 match result {
                     Ok(bytes) => {
-                        if let Err(message) = self.ensure_bytes_len(bytes.len()) {
-                            return Ok(self.json_result_error(message));
+                        if self.ensure_bytes_len(bytes.len()).is_err() {
+                            return Ok(self.json_result_error(json::JsonErrorKind::LimitExceeded));
                         }
                         match stream {
                             StreamKind::Stdout => self.stdout.extend_from_slice(&bytes),
@@ -2761,7 +2892,7 @@ impl VmHost for BootstrapHost {
                         }
                         Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
                     }
-                    Err(error) => Ok(self.json_result_error(error.to_string())),
+                    Err(error) => Ok(self.json_result_structured_error(&error)),
                 }
             }
             ("std.messagepack.validate", [bytes]) => {
@@ -5072,6 +5203,141 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::*;
+
+    fn runtime_json_error_kind(value: &RuntimeValue) -> Option<u32> {
+        let RuntimeValue::Record { name, values } = value else {
+            return None;
+        };
+        if name != "JsonError" {
+            return None;
+        }
+        let [
+            RuntimeValue::Variant {
+                name,
+                variant,
+                values,
+            },
+            RuntimeValue::Record { name: location, .. },
+            RuntimeValue::Newtype { name: path, .. },
+        ] = values.as_slice()
+        else {
+            return None;
+        };
+        (name == "JsonErrorKind"
+            && values.is_empty()
+            && location == "JsonLocation"
+            && path == "JsonPath")
+            .then_some(*variant)
+    }
+
+    #[test]
+    fn json_nominal_boundary_round_trips_every_event_and_error_kind() {
+        let mut host = BootstrapHost::default();
+        let events = vec![
+            json::JsonEvent::StartArray(None),
+            json::JsonEvent::EndArray,
+            json::JsonEvent::StartObject(Some(2)),
+            json::JsonEvent::EndObject,
+            json::JsonEvent::Key("key".into()),
+            json::JsonEvent::Null,
+            json::JsonEvent::Bool(true),
+            json::JsonEvent::Number(json::JsonNumber::parse("42").unwrap()),
+            json::JsonEvent::String("value".into()),
+        ];
+        for event in events {
+            let runtime = host.runtime_json_event(event.clone());
+            assert_eq!(host.json_event(&runtime).unwrap(), event);
+        }
+
+        for (ordinal, kind) in [
+            json::JsonErrorKind::InvalidUtf8,
+            json::JsonErrorKind::InvalidSyntax,
+            json::JsonErrorKind::UnexpectedEof,
+            json::JsonErrorKind::InvalidEscape,
+            json::JsonErrorKind::InvalidUnicodeScalar,
+            json::JsonErrorKind::InvalidNumber,
+            json::JsonErrorKind::DuplicateKey,
+            json::JsonErrorKind::UnknownField,
+            json::JsonErrorKind::MissingField,
+            json::JsonErrorKind::TypeMismatch,
+            json::JsonErrorKind::NumberRange,
+            json::JsonErrorKind::LimitExceeded,
+            json::JsonErrorKind::IoError,
+            json::JsonErrorKind::TrailingData,
+            json::JsonErrorKind::CanonicalizationError,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let error = host.json_error_parts(
+                kind,
+                json::JsonLocation {
+                    offset: 7,
+                    line: 2,
+                    column: 3,
+                },
+                &json::JsonPath::root(),
+            );
+            assert_eq!(runtime_json_error_kind(&error), Some(ordinal as u32));
+            let RuntimeValue::Record { values, .. } = error else {
+                unreachable!("JSON errors use the nominal record boundary")
+            };
+            assert!(matches!(
+                values.as_slice(),
+                [
+                    RuntimeValue::Variant { .. },
+                    RuntimeValue::Record { values, .. },
+                    RuntimeValue::Newtype { value, .. },
+                ] if values == &[
+                    RuntimeValue::Integer(7),
+                    RuntimeValue::Integer(2),
+                    RuntimeValue::Integer(3),
+                ] && matches!(value.as_ref(), RuntimeValue::Array(segments) if segments.is_empty())
+            ));
+        }
+    }
+
+    #[test]
+    fn json_nominal_boundary_rejects_forged_event_shapes() {
+        let host = BootstrapHost::default();
+        for value in [
+            RuntimeValue::Unit,
+            RuntimeValue::Variant {
+                name: "Other".into(),
+                variant: 1,
+                values: Vec::new(),
+            },
+            RuntimeValue::Variant {
+                name: "JsonEvent".into(),
+                variant: 99,
+                values: Vec::new(),
+            },
+            RuntimeValue::Variant {
+                name: "JsonEvent".into(),
+                variant: 0,
+                values: vec![RuntimeValue::OptionSome(Box::new(RuntimeValue::Integer(
+                    -1,
+                )))],
+            },
+            RuntimeValue::Variant {
+                name: "JsonEvent".into(),
+                variant: 1,
+                values: vec![RuntimeValue::Unit],
+            },
+            RuntimeValue::Variant {
+                name: "JsonEvent".into(),
+                variant: 4,
+                values: vec![RuntimeValue::Integer(1)],
+            },
+            RuntimeValue::Variant {
+                name: "JsonEvent".into(),
+                variant: 7,
+                values: vec![RuntimeValue::String("1".into())],
+            },
+        ] {
+            assert!(matches!(host.json_event(&value), Err(VmError::Host(_))));
+        }
+    }
 
     #[test]
     fn console_println_uses_a_stable_lf_newline() {
@@ -7421,8 +7687,7 @@ mod tests {
         assert!(matches!(
             host.invoke("std.json.validate", &[invalid_json, decode_options])
                 .unwrap(),
-            RuntimeValue::ResultErr(value)
-                if matches!(value.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::JsonError, .. })
+            RuntimeValue::ResultErr(value) if runtime_json_error_kind(&value) == Some(2)
         ));
 
         for (operation, bytes) in [
@@ -7578,8 +7843,7 @@ mod tests {
                 &[out_of_range, decode_options.clone()],
             )
                 .unwrap(),
-            RuntimeValue::ResultErr(value)
-                if matches!(value.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::JsonError, .. })
+            RuntimeValue::ResultErr(value) if runtime_json_error_kind(&value) == Some(10)
         ));
         for (specialization, source) in [
             ("Byte", b"256".as_slice()),
@@ -7641,7 +7905,53 @@ mod tests {
                 &[RuntimeValue::Float(f64::NAN), encode_options.clone()],
             )
             .unwrap();
-        assert!(matches!(not_finite, RuntimeValue::ResultErr(_)));
+        assert!(matches!(
+            not_finite,
+            RuntimeValue::ResultErr(value) if runtime_json_error_kind(&value) == Some(10)
+        ));
+        let invalid_map = host
+            .invoke(
+                "std.json.encode[Map[String, Int]]",
+                &[
+                    RuntimeValue::Map(vec![(RuntimeValue::Integer(1), RuntimeValue::Integer(2))]),
+                    encode_options.clone(),
+                ],
+            )
+            .unwrap();
+        assert!(matches!(
+            invalid_map,
+            RuntimeValue::ResultErr(value) if runtime_json_error_kind(&value) == Some(9)
+        ));
+
+        let negative_limits = host
+            .invoke(
+                "intrinsic.json.JsonLimits.construct",
+                &[
+                    RuntimeValue::Integer(-1),
+                    RuntimeValue::Integer(64),
+                    RuntimeValue::Integer(65_536),
+                    RuntimeValue::Integer(65_536),
+                    RuntimeValue::Integer(1_048_576),
+                    RuntimeValue::Integer(4_096),
+                    RuntimeValue::Integer(100_000),
+                    RuntimeValue::Integer(1_048_576),
+                ],
+            )
+            .unwrap();
+        let invalid_options = host
+            .invoke(
+                "intrinsic.json.JsonEncodeOptions.construct",
+                &[negative_limits, RuntimeValue::Bool(false)],
+            )
+            .unwrap();
+        assert!(matches!(
+            host.invoke(
+                "std.json.encode[Unit]",
+                &[RuntimeValue::Unit, invalid_options],
+            )
+            .unwrap(),
+            RuntimeValue::ResultErr(value) if runtime_json_error_kind(&value) == Some(11)
+        ));
 
         let number = ok(host
             .invoke(
@@ -7701,9 +8011,29 @@ mod tests {
         let RuntimeValue::OptionSome(event) = next else {
             panic!("scalar JSON must publish one event")
         };
+        assert!(matches!(
+            event.as_ref(),
+            RuntimeValue::Variant {
+                name,
+                variant: 7,
+                values,
+            } if name == "JsonEvent"
+                && matches!(values.as_slice(), [RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::JsonNumber,
+                    ..
+                }])
+        ));
         let owned = ok(host
             .invoke("std.json.JsonReader.own", &[reader.clone(), *event])
             .unwrap());
+        assert!(matches!(
+            &owned,
+            RuntimeValue::Variant {
+                name,
+                variant: 7,
+                values,
+            } if name == "JsonEvent" && values.len() == 1
+        ));
         assert!(matches!(
             ok(host
                 .invoke("std.json.JsonReader.next", std::slice::from_ref(&reader),)
@@ -7721,11 +8051,25 @@ mod tests {
         assert!(matches!(
             host.invoke("std.json.JsonReader.next", std::slice::from_ref(&reader))
                 .unwrap(),
-            RuntimeValue::ResultErr(value)
-                if matches!(value.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::JsonError, .. })
+            RuntimeValue::ResultErr(value) if runtime_json_error_kind(&value) == Some(1)
         ));
 
         let stdout = ok(host.invoke("std.console.stdout", &[]).unwrap());
+        let wrong_reader = host.allocate(
+            RuntimeHostValueKind::Reader,
+            HostValue::Reader {
+                stream: StreamKind::Stdout,
+                offset: 0,
+            },
+        );
+        assert!(matches!(
+            host.invoke(
+                "std.json.JsonReader.fromReader",
+                &[wrong_reader, decode_options.clone()],
+            )
+            .unwrap(),
+            RuntimeValue::ResultErr(value) if runtime_json_error_kind(&value) == Some(12)
+        ));
         let writer = ok(host
             .invoke("std.json.JsonWriter.toWriter", &[stdout, encode_options])
             .unwrap());
@@ -7749,8 +8093,7 @@ mod tests {
                 std::slice::from_ref(&writer),
             )
             .unwrap(),
-            RuntimeValue::ResultErr(value)
-                if matches!(value.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::JsonError, .. })
+            RuntimeValue::ResultErr(value) if runtime_json_error_kind(&value) == Some(1)
         ));
 
         let invalid_number = host
@@ -7761,8 +8104,7 @@ mod tests {
             .unwrap();
         assert!(matches!(
             invalid_number,
-            RuntimeValue::ResultErr(value)
-                if matches!(value.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::JsonError, .. })
+            RuntimeValue::ResultErr(value) if runtime_json_error_kind(&value) == Some(5)
         ));
     }
 

@@ -571,9 +571,7 @@ impl Verifier<'_> {
                         | IntrinsicType::JsonRaw
                         | IntrinsicType::JsonNumber
                         | IntrinsicType::JsonReader
-                        | IntrinsicType::JsonEvent
-                        | IntrinsicType::JsonWriter
-                        | IntrinsicType::JsonError => None,
+                        | IntrinsicType::JsonWriter => None,
                     };
                     if let Some((required, capability, reason)) = requirement {
                         self.verify_capability_requirement(

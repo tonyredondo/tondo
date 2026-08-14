@@ -509,9 +509,7 @@ impl<'a> TraceMetadataAnalysis<'a> {
                 | BytecodeIntrinsicType::JsonRaw
                 | BytecodeIntrinsicType::JsonNumber
                 | BytecodeIntrinsicType::JsonReader
-                | BytecodeIntrinsicType::JsonEvent
-                | BytecodeIntrinsicType::JsonWriter
-                | BytecodeIntrinsicType::JsonError => BytecodeTraceDescriptor::Inline,
+                | BytecodeIntrinsicType::JsonWriter => BytecodeTraceDescriptor::Inline,
             },
             BytecodeTypeKind::OpaqueResult { witness, .. } => self.opaque_descriptor(witness)?,
             BytecodeTypeKind::Generated { .. } => self
@@ -1222,9 +1220,7 @@ fn intrinsic_capability(
         BytecodeIntrinsicType::JsonValue
         | BytecodeIntrinsicType::JsonValueView
         | BytecodeIntrinsicType::JsonRaw
-        | BytecodeIntrinsicType::JsonNumber
-        | BytecodeIntrinsicType::JsonEvent
-        | BytecodeIntrinsicType::JsonError => fixed_capability(matches!(
+        | BytecodeIntrinsicType::JsonNumber => fixed_capability(matches!(
             capability,
             ClosedCapability::Copy
                 | ClosedCapability::Discard
@@ -1589,9 +1585,7 @@ fn intrinsic_terminal(
         | BytecodeIntrinsicType::JsonRaw
         | BytecodeIntrinsicType::JsonNumber
         | BytecodeIntrinsicType::JsonReader
-        | BytecodeIntrinsicType::JsonEvent
-        | BytecodeIntrinsicType::JsonWriter
-        | BytecodeIntrinsicType::JsonError => fixed_terminal(BytecodeTerminalStatus::Absent),
+        | BytecodeIntrinsicType::JsonWriter => fixed_terminal(BytecodeTerminalStatus::Absent),
         BytecodeIntrinsicType::Timer => {
             unreachable!("registered bytecode terminal roots return above")
         }
@@ -1784,9 +1778,7 @@ impl Verifier<'_> {
                 | BytecodeIntrinsicType::JsonRaw
                 | BytecodeIntrinsicType::JsonNumber
                 | BytecodeIntrinsicType::JsonReader
-                | BytecodeIntrinsicType::JsonEvent
-                | BytecodeIntrinsicType::JsonWriter
-                | BytecodeIntrinsicType::JsonError => None,
+                | BytecodeIntrinsicType::JsonWriter => None,
             };
             if let Some((required, capability, label)) = requirement {
                 let context = format!("type#{index}");
@@ -14694,9 +14686,7 @@ mod tests {
                 | BytecodeIntrinsicType::JsonValue
                 | BytecodeIntrinsicType::JsonValueView
                 | BytecodeIntrinsicType::JsonRaw
-                | BytecodeIntrinsicType::JsonNumber
-                | BytecodeIntrinsicType::JsonEvent
-                | BytecodeIntrinsicType::JsonError => [true, true, false, false, true, true],
+                | BytecodeIntrinsicType::JsonNumber => [true, true, false, false, true, true],
                 BytecodeIntrinsicType::BytesBuilder
                 | BytecodeIntrinsicType::FormatBuilder
                 | BytecodeIntrinsicType::VirtualTime => [false, true, false, false, true, false],

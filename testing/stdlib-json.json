@@ -74,6 +74,12 @@
     "policies": ["JsonDuplicatePolicy", "JsonUnknownFieldPolicy", "JsonNumberPolicy"],
     "error_type": "JsonError",
     "error_kind": "JsonErrorKind",
+    "nominal_boundary": {
+      "types": ["JsonEvent", "JsonErrorKind", "JsonLocation", "JsonPath", "JsonError"],
+      "representation": "verified-name-ordinal-declaration-order",
+      "symbol_member_ids_in_abi": false,
+      "opaque_host_handles": false
+    },
     "functions": ["parse", "parseView", "decode", "encode", "validate", "canonicalize", "encodeCanonical", "raw", "rawUnchecked"],
     "number_methods": ["parse", "text", "toInt", "toUInt", "toFloat32", "toFloat64"],
     "reader_methods": ["fromBytes", "fromReader", "next", "own", "finish"],

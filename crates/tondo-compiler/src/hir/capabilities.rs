@@ -873,9 +873,7 @@ fn intrinsic_node(
         IntrinsicType::JsonValue
         | IntrinsicType::JsonValueView
         | IntrinsicType::JsonRaw
-        | IntrinsicType::JsonNumber
-        | IntrinsicType::JsonEvent
-        | IntrinsicType::JsonError => {
+        | IntrinsicType::JsonNumber => {
             if matches!(
                 capability,
                 HirCapability::Copy

@@ -1,0 +1,106 @@
+{
+  "format": "tondo-conformance-case-layer/1",
+  "layer": "finalization",
+  "edition": "0.1",
+  "tasks": [
+    "ASYNC-DEFER-IMPL-001",
+    "CONF-SEAL-001",
+    "CONF-SEAL-FINAL-001",
+    "META-REPRO-001",
+    "UTEST-PROJECTS-001"
+  ],
+  "cases": [
+    {
+      "id": "canonical-fixture-manifest",
+      "surface": "documentation",
+      "requirements": [
+        "TL01-C-6-SERIALIZACIN-CANNICA-R001"
+      ],
+      "evidence": [
+        "rust:tondo-conformance:tests::spec_contract:canonical_fixture_manifest_fence_has_published_hash"
+      ]
+    },
+    {
+      "id": "conformance-closure",
+      "surface": "conformance",
+      "requirements": [
+        "TL01-22-9-R001",
+        "TL01-22-9-R002",
+        "TL01-22-9-R003",
+        "TL01-22-9-R004"
+      ],
+      "evidence": [
+        "rust:tondo-conformance:src::runner:response_identity_and_protocol_are_checked",
+        "rust:tondo-conformance:src::seal:candidate_is_canonical_self_contained_and_idempotently_published",
+        "rust:tondo-conformance:src::seal:ratchet_result_and_object_closure_fail_closed",
+        "rust:tondo-reference-adapter:tests::conformance:complete_baseline_suite_matches_in_process",
+        "rust:tondo-reliability:src::candidate:candidate_helpers_reject_malformed_json_missing_objects_and_unsafe_paths",
+        "rust:tondo-reliability:src::candidate:candidate_manifest_is_closed_canonical_and_path_bounded",
+        "rust:tondo-reliability:src::candidate:candidate_provenance_rejects_every_extra_or_substituted_source",
+        "rust:tondo-reliability:src::candidate:candidate_seals_verifies_and_rejects_files_outside_its_offline_closure",
+        "rust:tondo-reliability:src::candidate:doc_test_gate_requires_exact_typed_links_and_executable_evidence",
+        "rust:tondo-reliability:src::candidate:layer_gate_requires_the_exact_fresh_composed_observation_set",
+        "rust:tondo-reliability:src::candidate:normative_gate_allows_only_separate_stdlib_boundaries",
+        "rust:tondo-reliability:src::candidate:quality_gate_revalidates_raw_reports_bindings_and_baseline",
+        "rust:tondo-reliability:src::main:candidate_commands_execute_the_closed_offline_bundle",
+        "rust:tondo-reliability:src::main:candidate_options_are_explicit_and_command_scoped",
+        "rust:tondo-reliability:tests::cli_contract:candidate_cli_seals_reverifies_and_rejects_an_open_object_closure"
+      ]
+    },
+    {
+      "id": "defer-control",
+      "surface": "control-errors",
+      "requirements": [
+        "TL01-11-11-R001",
+        "TL01-13-7-R006",
+        "TL01-13-7-R007",
+        "TL01-13-7-R008",
+        "TL01-13-7-R009",
+        "TL01-13-7-R010",
+        "TL01-23-14-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::bytecode::lower:runtime_executes_defer_lifo_on_normal_and_abrupt_scope_exits",
+        "rust:tondo-compiler:src::hir::check:defer_rejects_ambiguous_affine_ownership_and_non_cleanup_effects",
+        "rust:tondo-compiler:src::hir::verify:defer_control_boundaries_are_reproved_before_mir",
+        "rust:tondo-compiler:src::test_lower:preserves_environment_domain_errors_async_and_cleanup"
+      ]
+    },
+    {
+      "id": "external-form-boundary",
+      "surface": "toolchain",
+      "requirements": [
+        "TL01-22-7-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::driver:formatter_operation_rejects_invalid_syntax_without_stdout",
+        "rust:tondo-compiler:src::project:project_source_paths_require_the_language_extension"
+      ]
+    },
+    {
+      "id": "meta-hermeticity",
+      "surface": "metaprogramming",
+      "requirements": [
+        "TL01-6-8-R002"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::meta:std_meta_contract_rejects_ambient_boundaries_and_incomplete_outputs",
+        "rust:tondo-compiler:src::meta_generate:ambient_input_and_snapshot_drift_are_rejected_before_execution",
+        "rust:tondo-compiler:tests::std_meta_conformance:meta_target_admits_no_ambient_or_unsafe_surface"
+      ]
+    },
+    {
+      "id": "project-conventions",
+      "surface": "projects",
+      "requirements": [
+        "TL01-APNDICE-D-LAYOUT-CONVENCIONAL-DE-PROYECTOS-R001"
+      ],
+      "evidence": [
+        "rust:tondo-cli:src::project_discovery:discovers_conventional_sources_and_generates_a_closed_internal_graph",
+        "rust:tondo-cli:src::project_discovery:toml_lockfiles_are_normalized_to_the_existing_pure_wire_boundary",
+        "rust:tondo-cli:tests::cli:check_and_run_accept_a_conventional_project_without_json_configuration",
+        "rust:tondo-compiler:src::project:project_plans_accept_only_declared_exact_bytes"
+      ]
+    }
+  ]
+}

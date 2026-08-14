@@ -13,9 +13,10 @@ use crate::bytecode::{
     BytecodeOperationKind, BytecodeParameterMode, BytecodePlace, BytecodePrefixOperator,
     BytecodeProgram, BytecodeProjection, BytecodeProjectionKind, BytecodeRangeKind, BytecodeRvalue,
     BytecodeRvalueKind, BytecodeScalarType, BytecodeScopeId, BytecodeSlotId, BytecodeSpan,
-    BytecodeTag, BytecodeTerminator, BytecodeTerminatorKind, BytecodeTraceMetadata, BytecodeTypeId,
-    BytecodeTypeKind, BytecodeVariantPayload, BytecodeVerificationLimits, normalize_array_index,
-    normalize_array_slice_indices, verify_bytecode_with_trace_metadata,
+    BytecodeTag, BytecodeTerminator, BytecodeTerminatorKind, BytecodeTraceDescriptor,
+    BytecodeTraceMetadata, BytecodeTypeId, BytecodeTypeKind, BytecodeVariantPayload,
+    BytecodeVerificationLimits, normalize_array_index, normalize_array_slice_indices,
+    verify_bytecode_with_trace_metadata,
 };
 use crate::literal;
 
@@ -2456,9 +2457,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                     | BytecodeIntrinsicType::JsonRaw
                     | BytecodeIntrinsicType::JsonNumber
                     | BytecodeIntrinsicType::JsonReader
-                    | BytecodeIntrinsicType::JsonEvent
-                    | BytecodeIntrinsicType::JsonWriter
-                    | BytecodeIntrinsicType::JsonError => {}
+                    | BytecodeIntrinsicType::JsonWriter => {}
                     BytecodeIntrinsicType::ProcessHandle => {
                         let Value::Host(value) = value else {
                             return Err(VmError::invariant(
@@ -4133,9 +4132,7 @@ fn runtime_host_kind(constructor: BytecodeIntrinsicType) -> Option<RuntimeHostVa
         BytecodeIntrinsicType::JsonRaw => RuntimeHostValueKind::JsonRaw,
         BytecodeIntrinsicType::JsonNumber => RuntimeHostValueKind::JsonNumber,
         BytecodeIntrinsicType::JsonReader => RuntimeHostValueKind::JsonReader,
-        BytecodeIntrinsicType::JsonEvent => RuntimeHostValueKind::JsonEvent,
         BytecodeIntrinsicType::JsonWriter => RuntimeHostValueKind::JsonWriter,
-        BytecodeIntrinsicType::JsonError => RuntimeHostValueKind::JsonError,
         BytecodeIntrinsicType::Array
         | BytecodeIntrinsicType::Map
         | BytecodeIntrinsicType::Set
@@ -9145,6 +9142,31 @@ impl Engine<'_, '_> {
                 )
             }
             (
+                BytecodeTypeKind::Nominal {
+                    nominal: Some(nominal),
+                    ..
+                },
+                RuntimeValue::Newtype { name, value },
+            ) => self.materialize_host_newtype(descriptor, nominal, &name, *value),
+            (
+                BytecodeTypeKind::Nominal {
+                    nominal: Some(nominal),
+                    ..
+                },
+                RuntimeValue::Record { name, values },
+            ) => self.materialize_host_record(descriptor, nominal, &name, values),
+            (
+                BytecodeTypeKind::Nominal {
+                    nominal: Some(nominal),
+                    ..
+                },
+                RuntimeValue::Variant {
+                    name,
+                    variant,
+                    values,
+                },
+            ) => self.materialize_host_variant(descriptor, nominal, &name, variant, values),
+            (
                 BytecodeTypeKind::Intrinsic {
                     constructor: BytecodeIntrinsicType::Array,
                     arguments,
@@ -9308,6 +9330,169 @@ impl Engine<'_, '_> {
             _ => Err(VmError::Host(
                 "bootstrap host result does not match its verified return type".into(),
             )),
+        }
+    }
+
+    fn materialize_host_newtype(
+        &mut self,
+        descriptor: BytecodeTypeId,
+        nominal: crate::bytecode::BytecodeNominalId,
+        name: &str,
+        value: RuntimeValue,
+    ) -> Result<Value, VmError> {
+        self.validate_host_nominal_name(nominal, name)?;
+        let trace = self.heap.type_descriptor(descriptor)?.clone();
+        let BytecodeTraceDescriptor::Newtype {
+            nominal: traced_nominal,
+            value: value_type,
+            ..
+        } = trace
+        else {
+            return Err(VmError::Host(
+                "bootstrap host newtype does not match its verified descriptor".into(),
+            ));
+        };
+        if traced_nominal != nominal {
+            return Err(VmError::Host(
+                "bootstrap host newtype selected the wrong nominal type".into(),
+            ));
+        }
+        let value = self.materialize_host_value(value_type, value)?;
+        self.allocate(
+            descriptor,
+            HeapObject::Newtype {
+                nominal,
+                value: Some(value.clone()),
+            },
+            &[value],
+        )
+    }
+
+    fn materialize_host_record(
+        &mut self,
+        descriptor: BytecodeTypeId,
+        nominal: crate::bytecode::BytecodeNominalId,
+        name: &str,
+        values: Vec<RuntimeValue>,
+    ) -> Result<Value, VmError> {
+        self.validate_host_nominal_name(nominal, name)?;
+        let trace = self.heap.type_descriptor(descriptor)?.clone();
+        let BytecodeTraceDescriptor::Record {
+            nominal: traced_nominal,
+            fields: schema,
+            ..
+        } = trace
+        else {
+            return Err(VmError::Host(
+                "bootstrap host record does not match its verified descriptor".into(),
+            ));
+        };
+        if traced_nominal != nominal {
+            return Err(VmError::Host(
+                "bootstrap host record selected the wrong nominal type".into(),
+            ));
+        }
+        let fields = self.materialize_host_record_values(&schema, values)?;
+        let roots = fields
+            .iter()
+            .filter_map(|(_, value)| value.clone())
+            .collect::<Vec<_>>();
+        self.allocate(descriptor, HeapObject::Record { nominal, fields }, &roots)
+    }
+
+    fn materialize_host_variant(
+        &mut self,
+        descriptor: BytecodeTypeId,
+        nominal: crate::bytecode::BytecodeNominalId,
+        name: &str,
+        variant: u32,
+        values: Vec<RuntimeValue>,
+    ) -> Result<Value, VmError> {
+        self.validate_host_nominal_name(nominal, name)?;
+        let trace = self.heap.type_descriptor(descriptor)?.clone();
+        let BytecodeTraceDescriptor::Variant {
+            nominal: Some(traced_nominal),
+            variants,
+            ..
+        } = trace
+        else {
+            return Err(VmError::Host(
+                "bootstrap host variant does not match its verified descriptor".into(),
+            ));
+        };
+        if traced_nominal != nominal {
+            return Err(VmError::Host(
+                "bootstrap host variant selected the wrong nominal type".into(),
+            ));
+        }
+        let schema = variants.get(variant as usize).ok_or_else(|| {
+            VmError::Host("bootstrap host selected an unknown enum variant ordinal".into())
+        })?;
+        let payload = match &schema.payload {
+            BytecodeVariantPayload::Unit if values.is_empty() => AggregatePayload::Unit,
+            BytecodeVariantPayload::Tuple(types) if types.len() == values.len() => {
+                AggregatePayload::Tuple(
+                    self.materialize_host_values(types, values)?
+                        .into_iter()
+                        .map(Some)
+                        .collect(),
+                )
+            }
+            BytecodeVariantPayload::Record(fields) if fields.len() == values.len() => {
+                AggregatePayload::Record(self.materialize_host_record_values(fields, values)?)
+            }
+            _ => {
+                return Err(VmError::Host(
+                    "bootstrap host variant payload has the wrong arity".into(),
+                ));
+            }
+        };
+        let mut roots = Vec::new();
+        payload.trace_values(&mut roots);
+        self.allocate(
+            descriptor,
+            HeapObject::Variant {
+                variant: schema.member,
+                payload,
+            },
+            &roots,
+        )
+    }
+
+    fn materialize_host_record_values(
+        &mut self,
+        schema: &[crate::bytecode::BytecodeField],
+        values: Vec<RuntimeValue>,
+    ) -> Result<Vec<(u32, Option<Value>)>, VmError> {
+        if schema.len() != values.len() {
+            return Err(VmError::Host(
+                "bootstrap host record values do not match its verified descriptor".into(),
+            ));
+        }
+        self.with_temporary_roots(|engine| {
+            let mut materialized = Vec::with_capacity(schema.len());
+            for (field, value) in schema.iter().zip(values) {
+                let value = engine.materialize_host_value(field.ty, value)?;
+                engine.retain_temporary(&value);
+                materialized.push((field.member, Some(value)));
+            }
+            Ok(materialized)
+        })
+    }
+
+    fn validate_host_nominal_name(
+        &self,
+        nominal: crate::bytecode::BytecodeNominalId,
+        name: &str,
+    ) -> Result<(), VmError> {
+        let expected = self.nominal_names.get(nominal.index() as usize);
+        if expected.is_some_and(|expected| expected == name) {
+            Ok(())
+        } else {
+            Err(VmError::Host(format!(
+                "bootstrap host value names nominal `{name}`, expected `{}`",
+                expected.map_or("<missing>", String::as_str)
+            )))
         }
     }
 
@@ -12187,7 +12372,7 @@ mod tests {
 
     #[test]
     fn host_materialization_accepts_every_supported_shape_and_rejects_drift() {
-        let mut program = root_pressure_program();
+        let mut program = terminal_fallback_program();
         let append = |program: &mut BytecodeProgram, name: &str, kind: BytecodeTypeKind| {
             let id = BytecodeTypeId::new(program.types.len() as u32);
             program.types.push(BytecodeType {
@@ -12329,6 +12514,92 @@ mod tests {
             tuple
         );
 
+        for (ty, runtime, expected) in [
+            (
+                BytecodeTypeId::new(13),
+                RuntimeValue::Newtype {
+                    name: "TextBox".into(),
+                    value: Box::new(RuntimeValue::String("boxed".into())),
+                },
+                RuntimeValue::Newtype {
+                    name: "TextBox".into(),
+                    value: Box::new(RuntimeValue::String("boxed".into())),
+                },
+            ),
+            (
+                BytecodeTypeId::new(14),
+                RuntimeValue::Record {
+                    name: "Message".into(),
+                    values: vec![
+                        RuntimeValue::String("message".into()),
+                        RuntimeValue::Array(vec![RuntimeValue::String("tag".into())]),
+                    ],
+                },
+                RuntimeValue::Record {
+                    name: "Message".into(),
+                    values: vec![
+                        RuntimeValue::String("message".into()),
+                        RuntimeValue::Array(vec![RuntimeValue::String("tag".into())]),
+                    ],
+                },
+            ),
+            (
+                BytecodeTypeId::new(15),
+                RuntimeValue::Variant {
+                    name: "Event".into(),
+                    variant: 0,
+                    values: Vec::new(),
+                },
+                RuntimeValue::Variant {
+                    name: "Event".into(),
+                    variant: 0,
+                    values: Vec::new(),
+                },
+            ),
+            (
+                BytecodeTypeId::new(15),
+                RuntimeValue::Variant {
+                    name: "Event".into(),
+                    variant: 1,
+                    values: vec![RuntimeValue::String("tuple".into())],
+                },
+                RuntimeValue::Variant {
+                    name: "Event".into(),
+                    variant: 1,
+                    values: vec![RuntimeValue::String("tuple".into())],
+                },
+            ),
+            (
+                BytecodeTypeId::new(15),
+                RuntimeValue::Variant {
+                    name: "Event".into(),
+                    variant: 2,
+                    values: vec![RuntimeValue::Array(vec![RuntimeValue::String(
+                        "record".into(),
+                    )])],
+                },
+                RuntimeValue::Variant {
+                    name: "Event".into(),
+                    variant: 2,
+                    values: vec![RuntimeValue::Array(vec![RuntimeValue::String(
+                        "record".into(),
+                    )])],
+                },
+            ),
+        ] {
+            let value = engine.materialize_host_value(ty, runtime).unwrap();
+            assert_eq!(
+                snapshot_value(
+                    &value,
+                    &engine.heap,
+                    &engine.callable_names,
+                    &engine.nominal_names,
+                )
+                .unwrap(),
+                expected
+            );
+        }
+
         for (runtime, expected) in [
             (RuntimeValue::OptionNone, RuntimeValue::OptionNone),
             (
@@ -12409,6 +12680,61 @@ mod tests {
             engine.materialize_host_value(scalars, RuntimeValue::Tuple(vec![RuntimeValue::Unit]),),
             Err(VmError::Host(_))
         ));
+        for (ty, runtime) in [
+            (
+                BytecodeTypeId::new(13),
+                RuntimeValue::Newtype {
+                    name: "Wrong".into(),
+                    value: Box::new(RuntimeValue::String("value".into())),
+                },
+            ),
+            (
+                BytecodeTypeId::new(14),
+                RuntimeValue::Record {
+                    name: "Wrong".into(),
+                    values: vec![
+                        RuntimeValue::String("value".into()),
+                        RuntimeValue::Array(Vec::new()),
+                    ],
+                },
+            ),
+            (
+                BytecodeTypeId::new(14),
+                RuntimeValue::Record {
+                    name: "Message".into(),
+                    values: vec![RuntimeValue::String("missing".into())],
+                },
+            ),
+            (
+                BytecodeTypeId::new(15),
+                RuntimeValue::Variant {
+                    name: "Event".into(),
+                    variant: 99,
+                    values: Vec::new(),
+                },
+            ),
+            (
+                BytecodeTypeId::new(15),
+                RuntimeValue::Variant {
+                    name: "Event".into(),
+                    variant: 1,
+                    values: Vec::new(),
+                },
+            ),
+            (
+                BytecodeTypeId::new(15),
+                RuntimeValue::Variant {
+                    name: "Event".into(),
+                    variant: 1,
+                    values: vec![RuntimeValue::Integer(1)],
+                },
+            ),
+        ] {
+            assert!(matches!(
+                engine.materialize_host_value(ty, runtime),
+                Err(VmError::Host(_))
+            ));
+        }
         assert!(matches!(
             engine.value_tag(&Value::Integer(1)),
             Err(VmError::Invariant(_))
@@ -13714,15 +14040,12 @@ mod tests {
                 ),
                 RuntimeValue::Record {
                     name: "Message".into(),
-                    fields: vec![
-                        (0, RuntimeValue::String("message".into())),
-                        (
-                            1,
-                            RuntimeValue::Array(vec![
-                                RuntimeValue::String("a".into()),
-                                RuntimeValue::String("b".into()),
-                            ]),
-                        ),
+                    values: vec![
+                        RuntimeValue::String("message".into()),
+                        RuntimeValue::Array(vec![
+                            RuntimeValue::String("a".into()),
+                            RuntimeValue::String("b".into()),
+                        ]),
                     ],
                 },
             ),
@@ -13735,8 +14058,9 @@ mod tests {
                     },
                 ),
                 RuntimeValue::Variant {
+                    name: "Event".into(),
                     variant: 1,
-                    payload: vec![(None, RuntimeValue::String("tuple".into()))],
+                    values: vec![RuntimeValue::String("tuple".into())],
                 },
             ),
             (
@@ -13751,11 +14075,11 @@ mod tests {
                     },
                 ),
                 RuntimeValue::Variant {
+                    name: "Event".into(),
                     variant: 2,
-                    payload: vec![(
-                        Some(0),
-                        RuntimeValue::Array(vec![RuntimeValue::String("record".into())]),
-                    )],
+                    values: vec![RuntimeValue::Array(vec![RuntimeValue::String(
+                        "record".into(),
+                    )])],
                 },
             ),
             (

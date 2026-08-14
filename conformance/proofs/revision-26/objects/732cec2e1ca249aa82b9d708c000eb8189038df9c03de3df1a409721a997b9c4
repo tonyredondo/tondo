@@ -1,0 +1,3160 @@
+use std::collections::BTreeMap;
+
+use serde_json::{Map, Value, json};
+use tondo_compiler::driver::{CompilationStatus, execute};
+use tondo_compiler::hir::{
+    HirCallArgumentTarget, HirCallProtocol, HirCallableId, HirCapability, HirCapabilityStatus,
+    HirClosure, HirClosureId, HirExpression, HirExpressionId, HirExpressionKind, HirForKind,
+    HirIndexAccess, HirIterationProtocol, HirMatchMode, HirNominalShape, HirPatternId,
+    HirPatternKind, HirTerminalOperation, HirTerminalStatus, HirTerminalUnwindAction,
+    HirTraitConstructor, HirTraitReference, HirTypeDeclarationKind, HirValueCategory,
+};
+use tondo_compiler::mir::{
+    MirAwaitable, MirFunction, MirFunctionId, MirLoanId, MirLoanKind, MirLocalId, MirLocalKind,
+    MirOperand, MirOperandKind, MirOperation, MirOperationKind, MirPlace, MirProjectionKind,
+    MirRvalue, MirRvalueKind, MirStatementKind, MirTerminatorKind, lower_to_mir,
+};
+use tondo_compiler::resolve::{
+    LocalId, LocalKind, MemberId, MemberKind, MemberOwner, ResolvedName, SymbolId, Visibility,
+};
+use tondo_compiler::semantic::{SemanticEntity, SemanticTypeMembers, SemanticVariantPayload};
+use tondo_compiler::source::{FileId, Span, TextRange};
+use tondo_compiler::types::{CursorMode, ParameterMode, TypeId, TypeKind};
+use tondo_conformance::manifest::SemanticQuery;
+use tondo_conformance::protocol::{
+    AdapterRequest, CompilationState, Observation, WireOperation, WireSemanticAction, WireSource,
+};
+
+use crate::{normative_diagnostics, source_files_by_path, source_request};
+
+type SourceMap<'a> = BTreeMap<&'a str, &'a WireSource>;
+
+struct QueryContext<'a> {
+    request: &'a AdapterRequest,
+    action: &'a WireSemanticAction,
+    model: &'a tondo_compiler::semantic::SemanticModel,
+    by_path: SourceMap<'a>,
+}
+
+pub(crate) fn observe_semantic(
+    request: &AdapterRequest,
+    action: &WireSemanticAction,
+) -> Result<Observation, String> {
+    let output =
+        execute(source_request(request, &action.source)?).map_err(|error| error.to_string())?;
+    let compilation = match output.status() {
+        CompilationStatus::Success => CompilationState::Success,
+        CompilationStatus::Rejected => CompilationState::Rejected,
+    };
+    let model = output
+        .semantic_model()
+        .ok_or_else(|| "semantic query case did not reach a semantic snapshot".to_owned())?;
+    let context = QueryContext {
+        request,
+        action,
+        model,
+        by_path: source_files_by_path(&action.source),
+    };
+    let mut results = Vec::with_capacity(action.queries.len());
+    for query in &action.queries {
+        results.push(run_query(&context, query)?);
+    }
+    let diagnostics = normative_diagnostics(output.diagnostics())?;
+    Ok(Observation {
+        compilation,
+        exit_code: i32::from(output.exit_code()),
+        diagnostics,
+        stdout_hex: String::new(),
+        stderr_hex: String::new(),
+        formatted_hex: None,
+        data: json!({
+            "schema": "tondo-semantic-observation-0.1/1",
+            "expression_check_complete": model.expression_check_complete(),
+            "queries": results
+        }),
+    })
+}
+
+fn run_query(context: &QueryContext<'_>, query: &SemanticQuery) -> Result<Value, String> {
+    let model = context.model;
+    match query {
+        SemanticQuery::FormattedAst => formatted_ast(context),
+        SemanticQuery::ExpressionType { file, start, end } => {
+            let (file_id, range) = locate(model, &context.by_path, file, *start, *end)?;
+            let ty = model.expression_type_at(file_id, range);
+            Ok(json!({
+                "query": "expression-type",
+                "type": ty.map(|ty| type_facts_json(model, ty)).transpose()?
+            }))
+        }
+        SemanticQuery::Entities { file, start, end } => {
+            let (file_id, range) = locate(model, &context.by_path, file, *start, *end)?;
+            let entities = model
+                .entities_at(file_id, range)
+                .iter()
+                .map(|entity| entity_json(model, entity))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(json!({"query": "entities", "entities": entities}))
+        }
+        SemanticQuery::References { file, start, end } => {
+            let (file_id, range) = locate(model, &context.by_path, file, *start, *end)?;
+            let entity = model
+                .entities_at(file_id, range)
+                .into_iter()
+                .next()
+                .ok_or_else(|| "reference query selected no entity".to_owned())?;
+            let references = model
+                .references(&entity)
+                .iter()
+                .map(|span| span_json(model.sources(), *span))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(json!({
+                "query": "references",
+                "entity_id": entity_id(model, &entity)?,
+                "references": references
+            }))
+        }
+        SemanticQuery::Signature { file, start, end } => {
+            let (file_id, range) = locate(model, &context.by_path, file, *start, *end)?;
+            let entity = model
+                .entities_at(file_id, range)
+                .into_iter()
+                .next()
+                .ok_or_else(|| "signature query selected no entity".to_owned())?;
+            let signature = model
+                .signature(&entity)
+                .map(|signature| signature_json(model, signature))
+                .transpose()?;
+            Ok(json!({
+                "query": "signature",
+                "entity_id": entity_id(model, &entity)?,
+                "signature": signature
+            }))
+        }
+        SemanticQuery::TypeMembers { file, start, end } => {
+            let (file_id, range) = locate(model, &context.by_path, file, *start, *end)?;
+            let ty = selected_type(model, file_id, range);
+            let members = ty
+                .map(|ty| type_members_json(model, ty))
+                .transpose()?
+                .flatten();
+            Ok(json!({
+                "query": "type-members",
+                "type": ty.map(|ty| canonical_type(model, ty)).transpose()?,
+                "members": members
+            }))
+        }
+        SemanticQuery::ClosedCallErrors { file, start, end } => {
+            let (file_id, range) = locate(model, &context.by_path, file, *start, *end)?;
+            let errors = model
+                .closed_call_errors_at(file_id, range)
+                .map_err(|error| error.to_string())?
+                .map(|errors| {
+                    errors
+                        .into_iter()
+                        .map(|ty| canonical_type(model, ty))
+                        .collect::<Result<Vec<_>, _>>()
+                })
+                .transpose()?;
+            Ok(json!({"query": "closed-call-errors", "errors": errors}))
+        }
+        SemanticQuery::TypeFacts { file, start, end } => {
+            let (file_id, range) = locate(model, &context.by_path, file, *start, *end)?;
+            let facts = selected_type(model, file_id, range)
+                .map(|ty| type_facts_json(model, ty))
+                .transpose()?;
+            Ok(json!({"query": "type-facts", "facts": facts}))
+        }
+        SemanticQuery::ExpressionFacts { file, start, end } => {
+            let (file_id, range) = locate(model, &context.by_path, file, *start, *end)?;
+            let facts = model
+                .expression_at(file_id, range)
+                .map(|(id, expression)| expression_json(model, id, expression))
+                .transpose()?;
+            Ok(json!({"query": "expression-facts", "facts": facts}))
+        }
+        SemanticQuery::SemanticSnapshot { file } => semantic_snapshot(context, file),
+    }
+}
+
+fn formatted_ast(context: &QueryContext<'_>) -> Result<Value, String> {
+    let mut action = context.action.source.clone();
+    action.operation = WireOperation::Format;
+    let output =
+        execute(source_request(context.request, &action)?).map_err(|error| error.to_string())?;
+    if output.status() != CompilationStatus::Success || !output.diagnostics().is_empty() {
+        return Err("formatted AST query requires syntactically valid source".into());
+    }
+    let bytes = output.stdout();
+    Ok(json!({
+        "query": "formatted-ast",
+        "encoding": "utf-8",
+        "formatted_hex": tondo_conformance::encode_hex(bytes),
+        "sha256": tondo_conformance::sha256(bytes)
+    }))
+}
+
+fn semantic_snapshot(context: &QueryContext<'_>, path: &str) -> Result<Value, String> {
+    let (file, _) = locate(context.model, &context.by_path, path, 0, 0)?;
+    let model = context.model;
+    let hir = model
+        .hir()
+        .ok_or_else(|| "semantic snapshot query requires typed HIR".to_owned())?;
+
+    let mut declarations = Vec::new();
+    for symbol in model
+        .resolved()
+        .symbols()
+        .filter(|symbol| symbol.span().file() == file)
+    {
+        declarations.push(entity_json(
+            model,
+            &SemanticEntity::Name(ResolvedName::Symbol(symbol.id())),
+        )?);
+    }
+    for member in model
+        .resolved()
+        .members()
+        .filter(|member| member.span().file() == file)
+    {
+        declarations.push(entity_json(model, &SemanticEntity::Member(member.id()))?);
+    }
+    for local in model
+        .resolved()
+        .locals()
+        .filter(|local| local.span().file() == file)
+    {
+        declarations.push(entity_json(
+            model,
+            &SemanticEntity::Name(ResolvedName::Local(local.id())),
+        )?);
+    }
+    sort_values(&mut declarations, &["declaration", "id"]);
+
+    let mut references = model
+        .resolved()
+        .references()
+        .filter(|reference| reference.file() == file)
+        .map(|reference| {
+            let entity = SemanticEntity::from(reference.entity());
+            Ok(json!({
+                "entity_id": entity_id(model, &entity)?,
+                "span": span_json(
+                    model.sources(),
+                    model
+                        .sources()
+                        .span(reference.file(), reference.range())
+                        .map_err(|error| error.to_string())?
+                )?
+            }))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    references.extend(
+        hir.member_references()
+            .filter(|reference| reference.span().file() == file)
+            .map(|reference| {
+                Ok(json!({
+                    "entity_id": member_id(model, reference.member())?,
+                    "span": span_json(model.sources(), reference.span())?
+                }))
+            })
+            .collect::<Result<Vec<_>, String>>()?,
+    );
+    sort_values(&mut references, &["span", "entity_id"]);
+
+    let mut expressions = hir
+        .expressions_with_ids()
+        .filter(|(_, expression)| expression.span().file() == file)
+        .map(|(id, expression)| expression_json(model, id, expression))
+        .collect::<Result<Vec<_>, _>>()?;
+    sort_values(&mut expressions, &["span", "id"]);
+
+    let mut closures = hir
+        .closures()
+        .filter(|closure| closure.span().file() == file)
+        .map(|closure| closure_json(model, closure))
+        .collect::<Result<Vec<_>, _>>()?;
+    sort_values(&mut closures, &["span", "id"]);
+    let mut opaque_results = hir
+        .callables()
+        .filter_map(|callable| callable.opaque_result().map(|opaque| (callable, opaque)))
+        .filter(|(_, opaque)| opaque.span().file() == file)
+        .map(|(callable, opaque)| {
+            Ok(json!({
+                "id": stable_id("opaque", [opaque.identity().canonical_name()]),
+                "callable_id": callable_id(model, callable.id())?,
+                "identity": opaque.identity().canonical_name(),
+                "span": span_json(model.sources(), opaque.span())?,
+                "bounds": bounds_json(model, opaque.bounds())?
+            }))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    sort_values(&mut opaque_results, &["span", "id"]);
+
+    let public_types = public_type_contracts(model, file)?;
+    let iterators = iterator_facts(model, file)?;
+    let unsafe_facts = unsafe_facts(model, file)?;
+    let borrow_bindings = borrow_binding_facts(model, file)?;
+    let ownership = mir_facts(model, file)?;
+
+    Ok(json!({
+        "query": "semantic-snapshot",
+        "schema": "tondo-semantic-snapshot-0.1/1",
+        "file": path,
+        "declarations": declarations,
+        "references": references,
+        "expressions": expressions,
+        "closures": closures,
+        "opaque_results": opaque_results,
+        "public_types": public_types,
+        "iterators": iterators,
+        "borrow_bindings": borrow_bindings,
+        "ownership": ownership,
+        "unsafe": unsafe_facts
+    }))
+}
+
+fn selected_type(
+    model: &tondo_compiler::semantic::SemanticModel,
+    file: FileId,
+    range: TextRange,
+) -> Option<TypeId> {
+    model
+        .type_annotation_at(file, range)
+        .or_else(|| model.expression_type_at(file, range))
+}
+
+fn type_facts_json(
+    model: &tondo_compiler::semantic::SemanticModel,
+    ty: TypeId,
+) -> Result<Value, String> {
+    let hir = model
+        .hir()
+        .ok_or_else(|| "type facts require typed HIR".to_owned())?;
+    let mut capabilities = Map::new();
+    for capability in HirCapability::ALL {
+        capabilities.insert(
+            capability.as_str().to_owned(),
+            hir.capability_status(ty, capability)
+                .map(capability_status_name)
+                .map(Value::from)
+                .unwrap_or(Value::Null),
+        );
+    }
+    let terminal = hir
+        .terminal_status(ty)
+        .map(terminal_status_name)
+        .map(str::to_owned);
+    let terminal_contract = hir
+        .direct_terminal_contract(ty)
+        .map_err(|error| error.to_string())?
+        .map(|contract| {
+            json!({
+                "operation": terminal_operation_name(contract.operation()),
+                "unwind": terminal_unwind_name(contract.unwind()),
+                "unwind_may_suspend": contract.unwind_may_suspend()
+            })
+        });
+    Ok(json!({
+        "canonical": canonical_type(model, ty)?,
+        "shape": type_shape_json(model, ty)?,
+        "capabilities": capabilities,
+        "terminal": {
+            "status": terminal,
+            "origin": terminal_origin_json(model, ty)?,
+            "direct_contract": terminal_contract
+        }
+    }))
+}
+
+fn type_shape_json(
+    model: &tondo_compiler::semantic::SemanticModel,
+    ty: TypeId,
+) -> Result<Value, String> {
+    let interner = model
+        .interner()
+        .ok_or_else(|| "type shape requires typed HIR".to_owned())?;
+    let recurse = |ty| type_shape_json(model, ty);
+    Ok(
+        match interner.kind(ty).map_err(|error| error.to_string())? {
+            TypeKind::Error => json!({"kind": "error"}),
+            TypeKind::Scalar(scalar) => json!({"kind": "scalar", "name": scalar.as_str()}),
+            TypeKind::Nominal {
+                identity,
+                arguments,
+            } => json!({
+                "kind": "nominal",
+                "identity": identity.canonical_name(),
+                "arguments": arguments.iter().copied().map(recurse).collect::<Result<Vec<_>, _>>()?
+            }),
+            TypeKind::Tuple(items) => json!({
+                "kind": "tuple",
+                "items": items.iter().copied().map(recurse).collect::<Result<Vec<_>, _>>()?
+            }),
+            TypeKind::Function(function) => json!({
+                "kind": "function",
+                "async": function.is_async(),
+                "unsafe": function.is_unsafe(),
+                "parameters": function.parameters().iter().map(|parameter| {
+                    Ok(json!({
+                        "mode": parameter_mode_name(parameter.mode()),
+                        "type": recurse(parameter.ty())?
+                    }))
+                }).collect::<Result<Vec<_>, String>>()?,
+                "variadic": function.variadic().map(recurse).transpose()?,
+                "outcome": recurse(function.outcome())?
+            }),
+            TypeKind::Option(item) => json!({
+                "kind": "option",
+                "expanded_from": "T?",
+                "item": recurse(*item)?
+            }),
+            TypeKind::Result { success, error } => json!({
+                "kind": "result",
+                "expanded_from": "T ! E",
+                "success": recurse(*success)?,
+                "error": recurse(*error)?
+            }),
+            TypeKind::Union(members) => json!({
+                "kind": "union",
+                "members": members.iter().copied().map(recurse).collect::<Result<Vec<_>, _>>()?
+            }),
+            TypeKind::Intrinsic {
+                constructor,
+                arguments,
+            } => json!({
+                "kind": "intrinsic",
+                "name": constructor.as_str(),
+                "arguments": arguments.iter().copied().map(recurse).collect::<Result<Vec<_>, _>>()?
+            }),
+            TypeKind::GenericParameter(position) => {
+                json!({"kind": "generic-parameter", "position": position})
+            }
+            TypeKind::Inference(_) => json!({"kind": "inference"}),
+            TypeKind::OpaqueResult {
+                identity,
+                arguments,
+            } => json!({
+                "kind": "opaque-result",
+                "identity": identity.canonical_name(),
+                "arguments": arguments.iter().copied().map(recurse).collect::<Result<Vec<_>, _>>()?
+            }),
+            TypeKind::Generated { arguments, .. } => json!({
+                "kind": "generated",
+                "canonical_identity": canonical_type(model, ty)?,
+                "arguments": arguments.iter().copied().map(recurse).collect::<Result<Vec<_>, _>>()?
+            }),
+            TypeKind::Cursor { mode, collection } => json!({
+                "kind": "cursor",
+                "mode": cursor_mode_name(*mode),
+                "collection": recurse(*collection)?
+            }),
+        },
+    )
+}
+
+fn terminal_origin_json(
+    model: &tondo_compiler::semantic::SemanticModel,
+    ty: TypeId,
+) -> Result<Value, String> {
+    let hir = model
+        .hir()
+        .ok_or_else(|| "terminal origin requires typed HIR".to_owned())?;
+    let Some(status) = hir.terminal_status(ty) else {
+        return Ok(Value::Null);
+    };
+    if status == HirTerminalStatus::Absent {
+        return Ok(Value::Null);
+    }
+    if let Some(contract) = hir
+        .direct_terminal_contract(ty)
+        .map_err(|error| error.to_string())?
+    {
+        return Ok(json!({
+            "kind": "direct",
+            "operation": terminal_operation_name(contract.operation())
+        }));
+    }
+    let interner = hir.interner();
+    Ok(
+        match interner.kind(ty).map_err(|error| error.to_string())? {
+            TypeKind::Nominal { identity, .. } => {
+                json!({"kind": "structural", "through": identity.canonical_name()})
+            }
+            TypeKind::Tuple(_) => json!({"kind": "structural", "through": "tuple"}),
+            TypeKind::Option(_) => json!({"kind": "structural", "through": "option"}),
+            TypeKind::Result { .. } => json!({"kind": "structural", "through": "result"}),
+            TypeKind::Union(_) => json!({"kind": "structural", "through": "union"}),
+            TypeKind::Intrinsic { constructor, .. } => {
+                json!({"kind": "structural", "through": constructor.as_str()})
+            }
+            TypeKind::Generated { .. } => {
+                json!({"kind": "structural", "through": "closure-environment"})
+            }
+            TypeKind::Cursor { .. } => json!({"kind": "structural", "through": "cursor"}),
+            TypeKind::GenericParameter(_)
+            | TypeKind::Inference(_)
+            | TypeKind::OpaqueResult { .. } => {
+                json!({"kind": "potential", "through": canonical_type(model, ty)?})
+            }
+            TypeKind::Error | TypeKind::Scalar(_) | TypeKind::Function(_) => Value::Null,
+        },
+    )
+}
+
+fn expression_json(
+    model: &tondo_compiler::semantic::SemanticModel,
+    id: HirExpressionId,
+    expression: &HirExpression,
+) -> Result<Value, String> {
+    let kind = expression_kind_name(expression.kind());
+    let mut semantic = Map::new();
+    match expression.kind() {
+        HirExpressionKind::Map {
+            reject_dynamic_duplicates,
+            ..
+        } => {
+            semantic.insert(
+                "dynamic_duplicate_check".into(),
+                json!({
+                    "status": if *reject_dynamic_duplicates { "required" } else { "elided" },
+                    "proof": if *reject_dynamic_duplicates {
+                        Value::Null
+                    } else {
+                        Value::from("value-type-satisfies-Discard")
+                    }
+                }),
+            );
+        }
+        HirExpressionKind::Call {
+            arguments,
+            protocol,
+            unsafe_call,
+            ..
+        }
+        | HirExpressionKind::AsyncCall {
+            arguments,
+            protocol,
+            unsafe_call,
+            ..
+        } => {
+            semantic.insert(
+                "call_protocol".into(),
+                Value::from(call_protocol_name(*protocol)),
+            );
+            semantic.insert("unsafe_operation".into(), Value::from(*unsafe_call));
+            if arguments
+                .iter()
+                .any(|argument| argument.target() == HirCallArgumentTarget::Receiver)
+            {
+                semantic.insert(
+                    "sugar".into(),
+                    json!({"kind": "dot-call", "expanded": "receiver-first-call"}),
+                );
+            }
+        }
+        HirExpressionKind::Match { mode, arms, .. } => {
+            let mut forcing_patterns = Vec::new();
+            for arm in arms {
+                if pattern_forces_mode(model, arm.pattern(), *mode)?.is_some() {
+                    forcing_patterns.push(pattern_id(model, arm.pattern())?);
+                }
+            }
+            semantic.insert("ownership_mode".into(), Value::from(match_mode_name(*mode)));
+            semantic.insert("forced_by".into(), json!(forcing_patterns));
+        }
+        HirExpressionKind::PropagateOption { .. } => {
+            semantic.insert(
+                "sugar".into(),
+                json!({"kind": "question", "expanded": "option-early-return"}),
+            );
+        }
+        HirExpressionKind::PropagateResult { .. } => {
+            semantic.insert(
+                "sugar".into(),
+                json!({"kind": "question", "expanded": "result-early-return"}),
+            );
+        }
+        HirExpressionKind::BootstrapHostCall { function, .. }
+            if function.name().starts_with("intrinsic.") =>
+        {
+            semantic.insert("unsafe_operation".into(), Value::from(true));
+            semantic.insert("required_operation".into(), Value::from(function.name()));
+        }
+        _ => {}
+    }
+    Ok(json!({
+        "id": expression_id(model, id)?,
+        "span": span_json(model.sources(), expression.span())?,
+        "kind": kind,
+        "category": match expression.category() {
+            HirValueCategory::Value => "value",
+            HirValueCategory::Place => "place"
+        },
+        "type": type_facts_json(model, expression.ty())?,
+        "semantic": semantic
+    }))
+}
+
+fn closure_json(
+    model: &tondo_compiler::semantic::SemanticModel,
+    closure: &HirClosure,
+) -> Result<Value, String> {
+    let captures = closure
+        .captures()
+        .iter()
+        .map(|capture| {
+            Ok(json!({
+                "local_id": local_id(model, capture.local())?,
+                "type": type_facts_json(model, capture.ty())?,
+                "mutable": capture.is_mutable()
+            }))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let protocols = closure.protocols();
+    Ok(json!({
+        "id": closure_id(model, closure.id())?,
+        "span": span_json(model.sources(), closure.span())?,
+        "signature": canonical_type(model, closure.function_type())?,
+        "async": closure.is_async(),
+        "unsafe": closure.is_unsafe(),
+        "protocols": {
+            "Call": protocols.call(),
+            "CallMut": protocols.call_mut(),
+            "CallOnce": protocols.call_once()
+        },
+        "environment": {
+            "type": type_facts_json(model, closure.ty())?,
+            "captures": captures
+        }
+    }))
+}
+
+fn type_members_json(
+    model: &tondo_compiler::semantic::SemanticModel,
+    ty: TypeId,
+) -> Result<Option<Value>, String> {
+    let Some(members) = model.type_members(ty).map_err(|error| error.to_string())? else {
+        return Ok(None);
+    };
+    Ok(Some(match members {
+        SemanticTypeMembers::Union(members) => json!({
+            "kind": "union",
+            "members": members
+                .into_iter()
+                .map(|member| type_facts_json(model, member))
+                .collect::<Result<Vec<_>, _>>()?
+        }),
+        SemanticTypeMembers::Enum {
+            arguments,
+            variants,
+        } => json!({
+            "kind": "enum",
+            "arguments": arguments
+                .into_iter()
+                .map(|argument| canonical_type(model, argument))
+                .collect::<Result<Vec<_>, _>>()?,
+            "variants": variants
+                .iter()
+                .map(|variant| {
+                    let payload = match variant.payload() {
+                        SemanticVariantPayload::Unit => json!({"kind": "unit"}),
+                        SemanticVariantPayload::Tuple(types) => json!({
+                            "kind": "tuple",
+                            "types": types
+                                .iter()
+                                .copied()
+                                .map(|ty| canonical_type(model, ty))
+                                .collect::<Result<Vec<_>, _>>()?
+                        }),
+                        SemanticVariantPayload::Record(fields) => json!({
+                            "kind": "record",
+                            "fields": fields
+                                .iter()
+                                .map(|field| {
+                                    Ok(json!({
+                                        "member_id": member_id(model, field.member())?,
+                                        "type": canonical_type(model, field.ty())?
+                                    }))
+                                })
+                                .collect::<Result<Vec<_>, String>>()?
+                        })
+                    };
+                    Ok(json!({
+                        "id": member_id(model, variant.member())?,
+                        "payload": payload
+                    }))
+                })
+                .collect::<Result<Vec<_>, String>>()?
+        }),
+    }))
+}
+
+fn signature_json(
+    model: &tondo_compiler::semantic::SemanticModel,
+    signature: &tondo_compiler::hir::HirCallableSignature,
+) -> Result<Value, String> {
+    Ok(json!({
+        "id": callable_id(model, signature.id())?,
+        "span": span_json(model.sources(), signature.span())?,
+        "function_type": canonical_type(model, signature.function_type())?,
+        "outcome": canonical_type(model, signature.outcome())?,
+        "generic_arity": signature.generic_arity(),
+        "generics": signature.generics().iter().map(|parameter| {
+            Ok(json!({
+                "local_id": local_id(model, parameter.local())?,
+                "position": parameter.position(),
+                "bounds": bounds_json(model, parameter.bounds())?
+            }))
+        }).collect::<Result<Vec<_>, String>>()?,
+        "parameters": signature.parameters().iter().map(|parameter| {
+            Ok(json!({
+                "span": span_json(model.sources(), parameter.span())?,
+                "local_id": parameter.local().map(|local| local_id(model, local)).transpose()?,
+                "mode": parameter_mode_name(parameter.mode()),
+                "type": canonical_type(model, parameter.ty())?,
+                "variadic_element": parameter
+                    .variadic_element()
+                    .map(|ty| canonical_type(model, ty))
+                    .transpose()?,
+                "receiver": parameter.is_receiver(),
+                "discard": parameter.is_discard()
+            }))
+        }).collect::<Result<Vec<_>, String>>()?,
+        "opaque_result": signature.opaque_result().map(|opaque| -> Result<Value, String> {
+            Ok(json!({
+                "id": stable_id("opaque", [opaque.identity().canonical_name()]),
+                "identity": opaque.identity().canonical_name(),
+                "bounds": bounds_json(model, opaque.bounds())?
+            }))
+        }).transpose()?
+    }))
+}
+
+fn public_type_contracts(
+    model: &tondo_compiler::semantic::SemanticModel,
+    file: FileId,
+) -> Result<Vec<Value>, String> {
+    let hir = model
+        .hir()
+        .ok_or_else(|| "public type contracts require typed HIR".to_owned())?;
+    let mut output = Vec::new();
+    for (symbol_id, declaration) in hir.declarations() {
+        let Some(symbol) = model.resolved().symbol(*symbol_id) else {
+            continue;
+        };
+        if symbol.span().file() != file || symbol.visibility() != Visibility::Public {
+            continue;
+        }
+        let HirTypeDeclarationKind::Nominal(definition) = declaration.kind() else {
+            continue;
+        };
+        let (shape, externally_constructible, public_members) = match definition.shape() {
+            HirNominalShape::Newtype { .. } => ("newtype", true, Vec::new()),
+            HirNominalShape::Enum { variants } => (
+                "enum",
+                true,
+                variants
+                    .iter()
+                    .map(|variant| member_id(model, variant.member()))
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
+            HirNominalShape::Record { fields } => {
+                let visible = fields
+                    .iter()
+                    .filter_map(|field| {
+                        model
+                            .resolved()
+                            .member(field.member())
+                            .filter(|member| member.visibility() == Visibility::Public)
+                    })
+                    .map(|member| member_id(model, member.id()))
+                    .collect::<Result<Vec<_>, _>>()?;
+                ("record", visible.len() == fields.len(), visible)
+            }
+        };
+        output.push(json!({
+            "id": symbol_id_json(model, symbol.id())?,
+            "identity": symbol.identity().canonical_name(),
+            "shape": shape,
+            "externally_constructible": externally_constructible,
+            "public_members": public_members,
+            "opaque_surface": {
+                "type": type_facts_json(model, definition.self_type())?,
+                "equality_and_hash_include_private_state": shape == "record"
+                    && !externally_constructible
+            }
+        }));
+    }
+    sort_values(&mut output, &["identity", "id"]);
+    Ok(output)
+}
+
+fn iterator_facts(
+    model: &tondo_compiler::semantic::SemanticModel,
+    file: FileId,
+) -> Result<Vec<Value>, String> {
+    let hir = model
+        .hir()
+        .ok_or_else(|| "iterator facts require typed HIR".to_owned())?;
+    let mut output = Vec::new();
+    for expression in hir
+        .expressions()
+        .filter(|expression| expression.span().file() == file)
+    {
+        let HirExpressionKind::Block { statements, .. } = expression.kind() else {
+            continue;
+        };
+        for statement in statements {
+            let tondo_compiler::hir::HirStatement::For {
+                span,
+                kind:
+                    HirForKind::Iterate {
+                        pattern,
+                        source,
+                        protocol,
+                    },
+                ..
+            } = statement
+            else {
+                continue;
+            };
+            let pattern = hir
+                .pattern(*pattern)
+                .ok_or_else(|| "iterator pattern is missing".to_owned())?;
+            let (protocol_name, cursor, function_type) = match protocol {
+                HirIterationProtocol::Intrinsic { cursor } => {
+                    ("intrinsic", Some(canonical_type(model, *cursor)?), None)
+                }
+                HirIterationProtocol::Trait {
+                    element: _,
+                    function_type,
+                    async_iteration,
+                } => (
+                    if *async_iteration {
+                        "AsyncIterator"
+                    } else {
+                        "Iterator"
+                    },
+                    None,
+                    Some(canonical_type(model, *function_type)?),
+                ),
+            };
+            output.push(json!({
+                "id": stable_id("iterator", [span_key(model.sources(), *span)?]),
+                "span": span_json(model.sources(), *span)?,
+                "source_span": span_json(
+                    model.sources(),
+                    hir.expression(*source)
+                        .ok_or_else(|| "iterator source is missing".to_owned())?
+                        .span()
+                )?,
+                "protocol": protocol_name,
+                "cursor": cursor,
+                "element": canonical_type(model, pattern.ty())?,
+                "next_function_type": function_type
+            }));
+        }
+    }
+    sort_values(&mut output, &["span", "id"]);
+    Ok(output)
+}
+
+fn borrow_binding_facts(
+    model: &tondo_compiler::semantic::SemanticModel,
+    file: FileId,
+) -> Result<Vec<Value>, String> {
+    let hir = model
+        .hir()
+        .ok_or_else(|| "borrow binding facts require typed HIR".to_owned())?;
+    let mut bindings = BTreeMap::new();
+
+    for callable in hir.callables() {
+        let Some(body) = hir
+            .body(callable.id())
+            .and_then(|body| hir.expression(body.root()))
+        else {
+            continue;
+        };
+        if body.span().file() != file {
+            continue;
+        }
+        for parameter in callable
+            .parameters()
+            .iter()
+            .filter(|parameter| parameter.mode() != ParameterMode::Value)
+        {
+            let Some(local) = parameter.local() else {
+                continue;
+            };
+            let id = local_id(model, local)?;
+            bindings.insert(
+                id.clone(),
+                json!({
+                    "id": id,
+                    "kind": "parameter",
+                    "mode": parameter_mode_name(parameter.mode()),
+                    "declaration": span_json(model.sources(), parameter.span())?,
+                    "origin": {"kind": "caller"},
+                    "region": span_json(model.sources(), body.span())?,
+                    "structured_end": {
+                        "kind": "callable-return",
+                        "span": span_json(model.sources(), body.span())?
+                    }
+                }),
+            );
+        }
+    }
+    for closure in hir
+        .closures()
+        .filter(|closure| closure.span().file() == file)
+    {
+        let body = hir
+            .expression(closure.body().root())
+            .ok_or_else(|| "closure body is missing".to_owned())?;
+        for parameter in closure
+            .parameters()
+            .iter()
+            .filter(|parameter| parameter.mode() != ParameterMode::Value)
+        {
+            let Some(local) = parameter.local() else {
+                continue;
+            };
+            let id = local_id(model, local)?;
+            bindings.insert(
+                id.clone(),
+                json!({
+                    "id": id,
+                    "kind": "closure-parameter",
+                    "mode": parameter_mode_name(parameter.mode()),
+                    "declaration": span_json(model.sources(), parameter.span())?,
+                    "origin": {"kind": "caller"},
+                    "region": span_json(model.sources(), body.span())?,
+                    "structured_end": {
+                        "kind": "closure-return",
+                        "span": span_json(model.sources(), body.span())?
+                    }
+                }),
+            );
+        }
+    }
+
+    for expression in hir
+        .expressions()
+        .filter(|expression| expression.span().file() == file)
+    {
+        if let HirExpressionKind::Block { statements, .. } = expression.kind() {
+            for statement in statements {
+                match statement {
+                    tondo_compiler::hir::HirStatement::Binding { pattern, value, .. } => {
+                        let origin = hir
+                            .expression(*value)
+                            .ok_or_else(|| "binding initializer is missing".to_owned())?
+                            .span();
+                        collect_borrow_pattern_facts(
+                            model,
+                            *pattern,
+                            "binding",
+                            origin,
+                            expression.span(),
+                            "lexical-block",
+                            &mut bindings,
+                        )?;
+                    }
+                    tondo_compiler::hir::HirStatement::For {
+                        kind:
+                            HirForKind::Iterate {
+                                pattern, source, ..
+                            },
+                        body,
+                        ..
+                    } => {
+                        let origin = hir
+                            .expression(*source)
+                            .ok_or_else(|| "iterator source is missing".to_owned())?
+                            .span();
+                        let region = hir
+                            .expression(*body)
+                            .ok_or_else(|| "iterator body is missing".to_owned())?
+                            .span();
+                        collect_borrow_pattern_facts(
+                            model,
+                            *pattern,
+                            "for-pattern",
+                            origin,
+                            region,
+                            "iteration",
+                            &mut bindings,
+                        )?;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if let HirExpressionKind::Match {
+            scrutinee, arms, ..
+        } = expression.kind()
+        {
+            let origin = hir
+                .expression(*scrutinee)
+                .ok_or_else(|| "match scrutinee is missing".to_owned())?
+                .span();
+            for arm in arms {
+                let region = hir
+                    .expression(arm.body())
+                    .ok_or_else(|| "match arm body is missing".to_owned())?
+                    .span();
+                collect_borrow_pattern_facts(
+                    model,
+                    arm.pattern(),
+                    "match-pattern",
+                    origin,
+                    region,
+                    "match-arm",
+                    &mut bindings,
+                )?;
+            }
+        }
+    }
+
+    let mut bindings = bindings.into_values().collect::<Vec<_>>();
+    sort_values(&mut bindings, &["declaration", "id"]);
+    Ok(bindings)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn collect_borrow_pattern_facts(
+    model: &tondo_compiler::semantic::SemanticModel,
+    root: HirPatternId,
+    kind: &str,
+    origin: Span,
+    region: Span,
+    end_kind: &str,
+    output: &mut BTreeMap<String, Value>,
+) -> Result<(), String> {
+    let hir = model
+        .hir()
+        .ok_or_else(|| "borrow pattern facts require typed HIR".to_owned())?;
+    let mut pending = vec![root];
+    while let Some(id) = pending.pop() {
+        let pattern = hir
+            .pattern(id)
+            .ok_or_else(|| "borrow pattern is missing".to_owned())?;
+        match pattern.kind() {
+            HirPatternKind::BorrowBinding { local, mode } => {
+                let id = local_id(model, *local)?;
+                output.insert(
+                    id.clone(),
+                    json!({
+                        "id": id,
+                        "kind": kind,
+                        "mode": parameter_mode_name(*mode),
+                        "declaration": span_json(model.sources(), pattern.span())?,
+                        "origin": {
+                            "kind": "expression",
+                            "span": span_json(model.sources(), origin)?
+                        },
+                        "region": span_json(model.sources(), region)?,
+                        "structured_end": {
+                            "kind": end_kind,
+                            "span": span_json(model.sources(), region)?
+                        }
+                    }),
+                );
+            }
+            HirPatternKind::Tuple(items) | HirPatternKind::Variant { fields: items, .. } => {
+                pending.extend(items.iter().copied());
+            }
+            HirPatternKind::OptionSome(item)
+            | HirPatternKind::ResultOk(item)
+            | HirPatternKind::ResultErr(item)
+            | HirPatternKind::Newtype { value: item, .. }
+            | HirPatternKind::UnionMember { pattern: item, .. } => pending.push(*item),
+            HirPatternKind::Record { fields, .. } => {
+                pending.extend(fields.iter().map(|field| field.pattern()));
+            }
+            HirPatternKind::Array { prefix, rest } => {
+                pending.extend(prefix.iter().copied());
+                pending.extend(*rest);
+            }
+            HirPatternKind::Recovery
+            | HirPatternKind::Wildcard
+            | HirPatternKind::Binding(_)
+            | HirPatternKind::Literal(_)
+            | HirPatternKind::NumericConversionError(_)
+            | HirPatternKind::OptionNone => {}
+        }
+    }
+    Ok(())
+}
+
+fn mir_facts(
+    model: &tondo_compiler::semantic::SemanticModel,
+    file: FileId,
+) -> Result<Value, String> {
+    let hir = model
+        .hir()
+        .ok_or_else(|| "ownership facts require typed HIR".to_owned())?;
+    let mir = lower_to_mir(model.resolved(), hir, Default::default())
+        .map_err(|error| format!("cannot derive ownership facts: {error}"))?;
+    let mut functions = mir
+        .functions()
+        .filter(|function| function.span().file() == file)
+        .map(|function| mir_function_json(model, function))
+        .collect::<Result<Vec<_>, _>>()?;
+    sort_values(&mut functions, &["span", "id"]);
+    Ok(json!({
+        "schema": "tondo-semantic-ownership-0.1/1",
+        "functions": functions
+    }))
+}
+
+fn mir_function_json(
+    model: &tondo_compiler::semantic::SemanticModel,
+    function: &MirFunction,
+) -> Result<Value, String> {
+    let function_id = mir_function_id(model, function.id())?;
+    let mut reserve_sites = BTreeMap::<u32, Vec<Value>>::new();
+    let mut release_sites = BTreeMap::<u32, Vec<Value>>::new();
+    for (block, body) in function.blocks_with_ids() {
+        let block_id = mir_block_id(&function_id, block.index());
+        for (sequence, statement) in body.statements().iter().enumerate() {
+            let loan = match statement.kind() {
+                MirStatementKind::ReserveLoan(loan) => Some((&mut reserve_sites, *loan)),
+                MirStatementKind::ReleaseLoan(loan) => Some((&mut release_sites, *loan)),
+                _ => None,
+            };
+            if let Some((sites, loan)) = loan {
+                sites.entry(loan.index()).or_default().push(json!({
+                    "span": span_json(model.sources(), statement.span())?,
+                    "block_id": block_id,
+                    "sequence": sequence
+                }));
+            }
+        }
+    }
+
+    let mut loans = function
+        .loans_with_ids()
+        .map(|(id, loan)| {
+            let mut reserved = reserve_sites.remove(&id.index()).unwrap_or_default();
+            let mut released = release_sites.remove(&id.index()).unwrap_or_default();
+            sort_values(&mut reserved, &["span", "block_id", "sequence"]);
+            sort_values(&mut released, &["span", "block_id", "sequence"]);
+            Ok(json!({
+                "id": mir_loan_id(&function_id, id),
+                "kind": mir_loan_kind_name(loan.kind()),
+                "mode": parameter_mode_name(loan.mode()),
+                "origin": mir_place_json(model, function, &function_id, loan.place())?,
+                "reserve_sites": reserved,
+                "structured_end": {
+                    "kind": match loan.kind() {
+                        MirLoanKind::CallLocal => "call-boundary",
+                        MirLoanKind::Region => "lexical-region"
+                    },
+                    "release_sites": released
+                }
+            }))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    sort_values(&mut loans, &["id"]);
+
+    let mut dynamic_checks = dynamic_check_facts(model, function, &function_id)?;
+    sort_values(&mut dynamic_checks, &["span", "id"]);
+    let mut affine_values = affine_value_facts(model, function, &function_id)?;
+    sort_values(&mut affine_values, &["declaration", "id"]);
+    let mut joins = join_facts(model, function, &function_id)?;
+    sort_values(&mut joins, &["span", "id"]);
+
+    Ok(json!({
+        "id": function_id,
+        "span": span_json(model.sources(), function.span())?,
+        "loans": loans,
+        "dynamic_checks": dynamic_checks,
+        "affine_values": affine_values,
+        "joins": joins
+    }))
+}
+
+fn mir_function_id(
+    model: &tondo_compiler::semantic::SemanticModel,
+    id: MirFunctionId,
+) -> Result<String, String> {
+    match id {
+        MirFunctionId::Callable(callable) => callable_id(model, callable),
+        MirFunctionId::Closure(closure) => closure_id(model, closure),
+    }
+}
+
+fn mir_block_id(function: &str, index: u32) -> String {
+    stable_id("block", [function.to_owned(), index.to_string()])
+}
+
+fn mir_loan_id(function: &str, id: MirLoanId) -> String {
+    stable_id("loan", [function.to_owned(), id.index().to_string()])
+}
+
+fn mir_local_id(
+    model: &tondo_compiler::semantic::SemanticModel,
+    function: &MirFunction,
+    function_id: &str,
+    id: MirLocalId,
+) -> Result<String, String> {
+    let local = function
+        .local(id)
+        .ok_or_else(|| "MIR place references an unknown local".to_owned())?;
+    match local.kind() {
+        MirLocalKind::User(local)
+        | MirLocalKind::Parameter {
+            source: Some(local),
+            ..
+        } => local_id(model, local),
+        MirLocalKind::Return
+        | MirLocalKind::Parameter { source: None, .. }
+        | MirLocalKind::Temporary => Ok(stable_id(
+            "mir-local",
+            [
+                function_id.to_owned(),
+                mir_local_kind_name(local.kind()),
+                span_key(model.sources(), local.span())?,
+                canonical_type(model, local.ty())?,
+                id.index().to_string(),
+            ],
+        )),
+    }
+}
+
+fn mir_place_json(
+    model: &tondo_compiler::semantic::SemanticModel,
+    function: &MirFunction,
+    function_id: &str,
+    place: &MirPlace,
+) -> Result<Value, String> {
+    let projections = place
+        .projections()
+        .iter()
+        .map(|projection| {
+            Ok(match projection.kind() {
+                MirProjectionKind::ClosureCapture { closure, index } => json!({
+                    "kind": "closure-capture",
+                    "closure_id": closure_id(model, *closure)?,
+                    "index": index,
+                    "type": canonical_type(model, projection.ty())?
+                }),
+                MirProjectionKind::Field(member) => json!({
+                    "kind": "field",
+                    "member_id": member_id(model, *member)?,
+                    "type": canonical_type(model, projection.ty())?
+                }),
+                MirProjectionKind::TupleField(index) => json!({
+                    "kind": "tuple-field",
+                    "index": index,
+                    "type": canonical_type(model, projection.ty())?
+                }),
+                MirProjectionKind::NewtypeValue => json!({
+                    "kind": "newtype-value",
+                    "type": canonical_type(model, projection.ty())?
+                }),
+                MirProjectionKind::RefValue => json!({
+                    "kind": "ref-value",
+                    "type": canonical_type(model, projection.ty())?
+                }),
+                MirProjectionKind::VariantTuple { variant, index } => json!({
+                    "kind": "variant-tuple",
+                    "variant_id": member_id(model, *variant)?,
+                    "index": index,
+                    "type": canonical_type(model, projection.ty())?
+                }),
+                MirProjectionKind::VariantField { variant, field } => json!({
+                    "kind": "variant-field",
+                    "variant_id": member_id(model, *variant)?,
+                    "field_id": member_id(model, *field)?,
+                    "type": canonical_type(model, projection.ty())?
+                }),
+                MirProjectionKind::OptionValue => json!({
+                    "kind": "option-value",
+                    "type": canonical_type(model, projection.ty())?
+                }),
+                MirProjectionKind::ResultOkValue => json!({
+                    "kind": "result-ok-value",
+                    "type": canonical_type(model, projection.ty())?
+                }),
+                MirProjectionKind::ResultErrValue => json!({
+                    "kind": "result-err-value",
+                    "type": canonical_type(model, projection.ty())?
+                }),
+                MirProjectionKind::UnionValue(member) => json!({
+                    "kind": "union-value",
+                    "member": canonical_type(model, *member)?,
+                    "type": canonical_type(model, projection.ty())?
+                }),
+                MirProjectionKind::ArrayPatternIndex(index) => json!({
+                    "kind": "array-pattern-index",
+                    "index": index,
+                    "type": canonical_type(model, projection.ty())?
+                }),
+                MirProjectionKind::ArrayPatternRest { start, suffix } => json!({
+                    "kind": "array-pattern-rest",
+                    "start": start,
+                    "suffix": suffix,
+                    "type": canonical_type(model, projection.ty())?
+                }),
+                MirProjectionKind::IteratorElement { index } => json!({
+                    "kind": "iterator-element",
+                    "index_local_id": mir_local_id(model, function, function_id, *index)?,
+                    "type": canonical_type(model, projection.ty())?
+                }),
+                MirProjectionKind::IteratorSource => json!({
+                    "kind": "iterator-source",
+                    "type": canonical_type(model, projection.ty())?
+                }),
+                MirProjectionKind::Index { index, access } => json!({
+                    "kind": "index",
+                    "index_local_id": mir_local_id(model, function, function_id, *index)?,
+                    "access": index_access_name(*access),
+                    "type": canonical_type(model, projection.ty())?
+                }),
+                MirProjectionKind::Slice { start, end, step } => json!({
+                    "kind": "slice",
+                    "start_local_id": start
+                        .map(|id| mir_local_id(model, function, function_id, id))
+                        .transpose()?,
+                    "end_local_id": end
+                        .map(|id| mir_local_id(model, function, function_id, id))
+                        .transpose()?,
+                    "step_local_id": step
+                        .map(|id| mir_local_id(model, function, function_id, id))
+                        .transpose()?,
+                    "type": canonical_type(model, projection.ty())?
+                }),
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok(json!({
+        "local_id": mir_local_id(model, function, function_id, place.local())?,
+        "type": canonical_type(model, place.ty())?,
+        "projections": projections,
+        "source_loan_id": place
+            .source_loan()
+            .map(|loan| mir_loan_id(function_id, loan))
+    }))
+}
+
+fn dynamic_check_facts(
+    model: &tondo_compiler::semantic::SemanticModel,
+    function: &MirFunction,
+    function_id: &str,
+) -> Result<Vec<Value>, String> {
+    let mut checks = Vec::new();
+    for (block, body) in function.blocks_with_ids() {
+        let block_id = mir_block_id(function_id, block.index());
+        let terminator = body.terminator();
+        match terminator.kind() {
+            MirTerminatorKind::Invoke { operation, .. }
+            | MirTerminatorKind::Spawn { operation, .. } => {
+                push_operation_dynamic_check(
+                    model,
+                    function_id,
+                    &block_id,
+                    terminator.span(),
+                    operation,
+                    &mut checks,
+                )?;
+            }
+            MirTerminatorKind::Await {
+                awaitable: MirAwaitable::Call(operation),
+                ..
+            } => {
+                push_operation_dynamic_check(
+                    model,
+                    function_id,
+                    &block_id,
+                    terminator.span(),
+                    operation,
+                    &mut checks,
+                )?;
+            }
+            MirTerminatorKind::ValidateLoan { loan, against, .. } => {
+                let mut against = against
+                    .iter()
+                    .map(|loan| mir_loan_id(function_id, *loan))
+                    .collect::<Vec<_>>();
+                against.sort();
+                let required = !against.is_empty();
+                checks.push(json!({
+                    "id": stable_id(
+                        "dynamic-check",
+                        [
+                            function_id.to_owned(),
+                            block_id.clone(),
+                            "loan-overlap".into()
+                        ]
+                    ),
+                    "kind": "loan-overlap",
+                    "span": span_json(model.sources(), terminator.span())?,
+                    "status": if required { "required" } else { "elided" },
+                    "loan_id": mir_loan_id(function_id, *loan),
+                    "against": against,
+                    "proof": if required {
+                        Value::Null
+                    } else {
+                        json!({"kind": "no-active-overlapping-loan"})
+                    }
+                }));
+            }
+            MirTerminatorKind::ValidatePlaces {
+                places,
+                against,
+                for_write,
+                ..
+            } => {
+                for (index, (place, against)) in places.iter().zip(against).enumerate() {
+                    let mut against = against
+                        .iter()
+                        .map(|loan| mir_loan_id(function_id, *loan))
+                        .collect::<Vec<_>>();
+                    against.sort();
+                    let required = !against.is_empty();
+                    checks.push(json!({
+                        "id": stable_id(
+                            "dynamic-check",
+                            [
+                                function_id.to_owned(),
+                                block_id.clone(),
+                                "place-overlap".into(),
+                                index.to_string()
+                            ]
+                        ),
+                        "kind": "place-overlap",
+                        "span": span_json(model.sources(), terminator.span())?,
+                        "status": if required { "required" } else { "elided" },
+                        "access": if *for_write { "write" } else { "read" },
+                        "place": mir_place_json(model, function, function_id, place)?,
+                        "against": against,
+                        "proof": if required {
+                            Value::Null
+                        } else {
+                            json!({"kind": "statically-disjoint-from-active-loans"})
+                        }
+                    }));
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(checks)
+}
+
+fn push_operation_dynamic_check(
+    model: &tondo_compiler::semantic::SemanticModel,
+    function_id: &str,
+    block_id: &str,
+    span: Span,
+    operation: &MirOperation,
+    output: &mut Vec<Value>,
+) -> Result<(), String> {
+    let (kind, status, against, proof) = match operation.kind() {
+        MirOperationKind::BuildMap {
+            reject_dynamic_duplicates,
+            ..
+        } => (
+            "duplicate-map-key",
+            if *reject_dynamic_duplicates {
+                "required"
+            } else {
+                "elided"
+            },
+            Vec::new(),
+            if *reject_dynamic_duplicates {
+                Value::Null
+            } else {
+                json!({"kind": "value-type-satisfies-Discard"})
+            },
+        ),
+        MirOperationKind::Index {
+            access, against, ..
+        } => {
+            let mut against = against
+                .iter()
+                .map(|loan| mir_loan_id(function_id, *loan))
+                .collect::<Vec<_>>();
+            against.sort();
+            let status = if against.is_empty() {
+                "elided"
+            } else {
+                "required"
+            };
+            let proof = if against.is_empty() {
+                json!({
+                    "kind": "statically-disjoint-from-active-loans",
+                    "access": index_access_name(*access)
+                })
+            } else {
+                Value::Null
+            };
+            ("index-overlap", status, against, proof)
+        }
+        MirOperationKind::Slice { against, .. } => {
+            let mut against = against
+                .iter()
+                .map(|loan| mir_loan_id(function_id, *loan))
+                .collect::<Vec<_>>();
+            against.sort();
+            let status = if against.is_empty() {
+                "elided"
+            } else {
+                "required"
+            };
+            let proof = if against.is_empty() {
+                json!({"kind": "statically-disjoint-from-active-loans"})
+            } else {
+                Value::Null
+            };
+            ("slice-overlap", status, against, proof)
+        }
+        _ => return Ok(()),
+    };
+    output.push(json!({
+        "id": stable_id(
+            "dynamic-check",
+            [
+                function_id.to_owned(),
+                block_id.to_owned(),
+                kind.to_owned()
+            ]
+        ),
+        "kind": kind,
+        "span": span_json(model.sources(), span)?,
+        "status": status,
+        "against": against,
+        "proof": proof
+    }));
+    Ok(())
+}
+
+struct AffineValueFact {
+    id: String,
+    declaration: Value,
+    ty: String,
+    events: Vec<Value>,
+}
+
+fn affine_value_facts(
+    model: &tondo_compiler::semantic::SemanticModel,
+    function: &MirFunction,
+    function_id: &str,
+) -> Result<Vec<Value>, String> {
+    let hir = model
+        .hir()
+        .ok_or_else(|| "affine value facts require typed HIR".to_owned())?;
+    let mut values = BTreeMap::<u32, AffineValueFact>::new();
+    for (id, local) in function.locals_with_ids() {
+        if !matches!(
+            local.kind(),
+            MirLocalKind::User(_) | MirLocalKind::Parameter { .. }
+        ) || hir.capability_status(local.ty(), HirCapability::Copy)
+            == Some(HirCapabilityStatus::Satisfied)
+        {
+            continue;
+        }
+        values.insert(
+            id.index(),
+            AffineValueFact {
+                id: mir_local_id(model, function, function_id, id)?,
+                declaration: span_json(model.sources(), local.span())?,
+                ty: canonical_type(model, local.ty())?,
+                events: Vec::new(),
+            },
+        );
+    }
+
+    for (block, body) in function.blocks_with_ids() {
+        let block_id = mir_block_id(function_id, block.index());
+        for (sequence, statement) in body.statements().iter().enumerate() {
+            match statement.kind() {
+                MirStatementKind::StorageLive(local) => push_affine_event(
+                    model,
+                    &mut values,
+                    *local,
+                    &block_id,
+                    sequence,
+                    statement.span(),
+                    "available",
+                    "storage-live",
+                )?,
+                MirStatementKind::StorageDead(local) => push_affine_event(
+                    model,
+                    &mut values,
+                    *local,
+                    &block_id,
+                    sequence,
+                    statement.span(),
+                    "consumed",
+                    "storage-dead",
+                )?,
+                MirStatementKind::ReserveLoan(loan) => {
+                    let loan = function
+                        .loan(*loan)
+                        .ok_or_else(|| "MIR reserves an unknown loan".to_owned())?;
+                    push_affine_event(
+                        model,
+                        &mut values,
+                        loan.place().local(),
+                        &block_id,
+                        sequence,
+                        statement.span(),
+                        "reserved",
+                        "loan-reserve",
+                    )?;
+                }
+                MirStatementKind::ReleaseLoan(loan) => {
+                    let loan = function
+                        .loan(*loan)
+                        .ok_or_else(|| "MIR releases an unknown loan".to_owned())?;
+                    push_affine_event(
+                        model,
+                        &mut values,
+                        loan.place().local(),
+                        &block_id,
+                        sequence,
+                        statement.span(),
+                        "available",
+                        "loan-release",
+                    )?;
+                }
+                MirStatementKind::Assign { destination, value } => {
+                    let mut moved = Vec::new();
+                    collect_rvalue_moves(value, &mut moved);
+                    moved.sort();
+                    moved.dedup();
+                    for local in moved {
+                        push_affine_event(
+                            model,
+                            &mut values,
+                            local,
+                            &block_id,
+                            sequence,
+                            statement.span(),
+                            "moved",
+                            "move",
+                        )?;
+                    }
+                    if destination.projections().is_empty() {
+                        push_affine_event(
+                            model,
+                            &mut values,
+                            destination.local(),
+                            &block_id,
+                            sequence,
+                            statement.span(),
+                            "available",
+                            "assignment",
+                        )?;
+                    }
+                }
+                MirStatementKind::RegisterDefer { action, .. } => {
+                    let mut moved = Vec::new();
+                    collect_operation_moves(action, &mut moved);
+                    moved.sort();
+                    moved.dedup();
+                    for local in moved {
+                        push_affine_event(
+                            model,
+                            &mut values,
+                            local,
+                            &block_id,
+                            sequence,
+                            statement.span(),
+                            "moved",
+                            "defer-registration",
+                        )?;
+                    }
+                }
+                MirStatementKind::RegisterFallback { .. }
+                | MirStatementKind::EnterTaskScope { .. }
+                | MirStatementKind::RetargetCleanup { .. }
+                | MirStatementKind::DisarmCleanup(_) => {}
+            }
+        }
+        let mut moved = Vec::new();
+        collect_terminator_moves(body.terminator().kind(), &mut moved);
+        moved.sort();
+        moved.dedup();
+        for local in moved {
+            push_affine_event(
+                model,
+                &mut values,
+                local,
+                &block_id,
+                body.statements().len(),
+                body.terminator().span(),
+                "moved",
+                "terminator",
+            )?;
+        }
+    }
+
+    values
+        .into_values()
+        .map(|mut value| {
+            sort_values(&mut value.events, &["span", "block_id", "sequence", "id"]);
+            Ok(json!({
+                "id": value.id,
+                "declaration": value.declaration,
+                "type": value.ty,
+                "analysis": "control-flow-events",
+                "events": value.events
+            }))
+        })
+        .collect()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_affine_event(
+    model: &tondo_compiler::semantic::SemanticModel,
+    values: &mut BTreeMap<u32, AffineValueFact>,
+    local: MirLocalId,
+    block_id: &str,
+    sequence: usize,
+    span: Span,
+    state: &str,
+    cause: &str,
+) -> Result<(), String> {
+    let Some(value) = values.get_mut(&local.index()) else {
+        return Ok(());
+    };
+    value.events.push(json!({
+        "id": stable_id(
+            "affine-event",
+            [
+                value.id.clone(),
+                block_id.to_owned(),
+                sequence.to_string(),
+                state.to_owned(),
+                cause.to_owned()
+            ]
+        ),
+        "block_id": block_id,
+        "sequence": sequence,
+        "span": span_json(model.sources(), span)?,
+        "state": state,
+        "cause": cause
+    }));
+    Ok(())
+}
+
+fn collect_rvalue_moves(value: &MirRvalue, output: &mut Vec<MirLocalId>) {
+    match value.kind() {
+        MirRvalueKind::Use(operand) | MirRvalueKind::Length(operand) => {
+            collect_operand_moves(operand, output);
+        }
+        MirRvalueKind::Prefix { operand, .. }
+        | MirRvalueKind::NumericConversion { value: operand, .. }
+        | MirRvalueKind::Coerce { value: operand, .. }
+        | MirRvalueKind::IteratorState { source: operand } => {
+            collect_operand_moves(operand, output);
+        }
+        MirRvalueKind::Binary { left, right, .. }
+        | MirRvalueKind::Range {
+            start: left,
+            end: right,
+            ..
+        }
+        | MirRvalueKind::Contains {
+            item: left,
+            container: right,
+            ..
+        } => {
+            collect_operand_moves(left, output);
+            collect_operand_moves(right, output);
+        }
+        MirRvalueKind::Aggregate { values, .. } => {
+            for value in values {
+                collect_operand_moves(value, output);
+            }
+        }
+        MirRvalueKind::RecordUpdate { base, fields } => {
+            collect_operand_moves(base, output);
+            for (_, value) in fields {
+                collect_operand_moves(value, output);
+            }
+        }
+        MirRvalueKind::MapRemove { key, .. } => collect_operand_moves(key, output),
+        MirRvalueKind::Interpolate { values, .. } => {
+            for value in values {
+                collect_operand_moves(value, output);
+            }
+        }
+    }
+}
+
+fn collect_operation_moves(operation: &MirOperation, output: &mut Vec<MirLocalId>) {
+    match operation.kind() {
+        MirOperationKind::CheckedPrefix { operand, .. }
+        | MirOperationKind::ExplicitPanic { message: operand } => {
+            collect_operand_moves(operand, output);
+        }
+        MirOperationKind::CheckedBinary { left, right, .. } => {
+            collect_operand_moves(left, output);
+            collect_operand_moves(right, output);
+        }
+        MirOperationKind::ArraySequence {
+            array, argument, ..
+        } => {
+            collect_operand_moves(array, output);
+            collect_operand_moves(argument, output);
+        }
+        MirOperationKind::BuildMap { entries, .. } => {
+            for (key, value) in entries {
+                collect_operand_moves(key, output);
+                collect_operand_moves(value, output);
+            }
+        }
+        MirOperationKind::Index { base, index, .. } => {
+            collect_operand_moves(base, output);
+            collect_operand_moves(index, output);
+        }
+        MirOperationKind::Slice { base, bounds, .. } => {
+            collect_operand_moves(base, output);
+            for bound in [bounds.start(), bounds.end(), bounds.step()]
+                .into_iter()
+                .flatten()
+            {
+                collect_operand_moves(bound, output);
+            }
+        }
+        MirOperationKind::Call {
+            callee, arguments, ..
+        } => {
+            collect_operand_moves(callee, output);
+            for argument in arguments {
+                collect_operand_moves(argument.value(), output);
+            }
+        }
+        MirOperationKind::Assert {
+            condition,
+            message_parts,
+            ..
+        } => {
+            collect_operand_moves(condition, output);
+            for part in message_parts {
+                collect_operand_moves(part.value(), output);
+            }
+        }
+        MirOperationKind::BootstrapHostCall { arguments, .. } => {
+            for argument in arguments {
+                collect_operand_moves(argument, output);
+            }
+        }
+        MirOperationKind::Format { value, display } => {
+            collect_operand_moves(value, output);
+            if let Some(display) = display {
+                collect_operand_moves(display, output);
+            }
+        }
+        MirOperationKind::JoinFormat {
+            values,
+            separator,
+            display,
+        } => {
+            collect_operand_moves(values, output);
+            collect_operand_moves(separator, output);
+            if let Some(display) = display {
+                collect_operand_moves(display, output);
+            }
+        }
+    }
+}
+
+fn collect_terminator_moves(kind: &MirTerminatorKind, output: &mut Vec<MirLocalId>) {
+    match kind {
+        MirTerminatorKind::SwitchBool { condition, .. } => {
+            collect_operand_moves(condition, output);
+        }
+        MirTerminatorKind::SwitchTag { value, .. } => collect_operand_moves(value, output),
+        MirTerminatorKind::Invoke { operation, .. }
+        | MirTerminatorKind::Spawn { operation, .. } => {
+            collect_operation_moves(operation, output);
+        }
+        MirTerminatorKind::Await { awaitable, .. } => match awaitable {
+            MirAwaitable::Call(operation) => collect_operation_moves(operation, output),
+            MirAwaitable::Join(operand) => collect_operand_moves(operand, output),
+        },
+        MirTerminatorKind::ValidatePlaces { replacements, .. } => {
+            for replacement in replacements.iter().flatten() {
+                collect_operand_moves(replacement, output);
+            }
+        }
+        MirTerminatorKind::Goto { .. }
+        | MirTerminatorKind::IteratorNext { .. }
+        | MirTerminatorKind::ValidateLoan { .. }
+        | MirTerminatorKind::DrainDefers { .. }
+        | MirTerminatorKind::DrainScopes { .. }
+        | MirTerminatorKind::DrainUnwind { .. }
+        | MirTerminatorKind::Return
+        | MirTerminatorKind::ResumePanic
+        | MirTerminatorKind::Unreachable => {}
+    }
+}
+
+fn collect_operand_moves(operand: &MirOperand, output: &mut Vec<MirLocalId>) {
+    if let MirOperandKind::Move(place) = operand.kind() {
+        output.push(place.local());
+    }
+}
+
+struct SpawnedJoin {
+    id: String,
+    owner_scope_id: String,
+    destination: MirLocalId,
+    span: Span,
+}
+
+fn join_facts(
+    model: &tondo_compiler::semantic::SemanticModel,
+    function: &MirFunction,
+    function_id: &str,
+) -> Result<Vec<Value>, String> {
+    let mut spawned = Vec::new();
+    let mut transfers = Vec::<(MirLocalId, MirLocalId, Span)>::new();
+    let mut awaits = Vec::<(MirLocalId, Span)>::new();
+    for (_, body) in function.blocks_with_ids() {
+        for statement in body.statements() {
+            let MirStatementKind::Assign { destination, value } = statement.kind() else {
+                continue;
+            };
+            if !destination.projections().is_empty() {
+                continue;
+            }
+            let MirRvalueKind::Use(operand) = value.kind() else {
+                continue;
+            };
+            let Some(source) = operand_place(operand) else {
+                continue;
+            };
+            if source.projections().is_empty() {
+                transfers.push((source.local(), destination.local(), statement.span()));
+            }
+        }
+        match body.terminator().kind() {
+            MirTerminatorKind::Spawn {
+                scope, destination, ..
+            } => {
+                spawned.push(SpawnedJoin {
+                    id: stable_id(
+                        "join",
+                        [
+                            function_id.to_owned(),
+                            span_key(model.sources(), body.terminator().span())?,
+                            mir_local_id(model, function, function_id, destination.local())?,
+                        ],
+                    ),
+                    owner_scope_id: stable_id(
+                        "task-scope",
+                        [function_id.to_owned(), scope.index().to_string()],
+                    ),
+                    destination: destination.local(),
+                    span: body.terminator().span(),
+                });
+            }
+            MirTerminatorKind::Await {
+                awaitable: MirAwaitable::Join(operand),
+                ..
+            } => {
+                if let Some(place) = operand_place(operand) {
+                    awaits.push((place.local(), body.terminator().span()));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    spawned
+        .into_iter()
+        .map(|join| {
+            let mut reachable = vec![join.destination];
+            let mut cursor = 0;
+            while cursor < reachable.len() {
+                let current = reachable[cursor];
+                cursor += 1;
+                for (_, destination, _) in
+                    transfers.iter().filter(|(source, _, _)| *source == current)
+                {
+                    if !reachable.contains(destination) {
+                        reachable.push(*destination);
+                    }
+                }
+            }
+            let consumed = awaits
+                .iter()
+                .filter(|(local, _)| reachable.contains(local))
+                .map(|(_, span)| *span)
+                .min_by_key(|span| {
+                    (
+                        span.file().index(),
+                        span.range().start(),
+                        span.range().end(),
+                    )
+                });
+            let mut transfer_facts = transfers
+                .iter()
+                .filter(|(source, _, _)| reachable.contains(source))
+                .map(|(source, destination, span)| {
+                    Ok(json!({
+                        "from_local_id": mir_local_id(
+                            model,
+                            function,
+                            function_id,
+                            *source
+                        )?,
+                        "to_local_id": mir_local_id(
+                            model,
+                            function,
+                            function_id,
+                            *destination
+                        )?,
+                        "span": span_json(model.sources(), *span)?
+                    }))
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            sort_values(
+                &mut transfer_facts,
+                &["span", "from_local_id", "to_local_id"],
+            );
+            Ok(json!({
+                "id": join.id,
+                "span": span_json(model.sources(), join.span)?,
+                "owner_scope_id": join.owner_scope_id,
+                "destination_local_id": mir_local_id(
+                    model,
+                    function,
+                    function_id,
+                    join.destination
+                )?,
+                "state": if consumed.is_some() {
+                    "consumed"
+                } else {
+                    "owned-by-scope"
+                },
+                "consumption": consumed
+                    .map(|span| -> Result<Value, String> {
+                        Ok(json!({
+                            "kind": "await",
+                            "span": span_json(model.sources(), span)?
+                        }))
+                    })
+                    .transpose()?,
+                "transfers": transfer_facts
+            }))
+        })
+        .collect()
+}
+
+fn operand_place(operand: &MirOperand) -> Option<&MirPlace> {
+    match operand.kind() {
+        MirOperandKind::Copy(place)
+        | MirOperandKind::Move(place)
+        | MirOperandKind::Borrow(place) => Some(place),
+        MirOperandKind::Constant(_)
+        | MirOperandKind::Loan(_)
+        | MirOperandKind::Function { .. }
+        | MirOperandKind::PreludeTraitFunction { .. } => None,
+    }
+}
+
+fn unsafe_facts(
+    model: &tondo_compiler::semantic::SemanticModel,
+    file: FileId,
+) -> Result<Value, String> {
+    let hir = model
+        .hir()
+        .ok_or_else(|| "unsafe facts require typed HIR".to_owned())?;
+    let mut regions = hir
+        .unsafe_regions()
+        .filter(|span| span.file() == file)
+        .map(|span| {
+            Ok(json!({
+                "id": stable_id("unsafe-region", [span_key(model.sources(), span)?]),
+                "kind": "explicit",
+                "span": span_json(model.sources(), span)?
+            }))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    for callable in hir.callables().filter(|callable| {
+        callable
+            .body_source()
+            .is_some_and(|span| span.file() == file)
+    }) {
+        let TypeKind::Function(function) = hir
+            .interner()
+            .kind(callable.function_type())
+            .map_err(|error| error.to_string())?
+        else {
+            continue;
+        };
+        if !function.is_unsafe() {
+            continue;
+        }
+        let span = callable
+            .body_source()
+            .expect("filtered callables retain a body span");
+        regions.push(json!({
+            "id": stable_id("unsafe-region", [callable_id(model, callable.id())?]),
+            "kind": "unsafe-callable",
+            "span": span_json(model.sources(), span)?
+        }));
+    }
+    for closure in hir
+        .closures()
+        .filter(|closure| closure.span().file() == file && closure.is_unsafe())
+    {
+        regions.push(json!({
+            "id": stable_id(
+                "unsafe-region",
+                [span_key(model.sources(), closure.span())?, "closure".into()]
+            ),
+            "kind": "unsafe-closure",
+            "span": span_json(model.sources(), closure.span())?
+        }));
+    }
+    sort_values(&mut regions, &["span", "id"]);
+
+    let mut operations = Vec::new();
+    for (id, expression) in hir
+        .expressions_with_ids()
+        .filter(|(_, expression)| expression.span().file() == file)
+    {
+        let required = match expression.kind() {
+            HirExpressionKind::Call {
+                unsafe_call: true, ..
+            }
+            | HirExpressionKind::AsyncCall {
+                unsafe_call: true, ..
+            } => Some("unsafe-callable"),
+            HirExpressionKind::BootstrapHostCall { function, .. }
+                if function.name().starts_with("intrinsic.") =>
+            {
+                Some(function.name())
+            }
+            _ => None,
+        };
+        let Some(required) = required else {
+            continue;
+        };
+        let span = span_json(model.sources(), expression.span())?;
+        let region_id = regions
+            .iter()
+            .filter(|region| span_contains(&region["span"], &span))
+            .min_by_key(|region| span_length(&region["span"]))
+            .and_then(|region| region["id"].as_str())
+            .map(str::to_owned);
+        operations.push(json!({
+            "id": expression_id(model, id)?,
+            "span": span,
+            "requires": required,
+            "region_id": region_id
+        }));
+    }
+    sort_values(&mut operations, &["span", "id"]);
+    Ok(json!({"regions": regions, "operations": operations}))
+}
+
+fn entity_json(
+    model: &tondo_compiler::semantic::SemanticModel,
+    entity: &SemanticEntity,
+) -> Result<Value, String> {
+    let declaration = model
+        .declaration_span(entity)
+        .map(|span| span_json(model.sources(), span))
+        .transpose()?;
+    let (kind, name) = entity_kind_and_name(model, entity)?;
+    Ok(json!({
+        "id": entity_id(model, entity)?,
+        "kind": kind,
+        "name": name,
+        "declaration": declaration
+    }))
+}
+
+fn entity_kind_and_name(
+    model: &tondo_compiler::semantic::SemanticModel,
+    entity: &SemanticEntity,
+) -> Result<(&'static str, Value), String> {
+    Ok(match entity {
+        SemanticEntity::Name(ResolvedName::Symbol(symbol)) => {
+            let symbol = model
+                .resolved()
+                .symbol(*symbol)
+                .ok_or_else(|| "semantic entity references an unknown symbol".to_owned())?;
+            ("symbol", Value::from(symbol.name().as_str()))
+        }
+        SemanticEntity::Name(ResolvedName::Local(local)) => {
+            let local = model
+                .resolved()
+                .local(*local)
+                .ok_or_else(|| "semantic entity references an unknown local".to_owned())?;
+            ("local", Value::from(local.name().as_str()))
+        }
+        SemanticEntity::Name(ResolvedName::Receiver) => ("receiver", Value::from("self")),
+        SemanticEntity::Name(ResolvedName::ContextualSelf) => {
+            ("contextual-self", Value::from("Self"))
+        }
+        SemanticEntity::Name(ResolvedName::Prelude { namespace, name }) => (
+            "prelude",
+            json!({"namespace": namespace.as_str(), "name": name.as_str()}),
+        ),
+        SemanticEntity::Name(ResolvedName::External {
+            module,
+            namespace,
+            name,
+        }) => (
+            "external",
+            json!({
+                "module": module.to_string(),
+                "namespace": namespace.as_str(),
+                "name": name.as_str()
+            }),
+        ),
+        SemanticEntity::Member(member) => {
+            let member = model
+                .resolved()
+                .member(*member)
+                .ok_or_else(|| "semantic entity references an unknown member".to_owned())?;
+            ("member", Value::from(member.name().as_str()))
+        }
+        SemanticEntity::Module(module) => ("module", Value::from(module.to_string())),
+        SemanticEntity::ContextualCandidates {
+            type_name,
+            value_name,
+        } => (
+            "contextual-candidates",
+            json!({
+                "type_id": resolved_name_id(model, type_name)?,
+                "value_id": resolved_name_id(model, value_name)?
+            }),
+        ),
+    })
+}
+
+fn entity_id(
+    model: &tondo_compiler::semantic::SemanticModel,
+    entity: &SemanticEntity,
+) -> Result<String, String> {
+    match entity {
+        SemanticEntity::Name(name) => resolved_name_id(model, name),
+        SemanticEntity::Member(member) => member_id(model, *member),
+        SemanticEntity::Module(module) => Ok(stable_id(
+            "module",
+            [
+                module.package().as_str().to_owned(),
+                module.path().as_str().to_owned(),
+            ],
+        )),
+        SemanticEntity::ContextualCandidates {
+            type_name,
+            value_name,
+        } => Ok(stable_id(
+            "candidates",
+            [
+                resolved_name_id(model, type_name)?,
+                resolved_name_id(model, value_name)?,
+            ],
+        )),
+    }
+}
+
+fn resolved_name_id(
+    model: &tondo_compiler::semantic::SemanticModel,
+    name: &ResolvedName,
+) -> Result<String, String> {
+    match name {
+        ResolvedName::Symbol(symbol) => symbol_id_json(model, *symbol),
+        ResolvedName::Local(local) => local_id(model, *local),
+        ResolvedName::Receiver => Ok("sem:receiver:self".into()),
+        ResolvedName::ContextualSelf => Ok("sem:type:Self".into()),
+        ResolvedName::Prelude { namespace, name } => Ok(stable_id(
+            "prelude",
+            [namespace.as_str().to_owned(), name.as_str().to_owned()],
+        )),
+        ResolvedName::External {
+            module,
+            namespace,
+            name,
+        } => Ok(stable_id(
+            "external",
+            [
+                module.to_string(),
+                namespace.as_str().to_owned(),
+                name.as_str().to_owned(),
+            ],
+        )),
+    }
+}
+
+fn symbol_id_json(
+    model: &tondo_compiler::semantic::SemanticModel,
+    symbol: SymbolId,
+) -> Result<String, String> {
+    let symbol = model
+        .resolved()
+        .symbol(symbol)
+        .ok_or_else(|| "unknown semantic symbol".to_owned())?;
+    Ok(stable_id("symbol", [symbol.identity().canonical_name()]))
+}
+
+fn member_id(
+    model: &tondo_compiler::semantic::SemanticModel,
+    member: MemberId,
+) -> Result<String, String> {
+    let member = model
+        .resolved()
+        .member(member)
+        .ok_or_else(|| "unknown semantic member".to_owned())?;
+    let owner = match member.owner() {
+        MemberOwner::Type(symbol) => symbol_id_json(model, symbol)?,
+        MemberOwner::Variant(variant) => member_id(model, variant)?,
+    };
+    Ok(stable_id(
+        "member",
+        [
+            owner,
+            member_kind_name(member.kind()).to_owned(),
+            member.name().as_str().to_owned(),
+        ],
+    ))
+}
+
+fn local_id(
+    model: &tondo_compiler::semantic::SemanticModel,
+    local: LocalId,
+) -> Result<String, String> {
+    let local = model
+        .resolved()
+        .local(local)
+        .ok_or_else(|| "unknown semantic local".to_owned())?;
+    Ok(stable_id(
+        "local",
+        [
+            span_key(model.sources(), local.span())?,
+            local.name().as_str().to_owned(),
+            local_kind_name(local.kind()).to_owned(),
+        ],
+    ))
+}
+
+fn callable_id(
+    model: &tondo_compiler::semantic::SemanticModel,
+    callable: HirCallableId,
+) -> Result<String, String> {
+    match callable {
+        HirCallableId::Symbol(symbol) => symbol_id_json(model, symbol),
+        HirCallableId::Member(member) => member_id(model, member),
+        HirCallableId::Implementation(method) => {
+            let hir = model
+                .hir()
+                .ok_or_else(|| "implementation callable requires typed HIR".to_owned())?;
+            let implementation = hir
+                .implementation(method.implementation())
+                .ok_or_else(|| "unknown semantic implementation".to_owned())?;
+            let method = implementation
+                .methods()
+                .iter()
+                .find(|candidate| candidate.id() == method)
+                .ok_or_else(|| "unknown semantic implementation method".to_owned())?;
+            Ok(stable_id(
+                "implementation-method",
+                [
+                    span_key(model.sources(), implementation.span())?,
+                    method.name().as_str().to_owned(),
+                ],
+            ))
+        }
+        HirCallableId::Host(function) => Ok(stable_id("host", [function.name().to_owned()])),
+    }
+}
+
+fn closure_id(
+    model: &tondo_compiler::semantic::SemanticModel,
+    id: HirClosureId,
+) -> Result<String, String> {
+    let closure = model
+        .hir()
+        .and_then(|hir| hir.closure(id))
+        .ok_or_else(|| "unknown semantic closure".to_owned())?;
+    Ok(stable_id(
+        "closure",
+        [
+            span_key(model.sources(), closure.span())?,
+            canonical_type(model, closure.function_type())?,
+        ],
+    ))
+}
+
+fn expression_id(
+    model: &tondo_compiler::semantic::SemanticModel,
+    id: HirExpressionId,
+) -> Result<String, String> {
+    let hir = model
+        .hir()
+        .ok_or_else(|| "expression ID requires typed HIR".to_owned())?;
+    let expression = hir
+        .expression(id)
+        .ok_or_else(|| "unknown semantic expression".to_owned())?;
+    let kind = expression_kind_name(expression.kind());
+    let canonical = canonical_type(model, expression.ty())?;
+    let ordinal = hir
+        .expressions_with_ids()
+        .take_while(|(candidate, _)| candidate.index() != id.index())
+        .filter(|(_, candidate)| {
+            candidate.span() == expression.span()
+                && expression_kind_name(candidate.kind()) == kind
+                && canonical_type(model, candidate.ty()).is_ok_and(|value| value == canonical)
+        })
+        .count();
+    Ok(stable_id(
+        "expression",
+        [
+            span_key(model.sources(), expression.span())?,
+            kind.to_owned(),
+            canonical,
+            ordinal.to_string(),
+        ],
+    ))
+}
+
+fn pattern_id(
+    model: &tondo_compiler::semantic::SemanticModel,
+    pattern: HirPatternId,
+) -> Result<String, String> {
+    let hir = model
+        .hir()
+        .ok_or_else(|| "pattern ID requires typed HIR".to_owned())?;
+    let pattern = hir
+        .pattern(pattern)
+        .ok_or_else(|| "unknown semantic pattern".to_owned())?;
+    Ok(stable_id(
+        "pattern",
+        [
+            span_key(model.sources(), pattern.span())?,
+            pattern_kind_name(pattern.kind()).to_owned(),
+            canonical_type(model, pattern.ty())?,
+        ],
+    ))
+}
+
+fn pattern_forces_mode(
+    model: &tondo_compiler::semantic::SemanticModel,
+    root: HirPatternId,
+    mode: HirMatchMode,
+) -> Result<Option<()>, String> {
+    let hir = model
+        .hir()
+        .ok_or_else(|| "match ownership requires typed HIR".to_owned())?;
+    let mut pending = vec![root];
+    while let Some(id) = pending.pop() {
+        let pattern = hir
+            .pattern(id)
+            .ok_or_else(|| "match pattern is missing".to_owned())?;
+        match pattern.kind() {
+            HirPatternKind::Binding(_) if mode == HirMatchMode::Consume => {
+                if hir.capability_status(pattern.ty(), HirCapability::Copy)
+                    != Some(HirCapabilityStatus::Satisfied)
+                {
+                    return Ok(Some(()));
+                }
+            }
+            HirPatternKind::BorrowBinding { .. } if mode == HirMatchMode::Observe => {
+                return Ok(Some(()));
+            }
+            HirPatternKind::Tuple(items) | HirPatternKind::Variant { fields: items, .. } => {
+                pending.extend(items.iter().copied());
+            }
+            HirPatternKind::OptionSome(item)
+            | HirPatternKind::ResultOk(item)
+            | HirPatternKind::ResultErr(item)
+            | HirPatternKind::Newtype { value: item, .. }
+            | HirPatternKind::UnionMember { pattern: item, .. } => pending.push(*item),
+            HirPatternKind::Record { fields, .. } => {
+                pending.extend(fields.iter().map(|field| field.pattern()));
+            }
+            HirPatternKind::Array { prefix, rest } => {
+                pending.extend(prefix.iter().copied());
+                pending.extend(*rest);
+            }
+            HirPatternKind::Recovery
+            | HirPatternKind::Wildcard
+            | HirPatternKind::Binding(_)
+            | HirPatternKind::BorrowBinding { .. }
+            | HirPatternKind::Literal(_)
+            | HirPatternKind::NumericConversionError(_)
+            | HirPatternKind::OptionNone => {}
+        }
+    }
+    Ok(None)
+}
+
+fn bounds_json(
+    model: &tondo_compiler::semantic::SemanticModel,
+    bounds: &[HirTraitReference],
+) -> Result<Vec<Value>, String> {
+    bounds
+        .iter()
+        .map(|bound| {
+            let identity = match bound.constructor() {
+                HirTraitConstructor::Symbol(symbol) => symbol_id_json(model, *symbol)?,
+                HirTraitConstructor::Prelude(name) => {
+                    stable_id("prelude-trait", [name.as_str().to_owned()])
+                }
+                HirTraitConstructor::External(identity) => {
+                    stable_id("external-trait", [identity.canonical_name()])
+                }
+            };
+            Ok(json!({
+                "identity": identity,
+                "arguments": bound
+                    .arguments()
+                    .iter()
+                    .copied()
+                    .map(|ty| canonical_type(model, ty))
+                    .collect::<Result<Vec<_>, _>>()?
+            }))
+        })
+        .collect()
+}
+
+fn locate(
+    model: &tondo_compiler::semantic::SemanticModel,
+    by_path: &SourceMap<'_>,
+    path: &str,
+    start: u32,
+    end: u32,
+) -> Result<(FileId, TextRange), String> {
+    let source = by_path
+        .get(path)
+        .ok_or_else(|| format!("query uses unknown file `{path}`"))?;
+    let file = model
+        .sources()
+        .iter()
+        .find(|(_, file)| {
+            file.path().as_str() == source.logical_path
+                && file.source_id().as_str() == source.source_id
+        })
+        .map(|(id, _)| id)
+        .ok_or_else(|| format!("semantic snapshot lacks `{path}`"))?;
+    let range = TextRange::new(start, end).map_err(|error| error.to_string())?;
+    Ok((file, range))
+}
+
+fn canonical_type(
+    model: &tondo_compiler::semantic::SemanticModel,
+    ty: TypeId,
+) -> Result<String, String> {
+    model
+        .canonical_type(ty)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "typed semantic model lacks a type interner".to_owned())
+}
+
+fn span_json(
+    sources: &tondo_compiler::source::SourceDatabase,
+    span: Span,
+) -> Result<Value, String> {
+    let file = sources
+        .get(span.file())
+        .map_err(|error| error.to_string())?;
+    Ok(json!({
+        "source_id": file.source_id().as_str(),
+        "module": file.module().as_str(),
+        "file": file.path().as_str(),
+        "start": span.range().start(),
+        "end": span.range().end()
+    }))
+}
+
+fn span_key(
+    sources: &tondo_compiler::source::SourceDatabase,
+    span: Span,
+) -> Result<String, String> {
+    let file = sources
+        .get(span.file())
+        .map_err(|error| error.to_string())?;
+    Ok(format!(
+        "{}:{}:{}:{}:{}",
+        file.source_id(),
+        file.module(),
+        file.path(),
+        span.range().start(),
+        span.range().end()
+    ))
+}
+
+fn stable_id(kind: &str, parts: impl IntoIterator<Item = String>) -> String {
+    let mut input = String::new();
+    for part in parts {
+        input.push_str(&part.len().to_string());
+        input.push(':');
+        input.push_str(&part);
+        input.push(';');
+    }
+    format!(
+        "sem:{kind}:{}",
+        &tondo_conformance::sha256(input.as_bytes())[..24]
+    )
+}
+
+fn sort_values(values: &mut [Value], keys: &[&str]) {
+    values.sort_by(|left, right| {
+        for key in keys {
+            let ordering = compare_json(&left[*key], &right[*key]);
+            if !ordering.is_eq() {
+                return ordering;
+            }
+        }
+        std::cmp::Ordering::Equal
+    });
+}
+
+fn compare_json(left: &Value, right: &Value) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+
+    let rank = |value: &Value| match value {
+        Value::Null => 0,
+        Value::Bool(_) => 1,
+        Value::Number(_) => 2,
+        Value::String(_) => 3,
+        Value::Array(_) => 4,
+        Value::Object(_) => 5,
+    };
+    match rank(left).cmp(&rank(right)) {
+        Ordering::Equal => {}
+        ordering => return ordering,
+    }
+    match (left, right) {
+        (Value::Null, Value::Null) => Ordering::Equal,
+        (Value::Bool(left), Value::Bool(right)) => left.cmp(right),
+        (Value::Number(left), Value::Number(right)) => match (left.as_i64(), right.as_i64()) {
+            (Some(left), Some(right)) => left.cmp(&right),
+            _ => match (left.as_u64(), right.as_u64()) {
+                (Some(left), Some(right)) => left.cmp(&right),
+                _ => left.to_string().cmp(&right.to_string()),
+            },
+        },
+        (Value::String(left), Value::String(right)) => left.cmp(right),
+        (Value::Array(left), Value::Array(right)) => left
+            .iter()
+            .zip(right)
+            .find_map(|(left, right)| {
+                let ordering = compare_json(left, right);
+                (!ordering.is_eq()).then_some(ordering)
+            })
+            .unwrap_or_else(|| left.len().cmp(&right.len())),
+        (Value::Object(left), Value::Object(right)) => {
+            // The adapter canonicalizes wire objects by UTF-8 key order. Use
+            // that same order while sorting semantic arrays; insertion order
+            // would make spans compare differently before and after encoding.
+            let mut left = left.iter().collect::<Vec<_>>();
+            let mut right = right.iter().collect::<Vec<_>>();
+            left.sort_unstable_by(|(key, _), (other, _)| key.cmp(other));
+            right.sort_unstable_by(|(key, _), (other, _)| key.cmp(other));
+            left.iter()
+                .zip(&right)
+                .find_map(|((left_key, left), (right_key, right))| {
+                    let ordering = left_key.cmp(right_key);
+                    if ordering.is_eq() {
+                        let ordering = compare_json(left, right);
+                        (!ordering.is_eq()).then_some(ordering)
+                    } else {
+                        Some(ordering)
+                    }
+                })
+                .unwrap_or_else(|| left.len().cmp(&right.len()))
+        }
+        _ => unreachable!("equal JSON ranks have matching variants"),
+    }
+}
+
+fn span_contains(container: &Value, inner: &Value) -> bool {
+    container["source_id"] == inner["source_id"]
+        && container["module"] == inner["module"]
+        && container["file"] == inner["file"]
+        && container["start"].as_u64().unwrap_or(u64::MAX) <= inner["start"].as_u64().unwrap_or(0)
+        && inner["end"].as_u64().unwrap_or(u64::MAX) <= container["end"].as_u64().unwrap_or(0)
+}
+
+fn span_length(span: &Value) -> u64 {
+    span["end"]
+        .as_u64()
+        .unwrap_or(u64::MAX)
+        .saturating_sub(span["start"].as_u64().unwrap_or(0))
+}
+
+fn capability_status_name(status: HirCapabilityStatus) -> &'static str {
+    match status {
+        HirCapabilityStatus::Satisfied => "satisfied",
+        HirCapabilityStatus::Deferred => "deferred",
+        HirCapabilityStatus::Unsatisfied => "unsatisfied",
+    }
+}
+
+fn terminal_status_name(status: HirTerminalStatus) -> &'static str {
+    match status {
+        HirTerminalStatus::Absent => "absent",
+        HirTerminalStatus::Potential => "potential",
+        HirTerminalStatus::Present => "present",
+    }
+}
+
+fn terminal_operation_name(operation: HirTerminalOperation) -> &'static str {
+    match operation {
+        HirTerminalOperation::JoinAwait => "join-await",
+        HirTerminalOperation::ProcessFinish => "process-finish",
+        HirTerminalOperation::TimerFinish => "timer-finish",
+    }
+}
+
+fn terminal_unwind_name(action: HirTerminalUnwindAction) -> &'static str {
+    match action {
+        HirTerminalUnwindAction::JoinTeardown => "join-teardown",
+        HirTerminalUnwindAction::ProcessCleanup => "process-cleanup",
+        HirTerminalUnwindAction::TimerCleanup => "timer-cleanup",
+    }
+}
+
+fn parameter_mode_name(mode: ParameterMode) -> &'static str {
+    match mode {
+        ParameterMode::Value => "value",
+        ParameterMode::Ref => "ref",
+        ParameterMode::Mut => "mut",
+        ParameterMode::Var => "var",
+    }
+}
+
+fn mir_loan_kind_name(kind: MirLoanKind) -> &'static str {
+    match kind {
+        MirLoanKind::CallLocal => "call-local",
+        MirLoanKind::Region => "region",
+    }
+}
+
+fn mir_local_kind_name(kind: MirLocalKind) -> String {
+    match kind {
+        MirLocalKind::Return => "return".into(),
+        MirLocalKind::Parameter { index, source } => format!(
+            "parameter:{index}:{}",
+            if source.is_some() {
+                "source"
+            } else {
+                "synthetic"
+            }
+        ),
+        MirLocalKind::User(_) => "user".into(),
+        MirLocalKind::Temporary => "temporary".into(),
+    }
+}
+
+fn index_access_name(access: HirIndexAccess) -> &'static str {
+    match access {
+        HirIndexAccess::Array => "array",
+        HirIndexAccess::String => "string",
+        HirIndexAccess::MapLookup => "map-lookup",
+        HirIndexAccess::MapEntry => "map-entry",
+    }
+}
+
+fn cursor_mode_name(mode: CursorMode) -> &'static str {
+    match mode {
+        CursorMode::Own => "own",
+        CursorMode::Ref => "ref",
+        CursorMode::Mut => "mut",
+    }
+}
+
+fn call_protocol_name(protocol: HirCallProtocol) -> &'static str {
+    match protocol {
+        HirCallProtocol::Call => "Call",
+        HirCallProtocol::CallMut => "CallMut",
+        HirCallProtocol::CallOnce => "CallOnce",
+    }
+}
+
+fn match_mode_name(mode: HirMatchMode) -> &'static str {
+    match mode {
+        HirMatchMode::Copy => "copy",
+        HirMatchMode::Observe => "observe",
+        HirMatchMode::Consume => "consume",
+    }
+}
+
+fn member_kind_name(kind: MemberKind) -> &'static str {
+    match kind {
+        MemberKind::RecordField => "record-field",
+        MemberKind::NewtypeValue => "newtype-value",
+        MemberKind::EnumVariant => "enum-variant",
+        MemberKind::VariantField => "variant-field",
+        MemberKind::InherentMethod => "inherent-method",
+        MemberKind::AssociatedFunction => "associated-function",
+        MemberKind::TraitMethod => "trait-method",
+        MemberKind::TraitAssociatedFunction => "trait-associated-function",
+    }
+}
+
+fn local_kind_name(kind: LocalKind) -> &'static str {
+    match kind {
+        LocalKind::GenericParameter => "generic-parameter",
+        LocalKind::Parameter => "parameter",
+        LocalKind::Binding => "binding",
+        LocalKind::Pattern => "pattern",
+        LocalKind::ForPattern => "for-pattern",
+        LocalKind::ClosureParameter => "closure-parameter",
+    }
+}
+
+fn expression_kind_name(kind: &HirExpressionKind) -> &'static str {
+    match kind {
+        HirExpressionKind::Recovery => "recovery",
+        HirExpressionKind::Literal(_) => "literal",
+        HirExpressionKind::InterpolatedString { .. } => "interpolated-string",
+        HirExpressionKind::Local(_) => "local",
+        HirExpressionKind::Constant(_) => "constant",
+        HirExpressionKind::Function(_) => "function",
+        HirExpressionKind::SyntheticFunction => "synthetic-function",
+        HirExpressionKind::SpecializedFunction { .. } => "specialized-function",
+        HirExpressionKind::PreludeTraitFunction { .. } => "prelude-trait-function",
+        HirExpressionKind::Closure(_) => "closure",
+        HirExpressionKind::Receiver => "receiver",
+        HirExpressionKind::Tuple(_) => "tuple",
+        HirExpressionKind::Array(_) => "array",
+        HirExpressionKind::Map { .. } => "map",
+        HirExpressionKind::Set(_) => "set",
+        HirExpressionKind::Newtype { .. } => "newtype",
+        HirExpressionKind::Ref { .. } => "ref",
+        HirExpressionKind::Record { .. } => "record",
+        HirExpressionKind::Variant { .. } => "variant",
+        HirExpressionKind::NumericConversionError(_) => "numeric-conversion-error",
+        HirExpressionKind::RecordUpdate { .. } => "record-update",
+        HirExpressionKind::NumericConversion { .. } => "numeric-conversion",
+        HirExpressionKind::Block { .. } => "block",
+        HirExpressionKind::Prefix { .. } => "prefix",
+        HirExpressionKind::Binary { .. } => "binary",
+        HirExpressionKind::ArraySequence { .. } => "array-sequence",
+        HirExpressionKind::MapRemove { .. } => "map-remove",
+        HirExpressionKind::Range { .. } => "range",
+        HirExpressionKind::Contains { .. } => "contains",
+        HirExpressionKind::Field { .. } => "field",
+        HirExpressionKind::TupleField { .. } => "tuple-field",
+        HirExpressionKind::RefValue { .. } => "ref-value",
+        HirExpressionKind::Index { .. } => "index",
+        HirExpressionKind::Slice { .. } => "slice",
+        HirExpressionKind::Call { .. } => "call",
+        HirExpressionKind::AsyncCall { .. } => "async-call",
+        HirExpressionKind::Await { .. } => "await",
+        HirExpressionKind::Spawn { .. } => "spawn",
+        HirExpressionKind::Scope { .. } => "scope",
+        HirExpressionKind::PreludePanic { .. } => "panic",
+        HirExpressionKind::PreludeAssert { .. } => "assert",
+        HirExpressionKind::BootstrapHostCall { .. } => "host-call",
+        HirExpressionKind::OptionSome { .. } => "option-some",
+        HirExpressionKind::ResultOk { .. } => "result-ok",
+        HirExpressionKind::ResultErr { .. } => "result-err",
+        HirExpressionKind::PropagateOption { .. } => "propagate-option",
+        HirExpressionKind::PropagateResult { .. } => "propagate-result",
+        HirExpressionKind::If { .. } => "if",
+        HirExpressionKind::Match { .. } => "match",
+        HirExpressionKind::Return { .. } => "return",
+        HirExpressionKind::Fail { .. } => "fail",
+        HirExpressionKind::Break { .. } => "break",
+        HirExpressionKind::Continue { .. } => "continue",
+        HirExpressionKind::Coerce { .. } => "coerce",
+    }
+}
+
+fn pattern_kind_name(kind: &HirPatternKind) -> &'static str {
+    match kind {
+        HirPatternKind::Recovery => "recovery",
+        HirPatternKind::Wildcard => "wildcard",
+        HirPatternKind::Binding(_) => "binding",
+        HirPatternKind::BorrowBinding { .. } => "borrow-binding",
+        HirPatternKind::Literal(_) => "literal",
+        HirPatternKind::Tuple(_) => "tuple",
+        HirPatternKind::OptionSome(_) => "option-some",
+        HirPatternKind::OptionNone => "option-none",
+        HirPatternKind::ResultOk(_) => "result-ok",
+        HirPatternKind::ResultErr(_) => "result-err",
+        HirPatternKind::Newtype { .. } => "newtype",
+        HirPatternKind::Variant { .. } => "variant",
+        HirPatternKind::NumericConversionError(_) => "numeric-conversion-error",
+        HirPatternKind::Record { .. } => "record",
+        HirPatternKind::UnionMember { .. } => "union-member",
+        HirPatternKind::Array { .. } => "array",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+    use tondo_compiler::hir::{
+        HirLiteral, HirRangeKind, HirTerminalOperation, HirTerminalUnwindAction,
+    };
+    use tondo_compiler::types::NumericConversionErrorVariant;
+
+    use super::*;
+
+    #[test]
+    fn closed_semantic_vocabulary_has_one_wire_spelling_per_variant() {
+        assert_eq!(
+            [
+                HirCapabilityStatus::Satisfied,
+                HirCapabilityStatus::Deferred,
+                HirCapabilityStatus::Unsatisfied,
+            ]
+            .map(capability_status_name),
+            ["satisfied", "deferred", "unsatisfied"]
+        );
+        assert_eq!(
+            [
+                HirTerminalStatus::Absent,
+                HirTerminalStatus::Potential,
+                HirTerminalStatus::Present,
+            ]
+            .map(terminal_status_name),
+            ["absent", "potential", "present"]
+        );
+        assert_eq!(
+            [
+                HirTerminalOperation::JoinAwait,
+                HirTerminalOperation::ProcessFinish,
+                HirTerminalOperation::TimerFinish,
+            ]
+            .map(terminal_operation_name),
+            ["join-await", "process-finish", "timer-finish"]
+        );
+        assert_eq!(
+            [
+                HirTerminalUnwindAction::JoinTeardown,
+                HirTerminalUnwindAction::ProcessCleanup,
+                HirTerminalUnwindAction::TimerCleanup,
+            ]
+            .map(terminal_unwind_name),
+            ["join-teardown", "process-cleanup", "timer-cleanup"]
+        );
+        assert_eq!(
+            [
+                ParameterMode::Value,
+                ParameterMode::Ref,
+                ParameterMode::Mut,
+                ParameterMode::Var,
+            ]
+            .map(parameter_mode_name),
+            ["value", "ref", "mut", "var"]
+        );
+        assert_eq!(
+            [MirLoanKind::CallLocal, MirLoanKind::Region].map(mir_loan_kind_name),
+            ["call-local", "region"]
+        );
+        assert_eq!(
+            [
+                HirIndexAccess::Array,
+                HirIndexAccess::String,
+                HirIndexAccess::MapLookup,
+                HirIndexAccess::MapEntry,
+            ]
+            .map(index_access_name),
+            ["array", "string", "map-lookup", "map-entry"]
+        );
+        assert_eq!(
+            [CursorMode::Own, CursorMode::Ref, CursorMode::Mut].map(cursor_mode_name),
+            ["own", "ref", "mut"]
+        );
+        assert_eq!(
+            [
+                HirCallProtocol::Call,
+                HirCallProtocol::CallMut,
+                HirCallProtocol::CallOnce,
+            ]
+            .map(call_protocol_name),
+            ["Call", "CallMut", "CallOnce"]
+        );
+        assert_eq!(
+            [
+                HirMatchMode::Copy,
+                HirMatchMode::Observe,
+                HirMatchMode::Consume,
+            ]
+            .map(match_mode_name),
+            ["copy", "observe", "consume"]
+        );
+        assert_eq!(
+            [
+                MemberKind::RecordField,
+                MemberKind::NewtypeValue,
+                MemberKind::EnumVariant,
+                MemberKind::VariantField,
+                MemberKind::InherentMethod,
+                MemberKind::AssociatedFunction,
+                MemberKind::TraitMethod,
+                MemberKind::TraitAssociatedFunction,
+            ]
+            .map(member_kind_name),
+            [
+                "record-field",
+                "newtype-value",
+                "enum-variant",
+                "variant-field",
+                "inherent-method",
+                "associated-function",
+                "trait-method",
+                "trait-associated-function",
+            ]
+        );
+        assert_eq!(
+            [
+                LocalKind::GenericParameter,
+                LocalKind::Parameter,
+                LocalKind::Binding,
+                LocalKind::Pattern,
+                LocalKind::ForPattern,
+                LocalKind::ClosureParameter,
+            ]
+            .map(local_kind_name),
+            [
+                "generic-parameter",
+                "parameter",
+                "binding",
+                "pattern",
+                "for-pattern",
+                "closure-parameter",
+            ]
+        );
+        assert_eq!(mir_local_kind_name(MirLocalKind::Return), "return");
+        assert_eq!(mir_local_kind_name(MirLocalKind::Temporary), "temporary");
+        assert_eq!(
+            mir_local_kind_name(MirLocalKind::Parameter {
+                index: 3,
+                source: None,
+            }),
+            "parameter:3:synthetic"
+        );
+    }
+
+    #[test]
+    fn semantic_sorting_and_span_helpers_are_total_and_deterministic() {
+        let ranked = [
+            Value::Null,
+            json!(false),
+            json!(-1),
+            json!("text"),
+            json!([1, 2]),
+            json!({"key": 1}),
+        ];
+        for (index, left) in ranked.iter().enumerate() {
+            assert_eq!(compare_json(left, left), std::cmp::Ordering::Equal);
+            for right in ranked.iter().skip(index + 1) {
+                assert_eq!(compare_json(left, right), std::cmp::Ordering::Less);
+                assert_eq!(compare_json(right, left), std::cmp::Ordering::Greater);
+            }
+        }
+        assert_eq!(
+            compare_json(&json!(-2), &json!(1)),
+            std::cmp::Ordering::Less
+        );
+        assert_eq!(
+            compare_json(&json!(2_u64), &json!(3_u64)),
+            std::cmp::Ordering::Less
+        );
+        let heterogeneous = compare_json(&json!(u64::MAX), &json!(1.5));
+        assert_ne!(heterogeneous, std::cmp::Ordering::Equal);
+        assert_eq!(
+            compare_json(&json!(1.5), &json!(u64::MAX)),
+            heterogeneous.reverse()
+        );
+        assert_eq!(
+            compare_json(&json!([1, 2]), &json!([1, 3])),
+            std::cmp::Ordering::Less
+        );
+        assert_eq!(
+            compare_json(&json!([1]), &json!([1, 0])),
+            std::cmp::Ordering::Less
+        );
+        let insertion_ordered = json!({
+            "source_id": "source",
+            "module": "main",
+            "file": "main.to",
+            "start": 10,
+            "end": 30
+        });
+        let canonical_ordered = json!({
+            "end": 30,
+            "file": "main.to",
+            "module": "main",
+            "source_id": "source",
+            "start": 10
+        });
+        assert_eq!(
+            compare_json(&insertion_ordered, &canonical_ordered),
+            std::cmp::Ordering::Equal
+        );
+        assert_eq!(
+            compare_json(&json!({"a": 1}), &json!({"b": 1})),
+            std::cmp::Ordering::Less
+        );
+        assert_eq!(
+            compare_json(&json!({"a": 1}), &json!({"a": 2})),
+            std::cmp::Ordering::Less
+        );
+
+        let mut unordered = vec![
+            json!({"span": 2, "id": "b"}),
+            json!({"span": 1, "id": "z"}),
+            json!({"span": 1, "id": "a"}),
+        ];
+        sort_values(&mut unordered, &["span", "id"]);
+        assert_eq!(
+            unordered,
+            [
+                json!({"span": 1, "id": "a"}),
+                json!({"span": 1, "id": "z"}),
+                json!({"span": 2, "id": "b"}),
+            ]
+        );
+
+        let container =
+            json!({"source_id":"source","module":"main","file":"main.to","start":10,"end":30});
+        let inner =
+            json!({"source_id":"source","module":"main","file":"main.to","start":12,"end":20});
+        assert!(span_contains(&container, &inner));
+        assert!(!span_contains(&inner, &container));
+        assert_eq!(span_length(&container), 20);
+        assert_eq!(span_length(&json!({})), u64::MAX);
+        assert_eq!(
+            stable_id("kind", ["a".into(), "bc".into()]),
+            stable_id("kind", ["a".into(), "bc".into()])
+        );
+        assert_ne!(
+            stable_id("kind", ["ab".into(), "c".into()]),
+            stable_id("kind", ["a".into(), "bc".into()])
+        );
+
+        assert_eq!(
+            expression_kind_name(&HirExpressionKind::Literal(HirLiteral::Unit)),
+            "literal"
+        );
+        assert_eq!(
+            expression_kind_name(&HirExpressionKind::NumericConversionError(
+                NumericConversionErrorVariant::OutOfRange,
+            )),
+            "numeric-conversion-error"
+        );
+        assert_eq!(
+            pattern_kind_name(&HirPatternKind::NumericConversionError(
+                NumericConversionErrorVariant::NotFinite,
+            )),
+            "numeric-conversion-error"
+        );
+        assert_eq!(pattern_kind_name(&HirPatternKind::Wildcard), "wildcard");
+        assert_eq!(
+            pattern_kind_name(&HirPatternKind::OptionNone),
+            "option-none"
+        );
+        let _ = HirRangeKind::Inclusive;
+    }
+}

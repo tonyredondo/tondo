@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use crate::bytecode::{
     BytecodeCallableId, BytecodeNominalId, BytecodeParameterMode, BytecodePlace, BytecodeRangeKind,
-    BytecodeTypeId,
+    BytecodeTraceDescriptor, BytecodeTypeId,
 };
 
 use super::heap::{Heap, HeapHandle, HeapObject};
@@ -135,6 +135,7 @@ fn snapshot_value_inner(
             visiting.insert(*handle, id);
             let result = snapshot_object(
                 heap.get(*handle)?,
+                heap.descriptor(*handle)?,
                 heap,
                 callable_names,
                 nominal_names,
@@ -148,6 +149,7 @@ fn snapshot_value_inner(
 
 fn snapshot_object(
     object: &HeapObject,
+    descriptor: BytecodeTypeId,
     heap: &Heap,
     callable_names: &[String],
     nominal_names: &[String],
@@ -200,15 +202,41 @@ fn snapshot_object(
         },
         HeapObject::Record { nominal, fields } => RuntimeValue::Record {
             name: nominal_name(*nominal, nominal_names),
-            fields: fields
+            values: fields
                 .iter()
-                .map(|(field, value)| Ok((*field, snapshot(present_value(value)?, visiting)?)))
+                .map(|(_, value)| snapshot(present_value(value)?, visiting))
                 .collect::<Result<_, VmError>>()?,
         },
-        HeapObject::Variant { variant, payload } => RuntimeValue::Variant {
-            variant: *variant,
-            payload: snapshot_payload(payload, heap, callable_names, nominal_names, visiting)?,
-        },
+        HeapObject::Variant { variant, payload } => {
+            let BytecodeTraceDescriptor::Variant {
+                nominal: Some(nominal),
+                variants,
+                ..
+            } = heap.type_descriptor(descriptor)?
+            else {
+                return Err(VmError::invariant(
+                    "a nominal variant has no nominal trace descriptor",
+                ));
+            };
+            let ordinal = variants
+                .iter()
+                .position(|candidate| candidate.member == *variant)
+                .ok_or_else(|| {
+                    VmError::invariant("variant member is absent from its descriptor")
+                })?;
+            RuntimeValue::Variant {
+                name: nominal_name(*nominal, nominal_names),
+                variant: u32::try_from(ordinal)
+                    .map_err(|_| VmError::invariant("variant ordinal exceeds u32"))?,
+                values: snapshot_payload_values(
+                    payload,
+                    heap,
+                    callable_names,
+                    nominal_names,
+                    visiting,
+                )?,
+            }
+        }
         HeapObject::OptionNone => RuntimeValue::OptionNone,
         HeapObject::OptionSome(value) => {
             RuntimeValue::OptionSome(Box::new(snapshot(present_value(value)?, visiting)?))
@@ -279,6 +307,21 @@ fn snapshot_payload(
             })
             .collect(),
     }
+}
+
+fn snapshot_payload_values(
+    payload: &AggregatePayload,
+    heap: &Heap,
+    callable_names: &[String],
+    nominal_names: &[String],
+    visiting: &mut BTreeMap<HeapHandle, usize>,
+) -> Result<Vec<RuntimeValue>, VmError> {
+    Ok(
+        snapshot_payload(payload, heap, callable_names, nominal_names, visiting)?
+            .into_iter()
+            .map(|(_, value)| value)
+            .collect(),
+    )
 }
 
 fn nominal_name(id: BytecodeNominalId, names: &[String]) -> String {
@@ -551,7 +594,7 @@ mod tests {
                 ),
                 RuntimeValue::Record {
                     name: "nominal#1".into(),
-                    fields: vec![(4, RuntimeValue::Integer(7))],
+                    values: vec![RuntimeValue::Integer(7)],
                 },
             ),
             (
@@ -564,8 +607,9 @@ mod tests {
                     },
                 ),
                 RuntimeValue::Variant {
+                    name: "nominal#2".into(),
                     variant: 0,
-                    payload: Vec::new(),
+                    values: Vec::new(),
                 },
             ),
             (
@@ -578,8 +622,9 @@ mod tests {
                     },
                 ),
                 RuntimeValue::Variant {
+                    name: "nominal#2".into(),
                     variant: 1,
-                    payload: vec![(None, RuntimeValue::Integer(8))],
+                    values: vec![RuntimeValue::Integer(8)],
                 },
             ),
             (
@@ -592,8 +637,9 @@ mod tests {
                     },
                 ),
                 RuntimeValue::Variant {
+                    name: "nominal#2".into(),
                     variant: 2,
-                    payload: vec![(Some(7), RuntimeValue::Integer(9))],
+                    values: vec![RuntimeValue::Integer(9)],
                 },
             ),
             (
@@ -703,6 +749,36 @@ mod tests {
             },
         );
         assert!(snapshot_value(&iterator, &heap, &[], &[]).is_err());
+
+        let mut structural_variant_heap = Heap::new(
+            VmLimits::default(),
+            vec![BytecodeTraceDescriptor::Variant {
+                nominal: None,
+                arguments: Vec::new(),
+                variants: vec![BytecodeVariant {
+                    member: 0,
+                    payload: BytecodeVariantPayload::Unit,
+                }],
+            }],
+        );
+        assert!(matches!(
+            structural_variant_heap.type_descriptor(BytecodeTypeId::new(99)),
+            Err(super::VmError::Invariant(message))
+                if message == "heap type descriptor is missing"
+        ));
+        let structural_variant = allocate(
+            &mut structural_variant_heap,
+            0,
+            HeapObject::Variant {
+                variant: 0,
+                payload: AggregatePayload::Unit,
+            },
+        );
+        assert!(matches!(
+            snapshot_value(&structural_variant, &structural_variant_heap, &[], &[]),
+            Err(super::VmError::Invariant(message))
+                if message == "a nominal variant has no nominal trace descriptor"
+        ));
     }
 
     #[test]

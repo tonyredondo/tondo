@@ -384,6 +384,15 @@ temporary scope until their full managed result is published. A task suspended
 on a child or scope stores the same frame vector in its task record; it remains
 a root source but cannot cross the host boundary.
 
+For nominal host results, the stable boundary uses the public type name plus
+record values in declaration order, or the public enum name plus a zero-based
+variant ordinal and payload values in declaration order. Source-local symbol
+and member IDs are forbidden at this boundary. Materialization resolves that
+shape against the already verified nominal descriptor, checks the public name,
+kind, arity and every recursive child type, and keeps completed children rooted
+until the enclosing value is published. Bytecode retains the fully qualified
+canonical identity separately for uniqueness; it is not a host wire name.
+
 Bytecode admission derives one immutable frame descriptor per function and
 checks that its slot vector exactly matches the verified function. Pushing a
 frame repeats that identity, count, and type check before any slot can become a

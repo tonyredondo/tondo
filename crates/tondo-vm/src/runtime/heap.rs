@@ -265,6 +265,15 @@ impl Heap {
         }
     }
 
+    pub(super) fn type_descriptor(
+        &self,
+        descriptor: BytecodeTypeId,
+    ) -> Result<&BytecodeTraceDescriptor, VmError> {
+        self.descriptors
+            .get(descriptor.index() as usize)
+            .ok_or_else(|| VmError::invariant("heap type descriptor is missing"))
+    }
+
     pub(super) fn allocate(
         &mut self,
         descriptor: BytecodeTypeId,
@@ -690,6 +699,43 @@ mod tests {
     use crate::bytecode::BytecodeVariant;
 
     use super::*;
+
+    #[test]
+    fn recycled_generation_never_exposes_the_reserved_zero_handle() {
+        let mut heap = Heap::new(VmLimits::default(), vec![BytecodeTraceDescriptor::String]);
+        heap.free.push(1);
+        assert!(matches!(
+            heap.allocate(
+                BytecodeTypeId::new(0),
+                HeapObject::String("invalid-free-slot".into()),
+                &[],
+                &mut VmStatistics::default(),
+            ),
+            Err(VmError::Invariant(message))
+                if message == "heap free list contains an invalid slot"
+        ));
+
+        heap.slots.push(HeapSlot {
+            generation: u32::MAX,
+            marked: false,
+            descriptor: BytecodeTypeId::new(0),
+            object: None,
+            bytes: 0,
+        });
+        heap.free.push(0);
+
+        let handle = heap
+            .allocate(
+                BytecodeTypeId::new(0),
+                HeapObject::String("recycled".into()),
+                &[],
+                &mut VmStatistics::default(),
+            )
+            .unwrap();
+
+        assert_eq!(handle.index, 0);
+        assert_eq!(handle.generation, 1);
+    }
 
     #[test]
     fn iterator_adapters_trace_source_and_callbacks() {
