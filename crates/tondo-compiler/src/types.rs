@@ -161,6 +161,14 @@ pub enum IntrinsicType {
     EnvValue,
     EnvError,
     VirtualTime,
+    JsonValue,
+    JsonValueView,
+    JsonRaw,
+    JsonNumber,
+    JsonReader,
+    JsonEvent,
+    JsonWriter,
+    JsonError,
 }
 
 impl IntrinsicType {
@@ -223,6 +231,14 @@ impl IntrinsicType {
             Self::EnvValue => "Value",
             Self::EnvError => "EnvError",
             Self::VirtualTime => "VirtualTime",
+            Self::JsonValue => "Value",
+            Self::JsonValueView => "ValueView",
+            Self::JsonRaw => "Raw",
+            Self::JsonNumber => "JsonNumber",
+            Self::JsonReader => "JsonReader",
+            Self::JsonEvent => "JsonEvent",
+            Self::JsonWriter => "JsonWriter",
+            Self::JsonError => "JsonError",
         }
     }
 
@@ -277,7 +293,15 @@ impl IntrinsicType {
             | Self::EnvValue
             | Self::EnvError
             | Self::AlreadyCompleted
-            | Self::VirtualTime => 0,
+            | Self::VirtualTime
+            | Self::JsonValue
+            | Self::JsonValueView
+            | Self::JsonRaw
+            | Self::JsonNumber
+            | Self::JsonReader
+            | Self::JsonEvent
+            | Self::JsonWriter
+            | Self::JsonError => 0,
         }
     }
 }

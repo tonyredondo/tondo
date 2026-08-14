@@ -9,9 +9,9 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 2.25
+**Versión del tracker:** 2.26
 
-**Última actualización:** 2026-08-13
+**Última actualización:** 2026-08-14
 
 **Especificaciones normativas:**
 
@@ -4476,6 +4476,19 @@ tests. Antes de volver a marcarlas `[x]` deben cumplirse todos estos puntos:
   el kernel compatibility y no sustituye la ruta typed; los gaps de exposición
   HIR/VM quedan registrados por `STD-PUBLIC-API-AUDIT-001`.
 
+- [ ] **STD-JSON-PUBLIC-001 — Cerrar la superficie Tondo exacta de JSON.** El
+  primer corte conecta HIR → bytecode → VM → host para `Value`, `ValueView`,
+  `Raw`, `JsonNumber`, `JsonReader` y `JsonWriter`, preserva los genéricos
+  explícitos y hace terminales los readers/writers tras `finish` o error. La
+  fixture pública se ejecuta desde el test de aceptación de la CLI. La leaf no
+  se cierra todavía: debe exponer los records/enums nominales de options,
+  limits, policies, error/path/location y eventos; respetar la aridad normativa
+  de cada firma; conectar `rawUnchecked` a `unsafe`; y hacer que
+  `decode[T: Decode[Json]]`/`encode[T: Encode[Json]]` despachen los providers
+  derive de records/enums sin reflection ni DOM. Hasta entonces la auditoría
+  conserva visibles sus gaps y no cuenta la mera presencia del nuevo bridge
+  host como firma verificada.
+
 - [x] **STD-MSGPACK-IMPL-001 — Implementar MessagePack completo.** Publicar
   `parse -> Value`, `decode[T: Decode[MessagePack]]`,
   `encode[T: Encode[MessagePack]]`, `ValueView`/`Raw` y streaming para todo el
@@ -5950,6 +5963,24 @@ no se declara iniciada antes de S1A.
 ---
 
 ## 25. Historial del tracker
+
+### 2.26 — 2026-08-14
+
+- Se implementa el primer corte ejecutable de `STD-JSON-PUBLIC-001`: los tipos
+  host nominales, las rutas HIR/bytecode/VM, el parse dinámico y prestado, Raw,
+  números exactos y el streaming reader/writer ya se consumen desde un programa
+  Tondo real. Los genéricos explícitos de funciones host dejan de perder sus
+  argumentos y las invariantes permiten préstamos exclusivos suspendibles solo
+  para los adapters I/O cerrados de JSON.
+- `validate` y `canonicalize` devuelven `JsonError` de forma coherente, las
+  conversiones typed comprueban el rango de los enteros estrechos y los handles
+  de streaming quedan terminales tras `finish` o cualquier error. Pruebas de
+  host, HIR y aceptación CLI cubren éxito, límites y reutilización inválida.
+- El cierre no reduce aún los 54 gaps de la auditoría pública: las firmas
+  normativas exigen options/limits/policies nominales y el dispatch derive para
+  records/enums. Se añade una leaf explícita para completar esa frontera sin
+  declarar verificada una coincidencia de nombre con aridad o semántica
+  distintas.
 
 ### 2.25 — 2026-08-13
 

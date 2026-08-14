@@ -100,6 +100,25 @@ fn check_reaches_the_shared_driver() {
 }
 
 #[test]
+fn json_public_surface_runs_through_the_cli() {
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/runtime/m11-std-codecs-001.to");
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .arg("run")
+        .arg(source)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "unexpected stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout, b"42\ncodecs-ok\n");
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
 fn check_and_run_accept_a_conventional_project_without_json_configuration() {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)

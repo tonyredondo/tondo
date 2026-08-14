@@ -14,8 +14,27 @@ patterns=(
     'rustc-LLVM ERROR:'
 )
 
+logs_contain() {
+    local pattern="$1"
+    local log line
+    local files
+
+    shopt -s globstar nullglob
+    files=("$logs"/**/*.log)
+    shopt -u globstar nullglob
+
+    for log in "${files[@]}"; do
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            if [[ "$line" == *"$pattern"* ]]; then
+                return 0
+            fi
+        done < "$log"
+    done
+    return 1
+}
+
 for pattern in "${patterns[@]}"; do
-    if rg --fixed-strings --quiet --glob '*.log' "$pattern" "$logs"; then
+    if logs_contain "$pattern"; then
         echo "mutation infrastructure failure: cargo-mutants log contains '$pattern'" >&2
         exit 1
     fi

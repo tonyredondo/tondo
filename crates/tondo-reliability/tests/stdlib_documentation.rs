@@ -151,6 +151,7 @@ fn public_api_status_preserves_audited_gaps() {
     let root = root();
     let docs = load(&root, "testing/stdlib-documentation.json");
     let api = load(&root, "testing/stdlib-public-api.json");
+    let config = load(&root, "testing/stdlib-public-api-config.json");
 
     for owner in owners(&docs) {
         let api_rows = api["rows"]
@@ -188,4 +189,29 @@ fn public_api_status_preserves_audited_gaps() {
     assert_eq!(docs["summary"]["api_complete"], 14);
     assert_eq!(docs["summary"]["api_partial"], 4);
     assert_eq!(docs["summary"]["api_not_applicable"], 4);
+
+    for codec in ["std.json", "std.messagepack", "std.protobuf"] {
+        let owner = config["owners"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|owner| owner["id"] == codec)
+            .unwrap();
+        assert_eq!(owner["exact_surface_complete"], false);
+        let exact = owner["exact_signatures"].as_array().unwrap();
+        assert!(api["rows"].as_array().unwrap().iter().all(|row| {
+            if row["owner"] != codec {
+                return true;
+            }
+            let signature = row["signature"].as_str().unwrap();
+            let exact_signature = exact
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .any(|name| signature.starts_with(&format!("pub fn {name}")));
+            exact_signature
+                || row["missing"].as_array().is_some_and(|missing| {
+                    missing.iter().any(|item| item == "exact-signature-shape")
+                })
+        }));
+    }
 }

@@ -497,7 +497,15 @@ impl<'a> TraceMetadataAnalysis<'a> {
                 | BytecodeIntrinsicType::EnvName
                 | BytecodeIntrinsicType::EnvValue
                 | BytecodeIntrinsicType::EnvError
-                | BytecodeIntrinsicType::VirtualTime => BytecodeTraceDescriptor::Inline,
+                | BytecodeIntrinsicType::VirtualTime
+                | BytecodeIntrinsicType::JsonValue
+                | BytecodeIntrinsicType::JsonValueView
+                | BytecodeIntrinsicType::JsonRaw
+                | BytecodeIntrinsicType::JsonNumber
+                | BytecodeIntrinsicType::JsonReader
+                | BytecodeIntrinsicType::JsonEvent
+                | BytecodeIntrinsicType::JsonWriter
+                | BytecodeIntrinsicType::JsonError => BytecodeTraceDescriptor::Inline,
             },
             BytecodeTypeKind::OpaqueResult { witness, .. } => self.opaque_descriptor(witness)?,
             BytecodeTypeKind::Generated { .. } => self
@@ -1193,6 +1201,24 @@ fn intrinsic_capability(
             capability,
             ClosedCapability::Discard | ClosedCapability::Send
         )),
+        BytecodeIntrinsicType::JsonReader | BytecodeIntrinsicType::JsonWriter => {
+            fixed_capability(matches!(
+                capability,
+                ClosedCapability::Discard | ClosedCapability::Send
+            ))
+        }
+        BytecodeIntrinsicType::JsonValue
+        | BytecodeIntrinsicType::JsonValueView
+        | BytecodeIntrinsicType::JsonRaw
+        | BytecodeIntrinsicType::JsonNumber
+        | BytecodeIntrinsicType::JsonEvent
+        | BytecodeIntrinsicType::JsonError => fixed_capability(matches!(
+            capability,
+            ClosedCapability::Copy
+                | ClosedCapability::Discard
+                | ClosedCapability::Send
+                | ClosedCapability::Share
+        )),
     }
 }
 
@@ -1539,7 +1565,15 @@ fn intrinsic_terminal(
         | BytecodeIntrinsicType::EnvName
         | BytecodeIntrinsicType::EnvValue
         | BytecodeIntrinsicType::EnvError
-        | BytecodeIntrinsicType::VirtualTime => fixed_terminal(BytecodeTerminalStatus::Absent),
+        | BytecodeIntrinsicType::VirtualTime
+        | BytecodeIntrinsicType::JsonValue
+        | BytecodeIntrinsicType::JsonValueView
+        | BytecodeIntrinsicType::JsonRaw
+        | BytecodeIntrinsicType::JsonNumber
+        | BytecodeIntrinsicType::JsonReader
+        | BytecodeIntrinsicType::JsonEvent
+        | BytecodeIntrinsicType::JsonWriter
+        | BytecodeIntrinsicType::JsonError => fixed_terminal(BytecodeTerminalStatus::Absent),
         BytecodeIntrinsicType::Timer => {
             unreachable!("registered bytecode terminal roots return above")
         }
@@ -1720,7 +1754,15 @@ impl Verifier<'_> {
                 | BytecodeIntrinsicType::EnvName
                 | BytecodeIntrinsicType::EnvValue
                 | BytecodeIntrinsicType::EnvError
-                | BytecodeIntrinsicType::VirtualTime => None,
+                | BytecodeIntrinsicType::VirtualTime
+                | BytecodeIntrinsicType::JsonValue
+                | BytecodeIntrinsicType::JsonValueView
+                | BytecodeIntrinsicType::JsonRaw
+                | BytecodeIntrinsicType::JsonNumber
+                | BytecodeIntrinsicType::JsonReader
+                | BytecodeIntrinsicType::JsonEvent
+                | BytecodeIntrinsicType::JsonWriter
+                | BytecodeIntrinsicType::JsonError => None,
             };
             if let Some((required, capability, label)) = requirement {
                 let context = format!("type#{index}");
@@ -2173,6 +2215,8 @@ impl Verifier<'_> {
                 && !callable.name.starts_with("std.io.writeAll")
                 && !callable.name.starts_with("std.fs.File.")
                 && !callable.name.starts_with("std.fs.Directory.")
+                && !callable.name.starts_with("std.json.JsonReader.")
+                && !callable.name.starts_with("std.json.JsonWriter.")
                 && !callable.name.starts_with("std.async.Waiter.wait")
                 // Source HIR admits an exclusive receiver only for the
                 // `AsyncIterator.next` implementation.  The bytecode table
@@ -2209,6 +2253,8 @@ impl Verifier<'_> {
                 && !callable.name.starts_with("std.io.writeAll")
                 && !callable.name.starts_with("std.fs.File.")
                 && !callable.name.starts_with("std.fs.Directory.")
+                && !callable.name.starts_with("std.json.JsonReader.")
+                && !callable.name.starts_with("std.json.JsonWriter.")
                 && !callable.name.starts_with("std.collections.")
                 && !callable.name.starts_with("std.async.Waiter.wait")
                 && !callable.name.starts_with("std.async.Completer.")
@@ -14614,7 +14660,13 @@ mod tests {
                 | BytecodeIntrinsicType::ProcessOutput
                 | BytecodeIntrinsicType::ProcessError
                 | BytecodeIntrinsicType::ProcessExitError
-                | BytecodeIntrinsicType::Utf8Error => [true, true, false, false, true, true],
+                | BytecodeIntrinsicType::Utf8Error
+                | BytecodeIntrinsicType::JsonValue
+                | BytecodeIntrinsicType::JsonValueView
+                | BytecodeIntrinsicType::JsonRaw
+                | BytecodeIntrinsicType::JsonNumber
+                | BytecodeIntrinsicType::JsonEvent
+                | BytecodeIntrinsicType::JsonError => [true, true, false, false, true, true],
                 BytecodeIntrinsicType::BytesBuilder
                 | BytecodeIntrinsicType::FormatBuilder
                 | BytecodeIntrinsicType::VirtualTime => [false, true, false, false, true, false],
@@ -14633,7 +14685,9 @@ mod tests {
                 BytecodeIntrinsicType::TempDirectory
                 | BytecodeIntrinsicType::Generator
                 | BytecodeIntrinsicType::Reader
-                | BytecodeIntrinsicType::Writer => [false, true, false, false, true, false],
+                | BytecodeIntrinsicType::Writer
+                | BytecodeIntrinsicType::JsonReader
+                | BytecodeIntrinsicType::JsonWriter => [false, true, false, false, true, false],
                 BytecodeIntrinsicType::IoLimits => [true, true, true, true, true, true],
                 BytecodeIntrinsicType::Duration
                 | BytecodeIntrinsicType::DurationError

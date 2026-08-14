@@ -559,7 +559,15 @@ impl Verifier<'_> {
                         | IntrinsicType::EnvName
                         | IntrinsicType::EnvValue
                         | IntrinsicType::EnvError
-                        | IntrinsicType::VirtualTime => None,
+                        | IntrinsicType::VirtualTime
+                        | IntrinsicType::JsonValue
+                        | IntrinsicType::JsonValueView
+                        | IntrinsicType::JsonRaw
+                        | IntrinsicType::JsonNumber
+                        | IntrinsicType::JsonReader
+                        | IntrinsicType::JsonEvent
+                        | IntrinsicType::JsonWriter
+                        | IntrinsicType::JsonError => None,
                     };
                     if let Some((required, capability, reason)) = requirement {
                         self.verify_capability_requirement(
@@ -2298,6 +2306,8 @@ impl Verifier<'_> {
                     if function.name().starts_with("std.io.")
                         || function.name().starts_with("std.fs.File.")
                         || function.name().starts_with("std.fs.Directory.")
+                        || function.name().starts_with("std.json.JsonReader.")
+                        || function.name().starts_with("std.json.JsonWriter.")
             );
             let async_oneshot_callable = matches!(
                 callable.id,

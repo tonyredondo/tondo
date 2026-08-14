@@ -4,11 +4,92 @@ import std.json
 import std.messagepack
 import std.protobuf
 
-fn main(): !(bytes.BytesError | bytes.Utf8Error) {
+fn main(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | json.JsonError) {
     let json_input = bytes.Bytes(r"""{"z":1,"a":2}""")?
     json.validate(json_input)?
     let json_canonical = json.canonicalize(json_input)?
     assert(String(json_canonical)? == r"""{"a":2,"z":1}""")
+
+    let json_value = json.parse(json_input)?
+    let _json_view = json.parseView(json_input)?
+    let _json_raw = json.raw(json_input)?
+    let json_value_canonical = json.encodeCanonical(json_value)?
+    assert(String(json_value_canonical)? == r"""{"a":2,"z":1}""")
+
+    let typed_input = bytes.Bytes("[1,2,3]")?
+    let typed_values = json.decode[Array[Int]](typed_input)?
+    assert(typed_values == [1, 2, 3])
+    let typed_output = json.encode[Array[Int]](typed_values)?
+    assert(String(typed_output)? == "[1,2,3]")
+
+    assert(json.decode[Bool](bytes.Bytes("true")?)? == true)
+    assert(json.decode[Array[String]](bytes.Bytes(r"""["text"]""")?)? == ["text"])
+    assert(json.decode[Unit](bytes.Bytes("null")?)? == ())
+    assert(json.decode[Byte](bytes.Bytes("255")?)? == Byte(255u8))
+    assert(json.decode[Int16](bytes.Bytes("-32768")?)? == -32768i16)
+    assert(json.decode[UInt32](bytes.Bytes("4294967295")?)? == 4294967295u32)
+    assert(json.decode[Float32](bytes.Bytes("1.5")?)? == 1.5f32)
+    assert(json.decode[Float64](bytes.Bytes("2.5")?)? == 2.5)
+    assert(json.decode[Int?](bytes.Bytes("null")?)? == none)
+    assert(json.decode[Int?](bytes.Bytes("7")?)? == some(7))
+    let typed_object = json.decode[Map[String, Int]](bytes.Bytes(r"""{"a":1}""")?)?
+    assert(typed_object == ["a": 1])
+    let typed_object_output = json.encode[Map[String, Int]](typed_object)?
+    assert(String(typed_object_output)? == r"""{"a":1}""")
+    assert(String(json.encode[Bool](true)?)? == "true")
+    assert(String(json.encode[Int?](none)?)? == "null")
+    assert(String(json.encode[Int?](some(7))?)? == "7")
+    match json.decode[Byte](bytes.Bytes("256")?) {
+        ok(_) => assert(false)
+        err(_) => ()
+    }
+    match json.decode[Int](bytes.Bytes("1.5")?) {
+        ok(_) => assert(false)
+        err(_) => ()
+    }
+    match json.decode[UInt64](bytes.Bytes("-1")?) {
+        ok(_) => assert(false)
+        err(_) => ()
+    }
+    match json.decode[UInt32](bytes.Bytes("4294967296")?) {
+        ok(_) => assert(false)
+        err(_) => ()
+    }
+    match json.decode[Float32](bytes.Bytes("1e1000")?) {
+        ok(_) => assert(false)
+        err(_) => ()
+    }
+    match json.decode[Float64](bytes.Bytes("1e10000")?) {
+        ok(_) => assert(false)
+        err(_) => ()
+    }
+
+    let number = json.JsonNumber.parse("42")?
+    assert(number.text() == "42")
+    assert(number.toInt()? == 42)
+    assert(number.toUInt()? == 42u64)
+    assert(number.toFloat32()? == 42.0f32)
+    assert(number.toFloat64()? == 42.0)
+
+    let scalar = bytes.Bytes("42")?
+    var event_reader = json.JsonReader.fromBytes(scalar)?
+    let event = match event_reader.next()? {
+        some(value) => event_reader.own(value)?
+        none => panic("JSON scalar must publish one event")
+    }
+    match event_reader.next()? {
+        some(_) => panic("JSON scalar must publish exactly one event")
+        none => ()
+    }
+    event_reader.finish()?
+
+    var stdout = console.stdout()?
+    var event_writer = json.JsonWriter.toWriter(var stdout)?
+    event_writer.write(event)?
+    event_writer.finish()?
+
+    var stdin = console.stdin()?
+    let _reader_from_io = json.JsonReader.fromReader(var stdin)?
 
     let duplicate = bytes.Bytes(r"""{"a":1,"a":2}""")?
     match json.validate(duplicate) {
@@ -32,5 +113,5 @@ fn main(): !(bytes.BytesError | bytes.Utf8Error) {
         Byte(0x12u8), Byte(0x02u8), Byte(0x6fu8), Byte(0x6bu8)
     ])?
     protobuf.validate(protobuf_input)?
-    console.print("codecs-ok\n")
+    console.print("\ncodecs-ok\n")
 }

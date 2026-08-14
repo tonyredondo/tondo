@@ -11,6 +11,10 @@ printf '%s\n' 'error[E0277]: a deliberately mutated type does not implement Defa
     > "$workspace/log/unviable.log"
 "$checker" "$workspace/log" >/dev/null
 
+mkdir -p "$workspace/bin"
+ln -s "$(command -v bash)" "$workspace/bin/bash"
+PATH="$workspace/bin" "$checker" "$workspace/log" >/dev/null
+
 for signature in \
     'rustc interrupted by SIGILL, printing backtrace' \
     'internal compiler error: unexpected query cycle' \

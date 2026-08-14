@@ -1372,19 +1372,208 @@ impl<'a> TypeLowerer<'a> {
         let codec_bytes = self.interner.result(bytes, bytes_error)?;
         let codec_unit = self.interner.result(unit, bytes_error)?;
         if json_referenced {
+            let json_value = self
+                .interner
+                .intrinsic(IntrinsicType::JsonValue, Vec::new())?;
+            let json_value_view = self
+                .interner
+                .intrinsic(IntrinsicType::JsonValueView, Vec::new())?;
+            let json_raw = self
+                .interner
+                .intrinsic(IntrinsicType::JsonRaw, Vec::new())?;
+            let json_number = self
+                .interner
+                .intrinsic(IntrinsicType::JsonNumber, Vec::new())?;
+            let json_reader = self
+                .interner
+                .intrinsic(IntrinsicType::JsonReader, Vec::new())?;
+            let json_event = self
+                .interner
+                .intrinsic(IntrinsicType::JsonEvent, Vec::new())?;
+            let json_writer = self
+                .interner
+                .intrinsic(IntrinsicType::JsonWriter, Vec::new())?;
+            let json_error = self
+                .interner
+                .intrinsic(IntrinsicType::JsonError, Vec::new())?;
+            let reader = self.interner.intrinsic(IntrinsicType::Reader, Vec::new())?;
+            let writer = self.interner.intrinsic(IntrinsicType::Writer, Vec::new())?;
+            let json_value_result = self.interner.result(json_value, json_error)?;
+            let json_value_view_result = self.interner.result(json_value_view, json_error)?;
+            let json_raw_result = self.interner.result(json_raw, json_error)?;
+            let json_number_result = self.interner.result(json_number, json_error)?;
+            let json_reader_result = self.interner.result(json_reader, json_error)?;
+            let json_writer_result = self.interner.result(json_writer, json_error)?;
+            let json_event_result = self.interner.result(json_event, json_error)?;
+            let optional_json_event = self.interner.option(json_event)?;
+            let optional_json_event_result =
+                self.interner.result(optional_json_event, json_error)?;
+            let json_unit_result = self.interner.result(unit, json_error)?;
+            let json_bytes_result = self.interner.result(bytes, json_error)?;
+            let int64 = self.interner.scalar(ScalarType::Int);
+            let uint64 = self.interner.scalar(ScalarType::UInt64);
+            let float32 = self.interner.scalar(ScalarType::Float32);
+            let float64 = self.interner.scalar(ScalarType::Float);
+            let json_int_result = self.interner.result(int64, json_error)?;
+            let json_uint_result = self.interner.result(uint64, json_error)?;
+            let json_float32_result = self.interner.result(float32, json_error)?;
+            let json_float64_result = self.interner.result(float64, json_error)?;
+
             self.push_bootstrap_host_callable(
                 span,
                 HirBootstrapHostFunction::JsonValidate,
                 vec![(bytes, false)],
                 None,
-                codec_unit,
+                json_unit_result,
             )?;
             self.push_bootstrap_host_callable(
                 span,
                 HirBootstrapHostFunction::JsonCanonicalize,
                 vec![(bytes, false)],
                 None,
-                codec_bytes,
+                json_bytes_result,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::JsonParse,
+                vec![(bytes, false)],
+                None,
+                json_value_result,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::JsonParseView,
+                vec![(bytes, false)],
+                None,
+                json_value_view_result,
+            )?;
+            let generic = self.interner.generic_parameter(0)?;
+            let generic_result = self.interner.result(generic, json_error)?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::JsonDecode,
+                vec![(bytes, ParameterMode::Value, false)],
+                generic_result,
+                1,
+                Vec::new(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::JsonEncode,
+                vec![(generic, ParameterMode::Value, false)],
+                json_bytes_result,
+                1,
+                Vec::new(),
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::JsonEncodeCanonical,
+                vec![(json_value, false)],
+                None,
+                json_bytes_result,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::JsonRaw,
+                vec![(bytes, false)],
+                None,
+                json_raw_result,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::JsonNumberParse,
+                vec![(string, false)],
+                None,
+                json_number_result,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::JsonNumberText,
+                vec![(json_number, true)],
+                None,
+                string,
+            )?;
+            for (function, outcome) in [
+                (HirBootstrapHostFunction::JsonNumberToInt, json_int_result),
+                (HirBootstrapHostFunction::JsonNumberToUInt, json_uint_result),
+                (
+                    HirBootstrapHostFunction::JsonNumberToFloat32,
+                    json_float32_result,
+                ),
+                (
+                    HirBootstrapHostFunction::JsonNumberToFloat64,
+                    json_float64_result,
+                ),
+            ] {
+                self.push_bootstrap_host_callable(
+                    span,
+                    function,
+                    vec![(json_number, true)],
+                    None,
+                    outcome,
+                )?;
+            }
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::JsonReaderFromBytes,
+                vec![(bytes, false)],
+                None,
+                json_reader_result,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::JsonReaderFromReader,
+                vec![(reader, ParameterMode::Var, false)],
+                None,
+                json_reader_result,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::JsonReaderNext,
+                vec![(json_reader, ParameterMode::Var, true)],
+                None,
+                optional_json_event_result,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::JsonReaderOwn,
+                vec![
+                    (json_reader, ParameterMode::Var, true),
+                    (json_event, ParameterMode::Value, false),
+                ],
+                None,
+                json_event_result,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::JsonReaderFinish,
+                vec![(json_reader, ParameterMode::Var, true)],
+                None,
+                json_unit_result,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::JsonWriterToWriter,
+                vec![(writer, ParameterMode::Var, false)],
+                None,
+                json_writer_result,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::JsonWriterWrite,
+                vec![
+                    (json_writer, ParameterMode::Var, true),
+                    (json_event, ParameterMode::Value, false),
+                ],
+                None,
+                json_unit_result,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::JsonWriterFinish,
+                vec![(json_writer, ParameterMode::Var, true)],
+                None,
+                json_unit_result,
             )?;
         }
         if messagepack_referenced {
@@ -6041,7 +6230,15 @@ impl<'a> TypeLowerer<'a> {
                         | IntrinsicType::EnvName
                         | IntrinsicType::EnvValue
                         | IntrinsicType::EnvError
-                        | IntrinsicType::VirtualTime => values.push(true),
+                        | IntrinsicType::VirtualTime
+                        | IntrinsicType::JsonValue
+                        | IntrinsicType::JsonValueView
+                        | IntrinsicType::JsonRaw
+                        | IntrinsicType::JsonNumber
+                        | IntrinsicType::JsonReader
+                        | IntrinsicType::JsonEvent
+                        | IntrinsicType::JsonWriter
+                        | IntrinsicType::JsonError => values.push(true),
                     },
                 },
                 ProductivityTask::Nominal(symbol, arguments) => {

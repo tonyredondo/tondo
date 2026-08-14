@@ -30,6 +30,10 @@ jq -e '
         and ((.runtime.symbols // {}) | type) == "object"
         and ((.hir_symbols // {}) | type) == "object"
         and ((.lowering_symbols // {}) | type) == "object"
+        and ((if has("exact_surface_complete") then .exact_surface_complete else true end) | type) == "boolean"
+        and ((.exact_signatures // []) | type) == "array"
+        and all((.exact_signatures // [])[]; type == "string" and length > 0)
+        and (if (has("exact_surface_complete") and (.exact_surface_complete == false)) then has("exact_signatures") else true end)
         and (if .runtime.kind == "not-applicable" then (.runtime.paths | length) == 0 and (.runtime.reason | type) == "string" and (.runtime.reason | length > 0) else (.runtime.paths | length > 0) end)
     )
 ' "$config" >/dev/null || die "invalid audit configuration"
@@ -163,7 +167,7 @@ extract_signatures() {
 
 emit_owner_rows() {
     local owner_json="$1"
-    local owner contract section include exclude case_path case_kind
+    local owner contract section include exclude case_path case_kind exact_surface_complete exact_signatures
     owner="$(jq -r '.id' <<< "$owner_json")"
     contract="$(jq -r '.contract' <<< "$owner_json")"
     section="$(jq -r '.section' <<< "$owner_json")"
@@ -171,6 +175,8 @@ emit_owner_rows() {
     exclude="$(jq -c '.exclude' <<< "$owner_json")"
     case_path="$(jq -r '.case.path' <<< "$owner_json")"
     case_kind="$(jq -r '.case.kind' <<< "$owner_json")"
+    exact_surface_complete="$(jq -r 'if has("exact_surface_complete") then .exact_surface_complete else true end' <<< "$owner_json")"
+    exact_signatures="$(jq -c '.exact_signatures // []' <<< "$owner_json")"
     local hir lowering runtime runtime_kind runtime_reason runtime_symbols
     hir="$(jq -c '.hir' <<< "$owner_json")"
     lowering="$(jq -c '.lowering' <<< "$owner_json")"
@@ -218,6 +224,10 @@ emit_owner_rows() {
 
         if ! grep -Fq -- "$signature" "$root/$contract"; then
             missing+=("contract-signature-drift")
+        fi
+        if [[ "$exact_surface_complete" != true ]] &&
+            ! jq -e --arg name "$name" 'index($name) != null' <<< "$exact_signatures" >/dev/null; then
+            missing+=("exact-signature-shape")
         fi
         if ! all_paths_contain_any "$hir" "$hir_needles"; then
             missing+=("hir-symbol")
@@ -303,7 +313,7 @@ generate_matrix() {
     jq -n --slurpfile rows "$rows_ndjson" --slurpfile config_json "$config" '
         ($rows) as $all_rows
         | ($config_json[0]) as $config
-        | ($config.owners | map({id,contract,section,case:.case,hir,lowering,runtime})) as $owner_config
+        | ($config.owners | map({id,contract,section,exact_surface_complete:(if has("exact_surface_complete") then .exact_surface_complete else true end),exact_signatures:(.exact_signatures // []),case:.case,hir,lowering,runtime})) as $owner_config
         | ($owner_config | map(. as $owner |
             ($all_rows | map(select(.owner == $owner.id))) as $owner_rows
             | . + {
@@ -330,6 +340,7 @@ generate_matrix() {
                 public_case_kinds:["runtime","compile","runner-source"],
                 documentation_is_not_public_case:true,
                 bootstrap_aliases:false,
+                exact_signature_shape_required:true,
                 strict_mode:"fails-on-any-gap"
             },
             status:(if (($all_rows | any(.status == "gap")) or ($owners | any(.owner_missing | length > 0))) then "open-gaps" else "verified" end),
@@ -354,6 +365,7 @@ validate_matrix() {
         and .rules.one_owner_per_signature == true
         and .rules.documentation_is_not_public_case == true
         and .rules.bootstrap_aliases == false
+        and .rules.exact_signature_shape_required == true
         and .rules.strict_mode == "fails-on-any-gap"
         and (.owners | length) == 20
         and ([.owners[].id] | unique | length) == 20
@@ -375,6 +387,8 @@ validate_matrix() {
         )
         and all(.owners[];
             (.owner_missing | type) == "array"
+            and (.exact_surface_complete | type) == "boolean"
+            and (.exact_signatures | type) == "array"
             and (.status == (if ((.owner_missing | length) > 0 or .gap_count > 0) then "open-gaps" else "verified" end))
             and (if .case.kind == "runtime" then ((.case.path | startswith("tests/runtime/")) or any(.owner_missing[]; . == "invalid-runtime-case"))
                  elif .case.kind == "compile" then (((.case.path | startswith("crates/")) and (.case.path | contains("/tests/"))) or any(.owner_missing[]; . == "invalid-compile-case"))

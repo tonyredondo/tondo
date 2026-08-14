@@ -284,6 +284,14 @@ pub enum BytecodeIntrinsicType {
     EnvValue,
     EnvError,
     VirtualTime,
+    JsonValue,
+    JsonValueView,
+    JsonRaw,
+    JsonNumber,
+    JsonReader,
+    JsonEvent,
+    JsonWriter,
+    JsonError,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -442,7 +450,15 @@ impl BytecodeIntrinsicType {
             | Self::EnvName
             | Self::EnvValue
             | Self::EnvError
-            | Self::VirtualTime => 0,
+            | Self::VirtualTime
+            | Self::JsonValue
+            | Self::JsonValueView
+            | Self::JsonRaw
+            | Self::JsonNumber
+            | Self::JsonReader
+            | Self::JsonEvent
+            | Self::JsonWriter
+            | Self::JsonError => 0,
         }
     }
 
@@ -520,7 +536,15 @@ impl BytecodeIntrinsicType {
             | Self::EnvName
             | Self::EnvValue
             | Self::EnvError
-            | Self::VirtualTime => None,
+            | Self::VirtualTime
+            | Self::JsonValue
+            | Self::JsonValueView
+            | Self::JsonRaw
+            | Self::JsonNumber
+            | Self::JsonReader
+            | Self::JsonEvent
+            | Self::JsonWriter
+            | Self::JsonError => None,
         }
     }
 }

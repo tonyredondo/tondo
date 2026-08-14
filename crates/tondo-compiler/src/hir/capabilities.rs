@@ -857,5 +857,30 @@ fn intrinsic_node(
                 fixed(HirCapabilityStatus::Unsatisfied)
             }
         }
+        IntrinsicType::JsonReader | IntrinsicType::JsonWriter => {
+            if matches!(capability, HirCapability::Discard | HirCapability::Send) {
+                satisfied(Vec::new())
+            } else {
+                fixed(HirCapabilityStatus::Unsatisfied)
+            }
+        }
+        IntrinsicType::JsonValue
+        | IntrinsicType::JsonValueView
+        | IntrinsicType::JsonRaw
+        | IntrinsicType::JsonNumber
+        | IntrinsicType::JsonEvent
+        | IntrinsicType::JsonError => {
+            if matches!(
+                capability,
+                HirCapability::Copy
+                    | HirCapability::Discard
+                    | HirCapability::Send
+                    | HirCapability::Share
+            ) {
+                satisfied(Vec::new())
+            } else {
+                fixed(HirCapabilityStatus::Unsatisfied)
+            }
+        }
     }
 }

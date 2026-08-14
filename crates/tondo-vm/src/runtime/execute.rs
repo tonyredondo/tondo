@@ -2444,7 +2444,15 @@ impl<'program, 'host> Engine<'program, 'host> {
                     | BytecodeIntrinsicType::EnvName
                     | BytecodeIntrinsicType::EnvValue
                     | BytecodeIntrinsicType::EnvError
-                    | BytecodeIntrinsicType::VirtualTime => {}
+                    | BytecodeIntrinsicType::VirtualTime
+                    | BytecodeIntrinsicType::JsonValue
+                    | BytecodeIntrinsicType::JsonValueView
+                    | BytecodeIntrinsicType::JsonRaw
+                    | BytecodeIntrinsicType::JsonNumber
+                    | BytecodeIntrinsicType::JsonReader
+                    | BytecodeIntrinsicType::JsonEvent
+                    | BytecodeIntrinsicType::JsonWriter
+                    | BytecodeIntrinsicType::JsonError => {}
                     BytecodeIntrinsicType::ProcessHandle => {
                         let Value::Host(value) = value else {
                             return Err(VmError::invariant(
@@ -4108,6 +4116,14 @@ fn runtime_host_kind(constructor: BytecodeIntrinsicType) -> Option<RuntimeHostVa
         BytecodeIntrinsicType::EnvValue => RuntimeHostValueKind::EnvValue,
         BytecodeIntrinsicType::EnvError => RuntimeHostValueKind::EnvError,
         BytecodeIntrinsicType::VirtualTime => RuntimeHostValueKind::VirtualTime,
+        BytecodeIntrinsicType::JsonValue => RuntimeHostValueKind::JsonValue,
+        BytecodeIntrinsicType::JsonValueView => RuntimeHostValueKind::JsonValueView,
+        BytecodeIntrinsicType::JsonRaw => RuntimeHostValueKind::JsonRaw,
+        BytecodeIntrinsicType::JsonNumber => RuntimeHostValueKind::JsonNumber,
+        BytecodeIntrinsicType::JsonReader => RuntimeHostValueKind::JsonReader,
+        BytecodeIntrinsicType::JsonEvent => RuntimeHostValueKind::JsonEvent,
+        BytecodeIntrinsicType::JsonWriter => RuntimeHostValueKind::JsonWriter,
+        BytecodeIntrinsicType::JsonError => RuntimeHostValueKind::JsonError,
         BytecodeIntrinsicType::Array
         | BytecodeIntrinsicType::Map
         | BytecodeIntrinsicType::Set

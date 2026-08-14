@@ -145,6 +145,17 @@ fn bootstrap_process_intrinsic(module: &ModuleId, name: &Name) -> Option<Intrins
             "ConsoleError" => IntrinsicType::ConsoleError,
             _ => return None,
         }),
+        "json" => Some(match name.as_str() {
+            "Value" => IntrinsicType::JsonValue,
+            "ValueView" => IntrinsicType::JsonValueView,
+            "Raw" => IntrinsicType::JsonRaw,
+            "JsonNumber" => IntrinsicType::JsonNumber,
+            "JsonReader" => IntrinsicType::JsonReader,
+            "JsonEvent" => IntrinsicType::JsonEvent,
+            "JsonWriter" => IntrinsicType::JsonWriter,
+            "JsonError" => IntrinsicType::JsonError,
+            _ => return None,
+        }),
         _ => None,
     }
 }
@@ -2518,6 +2529,26 @@ pub enum HirBootstrapHostFunction {
     FsOpenModeCreateNew,
     JsonValidate,
     JsonCanonicalize,
+    JsonParse,
+    JsonParseView,
+    JsonDecode,
+    JsonEncode,
+    JsonEncodeCanonical,
+    JsonRaw,
+    JsonNumberParse,
+    JsonNumberText,
+    JsonNumberToInt,
+    JsonNumberToUInt,
+    JsonNumberToFloat32,
+    JsonNumberToFloat64,
+    JsonReaderFromBytes,
+    JsonReaderFromReader,
+    JsonReaderNext,
+    JsonReaderOwn,
+    JsonReaderFinish,
+    JsonWriterToWriter,
+    JsonWriterWrite,
+    JsonWriterFinish,
     MessagePackValidate,
     MessagePackCanonicalize,
     ProtobufValidate,
@@ -2754,6 +2785,26 @@ impl HirBootstrapHostFunction {
             Self::FsOpenModeCreateNew => "std.fs.OpenMode.CreateNew",
             Self::JsonValidate => "std.json.validate",
             Self::JsonCanonicalize => "std.json.canonicalize",
+            Self::JsonParse => "std.json.parse",
+            Self::JsonParseView => "std.json.parseView",
+            Self::JsonDecode => "std.json.decode",
+            Self::JsonEncode => "std.json.encode",
+            Self::JsonEncodeCanonical => "std.json.encodeCanonical",
+            Self::JsonRaw => "std.json.raw",
+            Self::JsonNumberParse => "std.json.JsonNumber.parse",
+            Self::JsonNumberText => "std.json.JsonNumber.text",
+            Self::JsonNumberToInt => "std.json.JsonNumber.toInt",
+            Self::JsonNumberToUInt => "std.json.JsonNumber.toUInt",
+            Self::JsonNumberToFloat32 => "std.json.JsonNumber.toFloat32",
+            Self::JsonNumberToFloat64 => "std.json.JsonNumber.toFloat64",
+            Self::JsonReaderFromBytes => "std.json.JsonReader.fromBytes",
+            Self::JsonReaderFromReader => "std.json.JsonReader.fromReader",
+            Self::JsonReaderNext => "std.json.JsonReader.next",
+            Self::JsonReaderOwn => "std.json.JsonReader.own",
+            Self::JsonReaderFinish => "std.json.JsonReader.finish",
+            Self::JsonWriterToWriter => "std.json.JsonWriter.toWriter",
+            Self::JsonWriterWrite => "std.json.JsonWriter.write",
+            Self::JsonWriterFinish => "std.json.JsonWriter.finish",
             Self::MessagePackValidate => "std.messagepack.validate",
             Self::MessagePackCanonicalize => "std.messagepack.canonicalize",
             Self::ProtobufValidate => "std.protobuf.validate",
@@ -2880,6 +2931,10 @@ impl HirBootstrapHostFunction {
                 | Self::TestingWithVirtualTime
                 | Self::VirtualTimeSettle
                 | Self::VirtualTimeAdvance
+                | Self::JsonReaderFromReader
+                | Self::JsonWriterToWriter
+                | Self::JsonWriterWrite
+                | Self::JsonWriterFinish
         )
     }
 

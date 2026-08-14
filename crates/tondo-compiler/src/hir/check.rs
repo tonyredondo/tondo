@@ -904,7 +904,15 @@ impl<'a> ExpressionChecker<'a> {
                         | IntrinsicType::EnvName
                         | IntrinsicType::EnvValue
                         | IntrinsicType::EnvError
-                        | IntrinsicType::VirtualTime => None,
+                        | IntrinsicType::VirtualTime
+                        | IntrinsicType::JsonValue
+                        | IntrinsicType::JsonValueView
+                        | IntrinsicType::JsonRaw
+                        | IntrinsicType::JsonNumber
+                        | IntrinsicType::JsonReader
+                        | IntrinsicType::JsonEvent
+                        | IntrinsicType::JsonWriter
+                        | IntrinsicType::JsonError => None,
                     };
                     if let Some((required, capability, context)) = requirement {
                         let _ = self.require_capability_with_generics(
@@ -13889,6 +13897,21 @@ impl<'a> ExpressionChecker<'a> {
             {
                 (module_token, function_token, 5_u8)
             }
+            [module_token, type_token, function_token]
+                if type_token.token().normalized_identifier() == Some("JsonNumber") =>
+            {
+                (module_token, function_token, 6_u8)
+            }
+            [module_token, type_token, function_token]
+                if type_token.token().normalized_identifier() == Some("JsonReader") =>
+            {
+                (module_token, function_token, 7_u8)
+            }
+            [module_token, type_token, function_token]
+                if type_token.token().normalized_identifier() == Some("JsonWriter") =>
+            {
+                (module_token, function_token, 8_u8)
+            }
             _ => return Ok(None),
         };
         let Some(module_reference) = self.resolved.reference(file, module_token.range()) else {
@@ -13943,6 +13966,22 @@ impl<'a> ExpressionChecker<'a> {
                 ("fs", Some("CreateNew")) => HirBootstrapHostFunction::FsOpenModeCreateNew,
                 _ => return Ok(None),
             }
+        } else if static_type == 6 {
+            match (module.path().as_str(), function_name) {
+                ("json", Some("parse")) => HirBootstrapHostFunction::JsonNumberParse,
+                _ => return Ok(None),
+            }
+        } else if static_type == 7 {
+            match (module.path().as_str(), function_name) {
+                ("json", Some("fromBytes")) => HirBootstrapHostFunction::JsonReaderFromBytes,
+                ("json", Some("fromReader")) => HirBootstrapHostFunction::JsonReaderFromReader,
+                _ => return Ok(None),
+            }
+        } else if static_type == 8 {
+            match (module.path().as_str(), function_name) {
+                ("json", Some("toWriter")) => HirBootstrapHostFunction::JsonWriterToWriter,
+                _ => return Ok(None),
+            }
         } else {
             match (module.path().as_str(), function_name) {
                 ("console", Some("print")) => HirBootstrapHostFunction::ConsolePrint,
@@ -13974,6 +14013,12 @@ impl<'a> ExpressionChecker<'a> {
                 ("math", Some("max")) => HirBootstrapHostFunction::MathMax,
                 ("json", Some("validate")) => HirBootstrapHostFunction::JsonValidate,
                 ("json", Some("canonicalize")) => HirBootstrapHostFunction::JsonCanonicalize,
+                ("json", Some("parse")) => HirBootstrapHostFunction::JsonParse,
+                ("json", Some("parseView")) => HirBootstrapHostFunction::JsonParseView,
+                ("json", Some("decode")) => HirBootstrapHostFunction::JsonDecode,
+                ("json", Some("encode")) => HirBootstrapHostFunction::JsonEncode,
+                ("json", Some("encodeCanonical")) => HirBootstrapHostFunction::JsonEncodeCanonical,
+                ("json", Some("raw")) => HirBootstrapHostFunction::JsonRaw,
                 ("messagepack", Some("validate")) => HirBootstrapHostFunction::MessagePackValidate,
                 ("messagepack", Some("canonicalize")) => {
                     HirBootstrapHostFunction::MessagePackCanonicalize
@@ -14122,31 +14167,27 @@ impl<'a> ExpressionChecker<'a> {
                 host_function,
                 self.sources.span(file, base_path.range())?,
             )?;
-            let explicit_generics = if matches!(module.path().as_str(), "iter" | "async") {
-                explicit_bracket
-                    .map(|bracket| {
-                        self.expression_generic_arguments(file, bracket, Some(context))?
-                            .ok_or_else(|| HirError::TraitSelectionInvariant {
-                                message: "iterator generic arguments could not be parsed".into(),
-                            })
-                            .map(|arguments| ExplicitGenericArguments {
-                                arguments: arguments
-                                    .into_iter()
-                                    .enumerate()
-                                    .map(|(position, argument)| {
-                                        (
-                                            u32::try_from(position)
-                                                .expect("iterator generic position fits in u32"),
-                                            argument,
-                                        )
-                                    })
-                                    .collect(),
-                            })
-                    })
-                    .transpose()?
-            } else {
-                None
-            };
+            let explicit_generics = explicit_bracket
+                .map(|bracket| {
+                    self.expression_generic_arguments(file, bracket, Some(context))?
+                        .ok_or_else(|| HirError::TraitSelectionInvariant {
+                            message: "bootstrap host generic arguments could not be parsed".into(),
+                        })
+                        .map(|arguments| ExplicitGenericArguments {
+                            arguments: arguments
+                                .into_iter()
+                                .enumerate()
+                                .map(|(position, argument)| {
+                                    (
+                                        u32::try_from(position)
+                                            .expect("bootstrap generic position fits in u32"),
+                                        argument,
+                                    )
+                                })
+                                .collect(),
+                        })
+                })
+                .transpose()?;
             return self
                 .check_call(
                     CallSite {
@@ -17431,6 +17472,20 @@ impl<'a> ExpressionChecker<'a> {
                 (IntrinsicType::EnvSnapshot, "get") => HirBootstrapHostFunction::EnvSnapshotGet,
                 (IntrinsicType::EnvValue, "asText") => HirBootstrapHostFunction::EnvValueAsText,
                 (IntrinsicType::EnvValue, "asBytes") => HirBootstrapHostFunction::EnvValueAsBytes,
+                (IntrinsicType::JsonNumber, "text") => HirBootstrapHostFunction::JsonNumberText,
+                (IntrinsicType::JsonNumber, "toInt") => HirBootstrapHostFunction::JsonNumberToInt,
+                (IntrinsicType::JsonNumber, "toUInt") => HirBootstrapHostFunction::JsonNumberToUInt,
+                (IntrinsicType::JsonNumber, "toFloat32") => {
+                    HirBootstrapHostFunction::JsonNumberToFloat32
+                }
+                (IntrinsicType::JsonNumber, "toFloat64") => {
+                    HirBootstrapHostFunction::JsonNumberToFloat64
+                }
+                (IntrinsicType::JsonReader, "next") => HirBootstrapHostFunction::JsonReaderNext,
+                (IntrinsicType::JsonReader, "own") => HirBootstrapHostFunction::JsonReaderOwn,
+                (IntrinsicType::JsonReader, "finish") => HirBootstrapHostFunction::JsonReaderFinish,
+                (IntrinsicType::JsonWriter, "write") => HirBootstrapHostFunction::JsonWriterWrite,
+                (IntrinsicType::JsonWriter, "finish") => HirBootstrapHostFunction::JsonWriterFinish,
                 _ => return Ok(None),
             },
             _ => return Ok(None),
@@ -17473,6 +17528,11 @@ impl<'a> ExpressionChecker<'a> {
                 | HirBootstrapHostFunction::AsyncCompleterComplete
                 | HirBootstrapHostFunction::AsyncCompleterFail
                 | HirBootstrapHostFunction::AsyncCompleterCancel
+                | HirBootstrapHostFunction::JsonReaderNext
+                | HirBootstrapHostFunction::JsonReaderOwn
+                | HirBootstrapHostFunction::JsonReaderFinish
+                | HirBootstrapHostFunction::JsonWriterWrite
+                | HirBootstrapHostFunction::JsonWriterFinish
         ) {
             self.check_method_receiver(receiver, ParameterMode::Var, Some(receiver_type), context)?;
         }
@@ -26567,6 +26627,41 @@ fn build(input: Int, flag: Bool) {
         assert_eq!(
             arguments,
             &[output.program().interner().scalar(ScalarType::Int)]
+        );
+    }
+
+    #[test]
+    fn bootstrap_host_generic_calls_preserve_explicit_type_arguments() {
+        let (_, _, output) = check(
+            "import std.bytes\n\
+             import std.json\n\
+             fn decode(input: bytes.Bytes): Array[Int] ! json.JsonError {\n\
+                 json.decode[Array[Int]](input)\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+        let arguments = output
+            .program()
+            .expressions()
+            .find_map(|expression| match expression.kind() {
+                HirExpressionKind::SpecializedFunction {
+                    callable: HirCallableId::Host(HirBootstrapHostFunction::JsonDecode),
+                    arguments,
+                } => Some(arguments),
+                _ => None,
+            })
+            .expect("the JSON decode call has a specialized host callee");
+        assert_eq!(
+            arguments
+                .iter()
+                .map(|argument| output.program().interner().canonical(*argument).unwrap())
+                .collect::<Vec<_>>(),
+            ["Array[Int]"]
         );
     }
 

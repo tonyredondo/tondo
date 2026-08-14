@@ -4207,6 +4207,14 @@ fn intrinsic_type(value: IntrinsicType) -> bc::BytecodeIntrinsicType {
         IntrinsicType::EnvValue => bc::BytecodeIntrinsicType::EnvValue,
         IntrinsicType::EnvError => bc::BytecodeIntrinsicType::EnvError,
         IntrinsicType::VirtualTime => bc::BytecodeIntrinsicType::VirtualTime,
+        IntrinsicType::JsonValue => bc::BytecodeIntrinsicType::JsonValue,
+        IntrinsicType::JsonValueView => bc::BytecodeIntrinsicType::JsonValueView,
+        IntrinsicType::JsonRaw => bc::BytecodeIntrinsicType::JsonRaw,
+        IntrinsicType::JsonNumber => bc::BytecodeIntrinsicType::JsonNumber,
+        IntrinsicType::JsonReader => bc::BytecodeIntrinsicType::JsonReader,
+        IntrinsicType::JsonEvent => bc::BytecodeIntrinsicType::JsonEvent,
+        IntrinsicType::JsonWriter => bc::BytecodeIntrinsicType::JsonWriter,
+        IntrinsicType::JsonError => bc::BytecodeIntrinsicType::JsonError,
     }
 }
 

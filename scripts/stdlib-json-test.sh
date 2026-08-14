@@ -104,6 +104,34 @@ grep -Fq 'JsonReader::from_chunks' fuzz/fuzz_targets/stdlib_codecs.rs
 grep -Fq 'STD-A-JSON-EVIDENCE-001' docs/contracts/stdlib-s1a.md
 grep -Fq 'std.json' docs/contracts/stdlib-matrix.md
 grep -Fq 'std.json' TONDO_IMPLEMENTATION_TRACKER.md
+grep -Fq 'json_public_surface_runs_through_the_cli' crates/tondo-cli/tests/cli.rs
+
+for symbol in \
+    'HirBootstrapHostFunction::JsonParse' \
+    'HirBootstrapHostFunction::JsonParseView' \
+    'HirBootstrapHostFunction::JsonDecode' \
+    'HirBootstrapHostFunction::JsonEncode' \
+    'HirBootstrapHostFunction::JsonEncodeCanonical' \
+    'HirBootstrapHostFunction::JsonRaw' \
+    'HirBootstrapHostFunction::JsonNumberParse' \
+    'HirBootstrapHostFunction::JsonReaderFromReader' \
+    'HirBootstrapHostFunction::JsonWriterFinish'; do
+    grep -Fq "$symbol" crates/tondo-compiler/src/hir/lower.rs
+done
+
+for call in \
+    'json.parse(' \
+    'json.parseView(' \
+    'json.decode[Array[Int]](' \
+    'json.encode[Array[Int]](' \
+    'json.encodeCanonical(' \
+    'json.raw(' \
+    'json.JsonNumber.parse(' \
+    'json.JsonReader.fromBytes(' \
+    'json.JsonReader.fromReader(' \
+    'json.JsonWriter.toWriter('; do
+    grep -Fq "$call" tests/runtime/m11-std-codecs-001.to
+done
 
 jq -e '
   ([.rows[] | select(.owner == "std.json")] | length) == 22
