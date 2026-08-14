@@ -1,0 +1,8 @@
+fn characterAt(text: String, index: Int): Char {
+    text[index]
+}
+
+fn main() {
+    let minimum = -9223372036854775808
+    _ = characterAt("añ🙂", minimum)
+}

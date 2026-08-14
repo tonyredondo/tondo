@@ -1,0 +1,7 @@
+async fn child() {}
+
+async fn invalid() {
+    scope {
+        let pending = spawn child()
+    }
+}

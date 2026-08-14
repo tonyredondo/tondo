@@ -1,0 +1,103 @@
+import std.console
+
+type UserId = Int
+
+type User = {
+    id: UserId
+    name: String
+    email: String?
+}
+
+type SettingName = String
+
+fn findUser(users: Array[User], id: UserId): User? {
+    for user in users {
+        if user.id == id {
+            return user
+        }
+    }
+
+    none
+}
+
+fn displayUser(users: Array[User], id: UserId): String {
+    match findUser(users, id) {
+        some(user) => {
+            let email = match user.email {
+                some(address) => address
+                none => "unknown"
+            }
+
+            "{user.name} <{email}>"
+        }
+        none => "unknown user"
+    }
+}
+
+fn scale(values: mut Array[Float], factor: Float) {
+    values *= factor
+}
+
+fn canEdit(permissions: Set[String]): Bool {
+    "admin" in permissions or "write" in permissions
+}
+
+fn renderSetting(value: Int | String | Bool): String {
+    match value {
+        Int(number) => "{number}"
+        String(text) => text
+        Bool(flag) if flag => "true"
+        Bool(_) => "false"
+    }
+}
+
+fn main() {
+    let users = [
+        User {
+            id: UserId(1)
+            name: "Tony"
+            email: some("tony@example.test")
+        },
+    ]
+    assert(displayUser(users, UserId(1)) == "Tony <tony@example.test>")
+    assert(displayUser(users, UserId(2)) == "unknown user")
+
+    var values = [1.0, 2.0, 3.0, 4.0]
+    scale(mut values[1:3], 10.0)
+    assert(values == [1.0, 20.0, 30.0, 4.0])
+
+    let permissions = Set["read", "write"]
+    assert(canEdit(permissions))
+
+    let settings: Map[SettingName, Int | String | Bool] = [
+        SettingName("port"): 8080,
+        SettingName("host"): "localhost",
+        SettingName("debug"): true,
+    ]
+    assert(settings[SettingName("port")] == some(8080))
+    assert(renderSetting(8080) == "8080")
+    assert(renderSetting("localhost") == "localhost")
+    assert(renderSetting(true) == "true")
+    assert(renderSetting(false) == "false")
+
+    var left = 10
+    var right = 20
+    (left, right) = (right, left)
+    assert(left == 20)
+    assert(right == 10)
+
+    let identities: Ref[Map[String, User]] = Ref([:])
+    let sameIdentities = identities
+    let otherIdentities: Ref[Map[String, User]] = Ref([:])
+    assert(identities == sameIdentities)
+    assert(identities != otherIdentities)
+    assert(identities.value == otherIdentities.value)
+
+    var labels: Map[Ref[Map[String, User]], String] = [:]
+    labels[identities] = "primary"
+    labels[otherIdentities] = "secondary"
+    assert(labels[identities] == some("primary"))
+    assert(labels[otherIdentities] == some("secondary"))
+
+    console.print("g3-integrated-examples\n")
+}

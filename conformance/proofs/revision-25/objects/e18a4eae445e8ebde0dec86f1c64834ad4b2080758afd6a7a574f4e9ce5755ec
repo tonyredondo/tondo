@@ -1,0 +1,23 @@
+import std.console
+
+fn main() {
+    let values = [0, 1, 2, 3, 4]
+    let empty: Array[Int] = []
+    let minimum = -9223372036854775808
+    let maximum = 9223372036854775807
+
+    assert(values[:] == [0, 1, 2, 3, 4])
+    assert(values[1:4] == [1, 2, 3])
+    assert(values[-100:100] == [0, 1, 2, 3, 4])
+    assert(values[::2] == [0, 2, 4])
+    assert(values[::-1] == [4, 3, 2, 1, 0])
+    assert(values[:-1:-1] == empty)
+    assert(values[4:0:-2] == [4, 2])
+    assert(values[-1:-6:-2] == [4, 2, 0])
+    assert(values[minimum:maximum] == [0, 1, 2, 3, 4])
+    assert(values[maximum:minimum:-1] == [4, 3, 2, 1, 0])
+    assert(values[::minimum] == [4])
+    assert(empty[::-1] == empty)
+
+    console.print("array-slice\n")
+}
