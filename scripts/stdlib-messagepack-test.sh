@@ -17,6 +17,11 @@ expect_failure() {
     fi
 }
 
+die() {
+    echo "std.messagepack owner tests: $*" >&2
+    exit 1
+}
+
 jq '.owner = "std.invalid"' testing/stdlib-messagepack.json \
     > "$tmp_dir/invalid-owner.json"
 expect_failure invalid-owner env TONDO_STDLIB_MESSAGEPACK_CONTRACT="$tmp_dir/invalid-owner.json" \
@@ -109,9 +114,13 @@ grep -Fq 'std.messagepack' docs/contracts/stdlib-matrix.md
 grep -Fq 'std.messagepack' TONDO_IMPLEMENTATION_TRACKER.md
 
 jq -e '
-  ([.rows[] | select(.owner == "std.messagepack")] | length) == 18
+  ([.rows[] | select(.owner == "std.messagepack")] | length) == 19
   and any(.rows[] | select(.owner == "std.messagepack"); .symbol == "std.messagepack.parse")
-' testing/stdlib-public-api.json >/dev/null
+  and any(.rows[] | select(.owner == "std.messagepack");
+    .signature == "pub unsafe fn rawUnchecked(input: Bytes): Raw"
+    and .status == "gap"
+    and (.missing | sort) == ["exact-signature-shape", "lowering-symbol"])
+' testing/stdlib-public-api.json >/dev/null || die "public API audit lost the pending unsafe rawUnchecked boundary"
 
 jq -e '
   any(.owners[]; .id == "std.messagepack"

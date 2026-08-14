@@ -92,7 +92,7 @@ grep -Fq 'let overflow' tests/runtime/m6-num-004-ieee.to
 
 grep -Fq 'scalar oracle' docs/contracts/stdlib-core.md
 grep -Fq 'SIMD' docs/contracts/stdlib-core.md
-if rg -n 'std::simd|packed_simd|target_feature.*(avx|sse|neon)|fast[-_ ]math' \
+if grep -En 'std::simd|packed_simd|target_feature.*(avx|sse|neon)|fast[-_ ]math' \
     crates/tondo-stdlib/src/math.rs crates/tondo-compiler/src/process_host.rs >/dev/null; then
     echo "std.math owner tests: unexpected alternate SIMD/fast-math path" >&2
     exit 1
