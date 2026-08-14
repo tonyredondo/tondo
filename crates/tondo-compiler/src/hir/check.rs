@@ -14019,6 +14019,7 @@ impl<'a> ExpressionChecker<'a> {
                 ("json", Some("encode")) => HirBootstrapHostFunction::JsonEncode,
                 ("json", Some("encodeCanonical")) => HirBootstrapHostFunction::JsonEncodeCanonical,
                 ("json", Some("raw")) => HirBootstrapHostFunction::JsonRaw,
+                ("json", Some("rawUnchecked")) => HirBootstrapHostFunction::JsonRawUnchecked,
                 ("messagepack", Some("validate")) => HirBootstrapHostFunction::MessagePackValidate,
                 ("messagepack", Some("canonicalize")) => {
                     HirBootstrapHostFunction::MessagePackCanonicalize
@@ -26663,6 +26664,50 @@ fn build(input: Int, flag: Bool) {
                 .collect::<Vec<_>>(),
             ["Array[Int]"]
         );
+
+        let (_, _, unsafe_output) = check(
+            "import std.bytes\n\
+             import std.json\n\
+             fn retain(input: bytes.Bytes): json.Raw {\n\
+                 unsafe { json.rawUnchecked(input) }\n\
+             }\n",
+        );
+        assert!(
+            unsafe_output.diagnostics().is_empty(),
+            "{:#?}",
+            unsafe_output.diagnostics()
+        );
+        assert!(unsafe_output.is_complete());
+        assert!(
+            unsafe_output
+                .program()
+                .expressions()
+                .any(|expression| matches!(
+                    expression.kind(),
+                    HirExpressionKind::Function(HirCallableId::Host(
+                        HirBootstrapHostFunction::JsonRawUnchecked
+                    ))
+                ))
+        );
+        assert!(
+            unsafe_output
+                .program()
+                .expressions()
+                .any(|expression| matches!(
+                    expression.kind(),
+                    HirExpressionKind::Call {
+                        unsafe_call: true,
+                        ..
+                    }
+                ))
+        );
+
+        let (_, _, safe_output) = check(
+            "import std.bytes\n\
+             import std.json\n\
+             fn retain(input: bytes.Bytes): json.Raw { json.rawUnchecked(input) }\n",
+        );
+        assert_eq!(codes(&safe_output), ["E1701"]);
     }
 
     #[test]

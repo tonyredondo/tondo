@@ -2535,6 +2535,7 @@ pub enum HirBootstrapHostFunction {
     JsonEncode,
     JsonEncodeCanonical,
     JsonRaw,
+    JsonRawUnchecked,
     JsonNumberParse,
     JsonNumberText,
     JsonNumberToInt,
@@ -2791,6 +2792,7 @@ impl HirBootstrapHostFunction {
             Self::JsonEncode => "std.json.encode",
             Self::JsonEncodeCanonical => "std.json.encodeCanonical",
             Self::JsonRaw => "std.json.raw",
+            Self::JsonRawUnchecked => "std.json.rawUnchecked",
             Self::JsonNumberParse => "std.json.JsonNumber.parse",
             Self::JsonNumberText => "std.json.JsonNumber.text",
             Self::JsonNumberToInt => "std.json.JsonNumber.toInt",
@@ -2936,6 +2938,10 @@ impl HirBootstrapHostFunction {
                 | Self::JsonWriterWrite
                 | Self::JsonWriterFinish
         )
+    }
+
+    pub const fn is_unsafe(self) -> bool {
+        matches!(self, Self::JsonRawUnchecked)
     }
 
     pub const fn suspends(self) -> bool {

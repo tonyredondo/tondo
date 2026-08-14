@@ -37,11 +37,11 @@ jq -e '
   and ([.owners[].id] | unique | length) == 22
   and (.summary == {
     owners: 22,
-    rows: 372,
-    public_signatures: 207,
+    rows: 374,
+    public_signatures: 209,
     requirements: 165,
     verified_rows: 0,
-    partial_rows: 371,
+    partial_rows: 373,
     pending_rows: 1,
     owner_verified: 0,
     owner_partial: 21,
@@ -67,7 +67,7 @@ jq -e '
       and (.refs | type == "array" and length > 0)
     )
   )
-  and ([.owners[].rows[].id] | unique | length) == 372
+  and ([.owners[].rows[].id] | unique | length) == 374
   and ([.owners[].rows[].id] | sort) == ([.owners[].rows[].id] | unique | sort)
   and all(.owners[]; (.status != "verified" or all(.rows[]; .status == "verified")))
 ' "$coordination" >/dev/null || {
@@ -113,4 +113,4 @@ while IFS= read -r command; do
     fi
 done < <(jq -r '.owners[].evidence.commands[]' "$coordination")
 
-echo "stdlib conformance coordination: OK (22 owners; 372 rows; 207 signatures; 165 requirements; gaps explicit; promotion withheld)"
+echo "stdlib conformance coordination: OK (22 owners; 374 rows; 209 signatures; 165 requirements; gaps explicit; promotion withheld)"

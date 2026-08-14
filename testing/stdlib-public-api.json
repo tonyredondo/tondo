@@ -566,7 +566,8 @@
       "exact_surface_complete": false,
       "exact_signatures": [
         "validate",
-        "canonicalize"
+        "canonicalize",
+        "rawUnchecked"
       ],
       "case": {
         "path": "tests/runtime/m11-std-codecs-001.to",
@@ -592,11 +593,14 @@
           ],
           "std.json.canonicalize": [
             "std.json.canonicalize"
+          ],
+          "std.json.rawUnchecked": [
+            "std.json.rawUnchecked"
           ]
         }
       },
-      "signature_count": 22,
-      "verified_count": 2,
+      "signature_count": 23,
+      "verified_count": 3,
       "gap_count": 20,
       "owner_missing": [],
       "status": "open-gaps"
@@ -628,9 +632,9 @@
         ],
         "reason": null
       },
-      "signature_count": 18,
+      "signature_count": 19,
       "verified_count": 1,
-      "gap_count": 17,
+      "gap_count": 18,
       "owner_missing": [],
       "status": "open-gaps"
     },
@@ -4446,6 +4450,55 @@
       "status": "gap"
     },
     {
+      "id": "std.json:141",
+      "owner": "std.json",
+      "contract": "docs/contracts/stdlib-json.md",
+      "line": 141,
+      "signature": "pub unsafe fn rawUnchecked(input: Bytes): Raw",
+      "symbol": "std.json.rawUnchecked",
+      "operation": "rawUnchecked",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/check.rs"
+          ],
+          "symbol": "rawUnchecked",
+          "symbols": [
+            "JsonRawUnchecked"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/lower.rs"
+          ],
+          "symbol": "rawUnchecked",
+          "symbols": [
+            "JsonRawUnchecked"
+          ]
+        },
+        "host_vm": {
+          "kind": "host",
+          "paths": [
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-stdlib/src/json_api.rs"
+          ],
+          "reason": null,
+          "symbol": "std.json.rawUnchecked",
+          "symbols": [
+            "std.json.rawUnchecked"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-codecs-001.to",
+          "kind": "runtime",
+          "call": "rawUnchecked",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [],
+      "status": "verified"
+    },
+    {
       "id": "std.json:143",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
@@ -6005,6 +6058,58 @@
       },
       "missing": [
         "exact-signature-shape"
+      ],
+      "status": "gap"
+    },
+    {
+      "id": "std.messagepack:93",
+      "owner": "std.messagepack",
+      "contract": "docs/contracts/stdlib-messagepack.md",
+      "line": 93,
+      "signature": "pub unsafe fn rawUnchecked(input: Bytes): Raw",
+      "symbol": "std.messagepack.rawUnchecked",
+      "operation": "rawUnchecked",
+      "evidence": {
+        "hir": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/check.rs"
+          ],
+          "symbol": "rawUnchecked",
+          "symbols": [
+            "rawUnchecked"
+          ]
+        },
+        "lowering": {
+          "paths": [
+            "crates/tondo-compiler/src/hir/lower.rs"
+          ],
+          "symbol": "rawUnchecked",
+          "symbols": [
+            "rawUnchecked"
+          ]
+        },
+        "host_vm": {
+          "kind": "host",
+          "paths": [
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-stdlib/src/messagepack_api.rs"
+          ],
+          "reason": null,
+          "symbol": "std.messagepack.rawUnchecked",
+          "symbols": [
+            "rawUnchecked"
+          ]
+        },
+        "public_case": {
+          "path": "tests/runtime/m11-std-codecs-001.to",
+          "kind": "runtime",
+          "call": "rawUnchecked",
+          "bootstrap_alias": false
+        }
+      },
+      "missing": [
+        "exact-signature-shape",
+        "lowering-symbol"
       ],
       "status": "gap"
     },
@@ -10975,10 +11080,10 @@
   ],
   "summary": {
     "owners": 20,
-    "signatures": 207,
-    "verified": 156,
-    "signature_gaps": 51,
+    "signatures": 209,
+    "verified": 157,
+    "signature_gaps": 52,
     "owner_gaps": 3,
-    "gaps": 54
+    "gaps": 55
   }
 }

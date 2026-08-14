@@ -940,6 +940,11 @@
           "signature": "pub fn raw(input: Bytes): Raw ! JsonError"
         },
         {
+          "id": "std.json:141",
+          "symbol": "std.json.rawUnchecked",
+          "signature": "pub unsafe fn rawUnchecked(input: Bytes): Raw"
+        },
+        {
           "id": "std.json:143",
           "symbol": "std.json.JsonNumber.parse",
           "signature": "pub fn JsonNumber.parse(text: String): JsonNumber ! JsonError"
@@ -1244,6 +1249,11 @@
           "id": "std.messagepack:92",
           "symbol": "std.messagepack.raw",
           "signature": "pub fn raw(input: Bytes, options: MessagePackDecodeOptions): Raw ! MessagePackError"
+        },
+        {
+          "id": "std.messagepack:93",
+          "symbol": "std.messagepack.rawUnchecked",
+          "signature": "pub unsafe fn rawUnchecked(input: Bytes): Raw"
         },
         {
           "id": "std.messagepack:95",
@@ -2306,7 +2316,7 @@
   ],
   "summary": {
     "owners": 21,
-    "public_signatures": 207,
+    "public_signatures": 209,
     "owner_requirements": 164,
     "model_laws": 63,
     "fuzz_verified": 1,

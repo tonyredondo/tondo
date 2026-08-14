@@ -144,7 +144,7 @@ extract_signatures() {
     section="$(jq -r '.section' <<< "$owner_json")"
     if [[ "$section" == "*" ]]; then
         awk '
-            /^pub fn / {
+            /^pub (unsafe )?fn / {
                 line=$0
                 sub(/[[:space:]]*\/\/.*$/, "", line)
                 sub(/[[:space:]]+$/, "", line)
@@ -155,7 +155,7 @@ extract_signatures() {
         awk -v wanted="$section" '
             BEGIN { in_section=0 }
             /^## / { in_section=(index($0, wanted) > 0) }
-            in_section && /^pub fn / {
+            in_section && /^pub (unsafe )?fn / {
                 line=$0
                 sub(/[[:space:]]*\/\/.*$/, "", line)
                 sub(/[[:space:]]+$/, "", line)
@@ -200,6 +200,7 @@ emit_owner_rows() {
     while IFS=$'\t' read -r line signature; do
         [[ -n "$signature" ]] || continue
         name="${signature#pub }"
+        name="${name#unsafe }"
         name="${name#fn }"
         name="${name%%(*}"
         if [[ "$name" == *' '* ]]; then

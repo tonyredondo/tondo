@@ -207,7 +207,10 @@ fn public_api_status_preserves_audited_gaps() {
             let exact_signature = exact
                 .iter()
                 .filter_map(serde_json::Value::as_str)
-                .any(|name| signature.starts_with(&format!("pub fn {name}")));
+                .any(|name| {
+                    signature.starts_with(&format!("pub fn {name}"))
+                        || signature.starts_with(&format!("pub unsafe fn {name}"))
+                });
             exact_signature
                 || row["missing"].as_array().is_some_and(|missing| {
                     missing.iter().any(|item| item == "exact-signature-shape")

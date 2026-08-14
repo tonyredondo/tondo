@@ -17,6 +17,11 @@ expect_failure() {
     fi
 }
 
+die() {
+    echo "std.json owner tests: $*" >&2
+    exit 1
+}
+
 jq '.owner = "std.invalid"' testing/stdlib-json.json \
     > "$tmp_dir/invalid-owner.json"
 expect_failure invalid-owner env TONDO_STDLIB_JSON_CONTRACT="$tmp_dir/invalid-owner.json" \
@@ -113,6 +118,7 @@ for symbol in \
     'HirBootstrapHostFunction::JsonEncode' \
     'HirBootstrapHostFunction::JsonEncodeCanonical' \
     'HirBootstrapHostFunction::JsonRaw' \
+    'HirBootstrapHostFunction::JsonRawUnchecked' \
     'HirBootstrapHostFunction::JsonNumberParse' \
     'HirBootstrapHostFunction::JsonReaderFromReader' \
     'HirBootstrapHostFunction::JsonWriterFinish'; do
@@ -126,6 +132,7 @@ for call in \
     'json.encode[Array[Int]](' \
     'json.encodeCanonical(' \
     'json.raw(' \
+    'json.rawUnchecked(' \
     'json.JsonNumber.parse(' \
     'json.JsonReader.fromBytes(' \
     'json.JsonReader.fromReader(' \
@@ -134,9 +141,12 @@ for call in \
 done
 
 jq -e '
-  ([.rows[] | select(.owner == "std.json")] | length) == 22
+  ([.rows[] | select(.owner == "std.json")] | length) == 23
   and any(.rows[] | select(.owner == "std.json"); .symbol == "std.json.parse")
-' testing/stdlib-public-api.json >/dev/null
+  and any(.rows[] | select(.owner == "std.json");
+    .signature == "pub unsafe fn rawUnchecked(input: Bytes): Raw"
+    and .status == "verified")
+' testing/stdlib-public-api.json >/dev/null || die "public API audit lost the exact unsafe rawUnchecked boundary"
 
 jq -e '
   any(.owners[]; .id == "std.json"

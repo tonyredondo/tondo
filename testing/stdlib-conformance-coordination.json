@@ -1992,6 +1992,7 @@
         "std.json:138",
         "std.json:139",
         "std.json:140",
+        "std.json:141",
         "std.json:143",
         "std.json:144",
         "std.json:145",
@@ -2197,6 +2198,17 @@
         },
         {
           "id": "signature:std.json:140",
+          "kind": "signature",
+          "status": "partial",
+          "reason": "The serde_json bidirectional and fragmented harness covers the portable codec; STD-CONF-001 has not yet promoted every standard-library owner.",
+          "refs": [
+            "testing/stdlib-codec-conformance.json",
+            "scripts/stdlib-codec-conformance.sh",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
+          ]
+        },
+        {
+          "id": "signature:std.json:141",
           "kind": "signature",
           "status": "partial",
           "reason": "The serde_json bidirectional and fragmented harness covers the portable codec; STD-CONF-001 has not yet promoted every standard-library owner.",
@@ -2631,6 +2643,7 @@
         "std.messagepack:90",
         "std.messagepack:91",
         "std.messagepack:92",
+        "std.messagepack:93",
         "std.messagepack:95",
         "std.messagepack:96",
         "std.messagepack:98",
@@ -2916,6 +2929,17 @@
         },
         {
           "id": "signature:std.messagepack:92",
+          "kind": "signature",
+          "status": "partial",
+          "reason": "The rmpv bidirectional and fragmented harness covers the portable codec and extension preservation; STD-CONF-001 has not yet promoted every standard-library owner.",
+          "refs": [
+            "testing/stdlib-codec-conformance.json",
+            "scripts/stdlib-codec-conformance.sh",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
+          ]
+        },
+        {
+          "id": "signature:std.messagepack:93",
           "kind": "signature",
           "status": "partial",
           "reason": "The rmpv bidirectional and fragmented harness covers the portable codec and extension preservation; STD-CONF-001 has not yet promoted every standard-library owner.",
@@ -5251,11 +5275,11 @@
   ],
   "summary": {
     "owners": 22,
-    "rows": 372,
-    "public_signatures": 207,
+    "rows": 374,
+    "public_signatures": 209,
     "requirements": 165,
     "verified_rows": 0,
-    "partial_rows": 371,
+    "partial_rows": 373,
     "pending_rows": 1,
     "owner_verified": 0,
     "owner_partial": 21,

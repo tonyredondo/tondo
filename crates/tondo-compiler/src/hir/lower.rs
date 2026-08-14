@@ -1481,6 +1481,13 @@ impl<'a> TypeLowerer<'a> {
             )?;
             self.push_bootstrap_host_callable(
                 span,
+                HirBootstrapHostFunction::JsonRawUnchecked,
+                vec![(bytes, false)],
+                None,
+                json_raw,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
                 HirBootstrapHostFunction::JsonNumberParse,
                 vec![(string, false)],
                 None,
@@ -2585,7 +2592,7 @@ impl<'a> TypeLowerer<'a> {
             .collect::<Vec<_>>();
         let function_type = self.interner.function(FunctionType::new(
             function.is_async(),
-            false,
+            function.is_unsafe(),
             function_parameters,
             None,
             outcome,
@@ -2694,7 +2701,7 @@ impl<'a> TypeLowerer<'a> {
         }
         let function_type = self.interner.function(FunctionType::new(
             function.is_async(),
-            false,
+            function.is_unsafe(),
             function_parameters,
             variadic,
             outcome,

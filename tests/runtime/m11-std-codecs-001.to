@@ -13,6 +13,8 @@ fn main(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | json.Js
     let json_value = json.parse(json_input)?
     let _json_view = json.parseView(json_input)?
     let _json_raw = json.raw(json_input)?
+    let unchecked_raw = unsafe { json.rawUnchecked(bytes.Bytes("not-json")?) }
+    _ = unchecked_raw
     let json_value_canonical = json.encodeCanonical(json_value)?
     assert(String(json_value_canonical)? == r"""{"a":2,"z":1}""")
 

@@ -35,7 +35,7 @@ fn every_normative_matrix_row_has_an_explicit_conformance_record() {
     assert_eq!(registry["promotion"]["status"], "not-promoted");
 
     let matrix_rows = matrix["rows"].as_array().unwrap();
-    assert_eq!(matrix_rows.len(), 372);
+    assert_eq!(matrix_rows.len(), 374);
     assert_eq!(coordinated.len(), matrix_rows.len());
 
     for matrix_row in matrix_rows {

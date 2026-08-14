@@ -54,7 +54,7 @@ done
 jq -e '
   .summary == {
     owners: 21,
-    public_signatures: 207,
+    public_signatures: 209,
     owner_requirements: 164,
     model_laws: 63,
     fuzz_verified: 1,

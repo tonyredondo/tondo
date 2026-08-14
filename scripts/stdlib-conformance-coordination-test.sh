@@ -46,11 +46,11 @@ jq -e '
   . as $root
   | $root.summary == {
     owners: 22,
-    rows: 372,
-    public_signatures: 207,
+    rows: 374,
+    public_signatures: 209,
     requirements: 165,
     verified_rows: 0,
-    partial_rows: 371,
+    partial_rows: 373,
     pending_rows: 1,
     owner_verified: 0,
     owner_partial: 21,

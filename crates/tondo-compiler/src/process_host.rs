@@ -2229,6 +2229,14 @@ impl VmHost for BootstrapHost {
                     Err(error) => Ok(self.json_result_error(error.to_string())),
                 }
             }
+            ("std.json.rawUnchecked", [bytes]) => {
+                let id = self.bytes_id(bytes)?;
+                let _raw = json::raw_unchecked(self.bytes(bytes)?);
+                Ok(self.allocate(
+                    RuntimeHostValueKind::JsonRaw,
+                    HostValue::JsonRaw { _bytes: id },
+                ))
+            }
             ("std.json.JsonNumber.parse", [RuntimeValue::String(text)]) => {
                 match json::JsonNumber::parse(text) {
                     Ok(number) => Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
@@ -7132,6 +7140,21 @@ mod tests {
             .unwrap());
         assert!(matches!(
             raw,
+            RuntimeValue::Host {
+                kind: RuntimeHostValueKind::JsonRaw,
+                ..
+            }
+        ));
+        let unchecked_input = host.allocate(
+            RuntimeHostValueKind::Bytes,
+            HostValue::Bytes(b"not-json".to_vec()),
+        );
+        assert!(matches!(
+            host.invoke(
+                "std.json.rawUnchecked",
+                std::slice::from_ref(&unchecked_input),
+            )
+            .unwrap(),
             RuntimeValue::Host {
                 kind: RuntimeHostValueKind::JsonRaw,
                 ..

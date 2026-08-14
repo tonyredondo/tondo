@@ -1327,6 +1327,7 @@
         "signature:std.json:138",
         "signature:std.json:139",
         "signature:std.json:140",
+        "signature:std.json:141",
         "signature:std.json:143",
         "signature:std.json:144",
         "signature:std.json:145",
@@ -1602,6 +1603,7 @@
         "signature:std.messagepack:90",
         "signature:std.messagepack:91",
         "signature:std.messagepack:92",
+        "signature:std.messagepack:93",
         "signature:std.messagepack:95",
         "signature:std.messagepack:96",
         "signature:std.messagepack:98",
@@ -6732,6 +6734,30 @@
     },
     {
       "dimensions_ref": "owner:std.json",
+      "id": "signature:std.json:141",
+      "kind": "signature",
+      "layer": "A3",
+      "owner": "std.json",
+      "scope": "STD-0.1A",
+      "signature": "pub unsafe fn rawUnchecked(input: Bytes): Raw",
+      "source": {
+        "audit": "testing/stdlib-public-api.json#rows/std.json:141",
+        "contract": "docs/contracts/stdlib-json.md",
+        "line": 141
+      },
+      "stage_refs": {
+        "CONF": "owner:std.json:CONF",
+        "DOC": "owner:std.json:DOC",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.json:141:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.json:141:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.json:PERF",
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.json:141:SPEC"
+      },
+      "status": "open-gaps",
+      "symbol": "std.json.rawUnchecked"
+    },
+    {
+      "dimensions_ref": "owner:std.json",
       "id": "signature:std.json:143",
       "kind": "signature",
       "layer": "A3",
@@ -7995,6 +8021,30 @@
       },
       "status": "open-gaps",
       "symbol": "std.messagepack.raw"
+    },
+    {
+      "dimensions_ref": "owner:std.messagepack",
+      "id": "signature:std.messagepack:93",
+      "kind": "signature",
+      "layer": "A3",
+      "owner": "std.messagepack",
+      "scope": "STD-0.1A",
+      "signature": "pub unsafe fn rawUnchecked(input: Bytes): Raw",
+      "source": {
+        "audit": "testing/stdlib-public-api.json#rows/std.messagepack:93",
+        "contract": "docs/contracts/stdlib-messagepack.md",
+        "line": 93
+      },
+      "stage_refs": {
+        "CONF": "owner:std.messagepack:CONF",
+        "DOC": "owner:std.messagepack:DOC",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.messagepack:93:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.messagepack:93:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.messagepack:PERF",
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.messagepack:93:SPEC"
+      },
+      "status": "open-gaps",
+      "symbol": "std.messagepack.rawUnchecked"
     },
     {
       "dimensions_ref": "owner:std.messagepack",
@@ -12535,34 +12585,34 @@
   },
   "status": "open-gaps",
   "summary": {
-    "open_rows": 372,
+    "open_rows": 374,
     "owners": 22,
     "requirements": 165,
-    "rows": 372,
-    "signatures": 207,
+    "rows": 374,
+    "signatures": 209,
     "stage_counts": {
       "CONF": {
-        "partial": 371,
+        "partial": 373,
         "pending": 1
       },
       "DOC": {
-        "verified": 372
+        "verified": 374
       },
       "IMPL/HOST": {
         "partial": 1,
-        "verified": 371
+        "verified": 373
       },
       "MODEL/TEST/FUZZ": {
-        "partial": 366,
+        "partial": 368,
         "verified": 6
       },
       "PERF": {
-        "partial": 371,
+        "partial": 373,
         "pending": 1
       },
       "SPEC": {
         "partial": 1,
-        "verified": 371
+        "verified": 373
       }
     },
     "verified_rows": 0

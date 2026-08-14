@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 2.26
+**Versión del tracker:** 2.27
 
 **Última actualización:** 2026-08-14
 
@@ -4481,9 +4481,11 @@ tests. Antes de volver a marcarlas `[x]` deben cumplirse todos estos puntos:
   `Raw`, `JsonNumber`, `JsonReader` y `JsonWriter`, preserva los genéricos
   explícitos y hace terminales los readers/writers tras `finish` o error. La
   fixture pública se ejecuta desde el test de aceptación de la CLI. La leaf no
-  se cierra todavía: debe exponer los records/enums nominales de options,
+  se cierra todavía: `rawUnchecked` ya atraviesa HIR → VM → host como callable
+  realmente `unsafe`, sin validar los bytes ni admitir llamadas desde código
+  safe. Aún debe exponer los records/enums nominales de options,
   limits, policies, error/path/location y eventos; respetar la aridad normativa
-  de cada firma; conectar `rawUnchecked` a `unsafe`; y hacer que
+  del resto de firmas; y hacer que
   `decode[T: Decode[Json]]`/`encode[T: Encode[Json]]` despachen los providers
   derive de records/enums sin reflection ni DOM. Hasta entonces la auditoría
   conserva visibles sus gaps y no cuenta la mera presencia del nuevo bridge
@@ -4530,8 +4532,8 @@ tests. Antes de volver a marcarlas `[x]` deben cumplirse todos estos puntos:
   HIR → lowering → host/VM → caso público. `--check` detecta drift y mantiene
   visibles los huecos; `--strict` falla ante cualquiera. No acepta un path Rust
   aislado, un fixture que llama otra operación, una prueba documental ni un
-  alias bootstrap. El resultado actual es deliberadamente `open-gaps` (156/207
-  firmas verificadas; 54 gaps), que bloquea la promoción y alimenta los
+  alias bootstrap. El resultado actual es deliberadamente `open-gaps` (157/209
+  firmas verificadas; 55 gaps), que bloquea la promoción y alimenta los
   siguientes leaves de implementación.
 
 - [ ] **STD-IMPL-001 — Coordinar implementación Core por owner.** Cierra cuando
@@ -4779,7 +4781,7 @@ administrativas que no implementan comportamiento.
 
 - [x] **STD-MATRIX-ALL-001 — Construir la matriz normativa de stdlib.**
   `testing/stdlib-matrix.json` contiene 22 owners (incluidos los owners
-  intrínsecos `std.bytes` y capability-gated `std.time`/`std.env`), 207 firmas y 165
+  intrínsecos `std.bytes` y capability-gated `std.time`/`std.env`), 209 firmas y 165
   requisitos de owner. Cada fila
   enlaza explícitamente `SPEC → IMPL/HOST → MODEL/TEST/FUZZ → PERF → CONF →
   DOC`, conserva las dimensiones públicas de PERF y queda `open-gaps` cuando
@@ -4792,7 +4794,7 @@ administrativas que no implementan comportamiento.
   abiertos por sus celdas explícitas.
 
 - [x] **STD-TEST-001 — Coordinar modelos y properties por owner.**
-  `testing/stdlib-test-coordination.json` liga los 21 owners A, las 207 firmas
+  `testing/stdlib-test-coordination.json` liga los 21 owners A, las 209 firmas
   públicas y los 164 requisitos de owner a 63 leyes de modelo, comandos de test
   y campañas de fuzz. `scripts/stdlib-test-coordination-check.sh` regenera el
   registro y lo compara con la auditoría pública, la matriz normativa y
@@ -4842,7 +4844,7 @@ administrativas que no implementan comportamiento.
 
 - [x] **STD-CONF-001 — Coordinar conformidad por owner.**
   `testing/stdlib-conformance-coordination.json` materializa los 22 owners y
-  las 372 filas de `STD-MATRIX-ALL-001` (207 firmas y 165 requisitos), con una
+  las 374 filas de `STD-MATRIX-ALL-001` (209 firmas y 165 requisitos), con una
   entrada `CONF` explícita por fila, estado, razón, referencias y comandos.
   `scripts/stdlib-conformance-coordination-check.sh` regenera el registro,
   cruza matriz/API/owner evidence y exige que no existan filas implícitas,
@@ -5963,6 +5965,17 @@ no se declara iniciada antes de S1A.
 ---
 
 ## 25. Historial del tracker
+
+### 2.27 — 2026-08-14
+
+- `std.json.rawUnchecked` queda conectado como un callable host cuyo tipo lleva
+  el efecto `unsafe`; el checker emite `E1701` fuera de una región insegura y
+  una fixture ejecutable conserva bytes deliberadamente no válidos sin pasar
+  por el parser.
+- La auditoría pública indexa ahora tanto `pub fn` como `pub unsafe fn`. Esto
+  revela también la firma pendiente de MessagePack y corrige el universo de
+  207 a 209 firmas: JSON verifica `rawUnchecked`, mientras la matriz conserva
+  55 gaps reales (157/209 firmas verificadas y tres owners con gaps).
 
 ### 2.26 — 2026-08-14
 

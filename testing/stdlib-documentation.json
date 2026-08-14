@@ -896,6 +896,7 @@
             "std.json:138",
             "std.json:139",
             "std.json:140",
+            "std.json:141",
             "std.json:143",
             "std.json:144",
             "std.json:145",
@@ -913,7 +914,8 @@
           ],
           "verified_signatures": [
             "std.json:137",
-            "std.json:138"
+            "std.json:138",
+            "std.json:141"
           ],
           "refs": [
             "testing/stdlib-public-api.json"
@@ -1096,6 +1098,7 @@
             "std.messagepack:90",
             "std.messagepack:91",
             "std.messagepack:92",
+            "std.messagepack:93",
             "std.messagepack:95",
             "std.messagepack:96",
             "std.messagepack:98",
