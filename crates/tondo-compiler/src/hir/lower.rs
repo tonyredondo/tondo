@@ -1396,6 +1396,24 @@ impl<'a> TypeLowerer<'a> {
             let json_error = self
                 .interner
                 .intrinsic(IntrinsicType::JsonError, Vec::new())?;
+            let json_limits = self
+                .interner
+                .intrinsic(IntrinsicType::JsonLimits, Vec::new())?;
+            let json_decode_options = self
+                .interner
+                .intrinsic(IntrinsicType::JsonDecodeOptions, Vec::new())?;
+            let json_encode_options = self
+                .interner
+                .intrinsic(IntrinsicType::JsonEncodeOptions, Vec::new())?;
+            let json_duplicate_policy = self
+                .interner
+                .intrinsic(IntrinsicType::JsonDuplicatePolicy, Vec::new())?;
+            let json_unknown_policy = self
+                .interner
+                .intrinsic(IntrinsicType::JsonUnknownFieldPolicy, Vec::new())?;
+            let json_number_policy = self
+                .interner
+                .intrinsic(IntrinsicType::JsonNumberPolicy, Vec::new())?;
             let reader = self.interner.intrinsic(IntrinsicType::Reader, Vec::new())?;
             let writer = self.interner.intrinsic(IntrinsicType::Writer, Vec::new())?;
             let json_value_result = self.interner.result(json_value, json_error)?;
@@ -1419,31 +1437,98 @@ impl<'a> TypeLowerer<'a> {
             let json_float32_result = self.interner.result(float32, json_error)?;
             let json_float64_result = self.interner.result(float64, json_error)?;
 
+            for (function, outcome) in [
+                (
+                    HirBootstrapHostFunction::JsonDuplicateReject,
+                    json_duplicate_policy,
+                ),
+                (
+                    HirBootstrapHostFunction::JsonDuplicateFirst,
+                    json_duplicate_policy,
+                ),
+                (
+                    HirBootstrapHostFunction::JsonDuplicateLast,
+                    json_duplicate_policy,
+                ),
+                (
+                    HirBootstrapHostFunction::JsonUnknownReject,
+                    json_unknown_policy,
+                ),
+                (
+                    HirBootstrapHostFunction::JsonUnknownIgnore,
+                    json_unknown_policy,
+                ),
+                (
+                    HirBootstrapHostFunction::JsonUnknownCapture,
+                    json_unknown_policy,
+                ),
+                (
+                    HirBootstrapHostFunction::JsonNumberExact,
+                    json_number_policy,
+                ),
+                (
+                    HirBootstrapHostFunction::JsonNumberFloat32,
+                    json_number_policy,
+                ),
+                (
+                    HirBootstrapHostFunction::JsonNumberFloat64,
+                    json_number_policy,
+                ),
+            ] {
+                self.push_bootstrap_host_callable(span, function, Vec::new(), None, outcome)?;
+            }
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::JsonLimitsConstruct,
+                vec![(int64, false); 8],
+                None,
+                json_limits,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::JsonDecodeOptionsConstruct,
+                vec![
+                    (json_limits, false),
+                    (json_duplicate_policy, false),
+                    (json_unknown_policy, false),
+                    (json_number_policy, false),
+                ],
+                None,
+                json_decode_options,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::JsonEncodeOptionsConstruct,
+                vec![(json_limits, false), (bool_type, false)],
+                None,
+                json_encode_options,
+            )?;
+
             self.push_bootstrap_host_callable(
                 span,
                 HirBootstrapHostFunction::JsonValidate,
-                vec![(bytes, false)],
+                vec![(bytes, false), (json_decode_options, false)],
                 None,
                 json_unit_result,
             )?;
             self.push_bootstrap_host_callable(
                 span,
                 HirBootstrapHostFunction::JsonCanonicalize,
-                vec![(bytes, false)],
+                vec![(bytes, false), (json_decode_options, false)],
                 None,
                 json_bytes_result,
             )?;
             self.push_bootstrap_host_callable(
                 span,
                 HirBootstrapHostFunction::JsonParse,
-                vec![(bytes, false)],
+                vec![(bytes, false), (json_decode_options, false)],
                 None,
                 json_value_result,
             )?;
             self.push_bootstrap_host_callable(
                 span,
                 HirBootstrapHostFunction::JsonParseView,
-                vec![(bytes, false)],
+                vec![(bytes, false), (json_decode_options, false)],
                 None,
                 json_value_view_result,
             )?;
@@ -1452,7 +1537,10 @@ impl<'a> TypeLowerer<'a> {
             self.push_bootstrap_generic_host_callable(
                 span,
                 HirBootstrapHostFunction::JsonDecode,
-                vec![(bytes, ParameterMode::Value, false)],
+                vec![
+                    (bytes, ParameterMode::Value, false),
+                    (json_decode_options, ParameterMode::Value, false),
+                ],
                 generic_result,
                 1,
                 Vec::new(),
@@ -1460,7 +1548,10 @@ impl<'a> TypeLowerer<'a> {
             self.push_bootstrap_generic_host_callable(
                 span,
                 HirBootstrapHostFunction::JsonEncode,
-                vec![(generic, ParameterMode::Value, false)],
+                vec![
+                    (generic, ParameterMode::Value, false),
+                    (json_encode_options, ParameterMode::Value, false),
+                ],
                 json_bytes_result,
                 1,
                 Vec::new(),
@@ -1468,7 +1559,7 @@ impl<'a> TypeLowerer<'a> {
             self.push_bootstrap_host_callable(
                 span,
                 HirBootstrapHostFunction::JsonEncodeCanonical,
-                vec![(json_value, false)],
+                vec![(json_value, false), (json_limits, false)],
                 None,
                 json_bytes_result,
             )?;
@@ -1523,14 +1614,17 @@ impl<'a> TypeLowerer<'a> {
             self.push_bootstrap_host_callable(
                 span,
                 HirBootstrapHostFunction::JsonReaderFromBytes,
-                vec![(bytes, false)],
+                vec![(bytes, false), (json_decode_options, false)],
                 None,
                 json_reader_result,
             )?;
             self.push_bootstrap_host_callable_with_modes(
                 span,
                 HirBootstrapHostFunction::JsonReaderFromReader,
-                vec![(reader, ParameterMode::Var, false)],
+                vec![
+                    (reader, ParameterMode::Var, false),
+                    (json_decode_options, ParameterMode::Value, false),
+                ],
                 None,
                 json_reader_result,
             )?;
@@ -1561,7 +1655,10 @@ impl<'a> TypeLowerer<'a> {
             self.push_bootstrap_host_callable_with_modes(
                 span,
                 HirBootstrapHostFunction::JsonWriterToWriter,
-                vec![(writer, ParameterMode::Var, false)],
+                vec![
+                    (writer, ParameterMode::Var, false),
+                    (json_encode_options, ParameterMode::Value, false),
+                ],
                 None,
                 json_writer_result,
             )?;
@@ -6238,6 +6335,12 @@ impl<'a> TypeLowerer<'a> {
                         | IntrinsicType::EnvValue
                         | IntrinsicType::EnvError
                         | IntrinsicType::VirtualTime
+                        | IntrinsicType::JsonLimits
+                        | IntrinsicType::JsonDecodeOptions
+                        | IntrinsicType::JsonEncodeOptions
+                        | IntrinsicType::JsonDuplicatePolicy
+                        | IntrinsicType::JsonUnknownFieldPolicy
+                        | IntrinsicType::JsonNumberPolicy
                         | IntrinsicType::JsonValue
                         | IntrinsicType::JsonValueView
                         | IntrinsicType::JsonRaw

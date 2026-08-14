@@ -2445,6 +2445,12 @@ impl<'program, 'host> Engine<'program, 'host> {
                     | BytecodeIntrinsicType::EnvValue
                     | BytecodeIntrinsicType::EnvError
                     | BytecodeIntrinsicType::VirtualTime
+                    | BytecodeIntrinsicType::JsonLimits
+                    | BytecodeIntrinsicType::JsonDecodeOptions
+                    | BytecodeIntrinsicType::JsonEncodeOptions
+                    | BytecodeIntrinsicType::JsonDuplicatePolicy
+                    | BytecodeIntrinsicType::JsonUnknownFieldPolicy
+                    | BytecodeIntrinsicType::JsonNumberPolicy
                     | BytecodeIntrinsicType::JsonValue
                     | BytecodeIntrinsicType::JsonValueView
                     | BytecodeIntrinsicType::JsonRaw
@@ -4116,6 +4122,12 @@ fn runtime_host_kind(constructor: BytecodeIntrinsicType) -> Option<RuntimeHostVa
         BytecodeIntrinsicType::EnvValue => RuntimeHostValueKind::EnvValue,
         BytecodeIntrinsicType::EnvError => RuntimeHostValueKind::EnvError,
         BytecodeIntrinsicType::VirtualTime => RuntimeHostValueKind::VirtualTime,
+        BytecodeIntrinsicType::JsonLimits
+        | BytecodeIntrinsicType::JsonDecodeOptions
+        | BytecodeIntrinsicType::JsonEncodeOptions
+        | BytecodeIntrinsicType::JsonDuplicatePolicy
+        | BytecodeIntrinsicType::JsonUnknownFieldPolicy
+        | BytecodeIntrinsicType::JsonNumberPolicy => RuntimeHostValueKind::JsonValue,
         BytecodeIntrinsicType::JsonValue => RuntimeHostValueKind::JsonValue,
         BytecodeIntrinsicType::JsonValueView => RuntimeHostValueKind::JsonValueView,
         BytecodeIntrinsicType::JsonRaw => RuntimeHostValueKind::JsonRaw,

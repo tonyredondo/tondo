@@ -913,9 +913,27 @@
             "std.json:158"
           ],
           "verified_signatures": [
+            "std.json:133",
+            "std.json:134",
             "std.json:137",
             "std.json:138",
-            "std.json:141"
+            "std.json:139",
+            "std.json:140",
+            "std.json:141",
+            "std.json:143",
+            "std.json:144",
+            "std.json:145",
+            "std.json:146",
+            "std.json:147",
+            "std.json:148",
+            "std.json:150",
+            "std.json:151",
+            "std.json:152",
+            "std.json:153",
+            "std.json:154",
+            "std.json:156",
+            "std.json:157",
+            "std.json:158"
           ],
           "refs": [
             "testing/stdlib-public-api.json"

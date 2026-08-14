@@ -565,9 +565,27 @@
       "section": "API fuente única",
       "exact_surface_complete": false,
       "exact_signatures": [
+        "parse",
+        "parseView",
         "validate",
         "canonicalize",
-        "rawUnchecked"
+        "encodeCanonical",
+        "raw",
+        "rawUnchecked",
+        "JsonNumber.parse",
+        "JsonNumber.text",
+        "JsonNumber.toInt",
+        "JsonNumber.toUInt",
+        "JsonNumber.toFloat32",
+        "JsonNumber.toFloat64",
+        "JsonReader.fromBytes",
+        "JsonReader.fromReader",
+        "JsonReader.next",
+        "JsonReader.own",
+        "JsonReader.finish",
+        "JsonWriter.toWriter",
+        "JsonWriter.write",
+        "JsonWriter.finish"
       ],
       "case": {
         "path": "tests/runtime/m11-std-codecs-001.to",
@@ -575,7 +593,8 @@
         "canonical_calls": []
       },
       "hir": [
-        "crates/tondo-compiler/src/hir/check.rs"
+        "crates/tondo-compiler/src/hir/check.rs",
+        "crates/tondo-compiler/src/hir.rs"
       ],
       "lowering": [
         "crates/tondo-compiler/src/hir/lower.rs"
@@ -600,8 +619,8 @@
         }
       },
       "signature_count": 23,
-      "verified_count": 3,
-      "gap_count": 20,
+      "verified_count": 21,
+      "gap_count": 2,
       "owner_missing": [],
       "status": "open-gaps"
     },
@@ -4054,11 +4073,12 @@
       "evidence": {
         "hir": {
           "paths": [
-            "crates/tondo-compiler/src/hir/check.rs"
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir.rs"
           ],
           "symbol": "parse",
           "symbols": [
-            "parse"
+            "JsonParse"
           ]
         },
         "lowering": {
@@ -4067,7 +4087,7 @@
           ],
           "symbol": "parse",
           "symbols": [
-            "parse"
+            "JsonParse"
           ]
         },
         "host_vm": {
@@ -4089,10 +4109,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.json:134",
@@ -4105,11 +4123,12 @@
       "evidence": {
         "hir": {
           "paths": [
-            "crates/tondo-compiler/src/hir/check.rs"
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir.rs"
           ],
           "symbol": "parseView",
           "symbols": [
-            "parseView"
+            "JsonParseView"
           ]
         },
         "lowering": {
@@ -4118,7 +4137,7 @@
           ],
           "symbol": "parseView",
           "symbols": [
-            "parseView"
+            "JsonParseView"
           ]
         },
         "host_vm": {
@@ -4140,11 +4159,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape",
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.json:135",
@@ -4157,7 +4173,8 @@
       "evidence": {
         "hir": {
           "paths": [
-            "crates/tondo-compiler/src/hir/check.rs"
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir.rs"
           ],
           "symbol": "decode",
           "symbols": [
@@ -4208,7 +4225,8 @@
       "evidence": {
         "hir": {
           "paths": [
-            "crates/tondo-compiler/src/hir/check.rs"
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir.rs"
           ],
           "symbol": "encode",
           "symbols": [
@@ -4259,7 +4277,8 @@
       "evidence": {
         "hir": {
           "paths": [
-            "crates/tondo-compiler/src/hir/check.rs"
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir.rs"
           ],
           "symbol": "validate",
           "symbols": [
@@ -4308,7 +4327,8 @@
       "evidence": {
         "hir": {
           "paths": [
-            "crates/tondo-compiler/src/hir/check.rs"
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir.rs"
           ],
           "symbol": "canonicalize",
           "symbols": [
@@ -4357,11 +4377,12 @@
       "evidence": {
         "hir": {
           "paths": [
-            "crates/tondo-compiler/src/hir/check.rs"
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir.rs"
           ],
           "symbol": "encodeCanonical",
           "symbols": [
-            "encodeCanonical"
+            "JsonEncodeCanonical"
           ]
         },
         "lowering": {
@@ -4370,7 +4391,7 @@
           ],
           "symbol": "encodeCanonical",
           "symbols": [
-            "encodeCanonical"
+            "JsonEncodeCanonical"
           ]
         },
         "host_vm": {
@@ -4392,11 +4413,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape",
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.json:140",
@@ -4409,11 +4427,12 @@
       "evidence": {
         "hir": {
           "paths": [
-            "crates/tondo-compiler/src/hir/check.rs"
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir.rs"
           ],
           "symbol": "raw",
           "symbols": [
-            "raw"
+            "JsonRaw"
           ]
         },
         "lowering": {
@@ -4422,7 +4441,7 @@
           ],
           "symbol": "raw",
           "symbols": [
-            "raw"
+            "JsonRaw"
           ]
         },
         "host_vm": {
@@ -4444,10 +4463,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.json:141",
@@ -4460,7 +4477,8 @@
       "evidence": {
         "hir": {
           "paths": [
-            "crates/tondo-compiler/src/hir/check.rs"
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir.rs"
           ],
           "symbol": "rawUnchecked",
           "symbols": [
@@ -4509,11 +4527,12 @@
       "evidence": {
         "hir": {
           "paths": [
-            "crates/tondo-compiler/src/hir/check.rs"
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir.rs"
           ],
           "symbol": "parse",
           "symbols": [
-            "parse"
+            "JsonNumberParse"
           ]
         },
         "lowering": {
@@ -4522,7 +4541,7 @@
           ],
           "symbol": "parse",
           "symbols": [
-            "parse"
+            "JsonNumberParse"
           ]
         },
         "host_vm": {
@@ -4544,10 +4563,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.json:144",
@@ -4560,11 +4577,12 @@
       "evidence": {
         "hir": {
           "paths": [
-            "crates/tondo-compiler/src/hir/check.rs"
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir.rs"
           ],
           "symbol": "text",
           "symbols": [
-            "text"
+            "JsonNumberText"
           ]
         },
         "lowering": {
@@ -4573,7 +4591,7 @@
           ],
           "symbol": "text",
           "symbols": [
-            "text"
+            "JsonNumberText"
           ]
         },
         "host_vm": {
@@ -4595,10 +4613,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.json:145",
@@ -4611,11 +4627,12 @@
       "evidence": {
         "hir": {
           "paths": [
-            "crates/tondo-compiler/src/hir/check.rs"
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir.rs"
           ],
           "symbol": "toInt",
           "symbols": [
-            "toInt"
+            "JsonNumberToInt"
           ]
         },
         "lowering": {
@@ -4624,7 +4641,7 @@
           ],
           "symbol": "toInt",
           "symbols": [
-            "toInt"
+            "JsonNumberToInt"
           ]
         },
         "host_vm": {
@@ -4646,11 +4663,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape",
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.json:146",
@@ -4663,11 +4677,12 @@
       "evidence": {
         "hir": {
           "paths": [
-            "crates/tondo-compiler/src/hir/check.rs"
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir.rs"
           ],
           "symbol": "toUInt",
           "symbols": [
-            "toUInt"
+            "JsonNumberToUInt"
           ]
         },
         "lowering": {
@@ -4676,7 +4691,7 @@
           ],
           "symbol": "toUInt",
           "symbols": [
-            "toUInt"
+            "JsonNumberToUInt"
           ]
         },
         "host_vm": {
@@ -4698,11 +4713,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape",
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.json:147",
@@ -4715,11 +4727,12 @@
       "evidence": {
         "hir": {
           "paths": [
-            "crates/tondo-compiler/src/hir/check.rs"
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir.rs"
           ],
           "symbol": "toFloat32",
           "symbols": [
-            "toFloat32"
+            "JsonNumberToFloat32"
           ]
         },
         "lowering": {
@@ -4728,7 +4741,7 @@
           ],
           "symbol": "toFloat32",
           "symbols": [
-            "toFloat32"
+            "JsonNumberToFloat32"
           ]
         },
         "host_vm": {
@@ -4750,11 +4763,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape",
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.json:148",
@@ -4767,11 +4777,12 @@
       "evidence": {
         "hir": {
           "paths": [
-            "crates/tondo-compiler/src/hir/check.rs"
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir.rs"
           ],
           "symbol": "toFloat64",
           "symbols": [
-            "toFloat64"
+            "JsonNumberToFloat64"
           ]
         },
         "lowering": {
@@ -4780,7 +4791,7 @@
           ],
           "symbol": "toFloat64",
           "symbols": [
-            "toFloat64"
+            "JsonNumberToFloat64"
           ]
         },
         "host_vm": {
@@ -4802,11 +4813,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape",
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.json:150",
@@ -4819,11 +4827,12 @@
       "evidence": {
         "hir": {
           "paths": [
-            "crates/tondo-compiler/src/hir/check.rs"
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir.rs"
           ],
           "symbol": "fromBytes",
           "symbols": [
-            "fromBytes"
+            "JsonReaderFromBytes"
           ]
         },
         "lowering": {
@@ -4832,7 +4841,7 @@
           ],
           "symbol": "fromBytes",
           "symbols": [
-            "fromBytes"
+            "JsonReaderFromBytes"
           ]
         },
         "host_vm": {
@@ -4854,11 +4863,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape",
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.json:151",
@@ -4871,11 +4877,12 @@
       "evidence": {
         "hir": {
           "paths": [
-            "crates/tondo-compiler/src/hir/check.rs"
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir.rs"
           ],
           "symbol": "fromReader",
           "symbols": [
-            "fromReader"
+            "JsonReaderFromReader"
           ]
         },
         "lowering": {
@@ -4884,7 +4891,7 @@
           ],
           "symbol": "fromReader",
           "symbols": [
-            "fromReader"
+            "JsonReaderFromReader"
           ]
         },
         "host_vm": {
@@ -4906,11 +4913,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape",
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.json:152",
@@ -4923,11 +4927,12 @@
       "evidence": {
         "hir": {
           "paths": [
-            "crates/tondo-compiler/src/hir/check.rs"
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir.rs"
           ],
           "symbol": "next",
           "symbols": [
-            "next"
+            "JsonReaderNext"
           ]
         },
         "lowering": {
@@ -4936,7 +4941,7 @@
           ],
           "symbol": "next",
           "symbols": [
-            "next"
+            "JsonReaderNext"
           ]
         },
         "host_vm": {
@@ -4958,10 +4963,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.json:153",
@@ -4974,11 +4977,12 @@
       "evidence": {
         "hir": {
           "paths": [
-            "crates/tondo-compiler/src/hir/check.rs"
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir.rs"
           ],
           "symbol": "own",
           "symbols": [
-            "own"
+            "JsonReaderOwn"
           ]
         },
         "lowering": {
@@ -4987,7 +4991,7 @@
           ],
           "symbol": "own",
           "symbols": [
-            "own"
+            "JsonReaderOwn"
           ]
         },
         "host_vm": {
@@ -5009,10 +5013,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.json:154",
@@ -5025,11 +5027,12 @@
       "evidence": {
         "hir": {
           "paths": [
-            "crates/tondo-compiler/src/hir/check.rs"
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir.rs"
           ],
           "symbol": "finish",
           "symbols": [
-            "finish"
+            "JsonReaderFinish"
           ]
         },
         "lowering": {
@@ -5038,7 +5041,7 @@
           ],
           "symbol": "finish",
           "symbols": [
-            "finish"
+            "JsonReaderFinish"
           ]
         },
         "host_vm": {
@@ -5060,10 +5063,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.json:156",
@@ -5076,11 +5077,12 @@
       "evidence": {
         "hir": {
           "paths": [
-            "crates/tondo-compiler/src/hir/check.rs"
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir.rs"
           ],
           "symbol": "toWriter",
           "symbols": [
-            "toWriter"
+            "JsonWriterToWriter"
           ]
         },
         "lowering": {
@@ -5089,7 +5091,7 @@
           ],
           "symbol": "toWriter",
           "symbols": [
-            "toWriter"
+            "JsonWriterToWriter"
           ]
         },
         "host_vm": {
@@ -5111,11 +5113,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape",
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.json:157",
@@ -5128,11 +5127,12 @@
       "evidence": {
         "hir": {
           "paths": [
-            "crates/tondo-compiler/src/hir/check.rs"
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir.rs"
           ],
           "symbol": "write",
           "symbols": [
-            "write"
+            "JsonWriterWrite"
           ]
         },
         "lowering": {
@@ -5141,7 +5141,7 @@
           ],
           "symbol": "write",
           "symbols": [
-            "write"
+            "JsonWriterWrite"
           ]
         },
         "host_vm": {
@@ -5163,10 +5163,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.json:158",
@@ -5179,11 +5177,12 @@
       "evidence": {
         "hir": {
           "paths": [
-            "crates/tondo-compiler/src/hir/check.rs"
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir.rs"
           ],
           "symbol": "finish",
           "symbols": [
-            "finish"
+            "JsonWriterFinish"
           ]
         },
         "lowering": {
@@ -5192,7 +5191,7 @@
           ],
           "symbol": "finish",
           "symbols": [
-            "finish"
+            "JsonWriterFinish"
           ]
         },
         "host_vm": {
@@ -5214,10 +5213,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.math:207",
@@ -11081,9 +11078,9 @@
   "summary": {
     "owners": 20,
     "signatures": 209,
-    "verified": 157,
-    "signature_gaps": 52,
+    "verified": 175,
+    "signature_gaps": 34,
     "owner_gaps": 3,
-    "gaps": 55
+    "gaps": 37
   }
 }

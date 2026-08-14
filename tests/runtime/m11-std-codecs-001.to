@@ -4,64 +4,104 @@ import std.json
 import std.messagepack
 import std.protobuf
 
+fn json_limits_with(maxDocumentBytes: Int, maxOutputBytes: Int): json.JsonLimits {
+    json.JsonLimits {
+        maxDocumentBytes
+        maxDepth: 64
+        maxArrayItems: 65536
+        maxObjectMembers: 65536
+        maxStringBytes: 1048576
+        maxNumberBytes: 4096
+        maxEvents: 100000
+        maxOutputBytes
+    }
+}
+
+fn json_limits(): json.JsonLimits {
+    json_limits_with(1048576, 1048576)
+}
+
+fn json_decode_options(): json.JsonDecodeOptions {
+    json_decode_options_with(json_limits(), json.JsonDuplicatePolicy.Reject)
+}
+
+fn json_decode_options_with(
+    limits: json.JsonLimits,
+    duplicateKeys: json.JsonDuplicatePolicy,
+): json.JsonDecodeOptions {
+    json.JsonDecodeOptions {
+        limits
+        duplicateKeys
+        unknownFields: json.JsonUnknownFieldPolicy.Reject
+        numbers: json.JsonNumberPolicy.Exact
+    }
+}
+
+fn json_encode_options(): json.JsonEncodeOptions {
+    json.JsonEncodeOptions {
+        limits: json_limits()
+        canonical: false
+    }
+}
+
 fn main(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | json.JsonError) {
     let json_input = bytes.Bytes(r"""{"z":1,"a":2}""")?
-    json.validate(json_input)?
-    let json_canonical = json.canonicalize(json_input)?
+    json.validate(json_input, json_decode_options())?
+    let json_canonical = json.canonicalize(json_input, json_decode_options())?
     assert(String(json_canonical)? == r"""{"a":2,"z":1}""")
 
-    let json_value = json.parse(json_input)?
-    let _json_view = json.parseView(json_input)?
+    let json_value = json.parse(json_input, json_decode_options())?
+    let _json_view = json.parseView(json_input, json_decode_options())?
     let _json_raw = json.raw(json_input)?
     let unchecked_raw = unsafe { json.rawUnchecked(bytes.Bytes("not-json")?) }
     _ = unchecked_raw
-    let json_value_canonical = json.encodeCanonical(json_value)?
+    let json_value_canonical = json.encodeCanonical(json_value, json_limits())?
     assert(String(json_value_canonical)? == r"""{"a":2,"z":1}""")
 
     let typed_input = bytes.Bytes("[1,2,3]")?
-    let typed_values = json.decode[Array[Int]](typed_input)?
+    let typed_values = json.decode[Array[Int]](typed_input, json_decode_options())?
     assert(typed_values == [1, 2, 3])
-    let typed_output = json.encode[Array[Int]](typed_values)?
+    let typed_output = json.encode[Array[Int]](typed_values, json_encode_options())?
     assert(String(typed_output)? == "[1,2,3]")
 
-    assert(json.decode[Bool](bytes.Bytes("true")?)? == true)
-    assert(json.decode[Array[String]](bytes.Bytes(r"""["text"]""")?)? == ["text"])
-    assert(json.decode[Unit](bytes.Bytes("null")?)? == ())
-    assert(json.decode[Byte](bytes.Bytes("255")?)? == Byte(255u8))
-    assert(json.decode[Int16](bytes.Bytes("-32768")?)? == -32768i16)
-    assert(json.decode[UInt32](bytes.Bytes("4294967295")?)? == 4294967295u32)
-    assert(json.decode[Float32](bytes.Bytes("1.5")?)? == 1.5f32)
-    assert(json.decode[Float64](bytes.Bytes("2.5")?)? == 2.5)
-    assert(json.decode[Int?](bytes.Bytes("null")?)? == none)
-    assert(json.decode[Int?](bytes.Bytes("7")?)? == some(7))
-    let typed_object = json.decode[Map[String, Int]](bytes.Bytes(r"""{"a":1}""")?)?
+    assert(json.decode[Bool](bytes.Bytes("true")?, json_decode_options())? == true)
+    assert(json.decode[Array[String]](bytes.Bytes(r"""["text"]""")?, json_decode_options())? == ["text"])
+    assert(json.decode[Unit](bytes.Bytes("null")?, json_decode_options())? == ())
+    assert(json.decode[Byte](bytes.Bytes("255")?, json_decode_options())? == Byte(255u8))
+    assert(json.decode[Int16](bytes.Bytes("-32768")?, json_decode_options())? == -32768i16)
+    assert(json.decode[UInt32](bytes.Bytes("4294967295")?, json_decode_options())? == 4294967295u32)
+    assert(json.decode[Float32](bytes.Bytes("1.5")?, json_decode_options())? == 1.5f32)
+    assert(json.decode[Float64](bytes.Bytes("2.5")?, json_decode_options())? == 2.5)
+    assert(json.decode[Int?](bytes.Bytes("null")?, json_decode_options())? == none)
+    assert(json.decode[Int?](bytes.Bytes("7")?, json_decode_options())? == some(7))
+    let typed_object = json.decode[Map[String, Int]](bytes.Bytes(r"""{"a":1}""")?, json_decode_options())?
     assert(typed_object == ["a": 1])
-    let typed_object_output = json.encode[Map[String, Int]](typed_object)?
+    let typed_object_output = json.encode[Map[String, Int]](typed_object, json_encode_options())?
     assert(String(typed_object_output)? == r"""{"a":1}""")
-    assert(String(json.encode[Bool](true)?)? == "true")
-    assert(String(json.encode[Int?](none)?)? == "null")
-    assert(String(json.encode[Int?](some(7))?)? == "7")
-    match json.decode[Byte](bytes.Bytes("256")?) {
+    assert(String(json.encode[Bool](true, json_encode_options())?)? == "true")
+    assert(String(json.encode[Int?](none, json_encode_options())?)? == "null")
+    assert(String(json.encode[Int?](some(7), json_encode_options())?)? == "7")
+    match json.decode[Byte](bytes.Bytes("256")?, json_decode_options()) {
         ok(_) => assert(false)
         err(_) => ()
     }
-    match json.decode[Int](bytes.Bytes("1.5")?) {
+    match json.decode[Int](bytes.Bytes("1.5")?, json_decode_options()) {
         ok(_) => assert(false)
         err(_) => ()
     }
-    match json.decode[UInt64](bytes.Bytes("-1")?) {
+    match json.decode[UInt64](bytes.Bytes("-1")?, json_decode_options()) {
         ok(_) => assert(false)
         err(_) => ()
     }
-    match json.decode[UInt32](bytes.Bytes("4294967296")?) {
+    match json.decode[UInt32](bytes.Bytes("4294967296")?, json_decode_options()) {
         ok(_) => assert(false)
         err(_) => ()
     }
-    match json.decode[Float32](bytes.Bytes("1e1000")?) {
+    match json.decode[Float32](bytes.Bytes("1e1000")?, json_decode_options()) {
         ok(_) => assert(false)
         err(_) => ()
     }
-    match json.decode[Float64](bytes.Bytes("1e10000")?) {
+    match json.decode[Float64](bytes.Bytes("1e10000")?, json_decode_options()) {
         ok(_) => assert(false)
         err(_) => ()
     }
@@ -74,7 +114,7 @@ fn main(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | json.Js
     assert(number.toFloat64()? == 42.0)
 
     let scalar = bytes.Bytes("42")?
-    var event_reader = json.JsonReader.fromBytes(scalar)?
+    var event_reader = json.JsonReader.fromBytes(scalar, json_decode_options())?
     let event = match event_reader.next()? {
         some(value) => event_reader.own(value)?
         none => panic("JSON scalar must publish one event")
@@ -86,15 +126,39 @@ fn main(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | json.Js
     event_reader.finish()?
 
     var stdout = console.stdout()?
-    var event_writer = json.JsonWriter.toWriter(var stdout)?
+    var event_writer = json.JsonWriter.toWriter(var stdout, json_encode_options())?
     event_writer.write(event)?
     event_writer.finish()?
 
     var stdin = console.stdin()?
-    let _reader_from_io = json.JsonReader.fromReader(var stdin)?
+    let _reader_from_io = json.JsonReader.fromReader(var stdin, json_decode_options())?
 
     let duplicate = bytes.Bytes(r"""{"a":1,"a":2}""")?
-    match json.validate(duplicate) {
+    match json.validate(duplicate, json_decode_options()) {
+        ok(_) => assert(false)
+        err(_) => ()
+    }
+    let first = json.parse(
+        duplicate,
+        json_decode_options_with(json_limits(), json.JsonDuplicatePolicy.First),
+    )?
+    assert(String(json.encodeCanonical(first, json_limits())?)? == r"""{"a":1}""")
+    let last = json.parse(
+        duplicate,
+        json_decode_options_with(json_limits(), json.JsonDuplicatePolicy.Last),
+    )?
+    assert(String(json.encodeCanonical(last, json_limits())?)? == r"""{"a":2}""")
+
+    let tiny_document = json_decode_options_with(
+        json_limits_with(1, 1048576),
+        json.JsonDuplicatePolicy.Reject,
+    )
+    match json.validate(bytes.Bytes(r"""{}""")?, tiny_document) {
+        ok(_) => assert(false)
+        err(_) => ()
+    }
+    let tiny_output = json_limits_with(1048576, 1)
+    match json.encodeCanonical(last, tiny_output) {
         ok(_) => assert(false)
         err(_) => ()
     }

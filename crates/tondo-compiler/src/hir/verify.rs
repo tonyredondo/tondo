@@ -560,6 +560,12 @@ impl Verifier<'_> {
                         | IntrinsicType::EnvValue
                         | IntrinsicType::EnvError
                         | IntrinsicType::VirtualTime
+                        | IntrinsicType::JsonLimits
+                        | IntrinsicType::JsonDecodeOptions
+                        | IntrinsicType::JsonEncodeOptions
+                        | IntrinsicType::JsonDuplicatePolicy
+                        | IntrinsicType::JsonUnknownFieldPolicy
+                        | IntrinsicType::JsonNumberPolicy
                         | IntrinsicType::JsonValue
                         | IntrinsicType::JsonValueView
                         | IntrinsicType::JsonRaw

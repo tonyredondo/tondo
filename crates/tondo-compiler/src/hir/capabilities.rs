@@ -710,7 +710,13 @@ fn intrinsic_node(
                 fixed(HirCapabilityStatus::Unsatisfied)
             }
         }
-        IntrinsicType::IoLimits => {
+        IntrinsicType::IoLimits
+        | IntrinsicType::JsonLimits
+        | IntrinsicType::JsonDecodeOptions
+        | IntrinsicType::JsonEncodeOptions
+        | IntrinsicType::JsonDuplicatePolicy
+        | IntrinsicType::JsonUnknownFieldPolicy
+        | IntrinsicType::JsonNumberPolicy => {
             if matches!(
                 capability,
                 HirCapability::Copy

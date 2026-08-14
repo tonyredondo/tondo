@@ -143,6 +143,12 @@ pub(crate) const fn intrinsic_terminal_contract(
         | IntrinsicType::EnvValue
         | IntrinsicType::EnvError
         | IntrinsicType::VirtualTime
+        | IntrinsicType::JsonLimits
+        | IntrinsicType::JsonDecodeOptions
+        | IntrinsicType::JsonEncodeOptions
+        | IntrinsicType::JsonDuplicatePolicy
+        | IntrinsicType::JsonUnknownFieldPolicy
+        | IntrinsicType::JsonNumberPolicy
         | IntrinsicType::JsonValue
         | IntrinsicType::JsonValueView
         | IntrinsicType::JsonRaw
@@ -517,6 +523,12 @@ fn intrinsic_node(constructor: IntrinsicType, arguments: Vec<TypeId>) -> Termina
         | IntrinsicType::EnvValue
         | IntrinsicType::EnvError
         | IntrinsicType::VirtualTime
+        | IntrinsicType::JsonLimits
+        | IntrinsicType::JsonDecodeOptions
+        | IntrinsicType::JsonEncodeOptions
+        | IntrinsicType::JsonDuplicatePolicy
+        | IntrinsicType::JsonUnknownFieldPolicy
+        | IntrinsicType::JsonNumberPolicy
         | IntrinsicType::JsonValue
         | IntrinsicType::JsonValueView
         | IntrinsicType::JsonRaw

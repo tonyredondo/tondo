@@ -498,6 +498,12 @@ impl<'a> TraceMetadataAnalysis<'a> {
                 | BytecodeIntrinsicType::EnvValue
                 | BytecodeIntrinsicType::EnvError
                 | BytecodeIntrinsicType::VirtualTime
+                | BytecodeIntrinsicType::JsonLimits
+                | BytecodeIntrinsicType::JsonDecodeOptions
+                | BytecodeIntrinsicType::JsonEncodeOptions
+                | BytecodeIntrinsicType::JsonDuplicatePolicy
+                | BytecodeIntrinsicType::JsonUnknownFieldPolicy
+                | BytecodeIntrinsicType::JsonNumberPolicy
                 | BytecodeIntrinsicType::JsonValue
                 | BytecodeIntrinsicType::JsonValueView
                 | BytecodeIntrinsicType::JsonRaw
@@ -1109,7 +1115,13 @@ fn intrinsic_capability(
                 ClosedCapability::Discard | ClosedCapability::Send
             ))
         }
-        BytecodeIntrinsicType::IoLimits => fixed_capability(matches!(
+        BytecodeIntrinsicType::IoLimits
+        | BytecodeIntrinsicType::JsonLimits
+        | BytecodeIntrinsicType::JsonDecodeOptions
+        | BytecodeIntrinsicType::JsonEncodeOptions
+        | BytecodeIntrinsicType::JsonDuplicatePolicy
+        | BytecodeIntrinsicType::JsonUnknownFieldPolicy
+        | BytecodeIntrinsicType::JsonNumberPolicy => fixed_capability(matches!(
             capability,
             ClosedCapability::Copy
                 | ClosedCapability::Discard
@@ -1566,6 +1578,12 @@ fn intrinsic_terminal(
         | BytecodeIntrinsicType::EnvValue
         | BytecodeIntrinsicType::EnvError
         | BytecodeIntrinsicType::VirtualTime
+        | BytecodeIntrinsicType::JsonLimits
+        | BytecodeIntrinsicType::JsonDecodeOptions
+        | BytecodeIntrinsicType::JsonEncodeOptions
+        | BytecodeIntrinsicType::JsonDuplicatePolicy
+        | BytecodeIntrinsicType::JsonUnknownFieldPolicy
+        | BytecodeIntrinsicType::JsonNumberPolicy
         | BytecodeIntrinsicType::JsonValue
         | BytecodeIntrinsicType::JsonValueView
         | BytecodeIntrinsicType::JsonRaw
@@ -1755,6 +1773,12 @@ impl Verifier<'_> {
                 | BytecodeIntrinsicType::EnvValue
                 | BytecodeIntrinsicType::EnvError
                 | BytecodeIntrinsicType::VirtualTime
+                | BytecodeIntrinsicType::JsonLimits
+                | BytecodeIntrinsicType::JsonDecodeOptions
+                | BytecodeIntrinsicType::JsonEncodeOptions
+                | BytecodeIntrinsicType::JsonDuplicatePolicy
+                | BytecodeIntrinsicType::JsonUnknownFieldPolicy
+                | BytecodeIntrinsicType::JsonNumberPolicy
                 | BytecodeIntrinsicType::JsonValue
                 | BytecodeIntrinsicType::JsonValueView
                 | BytecodeIntrinsicType::JsonRaw
@@ -14590,6 +14614,12 @@ mod tests {
             BytecodeIntrinsicType::Timer,
             BytecodeIntrinsicType::DurationError,
             BytecodeIntrinsicType::ClockError,
+            BytecodeIntrinsicType::JsonLimits,
+            BytecodeIntrinsicType::JsonDecodeOptions,
+            BytecodeIntrinsicType::JsonEncodeOptions,
+            BytecodeIntrinsicType::JsonDuplicatePolicy,
+            BytecodeIntrinsicType::JsonUnknownFieldPolicy,
+            BytecodeIntrinsicType::JsonNumberPolicy,
         ] {
             let arguments = match constructor.arity() {
                 0 => Vec::new(),
@@ -14688,7 +14718,13 @@ mod tests {
                 | BytecodeIntrinsicType::Writer
                 | BytecodeIntrinsicType::JsonReader
                 | BytecodeIntrinsicType::JsonWriter => [false, true, false, false, true, false],
-                BytecodeIntrinsicType::IoLimits => [true, true, true, true, true, true],
+                BytecodeIntrinsicType::IoLimits
+                | BytecodeIntrinsicType::JsonLimits
+                | BytecodeIntrinsicType::JsonDecodeOptions
+                | BytecodeIntrinsicType::JsonEncodeOptions
+                | BytecodeIntrinsicType::JsonDuplicatePolicy
+                | BytecodeIntrinsicType::JsonUnknownFieldPolicy
+                | BytecodeIntrinsicType::JsonNumberPolicy => all,
                 BytecodeIntrinsicType::Duration
                 | BytecodeIntrinsicType::DurationError
                 | BytecodeIntrinsicType::ClockError => all,

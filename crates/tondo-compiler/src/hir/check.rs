@@ -905,6 +905,12 @@ impl<'a> ExpressionChecker<'a> {
                         | IntrinsicType::EnvValue
                         | IntrinsicType::EnvError
                         | IntrinsicType::VirtualTime
+                        | IntrinsicType::JsonLimits
+                        | IntrinsicType::JsonDecodeOptions
+                        | IntrinsicType::JsonEncodeOptions
+                        | IntrinsicType::JsonDuplicatePolicy
+                        | IntrinsicType::JsonUnknownFieldPolicy
+                        | IntrinsicType::JsonNumberPolicy
                         | IntrinsicType::JsonValue
                         | IntrinsicType::JsonValueView
                         | IntrinsicType::JsonRaw
@@ -6490,6 +6496,15 @@ impl<'a> ExpressionChecker<'a> {
         let Some(path) = self.expression_path_info(file, node)? else {
             return Ok(None);
         };
+        if let Some(function) = self.json_policy_variant(&path) {
+            return self
+                .allocate_bootstrap_value_call(
+                    self.sources.span(file, node.range())?,
+                    function,
+                    Vec::new(),
+                )
+                .map(Some);
+        }
         if path.suffix.is_empty() {
             return Ok(None);
         }
@@ -6565,6 +6580,9 @@ impl<'a> ExpressionChecker<'a> {
         let Some(ty) = self.construction_type(file, path_node.range(), &path, expected)? else {
             return self.recovery_expression(file, node.range());
         };
+        if let Some(expression) = self.check_json_options_record(file, node, ty, context)? {
+            return Ok(expression);
+        }
         let Some((symbol, arguments, shape)) = self.nominal_instance(ty)? else {
             self.emit(
                 self.sources.span(file, path_node.range())?,
@@ -6681,6 +6699,259 @@ impl<'a> ExpressionChecker<'a> {
                 self.recovery_expression(file, node.range())
             }
         }
+    }
+
+    fn json_policy_variant(&self, path: &PatternPathInfo) -> Option<HirBootstrapHostFunction> {
+        let ResolvedName::External {
+            module,
+            namespace: Namespace::Type,
+            name,
+        } = &path.resolved
+        else {
+            return None;
+        };
+        if module.package().as_str() != "toolchain:std:0.1-bootstrap"
+            || module.path().as_str() != "json"
+            || path.suffix.len() != 1
+        {
+            return None;
+        }
+        match (name.as_str(), path.suffix[0].name.as_str()) {
+            ("JsonDuplicatePolicy", "Reject") => {
+                Some(HirBootstrapHostFunction::JsonDuplicateReject)
+            }
+            ("JsonDuplicatePolicy", "First") => Some(HirBootstrapHostFunction::JsonDuplicateFirst),
+            ("JsonDuplicatePolicy", "Last") => Some(HirBootstrapHostFunction::JsonDuplicateLast),
+            ("JsonUnknownFieldPolicy", "Reject") => {
+                Some(HirBootstrapHostFunction::JsonUnknownReject)
+            }
+            ("JsonUnknownFieldPolicy", "Ignore") => {
+                Some(HirBootstrapHostFunction::JsonUnknownIgnore)
+            }
+            ("JsonUnknownFieldPolicy", "Capture") => {
+                Some(HirBootstrapHostFunction::JsonUnknownCapture)
+            }
+            ("JsonNumberPolicy", "Exact") => Some(HirBootstrapHostFunction::JsonNumberExact),
+            ("JsonNumberPolicy", "Float32") => Some(HirBootstrapHostFunction::JsonNumberFloat32),
+            ("JsonNumberPolicy", "Float64") => Some(HirBootstrapHostFunction::JsonNumberFloat64),
+            _ => None,
+        }
+    }
+
+    fn check_json_options_record(
+        &mut self,
+        file: FileId,
+        node: SyntaxNodeRef<'_>,
+        ty: TypeId,
+        context: &mut BodyContext,
+    ) -> Result<Option<HirExpressionId>, HirError> {
+        let TypeKind::Intrinsic {
+            constructor,
+            arguments,
+        } = self.program.interner.kind(ty)?
+        else {
+            return Ok(None);
+        };
+        if !arguments.is_empty() {
+            return Ok(None);
+        }
+        let int = self.program.interner.scalar(ScalarType::Int);
+        let bool_type = self.program.interner.scalar(ScalarType::Bool);
+        let intrinsic = |constructor, interner: &mut crate::types::TypeInterner| {
+            interner.intrinsic(constructor, Vec::new())
+        };
+        let (function, fields) = match constructor {
+            IntrinsicType::JsonLimits => (
+                HirBootstrapHostFunction::JsonLimitsConstruct,
+                vec![
+                    ("maxDocumentBytes", int),
+                    ("maxDepth", int),
+                    ("maxArrayItems", int),
+                    ("maxObjectMembers", int),
+                    ("maxStringBytes", int),
+                    ("maxNumberBytes", int),
+                    ("maxEvents", int),
+                    ("maxOutputBytes", int),
+                ],
+            ),
+            IntrinsicType::JsonDecodeOptions => (
+                HirBootstrapHostFunction::JsonDecodeOptionsConstruct,
+                vec![
+                    (
+                        "limits",
+                        intrinsic(IntrinsicType::JsonLimits, &mut self.program.interner)?,
+                    ),
+                    (
+                        "duplicateKeys",
+                        intrinsic(
+                            IntrinsicType::JsonDuplicatePolicy,
+                            &mut self.program.interner,
+                        )?,
+                    ),
+                    (
+                        "unknownFields",
+                        intrinsic(
+                            IntrinsicType::JsonUnknownFieldPolicy,
+                            &mut self.program.interner,
+                        )?,
+                    ),
+                    (
+                        "numbers",
+                        intrinsic(IntrinsicType::JsonNumberPolicy, &mut self.program.interner)?,
+                    ),
+                ],
+            ),
+            IntrinsicType::JsonEncodeOptions => (
+                HirBootstrapHostFunction::JsonEncodeOptionsConstruct,
+                vec![
+                    (
+                        "limits",
+                        intrinsic(IntrinsicType::JsonLimits, &mut self.program.interner)?,
+                    ),
+                    ("canonical", bool_type),
+                ],
+            ),
+            _ => return Ok(None),
+        };
+
+        let mut values = BTreeMap::<String, HirExpressionId>::new();
+        let mut valid = true;
+        for initializer in node
+            .child_nodes()
+            .filter(|child| child.kind() == SyntaxKind::RecordInitializer)
+        {
+            let Some(name_token) = initializer
+                .child_tokens()
+                .find(|token| token.kind() == TokenKind::Identifier || token.kind().is_keyword())
+            else {
+                valid = false;
+                continue;
+            };
+            let name = name_token
+                .token()
+                .normalized_identifier()
+                .unwrap_or(self.token_text(file, name_token)?)
+                .to_owned();
+            let Some((_, expected)) = fields.iter().find(|(field, _)| *field == name) else {
+                if let Some(expression) = initializer
+                    .child_nodes()
+                    .find(|child| AstExpression::cast(*child).is_some())
+                {
+                    let _ = self.check_expression(file, expression, None, context)?;
+                }
+                self.emit(
+                    self.sources.span(file, name_token.range())?,
+                    "E1102",
+                    format!("unknown record field `{name}`"),
+                    Vec::new(),
+                    None,
+                )?;
+                valid = false;
+                continue;
+            };
+            let value = if let Some(expression) = initializer
+                .child_nodes()
+                .find(|child| AstExpression::cast(*child).is_some())
+            {
+                self.check_expression(
+                    file,
+                    expression,
+                    Some(ExpressionExpectation::Direct(*expected)),
+                    context,
+                )?
+            } else {
+                self.check_shorthand_value(file, name_token, *expected, context)?
+            };
+            if values.insert(name.clone(), value).is_some() {
+                self.emit(
+                    self.sources.span(file, name_token.range())?,
+                    "E1102",
+                    format!("record field `{name}` is initialized more than once"),
+                    Vec::new(),
+                    None,
+                )?;
+                valid = false;
+            }
+        }
+        let missing = fields
+            .iter()
+            .filter_map(|(name, _)| (!values.contains_key(*name)).then_some(*name))
+            .collect::<Vec<_>>();
+        if !missing.is_empty() {
+            self.emit(
+                self.sources.span(file, node.range())?,
+                "E1102",
+                format!(
+                    "record construction is missing fields: {}",
+                    missing.join(", ")
+                ),
+                Vec::new(),
+                None,
+            )?;
+            valid = false;
+        }
+        if !valid {
+            return self.recovery_expression(file, node.range()).map(Some);
+        }
+        let ordered = fields
+            .iter()
+            .map(|(name, _)| {
+                values
+                    .remove(*name)
+                    .expect("all JSON option fields were checked")
+            })
+            .collect();
+        self.allocate_bootstrap_value_call(
+            self.sources.span(file, node.range())?,
+            function,
+            ordered,
+        )
+        .map(Some)
+    }
+
+    fn allocate_bootstrap_value_call(
+        &mut self,
+        span: Span,
+        function: HirBootstrapHostFunction,
+        values: Vec<HirExpressionId>,
+    ) -> Result<HirExpressionId, HirError> {
+        let callable = self
+            .program
+            .callable(HirCallableId::Host(function))
+            .expect("registered bootstrap JSON helper remains indexed");
+        let signature = callable.function_type();
+        let outcome = callable.outcome();
+        let callee = self.allocate_expression(HirExpression {
+            span,
+            ty: signature,
+            category: HirValueCategory::Value,
+            kind: HirExpressionKind::Function(HirCallableId::Host(function)),
+        })?;
+        let arguments = values
+            .into_iter()
+            .enumerate()
+            .map(|(index, value)| HirCallArgument {
+                label: None,
+                mode: ParameterMode::Value,
+                spread: false,
+                target: HirCallArgumentTarget::Fixed(
+                    u32::try_from(index).expect("JSON helper arity fits in u32"),
+                ),
+                value,
+            })
+            .collect();
+        self.allocate_expression(HirExpression {
+            span,
+            ty: outcome,
+            category: HirValueCategory::Value,
+            kind: HirExpressionKind::Call {
+                callee,
+                arguments,
+                signature,
+                protocol: HirCallProtocol::Call,
+                unsafe_call: false,
+            },
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -26636,8 +26907,8 @@ fn build(input: Int, flag: Bool) {
         let (_, _, output) = check(
             "import std.bytes\n\
              import std.json\n\
-             fn decode(input: bytes.Bytes): Array[Int] ! json.JsonError {\n\
-                 json.decode[Array[Int]](input)\n\
+             fn decode(input: bytes.Bytes, options: json.JsonDecodeOptions): Array[Int] ! json.JsonError {\n\
+                 json.decode[Array[Int]](input, options)\n\
              }\n",
         );
         assert!(
@@ -26708,6 +26979,95 @@ fn build(input: Int, flag: Bool) {
              fn retain(input: bytes.Bytes): json.Raw { json.rawUnchecked(input) }\n",
         );
         assert_eq!(codes(&safe_output), ["E1701"]);
+    }
+
+    #[test]
+    fn json_options_are_closed_typed_records_with_exact_public_arity() {
+        let (_, _, valid) = check(
+            "import std.bytes\n\
+             import std.json\n\
+             fn limits(): json.JsonLimits {\n\
+                 json.JsonLimits {\n\
+                     maxDocumentBytes: 1024\n\
+                     maxDepth: 16\n\
+                     maxArrayItems: 64\n\
+                     maxObjectMembers: 64\n\
+                     maxStringBytes: 1024\n\
+                     maxNumberBytes: 64\n\
+                     maxEvents: 128\n\
+                     maxOutputBytes: 1024\n\
+                 }\n\
+             }\n\
+             fn options(): json.JsonDecodeOptions {\n\
+                 json.JsonDecodeOptions {\n\
+                     limits: limits()\n\
+                     duplicateKeys: json.JsonDuplicatePolicy.First\n\
+                     unknownFields: json.JsonUnknownFieldPolicy.Ignore\n\
+                     numbers: json.JsonNumberPolicy.Exact\n\
+                 }\n\
+             }\n\
+             fn encodeOptions(): json.JsonEncodeOptions {\n\
+                 json.JsonEncodeOptions { limits: limits(), canonical: true }\n\
+             }\n\
+             fn validate(input: bytes.Bytes): Unit ! json.JsonError {\n\
+                 json.validate(input, options())?\n\
+             }\n",
+        );
+        assert!(valid.diagnostics().is_empty(), "{:#?}", valid.diagnostics());
+        assert!(valid.is_complete());
+
+        let (_, _, missing) = check(
+            "import std.json\n\
+             fn invalid(): json.JsonLimits {\n\
+                 json.JsonLimits {\n\
+                     maxDocumentBytes: 1\n\
+                     maxDepth: 1\n\
+                     maxArrayItems: 1\n\
+                     maxObjectMembers: 1\n\
+                     maxStringBytes: 1\n\
+                     maxNumberBytes: 1\n\
+                     maxEvents: 1\n\
+                 }\n\
+             }\n",
+        );
+        assert_eq!(codes(&missing), ["E1102"]);
+
+        let (_, _, unknown) = check(
+            "import std.json\n\
+             fn invalid(limits: json.JsonLimits): json.JsonEncodeOptions {\n\
+                 json.JsonEncodeOptions { limits, canonical: false, extra: 1 }\n\
+             }\n",
+        );
+        assert_eq!(codes(&unknown), ["E1102"]);
+
+        let (_, _, duplicate) = check(
+            "import std.json\n\
+             fn invalid(limits: json.JsonLimits): json.JsonEncodeOptions {\n\
+                 json.JsonEncodeOptions {\n\
+                     limits: limits\n\
+                     canonical: false\n\
+                     canonical: true\n\
+                 }\n\
+             }\n",
+        );
+        assert_eq!(codes(&duplicate), ["E1102"]);
+
+        let (_, _, wrong_type) = check(
+            "import std.json\n\
+             fn invalid(limits: json.JsonLimits): json.JsonEncodeOptions {\n\
+                 json.JsonEncodeOptions { limits, canonical: 1 }\n\
+             }\n",
+        );
+        assert_eq!(codes(&wrong_type), ["E1102"]);
+
+        let (_, _, old_arity) = check(
+            "import std.bytes\n\
+             import std.json\n\
+             fn invalid(input: bytes.Bytes): Unit ! json.JsonError {\n\
+                 json.validate(input)?\n\
+             }\n",
+        );
+        assert_eq!(codes(&old_arity), ["E1102"]);
     }
 
     #[test]

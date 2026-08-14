@@ -290,6 +290,25 @@ struct EnvSnapshot {
     entries: BTreeMap<Vec<u8>, Vec<u8>>,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct JsonLimitsInput {
+    values: [i128; 8],
+}
+
+#[derive(Debug, Clone, Copy)]
+struct JsonDecodeOptionsInput {
+    limits: JsonLimitsInput,
+    duplicate_keys: json::JsonDuplicatePolicy,
+    unknown_fields: json::JsonUnknownFieldPolicy,
+    numbers: json::JsonNumberPolicy,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct JsonEncodeOptionsInput {
+    limits: JsonLimitsInput,
+    canonical: bool,
+}
+
 enum HostValue {
     Command(ProcessPlan),
     Pipeline(ProcessPlan),
@@ -404,6 +423,12 @@ enum HostValue {
         domain: u64,
     },
     JsonValue(json::JsonValue),
+    JsonLimits(JsonLimitsInput),
+    JsonDecodeOptions(JsonDecodeOptionsInput),
+    JsonEncodeOptions(JsonEncodeOptionsInput),
+    JsonDuplicatePolicy(json::JsonDuplicatePolicy),
+    JsonUnknownFieldPolicy(json::JsonUnknownFieldPolicy),
+    JsonNumberPolicy(json::JsonNumberPolicy),
     JsonValueView {
         _bytes: u64,
     },
@@ -1421,6 +1446,135 @@ impl BootstrapHost {
         }
     }
 
+    fn json_limits_input(&self, value: &RuntimeValue) -> Result<JsonLimitsInput, VmError> {
+        let RuntimeValue::Host {
+            kind: RuntimeHostValueKind::JsonValue,
+            id,
+        } = value
+        else {
+            return Err(VmError::Host("JsonLimits value is invalid".into()));
+        };
+        match self.values.get(id) {
+            Some(HostValue::JsonLimits(limits)) => Ok(*limits),
+            _ => Err(VmError::Host("JsonLimits token is stale".into())),
+        }
+    }
+
+    fn json_limits(&self, input: JsonLimitsInput) -> Result<json::JsonLimits, String> {
+        let [
+            document,
+            depth,
+            array,
+            object,
+            string,
+            number,
+            events,
+            output,
+        ] = input.values;
+        let convert = |name: &str, value: i128| {
+            usize::try_from(value)
+                .map_err(|_| format!("{name} is outside the supported non-negative range"))
+        };
+        Ok(json::JsonLimits {
+            max_document_bytes: convert("maxDocumentBytes", document)?,
+            max_depth: convert("maxDepth", depth)?,
+            max_array_items: convert("maxArrayItems", array)?,
+            max_object_members: convert("maxObjectMembers", object)?,
+            max_string_bytes: convert("maxStringBytes", string)?,
+            max_number_bytes: convert("maxNumberBytes", number)?,
+            max_events: convert("maxEvents", events)?,
+            max_output_bytes: convert("maxOutputBytes", output)?,
+        })
+    }
+
+    fn json_duplicate_policy(
+        &self,
+        value: &RuntimeValue,
+    ) -> Result<json::JsonDuplicatePolicy, VmError> {
+        let RuntimeValue::Host {
+            kind: RuntimeHostValueKind::JsonValue,
+            id,
+        } = value
+        else {
+            return Err(VmError::Host("JsonDuplicatePolicy value is invalid".into()));
+        };
+        match self.values.get(id) {
+            Some(HostValue::JsonDuplicatePolicy(policy)) => Ok(*policy),
+            _ => Err(VmError::Host("JsonDuplicatePolicy token is stale".into())),
+        }
+    }
+
+    fn json_unknown_field_policy(
+        &self,
+        value: &RuntimeValue,
+    ) -> Result<json::JsonUnknownFieldPolicy, VmError> {
+        let RuntimeValue::Host {
+            kind: RuntimeHostValueKind::JsonValue,
+            id,
+        } = value
+        else {
+            return Err(VmError::Host(
+                "JsonUnknownFieldPolicy value is invalid".into(),
+            ));
+        };
+        match self.values.get(id) {
+            Some(HostValue::JsonUnknownFieldPolicy(policy)) => Ok(*policy),
+            _ => Err(VmError::Host(
+                "JsonUnknownFieldPolicy token is stale".into(),
+            )),
+        }
+    }
+
+    fn json_number_policy(&self, value: &RuntimeValue) -> Result<json::JsonNumberPolicy, VmError> {
+        let RuntimeValue::Host {
+            kind: RuntimeHostValueKind::JsonValue,
+            id,
+        } = value
+        else {
+            return Err(VmError::Host("JsonNumberPolicy value is invalid".into()));
+        };
+        match self.values.get(id) {
+            Some(HostValue::JsonNumberPolicy(policy)) => Ok(*policy),
+            _ => Err(VmError::Host("JsonNumberPolicy token is stale".into())),
+        }
+    }
+
+    fn json_decode_options(&self, value: &RuntimeValue) -> Result<json::JsonDecodeOptions, String> {
+        let RuntimeValue::Host {
+            kind: RuntimeHostValueKind::JsonValue,
+            id,
+        } = value
+        else {
+            return Err("JsonDecodeOptions value is invalid".into());
+        };
+        let Some(HostValue::JsonDecodeOptions(options)) = self.values.get(id) else {
+            return Err("JsonDecodeOptions token is stale".into());
+        };
+        Ok(json::JsonDecodeOptions {
+            limits: self.json_limits(options.limits)?,
+            duplicate_keys: options.duplicate_keys,
+            unknown_fields: options.unknown_fields,
+            numbers: options.numbers,
+        })
+    }
+
+    fn json_encode_options(&self, value: &RuntimeValue) -> Result<json::JsonEncodeOptions, String> {
+        let RuntimeValue::Host {
+            kind: RuntimeHostValueKind::JsonValue,
+            id,
+        } = value
+        else {
+            return Err("JsonEncodeOptions value is invalid".into());
+        };
+        let Some(HostValue::JsonEncodeOptions(options)) = self.values.get(id) else {
+            return Err("JsonEncodeOptions token is stale".into());
+        };
+        Ok(json::JsonEncodeOptions {
+            limits: self.json_limits(options.limits)?,
+            canonical: options.canonical,
+        })
+    }
+
     fn json_number(&self, value: &RuntimeValue) -> Result<&json::JsonNumber, VmError> {
         let RuntimeValue::Host {
             kind: RuntimeHostValueKind::JsonNumber,
@@ -2135,16 +2289,111 @@ impl VmHost for BootstrapHost {
             ("std.math.max", [RuntimeValue::Float(left), RuntimeValue::Float(right)]) => {
                 Ok(RuntimeValue::Float(math::max(*left, *right)))
             }
-            ("std.json.validate", [bytes]) => {
+            ("intrinsic.json.JsonDuplicatePolicy.Reject", []) => Ok(self.allocate(
+                RuntimeHostValueKind::JsonValue,
+                HostValue::JsonDuplicatePolicy(json::JsonDuplicatePolicy::Reject),
+            )),
+            ("intrinsic.json.JsonDuplicatePolicy.First", []) => Ok(self.allocate(
+                RuntimeHostValueKind::JsonValue,
+                HostValue::JsonDuplicatePolicy(json::JsonDuplicatePolicy::First),
+            )),
+            ("intrinsic.json.JsonDuplicatePolicy.Last", []) => Ok(self.allocate(
+                RuntimeHostValueKind::JsonValue,
+                HostValue::JsonDuplicatePolicy(json::JsonDuplicatePolicy::Last),
+            )),
+            ("intrinsic.json.JsonUnknownFieldPolicy.Reject", []) => Ok(self.allocate(
+                RuntimeHostValueKind::JsonValue,
+                HostValue::JsonUnknownFieldPolicy(json::JsonUnknownFieldPolicy::Reject),
+            )),
+            ("intrinsic.json.JsonUnknownFieldPolicy.Ignore", []) => Ok(self.allocate(
+                RuntimeHostValueKind::JsonValue,
+                HostValue::JsonUnknownFieldPolicy(json::JsonUnknownFieldPolicy::Ignore),
+            )),
+            ("intrinsic.json.JsonUnknownFieldPolicy.Capture", []) => Ok(self.allocate(
+                RuntimeHostValueKind::JsonValue,
+                HostValue::JsonUnknownFieldPolicy(json::JsonUnknownFieldPolicy::Capture),
+            )),
+            ("intrinsic.json.JsonNumberPolicy.Exact", []) => Ok(self.allocate(
+                RuntimeHostValueKind::JsonValue,
+                HostValue::JsonNumberPolicy(json::JsonNumberPolicy::Exact),
+            )),
+            ("intrinsic.json.JsonNumberPolicy.Float32", []) => Ok(self.allocate(
+                RuntimeHostValueKind::JsonValue,
+                HostValue::JsonNumberPolicy(json::JsonNumberPolicy::Float32),
+            )),
+            ("intrinsic.json.JsonNumberPolicy.Float64", []) => Ok(self.allocate(
+                RuntimeHostValueKind::JsonValue,
+                HostValue::JsonNumberPolicy(json::JsonNumberPolicy::Float64),
+            )),
+            (
+                "intrinsic.json.JsonLimits.construct",
+                [
+                    RuntimeValue::Integer(document),
+                    RuntimeValue::Integer(depth),
+                    RuntimeValue::Integer(array),
+                    RuntimeValue::Integer(object),
+                    RuntimeValue::Integer(string),
+                    RuntimeValue::Integer(number),
+                    RuntimeValue::Integer(events),
+                    RuntimeValue::Integer(output),
+                ],
+            ) => Ok(self.allocate(
+                RuntimeHostValueKind::JsonValue,
+                HostValue::JsonLimits(JsonLimitsInput {
+                    values: [
+                        *document, *depth, *array, *object, *string, *number, *events, *output,
+                    ],
+                }),
+            )),
+            (
+                "intrinsic.json.JsonDecodeOptions.construct",
+                [limits, duplicate, unknown, numbers],
+            ) => {
+                let duplicate_keys = self.json_duplicate_policy(duplicate)?;
+                let unknown_fields = self.json_unknown_field_policy(unknown)?;
+                let numbers = self.json_number_policy(numbers)?;
+                let limits = self.json_limits_input(limits)?;
+                Ok(self.allocate(
+                    RuntimeHostValueKind::JsonValue,
+                    HostValue::JsonDecodeOptions(JsonDecodeOptionsInput {
+                        limits,
+                        duplicate_keys,
+                        unknown_fields,
+                        numbers,
+                    }),
+                ))
+            }
+            (
+                "intrinsic.json.JsonEncodeOptions.construct",
+                [limits, RuntimeValue::Bool(canonical)],
+            ) => {
+                let limits = self.json_limits_input(limits)?;
+                Ok(self.allocate(
+                    RuntimeHostValueKind::JsonValue,
+                    HostValue::JsonEncodeOptions(JsonEncodeOptionsInput {
+                        limits,
+                        canonical: *canonical,
+                    }),
+                ))
+            }
+            ("std.json.validate", [bytes, options]) => {
                 let input = self.bytes(bytes)?.to_vec();
-                match json::validate(&input) {
+                let options = match self.json_decode_options(options) {
+                    Ok(options) => options,
+                    Err(error) => return Ok(self.json_result_error(error)),
+                };
+                match json::validate_with_options(&input, options) {
                     Ok(()) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))),
                     Err(error) => Ok(self.json_result_error(error.to_string())),
                 }
             }
-            ("std.json.canonicalize", [bytes]) => {
+            ("std.json.canonicalize", [bytes, options]) => {
                 let input = self.bytes(bytes)?.to_vec();
-                match json::parse(&input).and_then(|value| json::encode_canonical(&value)) {
+                let options = match self.json_decode_options(options) {
+                    Ok(options) => options,
+                    Err(error) => return Ok(self.json_result_error(error)),
+                };
+                match json::canonicalize_with_options(&input, options) {
                     Ok(output) => {
                         if let Err(message) = self.ensure_bytes_len(output.len()) {
                             return Ok(self.json_result_error(message));
@@ -2157,9 +2406,13 @@ impl VmHost for BootstrapHost {
                     Err(error) => Ok(self.json_result_error(error.to_string())),
                 }
             }
-            ("std.json.parse", [bytes]) => {
+            ("std.json.parse", [bytes, options]) => {
                 let input = self.bytes(bytes)?;
-                match json::parse(input) {
+                let options = match self.json_decode_options(options) {
+                    Ok(options) => options,
+                    Err(error) => return Ok(self.json_result_error(error)),
+                };
+                match json::parse_with_options(input, options) {
                     Ok(value) => Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
                         RuntimeHostValueKind::JsonValue,
                         HostValue::JsonValue(value),
@@ -2167,9 +2420,13 @@ impl VmHost for BootstrapHost {
                     Err(error) => Ok(self.json_result_error(error.to_string())),
                 }
             }
-            ("std.json.parseView", [bytes]) => {
+            ("std.json.parseView", [bytes, options]) => {
                 let id = self.bytes_id(bytes)?;
-                match json::parse_view(self.bytes(bytes)?, Default::default()) {
+                let options = match self.json_decode_options(options) {
+                    Ok(options) => options,
+                    Err(error) => return Ok(self.json_result_error(error)),
+                };
+                match json::parse_view(self.bytes(bytes)?, options) {
                     Ok(_) => Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
                         RuntimeHostValueKind::JsonValueView,
                         HostValue::JsonValueView { _bytes: id },
@@ -2177,11 +2434,15 @@ impl VmHost for BootstrapHost {
                     Err(error) => Ok(self.json_result_error(error.to_string())),
                 }
             }
-            ("std.json.decode", [bytes]) => {
+            ("std.json.decode", [bytes, options]) => {
                 let expected = generic_argument(specialized_name).ok_or_else(|| {
                     VmError::Host("specialized JSON decode has no type argument".into())
                 })?;
-                match json::parse(self.bytes(bytes)?)
+                let options = match self.json_decode_options(options) {
+                    Ok(options) => options,
+                    Err(error) => return Ok(self.json_result_error(error)),
+                };
+                match json::parse_with_options(self.bytes(bytes)?, options)
                     .map_err(|error| error.to_string())
                     .and_then(|value| json_to_runtime(&value, expected))
                 {
@@ -2189,24 +2450,36 @@ impl VmHost for BootstrapHost {
                     Err(error) => Ok(self.json_result_error(error)),
                 }
             }
-            ("std.json.encode", [value]) => match self
-                .runtime_json_value(value)
-                .and_then(|value| json::encode(&value).map_err(|error| error.to_string()))
-            {
-                Ok(output) => {
-                    if let Err(message) = self.ensure_bytes_len(output.len()) {
-                        return Ok(self.json_result_error(message));
+            ("std.json.encode", [value, options]) => {
+                match self.json_encode_options(options).and_then(|options| {
+                    self.runtime_json_value(value).and_then(|value| {
+                        json::encode_with_options(&value, options)
+                            .map_err(|error| error.to_string())
+                    })
+                }) {
+                    Ok(output) => {
+                        if let Err(message) = self.ensure_bytes_len(output.len()) {
+                            return Ok(self.json_result_error(message));
+                        }
+                        Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                            RuntimeHostValueKind::Bytes,
+                            HostValue::Bytes(output),
+                        ))))
                     }
-                    Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
-                        RuntimeHostValueKind::Bytes,
-                        HostValue::Bytes(output),
-                    ))))
+                    Err(error) => Ok(self.json_result_error(error)),
                 }
-                Err(error) => Ok(self.json_result_error(error)),
-            },
-            ("std.json.encodeCanonical", [value]) => {
+            }
+            ("std.json.encodeCanonical", [value, limits]) => {
                 let value = self.json_value(value)?.clone();
-                match json::encode_canonical(&value) {
+                let limits = match self
+                    .json_limits_input(limits)
+                    .map_err(|error| error.to_string())
+                    .and_then(|limits| self.json_limits(limits))
+                {
+                    Ok(limits) => limits,
+                    Err(error) => return Ok(self.json_result_error(error)),
+                };
+                match json::encode_canonical_with_limits(&value, limits) {
                     Ok(output) => {
                         if let Err(message) = self.ensure_bytes_len(output.len()) {
                             return Ok(self.json_result_error(message));
@@ -2275,10 +2548,13 @@ impl VmHost for BootstrapHost {
                     Err(error) => Ok(self.json_result_error(error.to_string())),
                 }
             }
-            ("std.json.JsonReader.fromBytes", [bytes]) => {
+            ("std.json.JsonReader.fromBytes", [bytes, options]) => {
                 let input = self.bytes(bytes)?.to_vec();
-                match json::JsonReader::from_reader(std::io::Cursor::new(input), Default::default())
-                {
+                let options = match self.json_decode_options(options) {
+                    Ok(options) => options,
+                    Err(error) => return Ok(self.json_result_error(error)),
+                };
+                match json::JsonReader::from_reader(std::io::Cursor::new(input), options) {
                     Ok(reader) => Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
                         RuntimeHostValueKind::JsonReader,
                         HostValue::JsonReader {
@@ -2289,7 +2565,7 @@ impl VmHost for BootstrapHost {
                     Err(error) => Ok(self.json_result_error(error.to_string())),
                 }
             }
-            ("std.json.JsonReader.fromReader", [reader]) => {
+            ("std.json.JsonReader.fromReader", [reader, options]) => {
                 let (id, stream, offset) = self.reader_state(reader)?;
                 if stream != StreamKind::Stdin {
                     return Ok(self.json_result_error("reader is not readable"));
@@ -2298,8 +2574,11 @@ impl VmHost for BootstrapHost {
                 if let Some(HostValue::Reader { offset, .. }) = self.values.get_mut(&id) {
                     *offset = self.stdin.len();
                 }
-                match json::JsonReader::from_reader(std::io::Cursor::new(input), Default::default())
-                {
+                let options = match self.json_decode_options(options) {
+                    Ok(options) => options,
+                    Err(error) => return Ok(self.json_result_error(error)),
+                };
+                match json::JsonReader::from_reader(std::io::Cursor::new(input), options) {
                     Ok(reader) => Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
                         RuntimeHostValueKind::JsonReader,
                         HostValue::JsonReader {
@@ -2397,12 +2676,16 @@ impl VmHost for BootstrapHost {
                     Err(error) => Ok(self.json_result_error(error.to_string())),
                 }
             }
-            ("std.json.JsonWriter.toWriter", [writer]) => {
+            ("std.json.JsonWriter.toWriter", [writer, options]) => {
                 let stream = self.writer_stream(writer)?;
                 if stream == StreamKind::Stdin {
                     return Ok(self.json_result_error("stdin is not writable"));
                 }
-                match json::JsonWriter::to_writer(Default::default()) {
+                let options = match self.json_encode_options(options) {
+                    Ok(options) => options,
+                    Err(error) => return Ok(self.json_result_error(error)),
+                };
+                match json::JsonWriter::to_writer(options) {
                     Ok(writer) => Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
                         RuntimeHostValueKind::JsonWriter,
                         HostValue::JsonWriter {
@@ -5509,6 +5792,50 @@ mod tests {
         *value
     }
 
+    fn json_limits(host: &mut BootstrapHost) -> RuntimeValue {
+        host.invoke(
+            "intrinsic.json.JsonLimits.construct",
+            &[
+                RuntimeValue::Integer(1 << 20),
+                RuntimeValue::Integer(64),
+                RuntimeValue::Integer(1 << 16),
+                RuntimeValue::Integer(1 << 16),
+                RuntimeValue::Integer(1 << 20),
+                RuntimeValue::Integer(4096),
+                RuntimeValue::Integer(100_000),
+                RuntimeValue::Integer(1 << 20),
+            ],
+        )
+        .unwrap()
+    }
+
+    fn json_decode_options(host: &mut BootstrapHost) -> RuntimeValue {
+        let limits = json_limits(host);
+        let duplicate = host
+            .invoke("intrinsic.json.JsonDuplicatePolicy.Reject", &[])
+            .unwrap();
+        let unknown = host
+            .invoke("intrinsic.json.JsonUnknownFieldPolicy.Reject", &[])
+            .unwrap();
+        let numbers = host
+            .invoke("intrinsic.json.JsonNumberPolicy.Exact", &[])
+            .unwrap();
+        host.invoke(
+            "intrinsic.json.JsonDecodeOptions.construct",
+            &[limits, duplicate, unknown, numbers],
+        )
+        .unwrap()
+    }
+
+    fn json_encode_options(host: &mut BootstrapHost) -> RuntimeValue {
+        let limits = json_limits(host);
+        host.invoke(
+            "intrinsic.json.JsonEncodeOptions.construct",
+            &[limits, RuntimeValue::Bool(false)],
+        )
+        .unwrap()
+    }
+
     fn output_text(host: &mut BootstrapHost, output: RuntimeValue) -> String {
         let bytes = host
             .invoke("std.process.ProcessOutput.stdout", &[output])
@@ -7043,13 +7370,17 @@ mod tests {
             RuntimeHostValueKind::Bytes,
             HostValue::Bytes(br#"{"b":2,"a":1}"#.to_vec()),
         );
+        let decode_options = json_decode_options(&mut host);
         assert!(matches!(
-            host.invoke("std.json.validate", std::slice::from_ref(&json_input))
+            host.invoke("std.json.validate", &[json_input.clone(), decode_options.clone()])
                 .unwrap(),
             RuntimeValue::ResultOk(value) if matches!(value.as_ref(), RuntimeValue::Unit)
         ));
         let json_canonical = ok(host
-            .invoke("std.json.canonicalize", std::slice::from_ref(&json_input))
+            .invoke(
+                "std.json.canonicalize",
+                &[json_input, decode_options.clone()],
+            )
             .unwrap());
         assert_eq!(host.bytes(&json_canonical).unwrap(), br#"{"a":1,"b":2}"#);
 
@@ -7088,7 +7419,7 @@ mod tests {
 
         let invalid_json = host.allocate(RuntimeHostValueKind::Bytes, HostValue::Bytes(Vec::new()));
         assert!(matches!(
-            host.invoke("std.json.validate", std::slice::from_ref(&invalid_json))
+            host.invoke("std.json.validate", &[invalid_json, decode_options])
                 .unwrap(),
             RuntimeValue::ResultErr(value)
                 if matches!(value.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::JsonError, .. })
@@ -7110,13 +7441,16 @@ mod tests {
     #[test]
     fn json_public_host_surface_is_typed_streaming_and_terminal() {
         let mut host = BootstrapHost::default();
+        let decode_options = json_decode_options(&mut host);
+        let encode_options = json_encode_options(&mut host);
+        let limits = json_limits(&mut host);
         let object = host.allocate(
             RuntimeHostValueKind::Bytes,
             HostValue::Bytes(br#"{"b":2,"a":1}"#.to_vec()),
         );
 
         let parsed = ok(host
-            .invoke("std.json.parse", std::slice::from_ref(&object))
+            .invoke("std.json.parse", &[object.clone(), decode_options.clone()])
             .unwrap());
         assert!(matches!(
             parsed,
@@ -7126,7 +7460,10 @@ mod tests {
             }
         ));
         let view = ok(host
-            .invoke("std.json.parseView", std::slice::from_ref(&object))
+            .invoke(
+                "std.json.parseView",
+                &[object.clone(), decode_options.clone()],
+            )
             .unwrap());
         assert!(matches!(
             view,
@@ -7160,21 +7497,26 @@ mod tests {
                 ..
             }
         ));
-        let canonical = ok(host.invoke("std.json.encodeCanonical", &[parsed]).unwrap());
+        let canonical = ok(host
+            .invoke("std.json.encodeCanonical", &[parsed, limits])
+            .unwrap());
         assert_eq!(host.bytes(&canonical).unwrap(), br#"{"a":1,"b":2}"#);
 
         let encoded = ok(host
             .invoke(
                 "std.json.encode[Array[Int]]",
-                &[RuntimeValue::Array(vec![
-                    RuntimeValue::Integer(1),
-                    RuntimeValue::Integer(2),
-                ])],
+                &[
+                    RuntimeValue::Array(vec![RuntimeValue::Integer(1), RuntimeValue::Integer(2)]),
+                    encode_options.clone(),
+                ],
             )
             .unwrap());
         assert_eq!(host.bytes(&encoded).unwrap(), b"[1,2]");
         let decoded = ok(host
-            .invoke("std.json.decode[Array[Int]]", &[encoded])
+            .invoke(
+                "std.json.decode[Array[Int]]",
+                &[encoded, decode_options.clone()],
+            )
             .unwrap());
         assert_eq!(
             decoded,
@@ -7218,7 +7560,10 @@ mod tests {
             );
             assert_eq!(
                 ok(host
-                    .invoke(&format!("std.json.decode[{specialization}]"), &[input])
+                    .invoke(
+                        &format!("std.json.decode[{specialization}]"),
+                        &[input, decode_options.clone()],
+                    )
                     .unwrap()),
                 expected
             );
@@ -7228,7 +7573,10 @@ mod tests {
             HostValue::Bytes(b"128".to_vec()),
         );
         assert!(matches!(
-            host.invoke("std.json.decode[Int8]", &[out_of_range])
+            host.invoke(
+                "std.json.decode[Int8]",
+                &[out_of_range, decode_options.clone()],
+            )
                 .unwrap(),
             RuntimeValue::ResultErr(value)
                 if matches!(value.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::JsonError, .. })
@@ -7246,8 +7594,11 @@ mod tests {
                 HostValue::Bytes(source.to_vec()),
             );
             assert!(matches!(
-                host.invoke(&format!("std.json.decode[{specialization}]"), &[input])
-                    .unwrap(),
+                host.invoke(
+                    &format!("std.json.decode[{specialization}]"),
+                    &[input, decode_options.clone()],
+                )
+                .unwrap(),
                 RuntimeValue::ResultErr(_)
             ));
         }
@@ -7277,12 +7628,18 @@ mod tests {
             ),
         ] {
             let encoded = ok(host
-                .invoke(&format!("std.json.encode[{specialization}]"), &[value])
+                .invoke(
+                    &format!("std.json.encode[{specialization}]"),
+                    &[value, encode_options.clone()],
+                )
                 .unwrap());
             assert_eq!(host.bytes(&encoded).unwrap(), expected);
         }
         let not_finite = host
-            .invoke("std.json.encode[Float64]", &[RuntimeValue::Float(f64::NAN)])
+            .invoke(
+                "std.json.encode[Float64]",
+                &[RuntimeValue::Float(f64::NAN), encode_options.clone()],
+            )
             .unwrap();
         assert!(matches!(not_finite, RuntimeValue::ResultErr(_)));
 
@@ -7335,7 +7692,7 @@ mod tests {
         let reader = ok(host
             .invoke(
                 "std.json.JsonReader.fromBytes",
-                std::slice::from_ref(&scalar),
+                &[scalar, decode_options.clone()],
             )
             .unwrap());
         let next = ok(host
@@ -7370,7 +7727,7 @@ mod tests {
 
         let stdout = ok(host.invoke("std.console.stdout", &[]).unwrap());
         let writer = ok(host
-            .invoke("std.json.JsonWriter.toWriter", &[stdout])
+            .invoke("std.json.JsonWriter.toWriter", &[stdout, encode_options])
             .unwrap());
         assert!(matches!(
             host.invoke("std.json.JsonWriter.write", &[writer.clone(), owned])
@@ -7413,11 +7770,9 @@ mod tests {
     fn json_reader_from_reader_consumes_only_the_remaining_stream() {
         let mut host = BootstrapHost::with_stdin(b"true".to_vec());
         let reader = ok(host.invoke("std.console.stdin", &[]).unwrap());
+        let options = json_decode_options(&mut host);
         let json_reader = ok(host
-            .invoke(
-                "std.json.JsonReader.fromReader",
-                std::slice::from_ref(&reader),
-            )
+            .invoke("std.json.JsonReader.fromReader", &[reader.clone(), options])
             .unwrap());
         let event = ok(host
             .invoke("std.json.JsonReader.next", &[json_reader])

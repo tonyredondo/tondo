@@ -4483,9 +4483,11 @@ tests. Antes de volver a marcarlas `[x]` deben cumplirse todos estos puntos:
   fixture pública se ejecuta desde el test de aceptación de la CLI. La leaf no
   se cierra todavía: `rawUnchecked` ya atraviesa HIR → VM → host como callable
   realmente `unsafe`, sin validar los bytes ni admitir llamadas desde código
-  safe. Aún debe exponer los records/enums nominales de options,
-  limits, policies, error/path/location y eventos; respetar la aridad normativa
-  del resto de firmas; y hacer que
+  safe. `JsonLimits`, `JsonDecodeOptions`, `JsonEncodeOptions` y los tres enums
+  de policy ya son tipos compiler-owned cerrados, construibles desde Tondo, y
+  todas las operaciones salvo el dispatch typed respetan su aridad normativa y
+  aplican realmente límites y policies. Aún debe exponer los records/enums
+  nominales de error/path/location y eventos, y hacer que
   `decode[T: Decode[Json]]`/`encode[T: Encode[Json]]` despachen los providers
   derive de records/enums sin reflection ni DOM. Hasta entonces la auditoría
   conserva visibles sus gaps y no cuenta la mera presencia del nuevo bridge
@@ -5965,6 +5967,20 @@ no se declara iniciada antes de S1A.
 ---
 
 ## 25. Historial del tracker
+
+### 2.28 — 2026-08-14
+
+- `STD-JSON-PUBLIC-001` cierra su frontera de configuración: limits, decode y
+  encode options y los policies de duplicados, campos desconocidos y números
+  son tipos compiler-owned distintos a través de HIR, MIR, bytecode y VM. La
+  construcción valida campos ausentes, desconocidos, repetidos y tipos antes de
+  generar el token host; la ABI no representa enums nominales como enteros sin
+  tipo.
+- Las APIs JSON consumen ya la aridad normativa completa y aplican los límites
+  y policies recibidos. La fixture CLI prueba `Reject`, `First`, `Last`, límite
+  de documento y límite de salida; la auditoría pasa de 157 a 175 de 209 firmas
+  verificadas. Solo `encode` y `decode` conservan gaps dentro de `std.json`,
+  porque no se contarán hasta conectar el derive estático de records/enums.
 
 ### 2.27 — 2026-08-14
 

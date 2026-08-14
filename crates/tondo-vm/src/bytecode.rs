@@ -284,6 +284,12 @@ pub enum BytecodeIntrinsicType {
     EnvValue,
     EnvError,
     VirtualTime,
+    JsonLimits,
+    JsonDecodeOptions,
+    JsonEncodeOptions,
+    JsonDuplicatePolicy,
+    JsonUnknownFieldPolicy,
+    JsonNumberPolicy,
     JsonValue,
     JsonValueView,
     JsonRaw,
@@ -451,6 +457,12 @@ impl BytecodeIntrinsicType {
             | Self::EnvValue
             | Self::EnvError
             | Self::VirtualTime
+            | Self::JsonLimits
+            | Self::JsonDecodeOptions
+            | Self::JsonEncodeOptions
+            | Self::JsonDuplicatePolicy
+            | Self::JsonUnknownFieldPolicy
+            | Self::JsonNumberPolicy
             | Self::JsonValue
             | Self::JsonValueView
             | Self::JsonRaw
@@ -537,6 +549,12 @@ impl BytecodeIntrinsicType {
             | Self::EnvValue
             | Self::EnvError
             | Self::VirtualTime
+            | Self::JsonLimits
+            | Self::JsonDecodeOptions
+            | Self::JsonEncodeOptions
+            | Self::JsonDuplicatePolicy
+            | Self::JsonUnknownFieldPolicy
+            | Self::JsonNumberPolicy
             | Self::JsonValue
             | Self::JsonValueView
             | Self::JsonRaw
