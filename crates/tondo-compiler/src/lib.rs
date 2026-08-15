@@ -9,6 +9,7 @@ pub mod meta;
 pub mod meta_atomic;
 pub mod meta_derive;
 pub mod meta_diagnostics;
+mod meta_frontend;
 pub mod meta_generate;
 pub mod meta_query;
 pub mod meta_repro;

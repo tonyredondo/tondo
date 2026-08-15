@@ -2202,6 +2202,13 @@ URL-safe debe nombrarse explícitamente); `parse` dinámico conserva el texto
 original. Las anotaciones se resuelven en compile time y no requieren
 reflection de valores.
 
+Un `Decode[C]` derivado añade `Discard` únicamente a los parámetros genéricos
+usados en payloads. Es necesario para limpiar valores parciales si falla la
+validación de un field o cierre posterior. Una implementación manual puede
+decodificar tipos affine si consume todos los parciales en cada salida de
+error; el compilador aplica exactamente el mismo análisis de ownership al
+código generado y al escrito a mano.
+
 ### 14.6 `std.serialization`
 
 `std.serialization` posee los protocolos estáticos compartidos. La forma
@@ -2234,6 +2241,7 @@ pub trait Encoder[C, E] {
 pub trait Decoder[C, E] {
     fn next(var self): SerializationEvent ! E
     fn own(var self, event: SerializationEvent): SerializationEvent ! E
+    fn reject(var self, error: SerializationError): E
 }
 
 pub trait Encode[C] {
@@ -2255,7 +2263,9 @@ El receiver `self` de `Encode` es la observación inmutable ordinaria del
 lenguaje: codificar no consume el valor. El encoder/decoder se pasa
 como `var` para que avance su estado sin boxing ni allocation por evento. Los
 payloads de texto/bytes de `next` son vistas hasta el siguiente evento y `own`
-es la única materialización estable.
+es la única materialización estable. `reject` traduce un `SerializationError`
+estructural al error nominal exacto del codec; no borra el tipo, no crea una
+union y no habilita conversiones implícitas.
 
 La distribución registra providers para:
 

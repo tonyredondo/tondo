@@ -308,6 +308,87 @@ impl<'a> TypeLowerer<'a> {
                 },
             );
         }
+        self.lower_bootstrap_serialization_nominal_declarations()
+    }
+
+    fn lower_bootstrap_serialization_nominal_declarations(&mut self) -> Result<(), HirError> {
+        let path = ModulePath::new("serialization")?;
+        let Some(module) = self.packages.module(self.packages.standard(), &path) else {
+            return Ok(());
+        };
+        let int = self.interner.scalar(ScalarType::Int);
+        let uint = self.interner.scalar(ScalarType::UInt64);
+        let float32 = self.interner.scalar(ScalarType::Float32);
+        let float64 = self.interner.scalar(ScalarType::Float);
+        let bool_type = self.interner.scalar(ScalarType::Bool);
+        let string = self.interner.scalar(ScalarType::String);
+        let optional_int = self.interner.option(int)?;
+        let bytes = self.interner.intrinsic(IntrinsicType::Bytes, Vec::new())?;
+        let io_error = self
+            .interner
+            .intrinsic(IntrinsicType::IoError, Vec::new())?;
+
+        for name in ["SerializationEvent", "SerializationError"] {
+            let type_name = Name::new(name).expect("serialization nominal names are valid");
+            let Some(symbol) = self.resolved.bootstrap_nominal(&module, &type_name) else {
+                continue;
+            };
+            let declaration = self
+                .resolved
+                .symbol(symbol)
+                .expect("serialization nominal symbols are indexed");
+            let self_type = self
+                .interner
+                .nominal(declaration.identity().clone(), Vec::new())?;
+            let variants = match name {
+                "SerializationEvent" => vec![
+                    self.bootstrap_variant(symbol, "Null", Vec::new()),
+                    self.bootstrap_variant(symbol, "Bool", vec![bool_type]),
+                    self.bootstrap_variant(symbol, "Int", vec![int]),
+                    self.bootstrap_variant(symbol, "UInt", vec![uint]),
+                    self.bootstrap_variant(symbol, "Float32", vec![float32]),
+                    self.bootstrap_variant(symbol, "Float64", vec![float64]),
+                    self.bootstrap_variant(symbol, "String", vec![string]),
+                    self.bootstrap_variant(symbol, "Bytes", vec![bytes]),
+                    self.bootstrap_variant(symbol, "StartArray", vec![optional_int]),
+                    self.bootstrap_variant(symbol, "EndArray", Vec::new()),
+                    self.bootstrap_variant(symbol, "StartMap", vec![optional_int]),
+                    self.bootstrap_variant(symbol, "MapKey", Vec::new()),
+                    self.bootstrap_variant(symbol, "EndMap", Vec::new()),
+                    self.bootstrap_variant(symbol, "StartRecord", vec![string, optional_int]),
+                    self.bootstrap_variant(symbol, "Field", vec![string]),
+                    self.bootstrap_variant(symbol, "EndRecord", Vec::new()),
+                    self.bootstrap_variant(symbol, "StartEnum", vec![string, string]),
+                    self.bootstrap_variant(symbol, "EndEnum", Vec::new()),
+                ],
+                "SerializationError" => [
+                    ("UnexpectedEvent", Vec::new()),
+                    ("TypeMismatch", Vec::new()),
+                    ("MissingField", Vec::new()),
+                    ("DuplicateField", Vec::new()),
+                    ("InvalidContainerLength", Vec::new()),
+                    ("LimitExceeded", Vec::new()),
+                    ("InvalidPath", Vec::new()),
+                    ("Io", vec![io_error]),
+                ]
+                .into_iter()
+                .map(|(variant, items)| self.bootstrap_variant(symbol, variant, items))
+                .collect(),
+                _ => unreachable!("the serialization nominal list is closed"),
+            };
+            self.declarations.insert(
+                symbol,
+                HirTypeDeclaration {
+                    symbol,
+                    span: declaration.span(),
+                    parameters: Vec::new(),
+                    kind: HirTypeDeclarationKind::Nominal(HirNominalDefinition {
+                        self_type,
+                        shape: HirNominalShape::Enum { variants },
+                    }),
+                },
+            );
+        }
         Ok(())
     }
 
@@ -4021,6 +4102,15 @@ impl<'a> TypeLowerer<'a> {
             return Ok(scalar);
         }
         match name.as_str() {
+            "Json" | "MessagePack" | "Protobuf" => {
+                if !self.check_arity(file, range, name.as_str(), 0, arguments.len())? {
+                    return Ok(self.interner.error());
+                }
+                Ok(self.interner.nominal(
+                    SymbolIdentity::bootstrap_standard("serialization", name.as_str()),
+                    Vec::new(),
+                )?)
+            }
             "Option" => {
                 if !self.check_arity(file, range, name.as_str(), 1, arguments.len())? {
                     return Ok(self.interner.error());
@@ -5592,6 +5682,7 @@ impl<'a> TypeLowerer<'a> {
                             &[
                                 ("next", HirSerializationTraitMethod::DecoderNext),
                                 ("own", HirSerializationTraitMethod::DecoderOwn),
+                                ("reject", HirSerializationTraitMethod::DecoderReject),
                             ]
                         };
                     for (method_name, method) in methods {
@@ -7292,9 +7383,8 @@ mod tests {
 
     #[test]
     fn derive_requests_retain_specialized_codec_identity_and_nominal_target() {
-        let (_, _, output) = lower(
-            "trait Encode[C] {}\ntype Json = Int\ntype User = Int\nderive Encode[Json] for User\n",
-        );
+        let (_, _, output) =
+            lower("trait Encode[C] {}\ntype User = Int\nderive Encode[Json] for User\n");
         let requests = output.program().derive_requests();
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0].traits(), ["Encode[Json]"]);
@@ -7602,9 +7692,9 @@ mod tests {
     #[test]
     fn recursive_productivity_accepts_real_bases_and_rejects_immediate_cycles() {
         let (_, _, output) = lower(
-            "enum Json {\n\
+            "enum JsonNode {\n\
                  Null\n\
-                 Children(Array[Json])\n\
+                 Children(Array[JsonNode])\n\
              }\n\
              type Chain = (Int, Chain?)\n\
              type Holder[T] = { value: T }\n\
@@ -8133,10 +8223,10 @@ mod tests {
         let (_, _, output) = lower(
             "trait Codec[T] {}\n\
              trait Other {}\n\
-             type Json = { id: Int }\n\
+             type JsonFormat = { id: Int }\n\
              type Xml = { id: Int }\n\
              type Payload = { value: Int }\n\
-             impl Codec[Json] for Payload {}\n\
+             impl Codec[JsonFormat] for Payload {}\n\
              impl Codec[Xml] for Payload {}\n\
              impl Other for Payload {}\n",
         );

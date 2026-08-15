@@ -162,13 +162,14 @@ pub(crate) fn check_expressions_configured<'a>(
 enum ExpressionExpectation {
     Direct(TypeId),
     CallableOutcome { full: TypeId, success: TypeId },
+    PropagatedSuccess(TypeId),
     ArithmeticPeer(TypeId),
 }
 
 impl ExpressionExpectation {
     fn contextual_type(self) -> TypeId {
         match self {
-            Self::Direct(ty) | Self::ArithmeticPeer(ty) => ty,
+            Self::Direct(ty) | Self::PropagatedSuccess(ty) | Self::ArithmeticPeer(ty) => ty,
             Self::CallableOutcome { success, .. } => success,
         }
     }
@@ -176,6 +177,7 @@ impl ExpressionExpectation {
     fn resulting_type(self) -> TypeId {
         match self {
             Self::Direct(ty)
+            | Self::PropagatedSuccess(ty)
             | Self::ArithmeticPeer(ty)
             | Self::CallableOutcome { full: ty, .. } => ty,
         }
@@ -500,6 +502,7 @@ fn serialization_prelude_method(
         ("Encoder", "endEnum") => HirSerializationTraitMethod::EncoderEndEnum,
         ("Decoder", "next") => HirSerializationTraitMethod::DecoderNext,
         ("Decoder", "own") => HirSerializationTraitMethod::DecoderOwn,
+        ("Decoder", "reject") => HirSerializationTraitMethod::DecoderReject,
         _ => return None,
     };
     Some(HirPreludeTraitMethod::Serialization(method))
@@ -2555,6 +2558,35 @@ impl<'a> ExpressionChecker<'a> {
         if let ExpressionExpectation::ArithmeticPeer(peer) = expectation
             && self.arithmetic_peer_matches(actual, peer)?
         {
+            return Ok(value);
+        }
+        if let ExpressionExpectation::PropagatedSuccess(expected_success) = expectation {
+            let actual_success = match self.program.interner.kind(actual)? {
+                TypeKind::Option(success) => Some(*success),
+                TypeKind::Result { success, .. } => Some(*success),
+                TypeKind::Error | TypeKind::Scalar(ScalarType::Never) => return Ok(value),
+                _ => None,
+            };
+            if let Some(actual_success) = actual_success {
+                if self
+                    .program
+                    .interner
+                    .assignability(actual_success, expected_success)?
+                    .is_some()
+                {
+                    return Ok(value);
+                }
+                let expected_name = self.program.interner.canonical(expected_success)?;
+                let actual_name = self.program.interner.canonical(actual_success)?;
+                self.emit(
+                    self.sources.span(file, node.range())?,
+                    "E1102",
+                    format!("propagated success expects `{expected_name}`, found `{actual_name}`"),
+                    Vec::new(),
+                    Some((expected_name, actual_name)),
+                )?;
+                return self.recovery_expression(file, node.range());
+            }
             return Ok(value);
         }
         if let Some(coerced) = self.coerce_concrete_closure_to_function(
@@ -10459,6 +10491,15 @@ impl<'a> ExpressionChecker<'a> {
                 if let Some(scalar) = self.program.interner.named_scalar(name.as_str()) {
                     return Ok(arguments.is_empty().then_some(scalar));
                 }
+                if matches!(name.as_str(), "Json" | "MessagePack" | "Protobuf") {
+                    if !arguments.is_empty() {
+                        return Ok(None);
+                    }
+                    return Ok(Some(self.program.interner.nominal(
+                        SymbolIdentity::bootstrap_standard("serialization", name.as_str()),
+                        Vec::new(),
+                    )?));
+                }
                 let ty = match (name.as_str(), arguments.as_slice()) {
                     ("Option", [item]) => self.program.interner.option(*item)?,
                     ("Result", [success, error]) => {
@@ -10991,6 +11032,20 @@ impl<'a> ExpressionChecker<'a> {
         ) && query.arguments().is_empty()
             && HirPreludeTraitMethod::ShrinkCandidates
                 .has_intrinsic_implementation(&self.program.interner, &[query.target()])?
+        {
+            memo.insert(query.clone(), TraitProofStatus::Satisfied);
+            return Ok(TraitProofStatus::Satisfied);
+        }
+
+        if matches!(
+            query.constructor(),
+            HirTraitConstructor::Prelude(name) if matches!(name.as_str(), "Encode" | "Decode")
+        ) && query.arguments().len() == 1
+            && HirPreludeTraitMethod::Serialization(HirSerializationTraitMethod::Encode)
+                .has_intrinsic_implementation(
+                    &self.program.interner,
+                    &[query.arguments()[0], query.target()],
+                )?
         {
             memo.insert(query.clone(), TraitProofStatus::Satisfied);
             return Ok(TraitProofStatus::Satisfied);
@@ -14090,12 +14145,19 @@ impl<'a> ExpressionChecker<'a> {
                 return Ok(constructor);
             }
         }
+        let base_expected = (suffix.kind() == SyntaxKind::PropagateSuffix)
+            .then(|| {
+                expected.map(|expected| {
+                    ExpressionExpectation::PropagatedSuccess(expected.contextual_type())
+                })
+            })
+            .flatten();
         let base = if suffix.kind() == SyntaxKind::CallSuffix
             && base_node.kind() == SyntaxKind::PathExpr
         {
             self.check_value_path(file, base_node, context, None)?
         } else {
-            self.check_expression(file, base_node, None, context)?
+            self.check_expression(file, base_node, base_expected, context)?
         };
         match suffix.kind() {
             SyntaxKind::CallSuffix => self.check_call(
@@ -19131,6 +19193,23 @@ impl<'a> ExpressionChecker<'a> {
                                 success
                             },
                         ),
+                        ExpressionExpectation::PropagatedSuccess(success) => {
+                            match self.program.interner.kind(function.outcome())? {
+                                TypeKind::Option(actual_success)
+                                | TypeKind::Result {
+                                    success: actual_success,
+                                    ..
+                                } => {
+                                    let _ = self.constrain_inference_assignment(
+                                        &mut inference.solver,
+                                        *actual_success,
+                                        success,
+                                    )?;
+                                }
+                                _ => {}
+                            }
+                            None
+                        }
                         ExpressionExpectation::ArithmeticPeer(_) => None,
                     };
                     if let Some(contextual) = contextual {
@@ -24050,16 +24129,16 @@ fn build(input: Int, flag: Bool) {
             "trait Codec[Format] {\n\
                  fn decode[Input: Discard](value: Input): Self\n\
              }\n\
-             type Json = Unit\n\
+             type JsonFormat = Unit\n\
              type User = { name: String }\n\
-             impl Codec[Json] for User {\n\
+             impl Codec[JsonFormat] for User {\n\
                  fn decode[Input: Discard](value: Input): User {\n\
                      _ = value\n\
                      User { name: \"Tony\" }\n\
                  }\n\
              }\n\
              fn decode(value: String): User {\n\
-                 Codec[Json].decode[User, String](value)\n\
+                 Codec[JsonFormat].decode[User, String](value)\n\
              }\n",
         );
         assert!(
@@ -24228,6 +24307,10 @@ fn build(input: Int, flag: Bool) {
              }\n\
              fn encode_qualified[E, S: serialization.Encoder[String, E]](value: User, encoder: var S): Unit ! E {\n\
                  serialization.Encode[String].encode[E, S](value, var encoder)?\n\
+             }\n\
+             fn decode_scalar[E, D: serialization.Decoder[String, E]](decoder: var D): Int ! E {\n\
+                 let value: Int = serialization.Decode[String].decode[E, D](var decoder)?\n\
+                 value\n\
              }\n",
         );
         assert!(
@@ -24254,6 +24337,40 @@ fn build(input: Int, flag: Bool) {
         assert!(methods.contains(&HirPreludeTraitMethod::Serialization(
             HirSerializationTraitMethod::EncoderField
         )));
+    }
+
+    #[test]
+    fn generic_decode_result_is_transferred_through_a_record_tail() {
+        let (_, _, output) = check(
+            "import std.serialization\n\
+             type Item[T] = { value: T }\n\
+             impl[T: Discard + serialization.Decode[Json]] serialization.Decode[Json] for Item[T] {\n\
+                 fn decode[E, D: serialization.Decoder[Json, E]](decoder: var D): Item[T] ! E {\n\
+                     let start = decoder.next()?\n\
+                     match start {\n\
+                         serialization.SerializationEvent.StartRecord(_, _) => {\n\
+                             match decoder.next()? {\n\
+                                 serialization.SerializationEvent.Field(\"value\") => ()\n\
+                                 _ => fail decoder.reject(serialization.SerializationError.TypeMismatch)\n\
+                             }\n\
+                             let value: T = serialization.Decode[Json].decode[E, D](var decoder)?\n\
+                             match decoder.next()? {\n\
+                                 serialization.SerializationEvent.EndRecord => ()\n\
+                                 _ => fail decoder.reject(serialization.SerializationError.TypeMismatch)\n\
+                             }\n\
+                             Item[T] { value }\n\
+                         }\n\
+                         _ => fail decoder.reject(serialization.SerializationError.TypeMismatch)\n\
+                     }\n\
+                 }\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
     }
 
     #[test]
@@ -30832,6 +30949,7 @@ fn build(input: Int, flag: Bool) {
             ("Encoder", "endEnum"),
             ("Decoder", "next"),
             ("Decoder", "own"),
+            ("Decoder", "reject"),
         ] {
             assert!(serialization_prelude_method(trait_name, method_name).is_some());
         }

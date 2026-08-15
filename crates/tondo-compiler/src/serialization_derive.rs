@@ -822,7 +822,7 @@ fn render_record_decode_static(
         line(
             output,
             5,
-            "_ => fail serialization.SerializationError.TypeMismatch",
+            "_ => fail decoder.reject(serialization.SerializationError.TypeMismatch)",
         );
         line(output, 4, "}");
         line(
@@ -844,7 +844,7 @@ fn render_record_decode_static(
     line(
         output,
         5,
-        "_ => fail serialization.SerializationError.TypeMismatch",
+        "_ => fail decoder.reject(serialization.SerializationError.TypeMismatch)",
     );
     line(output, 4, "}");
     let values = fields
@@ -866,7 +866,7 @@ fn render_record_decode_static(
     line(
         output,
         3,
-        "_ => fail serialization.SerializationError.TypeMismatch",
+        "_ => fail decoder.reject(serialization.SerializationError.TypeMismatch)",
     );
     line(output, 2, "}");
     Ok(())
@@ -942,7 +942,7 @@ fn render_enum_decode_static(
                     line(
                         output,
                         5,
-                        "_ => fail serialization.SerializationError.TypeMismatch",
+                        "_ => fail decoder.reject(serialization.SerializationError.TypeMismatch)",
                     );
                     line(output, 4, "}");
                     line(
@@ -979,7 +979,7 @@ fn render_enum_decode_static(
     line(
         output,
         3,
-        "_ => fail serialization.SerializationError.TypeMismatch",
+        "_ => fail decoder.reject(serialization.SerializationError.TypeMismatch)",
     );
     line(output, 2, "}");
     Ok(())
@@ -999,7 +999,7 @@ fn render_enum_end_static(
     line(
         output,
         indent + 1,
-        "_ => fail serialization.SerializationError.TypeMismatch",
+        "_ => fail decoder.reject(serialization.SerializationError.TypeMismatch)",
     );
     line(output, indent, "}");
     Ok(())
@@ -1647,6 +1647,22 @@ mod tests {
         let generic_source = std::str::from_utf8(generic.response().outputs()[0].bytes()).unwrap();
         assert!(generic_source.contains("impl [T: serialization.Encode]serialization.Encode"));
         assert!(generic_source.contains("for Boxed[T]"));
+
+        let generic_decode = derive_named(
+            "Boxed",
+            generic_record_snapshot(),
+            SerializationDirection::Decode,
+            &["T"],
+            &["T"],
+            DeriveTargetKind::Record,
+        )
+        .unwrap();
+        let generic_decode_source =
+            std::str::from_utf8(generic_decode.response().outputs()[0].bytes()).unwrap();
+        assert!(
+            generic_decode_source
+                .contains("impl [T: Discard + serialization.Decode]serialization.Decode")
+        );
     }
 
     #[test]

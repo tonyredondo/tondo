@@ -93,6 +93,44 @@ fn public_driver_output_supports_semantic_queries() {
 }
 
 #[test]
+fn public_driver_reproves_intrinsic_serialization_opaque_witnesses() {
+    let source = "import std.serialization\n\
+                  fn encoded(): impl Discard + serialization.Encode[Json] { 1 }\n\
+                  fn decoded(): impl Discard + serialization.Decode[Json] { 1 }\n\
+                  fn main() {}\n";
+    let mut sources = SourceDatabase::new();
+    let root = sources
+        .add(SourceInput::virtual_file(
+            SourceId::new("root:public-serialization-opaque-test").unwrap(),
+            ModulePath::new("main").unwrap(),
+            LogicalPath::new("main.to").unwrap(),
+            Arc::<[u8]>::from(source.as_bytes().to_vec()),
+        ))
+        .unwrap();
+    let packages = PackageGraph::loose(&sources, root).unwrap();
+    let output = execute(
+        CompilationRequest::new(
+            Operation::Check,
+            Edition::V0_1,
+            BuildTarget::vm_hosted(),
+            HostProfile::Hosted,
+            BTreeSet::new(),
+            DiagnosticFormat::Json,
+            SourceForm::Module,
+            ResourceLimits::default(),
+            packages,
+            sources,
+            root,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    assert_eq!(output.status(), CompilationStatus::Success);
+    assert!(output.diagnostics().is_empty());
+}
+
+#[test]
 fn public_driver_rejects_inherent_methods_on_intrinsic_types() {
     let source = "fn Int.invalid() {}\nfn main() {}\n";
     let mut sources = SourceDatabase::new();

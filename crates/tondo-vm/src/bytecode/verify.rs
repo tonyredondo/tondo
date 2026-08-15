@@ -12922,6 +12922,27 @@ mod tests {
                 expected,
             );
         }
+
+        let mut missing_float = program.clone();
+        missing_float.types[ids.float.index() as usize].kind =
+            BytecodeTypeKind::Scalar(BytecodeScalarType::Int8);
+        let missing_verifier = Verifier {
+            program: &missing_float,
+            limits: BytecodeVerificationLimits::default(),
+            dataflow_steps: Cell::new(0),
+            capabilities: OnceCell::new(),
+            terminals: OnceCell::new(),
+        };
+        assert_invariant(
+            missing_verifier.verify_numeric_conversion(
+                ids.int,
+                BytecodeScalarType::Float,
+                BytecodeNumericConversion::Total,
+                ids.float,
+                "rvalue",
+            ),
+            "required type is absent",
+        );
     }
 
     #[test]

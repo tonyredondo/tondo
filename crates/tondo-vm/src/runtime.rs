@@ -324,8 +324,9 @@ impl From<BytecodeVerificationError> for VmError {
 #[cfg(test)]
 mod tests {
     use crate::bytecode::{
-        BytecodeCallableId, BytecodeTraceDescriptor, BytecodeTypeId, BytecodeVariant,
-        BytecodeVariantPayload,
+        BytecodeCallableId, BytecodeIntrinsicType, BytecodeProgram, BytecodeTraceDescriptor,
+        BytecodeType, BytecodeTypeId, BytecodeTypeKind, BytecodeVariant, BytecodeVariantPayload,
+        verify_bytecode,
     };
 
     use super::heap::{Heap, HeapHandle, HeapObject, SharedBuffer};
@@ -339,6 +340,34 @@ mod tests {
             initial_gc_threshold: 1,
             ..VmLimits::default()
         }
+    }
+
+    #[test]
+    fn invalid_bytecode_preserves_the_verifier_diagnostic_at_the_vm_boundary() {
+        let program = BytecodeProgram {
+            types: vec![BytecodeType {
+                name: "Array".into(),
+                kind: BytecodeTypeKind::Intrinsic {
+                    constructor: BytecodeIntrinsicType::Array,
+                    arguments: Vec::new(),
+                },
+            }],
+            nominals: Vec::new(),
+            callables: Vec::new(),
+            constants: Vec::new(),
+            functions: Vec::new(),
+        };
+        let verification = verify_bytecode(&program).unwrap_err();
+
+        assert_eq!(verification.context(), "type#0");
+        assert_eq!(verification.message(), "intrinsic type has the wrong arity");
+        assert!(!verification.is_resource_limit());
+
+        let error = VmError::from(verification);
+        assert_eq!(
+            error.to_string(),
+            "invalid bytecode: bytecode invariant failed in type#0: intrinsic type has the wrong arity"
+        );
     }
 
     #[test]

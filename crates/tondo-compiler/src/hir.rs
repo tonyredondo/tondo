@@ -1227,6 +1227,7 @@ pub enum HirSerializationTraitMethod {
     EncoderEndEnum,
     DecoderNext,
     DecoderOwn,
+    DecoderReject,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -1271,7 +1272,8 @@ impl HirPreludeTraitMethod {
                 | HirSerializationTraitMethod::EncoderStartEnum
                 | HirSerializationTraitMethod::EncoderEndEnum => "Encoder",
                 HirSerializationTraitMethod::DecoderNext
-                | HirSerializationTraitMethod::DecoderOwn => "Decoder",
+                | HirSerializationTraitMethod::DecoderOwn
+                | HirSerializationTraitMethod::DecoderReject => "Decoder",
             },
         }
     }
@@ -1304,6 +1306,7 @@ impl HirPreludeTraitMethod {
                 HirSerializationTraitMethod::EncoderEndEnum => "endEnum",
                 HirSerializationTraitMethod::DecoderNext => "next",
                 HirSerializationTraitMethod::DecoderOwn => "own",
+                HirSerializationTraitMethod::DecoderReject => "reject",
             },
         }
     }
@@ -1430,6 +1433,10 @@ impl HirPreludeTraitMethod {
                     SymbolIdentity::bootstrap_standard("serialization", "SerializationEvent"),
                     Vec::new(),
                 )?;
+                let serialization_error = interner.nominal(
+                    SymbolIdentity::bootstrap_standard("serialization", "SerializationError"),
+                    Vec::new(),
+                )?;
                 let mut parameters = vec![FunctionParameter::new(ParameterMode::Var, *target)];
                 parameters.extend(match method {
                     HirSerializationTraitMethod::EncoderNull
@@ -1478,6 +1485,10 @@ impl HirPreludeTraitMethod {
                     HirSerializationTraitMethod::DecoderOwn => {
                         vec![FunctionParameter::new(ParameterMode::Value, event)]
                     }
+                    HirSerializationTraitMethod::DecoderReject => vec![FunctionParameter::new(
+                        ParameterMode::Value,
+                        serialization_error,
+                    )],
                     HirSerializationTraitMethod::Encode | HirSerializationTraitMethod::Decode => {
                         unreachable!()
                     }
@@ -1488,6 +1499,8 @@ impl HirPreludeTraitMethod {
                         | HirSerializationTraitMethod::DecoderOwn
                 ) {
                     interner.result(event, *error)?
+                } else if matches!(method, HirSerializationTraitMethod::DecoderReject) {
+                    *error
                 } else {
                     result
                 };
@@ -1522,6 +1535,12 @@ impl HirPreludeTraitMethod {
         Ok(match (self, arguments) {
             (Self::Display, [target]) => intrinsic_display_type(interner, *target)?,
             (Self::ShrinkCandidates, [target]) => intrinsic_shrink_type(interner, *target)?,
+            (
+                Self::Serialization(
+                    HirSerializationTraitMethod::Encode | HirSerializationTraitMethod::Decode,
+                ),
+                [_, target],
+            ) => intrinsic_serialization_leaf_type(interner, *target)?,
             (Self::Display, _)
             | (Self::IteratorNext, _)
             | (Self::AsyncIteratorNext, _)
@@ -1529,6 +1548,36 @@ impl HirPreludeTraitMethod {
             | (Self::Serialization(_), _) => false,
         })
     }
+}
+
+fn intrinsic_serialization_leaf_type(
+    interner: &TypeInterner,
+    target: TypeId,
+) -> Result<bool, TypeError> {
+    Ok(match interner.kind(target)? {
+        TypeKind::Scalar(
+            ScalarType::Unit
+            | ScalarType::Bool
+            | ScalarType::Byte
+            | ScalarType::Int8
+            | ScalarType::Int16
+            | ScalarType::Int32
+            | ScalarType::Int
+            | ScalarType::UInt8
+            | ScalarType::UInt16
+            | ScalarType::UInt32
+            | ScalarType::UInt64
+            | ScalarType::Float32
+            | ScalarType::Float
+            | ScalarType::String
+            | ScalarType::Char,
+        ) => true,
+        TypeKind::Intrinsic {
+            constructor: IntrinsicType::Bytes,
+            arguments,
+        } => arguments.is_empty(),
+        _ => false,
+    })
 }
 
 fn intrinsic_shrink_type(interner: &TypeInterner, root: TypeId) -> Result<bool, TypeError> {
@@ -3470,6 +3519,7 @@ mod serialization_catalog_tests {
             HirSerializationTraitMethod::EncoderEndEnum,
             HirSerializationTraitMethod::DecoderNext,
             HirSerializationTraitMethod::DecoderOwn,
+            HirSerializationTraitMethod::DecoderReject,
         ];
         for method in methods {
             let prelude = HirPreludeTraitMethod::Serialization(method);

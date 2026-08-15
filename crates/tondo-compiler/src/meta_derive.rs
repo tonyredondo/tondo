@@ -284,6 +284,9 @@ fn derive_generic_header(
                 .any(|bound| bound == parameter)
             {
                 bounds.push(validated_trait.identity().to_owned());
+                if derive_requires_partial_value_cleanup(validated_trait.identity()) {
+                    bounds.push("Discard".into());
+                }
             }
             bounds.sort();
             bounds.dedup();
@@ -295,6 +298,15 @@ fn derive_generic_header(
         })
         .collect::<Vec<_>>();
     format!("[{}]", binders.join(", "))
+}
+
+fn derive_requires_partial_value_cleanup(trait_identity: &str) -> bool {
+    matches!(
+        trait_identity
+            .split_once('[')
+            .map_or(trait_identity, |(base, _)| base),
+        "serialization.Decode" | "serialization.Deserialize"
+    )
 }
 
 fn output_path(request_index: usize, trait_index: usize) -> String {

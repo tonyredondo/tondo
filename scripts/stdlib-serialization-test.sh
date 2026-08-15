@@ -42,6 +42,7 @@ for marker in \
     'StartRecord' \
     'StartEnum' \
     'fn own(var self, event: SerializationEvent)' \
+    'fn reject(var self, error: SerializationError): E' \
     'construcción atómica' \
     'frames explícitos'; do
     grep -Fq "$marker" docs/contracts/stdlib-serialization.md
@@ -52,6 +53,7 @@ for symbol in \
     'pub trait Decoder' \
     'pub trait Encode' \
     'pub trait Decode' \
+    'fn reject(&mut self, error: SerializationError) -> E' \
     'pub fn validate_events' \
     'struct Frame' \
     'pub struct EventSerializer' \

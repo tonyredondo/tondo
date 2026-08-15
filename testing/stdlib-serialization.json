@@ -38,7 +38,8 @@
     "decode": "publish-after-complete-validation",
     "writer_error": "terminal-no-partial-success",
     "reader_error": "terminal-no-partial-success",
-    "derive_output": "atomic-source-publication"
+    "derive_output": "atomic-source-publication",
+    "error_mapping": "decoder-reject-to-codec-nominal"
   },
   "derive": {
     "provider": "build-only-hermetic",

@@ -505,8 +505,9 @@ fn resolve_primary(
 ) -> Result<ResolvedLocation, DiagnosticError> {
     match location {
         PrimaryLocation::Source(span) => {
+            let span = sources.diagnostic_span(*span)?;
             let file = sources.get(span.file())?;
-            let range = resolve_range(*span, sources)?;
+            let range = resolve_range(span, sources)?;
             Ok(ResolvedLocation {
                 source_id: file.source_id().to_string(),
                 module: Some(file.module().to_string()),
@@ -531,13 +532,14 @@ fn resolve_related(
     related: Related,
     sources: &SourceDatabase,
 ) -> Result<RenderedRelated, DiagnosticError> {
-    let file = sources.get(related.span.file())?;
+    let span = sources.diagnostic_span(related.span)?;
+    let file = sources.get(span.file())?;
     Ok(RenderedRelated {
         message: related.message,
         source_id: file.source_id().to_string(),
         module: file.module().to_string(),
         file: file.path().to_string(),
-        range: resolve_range(related.span, sources)?,
+        range: resolve_range(span, sources)?,
     })
 }
 
@@ -546,12 +548,13 @@ fn resolve_fix(fix: Fix, sources: &SourceDatabase) -> Result<RenderedFix, Diagno
         .edits
         .into_iter()
         .map(|edit| {
-            let file = sources.get(edit.span.file())?;
+            let span = sources.diagnostic_span(edit.span)?;
+            let file = sources.get(span.file())?;
             Ok(RenderedEdit {
                 source_id: file.source_id().to_string(),
                 module: file.module().to_string(),
                 file: file.path().to_string(),
-                range: resolve_range(edit.span, sources)?,
+                range: resolve_range(span, sources)?,
                 replacement: edit.replacement,
             })
         })

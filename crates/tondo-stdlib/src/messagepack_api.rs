@@ -1880,6 +1880,10 @@ impl Decoder<MessagePackCodec, MessagePackError> for MessagePackReader<'_> {
             .map(messagepack_event_to_common)
             .transpose()
     }
+
+    fn reject(&mut self, error: SerializationError) -> MessagePackError {
+        error.into()
+    }
 }
 
 /// Canonical typed MessagePack entry points for the static codec ABI.
@@ -2766,5 +2770,13 @@ mod tests {
             Some(MessagePackEvent::Binary(vec![7]))
         );
         assert_eq!(reader.next().unwrap(), None);
+        assert_eq!(
+            <MessagePackReader<'_> as Decoder<MessagePackCodec, MessagePackError>>::reject(
+                &mut reader,
+                SerializationError::DuplicateField,
+            )
+            .kind,
+            MessagePackErrorKind::DuplicateKey
+        );
     }
 }

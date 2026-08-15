@@ -3169,6 +3169,19 @@ impl Verifier<'_> {
             proof.memo.insert(query.clone(), true);
             return Ok(true);
         }
+        if matches!(
+            query.constructor(),
+            HirTraitConstructor::Prelude(name) if matches!(name.as_str(), "Encode" | "Decode")
+        ) && query.arguments().len() == 1
+            && super::HirPreludeTraitMethod::Serialization(
+                super::HirSerializationTraitMethod::Encode,
+            )
+            .has_intrinsic_implementation(&proof.interner, &[query.arguments()[0], query.target()])
+            .map_err(|error| HirInvariantError::new(&proof.context, error.to_string()))?
+        {
+            proof.memo.insert(query.clone(), true);
+            return Ok(true);
+        }
         if let Some(proven) = self.closed_call_query_proof(query, proof)? {
             proof.memo.insert(query.clone(), proven);
             return Ok(proven);
@@ -7192,6 +7205,16 @@ mod tests {
     }
 
     #[test]
+    fn serialization_intrinsic_opaque_witnesses_are_reproved_before_mir() {
+        const SOURCE: &str = "import std.serialization\n\
+             fn encoded(): impl Discard + serialization.Encode[Json] { 1 }\n\
+             fn decoded(): impl Discard + serialization.Decode[Json] { 1 }\n";
+
+        let (resolved, program) = checked_program_from(SOURCE);
+        verify_typed_hir(&resolved, &program).unwrap();
+    }
+
+    #[test]
     fn serialization_method_metadata_mismatch_is_rejected_before_mir() {
         const SOURCE: &str = "import std.serialization\n\
              type User = { value: Int }\n\
@@ -7947,10 +7970,10 @@ mod tests {
     #[test]
     fn implementation_coherence_is_rederived_before_mir() {
         const SOURCE: &str = "trait Codec[T] {}\n\
-             type Json = { id: Int }\n\
+             type JsonFormat = { id: Int }\n\
              type Xml = { id: Int }\n\
              type Payload = { value: Int }\n\
-             impl Codec[Json] for Payload {}\n\
+             impl Codec[JsonFormat] for Payload {}\n\
              impl Codec[Xml] for Payload {}\n\
              fn main() {}\n";
 

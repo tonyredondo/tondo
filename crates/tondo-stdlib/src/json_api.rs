@@ -1919,6 +1919,10 @@ impl Decoder<JsonCodec, JsonError> for JsonReader<'_> {
     fn next(&mut self) -> Result<Option<Event>, JsonError> {
         JsonReader::next(self)?.map(json_to_event).transpose()
     }
+
+    fn reject(&mut self, error: SerializationError) -> JsonError {
+        error.into()
+    }
 }
 
 fn map_serialization_error(error: SerializationError) -> JsonError {
@@ -2927,6 +2931,15 @@ mod tests {
                     | JsonErrorKind::DuplicateKey
             ));
         }
+        let mut reader = JsonReader::from_bytes(b"null", JsonDecodeOptions::default()).unwrap();
+        assert_eq!(
+            <JsonReader<'_> as Decoder<JsonCodec, JsonError>>::reject(
+                &mut reader,
+                SerializationError::DuplicateField,
+            )
+            .kind,
+            JsonErrorKind::DuplicateKey
+        );
         assert_eq!(
             decode_typed::<u64>(b"1", JsonDecodeOptions::default()).unwrap(),
             1

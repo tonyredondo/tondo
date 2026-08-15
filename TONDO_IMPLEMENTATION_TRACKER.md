@@ -4443,7 +4443,7 @@ tests. Antes de volver a marcarlas `[x]` deben cumplirse todos estos puntos:
   modos `var`/`ref`, resultado `Result` y bounds del codec; las llamadas
   cualificadas y por constraint usan la selección HIR/MIR estática sin
   `Value`, reflection runtime, vtables ni lookup por nombre. El verificador HIR
-  deriva de nuevo las firmas de Encode/Decode y de los 20 métodos de
+  deriva de nuevo las firmas de Encode/Decode y de los 21 métodos de
   Encoder/Decoder antes de producir MIR. Los kernels Rust siguen siendo
   adaptadores internos; los entry points de JSON/MessagePack/Protobuf y los
   providers derive se cierran en sus leaves posteriores. Evidencia: tests HIR
@@ -4462,7 +4462,13 @@ tests. Antes de volver a marcarlas `[x]` deben cumplirse todos estos puntos:
   source maps atómicos y políticas de fields `@name`/`@ignore`; las
   anotaciones `@json(base64)`, `@messagepack(binary)` y `@proto(number)` quedan
   validadas en el snapshot para que sus owners de codec consuman la política
-  sin reflection ni DOM.
+  sin reflection ni DOM. El driver ejecuta los providers sobre el snapshot
+  sellado, publica sus fuentes de manera atómica y realiza exactamente una
+  segunda pasada ordinaria del frontend con derives desactivados; los
+  diagnósticos de código generado vuelven al span del target original. El
+  protocolo incluye `Decoder.reject(SerializationError): E`, y un derive
+  genérico de Decode exige `Discard` solo a los parámetros realmente usados,
+  porque un fallo estructural posterior debe poder limpiar valores parciales.
 
 - [x] **STD-JSON-IMPL-001 — Implementar las tres rutas de JSON.** Publicar
   `parse -> Value`, `decode[T: Decode[Json]]` y
@@ -5971,6 +5977,23 @@ no se declara iniciada antes de S1A.
 
 ## 25. Historial del tracker
 
+### 2.30 — 2026-08-15
+
+- El driver ejecuta los providers registrados de serialization sobre un
+  `MetaSnapshot` sellado, publica todo el batch generado de forma atómica y lo
+  compila mediante una única segunda pasada normal del frontend. Esa pasada no
+  vuelve a ejecutar derives y cualquier diagnóstico conserva como origen el
+  target escrito por el usuario.
+- `Json`, `MessagePack` y `Protobuf` tienen identidad nominal prelude; el ABI
+  común publica también `SerializationEvent`, `SerializationError` y
+  `Decoder.reject`, de modo que un impl generado convierte fallos estructurales
+  al error propio del codec sin asumir conversiones implícitas.
+- Los derives de records, enums, newtypes y genéricos se validan ahora de
+  extremo a extremo dentro del driver. Decode añade `Discard` únicamente a los
+  parámetros genéricos usados para garantizar cleanup de valores parciales;
+  las pruebas cubren la matriz de formas, codecs, bounds, publicación atómica y
+  remapeo de diagnósticos.
+
 ### 2.29 — 2026-08-14
 
 - `STD-JSON-PUBLIC-001` cierra la frontera nominal de streaming y errores:
@@ -6624,7 +6647,7 @@ no se declara iniciada antes de S1A.
   canónicos de `std.serialization` se convierten únicamente en los protocolos
   prelude abiertos `Encode`, `Decode`, `Encoder` y `Decoder`, conservando
   aridades y la identidad del módulo estándar.
-- HIR publica las firmas de `encode`, `decode` y los 20 métodos de
+- HIR publica las firmas de `encode`, `decode` y los 21 métodos de
   Encoder/Decoder; las implementaciones validan receiver, modos, resultados y
   bounds de codec. Las llamadas cualificadas y por constraint atraviesan la
   misma selección estática que el resto de traits, sin DOM, reflection,

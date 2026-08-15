@@ -745,6 +745,13 @@ impl From<FormatError> for DriverError {
 /// rejected by an implemented phase therefore reports its normative diagnostic
 /// instead of also receiving `T0001`.
 pub fn execute(request: CompilationRequest) -> Result<CompilationOutput, DriverError> {
+    execute_with_derives(request, true)
+}
+
+fn execute_with_derives(
+    mut request: CompilationRequest,
+    expand_derives: bool,
+) -> Result<CompilationOutput, DriverError> {
     if request.operation == Operation::Test {
         return execute_test(request);
     }
@@ -967,6 +974,76 @@ pub fn execute(request: CompilationRequest) -> Result<CompilationOutput, DriverE
             )),
             products: None,
         });
+    }
+
+    if expand_derives && !hir_program.derive_requests().is_empty() {
+        let limits = crate::meta::MetaLimits::new(
+            request.limits.max_vm_steps.max(1),
+            request.limits.max_vm_heap_bytes.max(1),
+            u64::from(request.limits.max_source_bytes.max(1)),
+        )
+        .map_err(|error| DriverError::Invariant(error.to_string()))?;
+        match crate::meta_frontend::expand_derives(
+            &request.packages,
+            &request.sources,
+            &parsed_sources,
+            &resolved_program,
+            &hir_program,
+            limits,
+        ) {
+            Err(crate::meta_frontend::DeriveFrontendError::Diagnostics(entries)) => {
+                let diagnostics = crate::meta_diagnostics::render_meta_diagnostics(
+                    entries,
+                    request.target.diagnostic_source_id().clone(),
+                    &request.sources,
+                )?;
+                drop(parsed_sources);
+                return Ok(CompilationOutput {
+                    status: CompilationStatus::Rejected,
+                    exit_code: 1,
+                    diagnostics,
+                    stdout: Vec::new(),
+                    semantic_model: Some(SemanticModel::with_hir(
+                        request.sources,
+                        resolved_program,
+                        hir_program,
+                    )),
+                    products: None,
+                });
+            }
+            Err(crate::meta_frontend::DeriveFrontendError::Invariant(message)) => {
+                return Err(DriverError::Invariant(message));
+            }
+            Ok(generated) => {
+                drop(parsed_sources);
+                drop(resolved_program);
+                drop(hir_program);
+                for (index, source) in generated.into_iter().enumerate() {
+                    let base = format!("__tondo_generated__/{}", source.path);
+                    let path = unique_generated_path(
+                        &request.sources,
+                        &source.source_id,
+                        &source.module,
+                        &base,
+                        index,
+                    )?;
+                    request.sources.add(
+                        crate::source::SourceInput::new(
+                            source.source_id,
+                            source.module,
+                            path,
+                            crate::source::SourceOrigin::GeneratedMeta,
+                            source.bytes,
+                        )
+                        .with_diagnostic_origin(Some(source.diagnostic_origin)),
+                    )?;
+                }
+                request
+                    .packages
+                    .validate_sources(&request.sources, request.root)?;
+                return execute_with_derives(request, false);
+            }
+        }
     }
 
     let checked = match check_expressions_configured(
@@ -1279,6 +1356,32 @@ pub fn execute(request: CompilationRequest) -> Result<CompilationOutput, DriverE
     })
 }
 
+fn unique_generated_path(
+    sources: &SourceDatabase,
+    source_id: &SourceId,
+    module: &crate::source::ModulePath,
+    base: &str,
+    seed: usize,
+) -> Result<crate::source::LogicalPath, DriverError> {
+    for attempt in seed.. {
+        let candidate = if attempt == 0 {
+            base.to_owned()
+        } else {
+            format!("{base}.{attempt}")
+        };
+        let path = crate::source::LogicalPath::new(candidate)?;
+        let exists = sources.iter().any(|(_, source)| {
+            source.source_id() == source_id && source.module() == module && source.path() == &path
+        });
+        if !exists {
+            return Ok(path);
+        }
+    }
+    Err(DriverError::Invariant(
+        "generated source path space was exhausted".into(),
+    ))
+}
+
 /// Discovers executable test leaves in the request's root package. Parsing is
 /// repeated here deliberately: discovery is a read-only planning operation;
 /// the selected request is parsed and checked again by [`execute`].
@@ -1523,13 +1626,16 @@ fn clone_source_database(
             .as_ref()
             .filter(|(replacement_file, _, _)| *replacement_file == file)
             .map_or(source.origin(), |(_, _, origin)| *origin);
-        let actual = sources.add(crate::source::SourceInput::new(
-            source.source_id().clone(),
-            source.module().clone(),
-            source.path().clone(),
-            origin,
-            bytes,
-        ))?;
+        let actual = sources.add(
+            crate::source::SourceInput::new(
+                source.source_id().clone(),
+                source.module().clone(),
+                source.path().clone(),
+                origin,
+                bytes,
+            )
+            .with_diagnostic_origin(source.diagnostic_origin()),
+        )?;
         if actual != file {
             return Err(DriverError::Invariant(
                 "source clone changed file identity ordering".into(),
@@ -4570,5 +4676,140 @@ fn main() {
                 .message()
                 .contains("syntax node count")
         );
+    }
+
+    #[test]
+    fn derive_providers_are_compiled_in_one_atomic_frontend_round() {
+        let output = execute(operation_request(
+            Operation::Check,
+            b"import std.serialization\n\
+              type User = { id: Int, name: String }\n\
+              derive serialization.Encode[Json] + serialization.Decode[Json] for User\n\
+              fn main() {}\n",
+            SourceForm::Module,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
+        assert!(output.diagnostics().is_empty());
+    }
+
+    #[test]
+    fn derive_supports_generic_enum_and_newtype_targets() {
+        let output = execute(operation_request(
+            Operation::Check,
+            b"import std.serialization\n\
+              type Boxed[T] = { value: T }\n\
+              enum Choice { Empty, Item(Int) }\n\
+              type UserId = Int\n\
+              derive[T] serialization.Encode[Json] + serialization.Decode[Json] for Boxed[T]\n\
+              derive serialization.Encode[Json] + serialization.Decode[Json] for Choice\n\
+              derive serialization.Encode[Json] + serialization.Decode[Json] for UserId\n\
+              fn main() {}\n",
+            SourceForm::Module,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
+    }
+
+    #[test]
+    fn derive_directions_compile_empty_and_scalar_records_independently() {
+        for (label, declaration, derived_trait) in [
+            (
+                "encode empty",
+                "type Item = {}",
+                "serialization.Encode[Json]",
+            ),
+            (
+                "decode empty",
+                "type Item = {}",
+                "serialization.Decode[Json]",
+            ),
+            (
+                "encode scalar",
+                "type Item = { value: Int }",
+                "serialization.Encode[Json]",
+            ),
+            (
+                "decode scalar",
+                "type Item = { value: Int }",
+                "serialization.Decode[Json]",
+            ),
+            (
+                "encode generic",
+                "type Item[T] = { value: T }",
+                "[T] serialization.Encode[Json]",
+            ),
+            (
+                "decode generic",
+                "type Item[T] = { value: T }",
+                "[T] serialization.Decode[Json]",
+            ),
+        ] {
+            let source = format!(
+                "import std.serialization\n{declaration}\nderive {derived_trait} for Item\nfn main() {{}}\n"
+            );
+            let output = execute(operation_request(
+                Operation::Check,
+                source.as_bytes(),
+                SourceForm::Module,
+                ResourceLimits::default(),
+            ))
+            .unwrap();
+            assert_eq!(
+                output.status(),
+                CompilationStatus::Success,
+                "{label}: {}",
+                output.diagnostics().human()
+            );
+        }
+    }
+
+    #[test]
+    fn derive_rejects_duplicate_pairs_before_publishing_generated_sources() {
+        let output = execute(operation_request(
+            Operation::Check,
+            b"import std.serialization\n\
+              type User = { id: Int }\n\
+              derive serialization.Encode[Json] for User\n\
+              derive serialization.Encode[Json] for User\n\
+              fn main() {}\n",
+            SourceForm::Module,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(output.status(), CompilationStatus::Rejected);
+        assert_eq!(output.diagnostics().diagnostics().len(), 1);
+        assert_eq!(output.diagnostics().diagnostics()[0].code(), "E2103");
+    }
+
+    #[test]
+    fn derive_provider_errors_are_mapped_to_the_authorizing_source() {
+        let output = execute(operation_request(
+            Operation::Check,
+            b"import std.serialization\n\
+              type User = { @json(base64) id: Int }\n\
+              derive serialization.Encode[Json] for User\n\
+              fn main() {}\n",
+            SourceForm::Module,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(output.status(), CompilationStatus::Rejected);
+        let diagnostic = &output.diagnostics().diagnostics()[0];
+        assert_eq!(diagnostic.code(), "E2104");
+        assert!(diagnostic.message().contains("requires Bytes field"));
+        assert!(output.diagnostics().human().contains("main.to:"));
     }
 }

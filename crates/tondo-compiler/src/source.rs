@@ -293,6 +293,8 @@ impl Span {
 pub enum SourceOrigin {
     Physical,
     Virtual,
+    /// Compiler-owned source emitted by a hermetic meta provider.
+    GeneratedMeta,
     /// Compiler-owned source produced from `suite`/`test` declarations.
     GeneratedTesting,
 }
@@ -304,6 +306,7 @@ pub struct SourceInput {
     path: LogicalPath,
     origin: SourceOrigin,
     bytes: Arc<[u8]>,
+    diagnostic_origin: Option<Span>,
 }
 
 impl SourceInput {
@@ -320,7 +323,15 @@ impl SourceInput {
             path,
             origin,
             bytes: bytes.into(),
+            diagnostic_origin: None,
         }
+    }
+
+    /// Maps diagnostics from a generated file back to its authorized source
+    /// declaration. Generated files never become editable user input.
+    pub fn with_diagnostic_origin(mut self, origin: Option<Span>) -> Self {
+        self.diagnostic_origin = origin;
+        self
     }
 
     pub fn virtual_file(
@@ -340,6 +351,7 @@ pub struct SourceFile {
     path: LogicalPath,
     origin: SourceOrigin,
     bytes: Arc<[u8]>,
+    diagnostic_origin: Option<Span>,
     line_index: OnceLock<LineIndex>,
 }
 
@@ -362,6 +374,10 @@ impl SourceFile {
 
     pub fn bytes(&self) -> &[u8] {
         &self.bytes
+    }
+
+    pub fn diagnostic_origin(&self) -> Option<Span> {
+        self.diagnostic_origin
     }
 
     pub fn text(&self) -> Result<&str, std::str::Utf8Error> {
@@ -446,6 +462,7 @@ impl SourceDatabase {
             path: input.path,
             origin: input.origin,
             bytes: input.bytes,
+            diagnostic_origin: input.diagnostic_origin,
             line_index: OnceLock::new(),
         });
         self.by_key.insert(key, file_id);
@@ -481,6 +498,13 @@ impl SourceDatabase {
             return Err(SourceError::InvalidRange(range));
         }
         Ok(Span { file, range })
+    }
+
+    /// Resolves one generated-source mapping. Meta output is deliberately
+    /// mapped as a whole to its authorized declaration, so diagnostics remain
+    /// stable even when provider formatting changes.
+    pub fn diagnostic_span(&self, span: Span) -> Result<Span, SourceError> {
+        Ok(self.get(span.file())?.diagnostic_origin().unwrap_or(span))
     }
 }
 

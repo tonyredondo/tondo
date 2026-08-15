@@ -304,6 +304,8 @@ pub trait Decoder<C, E> {
     fn own(&mut self, event: Event) -> Result<Event, E> {
         Ok(event)
     }
+
+    fn reject(&mut self, error: SerializationError) -> E;
 }
 
 /// A statically dispatched typed encoder.  `C` is a zero-sized codec identity
@@ -448,6 +450,10 @@ impl<C> Decoder<C, SerializationError> for EventDeserializer<'_> {
 
     fn next(&mut self) -> Result<Option<Event>, SerializationError> {
         <Self as Deserializer>::next_event(self)
+    }
+
+    fn reject(&mut self, error: SerializationError) -> SerializationError {
+        error
     }
 }
 
@@ -1581,6 +1587,13 @@ mod tests {
             &mut decoder,
         )
         .unwrap();
+        assert_eq!(
+            <EventDeserializer<'_> as Decoder<Json, SerializationError>>::reject(
+                &mut decoder,
+                SerializationError::TypeMismatch,
+            ),
+            SerializationError::TypeMismatch
+        );
         decoder.finish().unwrap();
         assert_eq!(decoded, value);
     }

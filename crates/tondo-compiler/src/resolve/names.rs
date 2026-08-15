@@ -91,6 +91,7 @@ impl NameResolver<'_> {
             match child.kind() {
                 SyntaxKind::ImportDecl => {}
                 SyntaxKind::FunctionDecl => self.resolve_function(child)?,
+                SyntaxKind::DeriveDecl => self.resolve_derive(child)?,
                 SyntaxKind::TypeDecl
                 | SyntaxKind::AliasDecl
                 | SyntaxKind::EnumDecl
@@ -111,6 +112,16 @@ impl NameResolver<'_> {
             }
             self.scopes.pop();
         }
+        Ok(())
+    }
+
+    fn resolve_derive(&mut self, node: SyntaxNodeRef<'_>) -> Result<(), ResolveError> {
+        self.push_scope();
+        self.declare_generic_parameters(node)?;
+        for child in node.child_nodes() {
+            self.walk(child, Some(SyntaxKind::DeriveDecl))?;
+        }
+        self.scopes.pop();
         Ok(())
     }
 
@@ -368,7 +379,9 @@ impl NameResolver<'_> {
         parent: Option<SyntaxKind>,
     ) -> Result<(), ResolveError> {
         match node.kind() {
-            SyntaxKind::ImportDecl | SyntaxKind::ModulePath => return Ok(()),
+            SyntaxKind::ImportDecl | SyntaxKind::ModulePath | SyntaxKind::Attribute => {
+                return Ok(());
+            }
             SyntaxKind::Block => return self.resolve_block(node),
             SyntaxKind::BindingDecl => return self.resolve_binding(node),
             SyntaxKind::ForStmt => return self.resolve_for(node),
@@ -1428,6 +1441,9 @@ fn is_prelude_name(namespace: Namespace, name: &Name) -> bool {
                 | "Display"
                 | "Shrink"
                 | "NumericConversionError"
+                | "Json"
+                | "MessagePack"
+                | "Protobuf"
         ),
         Namespace::Value => matches!(name.as_str(), "panic" | "assert"),
         Namespace::Module => false,

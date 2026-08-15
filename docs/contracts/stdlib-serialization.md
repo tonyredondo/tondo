@@ -29,8 +29,16 @@ construcción atómica del resultado.
 - `Encoder[C, E]` y `Decoder[C, E]` son protocolos de estado. `var` expresa
   que el cursor o writer avanza; cada operación mantiene la identidad del
   error `E` del formato.
+- `Decoder.reject` traduce un error estructural compartido al error nominal
+  exacto del codec. `Decode[C]` permanece genérico sobre `E` sin unions,
+  conversiones implícitas ni reflection runtime.
 - Un decoder no publica un `T` hasta haber consumido y validado todos sus
   componentes. Un fallo deja el destino sin cambios observables.
+- Un `Decode[C]` derivado añade `Discard` solo a los parámetros genéricos que
+  aparecen en el payload. El bound permite limpiar valores parciales si un
+  cierre o field posterior es inválido. Una implementación manual puede
+  aceptar un tipo affine, pero debe consumir todos sus parciales en cada salida
+  de error; nunca se relaja el análisis de ownership para código generado.
 - Los nombres de records, fields y variants son metadata de la expansión o del
   schema declarado. No se obtienen mediante reflection runtime.
 
@@ -65,6 +73,7 @@ pub trait Encoder[C, E] {
 pub trait Decoder[C, E] {
     fn next(var self): SerializationEvent ! E
     fn own(var self, event: SerializationEvent): SerializationEvent ! E
+    fn reject(var self, error: SerializationError): E
 }
 
 pub trait Encode[C] {

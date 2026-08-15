@@ -568,18 +568,18 @@ struct Resolver<'a> {
 }
 
 #[derive(Debug, Clone, Copy)]
-enum BootstrapJsonShape {
+enum BootstrapNominalShape {
     Newtype,
     Record(&'static [&'static str]),
     Enum(&'static [&'static str]),
 }
 
-fn bootstrap_json_nominals() -> [(&'static str, SymbolKind, BootstrapJsonShape); 5] {
+fn bootstrap_json_nominals() -> [(&'static str, SymbolKind, BootstrapNominalShape); 5] {
     [
         (
             "JsonEvent",
             SymbolKind::Enum,
-            BootstrapJsonShape::Enum(&[
+            BootstrapNominalShape::Enum(&[
                 "StartArray",
                 "EndArray",
                 "StartObject",
@@ -594,7 +594,7 @@ fn bootstrap_json_nominals() -> [(&'static str, SymbolKind, BootstrapJsonShape);
         (
             "JsonErrorKind",
             SymbolKind::Enum,
-            BootstrapJsonShape::Enum(&[
+            BootstrapNominalShape::Enum(&[
                 "InvalidUtf8",
                 "InvalidSyntax",
                 "UnexpectedEof",
@@ -615,13 +615,56 @@ fn bootstrap_json_nominals() -> [(&'static str, SymbolKind, BootstrapJsonShape);
         (
             "JsonLocation",
             SymbolKind::Type,
-            BootstrapJsonShape::Record(&["offset", "line", "column"]),
+            BootstrapNominalShape::Record(&["offset", "line", "column"]),
         ),
-        ("JsonPath", SymbolKind::Type, BootstrapJsonShape::Newtype),
+        ("JsonPath", SymbolKind::Type, BootstrapNominalShape::Newtype),
         (
             "JsonError",
             SymbolKind::Type,
-            BootstrapJsonShape::Record(&["kind", "location", "path"]),
+            BootstrapNominalShape::Record(&["kind", "location", "path"]),
+        ),
+    ]
+}
+
+fn bootstrap_serialization_nominals() -> [(&'static str, SymbolKind, BootstrapNominalShape); 2] {
+    [
+        (
+            "SerializationEvent",
+            SymbolKind::Enum,
+            BootstrapNominalShape::Enum(&[
+                "Null",
+                "Bool",
+                "Int",
+                "UInt",
+                "Float32",
+                "Float64",
+                "String",
+                "Bytes",
+                "StartArray",
+                "EndArray",
+                "StartMap",
+                "MapKey",
+                "EndMap",
+                "StartRecord",
+                "Field",
+                "EndRecord",
+                "StartEnum",
+                "EndEnum",
+            ]),
+        ),
+        (
+            "SerializationError",
+            SymbolKind::Enum,
+            BootstrapNominalShape::Enum(&[
+                "UnexpectedEvent",
+                "TypeMismatch",
+                "MissingField",
+                "DuplicateField",
+                "InvalidContainerLength",
+                "LimitExceeded",
+                "InvalidPath",
+                "Io",
+            ]),
         ),
     ]
 }
@@ -738,9 +781,24 @@ impl Resolver<'_> {
         let Some(file) = ordered_files.first().copied() else {
             return Ok(());
         };
-        let json_path = crate::source::ModulePath::new("json")
-            .expect("the bootstrap JSON module path is valid");
-        let Some(module) = self.packages.module(self.packages.standard(), &json_path) else {
+        self.install_bootstrap_module_nominals(file, program, "json", &bootstrap_json_nominals())?;
+        self.install_bootstrap_module_nominals(
+            file,
+            program,
+            "serialization",
+            &bootstrap_serialization_nominals(),
+        )
+    }
+
+    fn install_bootstrap_module_nominals(
+        &self,
+        file: FileId,
+        program: &mut ResolvedProgram,
+        module_name: &str,
+        nominals: &[(&'static str, SymbolKind, BootstrapNominalShape)],
+    ) -> Result<(), ResolveError> {
+        let path = crate::source::ModulePath::new(module_name)?;
+        let Some(module) = self.packages.module(self.packages.standard(), &path) else {
             return Ok(());
         };
         let referenced = program.references.values().any(|reference| {
@@ -757,8 +815,8 @@ impl Resolver<'_> {
             return Ok(());
         }
         let span = self.sources.span(file, TextRange::empty(0))?;
-        for (name, kind, shape) in bootstrap_json_nominals() {
-            let name = Name::new(name).expect("bootstrap JSON type names are valid");
+        for (name, kind, shape) in nominals {
+            let name = Name::new(name).expect("bootstrap nominal type names are valid");
             let id = SymbolId(
                 u32::try_from(program.symbols.len())
                     .expect("symbol count is bounded by resolved syntax"),
@@ -772,7 +830,7 @@ impl Resolver<'_> {
                 id,
                 identity,
                 name: name.clone(),
-                kind,
+                kind: *kind,
                 visibility: Visibility::Public,
                 span,
                 generic_arity: 0,
@@ -783,7 +841,7 @@ impl Resolver<'_> {
                 .insert((module.clone(), name), id);
 
             match shape {
-                BootstrapJsonShape::Newtype => {
+                BootstrapNominalShape::Newtype => {
                     install_bootstrap_member(
                         program,
                         MemberOwner::Type(id),
@@ -793,8 +851,8 @@ impl Resolver<'_> {
                         span,
                     );
                 }
-                BootstrapJsonShape::Record(fields) => {
-                    for field in fields {
+                BootstrapNominalShape::Record(fields) => {
+                    for field in *fields {
                         install_bootstrap_member(
                             program,
                             MemberOwner::Type(id),
@@ -805,8 +863,8 @@ impl Resolver<'_> {
                         );
                     }
                 }
-                BootstrapJsonShape::Enum(variants) => {
-                    for variant in variants {
+                BootstrapNominalShape::Enum(variants) => {
+                    for variant in *variants {
                         install_bootstrap_member(
                             program,
                             MemberOwner::Type(id),
@@ -1456,6 +1514,9 @@ fn is_reserved_unqualified(name: &Name) -> bool {
             | "Display"
             | "Shrink"
             | "NumericConversionError"
+            | "Json"
+            | "MessagePack"
+            | "Protobuf"
             | "panic"
             | "assert"
             | "Self"
