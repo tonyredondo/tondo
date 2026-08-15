@@ -50,6 +50,7 @@ mod test_cli;
 const EXIT_DIAGNOSTIC: u8 = 1;
 const EXIT_USAGE: u8 = 2;
 const EXIT_INTERNAL: u8 = 3;
+const CLI_STACK_SIZE: usize = 8 * 1024 * 1024;
 
 type PreparedCompilation = (CompilationRequest, Option<Arc<[u8]>>);
 
@@ -82,9 +83,28 @@ Options:
   -V, --version                     Show version information";
 
 fn main() -> ExitCode {
-    match run(env::args_os().skip(1).collect()) {
-        Ok(code) => code,
-        Err(error) => {
+    // The compiler deliberately accepts substantially larger programs than a
+    // platform's default process stack can accommodate.  In particular,
+    // Windows reserves about 1 MiB for the executable entry thread, while
+    // recursive semantic passes may need several MiB even though the source
+    // itself is within every language resource limit.  Keep the public CLI
+    // entry point tiny and run the actual command on the same explicit stack
+    // used by the isolated test worker below.  This makes CLI behavior
+    // deterministic across hosts without changing the compiler API or the
+    // Tondo runtime's logical stack limits.
+    let command = std::thread::Builder::new()
+        .name("tondo-cli".into())
+        .stack_size(CLI_STACK_SIZE)
+        .spawn(|| run(env::args_os().skip(1).collect()));
+    let result = match command {
+        Ok(command) => command
+            .join()
+            .map_err(|_| "CLI command stack panicked".to_owned()),
+        Err(error) => Err(format!("cannot create CLI command stack: {error}")),
+    };
+    match result {
+        Ok(Ok(code)) => code,
+        Ok(Err(error)) | Err(error) => {
             eprintln!("tondo: {error}");
             ExitCode::from(EXIT_INTERNAL)
         }
@@ -1332,12 +1352,10 @@ fn join_worker_pipe(
 // the VM's logical stack budget can therefore exhaust the native stack before
 // the VM can report its own resource limit. Keep the process boundary and run
 // the worker body on a portable, bounded stack instead.
-const TEST_WORKER_STACK_SIZE: usize = 8 * 1024 * 1024;
-
 fn run_test_worker_on_explicit_stack(arguments: Vec<OsString>) -> Result<ExitCode, String> {
     let worker = std::thread::Builder::new()
         .name("tondo-test-worker".into())
-        .stack_size(TEST_WORKER_STACK_SIZE)
+        .stack_size(CLI_STACK_SIZE)
         .spawn(move || run_test_worker(&arguments))
         .map_err(|error| format!("cannot create isolated worker stack: {error}"))?;
     worker

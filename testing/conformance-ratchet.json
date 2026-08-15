@@ -8,11 +8,11 @@
   },
   "inventory": {
     "path": "testing/inventory.json",
-    "sha256": "ce25c8e8c6c1f4a44292db3e55eeb2c3ee079aa0c684f5e918ff6269bf8b4cb7"
+    "sha256": "df85b576e7a07e6eb2131645d554d609326de931c32c9ac039200c1deda5e2a8"
   },
   "matrix": {
     "path": "testing/coverage-matrix.json",
-    "sha256": "d28ba76f638ef24b213c9ec094dd23c56ae90f3ff83e572d33268caf1b547e79"
+    "sha256": "0b87dd0ba990cc4c6eedd43ffffc33fb4246bd6d221e96b0c92810c56e017c7d"
   },
   "gap_audit": {
     "path": "testing/normative-gap-audit.json",
@@ -27,17 +27,17 @@
   "coverage": {
     "status": "validated",
     "reason": "the supplied coverage report passed the quality and provenance gates",
-    "report_sha256": "583eee66afd217d80364522489c1f9b2c9edddd0e32f706f44138e507dd01879",
-    "provenance_sha256": "893f0d8a925b80f60d6cd6e72f743ca3bc891ff3d9e2667a18c7aef64d762338",
-    "tree_sha256": "6543c0dfb2c38c75ac7e509b7b34c4be677ff5e0d4e863c4235df6534d5108ba",
+    "report_sha256": "5b3043a1f339aa42a3c41ae1685098c1491bf78cca6217a750f006afcc4b9651",
+    "provenance_sha256": "98dd525e0ca33a2fd34408c8ada20c6993e1e2fcdc46ea010a93c9adec947bb8",
+    "tree_sha256": "ea80156a09f78eaca218a514af0d5495fdc76961fcdd79adc41e730469e53b0b",
     "input_set_sha256": "83e64e6a7a3ff403ef191f63204704170535b392737c6bfcbf5faba5073386f3"
   },
   "mutation": {
     "status": "validated",
     "reason": "the supplied mutation report passed the quality and provenance gates",
-    "report_sha256": "9b94123c4fa92dfbc7f0b93c5ae2510cd7862a0e4056816166f196acc8d8fbde",
-    "provenance_sha256": "893f0d8a925b80f60d6cd6e72f743ca3bc891ff3d9e2667a18c7aef64d762338",
-    "tree_sha256": "6543c0dfb2c38c75ac7e509b7b34c4be677ff5e0d4e863c4235df6534d5108ba",
+    "report_sha256": "06feacdabc58c40d3076077e02b3fa47f65493c47f7d9616fd4b17e0ad754f7c",
+    "provenance_sha256": "98dd525e0ca33a2fd34408c8ada20c6993e1e2fcdc46ea010a93c9adec947bb8",
+    "tree_sha256": "ea80156a09f78eaca218a514af0d5495fdc76961fcdd79adc41e730469e53b0b",
     "input_set_sha256": "83e64e6a7a3ff403ef191f63204704170535b392737c6bfcbf5faba5073386f3"
   }
 }
