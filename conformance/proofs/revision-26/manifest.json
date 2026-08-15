@@ -137,8 +137,8 @@
       "role": "conformance-result",
       "source_path": "generated:tondo-reference-result",
       "object": {
-        "path": "objects/8c4dab0693bbf34ed67294901d150f60e52d4a8b05580cfd0ed2df27aedc3dc6",
-        "sha256": "8c4dab0693bbf34ed67294901d150f60e52d4a8b05580cfd0ed2df27aedc3dc6"
+        "path": "objects/d29af3ee712c961656eeb5f3c2b34daa6e1a5e7b4f17bc2392f716980d42027c",
+        "sha256": "d29af3ee712c961656eeb5f3c2b34daa6e1a5e7b4f17bc2392f716980d42027c"
       }
     },
     {
@@ -353,16 +353,16 @@
       "role": "quality-evidence",
       "source_path": "testing/coverage-matrix.json",
       "object": {
-        "path": "objects/ba00588a62ca4cdd302ebea73526cd300fbb59ea84a05818da2cb0b693789032",
-        "sha256": "ba00588a62ca4cdd302ebea73526cd300fbb59ea84a05818da2cb0b693789032"
+        "path": "objects/3e287164e111b87614903a45289838808bf087e94b8d80a17a97d13fd76f3f3b",
+        "sha256": "3e287164e111b87614903a45289838808bf087e94b8d80a17a97d13fd76f3f3b"
       }
     },
     {
       "role": "quality-evidence",
       "source_path": "testing/inventory.json",
       "object": {
-        "path": "objects/f7dd3c840f286deafd4b3503192871bfe4a65e16aecd984732e5a7d9af72b8e5",
-        "sha256": "f7dd3c840f286deafd4b3503192871bfe4a65e16aecd984732e5a7d9af72b8e5"
+        "path": "objects/a8c4de1c909f6d9a70beb040d232735a5c926a4d9032f0a67d94099d548adb02",
+        "sha256": "a8c4de1c909f6d9a70beb040d232735a5c926a4d9032f0a67d94099d548adb02"
       }
     },
     {
@@ -385,8 +385,8 @@
       "role": "ratchet",
       "source_path": "testing/conformance-ratchet.json",
       "object": {
-        "path": "objects/9360a37bc812a01cf4da0c74b4274ec05608aa349e52b9ad0d8a4ef5ed4df3ef",
-        "sha256": "9360a37bc812a01cf4da0c74b4274ec05608aa349e52b9ad0d8a4ef5ed4df3ef"
+        "path": "objects/d182eae092e3c1f7ee5fe53bfc0c88c43c859d9683697fc95ea340f17254db38",
+        "sha256": "d182eae092e3c1f7ee5fe53bfc0c88c43c859d9683697fc95ea340f17254db38"
       }
     },
     {
