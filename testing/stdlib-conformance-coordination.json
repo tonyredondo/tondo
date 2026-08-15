@@ -1984,29 +1984,29 @@
       "status": "partial",
       "reason": "The serde_json bidirectional and fragmented harness covers the portable codec; STD-CONF-001 has not yet promoted every standard-library owner.",
       "public_signatures": [
-        "std.json:133",
-        "std.json:134",
-        "std.json:135",
-        "std.json:136",
-        "std.json:137",
-        "std.json:138",
-        "std.json:139",
-        "std.json:140",
-        "std.json:141",
         "std.json:143",
         "std.json:144",
         "std.json:145",
         "std.json:146",
         "std.json:147",
         "std.json:148",
+        "std.json:149",
         "std.json:150",
         "std.json:151",
-        "std.json:152",
         "std.json:153",
         "std.json:154",
+        "std.json:155",
         "std.json:156",
         "std.json:157",
-        "std.json:158"
+        "std.json:158",
+        "std.json:160",
+        "std.json:161",
+        "std.json:162",
+        "std.json:163",
+        "std.json:164",
+        "std.json:166",
+        "std.json:167",
+        "std.json:168"
       ],
       "requirements": [
         "requirement:std.json:canonical",
@@ -2120,105 +2120,6 @@
           ]
         },
         {
-          "id": "signature:std.json:133",
-          "kind": "signature",
-          "status": "partial",
-          "reason": "The serde_json bidirectional and fragmented harness covers the portable codec; STD-CONF-001 has not yet promoted every standard-library owner.",
-          "refs": [
-            "testing/stdlib-codec-conformance.json",
-            "scripts/stdlib-codec-conformance.sh",
-            "TONDO_IMPLEMENTATION_TRACKER.md"
-          ]
-        },
-        {
-          "id": "signature:std.json:134",
-          "kind": "signature",
-          "status": "partial",
-          "reason": "The serde_json bidirectional and fragmented harness covers the portable codec; STD-CONF-001 has not yet promoted every standard-library owner.",
-          "refs": [
-            "testing/stdlib-codec-conformance.json",
-            "scripts/stdlib-codec-conformance.sh",
-            "TONDO_IMPLEMENTATION_TRACKER.md"
-          ]
-        },
-        {
-          "id": "signature:std.json:135",
-          "kind": "signature",
-          "status": "partial",
-          "reason": "The serde_json bidirectional and fragmented harness covers the portable codec; STD-CONF-001 has not yet promoted every standard-library owner.",
-          "refs": [
-            "testing/stdlib-codec-conformance.json",
-            "scripts/stdlib-codec-conformance.sh",
-            "TONDO_IMPLEMENTATION_TRACKER.md"
-          ]
-        },
-        {
-          "id": "signature:std.json:136",
-          "kind": "signature",
-          "status": "partial",
-          "reason": "The serde_json bidirectional and fragmented harness covers the portable codec; STD-CONF-001 has not yet promoted every standard-library owner.",
-          "refs": [
-            "testing/stdlib-codec-conformance.json",
-            "scripts/stdlib-codec-conformance.sh",
-            "TONDO_IMPLEMENTATION_TRACKER.md"
-          ]
-        },
-        {
-          "id": "signature:std.json:137",
-          "kind": "signature",
-          "status": "partial",
-          "reason": "The serde_json bidirectional and fragmented harness covers the portable codec; STD-CONF-001 has not yet promoted every standard-library owner.",
-          "refs": [
-            "testing/stdlib-codec-conformance.json",
-            "scripts/stdlib-codec-conformance.sh",
-            "TONDO_IMPLEMENTATION_TRACKER.md"
-          ]
-        },
-        {
-          "id": "signature:std.json:138",
-          "kind": "signature",
-          "status": "partial",
-          "reason": "The serde_json bidirectional and fragmented harness covers the portable codec; STD-CONF-001 has not yet promoted every standard-library owner.",
-          "refs": [
-            "testing/stdlib-codec-conformance.json",
-            "scripts/stdlib-codec-conformance.sh",
-            "TONDO_IMPLEMENTATION_TRACKER.md"
-          ]
-        },
-        {
-          "id": "signature:std.json:139",
-          "kind": "signature",
-          "status": "partial",
-          "reason": "The serde_json bidirectional and fragmented harness covers the portable codec; STD-CONF-001 has not yet promoted every standard-library owner.",
-          "refs": [
-            "testing/stdlib-codec-conformance.json",
-            "scripts/stdlib-codec-conformance.sh",
-            "TONDO_IMPLEMENTATION_TRACKER.md"
-          ]
-        },
-        {
-          "id": "signature:std.json:140",
-          "kind": "signature",
-          "status": "partial",
-          "reason": "The serde_json bidirectional and fragmented harness covers the portable codec; STD-CONF-001 has not yet promoted every standard-library owner.",
-          "refs": [
-            "testing/stdlib-codec-conformance.json",
-            "scripts/stdlib-codec-conformance.sh",
-            "TONDO_IMPLEMENTATION_TRACKER.md"
-          ]
-        },
-        {
-          "id": "signature:std.json:141",
-          "kind": "signature",
-          "status": "partial",
-          "reason": "The serde_json bidirectional and fragmented harness covers the portable codec; STD-CONF-001 has not yet promoted every standard-library owner.",
-          "refs": [
-            "testing/stdlib-codec-conformance.json",
-            "scripts/stdlib-codec-conformance.sh",
-            "TONDO_IMPLEMENTATION_TRACKER.md"
-          ]
-        },
-        {
           "id": "signature:std.json:143",
           "kind": "signature",
           "status": "partial",
@@ -2285,6 +2186,17 @@
           ]
         },
         {
+          "id": "signature:std.json:149",
+          "kind": "signature",
+          "status": "partial",
+          "reason": "The serde_json bidirectional and fragmented harness covers the portable codec; STD-CONF-001 has not yet promoted every standard-library owner.",
+          "refs": [
+            "testing/stdlib-codec-conformance.json",
+            "scripts/stdlib-codec-conformance.sh",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
+          ]
+        },
+        {
           "id": "signature:std.json:150",
           "kind": "signature",
           "status": "partial",
@@ -2307,17 +2219,6 @@
           ]
         },
         {
-          "id": "signature:std.json:152",
-          "kind": "signature",
-          "status": "partial",
-          "reason": "The serde_json bidirectional and fragmented harness covers the portable codec; STD-CONF-001 has not yet promoted every standard-library owner.",
-          "refs": [
-            "testing/stdlib-codec-conformance.json",
-            "scripts/stdlib-codec-conformance.sh",
-            "TONDO_IMPLEMENTATION_TRACKER.md"
-          ]
-        },
-        {
           "id": "signature:std.json:153",
           "kind": "signature",
           "status": "partial",
@@ -2330,6 +2231,17 @@
         },
         {
           "id": "signature:std.json:154",
+          "kind": "signature",
+          "status": "partial",
+          "reason": "The serde_json bidirectional and fragmented harness covers the portable codec; STD-CONF-001 has not yet promoted every standard-library owner.",
+          "refs": [
+            "testing/stdlib-codec-conformance.json",
+            "scripts/stdlib-codec-conformance.sh",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
+          ]
+        },
+        {
+          "id": "signature:std.json:155",
           "kind": "signature",
           "status": "partial",
           "reason": "The serde_json bidirectional and fragmented harness covers the portable codec; STD-CONF-001 has not yet promoted every standard-library owner.",
@@ -2363,6 +2275,94 @@
         },
         {
           "id": "signature:std.json:158",
+          "kind": "signature",
+          "status": "partial",
+          "reason": "The serde_json bidirectional and fragmented harness covers the portable codec; STD-CONF-001 has not yet promoted every standard-library owner.",
+          "refs": [
+            "testing/stdlib-codec-conformance.json",
+            "scripts/stdlib-codec-conformance.sh",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
+          ]
+        },
+        {
+          "id": "signature:std.json:160",
+          "kind": "signature",
+          "status": "partial",
+          "reason": "The serde_json bidirectional and fragmented harness covers the portable codec; STD-CONF-001 has not yet promoted every standard-library owner.",
+          "refs": [
+            "testing/stdlib-codec-conformance.json",
+            "scripts/stdlib-codec-conformance.sh",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
+          ]
+        },
+        {
+          "id": "signature:std.json:161",
+          "kind": "signature",
+          "status": "partial",
+          "reason": "The serde_json bidirectional and fragmented harness covers the portable codec; STD-CONF-001 has not yet promoted every standard-library owner.",
+          "refs": [
+            "testing/stdlib-codec-conformance.json",
+            "scripts/stdlib-codec-conformance.sh",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
+          ]
+        },
+        {
+          "id": "signature:std.json:162",
+          "kind": "signature",
+          "status": "partial",
+          "reason": "The serde_json bidirectional and fragmented harness covers the portable codec; STD-CONF-001 has not yet promoted every standard-library owner.",
+          "refs": [
+            "testing/stdlib-codec-conformance.json",
+            "scripts/stdlib-codec-conformance.sh",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
+          ]
+        },
+        {
+          "id": "signature:std.json:163",
+          "kind": "signature",
+          "status": "partial",
+          "reason": "The serde_json bidirectional and fragmented harness covers the portable codec; STD-CONF-001 has not yet promoted every standard-library owner.",
+          "refs": [
+            "testing/stdlib-codec-conformance.json",
+            "scripts/stdlib-codec-conformance.sh",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
+          ]
+        },
+        {
+          "id": "signature:std.json:164",
+          "kind": "signature",
+          "status": "partial",
+          "reason": "The serde_json bidirectional and fragmented harness covers the portable codec; STD-CONF-001 has not yet promoted every standard-library owner.",
+          "refs": [
+            "testing/stdlib-codec-conformance.json",
+            "scripts/stdlib-codec-conformance.sh",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
+          ]
+        },
+        {
+          "id": "signature:std.json:166",
+          "kind": "signature",
+          "status": "partial",
+          "reason": "The serde_json bidirectional and fragmented harness covers the portable codec; STD-CONF-001 has not yet promoted every standard-library owner.",
+          "refs": [
+            "testing/stdlib-codec-conformance.json",
+            "scripts/stdlib-codec-conformance.sh",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
+          ]
+        },
+        {
+          "id": "signature:std.json:167",
+          "kind": "signature",
+          "status": "partial",
+          "reason": "The serde_json bidirectional and fragmented harness covers the portable codec; STD-CONF-001 has not yet promoted every standard-library owner.",
+          "refs": [
+            "testing/stdlib-codec-conformance.json",
+            "scripts/stdlib-codec-conformance.sh",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
+          ]
+        },
+        {
+          "id": "signature:std.json:168",
           "kind": "signature",
           "status": "partial",
           "reason": "The serde_json bidirectional and fragmented harness covers the portable codec; STD-CONF-001 has not yet promoted every standard-library owner.",

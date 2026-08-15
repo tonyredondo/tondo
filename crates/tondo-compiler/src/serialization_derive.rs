@@ -257,7 +257,7 @@ pub fn render_serialization_body(
             render_deserialize_impl(&mut output, declaration, &target_type)?;
         }
         SerializationDirection::Encode => {
-            render_encode_impl(&mut output, declaration, &codec)?;
+            render_encode_impl(&mut output, declaration, &target_type, &codec)?;
         }
         SerializationDirection::Decode => {
             render_decode_impl(&mut output, declaration, &target_type, &codec)?;
@@ -446,26 +446,32 @@ fn render_serialize_impl(
 fn render_encode_impl(
     output: &mut String,
     declaration: &MetaDeclaration,
+    target_type: &str,
     codec: &str,
 ) -> Result<(), SerializationDeriveError> {
     line(output, 0, "{");
     writeln!(
         output,
-        "    fn encode[E, S: serialization.Encoder[C, E]](self, encoder: var S): Unit ! E {{"
+        "    fn encode[E, S: serialization.Encoder[C, E]](value: {target_type}, encoder: var S): Unit ! E {{"
     )
     .expect("writing to String cannot fail");
     match declaration.kind() {
         MetaDeclarationKind::Record(fields) => {
-            render_record_encode_static(output, declaration, fields, "self", codec)?
+            render_record_encode_static(output, declaration, fields, target_type, codec)?
         }
         MetaDeclarationKind::Enum(variants) => {
-            render_enum_encode_static(output, declaration, variants, codec)?
+            if codec == "Json" {
+                render_json_enum_encode_static(output, declaration, variants, "value")?
+            } else {
+                render_enum_encode_static(output, declaration, variants, "value", codec)?
+            }
         }
         MetaDeclarationKind::Newtype(_) => {
+            line(output, 2, &format!("let {target_type}(inner) = value"));
             line(
                 output,
                 2,
-                "serialization.Encode[C].encode[E, S](self.value, var encoder)?",
+                "serialization.Encode[C].encode[E, S](inner, var encoder)?",
             );
         }
         MetaDeclarationKind::Trait(_) => {
@@ -483,10 +489,31 @@ fn render_record_encode_static(
     output: &mut String,
     declaration: &MetaDeclaration,
     fields: &[MetaField],
-    receiver: &str,
+    target_type: &str,
     codec: &str,
 ) -> Result<(), SerializationDeriveError> {
     let fields = field_policies(fields, codec)?;
+    let bindings = fields
+        .iter()
+        .enumerate()
+        .filter(|(_, (_, policy))| !policy.ignored)
+        .map(|(index, (field, _))| (field.name(), format!("__tondo_field_{index}")))
+        .collect::<Vec<_>>();
+    let mut pattern_fields = bindings
+        .iter()
+        .map(|(field, binding)| format!("{field}: {binding}"))
+        .collect::<Vec<_>>();
+    if fields.iter().any(|(_, policy)| policy.ignored) {
+        pattern_fields.push("..".into());
+    }
+    line(
+        output,
+        2,
+        &format!(
+            "let {target_type} {{ {} }} = value",
+            pattern_fields.join(", ")
+        ),
+    );
     line(
         output,
         2,
@@ -496,10 +523,11 @@ fn render_record_encode_static(
             fields.iter().filter(|(_, policy)| !policy.ignored).count()
         ),
     );
-    for (field, policy) in fields {
-        if policy.ignored {
-            continue;
-        }
+    for ((field, policy), (_, binding)) in fields
+        .into_iter()
+        .filter(|(_, policy)| !policy.ignored)
+        .zip(bindings)
+    {
         member_name(field.name())?;
         line(
             output,
@@ -510,9 +538,8 @@ fn render_record_encode_static(
             output,
             2,
             &format!(
-                "serialization.Encode[C].encode[E, S]({}.{}, var encoder)?",
-                receiver,
-                field.name()
+                "serialization.Encode[C].encode[E, S]({}, var encoder)?",
+                binding
             ),
         );
     }
@@ -524,9 +551,10 @@ fn render_enum_encode_static(
     output: &mut String,
     declaration: &MetaDeclaration,
     variants: &[MetaVariant],
+    receiver: &str,
     codec: &str,
 ) -> Result<(), SerializationDeriveError> {
-    line(output, 2, "match self {");
+    line(output, 2, &format!("match {receiver} {{"));
     for variant in variants {
         member_name(variant.name())?;
         let path = format!("{}.{}", declaration.identity(), variant.name());
@@ -548,15 +576,28 @@ fn render_enum_encode_static(
                 for field in fields {
                     member_name(field.name())?;
                 }
-                let names = fields
+                let bindings = fields
                     .iter()
-                    .map(|field| field.name().to_owned())
+                    .enumerate()
+                    .map(|(index, field)| (field.name(), format!("__tondo_variant_field_{index}")))
                     .collect::<Vec<_>>();
                 line(
                     output,
                     3,
-                    &format!("{} {{ {} }} => {{", path, names.join(", ")),
+                    &format!(
+                        "{} {{ {} }} => {{",
+                        path,
+                        bindings
+                            .iter()
+                            .map(|(field, binding)| format!("{field}: {binding}"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
                 );
+                let names = bindings
+                    .into_iter()
+                    .map(|(_, binding)| binding)
+                    .collect::<Vec<_>>();
                 render_enum_start_end_static(output, declaration, variant, 4, Some(&names), codec)?;
                 line(output, 3, "}");
             }
@@ -564,6 +605,112 @@ fn render_enum_encode_static(
     }
     line(output, 2, "}");
     Ok(())
+}
+
+fn render_json_enum_encode_static(
+    output: &mut String,
+    declaration: &MetaDeclaration,
+    variants: &[MetaVariant],
+    receiver: &str,
+) -> Result<(), SerializationDeriveError> {
+    line(output, 2, &format!("match {receiver} {{"));
+    for variant in variants {
+        member_name(variant.name())?;
+        let path = format!("{}.{}", declaration.identity(), variant.name());
+        match variant.payload() {
+            MetaVariantPayload::Unit => {
+                line(output, 3, &format!("{path} => {{"));
+                render_json_enum_prefix(output, variant.name(), 4);
+                line(output, 4, "encoder.null()?");
+                line(output, 4, "encoder.endRecord()?");
+                line(output, 3, "}");
+            }
+            MetaVariantPayload::Tuple(types) => {
+                let names = (0..types.len())
+                    .map(|index| format!("value_{index}"))
+                    .collect::<Vec<_>>();
+                line(output, 3, &format!("{path}({}) => {{", names.join(", ")));
+                render_json_enum_prefix(output, variant.name(), 4);
+                line(output, 4, &format!("encoder.startArray({})?", names.len()));
+                for name in &names {
+                    line(
+                        output,
+                        4,
+                        &format!("serialization.Encode[C].encode[E, S]({name}, var encoder)?"),
+                    );
+                }
+                line(output, 4, "encoder.endArray()?");
+                line(output, 4, "encoder.endRecord()?");
+                line(output, 3, "}");
+            }
+            MetaVariantPayload::Record(fields) => {
+                let fields = field_policies(fields, "Json")?;
+                let bindings = fields
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, (_, policy))| !policy.ignored)
+                    .map(|(index, (field, _))| {
+                        (field.name(), format!("__tondo_variant_field_{index}"))
+                    })
+                    .collect::<Vec<_>>();
+                let mut pattern_fields = bindings
+                    .iter()
+                    .map(|(field, binding)| format!("{field}: {binding}"))
+                    .collect::<Vec<_>>();
+                if fields.iter().any(|(_, policy)| policy.ignored) {
+                    pattern_fields.push("..".into());
+                }
+                line(
+                    output,
+                    3,
+                    &format!("{path} {{ {} }} => {{", pattern_fields.join(", ")),
+                );
+                render_json_enum_prefix(output, variant.name(), 4);
+                line(
+                    output,
+                    4,
+                    &format!(
+                        "encoder.startRecord({}, {})?",
+                        quote(declaration.identity()),
+                        fields.iter().filter(|(_, policy)| !policy.ignored).count()
+                    ),
+                );
+                for ((_, policy), (_, binding)) in fields
+                    .iter()
+                    .filter(|(_, policy)| !policy.ignored)
+                    .zip(&bindings)
+                {
+                    line(
+                        output,
+                        4,
+                        &format!("encoder.field({})?", quote(&policy.wire_name)),
+                    );
+                    line(
+                        output,
+                        4,
+                        &format!(
+                            "serialization.Encode[C].encode[E, S]({}, var encoder)?",
+                            binding
+                        ),
+                    );
+                }
+                line(output, 4, "encoder.endRecord()?");
+                line(output, 4, "encoder.endRecord()?");
+                line(output, 3, "}");
+            }
+        }
+    }
+    line(output, 2, "}");
+    Ok(())
+}
+
+fn render_json_enum_prefix(output: &mut String, variant: &str, indent: usize) {
+    line(output, indent, "encoder.startRecord(\"\", 1)?");
+    line(
+        output,
+        indent,
+        &format!("encoder.field({})?", quote(variant)),
+    );
 }
 
 fn render_enum_start_end_static(
@@ -767,7 +914,11 @@ fn render_decode_impl(
             render_record_decode_static(output, declaration, fields, codec)?
         }
         MetaDeclarationKind::Enum(variants) => {
-            render_enum_decode_static(output, declaration, variants, codec)?
+            if codec == "Json" {
+                render_json_enum_decode_static(output, declaration, variants)?
+            } else {
+                render_enum_decode_static(output, declaration, variants, codec)?
+            }
         }
         MetaDeclarationKind::Newtype(underlying) => {
             line(
@@ -983,6 +1134,140 @@ fn render_enum_decode_static(
     );
     line(output, 2, "}");
     Ok(())
+}
+
+fn render_json_enum_decode_static(
+    output: &mut String,
+    declaration: &MetaDeclaration,
+    variants: &[MetaVariant],
+) -> Result<(), SerializationDeriveError> {
+    render_expect_event(output, 2, "StartRecord(_, _)");
+    line(output, 2, "match decoder.next()? {");
+    for variant in variants {
+        member_name(variant.name())?;
+        line(
+            output,
+            3,
+            &format!(
+                "serialization.SerializationEvent.Field({}) => {{",
+                quote(variant.name())
+            ),
+        );
+        match variant.payload() {
+            MetaVariantPayload::Unit => {
+                render_expect_event(output, 4, "Null");
+                render_json_enum_end(
+                    output,
+                    4,
+                    &format!("{}.{}", declaration.identity(), variant.name()),
+                );
+            }
+            MetaVariantPayload::Tuple(types) => {
+                render_expect_event(output, 4, "StartArray(_)");
+                let mut names = Vec::new();
+                for (index, ty) in types.iter().enumerate() {
+                    let name = format!("value_{index}");
+                    line(
+                        output,
+                        4,
+                        &format!(
+                            "let {name}: {ty} = serialization.Decode[C].decode[E, D](var decoder)?"
+                        ),
+                    );
+                    names.push(name);
+                }
+                render_expect_event(output, 4, "EndArray");
+                render_json_enum_end(
+                    output,
+                    4,
+                    &format!(
+                        "{}.{}({})",
+                        declaration.identity(),
+                        variant.name(),
+                        names.join(", ")
+                    ),
+                );
+            }
+            MetaVariantPayload::Record(fields) => {
+                let fields = field_policies(fields, "Json")?;
+                render_expect_event(output, 4, "StartRecord(_, _)");
+                for (field, policy) in &fields {
+                    if policy.ignored {
+                        continue;
+                    }
+                    render_expect_event(output, 4, &format!("Field({})", quote(&policy.wire_name)));
+                    line(
+                        output,
+                        4,
+                        &format!(
+                            "let {}: {} = serialization.Decode[C].decode[E, D](var decoder)?",
+                            field.name(),
+                            field.ty()
+                        ),
+                    );
+                }
+                render_expect_event(output, 4, "EndRecord");
+                let values = fields
+                    .iter()
+                    .map(|(field, policy)| {
+                        if policy.ignored {
+                            format!("{}: none", field.name())
+                        } else {
+                            field.name().to_owned()
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                render_json_enum_end(
+                    output,
+                    4,
+                    &format!(
+                        "{}.{} {{ {} }}",
+                        declaration.identity(),
+                        variant.name(),
+                        values.join(", ")
+                    ),
+                );
+            }
+        }
+        line(output, 3, "}");
+    }
+    line(
+        output,
+        3,
+        "_ => fail decoder.reject(serialization.SerializationError.TypeMismatch)",
+    );
+    line(output, 2, "}");
+    Ok(())
+}
+
+fn render_expect_event(output: &mut String, indent: usize, pattern: &str) {
+    line(output, indent, "match decoder.next()? {");
+    line(
+        output,
+        indent + 1,
+        &format!("serialization.SerializationEvent.{pattern} => ()"),
+    );
+    line(
+        output,
+        indent + 1,
+        "_ => fail decoder.reject(serialization.SerializationError.TypeMismatch)",
+    );
+    line(output, indent, "}");
+}
+
+fn render_json_enum_end(output: &mut String, indent: usize, value: &str) {
+    line(output, indent, "match decoder.next()? {");
+    line(
+        output,
+        indent + 1,
+        &format!("serialization.SerializationEvent.EndRecord => {value}"),
+    );
+    line(
+        output,
+        indent + 1,
+        "_ => fail decoder.reject(serialization.SerializationError.TypeMismatch)",
+    );
+    line(output, indent, "}");
 }
 
 fn render_enum_end_static(
@@ -1608,6 +1893,46 @@ mod tests {
     }
 
     #[test]
+    fn json_enum_provider_uses_one_externally_tagged_object() {
+        let encoded = derive_named_codec(
+            "Choice",
+            enum_snapshot(),
+            SerializationDirection::Encode,
+            &[],
+            &[],
+            DeriveTargetKind::Enum,
+            Some("Json"),
+        )
+        .unwrap();
+        let encoded = std::str::from_utf8(encoded.response().outputs()[0].bytes()).unwrap();
+        assert!(encoded.contains("encoder.startRecord(\"\", 1)"));
+        assert!(encoded.contains("encoder.field(\"Empty\")"));
+        assert!(encoded.contains("encoder.null()"));
+        assert!(encoded.contains("encoder.field(\"Item\")"));
+        assert!(encoded.contains("encoder.startArray(1)"));
+        assert!(encoded.contains("encoder.field(\"Named\")"));
+        assert!(!encoded.contains("encoder.startEnum"));
+
+        let decoded = derive_named_codec(
+            "Choice",
+            enum_snapshot(),
+            SerializationDirection::Decode,
+            &[],
+            &[],
+            DeriveTargetKind::Enum,
+            Some("Json"),
+        )
+        .unwrap();
+        let decoded = std::str::from_utf8(decoded.response().outputs()[0].bytes()).unwrap();
+        assert!(decoded.contains("SerializationEvent.StartRecord(_, _)"));
+        assert!(decoded.contains("SerializationEvent.Field(\"Empty\")"));
+        assert!(decoded.contains("SerializationEvent.Null"));
+        assert!(decoded.contains("SerializationEvent.StartArray(_)"));
+        assert!(decoded.contains("SerializationEvent.EndArray"));
+        assert!(!decoded.contains("SerializationEvent.StartEnum"));
+    }
+
+    #[test]
     fn canonical_providers_emit_codec_generic_static_dispatch() {
         let encoded = derive(
             record_snapshot(),
@@ -1619,7 +1944,11 @@ mod tests {
         .unwrap();
         let encoded_source = std::str::from_utf8(encoded.response().outputs()[0].bytes()).unwrap();
         assert!(encoded_source.contains("fn encode[E, S: serialization.Encoder[C, E]]"));
-        assert!(encoded_source.contains("serialization.Encode[C].encode[E, S](self.id"));
+        assert!(
+            encoded_source
+                .contains("let User { id: __tondo_field_0, name: __tondo_field_1 } = value")
+        );
+        assert!(encoded_source.contains("serialization.Encode[C].encode[E, S](__tondo_field_0"));
         assert!(encoded_source.contains("encoder.startRecord(\"User\", 2)"));
 
         let decoded = derive(
@@ -1645,7 +1974,9 @@ mod tests {
         )
         .unwrap();
         let generic_source = std::str::from_utf8(generic.response().outputs()[0].bytes()).unwrap();
-        assert!(generic_source.contains("impl [T: serialization.Encode]serialization.Encode"));
+        assert!(
+            generic_source.contains("impl [T: Discard + serialization.Encode]serialization.Encode")
+        );
         assert!(generic_source.contains("for Boxed[T]"));
 
         let generic_decode = derive_named(
@@ -1859,7 +2190,7 @@ mod tests {
             )
             .unwrap();
             let source = std::str::from_utf8(execution.response().outputs()[0].bytes()).unwrap();
-            assert!(source.contains("self.value") || source.contains("UserId(value)"));
+            assert!(source.contains("UserId(inner)") || source.contains("UserId(value)"));
             assert!(source.contains("serialization::") || source.contains("serialization."));
         }
     }

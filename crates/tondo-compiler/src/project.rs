@@ -504,16 +504,10 @@ impl ProjectPlan {
         }
         nodes.push(PackageNode::new(
             self.standard.clone(),
-            package_source_id(&self.standard)?,
+            SourceId::new(BOOTSTRAP_STANDARD_PACKAGE)?,
             PackageAlias::new("tondoStd")?,
             Edition::V0_1,
-            [
-                ModulePath::new("bytes")?,
-                ModulePath::new("console")?,
-                ModulePath::new("env")?,
-                ModulePath::new("process")?,
-                ModulePath::new("time")?,
-            ],
+            crate::package::bootstrap_standard_modules()?,
             [],
         )?);
         let packages = PackageGraph::new(self.root.package.clone(), self.standard.clone(), nodes)?;

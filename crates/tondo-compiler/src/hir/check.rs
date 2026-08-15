@@ -500,6 +500,7 @@ fn serialization_prelude_method(
         ("Encoder", "endRecord") => HirSerializationTraitMethod::EncoderEndRecord,
         ("Encoder", "startEnum") => HirSerializationTraitMethod::EncoderStartEnum,
         ("Encoder", "endEnum") => HirSerializationTraitMethod::EncoderEndEnum,
+        ("Decoder", "peek") => HirSerializationTraitMethod::DecoderPeek,
         ("Decoder", "next") => HirSerializationTraitMethod::DecoderNext,
         ("Decoder", "own") => HirSerializationTraitMethod::DecoderOwn,
         ("Decoder", "reject") => HirSerializationTraitMethod::DecoderReject,
@@ -14281,6 +14282,8 @@ impl<'a> ExpressionChecker<'a> {
         let function_name = function_token.token().normalized_identifier();
         let generated_testing =
             self.sources.get(file)?.origin() == crate::source::SourceOrigin::GeneratedTesting;
+        let generated_standard =
+            self.sources.get(file)?.origin() == crate::source::SourceOrigin::GeneratedStandard;
         if module.path().as_str() == "bytes" && function_name == Some("Bytes") {
             // `bytes.Bytes(value)` is a type conversion, not a stdlib function
             // call. Leave it for the nominal-constructor checker below.
@@ -14330,11 +14333,17 @@ impl<'a> ExpressionChecker<'a> {
             match (module.path().as_str(), function_name) {
                 ("json", Some("fromBytes")) => HirBootstrapHostFunction::JsonReaderFromBytes,
                 ("json", Some("fromReader")) => HirBootstrapHostFunction::JsonReaderFromReader,
+                ("json", Some("__fromBytes")) if generated_standard => {
+                    HirBootstrapHostFunction::JsonReaderSerializationFromBytes
+                }
                 _ => return Ok(None),
             }
         } else if static_type == 8 {
             match (module.path().as_str(), function_name) {
                 ("json", Some("toWriter")) => HirBootstrapHostFunction::JsonWriterToWriter,
+                ("json", Some("__buffer")) if generated_standard => {
+                    HirBootstrapHostFunction::JsonWriterBuffer
+                }
                 _ => return Ok(None),
             }
         } else {
@@ -17840,8 +17849,38 @@ impl<'a> ExpressionChecker<'a> {
                 (IntrinsicType::JsonReader, "next") => HirBootstrapHostFunction::JsonReaderNext,
                 (IntrinsicType::JsonReader, "own") => HirBootstrapHostFunction::JsonReaderOwn,
                 (IntrinsicType::JsonReader, "finish") => HirBootstrapHostFunction::JsonReaderFinish,
+                (IntrinsicType::JsonReader, "__peekSerialization")
+                    if self.sources.get(file)?.origin()
+                        == crate::source::SourceOrigin::GeneratedStandard =>
+                {
+                    HirBootstrapHostFunction::JsonReaderSerializationPeek
+                }
+                (IntrinsicType::JsonReader, "__nextSerialization")
+                    if self.sources.get(file)?.origin()
+                        == crate::source::SourceOrigin::GeneratedStandard =>
+                {
+                    HirBootstrapHostFunction::JsonReaderSerializationNext
+                }
+                (IntrinsicType::JsonReader, "__rejectSerialization")
+                    if self.sources.get(file)?.origin()
+                        == crate::source::SourceOrigin::GeneratedStandard =>
+                {
+                    HirBootstrapHostFunction::JsonReaderSerializationReject
+                }
                 (IntrinsicType::JsonWriter, "write") => HirBootstrapHostFunction::JsonWriterWrite,
                 (IntrinsicType::JsonWriter, "finish") => HirBootstrapHostFunction::JsonWriterFinish,
+                (IntrinsicType::JsonWriter, "__write")
+                    if self.sources.get(file)?.origin()
+                        == crate::source::SourceOrigin::GeneratedStandard =>
+                {
+                    HirBootstrapHostFunction::JsonWriterBufferWrite
+                }
+                (IntrinsicType::JsonWriter, "__finish")
+                    if self.sources.get(file)?.origin()
+                        == crate::source::SourceOrigin::GeneratedStandard =>
+                {
+                    HirBootstrapHostFunction::JsonWriterBufferFinish
+                }
                 _ => return Ok(None),
             },
             _ => return Ok(None),
@@ -17889,6 +17928,11 @@ impl<'a> ExpressionChecker<'a> {
                 | HirBootstrapHostFunction::JsonReaderFinish
                 | HirBootstrapHostFunction::JsonWriterWrite
                 | HirBootstrapHostFunction::JsonWriterFinish
+                | HirBootstrapHostFunction::JsonWriterBufferWrite
+                | HirBootstrapHostFunction::JsonWriterBufferFinish
+                | HirBootstrapHostFunction::JsonReaderSerializationPeek
+                | HirBootstrapHostFunction::JsonReaderSerializationNext
+                | HirBootstrapHostFunction::JsonReaderSerializationReject
         ) {
             self.check_method_receiver(receiver, ParameterMode::Var, Some(receiver_type), context)?;
         }
@@ -19608,6 +19652,7 @@ impl<'a> ExpressionChecker<'a> {
                         &type_arguments,
                         context,
                     )?;
+                    let callable = self.json_typed_callable(callable, &type_arguments)?;
                     HirExpressionKind::SpecializedFunction {
                         callable,
                         arguments: type_arguments,
@@ -19747,6 +19792,37 @@ impl<'a> ExpressionChecker<'a> {
         }
     }
 
+    fn json_typed_callable(
+        &self,
+        callable: HirCallableId,
+        arguments: &[TypeId],
+    ) -> Result<HirCallableId, HirError> {
+        let helper_name = match callable {
+            HirCallableId::Host(HirBootstrapHostFunction::JsonEncode) => "encode",
+            HirCallableId::Host(HirBootstrapHostFunction::JsonDecode) => "decode",
+            _ => return Ok(callable),
+        };
+        let [target] = arguments else {
+            return Ok(callable);
+        };
+        if !matches!(
+            self.program.interner.kind(*target)?,
+            TypeKind::Nominal { .. }
+        ) {
+            return Ok(callable);
+        }
+        Ok(self
+            .resolved
+            .symbols()
+            .find(|symbol| {
+                symbol.kind() == SymbolKind::Function
+                    && symbol.identity().module().as_str() == "__json_typed"
+                    && symbol.name().as_str() == helper_name
+            })
+            .map(|symbol| HirCallableId::Symbol(symbol.id()))
+            .unwrap_or(callable))
+    }
+
     fn resolve_inference_type(
         &mut self,
         solver: &InferenceContext,
@@ -19854,7 +19930,8 @@ impl<'a> ExpressionChecker<'a> {
         bound_receiver: bool,
     ) -> CallShape {
         let callee_kind = self.program.expressions[callee.0 as usize].kind();
-        if matches!(callee_kind, HirExpressionKind::PreludeTraitFunction { .. }) {
+        if let HirExpressionKind::PreludeTraitFunction { method, .. } = callee_kind {
+            let has_receiver = method.has_receiver();
             let fixed = function
                 .parameters()
                 .iter()
@@ -19868,7 +19945,7 @@ impl<'a> ExpressionChecker<'a> {
                         name: None,
                         mode: parameter.mode(),
                         ty: parameter.ty(),
-                        receiver: index == 0,
+                        receiver: has_receiver && index == 0,
                     })
                 })
                 .collect();
@@ -24291,8 +24368,8 @@ fn build(input: Int, flag: Bool) {
             "import std.serialization\n\
              type User = { value: Int }\n\
              impl serialization.Encode[String] for User {\n\
-                 fn encode[E, S: serialization.Encoder[String, E]](self, encoder: var S): Unit ! E {\n\
-                     encoder.int(self.value)?\n\
+                 fn encode[E, S: serialization.Encoder[String, E]](value: Self, encoder: var S): Unit ! E {\n\
+                     encoder.int(value.value)?\n\
                  }\n\
              }\n\
              impl serialization.Decode[String] for User {\n\
@@ -30947,6 +31024,7 @@ fn build(input: Int, flag: Bool) {
             ("Encoder", "endRecord"),
             ("Encoder", "startEnum"),
             ("Encoder", "endEnum"),
+            ("Decoder", "peek"),
             ("Decoder", "next"),
             ("Decoder", "own"),
             ("Decoder", "reject"),

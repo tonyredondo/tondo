@@ -34,11 +34,13 @@ construcción atómica del resultado.
   conversiones implícitas ni reflection runtime.
 - Un decoder no publica un `T` hasta haber consumido y validado todos sus
   componentes. Un fallo deja el destino sin cambios observables.
-- Un `Decode[C]` derivado añade `Discard` solo a los parámetros genéricos que
-  aparecen en el payload. El bound permite limpiar valores parciales si un
-  cierre o field posterior es inválido. Una implementación manual puede
-  aceptar un tipo affine, pero debe consumir todos sus parciales en cada salida
-  de error; nunca se relaja el análisis de ownership para código generado.
+- Un `Encode[C]` o `Decode[C]` derivado añade `Discard` solo a los parámetros
+  genéricos que aparecen en el payload. Encode lo necesita porque el writer
+  puede fallar antes de consumir todos los fields recibidos por valor; Decode,
+  para limpiar valores parciales si un cierre o field posterior es inválido.
+  Una implementación manual puede aceptar un tipo affine, pero debe consumir
+  todo valor pendiente en cada salida de error; nunca se relaja el análisis de
+  ownership para código generado.
 - Los nombres de records, fields y variants son metadata de la expansión o del
   schema declarado. No se obtienen mediante reflection runtime.
 
@@ -71,19 +73,26 @@ pub trait Encoder[C, E] {
 }
 
 pub trait Decoder[C, E] {
+    fn peek(var self): SerializationEvent? ! E
     fn next(var self): SerializationEvent ! E
     fn own(var self, event: SerializationEvent): SerializationEvent ! E
     fn reject(var self, error: SerializationError): E
 }
 
 pub trait Encode[C] {
-    fn encode[E, S: Encoder[C, E]](self, var encoder: S): Unit ! E
+    fn encode[E, S: Encoder[C, E]](value: Self, var encoder: S): Unit ! E
 }
 
 pub trait Decode[C] {
     fn decode[E, D: Decoder[C, E]](var decoder: D): Self ! E
 }
 ```
+
+`peek` es no consumidor: dos llamadas consecutivas observan el mismo evento y
+el siguiente `next` lo consume. Devuelve `none` solo al final del stream y
+propaga el error nominal del codec si el lookahead descubre input inválido. El
+contrato permite implementar `Option`, arrays y maps estáticamente sin
+materializar un árbol dinámico ni exigir rewind al reader.
 
 `Int8`–`Int64` se emiten como `Int64` después de comprobar que la conversión
 es exacta; `UInt8`–`UInt64` se emiten como `UInt64`. `Byte` se emite mediante

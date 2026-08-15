@@ -2621,6 +2621,7 @@ impl<'a> FunctionBuilder<'a> {
                 },
             )?;
         }
+        self.register_fallback(inspect, span, self.local_place(next))?;
         self.terminate(
             inspect,
             span,
@@ -4003,6 +4004,7 @@ impl<'a> FunctionBuilder<'a> {
         let Some((block, result)) = self.lower_value(value, block)? else {
             return Ok(None);
         };
+        let result_owner = self.operand_place(&result, span)?.clone();
         let TypeKind::Result {
             success: source_success,
             error: source_error,
@@ -4065,6 +4067,7 @@ impl<'a> FunctionBuilder<'a> {
             span,
         )?;
         self.assign_operand(ok, span, destination, success)?;
+        self.push_statement(ok, span, MirStatementKind::DisarmCleanup(result_owner))?;
         let join = self.allocate_block(MirBlockKind::Normal)?;
         self.terminate(ok, span, MirTerminatorKind::Goto { target: join })?;
 
@@ -5603,6 +5606,9 @@ impl<'a> FunctionBuilder<'a> {
         });
         let consumed = if cleanup_transfer.is_none() {
             rvalue_move_places(&value)
+                .into_iter()
+                .map(|place| self.complete_sum_payload_owner(place))
+                .collect()
         } else {
             Vec::new()
         };
@@ -5617,6 +5623,28 @@ impl<'a> FunctionBuilder<'a> {
             self.register_fallback(block, span, destination_for_fallback)?;
         }
         Ok(())
+    }
+
+    fn complete_sum_payload_owner(&self, mut place: MirPlace) -> MirPlace {
+        if !matches!(
+            place.projections.last().map(MirProjection::kind),
+            Some(
+                MirProjectionKind::OptionValue
+                    | MirProjectionKind::ResultOkValue
+                    | MirProjectionKind::ResultErrValue
+                    | MirProjectionKind::UnionValue(_)
+            )
+        ) {
+            return place;
+        }
+
+        place.projections.pop();
+        place.ty = place
+            .projections
+            .last()
+            .map(MirProjection::ty)
+            .unwrap_or(self.locals[place.local.0 as usize].ty);
+        place
     }
 
     fn register_fallback(
@@ -8929,10 +8957,19 @@ mod tests {
     #[test]
     fn option_and_result_propagation_branch_to_payload_or_early_return() {
         let source = "fn source(): Int ! String { 1 }\n\
+                      fn unit_source(): Unit ! String { () }\n\
                       fn optional(): Int? { some(1) }\n\
+                      fn optional_unit(): Unit? { some(()) }\n\
                       fn widen(): Int ! (Bool | String) { source()? }\n\
                       fn unwrap_optional(): Int? { optional()? }\n\
-                      fn nested(): Int? ! String { optional()? }\n";
+                      fn unwrap_optional_unit(): Unit? { optional_unit()? }\n\
+                      fn nested(): Int? ! String { optional()? }\n\
+                      fn repeat(values: Array[Int]): Unit ! String {\n\
+                          for value in values {\n\
+                              _ = value\n\
+                              unit_source()?\n\
+                          }\n\
+                      }\n";
         let (resolved, hir) = checked(source);
         let mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
 
@@ -8950,7 +8987,7 @@ mod tests {
                 >= 2
         );
 
-        for name in ["unwrap_optional", "nested"] {
+        for name in ["unwrap_optional", "unwrap_optional_unit", "nested"] {
             let function = mir.function(function_id(&resolved, name)).unwrap();
             assert!(function.blocks().any(|block| matches!(
                 block.terminator().kind(),
@@ -8965,6 +9002,35 @@ mod tests {
                     >= 2
             );
         }
+
+        let repeat = mir.function(function_id(&resolved, "repeat")).unwrap();
+        assert!(
+            repeat
+                .blocks()
+                .flat_map(MirBasicBlock::statements)
+                .any(|statement| matches!(
+                    statement.kind(),
+                    MirStatementKind::Assign {
+                        value:
+                            MirRvalue {
+                                kind:
+                                    MirRvalueKind::Use(MirOperand {
+                                        kind: MirOperandKind::Copy(place),
+                                        ..
+                                    }),
+                                ..
+                            },
+                        ..
+                    } if matches!(
+                        place.projections().last().map(MirProjection::kind),
+                        Some(MirProjectionKind::ResultOkValue)
+                    )
+                ))
+        );
+        assert!(repeat.blocks().flat_map(MirBasicBlock::statements).any(
+            |statement| matches!(statement.kind(), MirStatementKind::DisarmCleanup(place)
+                if place.projections().is_empty())
+        ));
         verify_mir(&resolved, &hir, &mir).unwrap();
     }
 

@@ -25,9 +25,9 @@
       "section": "API fuente única",
       "include": [],
       "exclude": [],
-      "exact_surface_complete": false,
+      "exact_surface_complete": true,
       "exact_signatures": [
-        "parse", "parseView", "validate", "canonicalize", "encodeCanonical",
+        "parse", "parseView", "decode", "encode", "validate", "canonicalize", "encodeCanonical",
         "raw", "rawUnchecked", "JsonNumber.parse", "JsonNumber.text",
         "JsonNumber.toInt", "JsonNumber.toUInt", "JsonNumber.toFloat32",
         "JsonNumber.toFloat64", "JsonReader.fromBytes", "JsonReader.fromReader",
@@ -37,6 +37,8 @@
       "hir": ["crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir.rs"],
       "lowering": ["crates/tondo-compiler/src/hir/lower.rs"],
       "hir_symbols": {
+        "std.json.decode": ["JsonDecode", "json_typed_callable"],
+        "std.json.encode": ["JsonEncode", "json_typed_callable"],
         "std.json.parse": ["JsonParse"],
         "std.json.parseView": ["JsonParseView"],
         "std.json.validate": ["JsonValidate"],
@@ -60,6 +62,8 @@
         "std.json.JsonWriter.finish": ["JsonWriterFinish"]
       },
       "lowering_symbols": {
+        "std.json.decode": ["JsonDecode"],
+        "std.json.encode": ["JsonEncode"],
         "std.json.parse": ["JsonParse"],
         "std.json.parseView": ["JsonParseView"],
         "std.json.validate": ["JsonValidate"],
@@ -84,9 +88,11 @@
       },
       "runtime": {
         "kind": "host",
-        "paths": ["crates/tondo-compiler/src/process_host.rs", "crates/tondo-stdlib/src/json_api.rs"],
+        "paths": ["crates/tondo-compiler/src/process_host.rs", "crates/tondo-stdlib/src/json_api.rs", "crates/tondo-compiler/src/bootstrap/json_typed.to"],
         "reason": null,
         "symbols": {
+          "std.json.decode": ["fn decode[T: serialization.Decode[Json]]"],
+          "std.json.encode": ["fn encode[T: serialization.Encode[Json]]"],
           "std.json.validate": ["std.json.validate"],
           "std.json.canonicalize": ["std.json.canonicalize"],
           "std.json.rawUnchecked": ["std.json.rawUnchecked"]

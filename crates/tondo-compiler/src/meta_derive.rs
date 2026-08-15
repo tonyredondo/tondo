@@ -305,7 +305,7 @@ fn derive_requires_partial_value_cleanup(trait_identity: &str) -> bool {
         trait_identity
             .split_once('[')
             .map_or(trait_identity, |(base, _)| base),
-        "serialization.Decode" | "serialization.Deserialize"
+        "serialization.Encode" | "serialization.Decode" | "serialization.Deserialize"
     )
 }
 

@@ -461,26 +461,7 @@ impl PackageGraph {
             SourceId::new("toolchain:std:0.1-bootstrap")?,
             PackageAlias::new("tondoStd")?,
             Edition::V0_1,
-            [
-                ModulePath::new("bytes")?,
-                ModulePath::new("console")?,
-                ModulePath::new("process")?,
-                ModulePath::new("async")?,
-                ModulePath::new("time")?,
-                ModulePath::new("env")?,
-                ModulePath::new("math")?,
-                ModulePath::new("text")?,
-                ModulePath::new("collections")?,
-                ModulePath::new("iter")?,
-                ModulePath::new("format")?,
-                ModulePath::new("io")?,
-                ModulePath::new("serialization")?,
-                ModulePath::new("json")?,
-                ModulePath::new("messagepack")?,
-                ModulePath::new("protobuf")?,
-                ModulePath::new("path")?,
-                ModulePath::new("fs")?,
-            ],
+            bootstrap_standard_modules()?,
             [],
         )?);
         Self::new(root_id, standard_id, nodes)
@@ -671,6 +652,34 @@ impl PackageGraph {
             declaration,
         })
     }
+}
+
+pub(crate) fn bootstrap_standard_modules() -> Result<Vec<ModulePath>, PackageGraphError> {
+    [
+        "bytes",
+        "console",
+        "process",
+        "async",
+        "time",
+        "env",
+        "math",
+        "text",
+        "collections",
+        "iter",
+        "format",
+        "io",
+        "serialization",
+        "__json_typed",
+        "json",
+        "messagepack",
+        "protobuf",
+        "path",
+        "fs",
+    ]
+    .into_iter()
+    .map(ModulePath::new)
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(PackageGraphError::Source)
 }
 
 fn loose_package_id(kind: &str, source: &SourceId) -> Result<PackageId, PackageGraphError> {

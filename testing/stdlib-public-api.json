@@ -563,10 +563,12 @@
       "id": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
       "section": "API fuente única",
-      "exact_surface_complete": false,
+      "exact_surface_complete": true,
       "exact_signatures": [
         "parse",
         "parseView",
+        "decode",
+        "encode",
         "validate",
         "canonicalize",
         "encodeCanonical",
@@ -603,10 +605,17 @@
         "kind": "host",
         "paths": [
           "crates/tondo-compiler/src/process_host.rs",
-          "crates/tondo-stdlib/src/json_api.rs"
+          "crates/tondo-stdlib/src/json_api.rs",
+          "crates/tondo-compiler/src/bootstrap/json_typed.to"
         ],
         "reason": null,
         "symbols": {
+          "std.json.decode": [
+            "fn decode[T: serialization.Decode[Json]]"
+          ],
+          "std.json.encode": [
+            "fn encode[T: serialization.Encode[Json]]"
+          ],
           "std.json.validate": [
             "std.json.validate"
           ],
@@ -619,10 +628,10 @@
         }
       },
       "signature_count": 23,
-      "verified_count": 21,
-      "gap_count": 2,
+      "verified_count": 23,
+      "gap_count": 0,
       "owner_missing": [],
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "id": "std.messagepack",
@@ -4063,10 +4072,10 @@
       "status": "verified"
     },
     {
-      "id": "std.json:133",
+      "id": "std.json:143",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 133,
+      "line": 143,
       "signature": "pub fn parse(input: Bytes, options: JsonDecodeOptions): Value ! JsonError",
       "symbol": "std.json.parse",
       "operation": "parse",
@@ -4094,7 +4103,8 @@
           "kind": "host",
           "paths": [
             "crates/tondo-compiler/src/process_host.rs",
-            "crates/tondo-stdlib/src/json_api.rs"
+            "crates/tondo-stdlib/src/json_api.rs",
+            "crates/tondo-compiler/src/bootstrap/json_typed.to"
           ],
           "reason": null,
           "symbol": "std.json.parse",
@@ -4113,10 +4123,10 @@
       "status": "verified"
     },
     {
-      "id": "std.json:134",
+      "id": "std.json:144",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 134,
+      "line": 144,
       "signature": "pub fn parseView(input: Bytes, options: JsonDecodeOptions): ValueView ! JsonError",
       "symbol": "std.json.parseView",
       "operation": "parseView",
@@ -4144,7 +4154,8 @@
           "kind": "host",
           "paths": [
             "crates/tondo-compiler/src/process_host.rs",
-            "crates/tondo-stdlib/src/json_api.rs"
+            "crates/tondo-stdlib/src/json_api.rs",
+            "crates/tondo-compiler/src/bootstrap/json_typed.to"
           ],
           "reason": null,
           "symbol": "std.json.parseView",
@@ -4163,10 +4174,10 @@
       "status": "verified"
     },
     {
-      "id": "std.json:135",
+      "id": "std.json:145",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 135,
+      "line": 145,
       "signature": "pub fn decode[T: Decode[Json]](input: Bytes, options: JsonDecodeOptions): T ! JsonError",
       "symbol": "std.json.decode",
       "operation": "decode",
@@ -4178,7 +4189,8 @@
           ],
           "symbol": "decode",
           "symbols": [
-            "decode"
+            "JsonDecode",
+            "json_typed_callable"
           ]
         },
         "lowering": {
@@ -4187,19 +4199,20 @@
           ],
           "symbol": "decode",
           "symbols": [
-            "decode"
+            "JsonDecode"
           ]
         },
         "host_vm": {
           "kind": "host",
           "paths": [
             "crates/tondo-compiler/src/process_host.rs",
-            "crates/tondo-stdlib/src/json_api.rs"
+            "crates/tondo-stdlib/src/json_api.rs",
+            "crates/tondo-compiler/src/bootstrap/json_typed.to"
           ],
           "reason": null,
           "symbol": "std.json.decode",
           "symbols": [
-            "decode"
+            "fn decode[T: serialization.Decode[Json]]"
           ]
         },
         "public_case": {
@@ -4209,16 +4222,14 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
-      "id": "std.json:136",
+      "id": "std.json:146",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 136,
+      "line": 146,
       "signature": "pub fn encode[T: Encode[Json]](value: T, options: JsonEncodeOptions): Bytes ! JsonError",
       "symbol": "std.json.encode",
       "operation": "encode",
@@ -4230,7 +4241,8 @@
           ],
           "symbol": "encode",
           "symbols": [
-            "encode"
+            "JsonEncode",
+            "json_typed_callable"
           ]
         },
         "lowering": {
@@ -4239,19 +4251,20 @@
           ],
           "symbol": "encode",
           "symbols": [
-            "encode"
+            "JsonEncode"
           ]
         },
         "host_vm": {
           "kind": "host",
           "paths": [
             "crates/tondo-compiler/src/process_host.rs",
-            "crates/tondo-stdlib/src/json_api.rs"
+            "crates/tondo-stdlib/src/json_api.rs",
+            "crates/tondo-compiler/src/bootstrap/json_typed.to"
           ],
           "reason": null,
           "symbol": "std.json.encode",
           "symbols": [
-            "encode"
+            "fn encode[T: serialization.Encode[Json]]"
           ]
         },
         "public_case": {
@@ -4261,16 +4274,14 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
-      "id": "std.json:137",
+      "id": "std.json:147",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 137,
+      "line": 147,
       "signature": "pub fn validate(input: Bytes, options: JsonDecodeOptions): Unit ! JsonError",
       "symbol": "std.json.validate",
       "operation": "validate",
@@ -4298,7 +4309,8 @@
           "kind": "host",
           "paths": [
             "crates/tondo-compiler/src/process_host.rs",
-            "crates/tondo-stdlib/src/json_api.rs"
+            "crates/tondo-stdlib/src/json_api.rs",
+            "crates/tondo-compiler/src/bootstrap/json_typed.to"
           ],
           "reason": null,
           "symbol": "std.json.validate",
@@ -4317,10 +4329,10 @@
       "status": "verified"
     },
     {
-      "id": "std.json:138",
+      "id": "std.json:148",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 138,
+      "line": 148,
       "signature": "pub fn canonicalize(input: Bytes, options: JsonDecodeOptions): Bytes ! JsonError",
       "symbol": "std.json.canonicalize",
       "operation": "canonicalize",
@@ -4348,7 +4360,8 @@
           "kind": "host",
           "paths": [
             "crates/tondo-compiler/src/process_host.rs",
-            "crates/tondo-stdlib/src/json_api.rs"
+            "crates/tondo-stdlib/src/json_api.rs",
+            "crates/tondo-compiler/src/bootstrap/json_typed.to"
           ],
           "reason": null,
           "symbol": "std.json.canonicalize",
@@ -4367,10 +4380,10 @@
       "status": "verified"
     },
     {
-      "id": "std.json:139",
+      "id": "std.json:149",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 139,
+      "line": 149,
       "signature": "pub fn encodeCanonical(value: Value, limits: JsonLimits): Bytes ! JsonError",
       "symbol": "std.json.encodeCanonical",
       "operation": "encodeCanonical",
@@ -4398,7 +4411,8 @@
           "kind": "host",
           "paths": [
             "crates/tondo-compiler/src/process_host.rs",
-            "crates/tondo-stdlib/src/json_api.rs"
+            "crates/tondo-stdlib/src/json_api.rs",
+            "crates/tondo-compiler/src/bootstrap/json_typed.to"
           ],
           "reason": null,
           "symbol": "std.json.encodeCanonical",
@@ -4417,10 +4431,10 @@
       "status": "verified"
     },
     {
-      "id": "std.json:140",
+      "id": "std.json:150",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 140,
+      "line": 150,
       "signature": "pub fn raw(input: Bytes): Raw ! JsonError",
       "symbol": "std.json.raw",
       "operation": "raw",
@@ -4448,7 +4462,8 @@
           "kind": "host",
           "paths": [
             "crates/tondo-compiler/src/process_host.rs",
-            "crates/tondo-stdlib/src/json_api.rs"
+            "crates/tondo-stdlib/src/json_api.rs",
+            "crates/tondo-compiler/src/bootstrap/json_typed.to"
           ],
           "reason": null,
           "symbol": "std.json.raw",
@@ -4467,10 +4482,10 @@
       "status": "verified"
     },
     {
-      "id": "std.json:141",
+      "id": "std.json:151",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 141,
+      "line": 151,
       "signature": "pub unsafe fn rawUnchecked(input: Bytes): Raw",
       "symbol": "std.json.rawUnchecked",
       "operation": "rawUnchecked",
@@ -4498,7 +4513,8 @@
           "kind": "host",
           "paths": [
             "crates/tondo-compiler/src/process_host.rs",
-            "crates/tondo-stdlib/src/json_api.rs"
+            "crates/tondo-stdlib/src/json_api.rs",
+            "crates/tondo-compiler/src/bootstrap/json_typed.to"
           ],
           "reason": null,
           "symbol": "std.json.rawUnchecked",
@@ -4517,10 +4533,10 @@
       "status": "verified"
     },
     {
-      "id": "std.json:143",
+      "id": "std.json:153",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 143,
+      "line": 153,
       "signature": "pub fn JsonNumber.parse(text: String): JsonNumber ! JsonError",
       "symbol": "std.json.JsonNumber.parse",
       "operation": "parse",
@@ -4548,7 +4564,8 @@
           "kind": "host",
           "paths": [
             "crates/tondo-compiler/src/process_host.rs",
-            "crates/tondo-stdlib/src/json_api.rs"
+            "crates/tondo-stdlib/src/json_api.rs",
+            "crates/tondo-compiler/src/bootstrap/json_typed.to"
           ],
           "reason": null,
           "symbol": "std.json.JsonNumber.parse",
@@ -4567,10 +4584,10 @@
       "status": "verified"
     },
     {
-      "id": "std.json:144",
+      "id": "std.json:154",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 144,
+      "line": 154,
       "signature": "pub fn JsonNumber.text(self): String",
       "symbol": "std.json.JsonNumber.text",
       "operation": "text",
@@ -4598,7 +4615,8 @@
           "kind": "host",
           "paths": [
             "crates/tondo-compiler/src/process_host.rs",
-            "crates/tondo-stdlib/src/json_api.rs"
+            "crates/tondo-stdlib/src/json_api.rs",
+            "crates/tondo-compiler/src/bootstrap/json_typed.to"
           ],
           "reason": null,
           "symbol": "std.json.JsonNumber.text",
@@ -4617,10 +4635,10 @@
       "status": "verified"
     },
     {
-      "id": "std.json:145",
+      "id": "std.json:155",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 145,
+      "line": 155,
       "signature": "pub fn JsonNumber.toInt(self): Int64 ! JsonError",
       "symbol": "std.json.JsonNumber.toInt",
       "operation": "toInt",
@@ -4648,7 +4666,8 @@
           "kind": "host",
           "paths": [
             "crates/tondo-compiler/src/process_host.rs",
-            "crates/tondo-stdlib/src/json_api.rs"
+            "crates/tondo-stdlib/src/json_api.rs",
+            "crates/tondo-compiler/src/bootstrap/json_typed.to"
           ],
           "reason": null,
           "symbol": "std.json.JsonNumber.toInt",
@@ -4667,10 +4686,10 @@
       "status": "verified"
     },
     {
-      "id": "std.json:146",
+      "id": "std.json:156",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 146,
+      "line": 156,
       "signature": "pub fn JsonNumber.toUInt(self): UInt64 ! JsonError",
       "symbol": "std.json.JsonNumber.toUInt",
       "operation": "toUInt",
@@ -4698,7 +4717,8 @@
           "kind": "host",
           "paths": [
             "crates/tondo-compiler/src/process_host.rs",
-            "crates/tondo-stdlib/src/json_api.rs"
+            "crates/tondo-stdlib/src/json_api.rs",
+            "crates/tondo-compiler/src/bootstrap/json_typed.to"
           ],
           "reason": null,
           "symbol": "std.json.JsonNumber.toUInt",
@@ -4717,10 +4737,10 @@
       "status": "verified"
     },
     {
-      "id": "std.json:147",
+      "id": "std.json:157",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 147,
+      "line": 157,
       "signature": "pub fn JsonNumber.toFloat32(self): Float32 ! JsonError",
       "symbol": "std.json.JsonNumber.toFloat32",
       "operation": "toFloat32",
@@ -4748,7 +4768,8 @@
           "kind": "host",
           "paths": [
             "crates/tondo-compiler/src/process_host.rs",
-            "crates/tondo-stdlib/src/json_api.rs"
+            "crates/tondo-stdlib/src/json_api.rs",
+            "crates/tondo-compiler/src/bootstrap/json_typed.to"
           ],
           "reason": null,
           "symbol": "std.json.JsonNumber.toFloat32",
@@ -4767,10 +4788,10 @@
       "status": "verified"
     },
     {
-      "id": "std.json:148",
+      "id": "std.json:158",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 148,
+      "line": 158,
       "signature": "pub fn JsonNumber.toFloat64(self): Float64 ! JsonError",
       "symbol": "std.json.JsonNumber.toFloat64",
       "operation": "toFloat64",
@@ -4798,7 +4819,8 @@
           "kind": "host",
           "paths": [
             "crates/tondo-compiler/src/process_host.rs",
-            "crates/tondo-stdlib/src/json_api.rs"
+            "crates/tondo-stdlib/src/json_api.rs",
+            "crates/tondo-compiler/src/bootstrap/json_typed.to"
           ],
           "reason": null,
           "symbol": "std.json.JsonNumber.toFloat64",
@@ -4817,10 +4839,10 @@
       "status": "verified"
     },
     {
-      "id": "std.json:150",
+      "id": "std.json:160",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 150,
+      "line": 160,
       "signature": "pub fn JsonReader.fromBytes(input: Bytes, options: JsonDecodeOptions): JsonReader ! JsonError",
       "symbol": "std.json.JsonReader.fromBytes",
       "operation": "fromBytes",
@@ -4848,7 +4870,8 @@
           "kind": "host",
           "paths": [
             "crates/tondo-compiler/src/process_host.rs",
-            "crates/tondo-stdlib/src/json_api.rs"
+            "crates/tondo-stdlib/src/json_api.rs",
+            "crates/tondo-compiler/src/bootstrap/json_typed.to"
           ],
           "reason": null,
           "symbol": "std.json.JsonReader.fromBytes",
@@ -4867,10 +4890,10 @@
       "status": "verified"
     },
     {
-      "id": "std.json:151",
+      "id": "std.json:161",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 151,
+      "line": 161,
       "signature": "pub fn JsonReader.fromReader(var input: Reader, options: JsonDecodeOptions): JsonReader ! JsonError",
       "symbol": "std.json.JsonReader.fromReader",
       "operation": "fromReader",
@@ -4898,7 +4921,8 @@
           "kind": "host",
           "paths": [
             "crates/tondo-compiler/src/process_host.rs",
-            "crates/tondo-stdlib/src/json_api.rs"
+            "crates/tondo-stdlib/src/json_api.rs",
+            "crates/tondo-compiler/src/bootstrap/json_typed.to"
           ],
           "reason": null,
           "symbol": "std.json.JsonReader.fromReader",
@@ -4917,10 +4941,10 @@
       "status": "verified"
     },
     {
-      "id": "std.json:152",
+      "id": "std.json:162",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 152,
+      "line": 162,
       "signature": "pub fn JsonReader.next(var self): JsonEvent? ! JsonError",
       "symbol": "std.json.JsonReader.next",
       "operation": "next",
@@ -4948,7 +4972,8 @@
           "kind": "host",
           "paths": [
             "crates/tondo-compiler/src/process_host.rs",
-            "crates/tondo-stdlib/src/json_api.rs"
+            "crates/tondo-stdlib/src/json_api.rs",
+            "crates/tondo-compiler/src/bootstrap/json_typed.to"
           ],
           "reason": null,
           "symbol": "std.json.JsonReader.next",
@@ -4967,10 +4992,10 @@
       "status": "verified"
     },
     {
-      "id": "std.json:153",
+      "id": "std.json:163",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 153,
+      "line": 163,
       "signature": "pub fn JsonReader.own(var self, event: JsonEvent): JsonEvent ! JsonError",
       "symbol": "std.json.JsonReader.own",
       "operation": "own",
@@ -4998,7 +5023,8 @@
           "kind": "host",
           "paths": [
             "crates/tondo-compiler/src/process_host.rs",
-            "crates/tondo-stdlib/src/json_api.rs"
+            "crates/tondo-stdlib/src/json_api.rs",
+            "crates/tondo-compiler/src/bootstrap/json_typed.to"
           ],
           "reason": null,
           "symbol": "std.json.JsonReader.own",
@@ -5017,10 +5043,10 @@
       "status": "verified"
     },
     {
-      "id": "std.json:154",
+      "id": "std.json:164",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 154,
+      "line": 164,
       "signature": "pub fn JsonReader.finish(var self): Unit ! JsonError",
       "symbol": "std.json.JsonReader.finish",
       "operation": "finish",
@@ -5048,7 +5074,8 @@
           "kind": "host",
           "paths": [
             "crates/tondo-compiler/src/process_host.rs",
-            "crates/tondo-stdlib/src/json_api.rs"
+            "crates/tondo-stdlib/src/json_api.rs",
+            "crates/tondo-compiler/src/bootstrap/json_typed.to"
           ],
           "reason": null,
           "symbol": "std.json.JsonReader.finish",
@@ -5067,10 +5094,10 @@
       "status": "verified"
     },
     {
-      "id": "std.json:156",
+      "id": "std.json:166",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 156,
+      "line": 166,
       "signature": "pub fn JsonWriter.toWriter(var output: Writer, options: JsonEncodeOptions): JsonWriter ! JsonError",
       "symbol": "std.json.JsonWriter.toWriter",
       "operation": "toWriter",
@@ -5098,7 +5125,8 @@
           "kind": "host",
           "paths": [
             "crates/tondo-compiler/src/process_host.rs",
-            "crates/tondo-stdlib/src/json_api.rs"
+            "crates/tondo-stdlib/src/json_api.rs",
+            "crates/tondo-compiler/src/bootstrap/json_typed.to"
           ],
           "reason": null,
           "symbol": "std.json.JsonWriter.toWriter",
@@ -5117,10 +5145,10 @@
       "status": "verified"
     },
     {
-      "id": "std.json:157",
+      "id": "std.json:167",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 157,
+      "line": 167,
       "signature": "pub fn JsonWriter.write(var self, event: JsonEvent): Unit ! JsonError",
       "symbol": "std.json.JsonWriter.write",
       "operation": "write",
@@ -5148,7 +5176,8 @@
           "kind": "host",
           "paths": [
             "crates/tondo-compiler/src/process_host.rs",
-            "crates/tondo-stdlib/src/json_api.rs"
+            "crates/tondo-stdlib/src/json_api.rs",
+            "crates/tondo-compiler/src/bootstrap/json_typed.to"
           ],
           "reason": null,
           "symbol": "std.json.JsonWriter.write",
@@ -5167,10 +5196,10 @@
       "status": "verified"
     },
     {
-      "id": "std.json:158",
+      "id": "std.json:168",
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
-      "line": 158,
+      "line": 168,
       "signature": "pub fn JsonWriter.finish(var self): Unit ! JsonError",
       "symbol": "std.json.JsonWriter.finish",
       "operation": "finish",
@@ -5198,7 +5227,8 @@
           "kind": "host",
           "paths": [
             "crates/tondo-compiler/src/process_host.rs",
-            "crates/tondo-stdlib/src/json_api.rs"
+            "crates/tondo-stdlib/src/json_api.rs",
+            "crates/tondo-compiler/src/bootstrap/json_typed.to"
           ],
           "reason": null,
           "symbol": "std.json.JsonWriter.finish",
@@ -11078,9 +11108,9 @@
   "summary": {
     "owners": 20,
     "signatures": 209,
-    "verified": 175,
-    "signature_gaps": 34,
+    "verified": 177,
+    "signature_gaps": 32,
     "owner_gaps": 3,
-    "gaps": 37
+    "gaps": 35
   }
 }

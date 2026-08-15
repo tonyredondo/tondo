@@ -293,6 +293,8 @@ impl Span {
 pub enum SourceOrigin {
     Physical,
     Virtual,
+    /// Compiler-owned source that implements the bootstrap standard library.
+    GeneratedStandard,
     /// Compiler-owned source emitted by a hermetic meta provider.
     GeneratedMeta,
     /// Compiler-owned source produced from `suite`/`test` declarations.

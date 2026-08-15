@@ -1,0 +1,562 @@
+import std.bytes
+import std.collections
+import std.json
+import std.serialization
+
+type JsonEncoder = { writer: json.JsonWriter }
+type JsonDecoder = { reader: json.JsonReader }
+
+impl serialization.Encoder[Json, json.JsonError] for JsonEncoder {
+    fn null(var self): Unit ! json.JsonError {
+        self.writer.__write(serialization.SerializationEvent.Null)
+    }
+
+    fn bool(var self, value: Bool): Unit ! json.JsonError {
+        self.writer.__write(serialization.SerializationEvent.Bool(value))
+    }
+
+    fn int(var self, value: Int64): Unit ! json.JsonError {
+        self.writer.__write(serialization.SerializationEvent.Int(value))
+    }
+
+    fn uint(var self, value: UInt64): Unit ! json.JsonError {
+        self.writer.__write(serialization.SerializationEvent.UInt(value))
+    }
+
+    fn float32(var self, value: Float32): Unit ! json.JsonError {
+        self.writer.__write(serialization.SerializationEvent.Float32(value))
+    }
+
+    fn float64(var self, value: Float64): Unit ! json.JsonError {
+        self.writer.__write(serialization.SerializationEvent.Float64(value))
+    }
+
+    fn string(var self, value: String): Unit ! json.JsonError {
+        self.writer.__write(serialization.SerializationEvent.String(value))
+    }
+
+    fn bytes(var self, value: bytes.Bytes): Unit ! json.JsonError {
+        self.writer.__write(serialization.SerializationEvent.Bytes(value))
+    }
+
+    fn startArray(var self, length: Int?): Unit ! json.JsonError {
+        self.writer.__write(serialization.SerializationEvent.StartArray(length))
+    }
+
+    fn endArray(var self): Unit ! json.JsonError {
+        self.writer.__write(serialization.SerializationEvent.EndArray)
+    }
+
+    fn startMap(var self, length: Int?): Unit ! json.JsonError {
+        self.writer.__write(serialization.SerializationEvent.StartMap(length))
+    }
+
+    fn mapKey(var self): Unit ! json.JsonError {
+        self.writer.__write(serialization.SerializationEvent.MapKey)
+    }
+
+    fn endMap(var self): Unit ! json.JsonError {
+        self.writer.__write(serialization.SerializationEvent.EndMap)
+    }
+
+    fn startRecord(var self, name: String, fields: Int?): Unit ! json.JsonError {
+        self.writer.__write(serialization.SerializationEvent.StartRecord(name, fields))
+    }
+
+    fn field(var self, name: String): Unit ! json.JsonError {
+        self.writer.__write(serialization.SerializationEvent.Field(name))
+    }
+
+    fn endRecord(var self): Unit ! json.JsonError {
+        self.writer.__write(serialization.SerializationEvent.EndRecord)
+    }
+
+    fn startEnum(var self, name: String, variant: String): Unit ! json.JsonError {
+        self.writer.__write(serialization.SerializationEvent.StartEnum(name, variant))
+    }
+
+    fn endEnum(var self): Unit ! json.JsonError {
+        self.writer.__write(serialization.SerializationEvent.EndEnum)
+    }
+}
+
+impl serialization.Decoder[Json, json.JsonError] for JsonDecoder {
+    fn peek(var self): serialization.SerializationEvent? ! json.JsonError {
+        self.reader.__peekSerialization()
+    }
+
+    fn next(var self): serialization.SerializationEvent ! json.JsonError {
+        self.reader.__nextSerialization()
+    }
+
+    fn own(
+        var self,
+        event: serialization.SerializationEvent,
+    ): serialization.SerializationEvent ! json.JsonError {
+        event
+    }
+
+    fn reject(
+        var self,
+        error: serialization.SerializationError,
+    ): json.JsonError {
+        self.reader.__rejectSerialization(error)
+    }
+}
+
+impl serialization.Encode[Json] for Unit {
+    fn encode[E, S: serialization.Encoder[Json, E]](
+        value: Self,
+        encoder: var S,
+    ): Unit ! E {
+        encoder.null()
+    }
+}
+
+impl serialization.Decode[Json] for Unit {
+    fn decode[E, D: serialization.Decoder[Json, E]](
+        decoder: var D,
+    ): Unit ! E {
+        match decoder.next()? {
+            serialization.SerializationEvent.Null => ()
+            _ => fail decoder.reject(serialization.SerializationError.TypeMismatch)
+        }
+    }
+}
+
+impl serialization.Encode[Json] for Bool {
+    fn encode[E, S: serialization.Encoder[Json, E]](
+        value: Self,
+        encoder: var S,
+    ): Unit ! E {
+        encoder.bool(value)
+    }
+}
+
+impl serialization.Decode[Json] for Bool {
+    fn decode[E, D: serialization.Decoder[Json, E]](
+        decoder: var D,
+    ): Bool ! E {
+        match decoder.next()? {
+            serialization.SerializationEvent.Bool(value) => value
+            _ => fail decoder.reject(serialization.SerializationError.TypeMismatch)
+        }
+    }
+}
+
+impl serialization.Encode[Json] for Int {
+    fn encode[E, S: serialization.Encoder[Json, E]](
+        value: Self,
+        encoder: var S,
+    ): Unit ! E {
+        encoder.int(value)
+    }
+}
+
+impl serialization.Decode[Json] for Int {
+    fn decode[E, D: serialization.Decoder[Json, E]](
+        decoder: var D,
+    ): Int ! E {
+        match decoder.next()? {
+            serialization.SerializationEvent.Int(value) => value
+            _ => fail decoder.reject(serialization.SerializationError.TypeMismatch)
+        }
+    }
+}
+
+impl serialization.Encode[Json] for String {
+    fn encode[E, S: serialization.Encoder[Json, E]](
+        value: Self,
+        encoder: var S,
+    ): Unit ! E {
+        encoder.string(value)
+    }
+}
+
+impl serialization.Decode[Json] for String {
+    fn decode[E, D: serialization.Decoder[Json, E]](
+        decoder: var D,
+    ): String ! E {
+        match decoder.next()? {
+            serialization.SerializationEvent.String(value) => value
+            _ => fail decoder.reject(serialization.SerializationError.TypeMismatch)
+        }
+    }
+}
+
+impl serialization.Encode[Json] for Byte {
+    fn encode[E, S: serialization.Encoder[Json, E]](value: Self, encoder: var S): Unit ! E {
+        encoder.uint(UInt64(value))
+    }
+}
+
+impl serialization.Decode[Json] for Byte {
+    fn decode[E, D: serialization.Decoder[Json, E]](decoder: var D): Byte ! E {
+        match decoder.next()? {
+            serialization.SerializationEvent.Int(value) => match Byte(value) {
+                ok(converted) => converted
+                err(_) => fail decoder.reject(serialization.SerializationError.TypeMismatch)
+            }
+            serialization.SerializationEvent.UInt(value) => match Byte(value) {
+                ok(converted) => converted
+                err(_) => fail decoder.reject(serialization.SerializationError.TypeMismatch)
+            }
+            _ => fail decoder.reject(serialization.SerializationError.TypeMismatch)
+        }
+    }
+}
+
+impl serialization.Encode[Json] for Int8 {
+    fn encode[E, S: serialization.Encoder[Json, E]](value: Self, encoder: var S): Unit ! E {
+        encoder.int(Int(value))
+    }
+}
+
+impl serialization.Decode[Json] for Int8 {
+    fn decode[E, D: serialization.Decoder[Json, E]](decoder: var D): Int8 ! E {
+        match decoder.next()? {
+            serialization.SerializationEvent.Int(value) => match Int8(value) {
+                ok(converted) => converted
+                err(_) => fail decoder.reject(serialization.SerializationError.TypeMismatch)
+            }
+            serialization.SerializationEvent.UInt(value) => match Int8(value) {
+                ok(converted) => converted
+                err(_) => fail decoder.reject(serialization.SerializationError.TypeMismatch)
+            }
+            _ => fail decoder.reject(serialization.SerializationError.TypeMismatch)
+        }
+    }
+}
+
+impl serialization.Encode[Json] for Int16 {
+    fn encode[E, S: serialization.Encoder[Json, E]](value: Self, encoder: var S): Unit ! E {
+        encoder.int(Int(value))
+    }
+}
+
+impl serialization.Decode[Json] for Int16 {
+    fn decode[E, D: serialization.Decoder[Json, E]](decoder: var D): Int16 ! E {
+        match decoder.next()? {
+            serialization.SerializationEvent.Int(value) => match Int16(value) {
+                ok(converted) => converted
+                err(_) => fail decoder.reject(serialization.SerializationError.TypeMismatch)
+            }
+            serialization.SerializationEvent.UInt(value) => match Int16(value) {
+                ok(converted) => converted
+                err(_) => fail decoder.reject(serialization.SerializationError.TypeMismatch)
+            }
+            _ => fail decoder.reject(serialization.SerializationError.TypeMismatch)
+        }
+    }
+}
+
+impl serialization.Encode[Json] for Int32 {
+    fn encode[E, S: serialization.Encoder[Json, E]](value: Self, encoder: var S): Unit ! E {
+        encoder.int(Int(value))
+    }
+}
+
+impl serialization.Decode[Json] for Int32 {
+    fn decode[E, D: serialization.Decoder[Json, E]](decoder: var D): Int32 ! E {
+        match decoder.next()? {
+            serialization.SerializationEvent.Int(value) => match Int32(value) {
+                ok(converted) => converted
+                err(_) => fail decoder.reject(serialization.SerializationError.TypeMismatch)
+            }
+            serialization.SerializationEvent.UInt(value) => match Int32(value) {
+                ok(converted) => converted
+                err(_) => fail decoder.reject(serialization.SerializationError.TypeMismatch)
+            }
+            _ => fail decoder.reject(serialization.SerializationError.TypeMismatch)
+        }
+    }
+}
+
+impl serialization.Encode[Json] for UInt8 {
+    fn encode[E, S: serialization.Encoder[Json, E]](value: Self, encoder: var S): Unit ! E {
+        encoder.uint(UInt64(value))
+    }
+}
+
+impl serialization.Decode[Json] for UInt8 {
+    fn decode[E, D: serialization.Decoder[Json, E]](decoder: var D): UInt8 ! E {
+        match decoder.next()? {
+            serialization.SerializationEvent.Int(value) => match UInt8(value) {
+                ok(converted) => converted
+                err(_) => fail decoder.reject(serialization.SerializationError.TypeMismatch)
+            }
+            serialization.SerializationEvent.UInt(value) => match UInt8(value) {
+                ok(converted) => converted
+                err(_) => fail decoder.reject(serialization.SerializationError.TypeMismatch)
+            }
+            _ => fail decoder.reject(serialization.SerializationError.TypeMismatch)
+        }
+    }
+}
+
+impl serialization.Encode[Json] for UInt16 {
+    fn encode[E, S: serialization.Encoder[Json, E]](value: Self, encoder: var S): Unit ! E {
+        encoder.uint(UInt64(value))
+    }
+}
+
+impl serialization.Decode[Json] for UInt16 {
+    fn decode[E, D: serialization.Decoder[Json, E]](decoder: var D): UInt16 ! E {
+        match decoder.next()? {
+            serialization.SerializationEvent.Int(value) => match UInt16(value) {
+                ok(converted) => converted
+                err(_) => fail decoder.reject(serialization.SerializationError.TypeMismatch)
+            }
+            serialization.SerializationEvent.UInt(value) => match UInt16(value) {
+                ok(converted) => converted
+                err(_) => fail decoder.reject(serialization.SerializationError.TypeMismatch)
+            }
+            _ => fail decoder.reject(serialization.SerializationError.TypeMismatch)
+        }
+    }
+}
+
+impl serialization.Encode[Json] for UInt32 {
+    fn encode[E, S: serialization.Encoder[Json, E]](value: Self, encoder: var S): Unit ! E {
+        encoder.uint(UInt64(value))
+    }
+}
+
+impl serialization.Decode[Json] for UInt32 {
+    fn decode[E, D: serialization.Decoder[Json, E]](decoder: var D): UInt32 ! E {
+        match decoder.next()? {
+            serialization.SerializationEvent.Int(value) => match UInt32(value) {
+                ok(converted) => converted
+                err(_) => fail decoder.reject(serialization.SerializationError.TypeMismatch)
+            }
+            serialization.SerializationEvent.UInt(value) => match UInt32(value) {
+                ok(converted) => converted
+                err(_) => fail decoder.reject(serialization.SerializationError.TypeMismatch)
+            }
+            _ => fail decoder.reject(serialization.SerializationError.TypeMismatch)
+        }
+    }
+}
+
+impl serialization.Encode[Json] for UInt64 {
+    fn encode[E, S: serialization.Encoder[Json, E]](value: Self, encoder: var S): Unit ! E {
+        encoder.uint(value)
+    }
+}
+
+impl serialization.Decode[Json] for UInt64 {
+    fn decode[E, D: serialization.Decoder[Json, E]](decoder: var D): UInt64 ! E {
+        match decoder.next()? {
+            serialization.SerializationEvent.Int(value) => match UInt64(value) {
+                ok(converted) => converted
+                err(_) => fail decoder.reject(serialization.SerializationError.TypeMismatch)
+            }
+            serialization.SerializationEvent.UInt(value) => value
+            _ => fail decoder.reject(serialization.SerializationError.TypeMismatch)
+        }
+    }
+}
+
+impl serialization.Encode[Json] for Float32 {
+    fn encode[E, S: serialization.Encoder[Json, E]](value: Self, encoder: var S): Unit ! E {
+        encoder.float32(value)
+    }
+}
+
+impl serialization.Decode[Json] for Float32 {
+    fn decode[E, D: serialization.Decoder[Json, E]](decoder: var D): Float32 ! E {
+        match decoder.next()? {
+            serialization.SerializationEvent.Float32(value) => value
+            serialization.SerializationEvent.Float64(value) => match Float32(value) {
+                ok(converted) => converted
+                err(_) => fail decoder.reject(serialization.SerializationError.TypeMismatch)
+            }
+            serialization.SerializationEvent.Int(value) => Float32(value)
+            serialization.SerializationEvent.UInt(value) => Float32(value)
+            _ => fail decoder.reject(serialization.SerializationError.TypeMismatch)
+        }
+    }
+}
+
+impl serialization.Encode[Json] for Float64 {
+    fn encode[E, S: serialization.Encoder[Json, E]](value: Self, encoder: var S): Unit ! E {
+        encoder.float64(value)
+    }
+}
+
+impl serialization.Decode[Json] for Float64 {
+    fn decode[E, D: serialization.Decoder[Json, E]](decoder: var D): Float64 ! E {
+        match decoder.next()? {
+            serialization.SerializationEvent.Float32(value) => Float64(value)
+            serialization.SerializationEvent.Float64(value) => value
+            serialization.SerializationEvent.Int(value) => Float64(value)
+            serialization.SerializationEvent.UInt(value) => Float64(value)
+            _ => fail decoder.reject(serialization.SerializationError.TypeMismatch)
+        }
+    }
+}
+
+impl serialization.Encode[Json] for Char {
+    fn encode[E, S: serialization.Encoder[Json, E]](value: Self, encoder: var S): Unit ! E {
+        encoder.string("{value}")
+    }
+}
+
+impl serialization.Decode[Json] for Char {
+    fn decode[E, D: serialization.Decoder[Json, E]](decoder: var D): Char ! E {
+        match decoder.next()? {
+            serialization.SerializationEvent.String(value) => {
+                if value.length() == 1 {
+                    match value.get(0) {
+                        some(character) => character
+                        none => fail decoder.reject(serialization.SerializationError.TypeMismatch)
+                    }
+                } else {
+                    fail decoder.reject(serialization.SerializationError.TypeMismatch)
+                }
+            }
+            _ => fail decoder.reject(serialization.SerializationError.TypeMismatch)
+        }
+    }
+}
+
+impl serialization.Encode[Json] for bytes.Bytes {
+    fn encode[E, S: serialization.Encoder[Json, E]](value: Self, encoder: var S): Unit ! E {
+        encoder.bytes(value)
+    }
+}
+
+impl serialization.Decode[Json] for bytes.Bytes {
+    fn decode[E, D: serialization.Decoder[Json, E]](decoder: var D): bytes.Bytes ! E {
+        match decoder.next()? {
+            serialization.SerializationEvent.Bytes(value) => value
+            _ => fail decoder.reject(serialization.SerializationError.TypeMismatch)
+        }
+    }
+}
+
+impl[T: serialization.Encode[Json]] serialization.Encode[Json] for T? {
+    fn encode[E, S: serialization.Encoder[Json, E]](value: Self, encoder: var S): Unit ! E {
+        match value {
+            some(item) => serialization.Encode[Json].encode[E, S](item, var encoder)
+            none => encoder.null()
+        }
+    }
+}
+
+impl[T: serialization.Decode[Json]] serialization.Decode[Json] for T? {
+    fn decode[E, D: serialization.Decoder[Json, E]](decoder: var D): T? ! E {
+        match decoder.peek()? {
+            some(serialization.SerializationEvent.Null) => {
+                _ = decoder.next()?
+                none
+            }
+            some(_) => some(serialization.Decode[Json].decode[E, D](var decoder)?)
+            none => fail decoder.reject(serialization.SerializationError.UnexpectedEvent)
+        }
+    }
+}
+
+impl[T: Discard + serialization.Encode[Json]] serialization.Encode[Json] for Array[T] {
+    fn encode[E, S: serialization.Encoder[Json, E]](value: Self, encoder: var S): Unit ! E {
+        encoder.startArray(none)?
+        for item in value {
+            serialization.Encode[Json].encode[E, S](item, var encoder)?
+        }
+        encoder.endArray()
+    }
+}
+
+impl[T: Discard + serialization.Decode[Json]] serialization.Decode[Json] for Array[T] {
+    fn decode[E, D: serialization.Decoder[Json, E]](decoder: var D): Array[T] ! E {
+        match decoder.next()? {
+            serialization.SerializationEvent.StartArray(_) => ()
+            _ => fail decoder.reject(serialization.SerializationError.TypeMismatch)
+        }
+        var values = Array.new[T]()
+        for {
+            match decoder.peek()? {
+                some(serialization.SerializationEvent.EndArray) => {
+                    _ = decoder.next()?
+                    break
+                }
+                some(_) => {
+                    let item: T = serialization.Decode[Json].decode[E, D](var decoder)?
+                    match values.push(item) {
+                        ok(()) => ()
+                        err(_) => fail decoder.reject(serialization.SerializationError.LimitExceeded)
+                    }
+                }
+                none => fail decoder.reject(serialization.SerializationError.UnexpectedEvent)
+            }
+        }
+        values
+    }
+}
+
+impl[V: Discard + serialization.Encode[Json]] serialization.Encode[Json] for Map[String, V] {
+    fn encode[E, S: serialization.Encoder[Json, E]](value: Self, encoder: var S): Unit ! E {
+        encoder.startRecord("", none)?
+        for (key, item) in value.entries() {
+            encoder.field(key)?
+            serialization.Encode[Json].encode[E, S](item, var encoder)?
+        }
+        encoder.endRecord()
+    }
+}
+
+impl[V: Discard + serialization.Decode[Json]] serialization.Decode[Json] for Map[String, V] {
+    fn decode[E, D: serialization.Decoder[Json, E]](decoder: var D): Map[String, V] ! E {
+        match decoder.next()? {
+            serialization.SerializationEvent.StartRecord(_, _) => ()
+            _ => fail decoder.reject(serialization.SerializationError.TypeMismatch)
+        }
+        var values = Map.new[String, V]()
+        for {
+            match decoder.peek()? {
+                some(serialization.SerializationEvent.EndRecord) => {
+                    _ = decoder.next()?
+                    break
+                }
+                some(serialization.SerializationEvent.Field(_)) => {
+                    let key = match decoder.next()? {
+                        serialization.SerializationEvent.Field(key) => key
+                        _ => fail decoder.reject(serialization.SerializationError.UnexpectedEvent)
+                    }
+                    let item: V = serialization.Decode[Json].decode[E, D](var decoder)?
+                    match values.insert(key, item) {
+                        some(_) => fail decoder.reject(serialization.SerializationError.DuplicateField)
+                        none => ()
+                    }
+                }
+                some(_) => fail decoder.reject(serialization.SerializationError.UnexpectedEvent)
+                none => fail decoder.reject(serialization.SerializationError.UnexpectedEvent)
+            }
+        }
+        values
+    }
+}
+
+fn encode[T: serialization.Encode[Json]](
+    value: T,
+    options: json.JsonEncodeOptions,
+): bytes.Bytes ! json.JsonError {
+    var encoder = JsonEncoder { writer: json.JsonWriter.__buffer(options) }
+    serialization.Encode[Json].encode[json.JsonError, JsonEncoder](
+        value,
+        var encoder,
+    )?
+    encoder.writer.__finish()
+}
+
+fn decode[T: serialization.Decode[Json]](
+    input: bytes.Bytes,
+    options: json.JsonDecodeOptions,
+): T ! json.JsonError {
+    var decoder = JsonDecoder { reader: json.JsonReader.__fromBytes(input, options)? }
+    let value: T = serialization.Decode[Json].decode[
+        json.JsonError,
+        JsonDecoder,
+    ](var decoder)?
+    value
+}

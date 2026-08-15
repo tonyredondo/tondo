@@ -38,6 +38,16 @@ lookup por nombre ni construcción dinámica. Un derive de `Encode` o
 `Decode` genera una implementación estática; el codec no inspecciona
 metadata en runtime.
 
+Los enums usan una única representación JSON externally tagged, elegida por
+ser inequívoca y componible sin reflection: un objeto de exactamente un
+miembro cuyo nombre es la variante. El payload de una variante unit es
+`null`, el de una variante tuple es un array con aridad exacta y el de una
+variante record es un object con sus fields derivados. Por ejemplo,
+`Choice.Empty`, `Choice.Item(7)` y `Choice.Named { name: "x" }` se codifican
+como `{"Empty":null}`, `{"Item":[7]}` y
+`{"Named":{"name":"x"}}`. Variantes desconocidas, payloads con forma o
+aridad incorrectas y miembros adicionales se rechazan.
+
 ## Implementación cerrada del owner
 
 La implementación portable vive en
@@ -167,6 +177,14 @@ una vez después de la raíz; `finish` comprueba que no queda un token pendiente
 una sola vez. En ambos casos un error deja el objeto en estado terminal. La
 ruta a un `std.io.Writer` es suspendible; el parser sobre `Bytes` no necesita una API
 paralela.
+
+La comodidad typed se implementa como fuente Tondo compiler-owned: crea un
+`JsonReader`/`JsonWriter` y despacha `Decode[Json]`/`Encode[Json]`. El adapter
+del reader comprueba el final del documento al consumir el evento que completa
+la raíz, antes de que el decoder pueda publicar el valor; el writer solo
+publica bytes mediante su cierre. Records, enums y composiciones de scalars,
+`Option`, `Array` y `Map[String, V]` recorren eventos directamente y trailing
+data nunca puede quedar aceptado entre el último evento y el retorno.
 
 `Value.Object` conserva el orden de inserción y `JsonMember.key` es UTF-8;
 no se expone un `Map[String, Value]` alternativo. `JsonNumber.text` copia

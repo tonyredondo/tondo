@@ -3,6 +3,20 @@ import std.bytes
 import std.json
 import std.messagepack
 import std.protobuf
+import std.serialization
+
+type JsonUser = { id: Int, name: String }
+derive serialization.Encode[Json] + serialization.Decode[Json] for JsonUser
+
+type JsonComposite = { small: Byte, tags: Array[String], nickname: String? }
+derive serialization.Encode[Json] + serialization.Decode[Json] for JsonComposite
+
+enum JsonChoice {
+    Empty
+    Number(Int)
+    Named { name: String }
+}
+derive serialization.Encode[Json] + serialization.Decode[Json] for JsonChoice
 
 fn json_limits_with(maxDocumentBytes: Int, maxOutputBytes: Int): json.JsonLimits {
     json.JsonLimits {
@@ -63,6 +77,62 @@ fn main(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | json.Js
     assert(typed_values == [1, 2, 3])
     let typed_output = json.encode[Array[Int]](typed_values, json_encode_options())?
     assert(String(typed_output)? == "[1,2,3]")
+
+    let user_output = json.encode[JsonUser](
+        JsonUser { id: 7, name: "Tondo" },
+        json_encode_options(),
+    )?
+    assert(String(user_output)? == r"""{"id":7,"name":"Tondo"}""")
+    let user = json.decode[JsonUser](user_output, json_decode_options())?
+    assert(user.id == 7)
+    assert(user.name == "Tondo")
+
+    let composite_output = json.encode[JsonComposite](
+        JsonComposite { small: Byte(7u8), tags: ["a", "b"], nickname: none },
+        json_encode_options(),
+    )?
+    assert(String(composite_output)? == r"""{"small":7,"tags":["a","b"],"nickname":null}""")
+    let composite = json.decode[JsonComposite](composite_output, json_decode_options())?
+    assert(composite.small == Byte(7u8))
+    assert(composite.tags == ["a", "b"])
+    assert(composite.nickname == none)
+
+    let empty_output = json.encode[JsonChoice](JsonChoice.Empty, json_encode_options())?
+    assert(String(empty_output)? == r"""{"Empty":null}""")
+    match json.decode[JsonChoice](empty_output, json_decode_options())? {
+        JsonChoice.Empty => ()
+        _ => assert(false)
+    }
+    let number_output = json.encode[JsonChoice](JsonChoice.Number(9), json_encode_options())?
+    assert(String(number_output)? == r"""{"Number":[9]}""")
+    match json.decode[JsonChoice](number_output, json_decode_options())? {
+        JsonChoice.Number(value) => assert(value == 9)
+        _ => assert(false)
+    }
+    let named_output = json.encode[JsonChoice](
+        JsonChoice.Named { name: "typed" },
+        json_encode_options(),
+    )?
+    assert(String(named_output)? == r"""{"Named":{"name":"typed"}}""")
+    match json.decode[JsonChoice](named_output, json_decode_options())? {
+        JsonChoice.Named { name } => assert(name == "typed")
+        _ => assert(false)
+    }
+    for invalid_choice in [
+        r"""{"Other":null}""",
+        r"""{"Number":9}""",
+        r"""{"Empty":null,"Other":null}""",
+        r"""{"Empty":null} true""",
+    ] {
+        match json.decode[JsonChoice](bytes.Bytes(invalid_choice)?, json_decode_options()) {
+            ok(_) => assert(false)
+            err(error) => match error.kind {
+                json.JsonErrorKind.TypeMismatch => ()
+                json.JsonErrorKind.TrailingData => ()
+                _ => assert(false)
+            }
+        }
+    }
 
     assert(json.decode[Bool](bytes.Bytes("true")?, json_decode_options())? == true)
     assert(json.decode[Array[String]](bytes.Bytes(r"""["text"]""")?, json_decode_options())? == ["text"])

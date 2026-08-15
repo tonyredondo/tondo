@@ -41,8 +41,8 @@ jq -e '
     runtime_examples: 25,
     external_examples: 4,
     compiler_examples: 2,
-    api_complete: 14,
-    api_partial: 4,
+    api_complete: 15,
+    api_partial: 3,
     api_not_applicable: 4
   })
   and all(.owners[];

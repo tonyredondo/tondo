@@ -945,9 +945,21 @@ fn resolve_prelude_trait_dispatch(
                 ),
             )
         })?;
+    let method_arguments = match reference.method {
+        crate::hir::HirPreludeTraitMethod::Serialization(
+            crate::hir::HirSerializationTraitMethod::Encode
+            | crate::hir::HirSerializationTraitMethod::Decode,
+        ) => &reference.arguments[2..],
+        _ => &[],
+    };
     let target = CallableInstance {
         callable: HirCallableId::Implementation(method.id()),
-        arguments: selection.arguments().to_vec(),
+        arguments: selection
+            .arguments()
+            .iter()
+            .copied()
+            .chain(method_arguments.iter().copied())
+            .collect(),
     };
     verify_prelude_dispatch_signature(hir, interner, reference, &target, method.span())?;
     Ok(target)

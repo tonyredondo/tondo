@@ -2184,7 +2184,7 @@ La derivación estática utiliza `Encode[C]` y `Decode[C]`, donde `C` es el code
 
 ~~~tondo pseudocode
 pub trait Encode[C] {
-    fn encode[E, S: Encoder[C, E]](self, var encoder: S): Unit ! E
+    fn encode[E, S: Encoder[C, E]](value: Self, var encoder: S): Unit ! E
 }
 pub trait Decode[C] {
     fn decode[E, D: Decoder[C, E]](var decoder: D): Self ! E
@@ -2202,12 +2202,14 @@ URL-safe debe nombrarse explícitamente); `parse` dinámico conserva el texto
 original. Las anotaciones se resuelven en compile time y no requieren
 reflection de valores.
 
-Un `Decode[C]` derivado añade `Discard` únicamente a los parámetros genéricos
-usados en payloads. Es necesario para limpiar valores parciales si falla la
-validación de un field o cierre posterior. Una implementación manual puede
-decodificar tipos affine si consume todos los parciales en cada salida de
-error; el compilador aplica exactamente el mismo análisis de ownership al
-código generado y al escrito a mano.
+Un `Encode[C]` o `Decode[C]` derivado añade `Discard` únicamente a los
+parámetros genéricos usados en payloads. En encode es necesario porque el
+writer puede fallar antes de consumir todos los fields recibidos por valor; en
+decode permite limpiar valores parciales si falla la validación de un field o
+cierre posterior. Una implementación manual puede manejar tipos affine si
+consume todos los valores pendientes en cada salida de error; el compilador
+aplica exactamente el mismo análisis de ownership al código generado y al
+escrito a mano.
 
 ### 14.6 `std.serialization`
 
@@ -2239,13 +2241,14 @@ pub trait Encoder[C, E] {
 }
 
 pub trait Decoder[C, E] {
+    fn peek(var self): SerializationEvent? ! E
     fn next(var self): SerializationEvent ! E
     fn own(var self, event: SerializationEvent): SerializationEvent ! E
     fn reject(var self, error: SerializationError): E
 }
 
 pub trait Encode[C] {
-    fn encode[E, S: Encoder[C, E]](self, var encoder: S): Unit ! E
+    fn encode[E, S: Encoder[C, E]](value: Self, var encoder: S): Unit ! E
 }
 
 pub trait Decode[C] {
@@ -2259,13 +2262,16 @@ eventos exige una raíz única, fields únicos, claves y payloads completos,
 longitudes exactas cuando se declaran y cierres balanceados. Los frames son
 explícitos y acotados; no se usa la pila de llamadas del host.
 
-El receiver `self` de `Encode` es la observación inmutable ordinaria del
-lenguaje: codificar no consume el valor. El encoder/decoder se pasa
-como `var` para que avance su estado sin boxing ni allocation por evento. Los
-payloads de texto/bytes de `next` son vistas hasta el siguiente evento y `own`
-es la única materialización estable. `reject` traduce un `SerializationError`
-estructural al error nominal exacto del codec; no borra el tipo, no crea una
-union y no habilita conversiones implícitas.
+`Encode` recibe el valor por ownership como parámetro asociado, de modo que un
+tipo affine se consume una sola vez y no requiere un receiver ficticio. El
+encoder/decoder se pasa como `var` para que avance su estado sin boxing ni
+allocation por evento. `peek` observa el siguiente evento sin consumirlo y
+devuelve `none` únicamente cuando no queda ninguno; permite componer `Option`,
+arrays y maps sin buffering ni retroceso. Los payloads de texto/bytes de
+`next` son vistas hasta el siguiente evento y `own` es la única materialización
+estable. `reject` traduce un `SerializationError` estructural al error nominal
+exacto del codec; no borra el tipo, no crea una union y no habilita
+conversiones implícitas.
 
 La distribución registra providers para:
 
@@ -2513,6 +2519,12 @@ emite UTF-8 sin whitespace. Como JCS restringe el dominio a I-JSON, la operació
 devuelve un error si un `JsonNumber` no puede representarse en ese dominio sin
 cambiar su valor; nunca redondea silenciosamente. La operación normal no promete
 que whitespace o spelling coincidan con el input.
+
+Los enums derivados usan un único objeto externally tagged con exactamente un
+miembro: el nombre de la variante es la clave; una variante unit usa `null`,
+una tuple usa un array de aridad exacta y una record usa un object con sus
+fields derivados. Esta forma es cerrada: se rechazan variantes desconocidas,
+payloads con forma o aridad distintas y miembros exteriores adicionales.
 
 Un error contiene clase estable, byte offset, línea/columna cuando puedan
 calcularse y path estructural. No copia automáticamente el documento, el valor

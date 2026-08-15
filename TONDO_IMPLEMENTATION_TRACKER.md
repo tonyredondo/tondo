@@ -9,9 +9,9 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 2.27
+**Versión del tracker:** 2.31
 
-**Última actualización:** 2026-08-14
+**Última actualización:** 2026-08-15
 
 **Especificaciones normativas:**
 
@@ -43,8 +43,8 @@ confunde con conformarla. TLF tampoco cambia la semántica `.to`: Gate L0 produc
 un bundle separado y el candidato final fija G5, S1 y L0 por identidades
 independientes.
 
-**Objetivo inmediato:** completar Wave 5 y cerrar S1A empezando por los 54 gaps
-de la auditoría pública que mantienen abiertos `STD-IMPL-001` y
+**Objetivo inmediato:** completar Wave 5 y cerrar S1A empezando por los 32 gaps
+de firma y tres owners abiertos de la auditoría pública que mantienen abiertos `STD-IMPL-001` y
 `STD-IMPL-002`. `CONF-GAP-IMPL-001`, `CONF-LAYER-RESULT-001` y
 `CONF-SEAL-FINAL-001` ya cierran T0/G5 con 409 requisitos cubiertos, nueve
 no aplicables y las tres fronteras `TL01-26-*` reservadas a S1A. Los contratos
@@ -4461,14 +4461,17 @@ tests. Antes de volver a marcarlas `[x]` deben cumplirse todos estos puntos:
   `Encode[Protobuf]` y sus decoders), headers y bounds codec-específicos,
   source maps atómicos y políticas de fields `@name`/`@ignore`; las
   anotaciones `@json(base64)`, `@messagepack(binary)` y `@proto(number)` quedan
-  validadas en el snapshot para que sus owners de codec consuman la política
-  sin reflection ni DOM. El driver ejecuta los providers sobre el snapshot
+  validadas en el snapshot. Su transformación wire y las políticas completas
+  de record se mantienen explícitamente abiertas en
+  `STD-CODEC-DERIVE-POLICY-001`; validar una anotación no cuenta como haberla
+  aplicado. El driver ejecuta los providers sobre el snapshot
   sellado, publica sus fuentes de manera atómica y realiza exactamente una
   segunda pasada ordinaria del frontend con derives desactivados; los
   diagnósticos de código generado vuelven al span del target original. El
   protocolo incluye `Decoder.reject(SerializationError): E`, y un derive
-  genérico de Decode exige `Discard` solo a los parámetros realmente usados,
-  porque un fallo estructural posterior debe poder limpiar valores parciales.
+  genérico de Encode o Decode exige `Discard` solo a los parámetros realmente
+  usados: el writer puede fallar antes de consumir todos los fields recibidos
+  por valor y el decoder debe poder limpiar valores parciales.
 
 - [x] **STD-JSON-IMPL-001 — Implementar las tres rutas de JSON.** Publicar
   `parse -> Value`, `decode[T: Decode[Json]]` y
@@ -4482,7 +4485,7 @@ tests. Antes de volver a marcarlas `[x]` deben cumplirse todos estos puntos:
   el kernel compatibility y no sustituye la ruta typed; los gaps de exposición
   HIR/VM quedan registrados por `STD-PUBLIC-API-AUDIT-001`.
 
-- [ ] **STD-JSON-PUBLIC-001 — Cerrar la superficie Tondo exacta de JSON.** El
+- [x] **STD-JSON-PUBLIC-001 — Cerrar la superficie Tondo exacta de JSON.** El
   primer corte conecta HIR → bytecode → VM → host para `Value`, `ValueView`,
   `Raw`, `JsonNumber`, `JsonReader` y `JsonWriter`, preserva los genéricos
   explícitos y hace terminales los readers/writers tras `finish` o error. La
@@ -4496,11 +4499,24 @@ tests. Antes de volver a marcarlas `[x]` deben cumplirse todos estos puntos:
   `JsonLocation`, `JsonPath` y `JsonError` usan ahora el sistema nominal normal
   de Tondo de extremo a extremo; la representación intrínseca provisional se
   eliminó y el host materializa records/enums por nombre público, ordinal y
-  orden de declaración verificados. Solo falta hacer que
-  `decode[T: Decode[Json]]`/`encode[T: Encode[Json]]` despachen los providers
-  derive de records/enums sin reflection ni DOM. Hasta entonces la auditoría
-  conserva visibles sus gaps y no cuenta la mera presencia del nuevo bridge
-  host como firma verificada.
+  orden de declaración verificados. El cierre añade una unidad fuente
+  compiler-owned que implementa el adapter typed con los protocolos públicos,
+  redirige los targets nominales a los impls derive y recorre records, enums
+  unit/tuple/record y composiciones `Option`/`Array`/`Map` sin reflection ni
+  DOM. Los enums JSON usan un object externally tagged único y el reader
+  detecta trailing data antes de publicar `T`. `Decoder.peek` es no consumidor
+  y permite composición estática sin rewind. La fixture CLI cubre round-trip y
+  formas inválidas; la auditoría verifica las 23/23 firmas de `std.json` y
+  eleva el total a 177/209.
+
+- [ ] **STD-CODEC-DERIVE-POLICY-001 — Completar semántica wire de derives.**
+  Sustituir la decodificación posicional de records por una máquina estática
+  independiente del orden que detecte missing/duplicate/unknown fields,
+  reconstruya `Option` ausentes como `none` y aplique la policy explícita del
+  codec sin DOM. Consumir realmente `@json(base64)`, `@messagepack(binary)` y
+  `@proto(number)` en ambos sentidos; cubrir fields renombrados/ignorados,
+  payloads de enum, genéricos affine, orden permutado y fallos parciales. La
+  leaf no puede cerrarse por validar attributes ni por tests del kernel Rust.
 
 - [x] **STD-MSGPACK-IMPL-001 — Implementar MessagePack completo.** Publicar
   `parse -> Value`, `decode[T: Decode[MessagePack]]`,
@@ -5905,7 +5921,9 @@ gates en una barrera artificial.
       land the `Encode[C]`/`Decode[C]` and `Value` contracts; only then:
       `STD-JSON-IMPL-001 / STD-MSGPACK-IMPL-001 / STD-PROTOBUF-IMPL-001`;
     - A3 implementation (after ABI migration):
-      `STD-JSON-IMPL-001 / STD-MSGPACK-IMPL-001 / STD-PROTOBUF-IMPL-001`;
+      `STD-JSON-IMPL-001 / STD-MSGPACK-IMPL-001 / STD-PROTOBUF-IMPL-001`,
+      después `STD-JSON-PUBLIC-001 → STD-CODEC-DERIVE-POLICY-001` y las
+      superficies públicas equivalentes de MessagePack/Protobuf;
     - A4: `STD-TESTING-SHRINK-001 → STD-TESTING-IMPL-001`; y
     - A5: `STD-PUBLIC-API-AUDIT-001 → leaves STD-A-*-EVIDENCE →
       STD-TEST-001 / STD-CODEC-CONF-001 / STD-PERF-CONF-001 →
@@ -5977,6 +5995,30 @@ no se declara iniciada antes de S1A.
 
 ## 25. Historial del tracker
 
+### 2.31 — 2026-08-15
+
+- Se cierra `STD-JSON-PUBLIC-001`: `std.json.encode[T]` y `decode[T]`
+  redirigen tipos nominales al source Tondo compiler-owned y a sus impls
+  `Encode[Json]`/`Decode[Json]`; records, enums externally tagged y
+  composiciones tipadas atraviesan HIR, MIR, bytecode, VM y writer/reader
+  portable sin reflection ni DOM.
+- `Decoder.peek` entra en el protocolo estático cerrado. La regresión de host
+  prueba lookahead no consumidor y terminalidad; la fixture pública prueba las
+  tres formas de enum, contenedores, rangos numéricos, variantes/payloads
+  inválidos y trailing data.
+- `Encode[C]` es una operación asociada por valor. Sus providers desestructuran
+  records/newtypes antes de transferir payloads y añaden `Discard` solo a los
+  parámetros genéricos usados, cerrando de forma segura cualquier error del
+  writer anterior al consumo total del valor.
+- La propagación `?` consume correctamente el owner `Result` aunque el payload
+  `Ok` sea `Copy`, incluido el back-edge de un `for`; lowering y verifier
+  conservan la transferencia simétrica de payloads completos de `Option`,
+  `Result` y union sin relajar guards de cleanup.
+- La auditoría pública deja `std.json` en 23/23 y el total en 177/209. La
+  revisión detecta además que la validación build-only de annotations no aplica
+  aún todas sus transformaciones wire: `STD-CODEC-DERIVE-POLICY-001` conserva
+  explícitamente ese trabajo sin atribuírselo al cierre de superficie.
+
 ### 2.30 — 2026-08-15
 
 - El driver ejecuta los providers registrados de serialization sobre un
@@ -5989,10 +6031,10 @@ no se declara iniciada antes de S1A.
   `Decoder.reject`, de modo que un impl generado convierte fallos estructurales
   al error propio del codec sin asumir conversiones implícitas.
 - Los derives de records, enums, newtypes y genéricos se validan ahora de
-  extremo a extremo dentro del driver. Decode añade `Discard` únicamente a los
-  parámetros genéricos usados para garantizar cleanup de valores parciales;
-  las pruebas cubren la matriz de formas, codecs, bounds, publicación atómica y
-  remapeo de diagnósticos.
+  extremo a extremo dentro del driver. Encode y Decode añaden `Discard`
+  únicamente a los parámetros genéricos usados para garantizar cleanup en
+  salidas fallibles; las pruebas cubren la matriz de formas, codecs, bounds,
+  publicación atómica y remapeo de diagnósticos.
 
 ### 2.29 — 2026-08-14
 

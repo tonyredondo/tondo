@@ -1225,6 +1225,7 @@ pub enum HirSerializationTraitMethod {
     EncoderEndRecord,
     EncoderStartEnum,
     EncoderEndEnum,
+    DecoderPeek,
     DecoderNext,
     DecoderOwn,
     DecoderReject,
@@ -1271,7 +1272,8 @@ impl HirPreludeTraitMethod {
                 | HirSerializationTraitMethod::EncoderEndRecord
                 | HirSerializationTraitMethod::EncoderStartEnum
                 | HirSerializationTraitMethod::EncoderEndEnum => "Encoder",
-                HirSerializationTraitMethod::DecoderNext
+                HirSerializationTraitMethod::DecoderPeek
+                | HirSerializationTraitMethod::DecoderNext
                 | HirSerializationTraitMethod::DecoderOwn
                 | HirSerializationTraitMethod::DecoderReject => "Decoder",
             },
@@ -1304,6 +1306,7 @@ impl HirPreludeTraitMethod {
                 HirSerializationTraitMethod::EncoderEndRecord => "endRecord",
                 HirSerializationTraitMethod::EncoderStartEnum => "startEnum",
                 HirSerializationTraitMethod::EncoderEndEnum => "endEnum",
+                HirSerializationTraitMethod::DecoderPeek => "peek",
                 HirSerializationTraitMethod::DecoderNext => "next",
                 HirSerializationTraitMethod::DecoderOwn => "own",
                 HirSerializationTraitMethod::DecoderReject => "reject",
@@ -1321,6 +1324,15 @@ impl HirPreludeTraitMethod {
             ) => 4,
             Self::Serialization(_) => 3,
         }
+    }
+
+    pub(crate) fn has_receiver(self) -> bool {
+        !matches!(
+            self,
+            Self::Serialization(
+                HirSerializationTraitMethod::Encode | HirSerializationTraitMethod::Decode
+            )
+        )
     }
 
     pub(crate) fn query(self, arguments: &[TypeId]) -> Option<TraitQuery> {
@@ -1405,7 +1417,7 @@ impl HirPreludeTraitMethod {
                 };
                 let parameters = match self {
                     Self::Serialization(HirSerializationTraitMethod::Encode) => vec![
-                        FunctionParameter::new(ParameterMode::Ref, *target),
+                        FunctionParameter::new(ParameterMode::Value, *target),
                         FunctionParameter::new(ParameterMode::Var, *codec),
                     ],
                     Self::Serialization(HirSerializationTraitMethod::Decode) => {
@@ -1481,7 +1493,8 @@ impl HirPreludeTraitMethod {
                         FunctionParameter::new(ParameterMode::Value, string),
                         FunctionParameter::new(ParameterMode::Value, string),
                     ],
-                    HirSerializationTraitMethod::DecoderNext => Vec::new(),
+                    HirSerializationTraitMethod::DecoderPeek
+                    | HirSerializationTraitMethod::DecoderNext => Vec::new(),
                     HirSerializationTraitMethod::DecoderOwn => {
                         vec![FunctionParameter::new(ParameterMode::Value, event)]
                     }
@@ -1493,7 +1506,10 @@ impl HirPreludeTraitMethod {
                         unreachable!()
                     }
                 });
-                let outcome = if matches!(
+                let outcome = if matches!(method, HirSerializationTraitMethod::DecoderPeek) {
+                    let optional_event = interner.option(event)?;
+                    interner.result(optional_event, *error)?
+                } else if matches!(
                     method,
                     HirSerializationTraitMethod::DecoderNext
                         | HirSerializationTraitMethod::DecoderOwn
@@ -1539,8 +1555,8 @@ impl HirPreludeTraitMethod {
                 Self::Serialization(
                     HirSerializationTraitMethod::Encode | HirSerializationTraitMethod::Decode,
                 ),
-                [_, target],
-            ) => intrinsic_serialization_leaf_type(interner, *target)?,
+                [codec, target],
+            ) => intrinsic_serialization_type(interner, *codec, *target)?,
             (Self::Display, _)
             | (Self::IteratorNext, _)
             | (Self::AsyncIteratorNext, _)
@@ -1578,6 +1594,50 @@ fn intrinsic_serialization_leaf_type(
         } => arguments.is_empty(),
         _ => false,
     })
+}
+
+fn intrinsic_serialization_type(
+    interner: &TypeInterner,
+    codec: TypeId,
+    root: TypeId,
+) -> Result<bool, TypeError> {
+    let mut pending = vec![root];
+    let mut visited = BTreeSet::new();
+    let json = matches!(
+        interner.kind(codec)?,
+        TypeKind::Nominal { identity, arguments }
+            if arguments.is_empty()
+                && identity.module().as_str() == "serialization"
+                && identity.declaration().to_string() == "Json"
+    );
+    while let Some(ty) = pending.pop() {
+        if !visited.insert(ty) || intrinsic_serialization_leaf_type(interner, ty)? {
+            continue;
+        }
+        match interner.kind(ty)? {
+            TypeKind::Option(item) => pending.push(*item),
+            TypeKind::Intrinsic {
+                constructor: IntrinsicType::Array,
+                arguments,
+            } if arguments.len() == 1 => pending.push(arguments[0]),
+            TypeKind::Intrinsic {
+                constructor: IntrinsicType::Map,
+                arguments,
+            } if arguments.len() == 2 => {
+                if json
+                    && !matches!(
+                        interner.kind(arguments[0])?,
+                        TypeKind::Scalar(ScalarType::String)
+                    )
+                {
+                    return Ok(false);
+                }
+                pending.extend(arguments.iter().copied());
+            }
+            _ => return Ok(false),
+        }
+    }
+    Ok(true)
 }
 
 fn intrinsic_shrink_type(interner: &TypeInterner, root: TypeId) -> Result<bool, TypeError> {
@@ -2615,6 +2675,13 @@ pub enum HirBootstrapHostFunction {
     JsonWriterToWriter,
     JsonWriterWrite,
     JsonWriterFinish,
+    JsonWriterBuffer,
+    JsonWriterBufferWrite,
+    JsonWriterBufferFinish,
+    JsonReaderSerializationFromBytes,
+    JsonReaderSerializationPeek,
+    JsonReaderSerializationNext,
+    JsonReaderSerializationReject,
     MessagePackValidate,
     MessagePackCanonicalize,
     ProtobufValidate,
@@ -2884,6 +2951,15 @@ impl HirBootstrapHostFunction {
             Self::JsonWriterToWriter => "std.json.JsonWriter.toWriter",
             Self::JsonWriterWrite => "std.json.JsonWriter.write",
             Self::JsonWriterFinish => "std.json.JsonWriter.finish",
+            Self::JsonWriterBuffer => "intrinsic.json.JsonWriter.buffer",
+            Self::JsonWriterBufferWrite => "intrinsic.json.JsonWriter.write",
+            Self::JsonWriterBufferFinish => "intrinsic.json.JsonWriter.finish",
+            Self::JsonReaderSerializationFromBytes => {
+                "intrinsic.json.JsonReader.fromBytesSerialization"
+            }
+            Self::JsonReaderSerializationPeek => "intrinsic.json.JsonReader.peekSerialization",
+            Self::JsonReaderSerializationNext => "intrinsic.json.JsonReader.nextSerialization",
+            Self::JsonReaderSerializationReject => "intrinsic.json.JsonReader.rejectSerialization",
             Self::MessagePackValidate => "std.messagepack.validate",
             Self::MessagePackCanonicalize => "std.messagepack.canonicalize",
             Self::ProtobufValidate => "std.protobuf.validate",
@@ -3517,6 +3593,7 @@ mod serialization_catalog_tests {
             HirSerializationTraitMethod::EncoderEndRecord,
             HirSerializationTraitMethod::EncoderStartEnum,
             HirSerializationTraitMethod::EncoderEndEnum,
+            HirSerializationTraitMethod::DecoderPeek,
             HirSerializationTraitMethod::DecoderNext,
             HirSerializationTraitMethod::DecoderOwn,
             HirSerializationTraitMethod::DecoderReject,

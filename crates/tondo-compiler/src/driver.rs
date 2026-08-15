@@ -752,6 +752,7 @@ fn execute_with_derives(
     mut request: CompilationRequest,
     expand_derives: bool,
 ) -> Result<CompilationOutput, DriverError> {
+    install_bootstrap_standard_sources(&mut request)?;
     if request.operation == Operation::Test {
         return execute_test(request);
     }
@@ -1353,6 +1354,77 @@ fn execute_with_derives(
             hir_program,
         )),
         products: None,
+    })
+}
+
+fn install_bootstrap_standard_sources(request: &mut CompilationRequest) -> Result<(), DriverError> {
+    const SOURCE_ID: &str = "toolchain:std:0.1-bootstrap";
+    const MODULE: &str = "__json_typed";
+    const PATH: &str = "compiler/json_typed.to";
+    let module = crate::source::ModulePath::new(MODULE)?;
+    let standard_source = request
+        .packages
+        .package(request.packages.standard())
+        .expect("the package graph always contains its selected standard package")
+        .source_id()
+        .clone();
+
+    if request.packages.standard().as_str() != SOURCE_ID
+        || request
+            .packages
+            .module(request.packages.standard(), &module)
+            .is_none()
+        || !request
+            .sources
+            .iter()
+            .any(|(_, source)| imports_bootstrap_json(source.bytes()))
+        || request.sources.iter().any(|(_, source)| {
+            source.source_id() == &standard_source
+                && source.module().as_str() == MODULE
+                && source.path().as_str() == PATH
+        })
+    {
+        return Ok(());
+    }
+    request.sources.add(crate::source::SourceInput::new(
+        standard_source,
+        module,
+        crate::source::LogicalPath::new(PATH)?,
+        crate::source::SourceOrigin::GeneratedStandard,
+        include_bytes!("bootstrap/json_typed.to").as_slice(),
+    ))?;
+    request
+        .packages
+        .validate_sources(&request.sources, request.root)?;
+    Ok(())
+}
+
+fn imports_bootstrap_json(bytes: &[u8]) -> bool {
+    bytes.split(|byte| *byte == b'\n').any(|line| {
+        let line = line
+            .strip_suffix(b"\r")
+            .unwrap_or(line)
+            .strip_prefix(b"\xef\xbb\xbf")
+            .unwrap_or(line);
+        let line = line
+            .iter()
+            .position(|byte| !byte.is_ascii_whitespace())
+            .map_or(&[][..], |start| &line[start..]);
+        let Some(rest) = line.strip_prefix(b"import") else {
+            return false;
+        };
+        let Some(rest) = rest
+            .iter()
+            .position(|byte| !byte.is_ascii_whitespace())
+            .filter(|_| rest.first().is_some_and(u8::is_ascii_whitespace))
+            .map(|start| &rest[start..])
+        else {
+            return false;
+        };
+        let Some(rest) = rest.strip_prefix(b"std.json") else {
+            return false;
+        };
+        rest.first().is_none_or(|byte| byte.is_ascii_whitespace())
     })
 }
 
@@ -3364,6 +3436,25 @@ fn main() {
                 diagnostic.code() == warning && diagnostic.severity() == Severity::Warning
             }));
             assert!(!diagnostics.iter().any(|diagnostic| diagnostic.code() == "T0001"));
+        }
+    }
+
+    #[test]
+    fn typed_json_bootstrap_source_is_selected_only_by_a_real_standard_import() {
+        for source in [
+            &b"import std.json\nfn main() {}\n"[..],
+            &b"  import std.json as wire\r\nfn main() {}\r\n"[..],
+            &b"\xef\xbb\xbfimport std.json\nfn main() {}\n"[..],
+        ] {
+            assert!(imports_bootstrap_json(source));
+        }
+        for source in [
+            &b"fn main() {}\n"[..],
+            &b"// import std.json\nfn main() {}\n"[..],
+            &b"import std.jsonExtra\nfn main() {}\n"[..],
+            &b"importstd.json\nfn main() {}\n"[..],
+        ] {
+            assert!(!imports_bootstrap_json(source));
         }
     }
 

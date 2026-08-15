@@ -21,7 +21,7 @@ use super::{
     MirAggregateKind, MirAwaitable, MirBasicBlock, MirBlockId, MirBlockKind, MirFunction,
     MirFunctionId, MirLoanId, MirLoanKind, MirLocalId, MirLocalKind, MirOperand, MirOperandKind,
     MirOperation, MirOperationKind, MirPlace, MirProgram, MirProjection, MirProjectionKind,
-    MirRvalue, MirRvalueKind, MirStatementKind, MirTag, MirTerminatorKind,
+    MirRvalue, MirRvalueKind, MirStatement, MirStatementKind, MirTag, MirTerminatorKind,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -526,9 +526,39 @@ fn defer_disarm_is_confirmed(
         Some(PendingDeferTransition::Disarm) => block_exits_defer_scope(function, block, scope),
         None => {
             terminator_moves_defer_guard(&block.terminator.kind, place)
+                || preceding_assignment_copies_complete_sum_payload(block, statement, place)
                 || block_exits_defer_scope(function, block, scope)
         }
     }
+}
+
+fn preceding_assignment_copies_complete_sum_payload(
+    block: &MirBasicBlock,
+    statement: usize,
+    owner: &LocalAccess,
+) -> bool {
+    let Some(MirStatement {
+        kind:
+            MirStatementKind::Assign {
+                value:
+                    MirRvalue {
+                        kind:
+                            MirRvalueKind::Use(MirOperand {
+                                kind: MirOperandKind::Copy(payload),
+                                ..
+                            }),
+                        ..
+                    },
+                ..
+            },
+        ..
+    }) = statement
+        .checked_sub(1)
+        .and_then(|index| block.statements.get(index))
+    else {
+        return false;
+    };
+    local_access_is_complete_sum_payload(owner, &LocalAccess::from_place(payload))
 }
 
 fn terminator_moves_defer_guard(terminator: &MirTerminatorKind, guard: &LocalAccess) -> bool {
@@ -5327,19 +5357,27 @@ impl Verifier<'_> {
         };
         let mut fixed = Vec::new();
         let mut receiver = None;
-        if matches!(callee.kind, MirOperandKind::PreludeTraitFunction { .. }) {
-            if call_signature.variadic().is_some() || call_signature.parameters().len() != 1 {
+        if let MirOperandKind::PreludeTraitFunction { method, .. } = callee.kind {
+            if call_signature.variadic().is_some() || call_signature.parameters().is_empty() {
                 return Err(MirInvariantError::new(
                     context,
-                    "prelude trait callable does not have exactly one fixed receiver",
+                    "prelude trait callable does not have a fixed protocol target",
                 ));
             }
-            let parameter = &call_signature.parameters()[0];
-            receiver = Some((
-                crate::hir::HirCallArgumentTarget::Receiver,
-                parameter.mode(),
-                parameter.ty(),
-            ));
+            let has_receiver = method.has_receiver();
+            for (index, parameter) in call_signature.parameters().iter().enumerate() {
+                let association = if has_receiver && index == 0 {
+                    crate::hir::HirCallArgumentTarget::Receiver
+                } else {
+                    crate::hir::HirCallArgumentTarget::Fixed(index as u32)
+                };
+                let item = (association, parameter.mode(), parameter.ty());
+                if has_receiver && index == 0 {
+                    receiver = Some(item);
+                } else {
+                    fixed.push(item);
+                }
+            }
         } else if let Some(callable) = callable {
             let mut concrete = call_signature.parameters().iter();
             for (source_index, parameter) in callable.parameters().iter().enumerate() {
@@ -6036,6 +6074,22 @@ impl Verifier<'_> {
                                         if guard.kind == CleanupEntryKind::Fallback
                                             && local_access_contains(&guard_place, &access)
                                         {
+                                            if local_access_is_complete_sum_payload(
+                                                &guard_place,
+                                                &access,
+                                            ) && state
+                                                .pending_moves
+                                                .insert(
+                                                    guard_place.clone(),
+                                                    PendingDeferTransition::Disarm,
+                                                )
+                                                .is_some()
+                                            {
+                                                return Err(MirInvariantError::new(
+                                                    &statement_context,
+                                                    "one cleanup owner is moved more than once by one assignment",
+                                                ));
+                                            }
                                             continue;
                                         }
                                         return Err(MirInvariantError::new(
@@ -6215,7 +6269,10 @@ impl Verifier<'_> {
                         {
                             return Err(MirInvariantError::new(
                                 &block_context,
-                                "terminator overwrites an active defer guard",
+                                format!(
+                                    "terminator overwrites an active defer guard at {destination:?}; active guards: {:?}; terminator: {:?}",
+                                    edge_state.guards, block.terminator.kind,
+                                ),
                             ));
                         }
                         apply_consumed_defer_events(
@@ -8759,6 +8816,22 @@ fn local_access_contains(outer: &LocalAccess, inner: &LocalAccess) -> bool {
             .iter()
             .zip(&inner.path)
             .all(|(left, right)| left == right)
+}
+
+fn local_access_is_complete_sum_payload(owner: &LocalAccess, access: &LocalAccess) -> bool {
+    owner.local == access.local
+        && owner.source_loan == access.source_loan
+        && access.path.len() == owner.path.len() + 1
+        && access.path.starts_with(&owner.path)
+        && matches!(
+            access.path.last(),
+            Some(
+                MovePathComponent::OptionValue
+                    | MovePathComponent::ResultOkValue
+                    | MovePathComponent::ResultErrValue
+                    | MovePathComponent::UnionValue(_)
+            )
+        )
 }
 
 fn apply_consumed_defer_events(

@@ -1935,7 +1935,8 @@ impl Verifier<'_> {
                         })?;
                     let expected_receiver = !matches!(
                         serialization_method,
-                        super::HirSerializationTraitMethod::Decode
+                        super::HirSerializationTraitMethod::Encode
+                            | super::HirSerializationTraitMethod::Decode
                     );
                     let expected_bounds = if matches!(
                         serialization_method,
@@ -2119,6 +2120,11 @@ impl Verifier<'_> {
         implementation: &super::HirImplementation,
         context: &str,
     ) -> Result<(), HirInvariantError> {
+        if implementation.module.package().as_str() == "toolchain:std:0.1-bootstrap"
+            && implementation.module.path().as_str() == "__json_typed"
+        {
+            return Ok(());
+        }
         let owns_trait = match &implementation.trait_reference.constructor {
             HirTraitConstructor::Symbol(symbol) => {
                 self.resolved.symbol(*symbol).is_some_and(|symbol| {
@@ -7189,8 +7195,8 @@ mod tests {
         const SOURCE: &str = "import std.serialization\n\
              type User = { value: Int }\n\
              impl serialization.Encode[String] for User {\n\
-                 fn encode[E, S: serialization.Encoder[String, E]](self, encoder: var S): Unit ! E {\n\
-                     encoder.int(self.value)?\n\
+                 fn encode[E, S: serialization.Encoder[String, E]](value: Self, encoder: var S): Unit ! E {\n\
+                     encoder.int(value.value)?\n\
                  }\n\
              }\n\
              impl serialization.Decode[String] for User {\n\
@@ -7219,8 +7225,8 @@ mod tests {
         const SOURCE: &str = "import std.serialization\n\
              type User = { value: Int }\n\
              impl serialization.Encode[String] for User {\n\
-                 fn encode[E, S: serialization.Encoder[String, E]](self, encoder: var S): Unit ! E {\n\
-                     encoder.int(self.value)?\n\
+                 fn encode[E, S: serialization.Encoder[String, E]](value: Self, encoder: var S): Unit ! E {\n\
+                     encoder.int(value.value)?\n\
                  }\n\
              }\n\
              fn main() {}\n";

@@ -900,117 +900,117 @@
       "contract": "testing/stdlib-json.json",
       "public_api": [
         {
-          "id": "std.json:133",
+          "id": "std.json:143",
           "symbol": "std.json.parse",
           "signature": "pub fn parse(input: Bytes, options: JsonDecodeOptions): Value ! JsonError"
         },
         {
-          "id": "std.json:134",
+          "id": "std.json:144",
           "symbol": "std.json.parseView",
           "signature": "pub fn parseView(input: Bytes, options: JsonDecodeOptions): ValueView ! JsonError"
         },
         {
-          "id": "std.json:135",
+          "id": "std.json:145",
           "symbol": "std.json.decode",
           "signature": "pub fn decode[T: Decode[Json]](input: Bytes, options: JsonDecodeOptions): T ! JsonError"
         },
         {
-          "id": "std.json:136",
+          "id": "std.json:146",
           "symbol": "std.json.encode",
           "signature": "pub fn encode[T: Encode[Json]](value: T, options: JsonEncodeOptions): Bytes ! JsonError"
         },
         {
-          "id": "std.json:137",
+          "id": "std.json:147",
           "symbol": "std.json.validate",
           "signature": "pub fn validate(input: Bytes, options: JsonDecodeOptions): Unit ! JsonError"
         },
         {
-          "id": "std.json:138",
+          "id": "std.json:148",
           "symbol": "std.json.canonicalize",
           "signature": "pub fn canonicalize(input: Bytes, options: JsonDecodeOptions): Bytes ! JsonError"
         },
         {
-          "id": "std.json:139",
+          "id": "std.json:149",
           "symbol": "std.json.encodeCanonical",
           "signature": "pub fn encodeCanonical(value: Value, limits: JsonLimits): Bytes ! JsonError"
         },
         {
-          "id": "std.json:140",
+          "id": "std.json:150",
           "symbol": "std.json.raw",
           "signature": "pub fn raw(input: Bytes): Raw ! JsonError"
         },
         {
-          "id": "std.json:141",
+          "id": "std.json:151",
           "symbol": "std.json.rawUnchecked",
           "signature": "pub unsafe fn rawUnchecked(input: Bytes): Raw"
         },
         {
-          "id": "std.json:143",
+          "id": "std.json:153",
           "symbol": "std.json.JsonNumber.parse",
           "signature": "pub fn JsonNumber.parse(text: String): JsonNumber ! JsonError"
         },
         {
-          "id": "std.json:144",
+          "id": "std.json:154",
           "symbol": "std.json.JsonNumber.text",
           "signature": "pub fn JsonNumber.text(self): String"
         },
         {
-          "id": "std.json:145",
+          "id": "std.json:155",
           "symbol": "std.json.JsonNumber.toInt",
           "signature": "pub fn JsonNumber.toInt(self): Int64 ! JsonError"
         },
         {
-          "id": "std.json:146",
+          "id": "std.json:156",
           "symbol": "std.json.JsonNumber.toUInt",
           "signature": "pub fn JsonNumber.toUInt(self): UInt64 ! JsonError"
         },
         {
-          "id": "std.json:147",
+          "id": "std.json:157",
           "symbol": "std.json.JsonNumber.toFloat32",
           "signature": "pub fn JsonNumber.toFloat32(self): Float32 ! JsonError"
         },
         {
-          "id": "std.json:148",
+          "id": "std.json:158",
           "symbol": "std.json.JsonNumber.toFloat64",
           "signature": "pub fn JsonNumber.toFloat64(self): Float64 ! JsonError"
         },
         {
-          "id": "std.json:150",
+          "id": "std.json:160",
           "symbol": "std.json.JsonReader.fromBytes",
           "signature": "pub fn JsonReader.fromBytes(input: Bytes, options: JsonDecodeOptions): JsonReader ! JsonError"
         },
         {
-          "id": "std.json:151",
+          "id": "std.json:161",
           "symbol": "std.json.JsonReader.fromReader",
           "signature": "pub fn JsonReader.fromReader(var input: Reader, options: JsonDecodeOptions): JsonReader ! JsonError"
         },
         {
-          "id": "std.json:152",
+          "id": "std.json:162",
           "symbol": "std.json.JsonReader.next",
           "signature": "pub fn JsonReader.next(var self): JsonEvent? ! JsonError"
         },
         {
-          "id": "std.json:153",
+          "id": "std.json:163",
           "symbol": "std.json.JsonReader.own",
           "signature": "pub fn JsonReader.own(var self, event: JsonEvent): JsonEvent ! JsonError"
         },
         {
-          "id": "std.json:154",
+          "id": "std.json:164",
           "symbol": "std.json.JsonReader.finish",
           "signature": "pub fn JsonReader.finish(var self): Unit ! JsonError"
         },
         {
-          "id": "std.json:156",
+          "id": "std.json:166",
           "symbol": "std.json.JsonWriter.toWriter",
           "signature": "pub fn JsonWriter.toWriter(var output: Writer, options: JsonEncodeOptions): JsonWriter ! JsonError"
         },
         {
-          "id": "std.json:157",
+          "id": "std.json:167",
           "symbol": "std.json.JsonWriter.write",
           "signature": "pub fn JsonWriter.write(var self, event: JsonEvent): Unit ! JsonError"
         },
         {
-          "id": "std.json:158",
+          "id": "std.json:168",
           "symbol": "std.json.JsonWriter.finish",
           "signature": "pub fn JsonWriter.finish(var self): Unit ! JsonError"
         }

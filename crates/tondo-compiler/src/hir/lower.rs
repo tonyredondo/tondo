@@ -481,6 +481,10 @@ impl<'a> TypeLowerer<'a> {
         let testing_module = self.packages.module(self.packages.standard(), &testing);
         let json = ModulePath::new("json")?;
         let json_module = self.packages.module(self.packages.standard(), &json);
+        let serialization = ModulePath::new("serialization")?;
+        let serialization_module = self
+            .packages
+            .module(self.packages.standard(), &serialization);
         let messagepack = ModulePath::new("messagepack")?;
         let messagepack_module = self.packages.module(self.packages.standard(), &messagepack);
         let protobuf = ModulePath::new("protobuf")?;
@@ -573,6 +577,11 @@ impl<'a> TypeLowerer<'a> {
             })
         });
         let json_referenced = json_module.as_ref().is_some_and(|module| {
+            self.resolved.references().any(|reference| {
+                matches!(reference.entity(), ResolvedEntity::Module(reference_module) if reference_module == module)
+            })
+        });
+        let serialization_referenced = serialization_module.as_ref().is_some_and(|module| {
             self.resolved.references().any(|reference| {
                 matches!(reference.entity(), ResolvedEntity::Module(reference_module) if reference_module == module)
             })
@@ -1785,6 +1794,22 @@ impl<'a> TypeLowerer<'a> {
             )?;
             let generic = self.interner.generic_parameter(0)?;
             let generic_result = self.interner.result(generic, json_error)?;
+            let json_codec = self.interner.nominal(
+                SymbolIdentity::bootstrap_standard("serialization", "Json"),
+                Vec::new(),
+            )?;
+            let json_decode_bound = HirTraitReference {
+                constructor: HirTraitConstructor::Prelude(
+                    Name::new("Decode").expect("bootstrap trait names are valid"),
+                ),
+                arguments: vec![json_codec],
+            };
+            let json_encode_bound = HirTraitReference {
+                constructor: HirTraitConstructor::Prelude(
+                    Name::new("Encode").expect("bootstrap trait names are valid"),
+                ),
+                arguments: vec![json_codec],
+            };
             self.push_bootstrap_generic_host_callable(
                 span,
                 HirBootstrapHostFunction::JsonDecode,
@@ -1794,7 +1819,7 @@ impl<'a> TypeLowerer<'a> {
                 ],
                 generic_result,
                 1,
-                Vec::new(),
+                vec![(0, vec![json_decode_bound])],
             )?;
             self.push_bootstrap_generic_host_callable(
                 span,
@@ -1805,7 +1830,7 @@ impl<'a> TypeLowerer<'a> {
                 ],
                 json_bytes_result,
                 1,
-                Vec::new(),
+                vec![(0, vec![json_encode_bound])],
             )?;
             self.push_bootstrap_host_callable(
                 span,
@@ -1930,6 +1955,76 @@ impl<'a> TypeLowerer<'a> {
                 None,
                 json_unit_result,
             )?;
+            if serialization_referenced {
+                let serialization_module = serialization_module
+                    .as_ref()
+                    .expect("referenced serialization modules are installed");
+                let serialization_event =
+                    self.bootstrap_nominal_type(serialization_module, "SerializationEvent")?;
+                let serialization_error =
+                    self.bootstrap_nominal_type(serialization_module, "SerializationError")?;
+                self.push_bootstrap_host_callable(
+                    span,
+                    HirBootstrapHostFunction::JsonWriterBuffer,
+                    vec![(json_encode_options, false)],
+                    None,
+                    json_writer,
+                )?;
+                self.push_bootstrap_host_callable_with_modes(
+                    span,
+                    HirBootstrapHostFunction::JsonWriterBufferWrite,
+                    vec![
+                        (json_writer, ParameterMode::Var, true),
+                        (serialization_event, ParameterMode::Value, false),
+                    ],
+                    None,
+                    json_unit_result,
+                )?;
+                self.push_bootstrap_host_callable_with_modes(
+                    span,
+                    HirBootstrapHostFunction::JsonWriterBufferFinish,
+                    vec![(json_writer, ParameterMode::Var, true)],
+                    None,
+                    json_bytes_result,
+                )?;
+                let serialization_event_result =
+                    self.interner.result(serialization_event, json_error)?;
+                let optional_serialization_event = self.interner.option(serialization_event)?;
+                let optional_serialization_event_result = self
+                    .interner
+                    .result(optional_serialization_event, json_error)?;
+                self.push_bootstrap_host_callable(
+                    span,
+                    HirBootstrapHostFunction::JsonReaderSerializationFromBytes,
+                    vec![(bytes, false), (json_decode_options, false)],
+                    None,
+                    json_reader_result,
+                )?;
+                self.push_bootstrap_host_callable_with_modes(
+                    span,
+                    HirBootstrapHostFunction::JsonReaderSerializationPeek,
+                    vec![(json_reader, ParameterMode::Var, true)],
+                    None,
+                    optional_serialization_event_result,
+                )?;
+                self.push_bootstrap_host_callable_with_modes(
+                    span,
+                    HirBootstrapHostFunction::JsonReaderSerializationNext,
+                    vec![(json_reader, ParameterMode::Var, true)],
+                    None,
+                    serialization_event_result,
+                )?;
+                self.push_bootstrap_host_callable_with_modes(
+                    span,
+                    HirBootstrapHostFunction::JsonReaderSerializationReject,
+                    vec![
+                        (json_reader, ParameterMode::Var, true),
+                        (serialization_error, ParameterMode::Value, false),
+                    ],
+                    None,
+                    json_error,
+                )?;
+            }
         }
         if messagepack_referenced {
             self.push_bootstrap_host_callable(
@@ -5431,6 +5526,14 @@ impl<'a> TypeLowerer<'a> {
     }
 
     fn validate_orphan_rule(&mut self, implementation: &HirImplementation) -> Result<(), HirError> {
+        // Bootstrap standard sources are part of the compiler-owned prelude:
+        // they define the canonical leaf implementations that ordinary user
+        // modules are deliberately forbidden from orphaning.
+        if self.sources.get(implementation.span.file())?.origin()
+            == crate::source::SourceOrigin::GeneratedStandard
+        {
+            return Ok(());
+        }
         if self.type_has_recovery(implementation.target)?
             || self.types_have_recovery(implementation.trait_reference.arguments.iter().copied())?
         {
@@ -5638,7 +5741,7 @@ impl<'a> TypeLowerer<'a> {
                         requires_self_send: false,
                         signature: ExpectedTraitMethodSignature::Serialization {
                             function_type,
-                            has_receiver: name.as_str() == "Encode",
+                            has_receiver: false,
                             generic_bounds: vec![Vec::new(), vec![bound]],
                             local_arity: 2,
                         },
@@ -5680,6 +5783,7 @@ impl<'a> TypeLowerer<'a> {
                             ]
                         } else {
                             &[
+                                ("peek", HirSerializationTraitMethod::DecoderPeek),
                                 ("next", HirSerializationTraitMethod::DecoderNext),
                                 ("own", HirSerializationTraitMethod::DecoderOwn),
                                 ("reject", HirSerializationTraitMethod::DecoderReject),
@@ -8455,8 +8559,8 @@ mod tests {
             "import std.serialization\n\
              type User = { value: Int }\n\
              impl serialization.Encode[String] for User {\n\
-                 fn encode[E, S: serialization.Encoder[String, E]](self, encoder: var S): Unit ! E {\n\
-                     encoder.int(self.value)?\n\
+                 fn encode[E, S: serialization.Encoder[String, E]](value: Self, encoder: var S): Unit ! E {\n\
+                     encoder.int(value.value)?\n\
                  }\n\
              }\n",
         );

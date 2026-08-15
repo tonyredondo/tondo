@@ -443,9 +443,19 @@ enum HostValue {
         reader: json::JsonReader<'static>,
         finished: bool,
     },
+    JsonSerializationReader {
+        reader: json::JsonReader<'static>,
+        depth: usize,
+        finished: bool,
+    },
     JsonWriter {
         writer: json::JsonWriter,
         stream: StreamKind,
+        finished: bool,
+    },
+    JsonBufferWriter {
+        writer: Option<json::JsonWriter>,
+        error: Option<json::JsonErrorKind>,
         finished: bool,
     },
 }
@@ -1733,6 +1743,80 @@ impl BootstrapHost {
         }
     }
 
+    fn runtime_serialization_event(&mut self, event: json::JsonEvent) -> RuntimeValue {
+        let (variant, values) = match event {
+            json::JsonEvent::StartArray(length) => (8, vec![runtime_json_length_value(length)]),
+            json::JsonEvent::EndArray => (9, Vec::new()),
+            json::JsonEvent::StartObject(length) => (
+                13,
+                vec![
+                    RuntimeValue::String(String::new()),
+                    runtime_json_length_value(length),
+                ],
+            ),
+            json::JsonEvent::EndObject => (15, Vec::new()),
+            json::JsonEvent::Key(key) => (14, vec![RuntimeValue::String(key)]),
+            json::JsonEvent::Null => (0, Vec::new()),
+            json::JsonEvent::Bool(value) => (1, vec![RuntimeValue::Bool(value)]),
+            json::JsonEvent::Number(number) => {
+                if let Ok(value) = number.to_int() {
+                    (2, vec![RuntimeValue::Integer(i128::from(value))])
+                } else if let Ok(value) = number.to_uint() {
+                    (3, vec![RuntimeValue::Integer(i128::from(value))])
+                } else if let Ok(value) = number.to_float64() {
+                    (5, vec![RuntimeValue::Float(value)])
+                } else {
+                    (5, vec![RuntimeValue::Float(f64::NAN)])
+                }
+            }
+            json::JsonEvent::String(value) => (6, vec![RuntimeValue::String(value)]),
+        };
+        RuntimeValue::Variant {
+            name: "SerializationEvent".into(),
+            variant,
+            values,
+        }
+    }
+
+    fn serialization_event_to_json(
+        event: &RuntimeValue,
+    ) -> Result<json::JsonEvent, json::JsonErrorKind> {
+        let RuntimeValue::Variant {
+            name,
+            variant,
+            values,
+        } = event
+        else {
+            return Err(json::JsonErrorKind::TypeMismatch);
+        };
+        if name != "SerializationEvent" {
+            return Err(json::JsonErrorKind::TypeMismatch);
+        }
+        match (*variant, values.as_slice()) {
+            (0, []) => Ok(json::JsonEvent::Null),
+            (1, [RuntimeValue::Bool(value)]) => Ok(json::JsonEvent::Bool(*value)),
+            (2 | 3, [RuntimeValue::Integer(value)]) => json::JsonNumber::parse(&value.to_string())
+                .map(json::JsonEvent::Number)
+                .map_err(|error| error.kind),
+            (4 | 5, [RuntimeValue::Float(value)]) if value.is_finite() => {
+                json::JsonNumber::parse(&value.to_string())
+                    .map(json::JsonEvent::Number)
+                    .map_err(|error| error.kind)
+            }
+            (6, [RuntimeValue::String(value)]) => Ok(json::JsonEvent::String(value.clone())),
+            (8, [length]) => Ok(json::JsonEvent::StartArray(
+                runtime_json_length(length).map_err(|_| json::JsonErrorKind::TypeMismatch)?,
+            )),
+            (9, []) => Ok(json::JsonEvent::EndArray),
+            (13, [RuntimeValue::String(_), length]) => Ok(json::JsonEvent::StartObject(
+                runtime_json_length(length).map_err(|_| json::JsonErrorKind::TypeMismatch)?,
+            )),
+            (14, [RuntimeValue::String(value)]) => Ok(json::JsonEvent::Key(value.clone())),
+            (15, []) => Ok(json::JsonEvent::EndObject),
+            _ => Err(json::JsonErrorKind::TypeMismatch),
+        }
+    }
+
     fn runtime_json_value(
         &self,
         value: &RuntimeValue,
@@ -2754,6 +2838,163 @@ impl VmHost for BootstrapHost {
                     Err(error) => Ok(self.json_result_structured_error(&error)),
                 }
             }
+            ("intrinsic.json.JsonReader.fromBytesSerialization", [bytes, options]) => {
+                let input = self.bytes(bytes)?.to_vec();
+                let options = match self.json_decode_options(options) {
+                    Ok(options) => options,
+                    Err(error) => return Ok(self.json_result_error(error)),
+                };
+                match json::JsonReader::from_reader(std::io::Cursor::new(input), options) {
+                    Ok(reader) => Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                        RuntimeHostValueKind::JsonReader,
+                        HostValue::JsonSerializationReader {
+                            reader,
+                            depth: 0,
+                            finished: false,
+                        },
+                    )))),
+                    Err(error) => Ok(self.json_result_structured_error(&error)),
+                }
+            }
+            ("intrinsic.json.JsonReader.nextSerialization", [reader]) => {
+                let RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::JsonReader,
+                    id,
+                } = reader
+                else {
+                    return Err(VmError::Host("JSON serialization reader is invalid".into()));
+                };
+                let result = match self.values.get_mut(id) {
+                    Some(HostValue::JsonSerializationReader { finished: true, .. }) => {
+                        return Ok(self.json_result_error(json::JsonErrorKind::InvalidSyntax));
+                    }
+                    Some(HostValue::JsonSerializationReader {
+                        reader,
+                        depth,
+                        finished,
+                    }) => {
+                        let event = reader.next();
+                        match event {
+                            Ok(Some(event)) => {
+                                let root_complete = match event {
+                                    json::JsonEvent::StartArray(_)
+                                    | json::JsonEvent::StartObject(_) => {
+                                        *depth = depth.saturating_add(1);
+                                        false
+                                    }
+                                    json::JsonEvent::EndArray | json::JsonEvent::EndObject => {
+                                        *depth = depth.saturating_sub(1);
+                                        *depth == 0
+                                    }
+                                    json::JsonEvent::Key(_) => false,
+                                    json::JsonEvent::Null
+                                    | json::JsonEvent::Bool(_)
+                                    | json::JsonEvent::Number(_)
+                                    | json::JsonEvent::String(_) => *depth == 0,
+                                };
+                                if root_complete {
+                                    match reader.next() {
+                                        Ok(None) => *finished = true,
+                                        Ok(Some(_)) => {
+                                            *finished = true;
+                                            return Ok(self.json_result_error(
+                                                json::JsonErrorKind::TrailingData,
+                                            ));
+                                        }
+                                        Err(error) => {
+                                            *finished = true;
+                                            return Ok(self.json_result_structured_error(&error));
+                                        }
+                                    }
+                                }
+                                Ok(Some(event))
+                            }
+                            Ok(None) => {
+                                *finished = true;
+                                Ok(None)
+                            }
+                            Err(error) => {
+                                *finished = true;
+                                Err(error)
+                            }
+                        }
+                    }
+                    _ => return Err(VmError::Host("JSON serialization reader is stale".into())),
+                };
+                match result {
+                    Ok(Some(event)) => Ok(RuntimeValue::ResultOk(Box::new(
+                        self.runtime_serialization_event(event),
+                    ))),
+                    Ok(None) => Ok(self.json_result_error(json::JsonErrorKind::UnexpectedEof)),
+                    Err(error) => Ok(self.json_result_structured_error(&error)),
+                }
+            }
+            ("intrinsic.json.JsonReader.peekSerialization", [reader]) => {
+                let RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::JsonReader,
+                    id,
+                } = reader
+                else {
+                    return Err(VmError::Host("JSON serialization reader is invalid".into()));
+                };
+                let result = match self.values.get(id) {
+                    Some(HostValue::JsonSerializationReader { finished: true, .. }) => None,
+                    Some(HostValue::JsonSerializationReader { reader, .. }) => {
+                        let mut lookahead = reader.clone();
+                        match lookahead.next() {
+                            Ok(event) => event.map(Ok),
+                            Err(error) => Some(Err(error)),
+                        }
+                    }
+                    _ => return Err(VmError::Host("JSON serialization reader is stale".into())),
+                };
+                match result {
+                    Some(Ok(event)) => {
+                        let event = self.runtime_serialization_event(event);
+                        Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::OptionSome(
+                            Box::new(event),
+                        ))))
+                    }
+                    None => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::OptionNone))),
+                    Some(Err(error)) => Ok(self.json_result_structured_error(&error)),
+                }
+            }
+            ("intrinsic.json.JsonReader.rejectSerialization", [reader, error]) => {
+                let RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::JsonReader,
+                    id,
+                } = reader
+                else {
+                    return Err(VmError::Host("JSON serialization reader is invalid".into()));
+                };
+                if !matches!(
+                    self.values.get(id),
+                    Some(HostValue::JsonSerializationReader { .. })
+                ) {
+                    return Err(VmError::Host("JSON serialization reader is stale".into()));
+                }
+                let kind = match error {
+                    RuntimeValue::Variant { name, variant, .. } if name == "SerializationError" => {
+                        match variant {
+                            2 => json::JsonErrorKind::MissingField,
+                            3 => json::JsonErrorKind::DuplicateKey,
+                            4 | 5 => json::JsonErrorKind::LimitExceeded,
+                            7 => json::JsonErrorKind::IoError,
+                            _ => json::JsonErrorKind::TypeMismatch,
+                        }
+                    }
+                    _ => json::JsonErrorKind::TypeMismatch,
+                };
+                Ok(self.json_error_parts(
+                    kind,
+                    json::JsonLocation {
+                        offset: 0,
+                        line: 1,
+                        column: 1,
+                    },
+                    &json::JsonPath::root(),
+                ))
+            }
             ("std.json.JsonReader.own", [reader, event]) => {
                 let event = self.json_event(event)?;
                 let RuntimeValue::Host {
@@ -2888,9 +3129,116 @@ impl VmHost for BootstrapHost {
                         match stream {
                             StreamKind::Stdout => self.stdout.extend_from_slice(&bytes),
                             StreamKind::Stderr => self.stderr.extend_from_slice(&bytes),
-                            StreamKind::Stdin => unreachable!("stdin rejected at construction"),
+                            StreamKind::Stdin => {
+                                unreachable!("stdin rejected at construction")
+                            }
                         }
                         Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
+                    }
+                    Err(error) => Ok(self.json_result_structured_error(&error)),
+                }
+            }
+            ("intrinsic.json.JsonWriter.buffer", [options]) => {
+                let (writer, error) = match self.json_encode_options(options) {
+                    Ok(options) => match json::JsonWriter::to_writer(options) {
+                        Ok(writer) => (Some(writer), None),
+                        Err(error) => (None, Some(error.kind)),
+                    },
+                    Err(error) => (None, Some(error)),
+                };
+                Ok(self.allocate(
+                    RuntimeHostValueKind::JsonWriter,
+                    HostValue::JsonBufferWriter {
+                        writer,
+                        error,
+                        finished: false,
+                    },
+                ))
+            }
+            ("intrinsic.json.JsonWriter.write", [writer, event]) => {
+                let event = match Self::serialization_event_to_json(event) {
+                    Ok(event) => event,
+                    Err(kind) => return Ok(self.json_result_error(kind)),
+                };
+                let RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::JsonWriter,
+                    id,
+                } = writer
+                else {
+                    return Err(VmError::Host(
+                        "JSON buffer writer receiver is invalid".into(),
+                    ));
+                };
+                let result = match self.values.get_mut(id) {
+                    Some(HostValue::JsonBufferWriter { finished: true, .. }) => {
+                        return Ok(self.json_result_error(json::JsonErrorKind::InvalidSyntax));
+                    }
+                    Some(HostValue::JsonBufferWriter {
+                        writer,
+                        error,
+                        finished,
+                    }) => {
+                        if let Some(kind) = error.take() {
+                            *finished = true;
+                            return Ok(self.json_result_error(kind));
+                        }
+                        let result = writer
+                            .as_mut()
+                            .expect("a valid buffer writer remains installed")
+                            .write(event);
+                        if result.is_err() {
+                            *finished = true;
+                        }
+                        result
+                    }
+                    _ => return Err(VmError::Host("JSON buffer writer token is stale".into())),
+                };
+                match result {
+                    Ok(()) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))),
+                    Err(error) => Ok(self.json_result_structured_error(&error)),
+                }
+            }
+            ("intrinsic.json.JsonWriter.finish", [writer]) => {
+                let RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::JsonWriter,
+                    id,
+                } = writer
+                else {
+                    return Err(VmError::Host(
+                        "JSON buffer writer receiver is invalid".into(),
+                    ));
+                };
+                let result = match self.values.get_mut(id) {
+                    Some(HostValue::JsonBufferWriter { finished: true, .. }) => {
+                        return Ok(self.json_result_error(json::JsonErrorKind::InvalidSyntax));
+                    }
+                    Some(HostValue::JsonBufferWriter {
+                        writer,
+                        error,
+                        finished,
+                    }) => {
+                        if let Some(kind) = error.take() {
+                            *finished = true;
+                            return Ok(self.json_result_error(kind));
+                        }
+                        let result = writer
+                            .as_mut()
+                            .expect("a valid buffer writer remains installed")
+                            .finish();
+                        *finished = true;
+                        result
+                    }
+                    _ => return Err(VmError::Host("JSON buffer writer token is stale".into())),
+                };
+                match result {
+                    Ok(bytes) => {
+                        if self.ensure_bytes_len(bytes.len()).is_err() {
+                            return Ok(self.json_result_error(json::JsonErrorKind::LimitExceeded));
+                        }
+                        Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                            RuntimeHostValueKind::Bytes,
+                            HostValue::Bytes(bytes),
+                        ))))
                     }
                     Err(error) => Ok(self.json_result_structured_error(&error)),
                 }
@@ -8125,6 +8473,64 @@ mod tests {
                 .invoke("std.io.Reader.read", &[reader, RuntimeValue::Integer(1)])
                 .unwrap()),
             RuntimeValue::OptionNone
+        ));
+    }
+
+    #[test]
+    fn json_serialization_peek_is_non_consuming_and_tracks_terminal_input() {
+        let mut host = BootstrapHost::default();
+        let input = host.allocate(
+            RuntimeHostValueKind::Bytes,
+            HostValue::Bytes(b"[null]".to_vec()),
+        );
+        let options = json_decode_options(&mut host);
+        let reader = ok(host
+            .invoke(
+                "intrinsic.json.JsonReader.fromBytesSerialization",
+                &[input, options],
+            )
+            .unwrap());
+
+        for _ in 0..2 {
+            let peeked = ok(host
+                .invoke(
+                    "intrinsic.json.JsonReader.peekSerialization",
+                    std::slice::from_ref(&reader),
+                )
+                .unwrap());
+            let RuntimeValue::OptionSome(peeked) = peeked else {
+                panic!("serialization peek must expose the next event")
+            };
+            let consumed = ok(host
+                .invoke(
+                    "intrinsic.json.JsonReader.nextSerialization",
+                    std::slice::from_ref(&reader),
+                )
+                .unwrap());
+            assert_eq!(*peeked, consumed);
+        }
+
+        let closing = ok(host
+            .invoke(
+                "intrinsic.json.JsonReader.nextSerialization",
+                std::slice::from_ref(&reader),
+            )
+            .unwrap());
+        assert!(matches!(
+            closing,
+            RuntimeValue::Variant {
+                name,
+                variant: 9,
+                values,
+            } if name == "SerializationEvent" && values.is_empty()
+        ));
+        assert!(matches!(
+            host.invoke(
+                "intrinsic.json.JsonReader.nextSerialization",
+                std::slice::from_ref(&reader),
+            )
+            .unwrap(),
+            RuntimeValue::ResultErr(value) if runtime_json_error_kind(&value) == Some(1)
         ));
     }
 

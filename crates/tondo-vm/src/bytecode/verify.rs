@@ -2271,6 +2271,8 @@ impl Verifier<'_> {
                 && !callable.name.starts_with("std.fs.Directory.")
                 && !callable.name.starts_with("std.json.JsonReader.")
                 && !callable.name.starts_with("std.json.JsonWriter.")
+                && !callable.name.starts_with("intrinsic.json.JsonReader.")
+                && !callable.name.starts_with("intrinsic.json.JsonWriter.")
                 && !callable.name.starts_with("std.collections.")
                 && !callable.name.starts_with("std.async.Waiter.wait")
                 && !callable.name.starts_with("std.async.Completer.")
@@ -3002,8 +3004,9 @@ impl Verifier<'_> {
         id: BytecodeFunctionId,
         function: &BytecodeFunction,
     ) -> Result<(), BytecodeVerificationError> {
-        let context = format!("function#{}", id.index());
-        let callable = self.callable(function.callable, &context)?;
+        let id_context = format!("function#{}", id.index());
+        let callable = self.callable(function.callable, &id_context)?;
+        let context = format!("{id_context} `{}`", callable.name);
         if function.source.start > function.source.end {
             return Err(BytecodeVerificationError::new(
                 &context,
@@ -6970,6 +6973,22 @@ impl Verifier<'_> {
                                         if guard.kind == CleanupEntryKind::Fallback
                                             && local_access_contains(&guard_place, &access)
                                         {
+                                            if local_access_is_complete_sum_payload(
+                                                &guard_place,
+                                                &access,
+                                            ) && state
+                                                .pending_moves
+                                                .insert(
+                                                    guard_place.clone(),
+                                                    PendingDeferTransition::Disarm,
+                                                )
+                                                .is_some()
+                                            {
+                                                return Err(BytecodeVerificationError::new(
+                                                    &instruction_context,
+                                                    "one cleanup owner is moved more than once by one store",
+                                                ));
+                                            }
                                             continue;
                                         }
                                         return Err(BytecodeVerificationError::new(
@@ -9623,9 +9642,39 @@ fn defer_disarm_is_confirmed(
         Some(PendingDeferTransition::Disarm) => block_exits_defer_scope(function, block, scope),
         None => {
             terminator_moves_defer_guard(&block.terminator.kind, place)
+                || preceding_store_copies_complete_sum_payload(block, instruction, place)
                 || block_exits_defer_scope(function, block, scope)
         }
     }
+}
+
+fn preceding_store_copies_complete_sum_payload(
+    block: &BytecodeBlock,
+    instruction: usize,
+    owner: &LocalAccess,
+) -> bool {
+    let Some(BytecodeInstruction {
+        kind:
+            BytecodeInstructionKind::Store {
+                value:
+                    BytecodeRvalue {
+                        kind:
+                            BytecodeRvalueKind::Use(BytecodeOperand {
+                                kind: BytecodeOperandKind::Copy(payload),
+                                ..
+                            }),
+                        ..
+                    },
+                ..
+            },
+        ..
+    }) = instruction
+        .checked_sub(1)
+        .and_then(|index| block.instructions.get(index))
+    else {
+        return false;
+    };
+    local_access_is_complete_sum_payload(owner, &LocalAccess::from_place(payload))
 }
 
 fn terminator_moves_defer_guard(terminator: &BytecodeTerminatorKind, guard: &LocalAccess) -> bool {
@@ -10189,6 +10238,22 @@ fn local_access_contains(outer: &LocalAccess, inner: &LocalAccess) -> bool {
             .iter()
             .zip(&inner.path)
             .all(|(left, right)| left == right)
+}
+
+fn local_access_is_complete_sum_payload(owner: &LocalAccess, access: &LocalAccess) -> bool {
+    owner.slot == access.slot
+        && owner.source_loan == access.source_loan
+        && access.path.len() == owner.path.len() + 1
+        && access.path.starts_with(&owner.path)
+        && matches!(
+            access.path.last(),
+            Some(
+                MovePathComponent::OptionValue
+                    | MovePathComponent::ResultOkValue
+                    | MovePathComponent::ResultErrValue
+                    | MovePathComponent::UnionValue(_)
+            )
+        )
 }
 
 fn apply_consumed_defer_events(
@@ -16067,6 +16132,54 @@ mod tests {
         assert!(initialized.unavailable.is_empty());
         let dead = transfer_local(initialized, &[LocalEvent::StorageDead(slot)], slot);
         assert!(!dead.live);
+    }
+
+    #[test]
+    fn complete_sum_payload_transfer_matches_exactly_one_owner_projection() {
+        let slot = BytecodeSlotId::new(7);
+        let owner = LocalAccess {
+            slot,
+            path: Vec::new(),
+            source_loan: None,
+        };
+        for component in [
+            MovePathComponent::OptionValue,
+            MovePathComponent::ResultOkValue,
+            MovePathComponent::ResultErrValue,
+            MovePathComponent::UnionValue(BytecodeTypeId::new(3)),
+        ] {
+            assert!(local_access_is_complete_sum_payload(
+                &owner,
+                &LocalAccess {
+                    slot,
+                    path: vec![component],
+                    source_loan: None,
+                }
+            ));
+        }
+
+        for access in [
+            LocalAccess {
+                slot,
+                path: vec![MovePathComponent::TupleField(0)],
+                source_loan: None,
+            },
+            LocalAccess {
+                slot,
+                path: vec![
+                    MovePathComponent::OptionValue,
+                    MovePathComponent::TupleField(0),
+                ],
+                source_loan: None,
+            },
+            LocalAccess {
+                slot: BytecodeSlotId::new(8),
+                path: vec![MovePathComponent::OptionValue],
+                source_loan: None,
+            },
+        ] {
+            assert!(!local_access_is_complete_sum_payload(&owner, &access));
+        }
     }
 
     #[test]
