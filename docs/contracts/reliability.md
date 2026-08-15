@@ -124,8 +124,7 @@ specification fence.
 
 ## Deterministic gate and campaigns
 
-`scripts/test-gate.sh` is the canonical PR and `main` gate on Linux x86_64. It
-runs:
+`scripts/test-gate.sh` is the canonical full gate on Linux x86_64. It runs:
 
 1. formatter fixed-point check;
 2. structural validation of all normative specifications;
@@ -140,6 +139,27 @@ runs:
 11. explicit draft-lineage validation;
 12. the complete reference regression run; and
 13. byte-for-byte comparison with the draft result.
+
+Block feedback uses `scripts/fast-gate.sh`, whose full contract is in
+[`fast-gate.md`](./fast-gate.md). The fast lane is deliberately narrower, not
+weaker: it checks the changed packages, requires 100% coverage for newly
+instrumented executable Rust lines, and runs mutation only over the diff. A
+change that touches a shared compiler/runtime frontier or a normative record
+automatically escalates to the full gate. Its evidence is draft-only and cannot
+be copied into `conformance/proofs/`.
+
+The CI tiers are explicit:
+
+| Tier | Trigger | Required work |
+| --- | --- | --- |
+| `fast` | Every push and pull request | formatter, impact checks/tests, changed-line coverage and diff mutation when applicable |
+| `full` | Manual wave boundary and nightly reliability | the complete test gate, portable matrix, deterministic fuzz smoke and quality checks; promotion proof is opt-in at a wave boundary |
+
+The target directory may be placed on a persistent SSD locally via
+`CARGO_TARGET_DIR`; fast builds keep `CARGO_INCREMENTAL=1`. The quality gate
+keeps its clean-query `CARGO_INCREMENTAL=0` setting because cargo-mutants is a
+separate reproducibility boundary. No target directory or temporary path is
+part of a reliability identity.
 
 Linux ARM64, macOS Intel, macOS Apple Silicon, and Windows run the portable
 workspace tests plus a native CLI hello-world smoke test. They do not re-execute
@@ -157,7 +177,10 @@ workspace root with `./`; metadata includes only the target, seed, and tool
 versions. CI uploads logs, minimized fuzz artifacts, and quality reports, never
 credentials or ambient environment dumps. The strict job also retains the
 content-addressed draft manifest from every attempted revision, whether the
-later gate succeeds or fails.
+later gate succeeds or fails. `scripts/test-gate.sh` validates the current
+draft result on every full run but defers the immutable promotion proof unless
+`TONDO_FULL_GATE_PROMOTION=1` is supplied explicitly for a wave boundary; this
+prevents a normal block from attempting to replace an older proof revision.
 
 ## Generators, properties, and metamorphism
 

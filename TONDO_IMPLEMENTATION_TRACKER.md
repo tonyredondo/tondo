@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 2.31
+**Versión del tracker:** 2.32
 
 **Última actualización:** 2026-08-15
 
@@ -30,6 +30,7 @@ desarrollo y no ha sido publicado.
 - [Contrato de owner de `std.testing`](./docs/contracts/stdlib-testing.md)
 - [Matriz normativa de owners y firmas de stdlib](./docs/contracts/stdlib-matrix.md)
 - [Contrato de campañas de generación del runner](./docs/contracts/test-generation.md)
+- [Contrato de fast gate y tiers de evidencia](./docs/contracts/fast-gate.md)
 - [Contrato de owners Core STD-0.1A](./docs/contracts/stdlib-core.md)
 - [Contrato de owners Hosted STD-0.1A](./docs/contracts/stdlib-hosted.md)
 
@@ -399,6 +400,18 @@ cantidad de infraestructura necesaria antes del primer programa ejecutable.
   conserva solo metadata descriptiva solicitada; no existe `Any`, inspección de
   valores, acceso privado runtime, lookup por string ni dependencia reflectiva
   de serializers.
+
+### 3.2.1 Feedback por impacto
+
+- [x] **DEC-017 — Feedback por impacto y gates por tier.** Cada bloque usa
+  `scripts/fast-gate.sh`: formatter, paquetes afectados, cobertura de líneas
+  ejecutables nuevas al 100 % y mutación del diff. Fronteras compartidas,
+  registros normativos y scripts de gate escalan automáticamente a
+  `scripts/test-gate.sh`. Pushes y pull requests usan el tier `fast`; una wave
+  y la noche usan el tier `full`, que conserva test-gate, matriz portable,
+  fuzzing y quality-gate; `TONDO_FULL_GATE_PROMOTION=1` activa el promotion
+  proof únicamente en una wave. La evidencia de fast gate vive en
+  `target/reliability/fast-gate/` y nunca puede convertirse en proof sellado.
 
 ### 3.3 Estructura inicial recomendada
 
@@ -2768,6 +2781,19 @@ Antes de ampliar la gramática de M10.7 o M10.6:
   fuente, script, flag o toolchain sí. El baseline conserva además el origen de
   su captura. Este gate no cierra STD-IMPL-001 ni convierte la auditoría pública
   de la stdlib en completa.
+
+- [x] **FAST-GATE-001 — Acortar el ciclo sin rebajar calidad.** Añadir el
+  manifiesto `testing/fast-gate.json`, el clasificador de impacto y el gate
+  ejecutable `scripts/fast-gate.sh`. El gate mantiene caches incrementales
+  locales mediante `CARGO_TARGET_DIR`, ejecuta solo crates afectados cuando la
+  frontera es local, comprueba líneas nuevas con `cargo llvm-cov`, ejecuta
+  `cargo mutants --in-diff` en serie y escala a `test-gate.sh` ante una frontera
+  compartida. `scripts/fast-gate-test.sh` cubre el clasificador y las decisiones
+  de cobertura positiva/negativa; `docs/contracts/fast-gate.md` separa la
+  evidencia draft del promotion proof. La CI expone `fast` para push/PR y
+  `full` para wave boundaries/manual y nightly; el input `promotion` de la CI
+  hace explícita la operación inmutable de proof y ningún cambio al umbral
+  global ni a la ratchet queda implícito.
 
 - [x] **DOC-TEST-001 — Implementar `tondo doc-test` por la ruta pública.**
   El comando exacto `tondo doc-test --edition 0.1 <markdown>` usa el scanner
@@ -5994,6 +6020,20 @@ no se declara iniciada antes de S1A.
 ---
 
 ## 25. Historial del tracker
+
+### 2.32 — 2026-08-15
+
+- Se cierra `FAST-GATE-001` con `testing/fast-gate.json`, un clasificador de
+  impacto ejecutable, checks/tests por crate, cobertura de líneas nuevas,
+  mutación del diff y escalado fail-closed a `test-gate.sh` para fronteras
+  compartidas. `scripts/fast-gate-test.sh` prueba scopes y cobertura
+  negativa/positiva; la evidencia temporal queda separada del proof de
+  conformance.
+- La CI distingue el feedback `fast` de los cierres `full`; el uso de
+  `CARGO_TARGET_DIR` en SSD y la incrementalidad local no alteran provenance,
+  baseline ni la ratchet. El promotion proof es ahora opt-in mediante
+  `TONDO_FULL_GATE_PROMOTION=1`, de modo que un bloque normal no intenta
+  reemplazar el proof inmutable de una revisión anterior.
 
 ### 2.31 — 2026-08-15
 

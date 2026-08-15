@@ -13,6 +13,43 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  full-gate:
+    name: Complete test gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Cache nightly build
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: tondo-nightly-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: |
+            tondo-nightly-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Run complete test gate
+        env:
+          TONDO_TEST_TARGET: linux-x86_64
+          TONDO_FULL_GATE_PROMOTION: "0"
+        run: bash scripts/test-gate.sh
+
+      - name: Upload full-gate evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nightly-full-gate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/reliability/evidence/
+          if-no-files-found: warn
+          retention-days: 14
+
   fuzz:
     name: Extended fuzz campaigns
     runs-on: ubuntu-24.04

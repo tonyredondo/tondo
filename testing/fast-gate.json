@@ -1,0 +1,56 @@
+{
+  "format": "tondo-fast-gate/1",
+  "edition": "0.1",
+  "coverage": {
+    "new_executable_line_min_basis_points": 10000,
+    "global_baseline_source": "testing/quality-baseline.json"
+  },
+  "mutation": {
+    "required_for_rust_source_changes": true,
+    "jobs": 1,
+    "timeout_seconds": 300,
+    "build_timeout_seconds": 600
+  },
+  "shared_paths": [
+    "Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain.toml",
+    ".cargo/",
+    ".github/",
+    "TONDO_LANGUAGE_SPEC.md",
+    "TONDO_TESTING_SPEC.md",
+    "TONDO_TOOLCHAIN_SPEC.md",
+    "testing/inventory.json",
+    "testing/coverage-matrix.json",
+    "testing/normative-evidence.json",
+    "testing/quality-baseline.json",
+    "testing/conformance-ratchet.json",
+    "conformance/",
+    "crates/tondo-compiler/src/syntax/",
+    "crates/tondo-compiler/src/hir/",
+    "crates/tondo-compiler/src/mir/",
+    "crates/tondo-compiler/src/resolve/",
+    "crates/tondo-compiler/src/types.rs",
+    "crates/tondo-compiler/src/bytecode/",
+    "crates/tondo-vm/src/bytecode/",
+    "crates/tondo-vm/src/runtime/execute.rs",
+    "scripts/test-gate.sh",
+    "scripts/quality-gate.sh"
+  ],
+  "packages": [
+    { "prefix": "crates/tondo-cli/", "package": "tondo-cli" },
+    { "prefix": "crates/tondo-compiler/", "package": "tondo-compiler" },
+    { "prefix": "crates/tondo-conformance/", "package": "tondo-conformance" },
+    { "prefix": "crates/tondo-reference-adapter/", "package": "tondo-reference-adapter" },
+    { "prefix": "crates/tondo-reliability/", "package": "tondo-reliability" },
+    { "prefix": "crates/tondo-stdlib/", "package": "tondo-stdlib" },
+    { "prefix": "crates/tondo-vm/", "package": "tondo-vm" }
+  ],
+  "policy": {
+    "fast_gate": "fmt + impacted package check/test + changed executable lines + diff mutation",
+    "shared_frontier": "full test-gate",
+    "wave_boundary": "full test-gate + quality-gate + conformance proof",
+    "draft_evidence": "target/reliability/fast-gate/",
+    "promotion_proof": "conformance/proofs/"
+  }
+}

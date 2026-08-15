@@ -181,7 +181,9 @@ run_step conformance-compare \
     "$evidence/conformance-result.json" \
     conformance/0.1/results/tondo-reference-draft-tondo-vm-hosted.json
 
-if jq -e '([.requirements[] | select(.status == "draft-pending")] | length) == 0' \
+if [[ "${TONDO_FULL_GATE_PROMOTION:-0}" != "1" ]]; then
+    echo "::notice:: conformance promotion proof deferred (set TONDO_FULL_GATE_PROMOTION=1 at a wave boundary)"
+elif jq -e '([.requirements[] | select(.status == "draft-pending")] | length) == 0' \
     testing/coverage-matrix.json >/dev/null \
     && jq -e '([.case_layers[]?.cases[]?] | length) > 0' \
         "$evidence/conformance-result.json" >/dev/null; then
