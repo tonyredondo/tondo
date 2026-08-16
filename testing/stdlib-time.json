@@ -12,7 +12,7 @@
   "api": "tondo-std-time-0.1/1",
   "source": {
     "path": "crates/tondo-compiler/src/process_host.rs",
-    "sha256": "sha256:4833ac5a32d7eedc7120fb428a6c0d158de11b8deabbade97a1b3420a9d4f953"
+    "sha256": "sha256:87a320978012242826afc14c7b5c0bb822de92017661ebbfb3cbfd40076771a0"
   },
   "capabilities": {
     "required": ["clock"],
