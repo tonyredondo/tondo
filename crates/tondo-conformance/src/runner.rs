@@ -745,6 +745,7 @@ fn wire_source_action(suite: &LoadedSuite, action: &SourceAction) -> WireSourceA
         warning_profiles: action.warning_profiles.clone(),
         arguments: action.arguments.clone(),
         gc_threshold: action.gc_threshold,
+        include_interface: action.include_interface,
     }
 }
 
@@ -1956,6 +1957,7 @@ mod tests {
             warning_profiles: Vec::new(),
             arguments: Vec::new(),
             gc_threshold: None,
+            include_interface: false,
         };
         let fix = serde_json::json!({
             "edits": [{
@@ -2452,7 +2454,7 @@ mod tests {
                 .iter()
                 .flat_map(|layer| &layer.cases)
                 .count(),
-            66
+            67
         );
 
         assert!(compose_suite_result(&lineage, baseline.clone(), b"not json").is_err());

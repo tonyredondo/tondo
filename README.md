@@ -2,9 +2,9 @@
 
 **Development status:** Tondo 0.1 is not published. There is one current draft;
 the bootstrap corpus is only a regression suite for implemented behavior.
-Static metaprogramming, `defer await` and first-class testing are specified but
-not implemented yet. The compact Tondo LLM Form transport is specified but its
-codec and CLI are not implemented yet.
+Static metaprogramming, `defer await` and the remaining native testing
+surfaces are still under implementation. The compact Tondo LLM Form transport
+is specified but its codec and CLI are not implemented yet.
 
 **Draft conformance target:** `tondo-vm-hosted` / `hosted` /
 `[console, process]`
@@ -87,18 +87,22 @@ and Set leaves. The unchanged value-copy corpus runs eager and COW under normal
 and allocation-by-allocation GC pressure, so storage sharing cannot alter
 values, write independence, identity, iteration, panic, or output.
 
-Async execution is implemented without a visible future wrapper. Calls with an
-`async` signature must be initiated by `await` or, inside `scope`, by `spawn`.
-The latter returns one affine, scope-bound `Join[T, E]`; HIR follows that handle
-through bindings and containers, requires exactly one terminal consumption, and
-keeps every structured `ref` loan active until the handle is awaited or torn
-down. `Send` is checked for transferred and suspension-live values, while a
-concurrently observed `ref T` also requires `Share`. MIR and bytecode retain
-separate `Await`, `Spawn`, task-scope entry, and scope-drain operations. The VM
-executes them with a cooperative single-thread scheduler, idempotent wakeups,
-suspendible typed frame vectors, structured cancellation, sibling cleanup, and
-deterministic child-panic propagation. Parked frames and completed child results
-remain precise GC roots.
+Async execution is implemented without a visible future wrapper or a parallel
+`async` API. Every function is declared with `fn`; the compiler infers the
+published `suspends` effect from suspendible calls, explicit `await`, async
+iteration, or cleanup. A direct suspendible call waits implicitly and
+`await call()` is equivalent; only `spawn` preserves pending work and returns
+one affine, scope-bound `Join[T, E]`. HIR follows that handle through bindings
+and containers, requires exactly one terminal consumption, and keeps every
+structured `ref` loan active until the handle is awaited or torn down. `Send`
+is checked for transferred and suspension-live values, while a concurrently
+observed `ref T` also requires `Share`. `@sync`/`@nosuspend` are explicit
+non-suspending boundaries and reject a suspendible operation with `E1601`. MIR
+and bytecode retain separate `Await`, `Spawn`, task-scope entry, and
+scope-drain operations. The VM executes them with a cooperative single-thread
+scheduler, idempotent wakeups, suspendible typed frame vectors, structured
+cancellation, sibling cleanup, and deterministic child-panic propagation.
+Parked frames and completed child results remain precise GC roots.
 
 `CompilationOutput` now retains an immutable semantic snapshot after name
 resolution. Embedding tools can query contextual expression types, resolved
@@ -137,12 +141,14 @@ then to verified in-memory slot bytecode with source maps. Reached generic
 functions are monomorphized deterministically; equal concrete substitutions
 share one body, direct bytecode calls carry no runtime type pack, and expanding
 recursion is stopped by an explicit request limit. `tondo run` executes a safe
-sync or async explicit `main`, or an inferred implicit script entry, in an
+explicit `main` whose suspension effect is inferred, or an inferred implicit
+script entry, in an
 iterative VM with checked operations, normative panics, precise generational
 handles, non-moving mark-and-sweep collection, defensive limits, and
 capability-gated `std.console` and `std.process` host bridges. Root scripts
 support shebangs, top-level statements, inferred closed error unions, and
-automatic async entry when they use `await` or `scope`. `Command` and
+automatic suspension entry when they use a suspendible call, `await`, or
+`scope`. `Command` and
 `Pipeline` are inert copied
 plans; only four closed `|` compositions exist, argv never passes through a
 shell, and shell execution is explicitly named. Async terminal operations use

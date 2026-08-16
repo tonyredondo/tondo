@@ -22,9 +22,10 @@ lifted arithmetic, ARRAY-007 named concatenation/repetition, and ITER-001/002
 static user iterators plus all four intrinsic iteration forms, plus TEXT-002
 Unicode-scalar String length, indexing, and slicing, and TEXT-003 decoded
 interpolation with static `Display`, plus VARIADIC-001/002 homogeneous final
-packs and whole-array spread, plus the historical explicit-await ASYNC-001..003
-prototype, SCOPE-001, SPAWN-001, JOIN-001, SEND-001, SHARE-001, and
-MAIN-ASYNC-001; the 1.67 implicit-await migration remains pending
+packs and whole-array spread, plus the canonical inferred-suspension `suspends`
+effect and implicit-await path (the explicit-await prototype remains only in
+the frozen corpus), SCOPE-001, SPAWN-001, JOIN-001, SEND-001, SHARE-001, and
+MAIN-ASYNC-001
 
 ## Boundary
 

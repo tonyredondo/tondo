@@ -1845,6 +1845,7 @@ pub struct HirCallableSignature {
     opaque_result: Option<HirOpaqueResult>,
     body_source: Option<Span>,
     implicit_script: bool,
+    no_suspend: bool,
 }
 
 impl HirCallableSignature {
@@ -1886,6 +1887,16 @@ impl HirCallableSignature {
 
     pub fn is_implicit_script(&self) -> bool {
         self.implicit_script
+    }
+
+    /// Whether the source declaration explicitly forbids suspension.
+    ///
+    /// This is a source-level boundary (`@sync`/`@nosuspend`), separate from
+    /// the inferred function effect. Keeping it on the callable signature
+    /// lets checking reject a suspendible operation before inference can
+    /// promote the enclosing function.
+    pub fn no_suspend(&self) -> bool {
+        self.no_suspend
     }
 }
 

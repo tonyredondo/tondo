@@ -43,6 +43,7 @@
     "UTEST-SNAPSHOT-001",
     "UTEST-SPEC-001",
     "UTEST-SUITE-001",
+    "UTEST-SUSPENSION-MIGRATION-001",
     "UTEST-VTIME-001"
   ],
   "cases": [
@@ -580,6 +581,18 @@
       ],
       "evidence": [
         "rust:tondo-compiler:src::test_report:retry_repeat_snapshot_and_artifact_policies_are_closed"
+      ]
+    },
+    {
+      "id": "testing-53-suspension-migration",
+      "surface": "suspension",
+      "requirements": [
+        "TL01-28-3-R001"
+      ],
+      "evidence": [
+        "rust:tondo-reference-adapter:tests::suspension_migration:direct_and_explicit_wait_have_the_same_suspends_interface_hash",
+        "rust:tondo-reference-adapter:tests::suspension_migration:runtime_direct_suspension_uses_the_same_interface_observation",
+        "rust:tondo-reference-adapter:tests::suspension_migration:sync_boundaries_reject_direct_and_explicit_suspension_with_e1601"
       ]
     }
   ]

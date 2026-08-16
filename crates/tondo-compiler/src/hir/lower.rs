@@ -3051,6 +3051,7 @@ impl<'a> TypeLowerer<'a> {
             opaque_result: None,
             body_source: None,
             implicit_script: false,
+            no_suspend: false,
         });
         Ok(())
     }
@@ -3100,6 +3101,7 @@ impl<'a> TypeLowerer<'a> {
             opaque_result: None,
             body_source: None,
             implicit_script: false,
+            no_suspend: false,
         });
         Ok(())
     }
@@ -3160,6 +3162,7 @@ impl<'a> TypeLowerer<'a> {
             opaque_result: None,
             body_source: None,
             implicit_script: false,
+            no_suspend: false,
         });
         Ok(())
     }
@@ -4688,10 +4691,15 @@ impl<'a> TypeLowerer<'a> {
             // token without owning a body to analyse.  It must not seed the
             // name-based fixed point and accidentally make an unrelated
             // implementation method with the same name suspendible.
-            .filter(|callable| callable.has_body && callable.direct_suspendible)
+            .filter(|callable| {
+                callable.has_body && callable.direct_suspendible && !callable.no_suspend
+            })
             .map(|callable| callable.name.clone())
             .collect::<BTreeSet<_>>();
         for callable in &callables {
+            if callable.no_suspend {
+                continue;
+            }
             if callable
                 .called_names
                 .iter()
@@ -4865,6 +4873,7 @@ impl<'a> TypeLowerer<'a> {
             opaque_result: None,
             body_source: Some(self.sources.span(file, root.range())?),
             implicit_script: true,
+            no_suspend: false,
         });
         Ok(())
     }
@@ -6106,12 +6115,14 @@ impl<'a> TypeLowerer<'a> {
     ) -> Result<(), HirError> {
         let name_range = callable_name_range(callable).unwrap_or_else(|| callable.range());
         let generic_arity = environment.next_position;
-        let is_async = has_direct_token(callable, TokenKind::Async)
+        let no_suspend = callable_has_no_suspend_attribute(callable);
+        let is_async = (has_direct_token(callable, TokenKind::Async)
             || self.inferred_suspendible.contains(&(
                 file,
                 callable.range().start(),
                 callable.range().end(),
-            ));
+            )))
+            && !no_suspend;
         let is_unsafe = has_direct_token(callable, TokenKind::Unsafe);
         let mut parameters = Vec::new();
         let mut function_parameters = Vec::new();
@@ -6298,6 +6309,7 @@ impl<'a> TypeLowerer<'a> {
                 .map(|body| self.sources.span(file, body.range()))
                 .transpose()?,
             implicit_script: false,
+            no_suspend,
         });
         if let Some(body) = body {
             self.lower_annotation_tree(file, body, &environment)?;
@@ -6869,8 +6881,17 @@ impl<'a> TypeLowerer<'a> {
 }
 
 fn first_identifier(node: SyntaxNodeRef<'_>) -> Option<SyntaxTokenRef<'_>> {
-    node.descendant_tokens()
-        .find(|token| token.kind() == TokenKind::Identifier)
+    let attribute_ranges = node
+        .child_nodes()
+        .filter(|child| child.kind() == SyntaxKind::Attribute)
+        .map(|child| child.range())
+        .collect::<Vec<_>>();
+    node.descendant_tokens().find(|token| {
+        token.kind() == TokenKind::Identifier
+            && !attribute_ranges.iter().any(|range| {
+                token.range().start() >= range.start() && token.range().end() <= range.end()
+            })
+    })
 }
 
 /// Render a derive type path without dropping its generic codec arguments.
@@ -6950,6 +6971,7 @@ struct SourceCallableInfo {
     name: String,
     has_body: bool,
     direct_suspendible: bool,
+    no_suspend: bool,
     called_names: BTreeSet<String>,
 }
 
@@ -6977,6 +6999,7 @@ fn collect_source_callables<'a>(
             let body = node
                 .child_nodes()
                 .find(|child| child.kind() == SyntaxKind::Block);
+            let no_suspend = callable_has_no_suspend_attribute(node);
             let (direct_suspendible, called_names) = body
                 .map(|body| {
                     (
@@ -6998,6 +7021,7 @@ fn collect_source_callables<'a>(
                 name: name.to_owned(),
                 has_body: body.is_some(),
                 direct_suspendible: direct_suspendible || has_direct_token(node, TokenKind::Async),
+                no_suspend,
                 called_names,
             });
         }
@@ -7013,6 +7037,18 @@ fn syntax_contains_any(node: SyntaxNodeRef<'_>, kinds: &[SyntaxKind]) -> bool {
     }
     node.child_nodes()
         .any(|child| syntax_contains_any(child, kinds))
+}
+
+fn callable_has_no_suspend_attribute(node: SyntaxNodeRef<'_>) -> bool {
+    node.child_nodes()
+        .filter(|child| child.kind() == SyntaxKind::Attribute)
+        .filter_map(|attribute| {
+            attribute
+                .child_tokens()
+                .find(|token| token.kind() == TokenKind::Identifier)
+                .and_then(|token| token.token().normalized_identifier())
+        })
+        .any(|name| matches!(name, "sync" | "nosuspend"))
 }
 
 fn called_names(node: SyntaxNodeRef<'_>) -> BTreeSet<String> {

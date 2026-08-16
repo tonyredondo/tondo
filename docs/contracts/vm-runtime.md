@@ -32,8 +32,9 @@ Unicode-scalar String length, indexing, and slicing, plus TEXT-003 static
 Display execution and ordered interpolation, plus VARIADIC-001 homogeneous
 final packs and VARIADIC-002 explicit Array spread, plus OPT-COW-001..003
 measured and differentially validated collection copy-on-write, plus the
-historical explicit-await ASYNC-001..004 prototype (the 1.67 implicit-await
-migration remains pending), EXEC-001/002, SCOPE-001, SPAWN-001, JOIN-001,
+canonical inferred-suspension `suspends` effect and implicit-await path (the
+explicit-await prototype remains only in the frozen corpus), EXEC-001/002,
+SCOPE-001, SPAWN-001, JOIN-001,
 CANCEL-001/002, PANIC-ASYNC-001, SEND-001, SHARE-001, and MAIN-ASYNC-001
 
 **Language baseline:** Tondo 0.1

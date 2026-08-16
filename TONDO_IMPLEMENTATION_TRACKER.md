@@ -3154,14 +3154,23 @@ reporters.
   La inmutabilidad se demuestra reproduciendo el corpus bootstrap por sus
   hashes, no manteniendo dos gramáticas en el compilador del draft.
 
-- [ ] **UTEST-SUSPENSION-MIGRATION-001 — Migrar el runner al efecto
+- [x] **UTEST-SUSPENSION-MIGRATION-001 — Migrar el runner al efecto
   `suspends` publicado.** Revisar check, lowering, worker y fixtures de test para
   que una llamada suspendible directa espere implícitamente, `await` directo
   siga siendo equivalente, `Join`/`Waiter` conserven consumo explícito y
   `@sync`/`@nosuspend` produzca `E1601`. El test harness no puede introducir una
   API `async` paralela ni depender de que el body escriba `await` para inferir
   suspensión. Añadir compile-pass, compile-fail y runtime tests con hash de
-  interfaz `suspends` antes de marcar la conformidad de testing.
+  interfaz `suspends` antes de marcar la conformidad de testing. Cerrado con la
+  ruta de atributos del parser/CST, la frontera `no_suspend` del HIR/checker,
+  el backend de conformance y fixtures canónicos `fn`; la observación de
+  interfaz fija `api_hash` y `content_hash` para la equivalencia directa/
+  explícita. Evidencia: `tests/compile-pass/m7-suspension-inferred-direct.to`,
+  `tests/compile-pass/m7-suspension-inferred-explicit.to`,
+  `tests/compile-fail/m7-suspension-sync-boundary.to`,
+  `tests/runtime/m7-suspension-inferred.to` y
+  `crates/tondo-reference-adapter/tests/suspension_migration.rs`. El corpus
+  `async fn` histórico permanece sin cambios y no participa en esta prueba.
 
 - [x] **UTEST-ID-001 — Construir el árbol estático suite/test.** La identidad
   interna usa PackageId + source class + module path + ordered node path + kind;
@@ -5953,7 +5962,7 @@ de `origin/main`), los tests ejecutables actuales y el gate local completo:
 | `SCRIPT-004` | Cerrada | `script_entry_infers_suspension_for_direct_waiter_calls`, `script_entry_executes_sync_and_async_top_level_work` y `tests/runtime/m10-async-defer-script.to`, además del gate de fixtures. |
 | `ASYNC-INFER-001`, `ASYNC-IMPLICIT-AWAIT-001`, `ASYNC-EFFECT-API-001`, `ASYNC-JOIN-RETURN-001`, `ASYNC-THREAD-SPAWN-001`, `ASYNC-ONESHOT-001`, `ASYNC-ITER-001` | Cerradas | Ya tenían estado canónico `[x]`; el gate completo volvió a ejecutar compiler/VM/conformance y sus casos de inferencia, `Join`, one-shot, thread lane e iteración async. |
 | `ASYNC-DEFER-IMPL-001` | **No se cierra todavía** | La implementación existe y pasan `m10-async-defer-await`, `m10-async-defer-lifo`, `m10-async-defer-cancel`, `m10-async-defer-script` y los negativos de `E1608`/llamada fallible/`Join`/await anidado; la entrada exige además casos dedicados de timeout, resource limit, interrupción, `Send` y cleanup suprimido que aún no están aislados en fixtures del runner. |
-| `UTEST-SUSPENSION-MIGRATION-001` | **Pendiente real** | El backend de tests todavía conserva fixtures de compatibilidad `async`/`await` y no hay una prueba de conformance independiente que fije compile-pass/compile-fail/runtime y hash de interfaz `suspends` para el runner. |
+| `UTEST-SUSPENSION-MIGRATION-001` | Cerrada | Parser/CST acepta `@sync`/`@nosuspend`; HIR/checker preserva `fn` + inferencia, espera implícita y `E1601`; fixtures compile-pass/compile-fail/runtime canónicos y `crates/tondo-reference-adapter/tests/suspension_migration.rs` fijan equivalencia directa/`await`, consumo de `Waiter` y hashes de interfaz `suspends`. El corpus histórico `async fn` sigue congelado y separado. |
 | `ASYNC-ITER-EXT-001`, `NATIVE-THREAD-001` | **Pendientes reales** | Requieren adapters de streams de stdlib y ejecución física en workers OS del backend nativo, respectivamente; no forman parte del bootstrap VM. |
 
 El gate oficial (`bash scripts/test-gate.sh`) terminó con salida 0 y ejecutó

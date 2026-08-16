@@ -674,8 +674,17 @@ impl<'a> MemberCollector<'a> {
 }
 
 fn first_identifier(node: SyntaxNodeRef<'_>) -> Option<SyntaxTokenRef<'_>> {
-    node.descendant_tokens()
-        .find(|token| token.kind() == TokenKind::Identifier)
+    let attribute_ranges = node
+        .child_nodes()
+        .filter(|child| child.kind() == SyntaxKind::Attribute)
+        .map(|child| child.range())
+        .collect::<Vec<_>>();
+    node.descendant_tokens().find(|token| {
+        token.kind() == TokenKind::Identifier
+            && !attribute_ranges.iter().any(|range| {
+                token.range().start() >= range.start() && token.range().end() <= range.end()
+            })
+    })
 }
 
 fn field_name_token(field: SyntaxNodeRef<'_>) -> Option<SyntaxTokenRef<'_>> {

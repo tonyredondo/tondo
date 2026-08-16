@@ -25,3 +25,17 @@ matching; physical paths and insertion order never participate in identity.
 This is the execution bridge used by the test runner. Envelope operations such
 as logs, tags, attachments, snapshots, retries and scheduling remain owned by
 their sealed runner modules and are not reimplemented in the backend.
+
+## Canonical suspension migration
+
+The backend compiles test bodies through the same inferred-effect path as
+ordinary source. A test or setup body is always written with `fn`; a direct
+call to a `suspends` operation waits implicitly, while `await call()` lowers to
+the equivalent checked operation. `Join` and `Waiter` handles retain explicit
+consumption, and the runner does not expose an `async` test API or infer an
+effect from a body-local compatibility modifier. `@sync` and `@nosuspend`
+remain compiler-enforced boundaries and reject a suspendible call with
+`E1601`. The independent adapter conformance case fixes compile-pass,
+compile-fail, runtime, and interface-hash observations for this contract;
+historical `async fn` fixtures remain pinned only in the frozen bootstrap
+corpus.

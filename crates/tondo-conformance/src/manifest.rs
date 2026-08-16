@@ -9,6 +9,10 @@ use serde_json::Value;
 
 use crate::{ADAPTER_PROTOCOL, SUITE_FORMAT, SUITE_NAME, sha256};
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PinnedFile {
@@ -87,6 +91,8 @@ pub struct SourceAction {
     pub arguments: Vec<String>,
     #[serde(default)]
     pub gc_threshold: Option<u32>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub include_interface: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1071,6 +1077,7 @@ mod tests {
             warning_profiles: Vec::new(),
             arguments: Vec::new(),
             gc_threshold: None,
+            include_interface: false,
         }
     }
 

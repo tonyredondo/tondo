@@ -282,6 +282,7 @@ fn bless_source_case(
         warning_profiles: metadata.warning_profiles.clone(),
         arguments: metadata.arguments.clone(),
         gc_threshold: metadata.gc_threshold,
+        include_interface: false,
     };
     let action = if metadata.queries.is_empty() {
         AdapterAction::Source(wire.clone())
@@ -388,6 +389,7 @@ fn bless_source_case(
         warning_profiles: metadata.warning_profiles,
         arguments: metadata.arguments,
         gc_threshold: metadata.gc_threshold,
+        include_interface: false,
     };
     Ok(ConformanceCase {
         id,

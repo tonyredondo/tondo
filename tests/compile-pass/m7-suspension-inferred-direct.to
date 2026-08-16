@@ -1,0 +1,17 @@
+import std.async
+
+pub fn compute(): Int {
+    let pair = async.oneshot[Int, String]()
+    var (waiter, completer) = pair
+    _ = completer.complete(42)
+    let value = waiter.wait()
+    match value {
+        ok(result) => result
+        err(_) => 0
+    }
+}
+
+fn main() {
+    let value = compute()
+    assert(value == 42)
+}

@@ -2,11 +2,11 @@
   "format": "tondo-conformance-draft-lineage",
   "lineage": "tondo-draft",
   "edition": "0.1",
-  "revision": 27,
+  "revision": 26,
   "state": "open",
   "parent": {
-    "path": "conformance/draft/history/9a4f8f6c82ac997be1c3924cb1f2815864ffe6643a6ad4ab5b692ac92819c750.json",
-    "sha256": "9a4f8f6c82ac997be1c3924cb1f2815864ffe6643a6ad4ab5b692ac92819c750"
+    "path": "conformance/draft/history/8ad39cf1022f8274554b9b5414fab3aad3d889fea7521ce4712b178b0385810b.json",
+    "sha256": "8ad39cf1022f8274554b9b5414fab3aad3d889fea7521ce4712b178b0385810b"
   },
   "baseline": {
     "manifest": {
@@ -147,7 +147,7 @@
       "id": "testing",
       "manifest": {
         "path": "conformance/draft/layers/testing.json",
-        "sha256": "182236372e80ca193bee38475257fe82ecf4853e939f3b99bd33ac1e65d72a58"
+        "sha256": "3b3de9e5bed304d1677b82b2047cfd2665cb46e3bbe704dc167d495fb6a8b59c"
       },
       "tasks": [
         "UTEST-ARTIFACT-001",
@@ -190,7 +190,6 @@
         "UTEST-SNAPSHOT-001",
         "UTEST-SPEC-001",
         "UTEST-SUITE-001",
-        "UTEST-SUSPENSION-MIGRATION-001",
         "UTEST-VTIME-001"
       ],
       "requirements": [

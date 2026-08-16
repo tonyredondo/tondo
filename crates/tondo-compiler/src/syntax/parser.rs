@@ -292,6 +292,7 @@ impl Parser<'_> {
 
     fn parse_function_signature(&mut self) -> ParseResult {
         self.start(SyntaxKind::FunctionSignature)?;
+        self.parse_callable_attributes()?;
         self.parse_visibility()?;
         self.parse_function_modifiers();
         self.expect(TokenKind::Fn)?;
@@ -475,6 +476,7 @@ impl Parser<'_> {
 
     fn parse_trait_method(&mut self) -> ParseResult {
         self.start(SyntaxKind::TraitMethod)?;
+        self.parse_callable_attributes()?;
         self.parse_function_modifiers();
         self.expect(TokenKind::Fn)?;
         self.expect_identifier()?;
@@ -569,8 +571,26 @@ impl Parser<'_> {
         Ok(())
     }
 
+    fn parse_callable_attributes(&mut self) -> ParseResult {
+        let mut parsed = false;
+        loop {
+            if self.at(TokenKind::At) {
+                self.parse_attribute()?;
+                parsed = true;
+                continue;
+            }
+            if parsed && self.at(TokenKind::Nl) {
+                self.eat_newlines();
+                continue;
+            }
+            break;
+        }
+        Ok(())
+    }
+
     fn parse_implementation_method(&mut self) -> ParseResult {
         self.start(SyntaxKind::ImplementationMethod)?;
+        self.parse_callable_attributes()?;
         self.parse_function_modifiers();
         self.expect(TokenKind::Fn)?;
         self.expect_identifier()?;
@@ -589,6 +609,7 @@ impl Parser<'_> {
 
     fn parse_function_decl(&mut self) -> ParseResult {
         self.start(SyntaxKind::FunctionDecl)?;
+        self.parse_callable_attributes()?;
         self.parse_visibility()?;
         self.parse_function_modifiers();
         self.expect(TokenKind::Fn)?;
@@ -3394,7 +3415,10 @@ impl Parser<'_> {
     }
 
     fn at_function_signature_start(&self) -> bool {
-        let mut offset = usize::from(self.nth(0) == TokenKind::Pub);
+        let mut offset = self.leading_attribute_tokens();
+        if self.nth(offset) == TokenKind::Pub {
+            offset += 1;
+        }
         if self.nth(offset) == TokenKind::Async {
             offset += 1;
             if self.nth(offset) == TokenKind::Unsafe {
@@ -3566,7 +3590,7 @@ impl Parser<'_> {
         if let Some(kind) = self.test_suite_decl_discriminator() {
             return Some(kind);
         }
-        let mut offset = 0;
+        let mut offset = self.leading_attribute_tokens();
         if self.nth(offset) == TokenKind::Pub {
             offset += 1;
         }
@@ -3591,6 +3615,52 @@ impl Parser<'_> {
         .then_some(kind)
     }
 
+    /// Return the number of physical tokens occupied by leading attributes.
+    ///
+    /// Function attributes are lossless syntax nodes, but the top-level
+    /// discriminator must look through them before choosing the declaration
+    /// parser. Arguments may contain nested parentheses, so this is a small
+    /// balanced scan rather than a name-specific lookahead.
+    fn leading_attribute_tokens(&self) -> usize {
+        let mut offset = 0;
+        while self.nth(offset) == TokenKind::At {
+            offset += 1;
+            while self.nth(offset) == TokenKind::Identifier {
+                offset += 1;
+                if self.nth(offset) != TokenKind::Dot {
+                    break;
+                }
+                offset += 1;
+            }
+            if self.nth(offset) != TokenKind::LParen {
+                while self.nth(offset) == TokenKind::Nl {
+                    offset += 1;
+                }
+                continue;
+            }
+            let mut depth = 0_u32;
+            loop {
+                match self.nth(offset) {
+                    TokenKind::LParen => depth = depth.saturating_add(1),
+                    TokenKind::RParen => {
+                        depth = depth.saturating_sub(1);
+                        if depth == 0 {
+                            offset += 1;
+                            break;
+                        }
+                    }
+                    TokenKind::Nl | TokenKind::Eof => return offset,
+                    _ => {}
+                }
+                offset += 1;
+            }
+            while self.nth(offset) == TokenKind::Nl {
+                offset += 1;
+            }
+        }
+        offset
+    }
+
     fn at_function_type_start(&self) -> bool {
         self.at(TokenKind::Fn)
             || (self.at_any(&[TokenKind::Async, TokenKind::Unsafe])
@@ -3598,7 +3668,11 @@ impl Parser<'_> {
     }
 
     fn at_method_start(&self) -> bool {
-        self.at_any(&[TokenKind::Fn, TokenKind::Async, TokenKind::Unsafe])
+        let offset = self.leading_attribute_tokens();
+        matches!(
+            self.nth(offset),
+            TokenKind::Fn | TokenKind::Async | TokenKind::Unsafe
+        )
     }
 
     fn at_recovery_construct_start(&self) -> bool {

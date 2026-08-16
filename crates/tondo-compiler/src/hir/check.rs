@@ -307,6 +307,7 @@ struct BodyContext {
     loops: Vec<HirLoopId>,
     current_scope: Option<HirScopeId>,
     is_async: bool,
+    no_suspend: bool,
     in_unsafe_region: bool,
     structured_scope_depth: u32,
     async_initiation: Option<AsyncInitiation>,
@@ -1264,6 +1265,7 @@ impl<'a> ExpressionChecker<'a> {
                 self.program.interner.kind(callable.function_type())?,
                 TypeKind::Function(function) if function.is_async()
             );
+            context.no_suspend = callable.no_suspend();
             context.in_unsafe_region = matches!(
                 self.program.interner.kind(callable.function_type())?,
                 TypeKind::Function(function) if function.is_unsafe()
@@ -3255,6 +3257,16 @@ impl<'a> ExpressionChecker<'a> {
         context: &mut BodyContext,
     ) -> Result<HirExpressionId, HirError> {
         let span = self.sources.span(file, node.range())?;
+        if context.no_suspend {
+            self.emit(
+                span,
+                "E1601",
+                "suspension is not permitted in a `@sync`/`@nosuspend` context",
+                Vec::new(),
+                None,
+            )?;
+            return self.recovery_expression(file, node.range());
+        }
         if !context.is_async && (context.callable_id.is_some() || context.callable.is_some()) {
             context.is_async = true;
             self.promote_callable_to_suspendible(context)?;
@@ -3350,6 +3362,16 @@ impl<'a> ExpressionChecker<'a> {
         context: &mut BodyContext,
     ) -> Result<HirExpressionId, HirError> {
         let span = self.sources.span(file, node.range())?;
+        if context.no_suspend {
+            self.emit(
+                span,
+                "E1601",
+                "suspension is not permitted in a `@sync`/`@nosuspend` context",
+                Vec::new(),
+                None,
+            )?;
+            return self.recovery_expression(file, node.range());
+        }
         let kind = if node
             .child_tokens()
             .any(|token| token.kind() == TokenKind::Thread)
@@ -3437,6 +3459,16 @@ impl<'a> ExpressionChecker<'a> {
         context: &mut BodyContext,
     ) -> Result<HirExpressionId, HirError> {
         let span = self.sources.span(file, node.range())?;
+        if context.no_suspend {
+            self.emit(
+                span,
+                "E1601",
+                "suspension is not permitted in a `@sync`/`@nosuspend` context",
+                Vec::new(),
+                None,
+            )?;
+            return self.recovery_expression(file, node.range());
+        }
         if !context.is_async && (context.callable_id.is_some() || context.callable.is_some()) {
             context.is_async = true;
             self.promote_callable_to_suspendible(context)?;
@@ -12032,7 +12064,16 @@ impl<'a> ExpressionChecker<'a> {
                             query.constructor(),
                             HirTraitConstructor::Prelude(name) if name.as_str() == "AsyncIterator"
                         );
-                        if async_iteration && !context.is_async {
+                        if async_iteration && context.no_suspend {
+                            self.emit(
+                                self.sources.span(file, source_node.range())?,
+                                "E1601",
+                                "suspension is not permitted in a `@sync`/`@nosuspend` context",
+                                Vec::new(),
+                                None,
+                            )?;
+                        }
+                        if async_iteration && !context.is_async && !context.no_suspend {
                             context.is_async = true;
                             self.promote_callable_to_suspendible(context)?;
                         }
@@ -19048,6 +19089,16 @@ impl<'a> ExpressionChecker<'a> {
         let async_initiation = context
             .async_initiation
             .filter(|initiation| initiation.range == range);
+        if contract.function.is_async() && context.no_suspend {
+            self.emit(
+                call_span,
+                "E1601",
+                "a suspending call is not permitted in a `@sync`/`@nosuspend` context",
+                Vec::new(),
+                None,
+            )?;
+            return self.recovery_expression(file, range);
+        }
         let unsafe_call = contract.function.is_unsafe();
         if unsafe_call && !context.in_unsafe_region {
             self.emit(

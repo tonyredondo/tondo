@@ -308,7 +308,8 @@ fn observe_source(
         WireSourceForm::Module | WireSourceForm::Script | WireSourceForm::Fragment => {
             let output =
                 execute(source_request(request, action)?).map_err(|error| error.to_string())?;
-            let mut observation = observation_from_output(output, action.operation)?;
+            let mut observation =
+                observation_from_output(output, action.operation, action.include_interface)?;
             match historical_async_boundary_case(action) {
                 Some("initiation") => {
                     // Direct calls now suspend implicitly, so this historical
@@ -427,6 +428,7 @@ fn observe_syntax_source(action: &WireSourceAction) -> Result<Observation, Strin
 pub(crate) fn observation_from_output(
     output: CompilationOutput,
     operation: WireOperation,
+    include_interface: bool,
 ) -> Result<Observation, String> {
     let diagnostics = normative_diagnostics(output.diagnostics())?;
     let has_compile_error = diagnostics.iter().any(|diagnostic| {
@@ -453,6 +455,18 @@ pub(crate) fn observation_from_output(
     } else {
         output.stdout().to_vec()
     };
+    let data = if include_interface {
+        let interface = output.interface().ok_or_else(|| {
+            "interface observation requested but compilation produced no interface".to_owned()
+        })?;
+        json!({
+            "schema": "tondo-interface-observation-0.1/1",
+            "api_hash": interface.api_hash(),
+            "content_hash": interface.content_hash().map_err(|error| error.to_string())?,
+        })
+    } else {
+        Value::Null
+    };
     Ok(Observation {
         compilation,
         exit_code: i32::from(output.exit_code()),
@@ -460,7 +474,7 @@ pub(crate) fn observation_from_output(
         stdout_hex: tondo_conformance::encode_hex(&stdout),
         stderr_hex: String::new(),
         formatted_hex: formatted.map(|bytes| tondo_conformance::encode_hex(&bytes)),
-        data: Value::Null,
+        data,
     })
 }
 
@@ -589,6 +603,7 @@ mod tests {
             warning_profiles: Vec::new(),
             arguments: Vec::new(),
             gc_threshold: None,
+            include_interface: false,
         };
         let response = adapter.handle(&request(AdapterAction::Source(source)));
         let AdapterResult::Ok { observation } = response.result else {

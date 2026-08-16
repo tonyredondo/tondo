@@ -1,0 +1,10 @@
+import std.async
+
+@sync
+fn invalid() {
+    let pair = async.oneshot[Int, String]()
+    var (waiter, completer) = pair
+    _ = completer.complete(42)
+    let value = waiter.wait()
+    _ = value
+}

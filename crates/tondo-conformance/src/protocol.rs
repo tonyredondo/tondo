@@ -3,6 +3,10 @@ use serde_json::Value;
 
 use crate::ADAPTER_PROTOCOL;
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TargetSelection {
@@ -48,6 +52,8 @@ pub struct WireSourceAction {
     pub warning_profiles: Vec<String>,
     pub arguments: Vec<String>,
     pub gc_threshold: Option<u32>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub include_interface: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

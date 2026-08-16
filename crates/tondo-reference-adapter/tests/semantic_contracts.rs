@@ -254,6 +254,7 @@ fn semantic_queries_expose_option_union_enum_and_generic_shapes() {
         warning_profiles: Vec::new(),
         arguments: Vec::new(),
         gc_threshold: None,
+        include_interface: false,
     };
     let (optional_start, optional_end) = occurrence_span(SOURCE, "optional", 1);
     let (choice_start, choice_end) = occurrence_span(SOURCE, "choice", 1);
@@ -337,6 +338,7 @@ fn semantic_snapshot_exposes_unsafe_borrow_projection_and_pattern_contracts() {
         warning_profiles: Vec::new(),
         arguments: Vec::new(),
         gc_threshold: None,
+        include_interface: false,
     };
     let compile_request = AdapterRequest::new(
         0,
@@ -449,6 +451,7 @@ fn semantic_queries_and_snapshot_cover_advanced_language_contracts_end_to_end() 
         warning_profiles: Vec::new(),
         arguments: Vec::new(),
         gc_threshold: None,
+        include_interface: false,
     };
     let hidden_declaration = occurrence_span(ADVANCED_SOURCE, "hidden", 0);
     let hidden_call = occurrence_span(ADVANCED_SOURCE, "hidden(value)", 0);

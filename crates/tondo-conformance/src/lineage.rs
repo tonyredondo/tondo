@@ -594,7 +594,7 @@ mod tests {
         assert_eq!(first.case_layers()[2].layer, "meta");
         assert_eq!(first.case_layers()[2].cases.len(), 6);
         assert_eq!(first.case_layers()[3].layer, "testing");
-        assert_eq!(first.case_layers()[3].cases.len(), 52);
+        assert_eq!(first.case_layers()[3].cases.len(), 53);
         assert_eq!(first.implemented_requirements().len(), 52);
         assert!(first.manifest().pending_tasks.is_empty());
         first.check_sealable().unwrap();
