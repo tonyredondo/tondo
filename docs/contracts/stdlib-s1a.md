@@ -34,6 +34,10 @@ La trazabilidad por firma se comprueba además con
 [`stdlib-public-api-audit.md`](./stdlib-public-api-audit.md), cuya matriz viva
 puede permanecer abierta mientras los leaves de implementación sigan
 pendientes.
+La coordinación del grupo Core ya promovido se comprueba además con
+[`stdlib-implementation-coordination.md`](./stdlib-implementation-coordination.md)
+y su registro machine-readable; ese gate no convierte los gaps globales de
+codec o build-only en un waiver.
 Every owner has one canonical implementation boundary, source-controlled tests
 and a proof description. Portable kernels live in `tondo-stdlib`; compiler and
 VM bridges are limited to intrinsic lowering or capability-gated host effects.
@@ -43,7 +47,8 @@ The aggregate owner graph and capability/API rules live in the single
 machine-readable integration contract
 [`testing/stdlib-spec.json`](../../testing/stdlib-spec.json). The strict gate
 validates its topological order and links it to this document and the canonical
-standard-library specification; it does not promote pending typed codecs.
+standard-library specification; it does not promote pending typed codecs. The
+coordinator's next step after the Core group is `STD-IMPL-002`.
 
 The A0 `std.meta` owner has a dedicated contract at
 [`testing/stdlib-meta.json`](../../testing/stdlib-meta.json) and a separate

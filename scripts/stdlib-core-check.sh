@@ -13,7 +13,7 @@ jq -e '
   .contract == "docs/contracts/stdlib-core.md" and
   .owners == ["std.core","std.text","std.collections","std.iter","std.math","std.format","std.io","std.serialization"] and
   (.invariants | length) == 8 and (.test_matrix | length) == 7 and
-  .promotion_next == "STD-IMPL-001"
+  .promotion_next == "STD-IMPL-002"
 ' "$contract" >/dev/null
 [[ -s "$root/docs/contracts/stdlib-core.md" ]] || { echo "missing core contract document" >&2; exit 1; }
 echo "std.core owner contract: OK"

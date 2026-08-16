@@ -9,7 +9,7 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 2.33
+**Versión del tracker:** 2.34
 
 **Última actualización:** 2026-08-16
 
@@ -31,6 +31,7 @@ desarrollo y no ha sido publicado.
 - [Matriz normativa de owners y firmas de stdlib](./docs/contracts/stdlib-matrix.md)
 - [Contrato de campañas de generación del runner](./docs/contracts/test-generation.md)
 - [Contrato de fast gate y tiers de evidencia](./docs/contracts/fast-gate.md)
+- [Contrato de coordinación de implementación STD-0.1A](./docs/contracts/stdlib-implementation-coordination.md)
 - [Contrato de owners Core STD-0.1A](./docs/contracts/stdlib-core.md)
 - [Contrato de owners Hosted STD-0.1A](./docs/contracts/stdlib-hosted.md)
 
@@ -44,9 +45,11 @@ confunde con conformarla. TLF tampoco cambia la semántica `.to`: Gate L0 produc
 un bundle separado y el candidato final fija G5, S1 y L0 por identidades
 independientes.
 
-**Objetivo inmediato:** completar Wave 5 y cerrar S1A empezando por los 32 gaps
-de firma y tres owners abiertos de la auditoría pública que mantienen abiertos `STD-IMPL-001` y
-`STD-IMPL-002`. `CONF-GAP-IMPL-001`, `CONF-LAYER-RESULT-001` y
+**Objetivo inmediato:** continuar Wave 5/S1A después del cierre coordinado de
+`STD-IMPL-001`. Persisten 32 gaps de firma y tres owners abiertos de la
+auditoría pública global; no se silencian al promover el grupo Core. El
+siguiente coordinador es `STD-IMPL-002`, seguido por la exposición pública de
+MessagePack/Protobuf y la superficie build-only indexable. `CONF-GAP-IMPL-001`, `CONF-LAYER-RESULT-001` y
 `CONF-SEAL-FINAL-001` ya cierran T0/G5 con 409 requisitos cubiertos, nueve
 no aplicables y las tres fronteras `TL01-26-*` reservadas a S1A. Los contratos
 runtime-facing de STD-0.1B y M11 esperan G5 y S1A. Todo pertenece a la primera
@@ -4617,19 +4620,17 @@ tests. Antes de volver a marcarlas `[x]` deben cumplirse todos estos puntos:
   firmas verificadas; 55 gaps), que bloquea la promoción y alimenta los
   siguientes leaves de implementación.
 
-- [ ] **STD-IMPL-001 — Coordinar implementación Core por owner.** Cierra cuando
+- [x] **STD-IMPL-001 — Coordinar implementación Core por owner.** Cierra cuando
   `STD-CORE-IMPL-001`, `STD-TEXT-IMPL-001`, `STD-COLL-IMPL-001`,
   `STD-ITER-IMPL-001`, `STD-FMT-IMPL-001`, `STD-IO-IMPL-001`,
   `STD-SER-IMPL-001`, los owners Core ya completos y
-  `STD-PUBLIC-API-AUDIT-001` no dejan ninguna firma sin ruta pública. El
-  registro actual `testing/stdlib-implementation.json` solo demuestra archivos
-  y pruebas por owner, no cobertura por firma. `std.core` ya tiene sus 9/9
-  firmas trazadas con `vm-inline` y `std.collections` sus 18/18 firmas
-  públicas verificadas; `std.math` también conserva sus 9/9 firmas verificadas
-  mediante aliases de lowering explícitos y `std.format` pasa a 5/5 con
-  `FormatBuilderAppend`; `std.io` pasa a 4/4 con los aliases
-  `IoLimitsDefault`, `IoReadAll` e `IoWriteAll`; el coordinador permanece
-  abierto hasta que los demás owners Core alcancen la misma prueba pública.
+  `STD-PUBLIC-API-AUDIT-001` no dejan ninguna firma sin ruta pública dentro
+  del grupo coordinado. La evidencia reproducible está en
+  `testing/stdlib-implementation-coordination.json` y su checker: verifica
+  las 64 firmas Core, la etapa `IMPL/HOST` y las rutas de implementación/tests
+  de los ocho owners Core/serialization. El auditor global conserva 35 gaps
+  explícitos (codec y owners build-only); no son un waiver y alimentan los
+  siguientes leaves.
 
 - [ ] **STD-IMPL-002 — Coordinar Hosted por owner.** Cierra tras
   `STD-FS-IMPL-001`, `STD-PROC-IMPL-001` y la auditoría pública, conservando los
@@ -6072,11 +6073,32 @@ Wave 5/S1A abierta por APIs públicas y dimensiones de evidencia parciales.
 no-goals exactos. `CONF-LAYER-RESULT-001` produce el resultado compuesto y
 `CONF-SEAL-FINAL-001` lo archiva con calidad y documentación en el candidato
 offline. La acción inmediata es cerrar `STD-IMPL-001` y `STD-IMPL-002`; Wave 6
-no se declara iniciada antes de S1A.
+no se declara iniciada antes de S1A. `STD-IMPL-001` queda ahora cerrado por
+su gate de coordinación; la acción inmediata pasa a `STD-IMPL-002`.
 
 ---
 
 ## 25. Historial del tracker
+
+### 2.34 — 2026-08-16
+
+- Se corrige la promoción machine-readable de `testing/stdlib-spec.json`: los
+  owners `std.serialization` y `std.json` ya no se anuncian como
+  implementación pendiente y la siguiente coordinación pasa a
+  `STD-IMPL-002`; el checker y el contrato de grupo Core quedan alineados.
+- Se cierra `STD-IMPL-001` mediante
+  `testing/stdlib-implementation-coordination.json`. El registro generado y
+  su gate verifican los ocho owners Core/serialization, 64/64 firmas públicas
+  Core, las rutas de implementación/tests y la etapa `IMPL/HOST` de la matriz.
+  `std.serialization` queda explícitamente como protocolo compiler-owned sin
+  superficie top-level `pub fn` indexable, con razón normativa.
+- La auditoría pública global sigue en `open-gaps` con 35 gaps observables:
+  MessagePack/Protobuf aún no tienen todas sus rutas callable Tondo y
+  `std.meta`/`std.reflect`/`std.serialization` no exponen una superficie
+  indexable. El coordinador no relaja `--strict`; esos gaps pasan al trabajo
+  posterior y `STD-IMPL-002` queda como siguiente bloque.
+- `scripts/test-gate.sh` ejecuta el checker y los negativos de coordinación.
+  La evidencia no modifica la semántica ni anuncia una publicación de Tondo.
 
 ### 2.33 — 2026-08-16
 

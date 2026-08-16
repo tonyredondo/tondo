@@ -139,6 +139,10 @@ run_step stdlib-hosted-contract \
     scripts/stdlib-hosted-check.sh
 run_step stdlib-implementation-evidence \
     scripts/stdlib-implementation-check.sh
+run_step stdlib-implementation-coordination \
+    scripts/stdlib-implementation-coordination-check.sh
+run_step stdlib-implementation-coordination-tests \
+    scripts/stdlib-implementation-coordination-test.sh
 run_step stdlib-public-api-audit \
     scripts/stdlib-public-api-audit.sh --check
 run_step stdlib-public-api-audit-tests \

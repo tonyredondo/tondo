@@ -30,6 +30,7 @@ jq -e '
     "scripts/stdlib-performance-report.sh",
     "scripts/stdlib-performance-conformance.sh",
     "scripts/stdlib-performance-conformance-test.sh",
+    "scripts/stdlib-implementation-coordination-check.sh",
     "scripts/stdlib-matrix-check.sh",
     "scripts/stdlib-matrix-test.sh",
     "TONDO_TEST_TARGET=linux-x86_64 bash scripts/test-gate.sh"

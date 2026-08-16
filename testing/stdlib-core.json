@@ -34,5 +34,5 @@
     "error-priority",
     "async-cancellation"
   ],
-  "promotion_next": "STD-IMPL-001"
+  "promotion_next": "STD-IMPL-002"
 }

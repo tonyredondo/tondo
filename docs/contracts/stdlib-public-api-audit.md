@@ -47,8 +47,12 @@ scripts/stdlib-public-api-audit.sh --strict  # falla ante cualquier hueco
 `--check` es el modo que puede formar parte del gate diario: informa de los
 huecos sin ocultarlos y mantiene el workspace verificable mientras los leaves
 de implementación siguen abiertos. `--strict` es el gate de promoción S1A y
-debe pasar antes de cerrar `STD-IMPL-001`, `STD-IMPL-002` o cualquier leaf de
-evidencia.
+debe pasar antes de una promoción global. El cierre coordinado de
+`STD-IMPL-001` usa además
+[`stdlib-implementation-coordination.md`](./stdlib-implementation-coordination.md):
+solo promueve los owners Core/serialization que ya tienen evidencia completa y
+mantiene los gaps globales como trabajo posterior. Así no se confunde una
+coordinación parcial con un waiver del modo estricto.
 
 La matriz actual registra deliberadamente `open-gaps`: los codecs typed y
 streaming, varios métodos Hosted, la superficie completa de `std.testing` y

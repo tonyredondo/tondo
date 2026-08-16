@@ -47,7 +47,7 @@
   },
   "promotion": {
     "required_owner_status": "closed-contract",
-    "implementation_remains_pending": ["std.async","std.serialization","std.json","std.messagepack","std.protobuf"],
-    "next": "STD-SER-IMPL-001"
+    "implementation_remains_pending": ["std.async","std.messagepack","std.protobuf"],
+    "next": "STD-IMPL-002"
   }
 }

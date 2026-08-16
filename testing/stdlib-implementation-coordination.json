@@ -1,0 +1,655 @@
+{
+  "format": "tondo-stdlib-implementation-coordination/1",
+  "edition": "0.1",
+  "phase": "STD-0.1A",
+  "status": "closed-coordination",
+  "sources": {
+    "implementation": "testing/stdlib-implementation.json",
+    "public_api": "testing/stdlib-public-api.json",
+    "normative_matrix": "testing/stdlib-matrix.json",
+    "tracker": "TONDO_IMPLEMENTATION_TRACKER.md"
+  },
+  "rules": {
+    "required_owner_status": "implemented-draft",
+    "implementation_stage_must_be_verified": true,
+    "callable_public_signatures_must_be_verified": true,
+    "build_only_no_callable_surface_requires_reason": true,
+    "global_public_audit_is_not_promoted": true,
+    "no_waivers": true
+  },
+  "owners": [
+    {
+      "id": "std.core",
+      "layer": "A1",
+      "implementation": [
+        "crates/tondo-compiler/src/hir/check.rs",
+        "crates/tondo-compiler/src/hir/lower.rs",
+        "crates/tondo-compiler/src/hir/verify.rs",
+        "crates/tondo-compiler/src/mir/lower.rs"
+      ],
+      "tests": [
+        "tests/runtime/m11-std-core-001.to",
+        "tests/runtime/m11-std-core-002.to"
+      ],
+      "proof": "static-dispatch-and-value-semantics",
+      "implementation_status": "verified",
+      "matrix_impl_host": "verified",
+      "public_api": {
+        "status": "verified",
+        "signature_count": 9,
+        "verified_count": 9,
+        "gap_count": 0,
+        "signatures": [
+          {
+            "id": "std.core:28",
+            "symbol": "std.core.Option.some",
+            "signature": "pub fn Option.some[T](value: T): T?",
+            "status": "verified"
+          },
+          {
+            "id": "std.core:29",
+            "symbol": "std.core.Option.none",
+            "signature": "pub fn Option.none[T](): T?",
+            "status": "verified"
+          },
+          {
+            "id": "std.core:30",
+            "symbol": "std.core.Option.unwrapOr",
+            "signature": "pub fn Option.unwrapOr[T](self: T?, fallback: T): T",
+            "status": "verified"
+          },
+          {
+            "id": "std.core:31",
+            "symbol": "std.core.Option.map",
+            "signature": "pub fn Option.map[T, U](self: T?, fn(T): U): U?",
+            "status": "verified"
+          },
+          {
+            "id": "std.core:33",
+            "symbol": "std.core.Result.ok",
+            "signature": "pub fn Result.ok[T, E](value: T): T ! E",
+            "status": "verified"
+          },
+          {
+            "id": "std.core:34",
+            "symbol": "std.core.Result.err",
+            "signature": "pub fn Result.err[T, E](error: E): T ! E",
+            "status": "verified"
+          },
+          {
+            "id": "std.core:35",
+            "symbol": "std.core.Result.map",
+            "signature": "pub fn Result.map[T, U, E](self: T ! E, fn(T): U): U ! E",
+            "status": "verified"
+          },
+          {
+            "id": "std.core:36",
+            "symbol": "std.core.Result.mapErr",
+            "signature": "pub fn Result.mapErr[T, E, F](self: T ! E, fn(E): F): T ! F",
+            "status": "verified"
+          },
+          {
+            "id": "std.core:37",
+            "symbol": "std.core.Result.unwrapOr",
+            "signature": "pub fn Result.unwrapOr[T, E](self: T ! E, fallback: T): T",
+            "status": "verified"
+          }
+        ]
+      },
+      "public_surface_reason": null
+    },
+    {
+      "id": "std.text",
+      "layer": "A1",
+      "implementation": [
+        "crates/tondo-compiler/src/hir.rs",
+        "crates/tondo-compiler/src/hir/check.rs",
+        "crates/tondo-compiler/src/hir/lower.rs",
+        "crates/tondo-compiler/src/process_host.rs"
+      ],
+      "tests": [
+        "tests/runtime/m11-std-text-001.to",
+        "tests/runtime/m11-std-text-002.to"
+      ],
+      "proof": "utf8-scalar-indexing-and-bounded-transforms-with-construction-and-slicing",
+      "implementation_status": "verified",
+      "matrix_impl_host": "verified",
+      "public_api": {
+        "status": "verified",
+        "signature_count": 15,
+        "verified_count": 15,
+        "gap_count": 0,
+        "signatures": [
+          {
+            "id": "std.text:91",
+            "symbol": "std.text.String.empty",
+            "signature": "pub fn String.empty(): String",
+            "status": "verified"
+          },
+          {
+            "id": "std.text:92",
+            "symbol": "std.text.String.fromChars",
+            "signature": "pub fn String.fromChars(chars: Array[Char]): String ! TextError",
+            "status": "verified"
+          },
+          {
+            "id": "std.text:93",
+            "symbol": "std.text.String.length",
+            "signature": "pub fn String.length(self): Int",
+            "status": "verified"
+          },
+          {
+            "id": "std.text:94",
+            "symbol": "std.text.String.byteLength",
+            "signature": "pub fn String.byteLength(self): Int",
+            "status": "verified"
+          },
+          {
+            "id": "std.text:95",
+            "symbol": "std.text.String.get",
+            "signature": "pub fn String.get(self, index: Int): Char?",
+            "status": "verified"
+          },
+          {
+            "id": "std.text:96",
+            "symbol": "std.text.String.slice",
+            "signature": "pub fn String.slice(self, start: Int, end: Int): String ! TextError",
+            "status": "verified"
+          },
+          {
+            "id": "std.text:97",
+            "symbol": "std.text.String.contains",
+            "signature": "pub fn String.contains(self, needle: String): Bool",
+            "status": "verified"
+          },
+          {
+            "id": "std.text:98",
+            "symbol": "std.text.String.startsWith",
+            "signature": "pub fn String.startsWith(self, prefix: String): Bool",
+            "status": "verified"
+          },
+          {
+            "id": "std.text:99",
+            "symbol": "std.text.String.endsWith",
+            "signature": "pub fn String.endsWith(self, suffix: String): Bool",
+            "status": "verified"
+          },
+          {
+            "id": "std.text:100",
+            "symbol": "std.text.String.find",
+            "signature": "pub fn String.find(self, needle: String): Int?",
+            "status": "verified"
+          },
+          {
+            "id": "std.text:101",
+            "symbol": "std.text.String.replace",
+            "signature": "pub fn String.replace(self, old: String, new: String): String",
+            "status": "verified"
+          },
+          {
+            "id": "std.text:102",
+            "symbol": "std.text.String.trim",
+            "signature": "pub fn String.trim(self): String",
+            "status": "verified"
+          },
+          {
+            "id": "std.text:103",
+            "symbol": "std.text.String.toLowerAscii",
+            "signature": "pub fn String.toLowerAscii(self): String",
+            "status": "verified"
+          },
+          {
+            "id": "std.text:104",
+            "symbol": "std.text.String.toUpperAscii",
+            "signature": "pub fn String.toUpperAscii(self): String",
+            "status": "verified"
+          },
+          {
+            "id": "std.text:108",
+            "symbol": "std.text.String.chars",
+            "signature": "pub fn String.chars(self): String",
+            "status": "verified"
+          }
+        ]
+      },
+      "public_surface_reason": null
+    },
+    {
+      "id": "std.collections",
+      "layer": "A1",
+      "implementation": [
+        "crates/tondo-compiler/src/hir.rs",
+        "crates/tondo-compiler/src/hir/check.rs",
+        "crates/tondo-compiler/src/hir/lower.rs",
+        "crates/tondo-compiler/src/hir/verify.rs",
+        "crates/tondo-compiler/src/mir/lower.rs",
+        "crates/tondo-compiler/src/process_host.rs",
+        "crates/tondo-vm/src/bytecode.rs",
+        "crates/tondo-vm/src/bytecode/verify.rs",
+        "crates/tondo-vm/src/runtime.rs",
+        "crates/tondo-vm/src/runtime/execute.rs"
+      ],
+      "tests": [
+        "tests/runtime/m11-std-collections-001.to",
+        "crates/tondo-compiler/src/process_host.rs"
+      ],
+      "proof": "ordered-map-set-and-array-value-semantics-with-atomic-capacity-errors",
+      "implementation_status": "verified",
+      "matrix_impl_host": "verified",
+      "public_api": {
+        "status": "verified",
+        "signature_count": 18,
+        "verified_count": 18,
+        "gap_count": 0,
+        "signatures": [
+          {
+            "id": "std.collections:126",
+            "symbol": "std.collections.Array.new",
+            "signature": "pub fn Array.new[T](): Array[T]",
+            "status": "verified"
+          },
+          {
+            "id": "std.collections:127",
+            "symbol": "std.collections.Array.withCapacity",
+            "signature": "pub fn Array.withCapacity[T](capacity: Int): Array[T] ! CollectionError",
+            "status": "verified"
+          },
+          {
+            "id": "std.collections:128",
+            "symbol": "std.collections.Array.length",
+            "signature": "pub fn Array.length[T](self): Int",
+            "status": "verified"
+          },
+          {
+            "id": "std.collections:129",
+            "symbol": "std.collections.Array.get",
+            "signature": "pub fn Array.get[T](self, index: Int): T?",
+            "status": "verified"
+          },
+          {
+            "id": "std.collections:130",
+            "symbol": "std.collections.Array.slice",
+            "signature": "pub fn Array.slice[T](self, start: Int, end: Int): Array[T] ! CollectionError",
+            "status": "verified"
+          },
+          {
+            "id": "std.collections:131",
+            "symbol": "std.collections.Array.push",
+            "signature": "pub fn Array.push[T](var self, value: T): Unit ! CollectionError",
+            "status": "verified"
+          },
+          {
+            "id": "std.collections:132",
+            "symbol": "std.collections.Array.pop",
+            "signature": "pub fn Array.pop[T](var self): T?",
+            "status": "verified"
+          },
+          {
+            "id": "std.collections:134",
+            "symbol": "std.collections.Map.new",
+            "signature": "pub fn Map.new[K: Key, V](): Map[K, V]",
+            "status": "verified"
+          },
+          {
+            "id": "std.collections:135",
+            "symbol": "std.collections.Map.get",
+            "signature": "pub fn Map.get[K: Key, V](self, key: K): V?",
+            "status": "verified"
+          },
+          {
+            "id": "std.collections:136",
+            "symbol": "std.collections.Map.insert",
+            "signature": "pub fn Map.insert[K: Key, V](var self, key: K, value: V): V?",
+            "status": "verified"
+          },
+          {
+            "id": "std.collections:137",
+            "symbol": "std.collections.Map.remove",
+            "signature": "pub fn Map.remove[K: Key, V](var self, key: K): V?",
+            "status": "verified"
+          },
+          {
+            "id": "std.collections:138",
+            "symbol": "std.collections.Map.contains",
+            "signature": "pub fn Map.contains[K: Key, V](self, key: K): Bool",
+            "status": "verified"
+          },
+          {
+            "id": "std.collections:139",
+            "symbol": "std.collections.Map.entries",
+            "signature": "pub fn Map.entries[K: Key, V](self): Iterator[(K, V)]",
+            "status": "verified"
+          },
+          {
+            "id": "std.collections:141",
+            "symbol": "std.collections.Set.new",
+            "signature": "pub fn Set.new[K: Key](): Set[K]",
+            "status": "verified"
+          },
+          {
+            "id": "std.collections:142",
+            "symbol": "std.collections.Set.insert",
+            "signature": "pub fn Set.insert[K: Key](var self, value: K): Bool",
+            "status": "verified"
+          },
+          {
+            "id": "std.collections:143",
+            "symbol": "std.collections.Set.remove",
+            "signature": "pub fn Set.remove[K: Key](var self, value: K): Bool",
+            "status": "verified"
+          },
+          {
+            "id": "std.collections:144",
+            "symbol": "std.collections.Set.contains",
+            "signature": "pub fn Set.contains[K: Key](self, value: K): Bool",
+            "status": "verified"
+          },
+          {
+            "id": "std.collections:145",
+            "symbol": "std.collections.Set.values",
+            "signature": "pub fn Set.values[K: Key](self): Iterator[K]",
+            "status": "verified"
+          }
+        ]
+      },
+      "public_surface_reason": null
+    },
+    {
+      "id": "std.iter",
+      "layer": "A1",
+      "implementation": [
+        "crates/tondo-compiler/src/hir.rs",
+        "crates/tondo-compiler/src/hir/check.rs",
+        "crates/tondo-compiler/src/hir/lower.rs",
+        "crates/tondo-vm/src/runtime/heap.rs",
+        "crates/tondo-vm/src/runtime/execute.rs"
+      ],
+      "tests": [
+        "tests/runtime/m11-std-core-001.to",
+        "tests/runtime/m11-std-iter-001.to"
+      ],
+      "proof": "lazy-single-consumption-adapters-with-sync-callbacks-and-bounded-collection",
+      "implementation_status": "verified",
+      "matrix_impl_host": "verified",
+      "public_api": {
+        "status": "verified",
+        "signature_count": 4,
+        "verified_count": 4,
+        "gap_count": 0,
+        "signatures": [
+          {
+            "id": "std.iter:151",
+            "symbol": "std.iter.Iterator.map",
+            "signature": "pub fn Iterator.map[T, U](self, fn(T): U): Iterator[U]",
+            "status": "verified"
+          },
+          {
+            "id": "std.iter:152",
+            "symbol": "std.iter.Iterator.filter",
+            "signature": "pub fn Iterator.filter[T](self, fn(T): Bool): Iterator[T]",
+            "status": "verified"
+          },
+          {
+            "id": "std.iter:153",
+            "symbol": "std.iter.Iterator.take",
+            "signature": "pub fn Iterator.take[T](self, count: Int): Iterator[T]",
+            "status": "verified"
+          },
+          {
+            "id": "std.iter:154",
+            "symbol": "std.iter.Iterator.collect",
+            "signature": "pub fn Iterator.collect[T](self): Array[T] ! CollectionError",
+            "status": "verified"
+          }
+        ]
+      },
+      "public_surface_reason": null
+    },
+    {
+      "id": "std.math",
+      "layer": "A1",
+      "implementation": [
+        "crates/tondo-stdlib/src/math.rs",
+        "crates/tondo-compiler/src/process_host.rs"
+      ],
+      "tests": [
+        "crates/tondo-stdlib/src/math.rs",
+        "tests/runtime/m11-std-math-001.to"
+      ],
+      "proof": "portable-ieee-kernels-and-typed-domain-errors",
+      "implementation_status": "verified",
+      "matrix_impl_host": "verified",
+      "public_api": {
+        "status": "verified",
+        "signature_count": 9,
+        "verified_count": 9,
+        "gap_count": 0,
+        "signatures": [
+          {
+            "id": "std.math:207",
+            "symbol": "std.math.floor",
+            "signature": "pub fn floor(value: Float): Float",
+            "status": "verified"
+          },
+          {
+            "id": "std.math:208",
+            "symbol": "std.math.ceil",
+            "signature": "pub fn ceil(value: Float): Float",
+            "status": "verified"
+          },
+          {
+            "id": "std.math:209",
+            "symbol": "std.math.round",
+            "signature": "pub fn round(value: Float): Float",
+            "status": "verified"
+          },
+          {
+            "id": "std.math:210",
+            "symbol": "std.math.truncate",
+            "signature": "pub fn truncate(value: Float): Float",
+            "status": "verified"
+          },
+          {
+            "id": "std.math:211",
+            "symbol": "std.math.sqrt",
+            "signature": "pub fn sqrt(value: Float): Float ! MathError",
+            "status": "verified"
+          },
+          {
+            "id": "std.math:212",
+            "symbol": "std.math.fma",
+            "signature": "pub fn fma(a: Float, b: Float, c: Float): Float",
+            "status": "verified"
+          },
+          {
+            "id": "std.math:213",
+            "symbol": "std.math.abs",
+            "signature": "pub fn abs(value: Float): Float",
+            "status": "verified"
+          },
+          {
+            "id": "std.math:214",
+            "symbol": "std.math.min",
+            "signature": "pub fn min(a: Float, b: Float): Float",
+            "status": "verified"
+          },
+          {
+            "id": "std.math:215",
+            "symbol": "std.math.max",
+            "signature": "pub fn max(a: Float, b: Float): Float",
+            "status": "verified"
+          }
+        ]
+      },
+      "public_surface_reason": null
+    },
+    {
+      "id": "std.format",
+      "layer": "A1",
+      "implementation": [
+        "crates/tondo-stdlib/src/format.rs",
+        "crates/tondo-compiler/src/types.rs",
+        "crates/tondo-compiler/src/hir.rs",
+        "crates/tondo-compiler/src/hir/check.rs",
+        "crates/tondo-compiler/src/hir/lower.rs",
+        "crates/tondo-compiler/src/mir.rs",
+        "crates/tondo-compiler/src/mir/lower.rs",
+        "crates/tondo-compiler/src/mir/verify.rs",
+        "crates/tondo-compiler/src/bytecode/lower.rs",
+        "crates/tondo-compiler/src/process_host.rs",
+        "crates/tondo-vm/src/bytecode.rs",
+        "crates/tondo-vm/src/bytecode/verify.rs",
+        "crates/tondo-vm/src/runtime.rs",
+        "crates/tondo-vm/src/runtime/execute.rs"
+      ],
+      "tests": [
+        "crates/tondo-stdlib/src/format.rs",
+        "crates/tondo-compiler/src/process_host.rs",
+        "tests/runtime/m11-std-format-001.to"
+      ],
+      "proof": "bounded-builder-atomic-errors-and-static-display-through-hir-mir-bytecode-vm",
+      "implementation_status": "verified",
+      "matrix_impl_host": "verified",
+      "public_api": {
+        "status": "verified",
+        "signature_count": 5,
+        "verified_count": 5,
+        "gap_count": 0,
+        "signatures": [
+          {
+            "id": "std.format:227",
+            "symbol": "std.format.Builder.new",
+            "signature": "pub fn Builder.new(): Builder",
+            "status": "verified"
+          },
+          {
+            "id": "std.format:228",
+            "symbol": "std.format.Builder.append",
+            "signature": "pub fn Builder.append(var self, value: String): Unit ! FormatError",
+            "status": "verified"
+          },
+          {
+            "id": "std.format:229",
+            "symbol": "std.format.Builder.finish",
+            "signature": "pub fn Builder.finish(var self): String ! FormatError",
+            "status": "verified"
+          },
+          {
+            "id": "std.format:230",
+            "symbol": "std.format.format",
+            "signature": "pub fn format[T: Display](value: T): String ! FormatError",
+            "status": "verified"
+          },
+          {
+            "id": "std.format:231",
+            "symbol": "std.format.join",
+            "signature": "pub fn join[T: Display](values: Array[T], separator: String): String ! FormatError",
+            "status": "verified"
+          }
+        ]
+      },
+      "public_surface_reason": null
+    },
+    {
+      "id": "std.io",
+      "layer": "A1",
+      "implementation": [
+        "crates/tondo-stdlib/src/io.rs",
+        "crates/tondo-compiler/src/types.rs",
+        "crates/tondo-compiler/src/hir.rs",
+        "crates/tondo-compiler/src/hir/capabilities.rs",
+        "crates/tondo-compiler/src/hir/check.rs",
+        "crates/tondo-compiler/src/hir/lower.rs",
+        "crates/tondo-compiler/src/hir/terminal.rs",
+        "crates/tondo-compiler/src/hir/verify.rs",
+        "crates/tondo-compiler/src/bytecode/lower.rs",
+        "crates/tondo-compiler/src/process_host.rs",
+        "crates/tondo-vm/src/bytecode.rs",
+        "crates/tondo-vm/src/bytecode/verify.rs",
+        "crates/tondo-vm/src/runtime.rs",
+        "crates/tondo-vm/src/runtime/execute.rs"
+      ],
+      "tests": [
+        "crates/tondo-stdlib/src/io.rs",
+        "crates/tondo-compiler/src/process_host.rs",
+        "tests/runtime/m11-std-io-001.to"
+      ],
+      "proof": "bounded-limits-partial-io-eof-cancellation-and-public-cleanup",
+      "implementation_status": "verified",
+      "matrix_impl_host": "verified",
+      "public_api": {
+        "status": "verified",
+        "signature_count": 4,
+        "verified_count": 4,
+        "gap_count": 0,
+        "signatures": [
+          {
+            "id": "std.io:257",
+            "symbol": "std.io.defaultLimits",
+            "signature": "pub fn defaultLimits(): IoLimits",
+            "status": "verified"
+          },
+          {
+            "id": "std.io:258",
+            "symbol": "std.io.limits",
+            "signature": "pub fn limits(maxBytes: Int, maxRead: Int): IoLimits ! IoError",
+            "status": "verified"
+          },
+          {
+            "id": "std.io:259",
+            "symbol": "std.io.readAll",
+            "signature": "pub fn readAll[R: Reader](var reader: R, limits: IoLimits): Bytes ! IoError",
+            "status": "verified"
+          },
+          {
+            "id": "std.io:260",
+            "symbol": "std.io.writeAll",
+            "signature": "pub fn writeAll(var writer: Writer, data: Bytes): Unit ! IoError",
+            "status": "verified"
+          }
+        ]
+      },
+      "public_surface_reason": null
+    },
+    {
+      "id": "std.serialization",
+      "layer": "A3",
+      "implementation": [
+        "crates/tondo-stdlib/src/serialization.rs",
+        "crates/tondo-compiler/src/meta_derive.rs",
+        "crates/tondo-compiler/src/serialization_derive.rs"
+      ],
+      "tests": [
+        "crates/tondo-stdlib/src/serialization.rs",
+        "crates/tondo-compiler/src/meta_derive.rs",
+        "crates/tondo-compiler/src/serialization_derive.rs",
+        "scripts/stdlib-serialization-check.sh"
+      ],
+      "proof": "static-event-protocol-bounded-atomic; hermetic-derive-providers-with-source-maps",
+      "implementation_status": "verified",
+      "matrix_impl_host": "verified",
+      "public_api": {
+        "status": "not-applicable",
+        "signature_count": 0,
+        "verified_count": 0,
+        "gap_count": 0,
+        "signatures": []
+      },
+      "public_surface_reason": "std.serialization is a compiler-owned event protocol; its public traits are build-time contracts and have no indexable top-level pub fn surface"
+    }
+  ],
+  "summary": {
+    "owners": 8,
+    "signatures": 64,
+    "verified_signatures": 64,
+    "owners_with_public_surface": 7,
+    "owners_without_callable_surface": 1
+  },
+  "global_public_api": {
+    "status": "open-gaps",
+    "gaps": 35,
+    "reason": "MessagePack/Protobuf callable exposure and build-only owner indexing remain open public-audit work; this coordinator does not waive those rows",
+    "next_coordination": "STD-IMPL-002"
+  },
+  "next_coordination": "STD-IMPL-002"
+}

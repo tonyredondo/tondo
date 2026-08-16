@@ -2091,6 +2091,13 @@ un path Rust, una prueba documental o un alias bootstrap no son evidencia
 suficiente. Mientras existan filas `open-gaps`, el catálogo sigue siendo un
 contrato de desarrollo y no una publicación.
 
+La coordinación del grupo Core ya implementado se registra por separado en
+[`docs/contracts/stdlib-implementation-coordination.md`](./docs/contracts/stdlib-implementation-coordination.md)
+y [`testing/stdlib-implementation-coordination.json`](./testing/stdlib-implementation-coordination.json).
+Este registro exige evidencia completa para sus owners y conserva los gaps de
+la auditoría global como trabajo pendiente; no relaja el contrato de
+promoción S1A.
+
 La coordinación normativa completa de STD-0.1A vive en
 [`docs/contracts/stdlib-matrix.md`](./docs/contracts/stdlib-matrix.md) y
 [`testing/stdlib-matrix.json`](./testing/stdlib-matrix.json). Incluye una fila
