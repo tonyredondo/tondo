@@ -34,5 +34,5 @@
     "pipeline-redirection",
     "host-error-redaction"
   ],
-  "promotion_next": "STD-IMPL-002"
+  "promotion_next": "STD-CODEC-PUBLIC-001"
 }

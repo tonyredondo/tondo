@@ -143,6 +143,10 @@ run_step stdlib-implementation-coordination \
     scripts/stdlib-implementation-coordination-check.sh
 run_step stdlib-implementation-coordination-tests \
     scripts/stdlib-implementation-coordination-test.sh
+run_step stdlib-hosted-implementation-coordination \
+    scripts/stdlib-hosted-implementation-coordination-check.sh
+run_step stdlib-hosted-implementation-coordination-tests \
+    scripts/stdlib-hosted-implementation-coordination-test.sh
 run_step stdlib-public-api-audit \
     scripts/stdlib-public-api-audit.sh --check
 run_step stdlib-public-api-audit-tests \

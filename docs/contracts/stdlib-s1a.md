@@ -38,6 +38,11 @@ La coordinación del grupo Core ya promovido se comprueba además con
 [`stdlib-implementation-coordination.md`](./stdlib-implementation-coordination.md)
 y su registro machine-readable; ese gate no convierte los gaps globales de
 codec o build-only en un waiver.
+La coordinación Hosted se comprueba con
+[`stdlib-hosted-implementation-coordination.md`](./stdlib-hosted-implementation-coordination.md)
+y [`testing/stdlib-hosted-implementation-coordination.json`](../../testing/stdlib-hosted-implementation-coordination.json);
+verifica `std.console`, `std.path`, `std.fs` y `std.process`, sus capabilities,
+bridges y las 48 firmas públicas sin promover los gaps globales.
 Every owner has one canonical implementation boundary, source-controlled tests
 and a proof description. Portable kernels live in `tondo-stdlib`; compiler and
 VM bridges are limited to intrinsic lowering or capability-gated host effects.
@@ -48,7 +53,8 @@ machine-readable integration contract
 [`testing/stdlib-spec.json`](../../testing/stdlib-spec.json). The strict gate
 validates its topological order and links it to this document and the canonical
 standard-library specification; it does not promote pending typed codecs. The
-coordinator's next step after the Core group is `STD-IMPL-002`.
+Core coordinator is followed by the Hosted coordinator, whose next explicit
+block is `STD-CODEC-PUBLIC-001`.
 
 The A0 `std.meta` owner has a dedicated contract at
 [`testing/stdlib-meta.json`](../../testing/stdlib-meta.json) and a separate

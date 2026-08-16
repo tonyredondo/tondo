@@ -9,9 +9,9 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 2.34
+**Versión del tracker:** 2.35
 
-**Última actualización:** 2026-08-16
+**Última actualización:** 2026-08-17
 
 **Especificaciones normativas:**
 
@@ -32,6 +32,7 @@ desarrollo y no ha sido publicado.
 - [Contrato de campañas de generación del runner](./docs/contracts/test-generation.md)
 - [Contrato de fast gate y tiers de evidencia](./docs/contracts/fast-gate.md)
 - [Contrato de coordinación de implementación STD-0.1A](./docs/contracts/stdlib-implementation-coordination.md)
+- [Contrato de coordinación Hosted STD-0.1A](./docs/contracts/stdlib-hosted-implementation-coordination.md)
 - [Contrato de owners Core STD-0.1A](./docs/contracts/stdlib-core.md)
 - [Contrato de owners Hosted STD-0.1A](./docs/contracts/stdlib-hosted.md)
 
@@ -46,10 +47,10 @@ un bundle separado y el candidato final fija G5, S1 y L0 por identidades
 independientes.
 
 **Objetivo inmediato:** continuar Wave 5/S1A después del cierre coordinado de
-`STD-IMPL-001`. Persisten 32 gaps de firma y tres owners abiertos de la
+`STD-IMPL-002`. Persisten 32 gaps de firma y tres owners abiertos de la
 auditoría pública global; no se silencian al promover el grupo Core. El
-siguiente coordinador es `STD-IMPL-002`, seguido por la exposición pública de
-MessagePack/Protobuf y la superficie build-only indexable. `CONF-GAP-IMPL-001`, `CONF-LAYER-RESULT-001` y
+siguiente bloque explícito es `STD-CODEC-PUBLIC-001`, seguido por la exposición
+de MessagePack/Protobuf y la superficie build-only indexable. `CONF-GAP-IMPL-001`, `CONF-LAYER-RESULT-001` y
 `CONF-SEAL-FINAL-001` ya cierran T0/G5 con 409 requisitos cubiertos, nueve
 no aplicables y las tres fronteras `TL01-26-*` reservadas a S1A. Los contratos
 runtime-facing de STD-0.1B y M11 esperan G5 y S1A. Todo pertenece a la primera
@@ -4632,10 +4633,22 @@ tests. Antes de volver a marcarlas `[x]` deben cumplirse todos estos puntos:
   explícitos (codec y owners build-only); no son un waiver y alimentan los
   siguientes leaves.
 
-- [ ] **STD-IMPL-002 — Coordinar Hosted por owner.** Cierra tras
+- [x] **STD-IMPL-002 — Coordinar Hosted por owner.** Cierra tras
   `STD-FS-IMPL-001`, `STD-PROC-IMPL-001` y la auditoría pública, conservando los
-  bridges correctos de path/console y capabilities. Las operaciones parciales
-  existentes no prueban los handles y firmas ausentes.
+  bridges correctos de path/console y capabilities. El registro
+  `testing/stdlib-hosted-implementation-coordination.json` y su checker
+  verifican los cuatro owners Hosted, sus capabilities exactas, las etapas
+  `IMPL/HOST`, las celdas de evidencia y las 48/48 firmas públicas. `std.path`
+  queda explícitamente `HOST not-applicable` por ser puramente léxico; no se
+  inventa un provider. La auditoría global conserva 32 gaps de firma de
+  MessagePack/Protobuf y tres owners build-only, sin waiver.
+
+- [ ] **STD-CODEC-PUBLIC-001 — Cerrar la exposición pública restante de codecs
+  y owners build-only.** Trazar las 32 firmas restantes de MessagePack y
+  Protobuf hasta HIR, lowering, VM/host y casos públicos; indexar de forma
+  explícita los tres owners build-only sin fabricar `pub fn` runtime. El modo
+  `--strict` debe quedar verde solo cuando cada fila tenga una ruta pública o
+  una razón normativa `not-applicable` verificable.
 
 - [x] **STD-TESTING-IMPL-001 — Implementar `std.testing` sobre T0.** El runtime,
   temp resources, generators, diffs, tolerancias y control sellado se conservan.
@@ -6072,13 +6085,27 @@ Wave 5/S1A abierta por APIs públicas y dimensiones de evidencia parciales.
 `CONF-GAP-IMPL-001` cierra las 364 filas auditadas aplicables y conserva los dos
 no-goals exactos. `CONF-LAYER-RESULT-001` produce el resultado compuesto y
 `CONF-SEAL-FINAL-001` lo archiva con calidad y documentación en el candidato
-offline. La acción inmediata es cerrar `STD-IMPL-001` y `STD-IMPL-002`; Wave 6
-no se declara iniciada antes de S1A. `STD-IMPL-001` queda ahora cerrado por
-su gate de coordinación; la acción inmediata pasa a `STD-IMPL-002`.
+offline. La acción inmediata es cerrar `STD-IMPL-001`, `STD-IMPL-002` y
+`STD-CODEC-PUBLIC-001`; Wave 6 no se declara iniciada antes de S1A.
+`STD-IMPL-001` y `STD-IMPL-002` quedan ahora cerrados por sus gates de
+coordinación; la acción inmediata pasa a `STD-CODEC-PUBLIC-001`.
 
 ---
 
 ## 25. Historial del tracker
+
+### 2.35 — 2026-08-17
+
+- Se cierra `STD-IMPL-002` con
+  `testing/stdlib-hosted-implementation-coordination.json` y su contrato
+  ejecutable. El registro verifica `std.console`, `std.path`, `std.fs` y
+  `std.process`, las capabilities exactas, los bridges Hosted, la etapa
+  `IMPL/HOST`, la evidencia de owner y las 48 firmas públicas.
+- `std.path` conserva `HOST not-applicable` por su frontera puramente léxica;
+  `std.console`, `std.fs` y `std.process` exigen y verifican sus capabilities
+  `console`, `filesystem` y `process`. La auditoría global permanece en
+  `open-gaps` con 32 firmas de MessagePack/Protobuf y tres owners build-only.
+- El siguiente bloque machine-readable pasa a ser `STD-CODEC-PUBLIC-001`.
 
 ### 2.34 — 2026-08-16
 

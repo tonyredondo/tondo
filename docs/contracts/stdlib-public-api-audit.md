@@ -53,6 +53,11 @@ debe pasar antes de una promoción global. El cierre coordinado de
 solo promueve los owners Core/serialization que ya tienen evidencia completa y
 mantiene los gaps globales como trabajo posterior. Así no se confunde una
 coordinación parcial con un waiver del modo estricto.
+`STD-IMPL-002` usa además
+[`stdlib-hosted-implementation-coordination.md`](./stdlib-hosted-implementation-coordination.md):
+solo promueve los cuatro owners Hosted cuando sus capabilities, bridges y
+firmas públicas están verificadas; tampoco cambia el resultado global de
+`--strict`.
 
 La matriz actual registra deliberadamente `open-gaps`: los codecs typed y
 streaming, varios métodos Hosted, la superficie completa de `std.testing` y

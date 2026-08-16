@@ -2098,6 +2098,15 @@ Este registro exige evidencia completa para sus owners y conserva los gaps de
 la auditoría global como trabajo pendiente; no relaja el contrato de
 promoción S1A.
 
+La coordinación Hosted se registra por separado en
+[`docs/contracts/stdlib-hosted-implementation-coordination.md`](./docs/contracts/stdlib-hosted-implementation-coordination.md)
+y [`testing/stdlib-hosted-implementation-coordination.json`](./testing/stdlib-hosted-implementation-coordination.json).
+Este registro comprueba las cuatro superficies `std.console`, `std.path`,
+`std.fs` y `std.process`, sus bridges, capabilities y 48 firmas públicas. La
+capability vacía de `std.path` es intencional: sus operaciones son puramente
+léxicas. El cierre Hosted mantiene abiertos los gaps públicos de codecs y
+owners build-only, sin relajar `--strict`.
+
 La coordinación normativa completa de STD-0.1A vive en
 [`docs/contracts/stdlib-matrix.md`](./docs/contracts/stdlib-matrix.md) y
 [`testing/stdlib-matrix.json`](./testing/stdlib-matrix.json). Incluye una fila

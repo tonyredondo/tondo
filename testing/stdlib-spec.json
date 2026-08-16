@@ -48,6 +48,6 @@
   "promotion": {
     "required_owner_status": "closed-contract",
     "implementation_remains_pending": ["std.async","std.messagepack","std.protobuf"],
-    "next": "STD-IMPL-002"
+    "next": "STD-CODEC-PUBLIC-001"
   }
 }
