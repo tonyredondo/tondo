@@ -2103,27 +2103,29 @@ Clasificación explícita de los ejemplos integrados exigidos por este gate:
 
 **Objetivo:** el prototipo implementó suspensión y concurrencia con `await`
 explícito. El contrato vigente elimina el modificador fuente `async`, hace
-implícita la espera de llamadas directas y publica `suspends`; hay que completar
-la migración frontend/HIR/MIR y sus leaves antes de cerrar M7 conforme.
+implícita la espera de llamadas directas y publica `suspends`. La migración
+principal frontend/HIR/MIR está cerrada; los adapters de streams, el worker OS
+nativo y la migración específica del runner de tests permanecen como leaves
+independientes y no se atribuyen a este cierre.
 
-- [ ] **ASYNC-001 — Typecheckear funciones y closures suspendibles.** HIR conserva el
+- [x] **ASYNC-001 — Typecheckear funciones y closures suspendibles.** HIR conserva el
   efecto en la identidad y la firma exacta, comprueba cuerpos nombrados y
   cierres concretos, deriva su protocolo de llamada y rechaza parámetros
   exclusivos con `E1609`.
 
-- [ ] **ASYNC-002 — Bajar la espera implícita de llamadas suspendibles.** Una
+- [x] **ASYNC-002 — Bajar la espera implícita de llamadas suspendibles.** Una
   llamada directa se materializa como una operación HIR con el mismo `Await`
   verificado que `await call()`; no exige spelling adicional en una expresión
   ordinaria. `spawn` es la única iniciación que conserva un `Join`; `@sync` y
   `@nosuspend` rechazan la llamada directa y producen `E1601`.
 
-- [ ] **ASYNC-003 — Prohibir préstamos y parámetros incompatibles a través de
+- [x] **ASYNC-003 — Prohibir préstamos y parámetros incompatibles a través de
   suspensión.** El análisis de liveness comprueba `Send` para cada owner vivo,
   reutiliza la frontera de loans de BORROW-006 y emite `E1607` si un préstamo
   exclusivo alcanza `await`; los préstamos estructurados de `spawn` permanecen
   activos hasta consumir su `Join`.
 
-- [ ] **ASYNC-004 — Transformar MIR suspendible en frames suspendibles.** MIR y
+- [x] **ASYNC-004 — Transformar MIR suspendible en frames suspendibles.** MIR y
   bytecode poseen terminadores separados `Await`, `Spawn` y `DrainScopes`,
   además de `EnterTaskScope`; el executor aparca el vector de frames tipados de
   cada task sin recurrir al stack de Rust y lo restaura al reanudarla.
@@ -2143,16 +2145,19 @@ la migración frontend/HIR/MIR y sus leaves antes de cerrar M7 conforme.
   drena exactamente el sufijo léxico abandonado antes de sus defers y la VM
   verifica owner, anidamiento y cierre único.
 
-- [ ] **SPAWN-001 — Implementar `spawn` y `Join[T, E]`.** Los argumentos se
+- [x] **SPAWN-001 — Implementar `spawn` y `Join[T, E]`.** Los argumentos se
   preparan en la task propietaria, se transfieren a un frame hijo mediante
   `CallOnce`, y el resultado inmediato es un handle afín ligado a la identidad
   runtime del hijo y de su scope.
 
-- [ ] **JOIN-001 — Tratar `Join` como obligación terminal y consumirlo mediante
+- [x] **JOIN-001 — Tratar `Join` como obligación terminal y consumirlo mediante
   `await`.** HIR rastrea su procedencia a través de bindings, asignaciones,
-  patterns y contenedores, impide que escape o llegue vivo al final con
-  `E1603`, y libera los préstamos de `spawn` solo cuando desaparece el último
-  owner del handle. La VM impide consumo doble o desde otro scope.
+  patterns y contenedores, exige consumo, cancelación, detach o transferencia
+  afín explícita, y libera los préstamos de `spawn` solo cuando desaparece el
+  último owner del handle. La VM impide consumo doble o desde otro scope. La
+  antigua regla que prohibía que `Join` escapase fue sustituida por
+  `ASYNC-JOIN-RETURN-001`; esta entrada conserva el identificador histórico,
+  pero su estado canónico es el contrato de ownership vigente.
 
 - [x] **CANCEL-001 — Implementar cancelación cooperativa en los puntos
   normativos.** La petición se observa al entrar o abandonar `scope` y en
@@ -2284,7 +2289,7 @@ shell implícito ni efectos de importación.
 
 - [x] **SCRIPT-003 — Inferir localmente la unión cerrada de errores del script.**
 
-- [ ] **SCRIPT-004 — Inferir suspensión del `main` implícito.** Una llamada
+- [x] **SCRIPT-004 — Inferir suspensión del `main` implícito.** Una llamada
   suspendible directa, `await` explícito, iteración `AsyncIterator` o `scope`
   top-level hace suspendible el `main` implícito sin escribir `async` en la
   firma.
@@ -5934,6 +5939,35 @@ gates en una barrera artificial.
     gate. La compatibilidad léxica de `async` se conserva solo para fixtures
     históricos; `ASYNC-ITER-EXT-001`, `NATIVE-THREAD-001` y la migración del
     runner de tests continúan como leaves explícitas.
+
+#### Auditoría evidencial de Wave 4.5 — 2026-08-16
+
+La auditoría no convierte una casilla histórica en evidencia por sí sola. El
+estado siguiente se basa en el commit de implementación `d1a2d82` (ya ancestro
+de `origin/main`), los tests ejecutables actuales y el gate local completo:
+
+| Entrada | Estado auditado | Evidencia observada |
+| --- | --- | --- |
+| `ASYNC-001..004` | Cerradas | `cargo test -p tondo-compiler --lib`: 1.126/1.126; tests de inferencia de suspensión, diagnósticos de parámetros exclusivos, liveness `Send`, lowering/verificación de `Await`/`Spawn`/frames y ejecución de roots suspendidos. |
+| `SPAWN-001`, `JOIN-001` | Cerradas como aliases históricos | Tests de `scope`/cleanup, `direct_suspension_is_inferred_and_join_can_cross_a_function_boundary`, `join_can_be_returned_as_an_explicit_scope_handoff`, consumo afín y rechazo de doble consumo; el contrato vigente es `ASYNC-JOIN-RETURN-001`. |
+| `SCRIPT-004` | Cerrada | `script_entry_infers_suspension_for_direct_waiter_calls`, `script_entry_executes_sync_and_async_top_level_work` y `tests/runtime/m10-async-defer-script.to`, además del gate de fixtures. |
+| `ASYNC-INFER-001`, `ASYNC-IMPLICIT-AWAIT-001`, `ASYNC-EFFECT-API-001`, `ASYNC-JOIN-RETURN-001`, `ASYNC-THREAD-SPAWN-001`, `ASYNC-ONESHOT-001`, `ASYNC-ITER-001` | Cerradas | Ya tenían estado canónico `[x]`; el gate completo volvió a ejecutar compiler/VM/conformance y sus casos de inferencia, `Join`, one-shot, thread lane e iteración async. |
+| `ASYNC-DEFER-IMPL-001` | **No se cierra todavía** | La implementación existe y pasan `m10-async-defer-await`, `m10-async-defer-lifo`, `m10-async-defer-cancel`, `m10-async-defer-script` y los negativos de `E1608`/llamada fallible/`Join`/await anidado; la entrada exige además casos dedicados de timeout, resource limit, interrupción, `Send` y cleanup suprimido que aún no están aislados en fixtures del runner. |
+| `UTEST-SUSPENSION-MIGRATION-001` | **Pendiente real** | El backend de tests todavía conserva fixtures de compatibilidad `async`/`await` y no hay una prueba de conformance independiente que fije compile-pass/compile-fail/runtime y hash de interfaz `suspends` para el runner. |
+| `ASYNC-ITER-EXT-001`, `NATIVE-THREAD-001` | **Pendientes reales** | Requieren adapters de streams de stdlib y ejecución física en workers OS del backend nativo, respectivamente; no forman parte del bootstrap VM. |
+
+El gate oficial (`bash scripts/test-gate.sh`) terminó con salida 0 y ejecutó
+workspace, conformance, reliability, doc-tests, rustdoc y contratos de
+stdlib. La evidencia de calidad instrumentada alcanzó 90,64% de líneas
+(`9064` bp), 86,54% de funciones y 88,85% de regiones, superando el baseline
+de 90,25% de líneas (`9025` bp). La campaña oficial de mutación de esta pasada
+no se considera resultado: fue interrumpida durante su copia de target de
+decenas de GB para evitar una espera y presión de almacenamiento
+desproporcionadas; no se usa para cerrar ninguna entrada.
+
+Esta tabla es la fuente de reconciliación del estado actual; las notas
+históricas anteriores que describen el prototipo `async fn` no se reescriben y
+no prevalecen sobre la evidencia canónica de esta sección.
 26. [ ] **Wave 5 — STD-0.1A por layers.** Los contratos, slices A0 y kernels
     iniciales están cerrados; la auditoría 1.45 reabre el resto. El orden de
     cierre es:
