@@ -39,6 +39,10 @@ impl serialization.Encoder[Json, json.JsonError] for JsonEncoder {
         self.writer.__write(serialization.SerializationEvent.Bytes(value))
     }
 
+    fn base64(var self, value: bytes.Bytes): Unit ! json.JsonError {
+        self.writer.__writeBase64(value)
+    }
+
     fn startArray(var self, length: Int?): Unit ! json.JsonError {
         self.writer.__write(serialization.SerializationEvent.StartArray(length))
     }
@@ -87,6 +91,10 @@ impl serialization.Decoder[Json, json.JsonError] for JsonDecoder {
 
     fn next(var self): serialization.SerializationEvent ! json.JsonError {
         self.reader.__nextSerialization()
+    }
+
+    fn base64(var self): bytes.Bytes ! json.JsonError {
+        self.reader.__nextSerializationBase64()
     }
 
     fn own(

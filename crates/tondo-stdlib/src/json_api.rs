@@ -1934,7 +1934,9 @@ fn map_serialization_error(error: SerializationError) -> JsonError {
         SerializationError::EndOfInput | SerializationError::UnbalancedContainer => {
             JsonErrorKind::UnexpectedEof
         }
+        SerializationError::MissingField => JsonErrorKind::MissingField,
         SerializationError::DuplicateField => JsonErrorKind::DuplicateKey,
+        SerializationError::UnknownField => JsonErrorKind::UnknownField,
         SerializationError::InvalidContainerLength => JsonErrorKind::LimitExceeded,
     };
     JsonError::at_zero(kind)
@@ -2919,7 +2921,9 @@ mod tests {
             SerializationError::UnexpectedEvent,
             SerializationError::EndOfInput,
             SerializationError::UnbalancedContainer,
+            SerializationError::MissingField,
             SerializationError::DuplicateField,
+            SerializationError::UnknownField,
             SerializationError::InvalidContainerLength,
         ] {
             let mapped = map_serialization_error(error);
@@ -2929,6 +2933,8 @@ mod tests {
                     | JsonErrorKind::TypeMismatch
                     | JsonErrorKind::UnexpectedEof
                     | JsonErrorKind::DuplicateKey
+                    | JsonErrorKind::MissingField
+                    | JsonErrorKind::UnknownField
             ));
         }
         let mut reader = JsonReader::from_bytes(b"null", JsonDecodeOptions::default()).unwrap();
@@ -2939,6 +2945,22 @@ mod tests {
             )
             .kind,
             JsonErrorKind::DuplicateKey
+        );
+        assert_eq!(
+            <JsonReader<'_> as Decoder<JsonCodec, JsonError>>::reject(
+                &mut reader,
+                SerializationError::MissingField,
+            )
+            .kind,
+            JsonErrorKind::MissingField
+        );
+        assert_eq!(
+            <JsonReader<'_> as Decoder<JsonCodec, JsonError>>::reject(
+                &mut reader,
+                SerializationError::UnknownField,
+            )
+            .kind,
+            JsonErrorKind::UnknownField
         );
         assert_eq!(
             decode_typed::<u64>(b"1", JsonDecodeOptions::default()).unwrap(),

@@ -491,6 +491,7 @@ fn serialization_prelude_method(
         ("Encoder", "float64") => HirSerializationTraitMethod::EncoderFloat64,
         ("Encoder", "string") => HirSerializationTraitMethod::EncoderString,
         ("Encoder", "bytes") => HirSerializationTraitMethod::EncoderBytes,
+        ("Encoder", "base64") => HirSerializationTraitMethod::EncoderBase64,
         ("Encoder", "startArray") => HirSerializationTraitMethod::EncoderStartArray,
         ("Encoder", "endArray") => HirSerializationTraitMethod::EncoderEndArray,
         ("Encoder", "startMap") => HirSerializationTraitMethod::EncoderStartMap,
@@ -503,6 +504,7 @@ fn serialization_prelude_method(
         ("Encoder", "endEnum") => HirSerializationTraitMethod::EncoderEndEnum,
         ("Decoder", "peek") => HirSerializationTraitMethod::DecoderPeek,
         ("Decoder", "next") => HirSerializationTraitMethod::DecoderNext,
+        ("Decoder", "base64") => HirSerializationTraitMethod::DecoderBase64,
         ("Decoder", "own") => HirSerializationTraitMethod::DecoderOwn,
         ("Decoder", "reject") => HirSerializationTraitMethod::DecoderReject,
         _ => return None,
@@ -17902,6 +17904,12 @@ impl<'a> ExpressionChecker<'a> {
                 {
                     HirBootstrapHostFunction::JsonReaderSerializationNext
                 }
+                (IntrinsicType::JsonReader, "__nextSerializationBase64")
+                    if self.sources.get(file)?.origin()
+                        == crate::source::SourceOrigin::GeneratedStandard =>
+                {
+                    HirBootstrapHostFunction::JsonReaderSerializationNextBase64
+                }
                 (IntrinsicType::JsonReader, "__rejectSerialization")
                     if self.sources.get(file)?.origin()
                         == crate::source::SourceOrigin::GeneratedStandard =>
@@ -17915,6 +17923,12 @@ impl<'a> ExpressionChecker<'a> {
                         == crate::source::SourceOrigin::GeneratedStandard =>
                 {
                     HirBootstrapHostFunction::JsonWriterBufferWrite
+                }
+                (IntrinsicType::JsonWriter, "__writeBase64")
+                    if self.sources.get(file)?.origin()
+                        == crate::source::SourceOrigin::GeneratedStandard =>
+                {
+                    HirBootstrapHostFunction::JsonWriterBufferWriteBase64
                 }
                 (IntrinsicType::JsonWriter, "__finish")
                     if self.sources.get(file)?.origin()
@@ -17970,9 +17984,11 @@ impl<'a> ExpressionChecker<'a> {
                 | HirBootstrapHostFunction::JsonWriterWrite
                 | HirBootstrapHostFunction::JsonWriterFinish
                 | HirBootstrapHostFunction::JsonWriterBufferWrite
+                | HirBootstrapHostFunction::JsonWriterBufferWriteBase64
                 | HirBootstrapHostFunction::JsonWriterBufferFinish
                 | HirBootstrapHostFunction::JsonReaderSerializationPeek
                 | HirBootstrapHostFunction::JsonReaderSerializationNext
+                | HirBootstrapHostFunction::JsonReaderSerializationNextBase64
                 | HirBootstrapHostFunction::JsonReaderSerializationReject
         ) {
             self.check_method_receiver(receiver, ParameterMode::Var, Some(receiver_type), context)?;

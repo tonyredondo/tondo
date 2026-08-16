@@ -179,7 +179,9 @@ pub enum SerializationError {
     TypeMismatch,
     LimitExceeded,
     UnbalancedContainer,
+    MissingField,
     DuplicateField,
+    UnknownField,
     InvalidContainerLength,
 }
 
@@ -246,6 +248,13 @@ pub trait Encoder<C, E> {
         self.write_event(Event::Bytes(value.to_vec()))
     }
 
+    /// Encode bytes as padded RFC 4648 Base64 text.  This is intentionally a
+    /// separate operation from `bytes`: JSON derives opt into it with
+    /// `@json(base64)`, while binary codecs retain their native representation.
+    fn base64(&mut self, value: &[u8]) -> Result<(), E> {
+        self.write_event(Event::String(base64_encode(value)))
+    }
+
     fn start_array(&mut self, length: Option<usize>) -> Result<(), E> {
         self.write_event(Event::StartArray(length))
     }
@@ -300,6 +309,20 @@ pub trait Decoder<C, E> {
     fn peek_event(&mut self) -> Result<Option<Event>, E>;
 
     fn next(&mut self) -> Result<Option<Event>, E>;
+
+    /// Decode a padded RFC 4648 Base64 string emitted by `Encoder::base64`.
+    fn base64(&mut self) -> Result<Bytes, E>
+    where
+        Self: Sized,
+        E: From<SerializationError>,
+    {
+        match next_required(self)? {
+            Event::String(value) => base64_decode(&value)
+                .map(Bytes::new)
+                .map_err(|_| E::from(SerializationError::TypeMismatch)),
+            _ => Err(E::from(SerializationError::TypeMismatch)),
+        }
+    }
 
     fn own(&mut self, event: Event) -> Result<Event, E> {
         Ok(event)
@@ -491,6 +514,89 @@ where
     E: From<SerializationError>,
 {
     E::from(SerializationError::TypeMismatch)
+}
+
+/// RFC 4648 Base64 with the canonical alphabet and padding.  Keeping this
+/// small helper in the shared protocol makes the derive policy independent of
+/// a format-specific DOM or an allocation-heavy general-purpose codec.
+pub fn base64_encode(value: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let output_len = value.len().div_ceil(3) * 4;
+    let mut output = String::with_capacity(output_len);
+    for chunk in value.chunks(3) {
+        let first = chunk[0];
+        output.push(ALPHABET[(first >> 2) as usize] as char);
+        let second = chunk.get(1).copied();
+        let third = chunk.get(2).copied();
+        output.push(ALPHABET[((first & 0x03) << 4 | second.unwrap_or(0) >> 4) as usize] as char);
+        output.push(match second {
+            Some(second) => {
+                ALPHABET[((second & 0x0f) << 2 | third.unwrap_or(0) >> 6) as usize] as char
+            }
+            None => '=',
+        });
+        output.push(match third {
+            Some(third) => ALPHABET[(third & 0x3f) as usize] as char,
+            None => '=',
+        });
+    }
+    output
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Base64DecodeError;
+
+pub fn base64_decode(value: &str) -> Result<Vec<u8>, Base64DecodeError> {
+    fn sextet(byte: u8) -> Option<u8> {
+        match byte {
+            b'A'..=b'Z' => Some(byte - b'A'),
+            b'a'..=b'z' => Some(byte - b'a' + 26),
+            b'0'..=b'9' => Some(byte - b'0' + 52),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
+        }
+    }
+
+    let bytes = value.as_bytes();
+    if bytes.is_empty() {
+        return Ok(Vec::new());
+    }
+    if !bytes.len().is_multiple_of(4) {
+        return Err(Base64DecodeError);
+    }
+    let mut output = Vec::with_capacity(bytes.len() / 4 * 3);
+    for chunk in bytes.chunks_exact(4) {
+        let a = sextet(chunk[0]).ok_or(Base64DecodeError)?;
+        let b = sextet(chunk[1]).ok_or(Base64DecodeError)?;
+        let padding = match (chunk[2], chunk[3]) {
+            (b'=', b'=') => 2,
+            (_, b'=') => 1,
+            (b'=', _) => return Err(Base64DecodeError),
+            _ => 0,
+        };
+        let c = if chunk[2] == b'=' {
+            0
+        } else {
+            sextet(chunk[2]).ok_or(Base64DecodeError)?
+        };
+        let d = if chunk[3] == b'=' {
+            0
+        } else {
+            sextet(chunk[3]).ok_or(Base64DecodeError)?
+        };
+        if (padding == 2 && (b & 0x0f) != 0) || (padding == 1 && (c & 0x03) != 0) {
+            return Err(Base64DecodeError);
+        }
+        output.push((a << 2) | (b >> 4));
+        if padding < 2 {
+            output.push((b << 4) | (c >> 2));
+        }
+        if padding == 0 {
+            output.push((c << 6) | d);
+        }
+    }
+    Ok(output)
 }
 
 macro_rules! static_scalar_codec {
@@ -1656,5 +1762,34 @@ mod tests {
         let mut unit_decoder = EventDeserializer::new(&unit_events, Limits::default()).unwrap();
         <() as Decode<Json>>::decode::<SerializationError, _>(&mut unit_decoder).unwrap();
         unit_decoder.finish().unwrap();
+    }
+
+    #[test]
+    fn base64_policy_is_canonical_and_static() {
+        for (raw, encoded) in [
+            (b"".as_slice(), ""),
+            (b"f".as_slice(), "Zg=="),
+            (b"fo".as_slice(), "Zm8="),
+            (b"foo".as_slice(), "Zm9v"),
+            (b"foobar".as_slice(), "Zm9vYmFy"),
+        ] {
+            assert_eq!(base64_encode(raw), encoded);
+            assert_eq!(base64_decode(encoded).unwrap(), raw);
+        }
+        for invalid in ["=", "Zg=", "Zg===", "Zg!=", "Zh==", "Zm=8", "Zm9="] {
+            assert!(base64_decode(invalid).is_err(), "accepted {invalid:?}");
+        }
+
+        let mut encoder = EventSerializer::new(Limits::default());
+        <EventSerializer as Encoder<Json, SerializationError>>::base64(&mut encoder, b"tondo")
+            .unwrap();
+        let events = encoder.finish().unwrap();
+        assert_eq!(events, vec![Event::String("dG9uZG8=".into())]);
+        let mut decoder = EventDeserializer::new(&events, Limits::default()).unwrap();
+        let decoded =
+            <EventDeserializer<'_> as Decoder<Json, SerializationError>>::base64(&mut decoder)
+                .unwrap();
+        assert_eq!(decoded.as_slice(), b"tondo");
+        decoder.finish().unwrap();
     }
 }

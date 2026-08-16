@@ -56,7 +56,11 @@ jq -e '
     and .typed.encode_requires_dom == false
     and .typed.reflection == "forbidden"
     and .typed.missing_option == "none"
-    and .typed.ordinary_field_order == "declaration-order"
+    and .typed.ordinary_field_order.encode == "declaration-order"
+    and .typed.ordinary_field_order.decode == "order-independent-known-fields"
+    and .typed.unknown_field_policy == "reject-UnknownField"
+    and .typed.duplicate_field_policy == "reject-DuplicateField"
+    and .typed.missing_required_field_policy == "reject-MissingField"
     and .typed.canonical_field_order == "RFC8785-property-order"
     and .typed.unknown_capture == "declared-extras-only"
     and .typed.parser_stack == "explicit-bounded-stack"

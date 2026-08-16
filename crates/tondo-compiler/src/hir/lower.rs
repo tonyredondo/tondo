@@ -366,6 +366,7 @@ impl<'a> TypeLowerer<'a> {
                     ("TypeMismatch", Vec::new()),
                     ("MissingField", Vec::new()),
                     ("DuplicateField", Vec::new()),
+                    ("UnknownField", Vec::new()),
                     ("InvalidContainerLength", Vec::new()),
                     ("LimitExceeded", Vec::new()),
                     ("InvalidPath", Vec::new()),
@@ -1982,6 +1983,16 @@ impl<'a> TypeLowerer<'a> {
                 )?;
                 self.push_bootstrap_host_callable_with_modes(
                     span,
+                    HirBootstrapHostFunction::JsonWriterBufferWriteBase64,
+                    vec![
+                        (json_writer, ParameterMode::Var, true),
+                        (bytes, ParameterMode::Value, false),
+                    ],
+                    None,
+                    json_unit_result,
+                )?;
+                self.push_bootstrap_host_callable_with_modes(
+                    span,
                     HirBootstrapHostFunction::JsonWriterBufferFinish,
                     vec![(json_writer, ParameterMode::Var, true)],
                     None,
@@ -2013,6 +2024,13 @@ impl<'a> TypeLowerer<'a> {
                     vec![(json_reader, ParameterMode::Var, true)],
                     None,
                     serialization_event_result,
+                )?;
+                self.push_bootstrap_host_callable_with_modes(
+                    span,
+                    HirBootstrapHostFunction::JsonReaderSerializationNextBase64,
+                    vec![(json_reader, ParameterMode::Var, true)],
+                    None,
+                    json_bytes_result,
                 )?;
                 self.push_bootstrap_host_callable_with_modes(
                     span,
@@ -5776,6 +5794,7 @@ impl<'a> TypeLowerer<'a> {
                                 ("float64", HirSerializationTraitMethod::EncoderFloat64),
                                 ("string", HirSerializationTraitMethod::EncoderString),
                                 ("bytes", HirSerializationTraitMethod::EncoderBytes),
+                                ("base64", HirSerializationTraitMethod::EncoderBase64),
                                 ("startArray", HirSerializationTraitMethod::EncoderStartArray),
                                 ("endArray", HirSerializationTraitMethod::EncoderEndArray),
                                 ("startMap", HirSerializationTraitMethod::EncoderStartMap),
@@ -5794,6 +5813,7 @@ impl<'a> TypeLowerer<'a> {
                             &[
                                 ("peek", HirSerializationTraitMethod::DecoderPeek),
                                 ("next", HirSerializationTraitMethod::DecoderNext),
+                                ("base64", HirSerializationTraitMethod::DecoderBase64),
                                 ("own", HirSerializationTraitMethod::DecoderOwn),
                                 ("reject", HirSerializationTraitMethod::DecoderReject),
                             ]

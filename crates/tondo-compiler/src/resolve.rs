@@ -660,6 +660,7 @@ fn bootstrap_serialization_nominals() -> [(&'static str, SymbolKind, BootstrapNo
                 "TypeMismatch",
                 "MissingField",
                 "DuplicateField",
+                "UnknownField",
                 "InvalidContainerLength",
                 "LimitExceeded",
                 "InvalidPath",

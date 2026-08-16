@@ -9,9 +9,9 @@ para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps
 CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
 desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 2.32
+**Versión del tracker:** 2.33
 
-**Última actualización:** 2026-08-15
+**Última actualización:** 2026-08-16
 
 **Especificaciones normativas:**
 
@@ -4483,7 +4483,7 @@ tests. Antes de volver a marcarlas `[x]` deben cumplirse todos estos puntos:
   modos `var`/`ref`, resultado `Result` y bounds del codec; las llamadas
   cualificadas y por constraint usan la selección HIR/MIR estática sin
   `Value`, reflection runtime, vtables ni lookup por nombre. El verificador HIR
-  deriva de nuevo las firmas de Encode/Decode y de los 21 métodos de
+  deriva de nuevo las firmas de Encode/Decode y de los 23 métodos de
   Encoder/Decoder antes de producir MIR. Los kernels Rust siguen siendo
   adaptadores internos; los entry points de JSON/MessagePack/Protobuf y los
   providers derive se cierran en sus leaves posteriores. Evidencia: tests HIR
@@ -4549,7 +4549,7 @@ tests. Antes de volver a marcarlas `[x]` deben cumplirse todos estos puntos:
   formas inválidas; la auditoría verifica las 23/23 firmas de `std.json` y
   eleva el total a 177/209.
 
-- [ ] **STD-CODEC-DERIVE-POLICY-001 — Completar semántica wire de derives.**
+- [x] **STD-CODEC-DERIVE-POLICY-001 — Completar semántica wire de derives.**
   Sustituir la decodificación posicional de records por una máquina estática
   independiente del orden que detecte missing/duplicate/unknown fields,
   reconstruya `Option` ausentes como `none` y aplique la policy explícita del
@@ -4557,6 +4557,20 @@ tests. Antes de volver a marcarlas `[x]` deben cumplirse todos estos puntos:
   `@proto(number)` en ambos sentidos; cubrir fields renombrados/ignorados,
   payloads de enum, genéricos affine, orden permutado y fallos parciales. La
   leaf no puede cerrarse por validar attributes ni por tests del kernel Rust.
+  Cerrado con `serialization_derive.rs`: los records generan slots `seen` y
+  `Option[field]`, aceptan orden arbitrario y distinguen `MissingField`,
+  `DuplicateField` y `UnknownField`; los fields `Option` ausentes y los
+  ignorados publican `none` después de consumir su payload. JSON aplica
+  Base64 RFC 4648 mediante operaciones estáticas `Encoder/Decoder.base64`,
+  MessagePack usa maps string-keyed y `@messagepack(binary)` para binarios, y
+  Protobuf transporta `@proto(number)` como tokens `#N` que el adapter baja a
+  tags wire. La fixture CLI `m11-std-codecs-001.to` prueba rename/ignore,
+  Base64, orden permutado, missing/unknown/duplicate y payloads de enum; los
+  tests Rust cubren el adapter Protobuf order-independent, el mapa MessagePack,
+  el Base64 canónico y el mapping nominal de errores. Contratos y gates:
+  `docs/contracts/stdlib-serialization.md`, `testing/stdlib-serialization.json`,
+  `testing/stdlib-json.json`, `scripts/stdlib-serialization-check.sh` y
+  `scripts/stdlib-serialization-test.sh`.
 
 - [x] **STD-MSGPACK-IMPL-001 — Implementar MessagePack completo.** Publicar
   `parse -> Value`, `decode[T: Decode[MessagePack]]`,
@@ -6063,6 +6077,25 @@ no se declara iniciada antes de S1A.
 ---
 
 ## 25. Historial del tracker
+
+### 2.33 — 2026-08-16
+
+- `STD-CODEC-DERIVE-POLICY-001` queda cerrado con evidencia pública de la
+  expansión wire, no solo de validación de annotations. El provider genera una
+  máquina estática de slots para records: el encode conserva orden de
+  declaración, el decode acepta fields permutados y distingue presencia,
+  duplicados y nombres desconocidos sin DOM ni reflection.
+- `Option` ausente e `@ignore` se reconstruyen como `none` tras consumir el
+  payload; `@json(base64)` usa Base64 RFC 4648 canónico en ambos sentidos,
+  `@messagepack(binary)` conserva el tipo binario nativo y `@proto(number)` se
+  representa como token `#N` para que el adapter emita/lea el tag explícito.
+  MessagePack records/enums usan maps string-keyed y enums JSON/MessagePack son
+  externally tagged de una sola entrada.
+- La fixture CLI cubre rename/ignore, Base64, orden permutado,
+  missing/unknown/duplicate y payloads de enum. Los contratos machine-readable,
+  gates owner y tests Rust se actualizan con UnknownField y las operaciones
+  Base64; las validaciones focalizadas pasan y la cobertura queda pendiente del
+  gate completo antes del commit/push.
 
 ### 2.32 — 2026-08-15
 

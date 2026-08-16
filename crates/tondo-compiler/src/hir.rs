@@ -1215,6 +1215,7 @@ pub enum HirSerializationTraitMethod {
     EncoderFloat64,
     EncoderString,
     EncoderBytes,
+    EncoderBase64,
     EncoderStartArray,
     EncoderEndArray,
     EncoderStartMap,
@@ -1227,6 +1228,7 @@ pub enum HirSerializationTraitMethod {
     EncoderEndEnum,
     DecoderPeek,
     DecoderNext,
+    DecoderBase64,
     DecoderOwn,
     DecoderReject,
 }
@@ -1262,6 +1264,7 @@ impl HirPreludeTraitMethod {
                 | HirSerializationTraitMethod::EncoderFloat64
                 | HirSerializationTraitMethod::EncoderString
                 | HirSerializationTraitMethod::EncoderBytes
+                | HirSerializationTraitMethod::EncoderBase64
                 | HirSerializationTraitMethod::EncoderStartArray
                 | HirSerializationTraitMethod::EncoderEndArray
                 | HirSerializationTraitMethod::EncoderStartMap
@@ -1274,6 +1277,7 @@ impl HirPreludeTraitMethod {
                 | HirSerializationTraitMethod::EncoderEndEnum => "Encoder",
                 HirSerializationTraitMethod::DecoderPeek
                 | HirSerializationTraitMethod::DecoderNext
+                | HirSerializationTraitMethod::DecoderBase64
                 | HirSerializationTraitMethod::DecoderOwn
                 | HirSerializationTraitMethod::DecoderReject => "Decoder",
             },
@@ -1296,6 +1300,7 @@ impl HirPreludeTraitMethod {
                 HirSerializationTraitMethod::EncoderFloat64 => "float64",
                 HirSerializationTraitMethod::EncoderString => "string",
                 HirSerializationTraitMethod::EncoderBytes => "bytes",
+                HirSerializationTraitMethod::EncoderBase64 => "base64",
                 HirSerializationTraitMethod::EncoderStartArray => "startArray",
                 HirSerializationTraitMethod::EncoderEndArray => "endArray",
                 HirSerializationTraitMethod::EncoderStartMap => "startMap",
@@ -1308,6 +1313,7 @@ impl HirPreludeTraitMethod {
                 HirSerializationTraitMethod::EncoderEndEnum => "endEnum",
                 HirSerializationTraitMethod::DecoderPeek => "peek",
                 HirSerializationTraitMethod::DecoderNext => "next",
+                HirSerializationTraitMethod::DecoderBase64 => "base64",
                 HirSerializationTraitMethod::DecoderOwn => "own",
                 HirSerializationTraitMethod::DecoderReject => "reject",
             },
@@ -1478,6 +1484,9 @@ impl HirPreludeTraitMethod {
                     HirSerializationTraitMethod::EncoderBytes => {
                         vec![FunctionParameter::new(ParameterMode::Value, bytes)]
                     }
+                    HirSerializationTraitMethod::EncoderBase64 => {
+                        vec![FunctionParameter::new(ParameterMode::Value, bytes)]
+                    }
                     HirSerializationTraitMethod::EncoderStartArray
                     | HirSerializationTraitMethod::EncoderStartMap => {
                         vec![FunctionParameter::new(ParameterMode::Value, optional_int)]
@@ -1494,7 +1503,8 @@ impl HirPreludeTraitMethod {
                         FunctionParameter::new(ParameterMode::Value, string),
                     ],
                     HirSerializationTraitMethod::DecoderPeek
-                    | HirSerializationTraitMethod::DecoderNext => Vec::new(),
+                    | HirSerializationTraitMethod::DecoderNext
+                    | HirSerializationTraitMethod::DecoderBase64 => Vec::new(),
                     HirSerializationTraitMethod::DecoderOwn => {
                         vec![FunctionParameter::new(ParameterMode::Value, event)]
                     }
@@ -1515,6 +1525,8 @@ impl HirPreludeTraitMethod {
                         | HirSerializationTraitMethod::DecoderOwn
                 ) {
                     interner.result(event, *error)?
+                } else if matches!(method, HirSerializationTraitMethod::DecoderBase64) {
+                    interner.result(bytes, *error)?
                 } else if matches!(method, HirSerializationTraitMethod::DecoderReject) {
                     *error
                 } else {
@@ -2688,10 +2700,12 @@ pub enum HirBootstrapHostFunction {
     JsonWriterFinish,
     JsonWriterBuffer,
     JsonWriterBufferWrite,
+    JsonWriterBufferWriteBase64,
     JsonWriterBufferFinish,
     JsonReaderSerializationFromBytes,
     JsonReaderSerializationPeek,
     JsonReaderSerializationNext,
+    JsonReaderSerializationNextBase64,
     JsonReaderSerializationReject,
     MessagePackValidate,
     MessagePackCanonicalize,
@@ -2964,12 +2978,16 @@ impl HirBootstrapHostFunction {
             Self::JsonWriterFinish => "std.json.JsonWriter.finish",
             Self::JsonWriterBuffer => "intrinsic.json.JsonWriter.buffer",
             Self::JsonWriterBufferWrite => "intrinsic.json.JsonWriter.write",
+            Self::JsonWriterBufferWriteBase64 => "intrinsic.json.JsonWriter.writeBase64",
             Self::JsonWriterBufferFinish => "intrinsic.json.JsonWriter.finish",
             Self::JsonReaderSerializationFromBytes => {
                 "intrinsic.json.JsonReader.fromBytesSerialization"
             }
             Self::JsonReaderSerializationPeek => "intrinsic.json.JsonReader.peekSerialization",
             Self::JsonReaderSerializationNext => "intrinsic.json.JsonReader.nextSerialization",
+            Self::JsonReaderSerializationNextBase64 => {
+                "intrinsic.json.JsonReader.nextSerializationBase64"
+            }
             Self::JsonReaderSerializationReject => "intrinsic.json.JsonReader.rejectSerialization",
             Self::MessagePackValidate => "std.messagepack.validate",
             Self::MessagePackCanonicalize => "std.messagepack.canonicalize",
@@ -3594,6 +3612,7 @@ mod serialization_catalog_tests {
             HirSerializationTraitMethod::EncoderFloat64,
             HirSerializationTraitMethod::EncoderString,
             HirSerializationTraitMethod::EncoderBytes,
+            HirSerializationTraitMethod::EncoderBase64,
             HirSerializationTraitMethod::EncoderStartArray,
             HirSerializationTraitMethod::EncoderEndArray,
             HirSerializationTraitMethod::EncoderStartMap,
@@ -3606,6 +3625,7 @@ mod serialization_catalog_tests {
             HirSerializationTraitMethod::EncoderEndEnum,
             HirSerializationTraitMethod::DecoderPeek,
             HirSerializationTraitMethod::DecoderNext,
+            HirSerializationTraitMethod::DecoderBase64,
             HirSerializationTraitMethod::DecoderOwn,
             HirSerializationTraitMethod::DecoderReject,
         ];

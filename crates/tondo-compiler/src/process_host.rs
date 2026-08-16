@@ -18,7 +18,9 @@ use os_pipe::pipe;
 use tondo_stdlib::testing::{
     FloatTolerance, Generator, MAX_SHRINK_CANDIDATES, TextDiff, diff_text,
 };
-use tondo_stdlib::{io as stdlib_io, json, math, messagepack, path, protobuf};
+use tondo_stdlib::{
+    io as stdlib_io, json, math, messagepack, path, protobuf, serialization as stdlib_serialization,
+};
 use tondo_vm::runtime::{
     RuntimeHostValueKind, RuntimeValue, VmError, VmHost, VmTestNodeKind, VmTestNodeOutcome,
 };
@@ -2929,6 +2931,73 @@ impl VmHost for BootstrapHost {
                     Err(error) => Ok(self.json_result_structured_error(&error)),
                 }
             }
+            ("intrinsic.json.JsonReader.nextSerializationBase64", [reader]) => {
+                let RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::JsonReader,
+                    id,
+                } = reader
+                else {
+                    return Err(VmError::Host("JSON serialization reader is invalid".into()));
+                };
+                let result = match self.values.get_mut(id) {
+                    Some(HostValue::JsonSerializationReader { finished: true, .. }) => {
+                        return Ok(self.json_result_error(json::JsonErrorKind::InvalidSyntax));
+                    }
+                    Some(HostValue::JsonSerializationReader {
+                        reader, finished, ..
+                    }) => {
+                        let result = reader.next();
+                        if result.is_err() {
+                            *finished = true;
+                        }
+                        result
+                    }
+                    _ => return Err(VmError::Host("JSON serialization reader is stale".into())),
+                };
+                match result {
+                    Ok(Some(json::JsonEvent::String(value))) => {
+                        match stdlib_serialization::base64_decode(&value) {
+                            Ok(bytes) => {
+                                if self.ensure_bytes_len(bytes.len()).is_err() {
+                                    return Ok(
+                                        self.json_result_error(json::JsonErrorKind::LimitExceeded)
+                                    );
+                                }
+                                Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                                    RuntimeHostValueKind::Bytes,
+                                    HostValue::Bytes(bytes),
+                                ))))
+                            }
+                            Err(stdlib_serialization::Base64DecodeError) => {
+                                if let Some(HostValue::JsonSerializationReader {
+                                    finished, ..
+                                }) = self.values.get_mut(id)
+                                {
+                                    *finished = true;
+                                }
+                                Ok(self.json_result_error(json::JsonErrorKind::TypeMismatch))
+                            }
+                        }
+                    }
+                    Ok(Some(_)) => {
+                        if let Some(HostValue::JsonSerializationReader { finished, .. }) =
+                            self.values.get_mut(id)
+                        {
+                            *finished = true;
+                        }
+                        Ok(self.json_result_error(json::JsonErrorKind::TypeMismatch))
+                    }
+                    Ok(None) => {
+                        if let Some(HostValue::JsonSerializationReader { finished, .. }) =
+                            self.values.get_mut(id)
+                        {
+                            *finished = true;
+                        }
+                        Ok(self.json_result_error(json::JsonErrorKind::UnexpectedEof))
+                    }
+                    Err(error) => Ok(self.json_result_structured_error(&error)),
+                }
+            }
             ("intrinsic.json.JsonReader.peekSerialization", [reader]) => {
                 let RuntimeValue::Host {
                     kind: RuntimeHostValueKind::JsonReader,
@@ -2978,8 +3047,9 @@ impl VmHost for BootstrapHost {
                         match variant {
                             2 => json::JsonErrorKind::MissingField,
                             3 => json::JsonErrorKind::DuplicateKey,
-                            4 | 5 => json::JsonErrorKind::LimitExceeded,
-                            7 => json::JsonErrorKind::IoError,
+                            4 => json::JsonErrorKind::UnknownField,
+                            5 | 6 => json::JsonErrorKind::LimitExceeded,
+                            8 => json::JsonErrorKind::IoError,
                             _ => json::JsonErrorKind::TypeMismatch,
                         }
                     }
@@ -3186,6 +3256,46 @@ impl VmHost for BootstrapHost {
                             .as_mut()
                             .expect("a valid buffer writer remains installed")
                             .write(event);
+                        if result.is_err() {
+                            *finished = true;
+                        }
+                        result
+                    }
+                    _ => return Err(VmError::Host("JSON buffer writer token is stale".into())),
+                };
+                match result {
+                    Ok(()) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))),
+                    Err(error) => Ok(self.json_result_structured_error(&error)),
+                }
+            }
+            ("intrinsic.json.JsonWriter.writeBase64", [writer, bytes]) => {
+                let encoded = stdlib_serialization::base64_encode(self.bytes(bytes)?);
+                let RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::JsonWriter,
+                    id,
+                } = writer
+                else {
+                    return Err(VmError::Host(
+                        "JSON buffer writer receiver is invalid".into(),
+                    ));
+                };
+                let result = match self.values.get_mut(id) {
+                    Some(HostValue::JsonBufferWriter { finished: true, .. }) => {
+                        return Ok(self.json_result_error(json::JsonErrorKind::InvalidSyntax));
+                    }
+                    Some(HostValue::JsonBufferWriter {
+                        writer,
+                        error,
+                        finished,
+                    }) => {
+                        if let Some(kind) = error.take() {
+                            *finished = true;
+                            return Ok(self.json_result_error(kind));
+                        }
+                        let result = writer
+                            .as_mut()
+                            .expect("a valid buffer writer remains installed")
+                            .write(json::JsonEvent::String(encoded));
                         if result.is_err() {
                             *finished = true;
                         }

@@ -178,6 +178,8 @@ impl From<SerializationError> for MessagePackError {
             SerializationError::TypeMismatch
             | SerializationError::UnexpectedEvent
             | SerializationError::UnbalancedContainer
+            | SerializationError::MissingField
+            | SerializationError::UnknownField
             | SerializationError::InvalidContainerLength => MessagePackErrorKind::TypeMismatch,
         };
         MessagePackError::new(kind, 0)
@@ -2194,6 +2196,46 @@ mod tests {
     }
 
     #[test]
+    fn static_record_policy_uses_string_keyed_map_and_native_binary() {
+        let mut writer = MessagePackWriter::new(MessagePackEncodeOptions::default());
+        for event in [
+            MessagePackEvent::StartMap(Some(1)),
+            MessagePackEvent::MapKey,
+            MessagePackEvent::String("wire_payload".into()),
+            MessagePackEvent::Binary(vec![1, 2, 3]),
+            MessagePackEvent::EndMap,
+        ] {
+            writer.write(event).unwrap();
+        }
+        let bytes = writer.finish().unwrap();
+        assert_eq!(
+            bytes,
+            vec![
+                0x81, 0xac, b'w', b'i', b'r', b'e', b'_', b'p', b'a', b'y', b'l', b'o', b'a', b'd',
+                0xc4, 3, 1, 2, 3
+            ]
+        );
+
+        let mut reader =
+            MessagePackReader::from_bytes(&bytes, MessagePackDecodeOptions::default()).unwrap();
+        assert_eq!(
+            reader.next().unwrap(),
+            Some(MessagePackEvent::StartMap(Some(1)))
+        );
+        assert_eq!(reader.next().unwrap(), Some(MessagePackEvent::MapKey));
+        assert_eq!(
+            reader.next().unwrap(),
+            Some(MessagePackEvent::String("wire_payload".into()))
+        );
+        assert_eq!(
+            reader.next().unwrap(),
+            Some(MessagePackEvent::Binary(vec![1, 2, 3]))
+        );
+        assert_eq!(reader.next().unwrap(), Some(MessagePackEvent::EndMap));
+        assert_eq!(reader.next().unwrap(), None);
+    }
+
+    #[test]
     fn public_aliases_and_terminal_error_paths_are_exercised() {
         let options = MessagePackEncodeOptions {
             limits: limits(),
@@ -2778,5 +2820,19 @@ mod tests {
             .kind,
             MessagePackErrorKind::DuplicateKey
         );
+        for error in [
+            SerializationError::MissingField,
+            SerializationError::UnknownField,
+            SerializationError::TypeMismatch,
+        ] {
+            assert_eq!(
+                <MessagePackReader<'_> as Decoder<MessagePackCodec, MessagePackError>>::reject(
+                    &mut reader,
+                    error,
+                )
+                .kind,
+                MessagePackErrorKind::TypeMismatch
+            );
+        }
     }
 }

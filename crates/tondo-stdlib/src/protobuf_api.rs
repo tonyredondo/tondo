@@ -256,6 +256,8 @@ impl From<SerializationError> for ProtoError {
             SerializationError::TypeMismatch
             | SerializationError::UnexpectedEvent
             | SerializationError::UnbalancedContainer
+            | SerializationError::MissingField
+            | SerializationError::UnknownField
             | SerializationError::InvalidContainerLength => ProtoErrorKind::TypeMismatch,
             SerializationError::DuplicateField => ProtoErrorKind::SchemaMismatch,
         };
@@ -1345,6 +1347,19 @@ fn event_scalar(event: &Event, field: u32, output: &mut Vec<ProtoEvent>) -> Resu
     Ok(())
 }
 
+fn event_field_number(name: &str, fallback: u32) -> Result<u32, ProtoError> {
+    let Some(token) = name.strip_prefix('#') else {
+        return Ok(fallback);
+    };
+    let number = token
+        .parse::<u32>()
+        .map_err(|_| ProtoError::new(ProtoErrorKind::InvalidFieldNumber, 0))?;
+    if number == 0 || number > MAX_FIELD_NUMBER || (19_000..=19_999).contains(&number) {
+        return Err(ProtoError::new(ProtoErrorKind::InvalidFieldNumber, 0));
+    }
+    Ok(number)
+}
+
 fn serialization_events_to_proto(events: &[Event]) -> Result<Vec<ProtoEvent>, ProtoError> {
     fn encode_value(
         events: &[Event],
@@ -1387,12 +1402,13 @@ fn serialization_events_to_proto(events: &[Event]) -> Result<Vec<ProtoEvent>, Pr
                 index += 1;
                 let mut nested_field = 1u32;
                 while !matches!(events.get(index), Some(Event::EndRecord)) {
-                    if !matches!(events.get(index), Some(Event::Field(_))) {
+                    let Some(Event::Field(name)) = events.get(index) else {
                         return Err(ProtoError::new(ProtoErrorKind::TypeMismatch, index));
-                    }
+                    };
+                    let field_number = event_field_number(name, nested_field)?;
                     index += 1;
-                    index = encode_value(events, index, nested_field, output)?;
-                    nested_field = nested_field.checked_add(1).ok_or_else(|| {
+                    index = encode_value(events, index, field_number, output)?;
+                    nested_field = field_number.checked_add(1).ok_or_else(|| {
                         ProtoError::new(ProtoErrorKind::InvalidFieldNumber, index)
                     })?;
                 }
@@ -1416,12 +1432,13 @@ fn serialization_events_to_proto(events: &[Event]) -> Result<Vec<ProtoEvent>, Pr
         let mut index = 1;
         let mut field = 1u32;
         while !matches!(events.get(index), Some(Event::EndRecord)) {
-            if !matches!(events.get(index), Some(Event::Field(_))) {
+            let Some(Event::Field(name)) = events.get(index) else {
                 return Err(ProtoError::new(ProtoErrorKind::TypeMismatch, index));
-            }
+            };
+            let field_number = event_field_number(name, field)?;
             index += 1;
-            index = encode_value(events, index, field, &mut output)?;
-            field = field
+            index = encode_value(events, index, field_number, &mut output)?;
+            field = field_number
                 .checked_add(1)
                 .ok_or_else(|| ProtoError::new(ProtoErrorKind::InvalidFieldNumber, index))?;
         }
@@ -1441,42 +1458,66 @@ fn serialization_events_to_proto(events: &[Event]) -> Result<Vec<ProtoEvent>, Pr
 fn serialization_events_from_fields(
     fields: &[ParsedField],
     options: ProtoDecodeOptions,
+    record: bool,
 ) -> Result<Vec<Event>, ProtoError> {
     if fields.is_empty() {
         return Err(ProtoError::new(ProtoErrorKind::UnexpectedEof, 0));
     }
     let mut output = Vec::new();
+    if record {
+        output.push(Event::StartRecord {
+            name: "root".to_owned(),
+            fields: Some(fields.len()),
+        });
+    }
     let first_number = fields[0].number;
-    let repeated = fields
-        .iter()
-        .filter(|field| field.number == first_number)
-        .count()
-        > 1;
+    let repeated = !record
+        && fields
+            .iter()
+            .filter(|field| field.number == first_number)
+            .count()
+            > 1;
     if repeated {
         output.push(Event::StartArray(Some(fields.len())));
     }
     for field in fields {
         match field.wire_type {
             ProtoWireType::Varint => {
+                if record {
+                    output.push(Event::Field(format!("#{}", field.number)));
+                }
                 let mut offset = 0;
                 let (value, _) = read_varint(&field.payload, &mut offset, options)?;
                 output.push(Event::UInt(u128::from(value)));
             }
-            ProtoWireType::Fixed32 => output.push(Event::Float32(u32::from_le_bytes(
-                field
-                    .payload
-                    .as_slice()
-                    .try_into()
-                    .map_err(|_| ProtoError::new(ProtoErrorKind::InvalidLength, 0))?,
-            ))),
-            ProtoWireType::Fixed64 => output.push(Event::Float64(u64::from_le_bytes(
-                field
-                    .payload
-                    .as_slice()
-                    .try_into()
-                    .map_err(|_| ProtoError::new(ProtoErrorKind::InvalidLength, 0))?,
-            ))),
+            ProtoWireType::Fixed32 => {
+                if record {
+                    output.push(Event::Field(format!("#{}", field.number)));
+                }
+                output.push(Event::Float32(u32::from_le_bytes(
+                    field
+                        .payload
+                        .as_slice()
+                        .try_into()
+                        .map_err(|_| ProtoError::new(ProtoErrorKind::InvalidLength, 0))?,
+                )));
+            }
+            ProtoWireType::Fixed64 => {
+                if record {
+                    output.push(Event::Field(format!("#{}", field.number)));
+                }
+                output.push(Event::Float64(u64::from_le_bytes(
+                    field
+                        .payload
+                        .as_slice()
+                        .try_into()
+                        .map_err(|_| ProtoError::new(ProtoErrorKind::InvalidLength, 0))?,
+                )));
+            }
             ProtoWireType::LengthDelimited => {
+                if record {
+                    output.push(Event::Field(format!("#{}", field.number)));
+                }
                 if let Ok(text) = std::str::from_utf8(&field.payload) {
                     output.push(Event::String(text.to_owned()));
                 } else {
@@ -1485,6 +1526,9 @@ fn serialization_events_from_fields(
             }
             ProtoWireType::StartGroup => {
                 if options.unknown_fields == ProtoUnknownPolicy::Preserve {
+                    if record {
+                        output.push(Event::Field(format!("#{}", field.number)));
+                    }
                     output.push(Event::Bytes(unknown_from(field).raw_bytes()));
                 }
             }
@@ -1495,6 +1539,9 @@ fn serialization_events_from_fields(
     }
     if repeated {
         output.push(Event::EndArray);
+    }
+    if record {
+        output.push(Event::EndRecord);
     }
     Ok(output)
 }
@@ -1520,7 +1567,7 @@ pub fn encode<T: Serialize>(value: &T, options: ProtoEncodeOptions) -> Result<Ve
 
 pub fn decode<T: Deserialize>(input: &[u8], options: ProtoDecodeOptions) -> Result<T, ProtoError> {
     let fields = parse_fields(input, options)?;
-    let events = serialization_events_from_fields(&fields, options)?;
+    let events = serialization_events_from_fields(&fields, options, false)?;
     serialization::deserialize_value(
         &events,
         serialization::Limits {
@@ -1584,7 +1631,10 @@ pub fn decode_static<T: Decode<ProtobufCodec>>(
     options: ProtoDecodeOptions,
 ) -> Result<T, ProtoError> {
     let fields = parse_fields(input, options)?;
-    let events = serialization_events_from_fields(&fields, options)?;
+    // Static derives carry their record shape in the common event stream.  A
+    // legacy dynamic decode keeps the historical scalar/array projection so
+    // repeated fields remain Vec-compatible without a schema snapshot.
+    let events = serialization_events_from_fields(&fields, options, fields.len() > 1)?;
     let mut decoder = EventDeserializer::new(
         &events,
         serialization::Limits {
@@ -2335,6 +2385,61 @@ mod tests {
     }
 
     #[test]
+    fn static_record_adapter_preserves_explicit_numbers_and_input_order() {
+        let events = [
+            Event::StartRecord {
+                name: "User".into(),
+                fields: Some(2),
+            },
+            Event::Field("#7".into()),
+            Event::Int(150),
+            Event::Field("#2".into()),
+            Event::String("tondo".into()),
+            Event::EndRecord,
+        ];
+        let wire = serialization_events_to_proto(&events).unwrap();
+        assert!(wire.contains(&ProtoEvent::Field(7, ProtoWireType::Varint)));
+        assert!(wire.contains(&ProtoEvent::StartLengthDelimited(2)));
+        let mut writer = ProtoWriter::new(ProtoEncodeOptions::default());
+        for event in wire {
+            writer.write(event).unwrap();
+        }
+        let bytes = writer.finish().unwrap();
+        // The derive encoder's declaration order is observable in output; the
+        // field identity itself remains the explicit schema number.
+        assert_eq!(
+            bytes,
+            vec![0x38, 0x96, 0x01, 0x12, 5, b't', b'o', b'n', b'd', b'o']
+        );
+
+        let parsed = parse_fields(&bytes, ProtoDecodeOptions::default()).unwrap();
+        let decoded_events =
+            serialization_events_from_fields(&parsed, ProtoDecodeOptions::default(), true).unwrap();
+        assert_eq!(
+            decoded_events,
+            vec![
+                Event::StartRecord {
+                    name: "root".into(),
+                    fields: Some(2),
+                },
+                Event::Field("#7".into()),
+                Event::UInt(150),
+                Event::Field("#2".into()),
+                Event::String("tondo".into()),
+                Event::EndRecord,
+            ]
+        );
+
+        let permuted = [0x12, 5, b't', b'o', b'n', b'd', b'o', 0x38, 0x96, 0x01];
+        let permuted_fields = parse_fields(&permuted, ProtoDecodeOptions::default()).unwrap();
+        let permuted_events =
+            serialization_events_from_fields(&permuted_fields, ProtoDecodeOptions::default(), true)
+                .unwrap();
+        assert_eq!(permuted_events[1], Event::Field("#2".into()));
+        assert_eq!(permuted_events[3], Event::Field("#7".into()));
+    }
+
+    #[test]
     fn unknown_fields_api_is_explicitly_owned() {
         let mut fields = UnknownFields::default();
         fields.push(UnknownField {
@@ -2438,6 +2543,14 @@ mod tests {
             (
                 serialization::SerializationError::DuplicateField,
                 ProtoErrorKind::SchemaMismatch,
+            ),
+            (
+                serialization::SerializationError::MissingField,
+                ProtoErrorKind::TypeMismatch,
+            ),
+            (
+                serialization::SerializationError::UnknownField,
+                ProtoErrorKind::TypeMismatch,
             ),
         ] {
             let converted = ProtoError::from(error);

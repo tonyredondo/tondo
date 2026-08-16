@@ -11,6 +11,14 @@ derive serialization.Encode[Json] + serialization.Decode[Json] for JsonUser
 type JsonComposite = { small: Byte, tags: Array[String], nickname: String? }
 derive serialization.Encode[Json] + serialization.Decode[Json] for JsonComposite
 
+type JsonWirePolicy = {
+    @name("wire_id") id: Int
+    @json(base64) payload: bytes.Bytes
+    @ignore legacy: Int?
+    nickname: String?
+}
+derive serialization.Encode[Json] + serialization.Decode[Json] for JsonWirePolicy
+
 enum JsonChoice {
     Empty
     Number(Int)
@@ -87,6 +95,68 @@ fn main(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | json.Js
     assert(user.id == 7)
     assert(user.name == "Tondo")
 
+    let policy_output = json.encode[JsonWirePolicy](
+        JsonWirePolicy {
+            id: 7
+            payload: bytes.Bytes("hello")?
+            legacy: some(99)
+            nickname: none
+        },
+        json_encode_options(),
+    )?
+    assert(String(policy_output)? == r"""{"wire_id":7,"payload":"aGVsbG8=","nickname":null}""")
+    let policy = json.decode[JsonWirePolicy](policy_output, json_decode_options())?
+    assert(policy.id == 7)
+    assert(policy.payload.equal(bytes.Bytes("hello")?))
+    assert(policy.legacy == none)
+    assert(policy.nickname == none)
+    let permuted_policy = json.decode[JsonWirePolicy](
+        bytes.Bytes(r"""{"nickname":"Tony","payload":"aGVsbG8=","wire_id":7}""")?,
+        json_decode_options(),
+    )?
+    assert(permuted_policy.id == 7)
+    assert(permuted_policy.nickname == some("Tony"))
+    match json.decode[JsonWirePolicy](
+        bytes.Bytes(r"""{"wire_id":7,"payload":"aGVsbG8=","extra":true}""")?,
+        json_decode_options(),
+    ) {
+        ok(_) => assert(false)
+        err(error) => match error.kind {
+            json.JsonErrorKind.UnknownField => ()
+            _ => assert(false)
+        }
+    }
+    match json.decode[JsonWirePolicy](
+        bytes.Bytes(r"""{"payload":"aGVsbG8="}""")?,
+        json_decode_options(),
+    ) {
+        ok(_) => assert(false)
+        err(error) => match error.kind {
+            json.JsonErrorKind.MissingField => ()
+            _ => assert(false)
+        }
+    }
+    match json.decode[JsonWirePolicy](
+        bytes.Bytes(r"""{"wire_id":7,"wire_id":8,"payload":"aGVsbG8="}""")?,
+        json_decode_options(),
+    ) {
+        ok(_) => assert(false)
+        err(error) => match error.kind {
+            json.JsonErrorKind.DuplicateKey => ()
+            _ => assert(false)
+        }
+    }
+    match json.decode[JsonWirePolicy](
+        bytes.Bytes(r"""{"wire_id":7,"payload":"%%%"}""")?,
+        json_decode_options(),
+    ) {
+        ok(_) => assert(false)
+        err(error) => match error.kind {
+            json.JsonErrorKind.TypeMismatch => ()
+            _ => assert(false)
+        }
+    }
+
     let composite_output = json.encode[JsonComposite](
         JsonComposite { small: Byte(7u8), tags: ["a", "b"], nickname: none },
         json_encode_options(),
@@ -129,6 +199,8 @@ fn main(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | json.Js
             err(error) => match error.kind {
                 json.JsonErrorKind.TypeMismatch => ()
                 json.JsonErrorKind.TrailingData => ()
+                json.JsonErrorKind.UnknownField => ()
+                json.JsonErrorKind.DuplicateKey => ()
                 _ => assert(false)
             }
         }

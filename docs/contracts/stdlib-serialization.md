@@ -56,6 +56,7 @@ pub trait Encoder[C, E] {
     fn float64(var self, value: Float64): Unit ! E
     fn string(var self, value: String): Unit ! E
     fn bytes(var self, value: Bytes): Unit ! E
+    fn base64(var self, value: Bytes): Unit ! E
 
     fn startArray(var self, length: Int?): Unit ! E
     fn endArray(var self): Unit ! E
@@ -75,6 +76,7 @@ pub trait Encoder[C, E] {
 pub trait Decoder[C, E] {
     fn peek(var self): SerializationEvent? ! E
     fn next(var self): SerializationEvent ! E
+    fn base64(var self): Bytes ! E
     fn own(var self, event: SerializationEvent): SerializationEvent ! E
     fn reject(var self, error: SerializationError): E
 }
@@ -87,6 +89,12 @@ pub trait Decode[C] {
     fn decode[E, D: Decoder[C, E]](var decoder: D): Self ! E
 }
 ```
+
+`base64` es la operación de policy para bytes representados como texto Base64
+RFC 4648 canónico (alfabeto estándar y padding obligatorio). Solo los derives
+que optan por `@json(base64)` la invocan; los codecs binarios conservan
+`bytes`. La operación no construye un `Value` dinámico y rechaza padding no
+canónico o alfabetos alternativos.
 
 `peek` es no consumidor: dos llamadas consecutivas observan el mismo evento y
 el siguiente `next` lo consume. Devuelve `none` solo al final del stream y
@@ -207,12 +215,16 @@ genera output Tondo ordinario y determinista. La identidad completa del trait
 el registro puede reutilizar el provider base, pero nunca sustituye el codec
 seleccionado por un `C` implícito:
 
-- records visitan fields en orden de declaración;
+- el encode de records visita fields en orden de declaración; el decode usa
+  una máquina estática de slots y acepta cualquier orden de fields;
 - enums conservan nombre de tipo, variant y payload;
 - parámetros genéricos reciben únicamente los bounds mínimos usados por la
   expansión;
-- el decode construye un record temporal y lo publica solo tras validar todos
-  sus fields;
+- cada field conocido puede consumirse una sola vez. Un duplicado produce
+  `SerializationError.DuplicateField`, un field no declarado produce
+  `UnknownField` y un field obligatorio ausente produce `MissingField`;
+- un field `Option[T]` ausente se reconstruye como `none`; los fields
+  ignorados se consumen aplicando su policy y publican `none`;
 - los fields privados solo se incluyen cuando el provider tiene autorización
   explícita para el tipo objetivo; nunca se hacen públicos por accidente; y
 - `@name("wire_name")` establece el nombre común;
@@ -236,6 +248,19 @@ produce un impl con source map y diagnostics reproducibles.
 Protobuf es una excepción deliberada al derive genérico: sus field numbers,
 presence y evolución vienen únicamente del `.proto` schema-first y su
 generator publica impls ordinarios compatibles con estos traits.
+
+### Máquina wire estática
+
+La expansión no hace un decode posicional ni materializa un árbol. Para cada
+record emite una tabla cerrada de nombres/números de wire, un bit `seen` y un
+slot `Option[field_type]`. Repite `peek`/`next` hasta el cierre del contenedor,
+decodifica cada payload directamente al slot y valida presencia después del
+cierre; por tanto el resultado nunca se publica parcialmente. JSON usa
+`Field(name)`, MessagePack usa un map de claves `String` y Protobuf usa el
+token de evento `#number`, que el adapter reduce al tag wire sin consultar
+reflection ni el orden de declaración. Los enums JSON y MessagePack son maps
+externamente etiquetados de una sola entrada; sus payloads recorren la misma
+máquina estática.
 
 ## Implementación portable del protocolo
 

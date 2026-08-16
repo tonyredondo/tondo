@@ -52,10 +52,21 @@ jq -e '
   and .atomicity.derive_output == "atomic-source-publication"
   and .derive.provider == "build-only-hermetic"
   and .derive.output == "ordinary-tondo-impl"
-  and .derive.field_order == "declaration-order"
+  and .derive.field_order.encode == "declaration-order"
+  and .derive.field_order.decode == "order-independent-known-fields"
   and .derive.private_fields == "explicit-authorized-view-only"
   and .derive.custom_wire_names == "manual-impl-or-explicit-dto"
-  and .derive.protobuf_field_numbers == "schema-only"
+  and .derive.protobuf_field_numbers == "explicit-@proto-number"
+  and .derive.record_machine == "static-seen-slots-no-dom"
+  and .derive.unknown_field_policy == "strict-UnknownField"
+  and .derive.duplicate_field_policy == "DuplicateField"
+  and .derive.option_presence == "missing-Option-is-none"
+  and .derive.ignored_field_policy == "consume-and-publish-none"
+  and .derive.codec_policies == [
+    "@json(base64)-RFC4648-canonical",
+    "@messagepack(binary)-native-bin",
+    "@proto(number)-explicit-wire-token"
+  ]
   and .derive.minimum_bounds == true
   and .derive.source_maps == true
   and (.limits | map(.id)) == [
@@ -65,6 +76,7 @@ jq -e '
   and all(.limits[]; (.unit | length) > 0 and (.check | length) > 0)
   and .errors == [
     "UnexpectedEvent", "TypeMismatch", "MissingField", "DuplicateField",
+    "UnknownField",
     "InvalidContainerLength", "LimitExceeded", "InvalidPath", "IoError"
   ]
   and (.test_matrix | map(.id)) == [
@@ -83,5 +95,8 @@ grep -q '@ignore' "$document"
 grep -q 'MapKey' "$document"
 grep -q 'StartRecord' "$document"
 grep -q 'StartEnum' "$document"
+grep -q 'fn base64' "$document"
+grep -q 'cualquier orden' "$document"
+grep -q 'Máquina wire estática' "$document"
 
 echo "std.serialization owner contract: OK"

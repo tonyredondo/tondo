@@ -44,10 +44,23 @@
   "derive": {
     "provider": "build-only-hermetic",
     "output": "ordinary-tondo-impl",
-    "field_order": "declaration-order",
+    "field_order": {
+      "encode": "declaration-order",
+      "decode": "order-independent-known-fields"
+    },
     "private_fields": "explicit-authorized-view-only",
     "custom_wire_names": "manual-impl-or-explicit-dto",
-    "protobuf_field_numbers": "schema-only",
+    "protobuf_field_numbers": "explicit-@proto-number",
+    "record_machine": "static-seen-slots-no-dom",
+    "unknown_field_policy": "strict-UnknownField",
+    "duplicate_field_policy": "DuplicateField",
+    "option_presence": "missing-Option-is-none",
+    "ignored_field_policy": "consume-and-publish-none",
+    "codec_policies": [
+      "@json(base64)-RFC4648-canonical",
+      "@messagepack(binary)-native-bin",
+      "@proto(number)-explicit-wire-token"
+    ],
     "minimum_bounds": true,
     "source_maps": true
   },
@@ -62,6 +75,7 @@
   ],
   "errors": [
     "UnexpectedEvent", "TypeMismatch", "MissingField", "DuplicateField",
+    "UnknownField",
     "InvalidContainerLength", "LimitExceeded", "InvalidPath", "IoError"
   ],
   "test_matrix": [

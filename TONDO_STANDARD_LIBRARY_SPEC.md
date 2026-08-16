@@ -2228,6 +2228,7 @@ pub trait Encoder[C, E] {
     fn float64(var self, value: Float64): Unit ! E
     fn string(var self, value: String): Unit ! E
     fn bytes(var self, value: Bytes): Unit ! E
+    fn base64(var self, value: Bytes): Unit ! E
     fn startArray(var self, length: Int?): Unit ! E
     fn endArray(var self): Unit ! E
     fn startMap(var self, length: Int?): Unit ! E
@@ -2243,6 +2244,7 @@ pub trait Encoder[C, E] {
 pub trait Decoder[C, E] {
     fn peek(var self): SerializationEvent? ! E
     fn next(var self): SerializationEvent ! E
+    fn base64(var self): Bytes ! E
     fn own(var self, event: SerializationEvent): SerializationEvent ! E
     fn reject(var self, error: SerializationError): E
 }
@@ -2261,6 +2263,11 @@ pub trait Decode[C] {
 eventos exige una raíz única, fields únicos, claves y payloads completos,
 longitudes exactas cuando se declaran y cierres balanceados. Los frames son
 explícitos y acotados; no se usa la pila de llamadas del host.
+
+`Encoder.base64` y `Decoder.base64` son la única operación común para la policy
+de bytes representados como Base64 RFC 4648 canónico. El derive JSON la activa
+solo con `@json(base64)`; no construye `Value` ni acepta alfabetos/padding
+alternativos.
 
 `Encode` recibe el valor por ownership como parámetro asociado, de modo que un
 tipo affine se consume una sola vez y no requiere un receiver ficticio. El
@@ -2285,13 +2292,21 @@ derive serialization.Encode[Json] + serialization.Decode[Json]
 
 El comportamiento derivado:
 
-- visita fields en orden de declaración;
+- el encode visita fields en orden de declaración; el decode usa una máquina
+  estática de slots y acepta cualquier orden de fields;
 - utiliza el spelling declarado de cada field como nombre externo por defecto,
   incluidos fields privados cuya autorización concede `derive`;
 - conserva discriminante y payload de enum de forma estructural;
 - introduce bounds mínimos sobre parámetros genéricos;
 - rechaza en compile time un field sin implementación requerida; y
-- construye el valor solo después de validar todos sus componentes.
+- consume cada field conocido como máximo una vez y publica el valor solo tras
+  validar todos sus componentes; `DuplicateField`, `UnknownField` y
+  `MissingField` son fallos distintos;
+- reconstruye `Option[T]` ausentes como `none` y consume fields `@ignore`
+  aplicando su policy antes de publicar `none`;
+- para MessagePack materializa records y enums como maps de claves string; para
+  Protobuf usa tokens `#number` que el adapter baja al field tag sin inferir
+  desde el orden.
 
 Renombrar, omitir, aplanar o transformar fields cambia un contrato de wire y no
 se esconde en attributes generales. Se expresa con un `impl` manual o con un

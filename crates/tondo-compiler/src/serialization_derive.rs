@@ -4,6 +4,7 @@
 //! derive boundary.  It emits ordinary Tondo source; no runtime reflection,
 //! callbacks, filesystem access, or ambient state is involved.
 
+use std::collections::BTreeSet;
 use std::fmt::{self, Write};
 use std::sync::Arc;
 
@@ -143,6 +144,7 @@ pub enum SerializationDeriveError {
     IgnoredFieldRequiresOption(String),
     JsonBase64RequiresBytes(String),
     InvalidProtoNumber(String),
+    DuplicateWireField(String),
 }
 
 impl fmt::Display for SerializationDeriveError {
@@ -212,6 +214,12 @@ impl fmt::Display for SerializationDeriveError {
             }
             Self::InvalidProtoNumber(value) => {
                 write!(formatter, "invalid @proto field number `{value}`")
+            }
+            Self::DuplicateWireField(name) => {
+                write!(
+                    formatter,
+                    "serialization wire field `{name}` is declared more than once"
+                )
             }
         }
     }
@@ -462,6 +470,8 @@ fn render_encode_impl(
         MetaDeclarationKind::Enum(variants) => {
             if codec == "Json" {
                 render_json_enum_encode_static(output, declaration, variants, "value")?
+            } else if codec == "MessagePack" {
+                render_messagepack_enum_encode_static(output, declaration, variants, "value")?
             } else {
                 render_enum_encode_static(output, declaration, variants, "value", codec)?
             }
@@ -503,8 +513,10 @@ fn render_record_encode_static(
         .iter()
         .map(|(field, binding)| format!("{field}: {binding}"))
         .collect::<Vec<_>>();
-    if fields.iter().any(|(_, policy)| policy.ignored) {
-        pattern_fields.push("..".into());
+    for (field, policy) in &fields {
+        if policy.ignored {
+            pattern_fields.push(format!("{}: _", field.name()));
+        }
     }
     line(
         output,
@@ -514,6 +526,31 @@ fn render_record_encode_static(
             pattern_fields.join(", ")
         ),
     );
+    if codec == "MessagePack" {
+        line(
+            output,
+            2,
+            &format!(
+                "encoder.startMap({})?",
+                fields.iter().filter(|(_, policy)| !policy.ignored).count()
+            ),
+        );
+        for ((_, policy), (_, binding)) in fields
+            .iter()
+            .filter(|(_, policy)| !policy.ignored)
+            .zip(&bindings)
+        {
+            line(output, 2, "encoder.mapKey()?");
+            line(
+                output,
+                2,
+                &format!("encoder.string({})?", quote(&policy.event_name(codec))),
+            );
+            render_static_field_encode(output, 2, policy, binding, codec);
+        }
+        line(output, 2, "encoder.endMap()?");
+        return Ok(());
+    }
     line(
         output,
         2,
@@ -532,19 +569,35 @@ fn render_record_encode_static(
         line(
             output,
             2,
-            &format!("encoder.field({})?", quote(&policy.wire_name)),
+            &format!("encoder.field({})?", quote(&policy.event_name(codec))),
         );
+        render_static_field_encode(output, 2, &policy, &binding, codec);
+    }
+    line(output, 2, "encoder.endRecord()?");
+    Ok(())
+}
+
+fn render_static_field_encode(
+    output: &mut String,
+    indent: usize,
+    policy: &FieldPolicy,
+    binding: &str,
+    codec: &str,
+) {
+    if codec == "Json" && policy.json_base64 {
+        line(output, indent, &format!("encoder.base64({binding})?"));
+    } else if codec == "MessagePack" && policy.messagepack_binary {
+        line(output, indent, &format!("encoder.bytes({binding})?"));
+    } else {
         line(
             output,
-            2,
+            indent,
             &format!(
                 "serialization.Encode[C].encode[E, S]({}, var encoder)?",
                 binding
             ),
         );
     }
-    line(output, 2, "encoder.endRecord()?");
-    Ok(())
 }
 
 fn render_enum_encode_static(
@@ -657,8 +710,10 @@ fn render_json_enum_encode_static(
                     .iter()
                     .map(|(field, binding)| format!("{field}: {binding}"))
                     .collect::<Vec<_>>();
-                if fields.iter().any(|(_, policy)| policy.ignored) {
-                    pattern_fields.push("..".into());
+                for (field, policy) in &fields {
+                    if policy.ignored {
+                        pattern_fields.push(format!("{}: _", field.name()));
+                    }
                 }
                 line(
                     output,
@@ -683,19 +738,129 @@ fn render_json_enum_encode_static(
                     line(
                         output,
                         4,
-                        &format!("encoder.field({})?", quote(&policy.wire_name)),
+                        &format!("encoder.field({})?", quote(&policy.event_name("Json"))),
                     );
+                    render_static_field_encode(output, 4, policy, binding, "Json");
+                }
+                line(output, 4, "encoder.endRecord()?");
+                line(output, 4, "encoder.endRecord()?");
+                line(output, 3, "}");
+            }
+        }
+    }
+    line(output, 2, "}");
+    Ok(())
+}
+
+/// MessagePack has no record/enum event vocabulary of its own.  Static derives
+/// use the natural wire representation: an externally tagged map for enums
+/// and string-keyed maps for record payloads.  Generic maps remain unchanged,
+/// so a typed map never depends on reflection or on a runtime shape flag.
+fn render_messagepack_enum_encode_static(
+    output: &mut String,
+    declaration: &MetaDeclaration,
+    variants: &[MetaVariant],
+    receiver: &str,
+) -> Result<(), SerializationDeriveError> {
+    line(output, 2, &format!("match {receiver} {{"));
+    for variant in variants {
+        member_name(variant.name())?;
+        let path = format!("{}.{}", declaration.identity(), variant.name());
+        match variant.payload() {
+            MetaVariantPayload::Unit => {
+                line(output, 3, &format!("{path} => {{"));
+                line(output, 4, "encoder.startMap(1)?");
+                line(output, 4, "encoder.mapKey()?");
+                line(
+                    output,
+                    4,
+                    &format!("encoder.string({})?", quote(variant.name())),
+                );
+                line(output, 4, "encoder.null()?");
+                line(output, 4, "encoder.endMap()?");
+                line(output, 3, "}");
+            }
+            MetaVariantPayload::Tuple(types) => {
+                let names = (0..types.len())
+                    .map(|index| format!("value_{index}"))
+                    .collect::<Vec<_>>();
+                line(output, 3, &format!("{path}({}) => {{", names.join(", ")));
+                line(output, 4, "encoder.startMap(1)?");
+                line(output, 4, "encoder.mapKey()?");
+                line(
+                    output,
+                    4,
+                    &format!("encoder.string({})?", quote(variant.name())),
+                );
+                line(output, 4, &format!("encoder.startArray({})?", names.len()));
+                for name in &names {
+                    line(
+                        output,
+                        4,
+                        &format!("serialization.Encode[C].encode[E, S]({name}, var encoder)?"),
+                    );
+                }
+                line(output, 4, "encoder.endArray()?");
+                line(output, 4, "encoder.endMap()?");
+                line(output, 3, "}");
+            }
+            MetaVariantPayload::Record(fields) => {
+                let fields = field_policies(fields, "MessagePack")?;
+                let bindings = fields
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, (_, policy))| !policy.ignored)
+                    .map(|(index, (field, _))| {
+                        (field.name(), format!("__tondo_variant_field_{index}"))
+                    })
+                    .collect::<Vec<_>>();
+                let mut pattern_fields = bindings
+                    .iter()
+                    .map(|(field, binding)| format!("{field}: {binding}"))
+                    .collect::<Vec<_>>();
+                for (field, policy) in &fields {
+                    if policy.ignored {
+                        pattern_fields.push(format!("{}: _", field.name()));
+                    }
+                }
+                line(
+                    output,
+                    3,
+                    &format!("{path} {{ {} }} => {{", pattern_fields.join(", ")),
+                );
+                line(output, 4, "encoder.startMap(1)?");
+                line(output, 4, "encoder.mapKey()?");
+                line(
+                    output,
+                    4,
+                    &format!("encoder.string({})?", quote(variant.name())),
+                );
+                line(
+                    output,
+                    4,
+                    &format!(
+                        "encoder.startMap({})?",
+                        fields.iter().filter(|(_, policy)| !policy.ignored).count()
+                    ),
+                );
+                for ((_, policy), (_, binding)) in fields
+                    .iter()
+                    .filter(|(_, policy)| !policy.ignored)
+                    .zip(&bindings)
+                {
+                    line(output, 4, "encoder.mapKey()?");
                     line(
                         output,
                         4,
                         &format!(
-                            "serialization.Encode[C].encode[E, S]({}, var encoder)?",
-                            binding
+                            "encoder.string({})?",
+                            quote(&policy.event_name("MessagePack"))
                         ),
                     );
+                    render_static_field_encode(output, 4, policy, binding, "MessagePack");
                 }
-                line(output, 4, "encoder.endRecord()?");
-                line(output, 4, "encoder.endRecord()?");
+                line(output, 4, "encoder.endMap()?");
+                line(output, 4, "encoder.endMap()?");
                 line(output, 3, "}");
             }
         }
@@ -916,6 +1081,8 @@ fn render_decode_impl(
         MetaDeclarationKind::Enum(variants) => {
             if codec == "Json" {
                 render_json_enum_decode_static(output, declaration, variants)?
+            } else if codec == "MessagePack" {
+                render_messagepack_enum_decode_static(output, declaration, variants)?
             } else {
                 render_enum_decode_static(output, declaration, variants, codec)?
             }
@@ -949,6 +1116,9 @@ fn render_record_decode_static(
     codec: &str,
 ) -> Result<(), SerializationDeriveError> {
     let fields = field_policies(fields, codec)?;
+    if codec == "MessagePack" {
+        return render_messagepack_record_decode_static(output, declaration, &fields);
+    }
     line(output, 2, "let start = decoder.next()?");
     line(output, 2, "match start {");
     line(
@@ -956,62 +1126,19 @@ fn render_record_decode_static(
         3,
         "serialization.SerializationEvent.StartRecord(_, _) => {",
     );
-    for (field, policy) in &fields {
-        if policy.ignored {
-            continue;
-        }
-        member_name(field.name())?;
-        line(output, 4, "match decoder.next()? {");
-        line(
-            output,
-            5,
-            &format!(
-                "serialization.SerializationEvent.Field({}) => ()",
-                quote(&policy.wire_name)
-            ),
-        );
-        line(
-            output,
-            5,
-            "_ => fail decoder.reject(serialization.SerializationError.TypeMismatch)",
-        );
-        line(output, 4, "}");
-        line(
-            output,
-            4,
-            &format!(
-                "let {}: {} = serialization.Decode[C].decode[E, D](var decoder)?",
-                field.name(),
-                field.ty()
-            ),
-        );
-    }
-    line(output, 4, "match decoder.next()? {");
-    line(
-        output,
-        5,
-        "serialization.SerializationEvent.EndRecord => ()",
-    );
-    line(
-        output,
-        5,
-        "_ => fail decoder.reject(serialization.SerializationError.TypeMismatch)",
-    );
-    line(output, 4, "}");
-    let values = fields
-        .iter()
-        .map(|(field, policy)| {
-            if policy.ignored {
-                format!("{}: none", field.name())
-            } else {
-                field.name().to_owned()
-            }
-        })
-        .collect::<Vec<_>>();
+    let values = render_record_decode_machine(output, &fields, codec, 4, RecordEventStyle::Record)?;
     line(
         output,
         4,
-        &format!("{} {{ {} }}", declaration.identity(), values.join(", ")),
+        &format!(
+            "{} {{ {} }}",
+            declaration.identity(),
+            values
+                .iter()
+                .map(|(name, value)| format!("{name}: {value}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
     );
     line(output, 3, "}");
     line(
@@ -1021,6 +1148,255 @@ fn render_record_decode_static(
     );
     line(output, 2, "}");
     Ok(())
+}
+
+fn render_messagepack_record_decode_static(
+    output: &mut String,
+    declaration: &MetaDeclaration,
+    fields: &[(&MetaField, FieldPolicy)],
+) -> Result<(), SerializationDeriveError> {
+    line(output, 2, "let start = decoder.next()?");
+    line(output, 2, "match start {");
+    line(
+        output,
+        3,
+        "serialization.SerializationEvent.StartMap(_) => {",
+    );
+    let values =
+        render_record_decode_machine(output, fields, "MessagePack", 4, RecordEventStyle::Map)?;
+    line(
+        output,
+        4,
+        &format!(
+            "{} {{ {} }}",
+            declaration.identity(),
+            values
+                .iter()
+                .map(|(name, value)| format!("{name}: {value}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    );
+    line(output, 3, "}");
+    line(
+        output,
+        3,
+        "_ => fail decoder.reject(serialization.SerializationError.TypeMismatch)",
+    );
+    line(output, 2, "}");
+    Ok(())
+}
+
+/// Emit the bounded, order-independent record decoder used by records and
+/// enum record payloads.  Each field is decoded exactly once into an Option
+/// slot; required fields are checked only after the complete input record has
+/// been consumed, which preserves atomic publication and affine cleanup.
+#[derive(Debug, Clone, Copy)]
+enum RecordEventStyle {
+    Record,
+    Map,
+}
+
+fn render_record_decode_machine(
+    output: &mut String,
+    fields: &[(&MetaField, FieldPolicy)],
+    codec: &str,
+    indent: usize,
+    style: RecordEventStyle,
+) -> Result<Vec<(String, String)>, SerializationDeriveError> {
+    for (index, (field, _)) in fields.iter().enumerate() {
+        member_name(field.name())?;
+        line(
+            output,
+            indent,
+            &format!("var __tondo_seen_{index}: Bool = false"),
+        );
+        line(
+            output,
+            indent,
+            &format!("var __tondo_slot_{index}: Option[{}] = none", field.ty()),
+        );
+    }
+    line(output, indent, "for {");
+    line(output, indent + 1, "match decoder.peek()? {");
+    let end_event = match style {
+        RecordEventStyle::Record => "EndRecord",
+        RecordEventStyle::Map => "EndMap",
+    };
+    line(
+        output,
+        indent + 2,
+        &format!("some(serialization.SerializationEvent.{end_event}) => {{"),
+    );
+    line(output, indent + 3, "_ = decoder.next()?");
+    line(output, indent + 3, "break");
+    line(output, indent + 2, "}");
+    if matches!(style, RecordEventStyle::Record) {
+        line(
+            output,
+            indent + 2,
+            "some(serialization.SerializationEvent.Field(_)) => {",
+        );
+        line(
+            output,
+            indent + 3,
+            "let __tondo_field_name = match decoder.next()? {",
+        );
+        line(
+            output,
+            indent + 4,
+            "serialization.SerializationEvent.Field(name) => name",
+        );
+        line(
+            output,
+            indent + 4,
+            "_ => fail decoder.reject(serialization.SerializationError.UnexpectedEvent)",
+        );
+        line(output, indent + 3, "}");
+    } else {
+        line(
+            output,
+            indent + 2,
+            "some(serialization.SerializationEvent.MapKey) => {",
+        );
+        line(output, indent + 3, "_ = decoder.next()?");
+        line(
+            output,
+            indent + 3,
+            "let __tondo_field_name = match decoder.next()? {",
+        );
+        line(
+            output,
+            indent + 4,
+            "serialization.SerializationEvent.String(name) => name",
+        );
+        line(
+            output,
+            indent + 4,
+            "_ => fail decoder.reject(serialization.SerializationError.TypeMismatch)",
+        );
+        line(output, indent + 3, "}");
+    }
+    line(output, indent + 3, "match __tondo_field_name {");
+    for (index, (field, policy)) in fields.iter().enumerate() {
+        line(
+            output,
+            indent + 4,
+            &format!("{} => {{", quote(&policy.event_name(codec))),
+        );
+        line(output, indent + 5, &format!("if __tondo_seen_{index} {{"));
+        line(
+            output,
+            indent + 6,
+            "fail decoder.reject(serialization.SerializationError.DuplicateField)",
+        );
+        line(output, indent + 5, "}");
+        line(output, indent + 5, &format!("__tondo_seen_{index} = true"));
+        if policy.ignored {
+            if codec == "Json" && policy.json_base64 {
+                line(
+                    output,
+                    indent + 5,
+                    &format!(
+                        "let __tondo_ignored_{index}: {} = decoder.base64()?",
+                        field.ty()
+                    ),
+                );
+            } else {
+                line(
+                    output,
+                    indent + 5,
+                    &format!(
+                        "let __tondo_ignored_{index}: {} = serialization.Decode[C].decode[E, D](var decoder)?",
+                        field.ty()
+                    ),
+                );
+            }
+            line(output, indent + 5, &format!("_ = __tondo_ignored_{index}"));
+        } else if codec == "Json" && policy.json_base64 {
+            line(
+                output,
+                indent + 5,
+                &format!("__tondo_slot_{index} = some(decoder.base64()?)"),
+            );
+        } else {
+            line(
+                output,
+                indent + 5,
+                &format!(
+                    "let __tondo_decoded_{index}: {} = serialization.Decode[C].decode[E, D](var decoder)?",
+                    field.ty()
+                ),
+            );
+            line(
+                output,
+                indent + 5,
+                &format!("__tondo_slot_{index} = some(__tondo_decoded_{index})"),
+            );
+        }
+        line(output, indent + 4, "}");
+    }
+    line(
+        output,
+        indent + 4,
+        "_ => fail decoder.reject(serialization.SerializationError.UnknownField)",
+    );
+    line(output, indent + 3, "}");
+    line(output, indent + 2, "}");
+    line(
+        output,
+        indent + 2,
+        "some(_) => fail decoder.reject(serialization.SerializationError.UnexpectedEvent)",
+    );
+    line(
+        output,
+        indent + 2,
+        "none => fail decoder.reject(serialization.SerializationError.UnexpectedEvent)",
+    );
+    line(output, indent + 1, "}");
+    line(output, indent, "}");
+
+    let mut values = Vec::with_capacity(fields.len());
+    for (index, (field, policy)) in fields.iter().enumerate() {
+        let value_name = format!("__tondo_value_{index}");
+        if policy.ignored {
+            line(
+                output,
+                indent,
+                &format!("let {value_name}: {} = none", field.ty()),
+            );
+        } else if is_option_type(field.ty()) {
+            line(
+                output,
+                indent,
+                &format!(
+                    "let {value_name}: {} = match __tondo_slot_{index} {{",
+                    field.ty()
+                ),
+            );
+            line(output, indent + 1, "some(value) => value");
+            line(output, indent + 1, "none => none");
+            line(output, indent, "}");
+        } else {
+            line(
+                output,
+                indent,
+                &format!(
+                    "let {value_name}: {} = match __tondo_slot_{index} {{",
+                    field.ty()
+                ),
+            );
+            line(output, indent + 1, "some(value) => value");
+            line(
+                output,
+                indent + 1,
+                "none => fail decoder.reject(serialization.SerializationError.MissingField)",
+            );
+            line(output, indent, "}");
+        }
+        values.push((field.name().to_owned(), value_name));
+    }
+    Ok(values)
 }
 
 fn render_enum_decode_static(
@@ -1076,57 +1452,33 @@ fn render_enum_decode_static(
             }
             MetaVariantPayload::Record(fields) => {
                 let fields = field_policies(fields, codec)?;
-                for (field, policy) in &fields {
-                    if policy.ignored {
-                        continue;
-                    }
-                    member_name(field.name())?;
-                    line(output, 4, "match decoder.next()? {");
-                    line(
-                        output,
-                        5,
-                        &format!(
-                            "serialization.SerializationEvent.Field({}) => ()",
-                            quote(&policy.wire_name)
-                        ),
-                    );
-                    line(
-                        output,
-                        5,
-                        "_ => fail decoder.reject(serialization.SerializationError.TypeMismatch)",
-                    );
-                    line(output, 4, "}");
-                    line(
-                        output,
-                        4,
-                        &format!(
-                            "let {}: {} = serialization.Decode[C].decode[E, D](var decoder)?",
-                            field.name(),
-                            field.ty()
-                        ),
-                    );
-                }
-                let values = fields
-                    .iter()
-                    .map(|(field, policy)| {
-                        if policy.ignored {
-                            format!("{}: none", field.name())
-                        } else {
-                            field.name().to_owned()
-                        }
-                    })
-                    .collect::<Vec<_>>();
+                let values = render_record_decode_machine(
+                    output,
+                    &fields,
+                    codec,
+                    4,
+                    RecordEventStyle::Record,
+                )?;
                 let value = format!(
                     "{}.{} {{ {} }}",
                     declaration.identity(),
                     variant.name(),
-                    values.join(", ")
+                    values
+                        .iter()
+                        .map(|(name, value)| format!("{name}: {value}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 );
                 render_enum_end_static(output, 4, &value)?;
             }
         }
         line(output, 3, "}");
     }
+    line(
+        output,
+        3,
+        "serialization.SerializationEvent.Field(_) => fail decoder.reject(serialization.SerializationError.UnknownField)",
+    );
     line(
         output,
         3,
@@ -1191,32 +1543,13 @@ fn render_json_enum_decode_static(
             MetaVariantPayload::Record(fields) => {
                 let fields = field_policies(fields, "Json")?;
                 render_expect_event(output, 4, "StartRecord(_, _)");
-                for (field, policy) in &fields {
-                    if policy.ignored {
-                        continue;
-                    }
-                    render_expect_event(output, 4, &format!("Field({})", quote(&policy.wire_name)));
-                    line(
-                        output,
-                        4,
-                        &format!(
-                            "let {}: {} = serialization.Decode[C].decode[E, D](var decoder)?",
-                            field.name(),
-                            field.ty()
-                        ),
-                    );
-                }
-                render_expect_event(output, 4, "EndRecord");
-                let values = fields
-                    .iter()
-                    .map(|(field, policy)| {
-                        if policy.ignored {
-                            format!("{}: none", field.name())
-                        } else {
-                            field.name().to_owned()
-                        }
-                    })
-                    .collect::<Vec<_>>();
+                let values = render_record_decode_machine(
+                    output,
+                    &fields,
+                    "Json",
+                    4,
+                    RecordEventStyle::Record,
+                )?;
                 render_json_enum_end(
                     output,
                     4,
@@ -1224,7 +1557,11 @@ fn render_json_enum_decode_static(
                         "{}.{} {{ {} }}",
                         declaration.identity(),
                         variant.name(),
-                        values.join(", ")
+                        values
+                            .iter()
+                            .map(|(name, value)| format!("{name}: {value}"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
                     ),
                 );
             }
@@ -1234,10 +1571,140 @@ fn render_json_enum_decode_static(
     line(
         output,
         3,
+        "serialization.SerializationEvent.Field(_) => fail decoder.reject(serialization.SerializationError.UnknownField)",
+    );
+    line(
+        output,
+        3,
         "_ => fail decoder.reject(serialization.SerializationError.TypeMismatch)",
     );
     line(output, 2, "}");
     Ok(())
+}
+
+fn render_messagepack_enum_decode_static(
+    output: &mut String,
+    declaration: &MetaDeclaration,
+    variants: &[MetaVariant],
+) -> Result<(), SerializationDeriveError> {
+    render_expect_event(output, 2, "StartMap(_)");
+    line(output, 2, "match decoder.next()? {");
+    line(output, 3, "serialization.SerializationEvent.MapKey => ()");
+    line(
+        output,
+        3,
+        "_ => fail decoder.reject(serialization.SerializationError.TypeMismatch)",
+    );
+    line(output, 2, "}");
+    line(
+        output,
+        2,
+        "let __tondo_variant_name = match decoder.next()? {",
+    );
+    line(
+        output,
+        3,
+        "serialization.SerializationEvent.String(name) => name",
+    );
+    line(
+        output,
+        3,
+        "_ => fail decoder.reject(serialization.SerializationError.TypeMismatch)",
+    );
+    line(output, 2, "}");
+    line(output, 2, "match __tondo_variant_name {");
+    for variant in variants {
+        member_name(variant.name())?;
+        line(output, 3, &format!("{} => {{", quote(variant.name())));
+        match variant.payload() {
+            MetaVariantPayload::Unit => {
+                render_expect_event(output, 4, "Null");
+                render_messagepack_enum_end(
+                    output,
+                    4,
+                    &format!("{}.{}", declaration.identity(), variant.name()),
+                );
+            }
+            MetaVariantPayload::Tuple(types) => {
+                render_expect_event(output, 4, "StartArray(_)");
+                let mut names = Vec::new();
+                for (index, ty) in types.iter().enumerate() {
+                    let name = format!("value_{index}");
+                    line(
+                        output,
+                        4,
+                        &format!(
+                            "let {name}: {ty} = serialization.Decode[C].decode[E, D](var decoder)?"
+                        ),
+                    );
+                    names.push(name);
+                }
+                render_expect_event(output, 4, "EndArray");
+                render_messagepack_enum_end(
+                    output,
+                    4,
+                    &format!(
+                        "{}.{}({})",
+                        declaration.identity(),
+                        variant.name(),
+                        names.join(", ")
+                    ),
+                );
+            }
+            MetaVariantPayload::Record(fields) => {
+                let fields = field_policies(fields, "MessagePack")?;
+                let values = render_record_decode_machine(
+                    output,
+                    &fields,
+                    "MessagePack",
+                    4,
+                    RecordEventStyle::Map,
+                )?;
+                render_messagepack_enum_end(
+                    output,
+                    4,
+                    &format!(
+                        "{}.{} {{ {} }}",
+                        declaration.identity(),
+                        variant.name(),
+                        values
+                            .iter()
+                            .map(|(name, value)| format!("{name}: {value}"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                );
+            }
+        }
+        line(output, 3, "}");
+    }
+    line(
+        output,
+        3,
+        "_ => fail decoder.reject(serialization.SerializationError.UnknownField)",
+    );
+    line(output, 2, "}");
+    Ok(())
+}
+
+fn render_messagepack_enum_end(output: &mut String, indent: usize, value: &str) {
+    line(output, indent, "match decoder.next()? {");
+    line(
+        output,
+        indent + 1,
+        &format!("serialization.SerializationEvent.EndMap => {value}"),
+    );
+    line(
+        output,
+        indent + 1,
+        "serialization.SerializationEvent.MapKey => fail decoder.reject(serialization.SerializationError.DuplicateField)",
+    );
+    line(
+        output,
+        indent + 1,
+        "_ => fail decoder.reject(serialization.SerializationError.TypeMismatch)",
+    );
+    line(output, indent, "}");
 }
 
 fn render_expect_event(output: &mut String, indent: usize, pattern: &str) {
@@ -1261,6 +1728,11 @@ fn render_json_enum_end(output: &mut String, indent: usize, value: &str) {
         output,
         indent + 1,
         &format!("serialization.SerializationEvent.EndRecord => {value}"),
+    );
+    line(
+        output,
+        indent + 1,
+        "serialization.SerializationEvent.Field(_) => fail decoder.reject(serialization.SerializationError.DuplicateField)",
     );
     line(
         output,
@@ -1462,7 +1934,23 @@ struct FieldPolicy {
     wire_name: String,
     ignored: bool,
     json_base64: bool,
+    messagepack_binary: bool,
     proto_number: Option<u32>,
+}
+
+impl FieldPolicy {
+    fn event_name(&self, codec: &str) -> String {
+        if codec == "Protobuf" {
+            // The common event ABI is name-based.  Protobuf's schema-owned
+            // number is carried in a reserved, lossless field token so the
+            // codec adapter can lower it to the actual wire tag without
+            // consulting reflection or declaration order.
+            self.proto_number
+                .map_or_else(|| self.wire_name.clone(), |number| format!("#{number}"))
+        } else {
+            self.wire_name.clone()
+        }
+    }
 }
 
 fn field_policies<'a>(
@@ -1476,9 +1964,13 @@ fn field_policies<'a>(
             let mut wire_name = field.name().to_owned();
             let mut ignored = false;
             let mut json_base64 = false;
+            let mut messagepack_binary = false;
             let mut proto_number = None;
             let mut seen_name = false;
             let mut seen_ignore = false;
+            let mut seen_json = false;
+            let mut seen_messagepack = false;
+            let mut seen_proto = false;
             for attribute in field.attributes() {
                 let name = attribute.name();
                 match name {
@@ -1510,6 +2002,13 @@ fn field_policies<'a>(
                         seen_ignore = true;
                     }
                     "json" => {
+                        if seen_json {
+                            return Err(SerializationDeriveError::InvalidAttribute {
+                                name: name.into(),
+                                argument: attribute.argument().map(str::to_owned),
+                            });
+                        }
+                        seen_json = true;
                         let Some(argument) = attribute.argument() else {
                             return Err(SerializationDeriveError::InvalidAttribute {
                                 name: name.into(),
@@ -1523,7 +2022,7 @@ fn field_policies<'a>(
                             });
                         }
                         if codec == "Json" {
-                            if field.ty() != "Bytes" {
+                            if !is_bytes_type(field.ty()) {
                                 return Err(SerializationDeriveError::JsonBase64RequiresBytes(
                                     field.name().into(),
                                 ));
@@ -1532,6 +2031,13 @@ fn field_policies<'a>(
                         }
                     }
                     "messagepack" => {
+                        if seen_messagepack {
+                            return Err(SerializationDeriveError::InvalidAttribute {
+                                name: name.into(),
+                                argument: attribute.argument().map(str::to_owned),
+                            });
+                        }
+                        seen_messagepack = true;
                         let Some(argument) = attribute.argument() else {
                             return Err(SerializationDeriveError::InvalidAttribute {
                                 name: name.into(),
@@ -1544,14 +2050,24 @@ fn field_policies<'a>(
                                 argument: Some(argument.into()),
                             });
                         }
-                        if codec == "MessagePack" && field.ty() != "Bytes" {
+                        if codec == "MessagePack" && !is_bytes_type(field.ty()) {
                             return Err(SerializationDeriveError::AttributeCodecMismatch {
                                 name: name.into(),
                                 codec: codec.into(),
                             });
                         }
+                        if codec == "MessagePack" {
+                            messagepack_binary = true;
+                        }
                     }
                     "proto" => {
+                        if seen_proto {
+                            return Err(SerializationDeriveError::InvalidAttribute {
+                                name: name.into(),
+                                argument: attribute.argument().map(str::to_owned),
+                            });
+                        }
+                        seen_proto = true;
                         let Some(argument) = attribute.argument() else {
                             return Err(SerializationDeriveError::InvalidProtoNumber(
                                 "missing".into(),
@@ -1582,7 +2098,7 @@ fn field_policies<'a>(
                     field.name().into(),
                 ));
             }
-            if codec == "Protobuf" && !ignored && proto_number.is_none() {
+            if codec == "Protobuf" && proto_number.is_none() {
                 return Err(SerializationDeriveError::InvalidProtoNumber(format!(
                     "missing for `{}`",
                     field.name()
@@ -1594,11 +2110,28 @@ fn field_policies<'a>(
                     wire_name,
                     ignored,
                     json_base64,
+                    messagepack_binary,
                     proto_number,
                 },
             ))
         })
-        .collect()
+        .collect::<Result<Vec<_>, _>>()
+        .and_then(|policies| {
+            let mut seen = BTreeSet::new();
+            for (_, policy) in &policies {
+                if !policy.ignored {
+                    let event_name = policy.event_name(codec);
+                    if !seen.insert(event_name.clone()) {
+                        return Err(SerializationDeriveError::DuplicateWireField(event_name));
+                    }
+                }
+            }
+            Ok(policies)
+        })
+}
+
+fn is_bytes_type(ty: &str) -> bool {
+    matches!(ty.trim(), "Bytes" | "bytes.Bytes")
 }
 
 fn is_option_type(ty: &str) -> bool {
@@ -2035,10 +2568,10 @@ mod tests {
         .unwrap();
         let source = std::str::from_utf8(execution.response().outputs()[0].bytes()).unwrap();
         assert!(source.contains("Encoder[Json, E]"));
-        assert!(source.contains("Encode[Json].encode"));
+        assert!(source.contains("encoder.base64(__tondo_field_0)"));
         assert!(source.contains("encoder.startRecord(\"Annotated\", 1)"));
         assert!(source.contains("encoder.field(\"wire_payload\")"));
-        assert!(!source.contains("hidden"));
+        assert!(!source.contains("encoder.field(\"hidden\")"));
 
         let decoded = derive_named_codec(
             "Annotated",
@@ -2080,7 +2613,91 @@ mod tests {
         let decoded_source = std::str::from_utf8(decoded.response().outputs()[0].bytes()).unwrap();
         assert!(decoded_source.contains("Decoder[Json, E]"));
         assert!(decoded_source.contains("wire_payload"));
-        assert!(decoded_source.contains("hidden: none"));
+        assert!(decoded_source.contains("decoder.base64()?"));
+        assert!(decoded_source.contains("SerializationError.UnknownField"));
+        assert!(decoded_source.contains("SerializationError.DuplicateField"));
+        assert!(decoded_source.contains("SerializationError.MissingField"));
+        assert!(decoded_source.contains("let __tondo_value_1: Int? = none"));
+
+        let messagepack = derive_named_codec(
+            "Annotated",
+            MetaSnapshot::new(
+                [],
+                [],
+                [MetaDeclaration::new(
+                    "Annotated",
+                    "app",
+                    MetaVisibility::Public,
+                    [],
+                    [],
+                    span(300, 350),
+                    None::<String>,
+                    MetaDeclarationKind::record([field("payload", "bytes.Bytes", 0)
+                        .with_attributes([
+                            MetaAttribute::new("messagepack", Some("binary")).unwrap()
+                        ])
+                        .unwrap()]),
+                )
+                .unwrap()],
+            )
+            .unwrap(),
+            SerializationDirection::Encode,
+            &[],
+            &[],
+            DeriveTargetKind::Record,
+            Some("MessagePack"),
+        )
+        .unwrap();
+        let messagepack_source =
+            std::str::from_utf8(messagepack.response().outputs()[0].bytes()).unwrap();
+        assert!(messagepack_source.contains("encoder.startMap(1)"));
+        assert!(messagepack_source.contains("encoder.mapKey()"));
+        assert!(messagepack_source.contains("encoder.bytes(__tondo_field_0)"));
+
+        let messagepack_decode = derive_named_codec(
+            "Annotated",
+            MetaSnapshot::new(
+                [],
+                [],
+                [MetaDeclaration::new(
+                    "Annotated",
+                    "app",
+                    MetaVisibility::Public,
+                    [],
+                    [],
+                    span(300, 350),
+                    None::<String>,
+                    MetaDeclarationKind::record([field("payload", "bytes.Bytes", 0)]),
+                )
+                .unwrap()],
+            )
+            .unwrap(),
+            SerializationDirection::Decode,
+            &[],
+            &[],
+            DeriveTargetKind::Record,
+            Some("MessagePack"),
+        )
+        .unwrap();
+        let messagepack_decode_source =
+            std::str::from_utf8(messagepack_decode.response().outputs()[0].bytes()).unwrap();
+        assert!(messagepack_decode_source.contains("SerializationEvent.StartMap(_)"));
+        assert!(messagepack_decode_source.contains("SerializationEvent.MapKey"));
+
+        let messagepack_enum = derive_named_codec(
+            "Choice",
+            enum_snapshot(),
+            SerializationDirection::Encode,
+            &[],
+            &[],
+            DeriveTargetKind::Enum,
+            Some("MessagePack"),
+        )
+        .unwrap();
+        let messagepack_enum_source =
+            std::str::from_utf8(messagepack_enum.response().outputs()[0].bytes()).unwrap();
+        assert!(messagepack_enum_source.contains("encoder.startMap(1)"));
+        assert!(messagepack_enum_source.contains("encoder.string(\"Empty\")"));
 
         let protobuf_field = field("id", "Int", 0)
             .with_attributes([MetaAttribute::new("proto", Some("7")).unwrap()])
@@ -2114,7 +2731,7 @@ mod tests {
         assert!(
             std::str::from_utf8(protobuf.response().outputs()[0].bytes())
                 .unwrap()
-                .contains("Encoder[Protobuf, E]")
+                .contains("encoder.field(\"#7\")")
         );
     }
 
@@ -2311,6 +2928,26 @@ mod tests {
         assert!(matches!(
             field_policies(&[invalid_ignored], "Json"),
             Err(SerializationDeriveError::IgnoredFieldRequiresOption(_))
+        ));
+        let duplicate = field("left", "Int", 0)
+            .with_attributes([MetaAttribute::new("name", Some("same")).unwrap()])
+            .unwrap();
+        let duplicate_right = field("right", "Int", 1)
+            .with_attributes([MetaAttribute::new("name", Some("same")).unwrap()])
+            .unwrap();
+        assert!(matches!(
+            field_policies(&[duplicate, duplicate_right], "Json"),
+            Err(SerializationDeriveError::DuplicateWireField(_))
+        ));
+        let duplicate_proto = field("id", "Int", 0)
+            .with_attributes([
+                MetaAttribute::new("proto", Some("7")).unwrap(),
+                MetaAttribute::new("proto", Some("8")).unwrap(),
+            ])
+            .unwrap();
+        assert!(matches!(
+            field_policies(&[duplicate_proto], "Protobuf"),
+            Err(SerializationDeriveError::InvalidAttribute { name, .. }) if name == "proto"
         ));
     }
 }

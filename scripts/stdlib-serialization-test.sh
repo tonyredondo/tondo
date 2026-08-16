@@ -43,8 +43,11 @@ for marker in \
     'StartEnum' \
     'fn own(var self, event: SerializationEvent)' \
     'fn reject(var self, error: SerializationError): E' \
+    'fn base64(var self, value: Bytes): Unit ! E' \
+    'fn base64(var self): Bytes ! E' \
     'construcción atómica' \
-    'frames explícitos'; do
+    'frames explícitos' \
+    'cualquier orden'; do
     grep -Fq "$marker" docs/contracts/stdlib-serialization.md
 done
 
@@ -83,6 +86,7 @@ for test_name in \
     'record_provider_is_deterministic_and_maps_to_target' \
     'deserialize_provider_and_enum_shapes_are_generated' \
     'specialized_codecs_and_field_annotations_are_deterministic' \
+    'json_enum_provider_uses_one_externally_tagged_object' \
     'provider_rejects_missing_targets_bounds_and_member_names'; do
     grep -Fq "$test_name" crates/tondo-stdlib/src/serialization.rs \
         crates/tondo-compiler/src/serialization_derive.rs

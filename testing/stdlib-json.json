@@ -57,7 +57,13 @@
     "encode_requires_dom": false,
     "reflection": "forbidden",
     "missing_option": "none",
-    "ordinary_field_order": "declaration-order",
+    "ordinary_field_order": {
+      "encode": "declaration-order",
+      "decode": "order-independent-known-fields"
+    },
+    "unknown_field_policy": "reject-UnknownField",
+    "duplicate_field_policy": "reject-DuplicateField",
+    "missing_required_field_policy": "reject-MissingField",
     "canonical_field_order": "RFC8785-property-order",
     "unknown_capture": "declared-extras-only",
     "parser_stack": "explicit-bounded-stack"
