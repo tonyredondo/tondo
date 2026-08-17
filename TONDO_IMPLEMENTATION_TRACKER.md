@@ -52,7 +52,8 @@ independientes.
 `STD-CODEC-PUBLIC-001`. La auditoría pública global está verificada (209/209)
 y los tres owners build-only tienen una frontera explícita; no se fabrican
 funciones runtime para ellos. El siguiente bloque explícito es
-`NATIVE-TARGET-DESC-001`, condicionado por las celdas S1A aún pendientes.
+`NATIVE-ARTIFACT-001`, después del cierre de `NATIVE-TARGET-DESC-001`.
+Las celdas S1A de promoción siguen pendientes y no se sobreafirma su cierre.
 `CONF-GAP-IMPL-001`, `CONF-LAYER-RESULT-001` y
 `CONF-SEAL-FINAL-001` ya cierran T0/G5 con 409 requisitos cubiertos, nueve
 no aplicables y las tres fronteras `TL01-26-*` reservadas a S1A. Los contratos
@@ -5044,10 +5045,17 @@ pueden retrasar el primer backend correcto.
   UX pública; los schemas ejecutables del producto se cierran en las leaves
   siguientes.
 
-- [ ] **NATIVE-TARGET-DESC-001 — Definir el target descriptor nativo.** Fijar
-  schema, canonicalización e identidad de backend, triple, object format,
-  runtime ABI, driver/linker, capabilities, features, flags deterministas y
-  artefactos de toolchain por hash; ninguna selección consulta `PATH` o entorno.
+- [x] **NATIVE-TARGET-DESC-001 — Definir el target descriptor nativo.** El
+  formato `tondo-native-target-descriptor-draft` fija schema, canonicalización,
+  identidad de backend y target/triple, object format, runtime ABI,
+  capabilities/features, flags deterministas, driver/linker y artefactos de
+  toolchain por SHA-256. `NativeTargetDescriptor` valida referencias de tipo,
+  rechaza campos/path/expansiones ambientales y calcula la identidad de los
+  bytes canónicos sin consultar `PATH` ni entorno. El contrato y negativos
+  ejecutables viven en `testing/native-target-descriptor.json`,
+  `docs/contracts/native-target-descriptor.md` y los dos scripts de gate. Este
+  cierre solo fija inputs para artifact/link/publish; no selecciona aún un
+  backend de producción ni cierra S1A.
 
 - [ ] **NATIVE-ARTIFACT-001 — Definir la clausura de artefactos nativos.**
   Extender el artifact draft con objetos, runtime, stdlib, unidades
@@ -6098,12 +6106,25 @@ no-goals exactos. `CONF-LAYER-RESULT-001` produce el resultado compuesto y
 offline. `STD-IMPL-001`, `STD-IMPL-002` y `STD-CODEC-PUBLIC-001` están cerrados;
 Wave 6 no se declara iniciada antes de S1A.
 `STD-IMPL-001` y `STD-IMPL-002` quedan ahora cerrados por sus gates de
-coordinación; la acción inmediata pasa a `NATIVE-TARGET-DESC-001`, con las
-celdas S1A pendientes todavía visibles.
+coordinación; `NATIVE-TARGET-DESC-001` queda cerrado como contrato puro y la
+acción inmediata pasa a `NATIVE-ARTIFACT-001`, con las celdas S1A pendientes
+todavía visibles.
 
 ---
 
 ## 25. Historial del tracker
+
+### 2.37 — 2026-08-17
+
+- Se cierra `NATIVE-TARGET-DESC-001` con el lector puro
+  `NativeTargetDescriptor`. El record canónico fija backend, target/triple,
+  object format, runtime ABI, capabilities, features, flags, driver, linker y
+  artefactos hashados; la identidad es el SHA-256 de sus bytes canónicos.
+- La validación enlaza driver/linker con artefactos de tipo correcto y rechaza
+  campos desconocidos, orden no canónico, hashes inválidos, triples no
+  canónicos, paths físicos y expansiones ambientales. El contrato JSON, docs,
+  negativos y `test-gate.sh` quedan integrados; S1A permanece sin promover.
+- El siguiente bloque machine-readable es `NATIVE-ARTIFACT-001`.
 
 ### 2.36 — 2026-08-17
 

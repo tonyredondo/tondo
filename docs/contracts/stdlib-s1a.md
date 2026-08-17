@@ -55,8 +55,9 @@ machine-readable integration contract
 [`testing/stdlib-spec.json`](../../testing/stdlib-spec.json). The strict gate
 validates its topological order and links it to this document and the canonical
 standard-library specification; it does not promote pending fuzz/performance/
-conformance dimensions. The public codec audit is closed; the next
-implementation block is `NATIVE-TARGET-DESC-001`.
+conformance dimensions. The public codec audit is closed; the native target
+descriptor is now closed as a pure contract and the next implementation block
+is `NATIVE-ARTIFACT-001`.
 
 The A0 `std.meta` owner has a dedicated contract at
 [`testing/stdlib-meta.json`](../../testing/stdlib-meta.json) and a separate

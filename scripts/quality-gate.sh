@@ -26,7 +26,10 @@ mutation_report="$mutation_output/mutants.out/outcomes.json"
 mutation_before="$reports/mutation.before.json"
 mutation_after="$reports/mutation.after.json"
 mutation_binding="$reports/mutation.binding.json"
-mutation_tmp="${TONDO_MUTATION_TMPDIR:-$reports/mutation-tmp}"
+# Keep the cargo-mutants temporary worktree outside CARGO_TARGET_DIR.  With
+# --copy-target, placing TMPDIR below target would copy the temporary worktree
+# back into itself and grow recursively on every run.
+mutation_tmp="${TONDO_MUTATION_TMPDIR:-$root/../tondo-mutation-tmp}"
 mkdir -p "$reports"
 mkdir -p "$mutation_tmp"
 mutation_tmp="$(cd "$mutation_tmp" && pwd)"

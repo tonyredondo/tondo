@@ -1320,6 +1320,35 @@ conforme ejecuta el mismo producto que `tondo build` habría publicado, desde un
 path temporal privado, y conserva stdout, stderr, argumentos y exit status. No
 existe `--native`, `--vm` ni una segunda semántica de ejecución.
 
+#### 10.1.1 Descriptor de target nativo
+
+El descriptor nativo usa el formato interno
+`tondo-native-target-descriptor-draft`. Su shape, campos y negativos ejecutables
+están registrados en `testing/native-target-descriptor.json` y su contrato
+detallado está en `docs/contracts/native-target-descriptor.md`.
+
+El record canónico contiene exactamente la identidad del backend
+(`name`, `version`, `implementation_hash`), la identidad lógica del target
+(`name`, triple canónico en minúsculas y `profile`), `object_format`,
+`runtime_abi`, el registro de capabilities, listas de capabilities/features y
+flags deterministas, las referencias ordenadas de `driver` y `linker`, y la
+lista de artefactos de toolchain con sus hashes. Las listas con semántica de
+conjunto son ordenadas y sin duplicados; el orden de los argumentos de driver y
+linker se conserva.
+
+El lector rechaza campos desconocidos, bytes no canónicos, triples no
+canónicos, formatos de objeto fuera de `elf`/`macho`/`coff`, hashes inválidos,
+referencias ausentes o de tipo incorrecto y cualquier identidad o argumento
+que contenga un path físico o una expansión de `$`, `%` o backtick. Cada
+selección resuelve únicamente artefactos declarados por identidad y SHA-256:
+no consulta `PATH`, variables de entorno, shell ni flags ambientales. La
+identidad de contenido del descriptor es el SHA-256 de sus bytes canónicos.
+
+Este descriptor fija inputs para `NATIVE-ARTIFACT-001` y
+`NATIVE-LINK-PLAN-001`; no selecciona todavía un backend de producción, no
+ejecuta código nativo y no promete ABI FFI, layout de objetos, dynamic linking
+ni name mangling públicos.
+
 ### 10.2 Doc-tests
 
 La forma pública de documentación es:

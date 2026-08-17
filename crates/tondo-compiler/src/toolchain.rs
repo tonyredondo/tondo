@@ -22,6 +22,7 @@ pub const LOCKFILE_FORMAT: &str = "tondo-lock-draft";
 pub const INTERFACE_FORMAT: &str = "tondo-interface-draft";
 pub const ARTIFACT_FORMAT: &str = "tondo-artifact-draft";
 pub const STANDARD_DESCRIPTOR_FORMAT: &str = "tondo-standard-descriptor-draft";
+pub const NATIVE_TARGET_DESCRIPTOR_FORMAT: &str = "tondo-native-target-descriptor-draft";
 pub const PRIVILEGED_UNIT_FORMAT: &str = "tondo-privileged-unit-draft";
 pub const META_MODEL: &str = crate::meta::META_MODEL;
 pub const META_TARGET: &str = "tondo-meta";
@@ -2067,6 +2068,275 @@ impl StandardDescriptor {
     }
 }
 
+/// A hash-pinned tool selected by a native target descriptor.
+///
+/// The descriptor deliberately stores logical identities and ordered argument
+/// tokens, never executable paths or environment expansions. The orchestrator
+/// resolves these identities from its closed toolchain bundle.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeToolRef {
+    pub id: String,
+    pub version: String,
+    pub artifact_id: String,
+    #[serde(default)]
+    pub arguments: Vec<String>,
+}
+
+impl NativeToolRef {
+    fn validate(
+        &self,
+        field: &str,
+        expected_kind: &str,
+        artifacts: &[NativeToolArtifact],
+    ) -> Result<(), FormatError> {
+        require_kebab(&format!("{field}.id"), &self.id)?;
+        require_deterministic_atom(&format!("{field}.version"), &self.version, false)?;
+        require_kebab(&format!("{field}.artifact_id"), &self.artifact_id)?;
+        for (index, argument) in self.arguments.iter().enumerate() {
+            require_deterministic_atom(&format!("{field}.arguments[{index}]"), argument, false)?;
+        }
+        let Some(artifact) = artifacts
+            .iter()
+            .find(|artifact| artifact.id == self.artifact_id)
+        else {
+            return Err(FormatError::Invalid(format!(
+                "{field}.artifact_id `{}` is not declared",
+                self.artifact_id
+            )));
+        };
+        if artifact.kind != expected_kind {
+            return Err(FormatError::Invalid(format!(
+                "{field}.artifact_id `{}` has kind `{}`, expected `{expected_kind}`",
+                self.artifact_id, artifact.kind
+            )));
+        }
+        Ok(())
+    }
+}
+
+/// A closed, content-addressed input to a native build.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeToolArtifact {
+    pub id: String,
+    pub kind: String,
+    pub sha256: String,
+}
+
+impl NativeToolArtifact {
+    fn validate(&self, field: &str) -> Result<(), FormatError> {
+        require_kebab(&format!("{field}.id"), &self.id)?;
+        if !matches!(
+            self.kind.as_str(),
+            "backend" | "driver" | "linker" | "runtime" | "stdlib" | "sysroot" | "support"
+        ) {
+            return Err(FormatError::Invalid(format!(
+                "{field}.kind `{}` is not a supported toolchain artifact kind",
+                self.kind
+            )));
+        }
+        require_hash(&self.sha256, &format!("{field}.sha256"))
+    }
+}
+
+/// Identity of the code generator selected for a native target.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeBackendIdentity {
+    pub name: String,
+    pub version: String,
+    pub implementation_hash: String,
+}
+
+impl NativeBackendIdentity {
+    fn validate(&self) -> Result<(), FormatError> {
+        require_kebab("backend.name", &self.name)?;
+        require_deterministic_atom("backend.version", &self.version, false)?;
+        require_hash(&self.implementation_hash, "backend.implementation_hash")
+    }
+}
+
+/// Logical target identity. It contains no host path or host-derived value.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeTargetIdentity {
+    pub name: String,
+    pub triple: String,
+    pub profile: String,
+}
+
+impl NativeTargetIdentity {
+    fn validate(&self) -> Result<(), FormatError> {
+        require_kebab("target.name", &self.name)?;
+        require_target_triple(&self.triple)?;
+        require_kebab("target.profile", &self.profile)
+    }
+}
+
+/// Canonical target/backend/toolchain contract used by `tondo build`.
+///
+/// This record is intentionally narrower than an artifact or link plan. It
+/// fixes the identities those later records must consume, while keeping paths,
+/// PATH lookup, ambient flags and FFI/layout promises outside the contract.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeTargetDescriptor {
+    pub format: String,
+    pub backend: NativeBackendIdentity,
+    pub target: NativeTargetIdentity,
+    pub object_format: String,
+    pub runtime_abi: String,
+    pub capability_registry: String,
+    #[serde(default)]
+    pub capabilities: Vec<String>,
+    #[serde(default)]
+    pub features: Vec<String>,
+    #[serde(default)]
+    pub flags: Vec<String>,
+    pub driver: NativeToolRef,
+    pub linker: NativeToolRef,
+    #[serde(default)]
+    pub artifacts: Vec<NativeToolArtifact>,
+}
+
+impl NativeTargetDescriptor {
+    pub fn decode(bytes: &[u8]) -> Result<Self, FormatError> {
+        let value: Self = decode_canonical(bytes, "native target descriptor")?;
+        value.validate()?;
+        Ok(value)
+    }
+
+    pub fn encode(&self) -> Result<Vec<u8>, FormatError> {
+        self.validate()?;
+        encode(self)
+    }
+
+    pub fn canonicalize(&self) -> Result<Self, FormatError> {
+        let mut value = self.clone();
+        value.capabilities.sort();
+        value.features.sort();
+        value.flags.sort();
+        value.artifacts.sort_by(|a, b| a.id.cmp(&b.id));
+        value.validate()?;
+        Ok(value)
+    }
+
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>, FormatError> {
+        self.canonicalize()?.encode()
+    }
+
+    /// Content identity of the complete target/toolchain selection.
+    pub fn content_hash(&self) -> Result<String, FormatError> {
+        Ok(sha256(&self.canonical_bytes()?))
+    }
+
+    fn validate(&self) -> Result<(), FormatError> {
+        if self.format != NATIVE_TARGET_DESCRIPTOR_FORMAT {
+            return Err(FormatError::UnsupportedFormat {
+                expected: NATIVE_TARGET_DESCRIPTOR_FORMAT,
+                actual: self.format.clone(),
+            });
+        }
+        self.backend.validate()?;
+        self.target.validate()?;
+        if !matches!(self.object_format.as_str(), "elf" | "macho" | "coff") {
+            return Err(FormatError::Invalid(format!(
+                "unsupported native object format `{}`",
+                self.object_format
+            )));
+        }
+        require_runtime_abi(&self.runtime_abi)?;
+        if self.capability_registry != CAPABILITY_REGISTRY {
+            return Err(FormatError::Invalid(format!(
+                "native target uses capability registry `{}`, expected `{CAPABILITY_REGISTRY}`",
+                self.capability_registry
+            )));
+        }
+        require_capabilities(&self.capabilities)?;
+        require_sorted_unique("native target features", &self.features)?;
+        for feature in &self.features {
+            require_kebab("native target feature", feature)?;
+        }
+        require_sorted_unique("native target flags", &self.flags)?;
+        for (index, flag) in self.flags.iter().enumerate() {
+            require_deterministic_atom(&format!("native target flags[{index}]"), flag, false)?;
+        }
+        let artifact_ids = self
+            .artifacts
+            .iter()
+            .map(|artifact| artifact.id.clone())
+            .collect::<Vec<_>>();
+        require_sorted_unique("native target artifacts", &artifact_ids)?;
+        for (index, artifact) in self.artifacts.iter().enumerate() {
+            artifact.validate(&format!("native target artifacts[{index}]"))?;
+        }
+        self.driver
+            .validate("native target driver", "driver", &self.artifacts)?;
+        self.linker
+            .validate("native target linker", "linker", &self.artifacts)?;
+        if self.driver.id == self.linker.id {
+            return Err(FormatError::Invalid(
+                "native target driver and linker must have distinct identities".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn require_deterministic_atom(
+    field: &str,
+    value: &str,
+    allow_namespace_separator: bool,
+) -> Result<(), FormatError> {
+    require_nonempty(field, value)?;
+    if value
+        .bytes()
+        .any(|byte| byte == 0 || byte == b'\n' || byte == b'\r')
+        || value.contains(['$', '%', '`'])
+        || value.contains('\\')
+        || (!allow_namespace_separator && value.contains('/'))
+    {
+        return Err(FormatError::Invalid(format!(
+            "{field} contains a path or ambient-environment expansion"
+        )));
+    }
+    Ok(())
+}
+
+fn require_runtime_abi(value: &str) -> Result<(), FormatError> {
+    require_nonempty("runtime_abi", value)?;
+    if value.starts_with('/')
+        || value.contains(['\\', '$', '%', '`'])
+        || value.contains("//")
+        || !value.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"._+-/".contains(&byte)
+        })
+    {
+        return Err(FormatError::Invalid(
+            "runtime_abi must be a canonical logical identity, not a path or ambient expansion"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
+fn require_target_triple(value: &str) -> Result<(), FormatError> {
+    if value.is_empty()
+        || value != value.to_ascii_lowercase()
+        || !value.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"._+-".contains(&byte)
+        })
+        || value.starts_with(['-', '.'])
+        || value.ends_with(['-', '.'])
+    {
+        return Err(FormatError::Invalid(format!(
+            "target.triple `{value}` is not canonical"
+        )));
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InterfaceDependency {
@@ -2727,6 +2997,68 @@ mod tests {
         }
     }
 
+    fn native_target_descriptor() -> NativeTargetDescriptor {
+        let hash = sha256(b"native-toolchain-input");
+        NativeTargetDescriptor {
+            format: NATIVE_TARGET_DESCRIPTOR_FORMAT.into(),
+            backend: NativeBackendIdentity {
+                name: "cranelift".into(),
+                version: "draft".into(),
+                implementation_hash: hash.clone(),
+            },
+            target: NativeTargetIdentity {
+                name: "tondo-native-linux-x86-64".into(),
+                triple: "x86_64-unknown-linux-gnu".into(),
+                profile: "release".into(),
+            },
+            object_format: "elf".into(),
+            runtime_abi: "tondo-runtime-draft/1".into(),
+            capability_registry: CAPABILITY_REGISTRY.into(),
+            capabilities: vec!["console".into(), "process".into()],
+            features: vec!["fast".into()],
+            flags: vec!["-Ctarget-cpu=generic".into()],
+            driver: NativeToolRef {
+                id: "tondo-driver".into(),
+                version: "draft".into(),
+                artifact_id: "driver".into(),
+                arguments: vec!["--target=tondo-native-linux-x86-64".into()],
+            },
+            linker: NativeToolRef {
+                id: "tondo-linker".into(),
+                version: "draft".into(),
+                artifact_id: "linker".into(),
+                arguments: vec!["--build-id=none".into()],
+            },
+            artifacts: vec![
+                NativeToolArtifact {
+                    id: "backend".into(),
+                    kind: "backend".into(),
+                    sha256: hash.clone(),
+                },
+                NativeToolArtifact {
+                    id: "driver".into(),
+                    kind: "driver".into(),
+                    sha256: hash.clone(),
+                },
+                NativeToolArtifact {
+                    id: "linker".into(),
+                    kind: "linker".into(),
+                    sha256: hash.clone(),
+                },
+                NativeToolArtifact {
+                    id: "runtime".into(),
+                    kind: "runtime".into(),
+                    sha256: hash.clone(),
+                },
+                NativeToolArtifact {
+                    id: "stdlib".into(),
+                    kind: "stdlib".into(),
+                    sha256: hash,
+                },
+            ],
+        }
+    }
+
     fn lock(manifest_bytes: &[u8]) -> Lockfile {
         let source = LockedSource {
             source_set: "common".into(),
@@ -2792,6 +3124,106 @@ mod tests {
             .unwrap()
             .insert("extra".into(), serde_json::Value::Null);
         assert!(StandardDescriptor::decode(&serde_json::to_vec(&value).unwrap()).is_err());
+    }
+
+    #[test]
+    fn native_target_descriptor_round_trips_and_has_content_identity() {
+        let descriptor = native_target_descriptor();
+        let bytes = descriptor.encode().unwrap();
+        assert_eq!(NativeTargetDescriptor::decode(&bytes).unwrap(), descriptor);
+        assert_eq!(descriptor.content_hash().unwrap(), sha256(&bytes));
+
+        let mut changed = descriptor.clone();
+        changed.flags.push("-Copt-level=2".into());
+        changed.flags.sort();
+        assert_ne!(
+            descriptor.content_hash().unwrap(),
+            changed.content_hash().unwrap()
+        );
+    }
+
+    #[test]
+    fn native_target_descriptor_canonicalizes_set_fields_but_preserves_tool_order() {
+        let mut descriptor = native_target_descriptor();
+        descriptor.capabilities.reverse();
+        descriptor.features = vec!["z-feature".into(), "a-feature".into()];
+        descriptor.flags = vec!["-Zsecond".into(), "-Zfirst".into()];
+        descriptor.artifacts.reverse();
+        assert!(descriptor.encode().is_err());
+
+        let canonical = descriptor.canonicalize().unwrap();
+        assert_eq!(canonical.capabilities, ["console", "process"]);
+        assert_eq!(canonical.features, ["a-feature", "z-feature"]);
+        assert_eq!(canonical.flags, ["-Zfirst", "-Zsecond"]);
+        assert_eq!(canonical.artifacts[0].id, "backend");
+        assert_eq!(
+            canonical.canonical_bytes().unwrap(),
+            canonical.encode().unwrap()
+        );
+
+        let mut ordered = native_target_descriptor();
+        ordered.driver.arguments = vec!["--first".into(), "--second".into()];
+        let mut swapped = ordered.clone();
+        swapped.driver.arguments.reverse();
+        assert_ne!(
+            ordered.content_hash().unwrap(),
+            swapped.content_hash().unwrap()
+        );
+    }
+
+    #[test]
+    fn native_target_descriptor_rejects_ambient_paths_and_unpinned_tools() {
+        let descriptor = native_target_descriptor();
+
+        let mut missing = descriptor.clone();
+        missing.driver.artifact_id = "missing".into();
+        assert!(missing.encode().is_err());
+
+        let mut wrong_kind = descriptor.clone();
+        wrong_kind.driver.artifact_id = "linker".into();
+        assert!(wrong_kind.encode().is_err());
+
+        let mut environment = descriptor.clone();
+        environment.driver.arguments = vec!["--sysroot=$PATH".into()];
+        assert!(environment.encode().is_err());
+
+        let mut path = descriptor.clone();
+        path.backend.version = "/usr/bin/backend".into();
+        assert!(path.encode().is_err());
+
+        let mut abi_path = descriptor.clone();
+        abi_path.runtime_abi = "/usr/lib/tondo-runtime".into();
+        assert!(abi_path.encode().is_err());
+
+        let mut triple = descriptor.clone();
+        triple.target.triple = "X86_64-unknown-linux-gnu".into();
+        assert!(triple.encode().is_err());
+
+        let mut hash = descriptor.clone();
+        hash.artifacts[0].sha256 = "sha256:not-a-hash".into();
+        assert!(hash.encode().is_err());
+
+        let mut object = descriptor.clone();
+        object.object_format = "unknown".into();
+        assert!(object.encode().is_err());
+    }
+
+    #[test]
+    fn native_target_descriptor_decode_rejects_noncanonical_and_unknown_fields() {
+        let descriptor = native_target_descriptor();
+        let bytes = descriptor.encode().unwrap();
+        let pretty = serde_json::to_vec_pretty(&descriptor).unwrap();
+        assert!(matches!(
+            NativeTargetDescriptor::decode(&pretty),
+            Err(FormatError::NonCanonical("native target descriptor"))
+        ));
+
+        let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        value
+            .as_object_mut()
+            .unwrap()
+            .insert("ambient_path".into(), serde_json::Value::Null);
+        assert!(NativeTargetDescriptor::decode(&serde_json::to_vec(&value).unwrap()).is_err());
     }
 
     #[test]

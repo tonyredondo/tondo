@@ -63,6 +63,10 @@ run_step mutation-infrastructure-check-tests \
     scripts/mutation-infrastructure-check-test.sh
 run_step stdlib-performance-contract \
     scripts/stdlib-performance-check.sh
+run_step native-target-descriptor-contract \
+    scripts/native-target-descriptor-check.sh
+run_step native-target-descriptor-tests \
+    scripts/native-target-descriptor-test.sh
 run_step stdlib-json-contract \
     scripts/stdlib-json-check.sh
 run_step stdlib-messagepack-contract \

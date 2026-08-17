@@ -1,0 +1,68 @@
+{
+  "format": "tondo-native-target-descriptor-contract/1",
+  "owner": "toolchain.native_target",
+  "edition": "0.1",
+  "phase": "M11",
+  "status": "closed-contract",
+  "descriptor_format": "tondo-native-target-descriptor-draft",
+  "canonical_encoding": "compact-utf8-json-struct-order",
+  "identity": "sha256(canonical-descriptor-bytes)",
+  "required_fields": [
+    "format",
+    "backend",
+    "target",
+    "object_format",
+    "runtime_abi",
+    "capability_registry",
+    "capabilities",
+    "features",
+    "flags",
+    "driver",
+    "linker",
+    "artifacts"
+  ],
+  "backend_fields": ["name", "version", "implementation_hash"],
+  "target_fields": ["name", "triple", "profile"],
+  "tool_fields": ["id", "version", "artifact_id", "arguments"],
+  "artifact_fields": ["id", "kind", "sha256"],
+  "object_formats": ["elf", "macho", "coff"],
+  "artifact_kinds": [
+    "backend",
+    "driver",
+    "linker",
+    "runtime",
+    "stdlib",
+    "sysroot",
+    "support"
+  ],
+  "determinism": {
+    "capabilities": "sorted-unique-closed-registry",
+    "features": "sorted-unique-kebab",
+    "flags": "sorted-unique-no-ambient-expansion",
+    "artifacts": "sorted-unique-by-id",
+    "tool_arguments": "ordered-no-ambient-expansion",
+    "paths": "forbidden-in-tool-identity-and-arguments"
+  },
+  "selection": {
+    "path_lookup": "forbidden",
+    "environment_lookup": "forbidden",
+    "shell_expansion": "forbidden",
+    "unhashed_tool_input": "forbidden"
+  },
+  "negative_cases": [
+    "unknown-fields",
+    "pretty-or-unsorted-record",
+    "invalid-backend-hash",
+    "invalid-target-triple",
+    "unsupported-object-format",
+    "missing-driver-artifact",
+    "wrong-driver-artifact-kind",
+    "environment-expansion",
+    "path-bearing-tool-identity"
+  ],
+  "next_blocks": [
+    "NATIVE-ARTIFACT-001",
+    "NATIVE-LINK-PLAN-001",
+    "NATIVE-PUBLISH-SPEC-001"
+  ]
+}

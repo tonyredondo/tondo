@@ -2,11 +2,11 @@
   "format": "tondo-conformance-draft-lineage",
   "lineage": "tondo-draft",
   "edition": "0.1",
-  "revision": 28,
+  "revision": 27,
   "state": "open",
   "parent": {
-    "path": "conformance/draft/history/24522dbdec4ade9d77ae06fc1fdefd68a109d7b9bb006ed085976efcd38c2531.json",
-    "sha256": "24522dbdec4ade9d77ae06fc1fdefd68a109d7b9bb006ed085976efcd38c2531"
+    "path": "conformance/draft/history/9a4f8f6c82ac997be1c3924cb1f2815864ffe6643a6ad4ab5b692ac92819c750.json",
+    "sha256": "9a4f8f6c82ac997be1c3924cb1f2815864ffe6643a6ad4ab5b692ac92819c750"
   },
   "baseline": {
     "manifest": {
@@ -29,7 +29,7 @@
     },
     {
       "path": "TONDO_TOOLCHAIN_SPEC.md",
-      "sha256": "543fc9f65317d677b42679e886ff96e29bdd6ef71db3ce8b5aeb1a6fa2c82b26"
+      "sha256": "b05e43544957eb3069cb3f97de7a7a12154daa9894ba9bdbfe7f363b9d0d10c9"
     }
   ],
   "case_layers": [
