@@ -18,6 +18,17 @@ Los codecs concretos eligen cómo representan sus valores dinámicos, pero una
 implementación typed siempre usa estos protocolos, dispatch estático y una
 construcción atómica del resultado.
 
+### Frontera de compatibilidad Rust
+
+`Serializer`, `Deserializer`, `Serialize`, `Deserialize`,
+`serialize_value`/`deserialize_value` y los nombres dinámicos históricos
+`JsonValue`/`MessagePackValue` permanecen únicamente como bridge interno de
+compatibilidad del crate Rust mientras terminan las migraciones de los
+providers. No son una API pública de Tondo, no se registran en HIR/VM y el
+auditor público los excluye con esta razón explícita. El código nuevo usa
+exclusivamente `Encode[C]`, `Decode[C]`, `Encoder[C, E]` y `Decoder[C, E]`;
+el bridge se eliminará después de que los consumidores Rust hayan migrado.
+
 ## Principios
 
 - Un tipo implementa `Encode[C]`, `Decode[C]` o ambos. El compilador
@@ -285,8 +296,9 @@ identidades exactas:
 - std.derive.serialization.Encode para serialization.Encode[C];
 - std.derive.serialization.Decode para serialization.Decode[C].
 
-Los nombres históricos `Serialize`/`Deserialize` siguen registrados como
-bridges durante la transición. Los providers canónicos generan métodos
+Los nombres históricos `Serialize`/`Deserialize` solo siguen disponibles como
+bridge Rust interno durante la transición; no forman parte del ABI público de
+Tondo. Los providers canónicos generan métodos
 `encode`/`decode` con bounds `Encoder[C, E]`/`Decoder[C, E]` para records, enums,
 newtypes y parámetros genéricos. Las llamadas recursivas generadas fijan
 `[C]` y `[E, S]`/`[E, D]` de forma explícita para que la expansión no dependa de

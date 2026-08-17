@@ -53,6 +53,8 @@ run_step layer-evidence-attest \
 run_step rustdoc env RUSTDOCFLAGS=-Dwarnings cargo doc --workspace --no-deps --locked
 run_step conformance-build \
     cargo build -p tondo-conformance -p tondo-reference-adapter --bins --locked
+run_step conformance-candidate-wrapper-tests \
+    scripts/conformance-candidate-test.sh
 run_step doc-test \
     scripts/doc-test.sh
 run_step doc-test-conformance-tests \

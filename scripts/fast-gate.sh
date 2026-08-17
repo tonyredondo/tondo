@@ -213,7 +213,7 @@ else
                     --all-targets --json --output-path "$coverage_report" --no-clean
             fi
             if (( ! dry_run )); then
-                scripts/fast-coverage-check.sh "$diff_file" "$coverage_report" "$root"
+                bash scripts/fast-coverage-check.sh "$diff_file" "$coverage_report" "$root"
             fi
             if ! command -v cargo-mutants >/dev/null 2>&1; then
                 echo "fast gate: cargo-mutants is required for changed Rust source" >&2

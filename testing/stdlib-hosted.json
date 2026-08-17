@@ -34,5 +34,5 @@
     "pipeline-redirection",
     "host-error-redaction"
   ],
-  "promotion_next": "NATIVE-TARGET-DESC-001"
+  "promotion_next": "NATIVE-ARTIFACT-001"
 }

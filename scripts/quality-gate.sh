@@ -26,9 +26,9 @@ mutation_report="$mutation_output/mutants.out/outcomes.json"
 mutation_before="$reports/mutation.before.json"
 mutation_after="$reports/mutation.after.json"
 mutation_binding="$reports/mutation.binding.json"
-# Keep the cargo-mutants temporary worktree outside CARGO_TARGET_DIR.  With
-# --copy-target, placing TMPDIR below target would copy the temporary worktree
-# back into itself and grow recursively on every run.
+# Keep the cargo-mutants temporary worktree outside CARGO_TARGET_DIR. The
+# mutation run deliberately does not copy target artifacts, so this location
+# contains only the isolated source tree and its fresh mutation builds.
 mutation_tmp="${TONDO_MUTATION_TMPDIR:-$root/../tondo-mutation-tmp}"
 mkdir -p "$reports"
 mkdir -p "$mutation_tmp"
@@ -67,14 +67,17 @@ cargo run -p tondo-reliability --locked -- quality verify \
 cargo run -p tondo-reliability --locked -- quality provenance --root . > "$mutation_before"
 
 # The compiler test target is intentionally broad and can take several
-# minutes under a mutated build. Keep mutation builds serial: concurrent LLVM
-# codegen has produced intermittent rustc SIGILL failures on this runner, which
-# cargo-mutants would otherwise misclassify as semantically unviable mutants.
+# minutes under a mutated build. Do not copy the repository's target tree:
+# it contains coverage and historical artifacts that add tens of gigabytes
+# without materially improving the clean mutation build. Use a bounded pool of
+# four mutation workers; larger pools have produced intermittent rustc SIGILL
+# failures on this runner, which cargo-mutants would otherwise misclassify as
+# semantically unviable mutants.
 TMPDIR="$mutation_tmp" env -u CARGO_TARGET_DIR cargo mutants \
     --workspace \
     --no-config \
     --copy-vcs true \
-    --copy-target true \
+    --copy-target false \
     --file 'crates/tondo-compiler/src/project.rs' \
     --file 'crates/tondo-conformance/src/document.rs' \
     --file 'crates/tondo-vm/src/bytecode.rs' \
@@ -82,7 +85,7 @@ TMPDIR="$mutation_tmp" env -u CARGO_TARGET_DIR cargo mutants \
     --re '(ProjectPlan::parse|PrivilegedUnit::validate|validate_line_endings|normalize_array_index|Heap::has_capacity|Heap::ensure_capacity)' \
     --baseline run \
     --cargo-test-arg=--lib \
-    --jobs 1 \
+    --jobs 4 \
     --timeout 600 \
     --build-timeout 900 \
     --cargo-arg=--locked \

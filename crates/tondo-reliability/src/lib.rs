@@ -136,13 +136,10 @@ fn collect_files_inner(
         let path = entry.path();
         let relative = path.strip_prefix(root).unwrap_or(&path);
         if path.is_dir() {
-            if matches!(
-                relative
-                    .components()
-                    .next()
-                    .and_then(|item| item.as_os_str().to_str()),
-                Some(".git" | "target")
-            ) {
+            if relative
+                .components()
+                .any(|component| matches!(component.as_os_str().to_str(), Some(".git" | "target")))
+            {
                 continue;
             }
             collect_files_inner(root, &path, files)?;
@@ -283,10 +280,12 @@ mod tests {
         fs::create_dir_all(directory.0.join("src/nested")).unwrap();
         fs::create_dir_all(directory.0.join(".git")).unwrap();
         fs::create_dir_all(directory.0.join("target")).unwrap();
+        fs::create_dir_all(directory.0.join("nested/target")).unwrap();
         fs::write(directory.0.join("src/z.rs"), "").unwrap();
         fs::write(directory.0.join("src/nested/a.rs"), "").unwrap();
         fs::write(directory.0.join(".git/ignored"), "").unwrap();
         fs::write(directory.0.join("target/ignored"), "").unwrap();
+        fs::write(directory.0.join("nested/target/ignored"), "").unwrap();
 
         assert_eq!(
             logical_path(&directory.0, &directory.0.join("src/nested/a.rs")).unwrap(),

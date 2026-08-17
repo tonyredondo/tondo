@@ -30,6 +30,17 @@ jq -e '
   and .dom.typed_decode == "static-derive-atomic"
   and .dom.dynamic_values == "std.serialization.Value-json-messagepack; protocol-owned-protobuf"
   and .dom.reflection == "forbidden"
+  and .legacy_abi.status == "rust-internal-compatibility-only"
+  and .legacy_abi.canonical_replacement == [
+    "Encode[C]", "Decode[C]", "Encoder[C, E]", "Decoder[C, E]"
+  ]
+  and .legacy_abi.symbols == [
+    "Serializer", "Deserializer", "Serialize", "Deserialize",
+    "serialize_value", "deserialize_value", "JsonValue",
+    "MessagePackValue"
+  ]
+  and .legacy_abi.tondo_public_surface == "forbidden"
+  and .legacy_abi.public_api_audit == "excluded-with-reason"
   and .events == [
     "null", "bool", "int64", "uint64", "float32", "float64", "string", "bytes",
     "start-array", "end-array", "start-map", "map-key", "end-map",
@@ -98,5 +109,17 @@ grep -q 'StartEnum' "$document"
 grep -q 'fn base64' "$document"
 grep -q 'cualquier orden' "$document"
 grep -q 'Máquina wire estática' "$document"
+
+jq -e '
+  any(.owners[]; .id == "std.serialization"
+    and .runtime.kind == "not-applicable"
+    and (.runtime.reason | contains("legacy Rust ABI is compatibility-only"))
+    and .legacy_abi.status == "excluded-with-reason"
+    and .legacy_abi.reason == "Rust-only compatibility bridge; canonical Tondo surface is Encode/Decode")
+' testing/stdlib-public-api-config.json >/dev/null
+
+jq -e '
+  ([.rows[] | select(.owner == "std.serialization")] | length) == 0
+' testing/stdlib-public-api.json >/dev/null
 
 echo "std.serialization owner contract: OK"

@@ -423,7 +423,7 @@
       "runtime": {
         "kind": "not-applicable",
         "paths": [],
-        "reason": "portable protocol; no host provider"
+        "reason": "portable protocol; no host provider; legacy Rust ABI is compatibility-only"
       },
       "signature_count": 0,
       "verified_count": 0,

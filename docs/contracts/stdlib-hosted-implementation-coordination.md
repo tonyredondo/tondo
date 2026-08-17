@@ -1,6 +1,6 @@
 # Coordinación de implementación Hosted de `std.0.1A`
 
-`STD-IMPL-002` es el gate vertical de los cuatro owners Hosted. Su registro
+`STD-IMPL-002` es el gate vertical histórico de los cuatro owners Hosted. Su registro
 reproducible es
 [`testing/stdlib-hosted-implementation-coordination.json`](../../testing/stdlib-hosted-implementation-coordination.json)
 y se genera con
@@ -27,7 +27,8 @@ La auditoría pública que alimenta el registro ya está verificada (209/209):
 las firmas de MessagePack/Protobuf atraviesan sus rutas públicas y los tres
 owners build-only tienen una razón `not-applicable` explícita. No relaja
 `--strict` ni convierte una frontera build-only en un provider runtime. El
-siguiente bloque de implementación es `NATIVE-TARGET-DESC-001`, condicionado
+La siguiente coordinación de implementación es `NATIVE-ARTIFACT-001`, después
+del cierre de `NATIVE-TARGET-DESC-001`, y queda condicionada
 por las celdas de promoción que aún conserva S1A.
 
 ```text

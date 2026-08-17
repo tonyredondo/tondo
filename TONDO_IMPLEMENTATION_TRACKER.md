@@ -11,7 +11,7 @@ La forma TLF para agentes ya tiene spec y estudio léxico, pero encoder, decoder
 source maps, CLI y evaluación de generación permanecen pendientes. Tondo 0.1
 sigue en desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 2.36
+**Versión del tracker:** 2.39
 
 **Última actualización:** 2026-08-17
 
@@ -481,30 +481,32 @@ necesaria; la fragmentación del workspace no.
 | **M10.5c — Infraestructura de conformidad** | Una línea de draft, ratchet y candidato inmutable | Completado; cierre normativo G5/T0 sellado en revision 24 |
 | **M10.7 — Metaprogramación estática** | `derive`, generators, meta VM y contribución a G5 | Completado |
 | **M10.6 — Testing de usuario Tondo 0.1** | Implementación de `tondo test` y contribución a G5 | Completado; cierre evidencial T0 incluido en revision 24 |
-| **STD-0.1A — Foundation + Hosted** | Base estándar necesaria para meta, testing y backend | Arquitectura/owners y slices tempranos cerrados; firmas A3 e implementación pública incompletas |
+| **STD-0.1A — Foundation + Hosted** | Base estándar necesaria para meta, testing y backend | Arquitectura, owners y auditoría pública cerrados; permanecen celdas de fuzzing, rendimiento, conformance y promoción |
 | **M11 — Backend nativo y optimización** | Implementación de producción | Futuro |
 | **STD-0.1B — Concurrency + Application** | Contratos runtime antes de M11; implementación tras N1 | Arquitectura base cerrada; contratos y código pendientes |
 | **TLF — Forma para agentes** | Transporte compacto hacia Tondo canónico | Spec y estudio exploratorio completados; reproducción, implementación, evaluación y bundle L0 pendientes |
 
 Estado observado del workspace:
 
-- Repositorio local: `/mnt/media/Tony/Projects/tondo`, branch `main`, con
+- Repositorio local: `/mnt/media/Tony/Projects/tondo`, branch
+  `wave45-async-inferred`, con
   upstream en
   `github.com/tonyredondo/tondo`.
 - Workspace: `tondo-cli`, `tondo-compiler`, `tondo-conformance`,
   `tondo-reference-adapter`, `tondo-reliability`, `tondo-stdlib` y `tondo-vm`.
 - Toolchain utilizado para la validación: Rust 1.93.0 y Cargo 1.93.0; la versión
   mínima soportada queda fijada en Rust 1.93.
-- La evidencia actual registra 2.379 tests lógicos y 2.598 repeticiones:
-  2.324 ejecutables, 38 contratos draft documentales, cuatro campañas y 13
+- La evidencia actual registra 2.417 tests lógicos y 2.636 repeticiones:
+  2.362 ejecutables, 38 contratos draft documentales, cuatro campañas y 13
   entradas no ejecutables. La suite bootstrap conserva sus 205 casos y 424
   repeticiones byte-estables como regresión explícita.
 - La matriz G5/T0 contiene 421 requisitos de lenguaje, testing y toolchain: 409
   están cubiertos mediante evidencia ejecutable, nueve no aplican al target con
   justificación individual y tres límites `TL01-26-*` permanecen
   `stdlib-pending` porque pertenecen al gate separado S1A. La cobertura
-  ratcheteada es 90,61 % de líneas y mutation mantiene 100 % sobre los mutantes
-  ejecutables seleccionados.
+  medición reproducible actual de cobertura es 90,52 % de líneas, 86,47 % de
+  funciones y 88,72 % de regiones; supera el baseline de 90,25 %. La última
+  ratchet sellada mantiene 100 % sobre los mutantes ejecutables seleccionados.
 
 ### 4.1 Grafo de dependencias y ruta crítica
 
@@ -4554,8 +4556,9 @@ tests. Antes de volver a marcarlas `[x]` deben cumplirse todos estos puntos:
   DOM. Los enums JSON usan un object externally tagged único y el reader
   detecta trailing data antes de publicar `T`. `Decoder.peek` es no consumidor
   y permite composición estática sin rewind. La fixture CLI cubre round-trip y
-  formas inválidas; la auditoría verifica las 23/23 firmas de `std.json` y
-  eleva el total a 177/209.
+  formas inválidas; la auditoría global verifica ahora las 209/209 firmas,
+  incluidas las 23/23 de `std.json`. Quedan fuera de esta leaf únicamente los
+  gates de rendimiento, fuzzing, conformance y promoción de S1A.
 
 - [x] **STD-CODEC-DERIVE-POLICY-001 — Completar semántica wire de derives.**
   Sustituir la decodificación posicional de records por una máquina estática
@@ -4621,9 +4624,9 @@ tests. Antes de volver a marcarlas `[x]` deben cumplirse todos estos puntos:
   HIR → lowering → host/VM → caso público. `--check` detecta drift y mantiene
   visibles los huecos; `--strict` falla ante cualquiera. No acepta un path Rust
   aislado, un fixture que llama otra operación, una prueba documental ni un
-  alias bootstrap. El resultado actual es deliberadamente `open-gaps` (157/209
-  firmas verificadas; 55 gaps), que bloquea la promoción y alimenta los
-  siguientes leaves de implementación.
+  alias bootstrap. El registro actual está verificado en `209/209`, con cero
+  gaps; la promoción de S1A sigue bloqueada únicamente por sus gates de
+  rendimiento, fuzzing, conformance y sellado.
 
 - [x] **STD-IMPL-001 — Coordinar implementación Core por owner.** Cierra cuando
   `STD-CORE-IMPL-001`, `STD-TEXT-IMPL-001`, `STD-COLL-IMPL-001`,
@@ -4633,9 +4636,9 @@ tests. Antes de volver a marcarlas `[x]` deben cumplirse todos estos puntos:
   del grupo coordinado. La evidencia reproducible está en
   `testing/stdlib-implementation-coordination.json` y su checker: verifica
   las 64 firmas Core, la etapa `IMPL/HOST` y las rutas de implementación/tests
-  de los ocho owners Core/serialization. El auditor global conserva 35 gaps
-  explícitos (codec y owners build-only); no son un waiver y alimentan los
-  siguientes leaves.
+  de los ocho owners Core/serialization. El auditor global está ahora en
+  `209/209` firmas verificadas y cero gaps; los owners build-only quedan
+  excluidos mediante una razón explícita y no son un waiver.
 
 - [x] **STD-IMPL-002 — Coordinar Hosted por owner.** Cierra tras
   `STD-FS-IMPL-001`, `STD-PROC-IMPL-001` y la auditoría pública, conservando los
@@ -4644,8 +4647,8 @@ tests. Antes de volver a marcarlas `[x]` deben cumplirse todos estos puntos:
   verifican los cuatro owners Hosted, sus capabilities exactas, las etapas
   `IMPL/HOST`, las celdas de evidencia y las 48/48 firmas públicas. `std.path`
   queda explícitamente `HOST not-applicable` por ser puramente léxico; no se
-  inventa un provider. La auditoría global conserva 32 gaps de firma de
-  MessagePack/Protobuf y tres owners build-only, sin waiver.
+  inventa un provider. La auditoría global está en `209/209`, sin gaps; los
+  tres owners build-only conservan su frontera `not-applicable` explícita.
 
 - [x] **STD-CODEC-PUBLIC-001 — Cerrar la exposición pública restante de codecs
   y owners build-only.** Las 32 firmas restantes de MessagePack y Protobuf
@@ -6011,20 +6014,25 @@ de `origin/main`), los tests ejecutables actuales y el gate local completo:
 | `UTEST-SUSPENSION-MIGRATION-001` | Cerrada | Parser/CST acepta `@sync`/`@nosuspend`; HIR/checker preserva `fn` + inferencia, espera implícita y `E1601`; fixtures compile-pass/compile-fail/runtime canónicos y `crates/tondo-reference-adapter/tests/suspension_migration.rs` fijan equivalencia directa/`await`, consumo de `Waiter` y hashes de interfaz `suspends`. El corpus histórico `async fn` sigue congelado y separado. |
 | `ASYNC-ITER-EXT-001`, `NATIVE-THREAD-001` | **Pendientes reales** | Requieren adapters de streams de stdlib y ejecución física en workers OS del backend nativo, respectivamente; no forman parte del bootstrap VM. |
 
-El gate oficial (`bash scripts/test-gate.sh`) terminó con salida 0 y ejecutó
-workspace, conformance, reliability, doc-tests, rustdoc y contratos de
-stdlib. La evidencia de calidad instrumentada alcanzó 90,64% de líneas
-(`9064` bp), 86,54% de funciones y 88,85% de regiones, superando el baseline
-de 90,25% de líneas (`9025` bp). La campaña oficial de mutación de esta pasada
-no se considera resultado: fue interrumpida durante su copia de target de
-decenas de GB para evitar una espera y presión de almacenamiento
-desproporcionadas; no se usa para cerrar ninguna entrada.
+El gate oficial (`bash scripts/test-gate.sh`) se ejecutó después de esta
+reconciliación y selló la evidencia final de workspace, conformance, reliability,
+doc-tests, rustdoc y contratos de stdlib. La evidencia de calidad instrumentada
+alcanzó 90,52% de líneas (`9052` bp), 86,47% de funciones y 88,72% de regiones,
+superando el baseline de 90,25% de líneas (`9025` bp). La campaña oficial de
+mutación terminó con 30 mutantes seleccionados: 27 detectados, cero
+supervivientes, cero timeouts y tres inviables; por tanto el score sobre los
+mutantes ejecutables es 100% (`10000` bp). El gate usa un staging hermano de
+`CARGO_TARGET_DIR`, no copia artefactos de `target` y limita la ejecución a
+cuatro workers; la ruta recursiva y la espera desproporcionada ya no forman
+parte del diseño. `testing/conformance-ratchet.json` está regenerado y
+verificado en la revisión 28, con cuatro case layers draft actuales.
 
 Esta tabla es la fuente de reconciliación del estado actual; las notas
 históricas anteriores que describen el prototipo `async fn` no se reescriben y
 no prevalecen sobre la evidencia canónica de esta sección.
 26. [ ] **Wave 5 — STD-0.1A por layers.** Los contratos, slices A0 y kernels
-    iniciales están cerrados; la auditoría 1.45 reabre el resto. El orden de
+    iniciales están cerrados; la auditoría pública ya verifica 209/209 firmas.
+    Permanecen las dimensiones de evidencia y promoción de S1A. El orden de
     cierre es:
     - A1: `STD-CORE-IMPL-001`, `STD-TEXT-IMPL-001`, `STD-COLL-IMPL-001`,
       `STD-ITER-IMPL-001`, `STD-FMT-IMPL-001` y `STD-IO-IMPL-001`;
@@ -6038,9 +6046,12 @@ no prevalecen sobre la evidencia canónica de esta sección.
     - A3 implementation (after ABI migration):
       `STD-JSON-IMPL-001 / STD-MSGPACK-IMPL-001 / STD-PROTOBUF-IMPL-001`,
       después `STD-JSON-PUBLIC-001 → STD-CODEC-DERIVE-POLICY-001` y las
-      superficies públicas equivalentes de MessagePack/Protobuf;
+      superficies públicas equivalentes de MessagePack/Protobuf. Sus firmas
+      ya tienen auditoría pública completa; quedan sus gates de codec,
+      rendimiento, fuzzing y promoción;
     - A4: `STD-TESTING-SHRINK-001 → STD-TESTING-IMPL-001`; y
-    - A5: `STD-PUBLIC-API-AUDIT-001 → leaves STD-A-*-EVIDENCE →
+    - A5: `STD-PUBLIC-API-AUDIT-001` (cerrado, 209/209) → leaves
+      `STD-A-*-EVIDENCE` →
       STD-TEST-001 / STD-CODEC-CONF-001 / STD-PERF-CONF-001 →
       STD-MATRIX-ALL-001 → STD-CONF-001 → STD-DOC-001`.
     Los owners independientes pueden avanzar en paralelo, pero S1A no cierra
@@ -6099,7 +6110,8 @@ M4, M5, M6, M7, M8, M9, el corpus bootstrap M10, M10.5, M10.5b y Gates G4/H0
 quedan cerrados como implementación/infraestructura. M10.7 y la implementación
 funcional de M10.6 permanecen cerradas. `CONF-DRAFT-001` también permanece
 cerrada. La auditoría ya ha vuelto a cerrar T0/G5 en la revision 24 y mantiene
-Wave 5/S1A abierta por APIs públicas y dimensiones de evidencia parciales.
+Wave 5/S1A abierta por dimensiones de evidencia y promoción parciales; la
+superficie pública ya está verificada en 209/209 firmas.
 `CONF-GAP-IMPL-001` cierra las 364 filas auditadas aplicables y conserva los dos
 no-goals exactos. `CONF-LAYER-RESULT-001` produce el resultado compuesto y
 `CONF-SEAL-FINAL-001` lo archiva con calidad y documentación en el candidato
@@ -6113,6 +6125,45 @@ todavía visibles.
 ---
 
 ## 25. Historial del tracker
+
+### 2.39 — 2026-08-17
+
+- Se cierra la reconciliación de la auditoría de trabajo con evidencia
+  ejecutable: el gate completo pasa después de los cambios, la cobertura
+  observada es 90,52% de líneas, 86,47% de funciones y 88,72% de regiones, y
+  la mutación seleccionada obtiene 27/27 mutantes ejecutables detectados (30
+  total, tres inviables, cero supervivientes y cero timeouts).
+- El ratchet draft se regenera y verifica en la revisión 28 con cuatro case
+  layers; el tracker deja de describir la campaña como interrumpida y conserva
+  S1A abierto únicamente por sus gates explícitos de promoción.
+- El gate de mutación evita copiar `target`, usa un staging hermano y cuatro
+  workers acotados; la comprobación de wrappers, el selector histórico de
+  candidatos, la exclusión de `target`/`.git` anidados y la frontera ABI Rust
+  interna quedan cubiertos por tests y contratos ejecutables.
+
+### 2.38 — 2026-08-17
+
+- Se reconcilia el snapshot vivo con los artefactos actuales: 2.417 tests
+  lógicos, 2.636 repeticiones, 2.362 entradas ejecutables y auditoría pública
+  de stdlib en 209/209 firmas sin gaps. La cola ya no describe una auditoría
+  pública abierta; S1A permanece abierta solo por sus dimensiones de evidencia
+  y promoción.
+- Todas las coordinaciones y contratos de stdlib que habían quedado apuntando
+  a `NATIVE-TARGET-DESC-001` avanzan a `NATIVE-ARTIFACT-001`, que es el siguiente
+  bloque después del descriptor cerrado. Los generadores y checkers comparten
+  la misma expectativa para evitar drift regenerable.
+- Los wrappers de fast gate y cobertura recuperan el bit ejecutable y usan
+  `bash` para la invocación robusta; CI se ejecuta en pushes de cualquier rama,
+  y la selección de candidatos históricos exige `--revision` o `--candidate`
+  explícitos. Se añaden pruebas de wrapper al gate.
+- El colector de evidencia de reliability excluye directorios `.git` y
+  `target` en cualquier profundidad, no solo en la raíz. Esto evita hashear
+  salidas como `fuzz/target` (build artefacts, no inputs normativos) y mantiene
+  inventory/provenance deterministas sin el coste recursivo anterior.
+- Se registra el ABI Rust heredado (`Serializer`/`Deserializer`,
+  `Serialize`/`Deserialize` y aliases dinámicos) como bridge de compatibilidad
+  interno, excluido de la superficie Tondo y del auditor público con razón
+  verificable; la API canónica sigue siendo `Encode`/`Decode`.
 
 ### 2.37 — 2026-08-17
 

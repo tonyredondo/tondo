@@ -51,6 +51,20 @@ for marker in \
     grep -Fq "$marker" docs/contracts/stdlib-serialization.md
 done
 
+for marker in \
+    'bridge interno de' \
+    'No son una API pública de Tondo' \
+    'Encode[C]' \
+    'Decode[C]'; do
+    grep -Fq "$marker" docs/contracts/stdlib-serialization.md
+done
+
+jq -e '
+  .legacy_abi.status == "rust-internal-compatibility-only"
+  and .legacy_abi.tondo_public_surface == "forbidden"
+  and .legacy_abi.public_api_audit == "excluded-with-reason"
+' testing/stdlib-serialization.json >/dev/null
+
 for symbol in \
     'pub trait Encoder' \
     'pub trait Decoder' \

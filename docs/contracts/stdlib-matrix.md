@@ -200,7 +200,7 @@ referencias existentes y mantiene `promotion.status=not-promoted`; los tests
 negativos y el test Rust `stdlib_conformance_coordination` rechazan omisiones,
 sobreclaims y drift. La matriz sigue `open-gaps` por celdas de promoción
 pendientes; el siguiente bloque de implementación global es
-`NATIVE-TARGET-DESC-001`.
+`NATIVE-ARTIFACT-001` (con `NATIVE-TARGET-DESC-001` ya cerrado).
 
 `STD-DOC-001` añade `testing/stdlib-documentation.json`, el índice que enlaza
 cada owner con sus documentos, fronteras `kernel`/`bridge`/`public_api` y

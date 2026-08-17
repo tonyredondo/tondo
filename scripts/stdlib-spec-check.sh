@@ -32,7 +32,7 @@ jq -e '
   and .api_rules.async_io_model == "std.io-reader-writer"
   and .promotion.required_owner_status == "closed-contract"
   and .promotion.implementation_remains_pending == ["std.async"]
-  and .promotion.next == "NATIVE-TARGET-DESC-001"
+  and .promotion.next == "NATIVE-ARTIFACT-001"
 ' "$contract" >/dev/null
 
 expected='std.meta std.reflect std.core std.time std.env std.text std.collections std.iter std.math std.format std.io std.async std.serialization std.path std.console std.fs std.process std.json std.messagepack std.protobuf std.testing'

@@ -48,6 +48,6 @@
   "promotion": {
     "required_owner_status": "closed-contract",
     "implementation_remains_pending": ["std.async"],
-    "next": "NATIVE-TARGET-DESC-001"
+    "next": "NATIVE-ARTIFACT-001"
   }
 }

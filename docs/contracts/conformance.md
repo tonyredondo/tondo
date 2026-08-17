@@ -196,6 +196,15 @@ scripts/conformance-candidate.sh generate
 scripts/conformance-candidate.sh check
 ~~~
 
+The default commands select the current draft revision and are intended for a
+new candidate generated from fresh evidence. Historical verification must name
+its lineage explicitly; for example, the immutable bootstrap candidate is
+checked with:
+
+~~~text
+scripts/conformance-candidate.sh check --revision 24
+~~~
+
 The equivalent explicit commands are `tondo-reliability candidate seal` with a
 workspace-relative path for every input and `tondo-reliability candidate
 verify --root . --candidate conformance/candidates/revision-<N>`. Requiring
