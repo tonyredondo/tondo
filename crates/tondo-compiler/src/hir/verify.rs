@@ -571,7 +571,28 @@ impl Verifier<'_> {
                         | IntrinsicType::JsonRaw
                         | IntrinsicType::JsonNumber
                         | IntrinsicType::JsonReader
-                        | IntrinsicType::JsonWriter => None,
+                        | IntrinsicType::JsonWriter
+                        | IntrinsicType::MessagePackLimits
+                        | IntrinsicType::MessagePackDecodeOptions
+                        | IntrinsicType::MessagePackEncodeOptions
+                        | IntrinsicType::MessagePackDuplicatePolicy
+                        | IntrinsicType::MessagePackUnknownExtensionPolicy
+                        | IntrinsicType::MessagePackNonMinimalPolicy
+                        | IntrinsicType::MessagePackValue
+                        | IntrinsicType::MessagePackValueView
+                        | IntrinsicType::MessagePackRaw
+                        | IntrinsicType::MessagePackTimestamp
+                        | IntrinsicType::MessagePackReader
+                        | IntrinsicType::MessagePackWriter
+                        | IntrinsicType::ProtoDescriptor
+                        | IntrinsicType::ProtoLimits
+                        | IntrinsicType::ProtoDecodeOptions
+                        | IntrinsicType::ProtoEncodeOptions
+                        | IntrinsicType::ProtoWireTypePolicy
+                        | IntrinsicType::ProtoUnknownPolicy
+                        | IntrinsicType::ProtoReader
+                        | IntrinsicType::ProtoWriter
+                        | IntrinsicType::UnknownFields => None,
                     };
                     if let Some((required, capability, reason)) = requirement {
                         self.verify_capability_requirement(
@@ -2318,6 +2339,10 @@ impl Verifier<'_> {
                         || function.name().starts_with("std.fs.Directory.")
                         || function.name().starts_with("std.json.JsonReader.")
                         || function.name().starts_with("std.json.JsonWriter.")
+                        || function.name().starts_with("std.messagepack.MessagePackReader.")
+                        || function.name().starts_with("std.messagepack.MessagePackWriter.")
+                        || function.name().starts_with("std.protobuf.ProtoReader.")
+                        || function.name().starts_with("std.protobuf.ProtoWriter.")
             );
             let async_oneshot_callable = matches!(
                 callable.id,

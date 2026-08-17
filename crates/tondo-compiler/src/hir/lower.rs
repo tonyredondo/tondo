@@ -308,7 +308,272 @@ impl<'a> TypeLowerer<'a> {
                 },
             );
         }
-        self.lower_bootstrap_serialization_nominal_declarations()
+        self.lower_bootstrap_serialization_nominal_declarations()?;
+        self.lower_bootstrap_messagepack_nominal_declarations()?;
+        self.lower_bootstrap_protobuf_nominal_declarations()
+    }
+
+    fn lower_bootstrap_messagepack_nominal_declarations(&mut self) -> Result<(), HirError> {
+        let path = ModulePath::new("messagepack")?;
+        let Some(module) = self.packages.module(self.packages.standard(), &path) else {
+            return Ok(());
+        };
+        // The standard package registry contains module entries even when a
+        // source file did not import that owner.  Only lower the synthetic
+        // declarations when the resolver indexed the complete nominal set;
+        // otherwise a small program (for example a math-only script) must not
+        // trip the bootstrap dependency assertion below.
+        let ext_name = Name::new("MessagePackExt").expect("MessagePack nominal names are valid");
+        if self
+            .resolved
+            .bootstrap_nominal(&module, &ext_name)
+            .is_none()
+        {
+            return Ok(());
+        }
+        let int = self.interner.scalar(ScalarType::Int);
+        let uint = self.interner.scalar(ScalarType::UInt64);
+        let float32 = self.interner.scalar(ScalarType::Float32);
+        let float64 = self.interner.scalar(ScalarType::Float);
+        let bool_type = self.interner.scalar(ScalarType::Bool);
+        let string = self.interner.scalar(ScalarType::String);
+        let bytes = self.interner.intrinsic(IntrinsicType::Bytes, Vec::new())?;
+        let optional_int = self.interner.option(int)?;
+        let path_values = self
+            .interner
+            .intrinsic(IntrinsicType::Array, vec![string])?;
+        let ext_type = self.bootstrap_nominal_type(&module, "MessagePackExt")?;
+        let _event_type = self.bootstrap_nominal_type(&module, "MessagePackEvent")?;
+        let kind_type = self.bootstrap_nominal_type(&module, "MessagePackErrorKind")?;
+        let path_type = self.bootstrap_nominal_type(&module, "MessagePackPath")?;
+        for name in [
+            "MessagePackExt",
+            "MessagePackEvent",
+            "MessagePackErrorKind",
+            "MessagePackPath",
+            "MessagePackError",
+        ] {
+            let type_name = Name::new(name).expect("MessagePack nominal names are valid");
+            let Some(symbol) = self.resolved.bootstrap_nominal(&module, &type_name) else {
+                continue;
+            };
+            let declaration = self
+                .resolved
+                .symbol(symbol)
+                .expect("MessagePack nominal symbols are indexed");
+            let self_type = self
+                .interner
+                .nominal(declaration.identity().clone(), Vec::new())?;
+            let shape = match name {
+                "MessagePackExt" => HirNominalShape::Record {
+                    fields: vec![
+                        self.bootstrap_field(symbol, "typeCode", int),
+                        self.bootstrap_field(symbol, "payload", bytes),
+                    ],
+                },
+                "MessagePackEvent" => HirNominalShape::Enum {
+                    variants: vec![
+                        self.bootstrap_variant(symbol, "Nil", Vec::new()),
+                        self.bootstrap_variant(symbol, "Bool", vec![bool_type]),
+                        self.bootstrap_variant(symbol, "Int", vec![int]),
+                        self.bootstrap_variant(symbol, "UInt", vec![uint]),
+                        self.bootstrap_variant(symbol, "Float32", vec![float32]),
+                        self.bootstrap_variant(symbol, "Float64", vec![float64]),
+                        self.bootstrap_variant(symbol, "String", vec![string]),
+                        self.bootstrap_variant(symbol, "Binary", vec![bytes]),
+                        self.bootstrap_variant(symbol, "StartArray", vec![optional_int]),
+                        self.bootstrap_variant(symbol, "EndArray", Vec::new()),
+                        self.bootstrap_variant(symbol, "StartMap", vec![optional_int]),
+                        self.bootstrap_variant(symbol, "MapKey", Vec::new()),
+                        self.bootstrap_variant(symbol, "EndMap", Vec::new()),
+                        self.bootstrap_variant(symbol, "Ext", vec![ext_type]),
+                    ],
+                },
+                "MessagePackErrorKind" => HirNominalShape::Enum {
+                    variants: [
+                        "UnexpectedEof",
+                        "InvalidTag",
+                        "InvalidUtf8",
+                        "InvalidLength",
+                        "NonMinimalEncoding",
+                        "InvalidExtension",
+                        "TypeMismatch",
+                        "DuplicateKey",
+                        "NumberRange",
+                        "DeterministicKeyCollision",
+                        "OutOfOrderKey",
+                        "LimitExceeded",
+                        "IoError",
+                        "TrailingData",
+                    ]
+                    .into_iter()
+                    .map(|variant| self.bootstrap_variant(symbol, variant, Vec::new()))
+                    .collect(),
+                },
+                "MessagePackPath" => HirNominalShape::Newtype {
+                    underlying: path_values,
+                },
+                "MessagePackError" => HirNominalShape::Record {
+                    fields: vec![
+                        self.bootstrap_field(symbol, "kind", kind_type),
+                        self.bootstrap_field(symbol, "offset", int),
+                        self.bootstrap_field(symbol, "path", path_type),
+                    ],
+                },
+                _ => unreachable!("the bootstrap MessagePack nominal list is closed"),
+            };
+            self.declarations.insert(
+                symbol,
+                HirTypeDeclaration {
+                    symbol,
+                    span: declaration.span(),
+                    parameters: Vec::new(),
+                    kind: HirTypeDeclarationKind::Nominal(HirNominalDefinition {
+                        self_type,
+                        shape,
+                    }),
+                },
+            );
+        }
+        Ok(())
+    }
+
+    fn lower_bootstrap_protobuf_nominal_declarations(&mut self) -> Result<(), HirError> {
+        let path = ModulePath::new("protobuf")?;
+        let Some(module) = self.packages.module(self.packages.standard(), &path) else {
+            return Ok(());
+        };
+        let wire_name = Name::new("ProtoWireType").expect("Protobuf nominal names are valid");
+        if self
+            .resolved
+            .bootstrap_nominal(&module, &wire_name)
+            .is_none()
+        {
+            return Ok(());
+        }
+        let int = self.interner.scalar(ScalarType::Int);
+        let uint = self.interner.scalar(ScalarType::UInt64);
+        let string = self.interner.scalar(ScalarType::String);
+        let bytes = self.interner.intrinsic(IntrinsicType::Bytes, Vec::new())?;
+        let wire_type = self.bootstrap_nominal_type(&module, "ProtoWireType")?;
+        let unknown_field = self.bootstrap_nominal_type(&module, "UnknownField")?;
+        let optional_int = self.interner.option(int)?;
+        let proto_error_kind = self.bootstrap_nominal_type(&module, "ProtoErrorKind")?;
+        let proto_path = self.bootstrap_nominal_type(&module, "ProtoPath")?;
+        let mut declarations = Vec::new();
+        for name in [
+            "UnknownField",
+            "ProtoWireType",
+            "ProtoEvent",
+            "ProtoErrorKind",
+            "ProtoPath",
+            "ProtoError",
+        ] {
+            let type_name = Name::new(name).expect("Protobuf nominal names are valid");
+            let Some(symbol) = self.resolved.bootstrap_nominal(&module, &type_name) else {
+                continue;
+            };
+            let declaration = self
+                .resolved
+                .symbol(symbol)
+                .expect("Protobuf nominal symbols are indexed");
+            let self_type = self
+                .interner
+                .nominal(declaration.identity().clone(), Vec::new())?;
+            let shape = match name {
+                "UnknownField" => HirNominalShape::Record {
+                    fields: vec![
+                        self.bootstrap_field(symbol, "number", uint),
+                        self.bootstrap_field(symbol, "wireType", wire_type),
+                        self.bootstrap_field(symbol, "tagBytes", bytes),
+                        self.bootstrap_field(symbol, "payloadBytes", bytes),
+                    ],
+                },
+                "ProtoWireType" => HirNominalShape::Enum {
+                    variants: [
+                        "Varint",
+                        "Fixed64",
+                        "LengthDelimited",
+                        "StartGroup",
+                        "EndGroup",
+                        "Fixed32",
+                    ]
+                    .into_iter()
+                    .map(|variant| self.bootstrap_variant(symbol, variant, Vec::new()))
+                    .collect(),
+                },
+                "ProtoEvent" => HirNominalShape::Enum {
+                    variants: vec![
+                        self.bootstrap_variant(symbol, "StartMessage", vec![string]),
+                        self.bootstrap_variant(symbol, "EndMessage", Vec::new()),
+                        self.bootstrap_variant(symbol, "Field", vec![uint, wire_type]),
+                        self.bootstrap_variant(symbol, "Varint", vec![uint]),
+                        self.bootstrap_variant(symbol, "Fixed32", vec![uint]),
+                        self.bootstrap_variant(symbol, "Fixed64", vec![uint]),
+                        self.bootstrap_variant(symbol, "StartLengthDelimited", vec![uint]),
+                        self.bootstrap_variant(symbol, "Bytes", vec![bytes]),
+                        self.bootstrap_variant(symbol, "EndLengthDelimited", Vec::new()),
+                        self.bootstrap_variant(symbol, "StartPacked", vec![uint]),
+                        self.bootstrap_variant(symbol, "EndPacked", Vec::new()),
+                        self.bootstrap_variant(symbol, "Unknown", vec![unknown_field]),
+                    ],
+                },
+                "ProtoErrorKind" => HirNominalShape::Enum {
+                    variants: [
+                        "UnexpectedEof",
+                        "InvalidTag",
+                        "InvalidWireType",
+                        "InvalidVarint",
+                        "InvalidLength",
+                        "InvalidUtf8",
+                        "TypeMismatch",
+                        "InvalidPacked",
+                        "NumberRange",
+                        "InvalidFieldNumber",
+                        "InvalidGroup",
+                        "LimitExceeded",
+                        "IoError",
+                        "TrailingData",
+                        "SchemaMismatch",
+                    ]
+                    .into_iter()
+                    .map(|variant| self.bootstrap_variant(symbol, variant, Vec::new()))
+                    .collect(),
+                },
+                "ProtoPath" => HirNominalShape::Newtype {
+                    underlying: self
+                        .interner
+                        .intrinsic(IntrinsicType::Array, vec![string])?,
+                },
+                "ProtoError" => HirNominalShape::Record {
+                    fields: vec![
+                        self.bootstrap_field(symbol, "kind", proto_error_kind),
+                        self.bootstrap_field(symbol, "offset", optional_int),
+                        self.bootstrap_field(symbol, "path", proto_path),
+                    ],
+                },
+                _ => unreachable!("the bootstrap Protobuf nominal list is closed"),
+            };
+            declarations.push((
+                symbol,
+                HirTypeDeclaration {
+                    symbol,
+                    span: declaration.span(),
+                    parameters: Vec::new(),
+                    kind: HirTypeDeclarationKind::Nominal(HirNominalDefinition {
+                        self_type,
+                        shape,
+                    }),
+                },
+            ));
+        }
+        // Keep the optional offset formation alive in the declaration pass so
+        // future schema diagnostics can reuse the same canonical shape.
+        let _ = optional_int;
+        for (symbol, declaration) in declarations {
+            self.declarations.insert(symbol, declaration);
+        }
+        Ok(())
     }
 
     fn lower_bootstrap_serialization_nominal_declarations(&mut self) -> Result<(), HirError> {
@@ -1625,7 +1890,6 @@ impl<'a> TypeLowerer<'a> {
         }
 
         let codec_bytes = self.interner.result(bytes, bytes_error)?;
-        let codec_unit = self.interner.result(unit, bytes_error)?;
         if json_referenced {
             let json_value = self
                 .interner
@@ -2045,12 +2309,146 @@ impl<'a> TypeLowerer<'a> {
             }
         }
         if messagepack_referenced {
+            let messagepack_module = messagepack_module
+                .as_ref()
+                .expect("referenced MessagePack module is installed");
+            let messagepack_error =
+                self.bootstrap_nominal_type(messagepack_module, "MessagePackError")?;
+            let messagepack_ext =
+                self.bootstrap_nominal_type(messagepack_module, "MessagePackExt")?;
+            let messagepack_event =
+                self.bootstrap_nominal_type(messagepack_module, "MessagePackEvent")?;
+            let messagepack_timestamp = self
+                .interner
+                .intrinsic(IntrinsicType::MessagePackTimestamp, Vec::new())?;
+            let messagepack_value = self
+                .interner
+                .intrinsic(IntrinsicType::MessagePackValue, Vec::new())?;
+            let messagepack_value_view = self
+                .interner
+                .intrinsic(IntrinsicType::MessagePackValueView, Vec::new())?;
+            let messagepack_raw = self
+                .interner
+                .intrinsic(IntrinsicType::MessagePackRaw, Vec::new())?;
+            let messagepack_limits = self
+                .interner
+                .intrinsic(IntrinsicType::MessagePackLimits, Vec::new())?;
+            let messagepack_decode_options = self
+                .interner
+                .intrinsic(IntrinsicType::MessagePackDecodeOptions, Vec::new())?;
+            let messagepack_encode_options = self
+                .interner
+                .intrinsic(IntrinsicType::MessagePackEncodeOptions, Vec::new())?;
+            let messagepack_duplicate_policy = self
+                .interner
+                .intrinsic(IntrinsicType::MessagePackDuplicatePolicy, Vec::new())?;
+            let messagepack_unknown_policy = self
+                .interner
+                .intrinsic(IntrinsicType::MessagePackUnknownExtensionPolicy, Vec::new())?;
+            let messagepack_nonminimal_policy = self
+                .interner
+                .intrinsic(IntrinsicType::MessagePackNonMinimalPolicy, Vec::new())?;
+            let messagepack_reader = self
+                .interner
+                .intrinsic(IntrinsicType::MessagePackReader, Vec::new())?;
+            let messagepack_writer = self
+                .interner
+                .intrinsic(IntrinsicType::MessagePackWriter, Vec::new())?;
+            let messagepack_unit_result = self.interner.result(unit, messagepack_error)?;
+            let messagepack_bytes_result = self.interner.result(bytes, messagepack_error)?;
+            let messagepack_value_result =
+                self.interner.result(messagepack_value, messagepack_error)?;
+            let messagepack_event_result =
+                self.interner.result(messagepack_event, messagepack_error)?;
+            let messagepack_view_result = self
+                .interner
+                .result(messagepack_value_view, messagepack_error)?;
+            let messagepack_raw_result =
+                self.interner.result(messagepack_raw, messagepack_error)?;
+            let messagepack_timestamp_result = self
+                .interner
+                .result(messagepack_timestamp, messagepack_error)?;
+            let messagepack_reader_result = self
+                .interner
+                .result(messagepack_reader, messagepack_error)?;
+            let messagepack_writer_result = self
+                .interner
+                .result(messagepack_writer, messagepack_error)?;
+            let optional_messagepack_event = self.interner.option(messagepack_event)?;
+            let optional_messagepack_event_result = self
+                .interner
+                .result(optional_messagepack_event, messagepack_error)?;
+            for (function, outcome) in [
+                (
+                    HirBootstrapHostFunction::MessagePackDuplicatePreserve,
+                    messagepack_duplicate_policy,
+                ),
+                (
+                    HirBootstrapHostFunction::MessagePackDuplicateReject,
+                    messagepack_duplicate_policy,
+                ),
+                (
+                    HirBootstrapHostFunction::MessagePackDuplicateFirst,
+                    messagepack_duplicate_policy,
+                ),
+                (
+                    HirBootstrapHostFunction::MessagePackDuplicateLast,
+                    messagepack_duplicate_policy,
+                ),
+                (
+                    HirBootstrapHostFunction::MessagePackUnknownExtensionPreserve,
+                    messagepack_unknown_policy,
+                ),
+                (
+                    HirBootstrapHostFunction::MessagePackUnknownExtensionReject,
+                    messagepack_unknown_policy,
+                ),
+                (
+                    HirBootstrapHostFunction::MessagePackNonMinimalAccept,
+                    messagepack_nonminimal_policy,
+                ),
+                (
+                    HirBootstrapHostFunction::MessagePackNonMinimalReject,
+                    messagepack_nonminimal_policy,
+                ),
+            ] {
+                self.push_bootstrap_host_callable(span, function, Vec::new(), None, outcome)?;
+            }
+            let messagepack_ext_result =
+                self.interner.result(messagepack_ext, messagepack_error)?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::MessagePackLimitsConstruct,
+                vec![(int, false); 9],
+                None,
+                messagepack_limits,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::MessagePackDecodeOptionsConstruct,
+                vec![
+                    (messagepack_limits, false),
+                    (messagepack_duplicate_policy, false),
+                    (messagepack_duplicate_policy, false),
+                    (messagepack_nonminimal_policy, false),
+                    (messagepack_unknown_policy, false),
+                ],
+                None,
+                messagepack_decode_options,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::MessagePackEncodeOptionsConstruct,
+                vec![(messagepack_limits, false), (bool_type, false)],
+                None,
+                messagepack_encode_options,
+            )?;
             self.push_bootstrap_host_callable(
                 span,
                 HirBootstrapHostFunction::MessagePackValidate,
-                vec![(bytes, false)],
+                vec![(bytes, false), (messagepack_decode_options, false)],
                 None,
-                codec_unit,
+                messagepack_unit_result,
             )?;
             self.push_bootstrap_host_callable(
                 span,
@@ -2059,14 +2457,413 @@ impl<'a> TypeLowerer<'a> {
                 None,
                 codec_bytes,
             )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::MessagePackParse,
+                vec![(bytes, false), (messagepack_decode_options, false)],
+                None,
+                messagepack_value_result,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::MessagePackParseView,
+                vec![(bytes, false), (messagepack_decode_options, false)],
+                None,
+                messagepack_view_result,
+            )?;
+            let generic = self.interner.generic_parameter(0)?;
+            let generic_result = self.interner.result(generic, messagepack_error)?;
+            let messagepack_codec = self.interner.nominal(
+                SymbolIdentity::bootstrap_standard("serialization", "MessagePack"),
+                Vec::new(),
+            )?;
+            let decode_bound = HirTraitReference {
+                constructor: HirTraitConstructor::Prelude(Name::new("Decode").expect("trait")),
+                arguments: vec![messagepack_codec],
+            };
+            let encode_bound = HirTraitReference {
+                constructor: HirTraitConstructor::Prelude(Name::new("Encode").expect("trait")),
+                arguments: vec![messagepack_codec],
+            };
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::MessagePackDecode,
+                vec![
+                    (bytes, ParameterMode::Value, false),
+                    (messagepack_decode_options, ParameterMode::Value, false),
+                ],
+                generic_result,
+                1,
+                vec![(0, vec![decode_bound])],
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::MessagePackEncode,
+                vec![
+                    (generic, ParameterMode::Value, false),
+                    (messagepack_encode_options, ParameterMode::Value, false),
+                ],
+                messagepack_bytes_result,
+                1,
+                vec![(0, vec![encode_bound])],
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::MessagePackEncodeValue,
+                vec![
+                    (messagepack_value, false),
+                    (messagepack_encode_options, false),
+                ],
+                None,
+                messagepack_bytes_result,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::MessagePackEncodeDeterministic,
+                vec![(messagepack_value, false), (messagepack_limits, false)],
+                None,
+                messagepack_bytes_result,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::MessagePackRaw,
+                vec![(bytes, false), (messagepack_decode_options, false)],
+                None,
+                messagepack_raw_result,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::MessagePackRawUnchecked,
+                vec![(bytes, false)],
+                None,
+                messagepack_raw,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::MessagePackTimestampFromExt,
+                vec![(messagepack_ext, false)],
+                None,
+                messagepack_timestamp_result,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::MessagePackTimestampToExt,
+                vec![(messagepack_timestamp, true)],
+                None,
+                messagepack_ext_result,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::MessagePackReaderFromBytes,
+                vec![(bytes, false), (messagepack_decode_options, false)],
+                None,
+                messagepack_reader_result,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::MessagePackReaderFromReader,
+                vec![
+                    (reader, ParameterMode::Var, false),
+                    (messagepack_decode_options, ParameterMode::Value, false),
+                ],
+                None,
+                messagepack_reader_result,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::MessagePackReaderNext,
+                vec![(messagepack_reader, ParameterMode::Var, true)],
+                None,
+                optional_messagepack_event_result,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::MessagePackReaderOwn,
+                vec![
+                    (messagepack_reader, ParameterMode::Var, true),
+                    (messagepack_event, ParameterMode::Value, false),
+                ],
+                None,
+                messagepack_event_result,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::MessagePackReaderFinish,
+                vec![(messagepack_reader, ParameterMode::Var, true)],
+                None,
+                messagepack_unit_result,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::MessagePackWriterToWriter,
+                vec![
+                    (writer, ParameterMode::Var, false),
+                    (messagepack_encode_options, ParameterMode::Value, false),
+                ],
+                None,
+                messagepack_writer_result,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::MessagePackWriterWrite,
+                vec![
+                    (messagepack_writer, ParameterMode::Var, true),
+                    (messagepack_event, ParameterMode::Value, false),
+                ],
+                None,
+                messagepack_unit_result,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::MessagePackWriterFinish,
+                vec![(messagepack_writer, ParameterMode::Var, true)],
+                None,
+                messagepack_unit_result,
+            )?;
         }
         if protobuf_referenced {
+            let protobuf_module = protobuf_module
+                .as_ref()
+                .expect("referenced Protobuf module is installed");
+            let protobuf_error = self.bootstrap_nominal_type(protobuf_module, "ProtoError")?;
+            let proto_event = self.bootstrap_nominal_type(protobuf_module, "ProtoEvent")?;
+            let proto_descriptor_generic = self.interner.generic_parameter(0)?;
+            let proto_descriptor = self.interner.intrinsic(
+                IntrinsicType::ProtoDescriptor,
+                vec![proto_descriptor_generic],
+            )?;
+            let proto_limits = self
+                .interner
+                .intrinsic(IntrinsicType::ProtoLimits, Vec::new())?;
+            let proto_decode_options = self
+                .interner
+                .intrinsic(IntrinsicType::ProtoDecodeOptions, Vec::new())?;
+            let proto_encode_options = self
+                .interner
+                .intrinsic(IntrinsicType::ProtoEncodeOptions, Vec::new())?;
+            let proto_wire_policy = self
+                .interner
+                .intrinsic(IntrinsicType::ProtoWireTypePolicy, Vec::new())?;
+            let proto_unknown_policy = self
+                .interner
+                .intrinsic(IntrinsicType::ProtoUnknownPolicy, Vec::new())?;
+            let generic = self.interner.generic_parameter(0)?;
+            let proto_reader = self
+                .interner
+                .intrinsic(IntrinsicType::ProtoReader, vec![generic])?;
+            let proto_writer = self
+                .interner
+                .intrinsic(IntrinsicType::ProtoWriter, vec![generic])?;
+            let unknown_fields = self
+                .interner
+                .intrinsic(IntrinsicType::UnknownFields, Vec::new())?;
+            let proto_unit_result = self.interner.result(unit, protobuf_error)?;
+            let proto_bytes_result = self.interner.result(bytes, protobuf_error)?;
+            let proto_reader_result = self.interner.result(proto_reader, protobuf_error)?;
+            let proto_writer_result = self.interner.result(proto_writer, protobuf_error)?;
+            let optional_proto_event = self.interner.option(proto_event)?;
+            let optional_proto_event_result =
+                self.interner.result(optional_proto_event, protobuf_error)?;
+            for (function, outcome) in [
+                (
+                    HirBootstrapHostFunction::ProtobufWireTypePreserveUnknown,
+                    proto_wire_policy,
+                ),
+                (
+                    HirBootstrapHostFunction::ProtobufWireTypeReject,
+                    proto_wire_policy,
+                ),
+                (
+                    HirBootstrapHostFunction::ProtobufUnknownPreserve,
+                    proto_unknown_policy,
+                ),
+                (
+                    HirBootstrapHostFunction::ProtobufUnknownDiscard,
+                    proto_unknown_policy,
+                ),
+            ] {
+                self.push_bootstrap_host_callable(span, function, Vec::new(), None, outcome)?;
+            }
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::ProtobufLimitsConstruct,
+                vec![(int, false); 16],
+                None,
+                proto_limits,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::ProtobufDecodeOptionsConstruct,
+                vec![
+                    (proto_limits, false),
+                    (proto_wire_policy, false),
+                    (proto_unknown_policy, false),
+                    (bool_type, false),
+                ],
+                None,
+                proto_decode_options,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::ProtobufEncodeOptionsConstruct,
+                vec![(proto_limits, false), (bool_type, false)],
+                None,
+                proto_encode_options,
+            )?;
+            let proto_codec = self.interner.nominal(
+                SymbolIdentity::bootstrap_standard("serialization", "Protobuf"),
+                Vec::new(),
+            )?;
+            let proto_decode_bound = HirTraitReference {
+                constructor: HirTraitConstructor::Prelude(Name::new("Decode").expect("trait")),
+                arguments: vec![proto_codec],
+            };
+            let proto_encode_bound = HirTraitReference {
+                constructor: HirTraitConstructor::Prelude(Name::new("Encode").expect("trait")),
+                arguments: vec![proto_codec],
+            };
+            let proto_generic_result = self.interner.result(generic, protobuf_error)?;
+            let proto_event_result = self.interner.result(proto_event, protobuf_error)?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::ProtobufDecode,
+                vec![
+                    (bytes, ParameterMode::Value, false),
+                    (proto_decode_options, ParameterMode::Value, false),
+                ],
+                proto_generic_result,
+                1,
+                vec![(0, vec![proto_decode_bound])],
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::ProtobufEncode,
+                vec![
+                    (generic, ParameterMode::Value, false),
+                    (proto_encode_options, ParameterMode::Value, false),
+                ],
+                proto_bytes_result,
+                1,
+                vec![(0, vec![proto_encode_bound.clone()])],
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::ProtobufEncodeDeterministic,
+                vec![
+                    (generic, ParameterMode::Value, false),
+                    (proto_limits, ParameterMode::Value, false),
+                ],
+                proto_bytes_result,
+                1,
+                vec![(0, vec![proto_encode_bound.clone()])],
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::ProtobufDescriptor,
+                Vec::new(),
+                proto_descriptor,
+                1,
+                Vec::new(),
+            )?;
             self.push_bootstrap_host_callable(
                 span,
                 HirBootstrapHostFunction::ProtobufValidate,
-                vec![(bytes, false)],
+                vec![(bytes, false), (proto_decode_options, false)],
                 None,
-                codec_unit,
+                proto_unit_result,
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::ProtobufReaderFromBytes,
+                vec![
+                    (bytes, ParameterMode::Value, false),
+                    (proto_decode_options, ParameterMode::Value, false),
+                ],
+                proto_reader_result,
+                1,
+                Vec::new(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::ProtobufReaderFromReader,
+                vec![
+                    (reader, ParameterMode::Var, false),
+                    (proto_decode_options, ParameterMode::Value, false),
+                ],
+                proto_reader_result,
+                1,
+                Vec::new(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::ProtobufReaderNext,
+                vec![(proto_reader, ParameterMode::Ref, true)],
+                optional_proto_event_result,
+                1,
+                Vec::new(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::ProtobufReaderOwn,
+                vec![
+                    (proto_reader, ParameterMode::Ref, true),
+                    (proto_event, ParameterMode::Value, false),
+                ],
+                proto_event_result,
+                1,
+                Vec::new(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::ProtobufReaderFinish,
+                vec![(proto_reader, ParameterMode::Ref, true)],
+                proto_unit_result,
+                1,
+                Vec::new(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::ProtobufWriterToWriter,
+                vec![
+                    (writer, ParameterMode::Var, false),
+                    (proto_encode_options, ParameterMode::Value, false),
+                ],
+                proto_writer_result,
+                1,
+                Vec::new(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::ProtobufWriterWrite,
+                vec![
+                    (proto_writer, ParameterMode::Ref, true),
+                    (proto_event, ParameterMode::Value, false),
+                ],
+                proto_unit_result,
+                1,
+                Vec::new(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::ProtobufWriterFinish,
+                vec![(proto_writer, ParameterMode::Ref, true)],
+                proto_unit_result,
+                1,
+                Vec::new(),
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::ProtobufUnknownFieldsCount,
+                vec![(unknown_fields, ParameterMode::Ref, true)],
+                None,
+                int,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::ProtobufUnknownFieldsDiscard,
+                vec![(unknown_fields, ParameterMode::Ref, true)],
+                None,
+                unit,
             )?;
         }
         if path_referenced {
@@ -6765,7 +7562,28 @@ impl<'a> TypeLowerer<'a> {
                         | IntrinsicType::JsonRaw
                         | IntrinsicType::JsonNumber
                         | IntrinsicType::JsonReader
-                        | IntrinsicType::JsonWriter => values.push(true),
+                        | IntrinsicType::JsonWriter
+                        | IntrinsicType::MessagePackLimits
+                        | IntrinsicType::MessagePackDecodeOptions
+                        | IntrinsicType::MessagePackEncodeOptions
+                        | IntrinsicType::MessagePackDuplicatePolicy
+                        | IntrinsicType::MessagePackUnknownExtensionPolicy
+                        | IntrinsicType::MessagePackNonMinimalPolicy
+                        | IntrinsicType::MessagePackValue
+                        | IntrinsicType::MessagePackValueView
+                        | IntrinsicType::MessagePackRaw
+                        | IntrinsicType::MessagePackTimestamp
+                        | IntrinsicType::MessagePackReader
+                        | IntrinsicType::MessagePackWriter
+                        | IntrinsicType::ProtoDescriptor
+                        | IntrinsicType::ProtoLimits
+                        | IntrinsicType::ProtoDecodeOptions
+                        | IntrinsicType::ProtoEncodeOptions
+                        | IntrinsicType::ProtoWireTypePolicy
+                        | IntrinsicType::ProtoUnknownPolicy
+                        | IntrinsicType::ProtoReader
+                        | IntrinsicType::ProtoWriter
+                        | IntrinsicType::UnknownFields => values.push(true),
                     },
                 },
                 ProductivityTask::Nominal(symbol, arguments) => {

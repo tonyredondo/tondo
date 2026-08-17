@@ -86,10 +86,10 @@ jq -n \
         global_public_api: {
           status: $api.status,
           gaps: $api.summary.gaps,
-          reason: "MessagePack/Protobuf callable exposure and build-only owner indexing remain open public-audit work; this hosted coordinator does not waive those rows",
-          next_coordination: "STD-CODEC-PUBLIC-001"
+          reason: "STD-CODEC-PUBLIC-001 closed MessagePack/Protobuf callable exposure and indexed the build-only owners without a runtime waiver",
+          next_coordination: "NATIVE-TARGET-DESC-001"
         },
-        next_coordination: "STD-CODEC-PUBLIC-001"
+        next_coordination: "NATIVE-TARGET-DESC-001"
       }
     ' > "$output"
 

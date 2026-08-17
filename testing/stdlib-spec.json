@@ -47,7 +47,7 @@
   },
   "promotion": {
     "required_owner_status": "closed-contract",
-    "implementation_remains_pending": ["std.async","std.messagepack","std.protobuf"],
-    "next": "STD-CODEC-PUBLIC-001"
+    "implementation_remains_pending": ["std.async"],
+    "next": "NATIVE-TARGET-DESC-001"
   }
 }

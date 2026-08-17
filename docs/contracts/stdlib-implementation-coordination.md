@@ -15,10 +15,11 @@ existe superficie callable, todas sus filas de auditoría pública verificadas.
 providers son contratos compiler-owned/build-only, por lo que la matriz exige
 una razón explícita en lugar de inventar una firma pública.
 
-El registro conserva también el estado global `open-gaps` de la auditoría. Las
-rutas públicas de MessagePack/Protobuf y los owners build-only sin superficie
-indexable siguen siendo trabajo posterior; no se convierten en promoción por
-el cierre de este coordinador. El siguiente coordinador es `STD-IMPL-002`.
+El registro conserva también el estado global de la auditoría: ahora es
+`verified` con cero gaps, porque `STD-CODEC-PUBLIC-001` cerró las rutas públicas
+de MessagePack/Protobuf y las tres fronteras build-only sin inventar superficie
+runtime. Esto no convierte el coordinador Core en una promoción global; el
+siguiente coordinador histórico del grupo es `STD-IMPL-002`.
 
 ```text
 scripts/stdlib-implementation-coordination-check.sh

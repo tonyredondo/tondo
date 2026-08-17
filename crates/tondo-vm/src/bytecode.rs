@@ -296,6 +296,27 @@ pub enum BytecodeIntrinsicType {
     JsonNumber,
     JsonReader,
     JsonWriter,
+    MessagePackLimits,
+    MessagePackDecodeOptions,
+    MessagePackEncodeOptions,
+    MessagePackDuplicatePolicy,
+    MessagePackUnknownExtensionPolicy,
+    MessagePackNonMinimalPolicy,
+    MessagePackValue,
+    MessagePackValueView,
+    MessagePackRaw,
+    MessagePackTimestamp,
+    MessagePackReader,
+    MessagePackWriter,
+    ProtoDescriptor,
+    ProtoLimits,
+    ProtoDecodeOptions,
+    ProtoEncodeOptions,
+    ProtoWireTypePolicy,
+    ProtoUnknownPolicy,
+    ProtoReader,
+    ProtoWriter,
+    UnknownFields,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -406,6 +427,7 @@ impl BytecodeIntrinsicType {
     pub const fn arity(self) -> usize {
         match self {
             Self::Map | Self::Join | Self::Waiter | Self::Completer => 2,
+            Self::ProtoDescriptor | Self::ProtoReader | Self::ProtoWriter => 1,
             Self::Array | Self::Set | Self::Range | Self::Ref | Self::Pointer => 1,
             Self::Command
             | Self::Pipeline
@@ -466,7 +488,25 @@ impl BytecodeIntrinsicType {
             | Self::JsonRaw
             | Self::JsonNumber
             | Self::JsonReader
-            | Self::JsonWriter => 0,
+            | Self::JsonWriter
+            | Self::MessagePackLimits
+            | Self::MessagePackDecodeOptions
+            | Self::MessagePackEncodeOptions
+            | Self::MessagePackDuplicatePolicy
+            | Self::MessagePackUnknownExtensionPolicy
+            | Self::MessagePackNonMinimalPolicy
+            | Self::MessagePackValue
+            | Self::MessagePackValueView
+            | Self::MessagePackRaw
+            | Self::MessagePackTimestamp
+            | Self::MessagePackReader
+            | Self::MessagePackWriter
+            | Self::ProtoLimits
+            | Self::ProtoDecodeOptions
+            | Self::ProtoEncodeOptions
+            | Self::ProtoWireTypePolicy
+            | Self::ProtoUnknownPolicy
+            | Self::UnknownFields => 0,
         }
     }
 
@@ -556,7 +596,28 @@ impl BytecodeIntrinsicType {
             | Self::JsonRaw
             | Self::JsonNumber
             | Self::JsonReader
-            | Self::JsonWriter => None,
+            | Self::JsonWriter
+            | Self::MessagePackLimits
+            | Self::MessagePackDecodeOptions
+            | Self::MessagePackEncodeOptions
+            | Self::MessagePackDuplicatePolicy
+            | Self::MessagePackUnknownExtensionPolicy
+            | Self::MessagePackNonMinimalPolicy
+            | Self::MessagePackValue
+            | Self::MessagePackValueView
+            | Self::MessagePackRaw
+            | Self::MessagePackTimestamp
+            | Self::MessagePackReader
+            | Self::MessagePackWriter
+            | Self::ProtoDescriptor
+            | Self::ProtoLimits
+            | Self::ProtoDecodeOptions
+            | Self::ProtoEncodeOptions
+            | Self::ProtoWireTypePolicy
+            | Self::ProtoUnknownPolicy
+            | Self::ProtoReader
+            | Self::ProtoWriter
+            | Self::UnknownFields => None,
         }
     }
 }

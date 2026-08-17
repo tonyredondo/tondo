@@ -66,7 +66,157 @@ fn json_encode_options(): json.JsonEncodeOptions {
     }
 }
 
-fn main(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | json.JsonError) {
+fn messagepack_limits(): messagepack.MessagePackLimits {
+    messagepack.limits(
+        1048576,
+        64,
+        65536,
+        65536,
+        1048576,
+        1048576,
+        1048576,
+        100000,
+        1048576,
+    )
+}
+
+fn messagepack_decode_options(): messagepack.MessagePackDecodeOptions {
+    messagepack.decodeOptions(
+        messagepack_limits(),
+        messagepack.MessagePackDuplicatePolicy.Preserve,
+        messagepack.MessagePackDuplicatePolicy.Reject,
+        messagepack.MessagePackNonMinimalPolicy.Accept,
+        messagepack.MessagePackUnknownExtensionPolicy.Preserve,
+    )
+}
+
+fn messagepack_encode_options(): messagepack.MessagePackEncodeOptions {
+    messagepack.encodeOptions(messagepack_limits(), false)
+}
+
+fn protobuf_limits(): protobuf.ProtoLimits {
+    protobuf.limits(
+        1048576,
+        128,
+        65536,
+        1048576,
+        1048576,
+        64,
+        65536,
+        65536,
+        65536,
+        1048576,
+        1048576,
+        1048576,
+        1048576,
+        10,
+        100000,
+        1048576,
+    )
+}
+
+fn protobuf_decode_options(): protobuf.ProtoDecodeOptions {
+    protobuf.decodeOptions(
+        protobuf_limits(),
+        protobuf.ProtoWireTypePolicy.PreserveUnknown,
+        protobuf.ProtoUnknownPolicy.Preserve,
+        false,
+    )
+}
+
+fn protobuf_encode_options(): protobuf.ProtoEncodeOptions {
+    protobuf.encodeOptions(protobuf_limits(), false)
+}
+
+fn json_streaming_public_surface(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | json.JsonError) {
+    let scalar = bytes.Bytes("42")?
+    var stdin = console.stdin()?
+    var reader_from_io = json.JsonReader.fromReader(var stdin, json_decode_options())?
+    reader_from_io.finish()?
+    var event_reader = json.JsonReader.fromBytes(scalar, json_decode_options())?
+    let event = match event_reader.next()? {
+        some(value) => event_reader.own(value)?
+        none => panic("JSON scalar must publish one event")
+    }
+    match event_reader.next()? {
+        some(_) => panic("JSON scalar must publish exactly one event")
+        none => ()
+    }
+    event_reader.finish()?
+
+    var stdout = console.stdout()?
+    var event_writer = json.JsonWriter.toWriter(var stdout, json_encode_options())?
+    event_writer.write(event)?
+    event_writer.finish()?
+}
+
+fn messagepack_public_api_surface(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | messagepack.MessagePackError) {
+    if false {
+        let input = bytes.fromArray([Byte(0x91u8), Byte(0x01u8)])?
+        let decode_options = messagepack_decode_options()
+        let encode_options = messagepack_encode_options()
+        let value = messagepack.parse(input, decode_options)?
+        let _view = messagepack.parseView(input, decode_options)?
+        let _typed = messagepack.decode[Array[Int]](input, decode_options)?
+        let _bytes = messagepack.encode(value, encode_options)?
+        let _typed_bytes = messagepack.encode[Array[Int]]([1], encode_options)?
+        let _valid = messagepack.validate(input, decode_options)?
+        let _deterministic = messagepack.encodeDeterministic(value, messagepack_limits())?
+        let _raw = messagepack.raw(input, decode_options)?
+        let _unchecked = unsafe { messagepack.rawUnchecked(input) }
+        let ext = messagepack.MessagePackExt {
+            typeCode: -1
+            payload: bytes.Bytes("")?
+        }
+        let timestamp = messagepack.MessagePackTimestamp.fromExt(ext)?
+        let _roundtrip_ext = timestamp.toExt()?
+
+        var reader = messagepack.MessagePackReader.fromBytes(input, decode_options)?
+        let _event = reader.next()?
+        reader.finish()?
+        var stdin = console.stdin()?
+        var reader_from_io = messagepack.MessagePackReader.fromReader(var stdin, decode_options)?
+        reader_from_io.finish()?
+        var stdout = console.stdout()?
+        var writer = messagepack.MessagePackWriter.toWriter(var stdout, encode_options)?
+        writer.write(messagepack.MessagePackEvent.Nil)?
+        writer.finish()?
+    }
+}
+
+fn protobuf_public_api_surface(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | protobuf.ProtoError) {
+    if false {
+        let input = bytes.fromArray([Byte(0x08u8), Byte(0x01u8)])?
+        let decode_options = protobuf_decode_options()
+        let encode_options = protobuf_encode_options()
+        let _typed = protobuf.decode[Unit](input, decode_options)?
+        let _bytes = protobuf.encode[Unit]((), encode_options)?
+        let _deterministic = protobuf.encodeDeterministic[Unit]((), protobuf_limits())?
+        let _valid = protobuf.validate[Unit](input, decode_options)?
+        let _descriptor = protobuf.descriptor[Unit]()
+
+        var reader = protobuf.ProtoReader[Unit].fromBytes(input, decode_options)?
+        let _event = reader.next()?
+        reader.finish()?
+        var stdin = console.stdin()?
+        var reader_from_io = protobuf.ProtoReader[Unit].fromReader(var stdin, decode_options)?
+        reader_from_io.finish()?
+        var stdout = console.stdout()?
+        var writer = protobuf.ProtoWriter[Unit].toWriter(var stdout, protobuf_encode_options())?
+        writer.write(protobuf.ProtoEvent.EndMessage)?
+        writer.finish()?
+
+    }
+}
+
+fn protobuf_unknown_fields_surface(unknown: protobuf.UnknownFields): Unit {
+    let _count = unknown.count()
+    var mutable_unknown = unknown
+    mutable_unknown.discard()
+}
+
+fn main(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | json.JsonError | messagepack.MessagePackError | protobuf.ProtoError) {
+    console.print("42\n")
     let json_input = bytes.Bytes(r"""{"z":1,"a":2}""")?
     json.validate(json_input, json_decode_options())?
     let json_canonical = json.canonicalize(json_input, json_decode_options())?
@@ -255,26 +405,6 @@ fn main(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | json.Js
     assert(number.toFloat32()? == 42.0f32)
     assert(number.toFloat64()? == 42.0)
 
-    let scalar = bytes.Bytes("42")?
-    var event_reader = json.JsonReader.fromBytes(scalar, json_decode_options())?
-    let event = match event_reader.next()? {
-        some(value) => event_reader.own(value)?
-        none => panic("JSON scalar must publish one event")
-    }
-    match event_reader.next()? {
-        some(_) => panic("JSON scalar must publish exactly one event")
-        none => ()
-    }
-    event_reader.finish()?
-
-    var stdout = console.stdout()?
-    var event_writer = json.JsonWriter.toWriter(var stdout, json_encode_options())?
-    event_writer.write(event)?
-    event_writer.finish()?
-
-    var stdin = console.stdin()?
-    let _reader_from_io = json.JsonReader.fromReader(var stdin, json_decode_options())?
-
     let duplicate = bytes.Bytes(r"""{"a":1,"a":2}""")?
     match json.validate(duplicate, json_decode_options()) {
         ok(_) => assert(false)
@@ -318,7 +448,7 @@ fn main(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | json.Js
         Byte(0x82u8), Byte(0xa1u8), Byte(0x7au8), Byte(1u8),
         Byte(0xa1u8), Byte(0x61u8), Byte(2u8)
     ])?
-    messagepack.validate(messagepack_input)?
+    messagepack.validate(messagepack_input, messagepack_decode_options())?
     let messagepack_canonical = messagepack.canonicalize(messagepack_input)?
     assert(messagepack_canonical.equal(bytes.fromArray([
         Byte(0x82u8), Byte(0xa1u8), Byte(0x61u8), Byte(2u8),
@@ -329,6 +459,6 @@ fn main(): !(bytes.BytesError | bytes.Utf8Error | console.ConsoleError | json.Js
         Byte(0x08u8), Byte(0x96u8), Byte(0x01u8),
         Byte(0x12u8), Byte(0x02u8), Byte(0x6fu8), Byte(0x6bu8)
     ])?
-    protobuf.validate(protobuf_input)?
-    console.print("\ncodecs-ok\n")
+    protobuf.validate(protobuf_input, protobuf_decode_options())?
+    console.print("codecs-ok\n")
 }

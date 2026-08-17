@@ -33,8 +33,8 @@ jq -e '
   and .rules.global_public_audit_is_not_promoted
   and .rules.no_waivers
   and .next_coordination == "STD-IMPL-002"
-  and .global_public_api.status == "open-gaps"
-  and (.global_public_api.gaps | type == "number" and . > 0)
+  and .global_public_api.status == "verified"
+  and .global_public_api.gaps == 0
   and .summary == {
     owners: 8,
     signatures: 64,
@@ -80,4 +80,4 @@ while IFS= read -r ref; do
     }
 done < <(jq -r '.sources[]' "$coordination")
 
-echo "stdlib implementation coordination: OK (8 owners; 64 public signatures verified; codec/build-only gaps explicit; next STD-IMPL-002)"
+echo "stdlib implementation coordination: OK (8 owners; 64 public signatures verified; codec/build-only audit closed; next STD-IMPL-002)"

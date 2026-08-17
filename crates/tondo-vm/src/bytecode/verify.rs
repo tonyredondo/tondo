@@ -509,7 +509,28 @@ impl<'a> TraceMetadataAnalysis<'a> {
                 | BytecodeIntrinsicType::JsonRaw
                 | BytecodeIntrinsicType::JsonNumber
                 | BytecodeIntrinsicType::JsonReader
-                | BytecodeIntrinsicType::JsonWriter => BytecodeTraceDescriptor::Inline,
+                | BytecodeIntrinsicType::JsonWriter
+                | BytecodeIntrinsicType::MessagePackLimits
+                | BytecodeIntrinsicType::MessagePackDecodeOptions
+                | BytecodeIntrinsicType::MessagePackEncodeOptions
+                | BytecodeIntrinsicType::MessagePackDuplicatePolicy
+                | BytecodeIntrinsicType::MessagePackUnknownExtensionPolicy
+                | BytecodeIntrinsicType::MessagePackNonMinimalPolicy
+                | BytecodeIntrinsicType::MessagePackValue
+                | BytecodeIntrinsicType::MessagePackValueView
+                | BytecodeIntrinsicType::MessagePackRaw
+                | BytecodeIntrinsicType::MessagePackTimestamp
+                | BytecodeIntrinsicType::MessagePackReader
+                | BytecodeIntrinsicType::MessagePackWriter
+                | BytecodeIntrinsicType::ProtoDescriptor
+                | BytecodeIntrinsicType::ProtoLimits
+                | BytecodeIntrinsicType::ProtoDecodeOptions
+                | BytecodeIntrinsicType::ProtoEncodeOptions
+                | BytecodeIntrinsicType::ProtoWireTypePolicy
+                | BytecodeIntrinsicType::ProtoUnknownPolicy
+                | BytecodeIntrinsicType::ProtoReader
+                | BytecodeIntrinsicType::ProtoWriter
+                | BytecodeIntrinsicType::UnknownFields => BytecodeTraceDescriptor::Inline,
             },
             BytecodeTypeKind::OpaqueResult { witness, .. } => self.opaque_descriptor(witness)?,
             BytecodeTypeKind::Generated { .. } => self
@@ -1217,10 +1238,34 @@ fn intrinsic_capability(
                 ClosedCapability::Discard | ClosedCapability::Send
             ))
         }
+        BytecodeIntrinsicType::MessagePackReader
+        | BytecodeIntrinsicType::MessagePackWriter
+        | BytecodeIntrinsicType::ProtoReader
+        | BytecodeIntrinsicType::ProtoWriter => fixed_capability(matches!(
+            capability,
+            ClosedCapability::Discard | ClosedCapability::Send
+        )),
         BytecodeIntrinsicType::JsonValue
         | BytecodeIntrinsicType::JsonValueView
         | BytecodeIntrinsicType::JsonRaw
-        | BytecodeIntrinsicType::JsonNumber => fixed_capability(matches!(
+        | BytecodeIntrinsicType::JsonNumber
+        | BytecodeIntrinsicType::MessagePackLimits
+        | BytecodeIntrinsicType::MessagePackDecodeOptions
+        | BytecodeIntrinsicType::MessagePackEncodeOptions
+        | BytecodeIntrinsicType::MessagePackDuplicatePolicy
+        | BytecodeIntrinsicType::MessagePackUnknownExtensionPolicy
+        | BytecodeIntrinsicType::MessagePackNonMinimalPolicy
+        | BytecodeIntrinsicType::MessagePackValue
+        | BytecodeIntrinsicType::MessagePackValueView
+        | BytecodeIntrinsicType::MessagePackRaw
+        | BytecodeIntrinsicType::MessagePackTimestamp
+        | BytecodeIntrinsicType::ProtoDescriptor
+        | BytecodeIntrinsicType::ProtoLimits
+        | BytecodeIntrinsicType::ProtoDecodeOptions
+        | BytecodeIntrinsicType::ProtoEncodeOptions
+        | BytecodeIntrinsicType::ProtoWireTypePolicy
+        | BytecodeIntrinsicType::ProtoUnknownPolicy
+        | BytecodeIntrinsicType::UnknownFields => fixed_capability(matches!(
             capability,
             ClosedCapability::Copy
                 | ClosedCapability::Discard
@@ -1585,7 +1630,28 @@ fn intrinsic_terminal(
         | BytecodeIntrinsicType::JsonRaw
         | BytecodeIntrinsicType::JsonNumber
         | BytecodeIntrinsicType::JsonReader
-        | BytecodeIntrinsicType::JsonWriter => fixed_terminal(BytecodeTerminalStatus::Absent),
+        | BytecodeIntrinsicType::JsonWriter
+        | BytecodeIntrinsicType::MessagePackLimits
+        | BytecodeIntrinsicType::MessagePackDecodeOptions
+        | BytecodeIntrinsicType::MessagePackEncodeOptions
+        | BytecodeIntrinsicType::MessagePackDuplicatePolicy
+        | BytecodeIntrinsicType::MessagePackUnknownExtensionPolicy
+        | BytecodeIntrinsicType::MessagePackNonMinimalPolicy
+        | BytecodeIntrinsicType::MessagePackValue
+        | BytecodeIntrinsicType::MessagePackValueView
+        | BytecodeIntrinsicType::MessagePackRaw
+        | BytecodeIntrinsicType::MessagePackTimestamp
+        | BytecodeIntrinsicType::MessagePackReader
+        | BytecodeIntrinsicType::MessagePackWriter
+        | BytecodeIntrinsicType::ProtoDescriptor
+        | BytecodeIntrinsicType::ProtoLimits
+        | BytecodeIntrinsicType::ProtoDecodeOptions
+        | BytecodeIntrinsicType::ProtoEncodeOptions
+        | BytecodeIntrinsicType::ProtoWireTypePolicy
+        | BytecodeIntrinsicType::ProtoUnknownPolicy
+        | BytecodeIntrinsicType::ProtoReader
+        | BytecodeIntrinsicType::ProtoWriter
+        | BytecodeIntrinsicType::UnknownFields => fixed_terminal(BytecodeTerminalStatus::Absent),
         BytecodeIntrinsicType::Timer => {
             unreachable!("registered bytecode terminal roots return above")
         }
@@ -1778,7 +1844,28 @@ impl Verifier<'_> {
                 | BytecodeIntrinsicType::JsonRaw
                 | BytecodeIntrinsicType::JsonNumber
                 | BytecodeIntrinsicType::JsonReader
-                | BytecodeIntrinsicType::JsonWriter => None,
+                | BytecodeIntrinsicType::JsonWriter
+                | BytecodeIntrinsicType::MessagePackLimits
+                | BytecodeIntrinsicType::MessagePackDecodeOptions
+                | BytecodeIntrinsicType::MessagePackEncodeOptions
+                | BytecodeIntrinsicType::MessagePackDuplicatePolicy
+                | BytecodeIntrinsicType::MessagePackUnknownExtensionPolicy
+                | BytecodeIntrinsicType::MessagePackNonMinimalPolicy
+                | BytecodeIntrinsicType::MessagePackValue
+                | BytecodeIntrinsicType::MessagePackValueView
+                | BytecodeIntrinsicType::MessagePackRaw
+                | BytecodeIntrinsicType::MessagePackTimestamp
+                | BytecodeIntrinsicType::MessagePackReader
+                | BytecodeIntrinsicType::MessagePackWriter
+                | BytecodeIntrinsicType::ProtoDescriptor
+                | BytecodeIntrinsicType::ProtoLimits
+                | BytecodeIntrinsicType::ProtoDecodeOptions
+                | BytecodeIntrinsicType::ProtoEncodeOptions
+                | BytecodeIntrinsicType::ProtoWireTypePolicy
+                | BytecodeIntrinsicType::ProtoUnknownPolicy
+                | BytecodeIntrinsicType::ProtoReader
+                | BytecodeIntrinsicType::ProtoWriter
+                | BytecodeIntrinsicType::UnknownFields => None,
             };
             if let Some((required, capability, label)) = requirement {
                 let context = format!("type#{index}");
@@ -2233,6 +2320,10 @@ impl Verifier<'_> {
                 && !callable.name.starts_with("std.fs.Directory.")
                 && !callable.name.starts_with("std.json.JsonReader.")
                 && !callable.name.starts_with("std.json.JsonWriter.")
+                && !callable.name.starts_with("std.messagepack.MessagePackReader.")
+                && !callable.name.starts_with("std.messagepack.MessagePackWriter.")
+                && !callable.name.starts_with("std.protobuf.ProtoReader.")
+                && !callable.name.starts_with("std.protobuf.ProtoWriter.")
                 && !callable.name.starts_with("std.async.Waiter.wait")
                 // Source HIR admits an exclusive receiver only for the
                 // `AsyncIterator.next` implementation.  The bytecode table
@@ -2271,6 +2362,15 @@ impl Verifier<'_> {
                 && !callable.name.starts_with("std.fs.Directory.")
                 && !callable.name.starts_with("std.json.JsonReader.")
                 && !callable.name.starts_with("std.json.JsonWriter.")
+                && !callable
+                    .name
+                    .starts_with("std.messagepack.MessagePackReader.")
+                && !callable
+                    .name
+                    .starts_with("std.messagepack.MessagePackWriter.")
+                && !callable.name.starts_with("std.protobuf.ProtoReader.")
+                && !callable.name.starts_with("std.protobuf.ProtoWriter.")
+                && !callable.name.starts_with("std.protobuf.UnknownFields.")
                 && !callable.name.starts_with("intrinsic.json.JsonReader.")
                 && !callable.name.starts_with("intrinsic.json.JsonWriter.")
                 && !callable.name.starts_with("std.collections.")
@@ -14698,6 +14798,27 @@ mod tests {
             BytecodeIntrinsicType::JsonDuplicatePolicy,
             BytecodeIntrinsicType::JsonUnknownFieldPolicy,
             BytecodeIntrinsicType::JsonNumberPolicy,
+            BytecodeIntrinsicType::MessagePackLimits,
+            BytecodeIntrinsicType::MessagePackDecodeOptions,
+            BytecodeIntrinsicType::MessagePackEncodeOptions,
+            BytecodeIntrinsicType::MessagePackDuplicatePolicy,
+            BytecodeIntrinsicType::MessagePackUnknownExtensionPolicy,
+            BytecodeIntrinsicType::MessagePackNonMinimalPolicy,
+            BytecodeIntrinsicType::MessagePackValue,
+            BytecodeIntrinsicType::MessagePackValueView,
+            BytecodeIntrinsicType::MessagePackRaw,
+            BytecodeIntrinsicType::MessagePackTimestamp,
+            BytecodeIntrinsicType::MessagePackReader,
+            BytecodeIntrinsicType::MessagePackWriter,
+            BytecodeIntrinsicType::ProtoDescriptor,
+            BytecodeIntrinsicType::ProtoLimits,
+            BytecodeIntrinsicType::ProtoDecodeOptions,
+            BytecodeIntrinsicType::ProtoEncodeOptions,
+            BytecodeIntrinsicType::ProtoWireTypePolicy,
+            BytecodeIntrinsicType::ProtoUnknownPolicy,
+            BytecodeIntrinsicType::ProtoReader,
+            BytecodeIntrinsicType::ProtoWriter,
+            BytecodeIntrinsicType::UnknownFields,
         ] {
             let arguments = match constructor.arity() {
                 0 => Vec::new(),
@@ -14772,7 +14893,24 @@ mod tests {
                 | BytecodeIntrinsicType::JsonValue
                 | BytecodeIntrinsicType::JsonValueView
                 | BytecodeIntrinsicType::JsonRaw
-                | BytecodeIntrinsicType::JsonNumber => [true, true, false, false, true, true],
+                | BytecodeIntrinsicType::JsonNumber
+                | BytecodeIntrinsicType::MessagePackLimits
+                | BytecodeIntrinsicType::MessagePackDecodeOptions
+                | BytecodeIntrinsicType::MessagePackEncodeOptions
+                | BytecodeIntrinsicType::MessagePackDuplicatePolicy
+                | BytecodeIntrinsicType::MessagePackUnknownExtensionPolicy
+                | BytecodeIntrinsicType::MessagePackNonMinimalPolicy
+                | BytecodeIntrinsicType::MessagePackValue
+                | BytecodeIntrinsicType::MessagePackValueView
+                | BytecodeIntrinsicType::MessagePackRaw
+                | BytecodeIntrinsicType::MessagePackTimestamp
+                | BytecodeIntrinsicType::ProtoDescriptor
+                | BytecodeIntrinsicType::ProtoLimits
+                | BytecodeIntrinsicType::ProtoDecodeOptions
+                | BytecodeIntrinsicType::ProtoEncodeOptions
+                | BytecodeIntrinsicType::ProtoWireTypePolicy
+                | BytecodeIntrinsicType::ProtoUnknownPolicy
+                | BytecodeIntrinsicType::UnknownFields => [true, true, false, false, true, true],
                 BytecodeIntrinsicType::BytesBuilder
                 | BytecodeIntrinsicType::FormatBuilder
                 | BytecodeIntrinsicType::VirtualTime => [false, true, false, false, true, false],
@@ -14801,6 +14939,10 @@ mod tests {
                 | BytecodeIntrinsicType::JsonDuplicatePolicy
                 | BytecodeIntrinsicType::JsonUnknownFieldPolicy
                 | BytecodeIntrinsicType::JsonNumberPolicy => all,
+                BytecodeIntrinsicType::MessagePackReader
+                | BytecodeIntrinsicType::MessagePackWriter
+                | BytecodeIntrinsicType::ProtoReader
+                | BytecodeIntrinsicType::ProtoWriter => [false, true, false, false, true, false],
                 BytecodeIntrinsicType::Duration
                 | BytecodeIntrinsicType::DurationError
                 | BytecodeIntrinsicType::ClockError => all,

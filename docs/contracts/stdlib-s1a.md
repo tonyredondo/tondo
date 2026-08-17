@@ -16,8 +16,9 @@ every owner:
 - `public_api` is derived only from the public-signature audit. `complete` means
   every indexed signature is verified, `partial` preserves audit gaps, and
   `not-applicable` is reserved for intrinsic, metadata-only, or build-only
-  owners without public signature rows. `std.serialization` remains `partial`
-  until its public protocol rows are audited.
+  owners without public signature rows. The current audit is complete for all
+  indexed runtime signatures; `std.meta`, `std.reflect` and `std.serialization`
+  use explicit build-only/not-applicable boundaries.
 
 Each owner links at least one verifiable example. Runtime fixtures must retain
 their `.exit` and `.stdout`/`.codes` sidecars; codec examples additionally link
@@ -42,7 +43,8 @@ La coordinación Hosted se comprueba con
 [`stdlib-hosted-implementation-coordination.md`](./stdlib-hosted-implementation-coordination.md)
 y [`testing/stdlib-hosted-implementation-coordination.json`](../../testing/stdlib-hosted-implementation-coordination.json);
 verifica `std.console`, `std.path`, `std.fs` y `std.process`, sus capabilities,
-bridges y las 48 firmas públicas sin promover los gaps globales.
+bridges y las 48 firmas públicas; la auditoría global de codecs y owners
+build-only ya está verificada sin promover todavía las celdas S1A.
 Every owner has one canonical implementation boundary, source-controlled tests
 and a proof description. Portable kernels live in `tondo-stdlib`; compiler and
 VM bridges are limited to intrinsic lowering or capability-gated host effects.
@@ -52,9 +54,9 @@ The aggregate owner graph and capability/API rules live in the single
 machine-readable integration contract
 [`testing/stdlib-spec.json`](../../testing/stdlib-spec.json). The strict gate
 validates its topological order and links it to this document and the canonical
-standard-library specification; it does not promote pending typed codecs. The
-Core coordinator is followed by the Hosted coordinator, whose next explicit
-block is `STD-CODEC-PUBLIC-001`.
+standard-library specification; it does not promote pending fuzz/performance/
+conformance dimensions. The public codec audit is closed; the next
+implementation block is `NATIVE-TARGET-DESC-001`.
 
 The A0 `std.meta` owner has a dedicated contract at
 [`testing/stdlib-meta.json`](../../testing/stdlib-meta.json) and a separate

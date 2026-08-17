@@ -2457,7 +2457,28 @@ impl<'program, 'host> Engine<'program, 'host> {
                     | BytecodeIntrinsicType::JsonRaw
                     | BytecodeIntrinsicType::JsonNumber
                     | BytecodeIntrinsicType::JsonReader
-                    | BytecodeIntrinsicType::JsonWriter => {}
+                    | BytecodeIntrinsicType::JsonWriter
+                    | BytecodeIntrinsicType::MessagePackLimits
+                    | BytecodeIntrinsicType::MessagePackDecodeOptions
+                    | BytecodeIntrinsicType::MessagePackEncodeOptions
+                    | BytecodeIntrinsicType::MessagePackDuplicatePolicy
+                    | BytecodeIntrinsicType::MessagePackUnknownExtensionPolicy
+                    | BytecodeIntrinsicType::MessagePackNonMinimalPolicy
+                    | BytecodeIntrinsicType::MessagePackValue
+                    | BytecodeIntrinsicType::MessagePackValueView
+                    | BytecodeIntrinsicType::MessagePackRaw
+                    | BytecodeIntrinsicType::MessagePackTimestamp
+                    | BytecodeIntrinsicType::MessagePackReader
+                    | BytecodeIntrinsicType::MessagePackWriter
+                    | BytecodeIntrinsicType::ProtoDescriptor
+                    | BytecodeIntrinsicType::ProtoLimits
+                    | BytecodeIntrinsicType::ProtoDecodeOptions
+                    | BytecodeIntrinsicType::ProtoEncodeOptions
+                    | BytecodeIntrinsicType::ProtoWireTypePolicy
+                    | BytecodeIntrinsicType::ProtoUnknownPolicy
+                    | BytecodeIntrinsicType::ProtoReader
+                    | BytecodeIntrinsicType::ProtoWriter
+                    | BytecodeIntrinsicType::UnknownFields => {}
                     BytecodeIntrinsicType::ProcessHandle => {
                         let Value::Host(value) = value else {
                             return Err(VmError::invariant(
@@ -4133,6 +4154,29 @@ fn runtime_host_kind(constructor: BytecodeIntrinsicType) -> Option<RuntimeHostVa
         BytecodeIntrinsicType::JsonNumber => RuntimeHostValueKind::JsonNumber,
         BytecodeIntrinsicType::JsonReader => RuntimeHostValueKind::JsonReader,
         BytecodeIntrinsicType::JsonWriter => RuntimeHostValueKind::JsonWriter,
+        BytecodeIntrinsicType::MessagePackLimits
+        | BytecodeIntrinsicType::MessagePackDecodeOptions
+        | BytecodeIntrinsicType::MessagePackEncodeOptions
+        | BytecodeIntrinsicType::MessagePackDuplicatePolicy
+        | BytecodeIntrinsicType::MessagePackUnknownExtensionPolicy
+        | BytecodeIntrinsicType::MessagePackNonMinimalPolicy => {
+            RuntimeHostValueKind::MessagePackValue
+        }
+        BytecodeIntrinsicType::MessagePackValue => RuntimeHostValueKind::MessagePackValue,
+        BytecodeIntrinsicType::MessagePackValueView => RuntimeHostValueKind::MessagePackValueView,
+        BytecodeIntrinsicType::MessagePackRaw => RuntimeHostValueKind::MessagePackRaw,
+        BytecodeIntrinsicType::MessagePackTimestamp => RuntimeHostValueKind::MessagePackTimestamp,
+        BytecodeIntrinsicType::MessagePackReader => RuntimeHostValueKind::MessagePackReader,
+        BytecodeIntrinsicType::MessagePackWriter => RuntimeHostValueKind::MessagePackWriter,
+        BytecodeIntrinsicType::ProtoDescriptor => RuntimeHostValueKind::ProtoDescriptor,
+        BytecodeIntrinsicType::ProtoLimits => RuntimeHostValueKind::ProtoLimits,
+        BytecodeIntrinsicType::ProtoDecodeOptions => RuntimeHostValueKind::ProtoDecodeOptions,
+        BytecodeIntrinsicType::ProtoEncodeOptions => RuntimeHostValueKind::ProtoEncodeOptions,
+        BytecodeIntrinsicType::ProtoWireTypePolicy => RuntimeHostValueKind::ProtoWireTypePolicy,
+        BytecodeIntrinsicType::ProtoUnknownPolicy => RuntimeHostValueKind::ProtoUnknownPolicy,
+        BytecodeIntrinsicType::ProtoReader => RuntimeHostValueKind::ProtoReader,
+        BytecodeIntrinsicType::ProtoWriter => RuntimeHostValueKind::ProtoWriter,
+        BytecodeIntrinsicType::UnknownFields => RuntimeHostValueKind::UnknownFields,
         BytecodeIntrinsicType::Array
         | BytecodeIntrinsicType::Map
         | BytecodeIntrinsicType::Set

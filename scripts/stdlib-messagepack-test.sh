@@ -118,9 +118,9 @@ jq -e '
   and any(.rows[] | select(.owner == "std.messagepack"); .symbol == "std.messagepack.parse")
   and any(.rows[] | select(.owner == "std.messagepack");
     .signature == "pub unsafe fn rawUnchecked(input: Bytes): Raw"
-    and .status == "gap"
-    and (.missing | sort) == ["exact-signature-shape", "lowering-symbol"])
-' testing/stdlib-public-api.json >/dev/null || die "public API audit lost the pending unsafe rawUnchecked boundary"
+    and .status == "verified"
+    and (.missing | length) == 0)
+' testing/stdlib-public-api.json >/dev/null || die "public API audit lost the verified unsafe rawUnchecked boundary"
 
 jq -e '
   any(.owners[]; .id == "std.messagepack"

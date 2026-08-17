@@ -114,14 +114,13 @@ impl CapabilityAnalysis {
         capability: HirCapability,
         assumptions: &CapabilityAssumptions,
     ) -> Result<HirCapabilityStatus, TypeError> {
-        let mut interner = program.interner.clone();
         let mut nodes = BTreeMap::<(TypeId, HirCapability), CapabilityNode>::new();
         let mut pending = vec![(root, capability)];
         while let Some(key @ (ty, capability)) = pending.pop() {
             if nodes.contains_key(&key) {
                 continue;
             }
-            let mut node = self.node(program, &mut interner, ty, capability, assumptions)?;
+            let mut node = self.node(program, &program.interner, ty, capability, assumptions)?;
             node.dependencies.sort_unstable();
             node.dependencies.dedup();
             pending.extend(node.dependencies.iter().copied());
@@ -237,7 +236,7 @@ impl CapabilityAnalysis {
     fn node(
         &self,
         program: &HirProgram,
-        interner: &mut TypeInterner,
+        interner: &TypeInterner,
         ty: TypeId,
         capability: HirCapability,
         assumptions: &CapabilityAssumptions,
@@ -306,12 +305,13 @@ impl CapabilityAnalysis {
                     fixed(HirCapabilityStatus::Unsatisfied)
                 } else {
                     let substitution = TypeSubstitution::new(arguments);
+                    let mut substitution_interner = interner.clone();
                     let dependencies = closure
                         .captures()
                         .iter()
                         .map(|capture| {
                             substitution
-                                .apply(interner, capture.ty())
+                                .apply(&mut substitution_interner, capture.ty())
                                 .map(|ty| (ty, capability))
                         })
                         .collect::<Result<Vec<_>, _>>()?;
@@ -716,7 +716,18 @@ fn intrinsic_node(
         | IntrinsicType::JsonEncodeOptions
         | IntrinsicType::JsonDuplicatePolicy
         | IntrinsicType::JsonUnknownFieldPolicy
-        | IntrinsicType::JsonNumberPolicy => {
+        | IntrinsicType::JsonNumberPolicy
+        | IntrinsicType::MessagePackLimits
+        | IntrinsicType::MessagePackDecodeOptions
+        | IntrinsicType::MessagePackEncodeOptions
+        | IntrinsicType::MessagePackDuplicatePolicy
+        | IntrinsicType::MessagePackUnknownExtensionPolicy
+        | IntrinsicType::MessagePackNonMinimalPolicy
+        | IntrinsicType::ProtoLimits
+        | IntrinsicType::ProtoDecodeOptions
+        | IntrinsicType::ProtoEncodeOptions
+        | IntrinsicType::ProtoWireTypePolicy
+        | IntrinsicType::ProtoUnknownPolicy => {
             if matches!(
                 capability,
                 HirCapability::Copy
@@ -873,7 +884,13 @@ fn intrinsic_node(
         IntrinsicType::JsonValue
         | IntrinsicType::JsonValueView
         | IntrinsicType::JsonRaw
-        | IntrinsicType::JsonNumber => {
+        | IntrinsicType::JsonNumber
+        | IntrinsicType::MessagePackValue
+        | IntrinsicType::MessagePackValueView
+        | IntrinsicType::MessagePackRaw
+        | IntrinsicType::MessagePackTimestamp
+        | IntrinsicType::ProtoDescriptor
+        | IntrinsicType::UnknownFields => {
             if matches!(
                 capability,
                 HirCapability::Copy
@@ -881,6 +898,16 @@ fn intrinsic_node(
                     | HirCapability::Send
                     | HirCapability::Share
             ) {
+                satisfied(Vec::new())
+            } else {
+                fixed(HirCapabilityStatus::Unsatisfied)
+            }
+        }
+        IntrinsicType::MessagePackReader
+        | IntrinsicType::MessagePackWriter
+        | IntrinsicType::ProtoReader
+        | IntrinsicType::ProtoWriter => {
+            if matches!(capability, HirCapability::Discard | HirCapability::Send) {
                 satisfied(Vec::new())
             } else {
                 fixed(HirCapabilityStatus::Unsatisfied)

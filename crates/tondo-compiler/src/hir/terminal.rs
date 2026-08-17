@@ -154,7 +154,28 @@ pub(crate) const fn intrinsic_terminal_contract(
         | IntrinsicType::JsonRaw
         | IntrinsicType::JsonNumber
         | IntrinsicType::JsonReader
-        | IntrinsicType::JsonWriter => None,
+        | IntrinsicType::JsonWriter
+        | IntrinsicType::MessagePackLimits
+        | IntrinsicType::MessagePackDecodeOptions
+        | IntrinsicType::MessagePackEncodeOptions
+        | IntrinsicType::MessagePackDuplicatePolicy
+        | IntrinsicType::MessagePackUnknownExtensionPolicy
+        | IntrinsicType::MessagePackNonMinimalPolicy
+        | IntrinsicType::MessagePackValue
+        | IntrinsicType::MessagePackValueView
+        | IntrinsicType::MessagePackRaw
+        | IntrinsicType::MessagePackTimestamp
+        | IntrinsicType::MessagePackReader
+        | IntrinsicType::MessagePackWriter
+        | IntrinsicType::ProtoDescriptor
+        | IntrinsicType::ProtoLimits
+        | IntrinsicType::ProtoDecodeOptions
+        | IntrinsicType::ProtoEncodeOptions
+        | IntrinsicType::ProtoWireTypePolicy
+        | IntrinsicType::ProtoUnknownPolicy
+        | IntrinsicType::ProtoReader
+        | IntrinsicType::ProtoWriter
+        | IntrinsicType::UnknownFields => None,
     }
 }
 
@@ -532,7 +553,28 @@ fn intrinsic_node(constructor: IntrinsicType, arguments: Vec<TypeId>) -> Termina
         | IntrinsicType::JsonRaw
         | IntrinsicType::JsonNumber
         | IntrinsicType::JsonReader
-        | IntrinsicType::JsonWriter => fixed(HirTerminalStatus::Absent),
+        | IntrinsicType::JsonWriter
+        | IntrinsicType::MessagePackLimits
+        | IntrinsicType::MessagePackDecodeOptions
+        | IntrinsicType::MessagePackEncodeOptions
+        | IntrinsicType::MessagePackDuplicatePolicy
+        | IntrinsicType::MessagePackUnknownExtensionPolicy
+        | IntrinsicType::MessagePackNonMinimalPolicy
+        | IntrinsicType::MessagePackValue
+        | IntrinsicType::MessagePackValueView
+        | IntrinsicType::MessagePackRaw
+        | IntrinsicType::MessagePackTimestamp
+        | IntrinsicType::MessagePackReader
+        | IntrinsicType::MessagePackWriter
+        | IntrinsicType::ProtoDescriptor
+        | IntrinsicType::ProtoLimits
+        | IntrinsicType::ProtoDecodeOptions
+        | IntrinsicType::ProtoEncodeOptions
+        | IntrinsicType::ProtoWireTypePolicy
+        | IntrinsicType::ProtoUnknownPolicy
+        | IntrinsicType::ProtoReader
+        | IntrinsicType::ProtoWriter
+        | IntrinsicType::UnknownFields => fixed(HirTerminalStatus::Absent),
         IntrinsicType::Join | IntrinsicType::ProcessHandle | IntrinsicType::Timer => {
             unreachable!("registered terminal roots return above")
         }

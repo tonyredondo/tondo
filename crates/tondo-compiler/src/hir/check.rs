@@ -923,7 +923,28 @@ impl<'a> ExpressionChecker<'a> {
                         | IntrinsicType::JsonRaw
                         | IntrinsicType::JsonNumber
                         | IntrinsicType::JsonReader
-                        | IntrinsicType::JsonWriter => None,
+                        | IntrinsicType::JsonWriter
+                        | IntrinsicType::MessagePackLimits
+                        | IntrinsicType::MessagePackDecodeOptions
+                        | IntrinsicType::MessagePackEncodeOptions
+                        | IntrinsicType::MessagePackDuplicatePolicy
+                        | IntrinsicType::MessagePackUnknownExtensionPolicy
+                        | IntrinsicType::MessagePackNonMinimalPolicy
+                        | IntrinsicType::MessagePackValue
+                        | IntrinsicType::MessagePackValueView
+                        | IntrinsicType::MessagePackRaw
+                        | IntrinsicType::MessagePackTimestamp
+                        | IntrinsicType::MessagePackReader
+                        | IntrinsicType::MessagePackWriter
+                        | IntrinsicType::ProtoDescriptor
+                        | IntrinsicType::ProtoLimits
+                        | IntrinsicType::ProtoDecodeOptions
+                        | IntrinsicType::ProtoEncodeOptions
+                        | IntrinsicType::ProtoWireTypePolicy
+                        | IntrinsicType::ProtoUnknownPolicy
+                        | IntrinsicType::ProtoReader
+                        | IntrinsicType::ProtoWriter
+                        | IntrinsicType::UnknownFields => None,
                     };
                     if let Some((required, capability, context)) = requirement {
                         let _ = self.require_capability_with_generics(
@@ -6561,7 +6582,10 @@ impl<'a> ExpressionChecker<'a> {
         let Some(path) = self.expression_path_info(file, node)? else {
             return Ok(None);
         };
-        if let Some(function) = self.json_policy_variant(&path) {
+        if let Some(function) = self
+            .json_policy_variant(&path)
+            .or_else(|| self.codec_policy_variant(&path))
+        {
             return self
                 .allocate_bootstrap_value_call(
                     self.sources.span(file, node.range())?,
@@ -6799,6 +6823,60 @@ impl<'a> ExpressionChecker<'a> {
             ("JsonNumberPolicy", "Exact") => Some(HirBootstrapHostFunction::JsonNumberExact),
             ("JsonNumberPolicy", "Float32") => Some(HirBootstrapHostFunction::JsonNumberFloat32),
             ("JsonNumberPolicy", "Float64") => Some(HirBootstrapHostFunction::JsonNumberFloat64),
+            _ => None,
+        }
+    }
+
+    fn codec_policy_variant(&self, path: &PatternPathInfo) -> Option<HirBootstrapHostFunction> {
+        let ResolvedName::External {
+            module,
+            namespace: Namespace::Type,
+            name,
+        } = &path.resolved
+        else {
+            return None;
+        };
+        if module.package().as_str() != "toolchain:std:0.1-bootstrap" || path.suffix.len() != 1 {
+            return None;
+        }
+        let member = path.suffix[0].name.as_str();
+        match (module.path().as_str(), name.as_str(), member) {
+            ("messagepack", "MessagePackDuplicatePolicy", "Preserve") => {
+                Some(HirBootstrapHostFunction::MessagePackDuplicatePreserve)
+            }
+            ("messagepack", "MessagePackDuplicatePolicy", "Reject") => {
+                Some(HirBootstrapHostFunction::MessagePackDuplicateReject)
+            }
+            ("messagepack", "MessagePackDuplicatePolicy", "First") => {
+                Some(HirBootstrapHostFunction::MessagePackDuplicateFirst)
+            }
+            ("messagepack", "MessagePackDuplicatePolicy", "Last") => {
+                Some(HirBootstrapHostFunction::MessagePackDuplicateLast)
+            }
+            ("messagepack", "MessagePackUnknownExtensionPolicy", "Preserve") => {
+                Some(HirBootstrapHostFunction::MessagePackUnknownExtensionPreserve)
+            }
+            ("messagepack", "MessagePackUnknownExtensionPolicy", "Reject") => {
+                Some(HirBootstrapHostFunction::MessagePackUnknownExtensionReject)
+            }
+            ("messagepack", "MessagePackNonMinimalPolicy", "Accept") => {
+                Some(HirBootstrapHostFunction::MessagePackNonMinimalAccept)
+            }
+            ("messagepack", "MessagePackNonMinimalPolicy", "Reject") => {
+                Some(HirBootstrapHostFunction::MessagePackNonMinimalReject)
+            }
+            ("protobuf", "ProtoWireTypePolicy", "PreserveUnknown") => {
+                Some(HirBootstrapHostFunction::ProtobufWireTypePreserveUnknown)
+            }
+            ("protobuf", "ProtoWireTypePolicy", "Reject") => {
+                Some(HirBootstrapHostFunction::ProtobufWireTypeReject)
+            }
+            ("protobuf", "ProtoUnknownPolicy", "Preserve") => {
+                Some(HirBootstrapHostFunction::ProtobufUnknownPreserve)
+            }
+            ("protobuf", "ProtoUnknownPolicy", "Discard") => {
+                Some(HirBootstrapHostFunction::ProtobufUnknownDiscard)
+            }
             _ => None,
         }
     }
@@ -14311,6 +14389,64 @@ impl<'a> ExpressionChecker<'a> {
             {
                 (module_token, function_token, 8_u8)
             }
+            [module_token, type_token, function_token]
+                if type_token.token().normalized_identifier() == Some("MessagePackTimestamp") =>
+            {
+                (module_token, function_token, 9_u8)
+            }
+            [module_token, type_token, function_token]
+                if type_token.token().normalized_identifier() == Some("MessagePackReader") =>
+            {
+                (module_token, function_token, 10_u8)
+            }
+            [module_token, type_token, function_token]
+                if type_token.token().normalized_identifier() == Some("MessagePackWriter") =>
+            {
+                (module_token, function_token, 11_u8)
+            }
+            [module_token, type_token, function_token]
+                if type_token.token().normalized_identifier() == Some("ProtoReader") =>
+            {
+                (module_token, function_token, 12_u8)
+            }
+            [module_token, type_token, function_token]
+                if type_token.token().normalized_identifier() == Some("ProtoWriter") =>
+            {
+                (module_token, function_token, 13_u8)
+            }
+            [module_token, type_token, function_token]
+                if type_token.token().normalized_identifier() == Some("UnknownFields") =>
+            {
+                (module_token, function_token, 14_u8)
+            }
+            [module_token, type_token, function_token]
+                if type_token.token().normalized_identifier()
+                    == Some("MessagePackDuplicatePolicy") =>
+            {
+                (module_token, function_token, 15_u8)
+            }
+            [module_token, type_token, function_token]
+                if type_token.token().normalized_identifier()
+                    == Some("MessagePackUnknownExtensionPolicy") =>
+            {
+                (module_token, function_token, 16_u8)
+            }
+            [module_token, type_token, function_token]
+                if type_token.token().normalized_identifier()
+                    == Some("MessagePackNonMinimalPolicy") =>
+            {
+                (module_token, function_token, 17_u8)
+            }
+            [module_token, type_token, function_token]
+                if type_token.token().normalized_identifier() == Some("ProtoWireTypePolicy") =>
+            {
+                (module_token, function_token, 18_u8)
+            }
+            [module_token, type_token, function_token]
+                if type_token.token().normalized_identifier() == Some("ProtoUnknownPolicy") =>
+            {
+                (module_token, function_token, 19_u8)
+            }
             _ => return Ok(None),
         };
         let Some(module_reference) = self.resolved.reference(file, module_token.range()) else {
@@ -14389,6 +14525,104 @@ impl<'a> ExpressionChecker<'a> {
                 }
                 _ => return Ok(None),
             }
+        } else if static_type == 9 {
+            match (module.path().as_str(), function_name) {
+                ("messagepack", Some("fromExt")) => {
+                    HirBootstrapHostFunction::MessagePackTimestampFromExt
+                }
+                ("messagepack", Some("toExt")) => {
+                    HirBootstrapHostFunction::MessagePackTimestampToExt
+                }
+                _ => return Ok(None),
+            }
+        } else if static_type == 10 {
+            match (module.path().as_str(), function_name) {
+                ("messagepack", Some("fromBytes")) => {
+                    HirBootstrapHostFunction::MessagePackReaderFromBytes
+                }
+                ("messagepack", Some("fromReader")) => {
+                    HirBootstrapHostFunction::MessagePackReaderFromReader
+                }
+                _ => return Ok(None),
+            }
+        } else if static_type == 11 {
+            match (module.path().as_str(), function_name) {
+                ("messagepack", Some("toWriter")) => {
+                    HirBootstrapHostFunction::MessagePackWriterToWriter
+                }
+                _ => return Ok(None),
+            }
+        } else if static_type == 12 {
+            match (module.path().as_str(), function_name) {
+                ("protobuf", Some("fromBytes")) => {
+                    HirBootstrapHostFunction::ProtobufReaderFromBytes
+                }
+                ("protobuf", Some("fromReader")) => {
+                    HirBootstrapHostFunction::ProtobufReaderFromReader
+                }
+                _ => return Ok(None),
+            }
+        } else if static_type == 13 {
+            match (module.path().as_str(), function_name) {
+                ("protobuf", Some("toWriter")) => HirBootstrapHostFunction::ProtobufWriterToWriter,
+                _ => return Ok(None),
+            }
+        } else if static_type == 14 {
+            match (module.path().as_str(), function_name) {
+                ("protobuf", Some("count")) => HirBootstrapHostFunction::ProtobufUnknownFieldsCount,
+                ("protobuf", Some("discard")) => {
+                    HirBootstrapHostFunction::ProtobufUnknownFieldsDiscard
+                }
+                _ => return Ok(None),
+            }
+        } else if static_type == 15 {
+            match (module.path().as_str(), function_name) {
+                ("messagepack", Some("Preserve")) => {
+                    HirBootstrapHostFunction::MessagePackDuplicatePreserve
+                }
+                ("messagepack", Some("Reject")) => {
+                    HirBootstrapHostFunction::MessagePackDuplicateReject
+                }
+                ("messagepack", Some("First")) => {
+                    HirBootstrapHostFunction::MessagePackDuplicateFirst
+                }
+                ("messagepack", Some("Last")) => HirBootstrapHostFunction::MessagePackDuplicateLast,
+                _ => return Ok(None),
+            }
+        } else if static_type == 16 {
+            match (module.path().as_str(), function_name) {
+                ("messagepack", Some("Preserve")) => {
+                    HirBootstrapHostFunction::MessagePackUnknownExtensionPreserve
+                }
+                ("messagepack", Some("Reject")) => {
+                    HirBootstrapHostFunction::MessagePackUnknownExtensionReject
+                }
+                _ => return Ok(None),
+            }
+        } else if static_type == 17 {
+            match (module.path().as_str(), function_name) {
+                ("messagepack", Some("Accept")) => {
+                    HirBootstrapHostFunction::MessagePackNonMinimalAccept
+                }
+                ("messagepack", Some("Reject")) => {
+                    HirBootstrapHostFunction::MessagePackNonMinimalReject
+                }
+                _ => return Ok(None),
+            }
+        } else if static_type == 18 {
+            match (module.path().as_str(), function_name) {
+                ("protobuf", Some("PreserveUnknown")) => {
+                    HirBootstrapHostFunction::ProtobufWireTypePreserveUnknown
+                }
+                ("protobuf", Some("Reject")) => HirBootstrapHostFunction::ProtobufWireTypeReject,
+                _ => return Ok(None),
+            }
+        } else if static_type == 19 {
+            match (module.path().as_str(), function_name) {
+                ("protobuf", Some("Preserve")) => HirBootstrapHostFunction::ProtobufUnknownPreserve,
+                ("protobuf", Some("Discard")) => HirBootstrapHostFunction::ProtobufUnknownDiscard,
+                _ => return Ok(None),
+            }
         } else {
             match (module.path().as_str(), function_name) {
                 ("console", Some("print")) => HirBootstrapHostFunction::ConsolePrint,
@@ -14431,7 +14665,55 @@ impl<'a> ExpressionChecker<'a> {
                 ("messagepack", Some("canonicalize")) => {
                     HirBootstrapHostFunction::MessagePackCanonicalize
                 }
+                ("messagepack", Some("limits")) => {
+                    HirBootstrapHostFunction::MessagePackLimitsConstruct
+                }
+                ("messagepack", Some("decodeOptions")) => {
+                    HirBootstrapHostFunction::MessagePackDecodeOptionsConstruct
+                }
+                ("messagepack", Some("encodeOptions")) => {
+                    HirBootstrapHostFunction::MessagePackEncodeOptionsConstruct
+                }
+                ("messagepack", Some("Preserve")) => {
+                    HirBootstrapHostFunction::MessagePackDuplicatePreserve
+                }
+                ("messagepack", Some("Reject")) => {
+                    HirBootstrapHostFunction::MessagePackDuplicateReject
+                }
+                ("messagepack", Some("First")) => {
+                    HirBootstrapHostFunction::MessagePackDuplicateFirst
+                }
+                ("messagepack", Some("Last")) => HirBootstrapHostFunction::MessagePackDuplicateLast,
+                ("messagepack", Some("parse")) => HirBootstrapHostFunction::MessagePackParse,
+                ("messagepack", Some("parseView")) => {
+                    HirBootstrapHostFunction::MessagePackParseView
+                }
+                ("messagepack", Some("decode")) => HirBootstrapHostFunction::MessagePackDecode,
+                ("messagepack", Some("encode")) if explicit_bracket.is_none() => {
+                    HirBootstrapHostFunction::MessagePackEncodeValue
+                }
+                ("messagepack", Some("encode")) => HirBootstrapHostFunction::MessagePackEncode,
+                ("messagepack", Some("encodeDeterministic")) => {
+                    HirBootstrapHostFunction::MessagePackEncodeDeterministic
+                }
+                ("messagepack", Some("raw")) => HirBootstrapHostFunction::MessagePackRaw,
+                ("messagepack", Some("rawUnchecked")) => {
+                    HirBootstrapHostFunction::MessagePackRawUnchecked
+                }
                 ("protobuf", Some("validate")) => HirBootstrapHostFunction::ProtobufValidate,
+                ("protobuf", Some("decode")) => HirBootstrapHostFunction::ProtobufDecode,
+                ("protobuf", Some("encode")) => HirBootstrapHostFunction::ProtobufEncode,
+                ("protobuf", Some("encodeDeterministic")) => {
+                    HirBootstrapHostFunction::ProtobufEncodeDeterministic
+                }
+                ("protobuf", Some("descriptor")) => HirBootstrapHostFunction::ProtobufDescriptor,
+                ("protobuf", Some("limits")) => HirBootstrapHostFunction::ProtobufLimitsConstruct,
+                ("protobuf", Some("decodeOptions")) => {
+                    HirBootstrapHostFunction::ProtobufDecodeOptionsConstruct
+                }
+                ("protobuf", Some("encodeOptions")) => {
+                    HirBootstrapHostFunction::ProtobufEncodeOptionsConstruct
+                }
                 ("async", Some("oneshot")) => HirBootstrapHostFunction::AsyncOneshot,
                 ("iter", Some("map")) => HirBootstrapHostFunction::IterMap,
                 ("iter", Some("filter")) => HirBootstrapHostFunction::IterFilter,
@@ -17889,6 +18171,9 @@ impl<'a> ExpressionChecker<'a> {
                 (IntrinsicType::JsonNumber, "toFloat64") => {
                     HirBootstrapHostFunction::JsonNumberToFloat64
                 }
+                (IntrinsicType::MessagePackTimestamp, "toExt") => {
+                    HirBootstrapHostFunction::MessagePackTimestampToExt
+                }
                 (IntrinsicType::JsonReader, "next") => HirBootstrapHostFunction::JsonReaderNext,
                 (IntrinsicType::JsonReader, "own") => HirBootstrapHostFunction::JsonReaderOwn,
                 (IntrinsicType::JsonReader, "finish") => HirBootstrapHostFunction::JsonReaderFinish,
@@ -17935,6 +18220,40 @@ impl<'a> ExpressionChecker<'a> {
                         == crate::source::SourceOrigin::GeneratedStandard =>
                 {
                     HirBootstrapHostFunction::JsonWriterBufferFinish
+                }
+                (IntrinsicType::MessagePackReader, "next") => {
+                    HirBootstrapHostFunction::MessagePackReaderNext
+                }
+                (IntrinsicType::MessagePackReader, "own") => {
+                    HirBootstrapHostFunction::MessagePackReaderOwn
+                }
+                (IntrinsicType::MessagePackReader, "finish") => {
+                    HirBootstrapHostFunction::MessagePackReaderFinish
+                }
+                (IntrinsicType::MessagePackWriter, "write") => {
+                    HirBootstrapHostFunction::MessagePackWriterWrite
+                }
+                (IntrinsicType::MessagePackWriter, "finish") => {
+                    HirBootstrapHostFunction::MessagePackWriterFinish
+                }
+                (IntrinsicType::ProtoReader, "next") => {
+                    HirBootstrapHostFunction::ProtobufReaderNext
+                }
+                (IntrinsicType::ProtoReader, "own") => HirBootstrapHostFunction::ProtobufReaderOwn,
+                (IntrinsicType::ProtoReader, "finish") => {
+                    HirBootstrapHostFunction::ProtobufReaderFinish
+                }
+                (IntrinsicType::ProtoWriter, "write") => {
+                    HirBootstrapHostFunction::ProtobufWriterWrite
+                }
+                (IntrinsicType::ProtoWriter, "finish") => {
+                    HirBootstrapHostFunction::ProtobufWriterFinish
+                }
+                (IntrinsicType::UnknownFields, "count") => {
+                    HirBootstrapHostFunction::ProtobufUnknownFieldsCount
+                }
+                (IntrinsicType::UnknownFields, "discard") => {
+                    HirBootstrapHostFunction::ProtobufUnknownFieldsDiscard
                 }
                 _ => return Ok(None),
             },
@@ -17990,6 +18309,17 @@ impl<'a> ExpressionChecker<'a> {
                 | HirBootstrapHostFunction::JsonReaderSerializationNext
                 | HirBootstrapHostFunction::JsonReaderSerializationNextBase64
                 | HirBootstrapHostFunction::JsonReaderSerializationReject
+                | HirBootstrapHostFunction::MessagePackReaderNext
+                | HirBootstrapHostFunction::MessagePackReaderOwn
+                | HirBootstrapHostFunction::MessagePackReaderFinish
+                | HirBootstrapHostFunction::MessagePackWriterWrite
+                | HirBootstrapHostFunction::MessagePackWriterFinish
+                | HirBootstrapHostFunction::ProtobufReaderNext
+                | HirBootstrapHostFunction::ProtobufReaderOwn
+                | HirBootstrapHostFunction::ProtobufReaderFinish
+                | HirBootstrapHostFunction::ProtobufWriterWrite
+                | HirBootstrapHostFunction::ProtobufWriterFinish
+                | HirBootstrapHostFunction::ProtobufUnknownFieldsDiscard
         ) {
             self.check_method_receiver(receiver, ParameterMode::Var, Some(receiver_type), context)?;
         }

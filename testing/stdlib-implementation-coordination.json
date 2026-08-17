@@ -646,9 +646,9 @@
     "owners_without_callable_surface": 1
   },
   "global_public_api": {
-    "status": "open-gaps",
-    "gaps": 35,
-    "reason": "MessagePack/Protobuf callable exposure and build-only owner indexing remain open public-audit work; this coordinator does not waive those rows",
+    "status": "verified",
+    "gaps": 0,
+    "reason": "STD-CODEC-PUBLIC-001 closed MessagePack/Protobuf callable exposure and indexed the build-only owners without a runtime waiver",
     "next_coordination": "STD-IMPL-002"
   },
   "next_coordination": "STD-IMPL-002"

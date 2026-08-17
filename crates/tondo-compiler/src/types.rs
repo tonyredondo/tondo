@@ -173,6 +173,27 @@ pub enum IntrinsicType {
     JsonNumber,
     JsonReader,
     JsonWriter,
+    MessagePackLimits,
+    MessagePackDecodeOptions,
+    MessagePackEncodeOptions,
+    MessagePackDuplicatePolicy,
+    MessagePackUnknownExtensionPolicy,
+    MessagePackNonMinimalPolicy,
+    MessagePackValue,
+    MessagePackValueView,
+    MessagePackRaw,
+    MessagePackTimestamp,
+    MessagePackReader,
+    MessagePackWriter,
+    ProtoDescriptor,
+    ProtoLimits,
+    ProtoDecodeOptions,
+    ProtoEncodeOptions,
+    ProtoWireTypePolicy,
+    ProtoUnknownPolicy,
+    ProtoReader,
+    ProtoWriter,
+    UnknownFields,
 }
 
 impl IntrinsicType {
@@ -247,6 +268,32 @@ impl IntrinsicType {
             Self::JsonNumber => "JsonNumber",
             Self::JsonReader => "JsonReader",
             Self::JsonWriter => "JsonWriter",
+            Self::MessagePackLimits => "MessagePackLimits",
+            Self::MessagePackDecodeOptions => "MessagePackDecodeOptions",
+            Self::MessagePackEncodeOptions => "MessagePackEncodeOptions",
+            Self::MessagePackDuplicatePolicy => "MessagePackDuplicatePolicy",
+            Self::MessagePackUnknownExtensionPolicy => "MessagePackUnknownExtensionPolicy",
+            Self::MessagePackNonMinimalPolicy => "MessagePackNonMinimalPolicy",
+            // These names are internal bytecode catalog identities as well as
+            // diagnostics.  JSON exposes the shorter `Value`/`Raw` names, so
+            // keeping the MessagePack variants distinct is required when a
+            // source imports both codec owners: the verifier rejects duplicate
+            // type names in one program.
+            Self::MessagePackValue => "MessagePackValue",
+            Self::MessagePackValueView => "MessagePackValueView",
+            Self::MessagePackRaw => "MessagePackRaw",
+            Self::MessagePackTimestamp => "MessagePackTimestamp",
+            Self::MessagePackReader => "MessagePackReader",
+            Self::MessagePackWriter => "MessagePackWriter",
+            Self::ProtoDescriptor => "ProtoDescriptor",
+            Self::ProtoLimits => "ProtoLimits",
+            Self::ProtoDecodeOptions => "ProtoDecodeOptions",
+            Self::ProtoEncodeOptions => "ProtoEncodeOptions",
+            Self::ProtoWireTypePolicy => "ProtoWireTypePolicy",
+            Self::ProtoUnknownPolicy => "ProtoUnknownPolicy",
+            Self::ProtoReader => "ProtoReader",
+            Self::ProtoWriter => "ProtoWriter",
+            Self::UnknownFields => "UnknownFields",
         }
     }
 
@@ -254,6 +301,7 @@ impl IntrinsicType {
         match self {
             Self::Map | Self::Join | Self::Waiter | Self::Completer => 2,
             Self::Array | Self::Set | Self::Range | Self::Ref | Self::Pointer => 1,
+            Self::ProtoDescriptor | Self::ProtoReader | Self::ProtoWriter => 1,
             Self::Command
             | Self::Pipeline
             | Self::Bytes
@@ -313,7 +361,25 @@ impl IntrinsicType {
             | Self::JsonRaw
             | Self::JsonNumber
             | Self::JsonReader
-            | Self::JsonWriter => 0,
+            | Self::JsonWriter
+            | Self::MessagePackLimits
+            | Self::MessagePackDecodeOptions
+            | Self::MessagePackEncodeOptions
+            | Self::MessagePackDuplicatePolicy
+            | Self::MessagePackUnknownExtensionPolicy
+            | Self::MessagePackNonMinimalPolicy
+            | Self::MessagePackValue
+            | Self::MessagePackValueView
+            | Self::MessagePackRaw
+            | Self::MessagePackTimestamp
+            | Self::MessagePackReader
+            | Self::MessagePackWriter
+            | Self::ProtoLimits
+            | Self::ProtoDecodeOptions
+            | Self::ProtoEncodeOptions
+            | Self::ProtoWireTypePolicy
+            | Self::ProtoUnknownPolicy
+            | Self::UnknownFields => 0,
         }
     }
 }

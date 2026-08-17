@@ -1101,8 +1101,8 @@
           ]
         },
         "public_api": {
-          "status": "partial",
-          "reason": "public API audit retains gaps for this owner",
+          "status": "complete",
+          "reason": null,
           "signatures": [
             "std.messagepack:100",
             "std.messagepack:101",
@@ -1125,7 +1125,25 @@
             "std.messagepack:99"
           ],
           "verified_signatures": [
-            "std.messagepack:90"
+            "std.messagepack:100",
+            "std.messagepack:101",
+            "std.messagepack:102",
+            "std.messagepack:104",
+            "std.messagepack:105",
+            "std.messagepack:106",
+            "std.messagepack:85",
+            "std.messagepack:86",
+            "std.messagepack:87",
+            "std.messagepack:88",
+            "std.messagepack:89",
+            "std.messagepack:90",
+            "std.messagepack:91",
+            "std.messagepack:92",
+            "std.messagepack:93",
+            "std.messagepack:95",
+            "std.messagepack:96",
+            "std.messagepack:98",
+            "std.messagepack:99"
           ],
           "refs": [
             "testing/stdlib-public-api.json"
@@ -1461,8 +1479,8 @@
           ]
         },
         "public_api": {
-          "status": "partial",
-          "reason": "public API audit retains gaps for this owner",
+          "status": "complete",
+          "reason": null,
           "signatures": [
             "std.protobuf:113",
             "std.protobuf:114",
@@ -1481,7 +1499,21 @@
             "std.protobuf:130"
           ],
           "verified_signatures": [
-            "std.protobuf:116"
+            "std.protobuf:113",
+            "std.protobuf:114",
+            "std.protobuf:115",
+            "std.protobuf:116",
+            "std.protobuf:117",
+            "std.protobuf:119",
+            "std.protobuf:120",
+            "std.protobuf:121",
+            "std.protobuf:122",
+            "std.protobuf:123",
+            "std.protobuf:125",
+            "std.protobuf:126",
+            "std.protobuf:127",
+            "std.protobuf:129",
+            "std.protobuf:130"
           ],
           "refs": [
             "testing/stdlib-public-api.json"
@@ -1967,8 +1999,8 @@
     "runtime_examples": 25,
     "external_examples": 4,
     "compiler_examples": 2,
-    "api_complete": 15,
-    "api_partial": 3,
+    "api_complete": 17,
+    "api_partial": 1,
     "api_not_applicable": 4
   },
   "promotion": {

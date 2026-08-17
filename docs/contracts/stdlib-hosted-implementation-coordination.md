@@ -22,11 +22,13 @@ capability declarada por cada owner coincide exactamente con
 - `std.process` requiere `process` y conserva argv exacto, pipes, streams
   separados/combined, cancelación y reap de hijos.
 
-El cierre es una coordinación de implementación, no una conformidad global:
-la auditoría pública mantiene visibles sus 32 gaps de firma de MessagePack /
-Protobuf y sus tres owners build-only sin superficie indexable. No relaja
-`--strict` ni convierte esos gaps en un waiver. El siguiente bloque explícito
-es `STD-CODEC-PUBLIC-001`.
+El cierre es una coordinación de implementación, no una conformidad global.
+La auditoría pública que alimenta el registro ya está verificada (209/209):
+las firmas de MessagePack/Protobuf atraviesan sus rutas públicas y los tres
+owners build-only tienen una razón `not-applicable` explícita. No relaja
+`--strict` ni convierte una frontera build-only en un provider runtime. El
+siguiente bloque de implementación es `NATIVE-TARGET-DESC-001`, condicionado
+por las celdas de promoción que aún conserva S1A.
 
 ```text
 scripts/stdlib-hosted-implementation-coordination-check.sh

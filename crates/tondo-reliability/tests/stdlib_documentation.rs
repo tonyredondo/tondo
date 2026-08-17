@@ -186,8 +186,8 @@ fn public_api_status_preserves_audited_gaps() {
         }
     }
 
-    assert_eq!(docs["summary"]["api_complete"], 15);
-    assert_eq!(docs["summary"]["api_partial"], 3);
+    assert_eq!(docs["summary"]["api_complete"], 17);
+    assert_eq!(docs["summary"]["api_partial"], 1);
     assert_eq!(docs["summary"]["api_not_applicable"], 4);
 
     for codec in ["std.json", "std.messagepack", "std.protobuf"] {
@@ -198,11 +198,19 @@ fn public_api_status_preserves_audited_gaps() {
             .find(|owner| owner["id"] == codec)
             .unwrap();
         assert_eq!(
-            owner["exact_surface_complete"],
-            codec == "std.json",
-            "the typed std.json surface is complete; protocol codecs remain open"
+            owner["exact_surface_complete"], true,
+            "the audited JSON, MessagePack, and Protobuf surfaces are complete"
         );
         let exact = owner["exact_signatures"].as_array().unwrap();
+        if exact.is_empty() {
+            assert!(api["rows"].as_array().unwrap().iter().all(|row| {
+                row["owner"] != codec
+                    || row["missing"]
+                        .as_array()
+                        .is_some_and(|missing| missing.is_empty())
+            }));
+            continue;
+        }
         assert!(api["rows"].as_array().unwrap().iter().all(|row| {
             if row["owner"] != codec {
                 return true;

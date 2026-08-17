@@ -670,6 +670,137 @@ fn bootstrap_serialization_nominals() -> [(&'static str, SymbolKind, BootstrapNo
     ]
 }
 
+fn bootstrap_messagepack_nominals() -> [(&'static str, SymbolKind, BootstrapNominalShape); 5] {
+    [
+        (
+            "MessagePackExt",
+            SymbolKind::Type,
+            BootstrapNominalShape::Record(&["typeCode", "payload"]),
+        ),
+        (
+            "MessagePackEvent",
+            SymbolKind::Enum,
+            BootstrapNominalShape::Enum(&[
+                "Nil",
+                "Bool",
+                "Int",
+                "UInt",
+                "Float32",
+                "Float64",
+                "String",
+                "Binary",
+                "StartArray",
+                "EndArray",
+                "StartMap",
+                "MapKey",
+                "EndMap",
+                "Ext",
+            ]),
+        ),
+        (
+            "MessagePackErrorKind",
+            SymbolKind::Enum,
+            BootstrapNominalShape::Enum(&[
+                "UnexpectedEof",
+                "InvalidTag",
+                "InvalidUtf8",
+                "InvalidLength",
+                "NonMinimalEncoding",
+                "InvalidExtension",
+                "TypeMismatch",
+                "DuplicateKey",
+                "NumberRange",
+                "DeterministicKeyCollision",
+                "OutOfOrderKey",
+                "LimitExceeded",
+                "IoError",
+                "TrailingData",
+            ]),
+        ),
+        (
+            "MessagePackPath",
+            SymbolKind::Type,
+            BootstrapNominalShape::Newtype,
+        ),
+        (
+            "MessagePackError",
+            SymbolKind::Type,
+            BootstrapNominalShape::Record(&["kind", "offset", "path"]),
+        ),
+    ]
+}
+
+fn bootstrap_protobuf_nominals() -> [(&'static str, SymbolKind, BootstrapNominalShape); 6] {
+    [
+        (
+            "UnknownField",
+            SymbolKind::Type,
+            BootstrapNominalShape::Record(&["number", "wireType", "tagBytes", "payloadBytes"]),
+        ),
+        (
+            "ProtoWireType",
+            SymbolKind::Enum,
+            BootstrapNominalShape::Enum(&[
+                "Varint",
+                "Fixed64",
+                "LengthDelimited",
+                "StartGroup",
+                "EndGroup",
+                "Fixed32",
+            ]),
+        ),
+        (
+            "ProtoEvent",
+            SymbolKind::Enum,
+            BootstrapNominalShape::Enum(&[
+                "StartMessage",
+                "EndMessage",
+                "Field",
+                "Varint",
+                "Fixed32",
+                "Fixed64",
+                "StartLengthDelimited",
+                "Bytes",
+                "EndLengthDelimited",
+                "StartPacked",
+                "EndPacked",
+                "Unknown",
+            ]),
+        ),
+        (
+            "ProtoErrorKind",
+            SymbolKind::Enum,
+            BootstrapNominalShape::Enum(&[
+                "UnexpectedEof",
+                "InvalidTag",
+                "InvalidWireType",
+                "InvalidVarint",
+                "InvalidLength",
+                "InvalidUtf8",
+                "TypeMismatch",
+                "InvalidPacked",
+                "NumberRange",
+                "InvalidFieldNumber",
+                "InvalidGroup",
+                "LimitExceeded",
+                "IoError",
+                "TrailingData",
+                "SchemaMismatch",
+            ]),
+        ),
+        (
+            "ProtoPath",
+            SymbolKind::Type,
+            BootstrapNominalShape::Newtype,
+        ),
+        (
+            "ProtoError",
+            SymbolKind::Type,
+            BootstrapNominalShape::Record(&["kind", "offset", "path"]),
+        ),
+    ]
+}
+
 fn install_bootstrap_member(
     program: &mut ResolvedProgram,
     owner: MemberOwner,
@@ -788,6 +919,18 @@ impl Resolver<'_> {
             program,
             "serialization",
             &bootstrap_serialization_nominals(),
+        )?;
+        self.install_bootstrap_module_nominals(
+            file,
+            program,
+            "messagepack",
+            &bootstrap_messagepack_nominals(),
+        )?;
+        self.install_bootstrap_module_nominals(
+            file,
+            program,
+            "protobuf",
+            &bootstrap_protobuf_nominals(),
         )
     }
 

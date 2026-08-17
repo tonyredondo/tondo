@@ -460,6 +460,45 @@ enum HostValue {
         error: Option<json::JsonErrorKind>,
         finished: bool,
     },
+    MessagePackValue(messagepack::MessagePackValue),
+    #[allow(dead_code)]
+    MessagePackValueView(Vec<u8>),
+    #[allow(dead_code)]
+    MessagePackRaw(Vec<u8>),
+    MessagePackTimestamp(messagepack::MessagePackTimestamp),
+    MessagePackLimits(messagepack::MessagePackLimits),
+    MessagePackDecodeOptions(messagepack::MessagePackDecodeOptions),
+    MessagePackEncodeOptions(messagepack::MessagePackEncodeOptions),
+    MessagePackDuplicatePolicy(messagepack::MessagePackDuplicatePolicy),
+    MessagePackUnknownExtensionPolicy(messagepack::MessagePackUnknownExtensionPolicy),
+    MessagePackNonMinimalPolicy(messagepack::MessagePackNonMinimalPolicy),
+    MessagePackReader {
+        reader: messagepack::MessagePackReader<'static>,
+        finished: bool,
+    },
+    MessagePackWriter {
+        writer: messagepack::MessagePackWriter,
+        stream: Option<StreamKind>,
+        finished: bool,
+    },
+    #[allow(dead_code)]
+    ProtoDescriptor(String),
+    ProtoLimits(protobuf::ProtoLimits),
+    ProtoDecodeOptions(protobuf::ProtoDecodeOptions),
+    ProtoEncodeOptions(protobuf::ProtoEncodeOptions),
+    ProtoWireTypePolicy(protobuf::ProtoWireTypePolicy),
+    ProtoUnknownPolicy(protobuf::ProtoUnknownPolicy),
+    ProtoReader {
+        reader: protobuf::ProtoReader<'static, ()>,
+        finished: bool,
+    },
+    ProtoWriter {
+        writer: protobuf::ProtoWriter,
+        stream: Option<StreamKind>,
+        finished: bool,
+    },
+    #[allow(dead_code)]
+    UnknownFields(protobuf::UnknownFields),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -486,6 +525,45 @@ fn json_error_kind_ordinal(kind: json::JsonErrorKind) -> u32 {
         json::JsonErrorKind::IoError => 12,
         json::JsonErrorKind::TrailingData => 13,
         json::JsonErrorKind::CanonicalizationError => 14,
+    }
+}
+
+fn messagepack_error_kind_ordinal(kind: messagepack::MessagePackErrorKind) -> u32 {
+    match kind {
+        messagepack::MessagePackErrorKind::UnexpectedEof => 0,
+        messagepack::MessagePackErrorKind::InvalidTag => 1,
+        messagepack::MessagePackErrorKind::InvalidUtf8 => 2,
+        messagepack::MessagePackErrorKind::InvalidLength => 3,
+        messagepack::MessagePackErrorKind::NonMinimalEncoding => 4,
+        messagepack::MessagePackErrorKind::InvalidExtension => 5,
+        messagepack::MessagePackErrorKind::TypeMismatch => 6,
+        messagepack::MessagePackErrorKind::DuplicateKey => 7,
+        messagepack::MessagePackErrorKind::NumberRange => 8,
+        messagepack::MessagePackErrorKind::DeterministicKeyCollision => 9,
+        messagepack::MessagePackErrorKind::OutOfOrderKey => 10,
+        messagepack::MessagePackErrorKind::LimitExceeded => 11,
+        messagepack::MessagePackErrorKind::IoError => 12,
+        messagepack::MessagePackErrorKind::TrailingData => 13,
+    }
+}
+
+fn protobuf_error_kind_ordinal(kind: protobuf::ProtoErrorKind) -> u32 {
+    match kind {
+        protobuf::ProtoErrorKind::UnexpectedEof => 0,
+        protobuf::ProtoErrorKind::InvalidTag => 1,
+        protobuf::ProtoErrorKind::InvalidWireType => 2,
+        protobuf::ProtoErrorKind::InvalidVarint => 3,
+        protobuf::ProtoErrorKind::InvalidLength => 4,
+        protobuf::ProtoErrorKind::InvalidUtf8 => 5,
+        protobuf::ProtoErrorKind::TypeMismatch => 6,
+        protobuf::ProtoErrorKind::InvalidPacked => 7,
+        protobuf::ProtoErrorKind::NumberRange => 8,
+        protobuf::ProtoErrorKind::InvalidFieldNumber => 9,
+        protobuf::ProtoErrorKind::InvalidGroup => 10,
+        protobuf::ProtoErrorKind::LimitExceeded => 11,
+        protobuf::ProtoErrorKind::IoError => 12,
+        protobuf::ProtoErrorKind::TrailingData => 13,
+        protobuf::ProtoErrorKind::SchemaMismatch => 14,
     }
 }
 
@@ -1678,6 +1756,615 @@ impl BootstrapHost {
         })
     }
 
+    fn messagepack_error_parts(&self, error: &messagepack::MessagePackError) -> RuntimeValue {
+        RuntimeValue::Record {
+            name: "MessagePackError".into(),
+            values: vec![
+                RuntimeValue::Variant {
+                    name: "MessagePackErrorKind".into(),
+                    variant: messagepack_error_kind_ordinal(error.kind),
+                    values: Vec::new(),
+                },
+                RuntimeValue::Integer(error.offset as i128),
+                RuntimeValue::Newtype {
+                    name: "MessagePackPath".into(),
+                    value: Box::new(RuntimeValue::Array(Vec::new())),
+                },
+            ],
+        }
+    }
+
+    fn messagepack_result_error(&self, error: &messagepack::MessagePackError) -> RuntimeValue {
+        RuntimeValue::ResultErr(Box::new(self.messagepack_error_parts(error)))
+    }
+
+    fn messagepack_result_kind(&self, kind: messagepack::MessagePackErrorKind) -> RuntimeValue {
+        let error = messagepack::MessagePackError {
+            kind,
+            offset: 0,
+            path: Default::default(),
+        };
+        self.messagepack_result_error(&error)
+    }
+
+    fn messagepack_limits(
+        &self,
+        value: &RuntimeValue,
+    ) -> Result<messagepack::MessagePackLimits, VmError> {
+        let RuntimeValue::Host { id, .. } = value else {
+            return Err(VmError::Host("MessagePackLimits value is invalid".into()));
+        };
+        match self.values.get(id) {
+            Some(HostValue::MessagePackLimits(limits)) => Ok(*limits),
+            _ => Err(VmError::Host("MessagePackLimits token is stale".into())),
+        }
+    }
+
+    fn messagepack_duplicate_policy(
+        &self,
+        value: &RuntimeValue,
+    ) -> Result<messagepack::MessagePackDuplicatePolicy, VmError> {
+        let RuntimeValue::Host { id, .. } = value else {
+            return Err(VmError::Host(
+                "MessagePack duplicate policy is invalid".into(),
+            ));
+        };
+        match self.values.get(id) {
+            Some(HostValue::MessagePackDuplicatePolicy(policy)) => Ok(*policy),
+            _ => Err(VmError::Host(
+                "MessagePack duplicate policy is stale".into(),
+            )),
+        }
+    }
+
+    fn messagepack_unknown_policy(
+        &self,
+        value: &RuntimeValue,
+    ) -> Result<messagepack::MessagePackUnknownExtensionPolicy, VmError> {
+        let RuntimeValue::Host { id, .. } = value else {
+            return Err(VmError::Host(
+                "MessagePack extension policy is invalid".into(),
+            ));
+        };
+        match self.values.get(id) {
+            Some(HostValue::MessagePackUnknownExtensionPolicy(policy)) => Ok(*policy),
+            _ => Err(VmError::Host(
+                "MessagePack extension policy is stale".into(),
+            )),
+        }
+    }
+
+    fn messagepack_nonminimal_policy(
+        &self,
+        value: &RuntimeValue,
+    ) -> Result<messagepack::MessagePackNonMinimalPolicy, VmError> {
+        let RuntimeValue::Host { id, .. } = value else {
+            return Err(VmError::Host(
+                "MessagePack non-minimal policy is invalid".into(),
+            ));
+        };
+        match self.values.get(id) {
+            Some(HostValue::MessagePackNonMinimalPolicy(policy)) => Ok(*policy),
+            _ => Err(VmError::Host(
+                "MessagePack non-minimal policy is stale".into(),
+            )),
+        }
+    }
+
+    fn messagepack_decode_options(
+        &self,
+        value: &RuntimeValue,
+    ) -> Result<messagepack::MessagePackDecodeOptions, VmError> {
+        let RuntimeValue::Host { id, .. } = value else {
+            return Err(VmError::Host("MessagePackDecodeOptions is invalid".into()));
+        };
+        let Some(HostValue::MessagePackDecodeOptions(options)) = self.values.get(id) else {
+            return Err(VmError::Host(
+                "MessagePackDecodeOptions token is stale".into(),
+            ));
+        };
+        Ok(*options)
+    }
+
+    fn messagepack_encode_options(
+        &self,
+        value: &RuntimeValue,
+    ) -> Result<messagepack::MessagePackEncodeOptions, VmError> {
+        let RuntimeValue::Host { id, .. } = value else {
+            return Err(VmError::Host("MessagePackEncodeOptions is invalid".into()));
+        };
+        let Some(HostValue::MessagePackEncodeOptions(options)) = self.values.get(id) else {
+            return Err(VmError::Host(
+                "MessagePackEncodeOptions token is stale".into(),
+            ));
+        };
+        Ok(*options)
+    }
+
+    fn runtime_messagepack_value(
+        &self,
+        value: &RuntimeValue,
+    ) -> Result<messagepack::MessagePackValue, messagepack::MessagePackErrorKind> {
+        match value {
+            RuntimeValue::Host { kind, id } if *kind == RuntimeHostValueKind::MessagePackValue => {
+                match self.values.get(id) {
+                    Some(HostValue::MessagePackValue(value)) => Ok(value.clone()),
+                    _ => Err(messagepack::MessagePackErrorKind::TypeMismatch),
+                }
+            }
+            RuntimeValue::Unit => Ok(messagepack::MessagePackValue::Nil),
+            RuntimeValue::Bool(value) => Ok(messagepack::MessagePackValue::Bool(*value)),
+            RuntimeValue::Byte(value) => Ok(messagepack::MessagePackValue::UInt(u64::from(*value))),
+            RuntimeValue::Integer(value) if *value >= 0 => Ok(messagepack::MessagePackValue::Int(
+                i64::try_from(*value)
+                    .map_err(|_| messagepack::MessagePackErrorKind::NumberRange)?,
+            )),
+            RuntimeValue::Integer(value) => Ok(messagepack::MessagePackValue::Int(
+                i64::try_from(*value)
+                    .map_err(|_| messagepack::MessagePackErrorKind::NumberRange)?,
+            )),
+            RuntimeValue::Float(value) => {
+                Ok(messagepack::MessagePackValue::Float64(value.to_bits()))
+            }
+            RuntimeValue::String(value) => Ok(messagepack::MessagePackValue::String(value.clone())),
+            RuntimeValue::Array(values) => values
+                .iter()
+                .map(|value| self.runtime_messagepack_value(value))
+                .collect::<Result<Vec<_>, _>>()
+                .map(messagepack::MessagePackValue::Array),
+            RuntimeValue::Map(entries) => entries
+                .iter()
+                .map(|(key, value)| {
+                    Ok(messagepack::MessagePackEntry {
+                        key: self.runtime_messagepack_value(key)?,
+                        value: self.runtime_messagepack_value(value)?,
+                    })
+                })
+                .collect::<Result<Vec<_>, messagepack::MessagePackErrorKind>>()
+                .map(messagepack::MessagePackValue::Map),
+            _ => Err(messagepack::MessagePackErrorKind::TypeMismatch),
+        }
+    }
+
+    fn messagepack_to_typed_runtime(
+        &self,
+        value: &messagepack::MessagePackValue,
+        expected: &str,
+    ) -> Result<RuntimeValue, messagepack::MessagePackErrorKind> {
+        use messagepack::MessagePackValue as Value;
+        let expected = expected.trim();
+        match (expected, value) {
+            ("Unit", Value::Nil) => Ok(RuntimeValue::Unit),
+            ("Bool", Value::Bool(value)) => Ok(RuntimeValue::Bool(*value)),
+            ("String", Value::String(value)) => Ok(RuntimeValue::String(value.clone())),
+            ("Byte", Value::UInt(value)) => {
+                Ok(RuntimeValue::Byte(u8::try_from(*value).map_err(|_| {
+                    messagepack::MessagePackErrorKind::NumberRange
+                })?))
+            }
+            ("Int" | "Int8" | "Int16" | "Int32" | "Int64", Value::Int(value)) => {
+                let in_range = match expected {
+                    "Int8" => i8::try_from(*value).is_ok(),
+                    "Int16" => i16::try_from(*value).is_ok(),
+                    "Int32" => i32::try_from(*value).is_ok(),
+                    _ => true,
+                };
+                in_range
+                    .then_some(RuntimeValue::Integer(i128::from(*value)))
+                    .ok_or(messagepack::MessagePackErrorKind::NumberRange)
+            }
+            ("UInt" | "UInt8" | "UInt16" | "UInt32" | "UInt64", Value::UInt(value)) => {
+                let in_range = match expected {
+                    "UInt8" => u8::try_from(*value).is_ok(),
+                    "UInt16" => u16::try_from(*value).is_ok(),
+                    "UInt32" => u32::try_from(*value).is_ok(),
+                    _ => true,
+                };
+                in_range
+                    .then_some(RuntimeValue::Integer(i128::from(*value)))
+                    .ok_or(messagepack::MessagePackErrorKind::NumberRange)
+            }
+            ("Float32", Value::Float32(bits)) => {
+                Ok(RuntimeValue::Float(f32::from_bits(*bits) as f64))
+            }
+            ("Float" | "Float64", Value::Float64(bits)) => {
+                Ok(RuntimeValue::Float(f64::from_bits(*bits)))
+            }
+            _ if expected.ends_with('?') => {
+                if matches!(value, Value::Nil) {
+                    Ok(RuntimeValue::OptionNone)
+                } else {
+                    self.messagepack_to_typed_runtime(value, &expected[..expected.len() - 1])
+                        .map(Box::new)
+                        .map(RuntimeValue::OptionSome)
+                }
+            }
+            _ => {
+                if let Some(parts) = generic_parts(expected, "Array")
+                    && let [item] = parts.as_slice()
+                    && let Value::Array(values) = value
+                {
+                    return values
+                        .iter()
+                        .map(|value| self.messagepack_to_typed_runtime(value, item))
+                        .collect::<Result<Vec<_>, _>>()
+                        .map(RuntimeValue::Array);
+                }
+                Err(messagepack::MessagePackErrorKind::TypeMismatch)
+            }
+        }
+    }
+
+    fn runtime_messagepack_event(&mut self, event: messagepack::MessagePackEvent) -> RuntimeValue {
+        use messagepack::MessagePackEvent as Event;
+        let (variant, values) = match event {
+            Event::Nil => (0, Vec::new()),
+            Event::Bool(value) => (1, vec![RuntimeValue::Bool(value)]),
+            Event::Int(value) => (2, vec![RuntimeValue::Integer(i128::from(value))]),
+            Event::UInt(value) => (3, vec![RuntimeValue::Integer(i128::from(value))]),
+            Event::Float32(value) => (4, vec![RuntimeValue::Float(f32::from_bits(value) as f64)]),
+            Event::Float64(value) => (5, vec![RuntimeValue::Float(f64::from_bits(value))]),
+            Event::String(value) => (6, vec![RuntimeValue::String(value)]),
+            Event::Binary(value) => (
+                7,
+                vec![self.allocate(RuntimeHostValueKind::Bytes, HostValue::Bytes(value))],
+            ),
+            Event::StartArray(value) => (
+                8,
+                vec![value.map_or(RuntimeValue::OptionNone, |value| {
+                    RuntimeValue::OptionSome(Box::new(RuntimeValue::Integer(value as i128)))
+                })],
+            ),
+            Event::EndArray => (9, Vec::new()),
+            Event::StartMap(value) => (
+                10,
+                vec![value.map_or(RuntimeValue::OptionNone, |value| {
+                    RuntimeValue::OptionSome(Box::new(RuntimeValue::Integer(value as i128)))
+                })],
+            ),
+            Event::MapKey => (11, Vec::new()),
+            Event::EndMap => (12, Vec::new()),
+            Event::Ext(value) => (
+                13,
+                vec![RuntimeValue::Record {
+                    name: "MessagePackExt".into(),
+                    values: vec![
+                        RuntimeValue::Integer(i128::from(value.type_code)),
+                        self.allocate(RuntimeHostValueKind::Bytes, HostValue::Bytes(value.payload)),
+                    ],
+                }],
+            ),
+        };
+        RuntimeValue::Variant {
+            name: "MessagePackEvent".into(),
+            variant,
+            values,
+        }
+    }
+
+    fn messagepack_event(
+        &self,
+        value: &RuntimeValue,
+    ) -> Result<messagepack::MessagePackEvent, VmError> {
+        let RuntimeValue::Variant {
+            name,
+            variant,
+            values,
+        } = value
+        else {
+            return Err(VmError::Host("MessagePackEvent value is invalid".into()));
+        };
+        if name != "MessagePackEvent" {
+            return Err(VmError::Host("MessagePackEvent name is invalid".into()));
+        }
+        let value_at = |index: usize| {
+            values
+                .get(index)
+                .ok_or_else(|| VmError::Host("MessagePackEvent payload is incomplete".into()))
+        };
+        Ok(match *variant {
+            0 => messagepack::MessagePackEvent::Nil,
+            1 => messagepack::MessagePackEvent::Bool(matches!(
+                value_at(0)?,
+                RuntimeValue::Bool(true)
+            )),
+            2 => messagepack::MessagePackEvent::Int(match value_at(0)? {
+                RuntimeValue::Integer(value) => i64::try_from(*value)
+                    .map_err(|_| VmError::Host("MessagePack Int out of range".into()))?,
+                _ => return Err(VmError::Host("MessagePack Int payload invalid".into())),
+            }),
+            3 => messagepack::MessagePackEvent::UInt(match value_at(0)? {
+                RuntimeValue::Integer(value) => u64::try_from(*value)
+                    .map_err(|_| VmError::Host("MessagePack UInt out of range".into()))?,
+                _ => return Err(VmError::Host("MessagePack UInt payload invalid".into())),
+            }),
+            4 => messagepack::MessagePackEvent::Float32(match value_at(0)? {
+                RuntimeValue::Float(value) => (*value as f32).to_bits(),
+                _ => return Err(VmError::Host("MessagePack Float32 payload invalid".into())),
+            }),
+            5 => messagepack::MessagePackEvent::Float64(match value_at(0)? {
+                RuntimeValue::Float(value) => value.to_bits(),
+                _ => return Err(VmError::Host("MessagePack Float64 payload invalid".into())),
+            }),
+            6 => messagepack::MessagePackEvent::String(match value_at(0)? {
+                RuntimeValue::String(value) => value.clone(),
+                _ => return Err(VmError::Host("MessagePack String payload invalid".into())),
+            }),
+            7 => messagepack::MessagePackEvent::Binary(self.bytes(value_at(0)?)?.to_vec()),
+            8 => messagepack::MessagePackEvent::StartArray(
+                runtime_json_length(value_at(0)?)
+                    .map_err(|error| VmError::Host(error.to_string()))?,
+            ),
+            9 => messagepack::MessagePackEvent::EndArray,
+            10 => messagepack::MessagePackEvent::StartMap(
+                runtime_json_length(value_at(0)?)
+                    .map_err(|error| VmError::Host(error.to_string()))?,
+            ),
+            11 => messagepack::MessagePackEvent::MapKey,
+            12 => messagepack::MessagePackEvent::EndMap,
+            13 => {
+                let RuntimeValue::Record { values, .. } = value_at(0)? else {
+                    return Err(VmError::Host("MessagePackExt payload invalid".into()));
+                };
+                let type_code = match values.first() {
+                    Some(RuntimeValue::Integer(value)) => i8::try_from(*value)
+                        .map_err(|_| VmError::Host("MessagePack ext type out of range".into()))?,
+                    _ => return Err(VmError::Host("MessagePack ext type invalid".into())),
+                };
+                let payload = self
+                    .bytes(
+                        values
+                            .get(1)
+                            .ok_or_else(|| VmError::Host("MessagePack ext bytes missing".into()))?,
+                    )?
+                    .to_vec();
+                messagepack::MessagePackEvent::Ext(messagepack::MessagePackExt {
+                    type_code,
+                    payload,
+                })
+            }
+            _ => return Err(VmError::Host("MessagePackEvent variant is invalid".into())),
+        })
+    }
+
+    fn protobuf_error_parts(&self, error: &protobuf::ProtoError) -> RuntimeValue {
+        RuntimeValue::Record {
+            name: "ProtoError".into(),
+            values: vec![
+                RuntimeValue::Variant {
+                    name: "ProtoErrorKind".into(),
+                    variant: protobuf_error_kind_ordinal(error.kind),
+                    values: Vec::new(),
+                },
+                error.offset.map_or(RuntimeValue::OptionNone, |offset| {
+                    RuntimeValue::OptionSome(Box::new(RuntimeValue::Integer(offset as i128)))
+                }),
+                RuntimeValue::Newtype {
+                    name: "ProtoPath".into(),
+                    value: Box::new(RuntimeValue::Array(Vec::new())),
+                },
+            ],
+        }
+    }
+
+    fn protobuf_result_error(&self, error: &protobuf::ProtoError) -> RuntimeValue {
+        RuntimeValue::ResultErr(Box::new(self.protobuf_error_parts(error)))
+    }
+
+    fn protobuf_result_kind(&self, kind: protobuf::ProtoErrorKind) -> RuntimeValue {
+        let error = protobuf::ProtoError {
+            kind,
+            offset: None,
+            path: protobuf::ProtoPath::root(),
+        };
+        self.protobuf_result_error(&error)
+    }
+
+    fn proto_limits(&self, value: &RuntimeValue) -> Result<protobuf::ProtoLimits, VmError> {
+        let RuntimeValue::Host { id, .. } = value else {
+            return Err(VmError::Host("ProtoLimits value is invalid".into()));
+        };
+        match self.values.get(id) {
+            Some(HostValue::ProtoLimits(limits)) => Ok(*limits),
+            _ => Err(VmError::Host("ProtoLimits token is stale".into())),
+        }
+    }
+
+    fn proto_decode_options(
+        &self,
+        value: &RuntimeValue,
+    ) -> Result<protobuf::ProtoDecodeOptions, VmError> {
+        let RuntimeValue::Host { id, .. } = value else {
+            return Err(VmError::Host("ProtoDecodeOptions value is invalid".into()));
+        };
+        match self.values.get(id) {
+            Some(HostValue::ProtoDecodeOptions(options)) => Ok(*options),
+            _ => Err(VmError::Host("ProtoDecodeOptions token is stale".into())),
+        }
+    }
+
+    fn proto_encode_options(
+        &self,
+        value: &RuntimeValue,
+    ) -> Result<protobuf::ProtoEncodeOptions, VmError> {
+        let RuntimeValue::Host { id, .. } = value else {
+            return Err(VmError::Host("ProtoEncodeOptions value is invalid".into()));
+        };
+        match self.values.get(id) {
+            Some(HostValue::ProtoEncodeOptions(options)) => Ok(*options),
+            _ => Err(VmError::Host("ProtoEncodeOptions token is stale".into())),
+        }
+    }
+
+    fn proto_wire_policy(
+        &self,
+        value: &RuntimeValue,
+    ) -> Result<protobuf::ProtoWireTypePolicy, VmError> {
+        let RuntimeValue::Host { id, .. } = value else {
+            return Err(VmError::Host("Proto wire policy is invalid".into()));
+        };
+        match self.values.get(id) {
+            Some(HostValue::ProtoWireTypePolicy(policy)) => Ok(*policy),
+            _ => Err(VmError::Host("Proto wire policy is stale".into())),
+        }
+    }
+
+    fn proto_unknown_policy(
+        &self,
+        value: &RuntimeValue,
+    ) -> Result<protobuf::ProtoUnknownPolicy, VmError> {
+        let RuntimeValue::Host { id, .. } = value else {
+            return Err(VmError::Host("Proto unknown policy is invalid".into()));
+        };
+        match self.values.get(id) {
+            Some(HostValue::ProtoUnknownPolicy(policy)) => Ok(*policy),
+            _ => Err(VmError::Host("Proto unknown policy is stale".into())),
+        }
+    }
+
+    fn runtime_proto_event(&mut self, event: protobuf::ProtoEvent) -> RuntimeValue {
+        use protobuf::ProtoEvent as Event;
+        let (variant, values) = match event {
+            Event::StartMessage(value) => (0, vec![RuntimeValue::String(value)]),
+            Event::EndMessage => (1, Vec::new()),
+            Event::Field(number, wire) => (
+                2,
+                vec![
+                    RuntimeValue::Integer(number as i128),
+                    self.runtime_proto_wire_type(wire),
+                ],
+            ),
+            Event::Varint(value) => (3, vec![RuntimeValue::Integer(value as i128)]),
+            Event::Fixed32(value) => (4, vec![RuntimeValue::Integer(value as i128)]),
+            Event::Fixed64(value) => (5, vec![RuntimeValue::Integer(value as i128)]),
+            Event::StartLengthDelimited(number) => (6, vec![RuntimeValue::Integer(number as i128)]),
+            Event::Bytes(value) => (
+                7,
+                vec![self.allocate(RuntimeHostValueKind::Bytes, HostValue::Bytes(value))],
+            ),
+            Event::EndLengthDelimited => (8, Vec::new()),
+            Event::StartPacked(number) => (9, vec![RuntimeValue::Integer(number as i128)]),
+            Event::EndPacked => (10, Vec::new()),
+            Event::Unknown(field) => (11, vec![self.runtime_unknown_field(field)]),
+        };
+        RuntimeValue::Variant {
+            name: "ProtoEvent".into(),
+            variant,
+            values,
+        }
+    }
+
+    fn runtime_proto_wire_type(&self, wire: protobuf::ProtoWireType) -> RuntimeValue {
+        RuntimeValue::Variant {
+            name: "ProtoWireType".into(),
+            variant: wire as u32,
+            values: Vec::new(),
+        }
+    }
+
+    fn runtime_unknown_field(&mut self, field: protobuf::UnknownField) -> RuntimeValue {
+        RuntimeValue::Record {
+            name: "UnknownField".into(),
+            values: vec![
+                RuntimeValue::Integer(field.number as i128),
+                self.runtime_proto_wire_type(field.wire_type),
+                self.allocate(
+                    RuntimeHostValueKind::Bytes,
+                    HostValue::Bytes(field.tag_bytes),
+                ),
+                self.allocate(
+                    RuntimeHostValueKind::Bytes,
+                    HostValue::Bytes(field.payload_bytes),
+                ),
+            ],
+        }
+    }
+
+    fn proto_wire_type(&self, value: &RuntimeValue) -> Result<protobuf::ProtoWireType, VmError> {
+        let RuntimeValue::Variant { name, variant, .. } = value else {
+            return Err(VmError::Host("ProtoWireType value is invalid".into()));
+        };
+        if name != "ProtoWireType" {
+            return Err(VmError::Host("ProtoWireType name is invalid".into()));
+        }
+        match *variant {
+            0 => Ok(protobuf::ProtoWireType::Varint),
+            1 => Ok(protobuf::ProtoWireType::Fixed64),
+            2 => Ok(protobuf::ProtoWireType::LengthDelimited),
+            3 => Ok(protobuf::ProtoWireType::StartGroup),
+            4 => Ok(protobuf::ProtoWireType::EndGroup),
+            5 => Ok(protobuf::ProtoWireType::Fixed32),
+            _ => Err(VmError::Host("ProtoWireType variant is invalid".into())),
+        }
+    }
+
+    fn proto_event(&self, value: &RuntimeValue) -> Result<protobuf::ProtoEvent, VmError> {
+        let RuntimeValue::Variant {
+            name,
+            variant,
+            values,
+        } = value
+        else {
+            return Err(VmError::Host("ProtoEvent value is invalid".into()));
+        };
+        if name != "ProtoEvent" {
+            return Err(VmError::Host("ProtoEvent name is invalid".into()));
+        }
+        let payload = |index: usize| {
+            values
+                .get(index)
+                .ok_or_else(|| VmError::Host("ProtoEvent payload is incomplete".into()))
+        };
+        Ok(match *variant {
+            0 => protobuf::ProtoEvent::StartMessage(match payload(0)? {
+                RuntimeValue::String(value) => value.clone(),
+                _ => return Err(VmError::Host("Proto message name is invalid".into())),
+            }),
+            1 => protobuf::ProtoEvent::EndMessage,
+            2 => protobuf::ProtoEvent::Field(
+                match payload(0)? {
+                    RuntimeValue::Integer(value) => u32::try_from(*value)
+                        .map_err(|_| VmError::Host("Proto field number is out of range".into()))?,
+                    _ => return Err(VmError::Host("Proto field number is invalid".into())),
+                },
+                self.proto_wire_type(payload(1)?)?,
+            ),
+            3 => protobuf::ProtoEvent::Varint(match payload(0)? {
+                RuntimeValue::Integer(value) => u64::try_from(*value)
+                    .map_err(|_| VmError::Host("Proto varint is out of range".into()))?,
+                _ => return Err(VmError::Host("Proto varint is invalid".into())),
+            }),
+            4 => protobuf::ProtoEvent::Fixed32(match payload(0)? {
+                RuntimeValue::Integer(value) => u32::try_from(*value)
+                    .map_err(|_| VmError::Host("Proto fixed32 is out of range".into()))?,
+                _ => return Err(VmError::Host("Proto fixed32 is invalid".into())),
+            }),
+            5 => protobuf::ProtoEvent::Fixed64(match payload(0)? {
+                RuntimeValue::Integer(value) => u64::try_from(*value)
+                    .map_err(|_| VmError::Host("Proto fixed64 is out of range".into()))?,
+                _ => return Err(VmError::Host("Proto fixed64 is invalid".into())),
+            }),
+            6 => protobuf::ProtoEvent::StartLengthDelimited(match payload(0)? {
+                RuntimeValue::Integer(value) => u32::try_from(*value)
+                    .map_err(|_| VmError::Host("Proto field number is out of range".into()))?,
+                _ => return Err(VmError::Host("Proto field number is invalid".into())),
+            }),
+            7 => protobuf::ProtoEvent::Bytes(self.bytes(payload(0)?)?.to_vec()),
+            8 => protobuf::ProtoEvent::EndLengthDelimited,
+            9 => protobuf::ProtoEvent::StartPacked(match payload(0)? {
+                RuntimeValue::Integer(value) => u32::try_from(*value)
+                    .map_err(|_| VmError::Host("Proto field number is out of range".into()))?,
+                _ => return Err(VmError::Host("Proto field number is invalid".into())),
+            }),
+            10 => protobuf::ProtoEvent::EndPacked,
+            _ => {
+                return Err(VmError::Host(
+                    "ProtoEvent variant is not supported by the host bridge".into(),
+                ));
+            }
+        })
+    }
+
     fn json_number(&self, value: &RuntimeValue) -> Result<&json::JsonNumber, VmError> {
         let RuntimeValue::Host {
             kind: RuntimeHostValueKind::JsonNumber,
@@ -2508,6 +3195,189 @@ impl VmHost for BootstrapHost {
             ("std.math.max", [RuntimeValue::Float(left), RuntimeValue::Float(right)]) => {
                 Ok(RuntimeValue::Float(math::max(*left, *right)))
             }
+            ("intrinsic.messagepack.MessagePackDuplicatePolicy.Preserve", []) => Ok(self.allocate(
+                RuntimeHostValueKind::MessagePackValue,
+                HostValue::MessagePackDuplicatePolicy(
+                    messagepack::MessagePackDuplicatePolicy::Preserve,
+                ),
+            )),
+            ("intrinsic.messagepack.MessagePackDuplicatePolicy.Reject", []) => Ok(self.allocate(
+                RuntimeHostValueKind::MessagePackValue,
+                HostValue::MessagePackDuplicatePolicy(
+                    messagepack::MessagePackDuplicatePolicy::Reject,
+                ),
+            )),
+            ("intrinsic.messagepack.MessagePackDuplicatePolicy.First", []) => Ok(self.allocate(
+                RuntimeHostValueKind::MessagePackValue,
+                HostValue::MessagePackDuplicatePolicy(
+                    messagepack::MessagePackDuplicatePolicy::First,
+                ),
+            )),
+            ("intrinsic.messagepack.MessagePackDuplicatePolicy.Last", []) => Ok(self.allocate(
+                RuntimeHostValueKind::MessagePackValue,
+                HostValue::MessagePackDuplicatePolicy(
+                    messagepack::MessagePackDuplicatePolicy::Last,
+                ),
+            )),
+            ("intrinsic.messagepack.MessagePackUnknownExtensionPolicy.Preserve", []) => Ok(self
+                .allocate(
+                    RuntimeHostValueKind::MessagePackValue,
+                    HostValue::MessagePackUnknownExtensionPolicy(
+                        messagepack::MessagePackUnknownExtensionPolicy::Preserve,
+                    ),
+                )),
+            ("intrinsic.messagepack.MessagePackUnknownExtensionPolicy.Reject", []) => Ok(self
+                .allocate(
+                    RuntimeHostValueKind::MessagePackValue,
+                    HostValue::MessagePackUnknownExtensionPolicy(
+                        messagepack::MessagePackUnknownExtensionPolicy::Reject,
+                    ),
+                )),
+            ("intrinsic.messagepack.MessagePackNonMinimalPolicy.Accept", []) => Ok(self.allocate(
+                RuntimeHostValueKind::MessagePackValue,
+                HostValue::MessagePackNonMinimalPolicy(
+                    messagepack::MessagePackNonMinimalPolicy::Accept,
+                ),
+            )),
+            ("intrinsic.messagepack.MessagePackNonMinimalPolicy.Reject", []) => Ok(self.allocate(
+                RuntimeHostValueKind::MessagePackValue,
+                HostValue::MessagePackNonMinimalPolicy(
+                    messagepack::MessagePackNonMinimalPolicy::Reject,
+                ),
+            )),
+            ("intrinsic.messagepack.MessagePackLimits.construct", values) if values.len() == 9 => {
+                let mut converted = [0usize; 9];
+                for (index, value) in values.iter().enumerate() {
+                    converted[index] = match value {
+                        RuntimeValue::Integer(value) => usize::try_from(*value).map_err(|_| {
+                            VmError::Host("MessagePack limit is out of range".into())
+                        })?,
+                        _ => {
+                            return Err(VmError::Host(
+                                "MessagePack limit is not an integer".into(),
+                            ));
+                        }
+                    };
+                }
+                Ok(self.allocate(
+                    RuntimeHostValueKind::MessagePackValue,
+                    HostValue::MessagePackLimits(messagepack::MessagePackLimits {
+                        max_document_bytes: converted[0],
+                        max_depth: converted[1],
+                        max_array_items: converted[2],
+                        max_map_pairs: converted[3],
+                        max_string_bytes: converted[4],
+                        max_binary_bytes: converted[5],
+                        max_ext_bytes: converted[6],
+                        max_events: converted[7],
+                        max_output_bytes: converted[8],
+                    }),
+                ))
+            }
+            (
+                "intrinsic.messagepack.MessagePackDecodeOptions.construct",
+                [limits, dynamic, typed, nonminimal, unknown],
+            ) => {
+                let limits = self.messagepack_limits(limits)?;
+                let dynamic = self.messagepack_duplicate_policy(dynamic)?;
+                let typed = self.messagepack_duplicate_policy(typed)?;
+                let nonminimal = self.messagepack_nonminimal_policy(nonminimal)?;
+                let unknown = self.messagepack_unknown_policy(unknown)?;
+                Ok(self.allocate(
+                    RuntimeHostValueKind::MessagePackValue,
+                    HostValue::MessagePackDecodeOptions(messagepack::MessagePackDecodeOptions {
+                        limits,
+                        dynamic_map_duplicates: dynamic,
+                        typed_map_duplicates: typed,
+                        non_minimal: nonminimal,
+                        unknown_extensions: unknown,
+                    }),
+                ))
+            }
+            (
+                "intrinsic.messagepack.MessagePackEncodeOptions.construct",
+                [limits, RuntimeValue::Bool(deterministic)],
+            ) => Ok(self.allocate(
+                RuntimeHostValueKind::MessagePackValue,
+                HostValue::MessagePackEncodeOptions(messagepack::MessagePackEncodeOptions {
+                    limits: self.messagepack_limits(limits)?,
+                    deterministic: *deterministic,
+                }),
+            )),
+            ("intrinsic.protobuf.ProtoWireTypePolicy.PreserveUnknown", []) => Ok(self.allocate(
+                RuntimeHostValueKind::ProtoWireTypePolicy,
+                HostValue::ProtoWireTypePolicy(protobuf::ProtoWireTypePolicy::PreserveUnknown),
+            )),
+            ("intrinsic.protobuf.ProtoWireTypePolicy.Reject", []) => Ok(self.allocate(
+                RuntimeHostValueKind::ProtoWireTypePolicy,
+                HostValue::ProtoWireTypePolicy(protobuf::ProtoWireTypePolicy::Reject),
+            )),
+            ("intrinsic.protobuf.ProtoUnknownPolicy.Preserve", []) => Ok(self.allocate(
+                RuntimeHostValueKind::ProtoUnknownPolicy,
+                HostValue::ProtoUnknownPolicy(protobuf::ProtoUnknownPolicy::Preserve),
+            )),
+            ("intrinsic.protobuf.ProtoUnknownPolicy.Discard", []) => Ok(self.allocate(
+                RuntimeHostValueKind::ProtoUnknownPolicy,
+                HostValue::ProtoUnknownPolicy(protobuf::ProtoUnknownPolicy::Discard),
+            )),
+            ("intrinsic.protobuf.ProtoLimits.construct", values) if values.len() == 16 => {
+                let mut converted = [0usize; 16];
+                for (index, value) in values.iter().enumerate() {
+                    converted[index] = match value {
+                        RuntimeValue::Integer(value) => usize::try_from(*value)
+                            .map_err(|_| VmError::Host("Proto limit is out of range".into()))?,
+                        _ => return Err(VmError::Host("Proto limit is not an integer".into())),
+                    };
+                }
+                Ok(self.allocate(
+                    RuntimeHostValueKind::ProtoLimits,
+                    HostValue::ProtoLimits(protobuf::ProtoLimits {
+                        max_schema_bytes: converted[0],
+                        max_imports: converted[1],
+                        max_generated_types: converted[2],
+                        max_generated_bytes: converted[3],
+                        max_message_bytes: converted[4],
+                        max_depth: converted[5],
+                        max_fields: converted[6],
+                        max_repeated_items: converted[7],
+                        max_map_entries: converted[8],
+                        max_string_bytes: converted[9],
+                        max_bytes_field_bytes: converted[10],
+                        max_packed_bytes: converted[11],
+                        max_unknown_bytes: converted[12],
+                        max_varint_bytes: converted[13],
+                        max_events: converted[14],
+                        max_output_bytes: converted[15],
+                    }),
+                ))
+            }
+            (
+                "intrinsic.protobuf.ProtoDecodeOptions.construct",
+                [
+                    limits,
+                    wire_type,
+                    unknown,
+                    RuntimeValue::Bool(reject_nonminimal),
+                ],
+            ) => Ok(self.allocate(
+                RuntimeHostValueKind::ProtoDecodeOptions,
+                HostValue::ProtoDecodeOptions(protobuf::ProtoDecodeOptions {
+                    limits: self.proto_limits(limits)?,
+                    wire_type: self.proto_wire_policy(wire_type)?,
+                    unknown_fields: self.proto_unknown_policy(unknown)?,
+                    reject_non_minimal_varints: *reject_nonminimal,
+                }),
+            )),
+            (
+                "intrinsic.protobuf.ProtoEncodeOptions.construct",
+                [limits, RuntimeValue::Bool(deterministic)],
+            ) => Ok(self.allocate(
+                RuntimeHostValueKind::ProtoEncodeOptions,
+                HostValue::ProtoEncodeOptions(protobuf::ProtoEncodeOptions {
+                    limits: self.proto_limits(limits)?,
+                    deterministic: *deterministic,
+                }),
+            )),
             ("intrinsic.json.JsonDuplicatePolicy.Reject", []) => Ok(self.allocate(
                 RuntimeHostValueKind::JsonValue,
                 HostValue::JsonDuplicatePolicy(json::JsonDuplicatePolicy::Reject),
@@ -2594,6 +3464,623 @@ impl VmHost for BootstrapHost {
                         canonical: *canonical,
                     }),
                 ))
+            }
+            ("std.messagepack.validate", [bytes]) => {
+                match messagepack::validate(self.bytes(bytes)?, Default::default()) {
+                    Ok(()) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))),
+                    Err(error) => Ok(self.messagepack_result_error(&error)),
+                }
+            }
+            ("std.messagepack.validate", [bytes, options]) => {
+                match messagepack::validate(
+                    self.bytes(bytes)?,
+                    self.messagepack_decode_options(options)?,
+                ) {
+                    Ok(()) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))),
+                    Err(error) => Ok(self.messagepack_result_error(&error)),
+                }
+            }
+            ("std.messagepack.parse", [bytes, options]) => {
+                match messagepack::parse(
+                    self.bytes(bytes)?,
+                    self.messagepack_decode_options(options)?,
+                ) {
+                    Ok(value) => Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                        RuntimeHostValueKind::MessagePackValue,
+                        HostValue::MessagePackValue(value),
+                    )))),
+                    Err(error) => Ok(self.messagepack_result_error(&error)),
+                }
+            }
+            ("std.messagepack.parseView", [bytes, options]) => {
+                let input = self.bytes(bytes)?.to_vec();
+                match messagepack::parse_view(&input, self.messagepack_decode_options(options)?) {
+                    Ok(_) => Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                        RuntimeHostValueKind::MessagePackValueView,
+                        HostValue::MessagePackValueView(input),
+                    )))),
+                    Err(error) => Ok(self.messagepack_result_error(&error)),
+                }
+            }
+            ("std.messagepack.decode", [bytes, options]) => {
+                let expected = generic_argument(specialized_name).unwrap_or("Unit");
+                match messagepack::decode_value(
+                    self.bytes(bytes)?,
+                    self.messagepack_decode_options(options)?,
+                ) {
+                    Ok(value) => match self.messagepack_to_typed_runtime(&value, expected) {
+                        Ok(value) => Ok(RuntimeValue::ResultOk(Box::new(value))),
+                        Err(kind) => Ok(self.messagepack_result_kind(kind)),
+                    },
+                    Err(error) => Ok(self.messagepack_result_error(&error)),
+                }
+            }
+            ("std.messagepack.encode", [value, options]) => {
+                let value = match self.runtime_messagepack_value(value) {
+                    Ok(value) => value,
+                    Err(kind) => return Ok(self.messagepack_result_kind(kind)),
+                };
+                match messagepack::encode_value(&value, self.messagepack_encode_options(options)?) {
+                    Ok(output) => Ok(RuntimeValue::ResultOk(Box::new(
+                        self.allocate(RuntimeHostValueKind::Bytes, HostValue::Bytes(output)),
+                    ))),
+                    Err(error) => Ok(self.messagepack_result_error(&error)),
+                }
+            }
+            ("std.messagepack.encodeDeterministic", [value, limits]) => {
+                let value = match self.runtime_messagepack_value(value) {
+                    Ok(value) => value,
+                    Err(kind) => return Ok(self.messagepack_result_kind(kind)),
+                };
+                match messagepack::encode_deterministic_with_limits(
+                    &value,
+                    self.messagepack_limits(limits)?,
+                ) {
+                    Ok(output) => Ok(RuntimeValue::ResultOk(Box::new(
+                        self.allocate(RuntimeHostValueKind::Bytes, HostValue::Bytes(output)),
+                    ))),
+                    Err(error) => Ok(self.messagepack_result_error(&error)),
+                }
+            }
+            ("std.messagepack.raw", [bytes, options]) => {
+                match messagepack::raw(
+                    self.bytes(bytes)?,
+                    self.messagepack_decode_options(options)?,
+                ) {
+                    Ok(raw) => Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                        RuntimeHostValueKind::MessagePackRaw,
+                        HostValue::MessagePackRaw(raw.as_bytes().to_vec()),
+                    )))),
+                    Err(error) => Ok(self.messagepack_result_error(&error)),
+                }
+            }
+            ("std.messagepack.rawUnchecked", [bytes]) => Ok(self.allocate(
+                RuntimeHostValueKind::MessagePackRaw,
+                HostValue::MessagePackRaw(self.bytes(bytes)?.to_vec()),
+            )),
+            ("std.messagepack.MessagePackTimestamp.fromExt", [value]) => {
+                let RuntimeValue::Record { values, .. } = value else {
+                    return Ok(self
+                        .messagepack_result_kind(messagepack::MessagePackErrorKind::TypeMismatch));
+                };
+                let type_code = match values.first() {
+                    Some(RuntimeValue::Integer(value)) => i8::try_from(*value)
+                        .map_err(|_| VmError::Host("timestamp type code out of range".into()))?,
+                    _ => {
+                        return Ok(self.messagepack_result_kind(
+                            messagepack::MessagePackErrorKind::TypeMismatch,
+                        ));
+                    }
+                };
+                let payload = self
+                    .bytes(
+                        values
+                            .get(1)
+                            .ok_or_else(|| VmError::Host("timestamp payload missing".into()))?,
+                    )?
+                    .to_vec();
+                match messagepack::MessagePackTimestamp::from_ext(&messagepack::MessagePackExt {
+                    type_code,
+                    payload,
+                }) {
+                    Ok(timestamp) => Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                        RuntimeHostValueKind::MessagePackTimestamp,
+                        HostValue::MessagePackTimestamp(timestamp),
+                    )))),
+                    Err(error) => Ok(self.messagepack_result_error(&error)),
+                }
+            }
+            ("std.messagepack.MessagePackTimestamp.toExt", [value]) => {
+                let RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::MessagePackTimestamp,
+                    id,
+                } = value
+                else {
+                    return Ok(self
+                        .messagepack_result_kind(messagepack::MessagePackErrorKind::TypeMismatch));
+                };
+                let Some(HostValue::MessagePackTimestamp(timestamp)) = self.values.get(id) else {
+                    return Err(VmError::Host("MessagePackTimestamp token is stale".into()));
+                };
+                match timestamp.to_ext() {
+                    Ok(ext) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Record {
+                        name: "MessagePackExt".into(),
+                        values: vec![
+                            RuntimeValue::Integer(i128::from(ext.type_code)),
+                            self.allocate(
+                                RuntimeHostValueKind::Bytes,
+                                HostValue::Bytes(ext.payload),
+                            ),
+                        ],
+                    }))),
+                    Err(error) => Ok(self.messagepack_result_error(&error)),
+                }
+            }
+            ("std.messagepack.MessagePackReader.fromBytes", [bytes, options]) => {
+                match messagepack::MessagePackReader::from_chunks(
+                    [self.bytes(bytes)?.to_vec()],
+                    self.messagepack_decode_options(options)?,
+                ) {
+                    Ok(reader) => Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                        RuntimeHostValueKind::MessagePackReader,
+                        HostValue::MessagePackReader {
+                            reader,
+                            finished: false,
+                        },
+                    )))),
+                    Err(error) => Ok(self.messagepack_result_error(&error)),
+                }
+            }
+            ("std.messagepack.MessagePackReader.fromReader", [reader, options]) => {
+                let (_, stream, offset) = self.reader_state(reader)?;
+                if stream != StreamKind::Stdin {
+                    return Ok(
+                        self.messagepack_result_kind(messagepack::MessagePackErrorKind::IoError)
+                    );
+                }
+                let input = self.stdin[offset..].to_vec();
+                let options = self.messagepack_decode_options(options)?;
+                match messagepack::MessagePackReader::from_chunks([input], options) {
+                    Ok(reader) => Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                        RuntimeHostValueKind::MessagePackReader,
+                        HostValue::MessagePackReader {
+                            reader,
+                            finished: false,
+                        },
+                    )))),
+                    Err(error) => Ok(self.messagepack_result_error(&error)),
+                }
+            }
+            ("std.messagepack.MessagePackReader.next", [reader]) => {
+                let RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::MessagePackReader,
+                    id,
+                } = reader
+                else {
+                    return Err(VmError::Host(
+                        "MessagePackReader receiver is invalid".into(),
+                    ));
+                };
+                let result = match self.values.get_mut(id) {
+                    Some(HostValue::MessagePackReader { reader, finished }) if !*finished => {
+                        let result = reader.next();
+                        if result.is_err() {
+                            *finished = true;
+                        }
+                        result
+                    }
+                    Some(HostValue::MessagePackReader { .. }) => {
+                        return Ok(self.messagepack_result_kind(
+                            messagepack::MessagePackErrorKind::InvalidTag,
+                        ));
+                    }
+                    _ => return Err(VmError::Host("MessagePackReader token is stale".into())),
+                };
+                match result {
+                    Ok(Some(event)) => Ok(RuntimeValue::ResultOk(Box::new(
+                        RuntimeValue::OptionSome(Box::new(self.runtime_messagepack_event(event))),
+                    ))),
+                    Ok(None) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::OptionNone))),
+                    Err(error) => Ok(self.messagepack_result_error(&error)),
+                }
+            }
+            ("std.messagepack.MessagePackReader.own", [reader, event]) => {
+                let event = self.messagepack_event(event)?;
+                let RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::MessagePackReader,
+                    id,
+                } = reader
+                else {
+                    return Err(VmError::Host(
+                        "MessagePackReader receiver is invalid".into(),
+                    ));
+                };
+                match self.values.get_mut(id) {
+                    Some(HostValue::MessagePackReader { reader, finished }) => {
+                        match reader.own(event) {
+                            Ok(event) => Ok(RuntimeValue::ResultOk(Box::new(
+                                self.runtime_messagepack_event(event),
+                            ))),
+                            Err(error) => {
+                                *finished = true;
+                                Ok(self.messagepack_result_error(&error))
+                            }
+                        }
+                    }
+                    _ => Err(VmError::Host("MessagePackReader token is stale".into())),
+                }
+            }
+            ("std.messagepack.MessagePackReader.finish", [reader]) => {
+                let RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::MessagePackReader,
+                    id,
+                } = reader
+                else {
+                    return Err(VmError::Host(
+                        "MessagePackReader receiver is invalid".into(),
+                    ));
+                };
+                match self.values.get_mut(id) {
+                    Some(HostValue::MessagePackReader { reader, finished }) => {
+                        let result = reader.finish();
+                        *finished = true;
+                        match result {
+                            Ok(()) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))),
+                            Err(error) => Ok(self.messagepack_result_error(&error)),
+                        }
+                    }
+                    _ => Err(VmError::Host("MessagePackReader token is stale".into())),
+                }
+            }
+            ("std.messagepack.MessagePackWriter.toWriter", [writer, options]) => {
+                let stream = self.writer_stream(writer)?;
+                if stream == StreamKind::Stdin {
+                    return Ok(
+                        self.messagepack_result_kind(messagepack::MessagePackErrorKind::IoError)
+                    );
+                }
+                Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                    RuntimeHostValueKind::MessagePackWriter,
+                    HostValue::MessagePackWriter {
+                        writer: messagepack::MessagePackWriter::new(
+                            self.messagepack_encode_options(options)?,
+                        ),
+                        stream: Some(stream),
+                        finished: false,
+                    },
+                ))))
+            }
+            ("std.messagepack.MessagePackWriter.write", [writer, event]) => {
+                let event = self.messagepack_event(event)?;
+                let RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::MessagePackWriter,
+                    id,
+                } = writer
+                else {
+                    return Err(VmError::Host(
+                        "MessagePackWriter receiver is invalid".into(),
+                    ));
+                };
+                match self.values.get_mut(id) {
+                    Some(HostValue::MessagePackWriter {
+                        writer, finished, ..
+                    }) => {
+                        let result = writer.write(event);
+                        if result.is_err() {
+                            *finished = true;
+                        }
+                        match result {
+                            Ok(()) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))),
+                            Err(error) => Ok(self.messagepack_result_error(&error)),
+                        }
+                    }
+                    _ => Err(VmError::Host("MessagePackWriter token is stale".into())),
+                }
+            }
+            ("std.messagepack.MessagePackWriter.finish", [writer]) => {
+                let RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::MessagePackWriter,
+                    id,
+                } = writer
+                else {
+                    return Err(VmError::Host(
+                        "MessagePackWriter receiver is invalid".into(),
+                    ));
+                };
+                let (stream, result) = match self.values.get_mut(id) {
+                    Some(HostValue::MessagePackWriter {
+                        writer,
+                        stream,
+                        finished,
+                    }) => {
+                        let result = writer.finish();
+                        *finished = true;
+                        (*stream, result)
+                    }
+                    _ => return Err(VmError::Host("MessagePackWriter token is stale".into())),
+                };
+                match result {
+                    Ok(bytes) => {
+                        if let Some(stream) = stream {
+                            match stream {
+                                StreamKind::Stdout => self.stdout.extend_from_slice(&bytes),
+                                StreamKind::Stderr => self.stderr.extend_from_slice(&bytes),
+                                StreamKind::Stdin => {}
+                            }
+                        }
+                        Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
+                    }
+                    Err(error) => Ok(self.messagepack_result_error(&error)),
+                }
+            }
+            ("std.protobuf.validate", [bytes]) => {
+                match protobuf::validate::<()>(self.bytes(bytes)?, Default::default()) {
+                    Ok(()) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))),
+                    Err(error) => Ok(self.protobuf_result_error(&error)),
+                }
+            }
+            ("std.protobuf.validate", [bytes, options]) => {
+                match protobuf::validate::<()>(
+                    self.bytes(bytes)?,
+                    self.proto_decode_options(options)?,
+                ) {
+                    Ok(()) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))),
+                    Err(error) => Ok(self.protobuf_result_error(&error)),
+                }
+            }
+            ("std.protobuf.decode", [bytes, options]) => {
+                let expected = generic_argument(specialized_name).unwrap_or("Unit");
+                if expected != "Unit" {
+                    return Ok(self.protobuf_result_kind(protobuf::ProtoErrorKind::TypeMismatch));
+                }
+                match protobuf::decode::<Vec<u64>>(
+                    self.bytes(bytes)?,
+                    self.proto_decode_options(options)?,
+                ) {
+                    Ok(_) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))),
+                    Err(error) => Ok(self.protobuf_result_error(&error)),
+                }
+            }
+            ("std.protobuf.encode", [value, options]) => {
+                if !matches!(value, RuntimeValue::Unit) {
+                    return Ok(self.protobuf_result_kind(protobuf::ProtoErrorKind::TypeMismatch));
+                }
+                match protobuf::encode::<u64>(&0, self.proto_encode_options(options)?) {
+                    Ok(output) => Ok(RuntimeValue::ResultOk(Box::new(
+                        self.allocate(RuntimeHostValueKind::Bytes, HostValue::Bytes(output)),
+                    ))),
+                    Err(error) => Ok(self.protobuf_result_error(&error)),
+                }
+            }
+            ("std.protobuf.encodeDeterministic", [value, limits]) => {
+                if !matches!(value, RuntimeValue::Unit) {
+                    return Ok(self.protobuf_result_kind(protobuf::ProtoErrorKind::TypeMismatch));
+                }
+                match protobuf::encode_deterministic::<u64>(&0, self.proto_limits(limits)?) {
+                    Ok(output) => Ok(RuntimeValue::ResultOk(Box::new(
+                        self.allocate(RuntimeHostValueKind::Bytes, HostValue::Bytes(output)),
+                    ))),
+                    Err(error) => Ok(self.protobuf_result_error(&error)),
+                }
+            }
+            ("std.protobuf.descriptor", []) => Ok(self.allocate(
+                RuntimeHostValueKind::ProtoDescriptor,
+                HostValue::ProtoDescriptor(
+                    generic_argument(specialized_name)
+                        .unwrap_or("Unit")
+                        .to_owned(),
+                ),
+            )),
+            ("std.protobuf.ProtoReader.fromBytes", [bytes, options]) => {
+                match protobuf::ProtoReader::<()>::from_chunks(
+                    [self.bytes(bytes)?.to_vec()],
+                    self.proto_decode_options(options)?,
+                ) {
+                    Ok(reader) => Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                        RuntimeHostValueKind::ProtoReader,
+                        HostValue::ProtoReader {
+                            reader,
+                            finished: false,
+                        },
+                    )))),
+                    Err(error) => Ok(self.protobuf_result_error(&error)),
+                }
+            }
+            ("std.protobuf.ProtoReader.fromReader", [reader, options]) => {
+                let (_, stream, offset) = self.reader_state(reader)?;
+                if stream != StreamKind::Stdin {
+                    return Ok(self.protobuf_result_kind(protobuf::ProtoErrorKind::IoError));
+                }
+                match protobuf::ProtoReader::<()>::from_chunks(
+                    [self.stdin[offset..].to_vec()],
+                    self.proto_decode_options(options)?,
+                ) {
+                    Ok(reader) => Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                        RuntimeHostValueKind::ProtoReader,
+                        HostValue::ProtoReader {
+                            reader,
+                            finished: false,
+                        },
+                    )))),
+                    Err(error) => Ok(self.protobuf_result_error(&error)),
+                }
+            }
+            ("std.protobuf.ProtoReader.next", [reader]) => {
+                let RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::ProtoReader,
+                    id,
+                } = reader
+                else {
+                    return Err(VmError::Host("ProtoReader receiver is invalid".into()));
+                };
+                let result = match self.values.get_mut(id) {
+                    Some(HostValue::ProtoReader { reader, finished }) if !*finished => {
+                        let result = reader.next();
+                        if result.is_err() {
+                            *finished = true;
+                        }
+                        result
+                    }
+                    Some(HostValue::ProtoReader { .. }) => {
+                        return Ok(
+                            self.protobuf_result_kind(protobuf::ProtoErrorKind::TrailingData)
+                        );
+                    }
+                    _ => return Err(VmError::Host("ProtoReader token is stale".into())),
+                };
+                match result {
+                    Ok(Some(event)) => Ok(RuntimeValue::ResultOk(Box::new(
+                        RuntimeValue::OptionSome(Box::new(self.runtime_proto_event(event))),
+                    ))),
+                    Ok(None) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::OptionNone))),
+                    Err(error) => Ok(self.protobuf_result_error(&error)),
+                }
+            }
+            ("std.protobuf.ProtoReader.own", [reader, event]) => {
+                let event = self.proto_event(event)?;
+                let RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::ProtoReader,
+                    id,
+                } = reader
+                else {
+                    return Err(VmError::Host("ProtoReader receiver is invalid".into()));
+                };
+                match self.values.get_mut(id) {
+                    Some(HostValue::ProtoReader { reader, finished }) => match reader.own(event) {
+                        Ok(event) => Ok(RuntimeValue::ResultOk(Box::new(
+                            self.runtime_proto_event(event),
+                        ))),
+                        Err(error) => {
+                            *finished = true;
+                            Ok(self.protobuf_result_error(&error))
+                        }
+                    },
+                    _ => Err(VmError::Host("ProtoReader token is stale".into())),
+                }
+            }
+            ("std.protobuf.ProtoReader.finish", [reader]) => {
+                let RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::ProtoReader,
+                    id,
+                } = reader
+                else {
+                    return Err(VmError::Host("ProtoReader receiver is invalid".into()));
+                };
+                match self.values.get_mut(id) {
+                    Some(HostValue::ProtoReader { reader, finished }) => {
+                        let result = reader.finish();
+                        *finished = true;
+                        match result {
+                            Ok(()) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))),
+                            Err(error) => Ok(self.protobuf_result_error(&error)),
+                        }
+                    }
+                    _ => Err(VmError::Host("ProtoReader token is stale".into())),
+                }
+            }
+            ("std.protobuf.ProtoWriter.toWriter", [writer, options]) => {
+                let stream = self.writer_stream(writer)?;
+                if stream == StreamKind::Stdin {
+                    return Ok(self.protobuf_result_kind(protobuf::ProtoErrorKind::IoError));
+                }
+                Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                    RuntimeHostValueKind::ProtoWriter,
+                    HostValue::ProtoWriter {
+                        writer: protobuf::ProtoWriter::new(self.proto_encode_options(options)?),
+                        stream: Some(stream),
+                        finished: false,
+                    },
+                ))))
+            }
+            ("std.protobuf.ProtoWriter.write", [writer, event]) => {
+                let event = self.proto_event(event)?;
+                let RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::ProtoWriter,
+                    id,
+                } = writer
+                else {
+                    return Err(VmError::Host("ProtoWriter receiver is invalid".into()));
+                };
+                match self.values.get_mut(id) {
+                    Some(HostValue::ProtoWriter {
+                        writer, finished, ..
+                    }) => {
+                        let result = writer.write(event);
+                        if result.is_err() {
+                            *finished = true;
+                        }
+                        match result {
+                            Ok(()) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))),
+                            Err(error) => Ok(self.protobuf_result_error(&error)),
+                        }
+                    }
+                    _ => Err(VmError::Host("ProtoWriter token is stale".into())),
+                }
+            }
+            ("std.protobuf.ProtoWriter.finish", [writer]) => {
+                let RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::ProtoWriter,
+                    id,
+                } = writer
+                else {
+                    return Err(VmError::Host("ProtoWriter receiver is invalid".into()));
+                };
+                let (stream, result) = match self.values.get_mut(id) {
+                    Some(HostValue::ProtoWriter {
+                        writer,
+                        stream,
+                        finished,
+                    }) => {
+                        let result = writer.finish();
+                        *finished = true;
+                        (*stream, result)
+                    }
+                    _ => return Err(VmError::Host("ProtoWriter token is stale".into())),
+                };
+                match result {
+                    Ok(bytes) => {
+                        if let Some(stream) = stream {
+                            match stream {
+                                StreamKind::Stdout => self.stdout.extend_from_slice(&bytes),
+                                StreamKind::Stderr => self.stderr.extend_from_slice(&bytes),
+                                StreamKind::Stdin => {}
+                            }
+                        }
+                        Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
+                    }
+                    Err(error) => Ok(self.protobuf_result_error(&error)),
+                }
+            }
+            ("std.protobuf.UnknownFields.count", [fields]) => {
+                let RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::UnknownFields,
+                    id,
+                } = fields
+                else {
+                    return Err(VmError::Host("UnknownFields receiver is invalid".into()));
+                };
+                match self.values.get(id) {
+                    Some(HostValue::UnknownFields(fields)) => {
+                        Ok(RuntimeValue::Integer(fields.count() as i128))
+                    }
+                    _ => Err(VmError::Host("UnknownFields token is stale".into())),
+                }
+            }
+            ("std.protobuf.UnknownFields.discard", [fields]) => {
+                let RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::UnknownFields,
+                    id,
+                } = fields
+                else {
+                    return Err(VmError::Host("UnknownFields receiver is invalid".into()));
+                };
+                match self.values.get_mut(id) {
+                    Some(HostValue::UnknownFields(fields)) => {
+                        fields.discard();
+                        Ok(RuntimeValue::Unit)
+                    }
+                    _ => Err(VmError::Host("UnknownFields token is stale".into())),
+                }
             }
             ("std.json.validate", [bytes, options]) => {
                 let input = self.bytes(bytes)?.to_vec();
@@ -3353,13 +4840,6 @@ impl VmHost for BootstrapHost {
                     Err(error) => Ok(self.json_result_structured_error(&error)),
                 }
             }
-            ("std.messagepack.validate", [bytes]) => {
-                let input = self.bytes(bytes)?.to_vec();
-                match messagepack::decode(&input) {
-                    Ok(_) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))),
-                    Err(error) => Ok(self.bytes_result_error(error.to_string())),
-                }
-            }
             ("std.messagepack.canonicalize", [bytes]) => {
                 let input = self.bytes(bytes)?.to_vec();
                 match messagepack::decode(&input) {
@@ -3375,13 +4855,6 @@ impl VmHost for BootstrapHost {
                         }
                         Err(error) => Ok(self.bytes_result_error(error.to_string())),
                     },
-                    Err(error) => Ok(self.bytes_result_error(error.to_string())),
-                }
-            }
-            ("std.protobuf.validate", [bytes]) => {
-                let input = self.bytes(bytes)?.to_vec();
-                match protobuf::decode_fields(&input) {
-                    Ok(_) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))),
                     Err(error) => Ok(self.bytes_result_error(error.to_string())),
                 }
             }
@@ -6560,6 +8033,118 @@ mod tests {
         .unwrap()
     }
 
+    fn messagepack_limits(host: &mut BootstrapHost) -> RuntimeValue {
+        host.invoke(
+            "intrinsic.messagepack.MessagePackLimits.construct",
+            &[
+                RuntimeValue::Integer(1 << 20),
+                RuntimeValue::Integer(64),
+                RuntimeValue::Integer(1 << 16),
+                RuntimeValue::Integer(1 << 16),
+                RuntimeValue::Integer(1 << 20),
+                RuntimeValue::Integer(1 << 20),
+                RuntimeValue::Integer(1 << 20),
+                RuntimeValue::Integer(100_000),
+                RuntimeValue::Integer(1 << 20),
+            ],
+        )
+        .unwrap()
+    }
+
+    fn messagepack_decode_options(host: &mut BootstrapHost) -> RuntimeValue {
+        let limits = messagepack_limits(host);
+        let dynamic = host
+            .invoke(
+                "intrinsic.messagepack.MessagePackDuplicatePolicy.Preserve",
+                &[],
+            )
+            .unwrap();
+        let typed = host
+            .invoke(
+                "intrinsic.messagepack.MessagePackDuplicatePolicy.Reject",
+                &[],
+            )
+            .unwrap();
+        let nonminimal = host
+            .invoke(
+                "intrinsic.messagepack.MessagePackNonMinimalPolicy.Accept",
+                &[],
+            )
+            .unwrap();
+        let unknown = host
+            .invoke(
+                "intrinsic.messagepack.MessagePackUnknownExtensionPolicy.Preserve",
+                &[],
+            )
+            .unwrap();
+        host.invoke(
+            "intrinsic.messagepack.MessagePackDecodeOptions.construct",
+            &[limits, dynamic, typed, nonminimal, unknown],
+        )
+        .unwrap()
+    }
+
+    fn messagepack_encode_options(host: &mut BootstrapHost, deterministic: bool) -> RuntimeValue {
+        let limits = messagepack_limits(host);
+        host.invoke(
+            "intrinsic.messagepack.MessagePackEncodeOptions.construct",
+            &[limits, RuntimeValue::Bool(deterministic)],
+        )
+        .unwrap()
+    }
+
+    fn proto_limits(host: &mut BootstrapHost) -> RuntimeValue {
+        host.invoke(
+            "intrinsic.protobuf.ProtoLimits.construct",
+            &[
+                RuntimeValue::Integer(1 << 20),
+                RuntimeValue::Integer(64),
+                RuntimeValue::Integer(1 << 16),
+                RuntimeValue::Integer(1 << 20),
+                RuntimeValue::Integer(1 << 20),
+                RuntimeValue::Integer(64),
+                RuntimeValue::Integer(1 << 16),
+                RuntimeValue::Integer(1 << 16),
+                RuntimeValue::Integer(1 << 16),
+                RuntimeValue::Integer(1 << 20),
+                RuntimeValue::Integer(1 << 20),
+                RuntimeValue::Integer(1 << 20),
+                RuntimeValue::Integer(1 << 20),
+                RuntimeValue::Integer(10),
+                RuntimeValue::Integer(100_000),
+                RuntimeValue::Integer(1 << 20),
+            ],
+        )
+        .unwrap()
+    }
+
+    fn proto_decode_options(host: &mut BootstrapHost) -> RuntimeValue {
+        let limits = proto_limits(host);
+        let wire = host
+            .invoke(
+                "intrinsic.protobuf.ProtoWireTypePolicy.PreserveUnknown",
+                &[],
+            )
+            .unwrap();
+        let unknown = host
+            .invoke("intrinsic.protobuf.ProtoUnknownPolicy.Preserve", &[])
+            .unwrap();
+        host.invoke(
+            "intrinsic.protobuf.ProtoDecodeOptions.construct",
+            &[limits, wire, unknown, RuntimeValue::Bool(false)],
+        )
+        .unwrap()
+    }
+
+    fn proto_encode_options(host: &mut BootstrapHost, deterministic: bool) -> RuntimeValue {
+        let limits = proto_limits(host);
+        host.invoke(
+            "intrinsic.protobuf.ProtoEncodeOptions.construct",
+            &[limits, RuntimeValue::Bool(deterministic)],
+        )
+        .unwrap()
+    }
+
     fn output_text(host: &mut BootstrapHost, output: RuntimeValue) -> String {
         let bytes = host
             .invoke("std.process.ProcessOutput.stdout", &[output])
@@ -8155,9 +9740,544 @@ mod tests {
             let invalid = host.allocate(RuntimeHostValueKind::Bytes, HostValue::Bytes(bytes));
             assert!(matches!(
                 host.invoke(operation, std::slice::from_ref(&invalid)).unwrap(),
-                RuntimeValue::ResultErr(value)
-                    if matches!(value.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::BytesError, .. })
+                RuntimeValue::ResultErr(value) if match (operation, value.as_ref()) {
+                    ("std.messagepack.validate", RuntimeValue::Record { name, .. }) if name == "MessagePackError" => true,
+                    ("std.protobuf.validate", RuntimeValue::Record { name, .. }) if name == "ProtoError" => true,
+                    _ => false,
+                }
             ));
+        }
+    }
+
+    #[test]
+    fn codec_public_host_surfaces_execute_all_contract_routes() {
+        let mut host = BootstrapHost::with_stdin(vec![0x01]);
+        let messagepack_decode = messagepack_decode_options(&mut host);
+        let messagepack_encode = messagepack_encode_options(&mut host, false);
+        let messagepack_limits = messagepack_limits(&mut host);
+        let messagepack_input = host.allocate(
+            RuntimeHostValueKind::Bytes,
+            HostValue::Bytes(vec![0x92, 0x01, 0x02]),
+        );
+
+        assert!(matches!(
+            host.invoke(
+                "std.messagepack.validate",
+                std::slice::from_ref(&messagepack_input),
+            )
+            .unwrap(),
+            RuntimeValue::ResultOk(value) if matches!(value.as_ref(), RuntimeValue::Unit)
+        ));
+        assert!(matches!(
+            host.invoke(
+                "std.messagepack.validate",
+                &[messagepack_input.clone(), messagepack_decode.clone()],
+            )
+            .unwrap(),
+            RuntimeValue::ResultOk(value) if matches!(value.as_ref(), RuntimeValue::Unit)
+        ));
+        let messagepack_value = ok(host
+            .invoke(
+                "std.messagepack.parse",
+                &[messagepack_input.clone(), messagepack_decode.clone()],
+            )
+            .unwrap());
+        assert!(matches!(
+            messagepack_value,
+            RuntimeValue::Host {
+                kind: RuntimeHostValueKind::MessagePackValue,
+                ..
+            }
+        ));
+        let messagepack_view = ok(host
+            .invoke(
+                "std.messagepack.parseView",
+                &[messagepack_input.clone(), messagepack_decode.clone()],
+            )
+            .unwrap());
+        assert!(matches!(
+            messagepack_view,
+            RuntimeValue::Host {
+                kind: RuntimeHostValueKind::MessagePackValueView,
+                ..
+            }
+        ));
+        let messagepack_typed_input = host.allocate(
+            RuntimeHostValueKind::Bytes,
+            HostValue::Bytes(vec![0x92, 0xd0, 0x01, 0xd0, 0x02]),
+        );
+        let decoded = ok(host
+            .invoke(
+                "std.messagepack.decode[Array[Int]]",
+                &[messagepack_typed_input, messagepack_decode.clone()],
+            )
+            .unwrap());
+        assert_eq!(
+            decoded,
+            RuntimeValue::Array(vec![RuntimeValue::Integer(1), RuntimeValue::Integer(2)])
+        );
+        let dynamic_encoded = ok(host
+            .invoke(
+                "std.messagepack.encode",
+                &[messagepack_value.clone(), messagepack_encode.clone()],
+            )
+            .unwrap());
+        assert_eq!(host.bytes(&dynamic_encoded).unwrap(), &[0x92, 0x01, 0x02]);
+        let typed_encoded = ok(host
+            .invoke(
+                "std.messagepack.encode[Array[Int]]",
+                &[
+                    RuntimeValue::Array(vec![RuntimeValue::Integer(1), RuntimeValue::Integer(2)]),
+                    messagepack_encode.clone(),
+                ],
+            )
+            .unwrap());
+        assert_eq!(host.bytes(&typed_encoded).unwrap(), &[0x92, 0x01, 0x02]);
+        let deterministic_encoded = ok(host
+            .invoke(
+                "std.messagepack.encodeDeterministic",
+                &[messagepack_value.clone(), messagepack_limits.clone()],
+            )
+            .unwrap());
+        assert_eq!(
+            host.bytes(&deterministic_encoded).unwrap(),
+            &[0x92, 0x01, 0x02]
+        );
+        let raw = ok(host
+            .invoke(
+                "std.messagepack.raw",
+                &[messagepack_input.clone(), messagepack_decode.clone()],
+            )
+            .unwrap());
+        assert!(matches!(
+            raw,
+            RuntimeValue::Host {
+                kind: RuntimeHostValueKind::MessagePackRaw,
+                ..
+            }
+        ));
+        let unchecked_raw = host
+            .invoke(
+                "std.messagepack.rawUnchecked",
+                std::slice::from_ref(&messagepack_input),
+            )
+            .unwrap();
+        assert!(matches!(
+            unchecked_raw,
+            RuntimeValue::Host {
+                kind: RuntimeHostValueKind::MessagePackRaw,
+                ..
+            }
+        ));
+
+        let timestamp_ext = RuntimeValue::Record {
+            name: "MessagePackExt".into(),
+            values: vec![
+                RuntimeValue::Integer(-1),
+                host.allocate(
+                    RuntimeHostValueKind::Bytes,
+                    HostValue::Bytes(vec![0, 0, 0, 7]),
+                ),
+            ],
+        };
+        let timestamp = ok(host
+            .invoke(
+                "std.messagepack.MessagePackTimestamp.fromExt",
+                &[timestamp_ext],
+            )
+            .unwrap());
+        assert!(matches!(
+            timestamp,
+            RuntimeValue::Host {
+                kind: RuntimeHostValueKind::MessagePackTimestamp,
+                ..
+            }
+        ));
+        let round_trip_ext = ok(host
+            .invoke(
+                "std.messagepack.MessagePackTimestamp.toExt",
+                std::slice::from_ref(&timestamp),
+            )
+            .unwrap());
+        assert!(
+            matches!(round_trip_ext, RuntimeValue::Record { name, .. } if name == "MessagePackExt")
+        );
+
+        let reader = ok(host
+            .invoke(
+                "std.messagepack.MessagePackReader.fromBytes",
+                &[messagepack_input.clone(), messagepack_decode.clone()],
+            )
+            .unwrap());
+        let event = match ok(host
+            .invoke(
+                "std.messagepack.MessagePackReader.next",
+                std::slice::from_ref(&reader),
+            )
+            .unwrap())
+        {
+            RuntimeValue::OptionSome(event) => *event,
+            other => panic!("expected a MessagePack event, got {other:?}"),
+        };
+        assert_eq!(
+            ok(host
+                .invoke(
+                    "std.messagepack.MessagePackReader.own",
+                    &[reader.clone(), event.clone()],
+                )
+                .unwrap()),
+            event
+        );
+        assert_eq!(
+            ok(host
+                .invoke(
+                    "std.messagepack.MessagePackReader.finish",
+                    std::slice::from_ref(&reader),
+                )
+                .unwrap()),
+            RuntimeValue::Unit
+        );
+        let stdin = ok(host.invoke("std.console.stdin", &[]).unwrap());
+        let reader_from_io = ok(host
+            .invoke(
+                "std.messagepack.MessagePackReader.fromReader",
+                &[stdin, messagepack_decode.clone()],
+            )
+            .unwrap());
+        assert_eq!(
+            ok(host
+                .invoke(
+                    "std.messagepack.MessagePackReader.finish",
+                    std::slice::from_ref(&reader_from_io),
+                )
+                .unwrap()),
+            RuntimeValue::Unit
+        );
+
+        let stdout = ok(host.invoke("std.console.stdout", &[]).unwrap());
+        let writer = ok(host
+            .invoke(
+                "std.messagepack.MessagePackWriter.toWriter",
+                &[stdout, messagepack_encode.clone()],
+            )
+            .unwrap());
+        let scalar_event = RuntimeValue::Variant {
+            name: "MessagePackEvent".into(),
+            variant: 2,
+            values: vec![RuntimeValue::Integer(7)],
+        };
+        assert_eq!(
+            ok(host
+                .invoke(
+                    "std.messagepack.MessagePackWriter.write",
+                    &[writer.clone(), scalar_event],
+                )
+                .unwrap()),
+            RuntimeValue::Unit
+        );
+        assert_eq!(
+            ok(host
+                .invoke(
+                    "std.messagepack.MessagePackWriter.finish",
+                    std::slice::from_ref(&writer),
+                )
+                .unwrap()),
+            RuntimeValue::Unit
+        );
+        assert_eq!(host.take_stdout(), vec![7]);
+
+        // Exercise every event conversion arm at the host boundary.  The
+        // streaming readers above prove the public routes; these values keep
+        // the nominal event bridge complete even for values not produced by a
+        // single compact fixture document.
+        let messagepack_events = [
+            messagepack::MessagePackEvent::Nil,
+            messagepack::MessagePackEvent::Bool(true),
+            messagepack::MessagePackEvent::Int(-1),
+            messagepack::MessagePackEvent::UInt(2),
+            messagepack::MessagePackEvent::Float32(1.0_f32.to_bits()),
+            messagepack::MessagePackEvent::Float64(2.0_f64.to_bits()),
+            messagepack::MessagePackEvent::String("text".into()),
+            messagepack::MessagePackEvent::Binary(vec![1, 2]),
+            messagepack::MessagePackEvent::StartArray(Some(1)),
+            messagepack::MessagePackEvent::EndArray,
+            messagepack::MessagePackEvent::StartMap(Some(1)),
+            messagepack::MessagePackEvent::MapKey,
+            messagepack::MessagePackEvent::EndMap,
+            messagepack::MessagePackEvent::Ext(messagepack::MessagePackExt {
+                type_code: 3,
+                payload: vec![4],
+            }),
+        ];
+        for event in messagepack_events {
+            let runtime = host.runtime_messagepack_event(event.clone());
+            assert_eq!(host.messagepack_event(&runtime).unwrap(), event);
+        }
+
+        let mut proto_host = BootstrapHost::with_stdin(vec![0x08, 0x01]);
+        let proto_decode = proto_decode_options(&mut proto_host);
+        let proto_encode = proto_encode_options(&mut proto_host, false);
+        let proto_limits = proto_limits(&mut proto_host);
+        let proto_input = proto_host.allocate(
+            RuntimeHostValueKind::Bytes,
+            HostValue::Bytes(vec![
+                0x08, 0x01, // field 1: varint
+                0x11, 1, 2, 3, 4, 5, 6, 7, 8, // field 2: fixed64
+                0x1a, 1, 0x41, // field 3: length-delimited
+                0x25, 1, 2, 3, 4, // field 4: fixed32
+            ]),
+        );
+        assert!(matches!(
+            proto_host
+                .invoke("std.protobuf.validate", std::slice::from_ref(&proto_input))
+                .unwrap(),
+            RuntimeValue::ResultOk(value) if matches!(value.as_ref(), RuntimeValue::Unit)
+        ));
+        assert!(matches!(
+            proto_host
+                .invoke(
+                    "std.protobuf.validate",
+                    &[proto_input.clone(), proto_decode.clone()],
+                )
+                .unwrap(),
+            RuntimeValue::ResultOk(value) if matches!(value.as_ref(), RuntimeValue::Unit)
+        ));
+        let decoded = proto_host
+            .invoke(
+                "std.protobuf.decode[Unit]",
+                &[proto_input.clone(), proto_decode.clone()],
+            )
+            .unwrap();
+        assert!(matches!(
+            decoded,
+            RuntimeValue::ResultOk(_) | RuntimeValue::ResultErr(_)
+        ));
+        let encoded = proto_host
+            .invoke(
+                "std.protobuf.encode[Unit]",
+                &[RuntimeValue::Unit, proto_encode.clone()],
+            )
+            .unwrap();
+        assert!(matches!(
+            encoded,
+            RuntimeValue::ResultOk(_) | RuntimeValue::ResultErr(_)
+        ));
+        let deterministic = proto_host
+            .invoke(
+                "std.protobuf.encodeDeterministic[Unit]",
+                &[RuntimeValue::Unit, proto_limits.clone()],
+            )
+            .unwrap();
+        assert!(matches!(
+            deterministic,
+            RuntimeValue::ResultOk(_) | RuntimeValue::ResultErr(_)
+        ));
+        assert!(matches!(
+            proto_host
+                .invoke("std.protobuf.descriptor[Unit]", &[])
+                .unwrap(),
+            RuntimeValue::Host {
+                kind: RuntimeHostValueKind::ProtoDescriptor,
+                ..
+            }
+        ));
+
+        let reader = ok(proto_host
+            .invoke(
+                "std.protobuf.ProtoReader.fromBytes",
+                &[proto_input.clone(), proto_decode.clone()],
+            )
+            .unwrap());
+        loop {
+            let item = ok(proto_host
+                .invoke(
+                    "std.protobuf.ProtoReader.next",
+                    std::slice::from_ref(&reader),
+                )
+                .unwrap());
+            if matches!(item, RuntimeValue::OptionNone) {
+                break;
+            }
+        }
+        assert_eq!(
+            ok(proto_host
+                .invoke(
+                    "std.protobuf.ProtoReader.finish",
+                    std::slice::from_ref(&reader),
+                )
+                .unwrap()),
+            RuntimeValue::Unit
+        );
+        let stdin = ok(proto_host.invoke("std.console.stdin", &[]).unwrap());
+        let reader_from_io = ok(proto_host
+            .invoke(
+                "std.protobuf.ProtoReader.fromReader",
+                &[stdin, proto_decode.clone()],
+            )
+            .unwrap());
+        assert_eq!(
+            ok(proto_host
+                .invoke(
+                    "std.protobuf.ProtoReader.finish",
+                    std::slice::from_ref(&reader_from_io),
+                )
+                .unwrap()),
+            RuntimeValue::Unit
+        );
+
+        let stdout = ok(proto_host.invoke("std.console.stdout", &[]).unwrap());
+        let writer = ok(proto_host
+            .invoke(
+                "std.protobuf.ProtoWriter.toWriter",
+                &[stdout, proto_encode.clone()],
+            )
+            .unwrap());
+        let wire_varint = RuntimeValue::Variant {
+            name: "ProtoWireType".into(),
+            variant: 0,
+            values: Vec::new(),
+        };
+        let writer_events = [
+            RuntimeValue::Variant {
+                name: "ProtoEvent".into(),
+                variant: 0,
+                values: vec![RuntimeValue::String("root".into())],
+            },
+            RuntimeValue::Variant {
+                name: "ProtoEvent".into(),
+                variant: 2,
+                values: vec![RuntimeValue::Integer(1), wire_varint],
+            },
+            RuntimeValue::Variant {
+                name: "ProtoEvent".into(),
+                variant: 3,
+                values: vec![RuntimeValue::Integer(1)],
+            },
+            RuntimeValue::Variant {
+                name: "ProtoEvent".into(),
+                variant: 6,
+                values: vec![RuntimeValue::Integer(2)],
+            },
+            RuntimeValue::Variant {
+                name: "ProtoEvent".into(),
+                variant: 7,
+                values: vec![
+                    proto_host.allocate(RuntimeHostValueKind::Bytes, HostValue::Bytes(vec![0x41])),
+                ],
+            },
+            RuntimeValue::Variant {
+                name: "ProtoEvent".into(),
+                variant: 8,
+                values: Vec::new(),
+            },
+            RuntimeValue::Variant {
+                name: "ProtoEvent".into(),
+                variant: 9,
+                values: vec![RuntimeValue::Integer(3)],
+            },
+            RuntimeValue::Variant {
+                name: "ProtoEvent".into(),
+                variant: 7,
+                values: vec![
+                    proto_host.allocate(RuntimeHostValueKind::Bytes, HostValue::Bytes(vec![1, 2])),
+                ],
+            },
+            RuntimeValue::Variant {
+                name: "ProtoEvent".into(),
+                variant: 10,
+                values: Vec::new(),
+            },
+            RuntimeValue::Variant {
+                name: "ProtoEvent".into(),
+                variant: 1,
+                values: Vec::new(),
+            },
+        ];
+        for event in writer_events {
+            assert_eq!(
+                ok(proto_host
+                    .invoke("std.protobuf.ProtoWriter.write", &[writer.clone(), event],)
+                    .unwrap()),
+                RuntimeValue::Unit
+            );
+        }
+        assert_eq!(
+            ok(proto_host
+                .invoke(
+                    "std.protobuf.ProtoWriter.finish",
+                    std::slice::from_ref(&writer),
+                )
+                .unwrap()),
+            RuntimeValue::Unit
+        );
+        assert_eq!(
+            proto_host.take_stdout(),
+            vec![0x08, 0x01, 0x12, 0x01, 0x41, 0x1a, 0x02, 0x01, 0x02]
+        );
+
+        let mut unknown = protobuf::UnknownFields::default();
+        unknown.push(protobuf::UnknownField {
+            number: 9,
+            wire_type: protobuf::ProtoWireType::Varint,
+            tag_bytes: vec![0x48],
+            payload_bytes: vec![1],
+        });
+        let unknown = proto_host.allocate(
+            RuntimeHostValueKind::UnknownFields,
+            HostValue::UnknownFields(unknown),
+        );
+        assert_eq!(
+            proto_host
+                .invoke(
+                    "std.protobuf.UnknownFields.count",
+                    std::slice::from_ref(&unknown)
+                )
+                .unwrap(),
+            RuntimeValue::Integer(1)
+        );
+        assert_eq!(
+            proto_host
+                .invoke(
+                    "std.protobuf.UnknownFields.discard",
+                    std::slice::from_ref(&unknown)
+                )
+                .unwrap(),
+            RuntimeValue::Unit
+        );
+        assert_eq!(
+            proto_host
+                .invoke(
+                    "std.protobuf.UnknownFields.count",
+                    std::slice::from_ref(&unknown)
+                )
+                .unwrap(),
+            RuntimeValue::Integer(0)
+        );
+
+        let proto_events = [
+            protobuf::ProtoEvent::StartMessage("root".into()),
+            protobuf::ProtoEvent::EndMessage,
+            protobuf::ProtoEvent::Field(1, protobuf::ProtoWireType::Varint),
+            protobuf::ProtoEvent::Varint(1),
+            protobuf::ProtoEvent::Fixed32(2),
+            protobuf::ProtoEvent::Fixed64(3),
+            protobuf::ProtoEvent::StartLengthDelimited(2),
+            protobuf::ProtoEvent::Bytes(vec![4]),
+            protobuf::ProtoEvent::EndLengthDelimited,
+            protobuf::ProtoEvent::StartPacked(3),
+            protobuf::ProtoEvent::EndPacked,
+            protobuf::ProtoEvent::Unknown(protobuf::UnknownField {
+                number: 4,
+                wire_type: protobuf::ProtoWireType::Varint,
+                tag_bytes: vec![0x20],
+                payload_bytes: vec![1],
+            }),
+        ];
+        for event in proto_events {
+            let runtime = proto_host.runtime_proto_event(event.clone());
+            if !matches!(event, protobuf::ProtoEvent::Unknown(_)) {
+                assert_eq!(proto_host.proto_event(&runtime).unwrap(), event);
+            }
         }
     }
 

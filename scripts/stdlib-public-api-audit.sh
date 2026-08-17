@@ -25,7 +25,7 @@ jq -e '
         and (.hir | length > 0)
         and (.lowering | length > 0)
         and (.case.path | length > 0)
-        and (.case.kind | ["runtime", "compile", "runner-source"] | index(.) != null)
+        and (.case.kind | ["runtime", "compile", "runner-source", "build-only"] | index(.) != null)
         and (.runtime.kind | ["host", "vm", "vm-inline", "not-applicable"] | index(.) != null)
         and ((.runtime.symbols // {}) | type) == "object"
         and ((.hir_symbols // {}) | type) == "object"
@@ -261,6 +261,9 @@ emit_owner_rows() {
             runner-source)
                 [[ "$case_path" == crates/tondo-compiler/src/driver.rs ]] || missing+=("invalid-runner-case")
                 ;;
+            build-only)
+                [[ "$runtime_kind" == "not-applicable" && "$case_path" == crates/* && "$case_path" != docs/* ]] || missing+=("invalid-build-only-case")
+                ;;
             *)
                 missing+=("unknown-case-kind")
                 ;;
@@ -317,18 +320,20 @@ generate_matrix() {
         | ($config.owners | map({id,contract,section,exact_surface_complete:(if has("exact_surface_complete") then .exact_surface_complete else true end),exact_signatures:(.exact_signatures // []),case:.case,hir,lowering,runtime})) as $owner_config
         | ($owner_config | map(. as $owner |
             ($all_rows | map(select(.owner == $owner.id))) as $owner_rows
+            | [
+                (if ($owner_rows | length) == 0 and $owner.runtime.kind != "not-applicable" then "no-callable-signatures-indexed" else empty end),
+                (if ($owner.case.kind == "runtime" and (($owner.case.path | startswith("tests/runtime/")) | not)) then "invalid-runtime-case" else empty end),
+                (if ($owner.case.kind == "compile" and ((($owner.case.path | startswith("crates/")) and ($owner.case.path | contains("/tests/"))) | not)) then "invalid-compile-case" else empty end),
+                (if ($owner.case.kind == "runner-source" and $owner.case.path != "crates/tondo-compiler/src/driver.rs") then "invalid-runner-case" else empty end),
+                (if ($owner.case.kind == "build-only" and (($owner.runtime.kind != "not-applicable") or (($owner.case.path | startswith("crates/")) | not) or ($owner.case.path | startswith("docs/")))) then "invalid-build-only-case" else empty end),
+                (if ($owner.case.path | startswith("docs/")) then "documentation-is-not-public-case" else empty end)
+            ] as $owner_missing
             | . + {
                 signature_count: ($owner_rows | length),
                 verified_count: ($owner_rows | map(select(.status == "verified")) | length),
                 gap_count: ($owner_rows | map(select(.status == "gap")) | length),
-                owner_missing: [
-                    (if ($owner_rows | length) == 0 then "no-callable-signatures-indexed" else empty end),
-                    (if ($owner.case.kind == "runtime" and (($owner.case.path | startswith("tests/runtime/")) | not)) then "invalid-runtime-case" else empty end),
-                    (if ($owner.case.kind == "compile" and ((($owner.case.path | startswith("crates/")) and ($owner.case.path | contains("/tests/"))) | not)) then "invalid-compile-case" else empty end),
-                    (if ($owner.case.kind == "runner-source" and $owner.case.path != "crates/tondo-compiler/src/driver.rs") then "invalid-runner-case" else empty end),
-                    (if ($owner.case.path | startswith("docs/")) then "documentation-is-not-public-case" else empty end)
-                ],
-                status: (if (($owner_rows | any(.status == "gap")) or (($owner_rows | length) == 0) or (($owner.case.path | startswith("docs/")))) then "open-gaps" else "verified" end)
+                owner_missing: $owner_missing,
+                status: (if (($owner_rows | any(.status == "gap")) or (($owner_missing | length) > 0)) then "open-gaps" else "verified" end)
             })) as $owners
         | {
             format:"tondo-stdlib-public-api-audit/1",
@@ -338,7 +343,7 @@ generate_matrix() {
             rules:{
                 one_owner_per_signature:true,
                 required_stages:["contract","hir","lowering","host_vm","public_case"],
-                public_case_kinds:["runtime","compile","runner-source"],
+                public_case_kinds:["runtime","compile","runner-source","build-only"],
                 documentation_is_not_public_case:true,
                 bootstrap_aliases:false,
                 exact_signature_shape_required:true,
@@ -394,6 +399,7 @@ validate_matrix() {
             and (if .case.kind == "runtime" then ((.case.path | startswith("tests/runtime/")) or any(.owner_missing[]; . == "invalid-runtime-case"))
                  elif .case.kind == "compile" then (((.case.path | startswith("crates/")) and (.case.path | contains("/tests/"))) or any(.owner_missing[]; . == "invalid-compile-case"))
                  elif .case.kind == "runner-source" then (.case.path == "crates/tondo-compiler/src/driver.rs" or any(.owner_missing[]; . == "invalid-runner-case"))
+                 elif .case.kind == "build-only" then (((.case.path | startswith("crates/")) and (.runtime.kind == "not-applicable")) or any(.owner_missing[]; . == "invalid-build-only-case"))
                  else false end)
             and ((.case.path | startswith("docs/") | not) or any(.owner_missing[]; . == "documentation-is-not-public-case"))
         )

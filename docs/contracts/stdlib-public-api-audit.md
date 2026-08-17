@@ -27,9 +27,12 @@ con un path Rust aislado, un test que ejerce otra operación, una documentación
 un alias bootstrap ni un registro runtime paralelo.
 
 Los owners build-only pueden declarar `host_vm.kind = not-applicable`, pero la
-razón debe ser normativa. Si el contrato no expone ninguna firma indexable, el
-owner queda abierto con `no-callable-signatures-indexed`; esto evita confundir
-una implementación de soporte con una API pública auditada.
+razón debe ser normativa y el caso debe apuntar a una raíz compiler-owned
+`crates/...` con `case.kind = build-only`. Si el contrato no expone ninguna
+firma indexable, el owner queda verificado solo cuando esa frontera build-only
+es explícita; un owner runtime sin firmas sigue abierto con
+`no-callable-signatures-indexed`. Esto evita confundir una implementación de
+soporte con una API pública auditada.
 
 Los intrinsics Core que se materializan como agregados y ramas MIR usan
 `host_vm.kind = vm-inline`: la matriz conserva los símbolos exactos del
@@ -50,25 +53,29 @@ de implementación siguen abiertos. `--strict` es el gate de promoción S1A y
 debe pasar antes de una promoción global. El cierre coordinado de
 `STD-IMPL-001` usa además
 [`stdlib-implementation-coordination.md`](./stdlib-implementation-coordination.md):
-solo promueve los owners Core/serialization que ya tienen evidencia completa y
-mantiene los gaps globales como trabajo posterior. Así no se confunde una
+solo promueve los owners Core/serialization que ya tienen evidencia completa;
+no sustituye las celdas de promoción de la matriz. Así no se confunde una
 coordinación parcial con un waiver del modo estricto.
 `STD-IMPL-002` usa además
 [`stdlib-hosted-implementation-coordination.md`](./stdlib-hosted-implementation-coordination.md):
 solo promueve los cuatro owners Hosted cuando sus capabilities, bridges y
-firmas públicas están verificadas; tampoco cambia el resultado global de
-`--strict`.
+firmas públicas están verificadas; el resultado global de `--strict` queda
+determinado por la matriz completa y sus razones normativas.
 
-La matriz actual registra deliberadamente `open-gaps`: los codecs typed y
-streaming, varios métodos Hosted, la superficie completa de `std.testing` y
-las APIs build-only todavía no atraviesan una llamada pública para cada firma.
-Es una señal fail-closed para el tracker, no un waiver.
+La auditoría actual registra `verified` con 209/209 firmas y cero gaps. Las
+llamadas públicas de codecs incluyen rutas dynamic/typed y streaming; las
+fronteras build-only se verifican por su caso compiler-owned y razón
+`not-applicable`, sin fabricar una llamada runtime. La matriz normativa puede
+seguir `open-gaps` por requisitos de fuzz, rendimiento, conformance o promoción;
+eso es una señal fail-closed del tracker, no un waiver de esta auditoría.
 
 ## Invariantes de la matriz
 
 - hay exactamente un owner por identidad de firma;
 - el contrato y los stages se fijan por paths relativos al repositorio;
-- el caso público declara su kind (`runtime`, `compile` o `runner-source`);
+- el caso público declara su kind (`runtime`, `compile`, `runner-source` o
+  `build-only`); un `build-only` debe ser compiler-owned y no aplicable en
+  runtime;
 - `hir.symbols`, `lowering.symbols` y `host_vm.symbols` conservan los tokens
   implementativos usados para verificar cada ruta. Cuando una fase usa un
   nombre interno distinto de la firma pública, el alias se declara de forma

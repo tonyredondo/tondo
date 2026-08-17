@@ -160,6 +160,33 @@ fn bootstrap_process_intrinsic(module: &ModuleId, name: &Name) -> Option<Intrins
             "JsonWriter" => IntrinsicType::JsonWriter,
             _ => return None,
         }),
+        "messagepack" => Some(match name.as_str() {
+            "MessagePackLimits" => IntrinsicType::MessagePackLimits,
+            "MessagePackDecodeOptions" => IntrinsicType::MessagePackDecodeOptions,
+            "MessagePackEncodeOptions" => IntrinsicType::MessagePackEncodeOptions,
+            "MessagePackDuplicatePolicy" => IntrinsicType::MessagePackDuplicatePolicy,
+            "MessagePackUnknownExtensionPolicy" => IntrinsicType::MessagePackUnknownExtensionPolicy,
+            "MessagePackNonMinimalPolicy" => IntrinsicType::MessagePackNonMinimalPolicy,
+            "Value" => IntrinsicType::MessagePackValue,
+            "ValueView" => IntrinsicType::MessagePackValueView,
+            "Raw" => IntrinsicType::MessagePackRaw,
+            "MessagePackTimestamp" => IntrinsicType::MessagePackTimestamp,
+            "MessagePackReader" => IntrinsicType::MessagePackReader,
+            "MessagePackWriter" => IntrinsicType::MessagePackWriter,
+            _ => return None,
+        }),
+        "protobuf" => Some(match name.as_str() {
+            "ProtoDescriptor" => IntrinsicType::ProtoDescriptor,
+            "ProtoLimits" => IntrinsicType::ProtoLimits,
+            "ProtoDecodeOptions" => IntrinsicType::ProtoDecodeOptions,
+            "ProtoEncodeOptions" => IntrinsicType::ProtoEncodeOptions,
+            "ProtoWireTypePolicy" => IntrinsicType::ProtoWireTypePolicy,
+            "ProtoUnknownPolicy" => IntrinsicType::ProtoUnknownPolicy,
+            "ProtoReader" => IntrinsicType::ProtoReader,
+            "ProtoWriter" => IntrinsicType::ProtoWriter,
+            "UnknownFields" => IntrinsicType::UnknownFields,
+            _ => return None,
+        }),
         _ => None,
     }
 }
@@ -2709,7 +2736,57 @@ pub enum HirBootstrapHostFunction {
     JsonReaderSerializationReject,
     MessagePackValidate,
     MessagePackCanonicalize,
+    MessagePackDuplicatePreserve,
+    MessagePackDuplicateReject,
+    MessagePackDuplicateFirst,
+    MessagePackDuplicateLast,
+    MessagePackUnknownExtensionPreserve,
+    MessagePackUnknownExtensionReject,
+    MessagePackNonMinimalAccept,
+    MessagePackNonMinimalReject,
+    MessagePackLimitsConstruct,
+    MessagePackDecodeOptionsConstruct,
+    MessagePackEncodeOptionsConstruct,
+    MessagePackParse,
+    MessagePackParseView,
+    MessagePackDecode,
+    MessagePackEncodeValue,
+    MessagePackEncode,
+    MessagePackEncodeDeterministic,
+    MessagePackRaw,
+    MessagePackRawUnchecked,
+    MessagePackTimestampFromExt,
+    MessagePackTimestampToExt,
+    MessagePackReaderFromBytes,
+    MessagePackReaderFromReader,
+    MessagePackReaderNext,
+    MessagePackReaderOwn,
+    MessagePackReaderFinish,
+    MessagePackWriterToWriter,
+    MessagePackWriterWrite,
+    MessagePackWriterFinish,
     ProtobufValidate,
+    ProtobufWireTypePreserveUnknown,
+    ProtobufWireTypeReject,
+    ProtobufUnknownPreserve,
+    ProtobufUnknownDiscard,
+    ProtobufLimitsConstruct,
+    ProtobufDecodeOptionsConstruct,
+    ProtobufEncodeOptionsConstruct,
+    ProtobufDecode,
+    ProtobufEncode,
+    ProtobufEncodeDeterministic,
+    ProtobufDescriptor,
+    ProtobufReaderFromBytes,
+    ProtobufReaderFromReader,
+    ProtobufReaderNext,
+    ProtobufReaderOwn,
+    ProtobufReaderFinish,
+    ProtobufWriterToWriter,
+    ProtobufWriterWrite,
+    ProtobufWriterFinish,
+    ProtobufUnknownFieldsCount,
+    ProtobufUnknownFieldsDiscard,
     TextEmpty,
     TextFromChars,
     TextLength,
@@ -2991,7 +3068,83 @@ impl HirBootstrapHostFunction {
             Self::JsonReaderSerializationReject => "intrinsic.json.JsonReader.rejectSerialization",
             Self::MessagePackValidate => "std.messagepack.validate",
             Self::MessagePackCanonicalize => "std.messagepack.canonicalize",
+            Self::MessagePackDuplicatePreserve => {
+                "intrinsic.messagepack.MessagePackDuplicatePolicy.Preserve"
+            }
+            Self::MessagePackDuplicateReject => {
+                "intrinsic.messagepack.MessagePackDuplicatePolicy.Reject"
+            }
+            Self::MessagePackDuplicateFirst => {
+                "intrinsic.messagepack.MessagePackDuplicatePolicy.First"
+            }
+            Self::MessagePackDuplicateLast => {
+                "intrinsic.messagepack.MessagePackDuplicatePolicy.Last"
+            }
+            Self::MessagePackUnknownExtensionPreserve => {
+                "intrinsic.messagepack.MessagePackUnknownExtensionPolicy.Preserve"
+            }
+            Self::MessagePackUnknownExtensionReject => {
+                "intrinsic.messagepack.MessagePackUnknownExtensionPolicy.Reject"
+            }
+            Self::MessagePackNonMinimalAccept => {
+                "intrinsic.messagepack.MessagePackNonMinimalPolicy.Accept"
+            }
+            Self::MessagePackNonMinimalReject => {
+                "intrinsic.messagepack.MessagePackNonMinimalPolicy.Reject"
+            }
+            Self::MessagePackLimitsConstruct => "intrinsic.messagepack.MessagePackLimits.construct",
+            Self::MessagePackDecodeOptionsConstruct => {
+                "intrinsic.messagepack.MessagePackDecodeOptions.construct"
+            }
+            Self::MessagePackEncodeOptionsConstruct => {
+                "intrinsic.messagepack.MessagePackEncodeOptions.construct"
+            }
+            Self::MessagePackParse => "std.messagepack.parse",
+            Self::MessagePackParseView => "std.messagepack.parseView",
+            Self::MessagePackDecode => "std.messagepack.decode",
+            Self::MessagePackEncodeValue => "std.messagepack.encode",
+            Self::MessagePackEncode => "std.messagepack.encode",
+            Self::MessagePackEncodeDeterministic => "std.messagepack.encodeDeterministic",
+            Self::MessagePackRaw => "std.messagepack.raw",
+            Self::MessagePackRawUnchecked => "std.messagepack.rawUnchecked",
+            Self::MessagePackTimestampFromExt => "std.messagepack.MessagePackTimestamp.fromExt",
+            Self::MessagePackTimestampToExt => "std.messagepack.MessagePackTimestamp.toExt",
+            Self::MessagePackReaderFromBytes => "std.messagepack.MessagePackReader.fromBytes",
+            Self::MessagePackReaderFromReader => "std.messagepack.MessagePackReader.fromReader",
+            Self::MessagePackReaderNext => "std.messagepack.MessagePackReader.next",
+            Self::MessagePackReaderOwn => "std.messagepack.MessagePackReader.own",
+            Self::MessagePackReaderFinish => "std.messagepack.MessagePackReader.finish",
+            Self::MessagePackWriterToWriter => "std.messagepack.MessagePackWriter.toWriter",
+            Self::MessagePackWriterWrite => "std.messagepack.MessagePackWriter.write",
+            Self::MessagePackWriterFinish => "std.messagepack.MessagePackWriter.finish",
             Self::ProtobufValidate => "std.protobuf.validate",
+            Self::ProtobufWireTypePreserveUnknown => {
+                "intrinsic.protobuf.ProtoWireTypePolicy.PreserveUnknown"
+            }
+            Self::ProtobufWireTypeReject => "intrinsic.protobuf.ProtoWireTypePolicy.Reject",
+            Self::ProtobufUnknownPreserve => "intrinsic.protobuf.ProtoUnknownPolicy.Preserve",
+            Self::ProtobufUnknownDiscard => "intrinsic.protobuf.ProtoUnknownPolicy.Discard",
+            Self::ProtobufLimitsConstruct => "intrinsic.protobuf.ProtoLimits.construct",
+            Self::ProtobufDecodeOptionsConstruct => {
+                "intrinsic.protobuf.ProtoDecodeOptions.construct"
+            }
+            Self::ProtobufEncodeOptionsConstruct => {
+                "intrinsic.protobuf.ProtoEncodeOptions.construct"
+            }
+            Self::ProtobufDecode => "std.protobuf.decode",
+            Self::ProtobufEncode => "std.protobuf.encode",
+            Self::ProtobufEncodeDeterministic => "std.protobuf.encodeDeterministic",
+            Self::ProtobufDescriptor => "std.protobuf.descriptor",
+            Self::ProtobufReaderFromBytes => "std.protobuf.ProtoReader.fromBytes",
+            Self::ProtobufReaderFromReader => "std.protobuf.ProtoReader.fromReader",
+            Self::ProtobufReaderNext => "std.protobuf.ProtoReader.next",
+            Self::ProtobufReaderOwn => "std.protobuf.ProtoReader.own",
+            Self::ProtobufReaderFinish => "std.protobuf.ProtoReader.finish",
+            Self::ProtobufWriterToWriter => "std.protobuf.ProtoWriter.toWriter",
+            Self::ProtobufWriterWrite => "std.protobuf.ProtoWriter.write",
+            Self::ProtobufWriterFinish => "std.protobuf.ProtoWriter.finish",
+            Self::ProtobufUnknownFieldsCount => "std.protobuf.UnknownFields.count",
+            Self::ProtobufUnknownFieldsDiscard => "std.protobuf.UnknownFields.discard",
             Self::TextEmpty => "std.text.String.empty",
             Self::TextFromChars => "std.text.String.fromChars",
             Self::TextLength => "std.text.String.length",
@@ -3119,11 +3272,19 @@ impl HirBootstrapHostFunction {
                 | Self::JsonWriterToWriter
                 | Self::JsonWriterWrite
                 | Self::JsonWriterFinish
+                | Self::MessagePackReaderFromReader
+                | Self::MessagePackWriterToWriter
+                | Self::MessagePackWriterWrite
+                | Self::MessagePackWriterFinish
+                | Self::ProtobufReaderFromReader
+                | Self::ProtobufWriterToWriter
+                | Self::ProtobufWriterWrite
+                | Self::ProtobufWriterFinish
         )
     }
 
     pub const fn is_unsafe(self) -> bool {
-        matches!(self, Self::JsonRawUnchecked)
+        matches!(self, Self::JsonRawUnchecked | Self::MessagePackRawUnchecked)
     }
 
     pub const fn suspends(self) -> bool {

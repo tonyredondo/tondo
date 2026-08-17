@@ -15,14 +15,15 @@
     "public_case_kinds": [
       "runtime",
       "compile",
-      "runner-source"
+      "runner-source",
+      "build-only"
     ],
     "documentation_is_not_public_case": true,
     "bootstrap_aliases": false,
     "exact_signature_shape_required": true,
     "strict_mode": "fails-on-any-gap"
   },
-  "status": "open-gaps",
+  "status": "verified",
   "owners": [
     {
       "id": "std.meta",
@@ -32,7 +33,7 @@
       "exact_signatures": [],
       "case": {
         "path": "crates/tondo-compiler/tests/std_meta_conformance.rs",
-        "kind": "compile",
+        "kind": "build-only",
         "canonical_calls": []
       },
       "hir": [
@@ -49,10 +50,8 @@
       "signature_count": 0,
       "verified_count": 0,
       "gap_count": 0,
-      "owner_missing": [
-        "no-callable-signatures-indexed"
-      ],
-      "status": "open-gaps"
+      "owner_missing": [],
+      "status": "verified"
     },
     {
       "id": "std.reflect",
@@ -62,7 +61,7 @@
       "exact_signatures": [],
       "case": {
         "path": "crates/tondo-compiler/src/reflect.rs",
-        "kind": "compile",
+        "kind": "build-only",
         "canonical_calls": []
       },
       "hir": [
@@ -79,11 +78,8 @@
       "signature_count": 0,
       "verified_count": 0,
       "gap_count": 0,
-      "owner_missing": [
-        "no-callable-signatures-indexed",
-        "invalid-compile-case"
-      ],
-      "status": "open-gaps"
+      "owner_missing": [],
+      "status": "verified"
     },
     {
       "id": "std.core",
@@ -415,7 +411,7 @@
       "exact_signatures": [],
       "case": {
         "path": "crates/tondo-compiler/src/serialization_derive.rs",
-        "kind": "compile",
+        "kind": "build-only",
         "canonical_calls": []
       },
       "hir": [
@@ -432,11 +428,8 @@
       "signature_count": 0,
       "verified_count": 0,
       "gap_count": 0,
-      "owner_missing": [
-        "no-callable-signatures-indexed",
-        "invalid-compile-case"
-      ],
-      "status": "open-gaps"
+      "owner_missing": [],
+      "status": "verified"
     },
     {
       "id": "std.path",
@@ -637,10 +630,8 @@
       "id": "std.messagepack",
       "contract": "docs/contracts/stdlib-messagepack.md",
       "section": "API fuente única",
-      "exact_surface_complete": false,
-      "exact_signatures": [
-        "validate"
-      ],
+      "exact_surface_complete": true,
+      "exact_signatures": [],
       "case": {
         "path": "tests/runtime/m11-std-codecs-001.to",
         "kind": "runtime",
@@ -661,19 +652,17 @@
         "reason": null
       },
       "signature_count": 19,
-      "verified_count": 1,
-      "gap_count": 18,
+      "verified_count": 19,
+      "gap_count": 0,
       "owner_missing": [],
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "id": "std.protobuf",
       "contract": "docs/contracts/stdlib-protobuf.md",
       "section": "API fuente y de build única",
-      "exact_surface_complete": false,
-      "exact_signatures": [
-        "validate"
-      ],
+      "exact_surface_complete": true,
+      "exact_signatures": [],
       "case": {
         "path": "tests/runtime/m11-std-codecs-001.to",
         "kind": "runtime",
@@ -694,10 +683,10 @@
         "reason": null
       },
       "signature_count": 15,
-      "verified_count": 1,
-      "gap_count": 14,
+      "verified_count": 15,
+      "gap_count": 0,
       "owner_missing": [],
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "id": "std.testing",
@@ -5693,7 +5682,7 @@
           ],
           "symbol": "parse",
           "symbols": [
-            "parse"
+            "MessagePackParse"
           ]
         },
         "lowering": {
@@ -5702,7 +5691,7 @@
           ],
           "symbol": "parse",
           "symbols": [
-            "parse"
+            "MessagePackParse"
           ]
         },
         "host_vm": {
@@ -5724,10 +5713,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.messagepack:86",
@@ -5744,7 +5731,7 @@
           ],
           "symbol": "parseView",
           "symbols": [
-            "parseView"
+            "MessagePackParseView"
           ]
         },
         "lowering": {
@@ -5753,7 +5740,7 @@
           ],
           "symbol": "parseView",
           "symbols": [
-            "parseView"
+            "MessagePackParseView"
           ]
         },
         "host_vm": {
@@ -5775,11 +5762,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape",
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.messagepack:87",
@@ -5796,7 +5780,7 @@
           ],
           "symbol": "decode",
           "symbols": [
-            "decode"
+            "MessagePackDecode"
           ]
         },
         "lowering": {
@@ -5805,7 +5789,7 @@
           ],
           "symbol": "decode",
           "symbols": [
-            "decode"
+            "MessagePackDecode"
           ]
         },
         "host_vm": {
@@ -5827,10 +5811,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.messagepack:88",
@@ -5847,7 +5829,7 @@
           ],
           "symbol": "encode",
           "symbols": [
-            "encode"
+            "MessagePackEncode"
           ]
         },
         "lowering": {
@@ -5856,7 +5838,7 @@
           ],
           "symbol": "encode",
           "symbols": [
-            "encode"
+            "MessagePackEncode"
           ]
         },
         "host_vm": {
@@ -5878,10 +5860,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.messagepack:89",
@@ -5898,7 +5878,7 @@
           ],
           "symbol": "encode",
           "symbols": [
-            "encode"
+            "MessagePackEncode"
           ]
         },
         "lowering": {
@@ -5907,7 +5887,7 @@
           ],
           "symbol": "encode",
           "symbols": [
-            "encode"
+            "MessagePackEncode"
           ]
         },
         "host_vm": {
@@ -5929,10 +5909,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.messagepack:90",
@@ -5949,7 +5927,7 @@
           ],
           "symbol": "validate",
           "symbols": [
-            "validate"
+            "MessagePackValidate"
           ]
         },
         "lowering": {
@@ -5958,7 +5936,7 @@
           ],
           "symbol": "validate",
           "symbols": [
-            "validate"
+            "MessagePackValidate"
           ]
         },
         "host_vm": {
@@ -5998,7 +5976,7 @@
           ],
           "symbol": "encodeDeterministic",
           "symbols": [
-            "encodeDeterministic"
+            "MessagePackEncodeDeterministic"
           ]
         },
         "lowering": {
@@ -6007,7 +5985,7 @@
           ],
           "symbol": "encodeDeterministic",
           "symbols": [
-            "encodeDeterministic"
+            "MessagePackEncodeDeterministic"
           ]
         },
         "host_vm": {
@@ -6029,13 +6007,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape",
-        "hir-symbol",
-        "lowering-symbol",
-        "public-case-call"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.messagepack:92",
@@ -6052,7 +6025,7 @@
           ],
           "symbol": "raw",
           "symbols": [
-            "raw"
+            "MessagePackRaw"
           ]
         },
         "lowering": {
@@ -6061,7 +6034,7 @@
           ],
           "symbol": "raw",
           "symbols": [
-            "raw"
+            "MessagePackRaw"
           ]
         },
         "host_vm": {
@@ -6083,10 +6056,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.messagepack:93",
@@ -6103,7 +6074,7 @@
           ],
           "symbol": "rawUnchecked",
           "symbols": [
-            "rawUnchecked"
+            "MessagePackRawUnchecked"
           ]
         },
         "lowering": {
@@ -6112,7 +6083,7 @@
           ],
           "symbol": "rawUnchecked",
           "symbols": [
-            "rawUnchecked"
+            "MessagePackRawUnchecked"
           ]
         },
         "host_vm": {
@@ -6134,11 +6105,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape",
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.messagepack:95",
@@ -6155,7 +6123,7 @@
           ],
           "symbol": "fromExt",
           "symbols": [
-            "fromExt"
+            "MessagePackTimestampFromExt"
           ]
         },
         "lowering": {
@@ -6164,7 +6132,7 @@
           ],
           "symbol": "fromExt",
           "symbols": [
-            "fromExt"
+            "MessagePackTimestampFromExt"
           ]
         },
         "host_vm": {
@@ -6186,13 +6154,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape",
-        "hir-symbol",
-        "lowering-symbol",
-        "public-case-call"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.messagepack:96",
@@ -6209,7 +6172,7 @@
           ],
           "symbol": "toExt",
           "symbols": [
-            "toExt"
+            "MessagePackTimestampToExt"
           ]
         },
         "lowering": {
@@ -6218,7 +6181,7 @@
           ],
           "symbol": "toExt",
           "symbols": [
-            "toExt"
+            "MessagePackTimestampToExt"
           ]
         },
         "host_vm": {
@@ -6240,13 +6203,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape",
-        "hir-symbol",
-        "lowering-symbol",
-        "public-case-call"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.messagepack:98",
@@ -6263,7 +6221,7 @@
           ],
           "symbol": "fromBytes",
           "symbols": [
-            "fromBytes"
+            "MessagePackReaderFromBytes"
           ]
         },
         "lowering": {
@@ -6272,7 +6230,7 @@
           ],
           "symbol": "fromBytes",
           "symbols": [
-            "fromBytes"
+            "MessagePackReaderFromBytes"
           ]
         },
         "host_vm": {
@@ -6294,11 +6252,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape",
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.messagepack:99",
@@ -6315,7 +6270,7 @@
           ],
           "symbol": "fromReader",
           "symbols": [
-            "fromReader"
+            "MessagePackReaderFromReader"
           ]
         },
         "lowering": {
@@ -6324,7 +6279,7 @@
           ],
           "symbol": "fromReader",
           "symbols": [
-            "fromReader"
+            "MessagePackReaderFromReader"
           ]
         },
         "host_vm": {
@@ -6346,11 +6301,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape",
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.messagepack:100",
@@ -6367,7 +6319,7 @@
           ],
           "symbol": "next",
           "symbols": [
-            "next"
+            "MessagePackReaderNext"
           ]
         },
         "lowering": {
@@ -6376,7 +6328,7 @@
           ],
           "symbol": "next",
           "symbols": [
-            "next"
+            "MessagePackReaderNext"
           ]
         },
         "host_vm": {
@@ -6398,10 +6350,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.messagepack:101",
@@ -6418,7 +6368,7 @@
           ],
           "symbol": "own",
           "symbols": [
-            "own"
+            "MessagePackReaderOwn"
           ]
         },
         "lowering": {
@@ -6427,7 +6377,7 @@
           ],
           "symbol": "own",
           "symbols": [
-            "own"
+            "MessagePackReaderOwn"
           ]
         },
         "host_vm": {
@@ -6449,10 +6399,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.messagepack:102",
@@ -6469,7 +6417,7 @@
           ],
           "symbol": "finish",
           "symbols": [
-            "finish"
+            "MessagePackReaderFinish"
           ]
         },
         "lowering": {
@@ -6478,7 +6426,7 @@
           ],
           "symbol": "finish",
           "symbols": [
-            "finish"
+            "MessagePackReaderFinish"
           ]
         },
         "host_vm": {
@@ -6500,10 +6448,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.messagepack:104",
@@ -6520,7 +6466,7 @@
           ],
           "symbol": "toWriter",
           "symbols": [
-            "toWriter"
+            "MessagePackWriterToWriter"
           ]
         },
         "lowering": {
@@ -6529,7 +6475,7 @@
           ],
           "symbol": "toWriter",
           "symbols": [
-            "toWriter"
+            "MessagePackWriterToWriter"
           ]
         },
         "host_vm": {
@@ -6551,11 +6497,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape",
-        "lowering-symbol"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.messagepack:105",
@@ -6572,7 +6515,7 @@
           ],
           "symbol": "write",
           "symbols": [
-            "write"
+            "MessagePackWriterWrite"
           ]
         },
         "lowering": {
@@ -6581,7 +6524,7 @@
           ],
           "symbol": "write",
           "symbols": [
-            "write"
+            "MessagePackWriterWrite"
           ]
         },
         "host_vm": {
@@ -6603,10 +6546,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.messagepack:106",
@@ -6623,7 +6564,7 @@
           ],
           "symbol": "finish",
           "symbols": [
-            "finish"
+            "MessagePackWriterFinish"
           ]
         },
         "lowering": {
@@ -6632,7 +6573,7 @@
           ],
           "symbol": "finish",
           "symbols": [
-            "finish"
+            "MessagePackWriterFinish"
           ]
         },
         "host_vm": {
@@ -6654,10 +6595,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.path:46",
@@ -7970,7 +7909,7 @@
           ],
           "symbol": "decode",
           "symbols": [
-            "decode"
+            "ProtobufDecode"
           ]
         },
         "lowering": {
@@ -7979,7 +7918,7 @@
           ],
           "symbol": "decode",
           "symbols": [
-            "decode"
+            "ProtobufDecode"
           ]
         },
         "host_vm": {
@@ -8001,10 +7940,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.protobuf:114",
@@ -8021,7 +7958,7 @@
           ],
           "symbol": "encode",
           "symbols": [
-            "encode"
+            "ProtobufEncode"
           ]
         },
         "lowering": {
@@ -8030,7 +7967,7 @@
           ],
           "symbol": "encode",
           "symbols": [
-            "encode"
+            "ProtobufEncode"
           ]
         },
         "host_vm": {
@@ -8052,10 +7989,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.protobuf:115",
@@ -8072,7 +8007,7 @@
           ],
           "symbol": "encodeDeterministic",
           "symbols": [
-            "encodeDeterministic"
+            "ProtobufEncodeDeterministic"
           ]
         },
         "lowering": {
@@ -8081,7 +8016,7 @@
           ],
           "symbol": "encodeDeterministic",
           "symbols": [
-            "encodeDeterministic"
+            "ProtobufEncodeDeterministic"
           ]
         },
         "host_vm": {
@@ -8103,13 +8038,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape",
-        "hir-symbol",
-        "lowering-symbol",
-        "public-case-call"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.protobuf:116",
@@ -8126,7 +8056,7 @@
           ],
           "symbol": "validate",
           "symbols": [
-            "validate"
+            "ProtobufValidate"
           ]
         },
         "lowering": {
@@ -8135,7 +8065,7 @@
           ],
           "symbol": "validate",
           "symbols": [
-            "validate"
+            "ProtobufValidate"
           ]
         },
         "host_vm": {
@@ -8175,7 +8105,7 @@
           ],
           "symbol": "descriptor",
           "symbols": [
-            "descriptor"
+            "ProtobufDescriptor"
           ]
         },
         "lowering": {
@@ -8184,7 +8114,7 @@
           ],
           "symbol": "descriptor",
           "symbols": [
-            "descriptor"
+            "ProtobufDescriptor"
           ]
         },
         "host_vm": {
@@ -8206,13 +8136,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape",
-        "hir-symbol",
-        "lowering-symbol",
-        "public-case-call"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.protobuf:119",
@@ -8260,13 +8185,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape",
-        "hir-symbol",
-        "lowering-symbol",
-        "public-case-call"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.protobuf:120",
@@ -8314,13 +8234,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape",
-        "hir-symbol",
-        "lowering-symbol",
-        "public-case-call"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.protobuf:121",
@@ -8368,13 +8283,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape",
-        "hir-symbol",
-        "lowering-symbol",
-        "public-case-call"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.protobuf:122",
@@ -8422,13 +8332,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape",
-        "hir-symbol",
-        "lowering-symbol",
-        "public-case-call"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.protobuf:123",
@@ -8476,13 +8381,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape",
-        "hir-symbol",
-        "lowering-symbol",
-        "public-case-call"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.protobuf:125",
@@ -8530,13 +8430,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape",
-        "hir-symbol",
-        "lowering-symbol",
-        "public-case-call"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.protobuf:126",
@@ -8584,13 +8479,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape",
-        "hir-symbol",
-        "lowering-symbol",
-        "public-case-call"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.protobuf:127",
@@ -8638,13 +8528,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape",
-        "hir-symbol",
-        "lowering-symbol",
-        "public-case-call"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.protobuf:129",
@@ -8661,7 +8546,7 @@
           ],
           "symbol": "count",
           "symbols": [
-            "count"
+            "ProtobufUnknownFieldsCount"
           ]
         },
         "lowering": {
@@ -8670,7 +8555,7 @@
           ],
           "symbol": "count",
           "symbols": [
-            "count"
+            "ProtobufUnknownFieldsCount"
           ]
         },
         "host_vm": {
@@ -8692,11 +8577,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape",
-        "public-case-call"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.protobuf:130",
@@ -8713,7 +8595,7 @@
           ],
           "symbol": "discard",
           "symbols": [
-            "discard"
+            "ProtobufUnknownFieldsDiscard"
           ]
         },
         "lowering": {
@@ -8722,7 +8604,7 @@
           ],
           "symbol": "discard",
           "symbols": [
-            "discard"
+            "ProtobufUnknownFieldsDiscard"
           ]
         },
         "host_vm": {
@@ -8744,11 +8626,8 @@
           "bootstrap_alias": false
         }
       },
-      "missing": [
-        "exact-signature-shape",
-        "public-case-call"
-      ],
-      "status": "gap"
+      "missing": [],
+      "status": "verified"
     },
     {
       "id": "std.testing:69",
@@ -11108,9 +10987,9 @@
   "summary": {
     "owners": 20,
     "signatures": 209,
-    "verified": 177,
-    "signature_gaps": 32,
-    "owner_gaps": 3,
-    "gaps": 35
+    "verified": 209,
+    "signature_gaps": 0,
+    "owner_gaps": 0,
+    "gaps": 0
   }
 }

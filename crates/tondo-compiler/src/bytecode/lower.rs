@@ -4233,6 +4233,37 @@ fn intrinsic_type(value: IntrinsicType) -> bc::BytecodeIntrinsicType {
         IntrinsicType::JsonNumber => bc::BytecodeIntrinsicType::JsonNumber,
         IntrinsicType::JsonReader => bc::BytecodeIntrinsicType::JsonReader,
         IntrinsicType::JsonWriter => bc::BytecodeIntrinsicType::JsonWriter,
+        IntrinsicType::MessagePackLimits => bc::BytecodeIntrinsicType::MessagePackLimits,
+        IntrinsicType::MessagePackDecodeOptions => {
+            bc::BytecodeIntrinsicType::MessagePackDecodeOptions
+        }
+        IntrinsicType::MessagePackEncodeOptions => {
+            bc::BytecodeIntrinsicType::MessagePackEncodeOptions
+        }
+        IntrinsicType::MessagePackDuplicatePolicy => {
+            bc::BytecodeIntrinsicType::MessagePackDuplicatePolicy
+        }
+        IntrinsicType::MessagePackUnknownExtensionPolicy => {
+            bc::BytecodeIntrinsicType::MessagePackUnknownExtensionPolicy
+        }
+        IntrinsicType::MessagePackNonMinimalPolicy => {
+            bc::BytecodeIntrinsicType::MessagePackNonMinimalPolicy
+        }
+        IntrinsicType::MessagePackValue => bc::BytecodeIntrinsicType::MessagePackValue,
+        IntrinsicType::MessagePackValueView => bc::BytecodeIntrinsicType::MessagePackValueView,
+        IntrinsicType::MessagePackRaw => bc::BytecodeIntrinsicType::MessagePackRaw,
+        IntrinsicType::MessagePackTimestamp => bc::BytecodeIntrinsicType::MessagePackTimestamp,
+        IntrinsicType::MessagePackReader => bc::BytecodeIntrinsicType::MessagePackReader,
+        IntrinsicType::MessagePackWriter => bc::BytecodeIntrinsicType::MessagePackWriter,
+        IntrinsicType::ProtoDescriptor => bc::BytecodeIntrinsicType::ProtoDescriptor,
+        IntrinsicType::ProtoLimits => bc::BytecodeIntrinsicType::ProtoLimits,
+        IntrinsicType::ProtoDecodeOptions => bc::BytecodeIntrinsicType::ProtoDecodeOptions,
+        IntrinsicType::ProtoEncodeOptions => bc::BytecodeIntrinsicType::ProtoEncodeOptions,
+        IntrinsicType::ProtoWireTypePolicy => bc::BytecodeIntrinsicType::ProtoWireTypePolicy,
+        IntrinsicType::ProtoUnknownPolicy => bc::BytecodeIntrinsicType::ProtoUnknownPolicy,
+        IntrinsicType::ProtoReader => bc::BytecodeIntrinsicType::ProtoReader,
+        IntrinsicType::ProtoWriter => bc::BytecodeIntrinsicType::ProtoWriter,
+        IntrinsicType::UnknownFields => bc::BytecodeIntrinsicType::UnknownFields,
     }
 }
 

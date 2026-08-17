@@ -2,14 +2,16 @@
 
 **Estado:** M0–M10.7 conservan su implementación y Gates H0, T0 y G5 están
 cerrados para el draft revision 24 mediante un candidato G5/T0 verificable
-offline. La auditoría 1.45 mantiene abierto STD-0.1A/S1A: existen
-kernels/bridges útiles, pero la evidencia todavía expone APIs públicas,
-properties/fuzz, rendimiento y conformidad parciales de la stdlib. La forma TLF
-para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps,
-CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
-desarrollo y no ha sido publicado.
+offline. `STD-CODEC-PUBLIC-001` ya cerró la auditoría pública global: las 209
+firmas tienen ruta contract → HIR → lowering → host/VM → caso público y los
+tres owners sin runtime están indexados como `build-only`/`not-applicable` con
+razón verificable. STD-0.1A/S1A sigue abierto por las celdas explícitas de
+fuzzing, rendimiento, conformidad y promoción; no se sobreafirma un cierre.
+La forma TLF para agentes ya tiene spec y estudio léxico, pero encoder, decoder,
+source maps, CLI y evaluación de generación permanecen pendientes. Tondo 0.1
+sigue en desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 2.35
+**Versión del tracker:** 2.36
 
 **Última actualización:** 2026-08-17
 
@@ -47,10 +49,11 @@ un bundle separado y el candidato final fija G5, S1 y L0 por identidades
 independientes.
 
 **Objetivo inmediato:** continuar Wave 5/S1A después del cierre coordinado de
-`STD-IMPL-002`. Persisten 32 gaps de firma y tres owners abiertos de la
-auditoría pública global; no se silencian al promover el grupo Core. El
-siguiente bloque explícito es `STD-CODEC-PUBLIC-001`, seguido por la exposición
-de MessagePack/Protobuf y la superficie build-only indexable. `CONF-GAP-IMPL-001`, `CONF-LAYER-RESULT-001` y
+`STD-CODEC-PUBLIC-001`. La auditoría pública global está verificada (209/209)
+y los tres owners build-only tienen una frontera explícita; no se fabrican
+funciones runtime para ellos. El siguiente bloque explícito es
+`NATIVE-TARGET-DESC-001`, condicionado por las celdas S1A aún pendientes.
+`CONF-GAP-IMPL-001`, `CONF-LAYER-RESULT-001` y
 `CONF-SEAL-FINAL-001` ya cierran T0/G5 con 409 requisitos cubiertos, nueve
 no aplicables y las tres fronteras `TL01-26-*` reservadas a S1A. Los contratos
 runtime-facing de STD-0.1B y M11 esperan G5 y S1A. Todo pertenece a la primera
@@ -4643,12 +4646,19 @@ tests. Antes de volver a marcarlas `[x]` deben cumplirse todos estos puntos:
   inventa un provider. La auditoría global conserva 32 gaps de firma de
   MessagePack/Protobuf y tres owners build-only, sin waiver.
 
-- [ ] **STD-CODEC-PUBLIC-001 — Cerrar la exposición pública restante de codecs
-  y owners build-only.** Trazar las 32 firmas restantes de MessagePack y
-  Protobuf hasta HIR, lowering, VM/host y casos públicos; indexar de forma
-  explícita los tres owners build-only sin fabricar `pub fn` runtime. El modo
-  `--strict` debe quedar verde solo cuando cada fila tenga una ruta pública o
-  una razón normativa `not-applicable` verificable.
+- [x] **STD-CODEC-PUBLIC-001 — Cerrar la exposición pública restante de codecs
+  y owners build-only.** Las 32 firmas restantes de MessagePack y Protobuf
+  quedan trazadas hasta HIR, lowering, VM/host y casos públicos: la matriz
+  `testing/stdlib-public-api.json` verifica 209/209 filas bajo `--strict`.
+  `MessagePackValue` tiene la ruta dinámica `encode` además de la ruta typed
+  con bounds, y la fixture `m11-std-codecs-001.to` compila y ejecuta parse,
+  parseView, decode/encode typed y dynamic, validate, determinismo, raw,
+  timestamp/ext, readers/writers y Protobuf descriptor/readers/writers/
+  unknown fields. `std.meta`, `std.reflect` y `std.serialization` quedan
+  indexados explícitamente como `build-only` con runtime `not-applicable`,
+  paths compiler-owned y razones normativas; no se inventa una `pub fn`
+  runtime. `scripts/stdlib-public-api-audit.sh --strict`, los negativos del
+  auditor, `scripts/stdlib-codec-conformance.sh` y el smoke CLI pasan.
 
 - [x] **STD-TESTING-IMPL-001 — Implementar `std.testing` sobre T0.** El runtime,
   temp resources, generators, diffs, tolerancias y control sellado se conservan.
@@ -6085,14 +6095,33 @@ Wave 5/S1A abierta por APIs públicas y dimensiones de evidencia parciales.
 `CONF-GAP-IMPL-001` cierra las 364 filas auditadas aplicables y conserva los dos
 no-goals exactos. `CONF-LAYER-RESULT-001` produce el resultado compuesto y
 `CONF-SEAL-FINAL-001` lo archiva con calidad y documentación en el candidato
-offline. La acción inmediata es cerrar `STD-IMPL-001`, `STD-IMPL-002` y
-`STD-CODEC-PUBLIC-001`; Wave 6 no se declara iniciada antes de S1A.
+offline. `STD-IMPL-001`, `STD-IMPL-002` y `STD-CODEC-PUBLIC-001` están cerrados;
+Wave 6 no se declara iniciada antes de S1A.
 `STD-IMPL-001` y `STD-IMPL-002` quedan ahora cerrados por sus gates de
-coordinación; la acción inmediata pasa a `STD-CODEC-PUBLIC-001`.
+coordinación; la acción inmediata pasa a `NATIVE-TARGET-DESC-001`, con las
+celdas S1A pendientes todavía visibles.
 
 ---
 
 ## 25. Historial del tracker
+
+### 2.36 — 2026-08-17
+
+- Se cierra `STD-CODEC-PUBLIC-001`. La auditoría pública regenerada verifica
+  209/209 firmas (JSON, MessagePack y Protobuf incluidos) con evidencia
+  contract → HIR → lowering → host/VM → caso público y `--strict` sin gaps.
+  MessagePack incorpora la selección explícita entre `encode(Value, ...)` y
+  `encode[T: Encode[MessagePack]](...)`; la fixture pública ejecuta la ruta
+  CLI y conserva la salida `42\\ncodecs-ok\\n` sin stderr.
+- Los owners `std.meta`, `std.reflect` y `std.serialization` usan casos
+  `build-only` compiler-owned. El auditor valida `runtime.not-applicable`,
+  razón no vacía y path `crates/...`; no se convierten fronteras de metadata,
+  derive o protocolo en funciones runtime ficticias.
+- Se regeneran la matriz API, la coordinación Hosted/Core y la documentación
+  de owners para reflejar el cierre. Kernels, conformance externa y bridge
+  Hosted pasan; quedan pendientes únicamente las celdas de promoción que el
+  Gate S1A ya declara (fuzz dedicado, baselines de rendimiento, conformance y
+  sellado). El siguiente bloque de implementación es `NATIVE-TARGET-DESC-001`.
 
 ### 2.35 — 2026-08-17
 
