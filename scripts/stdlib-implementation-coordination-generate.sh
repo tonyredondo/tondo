@@ -72,9 +72,9 @@ jq -n \
           status: $api.status,
           gaps: $api.summary.gaps,
           reason: "STD-CODEC-PUBLIC-001 closed MessagePack/Protobuf callable exposure and indexed the build-only owners without a runtime waiver",
-          next_coordination: "NATIVE-ARTIFACT-001"
+          next_coordination: "NATIVE-LINK-PLAN-001"
         },
-        next_coordination: "NATIVE-ARTIFACT-001"
+        next_coordination: "NATIVE-LINK-PLAN-001"
       }
     ' > "$output"
 

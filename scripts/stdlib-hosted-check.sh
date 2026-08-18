@@ -20,7 +20,7 @@ jq -e '
   .capabilities["std.fs"] == ["filesystem"] and
   .capabilities["std.process"] == ["process"] and
   (.invariants | length) == 9 and (.test_matrix | length) == 9 and
-  .promotion_next == "NATIVE-ARTIFACT-001"
+  .promotion_next == "NATIVE-LINK-PLAN-001"
 ' "$contract" >/dev/null
 [[ -s "$root/docs/contracts/stdlib-hosted.md" ]] || { echo "missing hosted contract document" >&2; exit 1; }
 echo "std.hosted owner contract: OK"

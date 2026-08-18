@@ -1,0 +1,64 @@
+{
+  "format": "tondo-native-artifact-contract/1",
+  "owner": "toolchain.native_artifact",
+  "edition": "0.1",
+  "phase": "M11",
+  "status": "closed-contract",
+  "descriptor_format": "tondo-native-artifact-draft",
+  "canonical_encoding": "compact-utf8-json-struct-order",
+  "record_identity": "sha256(canonical-native-artifact-bytes)",
+  "semantic_identity": "artifact_hash=sha256(canonical-graph-fingerprint)",
+  "required_fields": [
+    "format",
+    "compiler",
+    "edition",
+    "package_id",
+    "target_descriptor_hash",
+    "source_artifact_hash",
+    "nodes",
+    "producers",
+    "product_id",
+    "artifact_hash",
+    "reproducible"
+  ],
+  "node_fields": ["id", "kind", "role", "sha256", "producer"],
+  "producer_fields": ["id", "kind", "inputs", "outputs", "sha256"],
+  "node_kinds": ["object", "runtime", "stdlib", "privileged-unit", "product"],
+  "node_roles": ["input", "intermediate", "output"],
+  "producer_kinds": ["compile", "prepare", "link"],
+  "graph": {
+    "nodes": "sorted-unique-by-id",
+    "producers": "sorted-unique-by-id",
+    "producer_edges": "sorted-unique-and-acyclic",
+    "reachability": "every-node-and-producer-reaches-product",
+    "required_inputs": "object-plus-one-runtime-plus-one-stdlib",
+    "product": "one-output-product-owned-by-one-link-producer",
+    "reproducible": true
+  },
+  "identity": {
+    "target_descriptor": "sha256-of-native-target-descriptor",
+    "source_artifact": "sha256-of-tondo-artifact-draft",
+    "node_and_producer_hashes": "validated-identities-no-path-lookup"
+  },
+  "layout": {
+    "physical_paths": "forbidden",
+    "object_layout": "not-public",
+    "calling_convention": "not-public",
+    "ffi_abi": "not-public"
+  },
+  "negative_cases": [
+    "unknown-fields",
+    "pretty-or-unsorted-record",
+    "invalid-hash",
+    "missing-runtime-or-stdlib",
+    "invalid-role-kind-combination",
+    "unknown-node-or-producer",
+    "input-overwrite",
+    "orphan-node-or-producer",
+    "producer-cycle",
+    "multiple-product-producers",
+    "non-link-product-producer",
+    "physical-layout-field"
+  ],
+  "next_blocks": ["NATIVE-LINK-PLAN-001", "NATIVE-PUBLISH-SPEC-001"]
+}

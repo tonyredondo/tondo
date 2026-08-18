@@ -11,9 +11,9 @@ La forma TLF para agentes ya tiene spec y estudio léxico, pero encoder, decoder
 source maps, CLI y evaluación de generación permanecen pendientes. Tondo 0.1
 sigue en desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 2.39
+**Versión del tracker:** 2.40
 
-**Última actualización:** 2026-08-17
+**Última actualización:** 2026-08-18
 
 **Especificaciones normativas:**
 
@@ -51,8 +51,9 @@ independientes.
 **Objetivo inmediato:** continuar Wave 5/S1A después del cierre coordinado de
 `STD-CODEC-PUBLIC-001`. La auditoría pública global está verificada (209/209)
 y los tres owners build-only tienen una frontera explícita; no se fabrican
-funciones runtime para ellos. El siguiente bloque explícito es
-`NATIVE-ARTIFACT-001`, después del cierre de `NATIVE-TARGET-DESC-001`.
+funciones runtime para ellos. `NATIVE-TARGET-DESC-001` y
+`NATIVE-ARTIFACT-001` están cerrados como contratos puros. El siguiente bloque
+explícito es `NATIVE-LINK-PLAN-001`.
 Las celdas S1A de promoción siguen pendientes y no se sobreafirma su cierre.
 `CONF-GAP-IMPL-001`, `CONF-LAYER-RESULT-001` y
 `CONF-SEAL-FINAL-001` ya cierran T0/G5 con 409 requisitos cubiertos, nueve
@@ -5060,10 +5061,16 @@ pueden retrasar el primer backend correcto.
   cierre solo fija inputs para artifact/link/publish; no selecciona aún un
   backend de producción ni cierra S1A.
 
-- [ ] **NATIVE-ARTIFACT-001 — Definir la clausura de artefactos nativos.**
-  Extender el artifact draft con objetos, runtime, stdlib, unidades
-  privilegiadas, producto final, productores y hashes, distinguiendo inputs,
-  intermediarios y output publicable sin convertir el layout en ABI pública.
+- [x] **NATIVE-ARTIFACT-001 — Definir la clausura de artefactos nativos.**
+  `tondo-native-artifact-draft` extiende la clausura semántica del artifact
+  draft con un grafo canónico de objetos, runtime, stdlib, unidades
+  privilegiadas, producto final, productores y hashes. `NativeArtifact` exige
+  inputs/intermediarios/output distinguibles, una única salida de `link`,
+  reachability completa, DAG de producers, hashes de target/source y
+  `artifact_hash` recalculable; no serializa layout, paths físicos ni ABI FFI.
+  El contrato, negativos, docs y gates viven en
+  `testing/native-artifact.json`, `docs/contracts/native-artifact.md` y los
+  scripts dedicados. El siguiente bloque es `NATIVE-LINK-PLAN-001`.
 
 - [ ] **NATIVE-LINK-PLAN-001 — Definir el plan de enlace canónico.** El
   compilador puro emite un record cerrado, versionado y validable con orden de
@@ -6118,13 +6125,25 @@ no-goals exactos. `CONF-LAYER-RESULT-001` produce el resultado compuesto y
 offline. `STD-IMPL-001`, `STD-IMPL-002` y `STD-CODEC-PUBLIC-001` están cerrados;
 Wave 6 no se declara iniciada antes de S1A.
 `STD-IMPL-001` y `STD-IMPL-002` quedan ahora cerrados por sus gates de
-coordinación; `NATIVE-TARGET-DESC-001` queda cerrado como contrato puro y la
-acción inmediata pasa a `NATIVE-ARTIFACT-001`, con las celdas S1A pendientes
-todavía visibles.
+coordinación; `NATIVE-TARGET-DESC-001` y `NATIVE-ARTIFACT-001` quedan cerrados
+como contratos puros y la acción inmediata pasa a
+`NATIVE-LINK-PLAN-001`, con las celdas S1A pendientes todavía visibles.
 
 ---
 
 ## 25. Historial del tracker
+
+### 2.40 — 2026-08-18
+
+- Se cierra `NATIVE-ARTIFACT-001` como contrato puro y machine-readable. El
+  nuevo `tondo-native-artifact-draft` enlaza el descriptor de target y el
+  artifact Tondo de origen, representa objetos/runtime/stdlib/unidades
+  privilegiadas/producto como nodos hashados, exige producers con inputs y
+  outputs cerrados, comprueba reachability y ciclos y recalcula
+  `artifact_hash`. Paths físicos, layout, calling convention y ABI FFI quedan
+  fuera del record. Se añaden `NativeArtifact`, contrato JSON, documentación,
+  negativos y gates ejecutables; la siguiente coordinación es
+  `NATIVE-LINK-PLAN-001`.
 
 ### 2.39 — 2026-08-17
 

@@ -25,8 +25,13 @@ pub const DEFAULT_PROOF_DIRECTORY: &str = "conformance/proofs";
 pub const RATCHET_PATH: &str = "testing/conformance-ratchet.json";
 
 const RATCHET_FORMAT: &str = "tondo-conformance-ratchet/2";
-const AUDITED_GAP_SCOPE_SHA256: &str =
-    "f28c16dd4b7cc1effeffbfb3238fd1f78c140b2403b1bdb3fee21132dd296bed";
+// Historical promotion proofs keep the audit scope they embedded; the live
+// draft adds the native-artifact requirement, so both content-addressed
+// reviewed scopes remain valid to preserve offline verification.
+const AUDITED_GAP_SCOPE_SHA256: [&str; 2] = [
+    "d9775ac13a1f63cb309aa0085d80c09ea7122758b713807a33e1041d0617e4b1",
+    "f28c16dd4b7cc1effeffbfb3238fd1f78c140b2403b1bdb3fee21132dd296bed",
+];
 const ADAPTER_PACKAGE: &str = "tondo-reference-adapter";
 const ADAPTER_SOURCES: [&str; 10] = [
     "crates/tondo-reference-adapter/Cargo.toml",
@@ -663,7 +668,7 @@ fn validate_gap_audit(
         audited_scope.push_str(&entry.text_sha256);
         audited_scope.push('\n');
     }
-    if sha256(audited_scope.as_bytes()) != AUDITED_GAP_SCOPE_SHA256 {
+    if !AUDITED_GAP_SCOPE_SHA256.contains(&sha256(audited_scope.as_bytes()).as_str()) {
         return invalid("normative gap audit differs from its reviewed requirement set");
     }
     let executable = inventory

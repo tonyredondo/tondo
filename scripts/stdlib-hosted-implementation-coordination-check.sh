@@ -35,7 +35,7 @@ jq -e '
   and .rules.callable_public_signatures_must_be_verified
   and .rules.global_public_audit_is_not_promoted
   and .rules.no_waivers
-  and .next_coordination == "NATIVE-ARTIFACT-001"
+  and .next_coordination == "NATIVE-LINK-PLAN-001"
   and .global_public_api.status == "verified"
   and .global_public_api.gaps == 0
   and .summary == {
@@ -100,4 +100,4 @@ for ref in \
     }
 done
 
-echo "stdlib hosted implementation coordination: OK (4 owners; 48 public signatures verified; capabilities and hosted bridges closed; next NATIVE-ARTIFACT-001)"
+echo "stdlib hosted implementation coordination: OK (4 owners; 48 public signatures verified; capabilities and hosted bridges closed; next NATIVE-LINK-PLAN-001)"

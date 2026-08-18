@@ -13,17 +13,32 @@
     },
     {
       "path": "TONDO_TOOLCHAIN_SPEC.md",
-      "sha256": "543fc9f65317d677b42679e886ff96e29bdd6ef71db3ce8b5aeb1a6fa2c82b26"
+      "sha256": "5331ff4ca6b82d874c9461b97bf17ee5331448b242d7f537c1f7b317d00c4660"
     }
   ],
   "summary": {
-    "total": 366,
+    "total": 367,
     "by_outcome": {
-      "implemented-without-trace": 364,
+      "implemented-without-trace": 365,
       "not-applicable": 2
     }
   },
   "entries": [
+    {
+      "requirement": "TC01-10-1-2-R001",
+      "text_sha256": "46efee51b88d158f343894f3fb6ce549f823c18744e42d5254cfc522ea67f3be",
+      "outcome": "implemented-without-trace",
+      "reason": "TC01-10-1-2-R001 has an existing implementation at crates/tondo-compiler/src/toolchain.rs and executable evidence rust:tondo-compiler:src::toolchain:native_artifact_rejects_invalid_roles_hashes_and_graph_edges; its six-dimension normative trace remains incomplete.",
+      "implementation": [
+        "crates/tondo-compiler/src/toolchain.rs"
+      ],
+      "tests": [
+        "rust:tondo-compiler:src::toolchain:native_artifact_canonicalizes_graph_sets_and_preserves_identity",
+        "rust:tondo-compiler:src::toolchain:native_artifact_rejects_invalid_roles_hashes_and_graph_edges",
+        "rust:tondo-compiler:src::toolchain:native_artifact_round_trips_and_binds_the_closed_graph"
+      ],
+      "follow_up": null
+    },
     {
       "requirement": "TC01-10-2-R001",
       "text_sha256": "7e440ad7e1ad2e8f5b2e44b7f748ac6d675960b458fffb8217933c6c1493c4bb",

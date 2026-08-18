@@ -1349,6 +1349,67 @@ Este descriptor fija inputs para `NATIVE-ARTIFACT-001` y
 ejecuta código nativo y no promete ABI FFI, layout de objetos, dynamic linking
 ni name mangling públicos.
 
+#### 10.1.2 Clausura de artefactos nativos
+
+`NATIVE-ARTIFACT-001` extiende la clausura semántica del artifact draft con el
+record especializado `tondo-native-artifact-draft`. El artifact ordinario
+(`tondo-artifact-draft`) sigue describiendo fuentes, generación e interfaz del
+programa Tondo; el record nativo enlaza esos bytes con el producto que más
+adelante consumirá el plan de enlace.
+
+Su forma canónica compacta tiene exactamente estos campos, en este orden:
+
+~~~json
+{
+  "format": "tondo-native-artifact-draft",
+  "compiler": "tondo-bootstrap/draft",
+  "edition": "0.1",
+  "package_id": "workspace:app@1",
+  "target_descriptor_hash": "sha256:...",
+  "source_artifact_hash": "sha256:...",
+  "nodes": [
+    {"id":"object-main", "kind":"object", "role":"input",
+     "sha256":"sha256:...", "producer":null},
+    {"id":"runtime", "kind":"runtime", "role":"input",
+     "sha256":"sha256:...", "producer":null},
+    {"id":"stdlib", "kind":"stdlib", "role":"input",
+     "sha256":"sha256:...", "producer":null},
+    {"id":"product", "kind":"product", "role":"output",
+     "sha256":"sha256:...", "producer":"link"}
+  ],
+  "producers": [
+    {"id":"link", "kind":"link", "inputs":["object-main","runtime","stdlib"],
+     "outputs":["product"], "sha256":"sha256:..."}
+  ],
+  "product_id": "product",
+  "artifact_hash": "sha256:...",
+  "reproducible": true
+}
+~~~
+
+`nodes` y `producers` son listas ordenadas por `id`; `inputs` y `outputs` son
+conjuntos ordenados. Los únicos kinds de nodo son `object`, `runtime`,
+`stdlib`, `privileged-unit` y `product`. Un input no tiene producer; un
+intermediate es un object producido por `compile` o `prepare`; el único output
+es `product`, producido por un único producer `link`. El grafo completo debe
+ser alcanzable desde `product_id` y no puede contener ciclos. Debe declarar al
+menos un object input, exactamente un runtime y exactamente un stdlib; las
+unidades privilegiadas son opcionales y pueden ser varias.
+
+`target_descriptor_hash` fija el descriptor completo y
+`source_artifact_hash` fija el artifact Tondo de origen. Cada node y producer
+lleva un SHA-256 validado; el lector puro no abre paths para recalcularlo. La
+identidad semántica `artifact_hash` se recalcula sobre todos los campos salvo
+ella misma, mientras que `content_hash` es el hash de los bytes canónicos del
+record. `reproducible` solo puede ser `true`.
+
+No se serializan paths físicos, comandos, símbolos, layout de objetos,
+calling convention ni ABI FFI. El record solo prueba qué inputs inmutables y
+qué transformaciones cerradas forman el producto; `NATIVE-LINK-PLAN-001` fija
+el orden de enlace y `NATIVE-PUBLISH-SPEC-001` fija staging y publicación.
+La forma ejecutable, sus negativos y sus tests están en
+`docs/contracts/native-artifact.md` y `testing/native-artifact.json`.
+
 ### 10.2 Doc-tests
 
 La forma pública de documentación es:

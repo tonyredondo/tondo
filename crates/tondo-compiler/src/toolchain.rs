@@ -23,6 +23,7 @@ pub const INTERFACE_FORMAT: &str = "tondo-interface-draft";
 pub const ARTIFACT_FORMAT: &str = "tondo-artifact-draft";
 pub const STANDARD_DESCRIPTOR_FORMAT: &str = "tondo-standard-descriptor-draft";
 pub const NATIVE_TARGET_DESCRIPTOR_FORMAT: &str = "tondo-native-target-descriptor-draft";
+pub const NATIVE_ARTIFACT_FORMAT: &str = "tondo-native-artifact-draft";
 pub const PRIVILEGED_UNIT_FORMAT: &str = "tondo-privileged-unit-draft";
 pub const META_MODEL: &str = crate::meta::META_MODEL;
 pub const META_TARGET: &str = "tondo-meta";
@@ -2284,6 +2285,494 @@ impl NativeTargetDescriptor {
     }
 }
 
+/// A logical node in the closed native artifact graph.
+///
+/// Nodes carry identities and hashes only. They intentionally do not carry a
+/// physical path, object layout, symbol name or calling convention; those are
+/// private implementation details of the selected target descriptor and later
+/// link plan.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeArtifactNode {
+    pub id: String,
+    pub kind: String,
+    pub role: String,
+    pub sha256: String,
+    pub producer: Option<String>,
+}
+
+impl NativeArtifactNode {
+    fn validate(&self, field: &str) -> Result<(), FormatError> {
+        require_kebab(&format!("{field}.id"), &self.id)?;
+        if !matches!(
+            self.kind.as_str(),
+            "object" | "runtime" | "stdlib" | "privileged-unit" | "product"
+        ) {
+            return Err(FormatError::Invalid(format!(
+                "{field}.kind `{}` is not a supported native artifact kind",
+                self.kind
+            )));
+        }
+        if !matches!(self.role.as_str(), "input" | "intermediate" | "output") {
+            return Err(FormatError::Invalid(format!(
+                "{field}.role `{}` is not a supported native artifact role",
+                self.role
+            )));
+        }
+        require_hash(&self.sha256, &format!("{field}.sha256"))?;
+        if let Some(producer) = &self.producer {
+            require_kebab(&format!("{field}.producer"), producer)?;
+        }
+        match (
+            self.role.as_str(),
+            self.kind.as_str(),
+            self.producer.is_some(),
+        ) {
+            ("input", "object" | "runtime" | "stdlib" | "privileged-unit", false) => {}
+            ("intermediate", "object", true) => {}
+            ("output", "product", true) => {}
+            _ => {
+                return Err(FormatError::Invalid(format!(
+                    "{field} has an invalid role/kind/producer combination"
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// A deterministic transformation in the native artifact graph.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeArtifactProducer {
+    pub id: String,
+    pub kind: String,
+    #[serde(default)]
+    pub inputs: Vec<String>,
+    #[serde(default)]
+    pub outputs: Vec<String>,
+    pub sha256: String,
+}
+
+impl NativeArtifactProducer {
+    fn validate(&self, field: &str) -> Result<(), FormatError> {
+        require_kebab(&format!("{field}.id"), &self.id)?;
+        if !matches!(self.kind.as_str(), "compile" | "prepare" | "link") {
+            return Err(FormatError::Invalid(format!(
+                "{field}.kind `{}` is not a supported native artifact producer",
+                self.kind
+            )));
+        }
+        require_sorted_unique(&format!("{field}.inputs"), &self.inputs)?;
+        require_sorted_unique(&format!("{field}.outputs"), &self.outputs)?;
+        if self.inputs.is_empty() || self.outputs.is_empty() {
+            return Err(FormatError::Invalid(format!(
+                "{field} must declare at least one input and output"
+            )));
+        }
+        for input in &self.inputs {
+            require_kebab(&format!("{field}.input"), input)?;
+        }
+        for output in &self.outputs {
+            require_kebab(&format!("{field}.output"), output)?;
+        }
+        if self
+            .inputs
+            .iter()
+            .any(|input| self.outputs.binary_search(input).is_ok())
+        {
+            return Err(FormatError::Invalid(format!(
+                "{field} cannot consume and produce the same node"
+            )));
+        }
+        require_hash(&self.sha256, &format!("{field}.sha256"))
+    }
+}
+
+/// Closed native product metadata consumed by the future link and publish
+/// plans. The graph is content-addressed and contains no physical layout.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeArtifact {
+    pub format: String,
+    pub compiler: String,
+    pub edition: String,
+    pub package_id: String,
+    pub target_descriptor_hash: String,
+    pub source_artifact_hash: String,
+    #[serde(default)]
+    pub nodes: Vec<NativeArtifactNode>,
+    #[serde(default)]
+    pub producers: Vec<NativeArtifactProducer>,
+    pub product_id: String,
+    pub artifact_hash: String,
+    pub reproducible: bool,
+}
+
+impl NativeArtifact {
+    pub fn decode(bytes: &[u8]) -> Result<Self, FormatError> {
+        let value: Self = decode_canonical(bytes, "native artifact")?;
+        value.validate()?;
+        Ok(value)
+    }
+
+    pub fn encode(&self) -> Result<Vec<u8>, FormatError> {
+        self.validate()?;
+        encode(self)
+    }
+
+    /// Sorts graph sets and refreshes the semantic artifact identity.
+    pub fn canonicalize(&self) -> Result<Self, FormatError> {
+        let mut value = self.clone();
+        value.nodes.sort_by(|left, right| left.id.cmp(&right.id));
+        value
+            .producers
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        for producer in &mut value.producers {
+            producer.inputs.sort();
+            producer.outputs.sort();
+        }
+        value.artifact_hash = value.calculated_artifact_hash()?;
+        value.validate()?;
+        Ok(value)
+    }
+
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>, FormatError> {
+        self.canonicalize()?.encode()
+    }
+
+    /// Content identity of the complete native artifact record.
+    pub fn content_hash(&self) -> Result<String, FormatError> {
+        Ok(sha256(&self.canonical_bytes()?))
+    }
+
+    pub fn target_descriptor_hash(&self) -> &str {
+        &self.target_descriptor_hash
+    }
+
+    pub fn source_artifact_hash(&self) -> &str {
+        &self.source_artifact_hash
+    }
+
+    pub fn nodes(&self) -> &[NativeArtifactNode] {
+        &self.nodes
+    }
+
+    pub fn producers(&self) -> &[NativeArtifactProducer] {
+        &self.producers
+    }
+
+    pub fn product_id(&self) -> &str {
+        &self.product_id
+    }
+
+    pub fn product(&self) -> Option<&NativeArtifactNode> {
+        self.nodes.iter().find(|node| node.id == self.product_id)
+    }
+
+    fn validate(&self) -> Result<(), FormatError> {
+        if self.format != NATIVE_ARTIFACT_FORMAT {
+            return Err(FormatError::UnsupportedFormat {
+                expected: NATIVE_ARTIFACT_FORMAT,
+                actual: self.format.clone(),
+            });
+        }
+        if self.compiler != COMPILER_ID {
+            return Err(FormatError::Invalid(format!(
+                "native artifact compiler `{}` differs from {COMPILER_ID}",
+                self.compiler
+            )));
+        }
+        require_nonempty("native artifact.edition", &self.edition)?;
+        require_package_id("native artifact.package_id", &self.package_id)?;
+        require_hash(
+            &self.target_descriptor_hash,
+            "native artifact.target_descriptor_hash",
+        )?;
+        require_hash(
+            &self.source_artifact_hash,
+            "native artifact.source_artifact_hash",
+        )?;
+        require_sorted_unique(
+            "native artifact node identities",
+            &self
+                .nodes
+                .iter()
+                .map(|node| node.id.clone())
+                .collect::<Vec<_>>(),
+        )?;
+        if self.nodes.is_empty() {
+            return Err(FormatError::Invalid(
+                "native artifact must declare nodes".into(),
+            ));
+        }
+        for (index, node) in self.nodes.iter().enumerate() {
+            node.validate(&format!("native artifact.nodes[{index}]"))?;
+        }
+        require_sorted_unique(
+            "native artifact producer identities",
+            &self
+                .producers
+                .iter()
+                .map(|producer| producer.id.clone())
+                .collect::<Vec<_>>(),
+        )?;
+        if self.producers.is_empty() {
+            return Err(FormatError::Invalid(
+                "native artifact must declare producers".into(),
+            ));
+        }
+        for (index, producer) in self.producers.iter().enumerate() {
+            producer.validate(&format!("native artifact.producers[{index}]"))?;
+        }
+        require_kebab("native artifact.product_id", &self.product_id)?;
+        if !self.reproducible {
+            return Err(FormatError::Invalid(
+                "native artifacts must be reproducible".into(),
+            ));
+        }
+        let node_by_id = self
+            .nodes
+            .iter()
+            .map(|node| (node.id.as_str(), node))
+            .collect::<BTreeMap<_, _>>();
+        let producer_by_id = self
+            .producers
+            .iter()
+            .map(|producer| (producer.id.as_str(), producer))
+            .collect::<BTreeMap<_, _>>();
+        let Some(product) = node_by_id.get(self.product_id.as_str()) else {
+            return Err(FormatError::Invalid(format!(
+                "native artifact product `{}` is not declared",
+                self.product_id
+            )));
+        };
+        if product.role != "output" || product.kind != "product" {
+            return Err(FormatError::Invalid(
+                "native artifact product_id must identify the output product".into(),
+            ));
+        }
+        let input_object_count = self
+            .nodes
+            .iter()
+            .filter(|node| node.role == "input" && node.kind == "object")
+            .count();
+        let runtime_count = self
+            .nodes
+            .iter()
+            .filter(|node| node.role == "input" && node.kind == "runtime")
+            .count();
+        let stdlib_count = self
+            .nodes
+            .iter()
+            .filter(|node| node.role == "input" && node.kind == "stdlib")
+            .count();
+        if input_object_count == 0 || runtime_count != 1 || stdlib_count != 1 {
+            return Err(FormatError::Invalid(
+                "native artifact requires object inputs and exactly one runtime and stdlib input"
+                    .into(),
+            ));
+        }
+
+        let mut output_owner = BTreeMap::new();
+        for producer in &self.producers {
+            for input in &producer.inputs {
+                let Some(node) = node_by_id.get(input.as_str()) else {
+                    return Err(FormatError::Invalid(format!(
+                        "producer `{}` references unknown input `{input}`",
+                        producer.id
+                    )));
+                };
+                if node.role == "output" {
+                    return Err(FormatError::Invalid(format!(
+                        "producer `{}` consumes output node `{input}`",
+                        producer.id
+                    )));
+                }
+            }
+            for output in &producer.outputs {
+                let Some(node) = node_by_id.get(output.as_str()) else {
+                    return Err(FormatError::Invalid(format!(
+                        "producer `{}` references unknown output `{output}`",
+                        producer.id
+                    )));
+                };
+                if node.role == "input" {
+                    return Err(FormatError::Invalid(format!(
+                        "producer `{}` overwrites input node `{output}`",
+                        producer.id
+                    )));
+                }
+                if output_owner
+                    .insert(output.as_str(), producer.id.as_str())
+                    .is_some()
+                {
+                    return Err(FormatError::Invalid(format!(
+                        "native artifact node `{output}` has multiple producers"
+                    )));
+                }
+                if node.producer.as_deref() != Some(producer.id.as_str()) {
+                    return Err(FormatError::Invalid(format!(
+                        "node `{output}` does not name producer `{}`",
+                        producer.id
+                    )));
+                }
+                if producer.kind == "link" && output.as_str() != self.product_id {
+                    return Err(FormatError::Invalid(
+                        "link producers may only output the final product".into(),
+                    ));
+                }
+                if producer.kind != "link" && output.as_str() == self.product_id {
+                    return Err(FormatError::Invalid(
+                        "only a link producer may output the final product".into(),
+                    ));
+                }
+            }
+        }
+        for node in &self.nodes {
+            match node.producer.as_deref() {
+                Some(producer_id) => {
+                    let Some(producer) = producer_by_id.get(producer_id) else {
+                        return Err(FormatError::Invalid(format!(
+                            "node `{}` references unknown producer `{producer_id}`",
+                            node.id
+                        )));
+                    };
+                    if !producer.outputs.iter().any(|output| output == &node.id) {
+                        return Err(FormatError::Invalid(format!(
+                            "node `{}` is not an output of producer `{producer_id}`",
+                            node.id
+                        )));
+                    }
+                }
+                None if node.role == "input" => {}
+                None => {
+                    return Err(FormatError::Invalid(format!(
+                        "non-input node `{}` has no producer",
+                        node.id
+                    )));
+                }
+            }
+        }
+        let link_producers = self
+            .producers
+            .iter()
+            .filter(|producer| producer.kind == "link")
+            .collect::<Vec<_>>();
+        if link_producers.len() != 1 || link_producers[0].outputs != [self.product_id.as_str()] {
+            return Err(FormatError::Invalid(
+                "native artifact requires exactly one link producer for product_id".into(),
+            ));
+        }
+
+        // Every producer must be reachable from the product, and producer
+        // dependencies must form a DAG. This keeps the record a closed graph
+        // rather than a bag of hashes that a linker could silently ignore.
+        let mut reachable_nodes = BTreeSet::new();
+        let mut reachable_producers = BTreeSet::new();
+        let mut pending = vec![self.product_id.as_str()];
+        while let Some(node_id) = pending.pop() {
+            if !reachable_nodes.insert(node_id) {
+                continue;
+            }
+            let node = node_by_id[node_id];
+            if let Some(producer_id) = node.producer.as_deref() {
+                reachable_producers.insert(producer_id);
+                pending.extend(
+                    producer_by_id[producer_id]
+                        .inputs
+                        .iter()
+                        .map(String::as_str),
+                );
+            }
+        }
+        if reachable_nodes.len() != self.nodes.len()
+            || reachable_producers.len() != self.producers.len()
+        {
+            return Err(FormatError::Invalid(
+                "native artifact contains unreachable nodes or producers".into(),
+            ));
+        }
+        let mut dependencies = BTreeMap::<&str, BTreeSet<&str>>::new();
+        let mut dependents = BTreeMap::<&str, BTreeSet<&str>>::new();
+        for producer in &self.producers {
+            let entry = dependencies.entry(producer.id.as_str()).or_default();
+            for input in &producer.inputs {
+                if let Some(upstream) = node_by_id[input.as_str()].producer.as_deref() {
+                    if upstream == producer.id {
+                        return Err(FormatError::Invalid(
+                            "native artifact producer graph contains a self-cycle".into(),
+                        ));
+                    }
+                    entry.insert(upstream);
+                    dependents
+                        .entry(upstream)
+                        .or_default()
+                        .insert(producer.id.as_str());
+                }
+            }
+        }
+        let mut ready = dependencies
+            .iter()
+            .filter(|(_, dependencies)| dependencies.is_empty())
+            .map(|(id, _)| *id)
+            .collect::<BTreeSet<_>>();
+        let mut processed = BTreeSet::new();
+        while let Some(id) = ready.iter().next().copied() {
+            ready.remove(id);
+            if !processed.insert(id) {
+                continue;
+            }
+            if let Some(children) = dependents.get(id) {
+                for child in children {
+                    let dependencies = dependencies.get_mut(child).unwrap();
+                    dependencies.remove(id);
+                    if dependencies.is_empty() {
+                        ready.insert(child);
+                    }
+                }
+            }
+        }
+        if processed.len() != self.producers.len() {
+            return Err(FormatError::Invalid(
+                "native artifact producer graph contains a cycle".into(),
+            ));
+        }
+        if self.artifact_hash != self.calculated_artifact_hash()? {
+            return Err(FormatError::Invalid(
+                "native artifact artifact_hash does not match its fields".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn calculated_artifact_hash(&self) -> Result<String, FormatError> {
+        #[derive(Serialize)]
+        struct Fingerprint<'a> {
+            compiler: &'a str,
+            edition: &'a str,
+            package_id: &'a str,
+            target_descriptor_hash: &'a str,
+            source_artifact_hash: &'a str,
+            nodes: &'a [NativeArtifactNode],
+            producers: &'a [NativeArtifactProducer],
+            product_id: &'a str,
+            reproducible: bool,
+        }
+        hash(&Fingerprint {
+            compiler: &self.compiler,
+            edition: &self.edition,
+            package_id: &self.package_id,
+            target_descriptor_hash: &self.target_descriptor_hash,
+            source_artifact_hash: &self.source_artifact_hash,
+            nodes: &self.nodes,
+            producers: &self.producers,
+            product_id: &self.product_id,
+            reproducible: self.reproducible,
+        })
+    }
+}
+
 fn require_deterministic_atom(
     field: &str,
     value: &str,
@@ -3059,6 +3548,90 @@ mod tests {
         }
     }
 
+    fn native_artifact() -> NativeArtifact {
+        let hash = sha256(b"native-artifact-input");
+        let nodes = vec![
+            NativeArtifactNode {
+                id: "object-main".into(),
+                kind: "object".into(),
+                role: "input".into(),
+                sha256: hash.clone(),
+                producer: None,
+            },
+            NativeArtifactNode {
+                id: "object-prepared".into(),
+                kind: "object".into(),
+                role: "intermediate".into(),
+                sha256: hash.clone(),
+                producer: Some("prepare".into()),
+            },
+            NativeArtifactNode {
+                id: "privileged-console".into(),
+                kind: "privileged-unit".into(),
+                role: "input".into(),
+                sha256: hash.clone(),
+                producer: None,
+            },
+            NativeArtifactNode {
+                id: "product".into(),
+                kind: "product".into(),
+                role: "output".into(),
+                sha256: sha256(b"tondo-product"),
+                producer: Some("link".into()),
+            },
+            NativeArtifactNode {
+                id: "runtime".into(),
+                kind: "runtime".into(),
+                role: "input".into(),
+                sha256: hash.clone(),
+                producer: None,
+            },
+            NativeArtifactNode {
+                id: "stdlib".into(),
+                kind: "stdlib".into(),
+                role: "input".into(),
+                sha256: hash,
+                producer: None,
+            },
+        ];
+        let producers = vec![
+            NativeArtifactProducer {
+                id: "link".into(),
+                kind: "link".into(),
+                inputs: vec![
+                    "object-prepared".into(),
+                    "privileged-console".into(),
+                    "runtime".into(),
+                    "stdlib".into(),
+                ],
+                outputs: vec!["product".into()],
+                sha256: sha256(b"link-producer"),
+            },
+            NativeArtifactProducer {
+                id: "prepare".into(),
+                kind: "prepare".into(),
+                inputs: vec!["object-main".into()],
+                outputs: vec!["object-prepared".into()],
+                sha256: sha256(b"prepare-producer"),
+            },
+        ];
+        let mut artifact = NativeArtifact {
+            format: NATIVE_ARTIFACT_FORMAT.into(),
+            compiler: COMPILER_ID.into(),
+            edition: "0.1".into(),
+            package_id: "workspace:app@1".into(),
+            target_descriptor_hash: sha256(b"target-descriptor"),
+            source_artifact_hash: sha256(b"source-artifact"),
+            nodes,
+            producers,
+            product_id: "product".into(),
+            artifact_hash: String::new(),
+            reproducible: true,
+        };
+        artifact.artifact_hash = artifact.calculated_artifact_hash().unwrap();
+        artifact
+    }
+
     fn lock(manifest_bytes: &[u8]) -> Lockfile {
         let source = LockedSource {
             source_set: "common".into(),
@@ -3206,6 +3779,190 @@ mod tests {
         let mut object = descriptor.clone();
         object.object_format = "unknown".into();
         assert!(object.encode().is_err());
+    }
+
+    #[test]
+    fn native_artifact_round_trips_and_binds_the_closed_graph() {
+        let artifact = native_artifact();
+        let bytes = artifact.encode().unwrap();
+        assert_eq!(NativeArtifact::decode(&bytes).unwrap(), artifact);
+        assert_eq!(artifact.content_hash().unwrap(), sha256(&bytes));
+        assert_eq!(
+            artifact.target_descriptor_hash(),
+            sha256(b"target-descriptor")
+        );
+        assert_eq!(artifact.source_artifact_hash(), sha256(b"source-artifact"));
+        assert_eq!(artifact.product_id(), "product");
+        assert_eq!(artifact.product().unwrap().kind, "product");
+        assert_eq!(artifact.nodes().len(), 6);
+        assert_eq!(artifact.producers().len(), 2);
+
+        let mut changed = artifact.clone();
+        changed.nodes[0].sha256 = sha256(b"changed-object");
+        changed.artifact_hash = changed.calculated_artifact_hash().unwrap();
+        assert_ne!(
+            artifact.content_hash().unwrap(),
+            changed.content_hash().unwrap()
+        );
+    }
+
+    #[test]
+    fn native_artifact_canonicalizes_graph_sets_and_preserves_identity() {
+        let artifact = native_artifact();
+        let bytes = artifact.encode().unwrap();
+        let mut shuffled = artifact.clone();
+        shuffled.nodes.reverse();
+        shuffled.producers.reverse();
+        shuffled.producers[0].inputs.reverse();
+        assert!(shuffled.encode().is_err());
+        assert_eq!(shuffled.canonical_bytes().unwrap(), bytes);
+        assert_eq!(shuffled.canonicalize().unwrap(), artifact);
+
+        let mut pretty = serde_json::to_vec_pretty(&artifact).unwrap();
+        pretty.push(b'\n');
+        assert!(matches!(
+            NativeArtifact::decode(&pretty),
+            Err(FormatError::NonCanonical("native artifact"))
+        ));
+        let mut unknown: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        unknown
+            .as_object_mut()
+            .unwrap()
+            .insert("physical_path".into(), serde_json::Value::Null);
+        assert!(NativeArtifact::decode(&serde_json::to_vec(&unknown).unwrap()).is_err());
+    }
+
+    #[test]
+    fn native_artifact_rejects_invalid_roles_hashes_and_graph_edges() {
+        let mut cases = Vec::new();
+
+        let mut invalid = native_artifact();
+        invalid.format = "tondo-native-artifact-9".into();
+        cases.push(invalid);
+        let mut invalid = native_artifact();
+        invalid.compiler = "other-compiler".into();
+        cases.push(invalid);
+        let mut invalid = native_artifact();
+        invalid.package_id = "not-a-package".into();
+        cases.push(invalid);
+        let mut invalid = native_artifact();
+        invalid.target_descriptor_hash = "not-a-hash".into();
+        cases.push(invalid);
+        let mut invalid = native_artifact();
+        invalid.source_artifact_hash = "not-a-hash".into();
+        cases.push(invalid);
+        let mut invalid = native_artifact();
+        invalid.reproducible = false;
+        cases.push(invalid);
+        let mut invalid = native_artifact();
+        invalid.product_id = "missing".into();
+        cases.push(invalid);
+        let mut invalid = native_artifact();
+        invalid.nodes[0].id = "bad/id".into();
+        cases.push(invalid);
+        let mut invalid = native_artifact();
+        invalid.nodes[0].kind = "metadata".into();
+        cases.push(invalid);
+        let mut invalid = native_artifact();
+        invalid.nodes[0].role = "output".into();
+        cases.push(invalid);
+        let mut invalid = native_artifact();
+        invalid.nodes[0].sha256 = "invalid".into();
+        cases.push(invalid);
+        let mut invalid = native_artifact();
+        invalid.nodes[0].producer = Some("prepare".into());
+        cases.push(invalid);
+        let mut invalid = native_artifact();
+        invalid.producers[0].kind = "unknown".into();
+        cases.push(invalid);
+        let mut invalid = native_artifact();
+        invalid.producers[0].inputs = vec!["unknown".into()];
+        cases.push(invalid);
+        let mut invalid = native_artifact();
+        invalid.producers[0].outputs = vec!["unknown".into()];
+        cases.push(invalid);
+        let mut invalid = native_artifact();
+        invalid.producers[0].sha256 = "invalid".into();
+        cases.push(invalid);
+        let mut invalid = native_artifact();
+        invalid.nodes[1].producer = Some("unknown".into());
+        cases.push(invalid);
+        let mut invalid = native_artifact();
+        invalid.producers[0].outputs = vec!["product".into()];
+        invalid.nodes[3].producer = Some("prepare".into());
+        cases.push(invalid);
+        let mut invalid = native_artifact();
+        invalid.producers[0].kind = "prepare".into();
+        cases.push(invalid);
+        let mut invalid = native_artifact();
+        invalid.producers[1].inputs = vec!["object-prepared".into()];
+        cases.push(invalid);
+        let mut invalid = native_artifact();
+        invalid.nodes.push(NativeArtifactNode {
+            id: "orphan".into(),
+            kind: "object".into(),
+            role: "input".into(),
+            sha256: sha256(b"orphan"),
+            producer: None,
+        });
+        invalid.nodes.sort_by(|left, right| left.id.cmp(&right.id));
+        cases.push(invalid);
+        for invalid in cases {
+            assert!(invalid.encode().is_err());
+        }
+
+        let mut invalid = native_artifact();
+        invalid.nodes.retain(|node| node.kind != "runtime");
+        invalid.artifact_hash = invalid.calculated_artifact_hash().unwrap();
+        assert!(invalid.encode().is_err());
+        let mut invalid = native_artifact();
+        invalid.nodes.retain(|node| node.kind != "stdlib");
+        invalid.artifact_hash = invalid.calculated_artifact_hash().unwrap();
+        assert!(invalid.encode().is_err());
+        let mut invalid = native_artifact();
+        invalid
+            .nodes
+            .retain(|node| node.kind != "object" || node.role != "input");
+        invalid.artifact_hash = invalid.calculated_artifact_hash().unwrap();
+        assert!(invalid.encode().is_err());
+
+        let mut invalid = native_artifact();
+        invalid.nodes[1].producer = None;
+        invalid.artifact_hash = invalid.calculated_artifact_hash().unwrap();
+        assert!(invalid.encode().is_err());
+        let mut invalid = native_artifact();
+        invalid.producers[0].inputs.push("product".into());
+        invalid.producers[0].inputs.sort();
+        invalid.artifact_hash = invalid.calculated_artifact_hash().unwrap();
+        assert!(invalid.encode().is_err());
+        let mut invalid = native_artifact();
+        invalid.producers[0].outputs.push("object-prepared".into());
+        invalid.producers[0].outputs.sort();
+        invalid.artifact_hash = invalid.calculated_artifact_hash().unwrap();
+        assert!(invalid.encode().is_err());
+        let mut invalid = native_artifact();
+        invalid.producers[0].outputs = vec!["product".into()];
+        invalid.producers[1].outputs = vec!["product".into()];
+        invalid.nodes[1].producer = Some("prepare".into());
+        invalid.artifact_hash = invalid.calculated_artifact_hash().unwrap();
+        assert!(invalid.encode().is_err());
+        let mut invalid = native_artifact();
+        invalid.producers[1].outputs = vec!["product".into()];
+        invalid.nodes[3].producer = Some("prepare".into());
+        invalid.artifact_hash = invalid.calculated_artifact_hash().unwrap();
+        assert!(invalid.encode().is_err());
+
+        let mut cycle = native_artifact();
+        cycle.producers[1].inputs = vec!["object-prepared".into()];
+        cycle.artifact_hash = cycle.calculated_artifact_hash().unwrap();
+        assert!(cycle.encode().is_err());
+
+        let mut duplicate = native_artifact();
+        duplicate.producers[0].inputs.push("runtime".into());
+        assert!(duplicate.encode().is_err());
+        let mut unsorted = native_artifact();
+        unsorted.producers[0].inputs.reverse();
+        assert!(unsorted.encode().is_err());
     }
 
     #[test]

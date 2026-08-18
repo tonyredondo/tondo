@@ -27,8 +27,8 @@ La auditoría pública que alimenta el registro ya está verificada (209/209):
 las firmas de MessagePack/Protobuf atraviesan sus rutas públicas y los tres
 owners build-only tienen una razón `not-applicable` explícita. No relaja
 `--strict` ni convierte una frontera build-only en un provider runtime. El
-La siguiente coordinación de implementación es `NATIVE-ARTIFACT-001`, después
-del cierre de `NATIVE-TARGET-DESC-001`, y queda condicionada
+La siguiente coordinación de implementación es `NATIVE-LINK-PLAN-001`, después
+del cierre de `NATIVE-ARTIFACT-001`, y queda condicionada
 por las celdas de promoción que aún conserva S1A.
 
 ```text
