@@ -60,5 +60,5 @@
     "non-link-product-producer",
     "physical-layout-field"
   ],
-  "next_blocks": ["PERF-001", "NATIVE-001"]
+  "next_blocks": ["NATIVE-001"]
 }

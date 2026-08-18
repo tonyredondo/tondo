@@ -20,6 +20,8 @@
     "TONDO_LANGUAGE_SPEC.md",
     "TONDO_TESTING_SPEC.md",
     "TONDO_TOOLCHAIN_SPEC.md",
+    "docs/contracts/performance.md",
+    "testing/performance.json",
     "testing/inventory.json",
     "testing/coverage-matrix.json",
     "testing/normative-evidence.json",
@@ -34,6 +36,8 @@
     "crates/tondo-compiler/src/bytecode/",
     "crates/tondo-vm/src/bytecode/",
     "crates/tondo-vm/src/runtime/execute.rs",
+    "scripts/performance-check.sh",
+    "scripts/performance-test.sh",
     "scripts/test-gate.sh",
     "scripts/quality-gate.sh"
   ],

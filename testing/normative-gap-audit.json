@@ -13,13 +13,13 @@
     },
     {
       "path": "TONDO_TOOLCHAIN_SPEC.md",
-      "sha256": "d275269851ae744ac20ae69a6eab322af57abfca9dee92e5c4d567cd58da852b"
+      "sha256": "216c535e6cb19d033f9bfcb722a9cc5f256fef473610f2c2db885ce20599b46e"
     }
   ],
   "summary": {
-    "total": 369,
+    "total": 370,
     "by_outcome": {
-      "implemented-without-trace": 366,
+      "implemented-without-trace": 367,
       "not-applicable": 2,
       "absent": 1
     }
@@ -63,6 +63,22 @@
       "implementation": [],
       "tests": [],
       "follow_up": "CONF-GAP-IMPL-001:TC01-10-1-4-R001"
+    },
+    {
+      "requirement": "TC01-10-1-5-R001",
+      "text_sha256": "25dbc4aad334567038999a273a4768ccc8aa6128d599c9a5555705f512bf821b",
+      "outcome": "implemented-without-trace",
+      "reason": "TC01-10-1-5-R001 has a machine-checkable design contract at docs/contracts/performance.md and testing/performance.json with executable contract checks; its six-dimension normative trace remains incomplete until the VM baseline is captured.",
+      "implementation": [
+        "docs/contracts/performance.md",
+        "scripts/performance-check.sh",
+        "scripts/performance-test.sh",
+        "testing/performance.json"
+      ],
+      "tests": [
+        "rust:tondo-reliability:src::matrix:toolchain_contract_has_complete_reviewed_six_dimension_traceability"
+      ],
+      "follow_up": null
     },
     {
       "requirement": "TC01-10-2-R001",

@@ -60,10 +60,5 @@
     "environment-expansion",
     "path-bearing-tool-identity"
   ],
-  "next_blocks": [
-    "NATIVE-ARTIFACT-001",
-    "NATIVE-LINK-PLAN-001",
-    "PERF-001",
-    "NATIVE-001"
-  ]
+  "next_blocks": ["NATIVE-001"]
 }

@@ -63,6 +63,10 @@ run_step reliability \
     cargo run -p tondo-reliability --locked -- check --root .
 run_step mutation-infrastructure-check-tests \
     scripts/mutation-infrastructure-check-test.sh
+run_step performance-contract \
+    scripts/performance-check.sh
+run_step performance-tests \
+    scripts/performance-test.sh
 run_step stdlib-performance-contract \
     scripts/stdlib-performance-check.sh
 run_step native-target-descriptor-contract \

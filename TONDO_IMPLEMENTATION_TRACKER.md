@@ -11,7 +11,7 @@ La forma TLF para agentes ya tiene spec y estudio léxico, pero encoder, decoder
 source maps, CLI y evaluación de generación permanecen pendientes. Tondo 0.1
 sigue en desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 2.43
+**Versión del tracker:** 2.44
 
 **Última actualización:** 2026-08-18
 
@@ -24,6 +24,7 @@ sigue en desarrollo y no ha sido publicado.
 
 **Contratos normativos por owner:**
 
+- [Contrato global de baseline de rendimiento previo al backend](./docs/contracts/performance.md)
 - [Contrato operativo de rendimiento de Standard Library 0.1](./docs/contracts/stdlib-performance.md)
 - [Contrato de owner de `std.json`](./docs/contracts/stdlib-json.md)
 - [Contrato de owner de `std.messagepack`](./docs/contracts/stdlib-messagepack.md)
@@ -53,8 +54,9 @@ independientes.
 y los tres owners build-only tienen una frontera explícita; no se fabrican
 funciones runtime para ellos. `NATIVE-TARGET-DESC-001` y
 `NATIVE-ARTIFACT-001`, `NATIVE-LINK-PLAN-001` y `NATIVE-PUBLISH-SPEC-001` están
-cerrados como contratos puros. El siguiente bloque explícito es `PERF-001`;
-después sigue la evaluación `NATIVE-001`.
+cerrados como contratos puros, y `PERF-001` ya fija el contrato de benchmark y
+baseline previo al backend. El siguiente bloque explícito es la evaluación
+`NATIVE-001`.
 Las celdas S1A de promoción siguen pendientes y no se sobreafirma su cierre.
 `CONF-GAP-IMPL-001`, `CONF-LAYER-RESULT-001` y
 `CONF-SEAL-FINAL-001` ya cierran T0/G5 con 409 requisitos cubiertos, nueve
@@ -5103,11 +5105,23 @@ pueden retrasar el primer backend correcto.
   del orquestador sigue reservada a `NATIVE-001`. El siguiente bloque es
   `PERF-001`.
 
-- [ ] **PERF-001 — Definir benchmarks y presupuestos antes de implementar.**
-  Incluir compilación, tamaño, programas STD-0.1A, throughput, latencia, memoria,
-  retain/release, pausas y workloads adversarios; registrar hardware y entorno.
-  La evaluación de backend y cada optimización posterior reutilizan esta
-  baseline en lugar de cambiar el workload para justificar una decisión.
+- [x] **PERF-001 — Definir benchmarks y presupuestos antes de implementar.**
+  El contrato global `tondo-performance/1` fija 14 workloads hash-pinned: cuatro
+  de compilación y diez de runtime, de los que dos son límites adversarios,
+  incluyendo el corpus
+  STD-0.1A de core, collections, text, codecs, I/O, process y bytes, además de
+  async y presión de memoria. Cada caso tiene clase, límites positivos finitos,
+  dimensiones aplicables y backend explícito; el fixture se verifica por
+  SHA-256. El protocolo fija reloj monotónico, 3 warmups, 9 muestras en 3
+  procesos (27 mínimo), median/p95/p99 y entorno reproducible. Los presupuestos
+  cubren compile time, code size, startup, throughput, latencia, allocations,
+  bytes asignados, memoria pico, retain/release y pausas, comparando únicamente
+  la misma identidad y sin agregación entre targets/backends. La VM hosted es
+  la baseline requerida; `native` queda diferido a `NATIVE-001` y no se inventan
+  cifras en el contrato. El registro, documentación, negativos y gates viven
+  en `testing/performance.json`, `docs/contracts/performance.md`,
+  `scripts/performance-check.sh` y `scripts/performance-test.sh`, integrados en
+  `scripts/test-gate.sh`. El siguiente bloque es `NATIVE-001`.
 
 - [ ] **NATIVE-001 — Elegir backend nativo con una evaluación separada.**
   Comparar Cranelift, LLVM y generación propia usando el MIR real, el corpus de
@@ -6146,13 +6160,28 @@ offline. `STD-IMPL-001`, `STD-IMPL-002` y `STD-CODEC-PUBLIC-001` están cerrados
 Wave 6 no se declara iniciada antes de S1A.
 `STD-IMPL-001` y `STD-IMPL-002` quedan ahora cerrados por sus gates de
 coordinación; `NATIVE-TARGET-DESC-001`, `NATIVE-ARTIFACT-001`,
-`NATIVE-LINK-PLAN-001` y `NATIVE-PUBLISH-SPEC-001` quedan cerrados como
-contratos puros y la acción inmediata pasa a `PERF-001`, con las celdas S1A
-pendientes todavía visibles.
+`NATIVE-LINK-PLAN-001`, `NATIVE-PUBLISH-SPEC-001` y `PERF-001` quedan cerrados
+como contratos puros y la acción inmediata pasa a `NATIVE-001`, con las celdas
+S1A pendientes todavía visibles.
 
 ---
 
 ## 25. Historial del tracker
+
+### 2.44 — 2026-08-18
+
+- Se cierra `PERF-001` como contrato global previo al backend. La suite fija 14
+  workloads hash-pinned y bounded, el corpus STD-0.1A de runtime, compilación,
+  diagnósticos adversarios, async, memoria y límites de overflow. Se declaran
+  las dimensiones de compile time, code size, startup, throughput, latencia,
+  allocations, bytes asignados, memoria pico, retain/release y pausas, con
+  presupuestos conservadores y comparación solo por identidad completa.
+- El protocolo reproducible exige 3 warmups, 9 muestras en 3 procesos,
+  median/p95/p99, toolchain fijado y entorno registrado; timestamp, PID, paths y
+  entorno ambiental no entran en la identidad. La VM hosted es la baseline
+  obligatoria y `native` queda diferido a `NATIVE-001`; no se publican cifras
+  inventadas ni se sobreafirma una captura ya realizada. Se añaden el registro,
+  contrato, negativos y gates ejecutables.
 
 ### 2.43 — 2026-08-18
 

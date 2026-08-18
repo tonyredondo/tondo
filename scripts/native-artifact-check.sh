@@ -55,7 +55,7 @@ jq -e '
     "pretty-or-unsorted-record", "producer-cycle", "unknown-fields",
     "unknown-node-or-producer"
   ]
-  and .next_blocks == ["PERF-001", "NATIVE-001"]
+  and .next_blocks == ["NATIVE-001"]
 ' "$contract" >/dev/null
 
 source="$root/crates/tondo-compiler/src/toolchain.rs"

@@ -13,7 +13,7 @@ use crate::sha256;
 pub const FORMAT: &str = "tondo-normative-gap-audit/1";
 pub const PATH: &str = "testing/normative-gap-audit.json";
 const AUDITED_SCOPE_SHA256: &str =
-    "5e80b3b90531af0af85877f736c30168ac2fa9877e1ec85019738eba1fde4afe";
+    "f65f43d409ea7e17912bdb3a4781bcd5baa90cc7d2e7378409a8b62297f1e771";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -269,8 +269,8 @@ mod tests {
     fn repository_audit_classifies_every_open_requirement() {
         let (root, inventory, matrix, audit) = repository_evidence();
         audit.validate(&root, &matrix, &inventory).unwrap();
-        assert_eq!(audit.summary.total, 369);
-        assert_eq!(audit.summary.by_outcome["implemented-without-trace"], 366);
+        assert_eq!(audit.summary.total, 370);
+        assert_eq!(audit.summary.by_outcome["implemented-without-trace"], 367);
         assert_eq!(audit.summary.by_outcome["not-applicable"], 2);
         assert_eq!(audit.summary.by_outcome["absent"], 1);
     }

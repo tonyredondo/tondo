@@ -1521,6 +1521,53 @@ atómica y `tondo run` debe rechazar antes de ejecutar cualquier ausencia,
 mezcla de identidades, límite excedido o divergencia entre el receipt y los
 bytes físicos; no puede exponer ni consumir un miembro parcial del par.
 
+#### 10.1.5 Baseline de rendimiento antes del backend
+
+`PERF-001` fija el experimento de rendimiento antes de elegir o implementar el
+backend nativo. No introduce una semántica de tiempo, memoria o throughput en
+el lenguaje y no inventa cifras universales. La forma machine-readable está en
+`testing/performance.json` y el contrato operativo en
+`docs/contracts/performance.md`; el contrato detallado de cada owner de la
+stdlib continúa siendo `STD-PERF-001`.
+
+La suite global separa cuatro workloads de compilación, ocho programas de
+runtime y dos límites adversarios. Incluye el bootstrap mínimo, llamadas
+genéricas, suspensión inferida, diagnósticos inválidos, programas STD-0.1A de
+core, collections, text, codecs, I/O, process y bytes, además de async,
+presión de memoria y overflow. Cada workload tiene un `.to` hash-pinned,
+clase, límites positivos finitos y dimensiones aplicables. Cambiar sus bytes,
+inputs, límites o intención requiere una revisión de contrato y una nueva
+baseline; conservar el path no basta.
+
+Cada captura registra reloj monotónico, tres warmups, nueve mediciones en tres
+procesos independientes, al menos 27 muestras y median/p95/p99. El informe
+registra CPU/features, memoria, OS/kernel, target, backend, perfil, toolchain,
+flags y revisión de fuente. Timestamp, PID, path físico, frecuencia de CPU y
+entorno ambiental no son identidad de una medición. Las identidades comparables
+son suite, workload, hash de fixture, target, backend, perfil, toolchain, flags
+y revisión.
+
+Los presupuestos cubren compile time, code size, startup, throughput, latencia,
+allocations, bytes asignados, memoria pico, retain/release y pausas. Se
+comparan únicamente observaciones con la misma identidad y nunca se agregan
+targets o backends distintos. La mejora en una dimensión no cancela una
+regresión inexplicada en otra; el conteo de allocations tiene presupuesto cero
+por defecto y cualquier aumento requiere revisión explícita.
+
+La VM hosted es la primera baseline obligatoria. El oracle de compilación son
+bytes canónicos de interfaz/artefacto y diagnósticos exactos; el oracle de
+runtime son las observaciones del lenguaje. Los contadores de allocation,
+retain/release y pausas solo son observaciones del harness y no cambian la
+semántica. `native` permanece diferido a `NATIVE-001`: solo puede compararse
+después de igualar valores, errores, orden, ownership, overflow, cancelación y
+exit status con la VM. SIMD, vectorización, tablas y multiversioning siguen
+permitidos si conservan oracle escalar y fallback portable.
+
+`PERF-001` cierra el diseño y sus validaciones negativas, no la captura de
+números. La baseline debe capturarse antes de `NATIVE-001`, `NATIVE-ABI-001` o
+promover una optimización, y las gates de captura, comparación y promoción
+deben conservar la baseline anterior ante cualquier fallo.
+
 ### 10.2 Doc-tests
 
 La forma pública de documentación es:
