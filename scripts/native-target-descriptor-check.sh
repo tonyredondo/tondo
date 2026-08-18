@@ -49,7 +49,7 @@ jq -e '
     "missing-driver-artifact", "path-bearing-tool-identity", "pretty-or-unsorted-record",
     "unknown-fields", "unsupported-object-format", "wrong-driver-artifact-kind"
   ]
-  and .next_blocks == ["NATIVE-ARTIFACT-001", "NATIVE-LINK-PLAN-001", "NATIVE-PUBLISH-SPEC-001"]
+  and .next_blocks == ["NATIVE-ARTIFACT-001", "NATIVE-LINK-PLAN-001", "PERF-001", "NATIVE-001"]
 ' "$contract" >/dev/null
 
 source="$root/crates/tondo-compiler/src/toolchain.rs"

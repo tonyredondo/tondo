@@ -13,14 +13,15 @@
     },
     {
       "path": "TONDO_TOOLCHAIN_SPEC.md",
-      "sha256": "0f9836c3d90ff6c7e7791d6890d928d90d8711afaea55f544bd9aafb5bfaf9a3"
+      "sha256": "d275269851ae744ac20ae69a6eab322af57abfca9dee92e5c4d567cd58da852b"
     }
   ],
   "summary": {
-    "total": 368,
+    "total": 369,
     "by_outcome": {
       "implemented-without-trace": 366,
-      "not-applicable": 2
+      "not-applicable": 2,
+      "absent": 1
     }
   },
   "entries": [
@@ -53,6 +54,15 @@
         "rust:tondo-compiler:src::toolchain:native_link_plan_validates_against_target_and_artifact_closures"
       ],
       "follow_up": null
+    },
+    {
+      "requirement": "TC01-10-1-4-R001",
+      "text_sha256": "76649742eaa509482682584bd73e395e8bdfddaa1e89f03571d46a64b7f58445",
+      "outcome": "absent",
+      "reason": "TC01-10-1-4-R001 is closed as a pure publication contract in crates/tondo-compiler/src/toolchain.rs and its physical orchestrator remains a deliberate NATIVE-001 boundary; the executable publisher and run integration are not yet implemented.",
+      "implementation": [],
+      "tests": [],
+      "follow_up": "CONF-GAP-IMPL-001:TC01-10-1-4-R001"
     },
     {
       "requirement": "TC01-10-2-R001",

@@ -1301,9 +1301,12 @@ interno fingiendo que es un binario nativo.
 hash semántico ni permite seleccionar formato, ABI o linker. Sin `--output`, el
 target descriptor determina un path bajo `target/` a partir del nombre lógico
 del paquete y de las convenciones del target. El producto se construye en un
-path temporal sibling, se valida y se publica mediante reemplazo atómico solo
-después de completar frontend, generación, lowering, código nativo y enlace.
-Un fallo conserva cualquier producto anterior y elimina el temporal.
+path temporal sibling, se valida y se publica con el receipt de identidad
+correspondiente mediante la frontera atómica definida en
+`NATIVE-PUBLISH-SPEC-001`, solo después de completar frontend, generación,
+lowering, código nativo y enlace. Un fallo antes de esa frontera conserva el
+par anterior completo y elimina el staging; nunca se expone un producto sin su
+receipt.
 
 El compilador puro produce un plan de enlace cerrado; no ejecuta el linker. El
 orquestador puede ejecutar únicamente el driver interno elegido por el target,
@@ -1316,9 +1319,10 @@ dynamic linking ni librerías enlazables por terceros.
 
 `tondo run` conserva una única forma: compila y ejecuta el target seleccionado
 por el plan. Mientras el target sea `tondo-vm-hosted` usa la VM; un target nativo
-conforme ejecuta el mismo producto que `tondo build` habría publicado, desde un
-path temporal privado, y conserva stdout, stderr, argumentos y exit status. No
-existe `--native`, `--vm` ni una segunda semántica de ejecución.
+conforme consume el mismo par producto/receipt que `tondo build` habría
+publicado, verifica ambos hashes y el tamaño del producto antes de ejecutar, y
+conserva stdout, stderr, argumentos y exit status. No existe `--native`, `--vm`
+ni una segunda semántica de ejecución.
 
 #### 10.1.1 Descriptor de target nativo
 
@@ -1473,6 +1477,49 @@ paths físicos, `PATH`, expansiones de shell/entorno y ejecución de shell está
 prohibidos. `output` solo fija identidad lógica, formato de objeto y hash
 esperado. `--output`, staging, `fsync`, `rename`, colisiones, interrupción y
 cleanup pertenecen exclusivamente a `NATIVE-PUBLISH-SPEC-001`.
+
+#### 10.1.4 Publicación y consumo nativos
+
+`NATIVE-PUBLISH-SPEC-001` cierra el hand-off entre el plan de enlace y el
+producto ejecutable sin seleccionar todavía una implementación de backend. El
+compilador emite el record cerrado `tondo-native-publish-plan-draft` y el
+orquestador materializa, después de obtener exactamente los bytes esperados,
+un `tondo-native-published-product-draft` como receipt. Ambos records son
+compactos, canónicos, hash-pinned y reproducibles; no incluyen path físico,
+timestamp, host, entorno, `PATH`, shell ni nombre temporal.
+
+La forma machine-readable, los campos obligatorios y los negativos normativos
+están en `testing/native-publish.json`, y el contrato operativo completo está
+en `docs/contracts/native-publish.md`. El plan cruza
+`target_descriptor_hash`, `artifact_hash` y `link_plan_hash` con los records
+seleccionados, repite el `product_id`, object format y hash esperado del link
+plan, y fija límites positivos para producto y receipt. La identidad semántica
+es `plan_hash = sha256(canonical-publish-plan-fingerprint)`; la identidad de
+bytes es el SHA-256 del record canónico completo.
+
+La política es cerrada y no configurable por el proyecto: resolver el destino
+físico fuera del hash, rechazar directorios y symlinks, crear staging sibling
+con create-new, escribir producto y receipt, sincronizar ambos archivos, hacer
+commit del par mediante una única frontera atómica, sincronizar el directorio
+padre cuando el host lo permita y limpiar staging en éxito o error. El producto
+anterior permanece visible hasta el commit; una publicación con el mismo
+receipt es no-op y una distinta solo reemplaza un archivo regular después de
+validar el par completo. Una limitación de durabilidad del host se reporta sin
+prometer `fsync` más fuerte que el disponible.
+
+`tondo run` consume únicamente ese par. Antes de ejecutar limita y decodifica el
+receipt canónico, lo valida contra el plan exacto y comprueba el SHA-256 y el
+tamaño de los bytes del producto que va a lanzar. Cualquier ausencia, mezcla de
+targets, receipt stale, reemplazo de bytes, directorio, symlink, límite
+excedido o publicación parcial produce rechazo antes de ejecutar; no existe
+fallback silencioso al producto anterior. `NativePublishPlan::collision`,
+`validate_receipt_bytes` y `NativePublishedProduct::validate_bytes` modelan
+estas decisiones puras y serán consumidas por el orquestador de `NATIVE-001`.
+
+El orquestador debe tratar producto y receipt como un único par de publicación
+atómica y `tondo run` debe rechazar antes de ejecutar cualquier ausencia,
+mezcla de identidades, límite excedido o divergencia entre el receipt y los
+bytes físicos; no puede exponer ni consumir un miembro parcial del par.
 
 ### 10.2 Doc-tests
 

@@ -81,8 +81,9 @@ object format, product ID and expected product hash must all agree.
 The driver is a logical, hash-pinned identity. Its arguments are ordered
 tokens; physical paths, shell expansion, environment expansion, `PATH` lookup
 and shell execution are forbidden. Output is also logical: `product_id`, object
-format and expected hash are recorded, while `--output`, staging and atomic
-publication belong only to `NATIVE-PUBLISH-SPEC-001`.
+format and expected hash are recorded. Publication is now closed by
+`NATIVE-PUBLISH-SPEC-001`; the next implementation blocks are `PERF-001` and
+`NATIVE-001`.
 
 The implementation, machine-readable contract and negative tests are in
 `crates/tondo-compiler/src/toolchain.rs`,

@@ -63,6 +63,7 @@
   "next_blocks": [
     "NATIVE-ARTIFACT-001",
     "NATIVE-LINK-PLAN-001",
-    "NATIVE-PUBLISH-SPEC-001"
+    "PERF-001",
+    "NATIVE-001"
   ]
 }

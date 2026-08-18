@@ -1,0 +1,122 @@
+{
+  "format": "tondo-native-publish-contract/1",
+  "owner": "toolchain.native_publish",
+  "edition": "0.1",
+  "phase": "M11",
+  "status": "closed-contract",
+  "plan_format": "tondo-native-publish-plan-draft",
+  "receipt_format": "tondo-native-published-product-draft",
+  "canonical_encoding": "compact-utf8-json-struct-order",
+  "plan_identity": "plan_hash=sha256(canonical-publish-plan-fingerprint)",
+  "receipt_identity": "receipt_hash=sha256(canonical-published-product-fingerprint)",
+  "record_identity": "sha256(canonical-native-publish-record-bytes)",
+  "required_fields": [
+    "format",
+    "compiler",
+    "edition",
+    "package_id",
+    "target_descriptor_hash",
+    "artifact_hash",
+    "link_plan_hash",
+    "output",
+    "policy",
+    "consumer",
+    "limits",
+    "plan_hash",
+    "reproducible"
+  ],
+  "output_fields": ["product_id", "object_format", "expected_sha256"],
+  "policy_fields": [
+    "staging",
+    "commit",
+    "durability",
+    "collision",
+    "interruption",
+    "cleanup"
+  ],
+  "consumer_fields": ["command", "receipt_format", "verification", "mismatch"],
+  "limit_fields": ["max_product_bytes", "max_receipt_bytes"],
+  "receipt_fields": [
+    "format",
+    "compiler",
+    "edition",
+    "package_id",
+    "target_descriptor_hash",
+    "artifact_hash",
+    "link_plan_hash",
+    "output",
+    "receipt_hash",
+    "reproducible"
+  ],
+  "receipt_output_fields": [
+    "product_id",
+    "object_format",
+    "product_sha256",
+    "product_bytes"
+  ],
+  "policy": {
+    "staging": "output-sibling",
+    "commit": "sync-file-then-atomic-rename",
+    "durability": "directory-sync-after-rename-when-supported",
+    "collision": "replace-regular-file-or-noop-same-receipt",
+    "interruption": "preserve-old-before-commit",
+    "cleanup": "remove-staging-on-failure"
+  },
+  "consumer": {
+    "command": "tondo-run",
+    "receipt_format": "tondo-native-published-product-draft",
+    "verification": "receipt-and-product-hash-before-exec",
+    "mismatch": "reject-before-exec"
+  },
+  "limits": {
+    "positive": true,
+    "finite": true,
+    "receipt_checked_before_decode": true,
+    "product_checked_before_commit": true
+  },
+  "phases": [
+    "validate-records",
+    "resolve-regular-output",
+    "stage-product-and-receipt",
+    "sync-staged-files",
+    "commit-pair-atomically",
+    "sync-parent-directory-when-supported",
+    "cleanup-staging"
+  ],
+  "failure_guarantees": {
+    "before-commit": "previous-complete-pair-remains-visible",
+    "staging-failure": "remove-staging-and-do-not-mutate-product",
+    "consumer-mismatch": "reject-before-exec",
+    "partial-pair": "never-expose-to-consumer"
+  },
+  "collision": {
+    "absent": "create",
+    "regular_existing": "replace-after-complete-validation",
+    "same_receipt": "no-op",
+    "directory_or_symlink": "reject-before-staging"
+  },
+  "physical_path": "orchestrator-only-out-of-hash",
+  "environment_lookup": "forbidden",
+  "shell_execution": "forbidden",
+  "timestamps": "forbidden",
+  "reproducible": true,
+  "negative_cases": [
+    "consumer-mismatch",
+    "directory-or-symlink-output",
+    "interrupted-stage",
+    "invalid-hash",
+    "invalid-policy",
+    "invalid-receipt",
+    "link-plan-mismatch",
+    "mixed-targets",
+    "non-positive-limit",
+    "pretty-or-unsorted-record",
+    "product-hash-mismatch",
+    "product-size-mismatch",
+    "receipt-hash-mismatch",
+    "receipt-over-limit",
+    "stale-plan-hash",
+    "unknown-fields"
+  ],
+  "next_blocks": ["PERF-001", "NATIVE-001"]
+}

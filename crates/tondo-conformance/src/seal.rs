@@ -26,12 +26,13 @@ pub const RATCHET_PATH: &str = "testing/conformance-ratchet.json";
 
 const RATCHET_FORMAT: &str = "tondo-conformance-ratchet/2";
 // Historical promotion proofs keep the audit scopes they embedded; the live
-// draft adds the native link-plan requirement, so all content-addressed
-// reviewed scopes remain valid to preserve offline verification.
-const AUDITED_GAP_SCOPE_SHA256: [&str; 3] = [
+// draft adds the native publish requirement, so all content-addressed reviewed
+// scopes remain valid to preserve offline verification.
+const AUDITED_GAP_SCOPE_SHA256: [&str; 4] = [
     "f0e374b55d039543e1076eaf876cda98ef379bf9d338190a9d687a252e304fef",
     "d9775ac13a1f63cb309aa0085d80c09ea7122758b713807a33e1041d0617e4b1",
     "f28c16dd4b7cc1effeffbfb3238fd1f78c140b2403b1bdb3fee21132dd296bed",
+    "5e80b3b90531af0af85877f736c30168ac2fa9877e1ec85019738eba1fde4afe",
 ];
 const ADAPTER_PACKAGE: &str = "tondo-reference-adapter";
 const ADAPTER_SOURCES: [&str; 10] = [

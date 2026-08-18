@@ -11,7 +11,7 @@ La forma TLF para agentes ya tiene spec y estudio léxico, pero encoder, decoder
 source maps, CLI y evaluación de generación permanecen pendientes. Tondo 0.1
 sigue en desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 2.42
+**Versión del tracker:** 2.43
 
 **Última actualización:** 2026-08-18
 
@@ -52,8 +52,9 @@ independientes.
 `STD-CODEC-PUBLIC-001`. La auditoría pública global está verificada (209/209)
 y los tres owners build-only tienen una frontera explícita; no se fabrican
 funciones runtime para ellos. `NATIVE-TARGET-DESC-001` y
-`NATIVE-ARTIFACT-001` y `NATIVE-LINK-PLAN-001` están cerrados como contratos
-puros. El siguiente bloque explícito es `NATIVE-PUBLISH-SPEC-001`.
+`NATIVE-ARTIFACT-001`, `NATIVE-LINK-PLAN-001` y `NATIVE-PUBLISH-SPEC-001` están
+cerrados como contratos puros. El siguiente bloque explícito es `PERF-001`;
+después sigue la evaluación `NATIVE-001`.
 Las celdas S1A de promoción siguen pendientes y no se sobreafirma su cierre.
 `CONF-GAP-IMPL-001`, `CONF-LAYER-RESULT-001` y
 `CONF-SEAL-FINAL-001` ya cierran T0/G5 con 409 requisitos cubiertos, nueve
@@ -490,7 +491,7 @@ necesaria; la fragmentación del workspace no.
 Estado observado del workspace:
 
 - Repositorio local: `/mnt/media/Tony/Projects/tondo`, branch
-  `wave45-async-inferred`, con
+  `main`, con
   upstream en
   `github.com/tonyredondo/tondo`.
 - Workspace: `tondo-cli`, `tondo-compiler`, `tondo-conformance`,
@@ -5086,10 +5087,21 @@ pueden retrasar el primer backend correcto.
   `docs/contracts/native-link-plan.md` y los scripts dedicados. El siguiente
   bloque es `NATIVE-PUBLISH-SPEC-001`.
 
-- [ ] **NATIVE-PUBLISH-SPEC-001 — Cerrar publicación y consumo del producto.**
-  Especificar staging, fsync/rename aplicable, colisiones, interrupción, cleanup
-  y la identidad exacta que `tondo run` consume después de `tondo build`, con
-  tests de fallo entre todas las fases.
+- [x] **NATIVE-PUBLISH-SPEC-001 — Cerrar publicación y consumo del producto.**
+  `tondo-native-publish-plan-draft` y
+  `tondo-native-published-product-draft` son records canónicos, hash-pinned y
+  reproducibles. `NativePublishPlan` cruza target/artifact/link, fija staging
+  sibling, sincronización de archivos, commit atómico del par producto/receipt,
+  colisiones, preservación del par anterior, límites y cleanup. El receipt se
+  valida antes de decodificar por tamaño y después se liga a los bytes reales
+  mediante SHA-256 y byte count antes de `tondo run`; directorios, symlinks,
+  paths físicos, entorno y shell quedan fuera del contrato. La matriz de
+  fallos entre validación, staging, fsync, commit, interrupción, cleanup y
+  consumo queda enumerada en `testing/native-publish.json` y
+  `docs/contracts/native-publish.md`; las decisiones puras están cubiertas por
+  los scripts dedicados y los tests de `toolchain.rs`. La integración física
+  del orquestador sigue reservada a `NATIVE-001`. El siguiente bloque es
+  `PERF-001`.
 
 - [ ] **PERF-001 — Definir benchmarks y presupuestos antes de implementar.**
   Incluir compilación, tamaño, programas STD-0.1A, throughput, latencia, memoria,
@@ -6133,14 +6145,26 @@ no-goals exactos. `CONF-LAYER-RESULT-001` produce el resultado compuesto y
 offline. `STD-IMPL-001`, `STD-IMPL-002` y `STD-CODEC-PUBLIC-001` están cerrados;
 Wave 6 no se declara iniciada antes de S1A.
 `STD-IMPL-001` y `STD-IMPL-002` quedan ahora cerrados por sus gates de
-coordinación; `NATIVE-TARGET-DESC-001`, `NATIVE-ARTIFACT-001` y
-`NATIVE-LINK-PLAN-001` quedan cerrados como contratos puros y la acción
-inmediata pasa a `NATIVE-PUBLISH-SPEC-001`, con las celdas S1A pendientes
-todavía visibles.
+coordinación; `NATIVE-TARGET-DESC-001`, `NATIVE-ARTIFACT-001`,
+`NATIVE-LINK-PLAN-001` y `NATIVE-PUBLISH-SPEC-001` quedan cerrados como
+contratos puros y la acción inmediata pasa a `PERF-001`, con las celdas S1A
+pendientes todavía visibles.
 
 ---
 
 ## 25. Historial del tracker
+
+### 2.43 — 2026-08-18
+
+- Se cierra `NATIVE-PUBLISH-SPEC-001` como contrato puro y ejecutable. El plan
+  de publicación fija la identidad exacta de target/artifact/link y una
+  política cerrada de staging sibling, sincronización, commit atómico del par
+  producto/receipt, colisiones, interrupción y cleanup. El receipt fija hash y
+  tamaño del producto, se limita antes de decodificar y se verifica contra los
+  bytes reales antes de `tondo run`; los records nunca contienen paths físicos,
+  timestamps ni valores ambientales. Se añaden `NativePublishPlan`,
+  `NativePublishedProduct`, negativos, fixture, documentación y gates; el
+  publicador físico queda correctamente reservado para `NATIVE-001`.
 
 ### 2.42 — 2026-08-18
 

@@ -25,6 +25,8 @@ pub const STANDARD_DESCRIPTOR_FORMAT: &str = "tondo-standard-descriptor-draft";
 pub const NATIVE_TARGET_DESCRIPTOR_FORMAT: &str = "tondo-native-target-descriptor-draft";
 pub const NATIVE_ARTIFACT_FORMAT: &str = "tondo-native-artifact-draft";
 pub const NATIVE_LINK_PLAN_FORMAT: &str = "tondo-native-link-plan-draft";
+pub const NATIVE_PUBLISH_PLAN_FORMAT: &str = "tondo-native-publish-plan-draft";
+pub const NATIVE_PUBLISHED_PRODUCT_FORMAT: &str = "tondo-native-published-product-draft";
 pub const PRIVILEGED_UNIT_FORMAT: &str = "tondo-privileged-unit-draft";
 pub const META_MODEL: &str = crate::meta::META_MODEL;
 pub const META_TARGET: &str = "tondo-meta";
@@ -3165,6 +3167,577 @@ impl NativeLinkPlan {
     }
 }
 
+/// Fixed publication policy for a native product.
+///
+/// These values are deliberately closed strings rather than host-specific
+/// switches. The orchestrator may implement the policy differently on each
+/// filesystem, but it must preserve the same publication boundary: stage next
+/// to the destination, make the staged bytes durable when the host supports
+/// it, and commit with one atomic rename.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativePublishPolicy {
+    pub staging: String,
+    pub commit: String,
+    pub durability: String,
+    pub collision: String,
+    pub interruption: String,
+    pub cleanup: String,
+}
+
+impl NativePublishPolicy {
+    fn validate(&self) -> Result<(), FormatError> {
+        let expected = [
+            ("staging", self.staging.as_str(), "output-sibling"),
+            (
+                "commit",
+                self.commit.as_str(),
+                "sync-file-then-atomic-rename",
+            ),
+            (
+                "durability",
+                self.durability.as_str(),
+                "directory-sync-after-rename-when-supported",
+            ),
+            (
+                "collision",
+                self.collision.as_str(),
+                "replace-regular-file-or-noop-same-receipt",
+            ),
+            (
+                "interruption",
+                self.interruption.as_str(),
+                "preserve-old-before-commit",
+            ),
+            (
+                "cleanup",
+                self.cleanup.as_str(),
+                "remove-staging-on-failure",
+            ),
+        ];
+        for (field, actual, expected) in expected {
+            if actual != expected {
+                return Err(FormatError::Invalid(format!(
+                    "native publish policy.{field} must be {expected}"
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Consumer boundary used by tondo-run after a native build.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativePublishConsumer {
+    pub command: String,
+    pub receipt_format: String,
+    pub verification: String,
+    pub mismatch: String,
+}
+
+impl NativePublishConsumer {
+    fn validate(&self) -> Result<(), FormatError> {
+        if self.command != "tondo-run" {
+            return Err(FormatError::Invalid(
+                "native publish consumer.command must be tondo-run".into(),
+            ));
+        }
+        if self.receipt_format != NATIVE_PUBLISHED_PRODUCT_FORMAT {
+            return Err(FormatError::Invalid(format!(
+                "native publish consumer.receipt_format must be {NATIVE_PUBLISHED_PRODUCT_FORMAT}"
+            )));
+        }
+        if self.verification != "receipt-and-product-hash-before-exec" {
+            return Err(FormatError::Invalid(
+                "native publish consumer.verification must require the receipt and product hash"
+                    .into(),
+            ));
+        }
+        if self.mismatch != "reject-before-exec" {
+            return Err(FormatError::Invalid(
+                "native publish consumer.mismatch must be reject-before-exec".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Product limits enforced before a staged file can be committed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativePublishLimits {
+    pub max_product_bytes: u64,
+    pub max_receipt_bytes: u32,
+}
+
+impl NativePublishLimits {
+    fn validate(&self) -> Result<(), FormatError> {
+        if self.max_product_bytes == 0 || self.max_receipt_bytes == 0 {
+            return Err(FormatError::Invalid(
+                "native publish limits must be positive and finite".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Logical output identity authorized by the publish plan.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativePublishOutput {
+    pub product_id: String,
+    pub object_format: String,
+    pub expected_sha256: String,
+}
+
+impl NativePublishOutput {
+    fn validate(&self, field: &str) -> Result<(), FormatError> {
+        require_kebab(&format!("{field}.product_id"), &self.product_id)?;
+        if !matches!(self.object_format.as_str(), "elf" | "macho" | "coff") {
+            return Err(FormatError::Invalid(format!(
+                "{field}.object_format {} is not supported",
+                self.object_format
+            )));
+        }
+        require_hash(&self.expected_sha256, &format!("{field}.expected_sha256"))
+    }
+}
+
+/// Closed publication input. This is the only record that may authorize an
+/// orchestrator to move linked bytes to a user-visible product path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativePublishPlan {
+    pub format: String,
+    pub compiler: String,
+    pub edition: String,
+    pub package_id: String,
+    pub target_descriptor_hash: String,
+    pub artifact_hash: String,
+    pub link_plan_hash: String,
+    pub output: NativePublishOutput,
+    pub policy: NativePublishPolicy,
+    pub consumer: NativePublishConsumer,
+    pub limits: NativePublishLimits,
+    pub plan_hash: String,
+    pub reproducible: bool,
+}
+
+impl NativePublishPlan {
+    pub fn decode(bytes: &[u8]) -> Result<Self, FormatError> {
+        let value: Self = decode_canonical(bytes, "native publish plan")?;
+        value.validate()?;
+        Ok(value)
+    }
+
+    pub fn encode(&self) -> Result<Vec<u8>, FormatError> {
+        self.validate()?;
+        encode(self)
+    }
+
+    pub fn canonicalize(&self) -> Result<Self, FormatError> {
+        let mut value = self.clone();
+        value.plan_hash = value.calculated_plan_hash()?;
+        value.validate()?;
+        Ok(value)
+    }
+
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>, FormatError> {
+        self.canonicalize()?.encode()
+    }
+
+    /// Hash of the complete canonical publish record.
+    pub fn content_hash(&self) -> Result<String, FormatError> {
+        Ok(sha256(&self.canonical_bytes()?))
+    }
+
+    /// Bind publication to the exact target, artifact and link records.
+    pub fn validate_against(
+        &self,
+        descriptor: &NativeTargetDescriptor,
+        artifact: &NativeArtifact,
+        link_plan: &NativeLinkPlan,
+    ) -> Result<(), FormatError> {
+        self.validate()?;
+        link_plan.validate_against(descriptor, artifact)?;
+        let target_hash = descriptor.content_hash()?;
+        if self.target_descriptor_hash != target_hash
+            || artifact.target_descriptor_hash != target_hash
+        {
+            return Err(FormatError::Invalid(
+                "native publish plan mixes target descriptor identities".into(),
+            ));
+        }
+        if self.artifact_hash != artifact.artifact_hash {
+            return Err(FormatError::Invalid(
+                "native publish plan artifact identity differs from selected artifact".into(),
+            ));
+        }
+        if self.link_plan_hash != link_plan.content_hash()? {
+            return Err(FormatError::Invalid(
+                "native publish plan link identity differs from selected link plan".into(),
+            ));
+        }
+        if self.package_id != link_plan.package_id
+            || self.output.product_id != link_plan.output.product_id
+            || self.output.object_format != link_plan.output.object_format
+            || self.output.expected_sha256 != link_plan.output.expected_sha256
+        {
+            return Err(FormatError::Invalid(
+                "native publish plan output differs from selected link plan".into(),
+            ));
+        }
+        if self.limits.max_product_bytes > link_plan.limits.max_output_bytes {
+            return Err(FormatError::Invalid(
+                "native publish product limit exceeds link plan limit".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Decide whether a valid receipt creates, replaces, or reuses a product.
+    /// The physical orchestrator separately rejects directories and symlinks;
+    /// this pure decision only handles receipt identity and collision policy.
+    pub fn collision(
+        &self,
+        existing: Option<&NativePublishedProduct>,
+        candidate: &NativePublishedProduct,
+    ) -> Result<NativePublishCollision, FormatError> {
+        candidate.validate_against(self)?;
+        match existing {
+            None => Ok(NativePublishCollision::Create),
+            Some(existing) => {
+                existing.validate_against(self)?;
+                if existing == candidate {
+                    Ok(NativePublishCollision::AlreadyPublished)
+                } else {
+                    Ok(NativePublishCollision::Replace)
+                }
+            }
+        }
+    }
+
+    /// Decode and bind the receipt that a `tondo run` consumer is about to use.
+    /// The byte limit is checked before parsing so a hostile sidecar cannot
+    /// force unbounded allocation at the execution boundary.
+    pub fn validate_receipt_bytes(
+        &self,
+        bytes: &[u8],
+    ) -> Result<NativePublishedProduct, FormatError> {
+        if bytes.len() > usize::try_from(self.limits.max_receipt_bytes).unwrap_or(usize::MAX) {
+            return Err(FormatError::Invalid(
+                "native published product receipt exceeds the publish byte limit".into(),
+            ));
+        }
+        let receipt = NativePublishedProduct::decode(bytes)?;
+        receipt.validate_against(self)?;
+        Ok(receipt)
+    }
+
+    fn validate(&self) -> Result<(), FormatError> {
+        if self.format != NATIVE_PUBLISH_PLAN_FORMAT {
+            return Err(FormatError::UnsupportedFormat {
+                expected: NATIVE_PUBLISH_PLAN_FORMAT,
+                actual: self.format.clone(),
+            });
+        }
+        if self.compiler != COMPILER_ID {
+            return Err(FormatError::Invalid(format!(
+                "native publish plan compiler {} differs from {COMPILER_ID}",
+                self.compiler
+            )));
+        }
+        require_nonempty("native publish plan.edition", &self.edition)?;
+        require_package_id("native publish plan.package_id", &self.package_id)?;
+        require_hash(
+            &self.target_descriptor_hash,
+            "native publish plan.target_descriptor_hash",
+        )?;
+        require_hash(&self.artifact_hash, "native publish plan.artifact_hash")?;
+        require_hash(&self.link_plan_hash, "native publish plan.link_plan_hash")?;
+        self.output.validate("native publish plan.output")?;
+        self.policy.validate()?;
+        self.consumer.validate()?;
+        self.limits.validate()?;
+        if !self.reproducible {
+            return Err(FormatError::Invalid(
+                "native publish plans must be reproducible".into(),
+            ));
+        }
+        if self.plan_hash != self.calculated_plan_hash()? {
+            return Err(FormatError::Invalid(
+                "native publish plan plan_hash does not match its fields".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn calculated_plan_hash(&self) -> Result<String, FormatError> {
+        #[derive(Serialize)]
+        struct Fingerprint<'a> {
+            compiler: &'a str,
+            edition: &'a str,
+            package_id: &'a str,
+            target_descriptor_hash: &'a str,
+            artifact_hash: &'a str,
+            link_plan_hash: &'a str,
+            output: &'a NativePublishOutput,
+            policy: &'a NativePublishPolicy,
+            consumer: &'a NativePublishConsumer,
+            limits: &'a NativePublishLimits,
+            reproducible: bool,
+        }
+        hash(&Fingerprint {
+            compiler: &self.compiler,
+            edition: &self.edition,
+            package_id: &self.package_id,
+            target_descriptor_hash: &self.target_descriptor_hash,
+            artifact_hash: &self.artifact_hash,
+            link_plan_hash: &self.link_plan_hash,
+            output: &self.output,
+            policy: &self.policy,
+            consumer: &self.consumer,
+            limits: &self.limits,
+            reproducible: self.reproducible,
+        })
+    }
+}
+
+/// Pure collision outcome for a validated publication receipt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NativePublishCollision {
+    Create,
+    Replace,
+    AlreadyPublished,
+}
+
+/// Receipt written beside a published product and consumed by tondo-run. It
+/// carries the exact link identity and product hash but never a physical path,
+/// timestamp or host-derived value.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativePublishedProduct {
+    pub format: String,
+    pub compiler: String,
+    pub edition: String,
+    pub package_id: String,
+    pub target_descriptor_hash: String,
+    pub artifact_hash: String,
+    pub link_plan_hash: String,
+    pub output: NativePublishedOutput,
+    pub receipt_hash: String,
+    pub reproducible: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativePublishedOutput {
+    pub product_id: String,
+    pub object_format: String,
+    pub product_sha256: String,
+    pub product_bytes: u64,
+}
+
+impl NativePublishedProduct {
+    pub fn from_bytes(plan: &NativePublishPlan, bytes: &[u8]) -> Result<Self, FormatError> {
+        plan.validate()?;
+        let product_bytes = u64::try_from(bytes.len()).map_err(|_| {
+            FormatError::Invalid("native product size does not fit its bounded identity".into())
+        })?;
+        if product_bytes > plan.limits.max_product_bytes {
+            return Err(FormatError::Invalid(
+                "native product exceeds the publish byte limit".into(),
+            ));
+        }
+        let product_sha256 = sha256(bytes);
+        if product_sha256 != plan.output.expected_sha256 {
+            return Err(FormatError::Invalid(
+                "native product bytes differ from the link plan output hash".into(),
+            ));
+        }
+        let mut receipt = Self {
+            format: NATIVE_PUBLISHED_PRODUCT_FORMAT.into(),
+            compiler: plan.compiler.clone(),
+            edition: plan.edition.clone(),
+            package_id: plan.package_id.clone(),
+            target_descriptor_hash: plan.target_descriptor_hash.clone(),
+            artifact_hash: plan.artifact_hash.clone(),
+            link_plan_hash: plan.link_plan_hash.clone(),
+            output: NativePublishedOutput {
+                product_id: plan.output.product_id.clone(),
+                object_format: plan.output.object_format.clone(),
+                product_sha256,
+                product_bytes,
+            },
+            receipt_hash: String::new(),
+            reproducible: true,
+        };
+        receipt.receipt_hash = receipt.calculated_receipt_hash()?;
+        receipt.validate_against(plan)?;
+        let receipt_bytes = receipt.encode()?;
+        if receipt_bytes.len()
+            > usize::try_from(plan.limits.max_receipt_bytes).unwrap_or(usize::MAX)
+        {
+            return Err(FormatError::Invalid(
+                "native published product receipt exceeds the publish byte limit".into(),
+            ));
+        }
+        Ok(receipt)
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self, FormatError> {
+        let value: Self = decode_canonical(bytes, "native published product")?;
+        value.validate()?;
+        Ok(value)
+    }
+
+    pub fn encode(&self) -> Result<Vec<u8>, FormatError> {
+        self.validate()?;
+        encode(self)
+    }
+
+    pub fn canonicalize(&self) -> Result<Self, FormatError> {
+        let mut value = self.clone();
+        value.receipt_hash = value.calculated_receipt_hash()?;
+        value.validate()?;
+        Ok(value)
+    }
+
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>, FormatError> {
+        self.canonicalize()?.encode()
+    }
+
+    pub fn content_hash(&self) -> Result<String, FormatError> {
+        Ok(sha256(&self.canonical_bytes()?))
+    }
+
+    pub fn validate_against(&self, plan: &NativePublishPlan) -> Result<(), FormatError> {
+        plan.validate()?;
+        self.validate()?;
+        if self.compiler != plan.compiler
+            || self.edition != plan.edition
+            || self.package_id != plan.package_id
+            || self.target_descriptor_hash != plan.target_descriptor_hash
+            || self.artifact_hash != plan.artifact_hash
+            || self.link_plan_hash != plan.link_plan_hash
+            || self.output.product_id != plan.output.product_id
+            || self.output.object_format != plan.output.object_format
+            || self.output.product_sha256 != plan.output.expected_sha256
+            || self.output.product_bytes > plan.limits.max_product_bytes
+        {
+            return Err(FormatError::Invalid(
+                "native published product identity differs from publish plan".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Verify the physical product bytes before execution. A valid receipt
+    /// alone is insufficient: the consumer must bind the sidecar to the file
+    /// it is about to execute.
+    pub fn validate_bytes(
+        &self,
+        plan: &NativePublishPlan,
+        bytes: &[u8],
+    ) -> Result<(), FormatError> {
+        self.validate_against(plan)?;
+        let product_bytes = u64::try_from(bytes.len()).map_err(|_| {
+            FormatError::Invalid("native product size does not fit its bounded identity".into())
+        })?;
+        if product_bytes != self.output.product_bytes || sha256(bytes) != self.output.product_sha256
+        {
+            return Err(FormatError::Invalid(
+                "native published product receipt does not match product bytes".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate(&self) -> Result<(), FormatError> {
+        if self.format != NATIVE_PUBLISHED_PRODUCT_FORMAT {
+            return Err(FormatError::UnsupportedFormat {
+                expected: NATIVE_PUBLISHED_PRODUCT_FORMAT,
+                actual: self.format.clone(),
+            });
+        }
+        if self.compiler != COMPILER_ID {
+            return Err(FormatError::Invalid(format!(
+                "native published product compiler {} differs from {COMPILER_ID}",
+                self.compiler
+            )));
+        }
+        require_nonempty("native published product.edition", &self.edition)?;
+        require_package_id("native published product.package_id", &self.package_id)?;
+        require_hash(
+            &self.target_descriptor_hash,
+            "native published product.target_descriptor_hash",
+        )?;
+        require_hash(
+            &self.artifact_hash,
+            "native published product.artifact_hash",
+        )?;
+        require_hash(
+            &self.link_plan_hash,
+            "native published product.link_plan_hash",
+        )?;
+        require_kebab(
+            "native published product.output.product_id",
+            &self.output.product_id,
+        )?;
+        if !matches!(self.output.object_format.as_str(), "elf" | "macho" | "coff") {
+            return Err(FormatError::Invalid(
+                "native published product output object format is unsupported".into(),
+            ));
+        }
+        require_hash(
+            &self.output.product_sha256,
+            "native published product.output.product_sha256",
+        )?;
+        if self.output.product_bytes == 0 {
+            return Err(FormatError::Invalid(
+                "native published product output must not be empty".into(),
+            ));
+        }
+        require_hash(&self.receipt_hash, "native published product.receipt_hash")?;
+        if !self.reproducible {
+            return Err(FormatError::Invalid(
+                "native published products must be reproducible".into(),
+            ));
+        }
+        if self.receipt_hash != self.calculated_receipt_hash()? {
+            return Err(FormatError::Invalid(
+                "native published product receipt_hash does not match its fields".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn calculated_receipt_hash(&self) -> Result<String, FormatError> {
+        #[derive(Serialize)]
+        struct Fingerprint<'a> {
+            compiler: &'a str,
+            edition: &'a str,
+            package_id: &'a str,
+            target_descriptor_hash: &'a str,
+            artifact_hash: &'a str,
+            link_plan_hash: &'a str,
+            output: &'a NativePublishedOutput,
+            reproducible: bool,
+        }
+        hash(&Fingerprint {
+            compiler: &self.compiler,
+            edition: &self.edition,
+            package_id: &self.package_id,
+            target_descriptor_hash: &self.target_descriptor_hash,
+            artifact_hash: &self.artifact_hash,
+            link_plan_hash: &self.link_plan_hash,
+            output: &self.output,
+            reproducible: self.reproducible,
+        })
+    }
+}
+
 fn require_link_argument(field: &str, value: &str) -> Result<(), FormatError> {
     require_deterministic_atom(field, value, false)?;
     if value == "." || value == ".." || value.contains("..") {
@@ -4099,6 +4672,82 @@ mod tests {
         plan
     }
 
+    fn native_publish_fixture() -> (
+        NativeTargetDescriptor,
+        NativeArtifact,
+        NativeLinkPlan,
+        NativePublishPlan,
+    ) {
+        let descriptor = native_target_descriptor();
+        let descriptor_hash = descriptor.content_hash().unwrap();
+        let mut artifact = native_artifact();
+        artifact.target_descriptor_hash = descriptor_hash.clone();
+        artifact.artifact_hash = artifact.calculated_artifact_hash().unwrap();
+
+        let mut link_plan = native_link_plan();
+        link_plan.target_descriptor_hash = descriptor_hash.clone();
+        link_plan.artifact_target_descriptor_hash = descriptor_hash.clone();
+        link_plan.artifact_hash = artifact.artifact_hash.clone();
+        link_plan.driver.id = descriptor.driver.id.clone();
+        link_plan.driver.version = descriptor.driver.version.clone();
+        link_plan.driver.artifact_id = descriptor.driver.artifact_id.clone();
+        link_plan.driver.artifact_sha256 = descriptor
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.id == descriptor.driver.artifact_id)
+            .unwrap()
+            .sha256
+            .clone();
+        link_plan.driver.arguments = descriptor.driver.arguments.clone();
+        link_plan.output.object_format = descriptor.object_format.clone();
+        link_plan.plan_hash = link_plan.calculated_plan_hash().unwrap();
+
+        let mut publish_plan = NativePublishPlan {
+            format: NATIVE_PUBLISH_PLAN_FORMAT.into(),
+            compiler: COMPILER_ID.into(),
+            edition: "0.1".into(),
+            package_id: artifact.package_id.clone(),
+            target_descriptor_hash: descriptor_hash,
+            artifact_hash: artifact.artifact_hash.clone(),
+            link_plan_hash: link_plan.content_hash().unwrap(),
+            output: NativePublishOutput {
+                product_id: link_plan.output.product_id.clone(),
+                object_format: link_plan.output.object_format.clone(),
+                expected_sha256: link_plan.output.expected_sha256.clone(),
+            },
+            policy: NativePublishPolicy {
+                staging: "output-sibling".into(),
+                commit: "sync-file-then-atomic-rename".into(),
+                durability: "directory-sync-after-rename-when-supported".into(),
+                collision: "replace-regular-file-or-noop-same-receipt".into(),
+                interruption: "preserve-old-before-commit".into(),
+                cleanup: "remove-staging-on-failure".into(),
+            },
+            consumer: NativePublishConsumer {
+                command: "tondo-run".into(),
+                receipt_format: NATIVE_PUBLISHED_PRODUCT_FORMAT.into(),
+                verification: "receipt-and-product-hash-before-exec".into(),
+                mismatch: "reject-before-exec".into(),
+            },
+            limits: NativePublishLimits {
+                max_product_bytes: link_plan.limits.max_output_bytes,
+                max_receipt_bytes: 16 * 1024,
+            },
+            plan_hash: String::new(),
+            reproducible: true,
+        };
+        publish_plan.plan_hash = publish_plan.calculated_plan_hash().unwrap();
+        (descriptor, artifact, link_plan, publish_plan)
+    }
+
+    fn assert_invalid_publish_plan(mut plan: NativePublishPlan) {
+        plan.plan_hash = plan.calculated_plan_hash().unwrap();
+        assert!(
+            plan.encode().is_err(),
+            "unexpectedly valid publish plan: {plan:?}"
+        );
+    }
+
     fn lock(manifest_bytes: &[u8]) -> Lockfile {
         let source = LockedSource {
             source_set: "common".into(),
@@ -4310,7 +4959,7 @@ mod tests {
         invalid.compiler = "other-compiler".into();
         cases.push(invalid);
         let mut invalid = native_artifact();
-        invalid.package_id = "not-a-package".into();
+        invalid.package_id.clear();
         cases.push(invalid);
         let mut invalid = native_artifact();
         invalid.target_descriptor_hash = "not-a-hash".into();
@@ -4574,6 +5223,305 @@ mod tests {
         for invalid in cases {
             assert!(invalid.encode().is_err(), "invalid link plan was accepted");
         }
+    }
+
+    #[test]
+    fn native_publish_plan_round_trips_and_receipt_binds_tondo_run() {
+        let (descriptor, artifact, link_plan, plan) = native_publish_fixture();
+        plan.validate_against(&descriptor, &artifact, &link_plan)
+            .unwrap();
+        let bytes = plan.encode().unwrap();
+        assert_eq!(NativePublishPlan::decode(&bytes).unwrap(), plan);
+        assert_eq!(plan.content_hash().unwrap(), sha256(&bytes));
+
+        let product = NativePublishedProduct::from_bytes(&plan, b"tondo-product").unwrap();
+        let receipt_bytes = product.encode().unwrap();
+        assert_eq!(
+            NativePublishedProduct::decode(&receipt_bytes).unwrap(),
+            product
+        );
+        assert_eq!(product.content_hash().unwrap(), sha256(&receipt_bytes));
+        product.validate_against(&plan).unwrap();
+        assert_eq!(
+            plan.validate_receipt_bytes(&receipt_bytes).unwrap(),
+            product
+        );
+        product.validate_bytes(&plan, b"tondo-product").unwrap();
+        assert_eq!(
+            plan.collision(None, &product).unwrap(),
+            NativePublishCollision::Create
+        );
+        assert_eq!(
+            plan.collision(Some(&product), &product).unwrap(),
+            NativePublishCollision::AlreadyPublished
+        );
+    }
+
+    #[test]
+    fn native_publish_plan_rejects_mismatches_and_stale_receipts() {
+        let (descriptor, artifact, link_plan, plan) = native_publish_fixture();
+        let product = NativePublishedProduct::from_bytes(&plan, b"tondo-product").unwrap();
+        let receipt_bytes = product.encode().unwrap();
+
+        let mut mixed = plan.clone();
+        mixed.target_descriptor_hash = sha256(b"other-target");
+        mixed.plan_hash = mixed.calculated_plan_hash().unwrap();
+        assert!(
+            mixed
+                .validate_against(&descriptor, &artifact, &link_plan)
+                .is_err()
+        );
+
+        let mut wrong_link = plan.clone();
+        wrong_link.link_plan_hash = sha256(b"other-link");
+        wrong_link.plan_hash = wrong_link.calculated_plan_hash().unwrap();
+        assert!(
+            wrong_link
+                .validate_against(&descriptor, &artifact, &link_plan)
+                .is_err()
+        );
+
+        let mut invalid = plan.clone();
+        invalid.policy.commit = "write-in-place".into();
+        invalid.plan_hash = invalid.calculated_plan_hash().unwrap();
+        assert!(invalid.encode().is_err());
+        let mut invalid = plan.clone();
+        invalid.consumer.mismatch = "execute-anyway".into();
+        invalid.plan_hash = invalid.calculated_plan_hash().unwrap();
+        assert!(invalid.encode().is_err());
+        let mut invalid = plan.clone();
+        invalid.limits.max_product_bytes = 0;
+        invalid.plan_hash = invalid.calculated_plan_hash().unwrap();
+        assert!(invalid.encode().is_err());
+        let mut unknown: serde_json::Value =
+            serde_json::from_slice(&plan.encode().unwrap()).unwrap();
+        unknown
+            .as_object_mut()
+            .unwrap()
+            .insert("physical_path".into(), serde_json::Value::Null);
+        assert!(NativePublishPlan::decode(&serde_json::to_vec(&unknown).unwrap()).is_err());
+
+        assert!(NativePublishedProduct::from_bytes(&plan, b"wrong-product").is_err());
+        assert!(product.validate_bytes(&plan, b"wrong-product").is_err());
+        let mut oversized_receipt_plan = plan.clone();
+        oversized_receipt_plan.limits.max_receipt_bytes = 1;
+        assert!(
+            oversized_receipt_plan
+                .validate_receipt_bytes(&receipt_bytes)
+                .is_err()
+        );
+        let mut stale = product.clone();
+        stale.output.product_bytes = 99;
+        stale.receipt_hash = stale.calculated_receipt_hash().unwrap();
+        assert!(stale.validate_against(&plan).is_ok());
+        assert_eq!(
+            plan.collision(Some(&product), &stale).unwrap(),
+            NativePublishCollision::Replace
+        );
+        stale.receipt_hash = sha256(b"stale-receipt");
+        assert!(stale.validate_against(&plan).is_err());
+    }
+
+    #[test]
+    fn native_publish_plan_rejects_every_closed_field_boundary() {
+        let (_, _, _, plan) = native_publish_fixture();
+
+        let mut invalid = plan.clone();
+        invalid.format = "future-native-publish".into();
+        assert_invalid_publish_plan(invalid);
+        let mut invalid = plan.clone();
+        invalid.compiler = "other-compiler".into();
+        assert_invalid_publish_plan(invalid);
+        let mut invalid = plan.clone();
+        invalid.edition.clear();
+        assert_invalid_publish_plan(invalid);
+        let mut invalid = plan.clone();
+        invalid.package_id.clear();
+        assert_invalid_publish_plan(invalid);
+        let mut invalid = plan.clone();
+        invalid.target_descriptor_hash = "missing".into();
+        assert_invalid_publish_plan(invalid);
+        let mut invalid = plan.clone();
+        invalid.artifact_hash = "missing".into();
+        assert_invalid_publish_plan(invalid);
+        let mut invalid = plan.clone();
+        invalid.link_plan_hash = "missing".into();
+        assert_invalid_publish_plan(invalid);
+
+        let mut invalid = plan.clone();
+        invalid.output.product_id = "not/a-product".into();
+        assert_invalid_publish_plan(invalid);
+        let mut invalid = plan.clone();
+        invalid.output.object_format = "unknown".into();
+        assert_invalid_publish_plan(invalid);
+        let mut invalid = plan.clone();
+        invalid.output.expected_sha256 = "missing".into();
+        assert_invalid_publish_plan(invalid);
+
+        for field in [
+            "staging",
+            "commit",
+            "durability",
+            "collision",
+            "interruption",
+            "cleanup",
+        ] {
+            let mut invalid = plan.clone();
+            match field {
+                "staging" => invalid.policy.staging = "invalid".into(),
+                "commit" => invalid.policy.commit = "invalid".into(),
+                "durability" => invalid.policy.durability = "invalid".into(),
+                "collision" => invalid.policy.collision = "invalid".into(),
+                "interruption" => invalid.policy.interruption = "invalid".into(),
+                "cleanup" => invalid.policy.cleanup = "invalid".into(),
+                _ => unreachable!(),
+            }
+            assert_invalid_publish_plan(invalid);
+        }
+
+        for field in ["command", "receipt_format", "verification", "mismatch"] {
+            let mut invalid = plan.clone();
+            match field {
+                "command" => invalid.consumer.command = "other-run".into(),
+                "receipt_format" => invalid.consumer.receipt_format = "other-receipt".into(),
+                "verification" => invalid.consumer.verification = "hash-after-exec".into(),
+                "mismatch" => invalid.consumer.mismatch = "execute-anyway".into(),
+                _ => unreachable!(),
+            }
+            assert_invalid_publish_plan(invalid);
+        }
+
+        let mut invalid = plan.clone();
+        invalid.limits.max_product_bytes = 0;
+        assert_invalid_publish_plan(invalid);
+        let mut invalid = plan.clone();
+        invalid.limits.max_receipt_bytes = 0;
+        assert_invalid_publish_plan(invalid);
+        let mut invalid = plan.clone();
+        invalid.reproducible = false;
+        assert_invalid_publish_plan(invalid);
+        let mut invalid = plan.clone();
+        invalid.plan_hash = "missing".into();
+        assert!(invalid.encode().is_err());
+
+        let pretty = serde_json::to_vec_pretty(&plan).unwrap();
+        assert!(matches!(
+            NativePublishPlan::decode(&pretty),
+            Err(FormatError::NonCanonical("native publish plan"))
+        ));
+
+        let (descriptor, artifact, link_plan, plan) = native_publish_fixture();
+        let mut invalid = plan.clone();
+        invalid.artifact_hash = sha256(b"other-artifact");
+        invalid.plan_hash = invalid.calculated_plan_hash().unwrap();
+        assert!(
+            invalid
+                .validate_against(&descriptor, &artifact, &link_plan)
+                .is_err()
+        );
+        let mut invalid = plan.clone();
+        invalid.package_id = "workspace:other@1".into();
+        invalid.plan_hash = invalid.calculated_plan_hash().unwrap();
+        assert!(
+            invalid
+                .validate_against(&descriptor, &artifact, &link_plan)
+                .is_err()
+        );
+        let mut invalid = plan.clone();
+        invalid.output.product_id = "other-product".into();
+        invalid.plan_hash = invalid.calculated_plan_hash().unwrap();
+        assert!(
+            invalid
+                .validate_against(&descriptor, &artifact, &link_plan)
+                .is_err()
+        );
+        let mut invalid = plan.clone();
+        invalid.limits.max_product_bytes = link_plan.limits.max_output_bytes + 1;
+        invalid.plan_hash = invalid.calculated_plan_hash().unwrap();
+        assert!(
+            invalid
+                .validate_against(&descriptor, &artifact, &link_plan)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn native_published_product_rejects_every_receipt_boundary() {
+        let (_, _, _, plan) = native_publish_fixture();
+        let product = NativePublishedProduct::from_bytes(&plan, b"tondo-product").unwrap();
+
+        let mut invalid = product.clone();
+        invalid.format = "future-receipt".into();
+        assert!(invalid.encode().is_err());
+        let mut invalid = product.clone();
+        invalid.compiler = "other-compiler".into();
+        invalid.receipt_hash = invalid.calculated_receipt_hash().unwrap();
+        assert!(invalid.encode().is_err());
+        let mut invalid = product.clone();
+        invalid.edition.clear();
+        invalid.receipt_hash = invalid.calculated_receipt_hash().unwrap();
+        assert!(invalid.encode().is_err());
+        let mut invalid = product.clone();
+        invalid.package_id.clear();
+        invalid.receipt_hash = invalid.calculated_receipt_hash().unwrap();
+        assert!(invalid.encode().is_err());
+        for field in ["target", "artifact", "link"] {
+            let mut invalid = product.clone();
+            match field {
+                "target" => invalid.target_descriptor_hash = "missing".into(),
+                "artifact" => invalid.artifact_hash = "missing".into(),
+                "link" => invalid.link_plan_hash = "missing".into(),
+                _ => unreachable!(),
+            }
+            invalid.receipt_hash = invalid.calculated_receipt_hash().unwrap();
+            assert!(invalid.encode().is_err());
+        }
+        let mut invalid = product.clone();
+        invalid.output.product_id = "not/a-product".into();
+        invalid.receipt_hash = invalid.calculated_receipt_hash().unwrap();
+        assert!(invalid.encode().is_err());
+        let mut invalid = product.clone();
+        invalid.output.object_format = "unknown".into();
+        invalid.receipt_hash = invalid.calculated_receipt_hash().unwrap();
+        assert!(invalid.encode().is_err());
+        let mut invalid = product.clone();
+        invalid.output.product_sha256 = "missing".into();
+        invalid.receipt_hash = invalid.calculated_receipt_hash().unwrap();
+        assert!(invalid.encode().is_err());
+        let mut invalid = product.clone();
+        invalid.output.product_bytes = 0;
+        invalid.receipt_hash = invalid.calculated_receipt_hash().unwrap();
+        assert!(invalid.encode().is_err());
+        let mut invalid = product.clone();
+        invalid.reproducible = false;
+        invalid.receipt_hash = invalid.calculated_receipt_hash().unwrap();
+        assert!(invalid.encode().is_err());
+
+        let mut invalid = product.clone();
+        invalid.receipt_hash = "missing".into();
+        assert!(invalid.encode().is_err());
+        let pretty = serde_json::to_vec_pretty(&product).unwrap();
+        assert!(matches!(
+            NativePublishedProduct::decode(&pretty),
+            Err(FormatError::NonCanonical("native published product"))
+        ));
+
+        let mut oversized = plan.clone();
+        oversized.limits.max_product_bytes = 1;
+        assert!(NativePublishedProduct::from_bytes(&oversized, b"tondo-product").is_err());
+        let mut tiny_receipt = plan.clone();
+        tiny_receipt.limits.max_receipt_bytes = 1;
+        assert!(NativePublishedProduct::from_bytes(&tiny_receipt, b"tondo-product").is_err());
+        assert!(plan.validate_receipt_bytes(b"not-json").is_err());
+        let mut mismatched = product.clone();
+        mismatched.edition = "0.2".into();
+        mismatched.receipt_hash = mismatched.calculated_receipt_hash().unwrap();
+        assert!(mismatched.validate_against(&plan).is_err());
+        let mut mismatched = product.clone();
+        mismatched.output.product_bytes += 1;
+        mismatched.receipt_hash = mismatched.calculated_receipt_hash().unwrap();
+        assert!(mismatched.validate_against(&plan).is_ok());
+        assert!(mismatched.validate_bytes(&plan, b"tondo-product").is_err());
     }
 
     #[test]

@@ -104,7 +104,8 @@ record; it still does not resolve physical paths or execute a process.
 
 No field contains a physical path, linker command, symbol name, object layout,
 calling convention or FFI promise. `--output`, staging paths and publication
-atomicity belong exclusively to `NATIVE-PUBLISH-SPEC-001`, the next contract.
+atomicity are closed by `NATIVE-PUBLISH-SPEC-001`; implementation proceeds
+through `PERF-001` and `NATIVE-001`.
 
 The implementation and negative contract cases are in
 `crates/tondo-compiler/src/toolchain.rs`,

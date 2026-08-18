@@ -77,6 +77,10 @@ run_step native-link-plan-contract \
     scripts/native-link-plan-check.sh
 run_step native-link-plan-tests \
     scripts/native-link-plan-test.sh
+run_step native-publish-contract \
+    scripts/native-publish-check.sh
+run_step native-publish-tests \
+    scripts/native-publish-test.sh
 run_step stdlib-json-contract \
     scripts/stdlib-json-check.sh
 run_step stdlib-messagepack-contract \

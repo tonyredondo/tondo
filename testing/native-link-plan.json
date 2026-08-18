@@ -75,5 +75,5 @@
     "unsupported-object-format",
     "zero-or-insufficient-limit"
   ],
-  "next_blocks": ["NATIVE-PUBLISH-SPEC-001"]
+  "next_blocks": ["PERF-001", "NATIVE-001"]
 }

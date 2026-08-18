@@ -1385,11 +1385,11 @@ El compilador debe aceptar el caso.
             .filter(|requirement| requirement.document == "TONDO_TOOLCHAIN_SPEC.md")
             .collect::<Vec<_>>();
 
-        assert_eq!(toolchain.len(), 33);
+        assert_eq!(toolchain.len(), 34);
         for requirement in toolchain {
             if matches!(
                 requirement.id.as_str(),
-                "TC01-10-1-2-R001" | "TC01-10-1-3-R001"
+                "TC01-10-1-2-R001" | "TC01-10-1-3-R001" | "TC01-10-1-4-R001"
             ) {
                 assert_eq!(requirement.status, "toolchain-limit", "{}", requirement.id);
                 continue;
