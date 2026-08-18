@@ -11,7 +11,13 @@ La forma TLF para agentes ya tiene spec y estudio léxico, pero encoder, decoder
 source maps, CLI y evaluación de generación permanecen pendientes. Tondo 0.1
 sigue en desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 2.44
+El tooling dinámico de diagnóstico también queda dentro del plan 0.1: race
+detection, detección de retención/leaks y crash dumps conservan una única
+frontera compilador/runtime/CLI, con evidencia por intento y paridad VM/native.
+`DIAG-SPEC-001` es el prerrequisito explícito de la evaluación nativa; la
+existencia del contrato no implica que ningún detector esté implementado.
+
+**Versión del tracker:** 2.45
 
 **Última actualización:** 2026-08-18
 
@@ -25,6 +31,7 @@ sigue en desarrollo y no ha sido publicado.
 **Contratos normativos por owner:**
 
 - [Contrato global de baseline de rendimiento previo al backend](./docs/contracts/performance.md)
+- [Contrato de tooling dinámico de diagnóstico](./docs/contracts/diagnostic-tooling.md)
 - [Contrato operativo de rendimiento de Standard Library 0.1](./docs/contracts/stdlib-performance.md)
 - [Contrato de owner de `std.json`](./docs/contracts/stdlib-json.md)
 - [Contrato de owner de `std.messagepack`](./docs/contracts/stdlib-messagepack.md)
@@ -39,6 +46,10 @@ sigue en desarrollo y no ha sido publicado.
 - [Contrato de owners Core STD-0.1A](./docs/contracts/stdlib-core.md)
 - [Contrato de owners Hosted STD-0.1A](./docs/contracts/stdlib-hosted.md)
 
+**RFCs de planificación:**
+
+- [RFC-019 — tooling dinámico de diagnóstico](./docs/rfc/019-diagnostic-tooling.md)
+
 **Companion normativo con conformidad separada:**
 
 - [Tondo LLM Form](./TONDO_LLM_FORM_SPEC.md)
@@ -49,14 +60,17 @@ confunde con conformarla. TLF tampoco cambia la semántica `.to`: Gate L0 produc
 un bundle separado y el candidato final fija G5, S1 y L0 por identidades
 independientes.
 
-**Objetivo inmediato:** continuar Wave 5/S1A después del cierre coordinado de
-`STD-CODEC-PUBLIC-001`. La auditoría pública global está verificada (209/209)
+**Objetivo inmediato:** cerrar primero el contrato y la instrumentación base de
+diagnóstico (`DIAG-SPEC-001` y `DIAG-RUNTIME-001`) y después continuar Wave
+5/S1A en paralelo con `RACE-001`, `LEAK-001`, `DUMP-001` y `DIAG-TEST-001`,
+antes de la evaluación coordinada de `NATIVE-001`. El cierre coordinado de
+`STD-CODEC-PUBLIC-001` ya está verificado (209/209)
 y los tres owners build-only tienen una frontera explícita; no se fabrican
 funciones runtime para ellos. `NATIVE-TARGET-DESC-001` y
 `NATIVE-ARTIFACT-001`, `NATIVE-LINK-PLAN-001` y `NATIVE-PUBLISH-SPEC-001` están
 cerrados como contratos puros, y `PERF-001` ya fija el contrato de benchmark y
-baseline previo al backend. El siguiente bloque explícito es la evaluación
-`NATIVE-001`.
+baseline previo al backend. El siguiente bloque explícito es `DIAG-SPEC-001`;
+`NATIVE-001` queda después de la compuerta de diagnóstico.
 Las celdas S1A de promoción siguen pendientes y no se sobreafirma su cierre.
 `CONF-GAP-IMPL-001`, `CONF-LAYER-RESULT-001` y
 `CONF-SEAL-FINAL-001` ya cierran T0/G5 con 409 requisitos cubiertos, nueve
@@ -374,14 +388,23 @@ cantidad de infraestructura necesaria antes del primer programa ejecutable.
   corpus bootstrap de regresión interno; no es una versión ni un release.
 
 - [ ] **DEC-013 — Backend nativo y ABI runtime interna.** `NATIVE-001` elige
-  backend y registra targets, debug info, toolchain y portabilidad;
+  backend y registra targets, debug info, toolchain, portabilidad y la
+  capacidad de conservar los perfiles `DIAG-*`;
   `NATIVE-ABI-001`, después del ADR de memoria, cierra calling convention,
-  unwind y fronteras runtime. Ninguna de ambas promete ABI FFI pública.
+  unwind, source maps, identidad task/thread y fronteras runtime. Ninguna de
+  ambas promete ABI FFI pública.
 
 - [ ] **DEC-014 — Gestión de memoria nativa.** `NATIVE-MEM-ADR-001` debe
   cerrarla antes de ABI y lowering nativos, fijando ownership runtime,
   atomicidad, weak refs, detección de ciclos, interacción con COW, async,
-  threads, FFI privilegiada y estrategia de verificación.
+  threads, FFI privilegiada, roots/retainers, ledger de recursos y estrategia
+  de verificación de `LEAK-001`.
+
+- [ ] **DEC-017 — Diagnóstico dinámico sin APIs paralelas.**
+  `DIAG-SPEC-001` cierra los perfiles `race`, `leaks` y `crash`, el envelope
+  `tondo-diagnostic-report/1`, el dump `tondo-dump/1`, privacidad, límites y
+  exit status. Runtime, CLI y runner comparten esa identidad; la stdlib no
+  añade `std.race`, `std.leaks` ni `std.crash`.
 
 - [x] **DEC-015 — Testing first-class integrado en 0.1.** La especificación
   [`TONDO_TESTING_SPEC.md`](./TONDO_TESTING_SPEC.md) forma parte del mismo
@@ -485,6 +508,7 @@ necesaria; la fragmentación del workspace no.
 | **M10.5c — Infraestructura de conformidad** | Una línea de draft, ratchet y candidato inmutable | Completado; cierre normativo G5/T0 sellado en revision 24 |
 | **M10.7 — Metaprogramación estática** | `derive`, generators, meta VM y contribución a G5 | Completado |
 | **M10.6 — Testing de usuario Tondo 0.1** | Implementación de `tondo test` y contribución a G5 | Completado; cierre evidencial T0 incluido en revision 24 |
+| **DIAG — Tooling dinámico** | Race detector, leak/retention detector, crash dumps y runner integrado | Planificado; prerrequisito de M11 |
 | **STD-0.1A — Foundation + Hosted** | Base estándar necesaria para meta, testing y backend | Arquitectura, owners y auditoría pública cerrados; permanecen celdas de fuzzing, rendimiento, conformance y promoción |
 | **M11 — Backend nativo y optimización** | Implementación de producción | Futuro |
 | **STD-0.1B — Concurrency + Application** | Contratos runtime antes de M11; implementación tras N1 | Arquitectura base cerrada; contratos y código pendientes |
@@ -619,8 +643,13 @@ el trabajo.
 | Mecanismo `CONF-SEAL-001` | resultado bootstrap completo, ratchet y hashes actuales | Cierre evidencial T0, layers ejecutados o STD-0.1A completa |
 | Gate T0 evidencial | `UTEST-SPEC-EVIDENCE-001` y matriz multi-spec sin huecos de testing aplicables | STD-0.1A completa |
 | Gate G5 vivo | `DOC-TEST-001`, `DOC-TEST-CONF-001`, `CONF-MATRIX-ALL-001`, `CONF-GAP-AUDIT-001`, `CONF-GAP-IMPL-001`, `CONF-LAYER-RESULT-001`, `QUALITY-EVIDENCE-BIND-001` y `CONF-SEAL-FINAL-001` | STD-0.1A completa |
-| `NATIVE-001` | `NATIVE-PRODUCT-SPEC-001`, target/artifact/link/publish specs, Gates G5/S1A y contratos runtime-facing de STD-0.1B | Implementación de STD-0.1B |
-| `NATIVE-ABI-001` | `NATIVE-001`, `NATIVE-MEM-ADR-001` y contratos de sync/executor | ABI FFI pública |
+| `DIAG-SPEC-001` | `PERF-001`, contrato CLI/testing y RFC-019 | Implementación de detectores |
+| `DIAG-RUNTIME-001` | `DIAG-SPEC-001`, VM hosted, async/threads/unsafe y source maps | Backend nativo |
+| `RACE-001` / `LEAK-001` / `DUMP-001` | `DIAG-RUNTIME-001` y sus respectivos fixtures/negativos | Promoción S1A |
+| `DIAG-TEST-001` | Detectores `RACE-001`, `LEAK-001`, `DUMP-001` y runner de retries/shards | CI específico |
+| `DIAG-CI-001` | `DIAG-TEST-001`, `PERF-001`, fuzzing y corpus persistente | Selección de backend |
+| `NATIVE-001` | `NATIVE-PRODUCT-SPEC-001`, target/artifact/link/publish specs, Gates G5/S1A, contratos runtime-facing de STD-0.1B y `DIAG-SPEC-001`/`DIAG-RUNTIME-001` | Implementación de STD-0.1B |
+| `NATIVE-ABI-001` | `NATIVE-001`, `NATIVE-MEM-ADR-001`, contratos de sync/executor y hooks `RACE`/`LEAK`/`DUMP` | ABI FFI pública |
 | ARC/runtime nativo | `NATIVE-ABI-001` y DEC-014 | Eliminación de retains, COW o escape analysis |
 | `NATIVE-LINK-001`/`NATIVE-CLI-001` | target/artifact/link schemas, lowering, ARC/ciclos y `NATIVE-STD-001` | Optimizaciones post-N1 |
 | Gate S1 | N1, todos los slices A/B conformes y `STD-S1-SEAL-001` | L0 o empaquetado global |
@@ -633,6 +662,29 @@ tests, cobertura aplicable y conformidad viva. Una wave posterior no utiliza
 una API provisional de la anterior. Trabajo de lanes distintas puede ejecutarse
 en paralelo; dos cambios que toquen el mismo schema, parser, IR o runtime se
 integran en el orden de la tabla anterior.
+
+### 4.1.3 Prioridad transversal de diagnóstico
+
+La lane `DIAG` se ejecuta antes de seleccionar el backend nativo y conserva el
+principio de una superficie pequeña. El orden es contractual para el trabajo,
+no una promesa de implementación ya cerrada:
+
+| ID | Prioridad | Alcance | Estado |
+|---|---:|---|---|
+| `DIAG-SPEC-001` | P0 | Profiles, envelope, dumps, identidad, privacidad, límites y CLI | Pendiente |
+| `DIAG-RUNTIME-001` | P0 | Eventos de memoria/sync, task/thread registry, roots, recursos y source maps en VM | Pendiente |
+| `RACE-001` | P0 | Race detector dinámico con happens-before, stacks y corpus positivo/negativo | Pendiente |
+| `LEAK-001` | P0 | Retención GC, recursos afines, FFI y snapshots de crecimiento | Pendiente |
+| `DUMP-001` | P0 | Captura segura `.tdump`, redacción y analizador human/JSON | Pendiente |
+| `DIAG-TEST-001` | P0 | Intentos aislados, retries, shards, artifacts JSON/JUnit | Pendiente |
+| `DIAG-CI-001` | P0 | Lanes, fuzzing, budgets y promotion gate | Pendiente |
+
+`DIAG-SPEC-001` y `DIAG-RUNTIME-001` bloquean `NATIVE-001`. `RACE-001`,
+`LEAK-001` y `DUMP-001` pueden avanzar junto a Wave 5 después de que el
+runtime hosted exponga los eventos necesarios, pero sus resultados no cuentan
+como conformidad hasta `DIAG-CI-001`. El backend nativo tiene que demostrar
+paridad de esos observables o declarar un target limitado antes de entrar en
+Gate N1.
 
 ### 4.2 Mapa de cobertura del spec
 
@@ -5015,7 +5067,7 @@ administrativas que no implementan comportamiento.
 - [ ] La distribución de STD-0.1A es reproducible, cerrada y versionada con
   firmas, units y providers realmente implementados.
 - [ ] Los programas representativos pasan el gate estricto y proporcionan el
-  corpus funcional inicial para NATIVE-001 y PERF-001.
+  corpus funcional inicial para `PERF-001`, `DIAG-*` y `NATIVE-001`.
 - [ ] `std.testing` está especificado, implementado y probado con su propio
   runner público; un proyecto puede escribir tests útiles usando solo
   `assert` y enriquecerlos mediante imports explícitos, sin crear un segundo
@@ -5027,15 +5079,17 @@ administrativas que no implementan comportamiento.
 ## 20. M11 — Backend nativo y optimización
 
 **Objetivo:** añadir una implementación nativa de producción sin introducir una
-segunda semántica. Comienza únicamente después de Gates H0, T0, G5 y S1A y de
-cerrar los contratos runtime-facing `STD-CONC-001`, `STD-SYNC-001`,
-`STD-EXEC-001` y la frontera host/cancelación de `STD-NET-001`. Esos módulos no
-se implementan todavía, pero sus requisitos alimentan elección de backend,
-memoria y ABI. La VM, la conformidad del lenguaje —incluidos test targets— y la
-conformidad de STD-0.1A son los oracles.
+segunda semántica. Comienza únicamente después de Gates H0, T0, G5 y S1A,
+`DIAG-CI-001` y de cerrar los contratos runtime-facing `STD-CONC-001`,
+`STD-SYNC-001`, `STD-EXEC-001` y la frontera host/cancelación de
+`STD-NET-001`. Esos módulos no se implementan todavía, pero sus requisitos y
+los perfiles `DIAG-*` alimentan elección de backend, memoria, debugging y ABI.
+La VM, la conformidad del lenguaje —incluidos test targets— y la conformidad
+de STD-0.1A son los oracles.
 
 **Orden obligatorio:** UX de producto → target/artifact/link/publish schemas →
-baseline → selección → memoria/ABI → lowering por slices → ARC/ciclos correctos
+baseline → `DIAG-SPEC-001` → `DIAG-RUNTIME-001` → detectores/runner/CI →
+selección → memoria/ABI → lowering por slices → ARC/ciclos correctos
 → fronteras Core/Hosted de STD-0.1A → link/CLI → conformidad por slices →
 diferencial/targets/empaquetado → Gate N1. Eliminación de retains,
 COW, escape analysis, incrementalidad y LSP son trabajo posterior a N1 y no
@@ -5121,26 +5175,78 @@ pueden retrasar el primer backend correcto.
   cifras en el contrato. El registro, documentación, negativos y gates viven
   en `testing/performance.json`, `docs/contracts/performance.md`,
   `scripts/performance-check.sh` y `scripts/performance-test.sh`, integrados en
-  `scripts/test-gate.sh`. El siguiente bloque es `NATIVE-001`.
+  `scripts/test-gate.sh`. El siguiente bloque es `DIAG-SPEC-001`; la evaluación
+  de `NATIVE-001` queda después de la compuerta de diagnóstico.
+
+- [ ] **DIAG-SPEC-001 — Cerrar el contrato unificado de diagnóstico dinámico.**
+  Fijar profiles `race`, `leaks` y `crash`, el envelope
+  `tondo-diagnostic-report/1`, el dump `tondo-dump/1`, exit status, límites,
+  privacidad, identidad por target/backend/toolchain y la forma CLI de
+  `tondo run/test --diagnostics` y `tondo dump analyze`. Mantener intacto el
+  schema de diagnostics de compilación y no añadir keywords ni APIs paralelas
+  en `std`; el contrato y RFC son
+  `docs/contracts/diagnostic-tooling.md` y `docs/rfc/019-diagnostic-tooling.md`.
+
+- [ ] **DIAG-RUNTIME-001 — Exponer instrumentación interna verificable.**
+  En la VM registrar task/thread IDs, accesos y sincronización, roots y
+  retainers, ledger de recursos, source maps, eventos de scheduler y barreras
+  de quiescencia sin cambiar la semántica del programa. Probar límites,
+  corrupción, aislamiento y coste; los hooks siguen siendo privados del
+  runtime.
+
+- [ ] **RACE-001 — Implementar el detector dinámico de races.** Instrumentar
+  `Ref[T]`, `Pointer[T]`, `unsafe`/FFI, memoria mutable compartida, spawn,
+  Join, channels, locks, atomics y suspensión. Emitir conflicto, stacks de
+  acceso/creación y happens-before; solo se consideran observaciones de caminos
+  ejecutados y los perfiles no silencian unsupported.
+
+- [ ] **LEAK-001 — Implementar el detector de retención y recursos.** Separar
+  objetos gestionados todavía alcanzables, recursos afines sin terminal,
+  allocations FFI y crecimiento sostenido. Tomar snapshots de roots/retainers
+  después de quiescencia, no marcar ciclos recuperados por el GC como leaks y
+  ejecutar cada intento en un proceso nuevo.
+
+- [ ] **DUMP-001 — Implementar crash dumps y analizador.** Capturar un
+  `.tdump` versionado con razón, target/backend, debug IDs, stacks de tasks y
+  threads, unwind, roots/heap summary, resource ledger y eventos recientes;
+  mantener la ruta de señal segura, redacción por defecto, rechazo de datos
+  corruptos y análisis determinista human/JSON sin red.
+
+- [ ] **DIAG-TEST-001 — Integrar perfiles en `tondo test`.** Asociar reportes y
+  dumps a cada intento, retry y shard; conservar artifacts content-addressed,
+  JUnit/JSON y límites de setup/teardown; iniciar un worker limpio por retry y
+  publicar unsupported como estado explícito.
+
+- [ ] **DIAG-CI-001 — Cerrar las lanes y gates de diagnóstico.** Añadir lanes
+  opt-in para race/leaks/crash, corpus positivo/negativo persistente, fuzzing
+  acotado, budgets de overhead y promotion gate. La campaña no modifica el
+  baseline de coverage/mutation/performance normal y CI no acepta un resultado
+  verde cuando el perfil requerido está unsupported.
 
 - [ ] **NATIVE-001 — Elegir backend nativo con una evaluación separada.**
   Comparar Cranelift, LLVM y generación propia usando el MIR real, el corpus de
   conformidad y los programas STD-0.1A. Medir soporte de targets, corrección,
   latencia de compilación, rendimiento, memoria, tamaño, debugging,
-  distribución, mantenimiento y licencias; registrar la elección en un ADR.
+  distribución, mantenimiento y licencias, además de la paridad de los
+  perfiles `DIAG-*`, source maps, task/thread registry, hooks de memoria/GC,
+  unwind, redacción y crash dumps; registrar la elección en un ADR. Un backend
+  que no conserve estas observaciones queda limitado explícitamente y no puede
+  entrar en Gate N1 por silencio.
 
 - [ ] **NATIVE-MEM-ADR-001 — Cerrar DEC-014 antes de la ABI.** Fijar ownership
   runtime, contadores atómicos/no atómicos, `Send`/`Share`, weak refs,
   recolección de ciclos, interacción con async, COW y threads, estrategia de
-  pánico/cancelación y oracles de verificación. Prototipar las rutas de riesgo
-  necesarias para demostrar que el modelo soporta los contratos runtime-facing
-  de STD-0.1B; no prometer layout público.
+  pánico/cancelación, roots/retainers, recursos y oracles de verificación.
+  Prototipar las rutas de riesgo necesarias para demostrar que el modelo
+  soporta `LEAK-001`, los contratos runtime-facing de STD-0.1B y la paridad VM;
+  no prometer layout público.
 
 - [ ] **NATIVE-ABI-001 — Definir una ABI runtime interna y versionada.** Fijar
   después de `NATIVE-MEM-ADR-001` la frontera compilador/runtime necesaria para
   el backend elegido: calls, unwind, frames async, retain/release, roots,
-  atomics, wakeups y handles host internos. Esta tarea cierra DEC-013; no
-  promete ABI FFI, layout de usuario ni name mangling estables.
+  atomics, wakeups, task/thread IDs, source maps, crash capture y handles host
+  internos. Esta tarea cierra DEC-013; no promete ABI FFI, layout de usuario ni
+  name mangling estables.
 
 - [ ] **NATIVE-LOWER-CALLS-001 — Lowering de ABI y llamadas.** Ejecutar un
   programa real con funciones, parámetros, retornos y llamadas host según la
@@ -5162,8 +5268,9 @@ pueden retrasar el primer backend correcto.
   frames, suspensión, wakeups, scopes, cancelación y cleanup bajo la ABI runtime.
 
 - [ ] **NATIVE-LOWER-DEBUG-001 — Preservar identidad y source maps.** Relacionar
-  MIR, código nativo, pánicos y diagnósticos con símbolos y rangos lógicos
-  reproducibles sin paths físicos ambientales.
+  MIR, código nativo, pánicos, diagnostics y dumps con símbolos, unwind y
+  rangos lógicos reproducibles sin paths físicos ambientales; cada task/thread
+  conserva una identidad útil para `RACE-001` y `DUMP-001`.
 
 - [ ] **NATIVE-002 — Coordinar el lowering mínimo desde MIR.** Cierra solo tras
   `NATIVE-LOWER-CALLS-001`, `NATIVE-LOWER-CONTROL-001`,
@@ -5295,7 +5402,9 @@ nueva semántica del lenguaje. La fase tiene dos momentos:
 
 1. Antes de M11 se cierran `STD-CONC-001`, `STD-SYNC-001`, `STD-EXEC-001` y la
    frontera runtime/host de `STD-NET-001`; son inputs de DEC-013/014 y de la
-   elección de backend, no una autorización para implementarlos.
+   elección de backend, no una autorización para implementarlos. Sus contratos
+   describen también los eventos que consume `DIAG-RUNTIME-001`; no añaden APIs
+   públicas para manejar el detector.
 2. Tras N1 se implementan y conforman todos los módulos B sobre VM y backend
    nativo. Los demás specs B pueden prepararse durante M11 cuando sus
    dependencias A estén estables.
@@ -5307,7 +5416,7 @@ publica hasta cerrar el gate final.
 
 | Orden B | Owners | Dependencias duras | Momento |
 |---|---|---|---|
-| B0 | sync, channel, executor y frontera net | async/memoria/I/O/time A | contratos antes de M11 |
+| B0 | sync, channel, executor y frontera net | async/memoria/I/O/time A + `DIAG-SPEC-001`/`DIAG-RUNTIME-001` | contratos antes de M11 |
 | B1 | `std.sync` | DEC-014 + backend/VM schedulers | implementación tras N1 |
 | B2 | `std.channel` | sync + scheduler + ownership `Send` | tras B1 |
 | B3 | `std.executor` | sync/channel + bridge bloqueante | tras B2 |
@@ -6103,7 +6212,9 @@ no prevalecen sobre la evidencia canónica de esta sección.
     implementar todavía STD-0.1B.
 28. [ ] **Wave 7 — M11 correcto antes que optimizado.** Ejecutar
     `NATIVE-PRODUCT-SPEC-001 → target/artifact/link/publish specs → PERF-001 →
-    NATIVE-001 → NATIVE-MEM-ADR-001 → NATIVE-ABI-001 → leaves NATIVE-LOWER-* →
+    DIAG-SPEC-001 → DIAG-RUNTIME-001 → (RACE-001 + LEAK-001 + DUMP-001) →
+    DIAG-TEST-001 → DIAG-CI-001 → NATIVE-001 → NATIVE-MEM-ADR-001 →
+    NATIVE-ABI-001 → leaves NATIVE-LOWER-* →
     NATIVE-002 → ARC-001 → ARC-002 → NATIVE-STD-CORE/HOSTED → NATIVE-STD-001 →
     NATIVE-LINK-001 → NATIVE-CLI-001 → leaves NATIVE-CONF-* → NATIVE-CONF-001 /
     NATIVE-DIFF-001 → targets → NATIVE-REL-001`. Cerrar Gate N1.
@@ -6161,12 +6272,28 @@ Wave 6 no se declara iniciada antes de S1A.
 `STD-IMPL-001` y `STD-IMPL-002` quedan ahora cerrados por sus gates de
 coordinación; `NATIVE-TARGET-DESC-001`, `NATIVE-ARTIFACT-001`,
 `NATIVE-LINK-PLAN-001`, `NATIVE-PUBLISH-SPEC-001` y `PERF-001` quedan cerrados
-como contratos puros y la acción inmediata pasa a `NATIVE-001`, con las celdas
-S1A pendientes todavía visibles.
+como contratos puros. La acción inmediata pasa a `DIAG-SPEC-001` y a la
+instrumentación VM asociada; `NATIVE-001` queda bloqueado hasta cerrar la
+compuerta `DIAG-CI-001`, con las celdas S1A pendientes todavía visibles.
 
 ---
 
 ## 25. Historial del tracker
+
+### 2.45 — 2026-08-18
+
+- Se incorpora la lane transversal `DIAG` para race detection, detección de
+  retención/leaks y crash dumps. `DIAG-SPEC-001` fija una superficie única de
+  perfiles opt-in, `tondo-diagnostic-report/1`, `tondo-dump/1`, privacidad,
+  identidad, límites y la frontera sin APIs paralelas de stdlib.
+- Se añaden `DIAG-RUNTIME-001`, `RACE-001`, `LEAK-001`, `DUMP-001`,
+  `DIAG-TEST-001` y `DIAG-CI-001` con evidencia por intento, procesos limpios
+  para retries/shards, artifacts JSON/JUnit y lanes de CI separadas. Ninguno se
+  marca implementado por esta actualización de planificación.
+- `NATIVE-001`, `NATIVE-MEM-ADR-001`, `NATIVE-ABI-001` y el lowering de debug
+  incorporan hooks de memoria/GC, task/thread IDs, source maps, unwind y crash
+  capture como criterios de selección. Wave 7 se reordena para cerrar la
+  compuerta de diagnóstico antes del backend nativo.
 
 ### 2.44 — 2026-08-18
 

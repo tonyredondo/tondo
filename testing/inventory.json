@@ -12,25 +12,25 @@
       "path": "TONDO_STANDARD_LIBRARY_SPEC.md",
       "edition": "0.1",
       "status": "draft-pending",
-      "sha256": "5395801f0e7e3027de554ca1618f1f727b2868a8f18fc4c6a81b7cb3fd7e0535"
+      "sha256": "f55cd81b12c08f4c022e78259086b2a8ab2bbb63a9600c577baa0f007941e8a2"
     },
     {
       "path": "TONDO_TESTING_SPEC.md",
       "edition": "0.1",
       "status": "draft-pending",
-      "sha256": "8ef9c6db7305b97ebf383c51c96b744884ea3fca9663935ec703df8fdeed2f65"
+      "sha256": "56548af3caca6cfce767a3ff19c7ebeb80e5939d0a762e48891479d1b24f6a1f"
     },
     {
       "path": "TONDO_TOOLCHAIN_SPEC.md",
       "edition": "0.1",
       "status": "draft-normative",
-      "sha256": "216c535e6cb19d033f9bfcb722a9cc5f256fef473610f2c2db885ce20599b46e"
+      "sha256": "96217930e139a03d251b4ee424461ae66847cf76ae79961605f79c395fae4e5a"
     },
     {
       "path": "conformance/draft/manifest.json",
       "edition": "0.1",
       "status": "draft-open",
-      "sha256": "e4aff23519fc0d7d6d70df1983554c0fb23c68f7f6d09579dfbb454d3fa6d02f"
+      "sha256": "92439c3bbfd39398a4677ff7f44d366d2a57820875ca6ab55a5b9a66df1cda58"
     }
   ],
   "summary": {

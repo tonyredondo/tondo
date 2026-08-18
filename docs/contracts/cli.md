@@ -85,6 +85,25 @@ source-set selection recorded by its closed manifest and lockfile.
 Keeping diagnostics on stderr prevents `tondo run` from mixing a program's
 stdout with machine-readable compiler output.
 
+## Dynamic diagnostic profiles (planned 0.1 tooling)
+
+The compiler diagnostic stream above remains unchanged. Runtime instrumentation
+is an explicit, separate profile selected for one invocation:
+
+~~~text
+tondo run  --diagnostics <race|leaks|crash|all>[,...] ...
+tondo test --diagnostics <race|leaks|crash|all>[,...] ...
+tondo dump analyze <file.tdump> [--format human|json]
+~~~
+
+The exact option spelling and report schema are owned by
+[`diagnostic-tooling.md`](./diagnostic-tooling.md) and RFC-019. Profiles are
+not project configuration, do not add source keywords, and do not introduce a
+second stdlib API. `tondo test` associates each report or `.tdump` with the
+existing attempt/artifact identity; retries use fresh processes. An unsupported
+profile is an explicit toolchain result, never a silent skip. This surface is
+planned and must not be described as implemented until `DIAG-CI-001` closes.
+
 ## Exit codes
 
 | Code | Meaning |

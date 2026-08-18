@@ -31,3 +31,7 @@ The provisional standard-library boundary selected for DEC-007 is recorded in
 [`docs/contracts/bootstrap-host.md`](../contracts/bootstrap-host.md).
 The hosted process scheduling decision is specified by ADR-017 and
 [`docs/contracts/process-host.md`](../contracts/process-host.md).
+
+Propuestas que todavía no son decisiones aceptadas viven en
+[`docs/rfc/`](../rfc/). La RFC-019 define la planificación del tooling dinámico
+de diagnóstico; no altera por sí sola el baseline aceptado.

@@ -2,11 +2,11 @@
   "format": "tondo-conformance-draft-lineage",
   "lineage": "tondo-draft",
   "edition": "0.1",
-  "revision": 32,
+  "revision": 31,
   "state": "open",
   "parent": {
-    "path": "conformance/draft/history/e4aff23519fc0d7d6d70df1983554c0fb23c68f7f6d09579dfbb454d3fa6d02f.json",
-    "sha256": "e4aff23519fc0d7d6d70df1983554c0fb23c68f7f6d09579dfbb454d3fa6d02f"
+    "path": "conformance/draft/history/fa8751df8d87ca3e4a4295dd3e435a928054e2b6e5329c849a7a36224010aa02.json",
+    "sha256": "fa8751df8d87ca3e4a4295dd3e435a928054e2b6e5329c849a7a36224010aa02"
   },
   "baseline": {
     "manifest": {
@@ -25,11 +25,11 @@
     },
     {
       "path": "TONDO_TESTING_SPEC.md",
-      "sha256": "56548af3caca6cfce767a3ff19c7ebeb80e5939d0a762e48891479d1b24f6a1f"
+      "sha256": "8ef9c6db7305b97ebf383c51c96b744884ea3fca9663935ec703df8fdeed2f65"
     },
     {
       "path": "TONDO_TOOLCHAIN_SPEC.md",
-      "sha256": "96217930e139a03d251b4ee424461ae66847cf76ae79961605f79c395fae4e5a"
+      "sha256": "216c535e6cb19d033f9bfcb722a9cc5f256fef473610f2c2db885ce20599b46e"
     }
   ],
   "case_layers": [

@@ -2864,6 +2864,17 @@ frontera no suspendible de `@sync`/`@nosuspend`, `E1610` queda para un `await` o
 `scope` fuera de una entrada válida, y las violaciones de ownership/liveness
 conservan sus códigos `E14xx`.
 
+La frontera de tooling dinámico del runner se describe en
+[`docs/contracts/diagnostic-tooling.md`](./docs/contracts/diagnostic-tooling.md)
+y RFC-019. `tondo test --diagnostics` añade perfiles `race`, `leaks` y `crash`
+al intento existente: cada ejecución, retry y shard conserva su identidad y
+recibe un proceso limpio, y los reportes `.tdump` se registran como artifacts
+content-addressed. JSON y JUnit proyectan sus descriptores sin duplicar el
+payload. Una observación positiva falla el intento; una limitación de target se
+publica como unsupported y no se convierte en éxito. Estos perfiles son
+instrumentación del runtime/toolchain, no nuevos keywords, hooks públicos ni un
+segundo harness.
+
 ## 15. Formato machine-readable
 
 ### 15.1 Forma canónica
