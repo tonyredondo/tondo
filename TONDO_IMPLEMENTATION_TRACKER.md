@@ -11,7 +11,7 @@ La forma TLF para agentes ya tiene spec y estudio léxico, pero encoder, decoder
 source maps, CLI y evaluación de generación permanecen pendientes. Tondo 0.1
 sigue en desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 2.40
+**Versión del tracker:** 2.42
 
 **Última actualización:** 2026-08-18
 
@@ -52,8 +52,8 @@ independientes.
 `STD-CODEC-PUBLIC-001`. La auditoría pública global está verificada (209/209)
 y los tres owners build-only tienen una frontera explícita; no se fabrican
 funciones runtime para ellos. `NATIVE-TARGET-DESC-001` y
-`NATIVE-ARTIFACT-001` están cerrados como contratos puros. El siguiente bloque
-explícito es `NATIVE-LINK-PLAN-001`.
+`NATIVE-ARTIFACT-001` y `NATIVE-LINK-PLAN-001` están cerrados como contratos
+puros. El siguiente bloque explícito es `NATIVE-PUBLISH-SPEC-001`.
 Las celdas S1A de promoción siguen pendientes y no se sobreafirma su cierre.
 `CONF-GAP-IMPL-001`, `CONF-LAYER-RESULT-001` y
 `CONF-SEAL-FINAL-001` ya cierran T0/G5 con 409 requisitos cubiertos, nueve
@@ -497,17 +497,18 @@ Estado observado del workspace:
   `tondo-reference-adapter`, `tondo-reliability`, `tondo-stdlib` y `tondo-vm`.
 - Toolchain utilizado para la validación: Rust 1.93.0 y Cargo 1.93.0; la versión
   mínima soportada queda fijada en Rust 1.93.
-- La evidencia actual registra 2.417 tests lógicos y 2.636 repeticiones:
-  2.362 ejecutables, 38 contratos draft documentales, cuatro campañas y 13
+- La evidencia actual registra 2.423 tests lógicos y 2.642 repeticiones:
+  2.368 ejecutables, 38 contratos draft documentales, cuatro campañas y 13
   entradas no ejecutables. La suite bootstrap conserva sus 205 casos y 424
   repeticiones byte-estables como regresión explícita.
-- La matriz G5/T0 contiene 421 requisitos de lenguaje, testing y toolchain: 409
+- La matriz G5/T0 contiene 423 requisitos de lenguaje, testing y toolchain: 409
   están cubiertos mediante evidencia ejecutable, nueve no aplican al target con
-  justificación individual y tres límites `TL01-26-*` permanecen
-  `stdlib-pending` porque pertenecen al gate separado S1A. La cobertura
-  medición reproducible actual de cobertura es 90,52 % de líneas, 86,47 % de
-  funciones y 88,72 % de regiones; supera el baseline de 90,25 %. La última
-  ratchet sellada mantiene 100 % sobre los mutantes ejecutables seleccionados.
+  justificación individual, tres límites `TL01-26-*` permanecen `stdlib-pending`
+  por pertenecer al gate separado S1A y dos filas de toolchain están limitadas
+  al contrato. La medición reproducible actual es 90,5199 % de líneas (9051 bp),
+  86,5062 % de funciones y 88,7608 % de regiones; supera el baseline de 90,25 %.
+  La última ratchet sellada mantiene 100 % sobre los 27 mutantes ejecutables
+  seleccionados (30 totales, tres inviables).
 
 ### 4.1 Grafo de dependencias y ruta crítica
 
@@ -5072,11 +5073,18 @@ pueden retrasar el primer backend correcto.
   `testing/native-artifact.json`, `docs/contracts/native-artifact.md` y los
   scripts dedicados. El siguiente bloque es `NATIVE-LINK-PLAN-001`.
 
-- [ ] **NATIVE-LINK-PLAN-001 — Definir el plan de enlace canónico.** El
-  compilador puro emite un record cerrado, versionado y validable con orden de
-  objetos, runtime, driver exacto, argumentos, output esperado y límites. Casos
-  negativos cubren campos extra, mezcla de targets, hashes ausentes y paths no
-  portables.
+- [x] **NATIVE-LINK-PLAN-001 — Definir el plan de enlace canónico.**
+  `tondo-native-link-plan-draft` es un record cerrado, versionado y validable
+  con inputs en orden semántico (objetos, unidades privilegiadas, runtime y
+  stdlib), driver exacto hash-pinned con argumentos ordenados, output lógico y
+  límites positivos. `NativeLinkPlan::validate_against` cruza descriptor y
+  artifact para rechazar mezcla de targets, inputs, driver, formato o producto
+  inconsistentes; paths físicos, shell, `PATH` y entorno quedan prohibidos.
+  La identidad `plan_hash` se recalcula sobre el fingerprint canónico y la
+  identidad de bytes es independiente. El contrato machine-readable, docs,
+  negativos y gates viven en `testing/native-link-plan.json`,
+  `docs/contracts/native-link-plan.md` y los scripts dedicados. El siguiente
+  bloque es `NATIVE-PUBLISH-SPEC-001`.
 
 - [ ] **NATIVE-PUBLISH-SPEC-001 — Cerrar publicación y consumo del producto.**
   Especificar staging, fsync/rename aplicable, colisiones, interrupción, cleanup
@@ -6125,13 +6133,36 @@ no-goals exactos. `CONF-LAYER-RESULT-001` produce el resultado compuesto y
 offline. `STD-IMPL-001`, `STD-IMPL-002` y `STD-CODEC-PUBLIC-001` están cerrados;
 Wave 6 no se declara iniciada antes de S1A.
 `STD-IMPL-001` y `STD-IMPL-002` quedan ahora cerrados por sus gates de
-coordinación; `NATIVE-TARGET-DESC-001` y `NATIVE-ARTIFACT-001` quedan cerrados
-como contratos puros y la acción inmediata pasa a
-`NATIVE-LINK-PLAN-001`, con las celdas S1A pendientes todavía visibles.
+coordinación; `NATIVE-TARGET-DESC-001`, `NATIVE-ARTIFACT-001` y
+`NATIVE-LINK-PLAN-001` quedan cerrados como contratos puros y la acción
+inmediata pasa a `NATIVE-PUBLISH-SPEC-001`, con las celdas S1A pendientes
+todavía visibles.
 
 ---
 
 ## 25. Historial del tracker
+
+### 2.42 — 2026-08-18
+
+- Se cierra `NATIVE-LINK-PLAN-001` con el gate estricto completo: 2.423 tests
+  lógicos, 2.642 repeticiones, contratos nativos y stdlib, conformance y
+  reliability pasan sin fallos; `cargo llvm-cov` observa 9051 bp de líneas y la
+  campaña seleccionada detecta 27/27 mutantes ejecutables (tres inviables).
+- La evidencia derivada se regenera y comprueba (`423` requisitos, `409`
+  cubiertos, `9` no aplicables, `3` `stdlib-pending`, `2` `toolchain-limit`),
+  la línea draft avanza a la revisión 30 y el ratchet queda validado. La
+  siguiente tarea continúa siendo `NATIVE-PUBLISH-SPEC-001`.
+
+### 2.41 — 2026-08-18
+
+- Se cierra `NATIVE-LINK-PLAN-001` como contrato puro y machine-readable. El
+  nuevo `tondo-native-link-plan-draft` fija la secuencia semántica de inputs,
+  la identidad y hash del driver, sus argumentos ordenados, el producto
+  esperado y límites finitos. `NativeLinkPlan::validate_against` cruza target,
+  artifact y descriptor para rechazar mezclas y divergencias antes de resolver
+  bytes; los records no contienen paths ni ejecutan shell. Se añaden shape,
+  documentación, negativos, tests y gates ejecutables. La siguiente coordinación
+  es `NATIVE-PUBLISH-SPEC-001`.
 
 ### 2.40 — 2026-08-18
 

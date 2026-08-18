@@ -481,7 +481,7 @@
     "status": "verified",
     "gaps": 0,
     "reason": "STD-CODEC-PUBLIC-001 closed MessagePack/Protobuf callable exposure and indexed the build-only owners without a runtime waiver",
-    "next_coordination": "NATIVE-LINK-PLAN-001"
+    "next_coordination": "NATIVE-PUBLISH-SPEC-001"
   },
-  "next_coordination": "NATIVE-LINK-PLAN-001"
+  "next_coordination": "NATIVE-PUBLISH-SPEC-001"
 }

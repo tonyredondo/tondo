@@ -1,0 +1,79 @@
+{
+  "format": "tondo-native-link-plan-contract/1",
+  "owner": "toolchain.native_link_plan",
+  "edition": "0.1",
+  "phase": "M11",
+  "status": "closed-contract",
+  "descriptor_format": "tondo-native-link-plan-draft",
+  "canonical_encoding": "compact-utf8-json-struct-order",
+  "record_identity": "sha256(canonical-native-link-plan-bytes)",
+  "semantic_identity": "plan_hash=sha256(canonical-link-plan-fingerprint)",
+  "required_fields": [
+    "format",
+    "compiler",
+    "edition",
+    "package_id",
+    "target_descriptor_hash",
+    "artifact_hash",
+    "artifact_target_descriptor_hash",
+    "inputs",
+    "driver",
+    "output",
+    "limits",
+    "plan_hash",
+    "reproducible"
+  ],
+  "input_fields": ["id", "kind", "sha256"],
+  "driver_fields": [
+    "id",
+    "version",
+    "artifact_id",
+    "artifact_sha256",
+    "arguments"
+  ],
+  "output_fields": ["product_id", "object_format", "expected_sha256"],
+  "limit_fields": ["max_inputs", "max_arguments", "max_output_bytes"],
+  "input_kinds": ["object", "privileged-unit", "runtime", "stdlib"],
+  "input_order": [
+    "objects-in-compiler-order",
+    "privileged-units-in-declared-order",
+    "one-runtime",
+    "one-stdlib"
+  ],
+  "bindings": {
+    "target_descriptor": "target_descriptor_hash-equals-artifact-target-descriptor-hash",
+    "artifact": "artifact_hash-identifies-native-artifact",
+    "driver": "exact-target-driver-identity-and-ordered-arguments",
+    "inputs": "ordered-hash-pinned-subset-of-native-artifact-link-inputs",
+    "output": "logical-product-id-object-format-and-expected-hash"
+  },
+  "selection": {
+    "filesystem_lookup": "forbidden",
+    "path_lookup": "forbidden",
+    "environment_lookup": "forbidden",
+    "shell_expansion": "forbidden",
+    "shell_execution": "forbidden"
+  },
+  "limits": {
+    "positive": true,
+    "must_cover_inputs": true,
+    "must_cover_arguments": true,
+    "finite_output_bytes": true
+  },
+  "reproducible": true,
+  "negative_cases": [
+    "duplicate-input",
+    "driver-mismatch",
+    "invalid-input-order",
+    "missing-hash",
+    "mixed-targets",
+    "non-portable-path",
+    "output-mismatch",
+    "pretty-or-unsorted-record",
+    "stale-plan-hash",
+    "unknown-fields",
+    "unsupported-object-format",
+    "zero-or-insufficient-limit"
+  ],
+  "next_blocks": ["NATIVE-PUBLISH-SPEC-001"]
+}

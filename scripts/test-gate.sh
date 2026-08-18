@@ -73,6 +73,10 @@ run_step native-artifact-contract \
     scripts/native-artifact-check.sh
 run_step native-artifact-tests \
     scripts/native-artifact-test.sh
+run_step native-link-plan-contract \
+    scripts/native-link-plan-check.sh
+run_step native-link-plan-tests \
+    scripts/native-link-plan-test.sh
 run_step stdlib-json-contract \
     scripts/stdlib-json-check.sh
 run_step stdlib-messagepack-contract \

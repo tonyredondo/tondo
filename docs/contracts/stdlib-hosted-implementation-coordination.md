@@ -26,9 +26,9 @@ El cierre es una coordinación de implementación, no una conformidad global.
 La auditoría pública que alimenta el registro ya está verificada (209/209):
 las firmas de MessagePack/Protobuf atraviesan sus rutas públicas y los tres
 owners build-only tienen una razón `not-applicable` explícita. No relaja
-`--strict` ni convierte una frontera build-only en un provider runtime. El
-La siguiente coordinación de implementación es `NATIVE-LINK-PLAN-001`, después
-del cierre de `NATIVE-ARTIFACT-001`, y queda condicionada
+`--strict` ni convierte una frontera build-only en un provider runtime. La
+siguiente coordinación de implementación es `NATIVE-PUBLISH-SPEC-001`, después
+del cierre de `NATIVE-LINK-PLAN-001`, y queda condicionada
 por las celdas de promoción que aún conserva S1A.
 
 ```text

@@ -25,10 +25,11 @@ pub const DEFAULT_PROOF_DIRECTORY: &str = "conformance/proofs";
 pub const RATCHET_PATH: &str = "testing/conformance-ratchet.json";
 
 const RATCHET_FORMAT: &str = "tondo-conformance-ratchet/2";
-// Historical promotion proofs keep the audit scope they embedded; the live
-// draft adds the native-artifact requirement, so both content-addressed
+// Historical promotion proofs keep the audit scopes they embedded; the live
+// draft adds the native link-plan requirement, so all content-addressed
 // reviewed scopes remain valid to preserve offline verification.
-const AUDITED_GAP_SCOPE_SHA256: [&str; 2] = [
+const AUDITED_GAP_SCOPE_SHA256: [&str; 3] = [
+    "f0e374b55d039543e1076eaf876cda98ef379bf9d338190a9d687a252e304fef",
     "d9775ac13a1f63cb309aa0085d80c09ea7122758b713807a33e1041d0617e4b1",
     "f28c16dd4b7cc1effeffbfb3238fd1f78c140b2403b1bdb3fee21132dd296bed",
 ];

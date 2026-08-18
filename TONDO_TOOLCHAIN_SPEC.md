@@ -1410,6 +1410,70 @@ el orden de enlace y `NATIVE-PUBLISH-SPEC-001` fija staging y publicación.
 La forma ejecutable, sus negativos y sus tests están en
 `docs/contracts/native-artifact.md` y `testing/native-artifact.json`.
 
+#### 10.1.3 Plan de enlace nativo
+
+`NATIVE-LINK-PLAN-001` cierra el hand-off puro entre el grafo de artefactos y
+el driver de enlace. El compilador emite el formato interno
+`tondo-native-link-plan-draft`; el record es versionado, cerrado y validable,
+pero no abre paths, consulta el entorno, ejecuta procesos ni publica un
+producto. La forma machine-readable y los negativos normativos están en
+`testing/native-link-plan.json` y `docs/contracts/native-link-plan.md`.
+
+Su forma canónica compacta tiene exactamente estos campos, en este orden:
+
+~~~json
+{
+  "format": "tondo-native-link-plan-draft",
+  "compiler": "tondo-bootstrap/draft",
+  "edition": "0.1",
+  "package_id": "workspace:app@1",
+  "target_descriptor_hash": "sha256:...",
+  "artifact_hash": "sha256:...",
+  "artifact_target_descriptor_hash": "sha256:...",
+  "inputs": [
+    {"id":"object-prepared", "kind":"object", "sha256":"sha256:..."},
+    {"id":"privileged-console", "kind":"privileged-unit", "sha256":"sha256:..."},
+    {"id":"runtime", "kind":"runtime", "sha256":"sha256:..."},
+    {"id":"stdlib", "kind":"stdlib", "sha256":"sha256:..."}
+  ],
+  "driver": {
+    "id":"tondo-driver", "version":"draft", "artifact_id":"driver",
+    "artifact_sha256":"sha256:...",
+    "arguments":["--target=tondo-native-linux-x86-64"]
+  },
+  "output": {
+    "product_id":"product", "object_format":"elf",
+    "expected_sha256":"sha256:..."
+  },
+  "limits": {
+    "max_inputs":64, "max_arguments":64, "max_output_bytes":1073741824
+  },
+  "plan_hash": "sha256:...",
+  "reproducible": true
+}
+~~~
+
+`inputs` conserva orden semántico y no se ordena durante la canonicalización:
+primero aparecen los objetos en el orden producido por el compilador, después
+las unidades privilegiadas en su orden declarado y finalmente exactamente un
+runtime y un `stdlib`. Los IDs son únicos y cada entrada lleva un hash
+SHA-256. Los límites son positivos, finitos y cubren tanto el número de inputs
+como el de argumentos.
+
+El record repite la identidad del descriptor como
+`artifact_target_descriptor_hash` para rechazar de forma pura una mezcla de
+targets antes de resolver bytes. `NativeLinkPlan::validate_against` valida
+además el descriptor y el `NativeArtifact` seleccionados: package, identidad
+del artifact, driver exacto y sus argumentos ordenados, hash del artefacto del
+driver, inputs del producer `link`, object format, product ID y hash esperado
+de salida deben coincidir.
+
+El driver es una identidad lógica hashada. Sus argumentos son tokens ordenados;
+paths físicos, `PATH`, expansiones de shell/entorno y ejecución de shell están
+prohibidos. `output` solo fija identidad lógica, formato de objeto y hash
+esperado. `--output`, staging, `fsync`, `rename`, colisiones, interrupción y
+cleanup pertenecen exclusivamente a `NATIVE-PUBLISH-SPEC-001`.
+
 ### 10.2 Doc-tests
 
 La forma pública de documentación es:

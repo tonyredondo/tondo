@@ -13,13 +13,13 @@
     },
     {
       "path": "TONDO_TOOLCHAIN_SPEC.md",
-      "sha256": "5331ff4ca6b82d874c9461b97bf17ee5331448b242d7f537c1f7b317d00c4660"
+      "sha256": "0f9836c3d90ff6c7e7791d6890d928d90d8711afaea55f544bd9aafb5bfaf9a3"
     }
   ],
   "summary": {
-    "total": 367,
+    "total": 368,
     "by_outcome": {
-      "implemented-without-trace": 365,
+      "implemented-without-trace": 366,
       "not-applicable": 2
     }
   },
@@ -36,6 +36,21 @@
         "rust:tondo-compiler:src::toolchain:native_artifact_canonicalizes_graph_sets_and_preserves_identity",
         "rust:tondo-compiler:src::toolchain:native_artifact_rejects_invalid_roles_hashes_and_graph_edges",
         "rust:tondo-compiler:src::toolchain:native_artifact_round_trips_and_binds_the_closed_graph"
+      ],
+      "follow_up": null
+    },
+    {
+      "requirement": "TC01-10-1-3-R001",
+      "text_sha256": "f066d8a2d4d4c68ada91e7c03c9db5ff047e2a8354628d56c209cc14b09cc177",
+      "outcome": "implemented-without-trace",
+      "reason": "TC01-10-1-3-R001 has an existing implementation at crates/tondo-compiler/src/toolchain.rs and executable evidence rust:tondo-compiler:src::toolchain:native_link_plan_rejects_unknown_fields_hashes_paths_and_limits; its six-dimension normative trace remains incomplete.",
+      "implementation": [
+        "crates/tondo-compiler/src/toolchain.rs"
+      ],
+      "tests": [
+        "rust:tondo-compiler:src::toolchain:native_link_plan_rejects_unknown_fields_hashes_paths_and_limits",
+        "rust:tondo-compiler:src::toolchain:native_link_plan_round_trips_and_preserves_semantic_input_order",
+        "rust:tondo-compiler:src::toolchain:native_link_plan_validates_against_target_and_artifact_closures"
       ],
       "follow_up": null
     },

@@ -32,7 +32,7 @@ jq -e '
   and .rules.build_only_no_callable_surface_requires_reason
   and .rules.global_public_audit_is_not_promoted
   and .rules.no_waivers
-  and .next_coordination == "NATIVE-LINK-PLAN-001"
+  and .next_coordination == "NATIVE-PUBLISH-SPEC-001"
   and .global_public_api.status == "verified"
   and .global_public_api.gaps == 0
   and .summary == {
@@ -80,4 +80,4 @@ while IFS= read -r ref; do
     }
 done < <(jq -r '.sources[]' "$coordination")
 
-echo "stdlib implementation coordination: OK (8 owners; 64 public signatures verified; codec/build-only audit closed; next NATIVE-LINK-PLAN-001)"
+echo "stdlib implementation coordination: OK (8 owners; 64 public signatures verified; codec/build-only audit closed; next NATIVE-PUBLISH-SPEC-001)"

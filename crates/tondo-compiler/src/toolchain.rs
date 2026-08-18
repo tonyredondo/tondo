@@ -24,6 +24,7 @@ pub const ARTIFACT_FORMAT: &str = "tondo-artifact-draft";
 pub const STANDARD_DESCRIPTOR_FORMAT: &str = "tondo-standard-descriptor-draft";
 pub const NATIVE_TARGET_DESCRIPTOR_FORMAT: &str = "tondo-native-target-descriptor-draft";
 pub const NATIVE_ARTIFACT_FORMAT: &str = "tondo-native-artifact-draft";
+pub const NATIVE_LINK_PLAN_FORMAT: &str = "tondo-native-link-plan-draft";
 pub const PRIVILEGED_UNIT_FORMAT: &str = "tondo-privileged-unit-draft";
 pub const META_MODEL: &str = crate::meta::META_MODEL;
 pub const META_TARGET: &str = "tondo-meta";
@@ -2773,6 +2774,407 @@ impl NativeArtifact {
     }
 }
 
+/// An ordered, hash-pinned input consumed by the native link driver.
+///
+/// Unlike the artifact graph, this order is semantic: object inputs are kept
+/// in compiler order, followed by privileged units, runtime and stdlib. The
+/// record contains logical identities only; the orchestrator resolves hashes
+/// from the closed target bundle and never from a filesystem path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeLinkInput {
+    pub id: String,
+    pub kind: String,
+    pub sha256: String,
+}
+
+impl NativeLinkInput {
+    fn validate(&self, field: &str) -> Result<(), FormatError> {
+        require_kebab(&format!("{field}.id"), &self.id)?;
+        if !matches!(
+            self.kind.as_str(),
+            "object" | "privileged-unit" | "runtime" | "stdlib"
+        ) {
+            return Err(FormatError::Invalid(format!(
+                "{field}.kind `{}` is not a supported native link input kind",
+                self.kind
+            )));
+        }
+        require_hash(&self.sha256, &format!("{field}.sha256"))
+    }
+}
+
+/// The exact driver identity and ordered argument tokens selected by the
+/// native target descriptor.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeLinkDriver {
+    pub id: String,
+    pub version: String,
+    pub artifact_id: String,
+    pub artifact_sha256: String,
+    #[serde(default)]
+    pub arguments: Vec<String>,
+}
+
+impl NativeLinkDriver {
+    fn validate(&self, field: &str) -> Result<(), FormatError> {
+        require_kebab(&format!("{field}.id"), &self.id)?;
+        require_deterministic_atom(&format!("{field}.version"), &self.version, false)?;
+        require_kebab(&format!("{field}.artifact_id"), &self.artifact_id)?;
+        require_hash(&self.artifact_sha256, &format!("{field}.artifact_sha256"))?;
+        for (index, argument) in self.arguments.iter().enumerate() {
+            require_link_argument(&format!("{field}.arguments[{index}]"), argument)?;
+        }
+        Ok(())
+    }
+}
+
+/// The logical product expected from the link operation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeLinkOutput {
+    pub product_id: String,
+    pub object_format: String,
+    pub expected_sha256: String,
+}
+
+impl NativeLinkOutput {
+    fn validate(&self, field: &str) -> Result<(), FormatError> {
+        require_kebab(&format!("{field}.product_id"), &self.product_id)?;
+        if !matches!(self.object_format.as_str(), "elf" | "macho" | "coff") {
+            return Err(FormatError::Invalid(format!(
+                "{field}.object_format `{}` is not supported",
+                self.object_format
+            )));
+        }
+        require_hash(&self.expected_sha256, &format!("{field}.expected_sha256"))
+    }
+}
+
+/// Finite resource limits enforced by the link orchestrator.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeLinkLimits {
+    pub max_inputs: u32,
+    pub max_arguments: u32,
+    pub max_output_bytes: u64,
+}
+
+impl NativeLinkLimits {
+    fn validate(&self, field: &str) -> Result<(), FormatError> {
+        if self.max_inputs == 0 || self.max_arguments == 0 || self.max_output_bytes == 0 {
+            return Err(FormatError::Invalid(format!(
+                "{field} must contain positive finite limits"
+            )));
+        }
+        Ok(())
+    }
+}
+
+/// Closed, pure input to the future native linker invocation.
+///
+/// This record is deliberately independent from staging and publication. It
+/// binds one target descriptor and one native artifact, fixes every logical
+/// input and the exact driver invocation, and carries resource limits without
+/// exposing paths, object layout, ABI or shell semantics.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeLinkPlan {
+    pub format: String,
+    pub compiler: String,
+    pub edition: String,
+    pub package_id: String,
+    pub target_descriptor_hash: String,
+    pub artifact_hash: String,
+    pub artifact_target_descriptor_hash: String,
+    #[serde(default)]
+    pub inputs: Vec<NativeLinkInput>,
+    pub driver: NativeLinkDriver,
+    pub output: NativeLinkOutput,
+    pub limits: NativeLinkLimits,
+    pub plan_hash: String,
+    pub reproducible: bool,
+}
+
+impl NativeLinkPlan {
+    pub fn decode(bytes: &[u8]) -> Result<Self, FormatError> {
+        let value: Self = decode_canonical(bytes, "native link plan")?;
+        value.validate()?;
+        Ok(value)
+    }
+
+    pub fn encode(&self) -> Result<Vec<u8>, FormatError> {
+        self.validate()?;
+        encode(self)
+    }
+
+    /// Refreshes the semantic identity without changing input order.
+    pub fn canonicalize(&self) -> Result<Self, FormatError> {
+        let mut value = self.clone();
+        value.plan_hash = value.calculated_plan_hash()?;
+        value.validate()?;
+        Ok(value)
+    }
+
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>, FormatError> {
+        self.canonicalize()?.encode()
+    }
+
+    /// Content identity of the complete link plan record.
+    pub fn content_hash(&self) -> Result<String, FormatError> {
+        Ok(sha256(&self.canonical_bytes()?))
+    }
+
+    /// Validate the plan against the exact target descriptor and artifact it
+    /// claims to consume. This is the pure boundary that rejects target
+    /// mixing before an orchestrator is allowed to resolve any bytes.
+    pub fn validate_against(
+        &self,
+        descriptor: &NativeTargetDescriptor,
+        artifact: &NativeArtifact,
+    ) -> Result<(), FormatError> {
+        self.validate()?;
+        artifact.encode()?;
+        let target_hash = descriptor.content_hash()?;
+        if self.target_descriptor_hash != target_hash {
+            return Err(FormatError::Invalid(
+                "native link plan target descriptor identity differs from selected descriptor"
+                    .into(),
+            ));
+        }
+        if artifact.target_descriptor_hash != target_hash
+            || self.artifact_target_descriptor_hash != artifact.target_descriptor_hash
+        {
+            return Err(FormatError::Invalid(
+                "native link plan mixes target descriptor identities".into(),
+            ));
+        }
+        if self.artifact_hash != artifact.artifact_hash {
+            return Err(FormatError::Invalid(
+                "native link plan artifact identity differs from selected artifact".into(),
+            ));
+        }
+        if self.package_id != artifact.package_id {
+            return Err(FormatError::Invalid(
+                "native link plan package differs from selected artifact".into(),
+            ));
+        }
+        if self.output.object_format != descriptor.object_format {
+            return Err(FormatError::Invalid(
+                "native link plan object format differs from selected target".into(),
+            ));
+        }
+        if self.driver.id != descriptor.driver.id
+            || self.driver.version != descriptor.driver.version
+            || self.driver.artifact_id != descriptor.driver.artifact_id
+            || self.driver.arguments != descriptor.driver.arguments
+        {
+            return Err(FormatError::Invalid(
+                "native link plan driver differs from selected target".into(),
+            ));
+        }
+        let Some(driver_artifact) = descriptor
+            .artifacts
+            .iter()
+            .find(|candidate| candidate.id == descriptor.driver.artifact_id)
+        else {
+            return Err(FormatError::Invalid(
+                "native link plan driver artifact is absent from selected target".into(),
+            ));
+        };
+        if self.driver.artifact_sha256 != driver_artifact.sha256 {
+            return Err(FormatError::Invalid(
+                "native link plan driver artifact hash differs from selected target".into(),
+            ));
+        }
+
+        let link = artifact
+            .producers
+            .iter()
+            .find(|producer| producer.kind == "link")
+            .ok_or_else(|| FormatError::Invalid("native artifact has no link producer".into()))?;
+        let artifact_inputs = link
+            .inputs
+            .iter()
+            .map(|id| {
+                let node = artifact
+                    .nodes
+                    .iter()
+                    .find(|node| node.id == *id)
+                    .ok_or_else(|| {
+                        FormatError::Invalid(format!(
+                            "native artifact link producer references missing node `{id}`"
+                        ))
+                    })?;
+                Ok((node.id.as_str(), node.kind.as_str(), node.sha256.as_str()))
+            })
+            .collect::<Result<Vec<_>, FormatError>>()?;
+        let plan_inputs = self
+            .inputs
+            .iter()
+            .map(|input| {
+                (
+                    input.id.as_str(),
+                    input.kind.as_str(),
+                    input.sha256.as_str(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut expected = artifact_inputs.clone();
+        let mut actual = plan_inputs.clone();
+        expected.sort_unstable();
+        actual.sort_unstable();
+        if expected != actual {
+            return Err(FormatError::Invalid(
+                "native link plan inputs differ from native artifact link closure".into(),
+            ));
+        }
+        let product = artifact.product().ok_or_else(|| {
+            FormatError::Invalid("native artifact product is absent from selected artifact".into())
+        })?;
+        if self.output.product_id != product.id || self.output.expected_sha256 != product.sha256 {
+            return Err(FormatError::Invalid(
+                "native link plan output differs from selected artifact product".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate(&self) -> Result<(), FormatError> {
+        if self.format != NATIVE_LINK_PLAN_FORMAT {
+            return Err(FormatError::UnsupportedFormat {
+                expected: NATIVE_LINK_PLAN_FORMAT,
+                actual: self.format.clone(),
+            });
+        }
+        if self.compiler != COMPILER_ID {
+            return Err(FormatError::Invalid(format!(
+                "native link plan compiler `{}` differs from {COMPILER_ID}",
+                self.compiler
+            )));
+        }
+        require_nonempty("native link plan.edition", &self.edition)?;
+        require_package_id("native link plan.package_id", &self.package_id)?;
+        require_hash(
+            &self.target_descriptor_hash,
+            "native link plan.target_descriptor_hash",
+        )?;
+        require_hash(&self.artifact_hash, "native link plan.artifact_hash")?;
+        require_hash(
+            &self.artifact_target_descriptor_hash,
+            "native link plan.artifact_target_descriptor_hash",
+        )?;
+        if self.target_descriptor_hash != self.artifact_target_descriptor_hash {
+            return Err(FormatError::Invalid(
+                "native link plan target descriptor identities do not match".into(),
+            ));
+        }
+        if self.inputs.is_empty() {
+            return Err(FormatError::Invalid(
+                "native link plan must declare inputs".into(),
+            ));
+        }
+        let input_ids = self
+            .inputs
+            .iter()
+            .map(|input| input.id.clone())
+            .collect::<Vec<_>>();
+        require_unique("native link plan input identities", &input_ids)?;
+        for (index, input) in self.inputs.iter().enumerate() {
+            input.validate(&format!("native link plan.inputs[{index}]"))?;
+        }
+        let mut phase = 0u8;
+        let mut object_count = 0usize;
+        let mut runtime_count = 0usize;
+        let mut stdlib_count = 0usize;
+        for input in &self.inputs {
+            let input_phase = match input.kind.as_str() {
+                "object" => 0,
+                "privileged-unit" => 1,
+                "runtime" => 2,
+                "stdlib" => 3,
+                _ => unreachable!("NativeLinkInput::validate checked the kind"),
+            };
+            if input_phase < phase {
+                return Err(FormatError::Invalid(
+                    "native link plan inputs are not in canonical link order".into(),
+                ));
+            }
+            phase = input_phase;
+            object_count += usize::from(input.kind == "object");
+            runtime_count += usize::from(input.kind == "runtime");
+            stdlib_count += usize::from(input.kind == "stdlib");
+        }
+        if object_count == 0 || runtime_count != 1 || stdlib_count != 1 {
+            return Err(FormatError::Invalid(
+                "native link plan requires objects and exactly one runtime and stdlib".into(),
+            ));
+        }
+        self.driver.validate("native link plan.driver")?;
+        self.output.validate("native link plan.output")?;
+        self.limits.validate("native link plan.limits")?;
+        if self.limits.max_inputs < self.inputs.len() as u32
+            || self.limits.max_arguments < self.driver.arguments.len() as u32
+        {
+            return Err(FormatError::Invalid(
+                "native link plan limits are smaller than the declared invocation".into(),
+            ));
+        }
+        if !self.reproducible {
+            return Err(FormatError::Invalid(
+                "native link plans must be reproducible".into(),
+            ));
+        }
+        if self.plan_hash != self.calculated_plan_hash()? {
+            return Err(FormatError::Invalid(
+                "native link plan plan_hash does not match its fields".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn calculated_plan_hash(&self) -> Result<String, FormatError> {
+        #[derive(Serialize)]
+        struct Fingerprint<'a> {
+            compiler: &'a str,
+            edition: &'a str,
+            package_id: &'a str,
+            target_descriptor_hash: &'a str,
+            artifact_hash: &'a str,
+            artifact_target_descriptor_hash: &'a str,
+            inputs: &'a [NativeLinkInput],
+            driver: &'a NativeLinkDriver,
+            output: &'a NativeLinkOutput,
+            limits: &'a NativeLinkLimits,
+            reproducible: bool,
+        }
+        hash(&Fingerprint {
+            compiler: &self.compiler,
+            edition: &self.edition,
+            package_id: &self.package_id,
+            target_descriptor_hash: &self.target_descriptor_hash,
+            artifact_hash: &self.artifact_hash,
+            artifact_target_descriptor_hash: &self.artifact_target_descriptor_hash,
+            inputs: &self.inputs,
+            driver: &self.driver,
+            output: &self.output,
+            limits: &self.limits,
+            reproducible: self.reproducible,
+        })
+    }
+}
+
+fn require_link_argument(field: &str, value: &str) -> Result<(), FormatError> {
+    require_deterministic_atom(field, value, false)?;
+    if value == "." || value == ".." || value.contains("..") {
+        return Err(FormatError::Invalid(format!(
+            "{field} contains a non-portable path token"
+        )));
+    }
+    Ok(())
+}
+
 fn require_deterministic_atom(
     field: &str,
     value: &str,
@@ -3632,6 +4034,71 @@ mod tests {
         artifact
     }
 
+    fn native_link_plan() -> NativeLinkPlan {
+        let artifact = native_artifact();
+        let input_hash = |id: &str| {
+            artifact
+                .nodes
+                .iter()
+                .find(|node| node.id == id)
+                .unwrap()
+                .sha256
+                .clone()
+        };
+        let mut plan = NativeLinkPlan {
+            format: NATIVE_LINK_PLAN_FORMAT.into(),
+            compiler: COMPILER_ID.into(),
+            edition: "0.1".into(),
+            package_id: artifact.package_id.clone(),
+            target_descriptor_hash: artifact.target_descriptor_hash.clone(),
+            artifact_hash: artifact.artifact_hash.clone(),
+            artifact_target_descriptor_hash: artifact.target_descriptor_hash.clone(),
+            inputs: vec![
+                NativeLinkInput {
+                    id: "object-prepared".into(),
+                    kind: "object".into(),
+                    sha256: input_hash("object-prepared"),
+                },
+                NativeLinkInput {
+                    id: "privileged-console".into(),
+                    kind: "privileged-unit".into(),
+                    sha256: input_hash("privileged-console"),
+                },
+                NativeLinkInput {
+                    id: "runtime".into(),
+                    kind: "runtime".into(),
+                    sha256: input_hash("runtime"),
+                },
+                NativeLinkInput {
+                    id: "stdlib".into(),
+                    kind: "stdlib".into(),
+                    sha256: input_hash("stdlib"),
+                },
+            ],
+            driver: NativeLinkDriver {
+                id: "tondo-driver".into(),
+                version: "draft".into(),
+                artifact_id: "driver".into(),
+                artifact_sha256: sha256(b"native-driver"),
+                arguments: vec!["--target=tondo-native-linux-x86-64".into()],
+            },
+            output: NativeLinkOutput {
+                product_id: artifact.product_id.clone(),
+                object_format: "elf".into(),
+                expected_sha256: sha256(b"tondo-product"),
+            },
+            limits: NativeLinkLimits {
+                max_inputs: 16,
+                max_arguments: 8,
+                max_output_bytes: 1024 * 1024 * 1024,
+            },
+            plan_hash: String::new(),
+            reproducible: true,
+        };
+        plan.plan_hash = plan.calculated_plan_hash().unwrap();
+        plan
+    }
+
     fn lock(manifest_bytes: &[u8]) -> Lockfile {
         let source = LockedSource {
             source_set: "common".into(),
@@ -3963,6 +4430,150 @@ mod tests {
         let mut unsorted = native_artifact();
         unsorted.producers[0].inputs.reverse();
         assert!(unsorted.encode().is_err());
+    }
+
+    #[test]
+    fn native_link_plan_round_trips_and_preserves_semantic_input_order() {
+        let plan = native_link_plan();
+        let bytes = plan.encode().unwrap();
+        assert_eq!(NativeLinkPlan::decode(&bytes).unwrap(), plan);
+        assert_eq!(plan.content_hash().unwrap(), sha256(&bytes));
+        assert_eq!(plan.calculated_plan_hash().unwrap(), plan.plan_hash);
+
+        let mut reordered = plan.clone();
+        reordered.inputs.swap(0, 1);
+        assert!(reordered.encode().is_err());
+
+        let mut changed = plan.clone();
+        changed.driver.arguments.push("--build-id=none".into());
+        changed.plan_hash = changed.calculated_plan_hash().unwrap();
+        assert_ne!(
+            plan.content_hash().unwrap(),
+            changed.content_hash().unwrap()
+        );
+    }
+
+    #[test]
+    fn native_link_plan_validates_against_target_and_artifact_closures() {
+        let descriptor = native_target_descriptor();
+        let descriptor_hash = descriptor.content_hash().unwrap();
+        let mut artifact = native_artifact();
+        artifact.target_descriptor_hash = descriptor_hash.clone();
+        artifact.artifact_hash = artifact.calculated_artifact_hash().unwrap();
+
+        let mut plan = native_link_plan();
+        plan.target_descriptor_hash = descriptor_hash.clone();
+        plan.artifact_target_descriptor_hash = descriptor_hash;
+        plan.artifact_hash = artifact.artifact_hash.clone();
+        plan.driver.id = descriptor.driver.id.clone();
+        plan.driver.version = descriptor.driver.version.clone();
+        plan.driver.artifact_id = descriptor.driver.artifact_id.clone();
+        plan.driver.artifact_sha256 = descriptor
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.id == descriptor.driver.artifact_id)
+            .unwrap()
+            .sha256
+            .clone();
+        plan.driver.arguments = descriptor.driver.arguments.clone();
+        plan.output.object_format = descriptor.object_format.clone();
+        plan.plan_hash = plan.calculated_plan_hash().unwrap();
+        plan.validate_against(&descriptor, &artifact).unwrap();
+
+        let mut mixed = plan.clone();
+        mixed.target_descriptor_hash = sha256(b"other-target");
+        mixed.artifact_target_descriptor_hash = mixed.target_descriptor_hash.clone();
+        mixed.plan_hash = mixed.calculated_plan_hash().unwrap();
+        assert!(mixed.validate_against(&descriptor, &artifact).is_err());
+
+        let mut wrong_driver = plan.clone();
+        wrong_driver.driver.arguments.push("--ambient".into());
+        wrong_driver.plan_hash = wrong_driver.calculated_plan_hash().unwrap();
+        assert!(
+            wrong_driver
+                .validate_against(&descriptor, &artifact)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn native_link_plan_rejects_unknown_fields_hashes_paths_and_limits() {
+        let plan = native_link_plan();
+        let bytes = plan.encode().unwrap();
+        let pretty = serde_json::to_vec_pretty(&plan).unwrap();
+        assert!(matches!(
+            NativeLinkPlan::decode(&pretty),
+            Err(FormatError::NonCanonical("native link plan"))
+        ));
+
+        let mut unknown: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        unknown
+            .as_object_mut()
+            .unwrap()
+            .insert("physical_path".into(), serde_json::Value::Null);
+        assert!(NativeLinkPlan::decode(&serde_json::to_vec(&unknown).unwrap()).is_err());
+
+        let mut cases = Vec::new();
+        let mut invalid = plan.clone();
+        invalid.format = "tondo-native-link-plan-9".into();
+        cases.push(invalid);
+        let mut invalid = plan.clone();
+        invalid.compiler = "other-compiler".into();
+        cases.push(invalid);
+        let mut invalid = plan.clone();
+        invalid.target_descriptor_hash = "missing".into();
+        cases.push(invalid);
+        let mut invalid = plan.clone();
+        invalid.artifact_hash = "missing".into();
+        cases.push(invalid);
+        let mut invalid = plan.clone();
+        invalid.artifact_target_descriptor_hash = sha256(b"other-target");
+        cases.push(invalid);
+        let mut invalid = plan.clone();
+        invalid.inputs[0].sha256 = "missing".into();
+        cases.push(invalid);
+        let mut invalid = plan.clone();
+        invalid.inputs[1].id = invalid.inputs[0].id.clone();
+        cases.push(invalid);
+        let mut invalid = plan.clone();
+        invalid.inputs.swap(0, 2);
+        cases.push(invalid);
+        let mut invalid = plan.clone();
+        invalid.driver.artifact_sha256 = "missing".into();
+        cases.push(invalid);
+        let mut invalid = plan.clone();
+        invalid.driver.arguments = vec!["--sysroot=/tmp/tondo".into()];
+        cases.push(invalid);
+        let mut invalid = plan.clone();
+        invalid.driver.arguments = vec!["--sysroot=..".into()];
+        cases.push(invalid);
+        let mut invalid = plan.clone();
+        invalid.output.product_id = "../product".into();
+        cases.push(invalid);
+        let mut invalid = plan.clone();
+        invalid.output.expected_sha256 = "missing".into();
+        cases.push(invalid);
+        let mut invalid = plan.clone();
+        invalid.limits.max_inputs = 0;
+        cases.push(invalid);
+        let mut invalid = plan.clone();
+        invalid.limits.max_arguments = 0;
+        cases.push(invalid);
+        let mut invalid = plan.clone();
+        invalid.limits.max_output_bytes = 0;
+        cases.push(invalid);
+        let mut invalid = plan.clone();
+        invalid.limits.max_inputs = 1;
+        cases.push(invalid);
+        let mut invalid = plan.clone();
+        invalid.plan_hash = "missing".into();
+        cases.push(invalid);
+        let mut invalid = plan.clone();
+        invalid.reproducible = false;
+        cases.push(invalid);
+        for invalid in cases {
+            assert!(invalid.encode().is_err(), "invalid link plan was accepted");
+        }
     }
 
     #[test]

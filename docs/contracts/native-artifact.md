@@ -1,7 +1,7 @@
 # Native artifact graph
 
 `NATIVE-ARTIFACT-001` closes the metadata that sits between a selected native
-target descriptor and the future link plan. It is a graph of immutable logical
+target descriptor and the link plan. It is a graph of immutable logical
 identities, not a native ABI or an object-layout description.
 
 The record uses `tondo-native-artifact-draft`, compact UTF-8 JSON in declared
@@ -99,11 +99,12 @@ selection. `source_artifact_hash` binds it to the existing
 `tondo-artifact-draft` metadata for the Tondo source and generated inputs.
 Node and producer hashes are supplied by the closed orchestrator; the pure
 reader validates their identity grammar but never opens a path to recompute
-them. `NATIVE-LINK-PLAN-001` will resolve those hashes to bytes.
+them. `NATIVE-LINK-PLAN-001` resolves those hashes into an ordered, closed link
+record; it still does not resolve physical paths or execute a process.
 
 No field contains a physical path, linker command, symbol name, object layout,
 calling convention or FFI promise. `--output`, staging paths and publication
-atomicity belong exclusively to `NATIVE-PUBLISH-SPEC-001`.
+atomicity belong exclusively to `NATIVE-PUBLISH-SPEC-001`, the next contract.
 
 The implementation and negative contract cases are in
 `crates/tondo-compiler/src/toolchain.rs`,
