@@ -10,10 +10,10 @@ módulo nunca concede por sí solo la capability del host.
 pub fn stdin(): std.io.Reader ! ConsoleError
 pub fn stdout(): std.io.Writer ! ConsoleError
 pub fn stderr(): std.io.Writer ! ConsoleError
-pub fn readLine(var input: std.io.Reader): String? ! ConsoleError
+pub fn readLine(var input: std.io.Reader): String? ! ConsoleError suspends
 pub fn print(value: String): Unit ! ConsoleError
 pub fn println(value: String): Unit ! ConsoleError
-pub fn flush(): Unit ! ConsoleError
+pub fn flush(): Unit ! ConsoleError suspends
 pub enum ConsoleError { Unavailable, Closed, Cancelled, Io(std.io.IoError) }
 ```
 
@@ -31,9 +31,10 @@ un locale ambiental. Los lectores pueden entregar partial I/O y
 devuelve `none`; una línea con UTF-8 inválido o un reader que no sea stdin
 devuelve `ConsoleError` sin avanzar el cursor ni publicar un valor parcial.
 
-`print` escribe exactamente los bytes UTF-8 de `String`, `println` añade un
-único byte LF y ninguna de las dos operaciones hace flush implícito. `flush`
-es explícito y terminal dentro del writer correspondiente. Los errores del
+`print` anexa exactamente los bytes UTF-8 de `String` al buffer ordenado del
+runtime y `println` añade un único byte LF. Ambas operaciones son acotadas y no
+suspendibles; ninguna hace flush implícito. `flush` es la única frontera de
+entrega suspendible y terminal dentro del writer correspondiente. Los errores del
 host se convierten a `ConsoleError` nominal y no exponen rutas, mensajes o
 detalles dependientes del sistema operativo. Los límites de bytes, chunks,
 progreso y cancelación pertenecen al protocolo `std.io`; el adaptador de
@@ -81,20 +82,20 @@ pub type Directory
 pub type Metadata
 pub enum OpenMode { Read, Write, ReadWrite, Append, Create, CreateNew }
 pub enum FsError { NotFound, PermissionDenied, AlreadyExists, InvalidPath, NotDirectory, IsDirectory, Closed, ResourceLimit, Cancelled, Io }
-pub fn open(path: Path, mode: OpenMode): File ! FsError
-pub fn openDirectory(path: Path): Directory ! FsError
-pub fn readAll(path: Path): Bytes ! FsError
-pub fn writeAll(path: Path, data: Bytes): Unit ! FsError
-pub fn createDirectory(path: Path, parents: Bool): Unit ! FsError
-pub fn remove(path: Path): Unit ! FsError
-pub fn metadata(path: Path): Metadata ! FsError
-pub fn list(path: Path): Array[Path] ! FsError
-pub fn rename(from: Path, to: Path): Unit ! FsError
-pub fn atomicWrite(path: Path, data: Bytes): Unit ! FsError
-pub fn File.read(var self, max: Int): Option[Bytes] ! FsError
-pub fn File.write(var self, data: Bytes): Int ! FsError
-pub fn File.flush(var self): Unit ! FsError
-pub fn Directory.list(var self): Array[Path] ! FsError
+pub fn open(path: Path, mode: OpenMode): File ! FsError suspends
+pub fn openDirectory(path: Path): Directory ! FsError suspends
+pub fn readAll(path: Path): Bytes ! FsError suspends
+pub fn writeAll(path: Path, data: Bytes): Unit ! FsError suspends
+pub fn createDirectory(path: Path, parents: Bool): Unit ! FsError suspends
+pub fn remove(path: Path): Unit ! FsError suspends
+pub fn metadata(path: Path): Metadata ! FsError suspends
+pub fn list(path: Path): Array[Path] ! FsError suspends
+pub fn rename(from: Path, to: Path): Unit ! FsError suspends
+pub fn atomicWrite(path: Path, data: Bytes): Unit ! FsError suspends
+pub fn File.read(var self, max: Int): Option[Bytes] ! FsError suspends
+pub fn File.write(var self, data: Bytes): Int ! FsError suspends
+pub fn File.flush(var self): Unit ! FsError suspends
+pub fn Directory.list(var self): Array[Path] ! FsError suspends
 ```
 
 Las operaciones requieren `filesystem`. `File` es un handle afín que ofrece la
@@ -149,12 +150,12 @@ pub fn shell(command: String): Command ! ProcessError
 pub fn pipe(left: Command, right: Command): Pipeline ! ProcessError
 pub fn Command.mergeStderr(self): Command
 pub fn Pipeline.mergeStderr(self): Pipeline
-pub fn Command.run(self): ExitStatus ! ProcessError
-pub fn Command.output(self): ProcessOutput ! ProcessError
-pub fn Command.check(self): ProcessOutput ! (ProcessError | ProcessExitError)
-pub fn Command.start(self): ProcessHandle ! ProcessError
-pub fn ProcessHandle.wait(var self): ExitStatus ! ProcessError
-pub fn ProcessHandle.cancel(var self): Unit
+pub fn Command.run(self): ExitStatus ! ProcessError suspends
+pub fn Command.output(self): ProcessOutput ! ProcessError suspends
+pub fn Command.check(self): ProcessOutput ! (ProcessError | ProcessExitError) suspends
+pub fn Command.start(self): ProcessHandle ! ProcessError suspends
+pub fn ProcessHandle.wait(var self): ExitStatus ! ProcessError suspends
+pub fn ProcessHandle.cancel(var self): Unit suspends
 pub fn ProcessOutput.stdout(self): Bytes
 pub fn ProcessOutput.stderr(self): Bytes
 pub fn ProcessOutput.combined(self): Bytes

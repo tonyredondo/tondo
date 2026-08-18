@@ -4,11 +4,11 @@
   "documents": [
     {
       "path": "TONDO_LANGUAGE_SPEC.md",
-      "sha256": "0be283f1032d1a53f733a9b4d9e46f7be81dd14f86d751f05a5f2c53e69a7614"
+      "sha256": "b436cb475e53c51eda008a6914fb58bae698d63e3de6fb84df5833a0e2c4114d"
     },
     {
       "path": "TONDO_TESTING_SPEC.md",
-      "sha256": "56548af3caca6cfce767a3ff19c7ebeb80e5939d0a762e48891479d1b24f6a1f"
+      "sha256": "26f4f30e5dceeee52b62d2dc601690cd30171f65e433468c94232839c803362d"
     },
     {
       "path": "TONDO_TOOLCHAIN_SPEC.md",
@@ -1536,12 +1536,17 @@
     },
     {
       "requirements": [
-        "TL01-11-10-R003"
+        "TL01-11-10-R003",
+        "TL01-11-10-R004",
+        "TL01-11-10-R005"
       ],
       "dimensions": {
         "positive": {
           "evidence": [
             "conformance:runtime/m4-call-003-closures",
+            "fixture:compile-pass/m7-suspends-exclusive-sequential",
+            "fixture:runtime/m7-suspends-exclusive-sequential",
+            "rust:tondo-compiler:src::hir::check:suspending_closures_accept_exclusive_parameters_and_await_direct_calls",
             "rust:tondo-compiler:src::types:unification_shape_matrix_traverses_every_closed_constructor"
           ],
           "waiver": null
@@ -1549,7 +1554,9 @@
         "rejection_or_failure": {
           "evidence": [
             "conformance:compile-fail/m4-call-004-async-exclusive-parameter",
-            "rust:tondo-compiler:src::hir::check:expression_rejection_matrix_reaches_each_closed_semantic_boundary"
+            "fixture:compile-fail/m7-spawn-exclusive-loan",
+            "rust:tondo-compiler:src::hir::check:expression_rejection_matrix_reaches_each_closed_semantic_boundary",
+            "rust:tondo-compiler:src::hir::check:spawn_rejects_exclusive_loans_but_implicit_await_accepts_them"
           ],
           "waiver": null
         },
@@ -1557,6 +1564,8 @@
           "evidence": [
             "conformance:compile-fail/m4-call-004-async-exclusive-parameter",
             "conformance:runtime/m4-call-003-closures",
+            "fixture:compile-fail/m7-spawn-exclusive-loan",
+            "fixture:runtime/m7-suspends-exclusive-sequential",
             "rust:tondo-compiler:src::hir::check:every_closed_capability_is_enforced_and_forwarded_parametrically"
           ],
           "waiver": null
@@ -1564,6 +1573,7 @@
         "composition": {
           "evidence": [
             "conformance:runtime/m4-call-003-closures",
+            "fixture:runtime/m7-suspends-exclusive-sequential",
             "rust:tondo-compiler:src::hir::check:operators_calls_and_discard_rules_use_the_checked_types"
           ],
           "waiver": null
@@ -1572,7 +1582,10 @@
           "evidence": [
             "conformance:compile-fail/m4-call-004-async-exclusive-parameter",
             "conformance:runtime/m4-call-003-closures",
+            "fixture:compile-fail/m7-spawn-exclusive-loan",
+            "fixture:runtime/m7-suspends-exclusive-sequential",
             "rust:tondo-compiler:src::hir::check:closed_capability_matrix_covers_intrinsics_and_structural_values",
+            "rust:tondo-compiler:src::hir::check:spawn_rejects_exclusive_loans_but_implicit_await_accepts_them",
             "rust:tondo-compiler:src::types:unification_shape_matrix_traverses_every_closed_constructor"
           ],
           "waiver": null
@@ -1580,7 +1593,9 @@
         "public_boundary": {
           "evidence": [
             "conformance:compile-fail/m4-call-004-async-exclusive-parameter",
-            "conformance:runtime/m4-call-003-closures"
+            "conformance:runtime/m4-call-003-closures",
+            "fixture:compile-fail/m7-spawn-exclusive-loan",
+            "fixture:runtime/m7-suspends-exclusive-sequential"
           ],
           "waiver": null
         }

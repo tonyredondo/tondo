@@ -1,0 +1,12 @@
+import std.console
+
+fn increment(value: mut Int) suspends {
+    value += 1
+}
+
+fn main() {
+    var value = 41
+    increment(mut value)
+    assert(value == 42)
+    console.print("suspends-exclusive-ok\n")
+}

@@ -7701,28 +7701,6 @@ fn execute(): String {
             .call_mut = true;
         let error = bc::verify_bytecode(&forged_protocol).unwrap_err();
         assert!(error.message().contains("protocols"));
-
-        let mut forged_parameter = lowered(
-            "fn build() {\n\
-                 let operation = async (value: ref Int) { () }\n\
-                 _ = operation\n\
-             }\n",
-        );
-        let callable = forged_parameter
-            .callables
-            .iter_mut()
-            .find(|callable| callable.closure.is_some())
-            .unwrap();
-        callable.parameters[0].mode = bc::BytecodeParameterMode::Mut;
-        let function_type = callable.function_type;
-        let bc::BytecodeTypeKind::Function(function) =
-            &mut forged_parameter.types[function_type.index() as usize].kind
-        else {
-            unreachable!()
-        };
-        function.parameters[0].mode = bc::BytecodeParameterMode::Mut;
-        let error = bc::verify_bytecode(&forged_parameter).unwrap_err();
-        assert!(error.message().contains("exclusive parameter"));
     }
 
     #[test]

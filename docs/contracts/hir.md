@@ -460,7 +460,8 @@ proof independently before HIR can cross into MIR.
 
 Parameter and generic-binder spellings are intentionally absent from this
 comparison. `Display` requires `fn display(self): String`; `Iterator[T]`
-requires `fn next(mut self): T?`. A trait default remains a generic template;
+requires `fn next(mut self): T?`, while `AsyncIterator[T]` requires
+`fn next(mut self): T? suspends`. A trait default remains a generic template;
 omitting it does not create an implementation callable. A replacement is an
 ordinary implementation body and is checked once under the implementation
 binders.

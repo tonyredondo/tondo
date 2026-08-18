@@ -1,0 +1,11 @@
+fn increment(value: mut Int) suspends {
+    value += 1
+}
+
+fn invalid() {
+    var value = 41
+    scope {
+        let task = spawn increment(mut value)
+        await task
+    }
+}

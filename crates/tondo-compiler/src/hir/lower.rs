@@ -191,10 +191,11 @@ struct TypeLowerer<'a> {
     annotations: BTreeMap<(FileId, u32, u32), TypeId>,
     generic_types: BTreeMap<LocalId, TypeId>,
     /// Source callables whose suspension effect is inferred from their body.
-    /// The parser still accepts the historical `async` modifier while the
-    /// language migrates to effect inference; keeping the set keyed by source
-    /// range avoids conflating same-named methods in different declarations.
+    /// The parser still accepts the historical `async` modifier for frozen
+    /// bootstrap fixtures; source ranges keep same-named methods distinct.
     inferred_suspendible: BTreeSet<(FileId, u32, u32)>,
+    /// Unambiguous suspendible declaration names used only for early script
+    /// inference. Typed body checking completes member/protocol dispatch.
     suspendible_names: BTreeSet<String>,
 }
 
@@ -5117,7 +5118,8 @@ impl<'a> TypeLowerer<'a> {
         node: SyntaxNodeRef<'a>,
         environment: &TypeEnvironment,
     ) -> Result<TypeId, HirError> {
-        let is_async = has_direct_token(node, TokenKind::Async);
+        let is_async =
+            has_direct_token(node, TokenKind::Async) || has_direct_token(node, TokenKind::Suspends);
         let mut parameters = Vec::new();
         let mut variadic = None;
         if let Some(list) = node
@@ -5156,16 +5158,6 @@ impl<'a> TypeLowerer<'a> {
                     }
                     variadic = Some(ty);
                 } else {
-                    if is_async && matches!(mode, ParameterMode::Mut | ParameterMode::Var) {
-                        self.emit(
-                            file,
-                            item.range(),
-                            "E1609",
-                            "an async function type cannot contain a `mut` or `var` parameter",
-                            None,
-                            None,
-                        )?;
-                    }
                     parameters.push(FunctionParameter::new(mode, ty));
                 }
             }
@@ -5372,7 +5364,13 @@ impl<'a> TypeLowerer<'a> {
                                 has_default: method
                                     .child_nodes()
                                     .any(|child| child.kind() == SyntaxKind::Block),
-                                requires_self_send: has_direct_token(method, TokenKind::Async)
+                                requires_self_send: (has_direct_token(method, TokenKind::Async)
+                                    || has_direct_token(method, TokenKind::Suspends)
+                                    || self.inferred_suspendible.contains(&(
+                                        site.file,
+                                        method.range().start(),
+                                        method.range().end(),
+                                    )))
                                     && callable_has_receiver(method),
                             })
                         })
@@ -5495,23 +5493,33 @@ impl<'a> TypeLowerer<'a> {
             collect_source_callables(parsed.cst().root_node(), *file, &mut callables);
         }
 
+        let mut declarations_by_name = BTreeMap::<String, Vec<usize>>::new();
+        for (index, callable) in callables.iter().enumerate() {
+            declarations_by_name
+                .entry(callable.name.clone())
+                .or_default()
+                .push(index);
+        }
+
         // Start with effects that are syntactically unambiguous.  A fixed
         // point below then propagates the effect through ordinary calls.  The
-        // source range, rather than only the name, is the identity here so
-        // overloaded/member declarations cannot accidentally rewrite one
-        // another's function type.
-        let mut suspendible_names = callables
+        // source index, rather than only the spelling, is the identity here so
+        // same-named methods cannot accidentally rewrite one another's type.
+        // Ambiguous method dispatch is completed later by the typed checker;
+        // this early pass only follows names that resolve to one declaration.
+        let mut suspendible = callables
             .iter()
+            .enumerate()
             // A signature-only trait method can carry the historical `async`
             // token without owning a body to analyse.  It must not seed the
             // name-based fixed point and accidentally make an unrelated
             // implementation method with the same name suspendible.
-            .filter(|callable| {
+            .filter(|(_, callable)| {
                 callable.has_body && callable.direct_suspendible && !callable.no_suspend
             })
-            .map(|callable| callable.name.clone())
+            .map(|(index, _)| index)
             .collect::<BTreeSet<_>>();
-        for callable in &callables {
+        for (index, callable) in callables.iter().enumerate() {
             if callable.no_suspend {
                 continue;
             }
@@ -5520,31 +5528,43 @@ impl<'a> TypeLowerer<'a> {
                 .iter()
                 .any(|name| inferred_host_suspendible(name))
             {
-                suspendible_names.insert(callable.name.clone());
+                suspendible.insert(index);
             }
         }
         loop {
-            let before = suspendible_names.len();
-            for callable in &callables {
-                if callable
-                    .called_names
-                    .iter()
-                    .any(|name| suspendible_names.contains(name))
-                {
-                    suspendible_names.insert(callable.name.clone());
+            let before = suspendible.len();
+            for (index, callable) in callables.iter().enumerate() {
+                if callable.no_suspend || suspendible.contains(&index) {
+                    continue;
+                }
+                let calls_unique_suspendible = callable.called_names.iter().any(|name| {
+                    declarations_by_name.get(name).is_some_and(|candidates| {
+                        matches!(candidates.as_slice(), [candidate] if suspendible.contains(candidate))
+                    })
+                });
+                if calls_unique_suspendible {
+                    suspendible.insert(index);
                 }
             }
-            if suspendible_names.len() == before {
+            if suspendible.len() == before {
                 break;
             }
         }
         self.inferred_suspendible.extend(
             callables
                 .iter()
-                .filter(|callable| suspendible_names.contains(&callable.name))
+                .enumerate()
+                .filter(|(index, _)| suspendible.contains(index))
+                .map(|(_, callable)| callable)
                 .map(|callable| (callable.file, callable.range.start(), callable.range.end())),
         );
-        self.suspendible_names = suspendible_names;
+        self.suspendible_names = declarations_by_name
+            .into_iter()
+            .filter_map(|(name, candidates)| {
+                matches!(candidates.as_slice(), [candidate] if suspendible.contains(candidate))
+                    .then_some(name)
+            })
+            .collect();
         Ok(())
     }
 
@@ -6928,12 +6948,24 @@ impl<'a> TypeLowerer<'a> {
         id: HirCallableId,
         environment: TypeEnvironment,
         generics: Vec<HirGenericParameter>,
-        allow_async_mut_receiver: bool,
+        _allow_async_mut_receiver: bool,
     ) -> Result<(), HirError> {
         let name_range = callable_name_range(callable).unwrap_or_else(|| callable.range());
         let generic_arity = environment.next_position;
         let no_suspend = callable_has_no_suspend_attribute(callable);
-        let is_async = (has_direct_token(callable, TokenKind::Async)
+        let explicit_suspends = has_direct_token(callable, TokenKind::Async)
+            || has_direct_token(callable, TokenKind::Suspends);
+        if explicit_suspends && no_suspend {
+            self.emit(
+                file,
+                callable.range(),
+                "E1601",
+                "`suspends` conflicts with `@sync`/`@nosuspend`",
+                None,
+                None,
+            )?;
+        }
+        let is_async = (explicit_suspends
             || self.inferred_suspendible.contains(&(
                 file,
                 callable.range().start(),
@@ -6973,19 +7005,6 @@ impl<'a> TypeLowerer<'a> {
                     } else {
                         ParameterMode::Ref
                     };
-                    if is_async
-                        && matches!(mode, ParameterMode::Mut | ParameterMode::Var)
-                        && !allow_async_mut_receiver
-                    {
-                        self.emit(
-                            file,
-                            parameter.range(),
-                            "E1609",
-                            "an async callable cannot borrow a mutable receiver",
-                            None,
-                            None,
-                        )?;
-                    }
                     let ty = environment
                         .contextual_self
                         .unwrap_or_else(|| self.interner.error());
@@ -7011,16 +7030,6 @@ impl<'a> TypeLowerer<'a> {
                 let source_type = self.lower_type_expr(file, ty_node, &environment)?;
                 let is_variadic = has_direct_token(*parameter, TokenKind::Ellipsis);
                 let mode = parameter_mode(*parameter);
-                if is_async && matches!(mode, ParameterMode::Mut | ParameterMode::Var) {
-                    self.emit(
-                        file,
-                        parameter.range(),
-                        "E1609",
-                        "an async callable cannot borrow a mutable parameter",
-                        None,
-                        None,
-                    )?;
-                }
                 let name = parameter
                     .child_tokens()
                     .find(|token| token.kind() == TokenKind::Identifier);
@@ -7858,7 +7867,9 @@ fn collect_source_callables<'a>(
                 range: node.range(),
                 name: name.to_owned(),
                 has_body: body.is_some(),
-                direct_suspendible: direct_suspendible || has_direct_token(node, TokenKind::Async),
+                direct_suspendible: direct_suspendible
+                    || has_direct_token(node, TokenKind::Async)
+                    || has_direct_token(node, TokenKind::Suspends),
                 no_suspend,
                 called_names,
             });
@@ -7929,7 +7940,8 @@ fn called_names(node: SyntaxNodeRef<'_>) -> BTreeSet<String> {
 fn inferred_host_suspendible(name: &str) -> bool {
     matches!(
         name,
-        "console.readLine"
+        "console.flush"
+            | "console.readLine"
             | "io.readAll"
             | "io.writeAll"
             | "fs.readAll"
@@ -7946,6 +7958,7 @@ fn inferred_host_suspendible(name: &str) -> bool {
             | "testing.withVirtualTime"
             | "VirtualTime.settle"
             | "VirtualTime.advance"
+            | "Waiter.wait"
             | "Reader.read"
             | "Writer.write"
             | "Writer.flush"
@@ -7954,18 +7967,33 @@ fn inferred_host_suspendible(name: &str) -> bool {
             | "File.flush"
             | "Directory.list"
             | "Command.status"
+            | "Command.start"
             | "Command.output"
             | "Command.run"
             | "Command.check"
             | "Pipeline.status"
+            | "Pipeline.start"
             | "Pipeline.output"
             | "Pipeline.run"
             | "Pipeline.check"
             | "ProcessHandle.status"
+            | "ProcessHandle.wait"
             | "ProcessHandle.output"
             | "ProcessHandle.run"
             | "ProcessHandle.check"
             | "ProcessHandle.cancel"
+            | "JsonReader.fromReader"
+            | "JsonWriter.toWriter"
+            | "JsonWriter.write"
+            | "JsonWriter.finish"
+            | "MessagePackReader.fromReader"
+            | "MessagePackWriter.toWriter"
+            | "MessagePackWriter.write"
+            | "MessagePackWriter.finish"
+            | "ProtoReader.fromReader"
+            | "ProtoWriter.toWriter"
+            | "ProtoWriter.write"
+            | "ProtoWriter.finish"
             | "Timer.wait"
     )
 }
@@ -8657,14 +8685,85 @@ mod tests {
     }
 
     #[test]
-    fn async_signatures_use_the_specific_exclusive_parameter_diagnostic() {
+    fn suspending_signatures_accept_exclusive_parameters_for_sequential_calls() {
         let (_, _, output) = lower(
             "type Counter = { value: Int }\n\
-             async fn update(value: mut Int) {}\n\
-             async fn Counter.change(mut self) {}\n\
-             fn accepts(operation: async fn(var Int)) {}\n",
+             fn update(value: mut Int) suspends {}\n\
+             fn Counter.change(mut self) suspends {}\n\
+             fn accepts(operation: fn(var Int) suspends) {}\n",
         );
-        assert_eq!(codes(&output), ["E1609", "E1609", "E1609"]);
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        let suspending_callables = output
+            .program()
+            .callables()
+            .filter(|callable| {
+                matches!(
+                    output
+                        .program()
+                        .interner()
+                        .kind(callable.function_type())
+                        .unwrap(),
+                    TypeKind::Function(function) if function.suspends()
+                )
+            })
+            .count();
+        let suspending_parameters = output
+            .program()
+            .callables()
+            .flat_map(|callable| callable.parameters())
+            .filter(|parameter| {
+                matches!(
+                    output.program().interner().kind(parameter.ty()).unwrap(),
+                    TypeKind::Function(function) if function.suspends()
+                )
+            })
+            .count();
+        assert_eq!((suspending_callables, suspending_parameters), (2, 1));
+    }
+
+    #[test]
+    fn explicit_suspends_conflicts_with_no_suspend_attributes() {
+        for attribute in ["sync", "nosuspend"] {
+            let (_, _, output) = lower(&format!("@{attribute}\nfn invalid() suspends {{}}\n"));
+            assert_eq!(codes(&output), ["E1601"], "{attribute}");
+        }
+    }
+
+    #[test]
+    fn same_named_methods_do_not_leak_the_suspension_effect() {
+        let (_, _, output) = lower(
+            "type Slow = { value: Int }\n\
+             fn Slow.run(self) suspends {}\n\
+             type Fast = { value: Int }\n\
+             fn Fast.run(self) {}\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        let effects = output
+            .program()
+            .callables()
+            .filter(|callable| matches!(callable.id(), HirCallableId::Member(_)))
+            .filter_map(|callable| {
+                let TypeKind::Function(function) = output
+                    .program()
+                    .interner()
+                    .kind(callable.function_type())
+                    .ok()?
+                else {
+                    return None;
+                };
+                Some(function.suspends())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(effects.iter().filter(|effect| **effect).count(), 1);
+        assert_eq!(effects.iter().filter(|effect| !**effect).count(), 1);
     }
 
     #[test]
@@ -9004,11 +9103,18 @@ mod tests {
                  fn map[U: Discard](self, value: U): U { value }\n\
              }\n",
             "trait Contract {\n\
-                 async fn run(self): Int\n\
+                 fn run(self): Int suspends\n\
              }\n\
              type Item = Int\n\
              impl Contract for Item {\n\
                  fn run(self): Int { 1 }\n\
+             }\n",
+            "trait Contract {\n\
+                 fn run(self): Int\n\
+             }\n\
+             type Item = Int\n\
+             impl Contract for Item {\n\
+                 fn run(self): Int suspends { 1 }\n\
              }\n",
         ] {
             let (_, _, invalid) = lower(source);

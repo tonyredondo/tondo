@@ -13,11 +13,11 @@ use super::capabilities::{CapabilityAnalysis, CapabilityAssumptions, bounds_impl
 use super::termination::{TraitTerminationEdge, analyze_trait_termination};
 use super::{
     AvailabilityFindingKind, HirAssignmentTarget, HirAssignmentTargetKind, HirBinaryOperator,
-    HirBootstrapHostFunction, HirCallableId, HirCapability, HirCapabilityStatus, HirClosureId,
-    HirConstantValue, HirConstantValueKind, HirConstantVariantValue, HirContainmentKind,
-    HirExpression, HirExpressionId, HirExpressionKind, HirFlow, HirForKind, HirGenericParameter,
-    HirIndexAccess, HirIterationProtocol, HirPattern, HirPatternId, HirPatternKind, HirProgram,
-    HirStatement, HirTerminalStatus, HirTraitConstructor, HirTraitIdentity, HirTraitMethodKey,
+    HirCallableId, HirCapability, HirCapabilityStatus, HirClosureId, HirConstantValue,
+    HirConstantValueKind, HirConstantVariantValue, HirContainmentKind, HirExpression,
+    HirExpressionId, HirExpressionKind, HirFlow, HirForKind, HirGenericParameter, HirIndexAccess,
+    HirIterationProtocol, HirPattern, HirPatternId, HirPatternKind, HirProgram, HirStatement,
+    HirTerminalStatus, HirTraitConstructor, HirTraitIdentity, HirTraitMethodKey,
     HirTypeDeclarationKind, HirValueCategory, HirVariantPayload, HirVariantValue, HirWriteKind,
     TerminalAnalysis, TraitQuery, TraitSelectionError, analyze_availability,
     analyze_closure_captures, select_implementation,
@@ -2331,50 +2331,6 @@ impl Verifier<'_> {
                     "callable signature is not a function type",
                 ));
             };
-            let host_io_callable = matches!(
-                callable.id,
-                HirCallableId::Host(function)
-                    if function.name().starts_with("std.io.")
-                        || function.name().starts_with("std.fs.File.")
-                        || function.name().starts_with("std.fs.Directory.")
-                        || function.name().starts_with("std.json.JsonReader.")
-                        || function.name().starts_with("std.json.JsonWriter.")
-                        || function.name().starts_with("std.messagepack.MessagePackReader.")
-                        || function.name().starts_with("std.messagepack.MessagePackWriter.")
-                        || function.name().starts_with("std.protobuf.ProtoReader.")
-                        || function.name().starts_with("std.protobuf.ProtoWriter.")
-            );
-            let async_oneshot_callable = matches!(
-                callable.id,
-                HirCallableId::Host(HirBootstrapHostFunction::AsyncWaiterWait)
-            );
-            let async_iterator_callable = matches!(
-                callable.id,
-                HirCallableId::Implementation(method)
-                    if self
-                        .program
-                        .implementation_method(method)
-                        .and_then(|method| method.contract())
-                        .is_some_and(|contract| {
-                            contract.method()
-                                == super::HirTraitMethodKey::Prelude(
-                                    super::HirPreludeTraitMethod::AsyncIteratorNext,
-                                )
-                        })
-            );
-            if function.is_async()
-                && callable.parameters.iter().any(|parameter| {
-                    matches!(parameter.mode, ParameterMode::Mut | ParameterMode::Var)
-                })
-                && !host_io_callable
-                && !async_oneshot_callable
-                && !async_iterator_callable
-            {
-                return Err(HirInvariantError::new(
-                    &context,
-                    "async callable retains an exclusive parameter across suspension",
-                ));
-            }
             let mut fixed = Vec::new();
             let mut variadic = None;
             for (index, parameter) in callable.parameters.iter().enumerate() {
@@ -2594,14 +2550,6 @@ impl Verifier<'_> {
                     return Err(HirInvariantError::new(
                         &context,
                         format!("closure parameter {parameter_index} has invalid local metadata"),
-                    ));
-                }
-                if function.is_async()
-                    && matches!(parameter.mode, ParameterMode::Mut | ParameterMode::Var)
-                {
-                    return Err(HirInvariantError::new(
-                        &context,
-                        "async closure retains an exclusive parameter across suspension",
                     ));
                 }
                 if let Some(element) = parameter.variadic_element {
@@ -7572,15 +7520,6 @@ mod tests {
         let error = verify_typed_hir(&resolved, &inner_capture).unwrap_err();
         assert!(error.message().contains("not an owned outer binding"));
 
-        const ASYNC_PARAMETER: &str = "fn build() {\n\
-             let operation = async (value: Int): Int { value }\n\
-             _ = operation\n\
-         }\n";
-        let (resolved, mut exclusive_async) = checked_program_from(ASYNC_PARAMETER);
-        exclusive_async.closures[0].parameters[0].mode = ParameterMode::Mut;
-        let error = verify_typed_hir(&resolved, &exclusive_async).unwrap_err();
-        assert!(error.message().contains("exclusive parameter"));
-
         const VARIADIC: &str = "fn build() {\n\
              let operation = (values: ...String): Int { 0 }\n\
              _ = operation\n\
@@ -7736,15 +7675,18 @@ mod tests {
     }
 
     #[test]
-    fn async_callable_exclusive_parameters_are_rejected_before_mir() {
-        const SOURCE: &str = "async fn inspect(value: ref Int) {}\n";
+    fn suspending_callable_exclusive_parameters_are_verified_before_mir() {
+        const SOURCE: &str = "fn inspect(value: mut Int) suspends {}\n";
         let (resolved, program) = checked_program_from(SOURCE);
         verify_typed_hir(&resolved, &program).unwrap();
 
         let (resolved, mut forged) = checked_program_from(SOURCE);
-        forged.callables[0].parameters[0].mode = ParameterMode::Mut;
+        forged.callables[0].parameters[0].mode = ParameterMode::Ref;
         let error = verify_typed_hir(&resolved, &forged).unwrap_err();
-        assert!(error.message().contains("exclusive parameter"), "{error}");
+        assert!(
+            error.message().contains("parameters and outcome disagree"),
+            "{error}"
+        );
     }
 
     #[test]
@@ -10097,6 +10039,8 @@ mod tests {
 
         assert!(!HirBootstrapHostFunction::ConsolePrint.suspends());
         assert!(HirBootstrapHostFunction::AsyncWaiterWait.suspends());
+        assert!(HirBootstrapHostFunction::CommandStart.suspends());
+        assert!(HirBootstrapHostFunction::PipelineStart.suspends());
         assert_eq!(HirLoopId(7).index(), 7);
 
         let (_, calls) =

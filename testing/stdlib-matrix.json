@@ -278,24 +278,24 @@
         "requirement:std.collections:ownership"
       ],
       "signature_rows": [
-        "signature:std.collections:126",
         "signature:std.collections:127",
         "signature:std.collections:128",
         "signature:std.collections:129",
         "signature:std.collections:130",
         "signature:std.collections:131",
         "signature:std.collections:132",
-        "signature:std.collections:134",
+        "signature:std.collections:133",
         "signature:std.collections:135",
         "signature:std.collections:136",
         "signature:std.collections:137",
         "signature:std.collections:138",
         "signature:std.collections:139",
-        "signature:std.collections:141",
+        "signature:std.collections:140",
         "signature:std.collections:142",
         "signature:std.collections:143",
         "signature:std.collections:144",
-        "signature:std.collections:145"
+        "signature:std.collections:145",
+        "signature:std.collections:146"
       ],
       "source_set": "stdlib-core",
       "stage_order": [
@@ -798,11 +798,11 @@
         "requirement:std.format:ownership"
       ],
       "signature_rows": [
-        "signature:std.format:227",
         "signature:std.format:228",
         "signature:std.format:229",
         "signature:std.format:230",
-        "signature:std.format:231"
+        "signature:std.format:231",
+        "signature:std.format:232"
       ],
       "source_set": "stdlib-core",
       "stage_order": [
@@ -928,7 +928,6 @@
         "requirement:std.fs:pipeline-redirection"
       ],
       "signature_rows": [
-        "signature:std.fs:84",
         "signature:std.fs:85",
         "signature:std.fs:86",
         "signature:std.fs:87",
@@ -941,7 +940,8 @@
         "signature:std.fs:94",
         "signature:std.fs:95",
         "signature:std.fs:96",
-        "signature:std.fs:97"
+        "signature:std.fs:97",
+        "signature:std.fs:98"
       ],
       "source_set": "stdlib-hosted",
       "stage_order": [
@@ -1063,10 +1063,10 @@
         "requirement:std.io:ownership"
       ],
       "signature_rows": [
-        "signature:std.io:257",
         "signature:std.io:258",
         "signature:std.io:259",
-        "signature:std.io:260"
+        "signature:std.io:260",
+        "signature:std.io:261"
       ],
       "source_set": "stdlib-core",
       "stage_order": [
@@ -1189,10 +1189,10 @@
         "requirement:std.iter:ownership"
       ],
       "signature_rows": [
-        "signature:std.iter:151",
         "signature:std.iter:152",
         "signature:std.iter:153",
-        "signature:std.iter:154"
+        "signature:std.iter:154",
+        "signature:std.iter:155"
       ],
       "source_set": "stdlib-core",
       "stage_order": [
@@ -1461,7 +1461,6 @@
         "requirement:std.math:ownership"
       ],
       "signature_rows": [
-        "signature:std.math:207",
         "signature:std.math:208",
         "signature:std.math:209",
         "signature:std.math:210",
@@ -1469,7 +1468,8 @@
         "signature:std.math:212",
         "signature:std.math:213",
         "signature:std.math:214",
-        "signature:std.math:215"
+        "signature:std.math:215",
+        "signature:std.math:216"
       ],
       "source_set": "stdlib-core",
       "stage_order": [
@@ -1843,7 +1843,6 @@
         "requirement:std.path:pipeline-redirection"
       ],
       "signature_rows": [
-        "signature:std.path:46",
         "signature:std.path:47",
         "signature:std.path:48",
         "signature:std.path:49",
@@ -1852,7 +1851,8 @@
         "signature:std.path:52",
         "signature:std.path:53",
         "signature:std.path:54",
-        "signature:std.path:55"
+        "signature:std.path:55",
+        "signature:std.path:56"
       ],
       "source_set": "stdlib-hosted",
       "stage_order": [
@@ -1973,7 +1973,6 @@
         "requirement:std.process:pipeline-redirection"
       ],
       "signature_rows": [
-        "signature:std.process:147",
         "signature:std.process:148",
         "signature:std.process:149",
         "signature:std.process:150",
@@ -1989,7 +1988,8 @@
         "signature:std.process:160",
         "signature:std.process:161",
         "signature:std.process:162",
-        "signature:std.process:163"
+        "signature:std.process:163",
+        "signature:std.process:164"
       ],
       "source_set": "stdlib-hosted",
       "stage_order": [
@@ -2634,7 +2634,6 @@
         "requirement:std.text:ownership"
       ],
       "signature_rows": [
-        "signature:std.text:91",
         "signature:std.text:92",
         "signature:std.text:93",
         "signature:std.text:94",
@@ -2648,7 +2647,8 @@
         "signature:std.text:102",
         "signature:std.text:103",
         "signature:std.text:104",
-        "signature:std.text:108"
+        "signature:std.text:105",
+        "signature:std.text:109"
       ],
       "source_set": "stdlib-core",
       "stage_order": [
@@ -3250,36 +3250,12 @@
     },
     {
       "dimensions_ref": "owner:std.collections",
-      "id": "signature:std.collections:126",
-      "kind": "signature",
-      "layer": "A1",
-      "owner": "std.collections",
-      "scope": "STD-0.1A",
-      "signature": "pub fn Array.new[T](): Array[T]",
-      "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.collections:126",
-        "contract": "docs/contracts/stdlib-core.md",
-        "line": 126
-      },
-      "stage_refs": {
-        "CONF": "owner:std.collections:CONF",
-        "DOC": "owner:std.collections:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.collections:126:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.collections:126:MODEL/TEST/FUZZ",
-        "PERF": "owner:std.collections:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.collections:126:SPEC"
-      },
-      "status": "open-gaps",
-      "symbol": "std.collections.Array.new"
-    },
-    {
-      "dimensions_ref": "owner:std.collections",
       "id": "signature:std.collections:127",
       "kind": "signature",
       "layer": "A1",
       "owner": "std.collections",
       "scope": "STD-0.1A",
-      "signature": "pub fn Array.withCapacity[T](capacity: Int): Array[T] ! CollectionError",
+      "signature": "pub fn Array.new[T](): Array[T]",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.collections:127",
         "contract": "docs/contracts/stdlib-core.md",
@@ -3294,7 +3270,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.collections:127:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.collections.Array.withCapacity"
+      "symbol": "std.collections.Array.new"
     },
     {
       "dimensions_ref": "owner:std.collections",
@@ -3303,7 +3279,7 @@
       "layer": "A1",
       "owner": "std.collections",
       "scope": "STD-0.1A",
-      "signature": "pub fn Array.length[T](self): Int",
+      "signature": "pub fn Array.withCapacity[T](capacity: Int): Array[T] ! CollectionError",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.collections:128",
         "contract": "docs/contracts/stdlib-core.md",
@@ -3318,7 +3294,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.collections:128:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.collections.Array.length"
+      "symbol": "std.collections.Array.withCapacity"
     },
     {
       "dimensions_ref": "owner:std.collections",
@@ -3327,7 +3303,7 @@
       "layer": "A1",
       "owner": "std.collections",
       "scope": "STD-0.1A",
-      "signature": "pub fn Array.get[T](self, index: Int): T?",
+      "signature": "pub fn Array.length[T](self): Int",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.collections:129",
         "contract": "docs/contracts/stdlib-core.md",
@@ -3342,7 +3318,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.collections:129:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.collections.Array.get"
+      "symbol": "std.collections.Array.length"
     },
     {
       "dimensions_ref": "owner:std.collections",
@@ -3351,7 +3327,7 @@
       "layer": "A1",
       "owner": "std.collections",
       "scope": "STD-0.1A",
-      "signature": "pub fn Array.slice[T](self, start: Int, end: Int): Array[T] ! CollectionError",
+      "signature": "pub fn Array.get[T](self, index: Int): T?",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.collections:130",
         "contract": "docs/contracts/stdlib-core.md",
@@ -3366,7 +3342,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.collections:130:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.collections.Array.slice"
+      "symbol": "std.collections.Array.get"
     },
     {
       "dimensions_ref": "owner:std.collections",
@@ -3375,7 +3351,7 @@
       "layer": "A1",
       "owner": "std.collections",
       "scope": "STD-0.1A",
-      "signature": "pub fn Array.push[T](var self, value: T): Unit ! CollectionError",
+      "signature": "pub fn Array.slice[T](self, start: Int, end: Int): Array[T] ! CollectionError",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.collections:131",
         "contract": "docs/contracts/stdlib-core.md",
@@ -3390,7 +3366,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.collections:131:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.collections.Array.push"
+      "symbol": "std.collections.Array.slice"
     },
     {
       "dimensions_ref": "owner:std.collections",
@@ -3399,7 +3375,7 @@
       "layer": "A1",
       "owner": "std.collections",
       "scope": "STD-0.1A",
-      "signature": "pub fn Array.pop[T](var self): T?",
+      "signature": "pub fn Array.push[T](var self, value: T): Unit ! CollectionError",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.collections:132",
         "contract": "docs/contracts/stdlib-core.md",
@@ -3414,31 +3390,31 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.collections:132:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.collections.Array.pop"
+      "symbol": "std.collections.Array.push"
     },
     {
       "dimensions_ref": "owner:std.collections",
-      "id": "signature:std.collections:134",
+      "id": "signature:std.collections:133",
       "kind": "signature",
       "layer": "A1",
       "owner": "std.collections",
       "scope": "STD-0.1A",
-      "signature": "pub fn Map.new[K: Key, V](): Map[K, V]",
+      "signature": "pub fn Array.pop[T](var self): T?",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.collections:134",
+        "audit": "testing/stdlib-public-api.json#rows/std.collections:133",
         "contract": "docs/contracts/stdlib-core.md",
-        "line": 134
+        "line": 133
       },
       "stage_refs": {
         "CONF": "owner:std.collections:CONF",
         "DOC": "owner:std.collections:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.collections:134:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.collections:134:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.collections:133:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.collections:133:MODEL/TEST/FUZZ",
         "PERF": "owner:std.collections:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.collections:134:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.collections:133:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.collections.Map.new"
+      "symbol": "std.collections.Array.pop"
     },
     {
       "dimensions_ref": "owner:std.collections",
@@ -3447,7 +3423,7 @@
       "layer": "A1",
       "owner": "std.collections",
       "scope": "STD-0.1A",
-      "signature": "pub fn Map.get[K: Key, V](self, key: K): V?",
+      "signature": "pub fn Map.new[K: Key, V](): Map[K, V]",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.collections:135",
         "contract": "docs/contracts/stdlib-core.md",
@@ -3462,7 +3438,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.collections:135:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.collections.Map.get"
+      "symbol": "std.collections.Map.new"
     },
     {
       "dimensions_ref": "owner:std.collections",
@@ -3471,7 +3447,7 @@
       "layer": "A1",
       "owner": "std.collections",
       "scope": "STD-0.1A",
-      "signature": "pub fn Map.insert[K: Key, V](var self, key: K, value: V): V?",
+      "signature": "pub fn Map.get[K: Key, V](self, key: K): V?",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.collections:136",
         "contract": "docs/contracts/stdlib-core.md",
@@ -3486,7 +3462,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.collections:136:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.collections.Map.insert"
+      "symbol": "std.collections.Map.get"
     },
     {
       "dimensions_ref": "owner:std.collections",
@@ -3495,7 +3471,7 @@
       "layer": "A1",
       "owner": "std.collections",
       "scope": "STD-0.1A",
-      "signature": "pub fn Map.remove[K: Key, V](var self, key: K): V?",
+      "signature": "pub fn Map.insert[K: Key, V](var self, key: K, value: V): V?",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.collections:137",
         "contract": "docs/contracts/stdlib-core.md",
@@ -3510,7 +3486,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.collections:137:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.collections.Map.remove"
+      "symbol": "std.collections.Map.insert"
     },
     {
       "dimensions_ref": "owner:std.collections",
@@ -3519,7 +3495,7 @@
       "layer": "A1",
       "owner": "std.collections",
       "scope": "STD-0.1A",
-      "signature": "pub fn Map.contains[K: Key, V](self, key: K): Bool",
+      "signature": "pub fn Map.remove[K: Key, V](var self, key: K): V?",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.collections:138",
         "contract": "docs/contracts/stdlib-core.md",
@@ -3534,7 +3510,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.collections:138:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.collections.Map.contains"
+      "symbol": "std.collections.Map.remove"
     },
     {
       "dimensions_ref": "owner:std.collections",
@@ -3543,7 +3519,7 @@
       "layer": "A1",
       "owner": "std.collections",
       "scope": "STD-0.1A",
-      "signature": "pub fn Map.entries[K: Key, V](self): Iterator[(K, V)]",
+      "signature": "pub fn Map.contains[K: Key, V](self, key: K): Bool",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.collections:139",
         "contract": "docs/contracts/stdlib-core.md",
@@ -3558,31 +3534,31 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.collections:139:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.collections.Map.entries"
+      "symbol": "std.collections.Map.contains"
     },
     {
       "dimensions_ref": "owner:std.collections",
-      "id": "signature:std.collections:141",
+      "id": "signature:std.collections:140",
       "kind": "signature",
       "layer": "A1",
       "owner": "std.collections",
       "scope": "STD-0.1A",
-      "signature": "pub fn Set.new[K: Key](): Set[K]",
+      "signature": "pub fn Map.entries[K: Key, V](self): Iterator[(K, V)]",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.collections:141",
+        "audit": "testing/stdlib-public-api.json#rows/std.collections:140",
         "contract": "docs/contracts/stdlib-core.md",
-        "line": 141
+        "line": 140
       },
       "stage_refs": {
         "CONF": "owner:std.collections:CONF",
         "DOC": "owner:std.collections:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.collections:141:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.collections:141:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.collections:140:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.collections:140:MODEL/TEST/FUZZ",
         "PERF": "owner:std.collections:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.collections:141:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.collections:140:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.collections.Set.new"
+      "symbol": "std.collections.Map.entries"
     },
     {
       "dimensions_ref": "owner:std.collections",
@@ -3591,7 +3567,7 @@
       "layer": "A1",
       "owner": "std.collections",
       "scope": "STD-0.1A",
-      "signature": "pub fn Set.insert[K: Key](var self, value: K): Bool",
+      "signature": "pub fn Set.new[K: Key](): Set[K]",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.collections:142",
         "contract": "docs/contracts/stdlib-core.md",
@@ -3606,7 +3582,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.collections:142:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.collections.Set.insert"
+      "symbol": "std.collections.Set.new"
     },
     {
       "dimensions_ref": "owner:std.collections",
@@ -3615,7 +3591,7 @@
       "layer": "A1",
       "owner": "std.collections",
       "scope": "STD-0.1A",
-      "signature": "pub fn Set.remove[K: Key](var self, value: K): Bool",
+      "signature": "pub fn Set.insert[K: Key](var self, value: K): Bool",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.collections:143",
         "contract": "docs/contracts/stdlib-core.md",
@@ -3630,7 +3606,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.collections:143:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.collections.Set.remove"
+      "symbol": "std.collections.Set.insert"
     },
     {
       "dimensions_ref": "owner:std.collections",
@@ -3639,7 +3615,7 @@
       "layer": "A1",
       "owner": "std.collections",
       "scope": "STD-0.1A",
-      "signature": "pub fn Set.contains[K: Key](self, value: K): Bool",
+      "signature": "pub fn Set.remove[K: Key](var self, value: K): Bool",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.collections:144",
         "contract": "docs/contracts/stdlib-core.md",
@@ -3654,7 +3630,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.collections:144:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.collections.Set.contains"
+      "symbol": "std.collections.Set.remove"
     },
     {
       "dimensions_ref": "owner:std.collections",
@@ -3663,7 +3639,7 @@
       "layer": "A1",
       "owner": "std.collections",
       "scope": "STD-0.1A",
-      "signature": "pub fn Set.values[K: Key](self): Iterator[K]",
+      "signature": "pub fn Set.contains[K: Key](self, value: K): Bool",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.collections:145",
         "contract": "docs/contracts/stdlib-core.md",
@@ -3676,6 +3652,30 @@
         "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.collections:145:MODEL/TEST/FUZZ",
         "PERF": "owner:std.collections:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.collections:145:SPEC"
+      },
+      "status": "open-gaps",
+      "symbol": "std.collections.Set.contains"
+    },
+    {
+      "dimensions_ref": "owner:std.collections",
+      "id": "signature:std.collections:146",
+      "kind": "signature",
+      "layer": "A1",
+      "owner": "std.collections",
+      "scope": "STD-0.1A",
+      "signature": "pub fn Set.values[K: Key](self): Iterator[K]",
+      "source": {
+        "audit": "testing/stdlib-public-api.json#rows/std.collections:146",
+        "contract": "docs/contracts/stdlib-core.md",
+        "line": 146
+      },
+      "stage_refs": {
+        "CONF": "owner:std.collections:CONF",
+        "DOC": "owner:std.collections:DOC",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.collections:146:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.collections:146:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.collections:PERF",
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.collections:146:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.collections.Set.values"
@@ -3993,7 +3993,7 @@
       "layer": "A2",
       "owner": "std.console",
       "scope": "STD-0.1A",
-      "signature": "pub fn readLine(var input: std.io.Reader): String? ! ConsoleError",
+      "signature": "pub fn readLine(var input: std.io.Reader): String? ! ConsoleError suspends",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.console:13",
         "contract": "docs/contracts/stdlib-hosted.md",
@@ -4065,7 +4065,7 @@
       "layer": "A2",
       "owner": "std.console",
       "scope": "STD-0.1A",
-      "signature": "pub fn flush(): Unit ! ConsoleError",
+      "signature": "pub fn flush(): Unit ! ConsoleError suspends",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.console:16",
         "contract": "docs/contracts/stdlib-hosted.md",
@@ -5019,36 +5019,12 @@
     },
     {
       "dimensions_ref": "owner:std.format",
-      "id": "signature:std.format:227",
-      "kind": "signature",
-      "layer": "A1",
-      "owner": "std.format",
-      "scope": "STD-0.1A",
-      "signature": "pub fn Builder.new(): Builder",
-      "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.format:227",
-        "contract": "docs/contracts/stdlib-core.md",
-        "line": 227
-      },
-      "stage_refs": {
-        "CONF": "owner:std.format:CONF",
-        "DOC": "owner:std.format:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.format:227:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.format:227:MODEL/TEST/FUZZ",
-        "PERF": "owner:std.format:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.format:227:SPEC"
-      },
-      "status": "open-gaps",
-      "symbol": "std.format.Builder.new"
-    },
-    {
-      "dimensions_ref": "owner:std.format",
       "id": "signature:std.format:228",
       "kind": "signature",
       "layer": "A1",
       "owner": "std.format",
       "scope": "STD-0.1A",
-      "signature": "pub fn Builder.append(var self, value: String): Unit ! FormatError",
+      "signature": "pub fn Builder.new(): Builder",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.format:228",
         "contract": "docs/contracts/stdlib-core.md",
@@ -5063,7 +5039,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.format:228:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.format.Builder.append"
+      "symbol": "std.format.Builder.new"
     },
     {
       "dimensions_ref": "owner:std.format",
@@ -5072,7 +5048,7 @@
       "layer": "A1",
       "owner": "std.format",
       "scope": "STD-0.1A",
-      "signature": "pub fn Builder.finish(var self): String ! FormatError",
+      "signature": "pub fn Builder.append(var self, value: String): Unit ! FormatError",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.format:229",
         "contract": "docs/contracts/stdlib-core.md",
@@ -5087,7 +5063,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.format:229:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.format.Builder.finish"
+      "symbol": "std.format.Builder.append"
     },
     {
       "dimensions_ref": "owner:std.format",
@@ -5096,7 +5072,7 @@
       "layer": "A1",
       "owner": "std.format",
       "scope": "STD-0.1A",
-      "signature": "pub fn format[T: Display](value: T): String ! FormatError",
+      "signature": "pub fn Builder.finish(var self): String ! FormatError",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.format:230",
         "contract": "docs/contracts/stdlib-core.md",
@@ -5111,7 +5087,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.format:230:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.format.format"
+      "symbol": "std.format.Builder.finish"
     },
     {
       "dimensions_ref": "owner:std.format",
@@ -5120,7 +5096,7 @@
       "layer": "A1",
       "owner": "std.format",
       "scope": "STD-0.1A",
-      "signature": "pub fn join[T: Display](values: Array[T], separator: String): String ! FormatError",
+      "signature": "pub fn format[T: Display](value: T): String ! FormatError",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.format:231",
         "contract": "docs/contracts/stdlib-core.md",
@@ -5133,6 +5109,30 @@
         "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.format:231:MODEL/TEST/FUZZ",
         "PERF": "owner:std.format:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.format:231:SPEC"
+      },
+      "status": "open-gaps",
+      "symbol": "std.format.format"
+    },
+    {
+      "dimensions_ref": "owner:std.format",
+      "id": "signature:std.format:232",
+      "kind": "signature",
+      "layer": "A1",
+      "owner": "std.format",
+      "scope": "STD-0.1A",
+      "signature": "pub fn join[T: Display](values: Array[T], separator: String): String ! FormatError",
+      "source": {
+        "audit": "testing/stdlib-public-api.json#rows/std.format:232",
+        "contract": "docs/contracts/stdlib-core.md",
+        "line": 232
+      },
+      "stage_refs": {
+        "CONF": "owner:std.format:CONF",
+        "DOC": "owner:std.format:DOC",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.format:232:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.format:232:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.format:PERF",
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.format:232:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.format.join"
@@ -5373,36 +5373,12 @@
     },
     {
       "dimensions_ref": "owner:std.fs",
-      "id": "signature:std.fs:84",
-      "kind": "signature",
-      "layer": "A2",
-      "owner": "std.fs",
-      "scope": "STD-0.1A",
-      "signature": "pub fn open(path: Path, mode: OpenMode): File ! FsError",
-      "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.fs:84",
-        "contract": "docs/contracts/stdlib-hosted.md",
-        "line": 84
-      },
-      "stage_refs": {
-        "CONF": "owner:std.fs:CONF",
-        "DOC": "owner:std.fs:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.fs:84:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.fs:84:MODEL/TEST/FUZZ",
-        "PERF": "owner:std.fs:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:84:SPEC"
-      },
-      "status": "open-gaps",
-      "symbol": "std.fs.open"
-    },
-    {
-      "dimensions_ref": "owner:std.fs",
       "id": "signature:std.fs:85",
       "kind": "signature",
       "layer": "A2",
       "owner": "std.fs",
       "scope": "STD-0.1A",
-      "signature": "pub fn openDirectory(path: Path): Directory ! FsError",
+      "signature": "pub fn open(path: Path, mode: OpenMode): File ! FsError suspends",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.fs:85",
         "contract": "docs/contracts/stdlib-hosted.md",
@@ -5417,7 +5393,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:85:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.fs.openDirectory"
+      "symbol": "std.fs.open"
     },
     {
       "dimensions_ref": "owner:std.fs",
@@ -5426,7 +5402,7 @@
       "layer": "A2",
       "owner": "std.fs",
       "scope": "STD-0.1A",
-      "signature": "pub fn readAll(path: Path): Bytes ! FsError",
+      "signature": "pub fn openDirectory(path: Path): Directory ! FsError suspends",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.fs:86",
         "contract": "docs/contracts/stdlib-hosted.md",
@@ -5441,7 +5417,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:86:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.fs.readAll"
+      "symbol": "std.fs.openDirectory"
     },
     {
       "dimensions_ref": "owner:std.fs",
@@ -5450,7 +5426,7 @@
       "layer": "A2",
       "owner": "std.fs",
       "scope": "STD-0.1A",
-      "signature": "pub fn writeAll(path: Path, data: Bytes): Unit ! FsError",
+      "signature": "pub fn readAll(path: Path): Bytes ! FsError suspends",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.fs:87",
         "contract": "docs/contracts/stdlib-hosted.md",
@@ -5465,7 +5441,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:87:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.fs.writeAll"
+      "symbol": "std.fs.readAll"
     },
     {
       "dimensions_ref": "owner:std.fs",
@@ -5474,7 +5450,7 @@
       "layer": "A2",
       "owner": "std.fs",
       "scope": "STD-0.1A",
-      "signature": "pub fn createDirectory(path: Path, parents: Bool): Unit ! FsError",
+      "signature": "pub fn writeAll(path: Path, data: Bytes): Unit ! FsError suspends",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.fs:88",
         "contract": "docs/contracts/stdlib-hosted.md",
@@ -5489,7 +5465,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:88:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.fs.createDirectory"
+      "symbol": "std.fs.writeAll"
     },
     {
       "dimensions_ref": "owner:std.fs",
@@ -5498,7 +5474,7 @@
       "layer": "A2",
       "owner": "std.fs",
       "scope": "STD-0.1A",
-      "signature": "pub fn remove(path: Path): Unit ! FsError",
+      "signature": "pub fn createDirectory(path: Path, parents: Bool): Unit ! FsError suspends",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.fs:89",
         "contract": "docs/contracts/stdlib-hosted.md",
@@ -5513,7 +5489,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:89:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.fs.remove"
+      "symbol": "std.fs.createDirectory"
     },
     {
       "dimensions_ref": "owner:std.fs",
@@ -5522,7 +5498,7 @@
       "layer": "A2",
       "owner": "std.fs",
       "scope": "STD-0.1A",
-      "signature": "pub fn metadata(path: Path): Metadata ! FsError",
+      "signature": "pub fn remove(path: Path): Unit ! FsError suspends",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.fs:90",
         "contract": "docs/contracts/stdlib-hosted.md",
@@ -5537,7 +5513,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:90:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.fs.metadata"
+      "symbol": "std.fs.remove"
     },
     {
       "dimensions_ref": "owner:std.fs",
@@ -5546,7 +5522,7 @@
       "layer": "A2",
       "owner": "std.fs",
       "scope": "STD-0.1A",
-      "signature": "pub fn list(path: Path): Array[Path] ! FsError",
+      "signature": "pub fn metadata(path: Path): Metadata ! FsError suspends",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.fs:91",
         "contract": "docs/contracts/stdlib-hosted.md",
@@ -5561,7 +5537,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:91:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.fs.list"
+      "symbol": "std.fs.metadata"
     },
     {
       "dimensions_ref": "owner:std.fs",
@@ -5570,7 +5546,7 @@
       "layer": "A2",
       "owner": "std.fs",
       "scope": "STD-0.1A",
-      "signature": "pub fn rename(from: Path, to: Path): Unit ! FsError",
+      "signature": "pub fn list(path: Path): Array[Path] ! FsError suspends",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.fs:92",
         "contract": "docs/contracts/stdlib-hosted.md",
@@ -5585,7 +5561,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:92:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.fs.rename"
+      "symbol": "std.fs.list"
     },
     {
       "dimensions_ref": "owner:std.fs",
@@ -5594,7 +5570,7 @@
       "layer": "A2",
       "owner": "std.fs",
       "scope": "STD-0.1A",
-      "signature": "pub fn atomicWrite(path: Path, data: Bytes): Unit ! FsError",
+      "signature": "pub fn rename(from: Path, to: Path): Unit ! FsError suspends",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.fs:93",
         "contract": "docs/contracts/stdlib-hosted.md",
@@ -5609,7 +5585,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:93:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.fs.atomicWrite"
+      "symbol": "std.fs.rename"
     },
     {
       "dimensions_ref": "owner:std.fs",
@@ -5618,7 +5594,7 @@
       "layer": "A2",
       "owner": "std.fs",
       "scope": "STD-0.1A",
-      "signature": "pub fn File.read(var self, max: Int): Option[Bytes] ! FsError",
+      "signature": "pub fn atomicWrite(path: Path, data: Bytes): Unit ! FsError suspends",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.fs:94",
         "contract": "docs/contracts/stdlib-hosted.md",
@@ -5633,7 +5609,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:94:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.fs.File.read"
+      "symbol": "std.fs.atomicWrite"
     },
     {
       "dimensions_ref": "owner:std.fs",
@@ -5642,7 +5618,7 @@
       "layer": "A2",
       "owner": "std.fs",
       "scope": "STD-0.1A",
-      "signature": "pub fn File.write(var self, data: Bytes): Int ! FsError",
+      "signature": "pub fn File.read(var self, max: Int): Option[Bytes] ! FsError suspends",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.fs:95",
         "contract": "docs/contracts/stdlib-hosted.md",
@@ -5657,7 +5633,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:95:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.fs.File.write"
+      "symbol": "std.fs.File.read"
     },
     {
       "dimensions_ref": "owner:std.fs",
@@ -5666,7 +5642,7 @@
       "layer": "A2",
       "owner": "std.fs",
       "scope": "STD-0.1A",
-      "signature": "pub fn File.flush(var self): Unit ! FsError",
+      "signature": "pub fn File.write(var self, data: Bytes): Int ! FsError suspends",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.fs:96",
         "contract": "docs/contracts/stdlib-hosted.md",
@@ -5681,7 +5657,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:96:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.fs.File.flush"
+      "symbol": "std.fs.File.write"
     },
     {
       "dimensions_ref": "owner:std.fs",
@@ -5690,7 +5666,7 @@
       "layer": "A2",
       "owner": "std.fs",
       "scope": "STD-0.1A",
-      "signature": "pub fn Directory.list(var self): Array[Path] ! FsError",
+      "signature": "pub fn File.flush(var self): Unit ! FsError suspends",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.fs:97",
         "contract": "docs/contracts/stdlib-hosted.md",
@@ -5703,6 +5679,30 @@
         "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.fs:97:MODEL/TEST/FUZZ",
         "PERF": "owner:std.fs:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:97:SPEC"
+      },
+      "status": "open-gaps",
+      "symbol": "std.fs.File.flush"
+    },
+    {
+      "dimensions_ref": "owner:std.fs",
+      "id": "signature:std.fs:98",
+      "kind": "signature",
+      "layer": "A2",
+      "owner": "std.fs",
+      "scope": "STD-0.1A",
+      "signature": "pub fn Directory.list(var self): Array[Path] ! FsError suspends",
+      "source": {
+        "audit": "testing/stdlib-public-api.json#rows/std.fs:98",
+        "contract": "docs/contracts/stdlib-hosted.md",
+        "line": 98
+      },
+      "stage_refs": {
+        "CONF": "owner:std.fs:CONF",
+        "DOC": "owner:std.fs:DOC",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.fs:98:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.fs:98:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.fs:PERF",
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:98:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.fs.Directory.list"
@@ -5891,36 +5891,12 @@
     },
     {
       "dimensions_ref": "owner:std.io",
-      "id": "signature:std.io:257",
-      "kind": "signature",
-      "layer": "A1",
-      "owner": "std.io",
-      "scope": "STD-0.1A",
-      "signature": "pub fn defaultLimits(): IoLimits",
-      "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.io:257",
-        "contract": "docs/contracts/stdlib-core.md",
-        "line": 257
-      },
-      "stage_refs": {
-        "CONF": "owner:std.io:CONF",
-        "DOC": "owner:std.io:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.io:257:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.io:257:MODEL/TEST/FUZZ",
-        "PERF": "owner:std.io:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.io:257:SPEC"
-      },
-      "status": "open-gaps",
-      "symbol": "std.io.defaultLimits"
-    },
-    {
-      "dimensions_ref": "owner:std.io",
       "id": "signature:std.io:258",
       "kind": "signature",
       "layer": "A1",
       "owner": "std.io",
       "scope": "STD-0.1A",
-      "signature": "pub fn limits(maxBytes: Int, maxRead: Int): IoLimits ! IoError",
+      "signature": "pub fn defaultLimits(): IoLimits",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.io:258",
         "contract": "docs/contracts/stdlib-core.md",
@@ -5935,7 +5911,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.io:258:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.io.limits"
+      "symbol": "std.io.defaultLimits"
     },
     {
       "dimensions_ref": "owner:std.io",
@@ -5944,7 +5920,7 @@
       "layer": "A1",
       "owner": "std.io",
       "scope": "STD-0.1A",
-      "signature": "pub fn readAll[R: Reader](var reader: R, limits: IoLimits): Bytes ! IoError",
+      "signature": "pub fn limits(maxBytes: Int, maxRead: Int): IoLimits ! IoError",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.io:259",
         "contract": "docs/contracts/stdlib-core.md",
@@ -5959,7 +5935,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.io:259:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.io.readAll"
+      "symbol": "std.io.limits"
     },
     {
       "dimensions_ref": "owner:std.io",
@@ -5968,7 +5944,7 @@
       "layer": "A1",
       "owner": "std.io",
       "scope": "STD-0.1A",
-      "signature": "pub fn writeAll(var writer: Writer, data: Bytes): Unit ! IoError",
+      "signature": "pub fn readAll[R: Reader](var reader: R, limits: IoLimits): Bytes ! IoError suspends",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.io:260",
         "contract": "docs/contracts/stdlib-core.md",
@@ -5981,6 +5957,30 @@
         "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.io:260:MODEL/TEST/FUZZ",
         "PERF": "owner:std.io:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.io:260:SPEC"
+      },
+      "status": "open-gaps",
+      "symbol": "std.io.readAll"
+    },
+    {
+      "dimensions_ref": "owner:std.io",
+      "id": "signature:std.io:261",
+      "kind": "signature",
+      "layer": "A1",
+      "owner": "std.io",
+      "scope": "STD-0.1A",
+      "signature": "pub fn writeAll(var writer: Writer, data: Bytes): Unit ! IoError suspends",
+      "source": {
+        "audit": "testing/stdlib-public-api.json#rows/std.io:261",
+        "contract": "docs/contracts/stdlib-core.md",
+        "line": 261
+      },
+      "stage_refs": {
+        "CONF": "owner:std.io:CONF",
+        "DOC": "owner:std.io:DOC",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.io:261:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.io:261:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.io:PERF",
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.io:261:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.io.writeAll"
@@ -6169,36 +6169,12 @@
     },
     {
       "dimensions_ref": "owner:std.iter",
-      "id": "signature:std.iter:151",
-      "kind": "signature",
-      "layer": "A1",
-      "owner": "std.iter",
-      "scope": "STD-0.1A",
-      "signature": "pub fn Iterator.map[T, U](self, fn(T): U): Iterator[U]",
-      "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.iter:151",
-        "contract": "docs/contracts/stdlib-core.md",
-        "line": 151
-      },
-      "stage_refs": {
-        "CONF": "owner:std.iter:CONF",
-        "DOC": "owner:std.iter:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.iter:151:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.iter:151:MODEL/TEST/FUZZ",
-        "PERF": "owner:std.iter:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.iter:151:SPEC"
-      },
-      "status": "open-gaps",
-      "symbol": "std.iter.Iterator.map"
-    },
-    {
-      "dimensions_ref": "owner:std.iter",
       "id": "signature:std.iter:152",
       "kind": "signature",
       "layer": "A1",
       "owner": "std.iter",
       "scope": "STD-0.1A",
-      "signature": "pub fn Iterator.filter[T](self, fn(T): Bool): Iterator[T]",
+      "signature": "pub fn Iterator.map[T, U](self, fn(T): U): Iterator[U]",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.iter:152",
         "contract": "docs/contracts/stdlib-core.md",
@@ -6213,7 +6189,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.iter:152:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.iter.Iterator.filter"
+      "symbol": "std.iter.Iterator.map"
     },
     {
       "dimensions_ref": "owner:std.iter",
@@ -6222,7 +6198,7 @@
       "layer": "A1",
       "owner": "std.iter",
       "scope": "STD-0.1A",
-      "signature": "pub fn Iterator.take[T](self, count: Int): Iterator[T]",
+      "signature": "pub fn Iterator.filter[T](self, fn(T): Bool): Iterator[T]",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.iter:153",
         "contract": "docs/contracts/stdlib-core.md",
@@ -6237,7 +6213,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.iter:153:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.iter.Iterator.take"
+      "symbol": "std.iter.Iterator.filter"
     },
     {
       "dimensions_ref": "owner:std.iter",
@@ -6246,7 +6222,7 @@
       "layer": "A1",
       "owner": "std.iter",
       "scope": "STD-0.1A",
-      "signature": "pub fn Iterator.collect[T](self): Array[T] ! CollectionError",
+      "signature": "pub fn Iterator.take[T](self, count: Int): Iterator[T]",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.iter:154",
         "contract": "docs/contracts/stdlib-core.md",
@@ -6259,6 +6235,30 @@
         "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.iter:154:MODEL/TEST/FUZZ",
         "PERF": "owner:std.iter:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.iter:154:SPEC"
+      },
+      "status": "open-gaps",
+      "symbol": "std.iter.Iterator.take"
+    },
+    {
+      "dimensions_ref": "owner:std.iter",
+      "id": "signature:std.iter:155",
+      "kind": "signature",
+      "layer": "A1",
+      "owner": "std.iter",
+      "scope": "STD-0.1A",
+      "signature": "pub fn Iterator.collect[T](self): Array[T] ! CollectionError",
+      "source": {
+        "audit": "testing/stdlib-public-api.json#rows/std.iter:155",
+        "contract": "docs/contracts/stdlib-core.md",
+        "line": 155
+      },
+      "stage_refs": {
+        "CONF": "owner:std.iter:CONF",
+        "DOC": "owner:std.iter:DOC",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.iter:155:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.iter:155:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.iter:PERF",
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.iter:155:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.iter.Iterator.collect"
@@ -6931,7 +6931,7 @@
       "layer": "A3",
       "owner": "std.json",
       "scope": "STD-0.1A",
-      "signature": "pub fn JsonReader.fromReader(var input: Reader, options: JsonDecodeOptions): JsonReader ! JsonError",
+      "signature": "pub fn JsonReader.fromReader(var input: Reader, options: JsonDecodeOptions): JsonReader ! JsonError suspends",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.json:161",
         "contract": "docs/contracts/stdlib-json.md",
@@ -7027,7 +7027,7 @@
       "layer": "A3",
       "owner": "std.json",
       "scope": "STD-0.1A",
-      "signature": "pub fn JsonWriter.toWriter(var output: Writer, options: JsonEncodeOptions): JsonWriter ! JsonError",
+      "signature": "pub fn JsonWriter.toWriter(var output: Writer, options: JsonEncodeOptions): JsonWriter ! JsonError suspends",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.json:166",
         "contract": "docs/contracts/stdlib-json.md",
@@ -7051,7 +7051,7 @@
       "layer": "A3",
       "owner": "std.json",
       "scope": "STD-0.1A",
-      "signature": "pub fn JsonWriter.write(var self, event: JsonEvent): Unit ! JsonError",
+      "signature": "pub fn JsonWriter.write(var self, event: JsonEvent): Unit ! JsonError suspends",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.json:167",
         "contract": "docs/contracts/stdlib-json.md",
@@ -7075,7 +7075,7 @@
       "layer": "A3",
       "owner": "std.json",
       "scope": "STD-0.1A",
-      "signature": "pub fn JsonWriter.finish(var self): Unit ! JsonError",
+      "signature": "pub fn JsonWriter.finish(var self): Unit ! JsonError suspends",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.json:168",
         "contract": "docs/contracts/stdlib-json.md",
@@ -7276,36 +7276,12 @@
     },
     {
       "dimensions_ref": "owner:std.math",
-      "id": "signature:std.math:207",
-      "kind": "signature",
-      "layer": "A1",
-      "owner": "std.math",
-      "scope": "STD-0.1A",
-      "signature": "pub fn floor(value: Float): Float",
-      "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.math:207",
-        "contract": "docs/contracts/stdlib-core.md",
-        "line": 207
-      },
-      "stage_refs": {
-        "CONF": "owner:std.math:CONF",
-        "DOC": "owner:std.math:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.math:207:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.math:207:MODEL/TEST/FUZZ",
-        "PERF": "owner:std.math:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.math:207:SPEC"
-      },
-      "status": "open-gaps",
-      "symbol": "std.math.floor"
-    },
-    {
-      "dimensions_ref": "owner:std.math",
       "id": "signature:std.math:208",
       "kind": "signature",
       "layer": "A1",
       "owner": "std.math",
       "scope": "STD-0.1A",
-      "signature": "pub fn ceil(value: Float): Float",
+      "signature": "pub fn floor(value: Float): Float",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.math:208",
         "contract": "docs/contracts/stdlib-core.md",
@@ -7320,7 +7296,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.math:208:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.math.ceil"
+      "symbol": "std.math.floor"
     },
     {
       "dimensions_ref": "owner:std.math",
@@ -7329,7 +7305,7 @@
       "layer": "A1",
       "owner": "std.math",
       "scope": "STD-0.1A",
-      "signature": "pub fn round(value: Float): Float",
+      "signature": "pub fn ceil(value: Float): Float",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.math:209",
         "contract": "docs/contracts/stdlib-core.md",
@@ -7344,7 +7320,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.math:209:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.math.round"
+      "symbol": "std.math.ceil"
     },
     {
       "dimensions_ref": "owner:std.math",
@@ -7353,7 +7329,7 @@
       "layer": "A1",
       "owner": "std.math",
       "scope": "STD-0.1A",
-      "signature": "pub fn truncate(value: Float): Float",
+      "signature": "pub fn round(value: Float): Float",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.math:210",
         "contract": "docs/contracts/stdlib-core.md",
@@ -7368,7 +7344,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.math:210:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.math.truncate"
+      "symbol": "std.math.round"
     },
     {
       "dimensions_ref": "owner:std.math",
@@ -7377,7 +7353,7 @@
       "layer": "A1",
       "owner": "std.math",
       "scope": "STD-0.1A",
-      "signature": "pub fn sqrt(value: Float): Float ! MathError",
+      "signature": "pub fn truncate(value: Float): Float",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.math:211",
         "contract": "docs/contracts/stdlib-core.md",
@@ -7392,7 +7368,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.math:211:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.math.sqrt"
+      "symbol": "std.math.truncate"
     },
     {
       "dimensions_ref": "owner:std.math",
@@ -7401,7 +7377,7 @@
       "layer": "A1",
       "owner": "std.math",
       "scope": "STD-0.1A",
-      "signature": "pub fn fma(a: Float, b: Float, c: Float): Float",
+      "signature": "pub fn sqrt(value: Float): Float ! MathError",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.math:212",
         "contract": "docs/contracts/stdlib-core.md",
@@ -7416,7 +7392,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.math:212:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.math.fma"
+      "symbol": "std.math.sqrt"
     },
     {
       "dimensions_ref": "owner:std.math",
@@ -7425,7 +7401,7 @@
       "layer": "A1",
       "owner": "std.math",
       "scope": "STD-0.1A",
-      "signature": "pub fn abs(value: Float): Float",
+      "signature": "pub fn fma(a: Float, b: Float, c: Float): Float",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.math:213",
         "contract": "docs/contracts/stdlib-core.md",
@@ -7440,7 +7416,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.math:213:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.math.abs"
+      "symbol": "std.math.fma"
     },
     {
       "dimensions_ref": "owner:std.math",
@@ -7449,7 +7425,7 @@
       "layer": "A1",
       "owner": "std.math",
       "scope": "STD-0.1A",
-      "signature": "pub fn min(a: Float, b: Float): Float",
+      "signature": "pub fn abs(value: Float): Float",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.math:214",
         "contract": "docs/contracts/stdlib-core.md",
@@ -7464,7 +7440,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.math:214:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.math.min"
+      "symbol": "std.math.abs"
     },
     {
       "dimensions_ref": "owner:std.math",
@@ -7473,7 +7449,7 @@
       "layer": "A1",
       "owner": "std.math",
       "scope": "STD-0.1A",
-      "signature": "pub fn max(a: Float, b: Float): Float",
+      "signature": "pub fn min(a: Float, b: Float): Float",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.math:215",
         "contract": "docs/contracts/stdlib-core.md",
@@ -7486,6 +7462,30 @@
         "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.math:215:MODEL/TEST/FUZZ",
         "PERF": "owner:std.math:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.math:215:SPEC"
+      },
+      "status": "open-gaps",
+      "symbol": "std.math.min"
+    },
+    {
+      "dimensions_ref": "owner:std.math",
+      "id": "signature:std.math:216",
+      "kind": "signature",
+      "layer": "A1",
+      "owner": "std.math",
+      "scope": "STD-0.1A",
+      "signature": "pub fn max(a: Float, b: Float): Float",
+      "source": {
+        "audit": "testing/stdlib-public-api.json#rows/std.math:216",
+        "contract": "docs/contracts/stdlib-core.md",
+        "line": 216
+      },
+      "stage_refs": {
+        "CONF": "owner:std.math:CONF",
+        "DOC": "owner:std.math:DOC",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.math:216:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.math:216:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.math:PERF",
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.math:216:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.math.max"
@@ -8125,7 +8125,7 @@
       "layer": "A3",
       "owner": "std.messagepack",
       "scope": "STD-0.1A",
-      "signature": "pub fn MessagePackReader.fromReader(var input: Reader, options: MessagePackDecodeOptions): MessagePackReader ! MessagePackError",
+      "signature": "pub fn MessagePackReader.fromReader(var input: Reader, options: MessagePackDecodeOptions): MessagePackReader ! MessagePackError suspends",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.messagepack:99",
         "contract": "docs/contracts/stdlib-messagepack.md",
@@ -8221,7 +8221,7 @@
       "layer": "A3",
       "owner": "std.messagepack",
       "scope": "STD-0.1A",
-      "signature": "pub fn MessagePackWriter.toWriter(var output: Writer, options: MessagePackEncodeOptions): MessagePackWriter ! MessagePackError",
+      "signature": "pub fn MessagePackWriter.toWriter(var output: Writer, options: MessagePackEncodeOptions): MessagePackWriter ! MessagePackError suspends",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.messagepack:104",
         "contract": "docs/contracts/stdlib-messagepack.md",
@@ -8245,7 +8245,7 @@
       "layer": "A3",
       "owner": "std.messagepack",
       "scope": "STD-0.1A",
-      "signature": "pub fn MessagePackWriter.write(var self, event: MessagePackEvent): Unit ! MessagePackError",
+      "signature": "pub fn MessagePackWriter.write(var self, event: MessagePackEvent): Unit ! MessagePackError suspends",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.messagepack:105",
         "contract": "docs/contracts/stdlib-messagepack.md",
@@ -8269,7 +8269,7 @@
       "layer": "A3",
       "owner": "std.messagepack",
       "scope": "STD-0.1A",
-      "signature": "pub fn MessagePackWriter.finish(var self): Unit ! MessagePackError",
+      "signature": "pub fn MessagePackWriter.finish(var self): Unit ! MessagePackError suspends",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.messagepack:106",
         "contract": "docs/contracts/stdlib-messagepack.md",
@@ -8714,36 +8714,12 @@
     },
     {
       "dimensions_ref": "owner:std.path",
-      "id": "signature:std.path:46",
-      "kind": "signature",
-      "layer": "A2",
-      "owner": "std.path",
-      "scope": "STD-0.1A",
-      "signature": "pub fn Path.fromString(value: String): Path ! PathError",
-      "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.path:46",
-        "contract": "docs/contracts/stdlib-hosted.md",
-        "line": 46
-      },
-      "stage_refs": {
-        "CONF": "owner:std.path:CONF",
-        "DOC": "owner:std.path:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.path:46:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.path:46:MODEL/TEST/FUZZ",
-        "PERF": "owner:std.path:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.path:46:SPEC"
-      },
-      "status": "open-gaps",
-      "symbol": "std.path.Path.fromString"
-    },
-    {
-      "dimensions_ref": "owner:std.path",
       "id": "signature:std.path:47",
       "kind": "signature",
       "layer": "A2",
       "owner": "std.path",
       "scope": "STD-0.1A",
-      "signature": "pub fn Path.fromBytes(value: Bytes): Path ! PathError",
+      "signature": "pub fn Path.fromString(value: String): Path ! PathError",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.path:47",
         "contract": "docs/contracts/stdlib-hosted.md",
@@ -8758,7 +8734,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.path:47:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.path.Path.fromBytes"
+      "symbol": "std.path.Path.fromString"
     },
     {
       "dimensions_ref": "owner:std.path",
@@ -8767,7 +8743,7 @@
       "layer": "A2",
       "owner": "std.path",
       "scope": "STD-0.1A",
-      "signature": "pub fn Path.join(self, component: String): Path ! PathError",
+      "signature": "pub fn Path.fromBytes(value: Bytes): Path ! PathError",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.path:48",
         "contract": "docs/contracts/stdlib-hosted.md",
@@ -8782,7 +8758,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.path:48:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.path.Path.join"
+      "symbol": "std.path.Path.fromBytes"
     },
     {
       "dimensions_ref": "owner:std.path",
@@ -8791,7 +8767,7 @@
       "layer": "A2",
       "owner": "std.path",
       "scope": "STD-0.1A",
-      "signature": "pub fn Path.parent(self): Path?",
+      "signature": "pub fn Path.join(self, component: String): Path ! PathError",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.path:49",
         "contract": "docs/contracts/stdlib-hosted.md",
@@ -8806,7 +8782,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.path:49:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.path.Path.parent"
+      "symbol": "std.path.Path.join"
     },
     {
       "dimensions_ref": "owner:std.path",
@@ -8815,7 +8791,7 @@
       "layer": "A2",
       "owner": "std.path",
       "scope": "STD-0.1A",
-      "signature": "pub fn Path.fileName(self): String?",
+      "signature": "pub fn Path.parent(self): Path?",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.path:50",
         "contract": "docs/contracts/stdlib-hosted.md",
@@ -8830,7 +8806,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.path:50:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.path.Path.fileName"
+      "symbol": "std.path.Path.parent"
     },
     {
       "dimensions_ref": "owner:std.path",
@@ -8839,7 +8815,7 @@
       "layer": "A2",
       "owner": "std.path",
       "scope": "STD-0.1A",
-      "signature": "pub fn Path.extension(self): String?",
+      "signature": "pub fn Path.fileName(self): String?",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.path:51",
         "contract": "docs/contracts/stdlib-hosted.md",
@@ -8854,7 +8830,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.path:51:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.path.Path.extension"
+      "symbol": "std.path.Path.fileName"
     },
     {
       "dimensions_ref": "owner:std.path",
@@ -8863,7 +8839,7 @@
       "layer": "A2",
       "owner": "std.path",
       "scope": "STD-0.1A",
-      "signature": "pub fn Path.kind(self): Bool",
+      "signature": "pub fn Path.extension(self): String?",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.path:52",
         "contract": "docs/contracts/stdlib-hosted.md",
@@ -8878,7 +8854,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.path:52:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.path.Path.kind"
+      "symbol": "std.path.Path.extension"
     },
     {
       "dimensions_ref": "owner:std.path",
@@ -8887,7 +8863,7 @@
       "layer": "A2",
       "owner": "std.path",
       "scope": "STD-0.1A",
-      "signature": "pub fn Path.isEmpty(self): Bool",
+      "signature": "pub fn Path.kind(self): Bool",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.path:53",
         "contract": "docs/contracts/stdlib-hosted.md",
@@ -8902,7 +8878,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.path:53:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.path.Path.isEmpty"
+      "symbol": "std.path.Path.kind"
     },
     {
       "dimensions_ref": "owner:std.path",
@@ -8911,7 +8887,7 @@
       "layer": "A2",
       "owner": "std.path",
       "scope": "STD-0.1A",
-      "signature": "pub fn Path.toString(self): String ! PathError",
+      "signature": "pub fn Path.isEmpty(self): Bool",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.path:54",
         "contract": "docs/contracts/stdlib-hosted.md",
@@ -8926,7 +8902,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.path:54:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.path.Path.toString"
+      "symbol": "std.path.Path.isEmpty"
     },
     {
       "dimensions_ref": "owner:std.path",
@@ -8935,7 +8911,7 @@
       "layer": "A2",
       "owner": "std.path",
       "scope": "STD-0.1A",
-      "signature": "pub fn Path.toBytes(self): Bytes",
+      "signature": "pub fn Path.toString(self): String ! PathError",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.path:55",
         "contract": "docs/contracts/stdlib-hosted.md",
@@ -8948,6 +8924,30 @@
         "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.path:55:MODEL/TEST/FUZZ",
         "PERF": "owner:std.path:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.path:55:SPEC"
+      },
+      "status": "open-gaps",
+      "symbol": "std.path.Path.toString"
+    },
+    {
+      "dimensions_ref": "owner:std.path",
+      "id": "signature:std.path:56",
+      "kind": "signature",
+      "layer": "A2",
+      "owner": "std.path",
+      "scope": "STD-0.1A",
+      "signature": "pub fn Path.toBytes(self): Bytes",
+      "source": {
+        "audit": "testing/stdlib-public-api.json#rows/std.path:56",
+        "contract": "docs/contracts/stdlib-hosted.md",
+        "line": 56
+      },
+      "stage_refs": {
+        "CONF": "owner:std.path:CONF",
+        "DOC": "owner:std.path:DOC",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.path:56:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.path:56:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.path:PERF",
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.path:56:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.path.Path.toBytes"
@@ -9188,36 +9188,12 @@
     },
     {
       "dimensions_ref": "owner:std.process",
-      "id": "signature:std.process:147",
-      "kind": "signature",
-      "layer": "A2",
-      "owner": "std.process",
-      "scope": "STD-0.1A",
-      "signature": "pub fn command(program: String, arguments: ...String): Command ! ProcessError",
-      "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.process:147",
-        "contract": "docs/contracts/stdlib-hosted.md",
-        "line": 147
-      },
-      "stage_refs": {
-        "CONF": "owner:std.process:CONF",
-        "DOC": "owner:std.process:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.process:147:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.process:147:MODEL/TEST/FUZZ",
-        "PERF": "owner:std.process:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:147:SPEC"
-      },
-      "status": "open-gaps",
-      "symbol": "std.process.command"
-    },
-    {
-      "dimensions_ref": "owner:std.process",
       "id": "signature:std.process:148",
       "kind": "signature",
       "layer": "A2",
       "owner": "std.process",
       "scope": "STD-0.1A",
-      "signature": "pub fn shell(command: String): Command ! ProcessError",
+      "signature": "pub fn command(program: String, arguments: ...String): Command ! ProcessError",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.process:148",
         "contract": "docs/contracts/stdlib-hosted.md",
@@ -9232,7 +9208,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:148:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.process.shell"
+      "symbol": "std.process.command"
     },
     {
       "dimensions_ref": "owner:std.process",
@@ -9241,7 +9217,7 @@
       "layer": "A2",
       "owner": "std.process",
       "scope": "STD-0.1A",
-      "signature": "pub fn pipe(left: Command, right: Command): Pipeline ! ProcessError",
+      "signature": "pub fn shell(command: String): Command ! ProcessError",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.process:149",
         "contract": "docs/contracts/stdlib-hosted.md",
@@ -9256,7 +9232,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:149:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.process.pipe"
+      "symbol": "std.process.shell"
     },
     {
       "dimensions_ref": "owner:std.process",
@@ -9265,7 +9241,7 @@
       "layer": "A2",
       "owner": "std.process",
       "scope": "STD-0.1A",
-      "signature": "pub fn Command.mergeStderr(self): Command",
+      "signature": "pub fn pipe(left: Command, right: Command): Pipeline ! ProcessError",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.process:150",
         "contract": "docs/contracts/stdlib-hosted.md",
@@ -9280,7 +9256,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:150:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.process.Command.mergeStderr"
+      "symbol": "std.process.pipe"
     },
     {
       "dimensions_ref": "owner:std.process",
@@ -9289,7 +9265,7 @@
       "layer": "A2",
       "owner": "std.process",
       "scope": "STD-0.1A",
-      "signature": "pub fn Pipeline.mergeStderr(self): Pipeline",
+      "signature": "pub fn Command.mergeStderr(self): Command",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.process:151",
         "contract": "docs/contracts/stdlib-hosted.md",
@@ -9304,7 +9280,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:151:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.process.Pipeline.mergeStderr"
+      "symbol": "std.process.Command.mergeStderr"
     },
     {
       "dimensions_ref": "owner:std.process",
@@ -9313,7 +9289,7 @@
       "layer": "A2",
       "owner": "std.process",
       "scope": "STD-0.1A",
-      "signature": "pub fn Command.run(self): ExitStatus ! ProcessError",
+      "signature": "pub fn Pipeline.mergeStderr(self): Pipeline",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.process:152",
         "contract": "docs/contracts/stdlib-hosted.md",
@@ -9328,7 +9304,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:152:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.process.Command.run"
+      "symbol": "std.process.Pipeline.mergeStderr"
     },
     {
       "dimensions_ref": "owner:std.process",
@@ -9337,7 +9313,7 @@
       "layer": "A2",
       "owner": "std.process",
       "scope": "STD-0.1A",
-      "signature": "pub fn Command.output(self): ProcessOutput ! ProcessError",
+      "signature": "pub fn Command.run(self): ExitStatus ! ProcessError suspends",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.process:153",
         "contract": "docs/contracts/stdlib-hosted.md",
@@ -9352,7 +9328,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:153:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.process.Command.output"
+      "symbol": "std.process.Command.run"
     },
     {
       "dimensions_ref": "owner:std.process",
@@ -9361,7 +9337,7 @@
       "layer": "A2",
       "owner": "std.process",
       "scope": "STD-0.1A",
-      "signature": "pub fn Command.check(self): ProcessOutput ! (ProcessError | ProcessExitError)",
+      "signature": "pub fn Command.output(self): ProcessOutput ! ProcessError suspends",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.process:154",
         "contract": "docs/contracts/stdlib-hosted.md",
@@ -9376,7 +9352,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:154:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.process.Command.check"
+      "symbol": "std.process.Command.output"
     },
     {
       "dimensions_ref": "owner:std.process",
@@ -9385,7 +9361,7 @@
       "layer": "A2",
       "owner": "std.process",
       "scope": "STD-0.1A",
-      "signature": "pub fn Command.start(self): ProcessHandle ! ProcessError",
+      "signature": "pub fn Command.check(self): ProcessOutput ! (ProcessError | ProcessExitError) suspends",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.process:155",
         "contract": "docs/contracts/stdlib-hosted.md",
@@ -9400,7 +9376,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:155:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.process.Command.start"
+      "symbol": "std.process.Command.check"
     },
     {
       "dimensions_ref": "owner:std.process",
@@ -9409,7 +9385,7 @@
       "layer": "A2",
       "owner": "std.process",
       "scope": "STD-0.1A",
-      "signature": "pub fn ProcessHandle.wait(var self): ExitStatus ! ProcessError",
+      "signature": "pub fn Command.start(self): ProcessHandle ! ProcessError suspends",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.process:156",
         "contract": "docs/contracts/stdlib-hosted.md",
@@ -9424,7 +9400,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:156:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.process.ProcessHandle.wait"
+      "symbol": "std.process.Command.start"
     },
     {
       "dimensions_ref": "owner:std.process",
@@ -9433,7 +9409,7 @@
       "layer": "A2",
       "owner": "std.process",
       "scope": "STD-0.1A",
-      "signature": "pub fn ProcessHandle.cancel(var self): Unit",
+      "signature": "pub fn ProcessHandle.wait(var self): ExitStatus ! ProcessError suspends",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.process:157",
         "contract": "docs/contracts/stdlib-hosted.md",
@@ -9448,7 +9424,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:157:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.process.ProcessHandle.cancel"
+      "symbol": "std.process.ProcessHandle.wait"
     },
     {
       "dimensions_ref": "owner:std.process",
@@ -9457,7 +9433,7 @@
       "layer": "A2",
       "owner": "std.process",
       "scope": "STD-0.1A",
-      "signature": "pub fn ProcessOutput.stdout(self): Bytes",
+      "signature": "pub fn ProcessHandle.cancel(var self): Unit suspends",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.process:158",
         "contract": "docs/contracts/stdlib-hosted.md",
@@ -9472,7 +9448,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:158:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.process.ProcessOutput.stdout"
+      "symbol": "std.process.ProcessHandle.cancel"
     },
     {
       "dimensions_ref": "owner:std.process",
@@ -9481,7 +9457,7 @@
       "layer": "A2",
       "owner": "std.process",
       "scope": "STD-0.1A",
-      "signature": "pub fn ProcessOutput.stderr(self): Bytes",
+      "signature": "pub fn ProcessOutput.stdout(self): Bytes",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.process:159",
         "contract": "docs/contracts/stdlib-hosted.md",
@@ -9496,7 +9472,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:159:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.process.ProcessOutput.stderr"
+      "symbol": "std.process.ProcessOutput.stdout"
     },
     {
       "dimensions_ref": "owner:std.process",
@@ -9505,7 +9481,7 @@
       "layer": "A2",
       "owner": "std.process",
       "scope": "STD-0.1A",
-      "signature": "pub fn ProcessOutput.combined(self): Bytes",
+      "signature": "pub fn ProcessOutput.stderr(self): Bytes",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.process:160",
         "contract": "docs/contracts/stdlib-hosted.md",
@@ -9520,7 +9496,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:160:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.process.ProcessOutput.combined"
+      "symbol": "std.process.ProcessOutput.stderr"
     },
     {
       "dimensions_ref": "owner:std.process",
@@ -9529,7 +9505,7 @@
       "layer": "A2",
       "owner": "std.process",
       "scope": "STD-0.1A",
-      "signature": "pub fn ProcessOutput.statuses(self): Array[ExitStatus]",
+      "signature": "pub fn ProcessOutput.combined(self): Bytes",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.process:161",
         "contract": "docs/contracts/stdlib-hosted.md",
@@ -9544,7 +9520,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:161:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.process.ProcessOutput.statuses"
+      "symbol": "std.process.ProcessOutput.combined"
     },
     {
       "dimensions_ref": "owner:std.process",
@@ -9553,7 +9529,7 @@
       "layer": "A2",
       "owner": "std.process",
       "scope": "STD-0.1A",
-      "signature": "pub fn ExitStatus.code(self): Int?",
+      "signature": "pub fn ProcessOutput.statuses(self): Array[ExitStatus]",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.process:162",
         "contract": "docs/contracts/stdlib-hosted.md",
@@ -9568,7 +9544,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:162:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.process.ExitStatus.code"
+      "symbol": "std.process.ProcessOutput.statuses"
     },
     {
       "dimensions_ref": "owner:std.process",
@@ -9577,7 +9553,7 @@
       "layer": "A2",
       "owner": "std.process",
       "scope": "STD-0.1A",
-      "signature": "pub fn ExitStatus.success(self): Bool",
+      "signature": "pub fn ExitStatus.code(self): Int?",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.process:163",
         "contract": "docs/contracts/stdlib-hosted.md",
@@ -9590,6 +9566,30 @@
         "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.process:163:MODEL/TEST/FUZZ",
         "PERF": "owner:std.process:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:163:SPEC"
+      },
+      "status": "open-gaps",
+      "symbol": "std.process.ExitStatus.code"
+    },
+    {
+      "dimensions_ref": "owner:std.process",
+      "id": "signature:std.process:164",
+      "kind": "signature",
+      "layer": "A2",
+      "owner": "std.process",
+      "scope": "STD-0.1A",
+      "signature": "pub fn ExitStatus.success(self): Bool",
+      "source": {
+        "audit": "testing/stdlib-public-api.json#rows/std.process:164",
+        "contract": "docs/contracts/stdlib-hosted.md",
+        "line": 164
+      },
+      "stage_refs": {
+        "CONF": "owner:std.process:CONF",
+        "DOC": "owner:std.process:DOC",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.process:164:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.process:164:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.process:PERF",
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:164:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.process.ExitStatus.success"
@@ -10187,7 +10187,7 @@
       "layer": "A3",
       "owner": "std.protobuf",
       "scope": "STD-0.1A",
-      "signature": "pub fn ProtoReader[T].fromReader(var input: Reader, options: ProtoDecodeOptions): ProtoReader[T] ! ProtoError",
+      "signature": "pub fn ProtoReader[T].fromReader(var input: Reader, options: ProtoDecodeOptions): ProtoReader[T] ! ProtoError suspends",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.protobuf:120",
         "contract": "docs/contracts/stdlib-protobuf.md",
@@ -10283,7 +10283,7 @@
       "layer": "A3",
       "owner": "std.protobuf",
       "scope": "STD-0.1A",
-      "signature": "pub fn ProtoWriter[T].toWriter(var output: Writer, options: ProtoEncodeOptions): ProtoWriter[T] ! ProtoError",
+      "signature": "pub fn ProtoWriter[T].toWriter(var output: Writer, options: ProtoEncodeOptions): ProtoWriter[T] ! ProtoError suspends",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.protobuf:125",
         "contract": "docs/contracts/stdlib-protobuf.md",
@@ -10307,7 +10307,7 @@
       "layer": "A3",
       "owner": "std.protobuf",
       "scope": "STD-0.1A",
-      "signature": "pub fn ProtoWriter[T].write(var self, event: ProtoEvent): Unit ! ProtoError",
+      "signature": "pub fn ProtoWriter[T].write(var self, event: ProtoEvent): Unit ! ProtoError suspends",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.protobuf:126",
         "contract": "docs/contracts/stdlib-protobuf.md",
@@ -10331,7 +10331,7 @@
       "layer": "A3",
       "owner": "std.protobuf",
       "scope": "STD-0.1A",
-      "signature": "pub fn ProtoWriter[T].finish(var self): Unit ! ProtoError",
+      "signature": "pub fn ProtoWriter[T].finish(var self): Unit ! ProtoError suspends",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.protobuf:127",
         "contract": "docs/contracts/stdlib-protobuf.md",
@@ -11809,36 +11809,12 @@
     },
     {
       "dimensions_ref": "owner:std.text",
-      "id": "signature:std.text:91",
-      "kind": "signature",
-      "layer": "A1",
-      "owner": "std.text",
-      "scope": "STD-0.1A",
-      "signature": "pub fn String.empty(): String",
-      "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.text:91",
-        "contract": "docs/contracts/stdlib-core.md",
-        "line": 91
-      },
-      "stage_refs": {
-        "CONF": "owner:std.text:CONF",
-        "DOC": "owner:std.text:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.text:91:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.text:91:MODEL/TEST/FUZZ",
-        "PERF": "owner:std.text:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.text:91:SPEC"
-      },
-      "status": "open-gaps",
-      "symbol": "std.text.String.empty"
-    },
-    {
-      "dimensions_ref": "owner:std.text",
       "id": "signature:std.text:92",
       "kind": "signature",
       "layer": "A1",
       "owner": "std.text",
       "scope": "STD-0.1A",
-      "signature": "pub fn String.fromChars(chars: Array[Char]): String ! TextError",
+      "signature": "pub fn String.empty(): String",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.text:92",
         "contract": "docs/contracts/stdlib-core.md",
@@ -11853,7 +11829,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.text:92:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.text.String.fromChars"
+      "symbol": "std.text.String.empty"
     },
     {
       "dimensions_ref": "owner:std.text",
@@ -11862,7 +11838,7 @@
       "layer": "A1",
       "owner": "std.text",
       "scope": "STD-0.1A",
-      "signature": "pub fn String.length(self): Int",
+      "signature": "pub fn String.fromChars(chars: Array[Char]): String ! TextError",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.text:93",
         "contract": "docs/contracts/stdlib-core.md",
@@ -11877,7 +11853,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.text:93:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.text.String.length"
+      "symbol": "std.text.String.fromChars"
     },
     {
       "dimensions_ref": "owner:std.text",
@@ -11886,7 +11862,7 @@
       "layer": "A1",
       "owner": "std.text",
       "scope": "STD-0.1A",
-      "signature": "pub fn String.byteLength(self): Int",
+      "signature": "pub fn String.length(self): Int",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.text:94",
         "contract": "docs/contracts/stdlib-core.md",
@@ -11901,7 +11877,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.text:94:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.text.String.byteLength"
+      "symbol": "std.text.String.length"
     },
     {
       "dimensions_ref": "owner:std.text",
@@ -11910,7 +11886,7 @@
       "layer": "A1",
       "owner": "std.text",
       "scope": "STD-0.1A",
-      "signature": "pub fn String.get(self, index: Int): Char?",
+      "signature": "pub fn String.byteLength(self): Int",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.text:95",
         "contract": "docs/contracts/stdlib-core.md",
@@ -11925,7 +11901,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.text:95:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.text.String.get"
+      "symbol": "std.text.String.byteLength"
     },
     {
       "dimensions_ref": "owner:std.text",
@@ -11934,7 +11910,7 @@
       "layer": "A1",
       "owner": "std.text",
       "scope": "STD-0.1A",
-      "signature": "pub fn String.slice(self, start: Int, end: Int): String ! TextError",
+      "signature": "pub fn String.get(self, index: Int): Char?",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.text:96",
         "contract": "docs/contracts/stdlib-core.md",
@@ -11949,7 +11925,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.text:96:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.text.String.slice"
+      "symbol": "std.text.String.get"
     },
     {
       "dimensions_ref": "owner:std.text",
@@ -11958,7 +11934,7 @@
       "layer": "A1",
       "owner": "std.text",
       "scope": "STD-0.1A",
-      "signature": "pub fn String.contains(self, needle: String): Bool",
+      "signature": "pub fn String.slice(self, start: Int, end: Int): String ! TextError",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.text:97",
         "contract": "docs/contracts/stdlib-core.md",
@@ -11973,7 +11949,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.text:97:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.text.String.contains"
+      "symbol": "std.text.String.slice"
     },
     {
       "dimensions_ref": "owner:std.text",
@@ -11982,7 +11958,7 @@
       "layer": "A1",
       "owner": "std.text",
       "scope": "STD-0.1A",
-      "signature": "pub fn String.startsWith(self, prefix: String): Bool",
+      "signature": "pub fn String.contains(self, needle: String): Bool",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.text:98",
         "contract": "docs/contracts/stdlib-core.md",
@@ -11997,7 +11973,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.text:98:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.text.String.startsWith"
+      "symbol": "std.text.String.contains"
     },
     {
       "dimensions_ref": "owner:std.text",
@@ -12006,7 +11982,7 @@
       "layer": "A1",
       "owner": "std.text",
       "scope": "STD-0.1A",
-      "signature": "pub fn String.endsWith(self, suffix: String): Bool",
+      "signature": "pub fn String.startsWith(self, prefix: String): Bool",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.text:99",
         "contract": "docs/contracts/stdlib-core.md",
@@ -12021,7 +11997,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.text:99:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.text.String.endsWith"
+      "symbol": "std.text.String.startsWith"
     },
     {
       "dimensions_ref": "owner:std.text",
@@ -12030,7 +12006,7 @@
       "layer": "A1",
       "owner": "std.text",
       "scope": "STD-0.1A",
-      "signature": "pub fn String.find(self, needle: String): Int?",
+      "signature": "pub fn String.endsWith(self, suffix: String): Bool",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.text:100",
         "contract": "docs/contracts/stdlib-core.md",
@@ -12045,7 +12021,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.text:100:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.text.String.find"
+      "symbol": "std.text.String.endsWith"
     },
     {
       "dimensions_ref": "owner:std.text",
@@ -12054,7 +12030,7 @@
       "layer": "A1",
       "owner": "std.text",
       "scope": "STD-0.1A",
-      "signature": "pub fn String.replace(self, old: String, new: String): String",
+      "signature": "pub fn String.find(self, needle: String): Int?",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.text:101",
         "contract": "docs/contracts/stdlib-core.md",
@@ -12069,7 +12045,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.text:101:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.text.String.replace"
+      "symbol": "std.text.String.find"
     },
     {
       "dimensions_ref": "owner:std.text",
@@ -12078,7 +12054,7 @@
       "layer": "A1",
       "owner": "std.text",
       "scope": "STD-0.1A",
-      "signature": "pub fn String.trim(self): String",
+      "signature": "pub fn String.replace(self, old: String, new: String): String",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.text:102",
         "contract": "docs/contracts/stdlib-core.md",
@@ -12093,7 +12069,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.text:102:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.text.String.trim"
+      "symbol": "std.text.String.replace"
     },
     {
       "dimensions_ref": "owner:std.text",
@@ -12102,7 +12078,7 @@
       "layer": "A1",
       "owner": "std.text",
       "scope": "STD-0.1A",
-      "signature": "pub fn String.toLowerAscii(self): String",
+      "signature": "pub fn String.trim(self): String",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.text:103",
         "contract": "docs/contracts/stdlib-core.md",
@@ -12117,7 +12093,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.text:103:SPEC"
       },
       "status": "open-gaps",
-      "symbol": "std.text.String.toLowerAscii"
+      "symbol": "std.text.String.trim"
     },
     {
       "dimensions_ref": "owner:std.text",
@@ -12126,7 +12102,7 @@
       "layer": "A1",
       "owner": "std.text",
       "scope": "STD-0.1A",
-      "signature": "pub fn String.toUpperAscii(self): String",
+      "signature": "pub fn String.toLowerAscii(self): String",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.text:104",
         "contract": "docs/contracts/stdlib-core.md",
@@ -12141,28 +12117,52 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.text:104:SPEC"
       },
       "status": "open-gaps",
+      "symbol": "std.text.String.toLowerAscii"
+    },
+    {
+      "dimensions_ref": "owner:std.text",
+      "id": "signature:std.text:105",
+      "kind": "signature",
+      "layer": "A1",
+      "owner": "std.text",
+      "scope": "STD-0.1A",
+      "signature": "pub fn String.toUpperAscii(self): String",
+      "source": {
+        "audit": "testing/stdlib-public-api.json#rows/std.text:105",
+        "contract": "docs/contracts/stdlib-core.md",
+        "line": 105
+      },
+      "stage_refs": {
+        "CONF": "owner:std.text:CONF",
+        "DOC": "owner:std.text:DOC",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.text:105:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.text:105:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.text:PERF",
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.text:105:SPEC"
+      },
+      "status": "open-gaps",
       "symbol": "std.text.String.toUpperAscii"
     },
     {
       "dimensions_ref": "owner:std.text",
-      "id": "signature:std.text:108",
+      "id": "signature:std.text:109",
       "kind": "signature",
       "layer": "A1",
       "owner": "std.text",
       "scope": "STD-0.1A",
       "signature": "pub fn String.chars(self): String",
       "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.text:108",
+        "audit": "testing/stdlib-public-api.json#rows/std.text:109",
         "contract": "docs/contracts/stdlib-core.md",
-        "line": 108
+        "line": 109
       },
       "stage_refs": {
         "CONF": "owner:std.text:CONF",
         "DOC": "owner:std.text:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.text:108:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.text:108:MODEL/TEST/FUZZ",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.text:109:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.text:109:MODEL/TEST/FUZZ",
         "PERF": "owner:std.text:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.text:108:SPEC"
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.text:109:SPEC"
       },
       "status": "open-gaps",
       "symbol": "std.text.String.chars"
@@ -12435,7 +12435,7 @@
       "layer": "A0",
       "owner": "std.time",
       "scope": "STD-0.1A",
-      "signature": "pub fn sleep(delay: Duration): Unit ! ClockError",
+      "signature": "pub fn sleep(delay: Duration): Unit ! ClockError suspends",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.time:43",
         "contract": "docs/contracts/stdlib-time.md",
@@ -12507,7 +12507,7 @@
       "layer": "A0",
       "owner": "std.time",
       "scope": "STD-0.1A",
-      "signature": "pub fn Timer.wait(self): Unit ! ClockError",
+      "signature": "pub fn Timer.wait(self): Unit ! ClockError suspends",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.time:47",
         "contract": "docs/contracts/stdlib-time.md",

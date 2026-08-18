@@ -150,17 +150,27 @@ La ejecución se divide en bloques del tracker:
 | ID | Entrega | Dependencias |
 |---|---|---|
 | `DIAG-SPEC-001` | Profiles, envelope, identidad, privacidad, límites y CLI | `PERF-001`, contratos CLI/testing |
-| `DIAG-RUNTIME-001` | Registro de task/thread, eventos de memoria, roots, recursos y source maps en VM | `DIAG-SPEC-001` |
-| `RACE-001` | Detector dinámico y corpus positivo/negativo | `DIAG-RUNTIME-001`, async/sync/unsafe |
-| `LEAK-001` | Retención GC, recursos y FFI con snapshots reproducibles | `DIAG-RUNTIME-001`, `NATIVE-MEM-ADR-001` |
+| `STD-CONC-001` / `STD-SYNC-001` / `STD-EXEC-001` / `STD-NET-001` | Contratos runtime-facing y eventos observables, sin implementación pública | `DIAG-SPEC-001`, foundations STD-0.1A |
+| `DIAG-RUNTIME-001` | Registro de task/thread, eventos de memoria, roots, recursos y source maps en VM | `DIAG-SPEC-001`, contratos runtime-facing B0, VM hosted |
+| `RACE-001` | Detector VM sobre tasks, memoria, unsafe y primitivas internas; corpus positivo/negativo | `DIAG-RUNTIME-001` |
+| `LEAK-001` | Retención GC y recursos hosted con snapshots reproducibles | `DIAG-RUNTIME-001` |
 | `DUMP-001` | Captura `.tdump`, redacción y analizador | `DIAG-SPEC-001`, source maps/unwind VM |
 | `DIAG-TEST-001` | Integración por intento, retry, shard, JSON/JUnit y artifacts | `RACE-001`, `LEAK-001`, `DUMP-001` |
 | `DIAG-CI-001` | Lanes, budgets, fuzzing, regression corpus y promotion gate | `DIAG-TEST-001`, `PERF-001` |
+| `DIAG-NATIVE-001` | Paridad nativa de race/leaks/dumps, roots/retainers, threads, unwind y source maps | backend elegido, memoria/ABI/lowering nativos, `NATIVE-THREAD-001`, detectores VM |
+| `DIAG-STDLIB-001` | Adapters de detector para channel/sync/executor/net y corpus VM/native | implementaciones STD-0.1B aplicables, `DIAG-NATIVE-001` |
+
+`RACE-001` anterior al backend cubre tasks, memoria, unsafe y primitivas
+internas del runtime; no afirma todavía cobertura de las APIs públicas de
+channel, sync, executor o net. Esa integración pertenece a
+`DIAG-STDLIB-001`, después de implementar sus owners.
 
 `NATIVE-001` no puede seleccionar un backend sin evaluar cómo conserva el
 registro de tasks/threads, hooks de memoria/GC, source maps, unwind y crash
 dumps. `NATIVE-MEM-ADR-001` y `NATIVE-ABI-001` incorporan estos requisitos; la
 implementación de STD-0.1B no publica APIs paralelas para satisfacerlos.
+`LEAK-001` no depende del modelo de memoria nativo: primero prueba la VM y el
+ledger hosted; `DIAG-NATIVE-001` prueba después ARC/ciclos/FFI nativos.
 
 ## 8. No objetivos de esta revisión
 

@@ -40,11 +40,11 @@ pub enum ClockError {
 pub fn now(): Instant ! ClockError
 pub fn resolution(): Duration ! ClockError
 pub fn deadline(after: Duration): Instant ! ClockError
-pub fn sleep(delay: Duration): Unit ! ClockError
+pub fn sleep(delay: Duration): Unit ! ClockError suspends
 
 pub fn Timer.after(delay: Duration): Timer ! ClockError
 pub fn Timer.at(deadline: Instant): Timer ! ClockError
-pub fn Timer.wait(self): Unit ! ClockError
+pub fn Timer.wait(self): Unit ! ClockError suspends
 pub fn Timer.cancel(self): Unit
 ~~~
 

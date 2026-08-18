@@ -26,7 +26,21 @@ fn complete_baseline_suite_matches_in_process() {
     let expected =
         fs::read(root.join("conformance/0.1/results/tondo-reference-draft-tondo-vm-hosted.json"))
             .expect("the draft reference result must exist");
-    assert_eq!(actual, expected);
+    if actual != expected {
+        let at = actual
+            .iter()
+            .zip(&expected)
+            .position(|(actual, expected)| actual != expected)
+            .unwrap_or_else(|| actual.len().min(expected.len()));
+        let start = at.saturating_sub(80);
+        let actual_end = (at + 160).min(actual.len());
+        let expected_end = (at + 160).min(expected.len());
+        panic!(
+            "bootstrap result diverged at byte {at}: actual `{}`, expected `{}`",
+            String::from_utf8_lossy(&actual[start..actual_end]),
+            String::from_utf8_lossy(&expected[start..expected_end]),
+        );
+    }
 }
 
 #[cfg(not(target_os = "linux"))]

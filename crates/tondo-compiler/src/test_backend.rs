@@ -132,7 +132,6 @@ pub struct TestEntry {
     body: Vec<u8>,
     setup: Vec<Vec<u8>>,
     suites: Vec<String>,
-    requires_async: bool,
 }
 
 impl TestEntry {
@@ -231,7 +230,6 @@ pub fn discover(
     let mut entries = Vec::new();
     let mut parents = Vec::new();
     let mut setup = Vec::new();
-    let mut setup_async = Vec::new();
     visit_declarations(
         file,
         source.bytes(),
@@ -241,7 +239,6 @@ pub fn discover(
         source.module().as_str(),
         &mut parents,
         &mut setup,
-        &mut setup_async,
         &mut entries,
     )?;
     Ok(entries)
@@ -305,11 +302,7 @@ pub fn lower_selected(
     if saw_main {
         return Err(TestBackendError::ProductionMain);
     }
-    if selected.requires_async {
-        output.extend_from_slice(b"async fn main() {\n");
-    } else {
-        output.extend_from_slice(b"fn main() {\n");
-    }
+    output.extend_from_slice(b"fn main() {\n");
     for statement in selected.setup() {
         output.extend_from_slice(statement);
         output.extend_from_slice(b"\n");
@@ -564,7 +557,6 @@ fn visit_declarations<'a>(
     module: &str,
     parents: &mut Vec<String>,
     setup: &mut Vec<Vec<u8>>,
-    setup_async: &mut Vec<bool>,
     entries: &mut Vec<TestEntry>,
 ) -> Result<(), TestBackendError> {
     for declaration in declarations {
@@ -594,11 +586,6 @@ fn visit_declarations<'a>(
                     body: block_contents(source, body.syntax().range())?,
                     setup: setup.clone(),
                     suites: parents.clone(),
-                    requires_async: setup_async.iter().any(|requires| *requires)
-                        || body
-                            .syntax()
-                            .descendant_tokens()
-                            .any(|token| token.kind() == crate::syntax::TokenKind::Await),
                 });
             }
             Declaration::Suite(suite) => {
@@ -615,12 +602,6 @@ fn visit_declarations<'a>(
                 for statement in body.setup() {
                     let range = statement.syntax().range();
                     setup.push(slice(source, range)?.to_vec());
-                    setup_async.push(
-                        statement
-                            .syntax()
-                            .descendant_tokens()
-                            .any(|token| token.kind() == crate::syntax::TokenKind::Await),
-                    );
                 }
                 visit_declarations(
                     file,
@@ -631,12 +612,10 @@ fn visit_declarations<'a>(
                     module,
                     parents,
                     setup,
-                    setup_async,
                     entries,
                 )?;
                 for _ in body.setup() {
                     setup.pop();
-                    setup_async.pop();
                 }
                 parents.pop();
             }
@@ -765,15 +744,15 @@ mod tests {
     #[test]
     fn async_is_inferred_from_suite_setup_or_test_body() {
         for source in [
-            b"async fn value(): Int { 1 }\nsuite service { let item = await value()\n test reads { assert(item == 1) } }\n".as_slice(),
-            b"async fn value(): Int { 1 }\ntest reads { assert(await value() == 1) }\n".as_slice(),
+            b"fn value(): Int suspends { 1 }\nsuite service { let item = value()\n test reads { assert(item == 1) } }\n".as_slice(),
+            b"fn value(): Int suspends { 1 }\ntest reads { assert(value() == 1) }\n".as_slice(),
         ] {
             let (sources, file, parsed, package) = parsed(source);
             let output =
                 lower_selected(&sources, file, parsed.cst(), &package, "main", None).unwrap();
             assert!(String::from_utf8(output)
                 .unwrap()
-                .contains("async fn main()"));
+                .contains("fn main()"));
         }
     }
 

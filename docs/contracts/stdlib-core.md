@@ -10,9 +10,9 @@ debe conservar exactamente las firmas y los observables de este documento.
 - Todas las operaciones son dispatch estático. No hay `Any`, vtables ni
   lookup por nombre.
 - Las llamadas a operaciones `suspends` esperan automáticamente en la forma
-  ordinaria. El efecto se infiere transitivamente y se publica como `suspends`
-  en la interfaz/ABI; los errores se devuelven como `Result` con la sintaxis
-  `T ! E`.
+  ordinaria. Los contratos sin cuerpo escriben el efecto; los cuerpos pueden
+  declararlo o inferirlo transitivamente. Siempre se publica como `suspends` en
+  la interfaz/ABI; los errores se devuelven como `Result` con `T ! E`.
 - Los límites de memoria, longitud y pasos son argumentos de options o defaults
   finitos del owner; alcanzar un límite devuelve un error nominal y no publica
   un valor parcial.
@@ -53,9 +53,10 @@ errores. `unwrapOr` es total. La construcción de un error no toca el host.
 
 ## `std.async`
 
-El owner usa la suspensión inferida del lenguaje: no publica modificadores
-fuente ni wrappers `Task`/`Future` y no duplica operaciones con sufijos async.
-La interfaz canónica imprime `suspends` después del outcome. `Join` solo nace de
+El owner usa el único efecto de suspensión del lenguaje: no publica wrappers
+`Task`/`Future` ni duplica operaciones con sufijos async. Los contratos
+bodyless escriben `suspends` después del outcome y la interfaz canónica siempre
+lo conserva. `Join` solo nace de
 `spawn` y se consume mediante `await handle`; la cancelación y el detach son
 operaciones terminales estructuradas. `await` delante de una llamada directa es
 opcional; para convertir un `Join` o `Waiter` pendiente en su resultado sigue
@@ -69,12 +70,12 @@ pub type Completer[T, E]
 pub type AlreadyCompleted
 
 pub fn oneshot[T, E](): (Waiter[T, E], Completer[T, E])
-pub fn Waiter.wait(var self): T ! E
+pub fn Waiter.wait(var self): T ! E suspends
 pub fn Completer.complete(var self, value: T): Unit ! AlreadyCompleted
 pub fn Completer.fail(var self, error: E): Unit ! AlreadyCompleted
 pub fn Completer.cancel(var self): Unit ! AlreadyCompleted
 
-trait AsyncIterator[T] { fn next(mut self): T? }
+trait AsyncIterator[T] { fn next(mut self): T? suspends }
 ```
 
 La finalización de `Completer` es atómica y exactamente una operación gana; las
@@ -248,16 +249,16 @@ convertir el número de allocations en una garantía semántica.
 pub enum IoError { Closed, Cancelled, InvalidData, ResourceLimit, Host }
 pub enum ReadResult { Data(Bytes), Eof }
 pub trait Reader {
-    fn read(var self, max: Int): ReadResult ! IoError
+    fn read(var self, max: Int): ReadResult ! IoError suspends
 }
 pub trait Writer {
-    fn write(var self, data: Bytes): Int ! IoError
-    fn flush(var self): Unit ! IoError
+    fn write(var self, data: Bytes): Int ! IoError suspends
+    fn flush(var self): Unit ! IoError suspends
 }
 pub fn defaultLimits(): IoLimits
 pub fn limits(maxBytes: Int, maxRead: Int): IoLimits ! IoError
-pub fn readAll[R: Reader](var reader: R, limits: IoLimits): Bytes ! IoError
-pub fn writeAll(var writer: Writer, data: Bytes): Unit ! IoError
+pub fn readAll[R: Reader](var reader: R, limits: IoLimits): Bytes ! IoError suspends
+pub fn writeAll(var writer: Writer, data: Bytes): Unit ! IoError suspends
 pub type IoLimits
 ```
 

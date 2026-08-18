@@ -15,8 +15,8 @@ can represent:
 - canonical scalar types, including `Unit` and `Never`;
 - nominal applications identified by a complete type-namespace
   `SymbolIdentity`;
-- tuples and function types with parameter modes, variadics, inferred
-  `suspends`, and unsafe;
+- tuples and function types with parameter modes, variadics, denotable or
+  inferred `suspends`, and unsafe;
 - option, result, and normalized structural union types;
 - intrinsic applications such as `Array[T]`, `Map[K, V]`, and `Ref[T]`;
 - generic parameters by complete binder position;

@@ -312,6 +312,7 @@ impl Parser<'_> {
         if self.at(TokenKind::Colon) {
             self.parse_outcome_annotation(true)?;
         }
+        self.eat(TokenKind::Suspends);
         self.expect_line_end()?;
         self.finish();
         Ok(())
@@ -487,6 +488,7 @@ impl Parser<'_> {
         if self.at(TokenKind::Colon) {
             self.parse_outcome_annotation(false)?;
         }
+        self.eat(TokenKind::Suspends);
         if self.at(TokenKind::LBrace) {
             self.parse_block()?;
             self.expect_line_end()?;
@@ -601,6 +603,7 @@ impl Parser<'_> {
         if self.at(TokenKind::Colon) {
             self.parse_outcome_annotation(false)?;
         }
+        self.eat(TokenKind::Suspends);
         self.parse_block()?;
         self.expect_line_end()?;
         self.finish();
@@ -629,6 +632,7 @@ impl Parser<'_> {
         if self.at(TokenKind::Colon) {
             self.parse_outcome_annotation(true)?;
         }
+        self.eat(TokenKind::Suspends);
         self.parse_block()?;
         self.expect_line_end()?;
         self.finish();
@@ -1078,6 +1082,7 @@ impl Parser<'_> {
         if self.at(TokenKind::Colon) {
             self.parse_outcome_annotation(false)?;
         }
+        self.eat(TokenKind::Suspends);
         self.finish();
         Ok(())
     }
@@ -3309,7 +3314,10 @@ impl Parser<'_> {
             }
         };
 
-        if self.nth(after_parameters) == TokenKind::LBrace {
+        if self.nth(after_parameters) == TokenKind::LBrace
+            || (self.nth(after_parameters) == TokenKind::Suspends
+                && self.nth(after_parameters + 1) == TokenKind::LBrace)
+        {
             return true;
         }
         if self.nth(after_parameters) != TokenKind::Colon {
@@ -4604,6 +4612,73 @@ async fn later(): impl Discard ! String { 1 }
                 "source: {source:?}"
             );
         }
+    }
+
+    #[test]
+    fn suspends_is_a_postfix_effect_on_every_public_signature_shape() {
+        let source = br#"trait Reader {
+    fn read(var self, buffer: mut Bytes): Int ! IoError suspends
+}
+type Input = { value: Int }
+impl Reader for Input {
+    fn read(var self, buffer: mut Bytes): Int ! IoError suspends {
+        0
+    }
+}
+pub fn fetch(): String ! IoError suspends {
+    "ready"
+}
+fn accepts(operation: fn(mut Bytes): Int ! IoError suspends) {
+    _ = operation
+}
+"#;
+        let (sources, file, parsed) = parse_source(source, ParseMode::Module);
+        assert!(
+            parsed.diagnostics().is_empty(),
+            "{:#?}",
+            parsed.diagnostics()
+        );
+        assert_eq!(
+            parsed
+                .cst()
+                .tokens()
+                .iter()
+                .filter(|token| token.kind() == TokenKind::Suspends)
+                .count(),
+            4
+        );
+        assert_lossless(&sources, file, &parsed, source);
+
+        let sequence = br#"pub fn read(value: mut Bytes): Int ! IoError suspends
+fn run() suspends {
+    read(mut bytes)
+}
+"#;
+        let (sources, file, parsed) = parse_source(sequence, ParseMode::SyntaxSequence);
+        assert!(
+            parsed.diagnostics().is_empty(),
+            "{:#?}",
+            parsed.diagnostics()
+        );
+        assert_eq!(
+            parsed
+                .cst()
+                .nodes()
+                .iter()
+                .filter(|node| node.kind() == SyntaxKind::FunctionSignature)
+                .count(),
+            1
+        );
+        assert_eq!(
+            parsed
+                .cst()
+                .nodes()
+                .iter()
+                .filter(|node| node.kind() == SyntaxKind::FunctionDecl)
+                .count(),
+            1
+        );
+        assert_lossless(&sources, file, &parsed, sequence);
     }
 
     #[test]

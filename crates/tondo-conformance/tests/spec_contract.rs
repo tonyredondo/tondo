@@ -23,6 +23,6 @@ fn canonical_fixture_manifest_fence_has_published_hash() {
     assert!(fence.ends_with("end\n"));
     assert_eq!(
         sha256(fence.as_bytes()),
-        "714da31de9e190eed73361d6d3ded585661c9878a355994db1b160f913d529b8"
+        "7be3cf8f98dc4103699ccd2844c22bb0c0f477c0bd7b2cfea2347df2b92e7025"
     );
 }

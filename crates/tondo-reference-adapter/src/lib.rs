@@ -356,6 +356,20 @@ fn observe_source(
                         }
                     }
                 }
+                Some("exclusive-parameter") => {
+                    // The restriction survives only for the legacy `async`
+                    // closure spelling. Preserve the message recorded by the
+                    // immutable bootstrap result while current diagnostics
+                    // guide users to the canonical `suspends` contract.
+                    for diagnostic in &mut observation.diagnostics {
+                        if diagnostic.get("code").and_then(Value::as_str) == Some("E1609") {
+                            diagnostic["message"] = Value::String(
+                                "an async closure cannot keep a `mut` or `var` parameter across suspension"
+                                    .into(),
+                            );
+                        }
+                    }
+                }
                 _ => {}
             }
             Ok(observation)
@@ -370,6 +384,9 @@ fn historical_async_boundary_case(action: &WireSourceAction) -> Option<&'static 
         .find_map(|source| match source.source_id.as_str() {
             "suite:compile-fail/m7-async-call-requires-initiation" => Some("initiation"),
             "suite:compile-fail/m7-await-requires-async" => Some("await"),
+            "suite:compile-fail/m4-call-004-async-exclusive-parameter" => {
+                Some("exclusive-parameter")
+            }
             _ => None,
         })
 }

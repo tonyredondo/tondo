@@ -117,14 +117,14 @@ pub fn validate[T](input: Bytes, options: ProtoDecodeOptions): Unit ! ProtoError
 pub fn descriptor[T](): ProtoDescriptor[T]
 
 pub fn ProtoReader[T].fromBytes(input: Bytes, options: ProtoDecodeOptions): ProtoReader[T] ! ProtoError
-pub fn ProtoReader[T].fromReader(var input: Reader, options: ProtoDecodeOptions): ProtoReader[T] ! ProtoError
+pub fn ProtoReader[T].fromReader(var input: Reader, options: ProtoDecodeOptions): ProtoReader[T] ! ProtoError suspends
 pub fn ProtoReader[T].next(var self): ProtoEvent? ! ProtoError
 pub fn ProtoReader[T].own(var self, event: ProtoEvent): ProtoEvent ! ProtoError
 pub fn ProtoReader[T].finish(var self): Unit ! ProtoError
 
-pub fn ProtoWriter[T].toWriter(var output: Writer, options: ProtoEncodeOptions): ProtoWriter[T] ! ProtoError
-pub fn ProtoWriter[T].write(var self, event: ProtoEvent): Unit ! ProtoError
-pub fn ProtoWriter[T].finish(var self): Unit ! ProtoError
+pub fn ProtoWriter[T].toWriter(var output: Writer, options: ProtoEncodeOptions): ProtoWriter[T] ! ProtoError suspends
+pub fn ProtoWriter[T].write(var self, event: ProtoEvent): Unit ! ProtoError suspends
+pub fn ProtoWriter[T].finish(var self): Unit ! ProtoError suspends
 
 pub fn UnknownFields.count(self): Int
 pub fn UnknownFields.discard(var self): Unit

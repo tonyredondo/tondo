@@ -806,10 +806,12 @@ ordinarias esperan automáticamente y devuelven el resultado lógico; no crean u
 wrapper `Task`/`Future` ni una segunda API.
 
 La interfaz pública imprime el efecto como `suspends` después del outcome y lo
-incluye en el hash ABI. Ese marcador pertenece al contrato publicado, no exige
-un modificador repetido en la implementación fuente. `@sync`/`@nosuspend`
-garantiza que una función no suspende y rechaza cualquier llamada suspendible,
-incluso cuando aparece sin `await`.
+incluye en el hash ABI. Una declaración sin cuerpo debe escribirlo; una
+implementación con cuerpo puede declararlo o dejar que el compilador lo infiera.
+El marcador explícito fija la promesa pública aunque la ruta actual complete de
+inmediato. `@sync`/`@nosuspend` garantiza que una función no suspende, es
+incompatible con `suspends` y rechaza cualquier llamada suspendible, incluso
+cuando aparece sin `await`.
 
 Una operación síncrona:
 
@@ -867,13 +869,13 @@ pub type Completer[T, E]
 pub type AlreadyCompleted
 
 pub fn oneshot[T, E](): (Waiter[T, E], Completer[T, E])
-pub fn Waiter.wait(var self): T ! E
+pub fn Waiter.wait(var self): T ! E suspends
 pub fn Completer.complete(var self, value: T): Unit ! AlreadyCompleted
 pub fn Completer.fail(var self, error: E): Unit ! AlreadyCompleted
 pub fn Completer.cancel(var self): Unit ! AlreadyCompleted
 
 pub trait AsyncIterator[T] {
-    fn next(mut self): T?
+    fn next(mut self): T? suspends
 }
 ~~~
 
@@ -1238,9 +1240,10 @@ Sus APIs concretas deberán distinguir:
 
 Un reader o writer concreto conserva el owner de su módulo y satisface los
 protocolos mediante dispatch estático. `read`, `write`, `flush`, `readAll` y
-`writeAll` se declaran como `fn`; si una implementación puede esperar I/O, el
-compilador infiere el efecto y una llamada ordinaria espera automáticamente. El
-caller puede escribir `await` como forma explícita, pero no hay variantes
+`writeAll` se declaran como `fn` con `suspends` en sus contratos sin cuerpo; una
+implementación con cuerpo puede conservarlo explícitamente o inferirlo. Una
+llamada ordinaria espera automáticamente. El caller puede escribir `await` como
+forma explícita, pero no hay variantes
 `readAsync` ni `writeAsync`. STD-0.1 no exige type erasure, vtables ni
 un stream dinámico común para almacenar implementaciones heterogéneas.
 
@@ -1250,16 +1253,16 @@ La superficie mínima de `std.io` es:
 enum IoError { Closed, Cancelled, InvalidData, ResourceLimit, Host }
 enum ReadResult { Data(Bytes), Eof }
 trait Reader {
-    fn read(var self, max: Int): ReadResult ! IoError
+    fn read(var self, max: Int): ReadResult ! IoError suspends
 }
 trait Writer {
-    fn write(var self, data: Bytes): Int ! IoError
-    fn flush(var self): Unit ! IoError
+    fn write(var self, data: Bytes): Int ! IoError suspends
+    fn flush(var self): Unit ! IoError suspends
 }
 fn defaultLimits(): IoLimits
 fn limits(maxBytes: Int, maxRead: Int): IoLimits ! IoError
-fn readAll[R: Reader](var reader: R, limits: IoLimits): Bytes ! IoError
-fn writeAll(var writer: Writer, data: Bytes): Unit ! IoError
+fn readAll[R: Reader](var reader: R, limits: IoLimits): Bytes ! IoError suspends
+fn writeAll(var writer: Writer, data: Bytes): Unit ! IoError suspends
 type IoLimits
 ```
 
@@ -1328,13 +1331,13 @@ type File
 type Directory
 type Metadata
 enum OpenMode { Read, Write, ReadWrite, Append, Create, CreateNew }
-fn open(path: Path, mode: OpenMode): File ! FsError
-fn openDirectory(path: Path): Directory ! FsError
-fn metadata(path: Path): Metadata ! FsError
-fn File.read(var self, max: Int): Option[Bytes] ! FsError
-fn File.write(var self, data: Bytes): Int ! FsError
-fn File.flush(var self): Unit ! FsError
-fn Directory.list(var self): Array[Path] ! FsError
+fn open(path: Path, mode: OpenMode): File ! FsError suspends
+fn openDirectory(path: Path): Directory ! FsError suspends
+fn metadata(path: Path): Metadata ! FsError suspends
+fn File.read(var self, max: Int): Option[Bytes] ! FsError suspends
+fn File.write(var self, data: Bytes): Int ! FsError suspends
+fn File.flush(var self): Unit ! FsError suspends
+fn Directory.list(var self): Array[Path] ! FsError suspends
 ```
 
 `File` y `Directory` son afines: el owner se revoca en cleanup normal y durante
@@ -1909,13 +1912,13 @@ para representar también un deadline ya vencido. Las esperas y timers solo
 aceptan retrasos no negativos:
 
 ~~~tondo pseudocode
-pub fn sleep(delay: Duration): Unit ! ClockError
+pub fn sleep(delay: Duration): Unit ! ClockError suspends
 
 pub type Timer
 
 pub fn Timer.after(delay: Duration): Timer ! ClockError
 pub fn Timer.at(deadline: Instant): Timer ! ClockError
-pub fn Timer.wait(self): Unit ! ClockError
+pub fn Timer.wait(self): Unit ! ClockError suspends
 pub fn Timer.cancel(self): Unit
 ~~~
 
@@ -2575,8 +2578,8 @@ pub fn raw(input: Bytes): Raw ! JsonError
 pub unsafe fn rawUnchecked(input: Bytes): Raw
 pub fn JsonReader.next(var self): JsonEvent? ! JsonError
 pub fn JsonReader.own(var self, event: JsonEvent): JsonEvent ! JsonError
-pub fn JsonWriter.write(var self, event: JsonEvent): Unit ! JsonError
-pub fn JsonWriter.finish(var self): Unit ! JsonError
+pub fn JsonWriter.write(var self, event: JsonEvent): Unit ! JsonError suspends
+pub fn JsonWriter.finish(var self): Unit ! JsonError suspends
 ~~~
 
 Los tipos, options, limits, eventos y errores exhaustivos están cerrados en el
@@ -2633,8 +2636,8 @@ pub fn raw(input: Bytes, options: MessagePackDecodeOptions): Raw ! MessagePackEr
 pub unsafe fn rawUnchecked(input: Bytes): Raw
 pub fn MessagePackReader.next(var self): MessagePackEvent? ! MessagePackError
 pub fn MessagePackReader.own(var self, event: MessagePackEvent): MessagePackEvent ! MessagePackError
-pub fn MessagePackWriter.write(var self, event: MessagePackEvent): Unit ! MessagePackError
-pub fn MessagePackWriter.finish(var self): Unit ! MessagePackError
+pub fn MessagePackWriter.write(var self, event: MessagePackEvent): Unit ! MessagePackError suspends
+pub fn MessagePackWriter.finish(var self): Unit ! MessagePackError suspends
 ~~~
 
 El catálogo completo de `Value`, ext/timestamp, policies, limits,
@@ -2778,8 +2781,8 @@ pub fn validate[T](input: Bytes, options: ProtoDecodeOptions): Unit ! ProtoError
 pub fn descriptor[T](): ProtoDescriptor[T]
 pub fn ProtoReader[T].next(var self): ProtoEvent? ! ProtoError
 pub fn ProtoReader[T].own(var self, event: ProtoEvent): ProtoEvent ! ProtoError
-pub fn ProtoWriter[T].write(var self, event: ProtoEvent): Unit ! ProtoError
-pub fn ProtoWriter[T].finish(var self): Unit ! ProtoError
+pub fn ProtoWriter[T].write(var self, event: ProtoEvent): Unit ! ProtoError suspends
+pub fn ProtoWriter[T].finish(var self): Unit ! ProtoError suspends
 ~~~
 
 La implementación portable vive en `crates/tondo-stdlib/src/protobuf_api.rs`:
@@ -3142,10 +3145,10 @@ declare rechaza el programa estáticamente con `E1008`. La superficie pública
 pub fn stdin(): std.io.Reader ! ConsoleError
 pub fn stdout(): std.io.Writer ! ConsoleError
 pub fn stderr(): std.io.Writer ! ConsoleError
-pub fn readLine(input: var std.io.Reader): String? ! ConsoleError
+pub fn readLine(input: var std.io.Reader): String? ! ConsoleError suspends
 pub fn print(value: String): Unit ! ConsoleError
 pub fn println(value: String): Unit ! ConsoleError
-pub fn flush(): Unit ! ConsoleError
+pub fn flush(): Unit ! ConsoleError suspends
 pub enum ConsoleError { Unavailable, Closed, Cancelled, Io(std.io.IoError) }
 ~~~
 
@@ -3153,13 +3156,14 @@ Los handles son tokens distintos y reutilizan los protocolos de `std.io`; no
 hay terminal, locale, encoding o newline ambiental implícito. `readLine` solo
 avanza el cursor después de aceptar una línea UTF-8 completa, devuelve `none`
 en EOF y devuelve un `ConsoleError` tipado sin consumir datos cuando recibe
-UTF-8 inválido o un handle de output. `print` conserva el texto exacto,
-`println` añade un único LF y ninguna operación hace flush implícito: el flush
-es explícito y terminal para el writer correspondiente. Partial I/O, límites,
-progreso, cancelación y cleanup siguen las reglas de `std.io`; el adaptador no
-introduce una segunda API sync/async ni duplica buffers. Los mensajes del host
-se mantienen opacos y nunca publican rutas o detalles dependientes del sistema
-operativo.
+UTF-8 inválido o un handle de output. `print` y `println` solo anexan al buffer
+de salida ordenado del runtime, nunca esperan al sistema operativo y por eso no
+declaran `suspends`; `println` añade un único LF. Ninguna de las dos hace flush
+implícito. `flush` es la única frontera de entrega suspendible y terminal para
+el writer correspondiente. Partial I/O, límites, progreso, cancelación y
+cleanup siguen las reglas de `std.io`; el adaptador no introduce una segunda
+API sync/async ni duplica buffers. Los mensajes del host se mantienen opacos y
+nunca publican rutas o detalles dependientes del sistema operativo.
 
 El shim bootstrap histórico queda como bridge interno de compatibilidad y no
 es una segunda identidad pública. La evidencia `STD-A-CONSOLE-EVIDENCE-001`

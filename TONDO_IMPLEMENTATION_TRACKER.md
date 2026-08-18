@@ -17,7 +17,7 @@ frontera compilador/runtime/CLI, con evidencia por intento y paridad VM/native.
 `DIAG-SPEC-001` es el prerrequisito explícito de la evaluación nativa; la
 existencia del contrato no implica que ningún detector esté implementado.
 
-**Versión del tracker:** 2.45
+**Versión del tracker:** 2.46
 
 **Última actualización:** 2026-08-18
 
@@ -57,20 +57,23 @@ existencia del contrato no implica que ningún detector esté implementado.
 G5 inventaría y sella exactamente lenguaje, testing y toolchain. La stdlib
 mantiene su conformidad separada en S1A/S1; fijar su spec por hash nunca se
 confunde con conformarla. TLF tampoco cambia la semántica `.to`: Gate L0 produce
-un bundle separado y el candidato final fija G5, S1 y L0 por identidades
-independientes.
+un bundle companion separado. El candidato del lenguaje fija G5 y S1; solo fija
+L0 cuando se construye además una distribución TLF, sin convertirla en requisito
+de Tondo 0.1.
 
-**Objetivo inmediato:** cerrar primero el contrato y la instrumentación base de
-diagnóstico (`DIAG-SPEC-001` y `DIAG-RUNTIME-001`) y después continuar Wave
-5/S1A en paralelo con `RACE-001`, `LEAK-001`, `DUMP-001` y `DIAG-TEST-001`,
-antes de la evaluación coordinada de `NATIVE-001`. El cierre coordinado de
+**Objetivo inmediato:** ejecutar `TRACKER-LINT-001`, cerrar las leaves reales de
+Wave 5/S1A y después `DIAG-SPEC-001`. Con ese contrato se cierran las fronteras
+runtime-facing B0 de Wave 6; entonces avanzan `DIAG-RUNTIME-001`, `RACE-001`,
+`LEAK-001`, `DUMP-001`, `DIAG-TEST-001` y `DIAG-CI-001` antes de la evaluación
+coordinada de `NATIVE-001`. El cierre coordinado de
 `STD-CODEC-PUBLIC-001` ya está verificado (209/209)
 y los tres owners build-only tienen una frontera explícita; no se fabrican
 funciones runtime para ellos. `NATIVE-TARGET-DESC-001` y
 `NATIVE-ARTIFACT-001`, `NATIVE-LINK-PLAN-001` y `NATIVE-PUBLISH-SPEC-001` están
 cerrados como contratos puros, y `PERF-001` ya fija el contrato de benchmark y
-baseline previo al backend. El siguiente bloque explícito es `DIAG-SPEC-001`;
-`NATIVE-001` queda después de la compuerta de diagnóstico.
+baseline previo al backend. El siguiente bloque explícito es
+`TRACKER-LINT-001`; después se cierran las leaves reales de S1A y comienza
+`DIAG-SPEC-001`. `NATIVE-001` queda después de la compuerta de diagnóstico.
 Las celdas S1A de promoción siguen pendientes y no se sobreafirma su cierre.
 `CONF-GAP-IMPL-001`, `CONF-LAYER-RESULT-001` y
 `CONF-SEAL-FINAL-001` ya cierran T0/G5 con 409 requisitos cubiertos, nueve
@@ -79,8 +82,8 @@ runtime-facing de STD-0.1B y M11 esperan G5 y S1A. Todo pertenece a la primera
 versión 0.1; los slices son orden de implementación, no versiones públicas. La
 VM permanece como implementación de referencia y oracle diferencial del
 backend nativo. La lane TLF puede avanzar en paralelo porque solo depende del
-frontend/formatter ya cerrados; no reemplaza esas prioridades y debe producir
-su bundle L0 antes de `REL-0.1-RC-001`.
+frontend/formatter ya cerrados; no reemplaza esas prioridades ni bloquea el
+candidato base. Su bundle L0 se publica únicamente como companion opcional.
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -96,8 +99,10 @@ volver a demostrar la ruta pública completa.
 
 ### Suspensión y concurrencia
 
-- No existe la keyword `async` ni `async fn`, `async unsafe fn` o un wrapper
-  público `Task`/`Future`. Todas las funciones son `fn`.
+- No existe una familia `async fn`, `async unsafe fn` ni un wrapper público
+  `Task`/`Future`. Todas las funciones son `fn`; `suspends` es un efecto postfix
+  denotable en firmas y tipos de función, obligatorio en contratos sin cuerpo e
+  inferible en cuerpos.
 - En la revisión 1.66, `await` era el marcador escrito obligatorio para iniciar
   una llamada suspendible. Esa regla queda registrada como antecedente del
   prototipo y está supersedida por la espera implícita y el contrato `suspends`
@@ -400,7 +405,7 @@ cantidad de infraestructura necesaria antes del primer programa ejecutable.
   threads, FFI privilegiada, roots/retainers, ledger de recursos y estrategia
   de verificación de `LEAK-001`.
 
-- [ ] **DEC-017 — Diagnóstico dinámico sin APIs paralelas.**
+- [ ] **DEC-018 — Diagnóstico dinámico sin APIs paralelas.**
   `DIAG-SPEC-001` cierra los perfiles `race`, `leaks` y `crash`, el envelope
   `tondo-diagnostic-report/1`, el dump `tondo-dump/1`, privacidad, límites y
   exit status. Runtime, CLI y runner comparten esa identidad; la stdlib no
@@ -447,6 +452,14 @@ cantidad de infraestructura necesaria antes del primer programa ejecutable.
   fuzzing y quality-gate; `TONDO_FULL_GATE_PROMOTION=1` activa el promotion
   proof únicamente en una wave. La evidencia de fast gate vive en
   `target/reliability/fast-gate/` y nunca puede convertirse en proof sellado.
+
+- [x] **DEC-019 — `suspends` visible sin duplicar APIs.** El efecto es postfix,
+  forma parte del tipo y del hash ABI, y aparece siempre en interfaces y
+  tooling. Los contratos sin cuerpo deben escribirlo; un cuerpo puede inferirlo
+  o fijarlo explícitamente como promesa estable. La llamada ordinaria espera de
+  forma implícita y `spawn` es la única iniciación concurrente. Los préstamos
+  exclusivos pueden atravesar una espera secuencial con `Send`, pero nunca se
+  transfieren a `spawn` o `spawn thread`.
 
 ### 3.3 Estructura inicial recomendada
 
@@ -644,16 +657,22 @@ el trabajo.
 | Gate T0 evidencial | `UTEST-SPEC-EVIDENCE-001` y matriz multi-spec sin huecos de testing aplicables | STD-0.1A completa |
 | Gate G5 vivo | `DOC-TEST-001`, `DOC-TEST-CONF-001`, `CONF-MATRIX-ALL-001`, `CONF-GAP-AUDIT-001`, `CONF-GAP-IMPL-001`, `CONF-LAYER-RESULT-001`, `QUALITY-EVIDENCE-BIND-001` y `CONF-SEAL-FINAL-001` | STD-0.1A completa |
 | `DIAG-SPEC-001` | `PERF-001`, contrato CLI/testing y RFC-019 | Implementación de detectores |
-| `DIAG-RUNTIME-001` | `DIAG-SPEC-001`, VM hosted, async/threads/unsafe y source maps | Backend nativo |
-| `RACE-001` / `LEAK-001` / `DUMP-001` | `DIAG-RUNTIME-001` y sus respectivos fixtures/negativos | Promoción S1A |
+| Contratos runtime-facing B0 | `DIAG-SPEC-001` y foundations STD-0.1A | `DIAG-RUNTIME-001` o backend nativo |
+| `DIAG-RUNTIME-001` | `DIAG-SPEC-001`, contratos B0, VM hosted, async/threads/unsafe y source maps | Backend nativo |
+| `RACE-001` / `LEAK-001` / `DUMP-001` | `DIAG-RUNTIME-001` y sus respectivos fixtures/negativos | Modelo de memoria nativo o implementación de owners B |
 | `DIAG-TEST-001` | Detectores `RACE-001`, `LEAK-001`, `DUMP-001` y runner de retries/shards | CI específico |
 | `DIAG-CI-001` | `DIAG-TEST-001`, `PERF-001`, fuzzing y corpus persistente | Selección de backend |
-| `NATIVE-001` | `NATIVE-PRODUCT-SPEC-001`, target/artifact/link/publish specs, Gates G5/S1A, contratos runtime-facing de STD-0.1B y `DIAG-SPEC-001`/`DIAG-RUNTIME-001` | Implementación de STD-0.1B |
+| `NATIVE-001` | `NATIVE-PRODUCT-SPEC-001`, target/artifact/link/publish specs, Gates G5/S1A, contratos runtime-facing B0 y `DIAG-CI-001` | Implementación de STD-0.1B |
 | `NATIVE-ABI-001` | `NATIVE-001`, `NATIVE-MEM-ADR-001`, contratos de sync/executor y hooks `RACE`/`LEAK`/`DUMP` | ABI FFI pública |
+| `DIAG-NATIVE-001` | memoria/ABI/lowering nativos, `NATIVE-THREAD-001` y detectores VM | Conformidad N1 |
 | ARC/runtime nativo | `NATIVE-ABI-001` y DEC-014 | Eliminación de retains, COW o escape analysis |
 | `NATIVE-LINK-001`/`NATIVE-CLI-001` | target/artifact/link schemas, lowering, ARC/ciclos y `NATIVE-STD-001` | Optimizaciones post-N1 |
-| Gate S1 | N1, todos los slices A/B conformes y `STD-S1-SEAL-001` | L0 o empaquetado global |
-| Gate L0 | benchmark reproducible, codec TLF, maps/diagnostics/CLI, properties/fuzz, evaluación, conformidad y bundle L0 | Backend nativo o implementación de STD-0.1B |
+| `DIAG-STDLIB-001` | owners B implementados y `DIAG-NATIVE-001` | Gate S1 |
+| Gate S1 | N1, todos los slices A/B conformes, `DIAG-STDLIB-001` y `STD-S1-SEAL-001` | `REL-0.1-RC-001` |
+| Gate L0 | benchmark reproducible, codec TLF, maps/diagnostics/CLI, properties/fuzz, evaluación, conformidad y bundle L0 | `TLF-REL-001` companion; nunca el candidato base |
+| `REL-0.1-RC-001` | G5, T0, N1 y S1 | supply chain e instalación |
+| `REL-SUPPLY-001` / `REL-INSTALL-001` | candidato exacto y decisión humana de licencia donde aplique | `REL-PUBLISH-001` |
+| `REL-PUBLISH-001` | RC, supply/install, CI verde y autorización explícita | publicación externa 0.1 |
 
 ### 4.1.2 Regla de integración por waves
 
@@ -717,7 +736,7 @@ entre dos subsistemas:
 | 26. Frontera con la stdlib | M6, M8, STD-0.1A y STD-0.1B | G3, G4, M10, S1A y S1 |
 | 27. Metaprogramación estática | M10.7; providers en STD-0.1A | G5 y S1A |
 | 28. Testing integrado Tondo 0.1 | Time-base de STD-0.1A + M10.6; helpers en STD-0.1A | T0, G5 y S1A |
-| Tondo LLM Form | Lane TLF sobre lexer/CST/formatter existentes | L0 y `REL-0.1-RC-001` |
+| Tondo LLM Form | Lane TLF sobre lexer/CST/formatter existentes | L0 y `TLF-REL-001` |
 
 ---
 
@@ -2282,8 +2301,21 @@ independientes y no se atribuyen a este cierre.
 - [x] **ASYNC-EFFECT-API-001 — Publicar el efecto `suspends`.** Generar el
   marcador después del outcome en interfaces, hashes ABI, diagnósticos e IDE;
   cargarlo antes de typecheckear clientes y rechazar cualquier drift de efecto.
-  No introducir un modificador fuente ni APIs duplicadas. `canonical_interface`
-  y el hash de interfaz usan la forma estable `fn(...): T suspends`.
+  No introducir APIs duplicadas. `canonical_interface` y el hash de interfaz
+  usan la forma estable `fn(...): T suspends`.
+
+- [x] **ASYNC-SUSPENDS-DENOTE-001 — Hacer denotable y comprobable el efecto.**
+  Reservar `suspends`, aceptarlo después del outcome en funciones, métodos de
+  trait/impl y tipos `fn`, exigirlo en contratos bodyless suspendibles y
+  permitir que un cuerpo lo infiera o lo fije como promesa. Las implementaciones
+  de trait conservan el efecto exactamente; `@sync`/`@nosuspend` entra en
+  conflicto con el marcador. La interfaz pública siempre lo muestra. Las
+  llamadas secuenciales admiten préstamos `mut`/`var` `Send` hasta completar la
+  espera; `spawn` y `spawn thread` los rechazan con `E1609`. Lexer, parser, HIR,
+  verificador y tests cubren firmas, closures contextuales, loans, drift y
+  ausencia de contaminación entre métodos homónimos. Solo una llamada
+  `suspends` es candidata a `spawn`; scope, `CallOnce`, `Send` y `Share` siguen
+  validándose en el call site.
 
 - [x] **ASYNC-JOIN-RETURN-001 — Hacer transferible `Join` fuera del scope.**
   Sustituir la regla histórica `join-escapes` por ownership afín: `await`,
@@ -2308,21 +2340,23 @@ independientes y no se atribuyen a este cierre.
 - [x] **ASYNC-ITER-001 — Implementar `AsyncIterator` y la iteración implícita.**
   Añadir el protocolo estático, hacer que `for` espere cada `next` cuando no
   exista `Iterator[T]`, conservar `for await` como desambiguador opcional y
-  demostrar que no se crea un array intermedio. La adaptación concreta de
-  `Channel`, cierre/backpressure de stdlib y `collect(limit:)` queda separada en
-  `ASYNC-ITER-EXT-001`, porque pertenece a los contratos de streams de la
-  librería y no al lowering del lenguaje.
+  demostrar que no se crea un array intermedio. `collect(limit:)` y las reglas
+  genéricas de cierre/backpressure quedan separadas en `ASYNC-ITER-EXT-001`;
+  la adaptación concreta de `Channel` pertenece a STD-0.1B y se cierra en
+  `STD-CHANNEL-ASYNC-ITER-001`.
 
-- [ ] **ASYNC-ITER-EXT-001 — Completar adapters de streams en stdlib.** Añadir
-  `collect(limit:)`, cierre cancelable/backpressure y la adaptación de
-  `Channel`/streams repetibles sobre el protocolo ya verificado por el
-  lenguaje. Este trabajo se cierra con los contratos de `std.channel` en Wave
-  6 y no reabre el ABI de `AsyncIterator`.
+- [ ] **ASYNC-ITER-EXT-001 — Completar streams genéricos en `std.async`.**
+  Añadir `collect(limit:)`, cierre cancelable, propagación de backpressure y
+  adapters que dependan únicamente de `AsyncIterator`, sin introducir
+  `Channel`, executor ni una segunda abstracción de stream. Se cierra en S1A y
+  no reabre el ABI del protocolo.
 
 - [ ] **NATIVE-THREAD-001 — Mapear la lane `Thread` a workers OS en el backend
   nativo.** La VM bootstrap conserva semántica cooperativa determinista; el
   backend nativo debe realizar la ejecución física en un worker sin cambiar
-  `Join`, `Send`, cancelación ni cleanup.
+  `Join`, `Send`, cancelación ni cleanup. Depende de `NATIVE-ABI-001` y
+  `NATIVE-LOWER-ASYNC-001`; cierra antes de `NATIVE-002` y
+  `DIAG-NATIVE-001`.
 
 ### Gate de salida de M7
 
@@ -3008,8 +3042,9 @@ sintaxis no amplíe la ruta recursiva temporal.
 `UTEST-VTIME-001`, el lifecycle temporal y Gate T0 quedaron cerrados sobre
 `STD-TIME-BASE-SPEC-001`, `STD-TIME-BASE-IMPL-001` y
 `STD-TIME-BASE-CONF-001`. Son APIs de producción de STD-0.1A, nunca shims
-privados del runner. `ASYNC-DEFER-IMPL-001` cerró antes de conducir el teardown
-de suite; testing no lo sustituye por un hook.
+privados del runner. La semántica funcional de `defer await` ya conduce el
+teardown de suite; `ASYNC-DEFER-IMPL-001` conserva abiertos únicamente sus
+fixtures de hardening y testing no lo sustituye por un hook.
 
 **Compatibilidad:** el corpus bootstrap y sus hashes se conservan únicamente
 como regresión reproducible. El borrador actual `TONDO_LANGUAGE_SPEC.md`, su
@@ -3203,14 +3238,15 @@ reporters.
   dedicados en `formatter_spec`, además de la suite completa del compilador y
   el gate oficial del formatter.
 
-- [ ] **ASYNC-DEFER-IMPL-001 — Migrar y verificar `defer await` bajo la
-  espera implícita.** Añadir la forma 0.1 al CST/formatter sin feature gate,
-  checks de firma/efecto/ownership, guards de suspensión en HIR/MIR/bytecode y
-  conducción LIFO en el executor. Probar inferencia de entradas/script,
+- [ ] **ASYNC-DEFER-IMPL-001 — Endurecer `defer await` bajo la espera
+  implícita.** La semántica funcional, CST/formatter, checks de
+  firma/efecto/ownership, guards HIR/MIR/bytecode y conducción LIFO ya existen.
+  El trabajo restante no reimplementa la feature: añade fixtures aislados para
+  inferencia de entradas/script,
   `E1601` en `@sync`/`@nosuspend`, retorno, error exterior, pánico,
   cancelación, cleanup suprimido, timeout, resource limit, interrupción, un
   owner afín, `Send` y rechazo de bloque/llamada fallible/capability mediante
-  `E1608`/`E14xx`. La forma se conecta al parser existente; HIR conserva
+  `E1608`/`E14xx`. La forma ya está conectada al parser; HIR conserva
   `Await` sobre una llamada suspendible, MIR/bytecode validan el contexto
   `DeferredAsync` y la VM conduce llamadas suspendibles de bytecode y host sin
   cancelar el cleanup que inició el unwind. Las llamadas ordinarias del body
@@ -5039,6 +5075,50 @@ administrativas que no implementan comportamiento.
   `docs/contracts/stdlib-s1a.md` fija el vocabulario de fronteras y mantiene el
   claim de draft no publicado; no se afirma una release ni una matriz verde.
 
+Las coordinaciones anteriores prueban que cada gap tiene identidad, no que el
+gap esté cerrado. Las siguientes leaves son las únicas que pueden promocionar
+S1A; su estado se deriva de los registros machine-readable y no de este texto:
+
+- [ ] **STD-A-ASYNC-API-001 — Cerrar la superficie pública de `std.async`.**
+  Actualizar contratos, auditoría y matriz al efecto denotable `suspends`.
+  Verificar `Join`, `Waiter`/`Completer`, `AsyncIterator`, `collect(limit:)`,
+  cierre y backpressure sin `Channel`, que pertenece a STD-0.1B. Ninguna firma
+  bodyless suspendible puede depender de inferencia por nombre.
+
+- [ ] **STD-A-ASYNC-IMPL-001 — Implementar y probar `std.async` completo.**
+  Consumir `ASYNC-DEFER-IMPL-001` y `ASYNC-ITER-EXT-001`; ejecutar one-shot,
+  streams genéricos, cancelación, cierre, límites, loans secuenciales y rechazo
+  de loans exclusivos en `spawn` por la ruta pública HIR → MIR → bytecode → VM.
+
+- [ ] **STD-A-FUZZ-001 — Cerrar todas las celdas FUZZ aplicables de S1A.** El
+  generador toma cada fila `partial` de `testing/stdlib-matrix.json`, exige
+  target, corpus, seed, límites, oracle y persistencia de regresiones por owner,
+  y solo finaliza cuando no queda ninguna celda FUZZ aplicable sin `verified`.
+
+- [ ] **STD-A-PERF-001 — Capturar presupuestos completos por owner S1A.** Para
+  cada hot path cerrar throughput/tail, allocations/bytes, memoria pico,
+  startup, code size y compile time sobre identidad de target revisada. Un owner
+  sin hot path registra `not-applicable` con razón normativa; diferido no cuenta
+  como promoción.
+
+- [ ] **STD-A-CONF-001 — Ejecutar conformidad pública completa de S1A.**
+  Convertir cada fila `pending`/`partial` de
+  `testing/stdlib-conformance-coordination.json` en una observación ejecutada o
+  un `not-applicable` normativo. Debe incluir `std.async`, capabilities hosted,
+  codecs, límites, cancelación y programas representativos; coordinación no es
+  evidencia de ejecución.
+
+- [ ] **STD-A-DIST-001 — Construir la distribución VM de STD-0.1A.** Empaquetar
+  fuentes, interfaces, units/providers, PackageId, hashes, manifests, docs y
+  matriz de capabilities desde dos workspaces limpios. Instalarla en un
+  workspace vacío, ejecutar ejemplos y desinstalar sin usar el árbol fuente.
+
+- [ ] **STD-S1A-SEAL-001 — Sellar Gate S1A desde evidencia derivada.** Exigir
+  `STD-A-ASYNC-IMPL-001`, `STD-A-FUZZ-001`, `STD-A-PERF-001`,
+  `STD-A-CONF-001`, `STD-A-DIST-001`, auditoría pública estricta y cero celdas
+  aplicables abiertas en la matriz. Emitir un bundle content-addressed separado
+  de G5, del backend nativo y de TLF; no editar estados a mano.
+
 ### Gate S1A — Standard Library 0.1 foundation
 
 - [ ] La spec estándar fija todas las firmas de su catálogo Core + Hosted
@@ -5066,6 +5146,8 @@ administrativas que no implementan comportamiento.
   positivos, negativos, límites y composición.
 - [ ] La distribución de STD-0.1A es reproducible, cerrada y versionada con
   firmas, units y providers realmente implementados.
+- [ ] `STD-S1A-SEAL-001` verifica cero gaps aplicables y reproduce el bundle
+  desde inputs cerrados; ninguna coordinación `[x]` sustituye esta compuerta.
 - [ ] Los programas representativos pasan el gate estricto y proporcionan el
   corpus funcional inicial para `PERF-001`, `DIAG-*` y `NATIVE-001`.
 - [ ] `std.testing` está especificado, implementado y probado con su propio
@@ -5088,8 +5170,9 @@ La VM, la conformidad del lenguaje —incluidos test targets— y la conformidad
 de STD-0.1A son los oracles.
 
 **Orden obligatorio:** UX de producto → target/artifact/link/publish schemas →
-baseline → `DIAG-SPEC-001` → `DIAG-RUNTIME-001` → detectores/runner/CI →
-selección → memoria/ABI → lowering por slices → ARC/ciclos correctos
+baseline → `DIAG-SPEC-001` → contratos runtime-facing B0 →
+`DIAG-RUNTIME-001` → detectores/runner/CI → selección → memoria/ABI →
+lowering por slices → `NATIVE-THREAD-001` → ARC/ciclos correctos
 → fronteras Core/Hosted de STD-0.1A → link/CLI → conformidad por slices →
 diferencial/targets/empaquetado → Gate N1. Eliminación de retains,
 COW, escape analysis, incrementalidad y LSP son trabajo posterior a N1 y no
@@ -5175,8 +5258,9 @@ pueden retrasar el primer backend correcto.
   cifras en el contrato. El registro, documentación, negativos y gates viven
   en `testing/performance.json`, `docs/contracts/performance.md`,
   `scripts/performance-check.sh` y `scripts/performance-test.sh`, integrados en
-  `scripts/test-gate.sh`. El siguiente bloque es `DIAG-SPEC-001`; la evaluación
-  de `NATIVE-001` queda después de la compuerta de diagnóstico.
+  `scripts/test-gate.sh`. Este contrato desbloquea `DIAG-SPEC-001`; en la cola
+  global, `TRACKER-LINT-001` y el seal real de S1A se completan antes de iniciar
+  ese bloque, y `NATIVE-001` queda después de la compuerta de diagnóstico.
 
 - [ ] **DIAG-SPEC-001 — Cerrar el contrato unificado de diagnóstico dinámico.**
   Fijar profiles `race`, `leaks` y `crash`, el envelope
@@ -5188,7 +5272,7 @@ pueden retrasar el primer backend correcto.
   `docs/contracts/diagnostic-tooling.md` y `docs/rfc/019-diagnostic-tooling.md`.
 
 - [ ] **DIAG-RUNTIME-001 — Exponer instrumentación interna verificable.**
-  En la VM registrar task/thread IDs, accesos y sincronización, roots y
+  Después de los contratos runtime-facing B0, registrar en la VM task/thread IDs, accesos y sincronización, roots y
   retainers, ledger de recursos, source maps, eventos de scheduler y barreras
   de quiescencia sin cambiar la semántica del programa. Probar límites,
   corrupción, aislamiento y coste; los hooks siguen siendo privados del
@@ -5196,15 +5280,17 @@ pueden retrasar el primer backend correcto.
 
 - [ ] **RACE-001 — Implementar el detector dinámico de races.** Instrumentar
   `Ref[T]`, `Pointer[T]`, `unsafe`/FFI, memoria mutable compartida, spawn,
-  Join, channels, locks, atomics y suspensión. Emitir conflicto, stacks de
+  Join, scheduler y primitivas internas de sincronización. Emitir conflicto, stacks de
   acceso/creación y happens-before; solo se consideran observaciones de caminos
-  ejecutados y los perfiles no silencian unsupported.
+  ejecutados y los perfiles no silencian unsupported. Los adapters de las APIs
+  públicas channel/sync/executor/net se prueban más tarde en `DIAG-STDLIB-001`.
 
 - [ ] **LEAK-001 — Implementar el detector de retención y recursos.** Separar
-  objetos gestionados todavía alcanzables, recursos afines sin terminal,
-  allocations FFI y crecimiento sostenido. Tomar snapshots de roots/retainers
+  en la VM objetos gestionados todavía alcanzables, recursos afines sin terminal
+  y crecimiento sostenido. Tomar snapshots de roots/retainers
   después de quiescencia, no marcar ciclos recuperados por el GC como leaks y
-  ejecutar cada intento en un proceso nuevo.
+  ejecutar cada intento en un proceso nuevo. ARC/ciclos/FFI nativos se validan
+  después en `DIAG-NATIVE-001`; no son prerrequisito circular de este bloque.
 
 - [ ] **DUMP-001 — Implementar crash dumps y analizador.** Capturar un
   `.tdump` versionado con razón, target/backend, debug IDs, stacks de tasks y
@@ -5231,14 +5317,15 @@ pueden retrasar el primer backend correcto.
   perfiles `DIAG-*`, source maps, task/thread registry, hooks de memoria/GC,
   unwind, redacción y crash dumps; registrar la elección en un ADR. Un backend
   que no conserve estas observaciones queda limitado explícitamente y no puede
-  entrar en Gate N1 por silencio.
+  entrar en Gate N1 por silencio. Depende de `DIAG-CI-001` y de los contratos
+  runtime-facing B0, no de una implementación todavía inexistente de owners B.
 
 - [ ] **NATIVE-MEM-ADR-001 — Cerrar DEC-014 antes de la ABI.** Fijar ownership
   runtime, contadores atómicos/no atómicos, `Send`/`Share`, weak refs,
   recolección de ciclos, interacción con async, COW y threads, estrategia de
   pánico/cancelación, roots/retainers, recursos y oracles de verificación.
   Prototipar las rutas de riesgo necesarias para demostrar que el modelo
-  soporta `LEAK-001`, los contratos runtime-facing de STD-0.1B y la paridad VM;
+  soporta `DIAG-NATIVE-001`, los contratos runtime-facing de STD-0.1B y la paridad VM;
   no prometer layout público.
 
 - [ ] **NATIVE-ABI-001 — Definir una ABI runtime interna y versionada.** Fijar
@@ -5275,8 +5362,9 @@ pueden retrasar el primer backend correcto.
 - [ ] **NATIVE-002 — Coordinar el lowering mínimo desde MIR.** Cierra solo tras
   `NATIVE-LOWER-CALLS-001`, `NATIVE-LOWER-CONTROL-001`,
   `NATIVE-LOWER-CLEANUP-001`, `NATIVE-LOWER-OWNERSHIP-001`,
-  `NATIVE-LOWER-ASYNC-001` y `NATIVE-LOWER-DEBUG-001`, con al menos un smoke
-  nativo real por slice antes de ampliar targets u optimizar.
+  `NATIVE-LOWER-ASYNC-001`, `NATIVE-LOWER-DEBUG-001` y
+  `NATIVE-THREAD-001`, con al menos un smoke nativo real por slice antes de
+  ampliar targets u optimizar.
 
 ### 20.2 Runtime correcto y frontera estándar
 
@@ -5287,6 +5375,14 @@ pueden retrasar el primer backend correcto.
 - [ ] **ARC-002 — Implementar recolección diferida de ciclos y weak refs
   linealizables.** Validar ciclos independientes, races aplicables, teardown y
   ausencia de resurrección antes de ejecutar conformidad completa.
+
+- [ ] **DIAG-NATIVE-001 — Demostrar paridad nativa de diagnóstico.** Después de
+  `NATIVE-002`, `ARC-002` y `NATIVE-THREAD-001`, ejecutar el corpus de
+  race/leaks/dumps contra el backend real. Verificar IDs de task/thread,
+  happens-before, roots/retainers ARC, ciclos, allocations FFI privilegiadas,
+  ledger de recursos, unwind, source maps, redacción, corrupción y límites.
+  Comparar el envelope portable con la VM sin exigir layouts o stacks físicos
+  idénticos. Este bloque es prerrequisito de la conformidad N1.
 
 - [ ] **NATIVE-STD-CORE-001 — Implementar la frontera Core de STD-0.1A.** Los
   valores, ownership, errores y protocolos portables observan la misma API que
@@ -5317,7 +5413,7 @@ pueden retrasar el primer backend correcto.
 ### 20.3 Oracle diferencial, targets y empaquetado
 
 - [ ] **NATIVE-CONF-ADAPTER-001 — Crear el adaptador nativo.** Implementar el
-  protocolo completo con identidad de backend/target y rechazo fail-closed de
+  protocolo completo después de `DIAG-NATIVE-001`, con identidad de backend/target y rechazo fail-closed de
   operaciones o capabilities no soportadas.
 
 - [ ] **NATIVE-CONF-LANGUAGE-001 — Ejecutar conformidad base nativa.** Correr
@@ -5364,6 +5460,8 @@ pueden retrasar el primer backend correcto.
   compatibles con la VM, incluidos los estados y reportes de `tondo test`.
 - [ ] Properties, fuzzing diferencial, GC/ARC/ciclos, async, pánicos y cleanup
   pasan bajo stress y sanitización aplicable.
+- [ ] `DIAG-NATIVE-001` demuestra race/leaks/dumps reales y nunca degrada un
+  perfil requerido a `unsupported` por silencio.
 - [ ] Cada target publicado compila y ejecuta un corpus real sobre hardware del
   target.
 - [ ] Las optimizaciones aceptadas aportan una mejora medida y conservan todos
@@ -5400,7 +5498,7 @@ semántica:
 **Objetivo:** completar la primera stdlib sin convertir APIs de aplicación en
 nueva semántica del lenguaje. La fase tiene dos momentos:
 
-1. Antes de M11 se cierran `STD-CONC-001`, `STD-SYNC-001`, `STD-EXEC-001` y la
+1. Después de `DIAG-SPEC-001` y antes de `DIAG-RUNTIME-001`/M11 se cierran `STD-CONC-001`, `STD-SYNC-001`, `STD-EXEC-001` y la
    frontera runtime/host de `STD-NET-001`; son inputs de DEC-013/014 y de la
    elección de backend, no una autorización para implementarlos. Sus contratos
    describen también los eventos que consume `DIAG-RUNTIME-001`; no añaden APIs
@@ -5416,7 +5514,7 @@ publica hasta cerrar el gate final.
 
 | Orden B | Owners | Dependencias duras | Momento |
 |---|---|---|---|
-| B0 | sync, channel, executor y frontera net | async/memoria/I/O/time A + `DIAG-SPEC-001`/`DIAG-RUNTIME-001` | contratos antes de M11 |
+| B0 | sync, channel, executor y frontera net | async/memoria/I/O/time A + `DIAG-SPEC-001` | contratos antes de `DIAG-RUNTIME-001` y M11 |
 | B1 | `std.sync` | DEC-014 + backend/VM schedulers | implementación tras N1 |
 | B2 | `std.channel` | sync + scheduler + ownership `Send` | tras B1 |
 | B3 | `std.executor` | sync/channel + bridge bloqueante | tras B2 |
@@ -5425,7 +5523,7 @@ publica hasta cerrar el gate final.
 | B6 | regex/UUID | text; UUID añade clock/entropy | paralelo tras N1 |
 | B7 | net | I/O + time + executor/cancelación | después de B3 |
 | B8 | log | format + time + I/O y sinks aplicables | después de owners de sinks |
-| B9 | integración/distribución | todos los micro-gates | `REL-0.1-RC-001` y S1 |
+| B9 | integración/distribución | todos los micro-gates | S1 y después `REL-0.1-RC-001` |
 
 ### 21.1 Concurrencia y tiempo
 
@@ -5519,6 +5617,11 @@ estas leaves.
 - [ ] **STD-CHANNEL-IMPL-001 — Implementar canales tipados.** Publicar creación,
   send/receive, cierre, backpressure y selección cancelable con `T: Send`, sin
   keyword nueva ni tasks desligadas.
+- [ ] **STD-CHANNEL-ASYNC-ITER-001 — Adaptar canales a `AsyncIterator`.**
+  Implementar la vista consumible de recepción sobre el protocolo ya cerrado,
+  preservando backpressure, cierre, cancelación y ownership sin materializar
+  arrays ni crear otro tipo de stream. Depende de `STD-CHANNEL-IMPL-001` y de
+  `ASYNC-ITER-EXT-001` y debe cerrar antes de la conformidad de `std.channel`.
 - [ ] **STD-CHANNEL-TEST-001 — Modelar y fuzzear canales.** Cubrir buffers 0/N,
   cierre concurrente, fairness declarada, cancelación, productores/consumidores
   abandonados, límites y ausencia de mensajes duplicados o perdidos.
@@ -5730,22 +5833,50 @@ estas leaves.
   su task `*-DOC-001`, con firmas, errores, pánicos, ownership, async, orden,
   coste y ejemplos ejecutables; el agregado no crea un segundo PackageId.
 
+- [ ] **DIAG-STDLIB-001 — Integrar diagnóstico con los owners concurrentes.**
+  Después de `STD-B-IMPL-001`, `STD-B-HOST-001`, `STD-B-TEST-001` y
+  `DIAG-NATIVE-001`, conectar channel/sync/executor/net a los eventos privados
+  ya fijados. Ejecutar corpus positivo/negativo de happens-before, recursos,
+  cancelación, sockets y dumps sobre VM y nativo; no añadir APIs públicas de
+  detector ni aceptar `unsupported` para un owner que entra en S1.
+
 - [ ] **STD-S1-SEAL-001 — Sellar la distribución conforme de Standard Library
-  0.1.** Después de los micro-gates A/B y Gate N1, reconstruir únicamente la
+  0.1.** Después de los micro-gates A/B, `DIAG-STDLIB-001` y Gate N1, reconstruir únicamente la
   stdlib, runtime/units/providers que posee, manifests, PackageId, content/API
   hashes y matriz de targets. Ejecutar conformidad VM/nativa y reproducibilidad
   desde dos workspaces limpios. Este bundle cierra S1 sin depender de L0 ni del
   empaquetado global del lenguaje.
 
 - [ ] **REL-0.1-RC-001 — Construir el candidato completo de primera
-  publicación.** Después de G5, T0, N1, S1 y L0, reconstruir toolchain,
-  VM, backend, runtime, stdlib runtime y companion meta desde inputs cerrados;
+  publicación.** Después de G5, T0, N1 y S1, reconstruir toolchain, VM,
+  backend, runtime, stdlib runtime y companion meta desde inputs cerrados;
   fijar PackageId, content/API hashes, manifests, checksums, matriz de targets y
-  el bundle L0 producido por `TLF-BUNDLE-001`. Ejecutar conjuntamente G5, H0,
-  T0, N1, L0, el bundle exacto de `STD-S1-SEAL-001`, conformidad VM/nativa,
+  provenance. Ejecutar conjuntamente G5, H0, T0, N1, el bundle exacto de
+  `STD-S1-SEAL-001`, conformidad VM/nativa,
   programas representativos y reproducibilidad desde dos workspaces limpios.
   La tarea compone gates ya independientes y crea un candidato, pero no publica
-  por sí misma.
+  por sí misma. Si existe L0, se referencia como companion opcional mediante
+  `TLF-REL-001`; su ausencia o cambio no modifica la identidad del candidato
+  base.
+
+- [ ] **REL-SUPPLY-001 — Cerrar licencia y cadena de suministro.** Antes de
+  distribuir fuera del repositorio, registrar la decisión humana de licencia,
+  añadir `LICENSE`/notices aplicables, generar SBOM y provenance verificables,
+  auditar licencias de dependencias y firmar checksums/artefactos sin incluir
+  secretos ni paths ambientales. No se elige una licencia por inferencia.
+
+- [ ] **REL-INSTALL-001 — Verificar instalación y ciclo de actualización.**
+  Desde los artefactos exactos de `REL-0.1-RC-001`, probar descarga, checksum,
+  instalación limpia, `tondo --version`, hello world, `tondo test`, upgrade,
+  rollback y uninstall en cada plataforma publicada, sin depender del checkout
+  ni dejar estado global tras el test.
+
+- [ ] **REL-PUBLISH-001 — Publicar Tondo 0.1 con autorización explícita.**
+  Requiere `REL-0.1-RC-001`, `REL-SUPPLY-001`, `REL-INSTALL-001` y CI verde sobre
+  los bytes finales. Crear tag/release, adjuntar artefactos, checksums,
+  firmas/SBOM, notas y documentación solo tras una orden humana específica;
+  verificar consumo externo y conservar un procedimiento de retirada sin
+  reescribir tags ni artefactos ya publicados.
 
 ### Gate S1 — Standard Library 0.1 completa
 
@@ -5763,8 +5894,8 @@ estas leaves.
   TLF ni el candidato global.
 - [ ] Tondo 0.1, `tondo test`, VM, backend nativo y los programas
   representativos pasan juntos el gate estricto antes de cualquier publicación.
-- [ ] El candidato fija y verifica por separado los bundles G5 y L0; TLF no
-  amplía la semántica del lenguaje ni reutiliza evidencia incompatible.
+- [ ] El candidato fija G5 y S1; cualquier bundle L0 se enlaza como companion
+  opcional, sin ampliar la semántica ni reutilizar evidencia incompatible.
 
 ---
 
@@ -5974,7 +6105,13 @@ TLF-RESEARCH-001 -> TLF-BENCH-REPRO-001 --------------------+
   spec TLF, identidad del formato, codec/maps/CLI, golden y fuzz corpora,
   harnesses, manifests, resultados léxicos/multi-modelo y frontend Tondo usado
   como oracle. Verificar el bundle sin consultar el workspace vivo. Este bundle
-  es separado del linaje G5 y debe cerrar antes de `REL-0.1-RC-001`.
+  es separado del linaje G5 y no bloquea el candidato base.
+
+- [ ] **TLF-REL-001 — Empaquetar TLF como companion opcional.** Después de
+  `TLF-BUNDLE-001`, producir artefactos y checksums que declaren tanto la
+  identidad L0 como el rango exacto de toolchains Tondo compatibles. Puede
+  acompañar a `REL-0.1-RC-001`, pero nunca cambia su hash, sus gates ni su
+  disponibilidad.
 
 ---
 
@@ -6137,8 +6274,8 @@ gates en una barrera artificial.
     detectar que el candidato no exigía cobertura normativa completa.
 25. [x] **Wave 4.5 — Migración de suspensión 1.67.** Completar
     `ASYNC-INFER-001`, `ASYNC-IMPLICIT-AWAIT-001`, `ASYNC-EFFECT-API-001`,
-    `ASYNC-JOIN-RETURN-001`, `ASYNC-THREAD-SPAWN-001`, `ASYNC-ONESHOT-001` y
-    `ASYNC-ITER-001`, junto a la actualización de `SCRIPT-004`, del ABI de
+    `ASYNC-SUSPENDS-DENOTE-001`, `ASYNC-JOIN-RETURN-001`,
+    `ASYNC-THREAD-SPAWN-001`, `ASYNC-ONESHOT-001` y `ASYNC-ITER-001`, junto a la actualización de `SCRIPT-004`, del ABI de
     bytecode y de los contratos de I/O. El mini-gate exige `rg` sin firmas
     `async fn`, equivalencia de lowering entre llamada directa y `await`,
     metadatos `suspends` con hash estable, Join transferible, one-shot,
@@ -6159,10 +6296,10 @@ de `origin/main`), los tests ejecutables actuales y el gate local completo:
 | `ASYNC-001..004` | Cerradas | `cargo test -p tondo-compiler --lib`: 1.126/1.126; tests de inferencia de suspensión, diagnósticos de parámetros exclusivos, liveness `Send`, lowering/verificación de `Await`/`Spawn`/frames y ejecución de roots suspendidos. |
 | `SPAWN-001`, `JOIN-001` | Cerradas como aliases históricos | Tests de `scope`/cleanup, `direct_suspension_is_inferred_and_join_can_cross_a_function_boundary`, `join_can_be_returned_as_an_explicit_scope_handoff`, consumo afín y rechazo de doble consumo; el contrato vigente es `ASYNC-JOIN-RETURN-001`. |
 | `SCRIPT-004` | Cerrada | `script_entry_infers_suspension_for_direct_waiter_calls`, `script_entry_executes_sync_and_async_top_level_work` y `tests/runtime/m10-async-defer-script.to`, además del gate de fixtures. |
-| `ASYNC-INFER-001`, `ASYNC-IMPLICIT-AWAIT-001`, `ASYNC-EFFECT-API-001`, `ASYNC-JOIN-RETURN-001`, `ASYNC-THREAD-SPAWN-001`, `ASYNC-ONESHOT-001`, `ASYNC-ITER-001` | Cerradas | Ya tenían estado canónico `[x]`; el gate completo volvió a ejecutar compiler/VM/conformance y sus casos de inferencia, `Join`, one-shot, thread lane e iteración async. |
+| `ASYNC-INFER-001`, `ASYNC-IMPLICIT-AWAIT-001`, `ASYNC-EFFECT-API-001`, `ASYNC-SUSPENDS-DENOTE-001`, `ASYNC-JOIN-RETURN-001`, `ASYNC-THREAD-SPAWN-001`, `ASYNC-ONESHOT-001`, `ASYNC-ITER-001` | Cerradas | El efecto público es denotable en contratos y tipos, continúa infiriéndose en cuerpos, y el gate cubre inferencia, préstamos secuenciales, rechazo en `spawn`, `Join`, one-shot, thread lane e iteración async. |
 | `ASYNC-DEFER-IMPL-001` | **No se cierra todavía** | La implementación existe y pasan `m10-async-defer-await`, `m10-async-defer-lifo`, `m10-async-defer-cancel`, `m10-async-defer-script` y los negativos de `E1608`/llamada fallible/`Join`/await anidado; la entrada exige además casos dedicados de timeout, resource limit, interrupción, `Send` y cleanup suprimido que aún no están aislados en fixtures del runner. |
 | `UTEST-SUSPENSION-MIGRATION-001` | Cerrada | Parser/CST acepta `@sync`/`@nosuspend`; HIR/checker preserva `fn` + inferencia, espera implícita y `E1601`; fixtures compile-pass/compile-fail/runtime canónicos y `crates/tondo-reference-adapter/tests/suspension_migration.rs` fijan equivalencia directa/`await`, consumo de `Waiter` y hashes de interfaz `suspends`. El corpus histórico `async fn` sigue congelado y separado. |
-| `ASYNC-ITER-EXT-001`, `NATIVE-THREAD-001` | **Pendientes reales** | Requieren adapters de streams de stdlib y ejecución física en workers OS del backend nativo, respectivamente; no forman parte del bootstrap VM. |
+| `ASYNC-ITER-EXT-001`, `STD-CHANNEL-ASYNC-ITER-001`, `NATIVE-THREAD-001` | **Pendientes reales** | Requieren streams genéricos S1A, adaptación de Channel en S1 y ejecución física en workers OS del backend nativo, respectivamente; no forman parte del bootstrap VM. |
 
 El gate oficial (`bash scripts/test-gate.sh`) se ejecutó después de esta
 reconciliación y selló la evidencia final de workspace, conformance, reliability,
@@ -6203,18 +6340,22 @@ no prevalecen sobre la evidencia canónica de esta sección.
     - A5: `STD-PUBLIC-API-AUDIT-001` (cerrado, 209/209) → leaves
       `STD-A-*-EVIDENCE` →
       STD-TEST-001 / STD-CODEC-CONF-001 / STD-PERF-CONF-001 →
-      STD-MATRIX-ALL-001 → STD-CONF-001 → STD-DOC-001`.
+      STD-MATRIX-ALL-001 → STD-CONF-001 → STD-DOC-001 →
+      (`STD-A-ASYNC-API-001` → `ASYNC-ITER-EXT-001` +
+      `ASYNC-DEFER-IMPL-001` → `STD-A-ASYNC-IMPL-001`) +
+      `STD-A-FUZZ-001` + `STD-A-PERF-001` + `STD-A-CONF-001` +
+      `STD-A-DIST-001` → `STD-S1A-SEAL-001`.
     Los owners independientes pueden avanzar en paralelo, pero S1A no cierra
     hasta que cada firma contractual atraviese una ruta pública real.
-27. [ ] **Wave 6 — Contratos que condicionan el backend.** Cerrar
+27. [ ] **Wave 6 — Contratos que condicionan el backend.** Después de
+    `DIAG-SPEC-001`, cerrar
     `STD-CONC-001`, `STD-SYNC-001`, `STD-EXEC-001` y la frontera runtime de
     `STD-NET-001`. Mini-gate: DEC-013/014 reciben requisitos completos sin
     implementar todavía STD-0.1B.
-28. [ ] **Wave 7 — M11 correcto antes que optimizado.** Ejecutar
-    `NATIVE-PRODUCT-SPEC-001 → target/artifact/link/publish specs → PERF-001 →
-    DIAG-SPEC-001 → DIAG-RUNTIME-001 → (RACE-001 + LEAK-001 + DUMP-001) →
+28. [ ] **Wave 7 — M11 correcto antes que optimizado.** Con Wave 6 cerrada,
+    ejecutar `DIAG-RUNTIME-001 → (RACE-001 + LEAK-001 + DUMP-001) →
     DIAG-TEST-001 → DIAG-CI-001 → NATIVE-001 → NATIVE-MEM-ADR-001 →
-    NATIVE-ABI-001 → leaves NATIVE-LOWER-* →
+    NATIVE-ABI-001 → leaves NATIVE-LOWER-* → NATIVE-THREAD-001 →
     NATIVE-002 → ARC-001 → ARC-002 → NATIVE-STD-CORE/HOSTED → NATIVE-STD-001 →
     NATIVE-LINK-001 → NATIVE-CLI-001 → leaves NATIVE-CONF-* → NATIVE-CONF-001 /
     NATIVE-DIFF-001 → targets → NATIVE-REL-001`. Cerrar Gate N1.
@@ -6222,7 +6363,8 @@ no prevalecen sobre la evidencia canónica de esta sección.
     cerrar para cada owner las leaves `IMPL`, `HOST` aplicable, `TEST/FUZZ`,
     `PERF`, `CONF` y `DOC` de 21.3.1–21.3.12, y después los coordinadores
     `STD-B-OWNER-MATRIX-001`, `STD-B-*` y `STD-S1-SEAL-001`; cerrar Gate S1. Solo después componer
-    `REL-0.1-RC-001` con G5/N1/L0. Optimizaciones post-N1 avanzan por evidencia
+    `REL-0.1-RC-001` con G5/T0/N1/S1 y después `REL-SUPPLY-001` /
+    `REL-INSTALL-001` / `REL-PUBLISH-001`. Optimizaciones post-N1 avanzan por evidencia
     y no bloquean el candidato salvo que un presupuesto publicado lo exija.
 
 Lane transversal TLF, independiente del orden de Waves 5–8:
@@ -6235,7 +6377,7 @@ Lane transversal TLF, independiente del orden de Waves 5–8:
 
 Puede avanzar mientras se cierran stdlib/conformidad porque solo consume el
 frontend estable. Gate L0 no es prerrequisito de S1A, G5 o N1, pero sí de
-`REL-0.1-RC-001`.
+`TLF-REL-001`; el candidato base no depende de TLF.
 
 Resumen topológico:
 
@@ -6252,10 +6394,10 @@ CONF-DRAFT
       STD-0.1A leaf implementations + public API audit -> S1A}
   -> STD-0.1B runtime contracts
   -> native build/link/CLI correctness / N1
-  -> STD-0.1B leaves + REL-0.1-RC / S1
+  -> STD-0.1B leaves -> S1 -> REL-0.1-RC -> supply/install/publish
 
 G0 -> TLF spec + reproducible benchmark -> codec/maps/CLI
-   -> properties/fuzz/eval -> conformance -> L0 bundle -> REL-0.1-RC
+   -> properties/fuzz/eval -> conformance -> L0 bundle -> TLF companion
 ~~~
 
 M4, M5, M6, M7, M8, M9, el corpus bootstrap M10, M10.5, M10.5b y Gates G4/H0
@@ -6272,13 +6414,30 @@ Wave 6 no se declara iniciada antes de S1A.
 `STD-IMPL-001` y `STD-IMPL-002` quedan ahora cerrados por sus gates de
 coordinación; `NATIVE-TARGET-DESC-001`, `NATIVE-ARTIFACT-001`,
 `NATIVE-LINK-PLAN-001`, `NATIVE-PUBLISH-SPEC-001` y `PERF-001` quedan cerrados
-como contratos puros. La acción inmediata pasa a `DIAG-SPEC-001` y a la
-instrumentación VM asociada; `NATIVE-001` queda bloqueado hasta cerrar la
-compuerta `DIAG-CI-001`, con las celdas S1A pendientes todavía visibles.
+como contratos puros. La acción inmediata es `TRACKER-LINT-001`, seguida de las
+leaves y el seal reales de S1A. Solo entonces comienza `DIAG-SPEC-001`; la
+instrumentación VM espera los contratos B0 y `NATIVE-001` espera
+`DIAG-CI-001`.
 
 ---
 
 ## 25. Historial del tracker
+
+### 2.46 — 2026-08-18
+
+- Se hace denotable `suspends` en firmas y tipos sin introducir `async fn` ni
+  un wrapper de retorno; contratos sin cuerpo lo escriben, cuerpos lo infieren
+  o lo fijan y la interfaz pública siempre lo muestra.
+- `spawn` exige una llamada `suspends` y además valida scope, `CallOnce`,
+  `Send`/`Share`; los préstamos exclusivos se permiten en espera secuencial y
+  se rechazan al escapar a una task o thread.
+- Se reabre S1A con leaves reales de async, fuzz, rendimiento, conformidad,
+  distribución y seal; streams genéricos y Channel quedan separados.
+- El DAG de diagnóstico se divide entre instrumentación VM, paridad nativa e
+  integración stdlib; `NATIVE-THREAD-001` entra en el lowering obligatorio.
+- El release base deja de depender de TLF, que conserva L0 y un empaquetado
+  companion. Se añaden gates explícitos de licencia/supply chain,
+  instalación/upgrade y publicación humana.
 
 ### 2.45 — 2026-08-18
 

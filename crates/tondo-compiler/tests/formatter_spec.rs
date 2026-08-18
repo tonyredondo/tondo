@@ -66,6 +66,16 @@ fn normative_minimum_corpus_matches_byte_for_byte_and_is_idempotent() {
             ParseMode::Module,
         ),
         (
+            b"fn read(value:mut Bytes):Int!IoError suspends{consume(mut value)}\n",
+            b"fn read(value: mut Bytes): Int ! IoError suspends {\n    consume(mut value)\n}\n",
+            ParseMode::Module,
+        ),
+        (
+            b"type Reader=fn(mut Bytes):Int!IoError suspends\n",
+            b"type Reader = fn(mut Bytes): Int ! IoError suspends\n",
+            ParseMode::Module,
+        ),
+        (
             b"impl Iterator[Int]for Cursor{fn next(mut self):Int?{none}\n}\n",
             b"impl Iterator[Int] for Cursor {\n    fn next(mut self): Int? {\n        none\n    }\n}\n",
             ParseMode::Module,

@@ -4,7 +4,7 @@
 - **Revisión:** 0.1-draft.3 — 2026-08-07.
 - **Edición objetivo:** Tondo 0.1.
 - **Especificación base:** [Tondo 0.1](./TONDO_LANGUAGE_SPEC.md).
-- **SHA-256 de la base:** `0be283f1032d1a53f733a9b4d9e46f7be81dd14f86d751f05a5f2c53e69a7614`.
+- **SHA-256 de la base:** `b436cb475e53c51eda008a6914fb58bae698d63e3de6fb84df5833a0e2c4114d`.
 - **Formatos de tooling:** `tondo-test-report-0.1/7`,
   `tondo-test-list-0.1/6`, `tondo-junit-report-0.1/4`,
   `tondo-test-artifacts-0.1/1` y `tondo-snapshot-store-0.1/1`.
@@ -2308,11 +2308,11 @@ pub fn snapshot(name: String, actual: String)
 
 pub fn withVirtualTime[
     E,
-    F: Send + CallOnce[fn(ref VirtualTime): Unit ! E],
-](body: F): ! E
+    F: Send + CallOnce[fn(ref VirtualTime): Unit ! E suspends],
+](body: F): ! E suspends
 
-pub fn VirtualTime.settle(self)
-pub fn VirtualTime.advance(self, duration: time.Duration)
+pub fn VirtualTime.settle(self) suspends
+pub fn VirtualTime.advance(self, duration: time.Duration) suspends
 ~~~
 
 Se utilizan mediante resolución de módulo ordinaria:

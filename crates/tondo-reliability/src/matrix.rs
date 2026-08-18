@@ -1458,7 +1458,7 @@ El compilador debe aceptar el caso.
             .filter(|requirement| requirement.document == "TONDO_LANGUAGE_SPEC.md")
             .collect::<Vec<_>>();
 
-        assert_eq!(language.len(), 309);
+        assert_eq!(language.len(), 311);
         let by_status = language
             .iter()
             .fold(BTreeMap::new(), |mut counts, requirement| {
@@ -1468,7 +1468,7 @@ El compilador debe aceptar el caso.
         assert_eq!(
             by_status,
             BTreeMap::from([
-                ("covered", 298),
+                ("covered", 300),
                 ("stdlib-pending", 3),
                 ("target-not-applicable", 8),
             ])

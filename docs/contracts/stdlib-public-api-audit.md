@@ -7,9 +7,10 @@ y su salida reproducible es
 [`testing/stdlib-public-api.json`](../../testing/stdlib-public-api.json). El
 script [`scripts/stdlib-public-api-audit.sh`](../../scripts/stdlib-public-api-audit.sh)
 extrae las firmas de los contratos y genera una fila por firma.
-Solo se indexan declaraciones fuente canónicas `pub fn`: la ausencia de una
-keyword `async` es normativa, mientras que `suspends` pertenece a la interfaz
-publicada y al hash de API, no a la declaración que escribe el autor.
+Solo se indexan declaraciones fuente canónicas `pub fn`: no existe una familia
+`async fn`. El efecto postfix `suspends` pertenece a la firma publicada y al
+hash de API; es obligatorio en contratos sin cuerpo e inferible en
+implementaciones con cuerpo.
 
 ## Cadena exigida
 

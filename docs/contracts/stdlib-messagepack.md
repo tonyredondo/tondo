@@ -96,14 +96,14 @@ pub fn MessagePackTimestamp.fromExt(value: MessagePackExt): MessagePackTimestamp
 pub fn MessagePackTimestamp.toExt(self): MessagePackExt ! MessagePackError
 
 pub fn MessagePackReader.fromBytes(input: Bytes, options: MessagePackDecodeOptions): MessagePackReader ! MessagePackError
-pub fn MessagePackReader.fromReader(var input: Reader, options: MessagePackDecodeOptions): MessagePackReader ! MessagePackError
+pub fn MessagePackReader.fromReader(var input: Reader, options: MessagePackDecodeOptions): MessagePackReader ! MessagePackError suspends
 pub fn MessagePackReader.next(var self): MessagePackEvent? ! MessagePackError
 pub fn MessagePackReader.own(var self, event: MessagePackEvent): MessagePackEvent ! MessagePackError
 pub fn MessagePackReader.finish(var self): Unit ! MessagePackError
 
-pub fn MessagePackWriter.toWriter(var output: Writer, options: MessagePackEncodeOptions): MessagePackWriter ! MessagePackError
-pub fn MessagePackWriter.write(var self, event: MessagePackEvent): Unit ! MessagePackError
-pub fn MessagePackWriter.finish(var self): Unit ! MessagePackError
+pub fn MessagePackWriter.toWriter(var output: Writer, options: MessagePackEncodeOptions): MessagePackWriter ! MessagePackError suspends
+pub fn MessagePackWriter.write(var self, event: MessagePackEvent): Unit ! MessagePackError suspends
+pub fn MessagePackWriter.finish(var self): Unit ! MessagePackError suspends
 ```
 
 `Value.Map` conserva pares y orden; no se ofrece un segundo

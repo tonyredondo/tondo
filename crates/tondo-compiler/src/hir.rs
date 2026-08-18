@@ -3230,7 +3230,9 @@ impl HirBootstrapHostFunction {
     pub const fn is_async(self) -> bool {
         matches!(
             self,
-            Self::ReaderRead
+            Self::ConsoleFlush
+                | Self::ConsoleReadLine
+                | Self::ReaderRead
                 | Self::WriterWrite
                 | Self::WriterFlush
                 | Self::IoReadAll
@@ -3249,10 +3251,12 @@ impl HirBootstrapHostFunction {
                 | Self::FileWrite
                 | Self::FileFlush
                 | Self::DirectoryList
+                | Self::CommandStart
                 | Self::CommandStatus
                 | Self::CommandOutput
                 | Self::CommandRun
                 | Self::CommandCheck
+                | Self::PipelineStart
                 | Self::PipelineStatus
                 | Self::PipelineOutput
                 | Self::PipelineRun

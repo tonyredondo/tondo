@@ -71,6 +71,7 @@ pub enum TokenKind {
     SelfKw,
     Some,
     Spawn,
+    Suspends,
     Suite,
     Test,
     Thread,
@@ -186,6 +187,7 @@ impl TokenKind {
                 | Self::SelfKw
                 | Self::Some
                 | Self::Spawn
+                | Self::Suspends
                 | Self::Suite
                 | Self::Test
                 | Self::Thread
@@ -236,6 +238,7 @@ impl TokenKind {
             "self" => Self::SelfKw,
             "some" => Self::Some,
             "spawn" => Self::Spawn,
+            "suspends" => Self::Suspends,
             "suite" => Self::Suite,
             "test" => Self::Test,
             "thread" => Self::Thread,

@@ -5,11 +5,11 @@
   "documents": [
     {
       "path": "TONDO_LANGUAGE_SPEC.md",
-      "sha256": "0be283f1032d1a53f733a9b4d9e46f7be81dd14f86d751f05a5f2c53e69a7614"
+      "sha256": "b436cb475e53c51eda008a6914fb58bae698d63e3de6fb84df5833a0e2c4114d"
     },
     {
       "path": "TONDO_TESTING_SPEC.md",
-      "sha256": "56548af3caca6cfce767a3ff19c7ebeb80e5939d0a762e48891479d1b24f6a1f"
+      "sha256": "26f4f30e5dceeee52b62d2dc601690cd30171f65e433468c94232839c803362d"
     },
     {
       "path": "TONDO_TOOLCHAIN_SPEC.md",
@@ -693,7 +693,7 @@
     },
     {
       "requirement": "TL01-11-10-R001",
-      "text_sha256": "4c1c517f5ebcb9c8a77892af9b439b1f7e58cef05d9848fae7eadea1ba2463c4",
+      "text_sha256": "d11ba8759b39def206ea1b9cf1fab075727c8b71be173a1b4a96c5e93adb795c",
       "outcome": "implemented-without-trace",
       "reason": "TL01-11-10-R001 has an existing implementation at crates/tondo-compiler/src/hir/check.rs and executable evidence rust:tondo-compiler:src::types:unification_shape_matrix_traverses_every_closed_constructor; its six-dimension normative trace remains incomplete.",
       "implementation": [
@@ -706,7 +706,7 @@
     },
     {
       "requirement": "TL01-11-10-R002",
-      "text_sha256": "a121c3ae2a6f86215c6cd1f3631aad5f92dcbd71dd365ac981683db1fe40252c",
+      "text_sha256": "6ac4b52f2f7ff565613cb342c581398dba1d5de3433bbe32c21b06efb025dea4",
       "outcome": "implemented-without-trace",
       "reason": "TL01-11-10-R002 has an existing implementation at crates/tondo-compiler/src/hir/check.rs and executable evidence rust:tondo-compiler:src::types:unification_shape_matrix_traverses_every_closed_constructor; its six-dimension normative trace remains incomplete.",
       "implementation": [
@@ -719,7 +719,7 @@
     },
     {
       "requirement": "TL01-11-10-R003",
-      "text_sha256": "5802dabad0ffe376fcb9dddcfa869de943ce6fa18364a006a448715383dd60c5",
+      "text_sha256": "24d090884f341f1c5a40294f6d36a379f8a3f0baae9ca07712c69559d3c05ee8",
       "outcome": "implemented-without-trace",
       "reason": "TL01-11-10-R003 has an existing implementation at crates/tondo-compiler/src/hir/check.rs and executable evidence rust:tondo-compiler:src::types:unification_shape_matrix_traverses_every_closed_constructor; its six-dimension normative trace remains incomplete.",
       "implementation": [
@@ -1044,7 +1044,7 @@
     },
     {
       "requirement": "TL01-12-3-R002",
-      "text_sha256": "b630c88a54a1ab5821f86773719c5ea184152e27a2c9d5f0458b97f16ec2209f",
+      "text_sha256": "8175df073f971c13144ceba8a2dca1188a1de8f1a47f4d79ce5b3079b5ca5b35",
       "outcome": "implemented-without-trace",
       "reason": "TL01-12-3-R002 has an existing implementation at crates/tondo-compiler/src/hir/check.rs and executable evidence rust:tondo-compiler:src::types:unification_shape_matrix_traverses_every_closed_constructor; its six-dimension normative trace remains incomplete.",
       "implementation": [
@@ -1681,7 +1681,7 @@
     },
     {
       "requirement": "TL01-16-13-R004",
-      "text_sha256": "d4978376249854abf60a8427a635d319599e6f26f27c66ceccde5f082bdf4d68",
+      "text_sha256": "85c349401d2e0c6023189f8b692c8d1462381b2e5a0cc753503c1855595c6598",
       "outcome": "implemented-without-trace",
       "reason": "TL01-16-13-R004 has an existing implementation at crates/tondo-compiler/src/hir/check.rs and executable evidence rust:tondo-compiler:src::hir::check:affine_availability_rejects_sequential_and_call_once_reuse; its six-dimension normative trace remains incomplete.",
       "implementation": [
@@ -1863,7 +1863,7 @@
     },
     {
       "requirement": "TL01-16-5-R001",
-      "text_sha256": "bf15a88646d51625b1d79d780371a4f2a3ec09c914e6fa01e5935df1c27aaa0e",
+      "text_sha256": "1a608199f4c3aec6114e8aa243acd4183a034807ccb63e76155fc780c2b30926",
       "outcome": "implemented-without-trace",
       "reason": "TL01-16-5-R001 has an existing implementation at crates/tondo-compiler/src/hir/check.rs and executable evidence rust:tondo-compiler:src::hir::check:affine_availability_rejects_sequential_and_call_once_reuse; its six-dimension normative trace remains incomplete.",
       "implementation": [
@@ -1876,7 +1876,7 @@
     },
     {
       "requirement": "TL01-16-5-R002",
-      "text_sha256": "440c4e9ddb16c4804afc7208d3bd7e902b1f52bc9d1beb2eaa55ca3cc32ddf9f",
+      "text_sha256": "656292055f27a65d4f1d33be5bd531a93a94d6742d5052ae309a6894d86c632d",
       "outcome": "implemented-without-trace",
       "reason": "TL01-16-5-R002 has an existing implementation at crates/tondo-compiler/src/hir/check.rs and executable evidence rust:tondo-compiler:src::hir::check:affine_availability_rejects_sequential_and_call_once_reuse; its six-dimension normative trace remains incomplete.",
       "implementation": [
@@ -2483,7 +2483,7 @@
     },
     {
       "requirement": "TL01-23-12-R001",
-      "text_sha256": "ac8dc6d77f510b5bcf798e9e3f8a54be1732817753c3af6784f03981c9c4366a",
+      "text_sha256": "fdcfc06189cf3bc715f0be280b9cfa1227df05b8c21148818cdf44677e28edec",
       "outcome": "implemented-without-trace",
       "reason": "TL01-23-12-R001 has an existing implementation at crates/tondo-compiler/src/syntax/parser.rs and executable evidence rust:tondo-compiler:src::syntax::parser:declarations_types_and_methods_parse_together; its six-dimension normative trace remains incomplete.",
       "implementation": [
@@ -2509,7 +2509,7 @@
     },
     {
       "requirement": "TL01-23-13-R002",
-      "text_sha256": "437264594631f346792ceac78e7cb1d96db580e372cff7ed367a75261c186d95",
+      "text_sha256": "43eb41a2fc36d682f206aeabc8dbbbc2946bf85b4ee8e1b76950851daddcb8df",
       "outcome": "implemented-without-trace",
       "reason": "TL01-23-13-R002 has an existing implementation at crates/tondo-compiler/src/syntax/parser.rs and executable evidence rust:tondo-compiler:src::syntax::parser:declarations_types_and_methods_parse_together; its six-dimension normative trace remains incomplete.",
       "implementation": [

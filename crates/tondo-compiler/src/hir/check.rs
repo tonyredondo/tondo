@@ -2850,7 +2850,7 @@ impl<'a> ExpressionChecker<'a> {
         expected: Option<ExpressionExpectation>,
         context: &mut BodyContext,
     ) -> Result<HirExpressionId, HirError> {
-        let mut is_async = node
+        let explicitly_async = node
             .child_tokens()
             .any(|token| token.kind() == TokenKind::Async);
         let is_unsafe = node
@@ -2879,9 +2879,10 @@ impl<'a> ExpressionChecker<'a> {
                 Ok(TypeKind::Function(function)) => Some(function.clone()),
                 _ => None,
             });
-        if expected_function.as_ref().is_some_and(|function| {
-            function.is_async() != is_async || function.is_unsafe() != is_unsafe
-        }) {
+        if expected_function
+            .as_ref()
+            .is_some_and(|function| function.is_unsafe() != is_unsafe)
+        {
             self.emit(
                 span,
                 "E1102",
@@ -2891,6 +2892,10 @@ impl<'a> ExpressionChecker<'a> {
             )?;
             return self.recovery_expression(file, node.range());
         }
+        let mut is_async = explicitly_async
+            || expected_function
+                .as_ref()
+                .is_some_and(FunctionType::is_async);
         let parameter_nodes = node
             .child_nodes()
             .find(|child| child.kind() == SyntaxKind::ClosureParameterList)
@@ -2980,11 +2985,16 @@ impl<'a> ExpressionChecker<'a> {
                 (ParameterMode::Value, self.program.interner.error(), false)
             };
 
-            if is_async && matches!(mode, ParameterMode::Mut | ParameterMode::Var) {
+            // `async (...)` survives only as a compatibility spelling for the
+            // frozen bootstrap corpus. Preserve its historical restriction;
+            // the canonical `fn(...) suspends` contract permits an exclusive
+            // parameter for a sequential, implicitly awaited call and checks
+            // the loan at `spawn` instead.
+            if explicitly_async && matches!(mode, ParameterMode::Mut | ParameterMode::Var) {
                 self.emit(
                     parameter_span,
                     "E1609",
-                    "an async closure cannot keep a `mut` or `var` parameter across suspension",
+                    "a legacy `async` closure cannot contain a `mut` or `var` parameter; use a `fn(...) suspends` contract",
                     Vec::new(),
                     None,
                 )?;
@@ -3447,7 +3457,7 @@ impl<'a> ExpressionChecker<'a> {
                 self.emit(
                     span,
                     "E1611",
-                    "`spawn` requires one async call",
+                    "`spawn` requires one `suspends` call",
                     Vec::new(),
                     None,
                 )?;
@@ -3576,6 +3586,17 @@ impl<'a> ExpressionChecker<'a> {
                 "an argument crossing an async suspension",
                 "E1605",
             )?;
+            if initiation == AsyncInitiationKind::Spawn
+                && matches!(argument.mode(), ParameterMode::Mut | ParameterMode::Var)
+            {
+                self.emit(
+                    value_span,
+                    "E1609",
+                    "a spawned call cannot keep an exclusive `mut` or `var` loan; move the owner or use synchronized shared state",
+                    Vec::new(),
+                    None,
+                )?;
+            }
             if initiation == AsyncInitiationKind::Spawn && argument.mode() == ParameterMode::Ref {
                 let _ = self.require_async_capability(
                     value_span,
@@ -18026,6 +18047,9 @@ impl<'a> ExpressionChecker<'a> {
                 (IntrinsicType::ProcessHandle, "status") => {
                     HirBootstrapHostFunction::ProcessHandleStatus
                 }
+                (IntrinsicType::ProcessHandle, "wait") => {
+                    HirBootstrapHostFunction::ProcessHandleStatus
+                }
                 (IntrinsicType::ProcessHandle, "output") => {
                     HirBootstrapHostFunction::ProcessHandleOutput
                 }
@@ -22749,16 +22773,29 @@ mod tests {
     }
 
     #[test]
-    fn closure_effects_must_match_the_expected_function_type_exactly() {
+    fn explicit_closure_effects_must_match_while_context_can_supply_suspension() {
         for source in [
             "fn invalid() {\n    let operation: fn(): Int = async () { 1 }\n    _ = operation\n}\n",
-            "fn invalid() {\n    let operation: async fn(): Int = () { 1 }\n    _ = operation\n}\n",
             "fn invalid() {\n    let operation: unsafe fn(): Int = async unsafe () { 1 }\n    _ = operation\n}\n",
-            "fn invalid() {\n    let operation: async unsafe fn(): Int = unsafe () { 1 }\n    _ = operation\n}\n",
         ] {
             let (_, _, output) = check(source);
             assert_eq!(codes(&output), ["E1102"], "{source}");
             assert_eq!(output.program().closures().count(), 0, "{source}");
+        }
+
+        for source in [
+            "fn valid() {\n    let operation: fn(): Int suspends = () { 1 }\n    _ = operation\n}\n",
+            "fn valid() {\n    let operation: unsafe fn(): Int suspends = unsafe () { 1 }\n    _ = operation\n}\n",
+            "fn valid() {\n    let operation: async unsafe fn(): Int = unsafe () { 1 }\n    _ = operation\n}\n",
+        ] {
+            let (_, _, output) = check(source);
+            assert!(
+                output.diagnostics().is_empty(),
+                "{source}\n{:#?}",
+                output.diagnostics()
+            );
+            assert!(output.is_complete(), "{source}");
+            assert_eq!(output.program().closures().count(), 1, "{source}");
         }
     }
 
@@ -22799,14 +22836,31 @@ mod tests {
     }
 
     #[test]
-    fn async_closures_reject_exclusive_parameters_and_await_direct_calls() {
-        for source in [
-            "fn invalid() {\n    let operation = async (value: mut Int) { () }\n    _ = operation\n}\n",
-            "fn invalid() {\n    let operation = async (value: var Int) { () }\n    _ = operation\n}\n",
-        ] {
-            let (_, _, output) = check(source);
-            assert_eq!(codes(&output), ["E1609"]);
-        }
+    fn suspending_closures_accept_exclusive_parameters_and_await_direct_calls() {
+        let (_, _, output) = check(
+            "fn build() {\n\
+                 let operation: fn(mut Int) suspends = (value) {\n\
+                     value += 1\n\
+                 }\n\
+                 var number = 1\n\
+                 operation(mut number)\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+
+        let (_, _, legacy) = check(
+            "fn invalid() {\n\
+                 let operation = async (value: mut Int) {\n\
+                     value += 1\n\
+                 }\n\
+                 _ = operation\n\
+             }\n",
+        );
+        assert_eq!(codes(&legacy), ["E1609"]);
 
         let async_source =
             "fn invalid() {\n    let operation = async (): Int { 1 }\n    _ = operation()\n}\n";
@@ -22825,6 +22879,74 @@ mod tests {
         assert_eq!(codes(&output), ["E1701"], "{unsafe_source}");
         assert!(output.is_complete(), "{unsafe_source}");
         assert_eq!(output.program().closures().count(), 1, "{unsafe_source}");
+    }
+
+    #[test]
+    fn spawn_rejects_exclusive_loans_but_implicit_await_accepts_them() {
+        let sequential = "fn update(value: mut Int) suspends {\n\
+                              value += 1\n\
+                          }\n\
+                          fn run() {\n\
+                              var value = 1\n\
+                              update(mut value)\n\
+                              assert(value == 2)\n\
+                          }\n";
+        let (_, _, output) = check(sequential);
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+
+        let spawned = "fn update(value: mut Int) suspends {\n\
+                           value += 1\n\
+                       }\n\
+                       fn invalid() {\n\
+                           var value = 1\n\
+                           scope {\n\
+                               let task = spawn update(mut value)\n\
+                               _ = task\n\
+                           }\n\
+                       }\n";
+        let (_, _, output) = check(spawned);
+        assert!(
+            codes(&output).contains(&"E1609"),
+            "{:#?}",
+            output.diagnostics()
+        );
+    }
+
+    #[test]
+    fn suspends_is_the_visible_spawn_eligibility_effect() {
+        let valid = "fn operation(): Int suspends { 42 }\n\
+                     fn run() {\n\
+                         scope {\n\
+                             let task = spawn operation()\n\
+                             assert(await task == 42)\n\
+                         }\n\
+                     }\n";
+        let (_, _, output) = check(valid);
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(
+            output
+                .program()
+                .expressions()
+                .any(|expression| { matches!(expression.kind(), HirExpressionKind::Spawn { .. }) })
+        );
+
+        let invalid = "fn operation(): Int { 42 }\n\
+                       fn run() {\n\
+                           scope {\n\
+                               let task = spawn operation()\n\
+                               _ = task\n\
+                           }\n\
+                       }\n";
+        let (_, _, output) = check(invalid);
+        assert_eq!(codes(&output), ["E1611"], "{:#?}", output.diagnostics());
     }
 
     #[test]
@@ -26854,14 +26976,14 @@ fn build(input: Int, flag: Bool) {
     }
 
     #[test]
-    fn async_receiver_traits_imply_send_for_implementations_generics_and_opaques() {
+    fn suspending_receiver_traits_imply_send_for_implementations_generics_and_opaques() {
         let (_, _, valid) = check(
             "trait Poll {\n\
-                 async fn poll(self): Bool\n\
+                 fn poll(self): Bool suspends\n\
              }\n\
              type Worker[T] = { value: T }\n\
              impl[T: Send] Poll for Worker[T] {\n\
-                 async fn poll(self): Bool { true }\n\
+                 fn poll(self): Bool suspends { true }\n\
              }\n\
              fn needSend[T: Discard + Send](value: T) {}\n\
              fn inferred[T: Discard + Poll](value: T) { needSend(value) }\n\
@@ -26876,8 +26998,8 @@ fn build(input: Int, flag: Bool) {
         assert!(valid.is_complete());
 
         for source in [
-            "trait Poll {\n    async fn poll(self): Bool\n}\nimpl Poll for Pointer[Int] {\n    async fn poll(self): Bool { true }\n}\n",
-            "trait Poll {\n    async fn poll(self): Bool\n}\ntype Worker[T] = { value: T }\nimpl[T] Poll for Worker[T] {\n    async fn poll(self): Bool { true }\n}\n",
+            "trait Poll {\n    fn poll(self): Bool suspends\n}\nimpl Poll for Pointer[Int] {\n    fn poll(self): Bool suspends { true }\n}\n",
+            "trait Poll {\n    fn poll(self): Bool suspends\n}\ntype Worker[T] = { value: T }\nimpl[T] Poll for Worker[T] {\n    fn poll(self): Bool suspends { true }\n}\n",
         ] {
             let (_, _, invalid) = check(source);
             assert_eq!(

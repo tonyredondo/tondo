@@ -158,14 +158,14 @@ pub fn JsonNumber.toFloat32(self): Float32 ! JsonError
 pub fn JsonNumber.toFloat64(self): Float64 ! JsonError
 
 pub fn JsonReader.fromBytes(input: Bytes, options: JsonDecodeOptions): JsonReader ! JsonError
-pub fn JsonReader.fromReader(var input: Reader, options: JsonDecodeOptions): JsonReader ! JsonError
+pub fn JsonReader.fromReader(var input: Reader, options: JsonDecodeOptions): JsonReader ! JsonError suspends
 pub fn JsonReader.next(var self): JsonEvent? ! JsonError
 pub fn JsonReader.own(var self, event: JsonEvent): JsonEvent ! JsonError
 pub fn JsonReader.finish(var self): Unit ! JsonError
 
-pub fn JsonWriter.toWriter(var output: Writer, options: JsonEncodeOptions): JsonWriter ! JsonError
-pub fn JsonWriter.write(var self, event: JsonEvent): Unit ! JsonError
-pub fn JsonWriter.finish(var self): Unit ! JsonError
+pub fn JsonWriter.toWriter(var output: Writer, options: JsonEncodeOptions): JsonWriter ! JsonError suspends
+pub fn JsonWriter.write(var self, event: JsonEvent): Unit ! JsonError suspends
+pub fn JsonWriter.finish(var self): Unit ! JsonError suspends
 ```
 
 `parse` es la única construcción dinámica; `decode` exige un `T` estático y

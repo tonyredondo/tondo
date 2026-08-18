@@ -29,23 +29,23 @@ fn shell(text: String): Command
 fn Command.mergeStderr(self): Command
 fn Pipeline.mergeStderr(self): Pipeline
 
-fn Command.start(self): ProcessHandle ! ProcessError
-fn Command.status(self): Array[ExitStatus] ! ProcessError
-fn Command.output(self): ProcessOutput ! ProcessError
-fn Command.run(self): Array[ExitStatus] ! ProcessError
-fn Command.check(self): ProcessOutput ! (ProcessError | ProcessExitError)
+fn Command.start(self): ProcessHandle ! ProcessError suspends
+fn Command.status(self): Array[ExitStatus] ! ProcessError suspends
+fn Command.output(self): ProcessOutput ! ProcessError suspends
+fn Command.run(self): Array[ExitStatus] ! ProcessError suspends
+fn Command.check(self): ProcessOutput ! (ProcessError | ProcessExitError) suspends
 
-fn Pipeline.start(self): ProcessHandle ! ProcessError
-fn Pipeline.status(self): Array[ExitStatus] ! ProcessError
-fn Pipeline.output(self): ProcessOutput ! ProcessError
-fn Pipeline.run(self): Array[ExitStatus] ! ProcessError
-fn Pipeline.check(self): ProcessOutput ! (ProcessError | ProcessExitError)
+fn Pipeline.start(self): ProcessHandle ! ProcessError suspends
+fn Pipeline.status(self): Array[ExitStatus] ! ProcessError suspends
+fn Pipeline.output(self): ProcessOutput ! ProcessError suspends
+fn Pipeline.run(self): Array[ExitStatus] ! ProcessError suspends
+fn Pipeline.check(self): ProcessOutput ! (ProcessError | ProcessExitError) suspends
 
-fn ProcessHandle.status(self): Array[ExitStatus] ! ProcessError
-fn ProcessHandle.output(self): ProcessOutput ! ProcessError
-fn ProcessHandle.run(self): Array[ExitStatus] ! ProcessError
-fn ProcessHandle.check(self): ProcessOutput ! (ProcessError | ProcessExitError)
-fn ProcessHandle.cancel(self): Array[ExitStatus] ! ProcessError
+fn ProcessHandle.status(self): Array[ExitStatus] ! ProcessError suspends
+fn ProcessHandle.output(self): ProcessOutput ! ProcessError suspends
+fn ProcessHandle.run(self): Array[ExitStatus] ! ProcessError suspends
+fn ProcessHandle.check(self): ProcessOutput ! (ProcessError | ProcessExitError) suspends
+fn ProcessHandle.cancel(self): Array[ExitStatus] ! ProcessError suspends
 ```
 
 `ProcessOutput` exposes the read-only fields `stdout: Bytes`, `stderr: Bytes`,

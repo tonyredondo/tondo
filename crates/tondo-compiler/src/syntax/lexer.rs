@@ -1645,8 +1645,8 @@ mod tests {
             "alias", "and", "as", "async", "await", "break", "const", "continue", "defer", "else",
             "enum", "err", "fail", "false", "fn", "for", "if", "impl", "import", "in", "let",
             "match", "mut", "none", "not", "ok", "or", "priv", "pub", "ref", "return", "scope",
-            "self", "some", "spawn", "suite", "test", "thread", "trait", "true", "type", "unsafe",
-            "var", "with",
+            "self", "some", "spawn", "suite", "suspends", "test", "thread", "trait", "true",
+            "type", "unsafe", "var", "with",
         ];
         let input = spellings.join(" ");
         let (_, _, lexed) = lex_bytes(input.as_bytes(), LexMode::Module);

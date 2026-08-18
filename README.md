@@ -88,15 +88,18 @@ and allocation-by-allocation GC pressure, so storage sharing cannot alter
 values, write independence, identity, iteration, panic, or output.
 
 Async execution is implemented without a visible future wrapper or a parallel
-`async` API. Every function is declared with `fn`; the compiler infers the
-published `suspends` effect from suspendible calls, explicit `await`, async
-iteration, or cleanup. A direct suspendible call waits implicitly and
+`async` API. Every function is declared with `fn`; the postfix `suspends`
+effect is required on bodyless contracts, may pin a stable promise on a body,
+and is otherwise inferred from suspendible calls, explicit `await`, async
+iteration, or cleanup. Public interfaces always expose it. A direct suspendible
+call waits implicitly and
 `await call()` is equivalent; only `spawn` preserves pending work and returns
 one affine, scope-bound `Join[T, E]`. HIR follows that handle through bindings
 and containers, requires exactly one terminal consumption, and keeps every
 structured `ref` loan active until the handle is awaited or torn down. `Send`
 is checked for transferred and suspension-live values, while a concurrently
-observed `ref T` also requires `Share`. `@sync`/`@nosuspend` are explicit
+observed `ref T` also requires `Share`; `spawn` rejects exclusive `mut`/`var`
+loans even though sequential suspension may retain them. `@sync`/`@nosuspend` are explicit
 non-suspending boundaries and reject a suspendible operation with `E1601`. MIR
 and bytecode retain separate `Await`, `Spawn`, task-scope entry, and
 scope-drain operations. The VM executes them with a cooperative single-thread

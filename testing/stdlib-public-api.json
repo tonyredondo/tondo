@@ -723,10 +723,10 @@
   ],
   "rows": [
     {
-      "id": "std.collections:126",
+      "id": "std.collections:127",
       "owner": "std.collections",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 126,
+      "line": 127,
       "signature": "pub fn Array.new[T](): Array[T]",
       "symbol": "std.collections.Array.new",
       "operation": "new",
@@ -773,10 +773,10 @@
       "status": "verified"
     },
     {
-      "id": "std.collections:127",
+      "id": "std.collections:128",
       "owner": "std.collections",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 127,
+      "line": 128,
       "signature": "pub fn Array.withCapacity[T](capacity: Int): Array[T] ! CollectionError",
       "symbol": "std.collections.Array.withCapacity",
       "operation": "withCapacity",
@@ -823,10 +823,10 @@
       "status": "verified"
     },
     {
-      "id": "std.collections:128",
+      "id": "std.collections:129",
       "owner": "std.collections",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 128,
+      "line": 129,
       "signature": "pub fn Array.length[T](self): Int",
       "symbol": "std.collections.Array.length",
       "operation": "length",
@@ -873,10 +873,10 @@
       "status": "verified"
     },
     {
-      "id": "std.collections:129",
+      "id": "std.collections:130",
       "owner": "std.collections",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 129,
+      "line": 130,
       "signature": "pub fn Array.get[T](self, index: Int): T?",
       "symbol": "std.collections.Array.get",
       "operation": "get",
@@ -923,10 +923,10 @@
       "status": "verified"
     },
     {
-      "id": "std.collections:130",
+      "id": "std.collections:131",
       "owner": "std.collections",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 130,
+      "line": 131,
       "signature": "pub fn Array.slice[T](self, start: Int, end: Int): Array[T] ! CollectionError",
       "symbol": "std.collections.Array.slice",
       "operation": "slice",
@@ -973,10 +973,10 @@
       "status": "verified"
     },
     {
-      "id": "std.collections:131",
+      "id": "std.collections:132",
       "owner": "std.collections",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 131,
+      "line": 132,
       "signature": "pub fn Array.push[T](var self, value: T): Unit ! CollectionError",
       "symbol": "std.collections.Array.push",
       "operation": "push",
@@ -1023,10 +1023,10 @@
       "status": "verified"
     },
     {
-      "id": "std.collections:132",
+      "id": "std.collections:133",
       "owner": "std.collections",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 132,
+      "line": 133,
       "signature": "pub fn Array.pop[T](var self): T?",
       "symbol": "std.collections.Array.pop",
       "operation": "pop",
@@ -1073,10 +1073,10 @@
       "status": "verified"
     },
     {
-      "id": "std.collections:134",
+      "id": "std.collections:135",
       "owner": "std.collections",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 134,
+      "line": 135,
       "signature": "pub fn Map.new[K: Key, V](): Map[K, V]",
       "symbol": "std.collections.Map.new",
       "operation": "new",
@@ -1123,10 +1123,10 @@
       "status": "verified"
     },
     {
-      "id": "std.collections:135",
+      "id": "std.collections:136",
       "owner": "std.collections",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 135,
+      "line": 136,
       "signature": "pub fn Map.get[K: Key, V](self, key: K): V?",
       "symbol": "std.collections.Map.get",
       "operation": "get",
@@ -1173,10 +1173,10 @@
       "status": "verified"
     },
     {
-      "id": "std.collections:136",
+      "id": "std.collections:137",
       "owner": "std.collections",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 136,
+      "line": 137,
       "signature": "pub fn Map.insert[K: Key, V](var self, key: K, value: V): V?",
       "symbol": "std.collections.Map.insert",
       "operation": "insert",
@@ -1223,10 +1223,10 @@
       "status": "verified"
     },
     {
-      "id": "std.collections:137",
+      "id": "std.collections:138",
       "owner": "std.collections",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 137,
+      "line": 138,
       "signature": "pub fn Map.remove[K: Key, V](var self, key: K): V?",
       "symbol": "std.collections.Map.remove",
       "operation": "remove",
@@ -1273,10 +1273,10 @@
       "status": "verified"
     },
     {
-      "id": "std.collections:138",
+      "id": "std.collections:139",
       "owner": "std.collections",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 138,
+      "line": 139,
       "signature": "pub fn Map.contains[K: Key, V](self, key: K): Bool",
       "symbol": "std.collections.Map.contains",
       "operation": "contains",
@@ -1323,10 +1323,10 @@
       "status": "verified"
     },
     {
-      "id": "std.collections:139",
+      "id": "std.collections:140",
       "owner": "std.collections",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 139,
+      "line": 140,
       "signature": "pub fn Map.entries[K: Key, V](self): Iterator[(K, V)]",
       "symbol": "std.collections.Map.entries",
       "operation": "entries",
@@ -1373,10 +1373,10 @@
       "status": "verified"
     },
     {
-      "id": "std.collections:141",
+      "id": "std.collections:142",
       "owner": "std.collections",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 141,
+      "line": 142,
       "signature": "pub fn Set.new[K: Key](): Set[K]",
       "symbol": "std.collections.Set.new",
       "operation": "new",
@@ -1423,10 +1423,10 @@
       "status": "verified"
     },
     {
-      "id": "std.collections:142",
+      "id": "std.collections:143",
       "owner": "std.collections",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 142,
+      "line": 143,
       "signature": "pub fn Set.insert[K: Key](var self, value: K): Bool",
       "symbol": "std.collections.Set.insert",
       "operation": "insert",
@@ -1473,10 +1473,10 @@
       "status": "verified"
     },
     {
-      "id": "std.collections:143",
+      "id": "std.collections:144",
       "owner": "std.collections",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 143,
+      "line": 144,
       "signature": "pub fn Set.remove[K: Key](var self, value: K): Bool",
       "symbol": "std.collections.Set.remove",
       "operation": "remove",
@@ -1523,10 +1523,10 @@
       "status": "verified"
     },
     {
-      "id": "std.collections:144",
+      "id": "std.collections:145",
       "owner": "std.collections",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 144,
+      "line": 145,
       "signature": "pub fn Set.contains[K: Key](self, value: K): Bool",
       "symbol": "std.collections.Set.contains",
       "operation": "contains",
@@ -1573,10 +1573,10 @@
       "status": "verified"
     },
     {
-      "id": "std.collections:145",
+      "id": "std.collections:146",
       "owner": "std.collections",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 145,
+      "line": 146,
       "signature": "pub fn Set.values[K: Key](self): Iterator[K]",
       "symbol": "std.collections.Set.values",
       "operation": "values",
@@ -1774,7 +1774,7 @@
       "owner": "std.console",
       "contract": "docs/contracts/stdlib-hosted.md",
       "line": 13,
-      "signature": "pub fn readLine(var input: std.io.Reader): String? ! ConsoleError",
+      "signature": "pub fn readLine(var input: std.io.Reader): String? ! ConsoleError suspends",
       "symbol": "std.console.readLine",
       "operation": "readLine",
       "evidence": {
@@ -1921,7 +1921,7 @@
       "owner": "std.console",
       "contract": "docs/contracts/stdlib-hosted.md",
       "line": 16,
-      "signature": "pub fn flush(): Unit ! ConsoleError",
+      "signature": "pub fn flush(): Unit ! ConsoleError suspends",
       "symbol": "std.console.flush",
       "operation": "flush",
       "evidence": {
@@ -2761,10 +2761,10 @@
       "status": "verified"
     },
     {
-      "id": "std.format:227",
+      "id": "std.format:228",
       "owner": "std.format",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 227,
+      "line": 228,
       "signature": "pub fn Builder.new(): Builder",
       "symbol": "std.format.Builder.new",
       "operation": "new",
@@ -2809,10 +2809,10 @@
       "status": "verified"
     },
     {
-      "id": "std.format:228",
+      "id": "std.format:229",
       "owner": "std.format",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 228,
+      "line": 229,
       "signature": "pub fn Builder.append(var self, value: String): Unit ! FormatError",
       "symbol": "std.format.Builder.append",
       "operation": "append",
@@ -2857,10 +2857,10 @@
       "status": "verified"
     },
     {
-      "id": "std.format:229",
+      "id": "std.format:230",
       "owner": "std.format",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 229,
+      "line": 230,
       "signature": "pub fn Builder.finish(var self): String ! FormatError",
       "symbol": "std.format.Builder.finish",
       "operation": "finish",
@@ -2905,10 +2905,10 @@
       "status": "verified"
     },
     {
-      "id": "std.format:230",
+      "id": "std.format:231",
       "owner": "std.format",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 230,
+      "line": 231,
       "signature": "pub fn format[T: Display](value: T): String ! FormatError",
       "symbol": "std.format.format",
       "operation": "format",
@@ -2953,10 +2953,10 @@
       "status": "verified"
     },
     {
-      "id": "std.format:231",
+      "id": "std.format:232",
       "owner": "std.format",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 231,
+      "line": 232,
       "signature": "pub fn join[T: Display](values: Array[T], separator: String): String ! FormatError",
       "symbol": "std.format.join",
       "operation": "join",
@@ -3001,11 +3001,11 @@
       "status": "verified"
     },
     {
-      "id": "std.fs:84",
+      "id": "std.fs:85",
       "owner": "std.fs",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 84,
-      "signature": "pub fn open(path: Path, mode: OpenMode): File ! FsError",
+      "line": 85,
+      "signature": "pub fn open(path: Path, mode: OpenMode): File ! FsError suspends",
       "symbol": "std.fs.open",
       "operation": "open",
       "evidence": {
@@ -3049,11 +3049,11 @@
       "status": "verified"
     },
     {
-      "id": "std.fs:85",
+      "id": "std.fs:86",
       "owner": "std.fs",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 85,
-      "signature": "pub fn openDirectory(path: Path): Directory ! FsError",
+      "line": 86,
+      "signature": "pub fn openDirectory(path: Path): Directory ! FsError suspends",
       "symbol": "std.fs.openDirectory",
       "operation": "openDirectory",
       "evidence": {
@@ -3097,11 +3097,11 @@
       "status": "verified"
     },
     {
-      "id": "std.fs:86",
+      "id": "std.fs:87",
       "owner": "std.fs",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 86,
-      "signature": "pub fn readAll(path: Path): Bytes ! FsError",
+      "line": 87,
+      "signature": "pub fn readAll(path: Path): Bytes ! FsError suspends",
       "symbol": "std.fs.readAll",
       "operation": "readAll",
       "evidence": {
@@ -3145,11 +3145,11 @@
       "status": "verified"
     },
     {
-      "id": "std.fs:87",
+      "id": "std.fs:88",
       "owner": "std.fs",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 87,
-      "signature": "pub fn writeAll(path: Path, data: Bytes): Unit ! FsError",
+      "line": 88,
+      "signature": "pub fn writeAll(path: Path, data: Bytes): Unit ! FsError suspends",
       "symbol": "std.fs.writeAll",
       "operation": "writeAll",
       "evidence": {
@@ -3193,11 +3193,11 @@
       "status": "verified"
     },
     {
-      "id": "std.fs:88",
+      "id": "std.fs:89",
       "owner": "std.fs",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 88,
-      "signature": "pub fn createDirectory(path: Path, parents: Bool): Unit ! FsError",
+      "line": 89,
+      "signature": "pub fn createDirectory(path: Path, parents: Bool): Unit ! FsError suspends",
       "symbol": "std.fs.createDirectory",
       "operation": "createDirectory",
       "evidence": {
@@ -3241,11 +3241,11 @@
       "status": "verified"
     },
     {
-      "id": "std.fs:89",
+      "id": "std.fs:90",
       "owner": "std.fs",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 89,
-      "signature": "pub fn remove(path: Path): Unit ! FsError",
+      "line": 90,
+      "signature": "pub fn remove(path: Path): Unit ! FsError suspends",
       "symbol": "std.fs.remove",
       "operation": "remove",
       "evidence": {
@@ -3289,11 +3289,11 @@
       "status": "verified"
     },
     {
-      "id": "std.fs:90",
+      "id": "std.fs:91",
       "owner": "std.fs",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 90,
-      "signature": "pub fn metadata(path: Path): Metadata ! FsError",
+      "line": 91,
+      "signature": "pub fn metadata(path: Path): Metadata ! FsError suspends",
       "symbol": "std.fs.metadata",
       "operation": "metadata",
       "evidence": {
@@ -3337,11 +3337,11 @@
       "status": "verified"
     },
     {
-      "id": "std.fs:91",
+      "id": "std.fs:92",
       "owner": "std.fs",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 91,
-      "signature": "pub fn list(path: Path): Array[Path] ! FsError",
+      "line": 92,
+      "signature": "pub fn list(path: Path): Array[Path] ! FsError suspends",
       "symbol": "std.fs.list",
       "operation": "list",
       "evidence": {
@@ -3385,11 +3385,11 @@
       "status": "verified"
     },
     {
-      "id": "std.fs:92",
+      "id": "std.fs:93",
       "owner": "std.fs",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 92,
-      "signature": "pub fn rename(from: Path, to: Path): Unit ! FsError",
+      "line": 93,
+      "signature": "pub fn rename(from: Path, to: Path): Unit ! FsError suspends",
       "symbol": "std.fs.rename",
       "operation": "rename",
       "evidence": {
@@ -3433,11 +3433,11 @@
       "status": "verified"
     },
     {
-      "id": "std.fs:93",
+      "id": "std.fs:94",
       "owner": "std.fs",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 93,
-      "signature": "pub fn atomicWrite(path: Path, data: Bytes): Unit ! FsError",
+      "line": 94,
+      "signature": "pub fn atomicWrite(path: Path, data: Bytes): Unit ! FsError suspends",
       "symbol": "std.fs.atomicWrite",
       "operation": "atomicWrite",
       "evidence": {
@@ -3481,11 +3481,11 @@
       "status": "verified"
     },
     {
-      "id": "std.fs:94",
+      "id": "std.fs:95",
       "owner": "std.fs",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 94,
-      "signature": "pub fn File.read(var self, max: Int): Option[Bytes] ! FsError",
+      "line": 95,
+      "signature": "pub fn File.read(var self, max: Int): Option[Bytes] ! FsError suspends",
       "symbol": "std.fs.File.read",
       "operation": "read",
       "evidence": {
@@ -3529,11 +3529,11 @@
       "status": "verified"
     },
     {
-      "id": "std.fs:95",
+      "id": "std.fs:96",
       "owner": "std.fs",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 95,
-      "signature": "pub fn File.write(var self, data: Bytes): Int ! FsError",
+      "line": 96,
+      "signature": "pub fn File.write(var self, data: Bytes): Int ! FsError suspends",
       "symbol": "std.fs.File.write",
       "operation": "write",
       "evidence": {
@@ -3577,11 +3577,11 @@
       "status": "verified"
     },
     {
-      "id": "std.fs:96",
+      "id": "std.fs:97",
       "owner": "std.fs",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 96,
-      "signature": "pub fn File.flush(var self): Unit ! FsError",
+      "line": 97,
+      "signature": "pub fn File.flush(var self): Unit ! FsError suspends",
       "symbol": "std.fs.File.flush",
       "operation": "flush",
       "evidence": {
@@ -3625,11 +3625,11 @@
       "status": "verified"
     },
     {
-      "id": "std.fs:97",
+      "id": "std.fs:98",
       "owner": "std.fs",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 97,
-      "signature": "pub fn Directory.list(var self): Array[Path] ! FsError",
+      "line": 98,
+      "signature": "pub fn Directory.list(var self): Array[Path] ! FsError suspends",
       "symbol": "std.fs.Directory.list",
       "operation": "list",
       "evidence": {
@@ -3673,10 +3673,10 @@
       "status": "verified"
     },
     {
-      "id": "std.io:257",
+      "id": "std.io:258",
       "owner": "std.io",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 257,
+      "line": 258,
       "signature": "pub fn defaultLimits(): IoLimits",
       "symbol": "std.io.defaultLimits",
       "operation": "defaultLimits",
@@ -3721,10 +3721,10 @@
       "status": "verified"
     },
     {
-      "id": "std.io:258",
+      "id": "std.io:259",
       "owner": "std.io",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 258,
+      "line": 259,
       "signature": "pub fn limits(maxBytes: Int, maxRead: Int): IoLimits ! IoError",
       "symbol": "std.io.limits",
       "operation": "limits",
@@ -3769,11 +3769,11 @@
       "status": "verified"
     },
     {
-      "id": "std.io:259",
+      "id": "std.io:260",
       "owner": "std.io",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 259,
-      "signature": "pub fn readAll[R: Reader](var reader: R, limits: IoLimits): Bytes ! IoError",
+      "line": 260,
+      "signature": "pub fn readAll[R: Reader](var reader: R, limits: IoLimits): Bytes ! IoError suspends",
       "symbol": "std.io.readAll",
       "operation": "readAll",
       "evidence": {
@@ -3817,11 +3817,11 @@
       "status": "verified"
     },
     {
-      "id": "std.io:260",
+      "id": "std.io:261",
       "owner": "std.io",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 260,
-      "signature": "pub fn writeAll(var writer: Writer, data: Bytes): Unit ! IoError",
+      "line": 261,
+      "signature": "pub fn writeAll(var writer: Writer, data: Bytes): Unit ! IoError suspends",
       "symbol": "std.io.writeAll",
       "operation": "writeAll",
       "evidence": {
@@ -3865,10 +3865,10 @@
       "status": "verified"
     },
     {
-      "id": "std.iter:151",
+      "id": "std.iter:152",
       "owner": "std.iter",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 151,
+      "line": 152,
       "signature": "pub fn Iterator.map[T, U](self, fn(T): U): Iterator[U]",
       "symbol": "std.iter.Iterator.map",
       "operation": "map",
@@ -3914,10 +3914,10 @@
       "status": "verified"
     },
     {
-      "id": "std.iter:152",
+      "id": "std.iter:153",
       "owner": "std.iter",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 152,
+      "line": 153,
       "signature": "pub fn Iterator.filter[T](self, fn(T): Bool): Iterator[T]",
       "symbol": "std.iter.Iterator.filter",
       "operation": "filter",
@@ -3963,10 +3963,10 @@
       "status": "verified"
     },
     {
-      "id": "std.iter:153",
+      "id": "std.iter:154",
       "owner": "std.iter",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 153,
+      "line": 154,
       "signature": "pub fn Iterator.take[T](self, count: Int): Iterator[T]",
       "symbol": "std.iter.Iterator.take",
       "operation": "take",
@@ -4012,10 +4012,10 @@
       "status": "verified"
     },
     {
-      "id": "std.iter:154",
+      "id": "std.iter:155",
       "owner": "std.iter",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 154,
+      "line": 155,
       "signature": "pub fn Iterator.collect[T](self): Array[T] ! CollectionError",
       "symbol": "std.iter.Iterator.collect",
       "operation": "collect",
@@ -4883,7 +4883,7 @@
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
       "line": 161,
-      "signature": "pub fn JsonReader.fromReader(var input: Reader, options: JsonDecodeOptions): JsonReader ! JsonError",
+      "signature": "pub fn JsonReader.fromReader(var input: Reader, options: JsonDecodeOptions): JsonReader ! JsonError suspends",
       "symbol": "std.json.JsonReader.fromReader",
       "operation": "fromReader",
       "evidence": {
@@ -5087,7 +5087,7 @@
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
       "line": 166,
-      "signature": "pub fn JsonWriter.toWriter(var output: Writer, options: JsonEncodeOptions): JsonWriter ! JsonError",
+      "signature": "pub fn JsonWriter.toWriter(var output: Writer, options: JsonEncodeOptions): JsonWriter ! JsonError suspends",
       "symbol": "std.json.JsonWriter.toWriter",
       "operation": "toWriter",
       "evidence": {
@@ -5138,7 +5138,7 @@
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
       "line": 167,
-      "signature": "pub fn JsonWriter.write(var self, event: JsonEvent): Unit ! JsonError",
+      "signature": "pub fn JsonWriter.write(var self, event: JsonEvent): Unit ! JsonError suspends",
       "symbol": "std.json.JsonWriter.write",
       "operation": "write",
       "evidence": {
@@ -5189,7 +5189,7 @@
       "owner": "std.json",
       "contract": "docs/contracts/stdlib-json.md",
       "line": 168,
-      "signature": "pub fn JsonWriter.finish(var self): Unit ! JsonError",
+      "signature": "pub fn JsonWriter.finish(var self): Unit ! JsonError suspends",
       "symbol": "std.json.JsonWriter.finish",
       "operation": "finish",
       "evidence": {
@@ -5236,10 +5236,10 @@
       "status": "verified"
     },
     {
-      "id": "std.math:207",
+      "id": "std.math:208",
       "owner": "std.math",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 207,
+      "line": 208,
       "signature": "pub fn floor(value: Float): Float",
       "symbol": "std.math.floor",
       "operation": "floor",
@@ -5284,10 +5284,10 @@
       "status": "verified"
     },
     {
-      "id": "std.math:208",
+      "id": "std.math:209",
       "owner": "std.math",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 208,
+      "line": 209,
       "signature": "pub fn ceil(value: Float): Float",
       "symbol": "std.math.ceil",
       "operation": "ceil",
@@ -5332,10 +5332,10 @@
       "status": "verified"
     },
     {
-      "id": "std.math:209",
+      "id": "std.math:210",
       "owner": "std.math",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 209,
+      "line": 210,
       "signature": "pub fn round(value: Float): Float",
       "symbol": "std.math.round",
       "operation": "round",
@@ -5380,10 +5380,10 @@
       "status": "verified"
     },
     {
-      "id": "std.math:210",
+      "id": "std.math:211",
       "owner": "std.math",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 210,
+      "line": 211,
       "signature": "pub fn truncate(value: Float): Float",
       "symbol": "std.math.truncate",
       "operation": "truncate",
@@ -5428,10 +5428,10 @@
       "status": "verified"
     },
     {
-      "id": "std.math:211",
+      "id": "std.math:212",
       "owner": "std.math",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 211,
+      "line": 212,
       "signature": "pub fn sqrt(value: Float): Float ! MathError",
       "symbol": "std.math.sqrt",
       "operation": "sqrt",
@@ -5476,10 +5476,10 @@
       "status": "verified"
     },
     {
-      "id": "std.math:212",
+      "id": "std.math:213",
       "owner": "std.math",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 212,
+      "line": 213,
       "signature": "pub fn fma(a: Float, b: Float, c: Float): Float",
       "symbol": "std.math.fma",
       "operation": "fma",
@@ -5524,10 +5524,10 @@
       "status": "verified"
     },
     {
-      "id": "std.math:213",
+      "id": "std.math:214",
       "owner": "std.math",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 213,
+      "line": 214,
       "signature": "pub fn abs(value: Float): Float",
       "symbol": "std.math.abs",
       "operation": "abs",
@@ -5572,10 +5572,10 @@
       "status": "verified"
     },
     {
-      "id": "std.math:214",
+      "id": "std.math:215",
       "owner": "std.math",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 214,
+      "line": 215,
       "signature": "pub fn min(a: Float, b: Float): Float",
       "symbol": "std.math.min",
       "operation": "min",
@@ -5620,10 +5620,10 @@
       "status": "verified"
     },
     {
-      "id": "std.math:215",
+      "id": "std.math:216",
       "owner": "std.math",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 215,
+      "line": 216,
       "signature": "pub fn max(a: Float, b: Float): Float",
       "symbol": "std.math.max",
       "operation": "max",
@@ -6260,7 +6260,7 @@
       "owner": "std.messagepack",
       "contract": "docs/contracts/stdlib-messagepack.md",
       "line": 99,
-      "signature": "pub fn MessagePackReader.fromReader(var input: Reader, options: MessagePackDecodeOptions): MessagePackReader ! MessagePackError",
+      "signature": "pub fn MessagePackReader.fromReader(var input: Reader, options: MessagePackDecodeOptions): MessagePackReader ! MessagePackError suspends",
       "symbol": "std.messagepack.MessagePackReader.fromReader",
       "operation": "fromReader",
       "evidence": {
@@ -6456,7 +6456,7 @@
       "owner": "std.messagepack",
       "contract": "docs/contracts/stdlib-messagepack.md",
       "line": 104,
-      "signature": "pub fn MessagePackWriter.toWriter(var output: Writer, options: MessagePackEncodeOptions): MessagePackWriter ! MessagePackError",
+      "signature": "pub fn MessagePackWriter.toWriter(var output: Writer, options: MessagePackEncodeOptions): MessagePackWriter ! MessagePackError suspends",
       "symbol": "std.messagepack.MessagePackWriter.toWriter",
       "operation": "toWriter",
       "evidence": {
@@ -6505,7 +6505,7 @@
       "owner": "std.messagepack",
       "contract": "docs/contracts/stdlib-messagepack.md",
       "line": 105,
-      "signature": "pub fn MessagePackWriter.write(var self, event: MessagePackEvent): Unit ! MessagePackError",
+      "signature": "pub fn MessagePackWriter.write(var self, event: MessagePackEvent): Unit ! MessagePackError suspends",
       "symbol": "std.messagepack.MessagePackWriter.write",
       "operation": "write",
       "evidence": {
@@ -6554,7 +6554,7 @@
       "owner": "std.messagepack",
       "contract": "docs/contracts/stdlib-messagepack.md",
       "line": 106,
-      "signature": "pub fn MessagePackWriter.finish(var self): Unit ! MessagePackError",
+      "signature": "pub fn MessagePackWriter.finish(var self): Unit ! MessagePackError suspends",
       "symbol": "std.messagepack.MessagePackWriter.finish",
       "operation": "finish",
       "evidence": {
@@ -6599,10 +6599,10 @@
       "status": "verified"
     },
     {
-      "id": "std.path:46",
+      "id": "std.path:47",
       "owner": "std.path",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 46,
+      "line": 47,
       "signature": "pub fn Path.fromString(value: String): Path ! PathError",
       "symbol": "std.path.Path.fromString",
       "operation": "fromString",
@@ -6647,10 +6647,10 @@
       "status": "verified"
     },
     {
-      "id": "std.path:47",
+      "id": "std.path:48",
       "owner": "std.path",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 47,
+      "line": 48,
       "signature": "pub fn Path.fromBytes(value: Bytes): Path ! PathError",
       "symbol": "std.path.Path.fromBytes",
       "operation": "fromBytes",
@@ -6695,10 +6695,10 @@
       "status": "verified"
     },
     {
-      "id": "std.path:48",
+      "id": "std.path:49",
       "owner": "std.path",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 48,
+      "line": 49,
       "signature": "pub fn Path.join(self, component: String): Path ! PathError",
       "symbol": "std.path.Path.join",
       "operation": "join",
@@ -6743,10 +6743,10 @@
       "status": "verified"
     },
     {
-      "id": "std.path:49",
+      "id": "std.path:50",
       "owner": "std.path",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 49,
+      "line": 50,
       "signature": "pub fn Path.parent(self): Path?",
       "symbol": "std.path.Path.parent",
       "operation": "parent",
@@ -6791,10 +6791,10 @@
       "status": "verified"
     },
     {
-      "id": "std.path:50",
+      "id": "std.path:51",
       "owner": "std.path",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 50,
+      "line": 51,
       "signature": "pub fn Path.fileName(self): String?",
       "symbol": "std.path.Path.fileName",
       "operation": "fileName",
@@ -6839,10 +6839,10 @@
       "status": "verified"
     },
     {
-      "id": "std.path:51",
+      "id": "std.path:52",
       "owner": "std.path",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 51,
+      "line": 52,
       "signature": "pub fn Path.extension(self): String?",
       "symbol": "std.path.Path.extension",
       "operation": "extension",
@@ -6887,10 +6887,10 @@
       "status": "verified"
     },
     {
-      "id": "std.path:52",
+      "id": "std.path:53",
       "owner": "std.path",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 52,
+      "line": 53,
       "signature": "pub fn Path.kind(self): Bool",
       "symbol": "std.path.Path.kind",
       "operation": "kind",
@@ -6935,10 +6935,10 @@
       "status": "verified"
     },
     {
-      "id": "std.path:53",
+      "id": "std.path:54",
       "owner": "std.path",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 53,
+      "line": 54,
       "signature": "pub fn Path.isEmpty(self): Bool",
       "symbol": "std.path.Path.isEmpty",
       "operation": "isEmpty",
@@ -6983,10 +6983,10 @@
       "status": "verified"
     },
     {
-      "id": "std.path:54",
+      "id": "std.path:55",
       "owner": "std.path",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 54,
+      "line": 55,
       "signature": "pub fn Path.toString(self): String ! PathError",
       "symbol": "std.path.Path.toString",
       "operation": "toString",
@@ -7031,10 +7031,10 @@
       "status": "verified"
     },
     {
-      "id": "std.path:55",
+      "id": "std.path:56",
       "owner": "std.path",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 55,
+      "line": 56,
       "signature": "pub fn Path.toBytes(self): Bytes",
       "symbol": "std.path.Path.toBytes",
       "operation": "toBytes",
@@ -7079,10 +7079,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:147",
+      "id": "std.process:148",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 147,
+      "line": 148,
       "signature": "pub fn command(program: String, arguments: ...String): Command ! ProcessError",
       "symbol": "std.process.command",
       "operation": "command",
@@ -7127,10 +7127,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:148",
+      "id": "std.process:149",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 148,
+      "line": 149,
       "signature": "pub fn shell(command: String): Command ! ProcessError",
       "symbol": "std.process.shell",
       "operation": "shell",
@@ -7175,10 +7175,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:149",
+      "id": "std.process:150",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 149,
+      "line": 150,
       "signature": "pub fn pipe(left: Command, right: Command): Pipeline ! ProcessError",
       "symbol": "std.process.pipe",
       "operation": "pipe",
@@ -7223,10 +7223,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:150",
+      "id": "std.process:151",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 150,
+      "line": 151,
       "signature": "pub fn Command.mergeStderr(self): Command",
       "symbol": "std.process.Command.mergeStderr",
       "operation": "mergeStderr",
@@ -7271,10 +7271,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:151",
+      "id": "std.process:152",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 151,
+      "line": 152,
       "signature": "pub fn Pipeline.mergeStderr(self): Pipeline",
       "symbol": "std.process.Pipeline.mergeStderr",
       "operation": "mergeStderr",
@@ -7319,11 +7319,11 @@
       "status": "verified"
     },
     {
-      "id": "std.process:152",
+      "id": "std.process:153",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 152,
-      "signature": "pub fn Command.run(self): ExitStatus ! ProcessError",
+      "line": 153,
+      "signature": "pub fn Command.run(self): ExitStatus ! ProcessError suspends",
       "symbol": "std.process.Command.run",
       "operation": "run",
       "evidence": {
@@ -7367,11 +7367,11 @@
       "status": "verified"
     },
     {
-      "id": "std.process:153",
+      "id": "std.process:154",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 153,
-      "signature": "pub fn Command.output(self): ProcessOutput ! ProcessError",
+      "line": 154,
+      "signature": "pub fn Command.output(self): ProcessOutput ! ProcessError suspends",
       "symbol": "std.process.Command.output",
       "operation": "output",
       "evidence": {
@@ -7415,11 +7415,11 @@
       "status": "verified"
     },
     {
-      "id": "std.process:154",
+      "id": "std.process:155",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 154,
-      "signature": "pub fn Command.check(self): ProcessOutput ! (ProcessError | ProcessExitError)",
+      "line": 155,
+      "signature": "pub fn Command.check(self): ProcessOutput ! (ProcessError | ProcessExitError) suspends",
       "symbol": "std.process.Command.check",
       "operation": "check",
       "evidence": {
@@ -7463,11 +7463,11 @@
       "status": "verified"
     },
     {
-      "id": "std.process:155",
+      "id": "std.process:156",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 155,
-      "signature": "pub fn Command.start(self): ProcessHandle ! ProcessError",
+      "line": 156,
+      "signature": "pub fn Command.start(self): ProcessHandle ! ProcessError suspends",
       "symbol": "std.process.Command.start",
       "operation": "start",
       "evidence": {
@@ -7511,11 +7511,11 @@
       "status": "verified"
     },
     {
-      "id": "std.process:156",
+      "id": "std.process:157",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 156,
-      "signature": "pub fn ProcessHandle.wait(var self): ExitStatus ! ProcessError",
+      "line": 157,
+      "signature": "pub fn ProcessHandle.wait(var self): ExitStatus ! ProcessError suspends",
       "symbol": "std.process.ProcessHandle.wait",
       "operation": "wait",
       "evidence": {
@@ -7559,11 +7559,11 @@
       "status": "verified"
     },
     {
-      "id": "std.process:157",
+      "id": "std.process:158",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 157,
-      "signature": "pub fn ProcessHandle.cancel(var self): Unit",
+      "line": 158,
+      "signature": "pub fn ProcessHandle.cancel(var self): Unit suspends",
       "symbol": "std.process.ProcessHandle.cancel",
       "operation": "cancel",
       "evidence": {
@@ -7607,10 +7607,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:158",
+      "id": "std.process:159",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 158,
+      "line": 159,
       "signature": "pub fn ProcessOutput.stdout(self): Bytes",
       "symbol": "std.process.ProcessOutput.stdout",
       "operation": "stdout",
@@ -7655,10 +7655,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:159",
+      "id": "std.process:160",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 159,
+      "line": 160,
       "signature": "pub fn ProcessOutput.stderr(self): Bytes",
       "symbol": "std.process.ProcessOutput.stderr",
       "operation": "stderr",
@@ -7703,10 +7703,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:160",
+      "id": "std.process:161",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 160,
+      "line": 161,
       "signature": "pub fn ProcessOutput.combined(self): Bytes",
       "symbol": "std.process.ProcessOutput.combined",
       "operation": "combined",
@@ -7751,10 +7751,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:161",
+      "id": "std.process:162",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 161,
+      "line": 162,
       "signature": "pub fn ProcessOutput.statuses(self): Array[ExitStatus]",
       "symbol": "std.process.ProcessOutput.statuses",
       "operation": "statuses",
@@ -7799,10 +7799,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:162",
+      "id": "std.process:163",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 162,
+      "line": 163,
       "signature": "pub fn ExitStatus.code(self): Int?",
       "symbol": "std.process.ExitStatus.code",
       "operation": "code",
@@ -7847,10 +7847,10 @@
       "status": "verified"
     },
     {
-      "id": "std.process:163",
+      "id": "std.process:164",
       "owner": "std.process",
       "contract": "docs/contracts/stdlib-hosted.md",
-      "line": 163,
+      "line": 164,
       "signature": "pub fn ExitStatus.success(self): Bool",
       "symbol": "std.process.ExitStatus.success",
       "operation": "success",
@@ -8193,7 +8193,7 @@
       "owner": "std.protobuf",
       "contract": "docs/contracts/stdlib-protobuf.md",
       "line": 120,
-      "signature": "pub fn ProtoReader[T].fromReader(var input: Reader, options: ProtoDecodeOptions): ProtoReader[T] ! ProtoError",
+      "signature": "pub fn ProtoReader[T].fromReader(var input: Reader, options: ProtoDecodeOptions): ProtoReader[T] ! ProtoError suspends",
       "symbol": "std.protobuf.ProtoReader",
       "operation": "ProtoReader",
       "evidence": {
@@ -8389,7 +8389,7 @@
       "owner": "std.protobuf",
       "contract": "docs/contracts/stdlib-protobuf.md",
       "line": 125,
-      "signature": "pub fn ProtoWriter[T].toWriter(var output: Writer, options: ProtoEncodeOptions): ProtoWriter[T] ! ProtoError",
+      "signature": "pub fn ProtoWriter[T].toWriter(var output: Writer, options: ProtoEncodeOptions): ProtoWriter[T] ! ProtoError suspends",
       "symbol": "std.protobuf.ProtoWriter",
       "operation": "ProtoWriter",
       "evidence": {
@@ -8438,7 +8438,7 @@
       "owner": "std.protobuf",
       "contract": "docs/contracts/stdlib-protobuf.md",
       "line": 126,
-      "signature": "pub fn ProtoWriter[T].write(var self, event: ProtoEvent): Unit ! ProtoError",
+      "signature": "pub fn ProtoWriter[T].write(var self, event: ProtoEvent): Unit ! ProtoError suspends",
       "symbol": "std.protobuf.ProtoWriter",
       "operation": "ProtoWriter",
       "evidence": {
@@ -8487,7 +8487,7 @@
       "owner": "std.protobuf",
       "contract": "docs/contracts/stdlib-protobuf.md",
       "line": 127,
-      "signature": "pub fn ProtoWriter[T].finish(var self): Unit ! ProtoError",
+      "signature": "pub fn ProtoWriter[T].finish(var self): Unit ! ProtoError suspends",
       "symbol": "std.protobuf.ProtoWriter",
       "operation": "ProtoWriter",
       "evidence": {
@@ -9880,10 +9880,10 @@
       "status": "verified"
     },
     {
-      "id": "std.text:91",
+      "id": "std.text:92",
       "owner": "std.text",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 91,
+      "line": 92,
       "signature": "pub fn String.empty(): String",
       "symbol": "std.text.String.empty",
       "operation": "empty",
@@ -9928,10 +9928,10 @@
       "status": "verified"
     },
     {
-      "id": "std.text:92",
+      "id": "std.text:93",
       "owner": "std.text",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 92,
+      "line": 93,
       "signature": "pub fn String.fromChars(chars: Array[Char]): String ! TextError",
       "symbol": "std.text.String.fromChars",
       "operation": "fromChars",
@@ -9976,10 +9976,10 @@
       "status": "verified"
     },
     {
-      "id": "std.text:93",
+      "id": "std.text:94",
       "owner": "std.text",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 93,
+      "line": 94,
       "signature": "pub fn String.length(self): Int",
       "symbol": "std.text.String.length",
       "operation": "length",
@@ -10024,10 +10024,10 @@
       "status": "verified"
     },
     {
-      "id": "std.text:94",
+      "id": "std.text:95",
       "owner": "std.text",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 94,
+      "line": 95,
       "signature": "pub fn String.byteLength(self): Int",
       "symbol": "std.text.String.byteLength",
       "operation": "byteLength",
@@ -10072,10 +10072,10 @@
       "status": "verified"
     },
     {
-      "id": "std.text:95",
+      "id": "std.text:96",
       "owner": "std.text",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 95,
+      "line": 96,
       "signature": "pub fn String.get(self, index: Int): Char?",
       "symbol": "std.text.String.get",
       "operation": "get",
@@ -10120,10 +10120,10 @@
       "status": "verified"
     },
     {
-      "id": "std.text:96",
+      "id": "std.text:97",
       "owner": "std.text",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 96,
+      "line": 97,
       "signature": "pub fn String.slice(self, start: Int, end: Int): String ! TextError",
       "symbol": "std.text.String.slice",
       "operation": "slice",
@@ -10168,10 +10168,10 @@
       "status": "verified"
     },
     {
-      "id": "std.text:97",
+      "id": "std.text:98",
       "owner": "std.text",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 97,
+      "line": 98,
       "signature": "pub fn String.contains(self, needle: String): Bool",
       "symbol": "std.text.String.contains",
       "operation": "contains",
@@ -10216,10 +10216,10 @@
       "status": "verified"
     },
     {
-      "id": "std.text:98",
+      "id": "std.text:99",
       "owner": "std.text",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 98,
+      "line": 99,
       "signature": "pub fn String.startsWith(self, prefix: String): Bool",
       "symbol": "std.text.String.startsWith",
       "operation": "startsWith",
@@ -10264,10 +10264,10 @@
       "status": "verified"
     },
     {
-      "id": "std.text:99",
+      "id": "std.text:100",
       "owner": "std.text",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 99,
+      "line": 100,
       "signature": "pub fn String.endsWith(self, suffix: String): Bool",
       "symbol": "std.text.String.endsWith",
       "operation": "endsWith",
@@ -10312,10 +10312,10 @@
       "status": "verified"
     },
     {
-      "id": "std.text:100",
+      "id": "std.text:101",
       "owner": "std.text",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 100,
+      "line": 101,
       "signature": "pub fn String.find(self, needle: String): Int?",
       "symbol": "std.text.String.find",
       "operation": "find",
@@ -10360,10 +10360,10 @@
       "status": "verified"
     },
     {
-      "id": "std.text:101",
+      "id": "std.text:102",
       "owner": "std.text",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 101,
+      "line": 102,
       "signature": "pub fn String.replace(self, old: String, new: String): String",
       "symbol": "std.text.String.replace",
       "operation": "replace",
@@ -10408,10 +10408,10 @@
       "status": "verified"
     },
     {
-      "id": "std.text:102",
+      "id": "std.text:103",
       "owner": "std.text",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 102,
+      "line": 103,
       "signature": "pub fn String.trim(self): String",
       "symbol": "std.text.String.trim",
       "operation": "trim",
@@ -10456,10 +10456,10 @@
       "status": "verified"
     },
     {
-      "id": "std.text:103",
+      "id": "std.text:104",
       "owner": "std.text",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 103,
+      "line": 104,
       "signature": "pub fn String.toLowerAscii(self): String",
       "symbol": "std.text.String.toLowerAscii",
       "operation": "toLowerAscii",
@@ -10504,10 +10504,10 @@
       "status": "verified"
     },
     {
-      "id": "std.text:104",
+      "id": "std.text:105",
       "owner": "std.text",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 104,
+      "line": 105,
       "signature": "pub fn String.toUpperAscii(self): String",
       "symbol": "std.text.String.toUpperAscii",
       "operation": "toUpperAscii",
@@ -10552,10 +10552,10 @@
       "status": "verified"
     },
     {
-      "id": "std.text:108",
+      "id": "std.text:109",
       "owner": "std.text",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 108,
+      "line": 109,
       "signature": "pub fn String.chars(self): String",
       "symbol": "std.text.String.chars",
       "operation": "chars",
@@ -10748,7 +10748,7 @@
       "owner": "std.time",
       "contract": "docs/contracts/stdlib-time.md",
       "line": 43,
-      "signature": "pub fn sleep(delay: Duration): Unit ! ClockError",
+      "signature": "pub fn sleep(delay: Duration): Unit ! ClockError suspends",
       "symbol": "std.time.sleep",
       "operation": "sleep",
       "evidence": {
@@ -10892,7 +10892,7 @@
       "owner": "std.time",
       "contract": "docs/contracts/stdlib-time.md",
       "line": 47,
-      "signature": "pub fn Timer.wait(self): Unit ! ClockError",
+      "signature": "pub fn Timer.wait(self): Unit ! ClockError suspends",
       "symbol": "std.time.Timer.wait",
       "operation": "wait",
       "evidence": {

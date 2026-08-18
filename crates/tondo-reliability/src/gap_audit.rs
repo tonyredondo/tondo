@@ -13,7 +13,7 @@ use crate::sha256;
 pub const FORMAT: &str = "tondo-normative-gap-audit/1";
 pub const PATH: &str = "testing/normative-gap-audit.json";
 const AUDITED_SCOPE_SHA256: &str =
-    "f65f43d409ea7e17912bdb3a4781bcd5baa90cc7d2e7378409a8b62297f1e771";
+    "25f07d95da01a9553a215c4ef9d9ffa6e4d9edbd183866b821c2f66a30aff0b4";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

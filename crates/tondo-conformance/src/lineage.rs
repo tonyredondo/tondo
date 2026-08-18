@@ -575,7 +575,7 @@ mod tests {
         );
         assert_eq!(
             sha256(first.specification("TONDO_LANGUAGE_SPEC.md").unwrap()),
-            "0be283f1032d1a53f733a9b4d9e46f7be81dd14f86d751f05a5f2c53e69a7614"
+            "b436cb475e53c51eda008a6914fb58bae698d63e3de6fb84df5833a0e2c4114d"
         );
         assert_ne!(
             first.baseline_specification(),
@@ -595,7 +595,7 @@ mod tests {
         assert_eq!(first.case_layers()[2].cases.len(), 6);
         assert_eq!(first.case_layers()[3].layer, "testing");
         assert_eq!(first.case_layers()[3].cases.len(), 53);
-        assert_eq!(first.implemented_requirements().len(), 52);
+        assert_eq!(first.implemented_requirements().len(), 56);
         assert!(first.manifest().pending_tasks.is_empty());
         first.check_sealable().unwrap();
     }

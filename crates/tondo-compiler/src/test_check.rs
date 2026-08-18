@@ -614,7 +614,7 @@ impl fmt::Display for CheckError {
                 write!(formatter, "attachment media type `{value}` is invalid")
             }
             Self::VirtualTimeClosure => formatter.write_str(
-                "withVirtualTime requires Send + CallOnce + async fn(ref VirtualTime): Unit ! E without escape or Share",
+                "withVirtualTime requires Send + CallOnce + fn(ref VirtualTime): Unit ! E suspends without escape or Share",
             ),
             Self::VirtualTimeNegativeDuration => {
                 formatter.write_str("virtual time duration cannot be negative")

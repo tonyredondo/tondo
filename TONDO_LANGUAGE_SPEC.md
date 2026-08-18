@@ -564,8 +564,8 @@ fn         for        if         impl       import
 in         let        match      mut        none
 not        ok         or         priv       pub
 ref        return     scope      self       some
-spawn      suite      test       trait      true
-type       unsafe     var        with
+spawn      suite      suspends   test       thread     trait
+true       type       unsafe     var        with
 ~~~
 
 | Keyword | Función |
@@ -606,7 +606,9 @@ type       unsafe     var        with
 | `some` | Construir o reconocer presencia de `Option` |
 | `spawn` | Iniciar una llamada asíncrona dentro de su `scope` propietario |
 | `suite` | Declarar un contenedor estático de tests en una fuente de test |
+| `suspends` | Declarar el efecto de suspensión en una firma o tipo de función |
 | `test` | Declarar una hoja ejecutable en una fuente de test |
+| `thread` | Seleccionar la lane de thread del sistema en `spawn thread` |
 | `trait` | Declarar un contrato de comportamiento estático |
 | `true` | Literal booleano |
 | `type` | Declarar un record o newtype nominal |
@@ -3035,12 +3037,12 @@ for item in stream {
 ### 10.18 `AsyncIterator[T]`
 
 `AsyncIterator[T]` es el protocolo estático para streams lazy con backpressure.
-Su `next` puede suspenderse por inferencia y produce como máximo un elemento por
-llamada:
+Su contrato bodyless marca `next` como `suspends` y produce como máximo un
+elemento por llamada:
 
 ~~~tondo pseudocode
 trait AsyncIterator[T] {
-    fn next(mut self): T?
+    fn next(mut self): T? suspends
 }
 
 fn consume(stream: impl AsyncIterator[Bytes]) {
@@ -3393,11 +3395,12 @@ fn(String, ...String)
 fn(ref Resource): Status
 fn(mut Array[Float], Float)
 fn(var Array[String], String)
+fn(var Array[String], String) suspends
 unsafe fn(Pointer[Byte]): Bytes ! IoError
 ~~~
 
 Las funciones nombradas pueden pasarse como valores si la firma coincide
-exactamente. `ref`, `mut`, `var`, el efecto suspendible inferido, `unsafe`, el
+exactamente. `ref`, `mut`, `var`, el efecto `suspends`, `unsafe`, el
 variádico, el éxito y el error forman parte del contrato; los nombres de
 parámetros no. Un valor cuyo tipo es
 literalmente `fn(...)` tiene representación uniforme y cumple siempre
@@ -3703,11 +3706,12 @@ terminal concreta.
 
 ### 11.10 Funciones y efectos de suspensión
 
-Todas las funciones se declaran con `fn`. No existe una keyword `async`, ni un
-tipo público `Task` o `Future`. El compilador infiere un efecto de suspensión
-cuando el cuerpo contiene una llamada a una operación `suspends`, una espera
-explícita, una iteración asíncrona o cleanup suspendible. El efecto queda
-registrado en ABI, metadatos, diagnósticos, documentación e IDE.
+Todas las funciones se declaran con `fn`. No existe una declaración paralela
+`async fn` ni un tipo público `Task` o `Future`. `suspends` es un efecto postfix
+de la firma, no una familia de funciones distinta. El compilador lo infiere
+cuando un cuerpo contiene una llamada suspendible, una espera explícita, una
+iteración asíncrona o cleanup suspendible. El efecto queda registrado en ABI,
+metadatos, diagnósticos, documentación e IDE.
 
 En la interfaz pública canónica, el efecto se imprime como `suspends` después
 del outcome:
@@ -3716,12 +3720,28 @@ del outcome:
 pub fn get(url: Url): Response ! HttpError suspends
 ~~~
 
-`suspends` pertenece al artefacto de interfaz y al hash ABI; no es una keyword
-que el autor deba repetir en el cuerpo de la función. La fuente sigue usando
-una única declaración `fn` y el compilador deriva el contrato publicado. Una
-función o trait público que cambie entre `suspends` y no suspendible cambia su
-contrato de API y debe ser visible como drift. `@sync` y su alias `@nosuspend`
-garantizan que una función no suspenda.
+`suspends` es keyword y forma parte del tipo de función y del hash ABI. Una
+declaración sin cuerpo —por ejemplo, un método requerido de trait o un contrato
+externo— debe escribirla si puede suspender. En una función o método con cuerpo
+puede omitirse y se infiere transitivamente; escribirla explícitamente fija una
+promesa estable aunque la implementación actual complete sin suspender. Esta
+promesa no obliga a crear un frame cuando el optimizador demuestra que no es
+necesario.
+
+Toda interfaz pública canónica muestra siempre el efecto, tanto si fue escrito
+como si fue inferido. Por ello documentación, autocompletado y tipos importados
+permiten saber antes de la llamada que `get(...)` espera implícitamente y que
+`spawn get(...)` inicia trabajo concurrente. Cambiar entre `suspends` y no
+suspendible es drift de API. `@sync` y su alias `@nosuspend` garantizan que una
+función no suspenda y son incompatibles con un marcador `suspends` explícito.
+
+`suspends` es la condición visible necesaria para convertir una llamada directa
+en `spawn call()`: intentar lanzar una llamada no suspendible produce `E1611`.
+No es, por sí sola, una promesa de que todo uso pueda lanzarse. El call site
+también debe estar dentro de `scope`, soportar `CallOnce` y satisfacer las
+capacidades `Send`/`Share` y las reglas de préstamos de 11.12. IDE y
+documentación pueden mostrar por separado “suspendible” y “spawnable aquí” sin
+inventar otro tipo de retorno.
 
 ~~~tondo pseudocode
 fn fetchUser(id: UserId): User ! NetworkError {
@@ -3744,16 +3764,26 @@ Una función `@sync`/`@nosuspend` no puede contener una llamada que pueda
 suspenderse, aunque la llamada esté escrita sin `await`, y produce `E1601`.
 Las funciones que no alcanzan una llamada suspendible siguen siendo síncronas y
 no crean un frame suspendible. Un valor vivo a través de cualquier frontera de
-suspensión, implícita o explícita, debe ser `Send`; un préstamo `mut`/`var` no
-puede cruzarla. Una función `unsafe` que suspende se declara `unsafe fn`; no
-existe una variante fuente adicional para combinar ambos efectos.
+suspensión, implícita o explícita, debe ser `Send`. Una función `unsafe` que
+suspende usa `unsafe fn(...): T suspends`; no existe una variante de declaración
+adicional para combinar ambos efectos.
 
-Un `ref T` puede permanecer prestado durante una llamada suspendible secuencial:
-el propietario debe seguir vivo, no puede moverse ni recibir un préstamo
-exclusivo y `T` debe ser `Send`. Al iniciar la misma operación con `spawn`, el
-préstamo compartido requiere además `Share` y queda bloqueado hasta consumir el
-`Join`. Un receptor `self` suspendible equivale a `ref Self` y exige `Self:
-Send`; una implementación de trait debe conservar esa capacidad.
+Un `ref T`, `mut T` o `var T` puede permanecer prestado durante una llamada
+suspendible **secuencial**, con espera implícita o `await` explícito. El place se
+mantiene estable en el frame del caller, `T` debe ser `Send` y el préstamo sigue
+activo hasta que la operación termine, falle o sea cancelada. Durante ese
+intervalo no puede crearse un alias incompatible, moverse el propietario ni
+observarse el valor desde el caller. El préstamo termina antes de la siguiente
+sentencia.
+
+`spawn` y `spawn thread` no admiten argumentos ni receptores prestados como
+`mut` o `var`: el hijo sería concurrente con el caller y no existe una forma
+local de usar ese préstamo con seguridad. El diagnóstico es `E1609`; el caller
+debe mover un owner al hijo o emplear estado compartido sincronizado. Un `ref T`
+sí puede cruzar a un hijo cuando exige además `Share` y queda bloqueado hasta
+consumir el `Join`. Un receptor suspendible `self`, `mut self` o `var self`
+aplica exactamente la regla correspondiente. Una implementación de trait debe
+conservar el efecto y los modos de préstamo de su contrato.
 
 El análisis de liveness aplica la misma regla a todo valor vivo a través de
 cualquier frontera de suspensión, incluidos parámetros genéricos y capturas de closures. Un `T` que
@@ -3808,14 +3838,14 @@ thread.
 
 ### 11.13 One-shot y completion
 
-La librería ofrece `oneshot[T, E]` con dos capacidades: `Waiter` y `Completer`. El waiter se consume una vez; `complete`, `fail` y `cancel` son atómicos y una segunda finalización devuelve `AlreadyCompleted`. No captura callbacks ni define scheduler. Para notificaciones repetidas se usa `Channel` o `Signal`.
+La librería ofrece `oneshot[T, E]` con dos capacidades: `Waiter` y `Completer`. El waiter se consume una vez; `complete`, `fail` y `cancel` son atómicos y una segunda finalización devuelve `AlreadyCompleted`. No captura callbacks ni define scheduler. Para notificaciones repetidas se usa `Channel`.
 
 ### 11.14 `AsyncIterator[T]`
 
 `AsyncIterator[T]` es el protocolo lazy con backpressure:
 
 ~~~tondo pseudocode
-trait AsyncIterator[T] { fn next(mut self): T? }
+trait AsyncIterator[T] { fn next(mut self): T? suspends }
 
 fn consume(stream: impl AsyncIterator[Bytes]) {
     for chunk in stream { use(chunk) }
@@ -3839,8 +3869,8 @@ o explícitas, canales, timers, streams, procesos y comprobaciones de librería.
 Un pánico de hijo cancela hermanos, espera su cleanup y se propaga; el primer
 pánico por orden de creación es el principal. Las firmas reflejan errores con
 `! E`, préstamos con `ref`, mutación con `mut`/`var` y raw con `unsafe`. La
-suspensión es un efecto inferido en la fuente y una propiedad `suspends` del
-contrato de interfaz; no es una keyword de declaración ni un wrapper de retorno.
+suspensión es un efecto inferible y una propiedad `suspends` de la firma; no es
+un wrapper de retorno ni una segunda familia de APIs.
 
 ---
 
@@ -3917,7 +3947,8 @@ trait Compare {
 
 Un trait no contiene campos, constructores ni inicialización. Puede declarar una operación asociada sin `self`; se invoca mediante `Trait.operation[Implementer](...)` y permite contratos como decoding o fábricas estáticas sin reflection. Especificar el implementador elimina la ambigüedad incluso cuando el método no recibe ni devuelve `Self`.
 
-Un trait cuyo método puede suspenderse con receptor `self` tiene el requisito
+Un trait cuyo método está marcado `suspends` con receptor `self`, `mut self` o
+`var self` tiene el requisito
 intrínseco `Self: Send` de 11.10. Toda implementación debe satisfacerlo y, para
 comprobación genérica, `T: Trait` permite deducir también `T: Send`. No es
 herencia general entre traits: es una condición cerrada de formación de ese
@@ -5615,16 +5646,16 @@ nunca cambia qué programas son válidos.
 ### 16.5 Vida de préstamos
 
 La vida de un préstamo `ref`, `mut` o `var` se infiere y no se escribe como
-lifetime. En una llamada síncrona queda limitada dinámicamente a esa llamada. Un
-`ref` de una llamada suspendible puede extenderse hasta completar la espera
-implícita o explícita, o consumir
-el `Join` propietario, pero continúa ligado a esa estructura y nunca se convierte
-en un valor de referencia. Un binding de patrón `ref` queda limitado al arm o a
-la iteración; un binding de patrón `mut` o `var`, únicamente a la iteración.
-`ref` puede cruzar un `await` dentro de esos límites cuando el valor referido
-cumple `Send`, y solo puede prestarse a un hijo concurrente con las garantías
-estructuradas `Send + Share` de 11.12. `mut` y `var` no pueden cruzar una
-suspensión.
+lifetime. En una llamada secuencial queda limitada dinámicamente a esa llamada,
+incluidas sus suspensiones implícitas o explícitas. El origen permanece estable,
+el préstamo sigue activo y su valor debe cumplir `Send` hasta que el callee
+termine. Un `ref` prestado a un hijo puede extenderse hasta consumir el `Join`
+propietario, pero continúa ligado a esa estructura y nunca se convierte en un
+valor de referencia. Un binding de patrón `ref` queda limitado al arm o a la
+iteración; un binding de patrón `mut` o `var`, únicamente a la iteración.
+Un préstamo puede cruzar una espera secuencial dentro de esos límites cuando el
+valor referido cumple `Send`; solo `ref` puede prestarse a un hijo concurrente,
+con las garantías estructuradas `Send + Share` de 11.12.
 
 Dentro de esos límites, el análisis termina un préstamo en su último uso posible,
 no necesariamente al final textual del bloque. Una rama posterior que todavía
@@ -5642,7 +5673,8 @@ Ningún préstamo puede:
 - Asignarse a estado global.
 - Sobrevivir al valor origen.
 
-Además, un préstamo `mut` o `var` no puede cruzar una suspensión. Estas
+Además, un préstamo `mut` o `var` no puede transferirse a `spawn`, cruzar una
+frontera de thread ni escapar de la llamada secuencial que lo posee. Estas
 restricciones son deliberadamente menores que un sistema general de ownership:
 protegen observación temporal, mutación temporal y regiones sin introducir
 referencias de primera clase ni anotaciones de vida.
@@ -6045,10 +6077,10 @@ Reglas relevantes:
 - `Pointer[T]` no cumple `Send` ni `Share`; una región `unsafe` no cambia
   capacidades estáticas.
 - `Join[T, E]` no es `Send` ni `Share`, con independencia de `T` y `E`.
-- Un préstamo `mut` o `var` nunca es `Share` y no puede cruzar un punto de
-  suspensión o frontera de thread. `ref` no cruza una frontera de thread
-  independiente; la única excepción concurrente es el hijo ligado a `scope`
-  definido en 11.12.
+- Un préstamo `mut` o `var` nunca es `Share`: puede sobrevivir una suspensión
+  secuencial con `Send`, pero no puede transferirse a `spawn` ni cruzar una frontera de
+  thread. `ref` no cruza una frontera de thread independiente; la única
+  excepción concurrente es el hijo ligado a `scope` definido en 11.12.
 
 ### 16.14 Tasks, threads y canales
 
@@ -8416,9 +8448,9 @@ primary_type    = type_path
 tuple_type      = "(", type_expr, ",", type_expr,
                   { ",", type_expr }, [ "," ], ")" ;
 
-function_type   = "fn", "(",
+function_type   = [ function_modifiers ], "fn", "(",
                   [ function_type_list ], ")",
-                  [ outcome_annotation ] ;
+                  [ outcome_annotation ], [ "suspends" ] ;
 
 function_modifiers
                 = "unsafe" ;
@@ -8530,7 +8562,7 @@ trait_decl      = [ visibility ], "trait", identifier,
 
 trait_method    = [ function_modifiers ], "fn", identifier,
                   [ generic_params ], parameter_list,
-                  [ outcome_annotation ],
+                  [ outcome_annotation ], [ "suspends" ],
                   ( NL | block, NL ) ;
 
 impl_decl       = "impl", [ generic_params ],
@@ -8545,12 +8577,13 @@ derive_decl     = "derive", [ generic_params ],
 implementation_method
                 = [ function_modifiers ], "fn", identifier,
                   [ generic_params ], parameter_list,
-                  [ outcome_annotation ], block, NL ;
+                  [ outcome_annotation ], [ "suspends" ], block, NL ;
 ~~~
 
 Un método de trait puede anteponer `unsafe` a `fn`; la implementación debe
-coincidir exactamente. La capacidad de suspensión se infiere desde el cuerpo y
-la implementación debe conservarla. El primer
+coincidir exactamente. Un método requerido sin cuerpo debe escribir
+`suspends`; un default puede declararlo o inferirlo desde el cuerpo. La
+implementación debe conservar exactamente ese efecto. El primer
 parámetro puede ser `self`, `mut self` o `var self`.
 
 En una llamada calificada a una operación de trait sin receptor, el primer argumento genérico después del nombre del método selecciona `Self`; no forma parte de los `generic_params` declarados por el método.
@@ -8564,7 +8597,8 @@ de traits normalizados, no una secuencia de expansiones observable. Un
 ~~~ebnf
 function_decl   = [ visibility ], [ function_modifiers ],
                   "fn", function_head, parameter_list,
-                  [ decl_outcome_annotation ], block, declaration_end ;
+                  [ decl_outcome_annotation ], [ "suspends" ],
+                  block, declaration_end ;
 
 function_head   = identifier, [ generic_params ]
                 | method_owner, ".", identifier,
@@ -8583,10 +8617,11 @@ parameter       = identifier, ":", [ parameter_modifier ], type_expr
 
 Una firma no puede expresar dos `!` superiores. El tipo completo después de `:` puede ser un éxito ordinario, `T ! E` o el shorthand `!E`.
 
-Una firma suspendible, también cuando sea `unsafe`, no puede contener parámetros
-ni receptores `mut` o `var`; cada parámetro `ref T` exige `T: Send`, y un receptor
-`self` exige `Self: Send`. Ambos adquieren además `Share` al lanzarse mediante
-`spawn`. `unsafe` no relaja esas condiciones. Un parámetro `...T` debe ser el
+Una firma suspendible, también cuando sea `unsafe`, admite parámetros y
+receptores `ref`, `mut` o `var` para llamadas secuenciales y exige `Send` a los
+valores que permanezcan vivos durante la suspensión. `spawn` añade `Share` para
+un `ref` y rechaza `mut`/`var` con `E1609`; `unsafe` no relaja esas condiciones.
+Un parámetro `...T` debe ser el
 último, no puede tener `parameter_modifier` y solo puede aparecer una vez. El
 identificador `_` sigue las reglas de descarte o préstamo sin binding de 11.3.
 
@@ -9122,6 +9157,8 @@ El parser puede construir una AST preliminar antes de resolución para:
 - `(parameters) { ... }`: cierre; tras resolución, si llama una operación
   `suspends`, usa `await`, itera un `AsyncIterator` o registra cleanup
   suspendible, su efecto es suspendible.
+- Un cierre contextual sin marcador adopta el efecto del tipo esperado
+  `fn(...) suspends`; un cierre concreto continúa infiriéndolo desde su cuerpo.
 - `unsafe (parameters) { ... }`: cierre con contrato unsafe; esas mismas formas
   de suspensión lo hacen suspendible.
 - `unsafe (parameters) { ... }`: cierre unsafe; `unsafe { ... }` sigue siendo una
@@ -10736,8 +10773,8 @@ type ProcessOutput = {
     stdout: Bytes
 }
 
-fn Pipeline.output(self): ProcessOutput ! ProcessError
-fn Pipeline.check(self): ProcessOutput ! ProcessError
+fn Pipeline.output(self): ProcessOutput ! ProcessError suspends
+fn Pipeline.check(self): ProcessOutput ! ProcessError suspends
 ~~~
 
 ### C.3 Fixtures especializados
@@ -10968,13 +11005,13 @@ decl spec.async_page impl Display for Page
 fixture spec.process extends spec.core
 decl spec.process opaque ProcessError
 decl spec.process type ProcessOutput = { stdout: Bytes }
-decl spec.process fn Pipeline.output(self): ProcessOutput ! ProcessError
-decl spec.process fn Pipeline.check(self): ProcessOutput ! ProcessError
+decl spec.process fn Pipeline.output(self): ProcessOutput ! ProcessError suspends
+decl spec.process fn Pipeline.check(self): ProcessOutput ! ProcessError suspends
 end
 ~~~
 
 El SHA-256 esperado de esos bytes es
-`714da31de9e190eed73361d6d3ded585661c9878a355994db1b160f913d529b8`. Un cambio de una firma, capability, requirement, binding,
+`7be3cf8f98dc4103699ccd2844c22bb0c0f477c0bd7b2cfea2347df2b92e7025`. Un cambio de una firma, capability, requirement, binding,
 orden o byte exige publicar un hash nuevo y una nueva revisión del Markdown. De
 este modo dos runners no pueden usar stubs distintos y afirmar que comprobaron el
 mismo ejemplo.

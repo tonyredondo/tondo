@@ -4357,6 +4357,10 @@ fn main() {
         let output = execute(operation_request(
             Operation::Run,
             b"import std.async\n\
+              fn waitOnce(waiter: async.Waiter[Int, String]): Int ! String suspends {\n\
+                  var owned = waiter\n\
+                  owned.wait()\n\
+              }\n\
               fn direct() {\n\
                   let pair = async.oneshot[Int, String]()\n\
                   var (waiter, completer) = pair\n\
@@ -4372,7 +4376,7 @@ fn main() {
                   let pair = async.oneshot[Int, String]()\n\
                   var (waiter, completer) = pair\n\
                   scope {\n\
-                      let job = spawn waiter.wait()\n\
+                      let job = spawn waitOnce(waiter)\n\
                       _ = completer.complete(9)\n\
                       let value = await job\n\
                       match value {\n\
@@ -4413,7 +4417,12 @@ fn main() {
             ResourceLimits::default(),
         ))
         .unwrap();
-        assert_eq!(output.status(), CompilationStatus::Success);
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{:#?}",
+            output.diagnostics()
+        );
         assert_eq!(output.exit_code(), 0);
         assert!(output.diagnostics().diagnostics().is_empty());
     }
@@ -4463,11 +4472,15 @@ fn main() {
         let output = execute(operation_request(
             Operation::Run,
             b"import std.async\n\
+              fn waitOnce(waiter: async.Waiter[Int, String]): Int ! String suspends {\n\
+                  var owned = waiter\n\
+                  owned.wait()\n\
+              }\n\
               fn cleanup() {\n\
                   let pair = async.oneshot[Int, String]()\n\
                   var (waiter, completer) = pair\n\
                   scope {\n\
-                      let job = spawn waiter.wait()\n\
+                      let job = spawn waitOnce(waiter)\n\
                       _ = completer.complete(1)\n\
                       let value = await job\n\
                       _ = value\n\
@@ -4480,7 +4493,12 @@ fn main() {
             ResourceLimits::default(),
         ))
         .unwrap();
-        assert_eq!(output.status(), CompilationStatus::Success);
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{:#?}",
+            output.diagnostics()
+        );
         assert_eq!(output.exit_code(), 0);
         assert!(output.diagnostics().diagnostics().is_empty());
     }

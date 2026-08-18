@@ -6427,7 +6427,11 @@ impl VmHost for BootstrapHost {
     fn start_async(&mut self, name: &str, arguments: &[RuntimeValue]) -> Result<u64, VmError> {
         if matches!(
             name,
-            "std.io.Reader.read"
+            "std.console.flush"
+                | "std.console.readLine"
+                | "std.process.Command.start"
+                | "std.process.Pipeline.start"
+                | "std.io.Reader.read"
                 | "std.io.Writer.write"
                 | "std.io.Writer.flush"
                 | "std.io.readAll"
@@ -6450,6 +6454,14 @@ impl VmHost for BootstrapHost {
                 | "std.json.JsonWriter.toWriter"
                 | "std.json.JsonWriter.write"
                 | "std.json.JsonWriter.finish"
+                | "std.messagepack.MessagePackReader.fromReader"
+                | "std.messagepack.MessagePackWriter.toWriter"
+                | "std.messagepack.MessagePackWriter.write"
+                | "std.messagepack.MessagePackWriter.finish"
+                | "std.protobuf.ProtoReader.fromReader"
+                | "std.protobuf.ProtoWriter.toWriter"
+                | "std.protobuf.ProtoWriter.write"
+                | "std.protobuf.ProtoWriter.finish"
         ) {
             let call = self.next_job;
             self.next_job = self
@@ -7356,6 +7368,29 @@ mod tests {
         );
         assert_eq!(chunks.stdout, b"out");
         assert_eq!(chunks.stderr, b"out");
+
+        let mut asynchronous = BootstrapHost::with_stdin(b"line\n".to_vec());
+        let reader = ok(asynchronous.invoke("std.console.stdin", &[]).unwrap());
+        let read = asynchronous
+            .start_async("std.console.readLine", &[reader])
+            .unwrap();
+        let (_, value) = asynchronous.wait_async(&[read]).unwrap();
+        assert_eq!(
+            value,
+            RuntimeValue::ResultOk(Box::new(RuntimeValue::OptionSome(Box::new(
+                RuntimeValue::String("line".into()),
+            ))))
+        );
+        assert_eq!(
+            asynchronous
+                .invoke("std.console.print", &[RuntimeValue::String("ready".into())],)
+                .unwrap(),
+            RuntimeValue::Unit
+        );
+        let flush = asynchronous.start_async("std.console.flush", &[]).unwrap();
+        let (_, value) = asynchronous.wait_async(&[flush]).unwrap();
+        assert_eq!(value, RuntimeValue::Unit);
+        assert_eq!(asynchronous.take_stdout(), b"ready");
     }
 
     #[test]
@@ -11420,7 +11455,11 @@ mod tests {
     fn cancel_and_host_drop_reap_started_children() {
         let mut host = BootstrapHost::default();
         let plan = shell(&mut host, "exec sleep 30");
-        let handle = ok(host.invoke("std.process.Command.start", &[plan]).unwrap());
+        let start = host
+            .start_async("std.process.Command.start", &[plan])
+            .unwrap();
+        let (_, handle) = host.wait_async(&[start]).unwrap();
+        let handle = ok(handle);
         let started = Instant::now();
         let _ = ok(await_call(
             &mut host,

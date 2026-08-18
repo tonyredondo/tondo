@@ -2305,38 +2305,6 @@ impl Verifier<'_> {
                     "callable function type has excess parameters",
                 ));
             }
-            if function.is_async
-                && callable.parameters.iter().any(|parameter| {
-                    matches!(
-                        parameter.mode,
-                        BytecodeParameterMode::Mut | BytecodeParameterMode::Var
-                    )
-                })
-                && !callable.name.starts_with("std.io.Reader.")
-                && !callable.name.starts_with("std.io.Writer.")
-                && !callable.name.starts_with("std.io.readAll")
-                && !callable.name.starts_with("std.io.writeAll")
-                && !callable.name.starts_with("std.fs.File.")
-                && !callable.name.starts_with("std.fs.Directory.")
-                && !callable.name.starts_with("std.json.JsonReader.")
-                && !callable.name.starts_with("std.json.JsonWriter.")
-                && !callable.name.starts_with("std.messagepack.MessagePackReader.")
-                && !callable.name.starts_with("std.messagepack.MessagePackWriter.")
-                && !callable.name.starts_with("std.protobuf.ProtoReader.")
-                && !callable.name.starts_with("std.protobuf.ProtoWriter.")
-                && !callable.name.starts_with("std.async.Waiter.wait")
-                // Source HIR admits an exclusive receiver only for the
-                // `AsyncIterator.next` implementation.  The bytecode table
-                // intentionally keeps implementation metadata opaque; HIR
-                // verification has already checked the closed protocol before
-                // this executable representation is built.
-                && !callable.name.starts_with("implementation#")
-            {
-                return Err(BytecodeVerificationError::new(
-                    &context,
-                    "async callable has an exclusive parameter",
-                ));
-            }
             if callable.implementation.is_none()
                 && callable
                     .parameters
@@ -14098,19 +14066,6 @@ mod tests {
         mutate_callable(
             &|program| program.callables[0].parameters.clear(),
             "function type has excess parameters",
-        );
-        mutate_callable(
-            &|program| {
-                let BytecodeTypeKind::Function(function) =
-                    &mut program.types[ids.function.index() as usize].kind
-                else {
-                    unreachable!()
-                };
-                function.is_async = true;
-                function.parameters[0].mode = BytecodeParameterMode::Mut;
-                program.callables[0].parameters[0].mode = BytecodeParameterMode::Mut;
-            },
-            "async callable has an exclusive parameter",
         );
         mutate_callable(
             &|program| {
