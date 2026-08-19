@@ -12,6 +12,20 @@ fn compute(): Int {
     }
 }
 
+fn exercise_fail() {
+    let pair = async.oneshot[Int, String]()
+    var (waiter, completer) = pair
+    _ = completer.fail("failed")
+    _ = waiter.wait()
+}
+
+fn exercise_cancel() {
+    let pair = async.oneshot[Int, String]()
+    var (waiter, completer) = pair
+    _ = completer.cancel()
+    _ = waiter.wait()
+}
+
 fn main() {
     assert(compute() == 42)
     console.print("suspension-inferred-ok\n")

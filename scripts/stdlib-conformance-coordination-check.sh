@@ -37,15 +37,15 @@ jq -e '
   and ([.owners[].id] | unique | length) == 22
   and (.summary == {
     owners: 22,
-    rows: 374,
-    public_signatures: 209,
-    requirements: 165,
+    rows: 385,
+    public_signatures: 214,
+    requirements: 171,
     verified_rows: 0,
-    partial_rows: 373,
-    pending_rows: 1,
+    partial_rows: 385,
+    pending_rows: 0,
     owner_verified: 0,
-    owner_partial: 21,
-    owner_pending: 1
+    owner_partial: 22,
+    owner_pending: 0
   })
   and all(.owners[];
     ((.id | type) == "string" and (.id | test("^std\\.[a-z]+$")))
@@ -67,7 +67,7 @@ jq -e '
       and (.refs | type == "array" and length > 0)
     )
   )
-  and ([.owners[].rows[].id] | unique | length) == 374
+  and ([.owners[].rows[].id] | unique | length) == 385
   and ([.owners[].rows[].id] | sort) == ([.owners[].rows[].id] | unique | sort)
   and all(.owners[]; (.status != "verified" or all(.rows[]; .status == "verified")))
 ' "$coordination" >/dev/null || {
@@ -113,4 +113,4 @@ while IFS= read -r command; do
     fi
 done < <(jq -r '.owners[].evidence.commands[]' "$coordination")
 
-echo "stdlib conformance coordination: OK (22 owners; 374 rows; 209 signatures; 165 requirements; gaps explicit; promotion withheld)"
+echo "stdlib conformance coordination: OK (22 owners; 385 rows; 214 signatures; 171 requirements; gaps explicit; promotion withheld)"

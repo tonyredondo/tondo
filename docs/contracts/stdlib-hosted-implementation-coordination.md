@@ -23,7 +23,7 @@ capability declarada por cada owner coincide exactamente con
   separados/combined, cancelación y reap de hijos.
 
 El cierre es una coordinación de implementación, no una conformidad global.
-La auditoría pública que alimenta el registro ya está verificada (209/209):
+La auditoría pública que alimenta el registro ya está verificada (214/214):
 las firmas de MessagePack/Protobuf atraviesan sus rutas públicas y los tres
 owners build-only tienen una razón `not-applicable` explícita. No relaja
 `--strict` ni convierte una frontera build-only en un provider runtime. La

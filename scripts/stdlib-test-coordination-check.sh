@@ -29,14 +29,14 @@ jq -e '
   and .rules.every_owner_has_test_commands
   and .rules.fuzz_gaps_require_reason
   and .rules.partial_fuzz_is_not_promotion
-  and (.owners | type == "array" and length == 21)
-  and ([.owners[].id] | unique | length) == 21
-  and (.summary.owners == 21)
-  and (.summary.public_signatures == 209)
-  and (.summary.owner_requirements == 164)
-  and (.summary.model_laws == 63)
+  and (.owners | type == "array" and length == 22)
+  and ([.owners[].id] | unique | length) == 22
+  and (.summary.owners == 22)
+  and (.summary.public_signatures == 214)
+  and (.summary.owner_requirements == 171)
+  and (.summary.model_laws == 66)
   and (.summary.fuzz_verified == 1)
-  and (.summary.fuzz_partial == 20)
+  and (.summary.fuzz_partial == 21)
   and all(.owners[];
     (.id | type == "string" and test("^std\\.[a-z]+$"))
     and (.leaf | type == "string" and startswith("STD-A-"))
@@ -55,7 +55,7 @@ jq -e '
     and (.fuzz.refs | type == "array" and length > 0)
     and (if .fuzz.status == "partial" then (.fuzz.reason | type == "string" and length > 0) else .fuzz.reason == null end)
   )
-  and ([.owners[].public_api[].id] | unique | length) == 209
+  and ([.owners[].public_api[].id] | unique | length) == 214
   and ([.owners[].public_api[].id] | unique | sort) == ([.owners[].public_api[].id] | sort)
 ' "$coordination" >/dev/null || {
     echo "stdlib test coordination: invalid registry" >&2
@@ -98,4 +98,4 @@ while IFS= read -r command; do
     fi
 done < <(jq -r '.owners[].test.commands[]' "$coordination")
 
-echo "stdlib test coordination: OK (21 owners; 209 public signatures; 164 owner requirements; 63 model laws; fuzz gaps explicit)"
+echo "stdlib test coordination: OK (22 owners; 214 public signatures; 171 owner requirements; 66 model laws; fuzz gaps explicit)"

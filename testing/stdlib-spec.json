@@ -19,7 +19,7 @@
     {"id":"std.math","contract":"docs/contracts/stdlib-core.md","source_set":"stdlib-core","dependencies":["std.core"]},
     {"id":"std.format","contract":"docs/contracts/stdlib-core.md","source_set":"stdlib-core","dependencies":["std.text"]},
     {"id":"std.io","contract":"docs/contracts/stdlib-core.md","source_set":"stdlib-core","dependencies":["std.core"]},
-    {"id":"std.async","contract":"docs/contracts/stdlib-core.md","source_set":"stdlib-core","dependencies":[]},
+    {"id":"std.async","contract":"docs/contracts/stdlib-async.md","source_set":"stdlib-core","dependencies":[]},
     {"id":"std.serialization","contract":"docs/contracts/stdlib-serialization.md","source_set":"stdlib-core","dependencies":["std.core","std.format","std.io"]},
     {"id":"std.path","contract":"docs/contracts/stdlib-hosted.md","source_set":"stdlib-hosted","dependencies":["std.text"]},
     {"id":"std.console","contract":"docs/contracts/stdlib-hosted.md","source_set":"stdlib-hosted","dependencies":["std.io"]},

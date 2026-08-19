@@ -53,15 +53,21 @@ errores. `unwrapOr` es total. La construcción de un error no toca el host.
 
 ## `std.async`
 
+La fuente normativa completa de este owner es el
+[`contrato dedicado de std.async`](./stdlib-async.md); esta sección conserva
+solo el resumen para el catálogo Core.
+
 El owner usa el único efecto de suspensión del lenguaje: no publica wrappers
 `Task`/`Future` ni duplica operaciones con sufijos async. Los contratos
-bodyless escriben `suspends` después del outcome y la interfaz canónica siempre
+sin cuerpo escriben `suspends` después del outcome y la interfaz canónica siempre
 lo conserva. `Join` solo nace de
 `spawn` y se consume mediante `await handle`; la cancelación y el detach son
 operaciones terminales estructuradas. `await` delante de una llamada directa es
 opcional; para convertir un `Join` o `Waiter` pendiente en su resultado sigue
 siendo obligatorio. `Waiter.wait()` es una llamada suspendible directa y espera
-implícitamente.
+implícitamente. La inferencia de cuerpos es transitiva y nunca depende del
+nombre de una función; `@sync`/`@nosuspend` rechaza cualquier camino que
+suspenda.
 
 ```tondo
 pub type Join[T, E]
@@ -76,12 +82,15 @@ pub fn Completer.fail(var self, error: E): Unit ! AlreadyCompleted
 pub fn Completer.cancel(var self): Unit ! AlreadyCompleted
 
 trait AsyncIterator[T] { fn next(mut self): T? suspends }
+pub fn AsyncIterator.collect[T](var self, limit: Int): Array[T] ! CollectionError suspends
 ```
 
 La finalización de `Completer` es atómica y exactamente una operación gana; las
 posteriores devuelven `AlreadyCompleted`. `AsyncIterator` mantiene backpressure,
 cierra al salir de `for` (o `for await`) y no materializa un array
-implícitamente.
+implícitamente. `collect(limit:)` es la única materialización y cierra el
+cursor en éxito, error, cancelación o unwind. `Channel` no forma parte de
+STD-0.1A; su adaptación queda en STD-0.1B.
 
 ## `std.text`
 

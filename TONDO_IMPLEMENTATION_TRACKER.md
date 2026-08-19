@@ -2,7 +2,7 @@
 
 **Estado:** M0–M10.7 conservan su implementación y Gates H0, T0 y G5 están
 cerrados para el draft revision 24 mediante un candidato G5/T0 verificable
-offline. `STD-CODEC-PUBLIC-001` ya cerró la auditoría pública global: las 209
+offline. `STD-CODEC-PUBLIC-001` ya cerró la auditoría pública global: las 214
 firmas tienen ruta contract → HIR → lowering → host/VM → caso público y los
 tres owners sin runtime están indexados como `build-only`/`not-applicable` con
 razón verificable. STD-0.1A/S1A sigue abierto por las celdas explícitas de
@@ -17,7 +17,7 @@ frontera compilador/runtime/CLI, con evidencia por intento y paridad VM/native.
 `DIAG-SPEC-001` es el prerrequisito explícito de la evaluación nativa; la
 existencia del contrato no implica que ningún detector esté implementado.
 
-**Versión del tracker:** 2.47
+**Versión del tracker:** 2.48
 
 **Última actualización:** 2026-08-19
 
@@ -38,6 +38,7 @@ existencia del contrato no implica que ningún detector esté implementado.
 - [Contrato de owner de `std.protobuf`](./docs/contracts/stdlib-protobuf.md)
 - [Contrato de owner de `std.serialization`](./docs/contracts/stdlib-serialization.md)
 - [Contrato de owner de `std.testing`](./docs/contracts/stdlib-testing.md)
+- [Contrato de owner de `std.async`](./docs/contracts/stdlib-async.md)
 - [Matriz normativa de owners y firmas de stdlib](./docs/contracts/stdlib-matrix.md)
 - [Contrato de campañas de generación del runner](./docs/contracts/test-generation.md)
 - [Contrato de fast gate y tiers de evidencia](./docs/contracts/fast-gate.md)
@@ -67,7 +68,7 @@ ese contrato se cierran las fronteras
 runtime-facing B0 de Wave 6; entonces avanzan `DIAG-RUNTIME-001`, `RACE-001`,
 `LEAK-001`, `DUMP-001`, `DIAG-TEST-001` y `DIAG-CI-001` antes de la evaluación
 coordinada de `NATIVE-001`. El cierre coordinado de
-`STD-CODEC-PUBLIC-001` ya está verificado (209/209)
+`STD-CODEC-PUBLIC-001` ya está verificado (214/214)
 y los tres owners build-only tienen una frontera explícita; no se fabrican
 funciones runtime para ellos. `NATIVE-TARGET-DESC-001` y
 `NATIVE-ARTIFACT-001`, `NATIVE-LINK-PLAN-001` y `NATIVE-PUBLISH-SPEC-001` están
@@ -538,16 +539,16 @@ Estado observado del workspace:
   `tondo-reference-adapter`, `tondo-reliability`, `tondo-stdlib` y `tondo-vm`.
 - Toolchain utilizado para la validación: Rust 1.93.0 y Cargo 1.93.0; la versión
   mínima soportada queda fijada en Rust 1.93.
-- La evidencia actual registra 2.423 tests lógicos y 2.642 repeticiones:
-  2.368 ejecutables, 38 contratos draft documentales, cuatro campañas y 13
+- La evidencia actual registra 2.445 tests lógicos y 2.664 repeticiones:
+  2.390 ejecutables, 38 contratos draft documentales, cuatro campañas y 13
   entradas no ejecutables. La suite bootstrap conserva sus 205 casos y 424
   repeticiones byte-estables como regresión explícita.
-- La matriz G5/T0 contiene 423 requisitos de lenguaje, testing y toolchain: 409
+- La matriz G5/T0 contiene 427 requisitos de lenguaje, testing y toolchain: 411
   están cubiertos mediante evidencia ejecutable, nueve no aplican al target con
   justificación individual, tres límites `TL01-26-*` permanecen `stdlib-pending`
-  por pertenecer al gate separado S1A y dos filas de toolchain están limitadas
-  al contrato. La medición reproducible actual es 90,5199 % de líneas (9051 bp),
-  86,5062 % de funciones y 88,7608 % de regiones; supera el baseline de 90,25 %.
+  por pertenecer al gate separado S1A y cuatro filas de toolchain están limitadas
+  al contrato. La medición reproducible actual es 90,5714 % de líneas (9057 bp),
+  86,5132 % de funciones y 88,8228 % de regiones; supera el baseline de 90,25 %.
   La última ratchet sellada mantiene 100 % sobre los 27 mutantes ejecutables
   seleccionados (30 totales, tres inviables).
 
@@ -4650,7 +4651,7 @@ tests. Antes de volver a marcarlas `[x]` deben cumplirse todos estos puntos:
   DOM. Los enums JSON usan un object externally tagged único y el reader
   detecta trailing data antes de publicar `T`. `Decoder.peek` es no consumidor
   y permite composición estática sin rewind. La fixture CLI cubre round-trip y
-  formas inválidas; la auditoría global verifica ahora las 209/209 firmas,
+  formas inválidas; la auditoría global verifica ahora las 214/214 firmas,
   incluidas las 23/23 de `std.json`. Quedan fuera de esta leaf únicamente los
   gates de rendimiento, fuzzing, conformance y promoción de S1A.
 
@@ -4718,7 +4719,7 @@ tests. Antes de volver a marcarlas `[x]` deben cumplirse todos estos puntos:
   HIR → lowering → host/VM → caso público. `--check` detecta drift y mantiene
   visibles los huecos; `--strict` falla ante cualquiera. No acepta un path Rust
   aislado, un fixture que llama otra operación, una prueba documental ni un
-  alias bootstrap. El registro actual está verificado en `209/209`, con cero
+  alias bootstrap. El registro actual está verificado en `214/214`, con cero
   gaps; la promoción de S1A sigue bloqueada únicamente por sus gates de
   rendimiento, fuzzing, conformance y sellado.
 
@@ -4731,7 +4732,7 @@ tests. Antes de volver a marcarlas `[x]` deben cumplirse todos estos puntos:
   `testing/stdlib-implementation-coordination.json` y su checker: verifica
   las 64 firmas Core, la etapa `IMPL/HOST` y las rutas de implementación/tests
   de los ocho owners Core/serialization. El auditor global está ahora en
-  `209/209` firmas verificadas y cero gaps; los owners build-only quedan
+  `214/214` firmas verificadas y cero gaps; los owners build-only quedan
   excluidos mediante una razón explícita y no son un waiver.
 
 - [x] **STD-IMPL-002 — Coordinar Hosted por owner.** Cierra tras
@@ -4741,13 +4742,13 @@ tests. Antes de volver a marcarlas `[x]` deben cumplirse todos estos puntos:
   verifican los cuatro owners Hosted, sus capabilities exactas, las etapas
   `IMPL/HOST`, las celdas de evidencia y las 48/48 firmas públicas. `std.path`
   queda explícitamente `HOST not-applicable` por ser puramente léxico; no se
-  inventa un provider. La auditoría global está en `209/209`, sin gaps; los
+  inventa un provider. La auditoría global está en `214/214`, sin gaps; los
   tres owners build-only conservan su frontera `not-applicable` explícita.
 
 - [x] **STD-CODEC-PUBLIC-001 — Cerrar la exposición pública restante de codecs
   y owners build-only.** Las 32 firmas restantes de MessagePack y Protobuf
   quedan trazadas hasta HIR, lowering, VM/host y casos públicos: la matriz
-  `testing/stdlib-public-api.json` verifica 209/209 filas bajo `--strict`.
+  `testing/stdlib-public-api.json` verifica 214/214 filas bajo `--strict`.
   `MessagePackValue` tiene la ruta dinámica `encode` además de la ruta typed
   con bounds, y la fixture `m11-std-codecs-001.to` compila y ejecuta parse,
   parseView, decode/encode typed y dynamic, validate, determinismo, raw,
@@ -4997,8 +4998,8 @@ administrativas que no implementan comportamiento.
   abiertos por sus celdas explícitas.
 
 - [x] **STD-TEST-001 — Coordinar modelos y properties por owner.**
-  `testing/stdlib-test-coordination.json` liga los 21 owners A, las 209 firmas
-  públicas y los 164 requisitos de owner a 63 leyes de modelo, comandos de test
+  `testing/stdlib-test-coordination.json` liga los 22 owners A, las 214 firmas
+  públicas y los 171 requisitos de owner a 66 leyes de modelo, comandos de test
   y campañas de fuzz. `scripts/stdlib-test-coordination-check.sh` regenera el
   registro y lo compara con la auditoría pública, la matriz normativa y
   `stdlib-owner-evidence`; sus tests negativos rechazan superficies sin ley,
@@ -5047,7 +5048,7 @@ administrativas que no implementan comportamiento.
 
 - [x] **STD-CONF-001 — Coordinar conformidad por owner.**
   `testing/stdlib-conformance-coordination.json` materializa los 22 owners y
-  las 374 filas de `STD-MATRIX-ALL-001` (209 firmas y 165 requisitos), con una
+  las 385 filas de `STD-MATRIX-ALL-001` (214 firmas y 171 requisitos), con una
   entrada `CONF` explícita por fila, estado, razón, referencias y comandos.
   `scripts/stdlib-conformance-coordination-check.sh` regenera el registro,
   cruza matriz/API/owner evidence y exige que no existan filas implícitas,
@@ -5055,8 +5056,10 @@ administrativas que no implementan comportamiento.
   su test negativo rechaza omisiones, sobreclaims y una coordinación siguiente
   obsoleta. `stdlib_conformance_coordination` replica la clausura en Rust.
   Los owners JSON/MessagePack/Protobuf/serialization conservan los seis casos
-  del harness externo; `std.async` queda `pending` por su requisito sintético y
-  los otros owners `partial` hasta obtener casos públicos completos. La
+  del harness externo; `std.async` conserva siete filas de contrato, cinco
+  callable auditadas y una implementación genérica pendiente en
+  `STD-A-ASYNC-IMPL-001`. Los otros owners `partial` hasta obtener casos
+  públicos completos. La
   coordinación se cierra como `closed-coordination`, pero
   `promotion.status=not-promoted` y la matriz siguen `open-gaps`; la siguiente
   coordinación es `STD-DOC-001`.
@@ -5080,11 +5083,14 @@ Las coordinaciones anteriores prueban que cada gap tiene identidad, no que el
 gap esté cerrado. Las siguientes leaves son las únicas que pueden promocionar
 S1A; su estado se deriva de los registros machine-readable y no de este texto:
 
-- [ ] **STD-A-ASYNC-API-001 — Cerrar la superficie pública de `std.async`.**
-  Actualizar contratos, auditoría y matriz al efecto denotable `suspends`.
-  Verificar `Join`, `Waiter`/`Completer`, `AsyncIterator`, `collect(limit:)`,
-  cierre y backpressure sin `Channel`, que pertenece a STD-0.1B. Ninguna firma
-  bodyless suspendible puede depender de inferencia por nombre.
+- [x] **STD-A-ASYNC-API-001 — Cerrar la superficie pública de `std.async`.**
+  `docs/contracts/stdlib-async.md` y `testing/stdlib-async.json` fijan el
+  efecto denotable `suspends`, la regla de inferencia solo en cuerpos presentes,
+  `Join`, `Waiter`/`Completer`, `AsyncIterator`, `collect(limit:)`, cierre y
+  backpressure sin `Channel`, que pertenece a STD-0.1B. La auditoría pública
+  verifica las cinco firmas callable actuales (214/214 en total), mientras la
+  implementación genérica de iteradores, materialización y cancelación queda
+  explícitamente en `STD-A-ASYNC-IMPL-001`.
 
 - [ ] **STD-A-ASYNC-IMPL-001 — Implementar y probar `std.async` completo.**
   Consumir `ASYNC-DEFER-IMPL-001` y `ASYNC-ITER-EXT-001`; ejecutar one-shot,
@@ -6340,7 +6346,7 @@ Esta tabla es la fuente de reconciliación del estado actual; las notas
 históricas anteriores que describen el prototipo `async fn` no se reescriben y
 no prevalecen sobre la evidencia canónica de esta sección.
 26. [ ] **Wave 5 — STD-0.1A por layers.** Los contratos, slices A0 y kernels
-    iniciales están cerrados; la auditoría pública ya verifica 209/209 firmas.
+    iniciales están cerrados; la auditoría pública ya verifica 214/214 firmas.
     Permanecen las dimensiones de evidencia y promoción de S1A. El orden de
     cierre es:
     - A1: `STD-CORE-IMPL-001`, `STD-TEXT-IMPL-001`, `STD-COLL-IMPL-001`,
@@ -6359,11 +6365,11 @@ no prevalecen sobre la evidencia canónica de esta sección.
       ya tienen auditoría pública completa; quedan sus gates de codec,
       rendimiento, fuzzing y promoción;
     - A4: `STD-TESTING-SHRINK-001 → STD-TESTING-IMPL-001`; y
-    - A5: `STD-PUBLIC-API-AUDIT-001` (cerrado, 209/209) → leaves
+    - A5: `STD-PUBLIC-API-AUDIT-001` (cerrado, 214/214) → leaves
       `STD-A-*-EVIDENCE` →
       STD-TEST-001 / STD-CODEC-CONF-001 / STD-PERF-CONF-001 →
       STD-MATRIX-ALL-001 → STD-CONF-001 → STD-DOC-001 →
-      (`STD-A-ASYNC-API-001` → `ASYNC-ITER-EXT-001` +
+      (`STD-A-ASYNC-API-001` (cerrado) → `ASYNC-ITER-EXT-001` +
       `ASYNC-DEFER-IMPL-001` → `STD-A-ASYNC-IMPL-001`) +
       `STD-A-FUZZ-001` + `STD-A-PERF-001` + `STD-A-CONF-001` +
       `STD-A-DIST-001` → `STD-S1A-SEAL-001`.
@@ -6427,7 +6433,7 @@ quedan cerrados como implementación/infraestructura. M10.7 y la implementación
 funcional de M10.6 permanecen cerradas. `CONF-DRAFT-001` también permanece
 cerrada. La auditoría ya ha vuelto a cerrar T0/G5 en la revision 24 y mantiene
 Wave 5/S1A abierta por dimensiones de evidencia y promoción parciales; la
-superficie pública ya está verificada en 209/209 firmas.
+superficie pública ya está verificada en 214/214 firmas.
 `CONF-GAP-IMPL-001` cierra las 364 filas auditadas aplicables y conserva los dos
 no-goals exactos. `CONF-LAYER-RESULT-001` produce el resultado compuesto y
 `CONF-SEAL-FINAL-001` lo archiva con calidad y documentación en el candidato
@@ -6437,14 +6443,26 @@ Wave 6 no se declara iniciada antes de S1A.
 coordinación; `NATIVE-TARGET-DESC-001`, `NATIVE-ARTIFACT-001`,
 `NATIVE-LINK-PLAN-001`, `NATIVE-PUBLISH-SPEC-001` y `PERF-001` quedan cerrados
 como contratos puros. `TRACKER-LINT-001` está cerrado y su informe derivado
-registra 616 tareas y 12 gates en la revisión 2.47. La acción inmediata son las
-leaves y el seal reales de S1A. Solo entonces comienza `DIAG-SPEC-001`; la
+registra 616 tareas y 12 gates en la revisión 2.48. `STD-A-ASYNC-API-001` ya
+cerró su contrato y auditoría; la acción inmediata son `ASYNC-ITER-EXT-001` y
+`ASYNC-DEFER-IMPL-001`, seguidos por las leaves y el seal reales de S1A. Solo
+entonces comienza `DIAG-SPEC-001`; la
 instrumentación VM espera los contratos B0 y `NATIVE-001` espera
 `DIAG-CI-001`.
 
 ---
 
 ## 25. Historial del tracker
+
+### 2.48 — 2026-08-19
+
+- Se cierra `STD-A-ASYNC-API-001` como contrato de superficie, no como
+  implementación completa. `docs/contracts/stdlib-async.md` y
+  `testing/stdlib-async.json` fijan `suspends`, la inferencia limitada a cuerpos
+  presentes, `Join`, oneshot, `AsyncIterator` y `collect(limit:)`, con `Channel`
+  reservado a STD-0.1B. La auditoría pública queda en 214/214 firmas y la
+  matriz/conformance/documentación regeneradas reflejan las siete filas del
+  owner; la implementación genérica queda en `STD-A-ASYNC-IMPL-001`.
 
 ### 2.47 — 2026-08-19
 

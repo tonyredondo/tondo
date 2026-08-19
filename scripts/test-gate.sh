@@ -105,6 +105,8 @@ run_step stdlib-time-contract \
     scripts/stdlib-time-check.sh
 run_step stdlib-env-contract \
     scripts/stdlib-env-check.sh
+run_step stdlib-async-contract \
+    scripts/stdlib-async-check.sh
 run_step stdlib-owner-evidence \
     scripts/stdlib-owner-evidence-check.sh
 run_step stdlib-meta-tests \
@@ -117,6 +119,8 @@ run_step stdlib-time-tests \
     scripts/stdlib-time-test.sh
 run_step stdlib-env-tests \
     scripts/stdlib-env-test.sh
+run_step stdlib-async-tests \
+    scripts/stdlib-async-test.sh
 run_step stdlib-core-contract \
     scripts/stdlib-core-check.sh
 run_step stdlib-core-tests \

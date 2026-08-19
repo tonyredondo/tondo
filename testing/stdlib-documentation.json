@@ -26,44 +26,50 @@
       "id": "std.async",
       "layer": "A1",
       "status": "documented-draft",
-      "contract": "docs/contracts/stdlib-core.md",
+      "contract": "docs/contracts/stdlib-async.md",
       "docs": [
         "TONDO_STANDARD_LIBRARY_SPEC.md",
+        "docs/contracts/stdlib-async.md",
         "docs/contracts/stdlib-core.md",
         "docs/contracts/stdlib-s1a.md"
       ],
       "boundary": {
         "kernel": {
           "status": "partial",
-          "reason": "the owner record explicitly retains the inferred-suspension ABI migration as pending",
+          "reason": "std.async is an intrinsic language/VM owner; it has no capability-gated host provider; the public effect and ownership contract is closed; generic async-iterator, collect(limit:), cancellation and close/backpressure execution remain explicit implementation leaves",
           "refs": [
+            "TONDO_IMPLEMENTATION_TRACKER.md",
             "crates/tondo-compiler/src/hir/check.rs",
             "crates/tondo-compiler/src/hir/lower.rs",
-            "crates/tondo-vm/src/runtime.rs",
             "crates/tondo-vm/src/runtime/execute.rs",
-            "tests/runtime/m7-async-closure.to",
-            "tests/runtime/m7-async-structured.to",
-            "tests/runtime/m7-cancellation-cleanup.to"
+            "testing/stdlib-implementation.json"
           ]
         },
         "bridge": {
-          "status": "partial",
-          "reason": "no separate owner evidence exists; the owner remains compiler/VM or draft-bound",
+          "status": "not-applicable",
+          "reason": "std.async is an intrinsic language/VM owner; it has no capability-gated host provider",
           "refs": [
-            "crates/tondo-compiler/src/hir/check.rs",
-            "crates/tondo-compiler/src/hir/lower.rs",
-            "crates/tondo-vm/src/runtime.rs",
             "crates/tondo-vm/src/runtime/execute.rs",
-            "tests/runtime/m7-async-closure.to",
-            "tests/runtime/m7-async-structured.to",
-            "tests/runtime/m7-cancellation-cleanup.to"
+            "testing/stdlib-async.json"
           ]
         },
         "public_api": {
-          "status": "not-applicable",
-          "reason": "the owner has no public signature rows; its contract is intrinsic, metadata-only, or build-only",
-          "signatures": [],
-          "verified_signatures": [],
+          "status": "complete",
+          "reason": null,
+          "signatures": [
+            "std.async:31",
+            "std.async:32",
+            "std.async:33",
+            "std.async:34",
+            "std.async:35"
+          ],
+          "verified_signatures": [
+            "std.async:31",
+            "std.async:32",
+            "std.async:33",
+            "std.async:34",
+            "std.async:35"
+          ],
           "refs": [
             "testing/stdlib-public-api.json"
           ]
@@ -90,11 +96,13 @@
         }
       ],
       "conformance": {
-        "status": "pending",
-        "reason": "STD-CONF-001 remains open until the owner has complete public evidence",
+        "status": "partial",
+        "reason": "the public callable surface is audited and the contract is executable, but full async iterator, collect and cancellation conformance waits for STD-A-ASYNC-IMPL-001",
         "refs": [
-          "TONDO_IMPLEMENTATION_TRACKER.md#STD-CONF-001",
-          "testing/stdlib-matrix.json"
+          "TONDO_IMPLEMENTATION_TRACKER.md",
+          "testing/stdlib-async.json",
+          "testing/stdlib-matrix.json",
+          "testing/stdlib-public-api.json"
         ]
       },
       "documentation_claim": "This record documents the unpublished draft only; it is not a release or a claim that the owner matrix is green."
@@ -199,44 +207,44 @@
           "status": "complete",
           "reason": null,
           "signatures": [
-            "std.collections:127",
-            "std.collections:128",
-            "std.collections:129",
-            "std.collections:130",
-            "std.collections:131",
-            "std.collections:132",
-            "std.collections:133",
-            "std.collections:135",
             "std.collections:136",
             "std.collections:137",
             "std.collections:138",
             "std.collections:139",
             "std.collections:140",
+            "std.collections:141",
             "std.collections:142",
-            "std.collections:143",
             "std.collections:144",
             "std.collections:145",
-            "std.collections:146"
+            "std.collections:146",
+            "std.collections:147",
+            "std.collections:148",
+            "std.collections:149",
+            "std.collections:151",
+            "std.collections:152",
+            "std.collections:153",
+            "std.collections:154",
+            "std.collections:155"
           ],
           "verified_signatures": [
-            "std.collections:127",
-            "std.collections:128",
-            "std.collections:129",
-            "std.collections:130",
-            "std.collections:131",
-            "std.collections:132",
-            "std.collections:133",
-            "std.collections:135",
             "std.collections:136",
             "std.collections:137",
             "std.collections:138",
             "std.collections:139",
             "std.collections:140",
+            "std.collections:141",
             "std.collections:142",
-            "std.collections:143",
             "std.collections:144",
             "std.collections:145",
-            "std.collections:146"
+            "std.collections:146",
+            "std.collections:147",
+            "std.collections:148",
+            "std.collections:149",
+            "std.collections:151",
+            "std.collections:152",
+            "std.collections:153",
+            "std.collections:154",
+            "std.collections:155"
           ],
           "refs": [
             "testing/stdlib-public-api.json"
@@ -560,18 +568,18 @@
           "status": "complete",
           "reason": null,
           "signatures": [
-            "std.format:228",
-            "std.format:229",
-            "std.format:230",
-            "std.format:231",
-            "std.format:232"
+            "std.format:237",
+            "std.format:238",
+            "std.format:239",
+            "std.format:240",
+            "std.format:241"
           ],
           "verified_signatures": [
-            "std.format:228",
-            "std.format:229",
-            "std.format:230",
-            "std.format:231",
-            "std.format:232"
+            "std.format:237",
+            "std.format:238",
+            "std.format:239",
+            "std.format:240",
+            "std.format:241"
           ],
           "refs": [
             "testing/stdlib-public-api.json"
@@ -737,16 +745,16 @@
           "status": "complete",
           "reason": null,
           "signatures": [
-            "std.io:258",
-            "std.io:259",
-            "std.io:260",
-            "std.io:261"
+            "std.io:267",
+            "std.io:268",
+            "std.io:269",
+            "std.io:270"
           ],
           "verified_signatures": [
-            "std.io:258",
-            "std.io:259",
-            "std.io:260",
-            "std.io:261"
+            "std.io:267",
+            "std.io:268",
+            "std.io:269",
+            "std.io:270"
           ],
           "refs": [
             "testing/stdlib-public-api.json"
@@ -812,16 +820,16 @@
           "status": "complete",
           "reason": null,
           "signatures": [
-            "std.iter:152",
-            "std.iter:153",
-            "std.iter:154",
-            "std.iter:155"
+            "std.iter:161",
+            "std.iter:162",
+            "std.iter:163",
+            "std.iter:164"
           ],
           "verified_signatures": [
-            "std.iter:152",
-            "std.iter:153",
-            "std.iter:154",
-            "std.iter:155"
+            "std.iter:161",
+            "std.iter:162",
+            "std.iter:163",
+            "std.iter:164"
           ],
           "refs": [
             "testing/stdlib-public-api.json"
@@ -1010,26 +1018,26 @@
           "status": "complete",
           "reason": null,
           "signatures": [
-            "std.math:208",
-            "std.math:209",
-            "std.math:210",
-            "std.math:211",
-            "std.math:212",
-            "std.math:213",
-            "std.math:214",
-            "std.math:215",
-            "std.math:216"
+            "std.math:217",
+            "std.math:218",
+            "std.math:219",
+            "std.math:220",
+            "std.math:221",
+            "std.math:222",
+            "std.math:223",
+            "std.math:224",
+            "std.math:225"
           ],
           "verified_signatures": [
-            "std.math:208",
-            "std.math:209",
-            "std.math:210",
-            "std.math:211",
-            "std.math:212",
-            "std.math:213",
-            "std.math:214",
-            "std.math:215",
-            "std.math:216"
+            "std.math:217",
+            "std.math:218",
+            "std.math:219",
+            "std.math:220",
+            "std.math:221",
+            "std.math:222",
+            "std.math:223",
+            "std.math:224",
+            "std.math:225"
           ],
           "refs": [
             "testing/stdlib-public-api.json"
@@ -1840,38 +1848,38 @@
           "status": "complete",
           "reason": null,
           "signatures": [
-            "std.text:100",
             "std.text:101",
             "std.text:102",
             "std.text:103",
             "std.text:104",
             "std.text:105",
+            "std.text:106",
+            "std.text:107",
+            "std.text:108",
             "std.text:109",
-            "std.text:92",
-            "std.text:93",
-            "std.text:94",
-            "std.text:95",
-            "std.text:96",
-            "std.text:97",
-            "std.text:98",
-            "std.text:99"
+            "std.text:110",
+            "std.text:111",
+            "std.text:112",
+            "std.text:113",
+            "std.text:114",
+            "std.text:118"
           ],
           "verified_signatures": [
-            "std.text:100",
             "std.text:101",
             "std.text:102",
             "std.text:103",
             "std.text:104",
             "std.text:105",
+            "std.text:106",
+            "std.text:107",
+            "std.text:108",
             "std.text:109",
-            "std.text:92",
-            "std.text:93",
-            "std.text:94",
-            "std.text:95",
-            "std.text:96",
-            "std.text:97",
-            "std.text:98",
-            "std.text:99"
+            "std.text:110",
+            "std.text:111",
+            "std.text:112",
+            "std.text:113",
+            "std.text:114",
+            "std.text:118"
           ],
           "refs": [
             "testing/stdlib-public-api.json"
@@ -1999,9 +2007,9 @@
     "runtime_examples": 25,
     "external_examples": 4,
     "compiler_examples": 2,
-    "api_complete": 17,
+    "api_complete": 18,
     "api_partial": 1,
-    "api_not_applicable": 4
+    "api_not_applicable": 3
   },
   "promotion": {
     "status": "not-published",

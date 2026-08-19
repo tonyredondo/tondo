@@ -17,8 +17,8 @@ jq -e '
     .format == "tondo-stdlib-public-api-audit-config/1"
     and .edition == "0.1"
     and .phase == "STD-0.1A"
-    and (.owners | length) == 20
-    and ([.owners[].id] | unique | length) == 20
+    and (.owners | length) == 21
+    and ([.owners[].id] | unique | length) == 21
     and all(.owners[];
         (.id | test("^std\\.[a-z]+$"))
         and (.contract | endswith(".md"))
@@ -373,8 +373,8 @@ validate_matrix() {
         and .rules.bootstrap_aliases == false
         and .rules.exact_signature_shape_required == true
         and .rules.strict_mode == "fails-on-any-gap"
-        and (.owners | length) == 20
-        and ([.owners[].id] | unique | length) == 20
+        and (.owners | length) == 21
+        and ([.owners[].id] | unique | length) == 21
         and ([.rows[].id] | unique | length) == (.rows | length)
         and (.summary.signatures == (.rows | length))
         and (.summary.verified + .summary.signature_gaps == .summary.signatures)

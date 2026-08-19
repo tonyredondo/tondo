@@ -35,7 +35,7 @@ fn every_normative_matrix_row_has_an_explicit_conformance_record() {
     assert_eq!(registry["promotion"]["status"], "not-promoted");
 
     let matrix_rows = matrix["rows"].as_array().unwrap();
-    assert_eq!(matrix_rows.len(), 374);
+    assert_eq!(matrix_rows.len(), 385);
     assert_eq!(coordinated.len(), matrix_rows.len());
 
     for matrix_row in matrix_rows {
@@ -158,6 +158,6 @@ fn conformance_commands_and_codec_observations_are_linked() {
     let async_owner = owners(&registry)
         .find(|owner| owner["id"] == "std.async")
         .unwrap();
-    assert_eq!(async_owner["status"], "pending");
+    assert_eq!(async_owner["status"], "partial");
     assert!(!async_owner["reason"].as_str().unwrap().is_empty());
 }

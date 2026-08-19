@@ -46,17 +46,17 @@ jq -e '
   . as $root
   | $root.summary == {
     owners: 22,
-    rows: 374,
-    public_signatures: 209,
-    requirements: 165,
+    rows: 385,
+    public_signatures: 214,
+    requirements: 171,
     verified_rows: 0,
-    partial_rows: 373,
-    pending_rows: 1,
+    partial_rows: 385,
+    pending_rows: 0,
     owner_verified: 0,
-    owner_partial: 21,
-    owner_pending: 1
+    owner_partial: 22,
+    owner_pending: 0
   }
-  and any($root.owners[]; .id == "std.async" and .status == "pending")
+  and any($root.owners[]; .id == "std.async" and .status == "partial" and (.rows | length) == 12)
   and all(["std.serialization", "std.json", "std.messagepack", "std.protobuf"][];
     . as $owner_id
     | any($root.owners[]; .id == $owner_id and (.evidence.cases | length) > 0)

@@ -857,8 +857,9 @@ cuando la fuente no tiene un iterador síncrono. Cada elemento espera un `next`,
 el efecto se infiere y el cierre ocurre al salir. `for await item in source`
 permanece como spelling explícito opcional para desambiguar una fuente que
 implementa ambos protocolos. La materialización solo ocurre mediante
-`collect(limit:)`. Un receiver de `std.channel.Channel` puede exponer este
-protocolo.
+`collect(limit:)`, con un límite finito y sin publicar arrays parciales. La
+adaptación de `std.channel.Channel` pertenece a STD-0.1B y no es una
+dependencia de esta superficie A.
 
 La superficie nominal mínima de `std.async` es:
 
@@ -877,6 +878,8 @@ pub fn Completer.cancel(var self): Unit ! AlreadyCompleted
 pub trait AsyncIterator[T] {
     fn next(mut self): T? suspends
 }
+
+pub fn AsyncIterator.collect[T](var self, limit: Int): Array[T] ! CollectionError suspends
 ~~~
 
 `Join` no expone constructor, poller ni callback: solo nace de `spawn` y se
@@ -885,6 +888,10 @@ se espera implícitamente en una llamada ordinaria;
 `Completer` puede completarse desde otro task o thread que cumpla `Send`. La
 segunda finalización no cambia el resultado de la primera y devuelve
 `AlreadyCompleted` de forma atómica.
+
+La superficie ejecutable y sus siete requisitos verificables están indexados en
+[`testing/stdlib-async.json`](./testing/stdlib-async.json) y el documento
+normativo fuente es [`docs/contracts/stdlib-async.md`](./docs/contracts/stdlib-async.md).
 
 ### 9.4 Scheduler y backpressure
 
@@ -2684,8 +2691,8 @@ promueve un fuzz target dedicado ni baselines completos de coste o
 `STD-CONF-001`; esas celdas permanecen parciales y visibles en la matriz.
 
 La coordinación `STD-TEST-001` queda registrada en
-`testing/stdlib-test-coordination.json`: sus 21 owners A, 207 firmas públicas y
-164 requisitos se vinculan a 63 leyes de modelo, comandos de test y campañas
+`testing/stdlib-test-coordination.json`: sus 22 owners A, 214 firmas públicas y
+171 requisitos se vinculan a 66 leyes de modelo, comandos de test y campañas
 de fuzz. El registro se genera desde la evidencia de owners, la auditoría de
 API y la matriz normativa; cada superficie debe tener una ley de modelo y cada
 fuzz parcial debe conservar una razón explícita. Esta coordinación no convierte
@@ -2694,15 +2701,16 @@ corpora bounded en fuzz dedicado ni cierra la conformidad global.
 La coordinación `STD-CONF-001` queda registrada en
 `testing/stdlib-conformance-coordination.json`: contiene los 22 owners de
 `STD-0.1A` y una fila `CONF` explícita para cada firma o requisito de la matriz
-(207 firmas y 165 requisitos). Cada fila conserva el estado actual de la
+(214 firmas y 171 requisitos). Cada fila conserva el estado actual de la
 matriz, una razón obligatoria para `partial`/`pending`, referencias
 reproducibles y comandos. El registro cruza la matriz normativa, la auditoría
 de API, la evidencia de owners, la coordinación de modelos y el harness
 externo de codecs; no permite declarar `verified` sin la observación de la
 fila ni convierte la coordinación en promoción. `std.async` permanece
-`pending` por su requisito sintético y los demás owners sin casos públicos
-completos permanecen `partial`. La promoción sigue `not-promoted` hasta
-`STD-DOC-001` y la conformance pública completa.
+`partial` por las celdas de implementación/conformance pendientes; `std.async`
+conserva un contrato concreto de siete filas, cinco callable auditadas y la
+implementación genérica pendiente en `STD-A-ASYNC-IMPL-001`. La promoción sigue
+`not-promoted` hasta `STD-DOC-001` y la conformance pública completa.
 
 La coordinación `STD-DOC-001` queda registrada en
 `testing/stdlib-documentation.json`. Cada owner tiene un contrato normativo y

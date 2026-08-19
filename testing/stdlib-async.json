@@ -1,0 +1,85 @@
+{
+  "format": "tondo-stdlib-owner-contract/1",
+  "owner": "std.async",
+  "edition": "0.1",
+  "phase": "STD-0.1A",
+  "status": "closed-contract",
+  "contract": "docs/contracts/stdlib-async.md",
+  "layer": "A1",
+  "kind": "intrinsic",
+  "target": "tondo-vm-hosted",
+  "surface": {
+    "effect": "suspends",
+    "bodyless_requires_effect": true,
+    "bodyful_inference": "allowed",
+    "inference_by_name": false,
+    "effect_in_interface_and_abi": true,
+    "direct_call_waits": true,
+    "explicit_await_direct_call": "optional",
+    "explicit_await_handle": "required",
+    "nosuspend_annotations": ["@sync", "@nosuspend"]
+  },
+  "types": [
+    "Join[T, E]",
+    "Waiter[T, E]",
+    "Completer[T, E]",
+    "AlreadyCompleted",
+    "AsyncIterator[T]"
+  ],
+  "signatures": [
+    {"id":"oneshot","signature":"pub fn oneshot[T, E](): (Waiter[T, E], Completer[T, E])","effect":"sync","kind":"constructor"},
+    {"id":"waiter-wait","signature":"pub fn Waiter.wait(var self): T ! E suspends","effect":"suspends","kind":"method"},
+    {"id":"completer-complete","signature":"pub fn Completer.complete(var self, value: T): Unit ! AlreadyCompleted","effect":"sync","kind":"method"},
+    {"id":"completer-fail","signature":"pub fn Completer.fail(var self, error: E): Unit ! AlreadyCompleted","effect":"sync","kind":"method"},
+    {"id":"completer-cancel","signature":"pub fn Completer.cancel(var self): Unit ! AlreadyCompleted","effect":"sync","kind":"method"},
+    {"id":"async-iterator-next","signature":"fn AsyncIterator.next(mut self): T? suspends","effect":"suspends","kind":"trait-method"},
+    {"id":"async-iterator-collect","signature":"pub fn AsyncIterator.collect[T](var self, limit: Int): Array[T] ! CollectionError suspends","effect":"suspends","kind":"materializer"}
+  ],
+  "join": {
+    "origin": ["spawn call()", "spawn thread call()"],
+    "affine": true,
+    "consumption": "await-handle-once",
+    "scope_exit": ["await", "cancel-and-await", "detach", "transfer"],
+    "public_constructor": false,
+    "public_polling": false
+  },
+  "oneshot": {
+    "completion": "exactly-one-atomic-winner",
+    "duplicate": "AlreadyCompleted",
+    "waiter_consumption": "once",
+    "completer_send": true,
+    "callbacks": false
+  },
+  "iterator": {
+    "element_per_next": 1,
+    "end": "none",
+    "lazy": true,
+    "backpressure": "one-next-at-a-time",
+    "close": "exactly-once-idempotent-before-terminal-outcome",
+    "for_selection": "async-when-no-sync-protocol",
+    "explicit_for_await": "disambiguation-only",
+    "channel_dependency": false
+  },
+  "collect": {
+    "limit": "finite-non-negative-maximum-elements",
+    "zero": "empty-array-and-close",
+    "at_limit": "success-without-extra-next",
+    "partial_publication": false,
+    "error_type": "CollectionError",
+    "close_on": ["success", "error", "cancel", "unwind"]
+  },
+  "test_matrix": [
+    {"id":"suspends-visibility","required":true,"observables":["bodyless-marker","abi-effect","no-name-inference","nosuspend-rejection"]},
+    {"id":"join-affinity","required":true,"observables":["spawn-origin","single-consume","scope-exit","transfer"]},
+    {"id":"oneshot-completion","required":true,"observables":["waiter","completer","atomic-winner","duplicate-error","send"]},
+    {"id":"async-iterator","required":true,"observables":["one-element","none-end","lazy","generic-protocol"]},
+    {"id":"bounded-collect","required":true,"observables":["finite-limit","zero","no-extra-next","no-partial-publication","typed-limit-error"]},
+    {"id":"close-backpressure","required":true,"observables":["success-close","error-close","cancel-close","unwind-close","one-next"]},
+    {"id":"no-channel-in-a","required":true,"observables":["channel-deferred-to-stdlib-0.1b"]}
+  ],
+  "promotion": {
+    "contract": ["exact-signatures","effect-rules","ownership","limits","channel-exclusion"],
+    "implementation_pending": ["generic-async-iterator","collect","cancel-close-backpressure"],
+    "next": "STD-A-ASYNC-IMPL-001"
+  }
+}

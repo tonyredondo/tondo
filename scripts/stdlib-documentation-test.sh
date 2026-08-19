@@ -50,9 +50,9 @@ jq -e '
     runtime_examples: 25,
     external_examples: 4,
     compiler_examples: 2,
-    api_complete: 17,
+    api_complete: 18,
     api_partial: 1,
-    api_not_applicable: 4
+    api_not_applicable: 3
   }
   and any($root.owners[]; .id == "std.meta" and .runtime_applicable == false and (.runtime_reason | length) > 0)
   and any($root.owners[]; .id == "std.reflect" and .runtime_applicable == false and (.runtime_reason | length) > 0)

@@ -15,6 +15,7 @@ for path in \
     testing/stdlib-bytes.json \
     testing/stdlib-time.json \
     testing/stdlib-env.json \
+    testing/stdlib-async.json \
     testing/stdlib-owner-evidence.json \
     testing/stdlib-public-api.json \
     testing/stdlib-spec.json \
@@ -43,6 +44,7 @@ jq -n \
     --slurpfile bytes_owner testing/stdlib-bytes.json \
     --slurpfile time_owner testing/stdlib-time.json \
     --slurpfile env_owner testing/stdlib-env.json \
+    --slurpfile async_owner testing/stdlib-async.json \
     --slurpfile owner_evidence testing/stdlib-owner-evidence.json \
     --slurpfile public_api testing/stdlib-public-api.json \
     --slurpfile integration testing/stdlib-spec.json \
@@ -258,6 +260,7 @@ jq -n \
         {path: "testing/stdlib-bytes.json", data: $bytes_owner[0]},
         {path: "testing/stdlib-time.json", data: $time_owner[0]},
         {path: "testing/stdlib-env.json", data: $env_owner[0]},
+        {path: "testing/stdlib-async.json", data: $async_owner[0]},
         {path: "testing/stdlib-core.json", data: $core[0]},
         {path: "testing/stdlib-hosted.json", data: $hosted[0]},
         {path: "testing/stdlib-serialization.json", data: $serialization[0]},
@@ -276,7 +279,7 @@ jq -n \
         phase: "STD-0.1A",
         status: (if any($rows[]; .status == "open-gaps") then "open-gaps" else "verified" end),
         catalogs: {current: "STD-0.1A", future_closed: "STD-0.1B", future_modules: ["std.encoding", "std.yaml", "std.toml", "std.cbor", "std.regex", "std.uuid", "std.channel", "std.sync", "std.executor", "std.log", "std.net"]},
-        sources: {canonical_spec: "TONDO_STANDARD_LIBRARY_SPEC.md", integration: "testing/stdlib-spec.json", implementation: "testing/stdlib-implementation.json", owner_contracts: ["testing/stdlib-meta.json", "testing/stdlib-reflect.json", "testing/stdlib-bytes.json", "testing/stdlib-time.json", "testing/stdlib-env.json"], owner_evidence: "testing/stdlib-owner-evidence.json", public_api: "testing/stdlib-public-api.json", performance_contract: "testing/stdlib-performance.json", performance_coordinator: "testing/stdlib-performance-conformance.json", codec_conformance: "testing/stdlib-codec-conformance.json"},
+        sources: {canonical_spec: "TONDO_STANDARD_LIBRARY_SPEC.md", integration: "testing/stdlib-spec.json", implementation: "testing/stdlib-implementation.json", owner_contracts: ["testing/stdlib-meta.json", "testing/stdlib-reflect.json", "testing/stdlib-bytes.json", "testing/stdlib-time.json", "testing/stdlib-env.json", "testing/stdlib-async.json"], owner_evidence: "testing/stdlib-owner-evidence.json", public_api: "testing/stdlib-public-api.json", performance_contract: "testing/stdlib-performance.json", performance_coordinator: "testing/stdlib-performance-conformance.json", codec_conformance: "testing/stdlib-codec-conformance.json"},
         rules: {required_stages: ["SPEC", "IMPL/HOST", "MODEL/TEST/FUZZ", "PERF", "CONF", "DOC"], one_owner_per_signature: true, one_owner_per_requirement: true, pending_requires_reason: true, not_applicable_requires_reason: true, future_catalog_not_implicitly_current: true},
         owners: $owners,
         rows: $rows,

@@ -30,35 +30,177 @@
     {
       "id": "std.async",
       "layer": "A1",
-      "status": "pending",
-      "reason": "STD-CONF-001 remains open until the owner has complete public evidence",
-      "public_signatures": [],
+      "status": "partial",
+      "reason": "the public callable surface is audited and the contract is executable, but full async iterator, collect and cancellation conformance waits for STD-A-ASYNC-IMPL-001",
+      "public_signatures": [
+        "std.async:31",
+        "std.async:32",
+        "std.async:33",
+        "std.async:34",
+        "std.async:35"
+      ],
       "requirements": [
-        "requirement:std.async:owner-contract"
+        "requirement:std.async:async-iterator",
+        "requirement:std.async:bounded-collect",
+        "requirement:std.async:close-backpressure",
+        "requirement:std.async:join-affinity",
+        "requirement:std.async:no-channel-in-a",
+        "requirement:std.async:oneshot-completion",
+        "requirement:std.async:suspends-visibility"
       ],
       "rows": [
         {
-          "id": "requirement:std.async:owner-contract",
+          "id": "requirement:std.async:async-iterator",
           "kind": "requirement",
-          "status": "pending",
-          "reason": "STD-CONF-001 remains open until the owner has complete public evidence",
+          "status": "partial",
+          "reason": "the public callable surface is audited and the contract is executable, but full async iterator, collect and cancellation conformance waits for STD-A-ASYNC-IMPL-001",
           "refs": [
-            "TONDO_IMPLEMENTATION_TRACKER.md#STD-CONF-001"
+            "testing/stdlib-public-api.json",
+            "testing/stdlib-async.json",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
+          ]
+        },
+        {
+          "id": "requirement:std.async:bounded-collect",
+          "kind": "requirement",
+          "status": "partial",
+          "reason": "the public callable surface is audited and the contract is executable, but full async iterator, collect and cancellation conformance waits for STD-A-ASYNC-IMPL-001",
+          "refs": [
+            "testing/stdlib-public-api.json",
+            "testing/stdlib-async.json",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
+          ]
+        },
+        {
+          "id": "requirement:std.async:close-backpressure",
+          "kind": "requirement",
+          "status": "partial",
+          "reason": "the public callable surface is audited and the contract is executable, but full async iterator, collect and cancellation conformance waits for STD-A-ASYNC-IMPL-001",
+          "refs": [
+            "testing/stdlib-public-api.json",
+            "testing/stdlib-async.json",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
+          ]
+        },
+        {
+          "id": "requirement:std.async:join-affinity",
+          "kind": "requirement",
+          "status": "partial",
+          "reason": "the public callable surface is audited and the contract is executable, but full async iterator, collect and cancellation conformance waits for STD-A-ASYNC-IMPL-001",
+          "refs": [
+            "testing/stdlib-public-api.json",
+            "testing/stdlib-async.json",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
+          ]
+        },
+        {
+          "id": "requirement:std.async:no-channel-in-a",
+          "kind": "requirement",
+          "status": "partial",
+          "reason": "the public callable surface is audited and the contract is executable, but full async iterator, collect and cancellation conformance waits for STD-A-ASYNC-IMPL-001",
+          "refs": [
+            "testing/stdlib-public-api.json",
+            "testing/stdlib-async.json",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
+          ]
+        },
+        {
+          "id": "requirement:std.async:oneshot-completion",
+          "kind": "requirement",
+          "status": "partial",
+          "reason": "the public callable surface is audited and the contract is executable, but full async iterator, collect and cancellation conformance waits for STD-A-ASYNC-IMPL-001",
+          "refs": [
+            "testing/stdlib-public-api.json",
+            "testing/stdlib-async.json",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
+          ]
+        },
+        {
+          "id": "requirement:std.async:suspends-visibility",
+          "kind": "requirement",
+          "status": "partial",
+          "reason": "the public callable surface is audited and the contract is executable, but full async iterator, collect and cancellation conformance waits for STD-A-ASYNC-IMPL-001",
+          "refs": [
+            "testing/stdlib-public-api.json",
+            "testing/stdlib-async.json",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
+          ]
+        },
+        {
+          "id": "signature:std.async:31",
+          "kind": "signature",
+          "status": "partial",
+          "reason": "the public callable surface is audited and the contract is executable, but full async iterator, collect and cancellation conformance waits for STD-A-ASYNC-IMPL-001",
+          "refs": [
+            "testing/stdlib-public-api.json",
+            "testing/stdlib-async.json",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
+          ]
+        },
+        {
+          "id": "signature:std.async:32",
+          "kind": "signature",
+          "status": "partial",
+          "reason": "the public callable surface is audited and the contract is executable, but full async iterator, collect and cancellation conformance waits for STD-A-ASYNC-IMPL-001",
+          "refs": [
+            "testing/stdlib-public-api.json",
+            "testing/stdlib-async.json",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
+          ]
+        },
+        {
+          "id": "signature:std.async:33",
+          "kind": "signature",
+          "status": "partial",
+          "reason": "the public callable surface is audited and the contract is executable, but full async iterator, collect and cancellation conformance waits for STD-A-ASYNC-IMPL-001",
+          "refs": [
+            "testing/stdlib-public-api.json",
+            "testing/stdlib-async.json",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
+          ]
+        },
+        {
+          "id": "signature:std.async:34",
+          "kind": "signature",
+          "status": "partial",
+          "reason": "the public callable surface is audited and the contract is executable, but full async iterator, collect and cancellation conformance waits for STD-A-ASYNC-IMPL-001",
+          "refs": [
+            "testing/stdlib-public-api.json",
+            "testing/stdlib-async.json",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
+          ]
+        },
+        {
+          "id": "signature:std.async:35",
+          "kind": "signature",
+          "status": "partial",
+          "reason": "the public callable surface is audited and the contract is executable, but full async iterator, collect and cancellation conformance waits for STD-A-ASYNC-IMPL-001",
+          "refs": [
+            "testing/stdlib-public-api.json",
+            "testing/stdlib-async.json",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
           ]
         }
       ],
       "evidence": {
-        "status": "pending",
+        "status": "partial",
         "refs": [
-          "TONDO_IMPLEMENTATION_TRACKER.md#STD-CONF-001",
-          "testing/stdlib-matrix.json"
+          "TONDO_IMPLEMENTATION_TRACKER.md",
+          "testing/stdlib-async.json",
+          "testing/stdlib-matrix.json",
+          "testing/stdlib-public-api.json"
         ],
         "commands": [
+          "cargo test -p tondo-compiler --locked --lib hir::check::tests",
+          "cargo test -p tondo-vm --locked --lib runtime::execute::tests",
+          "scripts/stdlib-async-check.sh",
+          "scripts/stdlib-async-test.sh",
           "scripts/stdlib-matrix-check.sh",
+          "scripts/stdlib-public-api-audit.sh",
           "scripts/stdlib-test-coordination-check.sh"
         ],
         "cases": [],
-        "scope": "synthetic-owner-gap"
+        "scope": "owner-evidence-pending-public-conformance"
       }
     },
     {
@@ -161,24 +303,24 @@
       "status": "partial",
       "reason": "the public API audit and collection runtime fixture cover all eighteen collection signatures; STD-CONF-001 has not yet promoted every standard-library owner",
       "public_signatures": [
-        "std.collections:127",
-        "std.collections:128",
-        "std.collections:129",
-        "std.collections:130",
-        "std.collections:131",
-        "std.collections:132",
-        "std.collections:133",
-        "std.collections:135",
         "std.collections:136",
         "std.collections:137",
         "std.collections:138",
         "std.collections:139",
         "std.collections:140",
+        "std.collections:141",
         "std.collections:142",
-        "std.collections:143",
         "std.collections:144",
         "std.collections:145",
-        "std.collections:146"
+        "std.collections:146",
+        "std.collections:147",
+        "std.collections:148",
+        "std.collections:149",
+        "std.collections:151",
+        "std.collections:152",
+        "std.collections:153",
+        "std.collections:154",
+        "std.collections:155"
       ],
       "requirements": [
         "requirement:std.collections:async-cancellation",
@@ -268,94 +410,6 @@
           ]
         },
         {
-          "id": "signature:std.collections:127",
-          "kind": "signature",
-          "status": "partial",
-          "reason": "the public API audit and collection runtime fixture cover all eighteen collection signatures; STD-CONF-001 has not yet promoted every standard-library owner",
-          "refs": [
-            "testing/stdlib-public-api.json",
-            "tests/runtime/m11-std-collections-001.to",
-            "TONDO_IMPLEMENTATION_TRACKER.md"
-          ]
-        },
-        {
-          "id": "signature:std.collections:128",
-          "kind": "signature",
-          "status": "partial",
-          "reason": "the public API audit and collection runtime fixture cover all eighteen collection signatures; STD-CONF-001 has not yet promoted every standard-library owner",
-          "refs": [
-            "testing/stdlib-public-api.json",
-            "tests/runtime/m11-std-collections-001.to",
-            "TONDO_IMPLEMENTATION_TRACKER.md"
-          ]
-        },
-        {
-          "id": "signature:std.collections:129",
-          "kind": "signature",
-          "status": "partial",
-          "reason": "the public API audit and collection runtime fixture cover all eighteen collection signatures; STD-CONF-001 has not yet promoted every standard-library owner",
-          "refs": [
-            "testing/stdlib-public-api.json",
-            "tests/runtime/m11-std-collections-001.to",
-            "TONDO_IMPLEMENTATION_TRACKER.md"
-          ]
-        },
-        {
-          "id": "signature:std.collections:130",
-          "kind": "signature",
-          "status": "partial",
-          "reason": "the public API audit and collection runtime fixture cover all eighteen collection signatures; STD-CONF-001 has not yet promoted every standard-library owner",
-          "refs": [
-            "testing/stdlib-public-api.json",
-            "tests/runtime/m11-std-collections-001.to",
-            "TONDO_IMPLEMENTATION_TRACKER.md"
-          ]
-        },
-        {
-          "id": "signature:std.collections:131",
-          "kind": "signature",
-          "status": "partial",
-          "reason": "the public API audit and collection runtime fixture cover all eighteen collection signatures; STD-CONF-001 has not yet promoted every standard-library owner",
-          "refs": [
-            "testing/stdlib-public-api.json",
-            "tests/runtime/m11-std-collections-001.to",
-            "TONDO_IMPLEMENTATION_TRACKER.md"
-          ]
-        },
-        {
-          "id": "signature:std.collections:132",
-          "kind": "signature",
-          "status": "partial",
-          "reason": "the public API audit and collection runtime fixture cover all eighteen collection signatures; STD-CONF-001 has not yet promoted every standard-library owner",
-          "refs": [
-            "testing/stdlib-public-api.json",
-            "tests/runtime/m11-std-collections-001.to",
-            "TONDO_IMPLEMENTATION_TRACKER.md"
-          ]
-        },
-        {
-          "id": "signature:std.collections:133",
-          "kind": "signature",
-          "status": "partial",
-          "reason": "the public API audit and collection runtime fixture cover all eighteen collection signatures; STD-CONF-001 has not yet promoted every standard-library owner",
-          "refs": [
-            "testing/stdlib-public-api.json",
-            "tests/runtime/m11-std-collections-001.to",
-            "TONDO_IMPLEMENTATION_TRACKER.md"
-          ]
-        },
-        {
-          "id": "signature:std.collections:135",
-          "kind": "signature",
-          "status": "partial",
-          "reason": "the public API audit and collection runtime fixture cover all eighteen collection signatures; STD-CONF-001 has not yet promoted every standard-library owner",
-          "refs": [
-            "testing/stdlib-public-api.json",
-            "tests/runtime/m11-std-collections-001.to",
-            "TONDO_IMPLEMENTATION_TRACKER.md"
-          ]
-        },
-        {
           "id": "signature:std.collections:136",
           "kind": "signature",
           "status": "partial",
@@ -411,7 +465,7 @@
           ]
         },
         {
-          "id": "signature:std.collections:142",
+          "id": "signature:std.collections:141",
           "kind": "signature",
           "status": "partial",
           "reason": "the public API audit and collection runtime fixture cover all eighteen collection signatures; STD-CONF-001 has not yet promoted every standard-library owner",
@@ -422,7 +476,7 @@
           ]
         },
         {
-          "id": "signature:std.collections:143",
+          "id": "signature:std.collections:142",
           "kind": "signature",
           "status": "partial",
           "reason": "the public API audit and collection runtime fixture cover all eighteen collection signatures; STD-CONF-001 has not yet promoted every standard-library owner",
@@ -456,6 +510,94 @@
         },
         {
           "id": "signature:std.collections:146",
+          "kind": "signature",
+          "status": "partial",
+          "reason": "the public API audit and collection runtime fixture cover all eighteen collection signatures; STD-CONF-001 has not yet promoted every standard-library owner",
+          "refs": [
+            "testing/stdlib-public-api.json",
+            "tests/runtime/m11-std-collections-001.to",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
+          ]
+        },
+        {
+          "id": "signature:std.collections:147",
+          "kind": "signature",
+          "status": "partial",
+          "reason": "the public API audit and collection runtime fixture cover all eighteen collection signatures; STD-CONF-001 has not yet promoted every standard-library owner",
+          "refs": [
+            "testing/stdlib-public-api.json",
+            "tests/runtime/m11-std-collections-001.to",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
+          ]
+        },
+        {
+          "id": "signature:std.collections:148",
+          "kind": "signature",
+          "status": "partial",
+          "reason": "the public API audit and collection runtime fixture cover all eighteen collection signatures; STD-CONF-001 has not yet promoted every standard-library owner",
+          "refs": [
+            "testing/stdlib-public-api.json",
+            "tests/runtime/m11-std-collections-001.to",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
+          ]
+        },
+        {
+          "id": "signature:std.collections:149",
+          "kind": "signature",
+          "status": "partial",
+          "reason": "the public API audit and collection runtime fixture cover all eighteen collection signatures; STD-CONF-001 has not yet promoted every standard-library owner",
+          "refs": [
+            "testing/stdlib-public-api.json",
+            "tests/runtime/m11-std-collections-001.to",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
+          ]
+        },
+        {
+          "id": "signature:std.collections:151",
+          "kind": "signature",
+          "status": "partial",
+          "reason": "the public API audit and collection runtime fixture cover all eighteen collection signatures; STD-CONF-001 has not yet promoted every standard-library owner",
+          "refs": [
+            "testing/stdlib-public-api.json",
+            "tests/runtime/m11-std-collections-001.to",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
+          ]
+        },
+        {
+          "id": "signature:std.collections:152",
+          "kind": "signature",
+          "status": "partial",
+          "reason": "the public API audit and collection runtime fixture cover all eighteen collection signatures; STD-CONF-001 has not yet promoted every standard-library owner",
+          "refs": [
+            "testing/stdlib-public-api.json",
+            "tests/runtime/m11-std-collections-001.to",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
+          ]
+        },
+        {
+          "id": "signature:std.collections:153",
+          "kind": "signature",
+          "status": "partial",
+          "reason": "the public API audit and collection runtime fixture cover all eighteen collection signatures; STD-CONF-001 has not yet promoted every standard-library owner",
+          "refs": [
+            "testing/stdlib-public-api.json",
+            "tests/runtime/m11-std-collections-001.to",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
+          ]
+        },
+        {
+          "id": "signature:std.collections:154",
+          "kind": "signature",
+          "status": "partial",
+          "reason": "the public API audit and collection runtime fixture cover all eighteen collection signatures; STD-CONF-001 has not yet promoted every standard-library owner",
+          "refs": [
+            "testing/stdlib-public-api.json",
+            "tests/runtime/m11-std-collections-001.to",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
+          ]
+        },
+        {
+          "id": "signature:std.collections:155",
           "kind": "signature",
           "status": "partial",
           "reason": "the public API audit and collection runtime fixture cover all eighteen collection signatures; STD-CONF-001 has not yet promoted every standard-library owner",
@@ -1146,11 +1288,11 @@
       "status": "partial",
       "reason": "the public API audit and formatting runtime fixture cover all five signatures; STD-CONF-001 has not yet promoted every standard-library owner",
       "public_signatures": [
-        "std.format:228",
-        "std.format:229",
-        "std.format:230",
-        "std.format:231",
-        "std.format:232"
+        "std.format:237",
+        "std.format:238",
+        "std.format:239",
+        "std.format:240",
+        "std.format:241"
       ],
       "requirements": [
         "requirement:std.format:async-cancellation",
@@ -1240,7 +1382,7 @@
           ]
         },
         {
-          "id": "signature:std.format:228",
+          "id": "signature:std.format:237",
           "kind": "signature",
           "status": "partial",
           "reason": "the public API audit and formatting runtime fixture cover all five signatures; STD-CONF-001 has not yet promoted every standard-library owner",
@@ -1251,7 +1393,7 @@
           ]
         },
         {
-          "id": "signature:std.format:229",
+          "id": "signature:std.format:238",
           "kind": "signature",
           "status": "partial",
           "reason": "the public API audit and formatting runtime fixture cover all five signatures; STD-CONF-001 has not yet promoted every standard-library owner",
@@ -1262,7 +1404,7 @@
           ]
         },
         {
-          "id": "signature:std.format:230",
+          "id": "signature:std.format:239",
           "kind": "signature",
           "status": "partial",
           "reason": "the public API audit and formatting runtime fixture cover all five signatures; STD-CONF-001 has not yet promoted every standard-library owner",
@@ -1273,7 +1415,7 @@
           ]
         },
         {
-          "id": "signature:std.format:231",
+          "id": "signature:std.format:240",
           "kind": "signature",
           "status": "partial",
           "reason": "the public API audit and formatting runtime fixture cover all five signatures; STD-CONF-001 has not yet promoted every standard-library owner",
@@ -1284,7 +1426,7 @@
           ]
         },
         {
-          "id": "signature:std.format:232",
+          "id": "signature:std.format:241",
           "kind": "signature",
           "status": "partial",
           "reason": "the public API audit and formatting runtime fixture cover all five signatures; STD-CONF-001 has not yet promoted every standard-library owner",
@@ -1657,10 +1799,10 @@
       "status": "partial",
       "reason": "the public API audit, portable kernel and std.io runtime fixture cover the four signatures; STD-CONF-001 has not yet promoted every standard-library owner",
       "public_signatures": [
-        "std.io:258",
-        "std.io:259",
-        "std.io:260",
-        "std.io:261"
+        "std.io:267",
+        "std.io:268",
+        "std.io:269",
+        "std.io:270"
       ],
       "requirements": [
         "requirement:std.io:async-cancellation",
@@ -1750,7 +1892,7 @@
           ]
         },
         {
-          "id": "signature:std.io:258",
+          "id": "signature:std.io:267",
           "kind": "signature",
           "status": "partial",
           "reason": "the public API audit, portable kernel and std.io runtime fixture cover the four signatures; STD-CONF-001 has not yet promoted every standard-library owner",
@@ -1761,7 +1903,7 @@
           ]
         },
         {
-          "id": "signature:std.io:259",
+          "id": "signature:std.io:268",
           "kind": "signature",
           "status": "partial",
           "reason": "the public API audit, portable kernel and std.io runtime fixture cover the four signatures; STD-CONF-001 has not yet promoted every standard-library owner",
@@ -1772,7 +1914,7 @@
           ]
         },
         {
-          "id": "signature:std.io:260",
+          "id": "signature:std.io:269",
           "kind": "signature",
           "status": "partial",
           "reason": "the public API audit, portable kernel and std.io runtime fixture cover the four signatures; STD-CONF-001 has not yet promoted every standard-library owner",
@@ -1783,7 +1925,7 @@
           ]
         },
         {
-          "id": "signature:std.io:261",
+          "id": "signature:std.io:270",
           "kind": "signature",
           "status": "partial",
           "reason": "the public API audit, portable kernel and std.io runtime fixture cover the four signatures; STD-CONF-001 has not yet promoted every standard-library owner",
@@ -1821,10 +1963,10 @@
       "status": "partial",
       "reason": "the public API audit and iterator runtime fixture cover all four iterator signatures; STD-CONF-001 has not yet promoted every standard-library owner",
       "public_signatures": [
-        "std.iter:152",
-        "std.iter:153",
-        "std.iter:154",
-        "std.iter:155"
+        "std.iter:161",
+        "std.iter:162",
+        "std.iter:163",
+        "std.iter:164"
       ],
       "requirements": [
         "requirement:std.iter:async-cancellation",
@@ -1914,7 +2056,7 @@
           ]
         },
         {
-          "id": "signature:std.iter:152",
+          "id": "signature:std.iter:161",
           "kind": "signature",
           "status": "partial",
           "reason": "the public API audit and iterator runtime fixture cover all four iterator signatures; STD-CONF-001 has not yet promoted every standard-library owner",
@@ -1925,7 +2067,7 @@
           ]
         },
         {
-          "id": "signature:std.iter:153",
+          "id": "signature:std.iter:162",
           "kind": "signature",
           "status": "partial",
           "reason": "the public API audit and iterator runtime fixture cover all four iterator signatures; STD-CONF-001 has not yet promoted every standard-library owner",
@@ -1936,7 +2078,7 @@
           ]
         },
         {
-          "id": "signature:std.iter:154",
+          "id": "signature:std.iter:163",
           "kind": "signature",
           "status": "partial",
           "reason": "the public API audit and iterator runtime fixture cover all four iterator signatures; STD-CONF-001 has not yet promoted every standard-library owner",
@@ -1947,7 +2089,7 @@
           ]
         },
         {
-          "id": "signature:std.iter:155",
+          "id": "signature:std.iter:164",
           "kind": "signature",
           "status": "partial",
           "reason": "the public API audit and iterator runtime fixture cover all four iterator signatures; STD-CONF-001 has not yet promoted every standard-library owner",
@@ -2405,15 +2547,15 @@
       "status": "partial",
       "reason": "the public API audit and IEEE/runtime fixtures cover all nine math signatures; STD-CONF-001 has not yet promoted every standard-library owner",
       "public_signatures": [
-        "std.math:208",
-        "std.math:209",
-        "std.math:210",
-        "std.math:211",
-        "std.math:212",
-        "std.math:213",
-        "std.math:214",
-        "std.math:215",
-        "std.math:216"
+        "std.math:217",
+        "std.math:218",
+        "std.math:219",
+        "std.math:220",
+        "std.math:221",
+        "std.math:222",
+        "std.math:223",
+        "std.math:224",
+        "std.math:225"
       ],
       "requirements": [
         "requirement:std.math:async-cancellation",
@@ -2503,7 +2645,7 @@
           ]
         },
         {
-          "id": "signature:std.math:208",
+          "id": "signature:std.math:217",
           "kind": "signature",
           "status": "partial",
           "reason": "the public API audit and IEEE/runtime fixtures cover all nine math signatures; STD-CONF-001 has not yet promoted every standard-library owner",
@@ -2514,7 +2656,7 @@
           ]
         },
         {
-          "id": "signature:std.math:209",
+          "id": "signature:std.math:218",
           "kind": "signature",
           "status": "partial",
           "reason": "the public API audit and IEEE/runtime fixtures cover all nine math signatures; STD-CONF-001 has not yet promoted every standard-library owner",
@@ -2525,7 +2667,7 @@
           ]
         },
         {
-          "id": "signature:std.math:210",
+          "id": "signature:std.math:219",
           "kind": "signature",
           "status": "partial",
           "reason": "the public API audit and IEEE/runtime fixtures cover all nine math signatures; STD-CONF-001 has not yet promoted every standard-library owner",
@@ -2536,7 +2678,7 @@
           ]
         },
         {
-          "id": "signature:std.math:211",
+          "id": "signature:std.math:220",
           "kind": "signature",
           "status": "partial",
           "reason": "the public API audit and IEEE/runtime fixtures cover all nine math signatures; STD-CONF-001 has not yet promoted every standard-library owner",
@@ -2547,7 +2689,7 @@
           ]
         },
         {
-          "id": "signature:std.math:212",
+          "id": "signature:std.math:221",
           "kind": "signature",
           "status": "partial",
           "reason": "the public API audit and IEEE/runtime fixtures cover all nine math signatures; STD-CONF-001 has not yet promoted every standard-library owner",
@@ -2558,7 +2700,7 @@
           ]
         },
         {
-          "id": "signature:std.math:213",
+          "id": "signature:std.math:222",
           "kind": "signature",
           "status": "partial",
           "reason": "the public API audit and IEEE/runtime fixtures cover all nine math signatures; STD-CONF-001 has not yet promoted every standard-library owner",
@@ -2569,7 +2711,7 @@
           ]
         },
         {
-          "id": "signature:std.math:214",
+          "id": "signature:std.math:223",
           "kind": "signature",
           "status": "partial",
           "reason": "the public API audit and IEEE/runtime fixtures cover all nine math signatures; STD-CONF-001 has not yet promoted every standard-library owner",
@@ -2580,7 +2722,7 @@
           ]
         },
         {
-          "id": "signature:std.math:215",
+          "id": "signature:std.math:224",
           "kind": "signature",
           "status": "partial",
           "reason": "the public API audit and IEEE/runtime fixtures cover all nine math signatures; STD-CONF-001 has not yet promoted every standard-library owner",
@@ -2591,7 +2733,7 @@
           ]
         },
         {
-          "id": "signature:std.math:216",
+          "id": "signature:std.math:225",
           "kind": "signature",
           "status": "partial",
           "reason": "the public API audit and IEEE/runtime fixtures cover all nine math signatures; STD-CONF-001 has not yet promoted every standard-library owner",
@@ -4783,21 +4925,21 @@
       "status": "partial",
       "reason": "the public API audit and Unicode/invalid-UTF-8 runtime fixtures cover all fifteen text signatures; STD-CONF-001 has not yet promoted every standard-library owner",
       "public_signatures": [
-        "std.text:100",
         "std.text:101",
         "std.text:102",
         "std.text:103",
         "std.text:104",
         "std.text:105",
+        "std.text:106",
+        "std.text:107",
+        "std.text:108",
         "std.text:109",
-        "std.text:92",
-        "std.text:93",
-        "std.text:94",
-        "std.text:95",
-        "std.text:96",
-        "std.text:97",
-        "std.text:98",
-        "std.text:99"
+        "std.text:110",
+        "std.text:111",
+        "std.text:112",
+        "std.text:113",
+        "std.text:114",
+        "std.text:118"
       ],
       "requirements": [
         "requirement:std.text:async-cancellation",
@@ -4887,17 +5029,6 @@
           ]
         },
         {
-          "id": "signature:std.text:100",
-          "kind": "signature",
-          "status": "partial",
-          "reason": "the public API audit and Unicode/invalid-UTF-8 runtime fixtures cover all fifteen text signatures; STD-CONF-001 has not yet promoted every standard-library owner",
-          "refs": [
-            "testing/stdlib-public-api.json",
-            "tests/runtime/m11-std-text-002.to",
-            "TONDO_IMPLEMENTATION_TRACKER.md"
-          ]
-        },
-        {
           "id": "signature:std.text:101",
           "kind": "signature",
           "status": "partial",
@@ -4953,6 +5084,39 @@
           ]
         },
         {
+          "id": "signature:std.text:106",
+          "kind": "signature",
+          "status": "partial",
+          "reason": "the public API audit and Unicode/invalid-UTF-8 runtime fixtures cover all fifteen text signatures; STD-CONF-001 has not yet promoted every standard-library owner",
+          "refs": [
+            "testing/stdlib-public-api.json",
+            "tests/runtime/m11-std-text-002.to",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
+          ]
+        },
+        {
+          "id": "signature:std.text:107",
+          "kind": "signature",
+          "status": "partial",
+          "reason": "the public API audit and Unicode/invalid-UTF-8 runtime fixtures cover all fifteen text signatures; STD-CONF-001 has not yet promoted every standard-library owner",
+          "refs": [
+            "testing/stdlib-public-api.json",
+            "tests/runtime/m11-std-text-002.to",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
+          ]
+        },
+        {
+          "id": "signature:std.text:108",
+          "kind": "signature",
+          "status": "partial",
+          "reason": "the public API audit and Unicode/invalid-UTF-8 runtime fixtures cover all fifteen text signatures; STD-CONF-001 has not yet promoted every standard-library owner",
+          "refs": [
+            "testing/stdlib-public-api.json",
+            "tests/runtime/m11-std-text-002.to",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
+          ]
+        },
+        {
           "id": "signature:std.text:109",
           "kind": "signature",
           "status": "partial",
@@ -4964,7 +5128,7 @@
           ]
         },
         {
-          "id": "signature:std.text:92",
+          "id": "signature:std.text:110",
           "kind": "signature",
           "status": "partial",
           "reason": "the public API audit and Unicode/invalid-UTF-8 runtime fixtures cover all fifteen text signatures; STD-CONF-001 has not yet promoted every standard-library owner",
@@ -4975,7 +5139,7 @@
           ]
         },
         {
-          "id": "signature:std.text:93",
+          "id": "signature:std.text:111",
           "kind": "signature",
           "status": "partial",
           "reason": "the public API audit and Unicode/invalid-UTF-8 runtime fixtures cover all fifteen text signatures; STD-CONF-001 has not yet promoted every standard-library owner",
@@ -4986,7 +5150,7 @@
           ]
         },
         {
-          "id": "signature:std.text:94",
+          "id": "signature:std.text:112",
           "kind": "signature",
           "status": "partial",
           "reason": "the public API audit and Unicode/invalid-UTF-8 runtime fixtures cover all fifteen text signatures; STD-CONF-001 has not yet promoted every standard-library owner",
@@ -4997,7 +5161,7 @@
           ]
         },
         {
-          "id": "signature:std.text:95",
+          "id": "signature:std.text:113",
           "kind": "signature",
           "status": "partial",
           "reason": "the public API audit and Unicode/invalid-UTF-8 runtime fixtures cover all fifteen text signatures; STD-CONF-001 has not yet promoted every standard-library owner",
@@ -5008,7 +5172,7 @@
           ]
         },
         {
-          "id": "signature:std.text:96",
+          "id": "signature:std.text:114",
           "kind": "signature",
           "status": "partial",
           "reason": "the public API audit and Unicode/invalid-UTF-8 runtime fixtures cover all fifteen text signatures; STD-CONF-001 has not yet promoted every standard-library owner",
@@ -5019,29 +5183,7 @@
           ]
         },
         {
-          "id": "signature:std.text:97",
-          "kind": "signature",
-          "status": "partial",
-          "reason": "the public API audit and Unicode/invalid-UTF-8 runtime fixtures cover all fifteen text signatures; STD-CONF-001 has not yet promoted every standard-library owner",
-          "refs": [
-            "testing/stdlib-public-api.json",
-            "tests/runtime/m11-std-text-002.to",
-            "TONDO_IMPLEMENTATION_TRACKER.md"
-          ]
-        },
-        {
-          "id": "signature:std.text:98",
-          "kind": "signature",
-          "status": "partial",
-          "reason": "the public API audit and Unicode/invalid-UTF-8 runtime fixtures cover all fifteen text signatures; STD-CONF-001 has not yet promoted every standard-library owner",
-          "refs": [
-            "testing/stdlib-public-api.json",
-            "tests/runtime/m11-std-text-002.to",
-            "TONDO_IMPLEMENTATION_TRACKER.md"
-          ]
-        },
-        {
-          "id": "signature:std.text:99",
+          "id": "signature:std.text:118",
           "kind": "signature",
           "status": "partial",
           "reason": "the public API audit and Unicode/invalid-UTF-8 runtime fixtures cover all fifteen text signatures; STD-CONF-001 has not yet promoted every standard-library owner",
@@ -5275,15 +5417,15 @@
   ],
   "summary": {
     "owners": 22,
-    "rows": 374,
-    "public_signatures": 209,
-    "requirements": 165,
+    "rows": 385,
+    "public_signatures": 214,
+    "requirements": 171,
     "verified_rows": 0,
-    "partial_rows": 373,
-    "pending_rows": 1,
+    "partial_rows": 385,
+    "pending_rows": 0,
     "owner_verified": 0,
-    "owner_partial": 21,
-    "owner_pending": 1
+    "owner_partial": 22,
+    "owner_pending": 0
   },
   "promotion": {
     "status": "not-promoted",

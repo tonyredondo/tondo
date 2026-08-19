@@ -46,19 +46,19 @@ for owner in \
     std.meta std.reflect std.bytes std.time std.env std.core std.text \
     std.collections std.iter std.math std.format std.io std.console std.path \
     std.fs std.process std.serialization std.json std.messagepack std.protobuf \
-    std.testing; do
+    std.testing std.async; do
     jq -e --arg owner "$owner" 'any(.owners[]; .id == $owner and (.model.laws | length) >= 3 and (.test.commands | length) > 0 and (.fuzz.campaigns | length) > 0)' \
         testing/stdlib-test-coordination.json >/dev/null
 done
 
 jq -e '
   .summary == {
-    owners: 21,
-    public_signatures: 209,
-    owner_requirements: 164,
-    model_laws: 63,
+    owners: 22,
+    public_signatures: 214,
+    owner_requirements: 171,
+    model_laws: 66,
     fuzz_verified: 1,
-    fuzz_partial: 20
+    fuzz_partial: 21
   }
 ' testing/stdlib-test-coordination.json >/dev/null
 

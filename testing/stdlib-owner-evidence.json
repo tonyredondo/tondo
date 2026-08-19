@@ -65,6 +65,11 @@
       "owners": ["std.io"]
     },
     {
+      "id": "STD-A-ASYNC-API-001",
+      "contract": "testing/stdlib-async.json",
+      "owners": ["std.async"]
+    },
+    {
       "id": "STD-A-PATH-EVIDENCE-001",
       "contract": "testing/stdlib-hosted.json",
       "owners": ["std.path"]
@@ -1027,6 +1032,84 @@
         "cargo test -p tondo-stdlib --locked --lib io::tests",
         "cargo test -p tondo-compiler --locked --lib process_host::tests::io_limits_helpers_are_bounded_and_atomic_at_the_public_host_boundary",
         "cargo test -p tondo-vm --locked --lib runtime::execute::tests::host_materialization_accepts_every_supported_shape_and_rejects_drift"
+      ]
+    },
+    {
+      "id": "std.async",
+      "layer": "A1",
+      "cells": {
+        "SPEC": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["testing/stdlib-async.json", "docs/contracts/stdlib-async.md", "TONDO_STANDARD_LIBRARY_SPEC.md"]
+        },
+        "IMPL": {
+          "status": "partial",
+          "reason": "the public effect and ownership contract is closed; generic async-iterator, collect(limit:), cancellation and close/backpressure execution remain explicit implementation leaves",
+          "refs": ["crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs", "crates/tondo-vm/src/runtime/execute.rs", "testing/stdlib-implementation.json", "TONDO_IMPLEMENTATION_TRACKER.md"]
+        },
+        "HOST": {
+          "status": "not-applicable",
+          "reason": "std.async is an intrinsic language/VM owner; it has no capability-gated host provider",
+          "refs": ["testing/stdlib-async.json", "crates/tondo-vm/src/runtime/execute.rs"]
+        },
+        "MODEL": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["testing/stdlib-async.json", "docs/contracts/stdlib-async.md", "crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs"]
+        },
+        "TEST": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["scripts/stdlib-async-check.sh", "scripts/stdlib-async-test.sh", "tests/runtime/m7-suspension-inferred.to"]
+        },
+        "FUZZ": {
+          "status": "partial",
+          "reason": "the contract negative cases are deterministic, but a dedicated async iterator and cancellation fuzz target belongs to STD-A-ASYNC-IMPL-001 and STD-A-FUZZ-001",
+          "refs": ["testing/stdlib-async.json", "TONDO_IMPLEMENTATION_TRACKER.md"]
+        },
+        "PERF": {
+          "status": "partial",
+          "reason": "effect, handle and bounded-iterator budgets are declared, but owner hot-path baselines remain pending implementation",
+          "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
+        },
+        "CONF": {
+          "status": "partial",
+          "reason": "the public callable surface is audited and the contract is executable, but full async iterator, collect and cancellation conformance waits for STD-A-ASYNC-IMPL-001",
+          "refs": ["testing/stdlib-public-api.json", "testing/stdlib-async.json", "TONDO_IMPLEMENTATION_TRACKER.md"]
+        },
+        "DOC": {
+          "status": "verified",
+          "reason": null,
+          "refs": ["docs/contracts/stdlib-async.md", "docs/contracts/stdlib-core.md", "TONDO_STANDARD_LIBRARY_SPEC.md", "docs/contracts/stdlib-s1a.md"]
+        }
+      },
+      "budgets": {
+        "suspension_points": {
+          "unit": "points",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 1000,
+          "state": "declared-baseline-pending"
+        },
+        "collected_elements": {
+          "unit": "elements",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 1000,
+          "state": "declared-baseline-pending"
+        },
+        "retained_bytes": {
+          "unit": "bytes",
+          "direction": "lower-is-better",
+          "max_regression_basis_points": 1000,
+          "state": "declared-baseline-pending"
+        }
+      },
+      "commands": [
+        "scripts/stdlib-async-check.sh",
+        "scripts/stdlib-async-test.sh",
+        "scripts/stdlib-public-api-audit.sh",
+        "cargo test -p tondo-compiler --locked --lib hir::check::tests",
+        "cargo test -p tondo-vm --locked --lib runtime::execute::tests"
       ]
     },
     {

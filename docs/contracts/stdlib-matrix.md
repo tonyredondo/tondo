@@ -9,8 +9,8 @@ y validada por
 [`scripts/stdlib-matrix-check.sh`](../../scripts/stdlib-matrix-check.sh).
 
 La matriz incluye exactamente los 21 owners del contrato de integración y el
-owner adicional `std.bytes` (22 en total; incluidos `std.time` y `std.env`), 207
-firmas indexadas por la auditoría pública y 165 requisitos de owner. `std.meta`,
+owner adicional `std.bytes` (22 en total; incluidos `std.time` y `std.env`), 214
+firmas indexadas por la auditoría pública y 171 requisitos de owner. `std.meta`,
 `std.reflect`, `std.bytes`, `std.time` y `std.env` añaden sus contratos
 executable A0 y seis requisitos de evidencia cada uno sin crear una segunda
 API pública; `std.core` conserva su contrato de grupo y añade evidencia por
@@ -183,7 +183,7 @@ dogfooding. `FUZZ`, las dimensiones de coste no capturadas y `STD-CONF-001`
 siguen marcadas como partial con razones explícitas.
 
 `STD-TEST-001` añade `testing/stdlib-test-coordination.json`, un registro
-generado que liga las 207 firmas y 164 requisitos a 63 leyes de modelo,
+generado que liga las 214 firmas y 171 requisitos a 66 leyes de modelo,
 comandos de test y campañas de fuzz. El registro exige que cada superficie
 pública tenga una ley y que cualquier fuzz parcial conserve su razón; no
 convierte un corpus bounded en una promoción de fuzz dedicada. La prueba Rust
@@ -191,10 +191,11 @@ convierte un corpus bounded en una promoción de fuzz dedicada. La prueba Rust
 crear un segundo owner ni una API alternativa.
 
 `STD-CONF-001` añade `testing/stdlib-conformance-coordination.json`, que
-materializa una fila `CONF` por cada una de las 372 filas de esta matriz. Cada
+materializa una fila `CONF` por cada una de las 385 filas de esta matriz. Cada
 owner conserva sus comandos, referencias, casos de interoperabilidad cuando
-existen y el estado derivado de sus filas; `std.async` queda explícitamente
-`pending` y los demás gaps continúan `partial` sin sobreafirmar conformance.
+existen y el estado derivado de sus filas; `std.async` aporta siete filas de
+contrato, con cinco callable auditadas y la implementación genérica pendiente;
+los demás gaps continúan `partial` sin sobreafirmar conformance.
 El checker regenera y cruza la identidad de todas las filas, exige razones y
 referencias existentes y mantiene `promotion.status=not-promoted`; los tests
 negativos y el test Rust `stdlib_conformance_coordination` rechazan omisiones,

@@ -121,91 +121,91 @@
         "gap_count": 0,
         "signatures": [
           {
-            "id": "std.text:92",
+            "id": "std.text:101",
             "symbol": "std.text.String.empty",
             "signature": "pub fn String.empty(): String",
             "status": "verified"
           },
           {
-            "id": "std.text:93",
+            "id": "std.text:102",
             "symbol": "std.text.String.fromChars",
             "signature": "pub fn String.fromChars(chars: Array[Char]): String ! TextError",
             "status": "verified"
           },
           {
-            "id": "std.text:94",
+            "id": "std.text:103",
             "symbol": "std.text.String.length",
             "signature": "pub fn String.length(self): Int",
             "status": "verified"
           },
           {
-            "id": "std.text:95",
+            "id": "std.text:104",
             "symbol": "std.text.String.byteLength",
             "signature": "pub fn String.byteLength(self): Int",
             "status": "verified"
           },
           {
-            "id": "std.text:96",
+            "id": "std.text:105",
             "symbol": "std.text.String.get",
             "signature": "pub fn String.get(self, index: Int): Char?",
             "status": "verified"
           },
           {
-            "id": "std.text:97",
+            "id": "std.text:106",
             "symbol": "std.text.String.slice",
             "signature": "pub fn String.slice(self, start: Int, end: Int): String ! TextError",
             "status": "verified"
           },
           {
-            "id": "std.text:98",
+            "id": "std.text:107",
             "symbol": "std.text.String.contains",
             "signature": "pub fn String.contains(self, needle: String): Bool",
             "status": "verified"
           },
           {
-            "id": "std.text:99",
+            "id": "std.text:108",
             "symbol": "std.text.String.startsWith",
             "signature": "pub fn String.startsWith(self, prefix: String): Bool",
             "status": "verified"
           },
           {
-            "id": "std.text:100",
+            "id": "std.text:109",
             "symbol": "std.text.String.endsWith",
             "signature": "pub fn String.endsWith(self, suffix: String): Bool",
             "status": "verified"
           },
           {
-            "id": "std.text:101",
+            "id": "std.text:110",
             "symbol": "std.text.String.find",
             "signature": "pub fn String.find(self, needle: String): Int?",
             "status": "verified"
           },
           {
-            "id": "std.text:102",
+            "id": "std.text:111",
             "symbol": "std.text.String.replace",
             "signature": "pub fn String.replace(self, old: String, new: String): String",
             "status": "verified"
           },
           {
-            "id": "std.text:103",
+            "id": "std.text:112",
             "symbol": "std.text.String.trim",
             "signature": "pub fn String.trim(self): String",
             "status": "verified"
           },
           {
-            "id": "std.text:104",
+            "id": "std.text:113",
             "symbol": "std.text.String.toLowerAscii",
             "signature": "pub fn String.toLowerAscii(self): String",
             "status": "verified"
           },
           {
-            "id": "std.text:105",
+            "id": "std.text:114",
             "symbol": "std.text.String.toUpperAscii",
             "signature": "pub fn String.toUpperAscii(self): String",
             "status": "verified"
           },
           {
-            "id": "std.text:109",
+            "id": "std.text:118",
             "symbol": "std.text.String.chars",
             "signature": "pub fn String.chars(self): String",
             "status": "verified"
@@ -243,109 +243,109 @@
         "gap_count": 0,
         "signatures": [
           {
-            "id": "std.collections:127",
+            "id": "std.collections:136",
             "symbol": "std.collections.Array.new",
             "signature": "pub fn Array.new[T](): Array[T]",
             "status": "verified"
           },
           {
-            "id": "std.collections:128",
+            "id": "std.collections:137",
             "symbol": "std.collections.Array.withCapacity",
             "signature": "pub fn Array.withCapacity[T](capacity: Int): Array[T] ! CollectionError",
             "status": "verified"
           },
           {
-            "id": "std.collections:129",
+            "id": "std.collections:138",
             "symbol": "std.collections.Array.length",
             "signature": "pub fn Array.length[T](self): Int",
             "status": "verified"
           },
           {
-            "id": "std.collections:130",
+            "id": "std.collections:139",
             "symbol": "std.collections.Array.get",
             "signature": "pub fn Array.get[T](self, index: Int): T?",
             "status": "verified"
           },
           {
-            "id": "std.collections:131",
+            "id": "std.collections:140",
             "symbol": "std.collections.Array.slice",
             "signature": "pub fn Array.slice[T](self, start: Int, end: Int): Array[T] ! CollectionError",
             "status": "verified"
           },
           {
-            "id": "std.collections:132",
+            "id": "std.collections:141",
             "symbol": "std.collections.Array.push",
             "signature": "pub fn Array.push[T](var self, value: T): Unit ! CollectionError",
             "status": "verified"
           },
           {
-            "id": "std.collections:133",
+            "id": "std.collections:142",
             "symbol": "std.collections.Array.pop",
             "signature": "pub fn Array.pop[T](var self): T?",
             "status": "verified"
           },
           {
-            "id": "std.collections:135",
+            "id": "std.collections:144",
             "symbol": "std.collections.Map.new",
             "signature": "pub fn Map.new[K: Key, V](): Map[K, V]",
             "status": "verified"
           },
           {
-            "id": "std.collections:136",
+            "id": "std.collections:145",
             "symbol": "std.collections.Map.get",
             "signature": "pub fn Map.get[K: Key, V](self, key: K): V?",
             "status": "verified"
           },
           {
-            "id": "std.collections:137",
+            "id": "std.collections:146",
             "symbol": "std.collections.Map.insert",
             "signature": "pub fn Map.insert[K: Key, V](var self, key: K, value: V): V?",
             "status": "verified"
           },
           {
-            "id": "std.collections:138",
+            "id": "std.collections:147",
             "symbol": "std.collections.Map.remove",
             "signature": "pub fn Map.remove[K: Key, V](var self, key: K): V?",
             "status": "verified"
           },
           {
-            "id": "std.collections:139",
+            "id": "std.collections:148",
             "symbol": "std.collections.Map.contains",
             "signature": "pub fn Map.contains[K: Key, V](self, key: K): Bool",
             "status": "verified"
           },
           {
-            "id": "std.collections:140",
+            "id": "std.collections:149",
             "symbol": "std.collections.Map.entries",
             "signature": "pub fn Map.entries[K: Key, V](self): Iterator[(K, V)]",
             "status": "verified"
           },
           {
-            "id": "std.collections:142",
+            "id": "std.collections:151",
             "symbol": "std.collections.Set.new",
             "signature": "pub fn Set.new[K: Key](): Set[K]",
             "status": "verified"
           },
           {
-            "id": "std.collections:143",
+            "id": "std.collections:152",
             "symbol": "std.collections.Set.insert",
             "signature": "pub fn Set.insert[K: Key](var self, value: K): Bool",
             "status": "verified"
           },
           {
-            "id": "std.collections:144",
+            "id": "std.collections:153",
             "symbol": "std.collections.Set.remove",
             "signature": "pub fn Set.remove[K: Key](var self, value: K): Bool",
             "status": "verified"
           },
           {
-            "id": "std.collections:145",
+            "id": "std.collections:154",
             "symbol": "std.collections.Set.contains",
             "signature": "pub fn Set.contains[K: Key](self, value: K): Bool",
             "status": "verified"
           },
           {
-            "id": "std.collections:146",
+            "id": "std.collections:155",
             "symbol": "std.collections.Set.values",
             "signature": "pub fn Set.values[K: Key](self): Iterator[K]",
             "status": "verified"
@@ -378,25 +378,25 @@
         "gap_count": 0,
         "signatures": [
           {
-            "id": "std.iter:152",
+            "id": "std.iter:161",
             "symbol": "std.iter.Iterator.map",
             "signature": "pub fn Iterator.map[T, U](self, fn(T): U): Iterator[U]",
             "status": "verified"
           },
           {
-            "id": "std.iter:153",
+            "id": "std.iter:162",
             "symbol": "std.iter.Iterator.filter",
             "signature": "pub fn Iterator.filter[T](self, fn(T): Bool): Iterator[T]",
             "status": "verified"
           },
           {
-            "id": "std.iter:154",
+            "id": "std.iter:163",
             "symbol": "std.iter.Iterator.take",
             "signature": "pub fn Iterator.take[T](self, count: Int): Iterator[T]",
             "status": "verified"
           },
           {
-            "id": "std.iter:155",
+            "id": "std.iter:164",
             "symbol": "std.iter.Iterator.collect",
             "signature": "pub fn Iterator.collect[T](self): Array[T] ! CollectionError",
             "status": "verified"
@@ -426,55 +426,55 @@
         "gap_count": 0,
         "signatures": [
           {
-            "id": "std.math:208",
+            "id": "std.math:217",
             "symbol": "std.math.floor",
             "signature": "pub fn floor(value: Float): Float",
             "status": "verified"
           },
           {
-            "id": "std.math:209",
+            "id": "std.math:218",
             "symbol": "std.math.ceil",
             "signature": "pub fn ceil(value: Float): Float",
             "status": "verified"
           },
           {
-            "id": "std.math:210",
+            "id": "std.math:219",
             "symbol": "std.math.round",
             "signature": "pub fn round(value: Float): Float",
             "status": "verified"
           },
           {
-            "id": "std.math:211",
+            "id": "std.math:220",
             "symbol": "std.math.truncate",
             "signature": "pub fn truncate(value: Float): Float",
             "status": "verified"
           },
           {
-            "id": "std.math:212",
+            "id": "std.math:221",
             "symbol": "std.math.sqrt",
             "signature": "pub fn sqrt(value: Float): Float ! MathError",
             "status": "verified"
           },
           {
-            "id": "std.math:213",
+            "id": "std.math:222",
             "symbol": "std.math.fma",
             "signature": "pub fn fma(a: Float, b: Float, c: Float): Float",
             "status": "verified"
           },
           {
-            "id": "std.math:214",
+            "id": "std.math:223",
             "symbol": "std.math.abs",
             "signature": "pub fn abs(value: Float): Float",
             "status": "verified"
           },
           {
-            "id": "std.math:215",
+            "id": "std.math:224",
             "symbol": "std.math.min",
             "signature": "pub fn min(a: Float, b: Float): Float",
             "status": "verified"
           },
           {
-            "id": "std.math:216",
+            "id": "std.math:225",
             "symbol": "std.math.max",
             "signature": "pub fn max(a: Float, b: Float): Float",
             "status": "verified"
@@ -517,31 +517,31 @@
         "gap_count": 0,
         "signatures": [
           {
-            "id": "std.format:228",
+            "id": "std.format:237",
             "symbol": "std.format.Builder.new",
             "signature": "pub fn Builder.new(): Builder",
             "status": "verified"
           },
           {
-            "id": "std.format:229",
+            "id": "std.format:238",
             "symbol": "std.format.Builder.append",
             "signature": "pub fn Builder.append(var self, value: String): Unit ! FormatError",
             "status": "verified"
           },
           {
-            "id": "std.format:230",
+            "id": "std.format:239",
             "symbol": "std.format.Builder.finish",
             "signature": "pub fn Builder.finish(var self): String ! FormatError",
             "status": "verified"
           },
           {
-            "id": "std.format:231",
+            "id": "std.format:240",
             "symbol": "std.format.format",
             "signature": "pub fn format[T: Display](value: T): String ! FormatError",
             "status": "verified"
           },
           {
-            "id": "std.format:232",
+            "id": "std.format:241",
             "symbol": "std.format.join",
             "signature": "pub fn join[T: Display](values: Array[T], separator: String): String ! FormatError",
             "status": "verified"
@@ -584,25 +584,25 @@
         "gap_count": 0,
         "signatures": [
           {
-            "id": "std.io:258",
+            "id": "std.io:267",
             "symbol": "std.io.defaultLimits",
             "signature": "pub fn defaultLimits(): IoLimits",
             "status": "verified"
           },
           {
-            "id": "std.io:259",
+            "id": "std.io:268",
             "symbol": "std.io.limits",
             "signature": "pub fn limits(maxBytes: Int, maxRead: Int): IoLimits ! IoError",
             "status": "verified"
           },
           {
-            "id": "std.io:260",
+            "id": "std.io:269",
             "symbol": "std.io.readAll",
             "signature": "pub fn readAll[R: Reader](var reader: R, limits: IoLimits): Bytes ! IoError suspends",
             "status": "verified"
           },
           {
-            "id": "std.io:261",
+            "id": "std.io:270",
             "symbol": "std.io.writeAll",
             "signature": "pub fn writeAll(var writer: Writer, data: Bytes): Unit ! IoError suspends",
             "status": "verified"

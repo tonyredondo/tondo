@@ -63,7 +63,7 @@ solo promueve los cuatro owners Hosted cuando sus capabilities, bridges y
 firmas públicas están verificadas; el resultado global de `--strict` queda
 determinado por la matriz completa y sus razones normativas.
 
-La auditoría actual registra `verified` con 209/209 firmas y cero gaps. Las
+La auditoría actual registra `verified` con 214/214 firmas y cero gaps. Las
 llamadas públicas de codecs incluyen rutas dynamic/typed y streaming; las
 fronteras build-only se verifican por su caso compiler-owned y razón
 `not-applicable`, sin fabricar una llamada runtime. La matriz normativa puede
