@@ -4597,6 +4597,30 @@ fn main() {
     }
 
     #[test]
+    fn async_deferred_cleanup_panic_is_suppressed_after_the_primary() {
+        let output = execute(operation_request(
+            Operation::Run,
+            b"fn cleanup() suspends {\n\
+                  panic(\"cleanup\")\n\
+              }\n\
+              fn main() {\n\
+                  defer await cleanup()\n\
+                  panic(\"primary\")\n\
+              }\n",
+            SourceForm::Script,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(output.status(), CompilationStatus::Rejected);
+        assert_eq!(output.exit_code(), 101);
+        let diagnostic = &output.diagnostics().diagnostics()[0];
+        assert_eq!(diagnostic.code(), "P0008");
+        assert!(diagnostic.message().ends_with("primary"));
+        let json = output.diagnostics().json_lines().unwrap();
+        assert!(json.contains("suppressed explicit-panic: cleanup"));
+    }
+
+    #[test]
     fn structured_child_panics_use_creation_order_after_sibling_cleanup() {
         let output = execute(operation_request(
             Operation::Run,
@@ -4672,6 +4696,64 @@ fn main() {
             output.diagnostics().diagnostics()[0]
                 .message()
                 .contains("VM")
+        );
+    }
+
+    #[test]
+    fn async_deferred_cleanup_does_not_mask_vm_resource_failure() {
+        let output = execute(operation_request(
+            Operation::Run,
+            b"import std.console\n\
+              fn cleanup() suspends {\n\
+                  console.print(\"cleanup\\n\")\n\
+              }\n\
+              fn main() {\n\
+                  defer await cleanup()\n\
+                  for {}\n\
+              }\n",
+            SourceForm::Script,
+            ResourceLimits {
+                max_vm_steps: 64,
+                ..ResourceLimits::default()
+            },
+        ))
+        .unwrap();
+        assert_eq!(output.status(), CompilationStatus::Rejected);
+        assert_eq!(output.exit_code(), 1);
+        assert_eq!(output.diagnostics().diagnostics()[0].code(), "T0002");
+        // A VM/toolchain resource failure is terminal rather than a language
+        // unwind. It must retain `T0002` and must not manufacture a partial
+        // user cleanup result; panic and cooperative cancellation are the
+        // paths that drain `defer await`.
+        assert!(output.stdout().is_empty());
+    }
+
+    #[test]
+    fn async_deferred_cleanup_requires_its_host_capability() {
+        let output = execute(operation_request_with_capabilities(
+            Operation::Check,
+            b"import std.time\n\
+              fn cleanup() suspends {\n\
+                  let zero = time.Duration.fromNanoseconds(0)\n\
+                  match time.sleep(zero) {\n\
+                      ok(_) => (),\n\
+                      err(_) => panic(\"clock\")\n\
+                  }\n\
+              }\n\
+              fn main() {\n\
+                  defer await cleanup()\n\
+              }\n",
+            SourceForm::Module,
+            ResourceLimits::default(),
+            BTreeSet::new(),
+        ))
+        .unwrap();
+        assert_eq!(output.status(), CompilationStatus::Rejected);
+        assert_eq!(output.diagnostics().diagnostics()[0].code(), "E1008");
+        assert!(
+            output.diagnostics().diagnostics()[0]
+                .message()
+                .contains("capability `clock` is missing")
         );
     }
 

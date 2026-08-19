@@ -1,0 +1,19 @@
+import std.async
+
+fn wait_once(waiter: async.Waiter[Int, String]): Int ! String suspends {
+    var owned = waiter
+    owned.wait()
+}
+
+fn cleanup() {
+    let pair = async.oneshot[Int, String]()
+    var (waiter, completer) = pair
+    scope {
+        let job = spawn wait_once(waiter)
+        _ = completer.complete(1)
+        let value = await job
+        _ = value
+    }
+}
+
+defer await cleanup()

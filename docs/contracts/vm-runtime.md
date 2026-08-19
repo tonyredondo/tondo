@@ -626,6 +626,33 @@ relabelled as recoverable Tondo errors or language panics. Cooperative
 cancellation is internal control state used while draining a structured child;
 it is not a fourth public outcome and never becomes an implicit member of `E`.
 
+## `defer await` hardening evidence
+
+The published `fn ... suspends` form and inferred suspension are exercised
+through the same fixture runner as the historical compatibility corpus. The
+isolated cases cover normal return, outer `fail`, primary panic with a
+suppressed cleanup panic, script entry, LIFO ordering, child cancellation, a
+host-backed `ProcessHandle.cancel`, and an inferred script cleanup:
+
+- `tests/runtime/m10-defer-await-return.to`
+- `tests/runtime/m10-defer-await-error.to`
+- `tests/runtime/m10-defer-await-panic.to`
+- `tests/runtime/m10-defer-await-lifo-suspends.to`
+- `tests/runtime/m10-defer-await-cancel-suspends.to`
+- `tests/runtime/m10-defer-await-host-cancel.to`
+- `tests/runtime/m10-defer-await-inferred.to`
+
+The negative corpus fixes the suspension boundary (`E1601` for both
+`@sync` and `@nosuspend`), rejects a non-suspendible operand (`E1611`), a
+fallible call, a `Join`, nested await, an async block, an affine owner reuse,
+and a non-`Send` pointer. `driver` tests additionally prove that a missing
+host capability is rejected before registration, a primary panic retains an
+async cleanup panic as suppressed, and a VM step-limit remains `T0002` without
+turning a toolchain failure into partial user cleanup. The test-runtime model
+records that a forced timeout skips user cleanup, while the interruption
+transaction does not reach exit 4 until the worker acknowledges cleanup and
+resource revocation.
+
 ## Required tests
 
 The baseline suite must exercise real lowered bytecode for scalar and compound

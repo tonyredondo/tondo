@@ -1,0 +1,15 @@
+import std.console
+
+fn first() suspends {
+    console.print("first\n")
+}
+
+fn second() suspends {
+    console.print("second\n")
+}
+
+fn main() {
+    defer await first()
+    defer await second()
+    console.print("body\n")
+}

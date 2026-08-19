@@ -38,3 +38,9 @@ The state machine exposes injected requests, worker acknowledgements, close
 events, dispatch decisions, and monotonic grace polling. It does not register
 signals or perform filesystem renames; those effects are wired by
 `UTEST-CLI-001` around this transaction.
+
+The executable regression `interrupt_waits_for_defer_await_cleanup_before_safe_exit`
+keeps a worker in `Cancelling` after an incomplete acknowledgement and reaches
+exit 4 only after cleanup (including `defer await`) and resource revocation are
+both acknowledged. The forced-timeout model is covered separately by
+`cleanup_runs_lifo_after_error_and_is_skipped_for_forced_termination`.

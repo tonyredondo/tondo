@@ -1,0 +1,6 @@
+fn cleanup() suspends {}
+
+@nosuspend
+fn invalid() {
+    defer await cleanup()
+}

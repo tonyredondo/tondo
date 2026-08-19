@@ -715,6 +715,37 @@ mod tests {
     }
 
     #[test]
+    fn interrupt_waits_for_defer_await_cleanup_before_safe_exit() {
+        let mut coordinator = coordinator([]);
+        coordinator
+            .request(
+                InterruptRequest::new(InterruptOrigin::User, "ctrl-c").unwrap(),
+                101,
+            )
+            .unwrap();
+
+        assert!(matches!(
+            coordinator.acknowledge_cancel("worker-a", CancellationAck::incomplete()),
+            Err(InterruptError::IncompleteCleanup(worker)) if worker == "worker-a"
+        ));
+        assert_eq!(
+            coordinator.phase(),
+            InterruptionPhase::Cancelling { requested_at: 101 }
+        );
+
+        coordinator
+            .acknowledge_cancel("worker-a", CancellationAck::complete())
+            .unwrap();
+        coordinator.close_worker("worker-a").unwrap();
+        coordinator
+            .acknowledge_cancel("worker-b", CancellationAck::complete())
+            .unwrap();
+        coordinator.close_worker("worker-b").unwrap();
+
+        assert_eq!(coordinator.outcome().unwrap().exit_code(), 4);
+    }
+
+    #[test]
     fn grace_expiry_or_second_request_forces_exit_three_and_blocks_late_acks() {
         let mut transaction = coordinator([]);
         transaction

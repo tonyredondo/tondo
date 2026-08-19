@@ -1,0 +1,8 @@
+fn cleanup() suspends {
+    panic("cleanup")
+}
+
+fn main() {
+    defer await cleanup()
+    panic("primary")
+}

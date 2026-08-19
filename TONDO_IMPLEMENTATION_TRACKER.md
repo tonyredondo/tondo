@@ -17,7 +17,7 @@ frontera compilador/runtime/CLI, con evidencia por intento y paridad VM/native.
 `DIAG-SPEC-001` es el prerrequisito explícito de la evaluación nativa; la
 existencia del contrato no implica que ningún detector esté implementado.
 
-**Versión del tracker:** 2.48
+**Versión del tracker:** 2.49
 
 **Última actualización:** 2026-08-19
 
@@ -3045,8 +3045,8 @@ sintaxis no amplíe la ruta recursiva temporal.
 `STD-TIME-BASE-SPEC-001`, `STD-TIME-BASE-IMPL-001` y
 `STD-TIME-BASE-CONF-001`. Son APIs de producción de STD-0.1A, nunca shims
 privados del runner. La semántica funcional de `defer await` ya conduce el
-teardown de suite; `ASYNC-DEFER-IMPL-001` conserva abiertos únicamente sus
-fixtures de hardening y testing no lo sustituye por un hook.
+teardown de suite; `ASYNC-DEFER-IMPL-001` cerró sus fixtures de hardening y
+testing no lo sustituye por un hook.
 
 **Compatibilidad:** el corpus bootstrap y sus hashes se conservan únicamente
 como regresión reproducible. El borrador actual `TONDO_LANGUAGE_SPEC.md`, su
@@ -3063,9 +3063,9 @@ completa Tondo 0.1.
    ejecución, después de crear el worker.
 2. **Lenguaje:** lexer → CST → formatter; tras unir source classes,
    discovery y dev-dependencies del plan → árbol/capturas →
-   overlays/integration. `ASYNC-DEFER-IMPL-001` avanza en paralelo sobre la
-   ruta de suspensión existente y debe migrar a la espera implícita antes de
-   cerrar testing.
+   overlays/integration. `ASYNC-DEFER-IMPL-001` ya está cerrado sobre la ruta
+   de suspensión existente; `ASYNC-ITER-EXT-001` continúa como la leaf async
+   pendiente antes del lowering genérico.
 3. **Ejecución:** check → lowering y modelo de resultados en paralelo →
    envelope → worker → inputs/lifecycle/límites.
 4. **Algoritmos puros:** glob → shard → order/scheduler, después de identidad y
@@ -3240,22 +3240,23 @@ reporters.
   dedicados en `formatter_spec`, además de la suite completa del compilador y
   el gate oficial del formatter.
 
-- [ ] **ASYNC-DEFER-IMPL-001 — Endurecer `defer await` bajo la espera
+- [x] **ASYNC-DEFER-IMPL-001 — Endurecer `defer await` bajo la espera
   implícita.** La semántica funcional, CST/formatter, checks de
-  firma/efecto/ownership, guards HIR/MIR/bytecode y conducción LIFO ya existen.
-  El trabajo restante no reimplementa la feature: añade fixtures aislados para
-  inferencia de entradas/script,
-  `E1601` en `@sync`/`@nosuspend`, retorno, error exterior, pánico,
-  cancelación, cleanup suprimido, timeout, resource limit, interrupción, un
-  owner afín, `Send` y rechazo de bloque/llamada fallible/capability mediante
-  `E1608`/`E14xx`. La forma ya está conectada al parser; HIR conserva
-  `Await` sobre una llamada suspendible, MIR/bytecode validan el contexto
-  `DeferredAsync` y la VM conduce llamadas suspendibles de bytecode y host sin
-  cancelar el cleanup que inició el unwind. Las llamadas ordinarias del body
-  esperan implícitamente; solo los handles exigen `await`. Evidencia ejecutable:
-  `m10-async-defer-await`, `m10-async-defer-lifo` y `m10-async-defer-cancel`, más
-  negativos para función no suspendible, `Join`, awaits anidados y llamada
-  fallible.
+  firma/efecto/ownership, guards HIR/MIR/bytecode y conducción LIFO ya existen
+  y quedan sellados por fixtures aislados del draft actual. La evidencia cubre
+  inferencia de entrada y script (`m10-defer-await-inferred`), la forma
+  canónica `fn ... suspends`, `E1601` en `@sync`/`@nosuspend`, retorno, error
+  exterior, pánico con cleanup suprimido, cancelación, timeout forzado,
+  resource limit, interrupción, owner afín, `Send`, bloque, `Join`, await
+  anidado, llamada no suspendible, llamada fallible y capability (`E1608`,
+  `E1611`, `E1401`, `E1605`, `E1410` y `E1008`). Runtime añade LIFO, cancelación
+  de hijos, host-backed `ProcessHandle.cancel` y script inferred; HIR conserva
+  `Await` sobre una llamada suspendible, MIR/bytecode validan `DeferredAsync` y
+  la VM mantiene el cleanup durante panic/cancelación sin relabelar un fallo de
+  recurso `T0002`. Evidencia adicional: los tests de driver
+  `async_deferred_cleanup_*`, el modelo de timeout
+  `cleanup_runs_lifo_after_error_and_is_skipped_for_forced_termination` y la
+  transacción `interrupt_waits_for_defer_await_cleanup_before_safe_exit`.
   La inmutabilidad se demuestra reproduciendo el corpus bootstrap por sus
   hashes, no manteniendo dos gramáticas en el compilador del draft.
 
@@ -5093,7 +5094,7 @@ S1A; su estado se deriva de los registros machine-readable y no de este texto:
   explícitamente en `STD-A-ASYNC-IMPL-001`.
 
 - [ ] **STD-A-ASYNC-IMPL-001 — Implementar y probar `std.async` completo.**
-  Consumir `ASYNC-DEFER-IMPL-001` y `ASYNC-ITER-EXT-001`; ejecutar one-shot,
+  Consumir `ASYNC-DEFER-IMPL-001` (cerrado) y `ASYNC-ITER-EXT-001`; ejecutar one-shot,
   streams genéricos, cancelación, cierre, límites, loans secuenciales y rechazo
   de loans exclusivos en `spawn` por la ruta pública HIR → MIR → bytecode → VM.
 
@@ -6269,7 +6270,8 @@ gates en una barrera artificial.
       unir formatter con plan/discovery/dev-dependencies,
       `UTEST-ID-001 → UTEST-CAPTURE-001`, y después
       `UTEST-OVERLAY-001` y `UTEST-INTEG-001` cierran en paralelo.
-      `ASYNC-DEFER-IMPL-001` avanza en paralelo y se une antes del lowering.
+      `ASYNC-DEFER-IMPL-001` ya está cerrado y no añade una lane pendiente al
+      lowering.
     Mini-gate: cada frontend baja hasta su primer IR verificable, los cinco
     slices tempranos tienen owner definitivo y la conformidad viva ratchetea.
 23. [x] **Wave 3 — Vertical slices ejecutables.**
@@ -6325,7 +6327,7 @@ de `origin/main`), los tests ejecutables actuales y el gate local completo:
 | `SPAWN-001`, `JOIN-001` | Cerradas como aliases históricos | Tests de `scope`/cleanup, `direct_suspension_is_inferred_and_join_can_cross_a_function_boundary`, `join_can_be_returned_as_an_explicit_scope_handoff`, consumo afín y rechazo de doble consumo; el contrato vigente es `ASYNC-JOIN-RETURN-001`. |
 | `SCRIPT-004` | Cerrada | `script_entry_infers_suspension_for_direct_waiter_calls`, `script_entry_executes_sync_and_async_top_level_work` y `tests/runtime/m10-async-defer-script.to`, además del gate de fixtures. |
 | `ASYNC-INFER-001`, `ASYNC-IMPLICIT-AWAIT-001`, `ASYNC-EFFECT-API-001`, `ASYNC-SUSPENDS-DENOTE-001`, `ASYNC-JOIN-RETURN-001`, `ASYNC-THREAD-SPAWN-001`, `ASYNC-ONESHOT-001`, `ASYNC-ITER-001` | Cerradas | El efecto público es denotable en contratos y tipos, continúa infiriéndose en cuerpos, y el gate cubre inferencia, préstamos secuenciales, rechazo en `spawn`, `Join`, one-shot, thread lane e iteración async. |
-| `ASYNC-DEFER-IMPL-001` | **No se cierra todavía** | La implementación existe y pasan `m10-async-defer-await`, `m10-async-defer-lifo`, `m10-async-defer-cancel`, `m10-async-defer-script` y los negativos de `E1608`/llamada fallible/`Join`/await anidado; la entrada exige además casos dedicados de timeout, resource limit, interrupción, `Send` y cleanup suprimido que aún no están aislados en fixtures del runner. |
+| `ASYNC-DEFER-IMPL-001` | **Cerrada** | Fixtures canónicos y de script cubren retorno, error exterior, pánico/supresión, LIFO, cancelación, host-backed cleanup e inferencia; negativos cubren `E1601`, `E1608`, `E1611`, `E1401`, `E1605`, `E1410` y `E1008`. Los tests de driver prueban `T0002`, capability y precedencia de panic; `test_runtime` fija timeout forzado y `test_interrupt` exige acknowledgement de cleanup antes de exit 4. |
 | `UTEST-SUSPENSION-MIGRATION-001` | Cerrada | Parser/CST acepta `@sync`/`@nosuspend`; HIR/checker preserva `fn` + inferencia, espera implícita y `E1601`; fixtures compile-pass/compile-fail/runtime canónicos y `crates/tondo-reference-adapter/tests/suspension_migration.rs` fijan equivalencia directa/`await`, consumo de `Waiter` y hashes de interfaz `suspends`. El corpus histórico `async fn` sigue congelado y separado. |
 | `ASYNC-ITER-EXT-001`, `STD-CHANNEL-ASYNC-ITER-001`, `NATIVE-THREAD-001` | **Pendientes reales** | Requieren streams genéricos S1A, adaptación de Channel en S1 y ejecución física en workers OS del backend nativo, respectivamente; no forman parte del bootstrap VM. |
 
@@ -6369,8 +6371,8 @@ no prevalecen sobre la evidencia canónica de esta sección.
       `STD-A-*-EVIDENCE` →
       STD-TEST-001 / STD-CODEC-CONF-001 / STD-PERF-CONF-001 →
       STD-MATRIX-ALL-001 → STD-CONF-001 → STD-DOC-001 →
-      (`STD-A-ASYNC-API-001` (cerrado) → `ASYNC-ITER-EXT-001` +
-      `ASYNC-DEFER-IMPL-001` → `STD-A-ASYNC-IMPL-001`) +
+      (`STD-A-ASYNC-API-001` (cerrado) → `ASYNC-ITER-EXT-001` →
+      `STD-A-ASYNC-IMPL-001`; `ASYNC-DEFER-IMPL-001` cerrado) +
       `STD-A-FUZZ-001` + `STD-A-PERF-001` + `STD-A-CONF-001` +
       `STD-A-DIST-001` → `STD-S1A-SEAL-001`.
     Los owners independientes pueden avanzar en paralelo, pero S1A no cierra
@@ -6443,9 +6445,10 @@ Wave 6 no se declara iniciada antes de S1A.
 coordinación; `NATIVE-TARGET-DESC-001`, `NATIVE-ARTIFACT-001`,
 `NATIVE-LINK-PLAN-001`, `NATIVE-PUBLISH-SPEC-001` y `PERF-001` quedan cerrados
 como contratos puros. `TRACKER-LINT-001` está cerrado y su informe derivado
-registra 616 tareas y 12 gates en la revisión 2.48. `STD-A-ASYNC-API-001` ya
-cerró su contrato y auditoría; la acción inmediata son `ASYNC-ITER-EXT-001` y
-`ASYNC-DEFER-IMPL-001`, seguidos por las leaves y el seal reales de S1A. Solo
+registra 616 tareas y 12 gates en la revisión 2.49. `STD-A-ASYNC-API-001` ya
+cerró su contrato y auditoría, y `ASYNC-DEFER-IMPL-001` cerró su hardening;
+la acción inmediata es `ASYNC-ITER-EXT-001`, seguida por las leaves y el seal
+reales de S1A. Solo
 entonces comienza `DIAG-SPEC-001`; la
 instrumentación VM espera los contratos B0 y `NATIVE-001` espera
 `DIAG-CI-001`.
@@ -6453,6 +6456,16 @@ instrumentación VM espera los contratos B0 y `NATIVE-001` espera
 ---
 
 ## 25. Historial del tracker
+
+### 2.49 — 2026-08-19
+
+- Se cierra `ASYNC-DEFER-IMPL-001` con fixtures canónicos para la espera
+  implícita e inferida, retorno, error exterior, panic/suppression, LIFO,
+  cancelación, host-backed cleanup y script entry. Los negativos fijan las
+  fronteras `E1601`, `E1608`, `E1611`, `E1401`, `E1605`, `E1410` y `E1008`;
+  tests de driver, runner e interrupción aíslan resource-limit, timeout y
+  acknowledgements. La implementación existente no se duplicó ni se añadió
+  un hook paralelo; el siguiente leaf async real es `ASYNC-ITER-EXT-001`.
 
 ### 2.48 — 2026-08-19
 

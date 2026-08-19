@@ -1,0 +1,13 @@
+import std.bytes
+
+fn cleanup(value: bytes.BytesBuilder) suspends {
+    _ = value
+}
+
+fn invalid(value: bytes.BytesBuilder) {
+    defer await cleanup(value)
+    let moved = value
+    _ = moved
+    let reused = value
+    _ = reused
+}
