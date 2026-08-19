@@ -12,6 +12,7 @@ pub mod quality;
 pub mod ratchet;
 pub mod regression;
 pub mod spec_structure;
+pub mod tracker;
 
 use std::fmt::Write as _;
 use std::fs;

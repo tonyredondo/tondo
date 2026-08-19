@@ -27,6 +27,8 @@
     "testing/normative-evidence.json",
     "testing/quality-baseline.json",
     "testing/conformance-ratchet.json",
+    "testing/tracker-graph.json",
+    "TONDO_IMPLEMENTATION_TRACKER.md",
     "conformance/",
     "crates/tondo-compiler/src/syntax/",
     "crates/tondo-compiler/src/hir/",

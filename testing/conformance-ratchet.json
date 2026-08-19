@@ -1,22 +1,22 @@
 {
   "format": "tondo-conformance-ratchet/2",
   "lineage": "tondo-draft",
-  "revision": 31,
+  "revision": 33,
   "manifest": {
     "path": "conformance/draft/manifest.json",
-    "sha256": "f4195228ec27bfec1af27bf8ac11544d3bd7c69bc015e6257da8a1cbd0e65c6e"
+    "sha256": "aacf3108b1f1e031a29a9d7a9d567f34786691093ac9250f8155aa0bf453dc18"
   },
   "inventory": {
     "path": "testing/inventory.json",
-    "sha256": "6f7c6fa4fe043d3eb502c34356467537535f8a18561c6fe797635e5b7aa87634"
+    "sha256": "f61a3795c2e38adaa6fc16cc6b6c45b565fa5388e44a1f417e63a6a4b6848d74"
   },
   "matrix": {
     "path": "testing/coverage-matrix.json",
-    "sha256": "3a45f6c9a6cec068ca1e4f82586f2de34878274f5d3a7185a2460ae4fbd3cc69"
+    "sha256": "7721e2710d61ab1682215ca101cd079d5a4cadd37d8937e61b142c55cb8756bc"
   },
   "gap_audit": {
     "path": "testing/normative-gap-audit.json",
-    "sha256": "1dca09a0173cb5ad3d8b1fdc5d4b72f620b6a0ff64321851f43654657c850949"
+    "sha256": "edc64ba75945eb2378516f538a2802afde8bc06039aa9c6a80729a2f1e4531e6"
   },
   "quality_baseline": {
     "path": "testing/quality-baseline.json",
@@ -27,17 +27,17 @@
   "coverage": {
     "status": "validated",
     "reason": "the supplied coverage report passed the quality and provenance gates",
-    "report_sha256": "043422bd2fcf10bfa78c35f8eb85f55eb52afc1514e77f7e5a5f3f26ab676bc7",
-    "provenance_sha256": "6b9d9e2fefcec19f1a30c3f3e047c31353eb92be4c6285efd926fe90a9426569",
-    "tree_sha256": "85f455927d2f699867098f81578587ed30f2f283cd18af8bdd1f318ad5fda180",
-    "input_set_sha256": "e2189d310a576d9b88c6f412e4d28a889de329915d13ab0fa4a9307bd3357206"
+    "report_sha256": "c791228d5498bfc2c3342b3503299ec9ef49f8a2ae3d986c509a4961161e0dd9",
+    "provenance_sha256": "0f5a1aa018ecc156dccf5e57257b47bf4187834623893e9553d30af44294c9ef",
+    "tree_sha256": "b5582d09cb17b7d345a5f5e13b830c71e428d230ca8ca61eba2c45eac1ce13ff",
+    "input_set_sha256": "36960c6d48488b207a70e2032512a654f8f7089a124173bc0f2b21c6cf1e6af2"
   },
   "mutation": {
     "status": "validated",
     "reason": "the supplied mutation report passed the quality and provenance gates",
-    "report_sha256": "bad71bf0aa03265324afbef8a8af7c593ac7dc35782afffb132b34bdce936cef",
-    "provenance_sha256": "6b9d9e2fefcec19f1a30c3f3e047c31353eb92be4c6285efd926fe90a9426569",
-    "tree_sha256": "85f455927d2f699867098f81578587ed30f2f283cd18af8bdd1f318ad5fda180",
-    "input_set_sha256": "e2189d310a576d9b88c6f412e4d28a889de329915d13ab0fa4a9307bd3357206"
+    "report_sha256": "bec8db8a499f2722ac6d75132ef2f221094e6eda9d06cff4988fccf59067c691",
+    "provenance_sha256": "0f5a1aa018ecc156dccf5e57257b47bf4187834623893e9553d30af44294c9ef",
+    "tree_sha256": "b5582d09cb17b7d345a5f5e13b830c71e428d230ca8ca61eba2c45eac1ce13ff",
+    "input_set_sha256": "36960c6d48488b207a70e2032512a654f8f7089a124173bc0f2b21c6cf1e6af2"
   }
 }

@@ -17,9 +17,9 @@ frontera compilador/runtime/CLI, con evidencia por intento y paridad VM/native.
 `DIAG-SPEC-001` es el prerrequisito explícito de la evaluación nativa; la
 existencia del contrato no implica que ningún detector esté implementado.
 
-**Versión del tracker:** 2.46
+**Versión del tracker:** 2.47
 
-**Última actualización:** 2026-08-18
+**Última actualización:** 2026-08-19
 
 **Especificaciones normativas:**
 
@@ -61,8 +61,9 @@ un bundle companion separado. El candidato del lenguaje fija G5 y S1; solo fija
 L0 cuando se construye además una distribución TLF, sin convertirla en requisito
 de Tondo 0.1.
 
-**Objetivo inmediato:** ejecutar `TRACKER-LINT-001`, cerrar las leaves reales de
-Wave 5/S1A y después `DIAG-SPEC-001`. Con ese contrato se cierran las fronteras
+**Objetivo inmediato:** cerrar las leaves reales de Wave 5/S1A y después
+`DIAG-SPEC-001`. El grafo activo ya está validado por `TRACKER-LINT-001`; con
+ese contrato se cierran las fronteras
 runtime-facing B0 de Wave 6; entonces avanzan `DIAG-RUNTIME-001`, `RACE-001`,
 `LEAK-001`, `DUMP-001`, `DIAG-TEST-001` y `DIAG-CI-001` antes de la evaluación
 coordinada de `NATIVE-001`. El cierre coordinado de
@@ -71,9 +72,9 @@ y los tres owners build-only tienen una frontera explícita; no se fabrican
 funciones runtime para ellos. `NATIVE-TARGET-DESC-001` y
 `NATIVE-ARTIFACT-001`, `NATIVE-LINK-PLAN-001` y `NATIVE-PUBLISH-SPEC-001` están
 cerrados como contratos puros, y `PERF-001` ya fija el contrato de benchmark y
-baseline previo al backend. El siguiente bloque explícito es
-`TRACKER-LINT-001`; después se cierran las leaves reales de S1A y comienza
-`DIAG-SPEC-001`. `NATIVE-001` queda después de la compuerta de diagnóstico.
+baseline previo al backend. Después del linter se cierran las leaves reales de
+S1A y comienza `DIAG-SPEC-001`. `NATIVE-001` queda después de la compuerta de
+diagnóstico.
 Las celdas S1A de promoción siguen pendientes y no se sobreafirma su cierre.
 `CONF-GAP-IMPL-001`, `CONF-LAYER-RESULT-001` y
 `CONF-SEAL-FINAL-001` ya cierran T0/G5 con 409 requisitos cubiertos, nueve
@@ -5913,7 +5914,7 @@ estas leaves.
   raíz, normalización, padres incorrectos, headings dentro de fences y fences
   truncados.
 
-- [ ] **TRACKER-LINT-001 — Validar el tracker como grafo.** Parsear tasks
+- [x] **TRACKER-LINT-001 — Validar el tracker como grafo.** Parsear tasks
   canónicas y gates, exigir IDs únicos, referencias exactas en campos de
   dependencia, ausencia de abreviaturas ambiguas y DAG acíclico. Los resúmenes
   de cerradas/abiertas y la cola topológica se derivan; no se mantienen cifras
@@ -6175,6 +6176,27 @@ TLF-RESEARCH-001 -> TLF-BENCH-REPRO-001 --------------------+
 
 ## 24. Cola inmediata
 
+### 24.1 Fuente canónica del grafo
+
+`testing/tracker-graph.json` es el manifiesto de dependencias activo. Las
+declaraciones de tareas y su estado (`[x]`/`[ ]`) se leen únicamente de las
+checklists de las secciones 1–24; la sección 25 es histórica y se ignora. El
+manifiesto solo enumera aristas no raíz en `task_dependencies` y
+`gate_dependencies`: toda tarea o gate activo que no aparece en esos mapas es
+una raíz explícita con `depends_on: []`. Cada referencia debe ser un ID exacto,
+sin prefijos, comodines ni abreviaturas. El linter deriva los conteos, la cola
+de trabajo lista y el orden topológico, y rechaza duplicados, referencias
+desconocidas, dependencias repetidas, auto-dependencias y ciclos.
+
+La compuerta reproducible es:
+
+```text
+cargo run -p tondo-reliability --locked -- tracker lint --root .
+```
+
+`--json` expone el informe derivado para CI y tooling; no existe un segundo
+resumen manual que pueda divergir del tracker.
+
 Los puntos 1–19 conservan la secuencia ya completada. A partir del 20 la unidad
 de integración es una **wave vertical**. Una tarea puede empezar tan pronto
 como estén cerrados sus prerequisitos duros; la wave posterior no se integra ni
@@ -6414,7 +6436,8 @@ Wave 6 no se declara iniciada antes de S1A.
 `STD-IMPL-001` y `STD-IMPL-002` quedan ahora cerrados por sus gates de
 coordinación; `NATIVE-TARGET-DESC-001`, `NATIVE-ARTIFACT-001`,
 `NATIVE-LINK-PLAN-001`, `NATIVE-PUBLISH-SPEC-001` y `PERF-001` quedan cerrados
-como contratos puros. La acción inmediata es `TRACKER-LINT-001`, seguida de las
+como contratos puros. `TRACKER-LINT-001` está cerrado y su informe derivado
+registra 616 tareas y 12 gates en la revisión 2.47. La acción inmediata son las
 leaves y el seal reales de S1A. Solo entonces comienza `DIAG-SPEC-001`; la
 instrumentación VM espera los contratos B0 y `NATIVE-001` espera
 `DIAG-CI-001`.
@@ -6422,6 +6445,14 @@ instrumentación VM espera los contratos B0 y `NATIVE-001` espera
 ---
 
 ## 25. Historial del tracker
+
+### 2.47 — 2026-08-19
+
+- Se completa `TRACKER-LINT-001`: `testing/tracker-graph.json` fija las aristas
+  exactas no raíz, el parser ignora la sección histórica 25, y la cola,
+  estados y orden topológico se derivan en cada ejecución. La compuerta rechaza
+  IDs duplicados, referencias desconocidas o abreviadas, dependencias repetidas,
+  auto-dependencias y ciclos.
 
 ### 2.46 — 2026-08-18
 

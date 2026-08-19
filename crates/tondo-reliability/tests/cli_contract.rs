@@ -118,6 +118,7 @@ fn repository_evidence_commands_are_readable_and_current_through_the_cli() {
         vec!["quality", "check", "--root", root],
         vec!["inventory", "check", "--root", root],
         vec!["matrix", "check", "--root", root],
+        vec!["tracker", "lint", "--root", root],
         vec!["check", "--root", root],
     ] {
         let output = run(&arguments);
@@ -128,6 +129,15 @@ fn repository_evidence_commands_are_readable_and_current_through_the_cli() {
         );
         assert!(!text(&output.stdout).trim().is_empty());
     }
+
+    let tracker_json = run(&["tracker", "lint", "--json", "--root", root]);
+    assert!(
+        tracker_json.status.success(),
+        "{}",
+        text(&tracker_json.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&tracker_json.stdout).unwrap();
+    assert_eq!(report["format"], "tondo-tracker-graph/1");
 
     let ratchet = run(&["ratchet", "check", "--root", root]);
     assert!(!ratchet.status.success());

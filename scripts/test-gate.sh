@@ -61,6 +61,8 @@ run_step doc-test-conformance-tests \
     scripts/doc-test-conformance-test.sh
 run_step reliability \
     cargo run -p tondo-reliability --locked -- check --root .
+run_step tracker-lint \
+    cargo run -p tondo-reliability --locked -- tracker lint --root .
 run_step mutation-infrastructure-check-tests \
     scripts/mutation-infrastructure-check-test.sh
 run_step performance-contract \

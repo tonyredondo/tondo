@@ -11,6 +11,7 @@ use tondo_reliability::provenance::{QualityProvenance, ReportBinding};
 use tondo_reliability::quality::{QualityBaseline, capture, parse_llvm_cov, parse_mutation_report};
 use tondo_reliability::ratchet;
 use tondo_reliability::regression::RegressionLedger;
+use tondo_reliability::tracker;
 use tondo_reliability::{
     INVENTORY_PATH, MATRIX_PATH, QUALITY_BASELINE_PATH, REGRESSION_LEDGER_PATH, canonical_json,
     check_bytes, spec_structure, workspace_root, write_if_changed,
@@ -32,7 +33,8 @@ Usage:
   tondo-reliability quality provenance [--root <directory>]
   tondo-reliability quality capture --coverage <json> --mutants <json> --revision <id> [--root <directory>]
   tondo-reliability quality bind --kind <coverage|mutation> --report <json> --before <json> --after <json> --output <json> [--root <directory>]
-  tondo-reliability quality verify --coverage <json> --coverage-binding <json> [--mutants <json> --mutants-binding <json>] [--root <directory>]";
+  tondo-reliability quality verify --coverage <json> --coverage-binding <json> [--mutants <json> --mutants-binding <json>] [--root <directory>]
+  tondo-reliability tracker lint [--json] [--root <directory>]";
 
 fn main() -> ExitCode {
     match run(env::args().skip(1).collect()) {
@@ -50,15 +52,31 @@ fn main() -> ExitCode {
 fn run(arguments: Vec<String>) -> Result<String, String> {
     let arguments = parse_arguments(arguments)?;
     let root = workspace_root(&arguments.root)?;
+    let tracker_command = matches!(
+        arguments.positionals.as_slice(),
+        [area, command] if area == "tracker" && command == "lint"
+    );
+    if arguments.json && !tracker_command {
+        return Err("`--json` is accepted only by `tracker lint`".into());
+    }
     if !matches!(
         arguments.positionals.first().map(String::as_str),
-        Some("quality" | "ratchet" | "layer-evidence" | "candidate")
+        Some("quality" | "ratchet" | "layer-evidence" | "candidate" | "tracker")
     ) {
         reject_quality_options(&arguments)?;
     }
     match arguments.positionals.as_slice() {
         [command] if command == "generate" => generate_all(&root),
         [command] if command == "check" => check_all(&root),
+        [area, command] if area == "tracker" && command == "lint" => {
+            let report = tracker::lint(&root)?;
+            if arguments.json {
+                String::from_utf8(canonical_json(&report)?)
+                    .map_err(|error| format!("tracker report is not UTF-8: {error}"))
+            } else {
+                Ok(tracker::summary(&report))
+            }
+        }
         [area, command] if area == "inventory" && command == "generate" => {
             generate_inventory(&root)
         }
@@ -253,6 +271,7 @@ struct Arguments {
     doc_test: Option<PathBuf>,
     doc_test_links: Option<PathBuf>,
     candidate: Option<PathBuf>,
+    json: bool,
 }
 
 fn parse_arguments(arguments: Vec<String>) -> Result<Arguments, String> {
@@ -274,9 +293,16 @@ fn parse_arguments(arguments: Vec<String>) -> Result<Arguments, String> {
     let mut doc_test = None;
     let mut doc_test_links = None;
     let mut candidate = None;
+    let mut json = false;
     let mut index = 0;
     while index < arguments.len() {
-        if matches!(
+        if arguments[index] == "--json" {
+            if json {
+                return Err("`--json` may appear only once".into());
+            }
+            json = true;
+            index += 1;
+        } else if matches!(
             arguments[index].as_str(),
             "--root"
                 | "--coverage"
@@ -350,6 +376,7 @@ fn parse_arguments(arguments: Vec<String>) -> Result<Arguments, String> {
         doc_test,
         doc_test_links,
         candidate,
+        json,
     })
 }
 
@@ -514,6 +541,7 @@ fn load_provenance(path: &Path) -> Result<QualityProvenance, String> {
 }
 
 fn generate_all(root: &Path) -> Result<String, String> {
+    tracker::lint(root)?;
     spec_structure::validate_repository(root)?;
     let inventory = inventory::build(root)?;
     inventory::validate(&inventory)?;
@@ -533,6 +561,7 @@ fn generate_all(root: &Path) -> Result<String, String> {
 }
 
 fn check_all(root: &Path) -> Result<String, String> {
+    tracker::lint(root)?;
     spec_structure::validate_repository(root)?;
     let inventory = inventory::build(root)?;
     inventory::validate(&inventory)?;
@@ -712,8 +741,25 @@ mod tests {
         assert_eq!(arguments.positionals, ["inventory", "check"]);
         assert_eq!(arguments.root, PathBuf::from("."));
         assert_eq!(arguments.coverage, None);
+        assert!(!arguments.json);
         assert!(parse_arguments(vec!["--unknown".into()]).is_err());
         assert!(parse_arguments(vec!["--root".into()]).is_err());
+
+        let tracker =
+            parse_arguments(vec!["tracker".into(), "lint".into(), "--json".into()]).unwrap();
+        assert!(tracker.json);
+        assert!(parse_arguments(vec!["--json".into(), "--json".into()]).is_err());
+        assert!(run(vec!["check".into(), "--json".into()]).is_err());
+    }
+
+    #[test]
+    fn tracker_command_reports_the_repository_graph_in_both_formats() {
+        let text = run(vec!["tracker".into(), "lint".into()]).unwrap();
+        assert!(text.starts_with("tracker lint: OK"));
+        let json = run(vec!["tracker".into(), "lint".into(), "--json".into()]).unwrap();
+        let report: tracker::Report = serde_json::from_str(&json).unwrap();
+        assert_eq!(report.format, "tondo-tracker-graph/1");
+        assert!(report.task_count > report.pending_tasks);
     }
 
     #[test]
