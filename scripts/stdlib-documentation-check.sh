@@ -37,8 +37,8 @@ jq -e '
   and ([.owners[].id] | unique | length) == 22
   and (.summary == {
     owners: 22,
-    examples: 31,
-    runtime_examples: 25,
+    examples: 32,
+    runtime_examples: 26,
     external_examples: 4,
     compiler_examples: 2,
     api_complete: 18,
@@ -140,4 +140,4 @@ while IFS= read -r example; do
     fi
 done < <(jq -c '.owners[].examples[]' "$documentation")
 
-echo "stdlib documentation: OK (22 owners; 31 examples; boundaries and unpublished claim explicit)"
+echo "stdlib documentation: OK (22 owners; 32 examples; boundaries and unpublished claim explicit)"

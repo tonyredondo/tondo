@@ -17,7 +17,7 @@ frontera compilador/runtime/CLI, con evidencia por intento y paridad VM/native.
 `DIAG-SPEC-001` es el prerrequisito explícito de la evaluación nativa; la
 existencia del contrato no implica que ningún detector esté implementado.
 
-**Versión del tracker:** 2.49
+**Versión del tracker:** 2.50
 
 **Última actualización:** 2026-08-19
 
@@ -2347,11 +2347,16 @@ independientes y no se atribuyen a este cierre.
   la adaptación concreta de `Channel` pertenece a STD-0.1B y se cierra en
   `STD-CHANNEL-ASYNC-ITER-001`.
 
-- [ ] **ASYNC-ITER-EXT-001 — Completar streams genéricos en `std.async`.**
-  Añadir `collect(limit:)`, cierre cancelable, propagación de backpressure y
-  adapters que dependan únicamente de `AsyncIterator`, sin introducir
-  `Channel`, executor ni una segunda abstracción de stream. Se cierra en S1A y
-  no reabre el ABI del protocolo.
+- [x] **ASYNC-ITER-EXT-001 — Completar streams genéricos en `std.async`.**
+  `AsyncIterator.collect(limit:)` queda implementado como lowering MIR genérico
+  sobre el único `next` del protocolo: reserva capacidad una vez, respeta
+  `limit == 0`, rechaza límites negativos mediante `CollectionError`, no pide
+  un `next` adicional al alcanzar el límite y propaga errores sin publicar un
+  array parcial. El estado del cursor permanece bajo ownership estructurado y
+  se drena por los caminos normal, error, cancelación y unwind; no se añade
+  `Channel`, executor ni una segunda abstracción de stream. La cobertura
+  ejecutable vive en `tests/runtime/m11-std-async-iter-001.to`, el driver y
+  `scripts/stdlib-async-test.sh`; el ABI de `AsyncIterator[T]` no cambia.
 
 - [ ] **NATIVE-THREAD-001 — Mapear la lane `Thread` a workers OS en el backend
   nativo.** La VM bootstrap conserva semántica cooperativa determinista; el
@@ -3064,8 +3069,8 @@ completa Tondo 0.1.
 2. **Lenguaje:** lexer → CST → formatter; tras unir source classes,
    discovery y dev-dependencies del plan → árbol/capturas →
    overlays/integration. `ASYNC-DEFER-IMPL-001` ya está cerrado sobre la ruta
-   de suspensión existente; `ASYNC-ITER-EXT-001` continúa como la leaf async
-   pendiente antes del lowering genérico.
+   de suspensión existente; `ASYNC-ITER-EXT-001` ya cerró el lowering genérico
+   y la siguiente leaf async es la conformance completa de `std.async`.
 3. **Ejecución:** check → lowering y modelo de resultados en paralelo →
    envelope → worker → inputs/lifecycle/límites.
 4. **Algoritmos puros:** glob → shard → order/scheduler, después de identidad y
@@ -5058,9 +5063,9 @@ administrativas que no implementan comportamiento.
   obsoleta. `stdlib_conformance_coordination` replica la clausura en Rust.
   Los owners JSON/MessagePack/Protobuf/serialization conservan los seis casos
   del harness externo; `std.async` conserva siete filas de contrato, cinco
-  callable auditadas y una implementación genérica pendiente en
-  `STD-A-ASYNC-IMPL-001`. Los otros owners `partial` hasta obtener casos
-  públicos completos. La
+  callable auditadas y la implementación de `collect(limit:)` verificada; la
+  conformance completa de `std.async` permanece en `STD-A-ASYNC-IMPL-001`.
+  Los otros owners `partial` hasta obtener casos públicos completos. La
   coordinación se cierra como `closed-coordination`, pero
   `promotion.status=not-promoted` y la matriz siguen `open-gaps`; la siguiente
   coordinación es `STD-DOC-001`.
@@ -6329,7 +6334,7 @@ de `origin/main`), los tests ejecutables actuales y el gate local completo:
 | `ASYNC-INFER-001`, `ASYNC-IMPLICIT-AWAIT-001`, `ASYNC-EFFECT-API-001`, `ASYNC-SUSPENDS-DENOTE-001`, `ASYNC-JOIN-RETURN-001`, `ASYNC-THREAD-SPAWN-001`, `ASYNC-ONESHOT-001`, `ASYNC-ITER-001` | Cerradas | El efecto público es denotable en contratos y tipos, continúa infiriéndose en cuerpos, y el gate cubre inferencia, préstamos secuenciales, rechazo en `spawn`, `Join`, one-shot, thread lane e iteración async. |
 | `ASYNC-DEFER-IMPL-001` | **Cerrada** | Fixtures canónicos y de script cubren retorno, error exterior, pánico/supresión, LIFO, cancelación, host-backed cleanup e inferencia; negativos cubren `E1601`, `E1608`, `E1611`, `E1401`, `E1605`, `E1410` y `E1008`. Los tests de driver prueban `T0002`, capability y precedencia de panic; `test_runtime` fija timeout forzado y `test_interrupt` exige acknowledgement de cleanup antes de exit 4. |
 | `UTEST-SUSPENSION-MIGRATION-001` | Cerrada | Parser/CST acepta `@sync`/`@nosuspend`; HIR/checker preserva `fn` + inferencia, espera implícita y `E1601`; fixtures compile-pass/compile-fail/runtime canónicos y `crates/tondo-reference-adapter/tests/suspension_migration.rs` fijan equivalencia directa/`await`, consumo de `Waiter` y hashes de interfaz `suspends`. El corpus histórico `async fn` sigue congelado y separado. |
-| `ASYNC-ITER-EXT-001`, `STD-CHANNEL-ASYNC-ITER-001`, `NATIVE-THREAD-001` | **Pendientes reales** | Requieren streams genéricos S1A, adaptación de Channel en S1 y ejecución física en workers OS del backend nativo, respectivamente; no forman parte del bootstrap VM. |
+| `STD-A-ASYNC-IMPL-001`, `STD-CHANNEL-ASYNC-ITER-001`, `NATIVE-THREAD-001` | **Pendientes reales** | Requieren conformance completa de cancelación/cierre en `std.async`, adaptación de Channel en S1 y ejecución física en workers OS del backend nativo, respectivamente; no forman parte del bootstrap VM. |
 
 El gate oficial (`bash scripts/test-gate.sh`) se ejecutó después de esta
 reconciliación y selló la evidencia final de workspace, conformance, reliability,
@@ -6445,9 +6450,10 @@ Wave 6 no se declara iniciada antes de S1A.
 coordinación; `NATIVE-TARGET-DESC-001`, `NATIVE-ARTIFACT-001`,
 `NATIVE-LINK-PLAN-001`, `NATIVE-PUBLISH-SPEC-001` y `PERF-001` quedan cerrados
 como contratos puros. `TRACKER-LINT-001` está cerrado y su informe derivado
-registra 616 tareas y 12 gates en la revisión 2.49. `STD-A-ASYNC-API-001` ya
-cerró su contrato y auditoría, y `ASYNC-DEFER-IMPL-001` cerró su hardening;
-la acción inmediata es `ASYNC-ITER-EXT-001`, seguida por las leaves y el seal
+registra 616 tareas y 12 gates en la revisión 2.50. `STD-A-ASYNC-API-001` ya
+cerró su contrato y auditoría, `ASYNC-DEFER-IMPL-001` cerró su hardening y
+`ASYNC-ITER-EXT-001` cerró el lowering genérico de `collect(limit:)` con
+evidencia runtime; la siguiente frontera son las leaves y el seal
 reales de S1A. Solo
 entonces comienza `DIAG-SPEC-001`; la
 instrumentación VM espera los contratos B0 y `NATIVE-001` espera
@@ -6457,7 +6463,16 @@ instrumentación VM espera los contratos B0 y `NATIVE-001` espera
 
 ## 25. Historial del tracker
 
-### 2.49 — 2026-08-19
+### 2.50 — 2026-08-19
+
+- Se cierra `ASYNC-ITER-EXT-001` con lowering MIR genérico para
+  `AsyncIterator.collect(limit:)`: capacidad acotada, límite cero, límite
+  negativo, propagación atómica de `CollectionError`, backpressure de un
+  elemento y ausencia de polling adicional al alcanzar el límite. El fixture
+  runtime y los tests HIR/driver cubren las rutas normales y de borde sin
+  abrir `Channel` ni cambiar el ABI.
+- `STD-A-ASYNC-IMPL-001` permanece abierto para la conformance completa de
+  cancelación/cierre y las campañas FUZZ/PERF posteriores.
 
 - Se cierra `ASYNC-DEFER-IMPL-001` con fixtures canónicos para la espera
   implícita e inferida, retorno, error exterior, panic/suppression, LIFO,
@@ -6465,9 +6480,9 @@ instrumentación VM espera los contratos B0 y `NATIVE-001` espera
   fronteras `E1601`, `E1608`, `E1611`, `E1401`, `E1605`, `E1410` y `E1008`;
   tests de driver, runner e interrupción aíslan resource-limit, timeout y
   acknowledgements. La implementación existente no se duplicó ni se añadió
-  un hook paralelo; el siguiente leaf async real es `ASYNC-ITER-EXT-001`.
+  un hook paralelo; la siguiente leaf async real es `STD-A-ASYNC-IMPL-001`.
 
-### 2.48 — 2026-08-19
+### 2.49 — 2026-08-19
 
 - Se cierra `STD-A-ASYNC-API-001` como contrato de superficie, no como
   implementación completa. `docs/contracts/stdlib-async.md` y

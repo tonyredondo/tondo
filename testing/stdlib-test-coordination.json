@@ -84,7 +84,9 @@
         "refs": [
           "scripts/stdlib-async-check.sh",
           "scripts/stdlib-async-test.sh",
-          "tests/runtime/m7-suspension-inferred.to"
+          "tests/runtime/m7-suspension-inferred.to",
+          "tests/runtime/m11-std-async-iter-001.to",
+          "crates/tondo-compiler/src/driver.rs"
         ]
       },
       "fuzz": {

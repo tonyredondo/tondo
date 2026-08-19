@@ -13,7 +13,9 @@ use crate::hir::{
 };
 use crate::resolve::{LocalId, MemberKind, ResolvedProgram};
 use crate::source::Span;
-use crate::types::{CursorMode, IntrinsicType, ParameterMode, ScalarType, TypeId, TypeKind};
+use crate::types::{
+    CursorMode, IntrinsicType, ParameterMode, ScalarType, TypeId, TypeKind, TypeSubstitution,
+};
 
 use super::{
     MirAggregateKind, MirAssertMessagePart, MirAwaitable, MirBasicBlock, MirBlockId, MirBlockKind,
@@ -1195,6 +1197,18 @@ impl<'a> FunctionBuilder<'a> {
                         protocol,
                         unsafe_call,
                     } => {
+                        if matches!(
+                            self.core_host_function(*callee)?,
+                            Some(HirBootstrapHostFunction::AsyncIteratorCollect)
+                        ) {
+                            return self.lower_async_iterator_collect(
+                                arguments,
+                                operation_expression.ty(),
+                                span,
+                                destination,
+                                block,
+                            );
+                        }
                         let Some((current, operation)) = self.lower_call_operation(
                             *callee,
                             arguments,
@@ -3102,6 +3116,7 @@ impl<'a> FunctionBuilder<'a> {
                 | HirBootstrapHostFunction::CoreResultMap
                 | HirBootstrapHostFunction::CoreResultMapErr
                 | HirBootstrapHostFunction::CoreResultUnwrapOr
+                | HirBootstrapHostFunction::AsyncIteratorCollect
                 | HirBootstrapHostFunction::FormatFormat
                 | HirBootstrapHostFunction::FormatJoin
         )
@@ -3244,8 +3259,525 @@ impl<'a> FunctionBuilder<'a> {
                     _ => unreachable!("the Core unwrap set is closed"),
                 }
             }
+            HirBootstrapHostFunction::AsyncIteratorCollect => Err(MirError::Construction {
+                span,
+                message: "AsyncIterator.collect must be lowered through its await owner".into(),
+            }),
             _ => unreachable!("Core lowering is selected only for Core operations"),
         }
+    }
+
+    fn specialized_host_function_type(
+        &self,
+        function: HirBootstrapHostFunction,
+        arguments: &[TypeId],
+        span: Span,
+    ) -> Result<TypeId, MirError> {
+        let callable = self
+            .hir
+            .callable(HirCallableId::Host(function))
+            .ok_or_else(|| MirError::Construction {
+                span,
+                message: format!("bootstrap host callable `{}` is missing", function.name()),
+            })?;
+        let mut interner = self.hir.interner().clone();
+        TypeSubstitution::new(arguments.to_vec())
+            .apply(&mut interner, callable.function_type())
+            .map_err(|error| MirError::Construction {
+                span,
+                message: format!(
+                    "cannot specialize bootstrap host callable `{}`: {error}",
+                    function.name()
+                ),
+            })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_async_iterator_collect(
+        &mut self,
+        arguments: &[crate::hir::HirCallArgument],
+        outcome: TypeId,
+        span: Span,
+        destination: MirPlace,
+        block: MirBlockId,
+    ) -> Result<Option<MirBlockId>, MirError> {
+        let mut source = None;
+        let mut limit = None;
+        let mut current = block;
+        for argument in arguments {
+            if argument.mode() != ParameterMode::Value {
+                return Err(MirError::Construction {
+                    span,
+                    message: "AsyncIterator.collect only accepts value arguments".into(),
+                });
+            }
+            let Some((next, value)) = self.lower_value(argument.value(), current)? else {
+                return Ok(None);
+            };
+            current = next;
+            match argument.target() {
+                crate::hir::HirCallArgumentTarget::Receiver => source = Some(value),
+                crate::hir::HirCallArgumentTarget::Fixed(_) => limit = Some(value),
+                _ => {
+                    return Err(MirError::Construction {
+                        span,
+                        message: "AsyncIterator.collect has an invalid argument target".into(),
+                    });
+                }
+            }
+        }
+        let source = source.ok_or_else(|| MirError::Construction {
+            span,
+            message: "AsyncIterator.collect has no source receiver".into(),
+        })?;
+        let limit = limit.ok_or_else(|| MirError::Construction {
+            span,
+            message: "AsyncIterator.collect has no limit".into(),
+        })?;
+        let TypeKind::Result {
+            success: array,
+            error,
+        } = self
+            .hir
+            .interner()
+            .kind(outcome)
+            .map_err(|error| MirError::Construction {
+                span,
+                message: format!("AsyncIterator.collect has an invalid outcome: {error}"),
+            })?
+        else {
+            return Err(MirError::Construction {
+                span,
+                message: "AsyncIterator.collect outcome is not Result".into(),
+            });
+        };
+        let element =
+            match self
+                .hir
+                .interner()
+                .kind(*array)
+                .map_err(|error| MirError::Construction {
+                    span,
+                    message: format!("AsyncIterator.collect success is invalid: {error}"),
+                })? {
+                TypeKind::Intrinsic {
+                    constructor: IntrinsicType::Array,
+                    arguments,
+                } if arguments.len() == 1 => arguments[0],
+                _ => {
+                    return Err(MirError::Construction {
+                        span,
+                        message: "AsyncIterator.collect success is not Array[T]".into(),
+                    });
+                }
+            };
+        let source_type = source.ty;
+        let state = self.allocate_temporary(source_type, span, current)?;
+        let remaining_ty = limit.ty;
+        let remaining = self.allocate_temporary(remaining_ty, span, current)?;
+        self.assign_operand(current, span, self.local_place(state), source)?;
+        self.assign_operand(current, span, self.local_place(remaining), limit)?;
+
+        let capacity_signature = self.specialized_host_function_type(
+            HirBootstrapHostFunction::CollectionArrayWithCapacity,
+            &[element],
+            span,
+        )?;
+        let push_signature = self.specialized_host_function_type(
+            HirBootstrapHostFunction::CollectionArrayPush,
+            &[element],
+            span,
+        )?;
+        let capacity_outcome = self.function_outcome(capacity_signature, span)?;
+        let capacity_result = self.allocate_temporary(capacity_outcome, span, current)?;
+        let array_local = self.allocate_temporary(*array, span, current)?;
+        let next_signature = self.async_iterator_next_signature(element, source_type, span)?;
+        let next_outcome = self.function_outcome(next_signature, span)?;
+        let next_result = self.allocate_temporary(next_outcome, span, current)?;
+        let push_outcome = self.function_outcome(push_signature, span)?;
+        let push_result = self.allocate_temporary(push_outcome, span, current)?;
+
+        let capacity_check = self.allocate_block(MirBlockKind::Normal)?;
+        let capacity_ready = self.allocate_block(MirBlockKind::Normal)?;
+        let capacity_err = self.allocate_block(MirBlockKind::Normal)?;
+        let header = self.allocate_block(MirBlockKind::Normal)?;
+        let limit_done = self.allocate_block(MirBlockKind::Normal)?;
+        let next_call = self.allocate_block(MirBlockKind::Normal)?;
+        let inspect_next = self.allocate_block(MirBlockKind::Normal)?;
+        let item = self.allocate_block(MirBlockKind::Normal)?;
+        let push_ok = self.allocate_block(MirBlockKind::Normal)?;
+        let push_err = self.allocate_block(MirBlockKind::Normal)?;
+        let exhausted = self.allocate_block(MirBlockKind::Normal)?;
+        let join = self.allocate_block(MirBlockKind::Normal)?;
+
+        let capacity_operation = MirOperation {
+            ty: capacity_outcome,
+            kind: MirOperationKind::Call {
+                callee: MirOperand {
+                    ty: capacity_signature,
+                    kind: MirOperandKind::Function {
+                        callable: HirCallableId::Host(
+                            HirBootstrapHostFunction::CollectionArrayWithCapacity,
+                        ),
+                        arguments: vec![element],
+                    },
+                },
+                arguments: vec![MirCallArgument {
+                    mode: ParameterMode::Value,
+                    target: crate::hir::HirCallArgumentTarget::Fixed(0),
+                    value: self.copy_local(remaining),
+                }],
+                signature: capacity_signature,
+                protocol: HirCallProtocol::Call,
+                unsafe_call: false,
+            },
+        };
+        let capacity_unwind = self.current_unwind(span)?;
+        self.terminate(
+            current,
+            span,
+            MirTerminatorKind::Invoke {
+                operation: capacity_operation,
+                destination: Some(self.local_place(capacity_result)),
+                target: Some(capacity_check),
+                unwind: capacity_unwind,
+            },
+        )?;
+        self.register_fallback(capacity_check, span, self.local_place(capacity_result))?;
+        self.terminate(
+            capacity_check,
+            span,
+            MirTerminatorKind::SwitchTag {
+                value: self.borrow_local(capacity_result),
+                cases: vec![(MirTag::ResultOk, capacity_ready)],
+                otherwise: capacity_err,
+            },
+        )?;
+        let capacity_array = self.project_operand(
+            &self.transfer_local(capacity_result, span)?,
+            MirProjection {
+                ty: *array,
+                kind: MirProjectionKind::ResultOkValue,
+            },
+            span,
+        )?;
+        self.assign_operand(
+            capacity_ready,
+            span,
+            self.local_place(array_local),
+            capacity_array,
+        )?;
+        self.terminate(
+            capacity_ready,
+            span,
+            MirTerminatorKind::Goto { target: header },
+        )?;
+        let capacity_error = self.project_operand(
+            &self.transfer_local(capacity_result, span)?,
+            MirProjection {
+                ty: *error,
+                kind: MirProjectionKind::ResultErrValue,
+            },
+            span,
+        )?;
+        self.assign(
+            capacity_err,
+            span,
+            destination.clone(),
+            MirRvalue {
+                ty: outcome,
+                kind: MirRvalueKind::Aggregate {
+                    shape: MirAggregateKind::ResultErr,
+                    values: vec![capacity_error],
+                },
+            },
+        )?;
+        self.terminate(capacity_err, span, MirTerminatorKind::Goto { target: join })?;
+
+        let zero = MirOperand {
+            ty: remaining_ty,
+            kind: MirOperandKind::Constant(MirConstant::Integer("0".into())),
+        };
+        let at_limit =
+            self.allocate_temporary(self.hir.interner().scalar(ScalarType::Bool), span, header)?;
+        self.assign(
+            header,
+            span,
+            self.local_place(at_limit),
+            MirRvalue {
+                ty: self.hir.interner().scalar(ScalarType::Bool),
+                kind: MirRvalueKind::Binary {
+                    operator: HirBinaryOperator::Equal,
+                    left: self.copy_local(remaining),
+                    right: zero,
+                },
+            },
+        )?;
+        self.terminate(
+            header,
+            span,
+            MirTerminatorKind::SwitchBool {
+                condition: self.copy_local(at_limit),
+                if_true: limit_done,
+                if_false: next_call,
+            },
+        )?;
+
+        let loan_depth = self.active_loans.len();
+        let state_loan =
+            self.reserve_loan(next_call, span, ParameterMode::Mut, self.local_place(state))?;
+        let next_operation = MirOperation {
+            ty: next_outcome,
+            kind: MirOperationKind::Call {
+                callee: MirOperand {
+                    ty: next_signature,
+                    kind: MirOperandKind::PreludeTraitFunction {
+                        method: HirPreludeTraitMethod::AsyncIteratorNext,
+                        arguments: vec![element, source_type],
+                    },
+                },
+                arguments: vec![MirCallArgument {
+                    mode: ParameterMode::Mut,
+                    target: crate::hir::HirCallArgumentTarget::Receiver,
+                    value: state_loan,
+                }],
+                signature: next_signature,
+                protocol: HirCallProtocol::Call,
+                unsafe_call: false,
+            },
+        };
+        let next_arguments = match &next_operation.kind {
+            MirOperationKind::Call { arguments, .. } => arguments,
+            _ => unreachable!("the async iterator next operation is a call"),
+        };
+        self.consume_call_loans(next_arguments, loan_depth, span)?;
+        let unwind = self.current_unwind(span)?;
+        for place in operation_move_places(&next_operation) {
+            self.push_statement(next_call, span, MirStatementKind::DisarmCleanup(place))?;
+        }
+        self.terminate(
+            next_call,
+            span,
+            MirTerminatorKind::Await {
+                awaitable: MirAwaitable::Call(next_operation),
+                destination: self.local_place(next_result),
+                target: inspect_next,
+                unwind,
+            },
+        )?;
+        self.register_fallback(inspect_next, span, self.local_place(next_result))?;
+        self.terminate(
+            inspect_next,
+            span,
+            MirTerminatorKind::SwitchTag {
+                value: self.borrow_local(next_result),
+                cases: vec![(MirTag::OptionSome, item)],
+                otherwise: exhausted,
+            },
+        )?;
+        let next_value = self.project_operand(
+            &self.transfer_local(next_result, span)?,
+            MirProjection {
+                ty: element,
+                kind: MirProjectionKind::OptionValue,
+            },
+            span,
+        )?;
+        let unit = self.hir.interner().scalar(ScalarType::Unit);
+        let push_unit = self.allocate_temporary(unit, span, item)?;
+        let array_loan = self.reserve_loan(
+            item,
+            span,
+            ParameterMode::Var,
+            self.local_place(array_local),
+        )?;
+        let push_operation = MirOperation {
+            ty: push_outcome,
+            kind: MirOperationKind::Call {
+                callee: MirOperand {
+                    ty: push_signature,
+                    kind: MirOperandKind::Function {
+                        callable: HirCallableId::Host(
+                            HirBootstrapHostFunction::CollectionArrayPush,
+                        ),
+                        arguments: vec![element],
+                    },
+                },
+                arguments: vec![
+                    MirCallArgument {
+                        mode: ParameterMode::Var,
+                        target: crate::hir::HirCallArgumentTarget::Receiver,
+                        value: array_loan,
+                    },
+                    MirCallArgument {
+                        mode: ParameterMode::Value,
+                        target: crate::hir::HirCallArgumentTarget::Fixed(1),
+                        value: next_value,
+                    },
+                ],
+                signature: push_signature,
+                protocol: HirCallProtocol::Call,
+                unsafe_call: false,
+            },
+        };
+        let push_arguments = match &push_operation.kind {
+            MirOperationKind::Call { arguments, .. } => arguments,
+            _ => unreachable!("the Array.push operation is a call"),
+        };
+        self.consume_call_loans(push_arguments, loan_depth, span)?;
+        let push_target = self
+            .invoke(
+                item,
+                span,
+                Some(self.local_place(push_result)),
+                push_operation,
+            )?
+            .ok_or_else(|| MirError::Construction {
+                span,
+                message: "Array.push unexpectedly diverges while collecting an async iterator"
+                    .into(),
+            })?;
+        self.terminate(
+            push_target,
+            span,
+            MirTerminatorKind::SwitchTag {
+                value: self.borrow_local(push_result),
+                cases: vec![(MirTag::ResultOk, push_ok)],
+                otherwise: push_err,
+            },
+        )?;
+        let push_error = self.project_operand(
+            &self.transfer_local(push_result, span)?,
+            MirProjection {
+                ty: *error,
+                kind: MirProjectionKind::ResultErrValue,
+            },
+            span,
+        )?;
+        self.assign(
+            push_err,
+            span,
+            destination.clone(),
+            MirRvalue {
+                ty: outcome,
+                kind: MirRvalueKind::Aggregate {
+                    shape: MirAggregateKind::ResultErr,
+                    values: vec![push_error],
+                },
+            },
+        )?;
+        self.terminate(push_err, span, MirTerminatorKind::Goto { target: join })?;
+        let push_success = self.project_operand(
+            &self.transfer_local(push_result, span)?,
+            MirProjection {
+                ty: unit,
+                kind: MirProjectionKind::ResultOkValue,
+            },
+            span,
+        )?;
+        self.assign_operand(push_ok, span, self.local_place(push_unit), push_success)?;
+        let decremented = self.allocate_temporary(remaining_ty, span, push_ok)?;
+        let decrement = MirOperation {
+            ty: remaining_ty,
+            kind: MirOperationKind::CheckedBinary {
+                operator: HirBinaryOperator::Subtract,
+                left: self.copy_local(remaining),
+                right: MirOperand {
+                    ty: remaining_ty,
+                    kind: MirOperandKind::Constant(MirConstant::Integer("1".into())),
+                },
+            },
+        };
+        let decrement_target = self
+            .invoke(
+                push_ok,
+                span,
+                Some(self.local_place(decremented)),
+                decrement,
+            )?
+            .ok_or_else(|| MirError::Construction {
+                span,
+                message: "remaining-limit subtraction unexpectedly diverges".into(),
+            })?;
+        self.assign_operand(
+            decrement_target,
+            span,
+            self.local_place(remaining),
+            self.transfer_local(decremented, span)?,
+        )?;
+        self.terminate(
+            decrement_target,
+            span,
+            MirTerminatorKind::Goto { target: header },
+        )?;
+        self.assign(
+            limit_done,
+            span,
+            destination.clone(),
+            MirRvalue {
+                ty: outcome,
+                kind: MirRvalueKind::Aggregate {
+                    shape: MirAggregateKind::ResultOk,
+                    values: vec![self.transfer_local(array_local, span)?],
+                },
+            },
+        )?;
+        self.terminate(limit_done, span, MirTerminatorKind::Goto { target: join })?;
+        self.push_statement(
+            exhausted,
+            span,
+            MirStatementKind::DisarmCleanup(self.local_place(next_result)),
+        )?;
+        self.assign(
+            exhausted,
+            span,
+            destination,
+            MirRvalue {
+                ty: outcome,
+                kind: MirRvalueKind::Aggregate {
+                    shape: MirAggregateKind::ResultOk,
+                    values: vec![self.transfer_local(array_local, span)?],
+                },
+            },
+        )?;
+        self.terminate(exhausted, span, MirTerminatorKind::Goto { target: join })?;
+        Ok(Some(join))
+    }
+
+    fn function_outcome(&self, signature: TypeId, span: Span) -> Result<TypeId, MirError> {
+        match self
+            .hir
+            .interner()
+            .kind(signature)
+            .map_err(|error| MirError::Construction {
+                span,
+                message: format!("invalid callable signature: {error}"),
+            })? {
+            TypeKind::Function(function) => Ok(function.outcome()),
+            _ => Err(MirError::Construction {
+                span,
+                message: "callable signature is not a function type".into(),
+            }),
+        }
+    }
+
+    fn async_iterator_next_signature(
+        &self,
+        element: TypeId,
+        source: TypeId,
+        span: Span,
+    ) -> Result<TypeId, MirError> {
+        let mut interner = self.hir.interner().clone();
+        HirPreludeTraitMethod::AsyncIteratorNext
+            .function_type(&mut interner, &[element, source])
+            .map_err(|error| MirError::Construction {
+                span,
+                message: format!("cannot construct AsyncIterator.next signature: {error}"),
+            })?
+            .ok_or_else(|| MirError::Construction {
+                span,
+                message: "AsyncIterator.next has no function signature".into(),
+            })
     }
 
     #[allow(clippy::too_many_arguments)]

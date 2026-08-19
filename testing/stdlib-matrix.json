@@ -95,11 +95,12 @@
           "status": "verified"
         },
         "IMPL/HOST": {
-          "reason": "std.async is an intrinsic language/VM owner; it has no capability-gated host provider; the public effect and ownership contract is closed; generic async-iterator, collect(limit:), cancellation and close/backpressure execution remain explicit implementation leaves",
+          "reason": "generic async-iterator collect(limit:) is lowered and runtime-covered; cancellation, exactly-once close and full backpressure conformance remain explicit implementation leaves; std.async is an intrinsic language/VM owner; it has no capability-gated host provider",
           "refs": [
             "TONDO_IMPLEMENTATION_TRACKER.md",
             "crates/tondo-compiler/src/hir/check.rs",
             "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-compiler/src/mir/lower.rs",
             "crates/tondo-vm/src/runtime/execute.rs",
             "testing/stdlib-async.json",
             "testing/stdlib-implementation.json"
@@ -110,12 +111,14 @@
           "reason": "the contract negative cases are deterministic, but a dedicated async iterator and cancellation fuzz target belongs to STD-A-ASYNC-IMPL-001 and STD-A-FUZZ-001",
           "refs": [
             "TONDO_IMPLEMENTATION_TRACKER.md",
+            "crates/tondo-compiler/src/driver.rs",
             "crates/tondo-compiler/src/hir/check.rs",
             "crates/tondo-compiler/src/hir/lower.rs",
             "docs/contracts/stdlib-async.md",
             "scripts/stdlib-async-check.sh",
             "scripts/stdlib-async-test.sh",
             "testing/stdlib-async.json",
+            "tests/runtime/m11-std-async-iter-001.to",
             "tests/runtime/m7-suspension-inferred.to"
           ],
           "status": "partial"

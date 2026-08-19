@@ -2585,6 +2585,7 @@ pub enum HirBootstrapHostFunction {
     AsyncCompleterComplete,
     AsyncCompleterFail,
     AsyncCompleterCancel,
+    AsyncIteratorCollect,
     BytesFromString,
     BytesToString,
     BytesEmpty,
@@ -2913,6 +2914,7 @@ impl HirBootstrapHostFunction {
             Self::AsyncCompleterComplete => "std.async.Completer.complete",
             Self::AsyncCompleterFail => "std.async.Completer.fail",
             Self::AsyncCompleterCancel => "std.async.Completer.cancel",
+            Self::AsyncIteratorCollect => "std.async.AsyncIterator.collect",
             Self::BytesFromString => "intrinsic.Bytes.fromString",
             Self::BytesToString => "intrinsic.String.fromBytes",
             Self::BytesEmpty => "std.bytes.empty",
@@ -3267,6 +3269,7 @@ impl HirBootstrapHostFunction {
                 | Self::ProcessHandleCheck
                 | Self::ProcessHandleCancel
                 | Self::AsyncWaiterWait
+                | Self::AsyncIteratorCollect
                 | Self::TimeSleep
                 | Self::TimerWait
                 | Self::TestingWithVirtualTime

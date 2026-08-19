@@ -79,7 +79,7 @@
   ],
   "promotion": {
     "contract": ["exact-signatures","effect-rules","ownership","limits","channel-exclusion"],
-    "implementation_pending": ["generic-async-iterator","collect","cancel-close-backpressure"],
+    "implementation_pending": ["cancel-close-backpressure"],
     "next": "STD-A-ASYNC-IMPL-001"
   }
 }

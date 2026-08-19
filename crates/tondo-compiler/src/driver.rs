@@ -4353,6 +4353,43 @@ fn main() {
     }
 
     #[test]
+    fn async_iterator_collect_materializes_with_a_bound_without_an_extra_poll() {
+        let output = execute(operation_request(
+            Operation::Run,
+            b"type Counter = { remaining: Int }\n\
+              impl AsyncIterator[Int] for Counter {\n\
+                  async fn next(mut self): Int? {\n\
+                      if self.remaining == 0 {\n\
+                          return none\n\
+                      }\n\
+                      let current = self.remaining\n\
+                      self.remaining -= 1\n\
+                      some(current)\n\
+                  }\n\
+              }\n\
+              fn consume(cursor: Counter) {\n\
+                  let result = cursor.collect(limit: 2)\n\
+                  match result {\n\
+                      ok(values) => assert(values == [3, 2])\n\
+                      err(_) => panic(\"collect failed\")\n\
+                  }\n\
+              }\n\
+              fn main() { consume(Counter { remaining: 3 }) }\n",
+            SourceForm::Script,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert_eq!(output.exit_code(), 0);
+        assert!(output.diagnostics().diagnostics().is_empty());
+    }
+
+    #[test]
     fn async_oneshot_completes_pending_waiters_once_and_cancels_cleanly() {
         let output = execute(operation_request(
             Operation::Run,

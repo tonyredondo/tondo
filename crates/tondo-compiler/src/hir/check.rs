@@ -17211,6 +17211,19 @@ impl<'a> ExpressionChecker<'a> {
         )? {
             return Ok(Some(call));
         }
+        if let Some(call) = self.check_async_iterator_method_call(
+            file,
+            range,
+            receiver,
+            receiver_type,
+            member_token,
+            suffix,
+            explicit_bracket,
+            expected,
+            context,
+        )? {
+            return Ok(Some(call));
+        }
         if let Some(call) = self.check_iterator_method_call(
             file,
             range,
@@ -17552,6 +17565,94 @@ impl<'a> ExpressionChecker<'a> {
         };
         let callee =
             self.bootstrap_host_callee(operation, self.sources.span(file, member_token.range())?)?;
+        self.check_call(
+            CallSite {
+                file,
+                range,
+                suffix,
+                expected,
+            },
+            callee,
+            Some(receiver),
+            explicit_generics,
+            context,
+        )
+        .map(Some)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn check_async_iterator_method_call(
+        &mut self,
+        file: FileId,
+        range: TextRange,
+        receiver: HirExpressionId,
+        receiver_type: TypeId,
+        member_token: SyntaxTokenRef<'_>,
+        suffix: SyntaxNodeRef<'_>,
+        explicit_bracket: Option<SyntaxNodeRef<'_>>,
+        expected: Option<ExpressionExpectation>,
+        context: &mut BodyContext,
+    ) -> Result<Option<HirExpressionId>, HirError> {
+        let member = member_token
+            .token()
+            .normalized_identifier()
+            .unwrap_or(self.token_text(file, member_token)?);
+        if member != "collect" {
+            return Ok(None);
+        }
+        let Some(query) = self.async_iterator_trait_query(
+            receiver_type,
+            self.sources.span(file, member_token.range())?,
+            context,
+        )?
+        else {
+            return Ok(None);
+        };
+        let Some(element) = query.arguments().first().copied() else {
+            return Err(HirError::TraitSelectionInvariant {
+                message: "AsyncIterator query has no element argument".into(),
+            });
+        };
+        self.require_trait_query(
+            self.sources.span(file, member_token.range())?,
+            query,
+            context,
+            TraitRequirementOrigin::Direct,
+        )?;
+        if let Some(bracket) = explicit_bracket {
+            self.emit(
+                self.sources.span(file, bracket.range())?,
+                "E1104",
+                "async iterator extensions do not declare method-local generic parameters",
+                Vec::new(),
+                None,
+            )?;
+            return self.recovery_expression(file, range).map(Some);
+        }
+        // `collect` lowers through the existing Array hosts in MIR. Intern
+        // their concrete `T` signatures while the checker still owns the
+        // mutable type interner so MIR can refer to the exact same TypeIds
+        // without introducing a parallel runtime collection API.
+        for function in [
+            HirBootstrapHostFunction::CollectionArrayWithCapacity,
+            HirBootstrapHostFunction::CollectionArrayPush,
+        ] {
+            let template = self
+                .program
+                .callable(HirCallableId::Host(function))
+                .ok_or_else(|| HirError::TraitSelectionInvariant {
+                    message: format!("bootstrap host callable `{}` is missing", function.name()),
+                })?
+                .function_type();
+            TypeSubstitution::new(vec![element]).apply(&mut self.program.interner, template)?;
+        }
+        let explicit_generics = Some(ExplicitGenericArguments {
+            arguments: [(0_u32, element)].into_iter().collect(),
+        });
+        let callee = self.bootstrap_host_callee(
+            HirBootstrapHostFunction::AsyncIteratorCollect,
+            self.sources.span(file, member_token.range())?,
+        )?;
         self.check_call(
             CallSite {
                 file,
@@ -20394,13 +20495,22 @@ impl<'a> ExpressionChecker<'a> {
                 if bound_receiver && parameter.receiver {
                     continue;
                 }
-                fixed.push(CallParameterInfo {
-                    index: u32::try_from(index).expect("call parameter counts fit in u32"),
-                    name: (!parameter.discard)
+                let name = if matches!(
+                    callable.id,
+                    HirCallableId::Host(HirBootstrapHostFunction::AsyncIteratorCollect)
+                ) && index == 1
+                {
+                    Some(Name::new("limit").expect("bootstrap parameter names are valid"))
+                } else {
+                    (!parameter.discard)
                         .then_some(parameter.local)
                         .flatten()
                         .and_then(|local| self.resolved.local(local))
-                        .map(|local| local.name().clone()),
+                        .map(|local| local.name().clone())
+                };
+                fixed.push(CallParameterInfo {
+                    index: u32::try_from(index).expect("call parameter counts fit in u32"),
+                    name,
                     mode: concrete.mode(),
                     ty: concrete.ty(),
                     receiver: parameter.receiver,
@@ -23031,6 +23141,79 @@ mod tests {
             })
         });
         assert!(has_async_iterator_loop);
+    }
+
+    #[test]
+    fn async_iterator_collect_is_generic_and_implicitly_awaited() {
+        let (_, _, output) = check(
+            "type Counter = { value: Int }\n\
+             impl AsyncIterator[Int] for Counter {\n\
+                 async fn next(mut self): Int? { none }\n\
+             }\n\
+             fn consume(cursor: Counter) {\n\
+                 _ = cursor.collect(limit: 3)\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+        assert!(output.program().expressions().any(|expression| {
+            matches!(
+                expression.kind(),
+                HirExpressionKind::Function(HirCallableId::Host(
+                    HirBootstrapHostFunction::AsyncIteratorCollect
+                )) | HirExpressionKind::SpecializedFunction {
+                    callable: HirCallableId::Host(HirBootstrapHostFunction::AsyncIteratorCollect),
+                    ..
+                }
+            )
+        }));
+        assert!(
+            output
+                .program()
+                .expressions()
+                .any(|expression| matches!(expression.kind(), HirExpressionKind::Await { .. }))
+        );
+    }
+
+    #[test]
+    fn async_iterator_collect_marks_all_named_limit_callers_before_body_check() {
+        let (_, _, output) = check(
+            "type Counter = { value: Int }\n\
+             impl AsyncIterator[Int] for Counter {\n\
+                 async fn next(mut self): Int? { none }\n\
+             }\n\
+             fn first(cursor: Counter) {\n\
+                 _ = cursor.collect(limit: 1)\n\
+             }\n\
+             fn second(cursor: Counter) {\n\
+                 _ = cursor.collect(limit: 2)\n\
+             }\n\
+             fn main() {\n\
+                 first(Counter { value: 0 })\n\
+                 second(Counter { value: 0 })\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+        let async_functions = output
+            .program()
+            .callables()
+            .filter(|callable| {
+                matches!(
+                    output.program().interner().kind(callable.function_type()),
+                    Ok(TypeKind::Function(function)) if function.is_async()
+                )
+            })
+            .count();
+        assert!(async_functions >= 4, "{async_functions}");
     }
 
     #[test]

@@ -788,6 +788,15 @@ impl<'a> TypeLowerer<'a> {
                 )
             })
         });
+        let async_iterator_referenced = self.resolved.references().any(|reference| {
+            matches!(
+                reference.entity(),
+                ResolvedEntity::Name(ResolvedName::Prelude {
+                    namespace: Namespace::Type,
+                    name,
+                }) if name.as_str() == "AsyncIterator"
+            )
+        });
         let time_referenced = time_module.as_ref().is_some_and(|time_module| {
             self.resolved.references().any(|reference| {
                 matches!(
@@ -1026,7 +1035,7 @@ impl<'a> TypeLowerer<'a> {
         let io_limits_outcome = self.interner.result(io_limits, io_error)?;
         let io_bytes_outcome = self.interner.result(bytes, io_error)?;
 
-        if async_referenced {
+        if async_referenced || async_iterator_referenced {
             let waiter_value = self.interner.generic_parameter(0)?;
             let waiter_error = self.interner.generic_parameter(1)?;
             let waiter = self
@@ -1086,6 +1095,35 @@ impl<'a> TypeLowerer<'a> {
                 completion_result,
                 2,
                 Vec::new(),
+            )?;
+
+            // `AsyncIterator.collect(limit:)` is a compiler-owned async
+            // extension.  Its source is any type carrying the static
+            // `AsyncIterator[T]` witness; lowering expands the call into the
+            // existing `next`/`Await` path instead of introducing a second
+            // stream object or scheduler.
+            let async_element = self.interner.generic_parameter(0)?;
+            let async_source = self.interner.generic_parameter(1)?;
+            let async_array = self
+                .interner
+                .intrinsic(IntrinsicType::Array, vec![async_element])?;
+            let async_result = self.interner.result(async_array, collection_error)?;
+            let async_iterator_bound = HirTraitReference {
+                constructor: HirTraitConstructor::Prelude(
+                    Name::new("AsyncIterator").expect("prelude trait names are valid"),
+                ),
+                arguments: vec![async_element],
+            };
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::AsyncIteratorCollect,
+                vec![
+                    (async_source, ParameterMode::Value, true),
+                    (int, ParameterMode::Value, false),
+                ],
+                async_result,
+                2,
+                vec![(1, vec![async_iterator_bound])],
             )?;
         }
 
@@ -7929,6 +7967,21 @@ fn called_names(node: SyntaxNodeRef<'_>) -> BTreeSet<String> {
         {
             output.insert(format!("{module}.{name}"));
         }
+
+        // `AsyncIterator.collect(limit:)` is a compiler-owned extension and
+        // therefore has no source declaration for the ordinary name fixed
+        // point to discover.  Keep the early effect pass precise by recording
+        // only the reserved named shape; synchronous iterator `collect()` is
+        // deliberately left untouched.
+        if name == "collect"
+            && tokens.get(index + 2..index + 4).is_some_and(|pair| {
+                pair[0].kind() == TokenKind::Identifier
+                    && pair[0].token().normalized_identifier() == Some("limit")
+                    && pair[1].kind() == TokenKind::Colon
+            })
+        {
+            output.insert("AsyncIterator.collect".to_owned());
+        }
     }
     output
 }
@@ -7962,6 +8015,7 @@ fn inferred_host_suspendible(name: &str) -> bool {
             | "Reader.read"
             | "Writer.write"
             | "Writer.flush"
+            | "AsyncIterator.collect"
             | "File.read"
             | "File.write"
             | "File.flush"

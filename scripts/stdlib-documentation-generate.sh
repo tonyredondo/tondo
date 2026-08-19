@@ -17,7 +17,8 @@ jq -n \
       {
         "std.async": [
           {id: "async-structured", kind: "runtime", source: "tests/runtime/m7-async-structured.to", command: "scripts/test-gate.sh"},
-          {id: "async-cancellation", kind: "runtime", source: "tests/runtime/m7-cancellation-cleanup.to", command: "scripts/test-gate.sh"}
+          {id: "async-cancellation", kind: "runtime", source: "tests/runtime/m7-cancellation-cleanup.to", command: "scripts/test-gate.sh"},
+          {id: "async-iterator-collect", kind: "runtime", source: "tests/runtime/m11-std-async-iter-001.to", command: "scripts/stdlib-async-test.sh"}
         ],
         "std.bytes": [
           {id: "bytes-public", kind: "runtime", source: "tests/runtime/m10-std-bytes-001.to", command: "scripts/stdlib-bytes-test.sh"}

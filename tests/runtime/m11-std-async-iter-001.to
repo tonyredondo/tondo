@@ -1,0 +1,71 @@
+type Countdown = {
+    remaining: Int
+}
+
+impl AsyncIterator[Int] for Countdown {
+    async fn next(mut self): Int? {
+        if self.remaining == 0 {
+            return none
+        }
+        let current = self.remaining
+        self.remaining -= 1
+        some(current)
+    }
+}
+
+type OneShot = {
+    first: Bool
+}
+
+impl AsyncIterator[Int] for OneShot {
+    async fn next(mut self): Int? {
+        if self.first {
+            self.first = false
+            return some(7)
+        }
+        panic("collect polled past its limit")
+    }
+}
+
+fn bounded_collect() {
+    var cursor = Countdown { remaining: 3 }
+    let result = cursor.collect(limit: 2)
+    match result {
+        ok(values) => assert(values == [3, 2])
+        err(_) => panic("bounded collect failed")
+    }
+}
+
+fn zero_collect() {
+    var cursor = Countdown { remaining: 3 }
+    let result = cursor.collect(limit: 0)
+    match result {
+        ok(values) => assert(values.length() == 0)
+        err(_) => panic("zero collect failed")
+    }
+}
+
+fn negative_collect() {
+    var cursor = Countdown { remaining: 3 }
+    let result = cursor.collect(limit: -1)
+    match result {
+        ok(_) => panic("negative collect succeeded")
+        err(_) => ()
+    }
+}
+
+fn no_extra_poll() {
+    var cursor = OneShot { first: true }
+    let result = cursor.collect(limit: 1)
+    match result {
+        ok(values) => assert(values == [7])
+        err(_) => panic("single-item collect failed")
+    }
+}
+
+fn main() {
+    bounded_collect()
+    zero_collect()
+    negative_collect()
+    no_extra_poll()
+}

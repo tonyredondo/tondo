@@ -1045,8 +1045,8 @@
         },
         "IMPL": {
           "status": "partial",
-          "reason": "the public effect and ownership contract is closed; generic async-iterator, collect(limit:), cancellation and close/backpressure execution remain explicit implementation leaves",
-          "refs": ["crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs", "crates/tondo-vm/src/runtime/execute.rs", "testing/stdlib-implementation.json", "TONDO_IMPLEMENTATION_TRACKER.md"]
+          "reason": "generic async-iterator collect(limit:) is lowered and runtime-covered; cancellation, exactly-once close and full backpressure conformance remain explicit implementation leaves",
+          "refs": ["crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs", "crates/tondo-compiler/src/mir/lower.rs", "crates/tondo-vm/src/runtime/execute.rs", "testing/stdlib-implementation.json", "TONDO_IMPLEMENTATION_TRACKER.md"]
         },
         "HOST": {
           "status": "not-applicable",
@@ -1061,7 +1061,7 @@
         "TEST": {
           "status": "verified",
           "reason": null,
-          "refs": ["scripts/stdlib-async-check.sh", "scripts/stdlib-async-test.sh", "tests/runtime/m7-suspension-inferred.to"]
+          "refs": ["scripts/stdlib-async-check.sh", "scripts/stdlib-async-test.sh", "tests/runtime/m7-suspension-inferred.to", "tests/runtime/m11-std-async-iter-001.to", "crates/tondo-compiler/src/driver.rs"]
         },
         "FUZZ": {
           "status": "partial",

@@ -46,8 +46,8 @@ jq -e '
   . as $root
   | $root.summary == {
     owners: 22,
-    examples: 31,
-    runtime_examples: 25,
+    examples: 32,
+    runtime_examples: 26,
     external_examples: 4,
     compiler_examples: 2,
     api_complete: 18,

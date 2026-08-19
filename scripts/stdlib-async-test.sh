@@ -43,8 +43,15 @@ for marker in \
     'AsyncCompleterComplete' \
     'AsyncCompleterFail' \
     'AsyncCompleterCancel' \
-    'AsyncIteratorNext'; do
-    grep -Fq "$marker" crates/tondo-compiler/src/hir/check.rs crates/tondo-compiler/src/hir/lower.rs
+    'AsyncIteratorNext' \
+    'AsyncIteratorCollect' \
+    'lower_async_iterator_collect' \
+    'CollectionArrayWithCapacity' \
+    'CollectionArrayPush'; do
+    grep -Fq "$marker" \
+        crates/tondo-compiler/src/hir/check.rs \
+        crates/tondo-compiler/src/hir/lower.rs \
+        crates/tondo-compiler/src/mir/lower.rs
 done
 
 grep -Fq 'std.async.oneshot' crates/tondo-vm/src/runtime/execute.rs
@@ -53,6 +60,12 @@ grep -Fq 'std.async.Completer.complete' crates/tondo-vm/src/runtime/execute.rs
 grep -Fq 'std.async.Completer.fail' crates/tondo-vm/src/runtime/execute.rs
 grep -Fq 'std.async.Completer.cancel' crates/tondo-vm/src/runtime/execute.rs
 grep -Fq 'AsyncIterator' tests/runtime/m7-async-structured.to crates/tondo-compiler/src/hir/check.rs
+grep -Fq 'collect(limit: 2)' tests/runtime/m11-std-async-iter-001.to
+grep -Fq 'collect(limit: 0)' tests/runtime/m11-std-async-iter-001.to
+grep -Fq 'collect(limit: -1)' tests/runtime/m11-std-async-iter-001.to
+grep -Fq 'collect polled past its limit' tests/runtime/m11-std-async-iter-001.to
+grep -Fq 'async_iterator_collect_materializes_with_a_bound_without_an_extra_poll' \
+    crates/tondo-compiler/src/driver.rs
 
 jq -e '
   .owner == "std.async"

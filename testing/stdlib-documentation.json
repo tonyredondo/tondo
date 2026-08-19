@@ -36,11 +36,12 @@
       "boundary": {
         "kernel": {
           "status": "partial",
-          "reason": "std.async is an intrinsic language/VM owner; it has no capability-gated host provider; the public effect and ownership contract is closed; generic async-iterator, collect(limit:), cancellation and close/backpressure execution remain explicit implementation leaves",
+          "reason": "generic async-iterator collect(limit:) is lowered and runtime-covered; cancellation, exactly-once close and full backpressure conformance remain explicit implementation leaves; std.async is an intrinsic language/VM owner; it has no capability-gated host provider",
           "refs": [
             "TONDO_IMPLEMENTATION_TRACKER.md",
             "crates/tondo-compiler/src/hir/check.rs",
             "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-compiler/src/mir/lower.rs",
             "crates/tondo-vm/src/runtime/execute.rs",
             "testing/stdlib-implementation.json"
           ]
@@ -83,6 +84,14 @@
           "kind": "runtime",
           "source": "tests/runtime/m7-cancellation-cleanup.to",
           "command": "scripts/test-gate.sh",
+          "status": "verified",
+          "verification": "fixture-sidecars"
+        },
+        {
+          "id": "async-iterator-collect",
+          "kind": "runtime",
+          "source": "tests/runtime/m11-std-async-iter-001.to",
+          "command": "scripts/stdlib-async-test.sh",
           "status": "verified",
           "verification": "fixture-sidecars"
         },
@@ -2003,8 +2012,8 @@
   ],
   "summary": {
     "owners": 22,
-    "examples": 31,
-    "runtime_examples": 25,
+    "examples": 32,
+    "runtime_examples": 26,
     "external_examples": 4,
     "compiler_examples": 2,
     "api_complete": 18,
