@@ -6,7 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [features]
-conformance = []
+conformance = ["tondo-vm/conformance"]
 
 [dependencies]
 serde.workspace = true

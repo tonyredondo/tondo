@@ -71,6 +71,33 @@ sin publicar un array parcial. El cursor se cierra tanto en éxito como en
 error, cancelación o unwind. `collect` no introduce una segunda API para
 streams ni depende de `Channel`.
 
+## Estado de implementación de STD-0.1A
+
+`STD-A-ASYNC-IMPL-001` cierra las dos rutas de consumo sin duplicar la API:
+
+- una llamada directa o `await cursor.collect(...)` usa el lowering MIR que
+  conserva el cursor y el buffer bajo el cleanup normal de la función;
+- `spawn cursor.collect(...)` transporta el witness estático de
+  `AsyncIterator.next` por HIR, MIR y bytecode y ejecuta el mismo protocolo en
+  un task estructurado, suspendiendo entre polls y sin crear un array
+  intermedio;
+- el task mantiene el cursor y los elementos como roots mientras está
+  suspendido y libera ese estado exactamente una vez en éxito, límite cero,
+  error de capacidad, cancelación o unwind;
+- los límites negativos y los fallos de capacidad publican `CollectionError`
+  como `ResultErr` y nunca publican un array parcial; al alcanzar el límite no
+  se solicita otro `next`;
+- al salir de un scope se solicita cancelación cooperativa al task, se reanuda
+  el frame suspendido para ejecutar su unwind y solo entonces se cierra el
+  owner. El `Join` sigue siendo el único camino para observar un resultado.
+
+La prueba pública de estas rutas es
+[`tests/runtime/m11-std-async-impl-001.to`](../../tests/runtime/m11-std-async-impl-001.to);
+los límites directos permanecen además en
+[`tests/runtime/m11-std-async-iter-001.to`](../../tests/runtime/m11-std-async-iter-001.to)
+y el driver cubre el mismo flujo con `await tick()`, cancelación de scope y
+rechazo de loans exclusivos en `spawn`.
+
 ## Límites y exclusiones
 
 - La cancelación es cooperativa y observable al alcanzar el siguiente punto
@@ -83,6 +110,5 @@ streams ni depende de `Channel`.
 - No hay callbacks, polling público, scheduler implícito ni wrappers de tarea.
 
 La implementación del cursor genérico, `collect(limit:)`, cancelación y
-backpressure se cierra en `STD-A-ASYNC-IMPL-001`; este documento fija sus
-contratos y permite que las tareas dependientes implementen exactamente esta
-superficie.
+backpressure queda verificada en `STD-A-ASYNC-IMPL-001`; las campañas de fuzz,
+rendimiento y conformidad global siguen siendo leaves independientes de S1A.

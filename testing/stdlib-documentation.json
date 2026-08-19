@@ -35,13 +35,16 @@
       ],
       "boundary": {
         "kernel": {
-          "status": "partial",
-          "reason": "generic async-iterator collect(limit:) is lowered and runtime-covered; cancellation, exactly-once close and full backpressure conformance remain explicit implementation leaves; std.async is an intrinsic language/VM owner; it has no capability-gated host provider",
+          "status": "verified",
+          "reason": null,
           "refs": [
             "TONDO_IMPLEMENTATION_TRACKER.md",
+            "crates/tondo-compiler/src/bytecode/lower.rs",
             "crates/tondo-compiler/src/hir/check.rs",
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/mir/lower.rs",
+            "crates/tondo-vm/src/bytecode.rs",
+            "crates/tondo-vm/src/bytecode/verify.rs",
             "crates/tondo-vm/src/runtime/execute.rs",
             "testing/stdlib-implementation.json"
           ]
@@ -106,7 +109,7 @@
       ],
       "conformance": {
         "status": "partial",
-        "reason": "the public callable surface is audited and the contract is executable, but full async iterator, collect and cancellation conformance waits for STD-A-ASYNC-IMPL-001",
+        "reason": "the public callable surface is audited and the implementation is runtime-covered, but full owner conformance waits for STD-A-CONF-001",
         "refs": [
           "TONDO_IMPLEMENTATION_TRACKER.md",
           "testing/stdlib-async.json",

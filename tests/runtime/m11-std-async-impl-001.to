@@ -1,0 +1,115 @@
+import std.async
+
+type Countdown = {
+    remaining: Int
+}
+
+impl AsyncIterator[Int] for Countdown {
+    async fn next(mut self): Int? {
+        await tick()
+        if self.remaining == 0 {
+            return none
+        }
+        let current = self.remaining
+        self.remaining -= 1
+        some(current)
+    }
+}
+
+type OneShot = {
+    first: Bool
+}
+
+impl AsyncIterator[Int] for OneShot {
+    async fn next(mut self): Int? {
+        await tick()
+        if self.first {
+            self.first = false
+            return some(7)
+        }
+        panic("collect polled past its limit")
+    }
+}
+
+type Blocked = {
+    waiter: async.Waiter[Int, String]
+}
+
+impl AsyncIterator[Int] for Blocked {
+    async fn next(mut self): Int? {
+        let result = self.waiter.wait()
+        match result {
+            ok(value) => some(value)
+            err(_) => none
+        }
+    }
+}
+
+async fn tick() {}
+
+fn spawned_bounded_collect() {
+    scope {
+        let cursor = Countdown { remaining: 3 }
+        let pending = spawn cursor.collect(limit: 2)
+        let result = await pending
+        match result {
+            ok(values) => assert(values == [3, 2])
+            err(_) => panic("spawned bounded collect failed")
+        }
+    }
+}
+
+fn spawned_zero_collect() {
+    scope {
+        let cursor = Countdown { remaining: 3 }
+        let pending = spawn cursor.collect(limit: 0)
+        let result = await pending
+        match result {
+            ok(values) => assert(values.length() == 0)
+            err(_) => panic("spawned zero collect failed")
+        }
+    }
+}
+
+fn spawned_negative_collect() {
+    scope {
+        let cursor = Countdown { remaining: 3 }
+        let pending = spawn cursor.collect(limit: -1)
+        let result = await pending
+        match result {
+            ok(_) => panic("spawned negative collect succeeded")
+            err(_) => ()
+        }
+    }
+}
+
+fn spawned_no_extra_poll() {
+    scope {
+        let cursor = OneShot { first: true }
+        let pending = spawn cursor.collect(limit: 1)
+        let result = await pending
+        match result {
+            ok(values) => assert(values == [7])
+            err(_) => panic("spawned single-item collect failed")
+        }
+    }
+}
+
+fn cancelled_collect_is_drained(waiter: async.Waiter[Int, String]) {
+    scope {
+        let cursor = Blocked { waiter: waiter }
+        let pending = spawn cursor.collect(limit: 1)
+        return
+    }
+}
+
+fn main() {
+    spawned_bounded_collect()
+    spawned_zero_collect()
+    spawned_negative_collect()
+    spawned_no_extra_poll()
+    let pair = async.oneshot[Int, String]()
+    var (waiter, completer) = pair
+    cancelled_collect_is_drained(waiter)
+    _ = completer.cancel()
+}

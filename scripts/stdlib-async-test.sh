@@ -64,7 +64,15 @@ grep -Fq 'collect(limit: 2)' tests/runtime/m11-std-async-iter-001.to
 grep -Fq 'collect(limit: 0)' tests/runtime/m11-std-async-iter-001.to
 grep -Fq 'collect(limit: -1)' tests/runtime/m11-std-async-iter-001.to
 grep -Fq 'collect polled past its limit' tests/runtime/m11-std-async-iter-001.to
+grep -Fq 'spawned_bounded_collect' tests/runtime/m11-std-async-impl-001.to
+grep -Fq 'spawn cursor.collect(limit: 2)' tests/runtime/m11-std-async-impl-001.to
+grep -Fq 'await tick()' tests/runtime/m11-std-async-impl-001.to
+grep -Fq 'cancelled_collect_is_drained' tests/runtime/m11-std-async-impl-001.to
+test -f tests/compile-fail/m7-spawn-exclusive-loan.to
+grep -Fq 'spawn increment(mut value)' tests/compile-fail/m7-spawn-exclusive-loan.to
 grep -Fq 'async_iterator_collect_materializes_with_a_bound_without_an_extra_poll' \
+    crates/tondo-compiler/src/driver.rs
+grep -Fq 'async_iterator_collect_spawn_uses_the_same_generic_cursor_and_cancellation' \
     crates/tondo-compiler/src/driver.rs
 
 jq -e '
@@ -72,6 +80,8 @@ jq -e '
   and any(.signatures[]; .id == "async-iterator-collect" and .effect == "suspends")
   and .surface.bodyless_requires_effect == true
   and .surface.inference_by_name == false
+  and .implementation.status == "verified"
+  and .implementation.cancellation == "structured-scope-cooperative"
   and .iterator.channel_dependency == false
 ' testing/stdlib-async.json >/dev/null
 

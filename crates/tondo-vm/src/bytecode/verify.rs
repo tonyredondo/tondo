@@ -5551,6 +5551,9 @@ impl Verifier<'_> {
             } => {
                 self.verify_operand(function, callee, context)?;
                 for argument in arguments {
+                    if argument.target == BytecodeCallArgumentTarget::AsyncIteratorNext {
+                        continue;
+                    }
                     self.verify_operand(function, &argument.value, context)?;
                 }
                 self.verify_call(
@@ -5888,6 +5891,91 @@ impl Verifier<'_> {
         if function_type.outcome != outcome {
             return Err(operation_error(context));
         }
+        let is_async_collect = match callee.kind {
+            BytecodeOperandKind::Function { callable, .. } => self
+                .callable(callable, context)?
+                .name
+                .starts_with("std.async.AsyncIterator.collect"),
+            _ => false,
+        };
+        let mut visible_arguments = Vec::with_capacity(arguments.len());
+        let mut has_async_iterator_next = false;
+        for argument in arguments {
+            if argument.target == BytecodeCallArgumentTarget::AsyncIteratorNext {
+                if !is_async_collect
+                    || operation_context != OperationContext::Spawn
+                    || argument.mode != BytecodeParameterMode::Value
+                {
+                    return Err(operation_error(context));
+                }
+                let BytecodeOperandKind::Function { callable, .. } = argument.value.kind else {
+                    return Err(operation_error(context));
+                };
+                if has_async_iterator_next {
+                    return Err(operation_error(context));
+                }
+                has_async_iterator_next = true;
+                // This private dispatch operand intentionally reuses the
+                // collect call's type-table entry; validate its concrete
+                // callable metadata below instead of applying the ordinary
+                // function-value specialization check.
+                let _ = self.ty(argument.value.ty, context)?;
+                let next_callable = self.callable(callable, context)?;
+                let BytecodeTypeKind::Function(next) =
+                    &self.ty(next_callable.function_type, context)?.kind
+                else {
+                    return Err(operation_error(context));
+                };
+                let receiver = match callee.kind {
+                    BytecodeOperandKind::Function { callable, .. } => {
+                        let callable = self.callable(callable, context)?;
+                        let mut receiver = None;
+                        for parameter in &callable.parameters {
+                            if parameter.receiver && receiver.replace(parameter.ty).is_some() {
+                                return Err(operation_error(context));
+                            }
+                        }
+                        match receiver {
+                            Some(receiver) => receiver,
+                            None => return Err(operation_error(context)),
+                        }
+                    }
+                    _ => return Err(operation_error(context)),
+                };
+                let element = match &self.ty(function_type.outcome, context)?.kind {
+                    BytecodeTypeKind::Result { success, .. } => {
+                        match self.array_element(*success) {
+                            Some(element) => element,
+                            None => return Err(operation_error(context)),
+                        }
+                    }
+                    _ => return Err(operation_error(context)),
+                };
+                let next_element = match &self.ty(next.outcome, context)?.kind {
+                    BytecodeTypeKind::Option(element) => *element,
+                    _ => return Err(operation_error(context)),
+                };
+                if !next.is_async
+                    || next.parameters.len() != 1
+                    || next_callable.parameters.len() != 1
+                    || !next_callable.parameters[0].receiver
+                    || next_callable.parameters[0].ty != receiver
+                    || next.parameters[0].ty != receiver
+                    || next_element != element
+                {
+                    return Err(operation_error(context));
+                }
+                continue;
+            }
+            visible_arguments.push(argument.clone());
+        }
+        if is_async_collect
+            && operation_context == OperationContext::Spawn
+            && !has_async_iterator_next
+        {
+            return Err(operation_error(context));
+        }
+        let arguments = visible_arguments;
         match &self.ty(callee.ty, context)?.kind {
             BytecodeTypeKind::Function(_) => {
                 if callee.ty != signature || protocol != BytecodeCallProtocol::Call {
@@ -6024,6 +6112,9 @@ impl Verifier<'_> {
                         return Err(operation_error(context));
                     }
                     continue;
+                }
+                BytecodeCallArgumentTarget::AsyncIteratorNext => {
+                    return Err(operation_error(context));
                 }
             }
             .ok_or_else(|| operation_error(context))?;

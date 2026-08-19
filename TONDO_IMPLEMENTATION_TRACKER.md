@@ -17,7 +17,7 @@ frontera compilador/runtime/CLI, con evidencia por intento y paridad VM/native.
 `DIAG-SPEC-001` es el prerrequisito explícito de la evaluación nativa; la
 existencia del contrato no implica que ningún detector esté implementado.
 
-**Versión del tracker:** 2.50
+**Versión del tracker:** 2.51
 
 **Última actualización:** 2026-08-19
 
@@ -5063,8 +5063,8 @@ administrativas que no implementan comportamiento.
   obsoleta. `stdlib_conformance_coordination` replica la clausura en Rust.
   Los owners JSON/MessagePack/Protobuf/serialization conservan los seis casos
   del harness externo; `std.async` conserva siete filas de contrato, cinco
-  callable auditadas y la implementación de `collect(limit:)` verificada; la
-  conformance completa de `std.async` permanece en `STD-A-ASYNC-IMPL-001`.
+  callable auditadas y la implementación directa/spawn de `collect(limit:)`
+  verificada; su conformance global sigue coordinándose en `STD-A-CONF-001`.
   Los otros owners `partial` hasta obtener casos públicos completos. La
   coordinación se cierra como `closed-coordination`, pero
   `promotion.status=not-promoted` y la matriz siguen `open-gaps`; la siguiente
@@ -5098,10 +5098,16 @@ S1A; su estado se deriva de los registros machine-readable y no de este texto:
   implementación genérica de iteradores, materialización y cancelación queda
   explícitamente en `STD-A-ASYNC-IMPL-001`.
 
-- [ ] **STD-A-ASYNC-IMPL-001 — Implementar y probar `std.async` completo.**
-  Consumir `ASYNC-DEFER-IMPL-001` (cerrado) y `ASYNC-ITER-EXT-001`; ejecutar one-shot,
-  streams genéricos, cancelación, cierre, límites, loans secuenciales y rechazo
-  de loans exclusivos en `spawn` por la ruta pública HIR → MIR → bytecode → VM.
+- [x] **STD-A-ASYNC-IMPL-001 — Implementar y probar `std.async` completo.**
+  Consumir `ASYNC-DEFER-IMPL-001` (cerrado) y `ASYNC-ITER-EXT-001`: la ruta
+  pública ejecuta one-shot, streams genéricos, cancelación cooperativa, cierre
+  por liberación del owner, límites y backpressure. `spawn cursor.collect(...)`
+  transporta el witness concreto de `AsyncIterator.next` por HIR → MIR →
+  bytecode → VM y conserva cursor/buffer como roots hasta el outcome terminal;
+  límites negativos o de capacidad devuelven `CollectionError` sin array
+  parcial y el límite alcanzado no hace un poll adicional. Los tests cubren
+  cancelación al salir de `scope`, loans secuenciales y el rechazo de loans
+  exclusivos en `spawn`.
 
 - [ ] **STD-A-FUZZ-001 — Cerrar todas las celdas FUZZ aplicables de S1A.** El
   generador toma cada fila `partial` de `testing/stdlib-matrix.json`, exige
@@ -6334,7 +6340,8 @@ de `origin/main`), los tests ejecutables actuales y el gate local completo:
 | `ASYNC-INFER-001`, `ASYNC-IMPLICIT-AWAIT-001`, `ASYNC-EFFECT-API-001`, `ASYNC-SUSPENDS-DENOTE-001`, `ASYNC-JOIN-RETURN-001`, `ASYNC-THREAD-SPAWN-001`, `ASYNC-ONESHOT-001`, `ASYNC-ITER-001` | Cerradas | El efecto público es denotable en contratos y tipos, continúa infiriéndose en cuerpos, y el gate cubre inferencia, préstamos secuenciales, rechazo en `spawn`, `Join`, one-shot, thread lane e iteración async. |
 | `ASYNC-DEFER-IMPL-001` | **Cerrada** | Fixtures canónicos y de script cubren retorno, error exterior, pánico/supresión, LIFO, cancelación, host-backed cleanup e inferencia; negativos cubren `E1601`, `E1608`, `E1611`, `E1401`, `E1605`, `E1410` y `E1008`. Los tests de driver prueban `T0002`, capability y precedencia de panic; `test_runtime` fija timeout forzado y `test_interrupt` exige acknowledgement de cleanup antes de exit 4. |
 | `UTEST-SUSPENSION-MIGRATION-001` | Cerrada | Parser/CST acepta `@sync`/`@nosuspend`; HIR/checker preserva `fn` + inferencia, espera implícita y `E1601`; fixtures compile-pass/compile-fail/runtime canónicos y `crates/tondo-reference-adapter/tests/suspension_migration.rs` fijan equivalencia directa/`await`, consumo de `Waiter` y hashes de interfaz `suspends`. El corpus histórico `async fn` sigue congelado y separado. |
-| `STD-A-ASYNC-IMPL-001`, `STD-CHANNEL-ASYNC-ITER-001`, `NATIVE-THREAD-001` | **Pendientes reales** | Requieren conformance completa de cancelación/cierre en `std.async`, adaptación de Channel en S1 y ejecución física en workers OS del backend nativo, respectivamente; no forman parte del bootstrap VM. |
+| `STD-A-ASYNC-IMPL-001` | **Cerrada** | Implementación VM completa de `std.async`: ruta directa y `spawn` de `collect`, cursor genérico, límites, cancelación cooperativa, liberación terminal y loans; fuzz, rendimiento y conformance global siguen en sus leaves S1A. |
+| `STD-CHANNEL-ASYNC-ITER-001`, `NATIVE-THREAD-001` | **Pendientes reales** | Requieren adaptación de Channel en S1 y ejecución física en workers OS del backend nativo, respectivamente; no forman parte del bootstrap VM. |
 
 El gate oficial (`bash scripts/test-gate.sh`) se ejecutó después de esta
 reconciliación y selló la evidencia final de workspace, conformance, reliability,
@@ -6450,10 +6457,11 @@ Wave 6 no se declara iniciada antes de S1A.
 coordinación; `NATIVE-TARGET-DESC-001`, `NATIVE-ARTIFACT-001`,
 `NATIVE-LINK-PLAN-001`, `NATIVE-PUBLISH-SPEC-001` y `PERF-001` quedan cerrados
 como contratos puros. `TRACKER-LINT-001` está cerrado y su informe derivado
-registra 616 tareas y 12 gates en la revisión 2.50. `STD-A-ASYNC-API-001` ya
+registra 616 tareas y 12 gates en la revisión 2.51. `STD-A-ASYNC-API-001` ya
 cerró su contrato y auditoría, `ASYNC-DEFER-IMPL-001` cerró su hardening y
 `ASYNC-ITER-EXT-001` cerró el lowering genérico de `collect(limit:)` con
-evidencia runtime; la siguiente frontera son las leaves y el seal
+evidencia runtime y `STD-A-ASYNC-IMPL-001` cerró su ejecución estructurada;
+la siguiente frontera son las leaves y el seal
 reales de S1A. Solo
 entonces comienza `DIAG-SPEC-001`; la
 instrumentación VM espera los contratos B0 y `NATIVE-001` espera
@@ -6463,6 +6471,20 @@ instrumentación VM espera los contratos B0 y `NATIVE-001` espera
 
 ## 25. Historial del tracker
 
+### 2.51 — 2026-08-19
+
+- Se cierra `STD-A-ASYNC-IMPL-001` como implementación, no solo contrato:
+  `spawn cursor.collect(limit:)` conserva el witness concreto de
+  `AsyncIterator.next` en bytecode y ejecuta el cursor genérico en un task
+  estructurado de la VM, con suspensión entre polls, cancelación cooperativa,
+  roots vivos y liberación terminal del owner.
+- Se cubren límites cero/negativo, límite sin poll adicional, errores de
+  capacidad sin publicación parcial, `await tick()` dentro de `next`, unwind al
+  salir de `scope` y el rechazo de loans exclusivos en `spawn`. La evidencia
+  canónica es `tests/runtime/m11-std-async-impl-001.to`, el driver y los gates
+  del owner; fuzz, rendimiento, conformidad global y distribución siguen siendo
+  leaves posteriores de S1A.
+
 ### 2.50 — 2026-08-19
 
 - Se cierra `ASYNC-ITER-EXT-001` con lowering MIR genérico para
@@ -6471,8 +6493,9 @@ instrumentación VM espera los contratos B0 y `NATIVE-001` espera
   elemento y ausencia de polling adicional al alcanzar el límite. El fixture
   runtime y los tests HIR/driver cubren las rutas normales y de borde sin
   abrir `Channel` ni cambiar el ABI.
-- `STD-A-ASYNC-IMPL-001` permanece abierto para la conformance completa de
-  cancelación/cierre y las campañas FUZZ/PERF posteriores.
+- `STD-A-ASYNC-IMPL-001` queda abierto en esta revisión histórica para la
+  conformance completa de cancelación/cierre y las campañas FUZZ/PERF
+  posteriores; la revisión 2.51 lo cierra con evidencia ejecutable.
 
 - Se cierra `ASYNC-DEFER-IMPL-001` con fixtures canónicos para la espera
   implícita e inferida, retorno, error exterior, panic/suppression, LIFO,

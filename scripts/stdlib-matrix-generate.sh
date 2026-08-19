@@ -144,8 +144,6 @@ jq -n \
         (implementation_owner($id; $manifest)) as $owner
         | if $owner == null then
             {status: "partial", reason: "intrinsic owner is not indexed in testing/stdlib-implementation.json; STD-A-BYTES-EVIDENCE-001 remains open", refs: ["docs/contracts/stdlib-bytes.md", "TONDO_STANDARD_LIBRARY_SPEC.md"]}
-          elif $id == "std.async" then
-            {status: "partial", reason: "the owner record explicitly retains the inferred-suspension ABI migration as pending", refs: (($owner.implementation + $owner.tests) | unique)}
           else
             {status: "verified", reason: null, refs: (($owner.implementation + $owner.tests) | unique)}
           end;

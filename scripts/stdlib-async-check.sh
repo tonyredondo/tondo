@@ -60,8 +60,14 @@ jq -e '
   and .collect.partial_publication == false
   and .collect.error_type == "CollectionError"
   and .collect.close_on == ["success", "error", "cancel", "unwind"]
+  and .implementation.status == "verified"
+  and .implementation.routes == ["direct-mir-await", "spawn-hir-mir-bytecode-vm"]
+  and .implementation.cancellation == "structured-scope-cooperative"
+  and .implementation.close == "owner-state-released-on-terminal-outcome"
+  and .implementation.capacity_failure == "CollectionError-without-partial-publication"
   and ([.test_matrix[].id] | unique | length) == 7
-  and .promotion.next == "STD-A-ASYNC-IMPL-001"
+  and .promotion.implementation_pending == []
+  and .promotion.next == "STD-A-FUZZ-001"
 ' "$contract" >/dev/null || die "invalid std.async owner contract"
 
 while IFS= read -r ref; do

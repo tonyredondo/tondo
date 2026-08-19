@@ -4,11 +4,11 @@ use tondo_vm::bytecode as bc;
 
 use super::{BytecodeError, BytecodeLoweringLimits};
 use crate::hir::{
-    CapabilityAnalysis, CapabilityAssumptions, HirCallProtocol, HirCallableId, HirCapability,
-    HirClosureId, HirConstantValue, HirConstantValueKind, HirConstantVariantValue, HirNominalShape,
-    HirPreludeTraitMethod, HirProgram, HirTraitConstructor, HirTraitMethodKey,
-    HirTypeDeclarationKind, HirVariantPayload, TraitQuery, TraitSelectionError,
-    analyze_closure_captures, select_implementation,
+    CapabilityAnalysis, CapabilityAssumptions, HirBootstrapHostFunction, HirCallProtocol,
+    HirCallableId, HirCapability, HirClosureId, HirConstantValue, HirConstantValueKind,
+    HirConstantVariantValue, HirNominalShape, HirPreludeTraitMethod, HirProgram,
+    HirTraitConstructor, HirTraitMethodKey, HirTypeDeclarationKind, HirVariantPayload, TraitQuery,
+    TraitSelectionError, analyze_closure_captures, select_implementation,
 };
 use crate::mir::{
     MirAggregateKind, MirAwaitable, MirBasicBlock, MirBlockKind, MirCallArgument, MirConstant,
@@ -2227,6 +2227,26 @@ fn collect_operation_function_references(
             for argument in arguments {
                 collect_operand_function_references(argument.value(), references);
             }
+            if let MirOperandKind::Function {
+                callable: HirCallableId::Host(HirBootstrapHostFunction::AsyncIteratorCollect),
+                arguments: generic_arguments,
+            } = callee.kind()
+                && let Some(element) = generic_arguments.first().copied()
+            {
+                let mut source = None;
+                for argument in arguments {
+                    if argument.target() == crate::hir::HirCallArgumentTarget::Receiver {
+                        source = Some(argument.value().ty());
+                        break;
+                    }
+                }
+                if let Some(source) = source {
+                    references.push(FunctionReference::PreludeTrait {
+                        method: HirPreludeTraitMethod::AsyncIteratorNext,
+                        arguments: vec![element, source],
+                    });
+                }
+            }
         }
         MirOperationKind::Assert {
             condition,
@@ -3666,12 +3686,16 @@ fn lower_operation(
         } => {
             let callee = operand(callee)?;
             let protocol = normalized_call_protocol(*protocol, &callee, deferred, context)?;
+            let mut arguments = arguments
+                .iter()
+                .map(|argument| lower_call_argument(argument, context, type_map))
+                .collect::<Result<Vec<_>, BytecodeError>>()?;
+            if let Some(next) = lower_async_iterator_next_argument(operation, context, type_map)? {
+                arguments.push(next);
+            }
             bc::BytecodeOperationKind::Call {
                 callee,
-                arguments: arguments
-                    .iter()
-                    .map(|argument| lower_call_argument(argument, context, type_map))
-                    .collect::<Result<_, BytecodeError>>()?,
+                arguments,
                 signature: mapped_catalog_id(*signature, type_map, context.catalog)?,
                 protocol,
                 unsafe_call: *unsafe_call,
@@ -3804,6 +3828,88 @@ fn lower_operation(
         ty: mapped_catalog_id(operation.ty(), type_map, context.catalog)?,
         kind,
     })
+}
+
+/// `collect` is lowered as an ordinary async call for the direct-await path.
+/// A spawned collect needs one extra, compiler-owned dispatch operand so the VM
+/// can invoke the concrete `AsyncIterator.next` implementation while retaining
+/// the original cursor.  Keeping it on the bytecode call preserves the normal
+/// call/Join protocol and avoids a second public runtime API.
+fn lower_async_iterator_next_argument(
+    operation: &MirOperation,
+    context: &FunctionLoweringContext<'_>,
+    type_map: &BTreeMap<TypeId, TypeId>,
+) -> Result<Option<bc::BytecodeCallArgument>, BytecodeError> {
+    let MirOperationKind::Call {
+        callee, arguments, ..
+    } = operation.kind()
+    else {
+        return Ok(None);
+    };
+    let MirOperandKind::Function {
+        callable: HirCallableId::Host(HirBootstrapHostFunction::AsyncIteratorCollect),
+        arguments: generic_arguments,
+    } = callee.kind()
+    else {
+        return Ok(None);
+    };
+    let element = match generic_arguments.first().copied() {
+        Some(element) => element,
+        None => {
+            return Err(BytecodeError::construction(
+                "async iterator collect lowering",
+                "collect host callable has no element type argument",
+            ));
+        }
+    };
+    let mut source = None;
+    for argument in arguments {
+        if argument.target() == crate::hir::HirCallArgumentTarget::Receiver {
+            source = Some(argument.value().ty());
+            break;
+        }
+    }
+    let source = match source {
+        Some(source) => source,
+        None => {
+            return Err(BytecodeError::construction(
+                "async iterator collect lowering",
+                "collect call has no receiver argument",
+            ));
+        }
+    };
+    let mapped_element = mapped_type(element, type_map)?;
+    let mapped_source = mapped_type(source, type_map)?;
+    let dispatch = PreludeTraitInstance {
+        method: HirPreludeTraitMethod::AsyncIteratorNext,
+        arguments: vec![mapped_element, mapped_source],
+    };
+    let target = match context.prelude_dispatches.get(&dispatch) {
+        Some(target) => target,
+        None => {
+            return Err(BytecodeError::construction(
+                "async iterator collect lowering",
+                "AsyncIterator.next has no selected dispatch",
+            ));
+        }
+    };
+    let callable = map_named_callable_instance(target, context.callable_ids)?;
+    let next = bc::BytecodeOperand {
+        // The hidden value is checked against the concrete callable metadata
+        // by the bytecode verifier. Reuse the host-call function type here so
+        // the private dispatch operand is covered by the function's existing
+        // type table without introducing a parallel public signature.
+        ty: mapped_catalog_id(callee.ty(), type_map, context.catalog)?,
+        kind: bc::BytecodeOperandKind::Function {
+            callable,
+            arguments: Vec::new(),
+        },
+    };
+    Ok(Some(bc::BytecodeCallArgument {
+        mode: bc::BytecodeParameterMode::Value,
+        target: bc::BytecodeCallArgumentTarget::AsyncIteratorNext,
+        value: next,
+    }))
 }
 
 fn lower_intrinsic_display_call(

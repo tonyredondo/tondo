@@ -151,6 +151,39 @@ mod tests {
     }
 
     #[test]
+    fn spawned_async_collect_uses_the_default_compiler_vm_instance() {
+        let source = "import std.async\n\
+type Counter = { remaining: Int }\n\
+impl AsyncIterator[Int] for Counter {\n\
+    async fn next(mut self): Int? {\n\
+        await tick()\n\
+        if self.remaining == 0 {\n\
+            return none\n\
+        }\n\
+        let current = self.remaining\n\
+        self.remaining -= 1\n\
+        some(current)\n\
+    }\n\
+}\n\
+async fn tick() {}\n\
+fn main() {\n\
+    scope {\n\
+        let pending = spawn Counter { remaining: 3 }.collect(limit: 2)\n\
+        let result = await pending\n\
+        match result {\n\
+            ok(values) => assert(values == [3, 2])\n\
+            err(_) => panic(\"spawn collect failed\")\n\
+        }\n\
+    }\n\
+}\n";
+        let observation = run("async-collect", source, ResourceLimits::default()).unwrap();
+        assert!(observation.accepted);
+        assert_eq!(observation.exit_code, 0);
+        assert!(observation.diagnostics_jsonl.is_empty());
+        assert!(observation.stdout_hex.is_empty());
+    }
+
+    #[test]
     fn hex_codec_round_trips_binary_output() {
         let bytes = [0, 1, 15, 16, 127, 128, 255];
         assert_eq!(decode_hex(&encode_hex(&bytes)).unwrap(), bytes);

@@ -2706,10 +2706,11 @@ matriz, una razón obligatoria para `partial`/`pending`, referencias
 reproducibles y comandos. El registro cruza la matriz normativa, la auditoría
 de API, la evidencia de owners, la coordinación de modelos y el harness
 externo de codecs; no permite declarar `verified` sin la observación de la
-fila ni convierte la coordinación en promoción. `std.async` permanece
-`partial` por las celdas de implementación/conformance pendientes; `std.async`
-conserva un contrato concreto de siete filas, cinco callable auditadas y la
-implementación genérica pendiente en `STD-A-ASYNC-IMPL-001`. La promoción sigue
+fila ni convierte la coordinación en promoción. `std.async` conserva la
+implementación de VM verificada y permanece `partial` únicamente en las celdas
+de conformance global, fuzz y rendimiento; su contrato concreto tiene siete
+filas, cinco callable auditadas y las rutas directa y `spawn` de `collect(limit:)`
+verificadas en `STD-A-ASYNC-IMPL-001`. La promoción sigue
 `not-promoted` hasta `STD-DOC-001` y la conformance pública completa.
 
 La coordinación `STD-DOC-001` queda registrada en

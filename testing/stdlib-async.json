@@ -68,6 +68,13 @@
     "error_type": "CollectionError",
     "close_on": ["success", "error", "cancel", "unwind"]
   },
+  "implementation": {
+    "status": "verified",
+    "routes": ["direct-mir-await", "spawn-hir-mir-bytecode-vm"],
+    "cancellation": "structured-scope-cooperative",
+    "close": "owner-state-released-on-terminal-outcome",
+    "capacity_failure": "CollectionError-without-partial-publication"
+  },
   "test_matrix": [
     {"id":"suspends-visibility","required":true,"observables":["bodyless-marker","abi-effect","no-name-inference","nosuspend-rejection"]},
     {"id":"join-affinity","required":true,"observables":["spawn-origin","single-consume","scope-exit","transfer"]},
@@ -79,7 +86,7 @@
   ],
   "promotion": {
     "contract": ["exact-signatures","effect-rules","ownership","limits","channel-exclusion"],
-    "implementation_pending": ["cancel-close-backpressure"],
-    "next": "STD-A-ASYNC-IMPL-001"
+    "implementation_pending": [],
+    "next": "STD-A-FUZZ-001"
   }
 }

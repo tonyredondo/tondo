@@ -1356,6 +1356,11 @@ pub enum BytecodeCallArgumentTarget {
     Fixed(u32),
     VariadicElement,
     VariadicSpread,
+    /// Compiler-owned dispatch operand used by `spawn iterator.collect(...)`.
+    /// It is not part of the public callable signature; the VM consumes it to
+    /// resume the generic `AsyncIterator.next` implementation without
+    /// materialising an intermediate array.
+    AsyncIteratorNext,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

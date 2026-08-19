@@ -634,6 +634,56 @@ mod tests {
     }
 
     #[test]
+    fn spawned_async_collect_is_exercised_through_the_conformance_driver() {
+        let source = b"import std.async\n\
+type Counter = { remaining: Int }\n\
+impl AsyncIterator[Int] for Counter {\n\
+    async fn next(mut self): Int? {\n\
+        await tick()\n\
+        if self.remaining == 0 {\n\
+            return none\n\
+        }\n\
+        let current = self.remaining\n\
+        self.remaining -= 1\n\
+        some(current)\n\
+    }\n\
+}\n\
+async fn tick() {}\n\
+fn main() {\n\
+    scope {\n\
+        let pending = spawn Counter { remaining: 3 }.collect(limit: 2)\n\
+        let result = await pending\n\
+        match result {\n\
+            ok(values) => assert(values == [3, 2])\n\
+            err(_) => panic(\"spawn collect failed\")\n\
+        }\n\
+    }\n\
+}\n";
+        let action = WireSourceAction {
+            operation: WireOperation::Run,
+            form: WireSourceForm::Script,
+            root: "main.to".into(),
+            sources: vec![WireSource {
+                source_id: "root:adapter-async-collect".into(),
+                module: "main".into(),
+                logical_path: "main.to".into(),
+                contents_hex: tondo_conformance::encode_hex(source),
+            }],
+            warning_profiles: Vec::new(),
+            arguments: Vec::new(),
+            gc_threshold: None,
+            include_interface: false,
+        };
+        let response = ReferenceAdapter.handle(&request(AdapterAction::Source(action)));
+        let AdapterResult::Ok { observation } = response.result else {
+            panic!("reference adapter rejected the async collect program");
+        };
+        assert_eq!(observation.compilation, CompilationState::Success);
+        assert_eq!(observation.exit_code, 0);
+        assert!(observation.diagnostics.is_empty());
+    }
+
+    #[test]
     fn protocol_json_is_canonicalized_without_changing_array_order() {
         let value = canonical_json(json!({
             "schema": {"z": 0, "a": 1},

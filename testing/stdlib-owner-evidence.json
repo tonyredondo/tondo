@@ -1044,9 +1044,9 @@
           "refs": ["testing/stdlib-async.json", "docs/contracts/stdlib-async.md", "TONDO_STANDARD_LIBRARY_SPEC.md"]
         },
         "IMPL": {
-          "status": "partial",
-          "reason": "generic async-iterator collect(limit:) is lowered and runtime-covered; cancellation, exactly-once close and full backpressure conformance remain explicit implementation leaves",
-          "refs": ["crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs", "crates/tondo-compiler/src/mir/lower.rs", "crates/tondo-vm/src/runtime/execute.rs", "testing/stdlib-implementation.json", "TONDO_IMPLEMENTATION_TRACKER.md"]
+          "status": "verified",
+          "reason": null,
+          "refs": ["crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs", "crates/tondo-compiler/src/mir/lower.rs", "crates/tondo-compiler/src/bytecode/lower.rs", "crates/tondo-vm/src/bytecode.rs", "crates/tondo-vm/src/bytecode/verify.rs", "crates/tondo-vm/src/runtime/execute.rs", "testing/stdlib-implementation.json", "TONDO_IMPLEMENTATION_TRACKER.md"]
         },
         "HOST": {
           "status": "not-applicable",
@@ -1061,11 +1061,11 @@
         "TEST": {
           "status": "verified",
           "reason": null,
-          "refs": ["scripts/stdlib-async-check.sh", "scripts/stdlib-async-test.sh", "tests/runtime/m7-suspension-inferred.to", "tests/runtime/m11-std-async-iter-001.to", "crates/tondo-compiler/src/driver.rs"]
+          "refs": ["scripts/stdlib-async-check.sh", "scripts/stdlib-async-test.sh", "tests/runtime/m7-suspension-inferred.to", "tests/runtime/m11-std-async-iter-001.to", "tests/runtime/m11-std-async-impl-001.to", "crates/tondo-compiler/src/driver.rs"]
         },
         "FUZZ": {
           "status": "partial",
-          "reason": "the contract negative cases are deterministic, but a dedicated async iterator and cancellation fuzz target belongs to STD-A-ASYNC-IMPL-001 and STD-A-FUZZ-001",
+          "reason": "the contract negative cases are deterministic, but a dedicated async iterator and cancellation fuzz target belongs to STD-A-FUZZ-001",
           "refs": ["testing/stdlib-async.json", "TONDO_IMPLEMENTATION_TRACKER.md"]
         },
         "PERF": {
@@ -1075,7 +1075,7 @@
         },
         "CONF": {
           "status": "partial",
-          "reason": "the public callable surface is audited and the contract is executable, but full async iterator, collect and cancellation conformance waits for STD-A-ASYNC-IMPL-001",
+          "reason": "the public callable surface is audited and the implementation is runtime-covered, but full owner conformance waits for STD-A-CONF-001",
           "refs": ["testing/stdlib-public-api.json", "testing/stdlib-async.json", "TONDO_IMPLEMENTATION_TRACKER.md"]
         },
         "DOC": {

@@ -76,7 +76,7 @@
       ],
       "stages": {
         "CONF": {
-          "reason": "the public callable surface is audited and the contract is executable, but full async iterator, collect and cancellation conformance waits for STD-A-ASYNC-IMPL-001",
+          "reason": "the public callable surface is audited and the implementation is runtime-covered, but full owner conformance waits for STD-A-CONF-001",
           "refs": [
             "testing/stdlib-public-api.json",
             "testing/stdlib-async.json",
@@ -95,20 +95,23 @@
           "status": "verified"
         },
         "IMPL/HOST": {
-          "reason": "generic async-iterator collect(limit:) is lowered and runtime-covered; cancellation, exactly-once close and full backpressure conformance remain explicit implementation leaves; std.async is an intrinsic language/VM owner; it has no capability-gated host provider",
+          "reason": null,
           "refs": [
             "TONDO_IMPLEMENTATION_TRACKER.md",
+            "crates/tondo-compiler/src/bytecode/lower.rs",
             "crates/tondo-compiler/src/hir/check.rs",
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/mir/lower.rs",
+            "crates/tondo-vm/src/bytecode.rs",
+            "crates/tondo-vm/src/bytecode/verify.rs",
             "crates/tondo-vm/src/runtime/execute.rs",
             "testing/stdlib-async.json",
             "testing/stdlib-implementation.json"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "MODEL/TEST/FUZZ": {
-          "reason": "the contract negative cases are deterministic, but a dedicated async iterator and cancellation fuzz target belongs to STD-A-ASYNC-IMPL-001 and STD-A-FUZZ-001",
+          "reason": "the contract negative cases are deterministic, but a dedicated async iterator and cancellation fuzz target belongs to STD-A-FUZZ-001",
           "refs": [
             "TONDO_IMPLEMENTATION_TRACKER.md",
             "crates/tondo-compiler/src/driver.rs",
@@ -118,6 +121,7 @@
             "scripts/stdlib-async-check.sh",
             "scripts/stdlib-async-test.sh",
             "testing/stdlib-async.json",
+            "tests/runtime/m11-std-async-impl-001.to",
             "tests/runtime/m11-std-async-iter-001.to",
             "tests/runtime/m7-suspension-inferred.to"
           ],
@@ -12926,8 +12930,7 @@
         "verified": 385
       },
       "IMPL/HOST": {
-        "partial": 12,
-        "verified": 373
+        "verified": 385
       },
       "MODEL/TEST/FUZZ": {
         "partial": 379,

@@ -526,6 +526,7 @@ enum TaskStatus {
 struct TaskRecord {
     frames: Vec<Frame>,
     pending_unwind: Option<RuntimeUnwind>,
+    async_collect: Option<AsyncCollectTask>,
     status: TaskStatus,
     resume: Option<TaskWait>,
     queued: bool,
@@ -534,6 +535,20 @@ struct TaskRecord {
     parent_scope: Option<usize>,
     join_consumed: bool,
     panic_observed: bool,
+}
+
+/// State owned by a spawned `AsyncIterator.collect` operation.  The iterator
+/// implementation still runs as ordinary bytecode frames; this small owner
+/// only keeps the cursor and bounded result buffer alive between `next()`
+/// suspensions.
+#[derive(Debug)]
+struct AsyncCollectTask {
+    cursor: Value,
+    next: Value,
+    remaining: i128,
+    values: Vec<Value>,
+    outcome: BytecodeTypeId,
+    array: BytecodeTypeId,
 }
 
 #[derive(Debug)]
@@ -616,6 +631,7 @@ impl<'program, 'host> Engine<'program, 'host> {
         self.tasks.push(TaskRecord {
             frames: Vec::new(),
             pending_unwind: None,
+            async_collect: None,
             status: TaskStatus::Running,
             resume: None,
             queued: false,
@@ -629,6 +645,14 @@ impl<'program, 'host> Engine<'program, 'host> {
 
         loop {
             if !self.resume_current_task()? {
+                if let Some(execution) = self.schedule_next()? {
+                    return Ok(execution);
+                }
+                continue;
+            }
+            if self.frames.is_empty() && self.tasks[self.current_task].async_collect.is_some() {
+                self.step_budget()?;
+                self.start_async_collect()?;
                 if let Some(execution) = self.schedule_next()? {
                     return Ok(execution);
                 }
@@ -1206,6 +1230,7 @@ impl<'program, 'host> Engine<'program, 'host> {
         self.tasks.push(TaskRecord {
             frames: child_frames,
             pending_unwind: None,
+            async_collect: None,
             status: TaskStatus::Runnable,
             resume: None,
             queued: false,
@@ -1225,6 +1250,263 @@ impl<'program, 'host> Engine<'program, 'host> {
         Ok(task)
     }
 
+    fn spawn_async_iterator_collect(
+        &mut self,
+        cursor: Value,
+        next: Value,
+        limit: Value,
+        outcome: BytecodeTypeId,
+        scope: usize,
+    ) -> Result<usize, VmError> {
+        let (array, _element) = self.result_array_type(outcome)?;
+        let Value::Integer(remaining) = limit else {
+            return Err(VmError::invariant("AsyncIterator.collect limit is not Int"));
+        };
+        let task = self.tasks.len();
+        self.tasks.push(TaskRecord {
+            frames: Vec::new(),
+            pending_unwind: None,
+            async_collect: Some(AsyncCollectTask {
+                cursor,
+                next,
+                remaining,
+                values: Vec::new(),
+                outcome,
+                array,
+            }),
+            status: TaskStatus::Runnable,
+            resume: None,
+            queued: false,
+            cancel_requested: false,
+            waiters: Vec::new(),
+            parent_scope: Some(scope),
+            join_consumed: false,
+            panic_observed: false,
+        });
+        let scope_state = match self.task_scopes.get_mut(scope) {
+            Some(Some(scope_state)) => scope_state,
+            _ => {
+                return Err(VmError::invariant(
+                    "collect spawn targets a missing task scope",
+                ));
+            }
+        };
+        scope_state.children.push(task);
+        self.enqueue_task(task)?;
+        Ok(task)
+    }
+
+    fn start_async_collect(&mut self) -> Result<(), VmError> {
+        if self.tasks[self.current_task].cancel_requested {
+            self.tasks[self.current_task].async_collect = None;
+            return self.complete_current_task(TaskCompletion::Cancelled);
+        }
+        let remaining = match self.tasks.get(self.current_task) {
+            Some(task) => match task.async_collect.as_ref() {
+                Some(collect) => collect.remaining,
+                None => return Err(VmError::invariant("collect task lost its state")),
+            },
+            None => return Err(VmError::invariant("collect task lost its state")),
+        };
+        if remaining < 0 {
+            let outcome = match self.tasks.get(self.current_task) {
+                Some(task) => match task.async_collect.as_ref() {
+                    Some(collect) => collect.outcome,
+                    None => return Err(VmError::invariant("collect task lost its state")),
+                },
+                None => return Err(VmError::invariant("collect task lost its state")),
+            };
+            self.tasks[self.current_task].async_collect = None;
+            let result = self.collection_error_result(outcome)?;
+            return self.complete_current_task(TaskCompletion::Returned(result));
+        }
+        if remaining == 0 {
+            return self.complete_async_collect_success();
+        }
+        self.start_async_collect_next()
+    }
+
+    fn start_async_collect_next(&mut self) -> Result<(), VmError> {
+        let (next, cursor) = {
+            let collect = self.tasks[self.current_task]
+                .async_collect
+                .as_ref()
+                .ok_or_else(|| VmError::invariant("collect task lost its state"))?;
+            (collect.next.clone(), collect.cursor.clone())
+        };
+        let operation = self
+            .prepare_evaluated_call(next, vec![(BytecodeCallArgumentTarget::Receiver, cursor)])?;
+        match operation {
+            OperationResult::Call {
+                function,
+                arguments,
+            } => {
+                let function_info = match self.program.function(function) {
+                    Some(function_info) => function_info,
+                    None => {
+                        return Err(VmError::invariant("AsyncIterator.next target is invalid"));
+                    }
+                };
+                // A sentinel continuation (no normal target and no caller
+                // frame) routes the returned Option back to the collect owner.
+                self.push_frame(
+                    function,
+                    arguments,
+                    Some(CallContinuation {
+                        destination: None,
+                        target: None,
+                        unwind: function_info.unwind,
+                        call_span: function_info.source,
+                        test_boundary: None,
+                        virtual_time: None,
+                    }),
+                )?;
+                Ok(())
+            }
+            OperationResult::Value(value) => self.finish_async_collect_next(value),
+            OperationResult::Panic(code, message) => Err(VmError::invariant(format!(
+                "AsyncIterator.next preparation panicked ({code:?}): {message}"
+            ))),
+            OperationResult::HostAsync { name, .. } => Err(VmError::UnsupportedHostCall(name)),
+            OperationResult::AsyncIteratorCollect { .. }
+            | OperationResult::OneShotWait { .. }
+            | OperationResult::TestBoundaryCall { .. }
+            | OperationResult::VirtualTimeBoundaryCall { .. } => Err(VmError::invariant(
+                "AsyncIterator.next crossed an unsupported internal boundary",
+            )),
+        }
+    }
+
+    fn finish_async_collect_next(&mut self, value: Value) -> Result<(), VmError> {
+        if self.tasks[self.current_task].cancel_requested {
+            self.tasks[self.current_task].async_collect = None;
+            return self.complete_current_task(TaskCompletion::Cancelled);
+        }
+        let item = match value {
+            Value::Heap(handle) => match self.heap.get(handle)?.clone() {
+                HeapObject::OptionNone => None,
+                HeapObject::OptionSome(Some(value)) => Some(value),
+                HeapObject::OptionSome(None) => {
+                    return Err(VmError::invariant(
+                        "AsyncIterator.next returned an empty OptionSome",
+                    ));
+                }
+                _ => {
+                    return Err(VmError::invariant(
+                        "AsyncIterator.next did not return an Option",
+                    ));
+                }
+            },
+            _ => {
+                return Err(VmError::invariant(
+                    "AsyncIterator.next did not return a managed Option",
+                ));
+            }
+        };
+        let Some(item) = item else {
+            return self.complete_async_collect_success();
+        };
+        let too_many = match self.tasks.get(self.current_task) {
+            Some(task) => match task.async_collect.as_ref() {
+                Some(collect) => collect.values.len() >= self.limits.max_heap_objects as usize,
+                None => true,
+            },
+            None => true,
+        };
+        if too_many {
+            let outcome = match self.tasks.get(self.current_task) {
+                Some(task) => match task.async_collect.as_ref() {
+                    Some(collect) => collect.outcome,
+                    None => return Err(VmError::invariant("collect task lost its state")),
+                },
+                None => return Err(VmError::invariant("collect task lost its state")),
+            };
+            self.tasks[self.current_task].async_collect = None;
+            let result = self.collection_error_result(outcome)?;
+            return self.complete_current_task(TaskCompletion::Returned(result));
+        }
+        let can_reserve = {
+            let collect = match self.tasks[self.current_task].async_collect.as_mut() {
+                Some(collect) => collect,
+                None => return Err(VmError::invariant("collect task lost its state")),
+            };
+            collect.values.try_reserve(1).is_ok()
+        };
+        if !can_reserve {
+            let outcome = match self.tasks.get(self.current_task) {
+                Some(task) => match task.async_collect.as_ref() {
+                    Some(collect) => collect.outcome,
+                    None => return Err(VmError::invariant("collect task lost its state")),
+                },
+                None => return Err(VmError::invariant("collect task lost its state")),
+            };
+            self.tasks[self.current_task].async_collect = None;
+            let result = self.collection_error_result(outcome)?;
+            self.complete_current_task(TaskCompletion::Returned(result))?;
+            return Ok(());
+        }
+        let remaining = {
+            let collect = match self.tasks[self.current_task].async_collect.as_mut() {
+                Some(collect) => collect,
+                None => return Err(VmError::invariant("collect task lost its state")),
+            };
+            collect.values.push(item);
+            collect.remaining -= 1;
+            collect.remaining
+        };
+        if remaining <= 0 {
+            self.complete_async_collect_success()
+        } else {
+            self.start_async_collect_next()
+        }
+    }
+
+    fn complete_async_collect_success(&mut self) -> Result<(), VmError> {
+        let collect = match self.tasks[self.current_task].async_collect.take() {
+            Some(collect) => collect,
+            None => return Err(VmError::invariant("collect task lost its state")),
+        };
+        let outcome = collect.outcome;
+        let marker = self.temporary_roots.len();
+        self.retain_temporary(&collect.cursor);
+        self.retain_temporary(&collect.next);
+        for value in &collect.values {
+            self.retain_temporary(value);
+        }
+        let mut array_values = Vec::with_capacity(collect.values.len());
+        for value in collect.values {
+            array_values.push(Some(value));
+        }
+        let array = match self.allocate(collect.array, HeapObject::Array(array_values.into()), &[])
+        {
+            Ok(array) => array,
+            Err(error) if error.is_resource_limit() => {
+                self.temporary_roots.truncate(marker);
+                let result = self.collection_error_result(outcome)?;
+                return self.complete_current_task(TaskCompletion::Returned(result));
+            }
+            Err(error) => {
+                self.temporary_roots.truncate(marker);
+                return Err(error);
+            }
+        };
+        let result =
+            match self.allocate(outcome, HeapObject::ResultOk(Some(array.clone())), &[array]) {
+                Ok(result) => result,
+                Err(error) if error.is_resource_limit() => {
+                    self.temporary_roots.truncate(marker);
+                    let result = self.collection_error_result(outcome)?;
+                    return self.complete_current_task(TaskCompletion::Returned(result));
+                }
+                Err(error) => {
+                    self.temporary_roots.truncate(marker);
+                    return Err(error);
+                }
+            };
+        self.temporary_roots.truncate(marker);
+        self.complete_current_task(TaskCompletion::Returned(result))
+    }
+
     fn spawn_host_task(
         &mut self,
         call: u64,
@@ -1235,6 +1517,7 @@ impl<'program, 'host> Engine<'program, 'host> {
         self.tasks.push(TaskRecord {
             frames: Vec::new(),
             pending_unwind: None,
+            async_collect: None,
             status: TaskStatus::Waiting(TaskWait::HostTask { call, outcome }),
             resume: None,
             queued: false,
@@ -1258,6 +1541,7 @@ impl<'program, 'host> Engine<'program, 'host> {
         self.tasks.push(TaskRecord {
             frames: Vec::new(),
             pending_unwind: None,
+            async_collect: None,
             status: TaskStatus::Complete(Some(TaskCompletion::Returned(value))),
             resume: None,
             queued: false,
@@ -1306,6 +1590,7 @@ impl<'program, 'host> Engine<'program, 'host> {
         self.tasks.push(TaskRecord {
             frames: Vec::new(),
             pending_unwind: None,
+            async_collect: None,
             status: TaskStatus::Waiting(TaskWait::OneShotTask { id, outcome }),
             resume: None,
             queued: false,
@@ -1329,6 +1614,7 @@ impl<'program, 'host> Engine<'program, 'host> {
         self.tasks.push(TaskRecord {
             frames: Vec::new(),
             pending_unwind: None,
+            async_collect: None,
             status: TaskStatus::Complete(Some(TaskCompletion::Cancelled)),
             resume: None,
             queued: false,
@@ -3098,6 +3384,11 @@ impl<'program, 'host> Engine<'program, 'host> {
                             "an async virtual-time boundary appeared in a synchronous invocation",
                         ));
                     }
+                    OperationResult::AsyncIteratorCollect { .. } => {
+                        return Err(VmError::invariant(
+                            "AsyncIterator.collect appeared in a synchronous invocation",
+                        ));
+                    }
                     OperationResult::Panic(code, message) => {
                         self.begin_panic(frame, code, message, span, *unwind)?;
                     }
@@ -3211,6 +3502,11 @@ impl<'program, 'host> Engine<'program, 'host> {
                                     }),
                                 )?;
                             }
+                            OperationResult::AsyncIteratorCollect { .. } => {
+                                return Err(VmError::invariant(
+                                    "AsyncIterator.collect appeared outside its spawn owner",
+                                ));
+                            }
                         }
                     }
                     BytecodeAwaitable::Join(join) => {
@@ -3316,6 +3612,22 @@ impl<'program, 'host> Engine<'program, 'host> {
                         let scope = self.active_task_scope(frame, *scope)?;
                         let call = self.host.start_async(&name, &arguments)?;
                         let child = self.spawn_host_task(call, outcome, scope)?;
+                        self.write_place(
+                            frame,
+                            destination,
+                            Value::Join(RuntimeJoin { task: child, scope }),
+                        )?;
+                        self.jump(frame, *target);
+                    }
+                    OperationResult::AsyncIteratorCollect {
+                        cursor,
+                        next,
+                        limit,
+                        outcome,
+                    } => {
+                        let scope = self.active_task_scope(frame, *scope)?;
+                        let child =
+                            self.spawn_async_iterator_collect(cursor, next, limit, outcome, scope)?;
                         self.write_place(
                             frame,
                             destination,
@@ -3540,6 +3852,11 @@ impl<'program, 'host> Engine<'program, 'host> {
                             OperationResult::VirtualTimeBoundaryCall { .. } => {
                                 return Err(VmError::invariant("virtual time cannot be spawned"));
                             }
+                            OperationResult::AsyncIteratorCollect { .. } => {
+                                return Err(VmError::invariant(
+                                    "AsyncIterator.collect cannot be deferred",
+                                ));
+                            }
                         }
                     }
                     RuntimeCleanup::Fallback(fallback) => {
@@ -3579,6 +3896,13 @@ impl<'program, 'host> Engine<'program, 'host> {
                     .pop()
                     .ok_or_else(|| VmError::invariant("return could not pop the current frame"))?;
                 if let Some(continuation) = finished.continuation {
+                    if continuation.target.is_none()
+                        && self.frames.is_empty()
+                        && self.tasks[self.current_task].async_collect.is_some()
+                    {
+                        self.finish_async_collect_next(value)?;
+                        return Ok(None);
+                    }
                     let caller = self.frames.len().checked_sub(1).ok_or_else(|| {
                         VmError::invariant("callee returned without its caller frame")
                     })?;
@@ -3624,6 +3948,21 @@ impl<'program, 'host> Engine<'program, 'host> {
                     .pop()
                     .ok_or_else(|| VmError::invariant("panic resume could not pop its frame"))?;
                 if let Some(continuation) = finished.continuation {
+                    if continuation.target.is_none()
+                        && self.frames.is_empty()
+                        && self.tasks[self.current_task].async_collect.is_some()
+                    {
+                        let unwind = self.pending_unwind.take().ok_or_else(|| {
+                            VmError::invariant("collect iterator unwind disappeared")
+                        })?;
+                        let completion = match unwind {
+                            RuntimeUnwind::Panic(panic) => TaskCompletion::Panicked(panic),
+                            RuntimeUnwind::Cancelled => TaskCompletion::Cancelled,
+                        };
+                        self.tasks[self.current_task].async_collect = None;
+                        self.complete_current_task(completion)?;
+                        return Ok(None);
+                    }
                     let caller = self.frames.len().checked_sub(1).ok_or_else(|| {
                         VmError::invariant("panicking callee has no caller frame")
                     })?;
@@ -3773,6 +4112,11 @@ impl<'program, 'host> Engine<'program, 'host> {
                             virtual_time: Some(controller),
                         }),
                     )?;
+                }
+                OperationResult::AsyncIteratorCollect { .. } => {
+                    return Err(VmError::invariant(
+                        "AsyncIterator.collect cannot be deferred",
+                    ));
                 }
             }
         } else if self.pending_unwind.is_some() {
@@ -4016,6 +4360,11 @@ impl<'program, 'host> Engine<'program, 'host> {
             if task_id != self.current_task {
                 self.append_frame_roots(&task.frames, &mut roots)?;
             }
+            if let Some(collect) = &task.async_collect {
+                roots.push(collect.cursor.clone());
+                roots.push(collect.next.clone());
+                roots.extend(collect.values.iter().cloned());
+            }
             if let TaskStatus::Complete(Some(TaskCompletion::Returned(value))) = &task.status {
                 roots.push(value.clone());
             }
@@ -4221,6 +4570,12 @@ enum OperationResult {
     HostAsync {
         name: String,
         arguments: Vec<RuntimeValue>,
+        outcome: BytecodeTypeId,
+    },
+    AsyncIteratorCollect {
+        cursor: Value,
+        next: Value,
+        limit: Value,
         outcome: BytecodeTypeId,
     },
     OneShotWait {
@@ -8109,6 +8464,7 @@ impl Engine<'_, '_> {
                 .iter()
                 .position(|parameter| parameter.receiver);
             let mut variadic_values = Vec::new();
+            let mut async_iterator_next = None;
             for (target, value) in arguments {
                 match target {
                     BytecodeCallArgumentTarget::Receiver => {
@@ -8139,6 +8495,13 @@ impl Engine<'_, '_> {
                             variadic_values.push(value);
                         }
                     }
+                    BytecodeCallArgumentTarget::AsyncIteratorNext => {
+                        if async_iterator_next.replace(value).is_some() {
+                            return Err(VmError::invariant(
+                                "collect call provides AsyncIterator.next more than once",
+                            ));
+                        }
+                    }
                 }
             }
             if let Some(index) = variadic {
@@ -8156,6 +8519,39 @@ impl Engine<'_, '_> {
                 .collect::<Result<Vec<_>, _>>()?;
             if let Some(environment) = environment {
                 values.insert(0, environment);
+            }
+            if metadata.name.starts_with("std.async.AsyncIterator.collect") {
+                let receiver_index = metadata
+                    .parameters
+                    .iter()
+                    .position(|parameter| parameter.receiver)
+                    .ok_or_else(|| {
+                        VmError::invariant("collect callable has no receiver parameter")
+                    })?;
+                let limit_index = metadata
+                    .parameters
+                    .iter()
+                    .enumerate()
+                    .find(|(_, parameter)| !parameter.receiver)
+                    .map(|(index, _)| index)
+                    .ok_or_else(|| VmError::invariant("collect callable has no limit parameter"))?;
+                let next = async_iterator_next.ok_or_else(|| {
+                    VmError::invariant("collect callable has no AsyncIterator.next dispatch")
+                })?;
+                let cursor = values
+                    .get(receiver_index)
+                    .ok_or_else(|| VmError::invariant("collect receiver slot is missing"))?
+                    .clone();
+                let limit = values
+                    .get(limit_index)
+                    .ok_or_else(|| VmError::invariant("collect limit slot is missing"))?
+                    .clone();
+                return Ok(OperationResult::AsyncIteratorCollect {
+                    cursor,
+                    next,
+                    limit,
+                    outcome: metadata.outcome,
+                });
             }
             if let Some(function) = metadata.implementation {
                 Ok(OperationResult::Call {
@@ -9936,6 +10332,9 @@ impl Engine<'_, '_> {
                 | OperationResult::VirtualTimeBoundaryCall { .. } => Err(VmError::invariant(
                     "iterator callback crossed an internal async/test boundary",
                 )),
+                OperationResult::AsyncIteratorCollect { .. } => Err(VmError::invariant(
+                    "iterator callback attempted AsyncIterator.collect",
+                )),
                 OperationResult::Call { .. } => unreachable!(),
             };
         };
@@ -11107,6 +11506,7 @@ mod tests {
         TaskRecord {
             frames: Vec::new(),
             pending_unwind: None,
+            async_collect: None,
             status,
             resume: None,
             queued: false,
@@ -11116,6 +11516,38 @@ mod tests {
             join_consumed: true,
             panic_observed: false,
         }
+    }
+
+    #[test]
+    fn async_collect_owner_rejects_uninitialized_state_at_each_boundary() {
+        let program = root_pressure_program();
+        let trace = derive_trace_metadata(&program).unwrap();
+        let mut host = RejectingHost;
+        let mut engine = Engine::new(
+            &program,
+            &mut host,
+            pressure_limits(),
+            ValueCopyStrategy::default(),
+            trace,
+        );
+
+        assert!(
+            engine
+                .spawn_async_iterator_collect(
+                    Value::Unit,
+                    Value::Unit,
+                    Value::Integer(1),
+                    BytecodeTypeId::new(5),
+                    0,
+                )
+                .is_err()
+        );
+
+        engine.tasks.push(scheduler_task(TaskStatus::Runnable));
+        assert!(engine.start_async_collect().is_err());
+        assert!(engine.start_async_collect_next().is_err());
+        assert!(engine.finish_async_collect_next(Value::Integer(0)).is_err());
+        assert!(engine.complete_async_collect_success().is_err());
     }
 
     #[test]

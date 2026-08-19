@@ -31,7 +31,7 @@
       "id": "std.async",
       "layer": "A1",
       "status": "partial",
-      "reason": "the public callable surface is audited and the contract is executable, but full async iterator, collect and cancellation conformance waits for STD-A-ASYNC-IMPL-001",
+      "reason": "the public callable surface is audited and the implementation is runtime-covered, but full owner conformance waits for STD-A-CONF-001",
       "public_signatures": [
         "std.async:31",
         "std.async:32",
@@ -53,7 +53,7 @@
           "id": "requirement:std.async:async-iterator",
           "kind": "requirement",
           "status": "partial",
-          "reason": "the public callable surface is audited and the contract is executable, but full async iterator, collect and cancellation conformance waits for STD-A-ASYNC-IMPL-001",
+          "reason": "the public callable surface is audited and the implementation is runtime-covered, but full owner conformance waits for STD-A-CONF-001",
           "refs": [
             "testing/stdlib-public-api.json",
             "testing/stdlib-async.json",
@@ -64,7 +64,7 @@
           "id": "requirement:std.async:bounded-collect",
           "kind": "requirement",
           "status": "partial",
-          "reason": "the public callable surface is audited and the contract is executable, but full async iterator, collect and cancellation conformance waits for STD-A-ASYNC-IMPL-001",
+          "reason": "the public callable surface is audited and the implementation is runtime-covered, but full owner conformance waits for STD-A-CONF-001",
           "refs": [
             "testing/stdlib-public-api.json",
             "testing/stdlib-async.json",
@@ -75,7 +75,7 @@
           "id": "requirement:std.async:close-backpressure",
           "kind": "requirement",
           "status": "partial",
-          "reason": "the public callable surface is audited and the contract is executable, but full async iterator, collect and cancellation conformance waits for STD-A-ASYNC-IMPL-001",
+          "reason": "the public callable surface is audited and the implementation is runtime-covered, but full owner conformance waits for STD-A-CONF-001",
           "refs": [
             "testing/stdlib-public-api.json",
             "testing/stdlib-async.json",
@@ -86,7 +86,7 @@
           "id": "requirement:std.async:join-affinity",
           "kind": "requirement",
           "status": "partial",
-          "reason": "the public callable surface is audited and the contract is executable, but full async iterator, collect and cancellation conformance waits for STD-A-ASYNC-IMPL-001",
+          "reason": "the public callable surface is audited and the implementation is runtime-covered, but full owner conformance waits for STD-A-CONF-001",
           "refs": [
             "testing/stdlib-public-api.json",
             "testing/stdlib-async.json",
@@ -97,7 +97,7 @@
           "id": "requirement:std.async:no-channel-in-a",
           "kind": "requirement",
           "status": "partial",
-          "reason": "the public callable surface is audited and the contract is executable, but full async iterator, collect and cancellation conformance waits for STD-A-ASYNC-IMPL-001",
+          "reason": "the public callable surface is audited and the implementation is runtime-covered, but full owner conformance waits for STD-A-CONF-001",
           "refs": [
             "testing/stdlib-public-api.json",
             "testing/stdlib-async.json",
@@ -108,7 +108,7 @@
           "id": "requirement:std.async:oneshot-completion",
           "kind": "requirement",
           "status": "partial",
-          "reason": "the public callable surface is audited and the contract is executable, but full async iterator, collect and cancellation conformance waits for STD-A-ASYNC-IMPL-001",
+          "reason": "the public callable surface is audited and the implementation is runtime-covered, but full owner conformance waits for STD-A-CONF-001",
           "refs": [
             "testing/stdlib-public-api.json",
             "testing/stdlib-async.json",
@@ -119,7 +119,7 @@
           "id": "requirement:std.async:suspends-visibility",
           "kind": "requirement",
           "status": "partial",
-          "reason": "the public callable surface is audited and the contract is executable, but full async iterator, collect and cancellation conformance waits for STD-A-ASYNC-IMPL-001",
+          "reason": "the public callable surface is audited and the implementation is runtime-covered, but full owner conformance waits for STD-A-CONF-001",
           "refs": [
             "testing/stdlib-public-api.json",
             "testing/stdlib-async.json",
@@ -130,7 +130,7 @@
           "id": "signature:std.async:31",
           "kind": "signature",
           "status": "partial",
-          "reason": "the public callable surface is audited and the contract is executable, but full async iterator, collect and cancellation conformance waits for STD-A-ASYNC-IMPL-001",
+          "reason": "the public callable surface is audited and the implementation is runtime-covered, but full owner conformance waits for STD-A-CONF-001",
           "refs": [
             "testing/stdlib-public-api.json",
             "testing/stdlib-async.json",
@@ -141,7 +141,7 @@
           "id": "signature:std.async:32",
           "kind": "signature",
           "status": "partial",
-          "reason": "the public callable surface is audited and the contract is executable, but full async iterator, collect and cancellation conformance waits for STD-A-ASYNC-IMPL-001",
+          "reason": "the public callable surface is audited and the implementation is runtime-covered, but full owner conformance waits for STD-A-CONF-001",
           "refs": [
             "testing/stdlib-public-api.json",
             "testing/stdlib-async.json",
@@ -152,7 +152,7 @@
           "id": "signature:std.async:33",
           "kind": "signature",
           "status": "partial",
-          "reason": "the public callable surface is audited and the contract is executable, but full async iterator, collect and cancellation conformance waits for STD-A-ASYNC-IMPL-001",
+          "reason": "the public callable surface is audited and the implementation is runtime-covered, but full owner conformance waits for STD-A-CONF-001",
           "refs": [
             "testing/stdlib-public-api.json",
             "testing/stdlib-async.json",
@@ -163,7 +163,7 @@
           "id": "signature:std.async:34",
           "kind": "signature",
           "status": "partial",
-          "reason": "the public callable surface is audited and the contract is executable, but full async iterator, collect and cancellation conformance waits for STD-A-ASYNC-IMPL-001",
+          "reason": "the public callable surface is audited and the implementation is runtime-covered, but full owner conformance waits for STD-A-CONF-001",
           "refs": [
             "testing/stdlib-public-api.json",
             "testing/stdlib-async.json",
@@ -174,7 +174,7 @@
           "id": "signature:std.async:35",
           "kind": "signature",
           "status": "partial",
-          "reason": "the public callable surface is audited and the contract is executable, but full async iterator, collect and cancellation conformance waits for STD-A-ASYNC-IMPL-001",
+          "reason": "the public callable surface is audited and the implementation is runtime-covered, but full owner conformance waits for STD-A-CONF-001",
           "refs": [
             "testing/stdlib-public-api.json",
             "testing/stdlib-async.json",

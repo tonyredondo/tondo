@@ -4390,6 +4390,71 @@ fn main() {
     }
 
     #[test]
+    fn async_iterator_collect_spawn_uses_the_same_generic_cursor_and_cancellation() {
+        let output = execute(operation_request(
+            Operation::Run,
+            b"import std.async\n\
+              type Counter = { remaining: Int }\n\
+              impl AsyncIterator[Int] for Counter {\n\
+                  async fn next(mut self): Int? {\n\
+                      await tick()\n\
+                      if self.remaining == 0 {\n\
+                          return none\n\
+                      }\n\
+                      let current = self.remaining\n\
+                      self.remaining -= 1\n\
+                      some(current)\n\
+                  }\n\
+              }\n\
+              type Blocked = { waiter: async.Waiter[Int, String] }\n\
+              impl AsyncIterator[Int] for Blocked {\n\
+                  async fn next(mut self): Int? {\n\
+                      let result = self.waiter.wait()\n\
+                      match result {\n\
+                          ok(value) => some(value)\n\
+                          err(_) => none\n\
+                      }\n\
+                  }\n\
+              }\n\
+              async fn tick() {}\n\
+              fn bounded() {\n\
+                  scope {\n\
+                      let pending = spawn Counter { remaining: 3 }.collect(limit: 2)\n\
+                      let result = await pending\n\
+                      match result {\n\
+                          ok(values) => assert(values == [3, 2])\n\
+                          err(_) => panic(\"spawn collect failed\")\n\
+                      }\n\
+                  }\n\
+              }\n\
+              fn cancelled(waiter: async.Waiter[Int, String]) {\n\
+                  scope {\n\
+                      let pending = spawn Blocked { waiter: waiter }.collect(limit: 1)\n\
+                      return\n\
+                  }\n\
+              }\n\
+              fn main() {\n\
+                  bounded()\n\
+                  let pair = async.oneshot[Int, String]()\n\
+                  var (waiter, completer) = pair\n\
+                  cancelled(waiter)\n\
+                  _ = completer.cancel()\n\
+              }\n",
+            SourceForm::Script,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert_eq!(output.exit_code(), 0);
+        assert!(output.diagnostics().diagnostics().is_empty());
+    }
+
+    #[test]
     fn async_oneshot_completes_pending_waiters_once_and_cancels_cleanly() {
         let output = execute(operation_request(
             Operation::Run,

@@ -86,12 +86,13 @@
           "scripts/stdlib-async-test.sh",
           "tests/runtime/m7-suspension-inferred.to",
           "tests/runtime/m11-std-async-iter-001.to",
+          "tests/runtime/m11-std-async-impl-001.to",
           "crates/tondo-compiler/src/driver.rs"
         ]
       },
       "fuzz": {
         "status": "partial",
-        "reason": "the contract negative cases are deterministic, but a dedicated async iterator and cancellation fuzz target belongs to STD-A-ASYNC-IMPL-001 and STD-A-FUZZ-001",
+        "reason": "the contract negative cases are deterministic, but a dedicated async iterator and cancellation fuzz target belongs to STD-A-FUZZ-001",
         "campaigns": [
           "bounded-owner-corpus"
         ],
