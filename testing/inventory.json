@@ -6,13 +6,13 @@
       "path": "TONDO_LANGUAGE_SPEC.md",
       "edition": "0.1",
       "status": "draft-normative",
-      "sha256": "035be3490638999cd9b6b00a4182e8bce05efcd186805b8e628069f655c0dc44"
+      "sha256": "c91923d3616d1fc22df1da38a0f1d3366c7b67477c49b3fc8b0f0e7b49459baa"
     },
     {
       "path": "TONDO_STANDARD_LIBRARY_SPEC.md",
       "edition": "0.1",
       "status": "draft-pending",
-      "sha256": "a3080a4abd834a2e1b8a2c2460db00e1ef1f98fe43d03d745e765f83ff234cdd"
+      "sha256": "5cacdebe2688193cbded9b3899e04a5d93401e7cd40d4b4fdffb583353c0172d"
     },
     {
       "path": "TONDO_TESTING_SPEC.md",
@@ -30,7 +30,7 @@
       "path": "conformance/draft/manifest.json",
       "edition": "0.1",
       "status": "draft-open",
-      "sha256": "934b37177bb9ba877f52cfb94c02285efd42d8b6abc8435edc0641f9bc5e54a7"
+      "sha256": "07dcb3e51a31bf4a4f389a705d1fef1e12d9aa859be201abc63ae66f983d7e05"
     }
   ],
   "summary": {
@@ -3073,7 +3073,7 @@
       ],
       "oracle": "exact-observation",
       "repetitions": 1,
-      "source_sha256": "7f7b1f30ddbff5ef7cec4db95c1e92596371bb250f13a8a9ef5f624634ea8c3b",
+      "source_sha256": "3ca8aedec0d190921fdabac5ea16c72f79ed64db7d5b4089045bb463d37a4ef9",
       "target": "tondo-vm-hosted",
       "document": "TONDO_LANGUAGE_SPEC.md",
       "edition": "0.1",

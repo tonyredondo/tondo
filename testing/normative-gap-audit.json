@@ -5,7 +5,7 @@
   "documents": [
     {
       "path": "TONDO_LANGUAGE_SPEC.md",
-      "sha256": "035be3490638999cd9b6b00a4182e8bce05efcd186805b8e628069f655c0dc44"
+      "sha256": "c91923d3616d1fc22df1da38a0f1d3366c7b67477c49b3fc8b0f0e7b49459baa"
     },
     {
       "path": "TONDO_TESTING_SPEC.md",
@@ -17,9 +17,9 @@
     }
   ],
   "summary": {
-    "total": 372,
+    "total": 374,
     "by_outcome": {
-      "absent": 12,
+      "absent": 14,
       "implemented-without-trace": 358,
       "not-applicable": 2
     }
@@ -573,6 +573,15 @@
         "rust:tondo-compiler:src::types:unification_shape_matrix_traverses_every_closed_constructor"
       ],
       "follow_up": null
+    },
+    {
+      "requirement": "TL01-10-18-R001",
+      "text_sha256": "1fbccfca384d00682c2bdd5bfb7ea29535b8e979f81b6ea2695af42386ad01b6",
+      "outcome": "absent",
+      "reason": "TL01-10-18-R001 defines the closed async cursor adaptation and rejects borrowed loop headers over shared collections; implementation is tracked by STD-SYNC-COLLECTION-ITER-001.",
+      "implementation": [],
+      "tests": [],
+      "follow_up": "CONF-GAP-IMPL-001:TL01-10-18-R001"
     },
     {
       "requirement": "TL01-10-3-R001",
@@ -1728,6 +1737,15 @@
         "rust:tondo-compiler:src::hir::check:affine_availability_rejects_sequential_and_call_once_reuse"
       ],
       "follow_up": null
+    },
+    {
+      "requirement": "TL01-16-14-R005",
+      "text_sha256": "71a6b3f757b1bbc0bc38db863ca0abc0e2b482ef04957aab00001452f66e335e",
+      "outcome": "absent",
+      "reason": "TL01-16-14-R005 defines the finite weak iteration horizon, per-next linearization, termination, and no-O(n)-copy contract; implementation is tracked by STD-SYNC-COLLECTION-ITER-001 and its test, performance, and conformance leaves.",
+      "implementation": [],
+      "tests": [],
+      "follow_up": "CONF-GAP-IMPL-001:TL01-16-14-R005"
     },
     {
       "requirement": "TL01-16-15-R001",

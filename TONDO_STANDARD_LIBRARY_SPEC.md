@@ -2405,7 +2405,7 @@ productor, limitar capacidad o seleccionar entre fuentes utiliza
 `std.channel`. `peek` y `snapshot` dejan el elemento en la estructura y por eso
 solo existen cuando copiarlo y observarlo concurrentemente es seguro.
 
-##### 14.4.4.4 Literales, snapshots y orden
+##### 14.4.4.4 Literales, iteración, snapshots y orden
 
 La construcción corta canónica reutiliza corchetes detrás del módulo:
 
@@ -2428,12 +2428,55 @@ reglas de los literales de valor equivalentes.
 
 En `sync.Stack[a, b, c]`, `c` es la cima y el primer `pop` devuelve `c`. En
 `sync.Queue[a, b, c]`, `a` está al frente y el primer `dequeue` devuelve `a`.
-`snapshot()` establece un punto de linearización coherente y materializa una
-colección ordinaria independiente: índice para array, inserción para map/set,
-cima a base para stack y frente a fondo para queue. Los owners compartidos no
-implementan directamente `Iterator`, operadores aritméticos ni igualdad por
-contenido; esas operaciones se realizan sobre el snapshot para no esconder una
-iteración débil ni múltiples lecturas inconsistentes.
+
+Los cinco owners son fuentes directas de `for` mediante el cursor asíncrono
+cerrado `cursor[sync,C]` del lenguaje:
+
+~~~tondo pseudocode
+for value in slots {
+    inspect(value)
+}
+
+for (key, value) in cache {
+    inspectEntry(key, value)
+}
+
+for job in jobs {
+    inspect(job)
+}
+
+let coherent = cache.snapshot()?
+for (key, value) in coherent {
+    decide(key, value)
+}
+~~~
+
+El recorrido es observacional, finito y débilmente consistente. Crear el cursor
+captura en O(1) un horizonte estructural, no los contenidos: inserciones,
+reinserciones, `push` y `enqueue` posteriores a crearlo quedan fuera; una
+retirada anterior a observar la entrada puede omitirla; y una escritura pendiente
+se observa en el valor que determine el punto de linearización de ese `next`.
+Cada generación estructural se entrega como máximo una vez, el cursor no
+mantiene locks durante el cuerpo, no asigna memoria proporcional a la
+cardinalidad y termina aunque continúen las inserciones. `sync.Array` recorre
+cada índice una vez; map produce `(K, V)`; set produce `K`; stack y queue
+producen copias sin ejecutar `pop` ni `dequeue`.
+
+Solo se permiten bindings por valor. `for ref`, `for mut` y `for var` se
+rechazan porque el almacenamiento puede cambiar concurrentemente. La iteración
+de stack y queue existe únicamente bajo `T: Copy + Send + Share`. Cada `next`
+puede ceder o aparcar bajo contención, por lo que el cursor implementa
+`AsyncIterator`, el `for` espera implícitamente y la función consumidora infiere
+`suspends`. Salir pronto o cancelar libera cualquier protección de reclamación
+sin bloquear posteriores writers.
+
+El orden directo es índice ascendente para array, inserción linearizada para
+map/set, cima a base para stack y frente a fondo para queue, restringido al
+horizonte capturado. No es una vista global coherente. `snapshot()` establece en
+cambio un único punto de linearización y materializa una colección ordinaria
+independiente con esos mismos órdenes. Igualdad, agregaciones exactas,
+serialización, aritmética de colecciones y cualquier decisión que necesite un
+solo instante se realizan sobre el snapshot, no directamente sobre el owner.
 
 ##### 14.4.4.5 Estrategia de implementación y progreso
 
@@ -2445,6 +2488,10 @@ La semántica no fija un layout, pero sí una estrategia de rendimiento verifica
 - `sync.Map` y `sync.Set` combinan lecturas sin lock global con CAS, sharding o
   locks finos para escritura y resize; keys independientes no comparten una
   exclusión global innecesaria.
+- Los cursores directos se crean con memoria auxiliar O(1), avanzan en O(1)
+  esperado amortizado por candidato y no usan una tabla de visitados ni una
+  copia encubierta. Resize, retirada y reclamación conservan el horizonte y
+  evitan duplicar una generación.
 - Reclamation coopera con el GC y protege ABA, use-after-free y doble drop. Una
   implementación nativa alternativa debe demostrar el mismo ownership.
 - Tras contención repetida se aplica backoff, yield o parking suspendible

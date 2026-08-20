@@ -5625,8 +5625,11 @@ publica hasta cerrar el gate final.
   `Send`/`Share`, cleanup, cancelación, fairness, orden de memoria y
   prohibiciones dentro del scheduler. Cerrar además `sync.Array/Map/Set` con
   operaciones por slot/key, `sync.Stack` LIFO y `sync.Queue` FIFO MPMC, bounds
-  de ownership, linearización, orden, snapshots coherentes, progreso y
-  separación respecto a `std.channel`. La construcción corta es únicamente
+  de ownership, linearización, orden, `for` directo débil con horizonte finito,
+  snapshots coherentes, progreso y separación respecto a `std.channel`. El
+  recorrido directo es asíncrono, solo por valor, no destructivo y no mantiene
+  locks durante el body; `snapshot()` conserva la elección explícita para un
+  único estado coherente. La construcción corta es únicamente
   `sync.Array[...]`, `sync.Map[...]`, `sync.Set[...]`, `sync.Stack[...]` y
   `sync.Queue[...]`, resuelta por identidad aun con alias de módulo; no existen
   nombres globales `SArray`/`SMap`/`SSet`. `sync.Array` mantiene longitud fija e
@@ -5749,36 +5752,57 @@ estas leaves.
   CAS para slots/stack/queue y una
   estrategia híbrida CAS/sharding/locks finos para map/set sin lock global de
   lectura ni spin ilimitado; reclamación y ABA cooperan con GC y ownership.
+- [ ] **STD-SYNC-COLLECTION-ITER-001 — Implementar `for` concurrente directo.**
+  Reconocer solo las cinco identidades cerradas de `std.sync` y bajar el header
+  ordinario por valor a `cursor[sync,C]: AsyncIterator[T]`, copiando el handle y
+  capturando en O(1) un horizonte estructural finito. Excluir altas posteriores
+  a crear el cursor, omitir retiradas aún no observadas, linearizar cada `next`,
+  preservar el orden normativo y no repetir una generación aun con resize, ABA
+  o reclamación. El cursor no copia contenidos, no mantiene locks durante el
+  body y libera toda protección en agotamiento, `break`, error, retorno, pánico
+  o cancelación.
+  Rechazar cualquier binding `ref`/`mut`/`var`; stack/queue exigen
+  `T: Copy + Send + Share` y nunca consumen elementos. Mantener `snapshot()`
+  como la única iteración de estado global coherente y no añadir `scan`, `live`,
+  `for await` ni otro protocolo público.
 - [ ] **STD-SYNC-COLLECTION-TEST-001 — Modelar y fuzzear colecciones
   compartidas.** Mantener modelos secuenciales de referencia y linearizability
   histories para get/set/CAS, insert/remove, push/pop y enqueue/dequeue. Cubrir
   carreras de primera/última entrada, duplicados, resize, orden concurrente,
-  slots y keys independientes, snapshot frente a writers, alias de handle,
-  último drop, valores afines `Discard`, cancelación, límites, ABA, reclamación,
-  pánico y scheduling determinista/stress; ninguna pérdida, duplicación, doble
-  drop ni use-after-free puede sobrevivir.
+  slots y keys independientes, cursor directo y snapshot frente a writers,
+  alias de handle, último drop, valores afines `Discard`, cancelación, límites,
+  ABA, reclamación, pánico y scheduling determinista/stress. Para `for`, cubrir
+  horizonte frente a altas continuas, reemplazo/retiro antes de `next`, mutación
+  desde el body, salida temprana, ausencia de locks retenidos, bounds y rechazo
+  de préstamos; ninguna generación repetida, pérdida fuera de la semántica
+  débil, doble drop ni use-after-free puede sobrevivir.
 - [ ] **STD-SYNC-COLLECTION-PERF-001 — Medir colecciones compartidas.** Fijar
   fast path 1:1, lectura dominante, escrituras sobre keys independientes,
-  contención hot-key/hot-slot, MPMC, snapshot y resize por cardinalidad y cores.
+  contención hot-key/hot-slot, MPMC, cursor directo, snapshot y resize por
+  cardinalidad y cores.
   Registrar throughput, p50/p99, escalabilidad, allocations, memoria, retries,
   wakeups y parking frente a oracles equivalentes; el gate rechaza un lock
-  global accidental y selecciona por target la estrategia demostrablemente más
-  eficiente sin alterar semántica.
+  global accidental, una copia o tabla de visitados O(n) en `for` y cualquier
+  retención de locks durante el body. Seleccionar por target la estrategia
+  demostrablemente más eficiente sin alterar semántica.
 - [ ] **STD-SYNC-COLLECTION-CONF-001 — Conformar colecciones compartidas.**
   Ejecutar el mismo corpus observable en VM y nativo: literales y aliases,
-  bounds estáticos, outcomes, linearización, orden de snapshots, LIFO/FIFO,
-  límites, capability `threads` y rechazo de iteración/aritmética/equivalencia
-  directa. La evidencia de algoritmos internos no sustituye la igualdad de
-  resultados y cleanup entre backends.
+  bounds estáticos, outcomes, linearización, `for` débil finito, orden de
+  recorridos y snapshots, LIFO/FIFO, límites y capability `threads`. Exigir
+  iteración directa solo por valor, stack/queue observacionales bajo sus bounds,
+  suspensión inferida y rechazo de préstamos, aritmética y equivalencia directa.
+  La evidencia de algoritmos internos no sustituye la igualdad de resultados y
+  cleanup entre backends.
 - [ ] **STD-SYNC-CONF-001 — Conformar sync.** Ejecutar casos portables y
   capability-gated en VM/nativo, incluido rechazo estático cuando falte
   `threads`; agrega también `STD-SYNC-COLLECTION-CONF-001` y no puede cerrar el
   owner dejando las colecciones solo documentadas.
 - [ ] **STD-SYNC-DOC-001 — Documentar sync.** Publicar ordering, deadlocks,
   ausencia de poisoning, cancelación, cleanup, costes y ejemplos ejecutables
-  sin defaults ocultos. Incluir los cinco literales, array fijo, CAS, snapshots,
-  orden, LIFO/FIFO y la elección explícita entre queue no bloqueante y channel
-  con espera/backpressure.
+  sin defaults ocultos. Incluir los cinco literales, array fijo, CAS, `for`
+  directo débil, snapshots coherentes, orden, LIFO/FIFO y la elección explícita
+  entre queue no bloqueante y channel con espera/backpressure. Contrastar en un
+  ejemplo la lectura observacional eficiente con decisiones sobre snapshot.
 
 #### 21.3.3 `std.channel`
 
