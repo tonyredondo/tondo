@@ -303,7 +303,7 @@ for symbol in \
     }
 done
 
-# The Rust compatibility bridge may retain wire-specific helper values, but
+# The Rust implementation may retain wire-specific helper values, but
 # the Tondo owner must not publish a dynamic serialization.Value alias.
 if grep -Eq '^pub type Value =|^pub type CommonValue =' "$source"; then
     echo "Protobuf owner must not publish a dynamic Value alias" >&2

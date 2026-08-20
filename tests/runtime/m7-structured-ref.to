@@ -1,14 +1,14 @@
 import std.console
 
-async fn observe(value: ref String): String {
-    await identity(ref value)
+fn observe(value: ref String): String suspends {
+    identity(ref value)
 }
 
-async fn identity(value: ref String): String {
+fn identity(value: ref String): String suspends {
     value
 }
 
-async fn main() {
+fn main() suspends {
     scope {
         var value = "before"
         let pending = spawn observe(ref value)

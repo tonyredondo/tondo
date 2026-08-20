@@ -2,8 +2,6 @@
 
 **Línea de desarrollo de la librería:** `draft`
 
-**Revisión del documento:** `draft.3`
-
 **Estado:** borrador normativo; Tondo y STD-0.1 todavía no
 se han publicado
 
@@ -33,7 +31,7 @@ se han publicado
 16. [Testing y conformidad](#16-testing-y-conformidad)
 17. [Evolución de la API](#17-evolución-de-la-api)
 18. [Características deliberadamente diferidas](#18-características-deliberadamente-diferidas)
-19. [Migración desde el bootstrap](#19-migración-desde-el-bootstrap)
+19. [Integración del borrador actual](#19-integración-del-borrador-actual)
 20. [Checklist de publicación](#20-checklist-de-publicación)
 
 ---
@@ -57,7 +55,7 @@ Este documento fija de forma normativa:
   determinismo, coste y portabilidad.
 - La distribución cerrada, reproducible y fijada por hashes.
 - Los requisitos de documentación, tests y conformidad de cada API.
-- La coexistencia temporal con el corpus bootstrap de regresión.
+- La integración con el corpus vivo del borrador actual.
 
 Esta revisión no fija todavía:
 
@@ -74,8 +72,8 @@ Esta revisión no fija todavía:
   Protobuf; este documento sí fija sus owners, arquitectura y garantías comunes.
 - La representación interna de ningún tipo.
 
-Una firma ilustrativa, un ejemplo del lenguaje o una operación existente en el
-bootstrap no se convierte en API de STD-0.1 hasta que su módulo cumpla la
+Una firma ilustrativa, un ejemplo del lenguaje o una operación interna no se
+convierte en API de STD-0.1 hasta que su módulo cumpla la
 [sección 15](#15-contrato-exigido-a-cada-módulo).
 
 ### 1.1 Objetivos
@@ -128,8 +126,7 @@ En este documento:
 - **STD-0.1** nombra el milestone de producto.
 - **0.1.0** nombra únicamente la futura primera versión pública completa de la
   stdlib; no identifica el estado actual.
-- **Bootstrap** nombra la superficie provisional usada como corpus de regresión
-  durante el desarrollo de Tondo 0.1.
+- **Draft** nombra el único contrato vivo durante el desarrollo de Tondo 0.1.
 
 ### 1.4 Inspiraciones aplicadas
 
@@ -800,7 +797,7 @@ No materializa un array de forma oculta detrás de una API anunciada como lazy.
 ### 9.1 Suspensión visible
 
 Todas las operaciones se declaran con `fn`. El compilador infiere un efecto de
-suspensión cuando el cuerpo llama a una operación `suspends`, usa `await`, itera
+suspensión cuando el cuerpo llama a una operación `suspends`, consume un `Join`, itera
 un `AsyncIterator` o registra cleanup suspendible. Las llamadas suspendibles
 ordinarias esperan automáticamente y devuelven el resultado lógico; no crean un
 wrapper `Task`/`Future` ni una segunda API.
@@ -810,8 +807,7 @@ incluye en el hash ABI. Una declaración sin cuerpo debe escribirlo; una
 implementación con cuerpo puede declararlo o dejar que el compilador lo infiera.
 El marcador explícito fija la promesa pública aunque la ruta actual complete de
 inmediato. `@sync`/`@nosuspend` garantiza que una función no suspende, es
-incompatible con `suspends` y rechaza cualquier llamada suspendible, incluso
-cuando aparece sin `await`.
+incompatible con `suspends` y rechaza cualquier llamada suspendible.
 
 Una operación síncrona:
 
@@ -827,8 +823,8 @@ El módulo elige una forma canónica según el efecto real:
 
 - Cálculo y transformación de memoria: síncrono.
 - Espera potencialmente no acotada de host: función suspendible, esperada
-  automáticamente en la forma ordinaria; `await` queda disponible como spelling
-  explícito y es obligatorio para consumir un handle pendiente.
+  automáticamente en la forma ordinaria. `await` se reserva para consumir un
+  `Join` pendiente.
 - Construcción inerte de un plan: síncrona.
 - Operación que solo consulta metadata ya materializada: síncrona.
 
@@ -854,9 +850,9 @@ fallar o cancelar es atómico y una segunda finalización produce
 
 `AsyncIterator[T]` y `for item in source` cubren streams lazy con backpressure
 cuando la fuente no tiene un iterador síncrono. Cada elemento espera un `next`,
-el efecto se infiere y el cierre ocurre al salir. `for await item in source`
-permanece como spelling explícito opcional para desambiguar una fuente que
-implementa ambos protocolos. La materialización solo ocurre mediante
+el efecto se infiere y el cierre ocurre al salir. Si una fuente implementa
+también `Iterator[T]`, el protocolo síncrono tiene precedencia; no existe
+`for await`. La materialización solo ocurre mediante
 `collect(limit:)`, con un límite finito y sin publicar arrays parciales. La
 adaptación de `std.channel.Channel` pertenece a STD-0.1B y no es una
 dependencia de esta superficie A.
@@ -1253,8 +1249,8 @@ Un reader o writer concreto conserva el owner de su módulo y satisface los
 protocolos mediante dispatch estático. `read`, `write`, `flush`, `readAll` y
 `writeAll` se declaran como `fn` con `suspends` en sus contratos sin cuerpo; una
 implementación con cuerpo puede conservarlo explícitamente o inferirlo. Una
-llamada ordinaria espera automáticamente. El caller puede escribir `await` como
-forma explícita, pero no hay variantes
+llamada ordinaria espera automáticamente; `await` sobre esa llamada es `E1611`.
+No hay variantes
 `readAsync` ni `writeAsync`. STD-0.1 no exige type erasure, vtables ni
 un stream dinámico común para almacenar implementaciones heterogéneas.
 
@@ -1778,22 +1774,21 @@ actualizar esta especificación y el tracker antes de implementar.
   requiera `entropy` o `clock`.
 - `std.log` define eventos puros en core; cada sink declara sus capabilities y
   política de backpressure sin alterar silenciosamente el control del programa.
-- Los argumentos de proceso pertenecen a `std.env`; el contrato bootstrap de
-  `std.process.args()` se migrará sin compatibilidad implícita.
+- Los argumentos del programa se obtienen mediante
+  `std.env.snapshot().arguments()`.
 - `std.env` solo expone un snapshot runtime explícito; no lee environment durante
   compilación ni ofrece mutación implícita.
 - `std.testing` solo existe en source sets de test y no forma parte de producción.
 - Streams, canales, red y sincronización solo aparecen bajo sus propietarios
   canónicos; ningún módulo existente los introduce indirectamente.
 
-### 14.2 Estado de esta revisión
+### 14.2 Estado del borrador
 
 El catálogo y sus propietarios son normativos. Las declaraciones exhaustivas de
 las veintinueve superficies permanecen pendientes, salvo el núcleo sellado que
 `TONDO_TESTING_SPEC.md` ya fija para `std.testing`, `std.bytes`, el sustrato
-monotónico de `std.time` y el snapshot read-only de `std.env`. El bootstrap
-conserva su propio contrato separado hasta completar la migración de la sección
-19.
+monotónico de `std.time` y el snapshot read-only de `std.env`. No existe un
+contrato bootstrap separado: el corpus consume siempre este borrador.
 
 La implementación usa dos gates internos sin crear versiones distintas:
 
@@ -2813,9 +2808,9 @@ La implementación portable vive en `crates/tondo-stdlib/src/protobuf_api.rs`:
 el checker schema-first, el parser/reader y el writer usan límites y stacks
 explícitos, y `encode_static`/`decode_static` atraviesan
 `Encode[Protobuf]`/`Decode[Protobuf]` sin materializar `serialization.Value`.
-Los helpers Rust `encode`/`decode` son únicamente el bridge de compatibilidad;
-`ProtoValue` y `Raw<Protobuf>` también quedan limitados a ese bridge y no
-introducen un alias dinámico de `serialization.Value`. La conformance oficial
+Los helpers Rust `encode`/`decode`, `ProtoValue` y `Raw<Protobuf>` son detalles
+internos de implementación y no forman una segunda API Tondo ni introducen un
+alias dinámico de `serialization.Value`. La conformance oficial
 e interoperabilidad independiente están cerradas por
 `STD-CODEC-CONF-001`, cuyo registro coordina `serde_json`, `rmpv` y `prost`,
 fragmentación, truncación, límites y preservación de unknown fields.
@@ -3031,7 +3026,7 @@ La suite estándar:
 - Tiene versión y manifest propios.
 - Fija la especificación y distribución por hash.
 - Se ejecuta mediante un adaptador público.
-- Conserva el corpus bootstrap Tondo 0.1 sin mutarlo.
+- Regenera el corpus Tondo 0.1 contra el contrato actual.
 - Ejecuta el mismo corpus contra VM y futuro backend nativo.
 - Distingue limitación de target de fallo de implementación.
 
@@ -3143,20 +3138,13 @@ tracker y de esta especificación, no mediante implementación ad hoc.
 
 ---
 
-## 19. Migración desde el bootstrap
+## 19. Integración del borrador actual
 
-El corpus bootstrap de regresión utiliza:
-
-~~~text
-PackageId = toolchain:std:0.1-bootstrap
-target    = tondo-vm-hosted
-profile   = hosted
-caps      = [console, process]
-~~~
-
-Esos bytes y su suite de conformidad se conservan como evidencia reproducible
-del desarrollo, pero no constituyen una release pública de Tondo ni una segunda
-línea de la librería.
+Tondo todavía no tiene una release. La stdlib, el adaptador hosted y el corpus
+de conformidad forman una única línea viva y usan el contrato canónico descrito
+aquí. Un cambio actualiza en el mismo bloque PackageId, interfaces, lowering,
+runtime, tests y manifest; no se conserva un paquete bootstrap, un shim o una
+suite anterior por compatibilidad.
 
 ### 19.1 `std.console`
 
@@ -3189,22 +3177,19 @@ cleanup siguen las reglas de `std.io`; el adaptador no introduce una segunda
 API sync/async ni duplica buffers. Los mensajes del host se mantienen opacos y
 nunca publican rutas o detalles dependientes del sistema operativo.
 
-El shim bootstrap histórico queda como bridge interno de compatibilidad y no
-es una segunda identidad pública. La evidencia `STD-A-CONSOLE-EVIDENCE-001`
+La evidencia `STD-A-CONSOLE-EVIDENCE-001`
 debe enlazar las siete firmas con HIR/lowering, bytecode/VM, el adaptador de
 capability, partial I/O, errores atómicos, fixture, coste y documentación antes
 de la promoción de S1A.
 
 ### 19.2 `std.process`
 
-El bootstrap expone una superficie cerrada de procesos, `Bytes` opaco y
-`process.args()`. STD-0.1:
+La superficie canónica de procesos de STD-0.1:
 
 - Conserva `Command` y `Pipeline` como planes intrínsecos.
-- Reutiliza el comportamiento probado cuando siga siendo correcto.
-- Migra el owner binario a `std.bytes.Bytes`.
-- Migra argumentos runtime a `std.env`.
-- Sustituye errores y tipos provisionales por propietarios canónicos.
+- Usa `std.bytes.Bytes` como owner binario.
+- Obtiene argumentos runtime mediante `std.env`.
+- Usa únicamente errores y tipos de sus owners canónicos.
 - Mantiene argv exacto, shell explícito, pipes, backpressure y cleanup.
 - `ProcessOutput` conserva `stdout` y `stderr` separados y ofrece además
   `combined`, una captura byte a byte en el orden observado por el host.
@@ -3216,8 +3201,7 @@ El bootstrap expone una superficie cerrada de procesos, `Bytes` opaco y
   shell; el modo script podrá bajar sus operadores de redirección a estos
   planes tipados y exigirá las capabilities de los recursos que abra.
 
-El corpus bootstrap no se reescribe. Un proyecto adopta STD-0.1
-seleccionando el nuevo PackageId y lockfile.
+El corpus vivo se regenera contra esta superficie y su PackageId actual.
 
 La evidencia ejecutable de esta frontera es `STD-A-PROC-EVIDENCE-001`: enlaza
 las diecisiete firmas públicas con el contrato hosted, la capability estática,
@@ -3227,11 +3211,12 @@ procesos y los fixtures M8. El gate cubre backpressure, streams separados y
 `STD-A-FUZZ-001` promueve el fuzz owner-aware, mientras baselines por target y
 `STD-CONF-001` siguen siendo promoción posterior.
 
-### 19.3 Implementación transitoria
+### 19.3 Una sola implementación vigente
 
-Durante la migración, el compilador puede conservar opcodes o bridges bootstrap
-internos. No puede exponer simultáneamente dos identidades públicas ni afirmar
-conformidad STD-0.1 hasta que la nueva interfaz completa sea la seleccionada.
+El compilador, la VM y los adapters pueden usar detalles internos distintos,
+pero solo implementan una identidad pública y un contrato fuente. Cuando el
+contrato cambia antes de la primera release, esos detalles, sus tests y la
+conformidad se migran en el mismo bloque; no queda un bridge anterior activo.
 
 ---
 
@@ -3262,7 +3247,7 @@ STD-0.1 puede publicarse como 0.1.0 únicamente cuando:
       límites.
 - [ ] Cada hot path tiene oracle escalar, equivalencia de kernels y gate de
       rendimiento multidimensional.
-- [ ] El corpus bootstrap Tondo 0.1 permanece verificable sin cambios.
+- [ ] El corpus vivo Tondo 0.1 se regenera y pasa contra la distribución actual.
 - [ ] Todo lo diferido está ausente o identificado fuera de `std`.
 
 Hasta cerrar esta lista, el documento puede ser normativo para las reglas base

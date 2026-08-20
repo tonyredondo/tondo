@@ -1,4 +1,0 @@
-import main.api
-fn use(value: Int): Int {
-    api.identity(value)
-}

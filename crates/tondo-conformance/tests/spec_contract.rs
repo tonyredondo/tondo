@@ -1,28 +1,25 @@
 use std::path::PathBuf;
 
-use tondo_conformance::sha256;
+use tondo_conformance::{manifest::SuiteManifest, sha256};
 
 #[test]
-fn canonical_fixture_manifest_fence_has_published_hash() {
+fn live_fixture_manifest_is_canonical_and_pinned_by_the_live_suite() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let specification = std::fs::read_to_string(root.join("TONDO_LANGUAGE_SPEC.md"))
-        .expect("the language specification must be readable UTF-8");
-    let section = specification
-        .split_once("### C.6 Serialización canónica\n")
-        .expect("the canonical serialization section must exist")
-        .1;
-    let fence = section
-        .split_once("~~~text\n")
-        .expect("the section must contain one text fence")
-        .1
-        .split_once("~~~\n")
-        .expect("the text fence must be closed")
-        .0;
+    let fixture_path = root.join("conformance/0.1/fixtures/tondo-fixture-manifest.txt");
+    let fixture = std::fs::read(&fixture_path).expect("the live fixture manifest must be readable");
+    let text = std::str::from_utf8(&fixture).expect("the live fixture manifest must be UTF-8");
+    let manifest: SuiteManifest = serde_json::from_slice(
+        &std::fs::read(root.join("conformance/0.1/manifest.json"))
+            .expect("the live suite manifest must be readable"),
+    )
+    .expect("the live suite manifest must be valid JSON");
 
-    assert!(fence.starts_with("tondo-fixture-manifest 0.1\n"));
-    assert!(fence.ends_with("end\n"));
+    assert!(text.starts_with("tondo-fixture-manifest 0.1\n"));
+    assert!(text.ends_with("end\n"));
+    assert!(!text.contains('\r'));
     assert_eq!(
-        sha256(fence.as_bytes()),
-        "7be3cf8f98dc4103699ccd2844c22bb0c0f477c0bd7b2cfea2347df2b92e7025"
+        manifest.fixture_manifest.path,
+        "conformance/0.1/fixtures/tondo-fixture-manifest.txt"
     );
+    assert_eq!(manifest.fixture_manifest.sha256, sha256(&fixture));
 }

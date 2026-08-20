@@ -4,8 +4,6 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
-use crate::sha256;
-
 const SPECIFICATIONS: [&str; 5] = [
     "TONDO_LANGUAGE_SPEC.md",
     "TONDO_STANDARD_LIBRARY_SPEC.md",
@@ -24,26 +22,13 @@ pub fn validate_repository(root: &Path) -> Result<(), String> {
             .map_err(|error| format!("`{relative}` is not valid UTF-8: {error}"))?;
         validate_document(relative, document)?;
     }
-    let language = fs::read(root.join("TONDO_LANGUAGE_SPEC.md"))
-        .map_err(|error| format!("cannot read `TONDO_LANGUAGE_SPEC.md`: {error}"))?;
     let testing = fs::read_to_string(root.join("TONDO_TESTING_SPEC.md"))
         .map_err(|error| format!("cannot read `TONDO_TESTING_SPEC.md`: {error}"))?;
-    validate_testing_metadata(&language, &testing)?;
+    validate_testing_status(&testing)?;
     Ok(())
 }
 
-fn validate_testing_metadata(language: &[u8], testing: &str) -> Result<(), String> {
-    let prefix = "- **SHA-256 de la base:** `";
-    let declared = testing
-        .lines()
-        .find_map(|line| line.strip_prefix(prefix)?.strip_suffix("`."))
-        .ok_or_else(|| "TONDO_TESTING_SPEC.md: missing base SHA-256 metadata".to_owned())?;
-    let actual = sha256(language);
-    if declared != actual {
-        return Err(format!(
-            "TONDO_TESTING_SPEC.md: base SHA-256 `{declared}` differs from TONDO_LANGUAGE_SPEC.md `{actual}`"
-        ));
-    }
+fn validate_testing_status(testing: &str) -> Result<(), String> {
     if testing
         .lines()
         .find(|line| line.starts_with("- **Estado:**"))
@@ -372,21 +357,8 @@ mod tests {
     }
 
     #[test]
-    fn testing_metadata_is_bound_to_the_language_bytes_and_current_status() {
-        let language = b"language";
-        let valid = format!(
-            "- **Estado:** borrador con implementación funcional.\n- **SHA-256 de la base:** `{}`.\n",
-            sha256(language)
-        );
-        validate_testing_metadata(language, &valid).unwrap();
-
-        let stale = "- **Estado:** borrador.\n- **SHA-256 de la base:** `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`.\n";
-        assert!(validate_testing_metadata(language, stale).is_err());
-
-        let misleading = format!(
-            "- **Estado:** todavía no implementado.\n- **SHA-256 de la base:** `{}`.\n",
-            sha256(language)
-        );
-        assert!(validate_testing_metadata(language, &misleading).is_err());
+    fn testing_status_must_describe_the_functional_runner() {
+        validate_testing_status("- **Estado:** borrador con implementación funcional.\n").unwrap();
+        assert!(validate_testing_status("- **Estado:** todavía no implementado.\n").is_err());
     }
 }

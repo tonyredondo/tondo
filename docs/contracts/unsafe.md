@@ -62,9 +62,9 @@ let value = unsafe {
 ~~~
 
 `unsafe` prueba el reconocimiento del contrato raw. Una llamada directa espera
-automáticamente; `await unsafeOperation()` es una forma explícita equivalente y
-`spawn unsafeOperation()` conserva un `Join`. Ninguna de esas formas sustituye la
-región `unsafe`.
+automáticamente; `await unsafeOperation()` se rechaza con `E1611` y
+`spawn unsafeOperation()` conserva un `Join`. Ninguna de esas formas sustituye
+la región `unsafe`.
 
 ## Diagnostics
 

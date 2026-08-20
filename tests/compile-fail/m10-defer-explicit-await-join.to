@@ -1,0 +1,9 @@
+fn cleanup() suspends {}
+
+fn invalid() suspends {
+    scope {
+        let pending = spawn cleanup()
+        defer await pending
+        await pending
+    }
+}

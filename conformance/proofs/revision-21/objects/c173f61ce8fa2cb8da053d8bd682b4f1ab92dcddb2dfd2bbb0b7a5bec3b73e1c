@@ -1,8 +1,0 @@
-fn missingMutableReceiver(): Int? {
-    let values = [1: 10]
-    values.remove(1)
-}
-
-fn missingQualifiedMode(values: var Map[Int, Int]): Int? {
-    Map.remove(values, 1)
-}

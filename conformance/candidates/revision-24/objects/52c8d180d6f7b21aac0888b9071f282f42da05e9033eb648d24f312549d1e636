@@ -1,1 +1,0 @@
-const Invalid: Int8 = 127i8 + 1i8

@@ -90,15 +90,11 @@ fn bootstrap_process_intrinsic(module: &ModuleId, name: &Name) -> Option<Intrins
         "process" => Some(match name.as_str() {
             "Command" => IntrinsicType::Command,
             "Pipeline" => IntrinsicType::Pipeline,
-            // Kept as a source-compatibility bridge for the bootstrap process
-            // contract. The canonical owner is now std.bytes.Bytes.
-            "Bytes" => IntrinsicType::Bytes,
             "ExitStatus" => IntrinsicType::ExitStatus,
             "ProcessOutput" => IntrinsicType::ProcessOutput,
             "ProcessHandle" => IntrinsicType::ProcessHandle,
             "ProcessError" => IntrinsicType::ProcessError,
             "ProcessExitError" => IntrinsicType::ProcessExitError,
-            "Utf8Error" => IntrinsicType::Utf8Error,
             _ => return None,
         }),
         "async" => Some(match name.as_str() {
@@ -2560,8 +2556,7 @@ pub enum HirBootstrapHostFunction {
     IoLimitsNew,
     IoReadAll,
     IoWriteAll,
-    ProcessArgs,
-    ProcessCmd,
+    ProcessCommand,
     ProcessShell,
     CommandStart,
     CommandStatus,
@@ -2889,8 +2884,7 @@ impl HirBootstrapHostFunction {
             Self::IoLimitsNew => "std.io.limits",
             Self::IoReadAll => "std.io.readAll",
             Self::IoWriteAll => "std.io.writeAll",
-            Self::ProcessArgs => "std.process.args",
-            Self::ProcessCmd => "std.process.cmd",
+            Self::ProcessCommand => "std.process.command",
             Self::ProcessShell => "std.process.shell",
             Self::CommandStart => "std.process.Command.start",
             Self::CommandStatus => "std.process.Command.status",
@@ -3673,6 +3667,226 @@ impl HirBody {
 #[cfg(test)]
 mod error_tests {
     use super::*;
+
+    #[test]
+    fn bootstrap_process_types_do_not_expose_bytes_compatibility_aliases() {
+        let package = crate::package::PackageId::new("toolchain:std:0.1-bootstrap").unwrap();
+        let cases = [
+            ("bytes", "Bytes", IntrinsicType::Bytes),
+            ("bytes", "BytesBuilder", IntrinsicType::BytesBuilder),
+            ("bytes", "BytesError", IntrinsicType::BytesError),
+            ("bytes", "Utf8Error", IntrinsicType::Utf8Error),
+            ("format", "Builder", IntrinsicType::FormatBuilder),
+            ("format", "FormatError", IntrinsicType::FormatError),
+            ("text", "TextError", IntrinsicType::TextError),
+            (
+                "collections",
+                "CollectionError",
+                IntrinsicType::CollectionError,
+            ),
+            ("path", "Path", IntrinsicType::Path),
+            ("path", "PathError", IntrinsicType::PathError),
+            ("fs", "FsError", IntrinsicType::FsError),
+            ("fs", "File", IntrinsicType::File),
+            ("fs", "Directory", IntrinsicType::Directory),
+            ("fs", "Metadata", IntrinsicType::Metadata),
+            ("fs", "OpenMode", IntrinsicType::OpenMode),
+            ("math", "MathError", IntrinsicType::MathError),
+            ("process", "Command", IntrinsicType::Command),
+            ("process", "Pipeline", IntrinsicType::Pipeline),
+            ("process", "ExitStatus", IntrinsicType::ExitStatus),
+            ("process", "ProcessOutput", IntrinsicType::ProcessOutput),
+            ("process", "ProcessHandle", IntrinsicType::ProcessHandle),
+            ("process", "ProcessError", IntrinsicType::ProcessError),
+            (
+                "process",
+                "ProcessExitError",
+                IntrinsicType::ProcessExitError,
+            ),
+            ("async", "Waiter", IntrinsicType::Waiter),
+            ("async", "Completer", IntrinsicType::Completer),
+            ("async", "AlreadyCompleted", IntrinsicType::AlreadyCompleted),
+            ("time", "Duration", IntrinsicType::Duration),
+            ("time", "Instant", IntrinsicType::Instant),
+            ("time", "Timer", IntrinsicType::Timer),
+            ("time", "DurationError", IntrinsicType::DurationError),
+            ("time", "ClockError", IntrinsicType::ClockError),
+            ("env", "Snapshot", IntrinsicType::EnvSnapshot),
+            ("env", "Name", IntrinsicType::EnvName),
+            ("env", "Value", IntrinsicType::EnvValue),
+            ("env", "EnvError", IntrinsicType::EnvError),
+            ("testing", "VirtualTime", IntrinsicType::VirtualTime),
+            ("testing", "FloatTolerance", IntrinsicType::FloatTolerance),
+            (
+                "testing",
+                "FloatToleranceError",
+                IntrinsicType::FloatToleranceError,
+            ),
+            ("testing", "TextDiff", IntrinsicType::TextDiff),
+            ("testing", "TempDirectory", IntrinsicType::TempDirectory),
+            ("testing", "TempError", IntrinsicType::TempError),
+            ("testing", "Generator", IntrinsicType::Generator),
+            ("testing", "GenerationId", IntrinsicType::GenerationId),
+            ("testing", "GenerationError", IntrinsicType::GenerationError),
+            ("io", "Reader", IntrinsicType::Reader),
+            ("io", "Writer", IntrinsicType::Writer),
+            ("io", "IoLimits", IntrinsicType::IoLimits),
+            ("io", "IoError", IntrinsicType::IoError),
+            ("console", "ConsoleError", IntrinsicType::ConsoleError),
+            ("json", "JsonLimits", IntrinsicType::JsonLimits),
+            (
+                "json",
+                "JsonDecodeOptions",
+                IntrinsicType::JsonDecodeOptions,
+            ),
+            (
+                "json",
+                "JsonEncodeOptions",
+                IntrinsicType::JsonEncodeOptions,
+            ),
+            (
+                "json",
+                "JsonDuplicatePolicy",
+                IntrinsicType::JsonDuplicatePolicy,
+            ),
+            (
+                "json",
+                "JsonUnknownFieldPolicy",
+                IntrinsicType::JsonUnknownFieldPolicy,
+            ),
+            ("json", "JsonNumberPolicy", IntrinsicType::JsonNumberPolicy),
+            ("json", "Value", IntrinsicType::JsonValue),
+            ("json", "ValueView", IntrinsicType::JsonValueView),
+            ("json", "Raw", IntrinsicType::JsonRaw),
+            ("json", "JsonNumber", IntrinsicType::JsonNumber),
+            ("json", "JsonReader", IntrinsicType::JsonReader),
+            ("json", "JsonWriter", IntrinsicType::JsonWriter),
+            (
+                "messagepack",
+                "MessagePackLimits",
+                IntrinsicType::MessagePackLimits,
+            ),
+            (
+                "messagepack",
+                "MessagePackDecodeOptions",
+                IntrinsicType::MessagePackDecodeOptions,
+            ),
+            (
+                "messagepack",
+                "MessagePackEncodeOptions",
+                IntrinsicType::MessagePackEncodeOptions,
+            ),
+            (
+                "messagepack",
+                "MessagePackDuplicatePolicy",
+                IntrinsicType::MessagePackDuplicatePolicy,
+            ),
+            (
+                "messagepack",
+                "MessagePackUnknownExtensionPolicy",
+                IntrinsicType::MessagePackUnknownExtensionPolicy,
+            ),
+            (
+                "messagepack",
+                "MessagePackNonMinimalPolicy",
+                IntrinsicType::MessagePackNonMinimalPolicy,
+            ),
+            ("messagepack", "Value", IntrinsicType::MessagePackValue),
+            (
+                "messagepack",
+                "ValueView",
+                IntrinsicType::MessagePackValueView,
+            ),
+            ("messagepack", "Raw", IntrinsicType::MessagePackRaw),
+            (
+                "messagepack",
+                "MessagePackTimestamp",
+                IntrinsicType::MessagePackTimestamp,
+            ),
+            (
+                "messagepack",
+                "MessagePackReader",
+                IntrinsicType::MessagePackReader,
+            ),
+            (
+                "messagepack",
+                "MessagePackWriter",
+                IntrinsicType::MessagePackWriter,
+            ),
+            (
+                "protobuf",
+                "ProtoDescriptor",
+                IntrinsicType::ProtoDescriptor,
+            ),
+            ("protobuf", "ProtoLimits", IntrinsicType::ProtoLimits),
+            (
+                "protobuf",
+                "ProtoDecodeOptions",
+                IntrinsicType::ProtoDecodeOptions,
+            ),
+            (
+                "protobuf",
+                "ProtoEncodeOptions",
+                IntrinsicType::ProtoEncodeOptions,
+            ),
+            (
+                "protobuf",
+                "ProtoWireTypePolicy",
+                IntrinsicType::ProtoWireTypePolicy,
+            ),
+            (
+                "protobuf",
+                "ProtoUnknownPolicy",
+                IntrinsicType::ProtoUnknownPolicy,
+            ),
+            ("protobuf", "ProtoReader", IntrinsicType::ProtoReader),
+            ("protobuf", "ProtoWriter", IntrinsicType::ProtoWriter),
+            ("protobuf", "UnknownFields", IntrinsicType::UnknownFields),
+        ];
+        for (module_path, name, expected) in cases {
+            let module = ModuleId::new(
+                package.clone(),
+                crate::source::ModulePath::new(module_path).unwrap(),
+            );
+            assert_eq!(
+                bootstrap_process_intrinsic(&module, &Name::new(name).unwrap()),
+                Some(expected),
+                "std.{module_path}.{name}",
+            );
+        }
+
+        let module = ModuleId::new(
+            package.clone(),
+            crate::source::ModulePath::new("process").unwrap(),
+        );
+        for name in ["Bytes", "Utf8Error"] {
+            assert_eq!(
+                bootstrap_process_intrinsic(&module, &Name::new(name).unwrap()),
+                None
+            );
+        }
+        assert_eq!(
+            bootstrap_process_intrinsic(&module, &Name::new("Unknown").unwrap()),
+            None,
+        );
+        assert_eq!(
+            bootstrap_process_intrinsic(
+                &ModuleId::new(package, crate::source::ModulePath::new("unknown").unwrap(),),
+                &Name::new("Unknown").unwrap(),
+            ),
+            None,
+        );
+        assert_eq!(
+            bootstrap_process_intrinsic(
+                &ModuleId::new(
+                    crate::package::PackageId::new("local:application").unwrap(),
+                    crate::source::ModulePath::new("process").unwrap(),
+                ),
+                &Name::new("ProcessError").unwrap(),
+            ),
+            None,
+        );
+    }
 
     #[test]
     fn hir_error_vocabulary_and_conversion_edges_are_observable() {

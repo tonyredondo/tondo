@@ -1,8 +1,8 @@
-async fn consume(pointer: Pointer[Int]) {
+fn consume(pointer: Pointer[Int]) suspends {
     _ = pointer
 }
 
-async fn invalid(pointer: Pointer[Int]) {
+fn invalid(pointer: Pointer[Int]) suspends {
     scope {
         let pending = spawn consume(pointer)
         await pending

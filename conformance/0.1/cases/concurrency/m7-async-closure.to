@@ -1,15 +1,15 @@
 import std.console
 
-async fn tick() {}
+fn tick() suspends {}
 
-async fn main() {
+fn main() suspends {
     let factor = 2
-    let operation = async (value: Int): Int {
-        await tick()
+    let operation = (value: Int): Int {
+        tick()
         value * factor
     }
 
-    assert(await operation(21) == 42)
+    assert(operation(21) == 42)
 
     scope {
         let pending = spawn operation(20)

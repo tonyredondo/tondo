@@ -339,9 +339,7 @@ impl Parser<'_> {
             Some(TokenKind::Trait) => self.parse_trait_decl(),
             Some(TokenKind::Impl) => self.parse_impl_decl(),
             Some(TokenKind::Derive) => self.parse_derive_decl(),
-            Some(TokenKind::Fn | TokenKind::Async | TokenKind::Unsafe) => {
-                self.parse_function_decl()
-            }
+            Some(TokenKind::Fn | TokenKind::Unsafe) => self.parse_function_decl(),
             Some(TokenKind::Test) => self.parse_test_decl(),
             Some(TokenKind::Suite) => self.parse_suite_decl(),
             _ => {
@@ -662,21 +660,11 @@ impl Parser<'_> {
     }
 
     fn parse_test_suite_modifiers(&mut self) -> ParseResult {
-        if !self.at_any(&[
-            TokenKind::Pub,
-            TokenKind::Priv,
-            TokenKind::Async,
-            TokenKind::Unsafe,
-        ]) {
+        if !self.at_any(&[TokenKind::Pub, TokenKind::Priv, TokenKind::Unsafe]) {
             return Ok(());
         }
         self.syntax_error("test and suite declarations do not accept modifiers")?;
-        while self.at_any(&[
-            TokenKind::Pub,
-            TokenKind::Priv,
-            TokenKind::Async,
-            TokenKind::Unsafe,
-        ]) {
+        while self.at_any(&[TokenKind::Pub, TokenKind::Priv, TokenKind::Unsafe]) {
             self.bump();
         }
         Ok(())
@@ -722,7 +710,6 @@ impl Parser<'_> {
     }
 
     fn parse_function_modifiers(&mut self) {
-        self.eat(TokenKind::Async);
         self.eat(TokenKind::Unsafe);
     }
 
@@ -1270,10 +1257,6 @@ impl Parser<'_> {
     fn parse_for_stmt_recursive(&mut self) -> ParseResult {
         self.start(SyntaxKind::ForStmt)?;
         self.expect(TokenKind::For)?;
-        // `for await` is an optional disambiguator for the AsyncIterator
-        // protocol.  Ordinary `for` still prefers Iterator and falls back to
-        // AsyncIterator when no synchronous witness exists.
-        self.eat(TokenKind::Await);
         self.start(SyntaxKind::ForHeader)?;
         if !self.at(TokenKind::LBrace) {
             if self.header_has_top_level_in() {
@@ -1296,7 +1279,6 @@ impl Parser<'_> {
         loop {
             self.start(SyntaxKind::ForStmt)?;
             self.expect(TokenKind::For)?;
-            self.eat(TokenKind::Await);
             self.start(SyntaxKind::ForHeader)?;
             if !self.at(TokenKind::LBrace) {
                 if self.header_has_top_level_in() {
@@ -1678,10 +1660,6 @@ impl Parser<'_> {
             }
             TokenKind::Match => {
                 self.parse_match_expression()?;
-                ExprShape::closed()
-            }
-            TokenKind::Async => {
-                self.parse_closure_expression()?;
                 ExprShape::closed()
             }
             TokenKind::Unsafe if self.nth(1) == TokenKind::LParen => {
@@ -2184,10 +2162,6 @@ impl Parser<'_> {
             }
             TokenKind::Match => {
                 self.parse_match_expression()?;
-                Ok(ExprShape::closed())
-            }
-            TokenKind::Async => {
-                self.parse_closure_expression()?;
                 Ok(ExprShape::closed())
             }
             TokenKind::Unsafe if self.nth(1) == TokenKind::LParen => {
@@ -3414,7 +3388,7 @@ impl Parser<'_> {
         let mut offset = 0;
         while matches!(
             self.nth(offset),
-            TokenKind::Pub | TokenKind::Priv | TokenKind::Async | TokenKind::Unsafe
+            TokenKind::Pub | TokenKind::Priv | TokenKind::Unsafe
         ) {
             offset += 1;
         }
@@ -3427,12 +3401,7 @@ impl Parser<'_> {
         if self.nth(offset) == TokenKind::Pub {
             offset += 1;
         }
-        if self.nth(offset) == TokenKind::Async {
-            offset += 1;
-            if self.nth(offset) == TokenKind::Unsafe {
-                offset += 1;
-            }
-        } else if self.nth(offset) == TokenKind::Unsafe {
+        if self.nth(offset) == TokenKind::Unsafe {
             offset += 1;
         }
         self.nth(offset) == TokenKind::Fn && self.nth(offset + 1) == TokenKind::Identifier
@@ -3602,9 +3571,6 @@ impl Parser<'_> {
         if self.nth(offset) == TokenKind::Pub {
             offset += 1;
         }
-        if self.nth(offset) == TokenKind::Async {
-            return Some(TokenKind::Async);
-        }
         if self.nth(offset) == TokenKind::Unsafe && self.nth(offset + 1) == TokenKind::Fn {
             return Some(TokenKind::Unsafe);
         }
@@ -3670,17 +3636,12 @@ impl Parser<'_> {
     }
 
     fn at_function_type_start(&self) -> bool {
-        self.at(TokenKind::Fn)
-            || (self.at_any(&[TokenKind::Async, TokenKind::Unsafe])
-                && matches!(self.nth(1), TokenKind::Fn | TokenKind::Unsafe))
+        self.at(TokenKind::Fn) || (self.at(TokenKind::Unsafe) && self.nth(1) == TokenKind::Fn)
     }
 
     fn at_method_start(&self) -> bool {
         let offset = self.leading_attribute_tokens();
-        matches!(
-            self.nth(offset),
-            TokenKind::Fn | TokenKind::Async | TokenKind::Unsafe
-        )
+        matches!(self.nth(offset), TokenKind::Fn | TokenKind::Unsafe)
     }
 
     fn at_recovery_construct_start(&self) -> bool {
@@ -3717,12 +3678,7 @@ impl Parser<'_> {
     }
 
     fn expect_module_component(&mut self) -> ParseResult {
-        if self.at_any(&[TokenKind::Identifier, TokenKind::Async]) {
-            self.bump();
-            Ok(())
-        } else {
-            self.expect_identifier()
-        }
+        self.expect_identifier()
     }
 
     fn expect_identifier_or_discard(&mut self) -> ParseResult {
@@ -4379,7 +4335,7 @@ suite arithmetic {
     #[test]
     fn test_and_suite_modifiers_are_rejected_but_recovered() {
         let source = br#"pub test invalid {}
-async suite invalid {
+unsafe suite invalid {
     test valid {}
 }
 "#;
@@ -4575,7 +4531,7 @@ pub enum ConsoleError { Unavailable, Closed, Cancelled, Io(std.io.IoError) }\n";
 fn free(): impl Discard { 1 }
 fn Item.method(self): impl Discard { self.value }
 fn Item.associated(): impl Discard { 1 }
-async fn later(): impl Discard ! String { 1 }
+fn later(): impl Discard ! String suspends { 1 }
 "#;
         let (_, _, parsed) = parse_source(valid, ParseMode::Module);
         assert!(
@@ -4682,6 +4638,18 @@ fn run() suspends {
     }
 
     #[test]
+    fn removed_async_and_for_await_spellings_are_rejected() {
+        for source in [
+            &b"async fn work() {}\n"[..],
+            &b"fn consume(values: Array[Int]) {\n    for await value in values {\n        _ = value\n    }\n}\n"[..],
+        ] {
+            let (_, _, parsed) = parse_source(source, ParseMode::Module);
+            assert!(!parsed.diagnostics().is_empty(), "{source:?}");
+            assert_eq!(codes(&parsed)[0], "E0004", "{source:?}");
+        }
+    }
+
+    #[test]
     fn declarations_types_and_methods_parse_together() {
         let source = br#"import std.io
 
@@ -4712,8 +4680,8 @@ impl Display for User[Int] {
 
     #[test]
     fn derive_declarations_are_lossless_and_have_typed_parts() {
-        let source = br#"derive serialization.Serialize + serialization.Deserialize for User
-derive[T] serialization.Serialize for Page[T]
+        let source = br#"derive serialization.Encode[Json] + serialization.Decode[Json] for User
+derive[T] serialization.Encode[Json] for Page[T]
 "#;
         let (sources, file, parsed) = parse_source(source, ParseMode::Module);
         assert!(parsed.diagnostics().is_empty(), "{:?}", codes(&parsed));
@@ -5247,7 +5215,7 @@ fn after(): Int {
             );
         }
         let (_, _, parsed) = parse_source(
-            b"fn f(): Value {\n    let closure = async () { value }\n    closure\n}\n",
+            b"fn f(): Value {\n    let closure = () { value }\n    closure\n}\n",
             ParseMode::Module,
         );
         assert!(
@@ -5367,7 +5335,7 @@ fn after(): Int {
             "match value { _ => value, }\n",
             "if true { value } else { value }\n",
             "for item in items { item }\n",
-            "async () { value }\n",
+            "() { value }\n",
             "(value, value)\n",
             "[value, value]\n",
             "value.field[0]\n",
@@ -5417,7 +5385,7 @@ fn after(): Int {
             wrap("spawn thread value"),
             wrap("if true { value } else { value }"),
             wrap("scope { match value { _ => value\n } }"),
-            wrap("async () { value }"),
+            wrap("() { value }"),
             wrap("unsafe () { value }"),
             wrap("value.field[0]"),
         ];

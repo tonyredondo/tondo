@@ -15,8 +15,6 @@ use unicode_normalization::UnicodeNormalization;
 const SUITE_MANIFEST: &[u8] = include_bytes!("../../../conformance/0.1/manifest.json");
 const FIXTURE_MANIFEST: &[u8] =
     include_bytes!("../../../conformance/0.1/fixtures/tondo-fixture-manifest.txt");
-const FIXTURE_MANIFEST_SHA256: &str =
-    "1b6ab9f853b7ef4b94b4b9aaff6297e20556f81e8d99c322bed03854453d76c2";
 
 #[derive(Debug)]
 pub enum DocTestError {
@@ -50,16 +48,11 @@ pub fn execute(arguments: &[OsString]) -> Result<Vec<u8>, DocTestError> {
     let fences = extract_fences(&bytes, &registered_errors)
         .map_err(|error| DocTestError::Diagnostic(format!("{}: {error}", file)))?;
     let fixture_hash = tondo_conformance::sha256(FIXTURE_MANIFEST);
-    if fixture_hash != FIXTURE_MANIFEST_SHA256 {
-        return Err(DocTestError::Internal(format!(
-            "embedded fixture manifest hash `{fixture_hash}` does not match `{FIXTURE_MANIFEST_SHA256}`"
-        )));
-    }
 
     let target = TargetSelection {
         name: "tondo-vm-hosted".into(),
         profile: "hosted".into(),
-        capabilities: vec!["console".into(), "process".into()],
+        capabilities: vec!["console".into(), "environment".into(), "process".into()],
     };
     let fixture_hex = tondo_conformance::encode_hex(FIXTURE_MANIFEST);
     let mut records = Vec::with_capacity(fences.len());
@@ -74,7 +67,7 @@ pub fn execute(arguments: &[OsString]) -> Result<Vec<u8>, DocTestError> {
             category: fence.category,
             fixture: fence.fixture.clone(),
             fixture_manifest_hex: fixture_hex.clone(),
-            fixture_manifest_sha256: FIXTURE_MANIFEST_SHA256.into(),
+            fixture_manifest_sha256: fixture_hash.clone(),
             expected_codes: fence.expected_codes.clone(),
             source_hex: tondo_conformance::encode_hex(&fence.source),
         };

@@ -1,8 +1,8 @@
-async fn observe(value: ref Int): Int {
+fn observe(value: ref Int): Int suspends {
     value
 }
 
-async fn invalid() {
+fn invalid() suspends {
     scope {
         var value = 1
         let pending = spawn observe(ref value)

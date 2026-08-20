@@ -1,6 +1,6 @@
-async fn tick() {}
+fn tick() suspends {}
 
-async fn invalid(pointer: Pointer[Int]): Pointer[Int] {
-    await tick()
+fn invalid(pointer: Pointer[Int]): Pointer[Int] suspends {
+    tick()
     pointer
 }

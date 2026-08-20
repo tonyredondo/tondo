@@ -7,28 +7,28 @@ fn recordIntegration() {
     testing.tags(["kind": "integration"])
 }
 
-async fn serviceValue(): Int {
+fn serviceValue(): Int suspends {
     42
 }
 
-async fn startService(): Int {
+fn startService(): Int suspends {
     scope {
         let service = spawn serviceValue()
         await service
     }
 }
 
-async fn stopService() {
+fn stopService() suspends {
     testing.log("service cleanup")
 }
 
 test integration_root {
     recordIntegration()
-    match await testing.withVirtualTime(async (clock) {
+    match testing.withVirtualTime((clock) {
         let before = time.now()?
         scope {
             let response = spawn counter.answerAfterBackoff(time.Duration.fromNanoseconds(25))
-            await clock.settle()
+            clock.settle()
             assert(await response? == 42)
         }
         let after = time.now()?
@@ -59,8 +59,8 @@ suite shared_service {
 }
 
 suite managed_service {
-    let serviceResponse = await startService()
-    defer await stopService()
+    let serviceResponse = startService()
+    defer stopService()
 
     test responds {
         testing.log("managed service response")

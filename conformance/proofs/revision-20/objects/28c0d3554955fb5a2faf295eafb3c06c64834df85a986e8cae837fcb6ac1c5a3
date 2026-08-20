@@ -1,8 +1,0 @@
-fn invalid(
-    first: Join[Int, Never],
-    second: Join[Int, Never],
-): Join[Int, Never] {
-    var current = first
-    current = second
-    current
-}

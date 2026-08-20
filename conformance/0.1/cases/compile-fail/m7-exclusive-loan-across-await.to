@@ -1,9 +1,9 @@
-async fn tick() {}
+fn tick() suspends {}
 
-async fn invalid(values: Array[Int]) {
+fn invalid(values: Array[Int]) suspends {
     var owned = values
     for mut value in owned {
-        await tick()
+        tick()
         value += 1
     }
 }

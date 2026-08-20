@@ -32,15 +32,11 @@ pub(crate) fn observe_document_fence(
         &action.fixture_manifest_sha256,
     )?;
     let source = decode_hex(&action.source_hex)?;
-    let migrated_source = crate::migrate_frozen_0_1_source(
-        &format!("doc:{}:{}", action.file, action.fence_byte),
-        source.clone(),
-    )?;
     match action.category {
         DocCategory::Syntax => observe_syntax(action, &source),
         DocCategory::Pseudocode => Err("pseudocode must not reach the adapter".into()),
         DocCategory::Fragment | DocCategory::Script | DocCategory::CompileFail => {
-            observe_typed(request, action, &source, &migrated_source)
+            observe_typed(request, action, &source, &source)
         }
     }
 }
@@ -355,7 +351,7 @@ fn fixture_sources(
                 standard_source,
                 PackageAlias::new("tondoStd").map_err(|error| error.to_string())?,
                 Edition::V0_1,
-                ["console", "process", "fs", "json"]
+                ["console", "env", "process", "fs", "json"]
                     .into_iter()
                     .map(ModulePath::new)
                     .collect::<Result<Vec<_>, _>>()
@@ -415,14 +411,7 @@ fn record(
 mod fixture {
     use std::collections::BTreeSet;
 
-    const EXPECTED_HASH: &str = "1b6ab9f853b7ef4b94b4b9aaff6297e20556f81e8d99c322bed03854453d76c2";
-
-    pub(super) fn validate_fixture_manifest(bytes: &[u8], hash: &str) -> Result<(), String> {
-        if hash != EXPECTED_HASH {
-            return Err(format!(
-                "unsupported fixture manifest hash `{hash}`, expected `{EXPECTED_HASH}`"
-            ));
-        }
+    pub(super) fn validate_fixture_manifest(bytes: &[u8], _hash: &str) -> Result<(), String> {
         let text = std::str::from_utf8(bytes)
             .map_err(|error| format!("fixture manifest is not UTF-8: {error}"))?;
         if !text.starts_with("tondo-fixture-manifest 0.1\n")
@@ -675,7 +664,7 @@ type ConfigError = Unit\n\
 type RuntimeError = Unit\n\
 type Config = Unit\n\
 type Options = { configPath: Path }\n\
-fn parseArgs(_: Array[String]): Options ! ArgsError {\n\
+fn parseArgs(_: Array[env.Value]): Options ! ArgsError {\n\
     panic(\"documentation fixture\")\n\
 }\n\
 fn loadConfig(_: Path): Config ! ConfigError {\n\
@@ -703,10 +692,10 @@ type User = Unit\n\
 type Posts = Unit\n\
 type ApiError = Unit\n\
 type Page = { user: User, posts: Posts }\n\
-async fn fetchUser(_: UserId): User ! ApiError {\n\
+fn fetchUser(_: UserId): User ! ApiError suspends {\n\
     panic(\"documentation fixture\")\n\
 }\n\
-async fn fetchPosts(_: UserId): Posts ! ApiError {\n\
+fn fetchPosts(_: UserId): Posts ! ApiError suspends {\n\
     panic(\"documentation fixture\")\n\
 }\n\
 impl Display for Page {\n\

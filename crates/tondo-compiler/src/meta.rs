@@ -1999,15 +1999,15 @@ mod tests {
             ["T"],
             DeriveTargetKind::Newtype,
         ));
-        context.add_trait("serialization.Serialize");
-        context.add_trait("serialization.Deserialize");
+        context.add_trait("serialization.Encode");
+        context.add_trait("serialization.Decode");
         context.add_provider(DeriveProvider::new(
-            "serialization.Serialize",
+            "serialization.Encode",
             "std.meta.serialization",
             ["T"],
         ));
         context.add_provider(DeriveProvider::new(
-            "serialization.Deserialize",
+            "serialization.Decode",
             "std.meta.serialization",
             std::iter::empty::<String>(),
         ));
@@ -2027,7 +2027,7 @@ mod tests {
     fn valid_requests_are_resolved_in_source_order_and_provider_bounds_are_canonical() {
         let mut context = context();
         context.add_provider(DeriveProvider::new(
-            "serialization.Serialize",
+            "serialization.Encode",
             "std.meta.serialization",
             ["T", "T"],
         ));
@@ -2035,9 +2035,9 @@ mod tests {
             request(
                 "Page",
                 &["T"],
-                &["serialization.Serialize", "serialization.Deserialize"],
+                &["serialization.Encode", "serialization.Decode"],
             ),
-            request("User", &[], &["serialization.Deserialize"]),
+            request("User", &[], &["serialization.Decode"]),
         ];
         let result = validate_derive_requests(&requests, &context).unwrap();
         assert_eq!(result.len(), 2);
@@ -2058,9 +2058,9 @@ mod tests {
             DeriveTargetKind::Alias,
         ));
         let requests = [
-            request("missing", &[], &["serialization.Deserialize"]),
-            request("Alias", &[], &["serialization.Deserialize"]),
-            request("Page", &[], &["serialization.Deserialize"]),
+            request("missing", &[], &["serialization.Decode"]),
+            request("Alias", &[], &["serialization.Decode"]),
+            request("Page", &[], &["serialization.Decode"]),
         ];
         let error = validate_derive_requests(&requests, &context).unwrap_err();
         assert_eq!(
@@ -2078,13 +2078,13 @@ mod tests {
         let mut context = context();
         context.add_trait("serialization.Missing");
         context.add_provider(DeriveProvider::new(
-            "serialization.Deserialize",
+            "serialization.Decode",
             "",
             std::iter::empty::<String>(),
         ));
         let requests = [
             request("User", &[], &["serialization.Missing"]),
-            request("User", &[], &["serialization.Deserialize"]),
+            request("User", &[], &["serialization.Decode"]),
         ];
         let error = validate_derive_requests(&requests, &context).unwrap_err();
         assert_eq!(
@@ -2100,15 +2100,15 @@ mod tests {
     #[test]
     fn duplicates_bounds_traits_requests_and_manual_impls_are_rejected() {
         let mut context = context();
-        context.add_manual_implementation("serialization.Deserialize", "User");
+        context.add_manual_implementation("serialization.Decode", "User");
         let requests = [
             request(
                 "User",
                 &[],
-                &["serialization.Serialize", "serialization.Serialize"],
+                &["serialization.Encode", "serialization.Encode"],
             ),
-            request("User", &[], &["serialization.Deserialize"]),
-            request("User", &[], &["serialization.Serialize"]),
+            request("User", &[], &["serialization.Decode"]),
+            request("User", &[], &["serialization.Encode"]),
         ];
         let error = validate_derive_requests(&requests, &context).unwrap_err();
         assert!(

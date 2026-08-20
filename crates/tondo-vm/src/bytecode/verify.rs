@@ -13275,7 +13275,7 @@ mod tests {
         );
         let async_unit = push_type(
             &mut program,
-            "async fn()",
+            "fn() suspends",
             BytecodeTypeKind::Function(BytecodeFunctionType {
                 is_async: true,
                 is_unsafe: false,
@@ -13297,7 +13297,7 @@ mod tests {
         );
         let async_argument = push_type(
             &mut program,
-            "async fn(Int)",
+            "fn(Int) suspends",
             BytecodeTypeKind::Function(BytecodeFunctionType {
                 is_async: true,
                 is_unsafe: false,
@@ -13311,7 +13311,7 @@ mod tests {
         );
         let async_int = push_type(
             &mut program,
-            "async fn(): Int",
+            "fn(): Int suspends",
             BytecodeTypeKind::Function(BytecodeFunctionType {
                 is_async: true,
                 is_unsafe: false,

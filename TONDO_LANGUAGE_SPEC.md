@@ -2,7 +2,6 @@
 
 **Estado:** borrador normativo de la primera versión de Tondo; todavía no publicado
 
-**Revisión del Markdown:** 0.1-draft.12 — 2026-08-07
 **Nombre:** Tondo  
 **Extensión:** `.to`  
 **Lema:** **Pequeño por diseño, completo en la práctica.**
@@ -324,8 +323,7 @@ Se adoptan conceptualmente:
 
 - Espera implícita para llamadas suspendibles en la forma ordinaria; el
   compilador infiere el efecto `suspend` de la función y lo propaga a sus
-  callers. `await` queda para consumir handles pendientes y como marcador
-  explícito opcional.
+  callers. `await` queda exclusivamente para consumir handles pendientes.
 - El resultado lógico ordinario de una función suspendible, separado del handle creado al lanzarla concurrentemente.
 - Lifetimes estructurados para tareas hijas.
 - Separación entre semántica del lenguaje, scheduler e implementación de frames
@@ -404,7 +402,7 @@ Ejemplos:
 - `ref T` expresa observación prestada y temporal; `Ref[T]` expresa identidad
   segura y almacenable; `Pointer[T]` expresa acceso raw inseguro.
 - Las llamadas suspendibles esperan automáticamente; `await` consume un
-  handle pendiente o documenta explícitamente una espera. `spawn` expresa
+  handle pendiente. `spawn` expresa
   concurrencia y `spawn thread` expresa una frontera explícita de thread del
   sistema.
 - Un script raíz se convierte en un único `main` implícito; los módulos importados permanecen libres de efectos.
@@ -573,7 +571,7 @@ true       type       unsafe     var        with
 | `alias` | Declarar un alias transparente |
 | `and` | Conjunción booleana con short-circuit |
 | `as` | Asignar alias a un import |
-| `await` | Consumir un handle pendiente o marcar explícitamente una espera |
+| `await` | Consumir un `Join[T, E]` pendiente |
 | `break` | Terminar el bucle actual |
 | `const` | Declarar una constante de módulo |
 | `continue` | Avanzar a la siguiente iteración |
@@ -3053,9 +3051,8 @@ fn consume(stream: impl AsyncIterator[Bytes]) {
 ~~~
 
 `for item in source` evalúa `source` una vez. Si solo existe `AsyncIterator[T]`,
-espera cada `next` implícitamente y no materializa un array; `for await item in
-source` es una forma explícita opcional para desambiguar una fuente que
-implemente ambos protocolos. `break`, error, cancelación o salida del scope
+espera cada `next` implícitamente y no materializa un array. Si la fuente
+implementa ambos protocolos, `Iterator[T]` tiene precedencia. `break`, error, cancelación o salida del scope
 cierran el stream según su contrato. `collect(limit: ...)` es la operación
 explícita que materializa un `Array[T]`; exige límite cuando no se puede demostrar
 finitud. Un receiver de `Channel` puede adaptarse a este protocolo.
@@ -3483,8 +3480,9 @@ Su cuerpo es una región `unsafe` y llamarlo requiere la misma región explícit
 que una función `unsafe` nombrada. `unsafe` forma parte de su firma de llamada.
 Un cierre que además pueda suspenderse utiliza la única combinación canónica
 `unsafe (parameters) { ... }`. La región unsafe del llamador debe abarcar la
-llamada directa (que espera implícitamente), el `await` explícito o el `spawn`
-que inicia la operación. La captura de punteros conserva
+llamada directa —que espera implícitamente— o el `spawn` que inicia la
+operación. Esperar después su `Join` no vuelve a autorizar la operación unsafe.
+La captura de punteros conserva
 además las reglas explícitas de 16.12.
 
 Un cierre puede recibir préstamos `ref`, `mut` o `var`. Para mantener visible el
@@ -3709,7 +3707,7 @@ terminal concreta.
 Todas las funciones se declaran con `fn`. No existe una declaración paralela
 `async fn` ni un tipo público `Task` o `Future`. `suspends` es un efecto postfix
 de la firma, no una familia de funciones distinta. El compilador lo infiere
-cuando un cuerpo contiene una llamada suspendible, una espera explícita, una
+cuando un cuerpo contiene una llamada suspendible, el consumo de un `Join`, una
 iteración asíncrona o cleanup suspendible. El efecto queda registrado en ABI,
 metadatos, diagnósticos, documentación e IDE.
 
@@ -3755,8 +3753,8 @@ fn parseHeader(input: Bytes): Header ! ParseError { decodeHeader(input)? }
 El resultado escrito es siempre el resultado lógico, nunca un wrapper de
 ejecución. No hay APIs duplicadas con sufijo `Async`. Una llamada suspendible
 en una expresión ordinaria se espera automáticamente y produce su resultado
-lógico; escribir `await call()` delante de esa misma llamada es una forma
-explícita equivalente y no añade una espera. `spawn call()` es la única forma
+lógico. Escribir `await call()` es un error `E1611`: la llamada ya espera por
+definición y Tondo mantiene una única forma canónica. `spawn call()` es la única forma
 de conservar la operación pendiente y devuelve un `Join`; `spawn thread call()`
 elige además un thread del sistema operativo.
 
@@ -3769,7 +3767,7 @@ suspende usa `unsafe fn(...): T suspends`; no existe una variante de declaració
 adicional para combinar ambos efectos.
 
 Un `ref T`, `mut T` o `var T` puede permanecer prestado durante una llamada
-suspendible **secuencial**, con espera implícita o `await` explícito. El place se
+suspendible **secuencial**, con espera implícita. El place se
 mantiene estable en el frame del caller, `T` debe ser `Send` y el préstamo sigue
 activo hasta que la operación termine, falle o sea cancelada. Durante ese
 intervalo no puede crearse un alias incompatible, moverse el propietario ni
@@ -3794,22 +3792,21 @@ introduce una variante local del modelo.
 
 ### 11.11 `await`
 
-`await operation` es la forma explícita de consumir una operación pendiente.
+`await operation` consume una operación pendiente representada por un
+`Join[T, E]`.
 Puede aparecer en cualquier función o cierre cuyo efecto inferido sea
 suspendible, incluido `main`, un script y un test. Devuelve el resultado lógico,
-consume un `Join[T, E]` o un waiter y no propaga errores implícitamente:
+consume el `Join[T, E]` y no propaga errores implícitamente:
 `await operation?` significa `(await operation)?`.
 
-Para una llamada directa cuyo tipo ya declara `suspends`, `await call()` es
-opcional y semánticamente equivalente a escribir simplemente `call()`. El
-formateador puede conservarlo como documentación de una frontera relevante,
-pero el compilador no lo exige. Para un `Join`, `Waiter` u otro handle pendiente
-`await handle` debe ser obligatorio: esos valores no se convierten implícitamente
+Para una llamada directa cuyo tipo declara `suspends`, la única forma es
+`call()`: la espera se inserta de manera implícita. `await call()` produce
+`E1611`. Para un `Join`, `await handle` debe escribirse: el handle no se convierte implícitamente
 en su resultado, porque hacerlo ocultaría el momento de join, cancelación y
 consumo afín. Un método suspendible como `waiter.wait()` sigue siendo una
 llamada directa ordinaria y espera implícitamente. Otra forma produce `E1611`.
-Dos awaits son secuenciales. La única suspensión de cleanup es `defer await`
-con una llamada infalible de `Unit`.
+Dos consumos `await` son secuenciales. El cleanup suspendible se infiere en
+`defer call()` o `defer { ... }`.
 
 ### 11.12 Concurrencia estructurada
 
@@ -3854,9 +3851,8 @@ fn consume(stream: impl AsyncIterator[Bytes]) {
 
 `for item in source` selecciona `Iterator[T]` cuando la fuente lo implementa;
 si solo implementa `AsyncIterator[T]`, espera implícitamente un elemento por
-`next` y propaga el efecto de suspensión. `for await item in source` permanece
-como spelling explícito opcional y sirve para desambiguar una fuente que
-implemente ambos protocolos. Ninguna de las dos formas materializa arrays.
+`next` y propaga el efecto de suspensión. No existe `for await`; si una fuente
+implementa ambos protocolos, `Iterator[T]` tiene precedencia. La iteración no materializa arrays.
 `break`, error, cancelación o salida del scope cierra el stream.
 `collect(limit: ...)` es la operación explícita que materializa un `Array[T]`;
 exige límite si no se prueba finitud. Un receiver de `Channel` puede adaptarse a
@@ -4539,10 +4535,10 @@ defer {
 }
 ~~~
 
-Una llamada suspendible infalible se registra con una única forma:
+Una llamada suspendible infalible usa exactamente la misma forma:
 
 ~~~tondo pseudocode
-defer await Service.stop(service)
+defer Service.stop(service)
 ~~~
 
 Reglas:
@@ -4586,20 +4582,19 @@ Reglas:
   consume el binding completo; el compilador puede comprobar así un único
   propietario y un orden terminal inequívoco.
 - La expresión diferida debe ser infallible y devolver `Unit`.
-- Las formas ordinarias `defer call()` y `defer { ... }` son estrictamente
-  síncronas: no pueden contener `await`, `spawn`, una expresión `scope` ni una
-  llamada suspendible.
-- `defer await call()` solo acepta una llamada `fn(...): Unit`
-  infallible. La llamada no se inicia al registrar el defer: sus operandos y
-  ownership se reservan entonces y se invoca y espera al abandonar el scope, en
-  su posición LIFO.
-- `defer await` cuenta como suspensión de la entrada que lo contiene. Una
+- `defer call()` y `defer { ... }` deben inferir si el cleanup suspende a partir de
+  sus llamadas directas. No admiten `await`, `spawn` ni una expresión `scope`:
+  el cleanup es secuencial y toda llamada suspendible espera implícitamente.
+- La llamada no se inicia al registrar el defer: sus operandos y ownership se
+  reservan entonces y se invoca y, si corresponde, se espera al abandonar el
+  scope, en su posición LIFO.
+- Un cleanup suspendible cuenta como suspensión de la entrada que lo contiene. Una
   función o cierre puede suspenderse por inferencia; un script, test o setup de suite
   infiere su contexto según sus reglas. Todos los valores reservados que continúen
   vivos satisfacen el mismo contrato `Send` y de liveness que en cualquier otro
-  `await`.
+  frontera de suspensión.
 - La llamada suspendible diferida admite como máximo el mismo operando afín propietario
-  que una llamada diferida ordinaria. No existe `defer await { ... }`, no puede
+  que una llamada diferida ordinaria. No puede
   propagar un error ni iniciar `scope` o `spawn`.
 - Una salida cooperativa, incluido `return`, `fail`, pánico o cancelación
   estructurada, no cancela el cleanup suspendible que ella misma inicia. Timeout,
@@ -4615,9 +4610,9 @@ Reglas:
 
 `defer` no es un destructor ni finalizador. Hace visible el punto de adquisición y el cleanup.
 
-Un `defer await` debe conservar la misma obligación de ownership hasta completar
-su espera; registrar el cleanup no transfiere ni elimina esa obligación antes
-del teardown.
+Un `defer` suspendible debe conservar la misma obligación de ownership hasta completar
+su espera inferida; registrar el cleanup no transfiere ni elimina esa obligación
+antes del teardown.
 
 ### 13.8 Asignación simple y múltiple
 
@@ -6205,7 +6200,7 @@ adyacente `??` es error léxico y nunca significa coalescencia.
 -value     negación de entero con signo o float
 not value  negación booleana
 ~value     complemento bitwise de entero o Byte
-await op   consumir un Join/Waiter o marcar explícitamente una espera
+await join consumir un Join pendiente
 spawn call iniciar una task en el scope actual
 ~~~
 
@@ -6219,9 +6214,9 @@ argumento definidas en 11.3 y 23.21; fuera de una llamada, `ref value` o
 `await` y `spawn` no son sobrecargables. Sus restricciones se definen en la sección 11. `scope { ... }` y `unsafe { ... }` son expresiones de bloque introducidas por keywords, no operadores sobre valores. Una llamada suspendible ordinaria no necesita el prefijo `await`; el compilador inserta la misma operación de espera durante el lowering.
 
 `-`, `not` y `~` aceptan recursivamente otra expresión unaria. `await` y `spawn`
-aceptan en cambio la llamada o el `Join` postfix cerrado definido en 23.19; no se
-encadenan como prefijos desnudos. `await` es obligatorio para consumir un handle
-pendiente y opcional para una llamada suspendible directa. Cuando el operando
+aceptan en cambio el `Join` o la llamada postfix cerrada definida en 23.19; no se
+encadenan como prefijos desnudos. `await` es obligatorio para consumir un `Join`
+pendiente y no acepta llamadas directas. Cuando el operando
 necesite otra construcción
 se utilizan paréntesis. Esta restricción mantiene inequívoco que el `?` escrito
 después de una llamada se aplica al resultado ya esperado.
@@ -6784,21 +6779,28 @@ Una herramienta puede compilar el archivo raíz de un target en modo script, por
 #!/usr/bin/env tondo
 
 import std.console
+import std.env
 import std.process
 
 enum ScriptError {
     MissingPattern
 }
 
-let pattern = process.args().getOr(0, "")
+let pattern = match env.snapshot()?.arguments() {
+    [] => ""
+    [value, ..] => match value.asText() {
+        some(text) => text
+        none => ""
+    }
+}
 
 if pattern.isEmpty() {
     fail ScriptError.MissingPattern
 }
 
 let pipeline = (
-    process.cmd("git", "log", "--oneline") |
-    process.cmd("grep", pattern)
+    process.command("git", "log", "--oneline") |
+    process.command("grep", pattern)
 )
 
 let output = pipeline.output()?
@@ -6844,7 +6846,7 @@ Por tanto:
 `Command` y `Pipeline` son valores de plan opacos e intrínsecos definidos por el lenguaje. La librería de procesos construye y opera esos valores. Programa y argumentos se proporcionan por separado:
 
 ~~~tondo
-let command = process.cmd("git", "show", revision)
+let command = process.command("git", "show", revision)
 ~~~
 
 Su forma conceptual aprovecha los variádicos homogéneos:
@@ -6874,9 +6876,9 @@ etapa del plan derecho y produce un `Pipeline` inerte:
 
 ~~~tondo
 let pipeline = (
-    process.cmd("git", "log", "--oneline") |
-    process.cmd("grep", pattern) |
-    process.cmd("head", "-n", "10")
+    process.command("git", "log", "--oneline") |
+    process.command("grep", pattern) |
+    process.command("head", "-n", "10")
 )
 ~~~
 
@@ -6894,8 +6896,7 @@ Un pipeline comienza a ejecutar únicamente mediante una operación terminal exp
 
 Las operaciones que esperan I/O se declaran como funciones ordinarias cuyo efecto
 de suspensión infiere el compilador y se esperan automáticamente en la forma
-ordinaria. `await` queda disponible como spelling explícito y es obligatorio al
-consumir un handle pendiente. Las variantes
+ordinaria. `await` aparece únicamente al consumir un handle pendiente. Las variantes
 bloqueantes, si existen, deben nombrarse como tales y no bloquear silenciosamente
 un worker cooperativo.
 
@@ -7707,8 +7708,8 @@ oculten un diagnóstico independiente.
 | `E1605` | `non-send-transfer` | Valor no `Send` cruza task/thread o queda vivo a través de una frontera de suspensión. |
 | `E1606` | `non-share-borrow` | Préstamo concurrente exige `Share` y el origen no lo cumple. |
 | `E1607` | `exclusive-borrow-across-await` | Préstamo `mut`/`var` cruza una suspensión prohibida. |
-| `E1608` | `invalid-suspend-cleanup` | Cleanup suspendible usa una forma distinta de una única llamada infallible `defer await`, o un defer intenta crear scope o lanzar trabajo. |
-| `E1609` | `invalid-suspend-signature` | Firma suspendible contiene receptor o parámetro exclusivo prohibido. |
+| `E1608` | `invalid-suspend-cleanup` | Un `defer` usa `await`, crea un scope, lanza trabajo, propaga un error o no produce `Unit`. |
+| `E1609` | `invalid-suspend-signature` | Un `spawn` intenta transferir un receptor o parámetro exclusivo `mut`/`var`. |
 | `E1610` | `invalid-suspend-context` | `await` o `scope` aparece fuera de una función, cierre o script con efecto suspendible. |
 | `E1611` | `invalid-suspend-operand` | `await` o `spawn` recibe una forma que no representa la operación permitida. |
 
@@ -8086,8 +8087,8 @@ Son errores obligatorios, entre otros:
 - Más de una implementación `Iterator[T]` para el mismo target (`E1113`).
 - Literal de map con una clave constante repetida (`E1116`).
 - Llamada suspendible dentro de `@sync`/`@nosuspend` (`E1601`). Las llamadas
-  directas ordinarias esperan implícitamente; un `Join` u otro handle pendiente
-  sin `await` produce `E1611`.
+  directas ordinarias esperan implícitamente; aplicar `await` a algo distinto de
+  un `Join` produce `E1611`.
 - `Join` que intenta escapar de su región estructurada (`E1603`) o conserva su
   obligación terminal en una salida normal (`E1404`).
 - Uso de un binding después de mover un valor afín (`E1401`).
@@ -8655,10 +8656,7 @@ fail_stmt       = "fail", expression ;
 break_stmt      = "break" ;
 continue_stmt   = "continue" ;
 
-defer_stmt      = "defer",
-                  ( deferred_suspendible_call | postfix_expression | block ) ;
-deferred_suspendible_call
-                = "await", plain_postfix_expression ;
+defer_stmt      = "defer", ( postfix_expression | block ) ;
 
 expression_stmt = expression ;
 tail_expression = expression ;
@@ -8674,11 +8672,10 @@ La alternativa sin `= expression` se conserva únicamente para que el parser
 pueda producir el diagnóstico específico `E1109`; nunca forma un binding válido
 ni introduce un nombre en el scope.
 
-Fuera de la forma `defer { ... }`, tanto el `postfix_expression` ordinario como
-el `plain_postfix_expression` de `deferred_suspendible_call` deben terminar en un
+Fuera de la forma `defer { ... }`, el `postfix_expression` debe terminar en un
 `call_suffix`; diferir un valor, un acceso de campo o un método sin llamarlo es
-error semántico. La segunda forma queda además restringida por 13.7 a una
-llamada suspendible infallible que devuelve `Unit`.
+error semántico. La llamada debe ser infallible y devolver `Unit`; su suspensión
+se infiere según 13.7.
 
 ### 23.15 Asignación
 
@@ -8712,8 +8709,7 @@ una forma sea una ruta de lugar no concede por sí solo permiso de escritura.
 ### 23.16 `for`
 
 ~~~ebnf
-for_stmt        = "for", [ "await" ],
-                  ( block
+for_stmt        = "for", ( block
                   | irrefutable_pattern, "in", expression, block
                   | expression, block ) ;
 ~~~
@@ -8725,10 +8721,8 @@ Resolución:
 - En otro caso: la expresión debe ser `Bool`.
 - `for pattern in expression` usa `Iterator[T]` cuando está disponible y, si la
   fuente solo implementa `AsyncIterator[T]`, espera cada `next` implícitamente y
-  hereda el efecto de suspensión de 11.14. `for await pattern in expression`
-  sigue siendo una forma explícita opcional para seleccionar el protocolo
-  asíncrono cuando una fuente implementa ambos. La forma `for await` sin `in` o
-  sobre una fuente que no implementa `AsyncIterator[T]` produce `E1611`.
+  hereda el efecto de suspensión de 11.14. Si ambos existen, `Iterator[T]` tiene
+  precedencia. `for await` no forma parte de la gramática.
 
 ### 23.17 Expresiones condicionales y match
 
@@ -8883,25 +8877,24 @@ Un tuple slot se comprueba además contra la aridad estática; ceros iniciales c
 
 `plain_postfix_expression` excluye deliberadamente `?` y se toma de forma
 maximal: todos los accesos, índices, especializaciones y llamadas contiguos forman
-parte del operando de `await` o `spawn`. Una llamada suspendible que aparece en
-un `postfix_expression` ordinario recibe el mismo await implícito durante el
-lowering. Por ello `await operation()?` aplica propagación al resultado esperado
-y el `?` marca una frontera tras la cual pueden continuar otros postfix:
+parte del operando de `spawn`. Una llamada suspendible que aparece en un
+`postfix_expression` ordinario recibe el await implícito durante el lowering.
+El operando de `await` debe tiparse como `Join[T, E]`; una llamada directa produce
+`E1611`. La propagación posterior se aplica al resultado del join:
 
 ~~~tondo
-let id = await fetchUser()?.id
+let user = await userJob?
+let id = user.id
 ~~~
 
-Sin esa frontera, un postfix sobre el valor ya esperado se parentiza:
+Un postfix directo sobre el resultado también puede parentizarse:
 
 ~~~tondo
-let id = (await fetchUser()).id
+let id = (await userJob).id
 ~~~
 
 Así `factory().fetch()` espera implícitamente la llamada suspendible formada por
-la cadena completa; `await factory().fetch()` es su spelling explícito
-equivalente. `(await factory()).fetch()` espera primero `factory` y llama después
-al método del resultado. Un `?` dentro de argumentos o de una expresión
+la cadena completa. Un `?` dentro de argumentos o de una expresión
 agrupada conserva su significado local. `spawn` no admite postfix exterior
 directo; el `Join` se enlaza o se parentiza antes de cualquier operación
 posterior.
@@ -9418,16 +9411,22 @@ No se necesita `while`. `for condition` expresa el mismo flujo.
 ### 24.11 Main completo
 
 ~~~tondo fragment spec.application
-import std.process
+import std.env
 
 enum AppError {
+    Environment(env.EnvError)
     Arguments(ArgsError)
     Config(ConfigError)
     Runtime(RuntimeError)
 }
 
 fn runApplication(): !AppError {
-    let options = match parseArgs(process.args()) {
+    let arguments = match env.snapshot() {
+        ok(snapshot) => snapshot.arguments()
+        err(error) => fail AppError.Environment(error)
+    }
+
+    let options = match parseArgs(arguments) {
         ok(options) => options
         err(error) => fail AppError.Arguments(error)
     }
@@ -9555,8 +9554,8 @@ import std.console
 import std.process
 
 let pipeline = (
-    process.cmd("git", "log", "--oneline") |
-    process.cmd("head", "-n", "5")
+    process.command("git", "log", "--oneline") |
+    process.command("head", "-n", "5")
 )
 
 let output = pipeline.check()?
@@ -10301,11 +10300,10 @@ la sintaxis, tipos, ownership y semántica general. La
 para discovery, lifecycle completo, aislamiento, CLI, selección, retries,
 tiempo virtual, artefactos, snapshots y formatos de reporte.
 
-El corpus bootstrap y su suite de regresión conservan la evidencia que existía
-antes de integrar esta superficie. No constituyen una versión pública ni una
-edición alternativa: la primera publicación de Tondo 0.1
-debe implementar el contrato consolidado y publicar nuevos hashes de
-conformidad.
+El corpus, su manifest y sus observaciones evolucionan junto a esta superficie.
+No se conserva una edición, snapshot o suite anterior en paralelo: la primera
+publicación de Tondo 0.1 debe implementar y sellar el contrato consolidado que
+esté vigente en ese momento.
 
 ### 28.2 Árbol estático
 
@@ -10357,7 +10355,7 @@ fn <suite-setup>(): Unit ! E
 
 `E` es la unión cerrada inferida localmente y debe cumplir `Discard`; si no hay
 fallos, es `Never`. La entrada se vuelve suspendible cuando contiene una operación que
-exige suspensión, incluido `defer await`. No se escribe un modificador porque
+exige suspensión, incluido un `defer` suspendible. No se escribe un modificador porque
 ninguna entrada es una API invocable. El body de test puede usar `return` sin
 valor, `fail` y `?`; el setup admite `fail` y `?`, pero un `return` que ocultaría
 descendientes produce `E1205`. Ninguna forma introduce `TestResult`.
@@ -10372,7 +10370,7 @@ delimitándolo explícitamente.
 Para cada subárbol seleccionado, el runner ejecuta el setup de una suite una vez,
 después sus descendientes y finalmente abandona el scope léxico de la suite. Los
 `defer` registrados por el setup forman su teardown LIFO, incluso cuando el setup
-o un descendiente falla. `defer await` es la única forma de teardown suspendible; no
+o un descendiente falla. Un `defer` que llama una operación `suspends` infiere el teardown suspendible; no
 existen hooks `before`/`after` ni callbacks de lifecycle paralelos.
 
 Un descendiente solo puede leer un binding ancestral cuando fue declarado con
@@ -10525,7 +10523,7 @@ scope {
 ~~~
 
 ~~~tondo pseudocode
-defer await cleanup()
+defer cleanup()
 ~~~
 
 ### Errores
@@ -10598,7 +10596,7 @@ scope {
 import std.console
 import std.process
 
-let pipeline = process.cmd("producer") | process.cmd("consumer")
+let pipeline = process.command("producer") | process.command("consumer")
 let output = pipeline.output()?
 console.print(String(output.stdout)?)
 ~~~
@@ -10611,7 +10609,7 @@ Las sentencias top-level existen solo en el archivo raíz de un script y forman 
 suite userApi {
     let service = TestService.start()?
     let endpoint = service.endpoint()
-    defer await TestService.stop(service)
+    defer TestService.stop(service)
 
     test reportsHealth {
         assert(readHealth(endpoint)?.ready)
@@ -10620,8 +10618,8 @@ suite userApi {
 ~~~
 
 `suite` y `test` solo aparecen en fuentes de test. Sus entradas infieren
-suspensión y errores desde las llamadas ordinarias; `defer await` sigue siendo
-su única construcción de teardown suspendible.
+suspensión y errores desde las llamadas ordinarias; `defer` sigue siendo
+su única construcción de teardown.
 
 ---
 
@@ -10864,7 +10862,7 @@ type Options = {
     configPath: Path
 }
 
-fn parseArgs(arguments: Array[String]): Options ! ArgsError
+fn parseArgs(arguments: Array[env.Value]): Options ! ArgsError
 fn loadConfig(path: Path): Config ! ConfigError
 fn run(config: Config): !RuntimeError
 ~~~
@@ -10882,8 +10880,8 @@ type Page = {
     posts: Posts
 }
 
-fn fetchUser(userId: UserId): User ! ApiError
-fn fetchPosts(userId: UserId): Posts ! ApiError
+fn fetchUser(userId: UserId): User ! ApiError suspends
+fn fetchPosts(userId: UserId): Posts ! ApiError suspends
 impl Display for Page
 ~~~
 
@@ -10898,8 +10896,8 @@ verifica:
 1. Que cada interfaz anterior sea internamente bien formada.
 2. Que no existan dos cabeceras de `impl` solapadas.
 3. Que `RowCursor` tenga exactamente un `Iterator[T]`.
-4. Que el SHA-256 de la serialización canónica de C.6 coincida con el valor
-   publicado.
+4. Que el SHA-256 declarado por el caso coincida con los bytes recibidos del
+   manifiesto vivo de fixtures.
 
 Al comprobar cada fence valida además que ninguna declaración inyectada colisione
 con el bloque. Una línea `require type Name` de C.6 no inyecta un símbolo: exige
@@ -10912,109 +10910,16 @@ cuando dos fences seleccionan fixtures distintos.
 
 ### C.6 Serialización canónica
 
-El byte string canónico es exactamente el contenido del siguiente fence, desde
-la `t` inicial de `tondo-fixture-manifest` hasta el `LF` posterior a `end`. Está
-codificado en UTF-8, ya utiliza `LF` y no incluye los delimitadores Markdown:
+Todo runner debe usar como única serialización canónica
+`conformance/0.1/fixtures/tondo-fixture-manifest.txt`. Está codificada en UTF-8,
+usa `LF`, comienza con `tondo-fixture-manifest 0.1` y termina con `end` seguido
+de `LF`. El generador debe calcular su SHA-256 desde esos bytes y fijarlo en
+cada caso documental y en el manifiesto vivo; no existe una segunda copia ni
+un hash actualizado manualmente dentro de esta especificación.
 
-~~~text
-tondo-fixture-manifest 0.1
-defaults Copy Discard Send Share
-universe module std.console
-universe decl std.console fn print(value: String)
-universe module std.fs
-universe decl std.fs opaque Path
-universe decl std.fs opaque IoError
-universe decl std.fs fn read(path: Path): Bytes ! IoError
-universe module std.json
-universe decl std.json opaque DecodeError
-universe module std.process
-universe decl std.process fn args(): Array[String]
-universe decl std.process fn cmd(program: String, arguments: ...String): Command
-fixture spec.core
-decl spec.core opaque Bytes
-decl spec.core opaque Utf8Error
-decl spec.core opaque Status
-decl spec.core opaque AcquireError
-decl spec.core opaque Resource capabilities Send terminal Resource.release(Resource) unwind resource-release
-decl spec.core fn Resource.release(resource: Resource)
-decl spec.core fn Resource.status(self): Status
-decl spec.core fn consume[T: Discard](value: T)
-decl spec.core fn String.isEmpty(self): Bool
-decl spec.core fn String(value: Bytes): String ! Utf8Error
-decl spec.core fn Array[T].length(self): Int
-decl spec.core fn Array[T].isEmpty(self): Bool
-decl spec.core fn Array[T: Copy].getOr(self, index: Int, fallback: T): T
-decl spec.core fn Array[T].append(var self, value: T)
-decl spec.core fn Map[K: Key, V: Copy].getOr(self, key: K, fallback: V): V
-decl spec.core fn Option[T: Copy].at(self): T
-decl spec.core unsafe fn Pointer[T].read(self): T
-alias fixture spec.0_1 = spec.core
-fixture spec.cursor extends spec.core
-decl spec.cursor opaque Query
-decl spec.cursor opaque Row
-decl spec.cursor opaque DatabaseError
-decl spec.cursor opaque Database
-decl spec.cursor opaque RowCursor capabilities Send terminal RowCursor.close(RowCursor) unwind cursor-close
-decl spec.cursor fn Database.openRows(query: Query): RowCursor ! DatabaseError
-decl spec.cursor fn RowCursor.close(cursor: RowCursor)
-decl spec.cursor impl Iterator[Row] for RowCursor fn next(mut self): Row?
-fixture spec.resource extends spec.core
-decl spec.resource fn acquire(): Resource ! AcquireError
-fixture spec.domain extends spec.core
-require spec.domain type User
-decl spec.domain fn decodeUser(bytes: Bytes): User ! std.json.DecodeError
-fixture spec.settings extends spec.core
-binding spec.settings fs = std.fs
-decl spec.settings alias Path = fs.Path
-decl spec.settings alias IoError = fs.IoError
-decl spec.settings opaque DecodeError
-decl spec.settings opaque Settings
-decl spec.settings fn decodeSettings(bytes: Bytes): Settings ! DecodeError
-fixture spec.user extends spec.core
-decl spec.user type UserId = Int
-decl spec.user type User = { id: UserId, name: String, email: String? }
-fixture spec.console extends spec.core
-binding spec.console console = std.console
-fixture spec.jobs extends spec.core
-decl spec.jobs opaque Deque[T: Discard] capabilities Discard
-decl spec.jobs type Job = { cancelled: Bool }
-decl spec.jobs opaque JobError
-decl spec.jobs fn Deque[T].isEmpty(self): Bool
-decl spec.jobs fn Deque[T].popFront(var self): T?
-decl spec.jobs fn run(job: Job): !JobError
-fixture spec.application extends spec.core
-decl spec.application opaque Path
-decl spec.application opaque ArgsError
-decl spec.application opaque ConfigError
-decl spec.application opaque RuntimeError
-decl spec.application opaque Config
-decl spec.application type Options = { configPath: Path }
-decl spec.application fn parseArgs(arguments: Array[String]): Options ! ArgsError
-decl spec.application fn loadConfig(path: Path): Config ! ConfigError
-decl spec.application fn run(config: Config): !RuntimeError
-fixture spec.async_page extends spec.core
-binding spec.async_page console = std.console
-decl spec.async_page type UserId = Int
-decl spec.async_page opaque User
-decl spec.async_page opaque Posts
-decl spec.async_page opaque ApiError
-decl spec.async_page type Page = { user: User, posts: Posts }
-decl spec.async_page fn fetchUser(userId: UserId): User ! ApiError
-decl spec.async_page fn fetchPosts(userId: UserId): Posts ! ApiError
-decl spec.async_page impl Display for Page
-fixture spec.process extends spec.core
-decl spec.process opaque ProcessError
-decl spec.process type ProcessOutput = { stdout: Bytes }
-decl spec.process fn Pipeline.output(self): ProcessOutput ! ProcessError suspends
-decl spec.process fn Pipeline.check(self): ProcessOutput ! ProcessError suspends
-end
-~~~
-
-El SHA-256 esperado de esos bytes es
-`7be3cf8f98dc4103699ccd2844c22bb0c0f477c0bd7b2cfea2347df2b92e7025`. Un cambio de una firma, capability, requirement, binding,
-orden o byte exige publicar un hash nuevo y una nueva revisión del Markdown. De
-este modo dos runners no pueden usar stubs distintos y afirmar que comprobaron el
-mismo ejemplo.
+Un cambio de firma, capability, requirement, binding, orden o byte se aplica
+directamente al manifiesto vivo y obliga a regenerar la evidencia derivada. Dos
+runners solo comparan el mismo fixture cuando los hashes calculados coinciden.
 
 ## Apéndice D. Layout convencional de proyectos
 

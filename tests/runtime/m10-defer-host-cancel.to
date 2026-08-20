@@ -1,0 +1,24 @@
+import std.console
+import std.process
+import std.env
+
+fn argument(value: env.Value): String {
+    match value.asText() {
+        some(argumentText) => argumentText
+        none => panic("process fixture argument is not UTF-8")
+    }
+}
+
+fn cleanup(handle: process.ProcessHandle) suspends {
+    match handle.cancel() {
+        ok(_) => (),
+        err(_) => panic("cancel")
+    }
+}
+
+fn main(): !(process.ProcessError | env.EnvError) {
+    let arguments = env.snapshot()?.arguments()
+    let handle = process.shell(argument(arguments[0])).start()?
+    defer cleanup(handle)
+    console.print("body\n")
+}

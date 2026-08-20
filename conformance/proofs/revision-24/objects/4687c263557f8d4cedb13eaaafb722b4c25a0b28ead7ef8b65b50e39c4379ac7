@@ -1,7 +1,0 @@
-fn collect[T: Discard](values: ...T) {
-    _ = values
-}
-
-fn main() {
-    collect(1, "two")
-}

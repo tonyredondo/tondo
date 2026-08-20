@@ -1,21 +1,21 @@
 import std.console
 
-async fn tick() {}
+fn tick() suspends {}
 
-async fn sibling() {
+fn sibling() suspends {
     defer console.print("sibling-cleanup\n")
 
     for {
-        await tick()
+        tick()
     }
 }
 
-async fn failChild() {
-    await tick()
+fn failChild() suspends {
+    tick()
     panic("structured child panic")
 }
 
-async fn main() {
+fn main() suspends {
     scope {
         let waiting = spawn sibling()
         let failing = spawn failChild()

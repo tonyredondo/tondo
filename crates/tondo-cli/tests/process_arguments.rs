@@ -9,10 +9,21 @@ fn run_forwards_only_arguments_after_the_separator() {
         &source,
         br#"
 import std.console
-import std.process
+import std.env
 
-fn main() {
-    assert(process.args() == ["--flag", "two words", "*", "$HOME"])
+fn text(value: env.Value): String {
+    match value.asText() {
+        some(argumentText) => argumentText
+        none => panic("argument is not UTF-8")
+    }
+}
+
+fn main(): !env.EnvError {
+    let arguments = env.snapshot()?.arguments()
+    assert(text(arguments[0]) == "--flag")
+    assert(text(arguments[1]) == "two words")
+    assert(text(arguments[2]) == "*")
+    assert(text(arguments[3]) == "$HOME")
     console.print("cli-args-ok\n")
 }
 "#,

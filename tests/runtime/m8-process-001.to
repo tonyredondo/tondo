@@ -3,48 +3,56 @@ import std.process
 import std.bytes
 import std.collections
 import std.text
+import std.env
 
-async fn pipelineText(pipeline: Pipeline): String ! (process.ProcessError | process.Utf8Error) {
-    let output = await pipeline.output()?
+fn argument(value: env.Value): String {
+    match value.asText() {
+        some(argumentText) => argumentText
+        none => panic("process fixture argument is not UTF-8")
+    }
+}
+
+fn pipelineText(pipeline: Pipeline): String ! (process.ProcessError | bytes.Utf8Error) suspends {
+    let output = pipeline.output()?
     String(output.stdout)?
 }
 
-async fn main(): !(process.ProcessError | process.Utf8Error) {
-    let hostCommands = process.args()
+fn main(): !(process.ProcessError | bytes.Utf8Error | env.EnvError) suspends {
+    let hostArguments = env.snapshot()?.arguments()
+    let streamCommand = argument(hostArguments[0])
+    let sleepCommand = argument(hostArguments[1])
 
     let source = process.command(
         "git",
         "show",
         "HEAD:tests/runtime/m8-process-001.stdout",
     )
-    let first = process.cmd("git", "hash-object", "--stdin")
-    let second = process.cmd("git", "hash-object", "--stdin")
-    let third = process.cmd("git", "hash-object", "--stdin")
+    let first = process.command("git", "hash-object", "--stdin")
+    let second = process.command("git", "hash-object", "--stdin")
+    let third = process.command("git", "hash-object", "--stdin")
 
     assert(
-        await pipelineText(source | first)? ==
+        pipelineText(source | first)? ==
         "a6cb097452c125b4e95c1964d6d3af7a1b819186\n"
     )
     assert(
-        await pipelineText(source | (first | second))? ==
+        pipelineText(source | (first | second))? ==
         "c9a7fc312cf6d2cca8fc70ad6078da85147a433d\n"
     )
     assert(
-        await pipelineText((source | first) | second)? ==
+        pipelineText((source | first) | second)? ==
         "c9a7fc312cf6d2cca8fc70ad6078da85147a433d\n"
     )
     assert(
-        await pipelineText((source | first) | (second | third))? ==
+        pipelineText((source | first) | (second | third))? ==
         "03337a02c790a62bb4cde612fd39894a8d1f797a\n"
     )
 
-    let exact = await process
-        .cmd("git", "rev-parse", "--sq-quote", "two words", "*", "$HOME")
+    let exact = process.command("git", "rev-parse", "--sq-quote", "two words", "*", "$HOME")
         .output()?
     assert(String(exact.stdout)? == " 'two words' '*' '$HOME'\n")
 
-    let streams = await process
-        .shell(hostCommands[0])
+    let streams = process.shell(streamCommand)
         .output()?
     assert(String(streams.stdout)? == "stdout")
     assert(String(streams.stderr)? == "stderr")
@@ -53,8 +61,7 @@ async fn main(): !(process.ProcessError | process.Utf8Error) {
     assert(String(streams_combined)? != "")
     assert(streams_statuses[0].success)
 
-    let merged = await process
-        .shell(hostCommands[0])
+    let merged = process.shell(streamCommand)
         .mergeStderr()
         .output()?
     let merged_stderr = merged.stderr
@@ -64,39 +71,42 @@ async fn main(): !(process.ProcessError | process.Utf8Error) {
     assert(String(merged_combined)? == String(merged_stdout)?)
 
     let _merged_pipeline = (
-        process.shell(hostCommands[0]) |
-        process.shell(hostCommands[0])
+        process.shell(streamCommand) |
+        process.shell(streamCommand)
     ).mergeStderr()
 
-    let status = await process.shell("exit 7").status()?
+    let status = process.shell("exit 7").status()?
     assert(status[0].code == some(7))
     assert(not status[0].success)
 
-    match await process.shell("exit 7").check() {
+    match process.shell("exit 7").check() {
         ok(_) => assert(false)
         err(process.ProcessError(_)) => assert(false)
         err(process.ProcessExitError(_)) => ()
     }
 
-    let ran = await process.cmd("git", "--version").run()?
+    let ran = process.command("git", "--version").run()?
     assert(ran[0].success)
 
     let handle = (
-        process.cmd(
+        process.command(
             "git",
             "show",
             "HEAD:tests/runtime/m8-process-001.stdout",
         ) |
-        process.cmd("git", "hash-object", "--stdin")
+        process.command("git", "hash-object", "--stdin")
     ).start()?
-    let handled = await handle.output()?
+    let handled = handle.output()?
     assert(
         String(handled.stdout)? ==
         "a6cb097452c125b4e95c1964d6d3af7a1b819186\n"
     )
 
-    let sleeping = process.shell(hostCommands[1]).start()?
-    let cancelled = await sleeping.cancel()?
+    let waited = process.command("git", "--version").start()?.wait()?
+    assert(waited[0].success)
+
+    let sleeping = process.shell(sleepCommand).start()?
+    let cancelled = sleeping.cancel()?
     assert(not cancelled[0].success)
 
     console.print("process-ok\n")

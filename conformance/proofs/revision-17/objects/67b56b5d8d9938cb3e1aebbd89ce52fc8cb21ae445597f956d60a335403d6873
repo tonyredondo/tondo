@@ -1,5 +1,0 @@
-import std.process
-
-async fn main(): !(process.ProcessError | process.ProcessExitError) {
-    let _ = await process.shell("exit 7").check()?
-}

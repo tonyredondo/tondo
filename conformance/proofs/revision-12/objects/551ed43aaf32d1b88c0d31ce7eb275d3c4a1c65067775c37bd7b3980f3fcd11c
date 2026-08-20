@@ -1,5 +1,0 @@
-fn main() {
-    let values = [10, 20, 30, 40]
-    let index = -9223372036854775808
-    _ = values[index]
-}

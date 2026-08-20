@@ -1,5 +1,0 @@
-#!/usr/bin/env tondo
-const Answer: Int = 42
-fn main() {
-    assert(Answer == 42)
-}

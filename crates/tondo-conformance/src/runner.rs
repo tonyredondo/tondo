@@ -132,7 +132,6 @@ pub struct ComposedSuiteResult {
     pub passed: bool,
     pub cases: Vec<CaseResult>,
     pub lineage: String,
-    pub revision: u32,
     pub lineage_manifest_sha256: String,
     pub inventory_sha256: String,
     pub tree_sha256: String,
@@ -169,7 +168,6 @@ pub struct LayerEvidenceObservation {
 struct LayerEvidenceReport {
     format: String,
     lineage: String,
-    revision: u32,
     manifest_sha256: String,
     inventory_sha256: String,
     tree_sha256: String,
@@ -279,10 +277,10 @@ pub fn run_suite(
 
 pub fn compose_suite_result(
     lineage: &DraftLineage,
-    baseline: SuiteResult,
+    suite_result: SuiteResult,
     evidence_bytes: &[u8],
 ) -> Result<ComposedSuiteResult, RunError> {
-    if baseline.cases.len() != lineage.baseline_suite().manifest().cases.len() {
+    if suite_result.cases.len() != lineage.suite().manifest().cases.len() {
         return Err(RunError::Protocol(
             "a composed result requires the complete bootstrap case set".into(),
         ));
@@ -291,7 +289,6 @@ pub fn compose_suite_result(
         .map_err(|error| RunError::Json(error.to_string()))?;
     if report.format != "tondo-layer-evidence/1"
         || report.lineage != lineage.manifest().lineage
-        || report.revision != lineage.manifest().revision
         || report.manifest_sha256 != lineage.manifest_sha256()
         || !report.passed
         || !is_sha256(&report.inventory_sha256)
@@ -365,16 +362,15 @@ pub fn compose_suite_result(
     }
     Ok(ComposedSuiteResult {
         format: COMPOSED_RESULT_FORMAT.into(),
-        suite: baseline.suite,
-        suite_version: baseline.suite_version,
-        edition: baseline.edition,
-        manifest_sha256: baseline.manifest_sha256,
-        adapter: baseline.adapter,
-        target: baseline.target,
-        passed: baseline.passed,
-        cases: baseline.cases,
+        suite: suite_result.suite,
+        suite_version: suite_result.suite_version,
+        edition: suite_result.edition,
+        manifest_sha256: suite_result.manifest_sha256,
+        adapter: suite_result.adapter,
+        target: suite_result.target,
+        passed: suite_result.passed,
+        cases: suite_result.cases,
         lineage: report.lineage,
-        revision: report.revision,
         lineage_manifest_sha256: report.manifest_sha256,
         inventory_sha256: report.inventory_sha256,
         tree_sha256: report.tree_sha256,
@@ -2400,13 +2396,37 @@ mod tests {
     fn composed_result_closes_layer_identity_order_and_evidence() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let lineage = DraftLineage::load(&root, crate::lineage::DRAFT_LINEAGE_PATH).unwrap();
-        let baseline: SuiteResult = serde_json::from_slice(
-            &std::fs::read(
-                root.join("conformance/0.1/results/tondo-reference-draft-tondo-vm-hosted.json"),
-            )
-            .unwrap(),
-        )
-        .unwrap();
+        let suite = lineage.suite();
+        let target = &suite.manifest().targets[0];
+        let suite_result = SuiteResult {
+            format: RESULT_FORMAT.into(),
+            suite: suite.manifest().suite.clone(),
+            suite_version: suite.manifest().version.clone(),
+            edition: suite.manifest().edition.clone(),
+            manifest_sha256: suite.manifest_sha256(),
+            adapter: serde_json::json!({"implementation": "unit-test"}),
+            target: TargetSelection {
+                name: target.name.clone(),
+                profile: target.profile.clone(),
+                capabilities: target.capabilities.clone(),
+            },
+            passed: true,
+            cases: suite
+                .manifest()
+                .cases
+                .iter()
+                .map(|case| CaseResult {
+                    id: case.id.clone(),
+                    group: case.group,
+                    repetitions: case.repeat,
+                    observation_sha256: vec![
+                        "a".repeat(64);
+                        usize::try_from(case.repeat)
+                            .expect("case repetition fits usize")
+                    ],
+                })
+                .collect(),
+        };
         let inventory_bytes = std::fs::read(root.join("testing/inventory.json")).unwrap();
         let inventory: Value = serde_json::from_slice(&inventory_bytes).unwrap();
         let sources = inventory["tests"]
@@ -2429,7 +2449,6 @@ mod tests {
         let report = LayerEvidenceReport {
             format: "tondo-layer-evidence/1".into(),
             lineage: lineage.manifest().lineage.clone(),
-            revision: lineage.manifest().revision,
             manifest_sha256: lineage.manifest_sha256(),
             inventory_sha256: crate::sha256(&inventory_bytes),
             tree_sha256: "a".repeat(64),
@@ -2445,8 +2464,8 @@ mod tests {
                 .collect(),
         };
         let encoded = serde_json::to_vec(&report).unwrap();
-        let composed = compose_suite_result(&lineage, baseline.clone(), &encoded).unwrap();
-        assert_eq!(composed.cases.len(), baseline.cases.len());
+        let composed = compose_suite_result(&lineage, suite_result.clone(), &encoded).unwrap();
+        assert_eq!(composed.cases.len(), suite_result.cases.len());
         assert_eq!(composed.case_layers.len(), lineage.case_layers().len());
         assert_eq!(
             composed
@@ -2457,17 +2476,17 @@ mod tests {
             67
         );
 
-        assert!(compose_suite_result(&lineage, baseline.clone(), b"not json").is_err());
-        let mut incomplete_baseline = baseline.clone();
-        incomplete_baseline.cases.pop();
-        assert!(compose_suite_result(&lineage, incomplete_baseline, &encoded).is_err());
+        assert!(compose_suite_result(&lineage, suite_result.clone(), b"not json").is_err());
+        let mut incomplete_suite = suite_result.clone();
+        incomplete_suite.cases.pop();
+        assert!(compose_suite_result(&lineage, incomplete_suite, &encoded).is_err());
 
         let mut duplicate: LayerEvidenceReport = serde_json::from_slice(&encoded).unwrap();
         duplicate.evidence.insert(1, duplicate.evidence[0].clone());
         assert!(
             compose_suite_result(
                 &lineage,
-                baseline.clone(),
+                suite_result.clone(),
                 &serde_json::to_vec(&duplicate).unwrap()
             )
             .is_err()
@@ -2478,7 +2497,7 @@ mod tests {
         assert!(
             compose_suite_result(
                 &lineage,
-                baseline.clone(),
+                suite_result.clone(),
                 &serde_json::to_vec(&invalid_hash).unwrap()
             )
             .is_err()
@@ -2489,7 +2508,7 @@ mod tests {
         assert!(
             compose_suite_result(
                 &lineage,
-                baseline.clone(),
+                suite_result.clone(),
                 &serde_json::to_vec(&missing).unwrap()
             )
             .is_err()
@@ -2500,8 +2519,12 @@ mod tests {
             observation_sha256: "d".repeat(64),
         });
         assert!(
-            compose_suite_result(&lineage, baseline, &serde_json::to_vec(&missing).unwrap())
-                .is_err()
+            compose_suite_result(
+                &lineage,
+                suite_result,
+                &serde_json::to_vec(&missing).unwrap()
+            )
+            .is_err()
         );
     }
 

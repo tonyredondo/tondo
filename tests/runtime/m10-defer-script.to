@@ -1,0 +1,8 @@
+import std.console
+
+let cleanup = () {
+    console.print("cleanup\n")
+}
+
+defer cleanup()
+console.print("body\n")

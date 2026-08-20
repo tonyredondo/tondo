@@ -341,9 +341,9 @@ negative coordinator tests, complete workspace tests and draft conformance
 adapter together.
 
 The live conformance lineage is explicitly
-`conformance/draft/manifest.json`. `conformance/0.1/manifest.json` and its
-results remain historical and immutable; S1A never mixes them with the live
-draft. Generated reports stay under `target/reliability/evidence` and are
+`conformance/draft/manifest.json` and its base suite is
+`conformance/0.1/manifest.json`; both describe the same current draft. Generated
+reports stay under `target/reliability/evidence` and are
 reproducible from the commands recorded in the owner manifest.
 
 The complete owner/signature/requirement coordination is kept separately in

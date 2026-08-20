@@ -3,32 +3,32 @@ import std.path
 import std.fs
 import std.bytes
 
-async fn main(): !(path.PathError | fs.FsError | bytes.BytesError | bytes.Utf8Error) {
+fn main(): !(path.PathError | fs.FsError | bytes.BytesError | bytes.Utf8Error) suspends {
     let existing = path.fromString("Cargo.toml")?
-    let _contents = await fs.readAll(existing)?
+    let _contents = fs.readAll(existing)?
 
     let missing = path.fromString("tondo-no-such-file")?
-    match await fs.readAll(missing) {
+    match fs.readAll(missing) {
         ok(_) => assert(false)
             err(_) => ()
     }
     let workspace = path.fromString("target/tondo-wave5-fs")?
-    await fs.createDirectory(workspace, true)?
+    fs.createDirectory(workspace, true)?
     let file = workspace.join("data.bin")?
-    await fs.atomicWrite(file, bytes.Bytes("ok")?)?
-    await fs.writeAll(file, bytes.Bytes("ok")?)?
-    let _entries = await fs.list(workspace)?
-    let _metadata = await fs.metadata(file)?
-    var append_file = await fs.open(file, fs.OpenMode.Append())?
-    let _written = await append_file.write(bytes.Bytes("!")?)?
-    await append_file.flush()?
-    var read_file = await fs.open(file, fs.OpenMode.Read())?
-    let _read = await read_file.read(16)?
-    var directory = await fs.openDirectory(workspace)?
-    let _directory_entries = await directory.list()?
+    fs.atomicWrite(file, bytes.Bytes("ok")?)?
+    fs.writeAll(file, bytes.Bytes("ok")?)?
+    let _entries = fs.list(workspace)?
+    let _metadata = fs.metadata(file)?
+    var append_file = fs.open(file, fs.OpenMode.Append())?
+    let _written = append_file.write(bytes.Bytes("!")?)?
+    append_file.flush()?
+    var read_file = fs.open(file, fs.OpenMode.Read())?
+    let _read = read_file.read(16)?
+    var directory = fs.openDirectory(workspace)?
+    let _directory_entries = directory.list()?
     let moved = workspace.join("renamed.bin")?
-    await fs.rename(file, moved)?
-    await fs.remove(moved)?
-    await fs.remove(workspace)?
+    fs.rename(file, moved)?
+    fs.remove(moved)?
+    fs.remove(workspace)?
     console.print("fs-ok\n")
 }

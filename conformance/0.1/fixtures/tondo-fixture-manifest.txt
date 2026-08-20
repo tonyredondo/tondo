@@ -8,9 +8,15 @@ universe decl std.fs opaque IoError
 universe decl std.fs fn read(path: Path): Bytes ! IoError
 universe module std.json
 universe decl std.json opaque DecodeError
+universe module std.env
+universe decl std.env opaque EnvError
+universe decl std.env opaque Value capabilities Copy
+universe decl std.env opaque Snapshot
+universe decl std.env fn snapshot(): Snapshot ! EnvError
+universe decl std.env fn Snapshot.arguments(self): Array[Value]
+universe decl std.env fn Value.asText(self): String?
 universe module std.process
-universe decl std.process fn args(): Array[String]
-universe decl std.process fn cmd(program: String, arguments: ...String): Command
+universe decl std.process fn command(program: String, arguments: ...String): Command
 fixture spec.core
 decl spec.core opaque Bytes
 decl spec.core opaque Utf8Error
@@ -70,7 +76,7 @@ decl spec.application opaque ConfigError
 decl spec.application opaque RuntimeError
 decl spec.application opaque Config
 decl spec.application type Options = { configPath: Path }
-decl spec.application fn parseArgs(arguments: Array[String]): Options ! ArgsError
+decl spec.application fn parseArgs(arguments: Array[std.env.Value]): Options ! ArgsError
 decl spec.application fn loadConfig(path: Path): Config ! ConfigError
 decl spec.application fn run(config: Config): !RuntimeError
 fixture spec.async_page extends spec.core
@@ -80,12 +86,12 @@ decl spec.async_page opaque User
 decl spec.async_page opaque Posts
 decl spec.async_page opaque ApiError
 decl spec.async_page type Page = { user: User, posts: Posts }
-decl spec.async_page async fn fetchUser(userId: UserId): User ! ApiError
-decl spec.async_page async fn fetchPosts(userId: UserId): Posts ! ApiError
+decl spec.async_page fn fetchUser(userId: UserId): User ! ApiError suspends
+decl spec.async_page fn fetchPosts(userId: UserId): Posts ! ApiError suspends
 decl spec.async_page impl Display for Page
 fixture spec.process extends spec.core
 decl spec.process opaque ProcessError
 decl spec.process type ProcessOutput = { stdout: Bytes }
-decl spec.process async fn Pipeline.output(self): ProcessOutput ! ProcessError
-decl spec.process async fn Pipeline.check(self): ProcessOutput ! ProcessError
+decl spec.process fn Pipeline.output(self): ProcessOutput ! ProcessError suspends
+decl spec.process fn Pipeline.check(self): ProcessOutput ! ProcessError suspends
 end

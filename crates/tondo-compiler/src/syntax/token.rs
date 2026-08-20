@@ -38,7 +38,6 @@ pub enum TokenKind {
     Alias,
     And,
     As,
-    Async,
     Await,
     Break,
     Const,
@@ -154,7 +153,6 @@ impl TokenKind {
             Self::Alias
                 | Self::And
                 | Self::As
-                | Self::Async
                 | Self::Await
                 | Self::Break
                 | Self::Const
@@ -205,7 +203,6 @@ impl TokenKind {
             "alias" => Self::Alias,
             "and" => Self::And,
             "as" => Self::As,
-            "async" => Self::Async,
             "await" => Self::Await,
             "break" => Self::Break,
             "const" => Self::Const,

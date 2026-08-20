@@ -1,6 +1,0 @@
-fn consume[T: Discard](value: T) {}
-
-fn invalid[T: Discard](owner: T) {
-    defer consume(owner)
-    defer consume(owner)
-}

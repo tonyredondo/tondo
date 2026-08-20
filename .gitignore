@@ -1,3 +1,4 @@
 /target/
+/.tmp/
 /fuzz/artifacts/
 /fuzz/target/

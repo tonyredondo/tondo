@@ -99,8 +99,7 @@ for symbol in \
     'IntrinsicType::ProcessHandle' \
     'IntrinsicType::ProcessError' \
     'IntrinsicType::ProcessExitError' \
-    'HirBootstrapHostFunction::ProcessArgs' \
-    'HirBootstrapHostFunction::ProcessCmd' \
+    'HirBootstrapHostFunction::ProcessCommand' \
     'HirBootstrapHostFunction::ProcessShell' \
     'HirBootstrapHostFunction::ProcessPipe' \
     'HirBootstrapHostFunction::CommandStart' \
@@ -129,6 +128,14 @@ for symbol in \
     grep -Fq "$symbol" crates/tondo-compiler/src/hir.rs \
         crates/tondo-compiler/src/hir/check.rs crates/tondo-compiler/src/hir/lower.rs
 done
+
+if grep -Fq 'HirBootstrapHostFunction::ProcessArgs' crates/tondo-compiler/src/hir.rs \
+    crates/tondo-compiler/src/hir/check.rs crates/tondo-compiler/src/hir/lower.rs \
+    || grep -Fq 'HirBootstrapHostFunction::ProcessCmd' crates/tondo-compiler/src/hir.rs \
+        crates/tondo-compiler/src/hir/check.rs crates/tondo-compiler/src/hir/lower.rs; then
+    echo "std.process owner tests: removed process.args/process.cmd host symbols remain" >&2
+    exit 1
+fi
 
 for symbol in \
     'BytecodeIntrinsicType::Command' \

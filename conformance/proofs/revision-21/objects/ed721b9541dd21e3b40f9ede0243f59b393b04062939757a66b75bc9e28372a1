@@ -1,5 +1,0 @@
-fn runtime(): Int {
-    1
-}
-
-const Invalid: Int = runtime()

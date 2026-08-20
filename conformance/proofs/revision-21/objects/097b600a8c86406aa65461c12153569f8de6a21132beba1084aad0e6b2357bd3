@@ -1,4 +1,0 @@
-async fn invalid() {
-    let value = await 42
-    assert(value == 42)
-}

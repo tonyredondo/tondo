@@ -428,7 +428,7 @@ fn emit_participation<'a>(
                     .ok_or_else(|| TestBackendError::InvalidBody("test has no body".into()))?;
                 output.extend_from_slice(b"__tondoTesting.__runLeaf(");
                 append_string_literal(output, &id);
-                output.extend_from_slice(b", async () {\n");
+                output.extend_from_slice(b", () {\n");
                 output.extend_from_slice(&block_contents(source, body.syntax().range())?);
                 output.extend_from_slice(b"\n})\n");
             }
@@ -448,7 +448,7 @@ fn emit_participation<'a>(
                         .ok_or_else(|| TestBackendError::InvalidBody("suite has no body".into()))?;
                     output.extend_from_slice(b"__tondoTesting.__runSuite(");
                     append_string_literal(output, prefix.trim_end_matches("::"));
-                    output.extend_from_slice(b", async () {\n");
+                    output.extend_from_slice(b", () {\n");
                     for statement in body.setup() {
                         output.extend_from_slice(slice(source, statement.syntax().range())?);
                         output.extend_from_slice(b"\n");

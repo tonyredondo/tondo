@@ -1,3 +1,0 @@
-const Zero: Float = 0.0
-const Nan: Float = Zero / Zero
-const Known: Bool = Nan == Nan

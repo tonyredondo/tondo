@@ -11176,9 +11176,9 @@ mod tests {
     fn block_guard_matrix_rejects_wrong_effect_storage_and_cleanup_contexts() {
         const SOURCE: &str = "fn inspect(value: Int, text: String): Int { value }\n\
              fn sum(left: Int, right: Int, text: String): Int { left + right }\n\
-             async fn load(value: Int): Int { value }\n\
-             async fn effects(text: String): Int {\n\
-                 let direct = await load(1)\n\
+             fn load(value: Int): Int suspends { value }\n\
+             fn effects(text: String): Int {\n\
+                 let direct = load(1)\n\
                  scope {\n\
                      let task = spawn load(direct)\n\
                      await task\n\
@@ -13018,12 +13018,12 @@ mod tests {
     #[test]
     fn process_output_redirections_are_verified_at_the_mir_boundary() {
         const SOURCE: &str = "import std.process\n\
-             async fn main(): !(process.ProcessError) {\n\
+             fn main(): !(process.ProcessError) {\n\
                  let command = process.command(\"/usr/bin/true\")\n\
                  let merged_command = command.mergeStderr()\n\
                  let pipeline = process.command(\"/usr/bin/printf\", \"x\") | process.command(\"/bin/cat\")\n\
                  let merged_pipeline = pipeline.mergeStderr()\n\
-                 let output = await merged_command.output()?\n\
+                 let output = merged_command.output()?\n\
                  let combined = output.combined\n\
                  _ = merged_pipeline\n\
                  _ = combined\n\
@@ -13038,10 +13038,10 @@ mod tests {
         const SOURCE: &str = "import std.console\n\
              fn operations(\n\
                  text: String,\n\
-                 body: async fn(),\n\
+                 body: fn() suspends,\n\
                  syncBody: fn(),\n\
-                 argumentBody: async fn(Int),\n\
-                 valueBody: async fn(): Int,\n\
+                 argumentBody: fn(Int) suspends,\n\
+                 valueBody: fn(): Int suspends,\n\
                  number: Int,\n\
              ) { console.print(text) }\n";
         let cases = [

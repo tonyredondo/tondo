@@ -312,10 +312,14 @@ struct BodyContext {
     structured_scope_depth: u32,
     async_initiation: Option<AsyncInitiation>,
     in_defer_body: bool,
-    /// Allows the single leading `await` in `defer await call(...)`.
-    /// `check_await` clears it while checking the operand so nested awaits
-    /// remain rejected by the ordinary defer rules.
-    defer_async_root: bool,
+    /// The direct call registered by `defer call(...)`. A suspendible root is
+    /// stored without an `Await` wrapper and awaited when the scope drains;
+    /// suspendible calls nested in its callee or arguments remain invalid.
+    defer_invocation_root: Option<TextRange>,
+    /// `defer { ... }` is checked as an inferred cleanup closure. Direct
+    /// suspendible calls in that closure wait automatically, like any other
+    /// function body.
+    defer_block: bool,
     defer_control_boundary: bool,
     script_errors: Option<Rc<RefCell<BTreeSet<TypeId>>>>,
 }
@@ -2771,12 +2775,12 @@ impl<'a> ExpressionChecker<'a> {
             && (matches!(
                 expression,
                 AstExpression::Spawn(_) | AstExpression::Scope(_)
-            ) || (matches!(expression, AstExpression::Await(_)) && !context.defer_async_root))
+            ) || matches!(expression, AstExpression::Await(_)))
         {
             self.emit(
                 self.sources.span(file, node.range())?,
                 "E1608",
-                "a deferred cleanup cannot suspend, create a scope, or spawn work",
+                "a deferred cleanup cannot use `await`, create a scope, or spawn work; direct calls wait automatically",
                 Vec::new(),
                 None,
             )?;
@@ -2850,9 +2854,6 @@ impl<'a> ExpressionChecker<'a> {
         expected: Option<ExpressionExpectation>,
         context: &mut BodyContext,
     ) -> Result<HirExpressionId, HirError> {
-        let explicitly_async = node
-            .child_tokens()
-            .any(|token| token.kind() == TokenKind::Async);
         let is_unsafe = node
             .child_tokens()
             .any(|token| token.kind() == TokenKind::Unsafe);
@@ -2892,10 +2893,9 @@ impl<'a> ExpressionChecker<'a> {
             )?;
             return self.recovery_expression(file, node.range());
         }
-        let mut is_async = explicitly_async
-            || expected_function
-                .as_ref()
-                .is_some_and(FunctionType::is_async);
+        let mut is_async = expected_function
+            .as_ref()
+            .is_some_and(FunctionType::is_async);
         let parameter_nodes = node
             .child_nodes()
             .find(|child| child.kind() == SyntaxKind::ClosureParameterList)
@@ -2984,22 +2984,6 @@ impl<'a> ExpressionChecker<'a> {
                 signature_valid = false;
                 (ParameterMode::Value, self.program.interner.error(), false)
             };
-
-            // `async (...)` survives only as a compatibility spelling for the
-            // frozen bootstrap corpus. Preserve its historical restriction;
-            // the canonical `fn(...) suspends` contract permits an exclusive
-            // parameter for a sequential, implicitly awaited call and checks
-            // the loan at `spawn` instead.
-            if explicitly_async && matches!(mode, ParameterMode::Mut | ParameterMode::Var) {
-                self.emit(
-                    parameter_span,
-                    "E1609",
-                    "a legacy `async` closure cannot contain a `mut` or `var` parameter; use a `fn(...) suspends` contract",
-                    Vec::new(),
-                    None,
-                )?;
-                signature_valid = false;
-            }
 
             if is_variadic
                 && (variadic.is_some()
@@ -3332,8 +3316,6 @@ impl<'a> ExpressionChecker<'a> {
             .any(|child| child.kind() == SyntaxKind::CallSuffix)
             .then_some(expected)
             .flatten();
-        let defer_async_root = context.defer_async_root;
-        context.defer_async_root = false;
         // The expectation belongs to the logical value produced by `await`.
         // It may guide generic call inference, but applying it to the async
         // call itself would wrap the call in a coercion and hide the awaitable
@@ -3343,12 +3325,20 @@ impl<'a> ExpressionChecker<'a> {
         } else {
             self.check_expression(file, operand_node, None, context)
         };
-        context.defer_async_root = defer_async_root;
         context.async_initiation = previous;
         let operation = checked?;
         let operation_type = self.expression_type(operation);
         let result = match self.program.expression(operation).map(HirExpression::kind) {
-            Some(HirExpressionKind::AsyncCall { .. }) => operation_type,
+            Some(HirExpressionKind::AsyncCall { .. }) => {
+                self.emit(
+                    span,
+                    "E1611",
+                    "`await` accepts only a pending `Join[T, E]`; direct calls wait automatically",
+                    Vec::new(),
+                    None,
+                )?;
+                return self.recovery_expression(file, node.range());
+            }
             _ => {
                 let TypeKind::Intrinsic {
                     constructor: IntrinsicType::Join,
@@ -3359,7 +3349,7 @@ impl<'a> ExpressionChecker<'a> {
                         self.emit(
                             span,
                             "E1611",
-                            "`await` requires an async call or a `Join[T, E]`",
+                            "`await` requires a pending `Join[T, E]`",
                             Vec::new(),
                             None,
                         )?;
@@ -7585,10 +7575,8 @@ impl<'a> ExpressionChecker<'a> {
             let mut defer_context = context.clone();
             defer_context.loops.clear();
             defer_context.in_defer_body = true;
-            defer_context.defer_async_root = matches!(
-                AstExpression::cast(expression),
-                Some(AstExpression::Await(_))
-            );
+            defer_context.defer_invocation_root = Some(expression.range());
+            defer_context.defer_block = false;
             defer_context.defer_control_boundary = true;
             defer_context.script_errors = None;
             self.check_expression(file, expression, None, &mut defer_context)?
@@ -7603,6 +7591,14 @@ impl<'a> ExpressionChecker<'a> {
                     guarded: None,
                 },
             });
+        }
+        let suspends = matches!(
+            self.program.expression(invocation).map(HirExpression::kind),
+            Some(HirExpressionKind::AsyncCall { .. })
+        );
+        if suspends && !context.is_async && !context.no_suspend {
+            context.is_async = true;
+            self.promote_callable_to_suspendible(context)?;
         }
         self.normalize_deferred_call_protocol(invocation, span, context)?;
         let guarded = self.validate_defer_invocation(invocation, span, context)?;
@@ -7626,7 +7622,8 @@ impl<'a> ExpressionChecker<'a> {
             self.program
                 .expression(invocation)
                 .and_then(|expression| match expression.kind() {
-                    HirExpressionKind::Call { callee, .. } => Some(*callee),
+                    HirExpressionKind::Call { callee, .. }
+                    | HirExpressionKind::AsyncCall { callee, .. } => Some(*callee),
                     _ => None,
                 })
         else {
@@ -7659,13 +7656,15 @@ impl<'a> ExpressionChecker<'a> {
             return Ok(());
         };
         let expression = &mut self.program.expressions[invocation.0 as usize];
-        let HirExpressionKind::Call {
-            protocol: recorded, ..
-        } = &mut expression.kind
-        else {
-            unreachable!("the deferred invocation was already classified as a call")
-        };
-        *recorded = protocol;
+        match &mut expression.kind {
+            HirExpressionKind::Call {
+                protocol: recorded, ..
+            }
+            | HirExpressionKind::AsyncCall {
+                protocol: recorded, ..
+            } => *recorded = protocol,
+            _ => unreachable!("the deferred invocation was already classified as a call"),
+        }
         Ok(())
     }
 
@@ -7725,6 +7724,8 @@ impl<'a> ExpressionChecker<'a> {
         });
         closure_context.is_async = false;
         closure_context.in_defer_body = true;
+        closure_context.defer_invocation_root = None;
+        closure_context.defer_block = true;
         closure_context.defer_control_boundary = true;
 
         let body_root = self.check_expression(
@@ -7733,8 +7734,9 @@ impl<'a> ExpressionChecker<'a> {
             Some(ExpressionExpectation::Direct(unit)),
             &mut closure_context,
         )?;
+        let suspends = closure_context.is_async;
         let function_type = self.program.interner.function(FunctionType::new(
-            false,
+            suspends,
             false,
             Vec::new(),
             None,
@@ -7742,7 +7744,7 @@ impl<'a> ExpressionChecker<'a> {
         ))?;
         let source = self.sources.get(file)?;
         let identity = GeneratedTypeIdentity::new(
-            GeneratedTypeKind::closure(false, false),
+            GeneratedTypeKind::closure(suspends, false),
             source.source_id().clone(),
             source.module().clone(),
             source.path().clone(),
@@ -7758,7 +7760,7 @@ impl<'a> ExpressionChecker<'a> {
                 offset: defer.range().start(),
             })?;
         let protocols =
-            self.derive_closure_protocols(body_root, &captures, false, &context.generics)?;
+            self.derive_closure_protocols(body_root, &captures, suspends, &context.generics)?;
         let protocol = if protocols.supports(HirCallProtocol::Call) {
             HirCallProtocol::Call
         } else {
@@ -7796,12 +7798,22 @@ impl<'a> ExpressionChecker<'a> {
             span,
             ty: unit,
             category: HirValueCategory::Value,
-            kind: HirExpressionKind::Call {
-                callee,
-                arguments: Vec::new(),
-                signature: function_type,
-                protocol,
-                unsafe_call: false,
+            kind: if suspends {
+                HirExpressionKind::AsyncCall {
+                    callee,
+                    arguments: Vec::new(),
+                    signature: function_type,
+                    protocol,
+                    unsafe_call: false,
+                }
+            } else {
+                HirExpressionKind::Call {
+                    callee,
+                    arguments: Vec::new(),
+                    signature: function_type,
+                    protocol,
+                    unsafe_call: false,
+                }
             },
         })
     }
@@ -7818,32 +7830,7 @@ impl<'a> ExpressionChecker<'a> {
             .expect("checked defer invocation remains indexed");
         let invocation_type = expression.ty();
         let invocation_kind = expression.kind().clone();
-        // `defer await` is represented as the ordinary `await` expression in
-        // HIR.  Only its single async-call operand is deferred; a Join or any
-        // other awaitable would make cleanup ownership ambiguous.
-        let invocation_kind = match invocation_kind {
-            HirExpressionKind::Await { operation } => {
-                if !matches!(
-                    self.program.expression(operation).map(HirExpression::kind),
-                    Some(HirExpressionKind::AsyncCall { .. })
-                ) {
-                    self.emit(
-                        span,
-                        "E1608",
-                        "`defer await` requires one async call, not a Join or block",
-                        Vec::new(),
-                        None,
-                    )?;
-                    return Ok(None);
-                }
-                self.program
-                    .expression(operation)
-                    .expect("deferred async call remains indexed")
-                    .kind()
-                    .clone()
-            }
-            kind => kind,
-        };
+        let suspends = matches!(invocation_kind, HirExpressionKind::AsyncCall { .. });
         let mut borrowed = Vec::new();
         let operands = match &invocation_kind {
             HirExpressionKind::Call {
@@ -7925,6 +7912,16 @@ impl<'a> ExpressionChecker<'a> {
             let operand_span = operand_expression.span();
             let operand_category = operand_expression.category();
             let operand_is_local = matches!(operand_expression.kind(), HirExpressionKind::Local(_));
+            if suspends {
+                let _ = self.require_async_capability(
+                    operand_span,
+                    operand_type,
+                    HirCapability::Send,
+                    &context.capability_assumptions,
+                    "a value retained by suspendible `defer` cleanup",
+                    "E1605",
+                )?;
+            }
             let status = self.capability_status_with_generics(
                 operand_type,
                 HirCapability::Copy,
@@ -12134,21 +12131,12 @@ impl<'a> ExpressionChecker<'a> {
             (Some(pattern_node), Some(source_node)) => {
                 let source = self.check_expression(file, source_node, None, context)?;
                 let source_type = self.expression_type(source);
-                let explicit_async = node
-                    .child_tokens()
-                    .any(|token| token.kind() == TokenKind::Await);
                 let element = self.iteration_element_type(source_type)?;
                 let (element, protocol) = if let Some(element) = element {
                     (element, None)
                 } else {
-                    let trait_query: Option<TraitQuery> = if explicit_async {
-                        self.async_iterator_trait_query(
-                            source_type,
-                            self.sources.span(file, source_node.range())?,
-                            context,
-                        )?
-                    } else {
-                        self.iterator_trait_query(
+                    let trait_query: Option<TraitQuery> = self
+                        .iterator_trait_query(
                             source_type,
                             self.sources.span(file, source_node.range())?,
                             context,
@@ -12157,8 +12145,7 @@ impl<'a> ExpressionChecker<'a> {
                             source_type,
                             self.sources.span(file, source_node.range())?,
                             context,
-                        )?)
-                    };
+                        )?);
                     if let Some(query) = trait_query {
                         let element = query.arguments()[0];
                         let async_iteration = matches!(
@@ -14653,8 +14640,7 @@ impl<'a> ExpressionChecker<'a> {
                 ("console", Some("stdout")) => HirBootstrapHostFunction::ConsoleStdout,
                 ("console", Some("stderr")) => HirBootstrapHostFunction::ConsoleStderr,
                 ("console", Some("readLine")) => HirBootstrapHostFunction::ConsoleReadLine,
-                ("process", Some("args")) => HirBootstrapHostFunction::ProcessArgs,
-                ("process", Some("command" | "cmd")) => HirBootstrapHostFunction::ProcessCmd,
+                ("process", Some("command")) => HirBootstrapHostFunction::ProcessCommand,
                 ("process", Some("shell")) => HirBootstrapHostFunction::ProcessShell,
                 ("bytes", Some("empty")) => HirBootstrapHostFunction::BytesEmpty,
                 ("bytes", Some("fromArray")) => HirBootstrapHostFunction::BytesFromArray,
@@ -19581,9 +19567,13 @@ impl<'a> ExpressionChecker<'a> {
             )?;
             return self.recovery_expression(file, range);
         }
+        let deferred_root = context.in_defer_body
+            && context
+                .defer_invocation_root
+                .is_some_and(|root| root == range);
         if contract.function.is_async()
             && async_initiation.is_none()
-            && !context.in_defer_body
+            && (!context.in_defer_body || context.defer_block)
             && !context.is_async
         {
             // Effect inference is intentionally performed at the consuming
@@ -19593,30 +19583,22 @@ impl<'a> ExpressionChecker<'a> {
             context.is_async = true;
             self.promote_callable_to_suspendible(context)?;
         }
-        let implicit_await = contract.function.is_async()
+        let implicit_wait = contract.function.is_async()
             && async_initiation.is_none()
-            && !context.in_defer_body
+            && (!context.in_defer_body || context.defer_block)
             && context.is_async;
         if contract.function.is_async() {
-            if context.in_defer_body
-                && !matches!(
-                    async_initiation,
-                    Some(AsyncInitiation {
-                        kind: AsyncInitiationKind::Await,
-                        ..
-                    })
-                )
-            {
+            if context.in_defer_body && !context.defer_block && !deferred_root {
                 self.emit(
                     call_span,
                     "E1608",
-                    "a deferred cleanup cannot call a suspending function directly",
+                    "a deferred call cannot suspend while evaluating its callee or arguments",
                     Vec::new(),
                     None,
                 )?;
                 return self.recovery_expression(file, range);
             }
-            if async_initiation.is_none() && !implicit_await {
+            if async_initiation.is_none() && !implicit_wait && !deferred_root {
                 self.emit(
                     call_span,
                     "E1601",
@@ -20301,7 +20283,7 @@ impl<'a> ExpressionChecker<'a> {
             category: HirValueCategory::Value,
             kind,
         })?;
-        if implicit_await {
+        if implicit_wait {
             self.validate_async_boundary(operation, AsyncInitiationKind::Await, context)?;
             self.allocate_expression(HirExpression {
                 span: self.sources.span(file, range)?,
@@ -22644,7 +22626,7 @@ mod tests {
     }
 
     #[test]
-    fn defer_rejects_ambiguous_affine_ownership_and_non_cleanup_effects() {
+    fn defer_rejects_ambiguous_affine_ownership_and_control_effects() {
         for (source, expected) in [
             (
                 "fn consume[T: Discard](value: T) {}\n\
@@ -22718,13 +22700,6 @@ mod tests {
                  }\n",
                 "E1410",
             ),
-            (
-                "async fn later() {}\n\
-                 fn invalid() {\n\
-                     defer later()\n\
-                 }\n",
-                "E1608",
-            ),
         ] {
             let (_, _, output) = check(source);
             assert!(
@@ -22733,6 +22708,64 @@ mod tests {
                 output.diagnostics()
             );
         }
+    }
+
+    #[test]
+    fn defer_infers_suspension_for_direct_calls_and_cleanup_blocks() {
+        let (_, _, output) = check(
+            "fn tick() suspends {}\n\
+             fn directCleanup() {\n\
+                 defer tick()\n\
+             }\n\
+             fn blockCleanup() {\n\
+                 defer {\n\
+                     tick()\n\
+                 }\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+        assert_eq!(
+            output
+                .program()
+                .callables()
+                .filter(|callable| matches!(
+                    output.program().interner().kind(callable.function_type()),
+                    Ok(TypeKind::Function(function)) if function.is_async()
+                ))
+                .count(),
+            3
+        );
+        assert_eq!(
+            output
+                .program()
+                .closures()
+                .filter(|closure| closure.is_async())
+                .count(),
+            1
+        );
+        let deferred_suspendible_calls = output
+            .program()
+            .expressions()
+            .filter_map(|expression| match expression.kind() {
+                HirExpressionKind::Block { statements, .. } => Some(statements.as_slice()),
+                _ => None,
+            })
+            .flatten()
+            .filter(|statement| matches!(
+                statement,
+                HirStatement::Defer { action, .. }
+                    if matches!(
+                        output.program().expression(action.expression()).map(HirExpression::kind),
+                        Some(HirExpressionKind::AsyncCall { .. })
+                    )
+            ))
+            .count();
+        assert_eq!(deferred_suspendible_calls, 2);
     }
 
     #[test]
@@ -22818,11 +22851,18 @@ mod tests {
     #[test]
     fn closure_effects_have_distinct_generated_kinds_and_exact_function_types() {
         let (_, _, output) = check(
-            "fn build() {\n\
+            "fn tick() suspends {}\n\
+             fn build() {\n\
                  let sync: fn(Int): Int = (value) { value }\n\
                  let raw: unsafe fn(Int): Int = unsafe (value) { value }\n\
-                 let later: async fn(Int): Int = async (value) { value }\n\
-                 let both: async unsafe fn(Int): Int = async unsafe (value) { value }\n\
+                 let later: fn(Int): Int suspends = (value) {\n\
+                     tick()\n\
+                     value\n\
+                 }\n\
+                 let both: unsafe fn(Int): Int suspends = unsafe (value) {\n\
+                     tick()\n\
+                     value\n\
+                 }\n\
                  _ = sync\n\
                  _ = raw\n\
                  _ = later\n\
@@ -22868,8 +22908,8 @@ mod tests {
             vec![
                 "fn(Int): Int",
                 "unsafe fn(Int): Int",
-                "async fn(Int): Int",
-                "async unsafe fn(Int): Int",
+                "fn(Int): Int suspends",
+                "unsafe fn(Int): Int suspends",
             ]
         );
         for closure in closures {
@@ -22883,10 +22923,10 @@ mod tests {
     }
 
     #[test]
-    fn explicit_closure_effects_must_match_while_context_can_supply_suspension() {
+    fn inferred_closure_effects_must_match_while_context_can_supply_suspension() {
         for source in [
-            "fn invalid() {\n    let operation: fn(): Int = async () { 1 }\n    _ = operation\n}\n",
-            "fn invalid() {\n    let operation: unsafe fn(): Int = async unsafe () { 1 }\n    _ = operation\n}\n",
+            "fn tick() suspends {}\nfn invalid() {\n    let operation: fn(): Int = () {\n        tick()\n        1\n    }\n    _ = operation\n}\n",
+            "fn tick() suspends {}\nfn invalid() {\n    let operation: unsafe fn(): Int = unsafe () {\n        tick()\n        1\n    }\n    _ = operation\n}\n",
         ] {
             let (_, _, output) = check(source);
             assert_eq!(codes(&output), ["E1102"], "{source}");
@@ -22896,7 +22936,6 @@ mod tests {
         for source in [
             "fn valid() {\n    let operation: fn(): Int suspends = () { 1 }\n    _ = operation\n}\n",
             "fn valid() {\n    let operation: unsafe fn(): Int suspends = unsafe () { 1 }\n    _ = operation\n}\n",
-            "fn valid() {\n    let operation: async unsafe fn(): Int = unsafe () { 1 }\n    _ = operation\n}\n",
         ] {
             let (_, _, output) = check(source);
             assert!(
@@ -22912,9 +22951,11 @@ mod tests {
     #[test]
     fn async_closure_writes_require_owned_call_once_access() {
         let (_, _, output) = check(
-            "fn build() {\n\
+            "fn tick() suspends {}\n\
+             fn build() {\n\
                  var asyncCount = 0\n\
-                 let later = async (): Int {\n\
+                 let later = (): Int {\n\
+                     tick()\n\
                      asyncCount += 1\n\
                      asyncCount\n\
                  }\n\
@@ -22946,7 +22987,7 @@ mod tests {
     }
 
     #[test]
-    fn suspending_closures_accept_exclusive_parameters_and_await_direct_calls() {
+    fn suspending_closures_accept_exclusive_parameters_and_implicit_waits() {
         let (_, _, output) = check(
             "fn build() {\n\
                  let operation: fn(mut Int) suspends = (value) {\n\
@@ -22962,27 +23003,6 @@ mod tests {
             output.diagnostics()
         );
 
-        let (_, _, legacy) = check(
-            "fn invalid() {\n\
-                 let operation = async (value: mut Int) {\n\
-                     value += 1\n\
-                 }\n\
-                 _ = operation\n\
-             }\n",
-        );
-        assert_eq!(codes(&legacy), ["E1609"]);
-
-        let async_source =
-            "fn invalid() {\n    let operation = async (): Int { 1 }\n    _ = operation()\n}\n";
-        let (_, _, output) = check(async_source);
-        assert!(
-            output.diagnostics().is_empty(),
-            "{:#?}",
-            output.diagnostics()
-        );
-        assert!(output.is_complete());
-        assert_eq!(output.program().closures().count(), 1);
-
         let unsafe_source =
             "fn deferred() {\n    let operation = unsafe (): Int { 1 }\n    _ = operation()\n}\n";
         let (_, _, output) = check(unsafe_source);
@@ -22992,7 +23012,24 @@ mod tests {
     }
 
     #[test]
-    fn spawn_rejects_exclusive_loans_but_implicit_await_accepts_them() {
+    fn await_rejects_direct_calls_because_they_wait_implicitly() {
+        let (_, _, output) = check(
+            "fn ready(): Int suspends { 42 }\n\
+             fn invalid() {\n\
+                 let value = await ready()\n\
+                 _ = value\n\
+             }\n",
+        );
+        assert_eq!(codes(&output), ["E1611"], "{:#?}", output.diagnostics());
+        assert!(
+            output.diagnostics()[0]
+                .message()
+                .contains("direct calls wait automatically")
+        );
+    }
+
+    #[test]
+    fn spawn_rejects_exclusive_loans_but_implicit_wait_accepts_them() {
         let sequential = "fn update(value: mut Int) suspends {\n\
                               value += 1\n\
                           }\n\
@@ -23060,9 +23097,9 @@ mod tests {
     }
 
     #[test]
-    fn source_calls_infer_suspension_and_insert_implicit_awaits() {
+    fn source_calls_infer_suspension_and_insert_implicit_waits() {
         let (_, _, output) = check(
-            "async fn leaf(): Int { 1 }\n\
+            "fn leaf(): Int suspends { 1 }\n\
              fn middle(): Int { leaf() }\n\
              fn top(): Int { middle() }\n",
         );
@@ -23095,7 +23132,7 @@ mod tests {
         let (_, _, output) = check(
             "type Counter = { value: Int }\n\
              impl AsyncIterator[Int] for Counter {\n\
-                 async fn next(mut self): Int? { none }\n\
+                 fn next(mut self): Int? suspends { none }\n\
              }\n\
              fn consume(cursor: Counter) {\n\
                  for item in cursor {\n\
@@ -23148,7 +23185,7 @@ mod tests {
         let (_, _, output) = check(
             "type Counter = { value: Int }\n\
              impl AsyncIterator[Int] for Counter {\n\
-                 async fn next(mut self): Int? { none }\n\
+                 fn next(mut self): Int? suspends { none }\n\
              }\n\
              fn consume(cursor: Counter) {\n\
                  _ = cursor.collect(limit: 3)\n\
@@ -23184,7 +23221,7 @@ mod tests {
         let (_, _, output) = check(
             "type Counter = { value: Int }\n\
              impl AsyncIterator[Int] for Counter {\n\
-                 async fn next(mut self): Int? { none }\n\
+                 fn next(mut self): Int? suspends { none }\n\
              }\n\
              fn first(cursor: Counter) {\n\
                  _ = cursor.collect(limit: 1)\n\
@@ -23219,7 +23256,7 @@ mod tests {
     #[test]
     fn join_can_be_returned_as_an_explicit_scope_handoff() {
         let (_, _, output) = check(
-            "async fn work(): Int { 1 }\n\
+            "fn work(): Int suspends { 1 }\n\
              fn prepare(): Join[Int, Never] {\n\
                  scope {\n\
                      return spawn work()\n\
@@ -28286,7 +28323,7 @@ fn build(input: Int, flag: Bool) {
             "fn inspect(value: ref Int): Int { value }\nfn invalid(): fn(Int): Int { inspect }\n",
             "fn collect(prefix: String, values: ...String): Int { 0 }\nfn invalid(): fn(String, String): Int { collect }\n",
             "unsafe fn inspect[T](value: T): T { value }\nfn invalid(): fn(Int): Int { inspect }\n",
-            "async fn inspect[T](value: T): T { value }\nfn invalid(): fn(Int): Int { inspect }\n",
+            "fn inspect[T](value: T): T suspends { value }\nfn invalid(): fn(Int): Int { inspect }\n",
             "fn inspect[T](value: T): T ! String { value }\nfn invalid(): fn(Int): Int { inspect }\n",
         ] {
             let (_, _, output) = check(source);
@@ -31619,8 +31656,8 @@ fn build(input: Int, flag: Bool) {
                      }\n\
                  }\n\
              }\n",
-            "async fn load(value: Int): Int { value }\n\
-             async fn concurrent(): Int {\n\
+            "fn load(value: Int): Int suspends { value }\n\
+             fn concurrent(): Int {\n\
                  scope {\n\
                      let task = spawn load(1)\n\
                      await task\n\

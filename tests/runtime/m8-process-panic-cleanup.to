@@ -1,13 +1,21 @@
 import std.process
+import std.env
 
-async fn failChild() {
+fn argument(value: env.Value): String {
+    match value.asText() {
+        some(argumentText) => argumentText
+        none => panic("process fixture argument is not UTF-8")
+    }
+}
+
+fn failChild() suspends {
     panic("process sibling panic")
 }
 
-async fn main(): !process.ProcessError {
-    let hostCommands = process.args()
+fn main(): !(process.ProcessError | env.EnvError) suspends {
+    let hostArguments = env.snapshot()?.arguments()
     scope {
-        let running = spawn process.shell(hostCommands[0]).output()
+        let running = spawn process.shell(argument(hostArguments[0])).output()
         let failing = spawn failChild()
         let _ = await failing
         let _ = await running?

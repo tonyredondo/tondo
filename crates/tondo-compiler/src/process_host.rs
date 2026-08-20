@@ -6298,15 +6298,8 @@ impl VmHost for BootstrapHost {
             ("std.collections.Set.contains", [RuntimeValue::Set(values), value]) => {
                 Ok(RuntimeValue::Bool(values.iter().any(|item| item == value)))
             }
-            ("std.process.args", []) => Ok(RuntimeValue::Array(
-                self.arguments
-                    .iter()
-                    .cloned()
-                    .map(RuntimeValue::String)
-                    .collect(),
-            )),
             (
-                "std.process.cmd" | "std.process.command",
+                "std.process.command",
                 [
                     RuntimeValue::String(program),
                     RuntimeValue::Array(arguments),

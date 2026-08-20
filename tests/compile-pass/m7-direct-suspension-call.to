@@ -1,0 +1,8 @@
+fn compute(): Int suspends {
+    42
+}
+
+fn main() {
+    let value = compute()
+    assert(value == 42)
+}

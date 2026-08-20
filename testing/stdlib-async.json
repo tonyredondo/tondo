@@ -15,7 +15,7 @@
     "inference_by_name": false,
     "effect_in_interface_and_abi": true,
     "direct_call_waits": true,
-    "explicit_await_direct_call": "optional",
+    "explicit_await_direct_call": "forbidden",
     "explicit_await_handle": "required",
     "nosuspend_annotations": ["@sync", "@nosuspend"]
   },
@@ -57,7 +57,7 @@
     "backpressure": "one-next-at-a-time",
     "close": "exactly-once-idempotent-before-terminal-outcome",
     "for_selection": "async-when-no-sync-protocol",
-    "explicit_for_await": "disambiguation-only",
+    "explicit_for_await": "forbidden",
     "channel_dependency": false
   },
   "collect": {
@@ -70,7 +70,7 @@
   },
   "implementation": {
     "status": "verified",
-    "routes": ["direct-mir-await", "spawn-hir-mir-bytecode-vm"],
+    "routes": ["implicit-direct-wait", "spawn-hir-mir-bytecode-vm"],
     "cancellation": "structured-scope-cooperative",
     "close": "owner-state-released-on-terminal-outcome",
     "capacity_failure": "CollectionError-without-partial-publication"

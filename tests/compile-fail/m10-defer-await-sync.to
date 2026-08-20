@@ -1,6 +1,0 @@
-fn cleanup() suspends {}
-
-@sync
-fn invalid() {
-    defer await cleanup()
-}

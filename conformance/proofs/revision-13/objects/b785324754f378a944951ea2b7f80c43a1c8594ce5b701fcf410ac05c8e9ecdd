@@ -1,5 +1,0 @@
-fn invalid(values: var Array[Int]) {
-    for mut value in values {
-        values[0] = value
-    }
-}

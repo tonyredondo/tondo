@@ -59,11 +59,7 @@ fn validate_command_reports_the_single_draft_identity() {
     assert!(output.stderr.is_empty());
     let lineage = DraftLineage::load(repository_root(), DRAFT_LINEAGE_PATH)
         .expect("the repository draft must remain loadable");
-    let expected = format!(
-        "tondo-draft 0.1 open {} {}\n",
-        lineage.manifest().revision,
-        lineage.manifest_sha256()
-    );
+    let expected = format!("tondo-draft 0.1 open {}\n", lineage.manifest_sha256());
     assert_eq!(
         String::from_utf8(output.stdout).expect("identity must be UTF-8"),
         expected
@@ -93,58 +89,6 @@ fn validate_command_rejects_a_second_lineage_name() {
             .expect("error must be UTF-8")
             .contains("unknown lineage `checkpoint`")
     );
-}
-
-#[test]
-fn seal_proof_requires_explicit_evidence_and_destination() {
-    let output = Command::new(executable())
-        .args([
-            "seal-proof",
-            "--root",
-            repository_root()
-                .to_str()
-                .expect("repository path must be UTF-8"),
-            "--manifest",
-            "conformance/draft/manifest.json",
-            "--lineage",
-            "draft",
-        ])
-        .output()
-        .expect("the conformance runner must execute");
-
-    assert!(!output.status.success());
-    assert!(output.stdout.is_empty());
-    assert!(
-        String::from_utf8(output.stderr)
-            .expect("error must be UTF-8")
-            .contains("`--result` is required for seal-proof")
-    );
-}
-
-#[test]
-fn verify_proof_command_rejects_an_unsealed_directory() {
-    let root =
-        std::env::temp_dir().join(format!("tondo-proof-cli-rejection-{}", std::process::id()));
-    if root.exists() {
-        std::fs::remove_dir_all(&root).expect("stale test directory must be removable");
-    }
-    std::fs::create_dir_all(root.join("proof")).expect("test directory must be creatable");
-    std::fs::write(root.join("proof/manifest.json"), b"{}\n")
-        .expect("test manifest must be writable");
-    let output = Command::new(executable())
-        .args([
-            "verify-proof",
-            "--root",
-            root.to_str().expect("repository path must be UTF-8"),
-            "--proof",
-            "proof",
-        ])
-        .output()
-        .expect("the conformance runner must verify");
-    assert!(!output.status.success());
-    assert!(output.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("invalid promotion-proof JSON"));
-    std::fs::remove_dir_all(root).expect("test directory must be removable");
 }
 
 #[test]

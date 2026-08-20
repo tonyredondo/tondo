@@ -1,5 +1,0 @@
-import std.process
-
-fn invalid() {
-    let _ = process.magic("implicit shell")
-}

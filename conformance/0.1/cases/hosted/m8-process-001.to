@@ -1,57 +1,60 @@
 import std.console
 import std.process
+import std.bytes
+import std.env
 
-async fn pipelineText(pipeline: Pipeline): String ! (process.ProcessError | process.Utf8Error) {
-    let output = await pipeline.output()?
-    output.stdout.text()?
+fn pipelineText(pipeline: Pipeline): String ! (process.ProcessError | bytes.Utf8Error) suspends {
+    let output = pipeline.output()?
+    String(output.stdout)?
 }
 
-async fn main(): !(process.ProcessError | process.Utf8Error) {
-    assert(process.args() == [])
+fn main(): !(process.ProcessError | bytes.Utf8Error | env.EnvError) suspends {
+    match env.snapshot()?.arguments() {
+        [] => ()
+        [_, ..] => assert(false)
+    }
 
-    let source = process.cmd("/usr/bin/printf", "pipe")
-    let first = process.cmd("/usr/bin/cat")
-    let second = process.cmd("/usr/bin/cat")
-    let third = process.cmd("/usr/bin/cat")
+    let source = process.command("/usr/bin/printf", "pipe")
+    let first = process.command("/usr/bin/cat")
+    let second = process.command("/usr/bin/cat")
+    let third = process.command("/usr/bin/cat")
 
-    assert(await pipelineText(source | first)? == "pipe")
-    assert(await pipelineText(source | (first | second))? == "pipe")
-    assert(await pipelineText((source | first) | second)? == "pipe")
-    assert(await pipelineText((source | first) | (second | third))? == "pipe")
+    assert(pipelineText(source | first)? == "pipe")
+    assert(pipelineText(source | (first | second))? == "pipe")
+    assert(pipelineText((source | first) | second)? == "pipe")
+    assert(pipelineText((source | first) | (second | third))? == "pipe")
 
-    let exact = await process
-        .cmd("/usr/bin/printf", "[%s][%s][%s]", "two words", "*", "$HOME")
+    let exact = process.command("/usr/bin/printf", "[%s][%s][%s]", "two words", "*", "$HOME")
         .output()?
-    assert(exact.stdout.text()? == "[two words][*][$HOME]")
+    assert(String(exact.stdout)? == "[two words][*][$HOME]")
 
-    let streams = await process
-        .shell("printf stdout; printf stderr >&2")
+    let streams = process.shell("printf stdout; printf stderr >&2")
         .output()?
-    assert(streams.stdout.text()? == "stdout")
-    assert(streams.stderr.text()? == "stderr")
+    assert(String(streams.stdout)? == "stdout")
+    assert(String(streams.stderr)? == "stderr")
 
-    let status = await process.shell("exit 7").status()?
+    let status = process.shell("exit 7").status()?
     assert(status[0].code == some(7))
     assert(not status[0].success)
 
-    match await process.shell("exit 7").check() {
+    match process.shell("exit 7").check() {
         ok(_) => assert(false)
         err(process.ProcessError(_)) => assert(false)
         err(process.ProcessExitError(_)) => ()
     }
 
-    let ran = await process.cmd("/usr/bin/true").run()?
+    let ran = process.command("/usr/bin/true").run()?
     assert(ran[0].success)
 
     let handle = (
-        process.cmd("/usr/bin/printf", "handle") |
-        process.cmd("/usr/bin/cat")
+        process.command("/usr/bin/printf", "handle") |
+        process.command("/usr/bin/cat")
     ).start()?
-    let handled = await handle.output()?
-    assert(handled.stdout.text()? == "handle")
+    let handled = handle.output()?
+    assert(String(handled.stdout)? == "handle")
 
     let sleeping = process.shell("exec sleep 30").start()?
-    let cancelled = await sleeping.cancel()?
+    let cancelled = sleeping.cancel()?
     assert(not cancelled[0].success)
 
     console.print("process-ok\n")

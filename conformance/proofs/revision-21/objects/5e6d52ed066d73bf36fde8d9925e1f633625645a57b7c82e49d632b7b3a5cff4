@@ -1,3 +1,0 @@
-type Secret = {
-    priv value: Int
-}

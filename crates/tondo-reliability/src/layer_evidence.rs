@@ -18,7 +18,6 @@ pub const FORMAT: &str = "tondo-layer-evidence/1";
 pub struct LayerEvidenceReport {
     pub format: String,
     pub lineage: String,
-    pub revision: u32,
     pub manifest_sha256: String,
     pub inventory_sha256: String,
     pub tree_sha256: String,
@@ -94,7 +93,6 @@ pub fn attest(
     Ok(LayerEvidenceReport {
         format: FORMAT.into(),
         lineage: lineage.manifest().lineage.clone(),
-        revision: lineage.manifest().revision,
         manifest_sha256: lineage.manifest_sha256(),
         inventory_sha256: sha256(&tracked_inventory),
         tree_sha256: after.tree_sha256,

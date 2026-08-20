@@ -4,8 +4,6 @@
   "edition": "0.1",
   "tasks": [
     "ASYNC-DEFER-IMPL-001",
-    "CONF-SEAL-001",
-    "CONF-SEAL-FINAL-001",
     "META-REPRO-001",
     "UTEST-PROJECTS-001"
   ],
@@ -17,7 +15,7 @@
         "TL01-C-6-SERIALIZACIN-CANNICA-R001"
       ],
       "evidence": [
-        "rust:tondo-conformance:tests::spec_contract:canonical_fixture_manifest_fence_has_published_hash"
+        "rust:tondo-conformance:tests::spec_contract:live_fixture_manifest_is_canonical_and_pinned_by_the_live_suite"
       ]
     },
     {
@@ -31,20 +29,7 @@
       ],
       "evidence": [
         "rust:tondo-conformance:src::runner:response_identity_and_protocol_are_checked",
-        "rust:tondo-conformance:src::seal:candidate_is_canonical_self_contained_and_idempotently_published",
-        "rust:tondo-conformance:src::seal:ratchet_result_and_object_closure_fail_closed",
-        "rust:tondo-reference-adapter:tests::conformance:complete_baseline_suite_matches_in_process",
-        "rust:tondo-reliability:src::candidate:candidate_helpers_reject_malformed_json_missing_objects_and_unsafe_paths",
-        "rust:tondo-reliability:src::candidate:candidate_manifest_is_closed_canonical_and_path_bounded",
-        "rust:tondo-reliability:src::candidate:candidate_provenance_rejects_every_extra_or_substituted_source",
-        "rust:tondo-reliability:src::candidate:candidate_seals_verifies_and_rejects_files_outside_its_offline_closure",
-        "rust:tondo-reliability:src::candidate:doc_test_gate_requires_exact_typed_links_and_executable_evidence",
-        "rust:tondo-reliability:src::candidate:layer_gate_requires_the_exact_fresh_composed_observation_set",
-        "rust:tondo-reliability:src::candidate:normative_gate_allows_only_separate_stdlib_boundaries",
-        "rust:tondo-reliability:src::candidate:quality_gate_revalidates_raw_reports_bindings_and_baseline",
-        "rust:tondo-reliability:src::main:candidate_commands_execute_the_closed_offline_bundle",
-        "rust:tondo-reliability:src::main:candidate_options_are_explicit_and_command_scoped",
-        "rust:tondo-reliability:tests::cli_contract:candidate_cli_seals_reverifies_and_rejects_an_open_object_closure"
+        "rust:tondo-reference-adapter:tests::conformance:complete_live_suite_passes_in_process_without_a_checked_result_snapshot"
       ]
     },
     {
@@ -61,9 +46,9 @@
       ],
       "evidence": [
         "rust:tondo-compiler:src::bytecode::lower:runtime_executes_defer_lifo_on_normal_and_abrupt_scope_exits",
-        "rust:tondo-compiler:src::hir::check:defer_rejects_ambiguous_affine_ownership_and_non_cleanup_effects",
+        "rust:tondo-compiler:src::hir::check:defer_rejects_ambiguous_affine_ownership_and_control_effects",
         "rust:tondo-compiler:src::hir::verify:defer_control_boundaries_are_reproved_before_mir",
-        "rust:tondo-compiler:src::test_lower:preserves_environment_domain_errors_async_and_cleanup"
+        "rust:tondo-compiler:src::test_lower:preserves_environment_domain_errors_suspension_and_cleanup"
       ]
     },
     {

@@ -4,14 +4,14 @@ fn key(): String {
     "same"
 }
 
-async fn startPair(): (
+fn startPair(): (
     process.ProcessHandle,
     process.ProcessHandle,
-) ! process.ProcessError {
-    let first = process.cmd("/usr/bin/true").start()?
-    match process.cmd("/usr/bin/true").start() {
+) ! process.ProcessError suspends {
+    let first = process.command("/usr/bin/true").start()?
+    match process.command("/usr/bin/true").start() {
         ok(second) => (first, second)
-        err(error) => match await first.cancel() {
+        err(error) => match first.cancel() {
             ok(_) => fail error
             err(cleanupError) => fail cleanupError
         }
@@ -22,8 +22,8 @@ fn consume(handle: process.ProcessHandle): Never {
     panic("duplicate-key guard failed")
 }
 
-async fn main(): !process.ProcessError {
-    let (first, second) = await startPair()?
+fn main(): !process.ProcessError suspends {
+    let (first, second) = startPair()?
     let jobs: Map[String, process.ProcessHandle] = [
         key(): first,
         key(): second,

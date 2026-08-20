@@ -1,0 +1,12 @@
+import std.console
+
+enum AppError { Failed }
+
+fn cleanup() suspends {
+    console.print("cleanup\n")
+}
+
+fn main(): !AppError {
+    defer cleanup()
+    fail AppError.Failed
+}

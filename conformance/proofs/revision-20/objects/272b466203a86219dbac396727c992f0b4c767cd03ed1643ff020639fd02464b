@@ -1,6 +1,0 @@
-fn invalid() {
-    let operation = async (value: mut Int) {
-        value += 1
-    }
-    _ = operation
-}

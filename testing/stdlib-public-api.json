@@ -491,7 +491,7 @@
       "runtime": {
         "kind": "not-applicable",
         "paths": [],
-        "reason": "portable protocol; no host provider; legacy Rust ABI is compatibility-only"
+        "reason": "portable protocol with compile-time static dispatch; no host provider"
       },
       "signature_count": 0,
       "verified_count": 0,

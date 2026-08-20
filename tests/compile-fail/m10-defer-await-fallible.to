@@ -1,9 +1,0 @@
-enum CleanupError { Failed }
-
-async fn cleanup(): !CleanupError {
-    fail CleanupError.Failed
-}
-
-async fn invalid() {
-    defer await cleanup()
-}

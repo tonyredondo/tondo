@@ -1,8 +1,8 @@
 fn build() {
     let sync: fn(Int): Int = (value) { value }
     let raw: unsafe fn(Int): Int = unsafe (value) { value }
-    let later: async fn(Int): Int = async (value) { value }
-    let both: async unsafe fn(Int): Int = async unsafe (value) { value }
+    let later: fn(Int): Int suspends = (value) { value }
+    let both: unsafe fn(Int): Int suspends = unsafe (value) { value }
     _ = sync
     _ = raw
     _ = later

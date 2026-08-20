@@ -5,8 +5,7 @@ suite retry_group {
     testing.log("suite participation")
 
     test deterministicFlaky {
-        match await process
-            .cmd(
+        match process.command(
                 "sh",
                 "-c",
                 "if test -f dogfood-retry.marker; then rm dogfood-retry.marker; exit 0; else : > dogfood-retry.marker; exit 7; fi",

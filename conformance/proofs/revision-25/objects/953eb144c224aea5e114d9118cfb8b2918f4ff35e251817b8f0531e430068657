@@ -1,3 +1,0 @@
-fn valid() {
-    let unused = 1
-}

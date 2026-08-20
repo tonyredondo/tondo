@@ -21,8 +21,8 @@ and ITER-001/002 static user iterators plus all four intrinsic iteration forms
 implemented, plus TEXT-002 Unicode-scalar String length, indexing, and slicing,
 and TEXT-003 static Display calls plus ordered interpolation, plus
 VARIADIC-001/002 homogeneous final packs and whole-array spread, plus the
-canonical inferred-suspension `suspends` effect and implicit-await path (the
-explicit-await prototype remains only in the frozen corpus), SCOPE-001,
+canonical inferred-suspension `suspends` effect and implicit-wait path,
+SCOPE-001,
 SPAWN-001, JOIN-001, SEND-001, SHARE-001, and MAIN-ASYNC-001
 
 This document fixes the internal contract required by M3, M5, and M7. It does
@@ -233,7 +233,7 @@ move, and availability then rejects every overlapping later use on the same CFG
 route. Construction remains separate from body execution. The body and exact
 function signature may represent sync, unsafe, suspendible, or
 unsafe-suspendible source effects. A suspendible body is reached by the
-implicit-await call operation; only `spawn` preserves it as a pending handle.
+implicit-wait call operation; only `spawn` preserves it as a pending handle.
 
 An indirect closure call carries the exact protocol selected by HIR. `Call` and
 `CallMut` read a place through a shallow, non-escaping `Borrow` operand so body
@@ -486,7 +486,7 @@ TERM-003 and TERM-004 populate those blocks with six explicit forms:
 
 - `RegisterDefer { scope, action, guard }` stores one already checked
   infallible `Unit` invocation. A synchronous action uses a sync call signature;
-  `defer await` retains the suspendible call signature and is admitted through the
+  `defer` retains the suspendible call signature and is admitted through the
   `DeferredAsync` operation context. Copy operands are snapshots; an optional
   guard names its unique complete affine owner slot, including one environment
   capture slot while lowering a closure body. No suspendible block or fallible cleanup
@@ -545,8 +545,9 @@ failure occurs before the replacement and therefore leaves the original
 fallback armed.
 
 `Await` is a suspension terminator whose awaitable is either one complete
-suspendible operation or one `Join`/`Waiter` operand. Direct suspendible calls
-lower to this terminator implicitly; an explicit `await` selects the same shape.
+suspendible operation inserted by lowering or one source `Join` operand. Direct
+suspendible calls lower to this terminator implicitly; source `await` is reserved
+for consuming the `Join`.
 It writes the logical result only on `target`;
 panic and cooperative cancellation use the explicit `unwind` edge while
 retaining their distinct tagged runtime state. Values live across the

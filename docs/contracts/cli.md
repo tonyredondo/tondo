@@ -1,4 +1,4 @@
-# Bootstrap CLI contract
+# CLI contract
 
 **Status:** active contract for the current unpublished Tondo 0.1 draft
 
@@ -13,7 +13,7 @@ tondo --help
 tondo --version
 ~~~
 
-The bootstrap accepts one loose source file or one conventional project directory.
+The CLI accepts one loose source file or one conventional project directory.
 The forms cannot be combined. Without
 `--project`, the current directory is used for `check`, `run` and `test`.
 
@@ -32,8 +32,9 @@ The forms cannot be combined. Without
 - `--check` on the `check` or `run` command is a usage error.
 - Only `run` accepts program arguments, and only after the exact `--`
   separator. `fmt` and `check` reject the separator.
-- Program arguments must be valid UTF-8 and reach `std.process.args()` in
-  their original order. Flags after `--` are program data, not CLI options.
+- Program arguments must be valid UTF-8 and reach
+  `std.env.snapshot().arguments()` in their original order. Flags after `--`
+  are program data, not CLI options.
 
 Build and project options are:
 
@@ -59,7 +60,7 @@ formats.
 
 ## Logical identity for a loose source
 
-The CLI reads the physical path, but the bootstrap driver receives:
+The CLI reads the physical path, but the driver receives:
 
 ~~~text
 source_id = root:cli

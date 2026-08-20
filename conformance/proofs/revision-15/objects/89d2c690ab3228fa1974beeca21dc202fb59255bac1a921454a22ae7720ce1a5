@@ -1,2 +1,0 @@
-alias Number = Int
-fn Number.invalid() {}

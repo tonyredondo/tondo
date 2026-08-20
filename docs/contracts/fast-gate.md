@@ -1,15 +1,14 @@
 # Fast gate contract
 
-**Status:** accepted for Tondo 0.1 development; it does not replace a wave
-gate or a promotion proof.
+**Status:** accepted for Tondo 0.1 development; it does not replace a full wave
+gate.
 
 `scripts/fast-gate.sh` is the short feedback loop for a block-sized change. It
 derives an impact set from the diff, runs the formatter, checks and tests only
 the affected workspace packages, then proves that every newly executable Rust
 line is covered and that changed Rust code has no surviving diff mutant. The
 temporary evidence is written below `target/reliability/fast-gate/` (or the
-caller-provided `CARGO_TARGET_DIR`) and is deliberately not part of
-`conformance/proofs/`.
+caller-provided `CARGO_TARGET_DIR`) and is deliberately ephemeral.
 
 The machine-readable policy lives in `testing/fast-gate.json`. A change to a
 workspace manifest, compiler/runtime frontier, normative source, conformance
@@ -28,5 +27,4 @@ pass.
 
 Fast evidence is draft evidence. It can accelerate local iteration and the
 ordinary CI lane, but a wave is not complete until the full test gate, quality
-gate, conformance ratchet, and (with `TONDO_FULL_GATE_PROMOTION=1`) the
-content-addressed promotion proof have been regenerated from the final tree.
+gate and conformance ratchet have been regenerated from the final tree.

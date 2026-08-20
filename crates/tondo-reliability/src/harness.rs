@@ -155,8 +155,8 @@ mod tests {
         let source = "import std.async\n\
 type Counter = { remaining: Int }\n\
 impl AsyncIterator[Int] for Counter {\n\
-    async fn next(mut self): Int? {\n\
-        await tick()\n\
+    fn next(mut self): Int? suspends {\n\
+        tick()\n\
         if self.remaining == 0 {\n\
             return none\n\
         }\n\
@@ -165,7 +165,7 @@ impl AsyncIterator[Int] for Counter {\n\
         some(current)\n\
     }\n\
 }\n\
-async fn tick() {}\n\
+fn tick() suspends {}\n\
 fn main() {\n\
     scope {\n\
         let pending = spawn Counter { remaining: 3 }.collect(limit: 2)\n\

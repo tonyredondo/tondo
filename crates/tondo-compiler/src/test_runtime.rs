@@ -1194,7 +1194,7 @@ mod tests {
         let forced_order = order.clone();
         let forced = LeafProgram::new("forced", move |context| {
             // A hard timeout/forced termination is not a language unwind. A
-            // registered `defer await` cleanup therefore remains unexecuted;
+            // registered inferred suspendible cleanup therefore remains unexecuted;
             // the coordinator reports isolation loss instead of pretending
             // that the user cleanup completed.
             let forced_order = forced_order.clone();

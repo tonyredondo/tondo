@@ -1,6 +1,6 @@
-async fn child() {}
+fn child() suspends {}
 
-async fn invalid() {
+fn invalid() suspends {
     scope {
         let pending = spawn child()
     }

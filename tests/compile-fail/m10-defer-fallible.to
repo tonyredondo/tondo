@@ -1,0 +1,9 @@
+enum CleanupError { Failed }
+
+fn cleanup(): !CleanupError suspends {
+    fail CleanupError.Failed
+}
+
+fn invalid() suspends {
+    defer cleanup()
+}

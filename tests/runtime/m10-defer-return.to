@@ -1,0 +1,11 @@
+import std.console
+
+fn cleanup() suspends {
+    console.print("cleanup\n")
+}
+
+fn main() {
+    defer cleanup()
+    console.print("return\n")
+    return
+}

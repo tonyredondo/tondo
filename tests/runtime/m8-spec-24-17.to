@@ -4,9 +4,9 @@ import std.console
 import std.process
 
 let pipeline = (
-    process.cmd("git", "log", "--oneline") |
-    process.cmd("git", "hash-object", "--stdin")
+    process.command("git", "log", "--oneline") |
+    process.command("git", "hash-object", "--stdin")
 )
 
-let output = await pipeline.check()?
+let output = pipeline.check()?
 console.print(String(output.stdout)?)

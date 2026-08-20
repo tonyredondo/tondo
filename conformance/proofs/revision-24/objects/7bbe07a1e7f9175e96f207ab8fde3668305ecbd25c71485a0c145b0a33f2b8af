@@ -1,8 +1,0 @@
-async fn compute(): Int {
-    42
-}
-
-fn invalid() {
-    let value = await compute()
-    assert(value == 42)
-}

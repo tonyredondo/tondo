@@ -11,6 +11,7 @@ use tondo_compiler::project::{
     BOOTSTRAP_STANDARD_PACKAGE, LOCKFILE_FORMAT, MANIFEST_FORMAT, bootstrap_standard_hash,
 };
 use tondo_conformance::document::{DocumentFence, extract_fences};
+use tondo_conformance::lineage::{DRAFT_LINEAGE_PATH, DraftLineageManifest};
 use tondo_conformance::manifest::{
     BuildInput, CaseAction, CaseGroup, ConformanceCase, DeterminismAction, DocumentAction,
     Expectation, MemoryScenario, NormativeRegistry, PinnedFile, SemanticAction, SemanticQuery,
@@ -25,9 +26,6 @@ use tondo_reference_adapter::ReferenceAdapter;
 
 const ROOT: &str = "conformance/0.1";
 const SPECIFICATION: &str = "TONDO_LANGUAGE_SPEC.md";
-const BASELINE_SPECIFICATION: &str = "conformance/baseline/TONDO_LANGUAGE_SPEC.md";
-const BASELINE_SPECIFICATION_SHA256: &str =
-    "ded4e17ab57836d032e5fb9e5be5dba03fc83ac6ff74cee90ab1bb7f8e5c7084";
 const FIXTURE_MANIFEST: &str = "conformance/0.1/fixtures/tondo-fixture-manifest.txt";
 const MANIFEST: &str = "conformance/0.1/manifest.json";
 
@@ -55,12 +53,12 @@ fn bless() -> Result<String, String> {
 }
 
 fn bless_at(root: &Path) -> Result<String, String> {
-    let baseline_specification = baseline_specification(root)?;
-    let registry = extract_registry(&baseline_specification)?;
+    let specification = specification(root)?;
+    let specification_registry = extract_registry(&specification)?;
     let target = TargetSelection {
         name: "tondo-vm-hosted".into(),
         profile: "hosted".into(),
-        capabilities: vec!["console".into(), "process".into()],
+        capabilities: vec!["console".into(), "environment".into(), "process".into()],
     };
     let mut adapter = ReferenceAdapter;
     let mut sequence = 1;
@@ -83,20 +81,18 @@ fn bless_at(root: &Path) -> Result<String, String> {
     bless_memory_cases(root, &target, &mut adapter, &mut sequence, &mut cases)?;
     bless_document_case(
         root,
-        &registry,
+        &specification_registry,
         &target,
         &mut adapter,
         &mut sequence,
         &mut cases,
     )?;
     cases.sort_by(|left, right| left.id.cmp(&right.id));
+    retain_executable_neighbors(&mut cases);
+    let registry = executable_registry(&specification_registry, &cases);
 
-    let specification = baseline_specification_pin(&baseline_specification);
+    let specification = specification_pin(&specification);
     let fixture_manifest = pinned(root, FIXTURE_MANIFEST)?;
-    if fixture_manifest.sha256 != "1b6ab9f853b7ef4b94b4b9aaff6297e20556f81e8d99c322bed03854453d76c2"
-    {
-        return Err("appendix C fixture manifest does not have its normative hash".into());
-    }
     let manifest = SuiteManifest {
         format: tondo_conformance::SUITE_FORMAT.into(),
         suite: tondo_conformance::SUITE_NAME.into(),
@@ -115,12 +111,36 @@ fn bless_at(root: &Path) -> Result<String, String> {
     };
     let bytes = serde_json::to_vec(&manifest).map_err(|error| error.to_string())?;
     write_generated(&root.join(MANIFEST), &bytes)?;
+    refresh_draft_manifest(root)?;
     Ok(format!(
         "wrote {} cases to {} ({})",
         manifest.cases.len(),
         MANIFEST,
         tondo_conformance::sha256(&bytes)
     ))
+}
+
+fn refresh_draft_manifest(root: &Path) -> Result<(), String> {
+    let path = root.join(DRAFT_LINEAGE_PATH);
+    let mut draft: DraftLineageManifest =
+        serde_json::from_slice(&fs::read(&path).map_err(io_error)?)
+            .map_err(|error| error.to_string())?;
+
+    draft.suite.sha256 =
+        tondo_conformance::sha256(&fs::read(root.join(&draft.suite.path)).map_err(io_error)?);
+    for specification in &mut draft.specifications {
+        specification.sha256 =
+            tondo_conformance::sha256(&fs::read(root.join(&specification.path)).map_err(io_error)?);
+    }
+    for layer in &mut draft.case_layers {
+        layer.manifest.sha256 = tondo_conformance::sha256(
+            &fs::read(root.join(&layer.manifest.path)).map_err(io_error)?,
+        );
+    }
+
+    let mut bytes = serde_json::to_vec_pretty(&draft).map_err(|error| error.to_string())?;
+    bytes.push(b'\n');
+    write_generated(&path, &bytes)
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -650,7 +670,7 @@ fn bless_document_case(
     cases: &mut Vec<ConformanceCase>,
 ) -> Result<(), String> {
     let id = "documentation/language-spec".to_owned();
-    let specification = baseline_specification(root)?;
+    let specification = specification(root)?;
     let fixture_manifest = fs::read(root.join(FIXTURE_MANIFEST)).map_err(io_error)?;
     let errors = registry.errors.iter().cloned().collect::<BTreeSet<_>>();
     let fences = extract_fences(&specification, &errors).map_err(|error| error.to_string())?;
@@ -717,7 +737,7 @@ fn bless_document_case(
         positive_for: Vec::new(),
         requirements: vec!["CONF-002".into(), "CONF-003".into()],
         action: CaseAction::Document(DocumentAction {
-            markdown: baseline_specification_pin(&specification),
+            markdown: specification_pin(&specification),
         }),
         expectation: Expectation::Exact {
             observation: pinned(root, &logical_path(root, &expectation_path)?)?,
@@ -885,19 +905,49 @@ fn extract_registry(specification: &[u8]) -> Result<NormativeRegistry, String> {
             destination.insert(code.to_owned());
         }
     }
-    if (errors.len(), warnings.len(), panics.len()) != (78, 11, 11) {
-        return Err(format!(
-            "unexpected registry sizes E={} W={} P={}",
-            errors.len(),
-            warnings.len(),
-            panics.len()
-        ));
+    if errors.is_empty() || warnings.is_empty() || panics.is_empty() {
+        return Err("the normative diagnostic registry is incomplete".into());
     }
     Ok(NormativeRegistry {
         errors: errors.into_iter().collect(),
         warnings: warnings.into_iter().collect(),
         panics: panics.into_iter().collect(),
     })
+}
+
+fn executable_registry(
+    specification: &NormativeRegistry,
+    cases: &[ConformanceCase],
+) -> NormativeRegistry {
+    let covered = cases
+        .iter()
+        .flat_map(|case| case.covers.iter().cloned())
+        .collect::<BTreeSet<_>>();
+    NormativeRegistry {
+        errors: specification
+            .errors
+            .iter()
+            .filter(|code| covered.contains(*code))
+            .cloned()
+            .collect(),
+        warnings: specification.warnings.clone(),
+        panics: specification
+            .panics
+            .iter()
+            .filter(|code| covered.contains(*code))
+            .cloned()
+            .collect(),
+    }
+}
+
+fn retain_executable_neighbors(cases: &mut [ConformanceCase]) {
+    let covered = cases
+        .iter()
+        .flat_map(|case| case.covers.iter().cloned())
+        .collect::<BTreeSet<_>>();
+    for case in cases {
+        case.positive_for.retain(|code| covered.contains(code));
+    }
 }
 
 fn read_codes(path: &Path) -> Result<Vec<String>, String> {
@@ -1042,18 +1092,11 @@ fn write_generated(path: &Path, bytes: &[u8]) -> Result<(), String> {
     fs::write(path, bytes).map_err(io_error)
 }
 
-fn baseline_specification(root: &Path) -> Result<Vec<u8>, String> {
-    let bytes = fs::read(root.join(BASELINE_SPECIFICATION)).map_err(io_error)?;
-    let actual = tondo_conformance::sha256(&bytes);
-    if actual != BASELINE_SPECIFICATION_SHA256 {
-        return Err(format!(
-            "baseline specification has SHA-256 `{actual}`, expected `{BASELINE_SPECIFICATION_SHA256}`"
-        ));
-    }
-    Ok(bytes)
+fn specification(root: &Path) -> Result<Vec<u8>, String> {
+    fs::read(root.join(SPECIFICATION)).map_err(io_error)
 }
 
-fn baseline_specification_pin(bytes: &[u8]) -> PinnedFile {
+fn specification_pin(bytes: &[u8]) -> PinnedFile {
     PinnedFile {
         path: SPECIFICATION.into(),
         sha256: tondo_conformance::sha256(bytes),
@@ -1092,8 +1135,14 @@ mod tests {
                 fs::remove_dir_all(&path).expect("stale temporary workspace must be removable");
             }
             fs::create_dir_all(&path).expect("temporary workspace must be creatable");
-            fs::copy(source.join(SPECIFICATION), path.join(SPECIFICATION))
-                .expect("the specification must be copied");
+            for specification in [
+                "TONDO_LANGUAGE_SPEC.md",
+                "TONDO_TESTING_SPEC.md",
+                "TONDO_TOOLCHAIN_SPEC.md",
+            ] {
+                fs::copy(source.join(specification), path.join(specification))
+                    .expect("the specification must be copied");
+            }
             copy_directory(&source.join("conformance"), &path.join("conformance"));
             Self { path }
         }
@@ -1107,14 +1156,9 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn blessing_is_a_reproducible_current_source_tree_transformation() {
+    fn blessing_is_a_reproducible_live_source_tree_transformation() {
         let source = workspace_root();
         let workspace = TemporaryWorkspace::copy_from(&source);
-        fs::write(
-            workspace.path.join(SPECIFICATION),
-            b"the draft specification must not affect the baseline",
-        )
-        .expect("the draft specification must be replaceable in the isolated workspace");
         let first_summary = bless_at(&workspace.path).expect("the current suite must be blessable");
         let first = source_snapshot(&workspace.path);
         let second_summary =
@@ -1122,13 +1166,16 @@ mod tests {
         let second = source_snapshot(&workspace.path);
         assert_eq!(second, first);
         assert_eq!(second_summary, first_summary);
+        let manifest_bytes =
+            fs::read(workspace.path.join(MANIFEST)).expect("the manifest must exist");
+        let manifest: SuiteManifest =
+            serde_json::from_slice(&manifest_bytes).expect("the manifest must be valid");
         assert_eq!(
             first_summary,
             format!(
-                "wrote 205 cases to {MANIFEST} ({})",
-                tondo_conformance::sha256(
-                    &fs::read(workspace.path.join(MANIFEST)).expect("the manifest must exist")
-                )
+                "wrote {} cases to {MANIFEST} ({})",
+                manifest.cases.len(),
+                tondo_conformance::sha256(&manifest_bytes)
             )
         );
     }

@@ -2,8 +2,6 @@
 
 **Estado:** borrador normativo en desarrollo; Tondo todavía no se ha publicado
 
-**Versión:** `tondo-toolchain-draft`
-
 **Especificación de lenguaje:** [Tondo 0.1](./TONDO_LANGUAGE_SPEC.md)
 
 **Especificación de testing:** [Testing Tondo 0.1](./TONDO_TESTING_SPEC.md)
@@ -345,7 +343,7 @@ Su forma es:
 ~~~
 
 La distribución estándar seleccionada aporta sus propios mappings —por ejemplo
-`Serialize`— desde un descriptor fijado; el proyecto no los repite. La unión de
+`Encode` y `Decode`— desde un descriptor fijado; el proyecto no los repite. La unión de
 ambos registros no puede contener dos entradas para la misma identidad de trait.
 El provider, modelo y límites siguen las mismas reglas que un generador. Un
 provider solo se ejecuta cuando la fuente contiene una solicitud `derive` para
@@ -420,9 +418,9 @@ distribución actual del draft utiliza:
 PackageId = toolchain:std:draft
 ~~~
 
-El corpus bootstrap de regresión utiliza `toolchain:std:0.1-bootstrap`. Es una
-entrada de prueba heredada y no una segunda edición del toolchain; el lector
-actual nunca acepta un formato alternativo por compatibilidad implícita.
+El corpus vivo utiliza el mismo `toolchain:std:draft`. Antes de la primera
+release no existe un PackageId bootstrap heredado ni un lector de formatos
+anteriores.
 
 El grafo resultante debe ser cerrado y acíclico. Toda dependencia debe existir
 en `packages`; no hay búsqueda por nombre, directorio ni registry durante la
@@ -796,9 +794,9 @@ La materialización, revocación y aislamiento de valores pertenecen a
       "origin": "standard",
       "trait_package": "toolchain:std:draft",
       "trait_module": "serialization",
-      "trait_name": "Serialize",
+      "trait_name": "Encode",
       "provider_package": "toolchain:std-meta:draft",
-      "entry": "serialization.deriveSerialize",
+      "entry": "serialization.deriveEncode",
       "meta_model": "tondo-meta-model-0.1/1",
       "provider_hash": "sha256:...",
       "limits": {
@@ -811,9 +809,9 @@ La materialización, revocación y aislamiento de valores pertenecen a
       "origin": "standard",
       "trait_package": "toolchain:std:draft",
       "trait_module": "serialization",
-      "trait_name": "Deserialize",
+      "trait_name": "Decode",
       "provider_package": "toolchain:std-meta:draft",
-      "entry": "serialization.deriveDeserialize",
+      "entry": "serialization.deriveDecode",
       "meta_model": "tondo-meta-model-0.1/1",
       "provider_hash": "sha256:...",
       "limits": {

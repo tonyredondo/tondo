@@ -102,8 +102,8 @@ fn exercise(): Int {
         (
             "async-structured",
             "\
-async fn immediate(value: Int): Int { value }
-async fn exercise(): Int {
+fn immediate(value: Int): Int suspends { value }
+fn exercise(): Int suspends {
     scope {
         let pending = spawn immediate(42)
         await pending

@@ -1,10 +1,10 @@
 import std.process
 
-async fn failChild() {
+fn failChild() suspends {
     panic("process sibling panic")
 }
 
-async fn main(): !process.ProcessError {
+fn main(): !process.ProcessError suspends {
     scope {
         let running = spawn process.shell("exec sleep 30").output()
         let failing = spawn failChild()

@@ -21,7 +21,6 @@ pub const PATH: &str = "testing/conformance-ratchet.json";
 pub struct RatchetRecord {
     pub format: String,
     pub lineage: String,
-    pub revision: u32,
     pub manifest: EvidenceFile,
     pub inventory: EvidenceFile,
     pub matrix: EvidenceFile,
@@ -118,7 +117,6 @@ pub fn build(
     let record = RatchetRecord {
         format: FORMAT.into(),
         lineage: lineage.manifest().lineage.clone(),
-        revision: lineage.manifest().revision,
         manifest: EvidenceFile {
             path: DRAFT_LINEAGE_PATH.into(),
             sha256: lineage.manifest_sha256(),
@@ -137,8 +135,8 @@ pub fn build(
 }
 
 pub fn validate(record: &RatchetRecord) -> Result<(), String> {
-    if record.format != FORMAT || record.lineage != DRAFT_LINEAGE_NAME || record.revision == 0 {
-        return Err("ratchet record has an unsupported format, lineage, or revision".into());
+    if record.format != FORMAT || record.lineage != DRAFT_LINEAGE_NAME {
+        return Err("ratchet record has an unsupported format or lineage".into());
     }
     for evidence in [
         (&record.manifest, DRAFT_LINEAGE_PATH),
@@ -299,7 +297,6 @@ mod tests {
         RatchetRecord {
             format: FORMAT.into(),
             lineage: DRAFT_LINEAGE_NAME.into(),
-            revision: 3,
             manifest: evidence(DRAFT_LINEAGE_PATH),
             inventory: evidence(crate::INVENTORY_PATH),
             matrix: evidence(crate::MATRIX_PATH),
@@ -329,10 +326,6 @@ mod tests {
 
         let mut record = base.clone();
         record.lineage = "other-lineage".into();
-        assert!(validate(&record).is_err());
-
-        let mut record = base.clone();
-        record.revision = 0;
         assert!(validate(&record).is_err());
 
         let mut record = base.clone();

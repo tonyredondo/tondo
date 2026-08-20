@@ -109,7 +109,7 @@ impl ModulePath {
                 return Err(SourceError::InvalidModulePath(value.to_owned()));
             };
             if component == "_"
-                || (is_keyword(&component) && component != "async")
+                || is_keyword(&component)
                 || !(first == '_' || unicode_ident::is_xid_start(first))
                 || !characters.all(unicode_ident::is_xid_continue)
             {
@@ -132,7 +132,6 @@ fn is_keyword(value: &str) -> bool {
         "alias"
             | "and"
             | "as"
-            | "async"
             | "await"
             | "break"
             | "const"

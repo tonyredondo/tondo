@@ -71,7 +71,7 @@ pub struct TestEntry {
 pub fn build(root: &Path) -> Result<Inventory, String> {
     let lineage = DraftLineage::load(root, Path::new(DRAFT_LINEAGE_PATH))
         .map_err(|error| error.to_string())?;
-    let suite = lineage.baseline_suite();
+    let suite = lineage.suite();
     validate_repository_sidecars(root, suite)?;
 
     let mut tests = Vec::new();

@@ -66,7 +66,7 @@ grep -Fq 'collect(limit: -1)' tests/runtime/m11-std-async-iter-001.to
 grep -Fq 'collect polled past its limit' tests/runtime/m11-std-async-iter-001.to
 grep -Fq 'spawned_bounded_collect' tests/runtime/m11-std-async-impl-001.to
 grep -Fq 'spawn cursor.collect(limit: 2)' tests/runtime/m11-std-async-impl-001.to
-grep -Fq 'await tick()' tests/runtime/m11-std-async-impl-001.to
+grep -Fq 'tick()' tests/runtime/m11-std-async-impl-001.to
 grep -Fq 'cancelled_collect_is_drained' tests/runtime/m11-std-async-impl-001.to
 test -f tests/compile-fail/m7-spawn-exclusive-loan.to
 grep -Fq 'spawn increment(mut value)' tests/compile-fail/m7-spawn-exclusive-loan.to

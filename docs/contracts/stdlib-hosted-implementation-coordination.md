@@ -1,6 +1,6 @@
 # Coordinación de implementación Hosted de `std.0.1A`
 
-`STD-IMPL-002` es el gate vertical histórico de los cuatro owners Hosted. Su registro
+`STD-IMPL-002` es el gate vertical de los cuatro owners Hosted. Su registro
 reproducible es
 [`testing/stdlib-hosted-implementation-coordination.json`](../../testing/stdlib-hosted-implementation-coordination.json)
 y se genera con

@@ -1,4 +1,0 @@
-trait Left {}
-trait Right {}
-impl[T: Right] Left for T {}
-impl[T: Left] Right for T {}

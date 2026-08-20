@@ -339,10 +339,8 @@ struct RuntimeDefer {
     span: BytecodeSpan,
     operation: DeferredOperation,
     guard: Option<BytecodePlace>,
-    /// `true` only for a verified `defer await` call.  The bit is derived from
-    /// the call signature rather than carried as syntax metadata, keeping the
-    /// bytecode representation stable while making cleanup scheduling explicit
-    /// at runtime.
+    /// Derived from the deferred call signature. A suspendible cleanup is
+    /// awaited while the scope drains without requiring source-level syntax.
     async_cleanup: bool,
 }
 
@@ -472,7 +470,7 @@ enum TaskWait {
         unwind: BytecodeBlockId,
         completion: Option<RuntimeValue>,
     },
-    /// A host operation started by `defer await`.  Cleanup must be allowed to
+    /// A host operation started by an inferred suspendible defer. Cleanup must be allowed to
     /// finish even when the surrounding task is already unwinding, so it has
     /// its own wait state instead of reusing the cancellable ordinary await.
     DeferredHostCall {

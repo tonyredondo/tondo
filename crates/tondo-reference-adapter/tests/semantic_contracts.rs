@@ -225,12 +225,12 @@ fn collections(
     total
 }
 
-async fn load(value: Int): Int {
+fn load(value: Int): Int suspends {
     value
 }
 
-async fn concurrent(value: Int): Int {
-    let direct = await load(value)
+fn concurrent(value: Int): Int suspends {
+    let direct = load(value)
     scope {
         let task = spawn load(direct)
         let transferred = task

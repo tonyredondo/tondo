@@ -3684,6 +3684,20 @@ impl Verifier<'_> {
         loops: &BTreeSet<super::HirLoopId>,
     ) -> Result<(), HirInvariantError> {
         let mut async_call_parents = vec![0_u32; self.program.expressions.len()];
+        let deferred_calls = self
+            .program
+            .expressions
+            .iter()
+            .filter_map(|expression| match &expression.kind {
+                HirExpressionKind::Block { statements, .. } => Some(statements),
+                _ => None,
+            })
+            .flatten()
+            .filter_map(|statement| match statement {
+                HirStatement::Defer { action, .. } => Some(action.expression()),
+                _ => None,
+            })
+            .collect::<BTreeSet<_>>();
         for (index, expression) in self.program.expressions.iter().enumerate() {
             let id = HirExpressionId(index as u32);
             let context = format!("expression#{}", id.index());
@@ -3705,15 +3719,17 @@ impl Verifier<'_> {
                     self.program.expression(child).map(HirExpression::kind),
                     Some(HirExpressionKind::AsyncCall { .. })
                 ) {
-                    if !matches!(
-                        expression.kind,
-                        HirExpressionKind::Await { operation }
-                            | HirExpressionKind::Spawn { operation, .. }
-                            if operation == child
-                    ) {
+                    if !deferred_calls.contains(&child)
+                        && !matches!(
+                            expression.kind,
+                            HirExpressionKind::Await { operation }
+                                | HirExpressionKind::Spawn { operation, .. }
+                                if operation == child
+                        )
+                    {
                         return Err(HirInvariantError::new(
                             context,
-                            "an async call is referenced outside its initiating await or spawn",
+                            "a suspendible call is referenced outside its implicit wait, spawn, or defer owner",
                         ));
                     }
                     async_call_parents[child.index() as usize] += 1;
@@ -3729,7 +3745,7 @@ impl Verifier<'_> {
             {
                 return Err(HirInvariantError::new(
                     format!("expression#{index}"),
-                    "an async call must have exactly one await or spawn owner",
+                    "a suspendible call must have exactly one implicit wait, spawn, or defer owner",
                 ));
             }
         }
@@ -4817,10 +4833,7 @@ impl Verifier<'_> {
                 ));
             }
             let operands = defer_registration_children(self.program, action);
-            let invocation = match &expression.kind {
-                HirExpressionKind::Await { operation } => self.expression(*operation, context)?,
-                _ => expression,
-            };
+            let invocation = expression;
             match &invocation.kind {
                 HirExpressionKind::Call {
                     arguments,
@@ -6294,13 +6307,6 @@ fn defer_registration_children(
     let Some(expression) = program.expression(action.expression()) else {
         return Vec::new();
     };
-    let expression = match expression.kind() {
-        HirExpressionKind::Await { operation } => program.expression(*operation),
-        _ => Some(expression),
-    };
-    let Some(expression) = expression else {
-        return Vec::new();
-    };
     match expression.kind() {
         HirExpressionKind::Call {
             callee, arguments, ..
@@ -6514,12 +6520,12 @@ mod tests {
     #[test]
     fn process_output_redirections_are_verified_at_the_hir_boundary() {
         const SOURCE: &str = "import std.process\n\
-             async fn main(): !(process.ProcessError) {\n\
+             fn main(): !(process.ProcessError) {\n\
                  let command = process.command(\"/usr/bin/true\")\n\
                  let merged_command = command.mergeStderr()\n\
                  let pipeline = process.command(\"/usr/bin/printf\", \"x\") | process.command(\"/bin/cat\")\n\
                  let merged_pipeline = pipeline.mergeStderr()\n\
-                 let output = await merged_command.output()?\n\
+                 let output = merged_command.output()?\n\
                  let combined = output.combined\n\
                  _ = merged_pipeline\n\
                  _ = combined\n\
@@ -6818,7 +6824,7 @@ mod tests {
     #[test]
     fn trait_contract_metadata_is_verified_before_mir() {
         const SOURCE: &str = "trait Contract[T: Discard] {\n\
-             async fn send(self)\n\
+             fn send(self) suspends\n\
              fn required(self): T\n\
              fn defaulted[U](self, value: U): U { value }\n\
          }\n\
@@ -7151,11 +7157,11 @@ mod tests {
         assert!(error.message().contains("required prelude trait method"));
 
         const SEND: &str = "trait Contract {\n\
-                 async fn send(self)\n\
+                 fn send(self) suspends\n\
              }\n\
              type Item = Int\n\
              impl Contract for Item {\n\
-                 async fn send(self) {}\n\
+                 fn send(self) suspends {}\n\
              }\n";
         let (resolved, mut wrong_send) = checked_program_from(SEND);
         wrong_send.implementations[0].requires_self_send = false;
@@ -7604,11 +7610,13 @@ mod tests {
 
     #[test]
     fn async_closure_effects_and_protocols_are_reproved_before_mir() {
-        const SOURCE: &str = "fn build() {\n\
+        const SOURCE: &str = "fn suspendPoint() suspends {}\n\
+             fn build() {\n\
              let plain = (): Int { 0 }\n\
              _ = plain()\n\
              var count = 0\n\
-             let operation = async (): Int {\n\
+             let operation = (): Int {\n\
+                 suspendPoint()\n\
                  count += 1\n\
                  count\n\
              }\n\
@@ -8348,9 +8356,9 @@ mod tests {
         );
 
         let (resolved, mut program) = checked_program_from(
-            "async fn load(value: Int): Int { value }\n\
-             async fn effects(): Int {\n\
-                 let direct = await load(1)\n\
+            "fn load(value: Int): Int suspends { value }\n\
+             fn effects(): Int {\n\
+                 let direct = load(1)\n\
                  scope {\n\
                      let task = spawn load(direct)\n\
                      await task\n\
@@ -9317,9 +9325,9 @@ mod tests {
                  }\n\
              }\n\
              fn stop(): Never { panic(\"stop\") }\n\
-             async fn load(value: Int): Int { value }\n\
-             async fn effects(): Int {\n\
-                 let direct = await load(1)\n\
+             fn load(value: Int): Int suspends { value }\n\
+             fn effects(): Int {\n\
+                 let direct = load(1)\n\
                  scope {\n\
                      let task = spawn load(direct)\n\
                      await task\n\

@@ -1,7 +1,0 @@
-async fn tick() {}
-
-async fn invalid() {
-    defer {
-        await tick()
-    }
-}

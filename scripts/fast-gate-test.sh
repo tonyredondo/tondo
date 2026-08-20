@@ -5,7 +5,7 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
 for helper in scripts/fast-coverage-check.sh scripts/fast-gate.sh \
-    scripts/fast-gate-test.sh scripts/conformance-candidate.sh; do
+    scripts/fast-gate-test.sh; do
     [[ -x "$helper" ]] || {
         echo "fast gate test: helper is not executable: $helper" >&2
         exit 1

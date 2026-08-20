@@ -507,18 +507,7 @@ impl Scanner<'_> {
         let spelling = str::from_utf8(&self.bytes[start..self.position])
             .expect("identifier scanning only crosses valid UTF-8 scalars");
         let normalized = spelling.nfc().collect::<String>();
-        let preceding_dot = self.bytes[..start]
-            .iter()
-            .rev()
-            .find(|byte| !matches!(byte, b' ' | b'\t'))
-            == Some(&b'.');
-        let following_dot = self.bytes.get(self.position..).is_some_and(|tail| {
-            tail.iter().find(|byte| !matches!(byte, b' ' | b'\t')) == Some(&b'.')
-        });
-        let async_module_component = normalized == "async" && (preceding_dot || following_dot);
-        if let Some(keyword) = TokenKind::from_keyword(&normalized)
-            && !async_module_component
-        {
+        if let Some(keyword) = TokenKind::from_keyword(&normalized) {
             self.emit(keyword, start, self.position)
         } else {
             self.ensure_token_capacity(start)?;
@@ -1642,11 +1631,11 @@ mod tests {
     #[test]
     fn every_reserved_word_has_a_distinct_keyword_token() {
         let spellings = [
-            "alias", "and", "as", "async", "await", "break", "const", "continue", "defer", "else",
-            "enum", "err", "fail", "false", "fn", "for", "if", "impl", "import", "in", "let",
-            "match", "mut", "none", "not", "ok", "or", "priv", "pub", "ref", "return", "scope",
-            "self", "some", "spawn", "suite", "suspends", "test", "thread", "trait", "true",
-            "type", "unsafe", "var", "with",
+            "alias", "and", "as", "await", "break", "const", "continue", "defer", "else", "enum",
+            "err", "fail", "false", "fn", "for", "if", "impl", "import", "in", "let", "match",
+            "mut", "none", "not", "ok", "or", "priv", "pub", "ref", "return", "scope", "self",
+            "some", "spawn", "suite", "suspends", "test", "thread", "trait", "true", "type",
+            "unsafe", "var", "with",
         ];
         let input = spellings.join(" ");
         let (_, _, lexed) = lex_bytes(input.as_bytes(), LexMode::Module);
@@ -1660,6 +1649,23 @@ mod tests {
                 .collect::<std::collections::BTreeSet<_>>()
                 .len(),
             spellings.len()
+        );
+    }
+
+    #[test]
+    fn async_is_an_ordinary_identifier() {
+        let input = "import std.async\nfn async(): Int { 1 }\n";
+        let (_, _, lexed) = lex_bytes(input.as_bytes(), LexMode::Module);
+        let async_tokens = lexed
+            .tokens()
+            .iter()
+            .filter(|token| token.normalized_identifier() == Some("async"))
+            .collect::<Vec<_>>();
+        assert_eq!(async_tokens.len(), 2);
+        assert!(
+            async_tokens
+                .iter()
+                .all(|token| token.kind() == TokenKind::Identifier)
         );
     }
 

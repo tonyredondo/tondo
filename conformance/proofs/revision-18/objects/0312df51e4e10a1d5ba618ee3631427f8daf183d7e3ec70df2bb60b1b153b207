@@ -1,4 +1,0 @@
-type Secret = Int
-pub fn expose(value: Secret): Int {
-    value.value
-}

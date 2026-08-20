@@ -425,9 +425,11 @@ fn validate_draft_contract(manifest: &SuiteManifest) -> Result<(), ManifestError
             .capabilities
             .iter()
             .map(String::as_str)
-            .ne(["console", "process"])
+            .ne(["console", "environment", "process"])
     {
-        return invalid("the draft target must be tondo-vm-hosted/hosted with [console, process]");
+        return invalid(
+            "the draft target must be tondo-vm-hosted/hosted with [console, environment, process]",
+        );
     }
 
     let groups = manifest
@@ -899,6 +901,7 @@ fn validate_expectations(
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) fn validate_embedded_suite(
     manifest: &SuiteManifest,
     manifest_bytes: &[u8],
@@ -1087,7 +1090,7 @@ mod tests {
             group,
             target: "tondo-vm-hosted".into(),
             profile: "hosted".into(),
-            capabilities: vec!["console".into(), "process".into()],
+            capabilities: vec!["console".into(), "environment".into(), "process".into()],
             repeat: 1,
             covers: Vec::new(),
             positive_for: Vec::new(),
@@ -1116,7 +1119,7 @@ mod tests {
             targets: vec![TargetDeclaration {
                 name: "tondo-vm-hosted".into(),
                 profile: "hosted".into(),
-                capabilities: vec!["console".into(), "process".into()],
+                capabilities: vec!["console".into(), "environment".into(), "process".into()],
             }],
             cases: vec![case],
         }
@@ -1307,7 +1310,7 @@ mod tests {
         let target = TargetDeclaration {
             name: "tondo-vm-hosted".into(),
             profile: "hosted".into(),
-            capabilities: vec!["console".into(), "process".into()],
+            capabilities: vec!["console".into(), "environment".into(), "process".into()],
         };
         let targets = BTreeMap::from([(target.name.as_str(), &target)]);
         let base = conformance_case(
@@ -1405,7 +1408,7 @@ mod tests {
     }
 
     #[test]
-    fn baseline_suite_accessors_preserve_loaded_identity() {
+    fn live_suite_accessors_preserve_loaded_identity() {
         use crate::lineage::DraftLineage;
 
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -1413,7 +1416,7 @@ mod tests {
             .and_then(Path::parent)
             .unwrap();
         let lineage = DraftLineage::load(root, "conformance/draft/manifest.json").unwrap();
-        let suite = lineage.baseline_suite();
+        let suite = lineage.suite();
         assert_eq!(suite.root(), root);
         assert_eq!(
             suite.manifest_path(),
@@ -1439,15 +1442,21 @@ mod tests {
         invalid.cases[0].repeat = 0;
         assert!(validate_embedded_suite(&invalid, &suite.manifest_bytes, &pinned).is_err());
 
-        assert!(matches!(
-            LoadedSuite::load(root, "conformance/0.1/manifest.json"),
-            Err(ManifestError::HashMismatch { path, .. }) if path == "TONDO_LANGUAGE_SPEC.md"
-        ));
+        let direct = LoadedSuite::load(root, "conformance/0.1/manifest.json")
+            .expect("the live suite must load without a historical specification override");
+        assert_eq!(direct.manifest_sha256(), suite.manifest_sha256());
+        assert_eq!(
+            direct.file(&direct.manifest().specification),
+            suite.file(&suite.manifest().specification)
+        );
 
         let overrides = BTreeMap::from([
             (
                 "TONDO_LANGUAGE_SPEC.md".into(),
-                lineage.baseline_specification().to_vec(),
+                lineage
+                    .specification("TONDO_LANGUAGE_SPEC.md")
+                    .unwrap()
+                    .to_vec(),
             ),
             ("unreferenced.txt".into(), b"not part of the suite".to_vec()),
         ]);

@@ -1,3 +1,0 @@
-fn extract[T: Discard](reference: Ref[T]): T {
-    reference.value
-}

@@ -1,7 +1,0 @@
-fn cleanup(pointer: Pointer[Int]) suspends {
-    _ = pointer
-}
-
-fn invalid(pointer: Pointer[Int]) {
-    defer await cleanup(pointer)
-}

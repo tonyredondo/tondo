@@ -23,8 +23,8 @@ static user iterators plus all four intrinsic iteration forms, plus TEXT-002
 Unicode-scalar String length, indexing, and slicing, and TEXT-003 decoded
 interpolation with static `Display`, plus VARIADIC-001/002 homogeneous final
 packs and whole-array spread, plus the canonical inferred-suspension `suspends`
-effect and implicit-await path (the explicit-await prototype remains only in
-the frozen corpus), SCOPE-001, SPAWN-001, JOIN-001, SEND-001, SHARE-001, and
+effect and single implicit-wait path, SCOPE-001, SPAWN-001, JOIN-001,
+SEND-001, SHARE-001, and
 MAIN-ASYNC-001
 
 ## Boundary
@@ -976,7 +976,7 @@ that scope and one already type-checked invocation-shaped `HirDeferAction`; the
 invocation itself is delayed, but its direct operands remain in source
 evaluation order. An ordinary action must return `Unit`, be infallible and
 synchronous, and be a call, `assert`, bootstrap host invocation, or the
-  zero-argument closure generated for a defer block. `defer await` is represented
+  zero-argument closure generated for a defer block. `defer` is represented
   by one `Await` wrapper around one suspendible call: it is still infallible
   `Unit`, but its suspension effect is retained for lowering and executor
   scheduling. It
@@ -991,7 +991,7 @@ Every direct operand proven `Copy` is a registration-time snapshot. There may
 be at most one non-`Copy` operand. It must be a complete local binding or a
 temporary value. A deferred callee uses `Call` only when it is both `Copy` and
 repeatable; otherwise it uses `CallOnce`. This protocol rule is identical for
-`defer await`; the suspension effect changes scheduling, not ownership. It never
+`defer`; the suspension effect changes scheduling, not ownership. It never
 retains the exclusive borrow required by `CallMut`, and a non-`Copy` callee must
 use `CallOnce`. HIR records
 that exact operand as the guard instead of pretending to move it when the
@@ -1198,9 +1198,9 @@ language-defined non-`Send` exception.
 
 The checker represents a suspendible call as `SuspendibleCall`; that node
 describes a fully associated operation but cannot execute synchronously. In an
-ordinary expression its parent is an implicit `Await` inserted by lowering. An
-explicit `await call()` produces the same node and is semantically equivalent.
-`Join[T, E]` and `Waiter` values require an explicit `Await`, while `Spawn` is the
+ordinary expression its parent is an implicit `Await` inserted by lowering.
+`await call()` is rejected with `E1611`; `Join[T, E]` values require an explicit
+`Await`, while `Waiter.wait()` remains an ordinary direct call and `Spawn` is the
 only parent that preserves a pending handle. A direct call in a
 `@sync`/`@nosuspend` context is rejected with `E1601`; malformed explicit
 operands use `E1610` or `E1611` before availability analysis.

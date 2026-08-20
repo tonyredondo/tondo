@@ -1,5 +1,0 @@
-async fn cleanup() {}
-
-fn main() {
-    defer await cleanup()
-}

@@ -361,9 +361,9 @@ frames explícitos; `ProtoReader[T]` y `ProtoWriter[T]` comparten la misma
 máquina bounded y quedan terminales tras error o `finish`. La ruta canónica
 `encode_static`/`decode_static` usa `Encode[Protobuf]`/`Decode[Protobuf]` y el
 adaptador de eventos schema-bound sin construir `serialization.Value`. Los
-helpers Rust `encode`/`decode` y el `ProtoValue`/`Raw<Protobuf>` de
-compatibilidad conservan los kernels anteriores, pero no son la superficie
-Tondo normativa ni una segunda API dinámica. Los límites de eventos se
+helpers Rust `encode`/`decode` y `ProtoValue`/`Raw<Protobuf>` son detalles
+internos del kernel, no la superficie Tondo normativa ni una segunda API
+dinámica. Los límites de eventos se
 comprueban tanto al materializar eventos del reader como al aceptar eventos del
 writer, antes de crecer las colecciones.
 

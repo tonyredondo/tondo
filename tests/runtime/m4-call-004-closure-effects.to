@@ -1,8 +1,8 @@
 fn main() {
     let sync: fn(): Int = () { 1 }
     let raw: unsafe fn(): Int = unsafe () { 2 }
-    let later: async fn(): Int = async () { 3 }
-    let both: async unsafe fn(): Int = async unsafe () { 4 }
+    let later: fn(): Int suspends = () { 3 }
+    let both: unsafe fn(): Int suspends = unsafe () { 4 }
     _ = sync
     _ = raw
     _ = later

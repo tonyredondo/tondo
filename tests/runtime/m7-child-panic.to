@@ -1,8 +1,8 @@
-async fn failChild(): Int {
+fn failChild(): Int suspends {
     panic("child panic")
 }
 
-async fn main() {
+fn main() suspends {
     scope {
         let child = spawn failChild()
         let value = await child

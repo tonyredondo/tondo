@@ -2,7 +2,6 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use tondo_reliability::candidate::{self, CandidateInputs, CandidateOutcome};
 use tondo_reliability::gap_audit::GapAudit;
 use tondo_reliability::inventory;
 use tondo_reliability::layer_evidence;
@@ -26,8 +25,6 @@ Usage:
   tondo-reliability inventory <generate|check> [--root <directory>]
   tondo-reliability matrix <generate|check> [--root <directory>]
   tondo-reliability layer-evidence attest --test-log <path> --before <json> --output <json> [--root <directory>]
-  tondo-reliability candidate seal --proof <directory> --coverage <json> --coverage-binding <json> --mutants <json> --mutants-binding <json> --layer-evidence <json> --doc-test <json> --doc-test-links <json> --output <directory> [--root <directory>]
-  tondo-reliability candidate verify --candidate <directory> [--root <directory>]
   tondo-reliability ratchet <generate|check> [--coverage <json>] [--mutants <json>] [--coverage-binding <json>] [--mutants-binding <json>] [--root <directory>]
   tondo-reliability quality check [--root <directory>]
   tondo-reliability quality provenance [--root <directory>]
@@ -61,7 +58,7 @@ fn run(arguments: Vec<String>) -> Result<String, String> {
     }
     if !matches!(
         arguments.positionals.first().map(String::as_str),
-        Some("quality" | "ratchet" | "layer-evidence" | "candidate" | "tracker")
+        Some("quality" | "ratchet" | "layer-evidence" | "tracker")
     ) {
         reject_quality_options(&arguments)?;
     }
@@ -94,39 +91,6 @@ fn run(arguments: Vec<String>) -> Result<String, String> {
                 "layer evidence {}: {} observations",
                 change(changed),
                 report.evidence.len()
-            ))
-        }
-        [area, command] if area == "candidate" && command == "seal" => {
-            reject_candidate_seal_options(&arguments)?;
-            let inputs = CandidateInputs {
-                proof: required_path(&arguments.proof, "--proof")?,
-                coverage: required_path(&arguments.coverage, "--coverage")?,
-                coverage_binding: required_path(&arguments.coverage_binding, "--coverage-binding")?,
-                mutation: required_path(&arguments.mutants, "--mutants")?,
-                mutation_binding: required_path(&arguments.mutants_binding, "--mutants-binding")?,
-                layer_evidence: required_path(&arguments.layer_evidence, "--layer-evidence")?,
-                doc_test: required_path(&arguments.doc_test, "--doc-test")?,
-                doc_test_links: required_path(&arguments.doc_test_links, "--doc-test-links")?,
-            };
-            let output = required_path(&arguments.output, "--output")?;
-            let outcome = candidate::seal_candidate(&root, &inputs, output)?;
-            Ok(format!(
-                "candidate {}: revision {}, gates G5 and T0",
-                match outcome {
-                    CandidateOutcome::Created => "created",
-                    CandidateOutcome::AlreadyPresent => "already present",
-                },
-                candidate::verify_candidate(&root, output)?.lineage.revision
-            ))
-        }
-        [area, command] if area == "candidate" && command == "verify" => {
-            reject_candidate_verify_options(&arguments)?;
-            let candidate = required_path(&arguments.candidate, "--candidate")?;
-            let verified = candidate::verify_candidate(&root, candidate)?;
-            Ok(format!(
-                "candidate verified offline: revision {}, gates {}",
-                verified.lineage.revision,
-                verified.gates.join(" and ")
             ))
         }
         [area, command] if area == "ratchet" && command == "generate" => {
@@ -266,11 +230,6 @@ struct Arguments {
     after: Option<PathBuf>,
     output: Option<PathBuf>,
     test_log: Option<PathBuf>,
-    proof: Option<PathBuf>,
-    layer_evidence: Option<PathBuf>,
-    doc_test: Option<PathBuf>,
-    doc_test_links: Option<PathBuf>,
-    candidate: Option<PathBuf>,
     json: bool,
 }
 
@@ -288,11 +247,6 @@ fn parse_arguments(arguments: Vec<String>) -> Result<Arguments, String> {
     let mut after = None;
     let mut output = None;
     let mut test_log = None;
-    let mut proof = None;
-    let mut layer_evidence = None;
-    let mut doc_test = None;
-    let mut doc_test_links = None;
-    let mut candidate = None;
     let mut json = false;
     let mut index = 0;
     while index < arguments.len() {
@@ -316,11 +270,6 @@ fn parse_arguments(arguments: Vec<String>) -> Result<Arguments, String> {
                 | "--after"
                 | "--output"
                 | "--test-log"
-                | "--proof"
-                | "--layer-evidence"
-                | "--doc-test"
-                | "--doc-test-links"
-                | "--candidate"
         ) {
             let option = arguments[index].as_str();
             let value = arguments
@@ -339,11 +288,6 @@ fn parse_arguments(arguments: Vec<String>) -> Result<Arguments, String> {
                 "--after" => after.replace(PathBuf::from(value)).is_some(),
                 "--output" => output.replace(PathBuf::from(value)).is_some(),
                 "--test-log" => test_log.replace(PathBuf::from(value)).is_some(),
-                "--proof" => proof.replace(PathBuf::from(value)).is_some(),
-                "--layer-evidence" => layer_evidence.replace(PathBuf::from(value)).is_some(),
-                "--doc-test" => doc_test.replace(PathBuf::from(value)).is_some(),
-                "--doc-test-links" => doc_test_links.replace(PathBuf::from(value)).is_some(),
-                "--candidate" => candidate.replace(PathBuf::from(value)).is_some(),
                 _ => unreachable!(),
             };
             if duplicate {
@@ -371,11 +315,6 @@ fn parse_arguments(arguments: Vec<String>) -> Result<Arguments, String> {
         after,
         output,
         test_log,
-        proof,
-        layer_evidence,
-        doc_test,
-        doc_test_links,
-        candidate,
         json,
     })
 }
@@ -392,7 +331,6 @@ fn reject_quality_options(arguments: &Arguments) -> Result<(), String> {
         || arguments.after.is_some()
         || arguments.output.is_some()
         || arguments.test_log.is_some()
-        || has_candidate_options(arguments)
     {
         Err("this command does not accept quality report options".into())
     } else {
@@ -409,7 +347,6 @@ fn reject_layer_evidence_options(arguments: &Arguments) -> Result<(), String> {
         || arguments.kind.is_some()
         || arguments.report.is_some()
         || arguments.after.is_some()
-        || has_candidate_options(arguments)
     {
         Err("layer-evidence attest accepts only --root, --test-log, --before, and --output".into())
     } else {
@@ -425,7 +362,6 @@ fn reject_ratchet_options(arguments: &Arguments) -> Result<(), String> {
         || arguments.after.is_some()
         || arguments.output.is_some()
         || arguments.test_log.is_some()
-        || has_candidate_options(arguments)
     {
         return Err("ratchet does not accept revision".into());
     }
@@ -439,7 +375,6 @@ fn reject_binding_options(arguments: &Arguments) -> Result<(), String> {
         || arguments.mutants_binding.is_some()
         || arguments.revision.is_some()
         || arguments.test_log.is_some()
-        || has_candidate_options(arguments)
     {
         Err("quality bind does not accept coverage, mutation, binding, or revision options".into())
     } else {
@@ -456,7 +391,6 @@ fn reject_capture_options(arguments: &Arguments) -> Result<(), String> {
         || arguments.after.is_some()
         || arguments.output.is_some()
         || arguments.test_log.is_some()
-        || has_candidate_options(arguments)
     {
         Err("quality capture does not accept binding command options".into())
     } else {
@@ -471,58 +405,11 @@ fn reject_verify_options(arguments: &Arguments) -> Result<(), String> {
         || arguments.after.is_some()
         || arguments.output.is_some()
         || arguments.test_log.is_some()
-        || has_candidate_options(arguments)
     {
         Err("quality verify does not accept binding command options".into())
     } else {
         Ok(())
     }
-}
-
-fn reject_candidate_seal_options(arguments: &Arguments) -> Result<(), String> {
-    if arguments.revision.is_some()
-        || arguments.kind.is_some()
-        || arguments.report.is_some()
-        || arguments.before.is_some()
-        || arguments.after.is_some()
-        || arguments.test_log.is_some()
-        || arguments.candidate.is_some()
-    {
-        Err("candidate seal accepts only candidate evidence paths and --output".into())
-    } else {
-        Ok(())
-    }
-}
-
-fn reject_candidate_verify_options(arguments: &Arguments) -> Result<(), String> {
-    if arguments.coverage.is_some()
-        || arguments.mutants.is_some()
-        || arguments.coverage_binding.is_some()
-        || arguments.mutants_binding.is_some()
-        || arguments.revision.is_some()
-        || arguments.kind.is_some()
-        || arguments.report.is_some()
-        || arguments.before.is_some()
-        || arguments.after.is_some()
-        || arguments.output.is_some()
-        || arguments.test_log.is_some()
-        || arguments.proof.is_some()
-        || arguments.layer_evidence.is_some()
-        || arguments.doc_test.is_some()
-        || arguments.doc_test_links.is_some()
-    {
-        Err("candidate verify accepts only --root and --candidate".into())
-    } else {
-        Ok(())
-    }
-}
-
-fn has_candidate_options(arguments: &Arguments) -> bool {
-    arguments.proof.is_some()
-        || arguments.layer_evidence.is_some()
-        || arguments.doc_test.is_some()
-        || arguments.doc_test_links.is_some()
-        || arguments.candidate.is_some()
 }
 
 fn required_path<'a>(value: &'a Option<PathBuf>, name: &str) -> Result<&'a Path, String> {
@@ -643,9 +530,8 @@ fn generate_ratchet(root: &Path, arguments: &Arguments) -> Result<String, String
     )?;
     let changed = write_if_changed(&root.join(ratchet::PATH), &canonical_json(&record)?)?;
     Ok(format!(
-        "ratchet {}: revision {}, {} draft case layers",
+        "ratchet {}: {} draft case layers",
         change(changed),
-        record.revision,
         record.draft_case_layers
     ))
 }
@@ -660,8 +546,8 @@ fn check_ratchet(root: &Path, arguments: &Arguments) -> Result<String, String> {
     )?;
     check_bytes(&root.join(ratchet::PATH), &canonical_json(&expected)?)?;
     Ok(format!(
-        "ratchet is current: revision {}, {} draft case layers",
-        expected.revision, expected.draft_case_layers
+        "ratchet is current: {} draft case layers",
+        expected.draft_case_layers
     ))
 }
 
@@ -674,11 +560,6 @@ mod tests {
     use std::fs;
 
     use super::*;
-
-    #[path = "candidate_support.rs"]
-    mod candidate_support;
-
-    use candidate_support::CandidateFixture;
 
     struct EvidenceSnapshot {
         root: PathBuf,
@@ -805,90 +686,6 @@ mod tests {
         let mut invalid = arguments;
         invalid.coverage = Some("coverage.json".into());
         assert!(reject_layer_evidence_options(&invalid).is_err());
-    }
-
-    #[test]
-    fn candidate_options_are_explicit_and_command_scoped() {
-        let arguments = parse_arguments(vec![
-            "candidate".into(),
-            "seal".into(),
-            "--proof".into(),
-            "proof".into(),
-            "--coverage".into(),
-            "coverage.json".into(),
-            "--coverage-binding".into(),
-            "coverage-binding.json".into(),
-            "--mutants".into(),
-            "mutation.json".into(),
-            "--mutants-binding".into(),
-            "mutation-binding.json".into(),
-            "--layer-evidence".into(),
-            "layer.json".into(),
-            "--doc-test".into(),
-            "doc-test.json".into(),
-            "--doc-test-links".into(),
-            "links.json".into(),
-            "--output".into(),
-            "candidate".into(),
-        ])
-        .unwrap();
-        assert!(reject_candidate_seal_options(&arguments).is_ok());
-        assert_eq!(arguments.proof, Some(PathBuf::from("proof")));
-
-        let verify = parse_arguments(vec![
-            "candidate".into(),
-            "verify".into(),
-            "--candidate".into(),
-            "candidate".into(),
-        ])
-        .unwrap();
-        assert!(reject_candidate_verify_options(&verify).is_ok());
-        assert!(reject_quality_options(&verify).is_err());
-    }
-
-    #[test]
-    fn candidate_commands_execute_the_closed_offline_bundle() {
-        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let fixture = CandidateFixture::new(&repository);
-        let root = fixture.root.to_str().unwrap();
-        let seal = vec![
-            "candidate".into(),
-            "seal".into(),
-            "--proof".into(),
-            fixture.proof.into(),
-            "--coverage".into(),
-            fixture.coverage.into(),
-            "--coverage-binding".into(),
-            fixture.coverage_binding.into(),
-            "--mutants".into(),
-            fixture.mutation.into(),
-            "--mutants-binding".into(),
-            fixture.mutation_binding.into(),
-            "--layer-evidence".into(),
-            fixture.layer.into(),
-            "--doc-test".into(),
-            fixture.doc_test.into(),
-            "--doc-test-links".into(),
-            fixture.doc_links.into(),
-            "--output".into(),
-            fixture.output.into(),
-            "--root".into(),
-            root.into(),
-        ];
-        assert!(run(seal.clone()).unwrap().contains("candidate created"));
-        assert!(run(seal).unwrap().contains("candidate already present"));
-        assert!(
-            run(vec![
-                "candidate".into(),
-                "verify".into(),
-                "--candidate".into(),
-                fixture.output.into(),
-                "--root".into(),
-                root.into(),
-            ])
-            .unwrap()
-            .contains("candidate verified offline")
-        );
     }
 
     #[test]

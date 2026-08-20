@@ -68,7 +68,7 @@ cargo run -p tondo-reliability --locked -- quality provenance --root . > "$mutat
 
 # The compiler test target is intentionally broad and can take several
 # minutes under a mutated build. Do not copy the repository's target tree:
-# it contains coverage and historical artifacts that add tens of gigabytes
+# it contains coverage and build artifacts that add tens of gigabytes
 # without materially improving the clean mutation build. Use a bounded pool of
 # four mutation workers; larger pools have produced intermittent rustc SIGILL
 # failures on this runner, which cargo-mutants would otherwise misclassify as

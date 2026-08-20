@@ -1,4 +1,0 @@
-fn invalid() {
-    var value = 0
-    (value, value) = (1, 2)
-}

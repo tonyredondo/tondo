@@ -1,14 +1,11 @@
 use std::env;
 use std::fs;
-use std::path::Component;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use tondo_conformance::lineage::DraftLineage;
 use tondo_conformance::manifest::CaseGroup;
 use tondo_conformance::runner::{ProcessAdapter, compose_suite_result, run_suite};
-use tondo_conformance::seal::{ProofOutcome, seal_promotion_proof, verify_promotion_proof};
-use tondo_conformance::sha256;
 
 const USAGE: &str = "\
 Tondo draft conformance runner
@@ -16,8 +13,6 @@ Tondo draft conformance runner
 Usage:
   tondo-conformance validate --root <directory> --manifest <draft-path> --lineage draft
   tondo-conformance run --root <directory> --manifest <draft-path> --lineage draft --adapter <executable> --evidence <json> [--output <path>]
-  tondo-conformance seal-proof --root <directory> --manifest <draft-path> --lineage draft --result <path> --output <directory>
-  tondo-conformance verify-proof --root <directory> --proof <directory>
 
 Groups:
   lex-parse-format, compile-pass, compile-fail, semantic-queries, runtime,
@@ -43,8 +38,6 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
     let mut adapter = None;
     let mut group = None;
     let mut output = None;
-    let mut result = None;
-    let mut proof = None;
     let mut evidence = None;
     let mut index = 1;
     while index < arguments.len() {
@@ -61,70 +54,30 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
             "--adapter" => set_once(&mut adapter, PathBuf::from(value), option)?,
             "--group" => set_once(&mut group, parse_group(value)?, option)?,
             "--output" => set_once(&mut output, PathBuf::from(value), option)?,
-            "--result" => set_once(&mut result, PathBuf::from(value), option)?,
-            "--proof" => set_once(&mut proof, PathBuf::from(value), option)?,
             "--evidence" => set_once(&mut evidence, PathBuf::from(value), option)?,
             _ => return Err(format!("unknown option `{option}`\n\n{USAGE}")),
         }
     }
     let root = root.ok_or_else(|| "`--root` is required".to_owned())?;
-    if command == "verify-proof" {
-        if manifest.is_some()
-            || lineage.is_some()
-            || adapter.is_some()
-            || group.is_some()
-            || output.is_some()
-            || result.is_some()
-            || evidence.is_some()
-        {
-            return Err("verify-proof accepts only --root and --proof".into());
-        }
-        let proof = proof.ok_or_else(|| "`--proof` is required for verify-proof".to_owned())?;
-        require_relative_normal(&proof, "--proof")?;
-        let proof_manifest = proof.join("manifest.json");
-        let verified =
-            verify_promotion_proof(&root, &proof_manifest).map_err(|error| error.to_string())?;
-        let bytes = fs::read(root.join(&proof_manifest))
-            .map_err(|error| format!("cannot read `{}`: {error}", proof_manifest.display()))?;
-        println!(
-            "{} revision {} promotion-proof {}",
-            verified.lineage.name,
-            verified.lineage.revision,
-            sha256(&bytes)
-        );
-        return Ok(());
-    }
-    if proof.is_some() {
-        return Err("`--proof` is accepted only by verify-proof".into());
-    }
     let manifest = manifest.ok_or_else(|| "`--manifest` is required".to_owned())?;
     let selection = lineage.ok_or_else(|| "`--lineage` is required".to_owned())?;
     let lineage = DraftLineage::load(&root, manifest).map_err(|error| error.to_string())?;
     match command.as_str() {
         "validate" => {
-            if adapter.is_some()
-                || group.is_some()
-                || output.is_some()
-                || result.is_some()
-                || evidence.is_some()
-            {
+            if adapter.is_some() || group.is_some() || output.is_some() || evidence.is_some() {
                 return Err("validate accepts only --root, --manifest, and --lineage".into());
             }
             let _ = selection;
             println!(
-                "{} {} {} {} {}",
+                "{} {} {} {}",
                 lineage.manifest().lineage,
                 lineage.manifest().edition,
                 lineage.manifest().state,
-                lineage.manifest().revision,
                 lineage.manifest_sha256()
             );
             Ok(())
         }
         "run" => {
-            if result.is_some() {
-                return Err("run does not accept --result".into());
-            }
             if group.is_some() {
                 return Err(
                     "run no longer accepts partial groups; composed draft results are atomic"
@@ -136,11 +89,11 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
             let evidence = evidence
                 .ok_or_else(|| "`--evidence` is required for the run command".to_owned())?;
             let mut adapter = ProcessAdapter::spawn(adapter)?;
-            let baseline = run_suite(lineage.baseline_suite(), &mut adapter, None)
+            let suite_result = run_suite(lineage.suite(), &mut adapter, None)
                 .map_err(|error| error.to_string())?;
             let evidence_bytes = fs::read(&evidence)
                 .map_err(|error| format!("cannot read `{}`: {error}", evidence.display()))?;
-            let result = compose_suite_result(&lineage, baseline, &evidence_bytes)
+            let result = compose_suite_result(&lineage, suite_result, &evidence_bytes)
                 .map_err(|error| error.to_string())?;
             let encoded = serde_json::to_vec(&result)
                 .map_err(|error| format!("cannot encode result: {error}"))?;
@@ -152,52 +105,7 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
             }
             Ok(())
         }
-        "seal-proof" => {
-            if adapter.is_some() || group.is_some() || evidence.is_some() {
-                return Err(
-                    "seal-proof accepts --root, --manifest, --lineage, --result, and --output"
-                        .into(),
-                );
-            }
-            let result =
-                result.ok_or_else(|| "`--result` is required for seal-proof".to_owned())?;
-            let output =
-                output.ok_or_else(|| "`--output` is required for seal-proof".to_owned())?;
-            require_relative_normal(&result, "--result")?;
-            require_relative_normal(&output, "--output")?;
-            let outcome = seal_promotion_proof(&lineage, &root.join(&result), &output)
-                .map_err(|error| error.to_string())?;
-            let proof_manifest = output.join("manifest.json");
-            let bytes = fs::read(root.join(&proof_manifest))
-                .map_err(|error| format!("cannot read `{}`: {error}", proof_manifest.display()))?;
-            let verb = match outcome {
-                ProofOutcome::Created => "sealed promotion proof",
-                ProofOutcome::AlreadyPresent => "verified existing promotion proof",
-            };
-            println!(
-                "{verb} {} revision {} {}",
-                lineage.manifest().lineage,
-                lineage.manifest().revision,
-                sha256(&bytes)
-            );
-            Ok(())
-        }
         _ => Err(format!("unknown command `{command}`\n\n{USAGE}")),
-    }
-}
-
-fn require_relative_normal(path: &std::path::Path, name: &str) -> Result<(), String> {
-    if path.as_os_str().is_empty()
-        || path.is_absolute()
-        || path
-            .components()
-            .any(|component| !matches!(component, Component::Normal(_)))
-    {
-        Err(format!(
-            "`{name}` must contain only relative normal components"
-        ))
-    } else {
-        Ok(())
     }
 }
 
@@ -350,16 +258,5 @@ mod tests {
                 .unwrap_err()
                 .contains("unknown command `other`")
         );
-
-        assert_eq!(
-            run(suite_arguments("seal-proof")).unwrap_err(),
-            "`--result` is required for seal-proof"
-        );
-        assert_eq!(
-            run(vec!["verify-proof".into(), "--root".into(), ".".into()]).unwrap_err(),
-            "`--proof` is required for verify-proof"
-        );
-        assert!(require_relative_normal(PathBuf::from("a/b").as_path(), "path").is_ok());
-        assert!(require_relative_normal(PathBuf::from("../a").as_path(), "path").is_err());
     }
 }

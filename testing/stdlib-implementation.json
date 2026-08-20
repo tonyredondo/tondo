@@ -50,7 +50,7 @@
     "TONDO_TEST_TARGET=linux-x86_64 bash scripts/test-gate.sh"
   ],
   "conformance_lineage": "conformance/draft/manifest.json",
-  "historical_manifest_immutable": true,
+  "live_manifest_regenerated": true,
   "coverage_floor_basis_points": 9025,
   "release_gate": "STD-0.1 publication checklist remains separate and open"
 }

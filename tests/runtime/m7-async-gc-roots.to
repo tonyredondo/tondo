@@ -1,6 +1,6 @@
 import std.console
 
-async fn pressure(): Int {
+fn pressure(): Int suspends {
     var count = 0
     for count < 64 {
         let garbage = ["garbage", "collection"]
@@ -10,11 +10,11 @@ async fn pressure(): Int {
     count
 }
 
-async fn completedValue(): Array[String] {
+fn completedValue(): Array[String] suspends {
     ["left", "right"]
 }
 
-async fn holdSuspendedValue(): String {
+fn holdSuspendedValue(): String suspends {
     let retained = "retained"
     scope {
         let pending = spawn pressure()
@@ -23,7 +23,7 @@ async fn holdSuspendedValue(): String {
     retained
 }
 
-async fn main() {
+fn main() suspends {
     scope {
         let completed = spawn completedValue()
         let allocating = spawn pressure()
@@ -33,6 +33,6 @@ async fn main() {
         assert(values[1] == "right")
     }
 
-    assert(await holdSuspendedValue() == "retained")
+    assert(holdSuspendedValue() == "retained")
     console.print("async-gc-roots-ok\n")
 }

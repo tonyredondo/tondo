@@ -2,7 +2,7 @@ fn key(value: Int): Int {
     value
 }
 
-async fn observe(value: ref Int): Int {
+fn observe(value: ref Int): Int suspends {
     value
 }
 
@@ -10,7 +10,7 @@ unsafe fn raw(value: Int): Int {
     value + 1
 }
 
-async fn facts() {
+fn facts() suspends {
     let values: Map[Int, Int] = [
         key(1): 10,
         key(2): 20,

@@ -13,11 +13,6 @@ on:
         options:
           - fast
           - full
-      promotion:
-        description: Also attempt the immutable conformance promotion proof
-        required: true
-        default: false
-        type: boolean
 
 permissions:
   contents: read
@@ -86,7 +81,6 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && inputs.tier == 'full'
         env:
           TONDO_TEST_TARGET: linux-x86_64
-          TONDO_FULL_GATE_PROMOTION: ${{ inputs.promotion && '1' || '0' }}
         run: bash scripts/test-gate.sh
 
       - name: Upload reproducible failure evidence

@@ -65,7 +65,7 @@ fn public_driver_executes_a_fallible_virtual_time_callback() {
     let base = inline_module_request(
         Operation::Check,
         "virtual-time.to",
-        b"import std.testing\nimport std.time\ntest virtualClock {\n match await testing.withVirtualTime(async (clock) {\n  scope {\n   let sleeper = spawn time.sleep(time.Duration.fromNanoseconds(3))\n   await clock.settle()\n   _ = await sleeper?\n  }\n }) {\n  ok(_) => ()\n  err(_) => testing.failNow(\"virtual time failed\")\n }\n}\n",
+        b"import std.testing\nimport std.time\ntest virtualClock {\n match testing.withVirtualTime((clock) {\n  scope {\n   let sleeper = spawn time.sleep(time.Duration.fromNanoseconds(3))\n   clock.settle()\n   _ = await sleeper?\n  }\n }) {\n  ok(_) => ()\n  err(_) => testing.failNow(\"virtual time failed\")\n }\n}\n",
     );
     let entries = discover_tests(&base).unwrap();
     let request = base

@@ -1,5 +1,0 @@
-fn signedOverflow(): Int8 { 128i8 }
-fn unsignedOverflow(): UInt8 { 256u8 }
-fn contextualOverflow(): Int16 { 32768 }
-fn floatOverflow(): Float32 { 3.4028236e38f32 }
-fn implicitPromotion(): Int16 { 1i8 + 1i16 }

@@ -1,8 +1,8 @@
-async fn compute(): Int {
+fn compute(): Int suspends {
     42
 }
 
-async fn invalid() {
+fn invalid() suspends {
     let pending = spawn compute()
     let value = await pending
     assert(value == 42)

@@ -32,8 +32,8 @@ Unicode-scalar String length, indexing, and slicing, plus TEXT-003 static
 Display execution and ordered interpolation, plus VARIADIC-001 homogeneous
 final packs and VARIADIC-002 explicit Array spread, plus OPT-COW-001..003
 measured and differentially validated collection copy-on-write, plus the
-canonical inferred-suspension `suspends` effect and implicit-await path (the
-explicit-await prototype remains only in the frozen corpus), EXEC-001/002,
+canonical inferred-suspension `suspends` effect and implicit-wait path,
+EXEC-001/002,
 SCOPE-001, SPAWN-001, JOIN-001,
 CANCEL-001/002, PANIC-ASYNC-001, SEND-001, SHARE-001, and MAIN-ASYNC-001
 
@@ -489,9 +489,9 @@ root completes, the VM reports an invariant failure instead of spinning.
 
 The selected safe entry may be synchronous or suspendible and always becomes
 task zero. This runtime root is not a lexical `scope`, so it does not authorize
-detached `spawn`. A direct suspendible call, whether written with `await` or
-not, pushes the callee frame into the same task and resumes the caller with its
-logical value. `spawn` instead creates a new runnable task under the active
+detached `spawn`. A direct suspendible call pushes the callee frame into the
+same task and resumes the caller with its logical value; writing `await call()`
+is rejected. `spawn` instead creates a new runnable task under the active
 innermost task scope and stores an immediate
 `Join` in the owner. Awaiting an incomplete handle consumes no state yet: the
 owner parks with its exact handle place, destination, normal edge, and unwind
@@ -503,7 +503,8 @@ creation order, and closed bit. Draining requests cancellation for every live
 child and parks the owner until all children are complete. Cancellation is one
 internal `RuntimeUnwind::Cancelled` state, distinct from returned Tondo values,
 recoverable error `E`, language panic, and VM failure. It is observed only at
-the implemented cooperative boundaries: an implicit or explicit wait, `spawn`,
+the implemented cooperative boundaries: a direct-call wait, an explicit `Join`
+wait, `spawn`,
 task-scope entry, and task-scope drain. The child then follows its ordinary unwind ledger, including
 defers and nested task scopes, before completing as cancelled.
 
@@ -517,7 +518,7 @@ completion defensively requires every non-root task to be consumed, so no child
 can survive its owner even if malformed bytecode passed an earlier check.
 
 Explicit cleanup entries are drained from the same runtime LIFO ledger. A
-`defer await` entry is captured before the scope continues, then its suspendible call
+`defer` entry is captured before the scope continues, then its suspendible call
 is started only when that entry reaches the drain. A bytecode callee reuses the
 ordinary frame continuation; a suspendible host call parks the current task in a
 dedicated deferred-host wait state. That wait is not cancelled by the unwind
@@ -575,9 +576,10 @@ unavailable after the call. Named spread has the same runtime path and differs
 only in its verifier-proved association with the exact variadic parameter.
 
 The ordinary call path admits synchronous signatures and suspendible signatures.
-For a suspendible signature, the verifier lowers an ordinary call to the same
-`Await` operation used by explicit `await call()`; only `Spawn` preserves a
-pending handle. The verified `unsafe_call` bit must agree with the callable.
+For a suspendible signature, the verifier lowers an ordinary call to one
+implicit `Await` operation; source `await call()` is rejected with `E1611` and
+only `Spawn` preserves a pending handle. The verified `unsafe_call` bit must
+agree with the callable.
 The public execution entry accepts a safe sync or suspendible body and rejects
 an unsafe root; nested unsafe execution has already crossed a verified lexical
 region. Effectful closures retain their exact type through
@@ -626,28 +628,28 @@ relabelled as recoverable Tondo errors or language panics. Cooperative
 cancellation is internal control state used while draining a structured child;
 it is not a fourth public outcome and never becomes an implicit member of `E`.
 
-## `defer await` hardening evidence
+## `defer` hardening evidence
 
 The published `fn ... suspends` form and inferred suspension are exercised
-through the same fixture runner as the historical compatibility corpus. The
-isolated cases cover normal return, outer `fail`, primary panic with a
+through the single current fixture runner. The isolated cases cover normal
+return, outer `fail`, primary panic with a
 suppressed cleanup panic, script entry, LIFO ordering, child cancellation, a
 host-backed `ProcessHandle.cancel`, and an inferred script cleanup:
 
-- `tests/runtime/m10-defer-await-return.to`
-- `tests/runtime/m10-defer-await-error.to`
-- `tests/runtime/m10-defer-await-panic.to`
-- `tests/runtime/m10-defer-await-lifo-suspends.to`
-- `tests/runtime/m10-defer-await-cancel-suspends.to`
-- `tests/runtime/m10-defer-await-host-cancel.to`
-- `tests/runtime/m10-defer-await-inferred.to`
+- `tests/runtime/m10-defer-return.to`
+- `tests/runtime/m10-defer-error.to`
+- `tests/runtime/m10-defer-panic.to`
+- `tests/runtime/m10-defer-lifo.to`
+- `tests/runtime/m10-defer-cancel.to`
+- `tests/runtime/m10-defer-host-cancel.to`
+- `tests/runtime/m10-defer-inferred.to`
 
 The negative corpus fixes the suspension boundary (`E1601` for both
-`@sync` and `@nosuspend`), rejects a non-suspendible operand (`E1611`), a
-fallible call, a `Join`, nested await, an async block, an affine owner reuse,
-and a non-`Send` pointer. `driver` tests additionally prove that a missing
+`@sync` and `@nosuspend`), rejects explicit `await` inside `defer`, fallible
+cleanup, non-suspendible cleanup, an affine owner reuse and a non-`Send`
+pointer. `driver` tests additionally prove that a missing
 host capability is rejected before registration, a primary panic retains an
-async cleanup panic as suppressed, and a VM step-limit remains `T0002` without
+suspendible cleanup panic as suppressed, and a VM step-limit remains `T0002` without
 turning a toolchain failure into partial user cleanup. The test-runtime model
 records that a forced timeout skips user cleanup, while the interruption
 transaction does not reach exit 4 until the worker acknowledges cleanup and
@@ -655,7 +657,7 @@ resource revocation.
 
 ## Required tests
 
-The baseline suite must exercise real lowered bytecode for scalar and compound
+The current execution suite must exercise real lowered bytecode for scalar and compound
 values, direct and indirect calls, all three closure protocols, nested,
 projected, generic, opaque, erased, variadic, fallible, and stateful closures,
 returns, branches, loops, pattern dispatch, checked arithmetic, indexing and
@@ -669,7 +671,8 @@ calls before execution. Entry tests must accept a safe suspendible root, reject 
 unsafe root, and preserve the same logical outcome contract as synchronous
 `main`.
 
-Suspension regressions execute implicit/explicit direct waits, concurrent children, concrete suspendible
+Suspension regressions execute inferred direct waits, explicit `Join` waits,
+concurrent children, concrete suspendible
 closures, fallible cancellation without an injected error variant, structured
 shared references, child panic, sibling cancellation/cleanup, and multiple
 parked or completed managed values under a collection threshold of one.

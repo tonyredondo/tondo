@@ -1,5 +1,0 @@
-fn cleanup() {}
-
-fn invalid() {
-    defer await cleanup()
-}

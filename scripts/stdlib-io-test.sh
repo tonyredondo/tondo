@@ -108,9 +108,9 @@ done
 for marker in \
     'var input = console.stdin()?' \
     'let limits = io.defaultLimits()' \
-    'let data = await io.readAll(var input, limits)?' \
+    'let data = io.readAll(var input, limits)?' \
     'var output = console.stdout()?' \
-    'await io.writeAll(var output, bytes.Bytes("io-ok")?)?'; do
+    'io.writeAll(var output, bytes.Bytes("io-ok")?)?'; do
     grep -Fq "$marker" tests/runtime/m11-std-io-001.to
 done
 

@@ -1,5 +1,0 @@
-trait Value {
-    fn value(self): Int
-}
-type Item = Int
-impl Value for Item {}

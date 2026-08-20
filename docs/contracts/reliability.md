@@ -18,7 +18,7 @@ The repository owns six machine-readable records:
 | `testing/coverage-matrix.json` | Every extracted normative Tondo 0.1 requirement, its stable identity, baseline relationship, classification, dimensions, and evidence or waiver. |
 | `testing/quality-baseline.json` | Reviewed line/function/region coverage and the bounded mutation selection with non-regression thresholds. |
 | `testing/regressions.json` | Confirmed defects tied to the lowest executable public boundary that would have detected them. |
-| `testing/conformance-ratchet.json` | The exact draft-lineage revision and evidence hashes accepted by the incremental conformance gate. |
+| `testing/conformance-ratchet.json` | The exact current-draft manifest and evidence hashes accepted by the incremental conformance gate. |
 
 `tondo-reliability generate` deterministically rebuilds the inventory and
 matrix. `tondo-reliability check` rebuilds them in memory, compares exact bytes,
@@ -30,8 +30,8 @@ sección únicos. Esta comprobación no infiere semántica; protege las identida
 anchors que consumen la matriz y la documentación.
 
 The command tondo-reliability ratchet check is the common mini-gate for every
-draft conformance wave. It validates the current draft lineage and its revision
-history, regenerates the inventory and coverage matrix in memory, checks their
+draft conformance wave. It validates the single current draft, regenerates the
+inventory and coverage matrix in memory, checks their
 canonical bytes, validates the quality baseline, and verifies the ratchet
 record hashes. A wave with draft case layers must also provide coverage and
 mutation reports that pass the baseline non-regression gates; a wave without
@@ -43,10 +43,10 @@ repository records; the quality gate supplies fresh coverage and mutation
 reports to the ratchet. The record never contains physical paths or report
 contents, only portable logical paths and SHA-256 identities.
 
-The current ratchet does not yet bind those report identities to a digest of
-the measured workspace. `QUALITY-EVIDENCE-BIND-001` is therefore a required
-precondition of final sealing; existing records are promotion-mechanism proofs,
-not evidence that an arbitrary later tree retained the measured quality.
+The ratchet binds report identities to the canonical digest of the measured
+workspace. `QUALITY-EVIDENCE-BIND-001` verifies that sources, tests, flags,
+toolchain and raw report match before a quality result can advance the current
+baseline.
 
 ## Inventory semantics
 
@@ -56,7 +56,7 @@ One logical test is not necessarily one source file or one execution:
 - `.to` fixtures are paired with their adjacent sidecars.
 - Runtime fixtures that need host shell text declare both `.args-unix` and
   `.args-windows`; the harness forwards exactly one selected file through
-  `std.process.args()`.
+  `std.env.snapshot().arguments()`.
 - Conformance cases retain their declared repetitions, target, oracle, group,
   requirements, and pinned source hashes.
 - Every Tondo fence in the normative language specification is recorded.
@@ -132,28 +132,27 @@ specification fence.
 4. Clippy with warnings denied;
 5. every workspace test and target;
 6. Rustdoc with warnings denied;
-7. exact bootstrap-regression provenance from pinned paths and SHA-256;
+7. exact live-corpus provenance from pinned paths and SHA-256;
 8. locked conformance runner and adapter builds;
 9. exact reliability-record validation;
 10. the incremental conformance ratchet and its content-addressed evidence;
 11. explicit draft-lineage validation;
-12. the complete reference regression run; and
-13. byte-for-byte comparison with the draft result.
+12. the complete reference regression run.
 
 Block feedback uses `scripts/fast-gate.sh`, whose full contract is in
 [`fast-gate.md`](./fast-gate.md). The fast lane is deliberately narrower, not
 weaker: it checks the changed packages, requires 100% coverage for newly
 instrumented executable Rust lines, and runs mutation only over the diff. A
 change that touches a shared compiler/runtime frontier or a normative record
-automatically escalates to the full gate. Its evidence is draft-only and cannot
-be copied into `conformance/proofs/`.
+automatically escalates to the full gate. Its evidence is draft-only and
+ephemeral.
 
 The CI tiers are explicit:
 
 | Tier | Trigger | Required work |
 | --- | --- | --- |
 | `fast` | Every push and pull request | formatter, impact checks/tests, changed-line coverage and diff mutation when applicable |
-| `full` | Manual wave boundary and nightly reliability | the complete test gate, portable matrix, deterministic fuzz smoke and quality checks; promotion proof is opt-in at a wave boundary |
+| `full` | Manual wave boundary and nightly reliability | the complete test gate, portable matrix, deterministic fuzz smoke and quality checks |
 
 The target directory may be placed on a persistent SSD locally via
 `CARGO_TARGET_DIR`; fast builds keep `CARGO_INCREMENTAL=1`. The quality gate
@@ -176,11 +175,10 @@ Failure evidence lives under `target/reliability/`. Logs replace the physical
 workspace root with `./`; metadata includes only the target, seed, and tool
 versions. CI uploads logs, minimized fuzz artifacts, and quality reports, never
 credentials or ambient environment dumps. The strict job also retains the
-content-addressed draft manifest from every attempted revision, whether the
-later gate succeeds or fails. `scripts/test-gate.sh` validates the current
-draft result on every full run but defers the immutable promotion proof unless
-`TONDO_FULL_GATE_PROMOTION=1` is supplied explicitly for a wave boundary; this
-prevents a normal block from attempting to replace an older proof revision.
+attempt report from every run, whether the later gate succeeds or fails.
+`scripts/test-gate.sh` validates and executes the single current draft on every
+full run. Immutable release artifacts begin only at the first actual release
+boundary.
 
 ## Generators, properties, and metamorphism
 

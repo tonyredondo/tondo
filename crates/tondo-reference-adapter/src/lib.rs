@@ -145,7 +145,7 @@ fn describe() -> Observation {
             "targets": [{
                 "name": BuildTarget::vm_hosted().name(),
                 "profile": HostProfile::Hosted.as_str(),
-                "capabilities": ["console", "process"]
+                "capabilities": ["console", "environment", "process"]
             }]
         }),
     }
@@ -160,8 +160,7 @@ pub(crate) fn prepare_sources(action: &WireSourceAction) -> Result<PreparedSourc
     let mut sources = SourceDatabase::new();
     let mut root = None;
     for source in &action.sources {
-        let bytes =
-            migrate_frozen_0_1_source(&source.source_id, decode_hex(&source.contents_hex)?)?;
+        let bytes = decode_hex(&source.contents_hex)?;
         let file = sources
             .add(SourceInput::virtual_file(
                 SourceId::new(source.source_id.clone()).map_err(|error| error.to_string())?,
@@ -176,64 +175,6 @@ pub(crate) fn prepare_sources(action: &WireSourceAction) -> Result<PreparedSourc
     }
     let root = root.ok_or_else(|| "source action root was not supplied".to_owned())?;
     Ok(PreparedSource { sources, root })
-}
-
-/// The frozen 0.1 conformance suite predates the canonical `String(Bytes)`
-/// conversion and intentionally remains byte-for-byte historical evidence.
-/// Translate the few pinned fixtures at the adapter boundary so the current
-/// compiler can execute the suite without reintroducing removed public APIs or
-/// changing the observations sealed by that historical corpus.
-pub(crate) fn migrate_frozen_0_1_source(
-    source_id: &str,
-    bytes: Vec<u8>,
-) -> Result<Vec<u8>, String> {
-    if source_id == "suite:compile-fail/m7-async-call-requires-initiation" {
-        return Ok(br#"async fn compute(): Int {
-    42
-}
-
-const value =   compute()
-"#
-        .to_vec());
-    }
-    if source_id == "suite:compile-fail/m7-await-requires-async" {
-        return Ok(br#"async fn compute(): Int {
-    42
-}
-
-const value = await compute()
-"#
-        .to_vec());
-    }
-    let fixture = source_id == "suite:hosted/m8-process-001";
-    let document = source_id.starts_with("doc:TONDO_LANGUAGE_SPEC.md:");
-    if !fixture && !document {
-        return Ok(bytes);
-    }
-
-    let mut source = String::from_utf8(bytes)
-        .map_err(|error| format!("frozen hosted process fixture is not UTF-8: {error}"))?;
-    let mut replaced = 0;
-    for (legacy, canonical) in [
-        ("output.stdout.text()?", "String(output.stdout)?"),
-        ("exact.stdout.text()?", "String(exact.stdout)?"),
-        ("streams.stdout.text()?", "String(streams.stdout)?"),
-        ("streams.stderr.text()?", "String(streams.stderr)?"),
-        ("handled.stdout.text()?", "String(handled.stdout)?"),
-    ] {
-        let count = source.matches(legacy).count();
-        if fixture && count != 1 {
-            return Err(format!(
-                "frozen hosted process fixture must contain exactly one `{legacy}`"
-            ));
-        }
-        replaced += count;
-        source = source.replace(legacy, canonical);
-    }
-    if fixture && replaced != 5 {
-        return Err("frozen hosted process fixture has an incomplete migration".into());
-    }
-    Ok(source.into_bytes())
 }
 
 pub(crate) fn source_request(
@@ -308,87 +249,9 @@ fn observe_source(
         WireSourceForm::Module | WireSourceForm::Script | WireSourceForm::Fragment => {
             let output =
                 execute(source_request(request, action)?).map_err(|error| error.to_string())?;
-            let mut observation =
-                observation_from_output(output, action.operation, action.include_interface)?;
-            match historical_async_boundary_case(action) {
-                Some("initiation") => {
-                    // Direct calls now suspend implicitly, so this historical
-                    // case is represented by a small non-constant call and
-                    // keeps its old single boundary observation on the wire.
-                    for diagnostic in &mut observation.diagnostics {
-                        if diagnostic.get("code").and_then(Value::as_str) == Some("E1901") {
-                            diagnostic["code"] = Value::String("E1601".into());
-                            diagnostic["message"] = Value::String(
-                                "an async call must be initiated by `await` or `spawn`".into(),
-                            );
-                            diagnostic["range"] = json!({
-                                "start": {"byte": 74, "line": 5, "column": 23},
-                                "end": {"byte": 76, "line": 5, "column": 25}
-                            });
-                            diagnostic["id"] = Value::String(
-                                "diag:e94032c2021af61d71dd5d38d0021fce1c902a1964d1f0bc9fd16d92503d3c59"
-                                    .into(),
-                            );
-                        }
-                    }
-                }
-                Some("await") => {
-                    // The frozen 0.1 case asserts the old single-boundary
-                    // diagnostic. Inferred suspension still reports E1610,
-                    // while the current constant checker also reports its
-                    // secondary E1901 note.
-                    observation.diagnostics.retain(|diagnostic| {
-                        diagnostic.get("code").and_then(Value::as_str) != Some("E1901")
-                    });
-                    for diagnostic in &mut observation.diagnostics {
-                        if diagnostic.get("code").and_then(Value::as_str) == Some("E1610") {
-                            diagnostic["message"] = Value::String(
-                                "`await` is only valid inside an async function or closure".into(),
-                            );
-                            diagnostic["range"] = json!({
-                                "start": {"byte": 66, "line": 5, "column": 15},
-                                "end": {"byte": 82, "line": 5, "column": 31}
-                            });
-                            diagnostic["id"] = Value::String(
-                                "diag:b32975fefab7fe737a29409db6a2aecf56dd60ac9b0db679e6a25d54622438ec"
-                                    .into(),
-                            );
-                        }
-                    }
-                }
-                Some("exclusive-parameter") => {
-                    // The restriction survives only for the legacy `async`
-                    // closure spelling. Preserve the message recorded by the
-                    // immutable bootstrap result while current diagnostics
-                    // guide users to the canonical `suspends` contract.
-                    for diagnostic in &mut observation.diagnostics {
-                        if diagnostic.get("code").and_then(Value::as_str) == Some("E1609") {
-                            diagnostic["message"] = Value::String(
-                                "an async closure cannot keep a `mut` or `var` parameter across suspension"
-                                    .into(),
-                            );
-                        }
-                    }
-                }
-                _ => {}
-            }
-            Ok(observation)
+            observation_from_output(output, action.operation, action.include_interface)
         }
     }
-}
-
-fn historical_async_boundary_case(action: &WireSourceAction) -> Option<&'static str> {
-    action
-        .sources
-        .iter()
-        .find_map(|source| match source.source_id.as_str() {
-            "suite:compile-fail/m7-async-call-requires-initiation" => Some("initiation"),
-            "suite:compile-fail/m7-await-requires-async" => Some("await"),
-            "suite:compile-fail/m4-call-004-async-exclusive-parameter" => {
-                Some("exclusive-parameter")
-            }
-            _ => None,
-        })
 }
 
 fn observe_syntax_source(action: &WireSourceAction) -> Result<Observation, String> {
@@ -638,8 +501,8 @@ mod tests {
         let source = b"import std.async\n\
 type Counter = { remaining: Int }\n\
 impl AsyncIterator[Int] for Counter {\n\
-    async fn next(mut self): Int? {\n\
-        await tick()\n\
+    fn next(mut self): Int? suspends {\n\
+        tick()\n\
         if self.remaining == 0 {\n\
             return none\n\
         }\n\
@@ -648,7 +511,7 @@ impl AsyncIterator[Int] for Counter {\n\
         some(current)\n\
     }\n\
 }\n\
-async fn tick() {}\n\
+fn tick() suspends {}\n\
 fn main() {\n\
     scope {\n\
         let pending = spawn Counter { remaining: 3 }.collect(limit: 2)\n\
@@ -707,32 +570,6 @@ fn main() {\n\
                 .map(String::as_str)
                 .collect::<Vec<_>>(),
             ["a", "b"]
-        );
-    }
-
-    #[test]
-    fn frozen_process_fixture_uses_the_canonical_bytes_conversion_only_at_the_adapter_boundary() {
-        let legacy = b"fn main() { output.stdout.text()?; exact.stdout.text()?; streams.stdout.text()?; streams.stderr.text()?; handled.stdout.text()? }";
-        let migrated = migrate_frozen_0_1_source("suite:hosted/m8-process-001", legacy.to_vec())
-            .expect("the pinned historical fixture must migrate");
-        let migrated = String::from_utf8(migrated).expect("migration must preserve UTF-8");
-        assert!(migrated.contains("String(output.stdout)?"));
-        assert!(migrated.contains("String(exact.stdout)?"));
-        assert!(migrated.contains("String(streams.stdout)?"));
-        assert!(migrated.contains("String(streams.stderr)?"));
-        assert!(migrated.contains("String(handled.stdout)?"));
-        assert!(!migrated.contains(".text()?"));
-        assert_eq!(
-            migrate_frozen_0_1_source("suite:other", legacy.to_vec()).unwrap(),
-            legacy
-        );
-        assert_eq!(
-            migrate_frozen_0_1_source(
-                "doc:TONDO_LANGUAGE_SPEC.md:1",
-                b"console.print(output.stdout.text()?)".to_vec()
-            )
-            .unwrap(),
-            b"console.print(String(output.stdout)?)"
         );
     }
 }

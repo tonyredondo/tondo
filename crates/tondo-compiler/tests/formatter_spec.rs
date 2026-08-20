@@ -149,8 +149,8 @@ suite emptySuite {
 
 #[test]
 fn derive_declarations_have_one_canonical_layout() {
-    let input = b"derive serialization.Deserialize+serialization.Serialize for User\nderive[T] serialization.Serialize for Page[T]\n";
-    let expected = b"derive serialization.Deserialize + serialization.Serialize for User\n\nderive[T] serialization.Serialize for Page[T]\n";
+    let input = b"derive serialization.Decode[Json]+serialization.Encode[Json] for User\nderive[T] serialization.Encode[Json] for Page[T]\n";
+    let expected = b"derive serialization.Decode[Json] + serialization.Encode[Json] for User\n\nderive[T] serialization.Encode[Json] for Page[T]\n";
     let formatted = format_once(input, ParseMode::Module);
     assert_eq!(formatted, expected);
     assert_eq!(format_once(&formatted, ParseMode::Module), formatted);

@@ -1,8 +1,8 @@
-async fn child(): Int {
+fn child(): Int suspends {
     42
 }
 
-async fn invalid(): Join[Int, Never] {
+fn invalid(): Join[Int, Never] suspends {
     scope {
         let pending = spawn child()
         pending

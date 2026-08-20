@@ -38,7 +38,6 @@ jobs:
       - name: Run complete test gate
         env:
           TONDO_TEST_TARGET: linux-x86_64
-          TONDO_FULL_GATE_PROMOTION: "0"
         run: bash scripts/test-gate.sh
 
       - name: Upload full-gate evidence

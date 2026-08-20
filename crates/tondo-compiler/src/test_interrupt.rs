@@ -461,7 +461,7 @@ impl InterruptionCoordinator {
         }
     }
 
-    /// Record that a worker completed cleanup (including `defer await`) and
+    /// Record that a worker completed cleanup (including suspendible `defer`) and
     /// revoked every host resource it owned.
     pub fn acknowledge_cancel(
         &mut self,
@@ -715,7 +715,7 @@ mod tests {
     }
 
     #[test]
-    fn interrupt_waits_for_defer_await_cleanup_before_safe_exit() {
+    fn interrupt_waits_for_inferred_defer_cleanup_before_safe_exit() {
         let mut coordinator = coordinator([]);
         coordinator
             .request(

@@ -87,7 +87,7 @@ pub fn AsyncIterator.collect[T](var self, limit: Int): Array[T] ! CollectionErro
 
 La finalización de `Completer` es atómica y exactamente una operación gana; las
 posteriores devuelven `AlreadyCompleted`. `AsyncIterator` mantiene backpressure,
-cierra al salir de `for` (o `for await`) y no materializa un array
+cierra al salir de `for` y no materializa un array
 implícitamente. `collect(limit:)` es la única materialización y cierra el
 cursor en éxito, error, cancelación o unwind. `Channel` no forma parte de
 STD-0.1A; su adaptación queda en STD-0.1B.

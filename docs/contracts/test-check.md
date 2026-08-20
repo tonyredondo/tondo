@@ -42,7 +42,7 @@ runtime.
 `withVirtualTime` requires a suspendible `Send + CallOnce` closure accepting
 `ref VirtualTime`, returning `Unit`, and neither escaping nor sharing the
 controller. The boundary itself must be called directly rather than spawned;
-its result is awaited implicitly (an explicit `await` is optional);
+its result is awaited implicitly (`await` on the direct call is rejected);
 controlled tasks are spawned inside the callback's structured scope. The
 controller is therefore opaque and cannot become a Tondo value or capability.
 

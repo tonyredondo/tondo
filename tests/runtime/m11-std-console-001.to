@@ -1,6 +1,6 @@
 import std.console
 
-async fn main(): !console.ConsoleError {
+fn main(): !console.ConsoleError suspends {
     var input = console.stdin()?
     let line = console.readLine(var input)?
     match line {

@@ -5,7 +5,6 @@ pub mod lineage;
 pub mod manifest;
 pub mod protocol;
 pub mod runner;
-pub mod seal;
 
 use std::fmt::Write as _;
 

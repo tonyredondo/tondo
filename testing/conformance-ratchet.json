@@ -1,43 +1,44 @@
 {
   "format": "tondo-conformance-ratchet/2",
   "lineage": "tondo-draft",
-  "revision": 33,
   "manifest": {
     "path": "conformance/draft/manifest.json",
-    "sha256": "aacf3108b1f1e031a29a9d7a9d567f34786691093ac9250f8155aa0bf453dc18"
+    "sha256": "d4d3a1b1f0b7c99ca38d7abfeedb2f1b84e3c16bca0cf649dc5f5dec2c9033c7"
   },
   "inventory": {
     "path": "testing/inventory.json",
-    "sha256": "98937bb67b0660589044a16096121a3928e33c40731261def8d36b6bac8319b9"
+    "sha256": "53ee80b9fc3f2d5244c0a98d55f4725ee7567c57a858a2594c7bffc327b8a7bd"
   },
   "matrix": {
     "path": "testing/coverage-matrix.json",
-    "sha256": "ba15296a4a5a1b7890e35939684cf0657ad3d8e1aa1dc1fa81be0b949fa7db57"
+    "sha256": "20e5eeeb8630ef0230f80f3cc0674b39d09f3971820918257900e652820d691b"
   },
   "gap_audit": {
     "path": "testing/normative-gap-audit.json",
-    "sha256": "edc64ba75945eb2378516f538a2802afde8bc06039aa9c6a80729a2f1e4531e6"
+    "sha256": "acd23e1f1e6b5ecbe164aecfbc70fa8d273fc536157ede5eb54cf8c443d5a663"
   },
   "quality_baseline": {
     "path": "testing/quality-baseline.json",
-    "sha256": "e427737d48e3545dd8f3c08c527e8d9e8dc3bd4af8c4f774d641bd474b404b4c"
+    "sha256": "d2205206ed8fe8d1933203a8d7b17971396b75bc6730037e7bcd6bd15eb5801b"
   },
   "draft_case_layers": 4,
-  "pending_tasks": [],
+  "pending_tasks": [
+    "CONF-SEAL-FINAL-001"
+  ],
   "coverage": {
     "status": "validated",
     "reason": "the supplied coverage report passed the quality and provenance gates",
-    "report_sha256": "d2c5108d85cb7ae3323f9ebda9ccb1986f97674e5c6081f416d76057ff3eebec",
-    "provenance_sha256": "2f5e9bb928727856a91f6ad8411dce39e2e3bc10f1bfde5867d1972de5d86446",
-    "tree_sha256": "a1b967ac1199d96ff2c3cbda9d29562063d8fe0808e6dca95f4d0e90ca231b72",
-    "input_set_sha256": "ad327e6cfe8d5c8ab76d5dcfde2bd6fb84eb218884a7c39311385d71e351653d"
+    "report_sha256": "86a9c60d62760437e9bb3d5ee3d65174330c82d79fc00d35f618ecdc4da652bf",
+    "provenance_sha256": "10159de93bc70c458fe0e55599bdff2c8374c46913b9035632b26ddfc01ace19",
+    "tree_sha256": "5bf40372e99608e8eded1776b482d014ec1091528d97e22c4a4e08bd8e59cf25",
+    "input_set_sha256": "fd280a7ff39432626298da3a8500a050c6957429d38b75070fbd787f64687ad4"
   },
   "mutation": {
     "status": "validated",
     "reason": "the supplied mutation report passed the quality and provenance gates",
-    "report_sha256": "df768fcfca7aa471212d3bb00f8dda5e17fe98c835dc77026367a52e95a0da1f",
-    "provenance_sha256": "2f5e9bb928727856a91f6ad8411dce39e2e3bc10f1bfde5867d1972de5d86446",
-    "tree_sha256": "a1b967ac1199d96ff2c3cbda9d29562063d8fe0808e6dca95f4d0e90ca231b72",
-    "input_set_sha256": "ad327e6cfe8d5c8ab76d5dcfde2bd6fb84eb218884a7c39311385d71e351653d"
+    "report_sha256": "d484bf2aebf3b5de1e1fc009984dfa7bdf017f9334de77fc09b347e5de1de190",
+    "provenance_sha256": "10159de93bc70c458fe0e55599bdff2c8374c46913b9035632b26ddfc01ace19",
+    "tree_sha256": "5bf40372e99608e8eded1776b482d014ec1091528d97e22c4a4e08bd8e59cf25",
+    "input_set_sha256": "fd280a7ff39432626298da3a8500a050c6957429d38b75070fbd787f64687ad4"
   }
 }

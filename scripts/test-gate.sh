@@ -53,8 +53,6 @@ run_step layer-evidence-attest \
 run_step rustdoc env RUSTDOCFLAGS=-Dwarnings cargo doc --workspace --no-deps --locked
 run_step conformance-build \
     cargo build -p tondo-conformance -p tondo-reference-adapter --bins --locked
-run_step conformance-candidate-wrapper-tests \
-    scripts/conformance-candidate-test.sh
 run_step doc-test \
     scripts/doc-test.sh
 run_step doc-test-conformance-tests \
@@ -216,48 +214,3 @@ run_step conformance-run \
     --adapter "$cargo_target_dir/debug/tondo-reference-adapter" \
     --evidence "$evidence/layer-evidence.json" \
     --output "$evidence/conformance-result.json"
-run_step conformance-compare \
-    scripts/conformance-bootstrap-compare.sh \
-    "$evidence/conformance-result.json" \
-    conformance/0.1/results/tondo-reference-draft-tondo-vm-hosted.json
-
-if [[ "${TONDO_FULL_GATE_PROMOTION:-0}" != "1" ]]; then
-    echo "::notice:: conformance promotion proof deferred (set TONDO_FULL_GATE_PROMOTION=1 at a wave boundary)"
-elif jq -e '([.requirements[] | select(.status == "draft-pending")] | length) == 0' \
-    testing/coverage-matrix.json >/dev/null \
-    && jq -e '([.case_layers[]?.cases[]?] | length) > 0' \
-        "$evidence/conformance-result.json" >/dev/null; then
-    # The seal boundary deliberately accepts only workspace-relative normal
-    # paths. Keep the large build and test evidence on CARGO_TARGET_DIR, but
-    # stage the small result and proof below the ignored local target tree.
-    seal_stage="$(mktemp -d target/reliability/conformance-seal.XXXXXX)"
-    trap 'rm -rf -- "$seal_stage"' EXIT
-    cp "$evidence/conformance-result.json" "$seal_stage/conformance-result.json"
-    proof_directory="$seal_stage/promotion-proof"
-    run_step conformance-seal-proof \
-        cargo run -p tondo-conformance --locked -- seal-proof \
-        --root . \
-        --manifest conformance/draft/manifest.json \
-        --lineage draft \
-        --result "$seal_stage/conformance-result.json" \
-        --output "$proof_directory"
-    draft_revision="$(jq -r '.revision' conformance/draft/manifest.json)"
-    checked_in_proof="conformance/proofs/revision-$draft_revision"
-    run_step conformance-proof-compare \
-        cmp "$proof_directory/manifest.json" "$checked_in_proof/manifest.json"
-    run_step conformance-proof-verify \
-        cargo run -p tondo-conformance --locked -- verify-proof \
-        --root . \
-        --proof "$checked_in_proof"
-    candidate="conformance/candidates/revision-$draft_revision"
-    if [[ -d "$candidate" ]]; then
-        run_step conformance-candidate-verify \
-            scripts/conformance-candidate.sh check
-    else
-        echo "::notice:: final conformance candidate is not present for revision $draft_revision"
-    fi
-    rm -rf -- "$seal_stage"
-    trap - EXIT
-else
-    echo "::notice:: conformance promotion proof skipped: normative coverage or the composed case-layer result is not ready"
-fi

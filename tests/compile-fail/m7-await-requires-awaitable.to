@@ -1,4 +1,4 @@
-async fn invalid() {
+fn invalid() suspends {
     let value = await 42
     assert(value == 42)
 }

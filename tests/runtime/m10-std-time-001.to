@@ -9,7 +9,7 @@ fn elapsed_between(start: time.Instant, end: time.Instant): time.Duration ! time
     end.durationSince(start)?
 }
 
-async fn main(): !(time.ClockError | time.DurationError) {
+fn main(): !(time.ClockError | time.DurationError) suspends {
     let resolution = checked_resolution()?
     assert(not resolution.isNegative())
     let start = time.now()?
@@ -17,9 +17,9 @@ async fn main(): !(time.ClockError | time.DurationError) {
     let deadline = time.deadline(zero)?
     let elapsed = elapsed_between(start, deadline)?
     assert(not elapsed.isNegative() or elapsed.isZero())
-    await time.sleep(zero)?
+    time.sleep(zero)?
     let timer = time.Timer.after(zero)?
-    await timer.wait()?
+    timer.wait()?
     let cancelled = time.Timer.after(zero)?
     cancelled.cancel()
     console.print("time-ok\n")

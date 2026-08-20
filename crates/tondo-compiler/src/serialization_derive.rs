@@ -17,26 +17,13 @@ use crate::meta_derive::{
 use crate::meta_test_support::string_artifact;
 use crate::meta_vm::MetaVmArtifact;
 
-pub const SERIALIZE_TRAIT: &str = "serialization.Serialize";
-pub const DESERIALIZE_TRAIT: &str = "serialization.Deserialize";
-pub const SERIALIZE_PROVIDER: &str = "std.derive.serialization.Serialize";
-pub const DESERIALIZE_PROVIDER: &str = "std.derive.serialization.Deserialize";
-/// Canonical 0.1 ABI identities.  The legacy names remain registered as
-/// compatibility providers until all downstream source has migrated.
 pub const ENCODE_TRAIT: &str = "serialization.Encode";
 pub const DECODE_TRAIT: &str = "serialization.Decode";
 pub const ENCODE_PROVIDER: &str = "std.derive.serialization.Encode";
 pub const DECODE_PROVIDER: &str = "std.derive.serialization.Decode";
 
-const SERIALIZER_TRAIT: &str = "serialization.Serializer";
-const DESERIALIZER_TRAIT: &str = "serialization.Deserializer";
-const EVENT_TYPE: &str = "serialization.SerializationEvent";
-const ERROR_TYPE: &str = "serialization.SerializationError";
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SerializationDirection {
-    Serialize,
-    Deserialize,
     Encode,
     Decode,
 }
@@ -44,8 +31,6 @@ pub enum SerializationDirection {
 impl SerializationDirection {
     pub const fn trait_identity(self) -> &'static str {
         match self {
-            Self::Serialize => SERIALIZE_TRAIT,
-            Self::Deserialize => DESERIALIZE_TRAIT,
             Self::Encode => ENCODE_TRAIT,
             Self::Decode => DECODE_TRAIT,
         }
@@ -53,8 +38,6 @@ impl SerializationDirection {
 
     pub const fn provider_identity(self) -> &'static str {
         match self {
-            Self::Serialize => SERIALIZE_PROVIDER,
-            Self::Deserialize => DESERIALIZE_PROVIDER,
             Self::Encode => ENCODE_PROVIDER,
             Self::Decode => DECODE_PROVIDER,
         }
@@ -80,18 +63,6 @@ impl SerializationDeriveProvider {
 pub fn register_serialization_providers(
     registry: &mut DeriveProviderRegistry,
 ) -> Result<(), DeriveExecutionError> {
-    registry.insert(
-        SERIALIZE_PROVIDER,
-        Arc::new(SerializationDeriveProvider::new(
-            SerializationDirection::Serialize,
-        )),
-    )?;
-    registry.insert(
-        DESERIALIZE_PROVIDER,
-        Arc::new(SerializationDeriveProvider::new(
-            SerializationDirection::Deserialize,
-        )),
-    )?;
     registry.insert(
         ENCODE_PROVIDER,
         Arc::new(SerializationDeriveProvider::new(
@@ -258,12 +229,6 @@ pub fn render_serialization_body(
     let _ = generic_header(declaration, request, direction)?;
     let mut output = String::new();
     match direction {
-        SerializationDirection::Serialize => {
-            render_serialize_impl(&mut output, declaration)?;
-        }
-        SerializationDirection::Deserialize => {
-            render_deserialize_impl(&mut output, declaration, &target_type)?;
-        }
         SerializationDirection::Encode => {
             render_encode_impl(&mut output, declaration, &target_type, &codec)?;
         }
@@ -297,12 +262,6 @@ fn codec_for_request(
     identity: &str,
     direction: SerializationDirection,
 ) -> Result<String, SerializationDeriveError> {
-    if !matches!(
-        direction,
-        SerializationDirection::Encode | SerializationDirection::Decode
-    ) {
-        return Ok("C".into());
-    }
     let base = direction.trait_identity();
     if identity == base {
         return Ok("C".into());
@@ -411,40 +370,6 @@ fn variant_payload_types(variant: &MetaVariant) -> Vec<String> {
 fn type_mentions_parameter(ty: &str, parameter: &str) -> bool {
     ty.split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
         .any(|part| part == parameter)
-}
-
-fn render_serialize_impl(
-    output: &mut String,
-    declaration: &MetaDeclaration,
-) -> Result<(), SerializationDeriveError> {
-    line(output, 0, "{");
-    writeln!(
-        output,
-        "    fn serialize[E, S: {}[E]](self, serializer: var S): Unit ! E {{",
-        SERIALIZER_TRAIT
-    )
-    .expect("writing to String cannot fail");
-    match declaration.kind() {
-        MetaDeclarationKind::Record(fields) => {
-            render_record_encode(output, declaration, fields, "self")?
-        }
-        MetaDeclarationKind::Enum(variants) => render_enum_encode(output, declaration, variants)?,
-        MetaDeclarationKind::Newtype(_) => {
-            line(
-                output,
-                2,
-                "serialization.Serialize.serialize(self.value, var serializer)?",
-            );
-        }
-        MetaDeclarationKind::Trait(_) => {
-            return Err(SerializationDeriveError::UnsupportedTargetKind(
-                declaration.kind().name().into(),
-            ));
-        }
-    }
-    line(output, 1, "}");
-    line(output, 0, "}");
-    Ok(())
 }
 
 /// Render the canonical `Encode[C]` implementation.  The codec parameter is
@@ -908,156 +833,6 @@ fn render_enum_start_end_static(
         }
     }
     line(output, indent, "encoder.endEnum()?");
-    Ok(())
-}
-
-fn render_record_encode(
-    output: &mut String,
-    declaration: &MetaDeclaration,
-    fields: &[MetaField],
-    receiver: &str,
-) -> Result<(), SerializationDeriveError> {
-    line(
-        output,
-        2,
-        &format!(
-            "serializer.startRecord({}, {})?",
-            quote(declaration.identity()),
-            fields.len()
-        ),
-    );
-    for field in fields {
-        member_name(field.name())?;
-        line(
-            output,
-            2,
-            &format!("serializer.field({})?", quote(field.name())),
-        );
-        line(
-            output,
-            2,
-            &format!(
-                "serialization.Serialize.serialize({}.{}, var serializer)?",
-                receiver,
-                field.name()
-            ),
-        );
-    }
-    line(output, 2, "serializer.endRecord()?");
-    Ok(())
-}
-
-fn render_enum_encode(
-    output: &mut String,
-    declaration: &MetaDeclaration,
-    variants: &[MetaVariant],
-) -> Result<(), SerializationDeriveError> {
-    line(output, 2, "match self {");
-    for variant in variants {
-        member_name(variant.name())?;
-        let path = format!("{}.{}", declaration.identity(), variant.name());
-        match variant.payload() {
-            MetaVariantPayload::Unit => {
-                line(output, 3, &format!("{} => {{", path));
-                render_enum_start_end(output, declaration, variant, 4, None)?;
-                line(output, 3, "}");
-            }
-            MetaVariantPayload::Tuple(types) => {
-                let names = (0..types.len())
-                    .map(|index| format!("value_{index}"))
-                    .collect::<Vec<_>>();
-                line(output, 3, &format!("{}({}) => {{", path, names.join(", ")));
-                render_enum_start_end(output, declaration, variant, 4, Some(&names))?;
-                line(output, 3, "}");
-            }
-            MetaVariantPayload::Record(fields) => {
-                for field in fields {
-                    member_name(field.name())?;
-                }
-                let names = fields
-                    .iter()
-                    .map(|field| field.name().to_owned())
-                    .collect::<Vec<_>>();
-                line(
-                    output,
-                    3,
-                    &format!("{} {{ {} }} => {{", path, names.join(", ")),
-                );
-                render_enum_start_end(output, declaration, variant, 4, Some(&names))?;
-                line(output, 3, "}");
-            }
-        }
-    }
-    line(output, 2, "}");
-    Ok(())
-}
-
-fn render_enum_start_end(
-    output: &mut String,
-    declaration: &MetaDeclaration,
-    variant: &MetaVariant,
-    indent: usize,
-    payload_names: Option<&[String]>,
-) -> Result<(), SerializationDeriveError> {
-    line(
-        output,
-        indent,
-        &format!(
-            "serializer.startEnum({}, {})?",
-            quote(declaration.identity()),
-            quote(variant.name())
-        ),
-    );
-    if let Some(names) = payload_names {
-        for name in names {
-            line(
-                output,
-                indent,
-                &format!(
-                    "serialization.Serialize.serialize({}, var serializer)?",
-                    name
-                ),
-            );
-        }
-    }
-    line(output, indent, "serializer.endEnum()?");
-    Ok(())
-}
-
-fn render_deserialize_impl(
-    output: &mut String,
-    declaration: &MetaDeclaration,
-    target_type: &str,
-) -> Result<(), SerializationDeriveError> {
-    line(output, 0, "{");
-    writeln!(
-        output,
-        "    fn deserialize[E, D: {}[E]](deserializer: var D): {} ! E {{",
-        DESERIALIZER_TRAIT, target_type
-    )
-    .expect("writing to String cannot fail");
-    match declaration.kind() {
-        MetaDeclarationKind::Record(fields) => render_record_decode(output, declaration, fields)?,
-        MetaDeclarationKind::Enum(variants) => render_enum_decode(output, declaration, variants)?,
-        MetaDeclarationKind::Newtype(underlying) => {
-            line(
-                output,
-                2,
-                &format!(
-                    "let value: {} = serialization.Deserialize.deserialize(var deserializer)?",
-                    underlying
-                ),
-            );
-            line(output, 2, &format!("{}(value)", declaration.identity()));
-        }
-        MetaDeclarationKind::Trait(_) => {
-            return Err(SerializationDeriveError::UnsupportedTargetKind(
-                declaration.kind().name().into(),
-            ));
-        }
-    }
-    line(output, 1, "}");
-    line(output, 0, "}");
     Ok(())
 }
 
@@ -1762,173 +1537,6 @@ fn render_enum_end_static(
     Ok(())
 }
 
-fn render_record_decode(
-    output: &mut String,
-    declaration: &MetaDeclaration,
-    fields: &[MetaField],
-) -> Result<(), SerializationDeriveError> {
-    line(output, 2, "let start = deserializer.next()?");
-    line(output, 2, "match start {");
-    line(
-        output,
-        3,
-        &format!("{}.StartRecord(_, _) => {{", EVENT_TYPE),
-    );
-    for field in fields {
-        member_name(field.name())?;
-        line(output, 4, "match deserializer.next()? {");
-        line(
-            output,
-            5,
-            &format!("{}.Field({}) => ()", EVENT_TYPE, quote(field.name())),
-        );
-        line(output, 5, &format!("_ => fail {}.TypeMismatch", ERROR_TYPE));
-        line(output, 4, "}");
-        line(
-            output,
-            4,
-            &format!(
-                "let {}: {} = serialization.Deserialize.deserialize(var deserializer)?",
-                field.name(),
-                field.ty()
-            ),
-        );
-    }
-    line(output, 4, "match deserializer.next()? {");
-    line(output, 5, &format!("{}.EndRecord => ()", EVENT_TYPE));
-    line(output, 5, &format!("_ => fail {}.TypeMismatch", ERROR_TYPE));
-    line(output, 4, "}");
-    line(
-        output,
-        4,
-        &format!(
-            "{} {{ {} }}",
-            declaration.identity(),
-            fields
-                .iter()
-                .map(|field| field.name())
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-    );
-    line(output, 3, "}");
-    line(output, 3, &format!("_ => fail {}.TypeMismatch", ERROR_TYPE));
-    line(output, 2, "}");
-    Ok(())
-}
-
-fn render_enum_decode(
-    output: &mut String,
-    declaration: &MetaDeclaration,
-    variants: &[MetaVariant],
-) -> Result<(), SerializationDeriveError> {
-    line(output, 2, "let start = deserializer.next()?");
-    line(output, 2, "match start {");
-    for variant in variants {
-        member_name(variant.name())?;
-        line(
-            output,
-            3,
-            &format!(
-                "{}.StartEnum(_, {}) => {{",
-                EVENT_TYPE,
-                quote(variant.name())
-            ),
-        );
-        match variant.payload() {
-            MetaVariantPayload::Unit => {
-                render_enum_end(
-                    output,
-                    4,
-                    &format!("{}.{}", declaration.identity(), variant.name()),
-                )?;
-            }
-            MetaVariantPayload::Tuple(types) => {
-                let mut names = Vec::new();
-                for (index, ty) in types.iter().enumerate() {
-                    let name = format!("value_{index}");
-                    line(
-                        output,
-                        4,
-                        &format!(
-                            "let {}: {} = serialization.Deserialize.deserialize(var deserializer)?",
-                            name, ty
-                        ),
-                    );
-                    names.push(name);
-                }
-                render_enum_end(
-                    output,
-                    4,
-                    &format!(
-                        "{}.{}({})",
-                        declaration.identity(),
-                        variant.name(),
-                        names.join(", ")
-                    ),
-                )?;
-            }
-            MetaVariantPayload::Record(fields) => {
-                for field in fields {
-                    member_name(field.name())?;
-                    line(output, 4, "match deserializer.next()? {");
-                    line(
-                        output,
-                        5,
-                        &format!("{}.Field({}) => ()", EVENT_TYPE, quote(field.name())),
-                    );
-                    line(output, 5, &format!("_ => fail {}.TypeMismatch", ERROR_TYPE));
-                    line(output, 4, "}");
-                    line(
-                        output,
-                        4,
-                        &format!(
-                            "let {}: {} = serialization.Deserialize.deserialize(var deserializer)?",
-                            field.name(),
-                            field.ty()
-                        ),
-                    );
-                }
-                let value = format!(
-                    "{}.{} {{ {} }}",
-                    declaration.identity(),
-                    variant.name(),
-                    fields
-                        .iter()
-                        .map(|field| field.name())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                );
-                render_enum_end(output, 4, &value)?;
-            }
-        }
-        line(output, 3, "}");
-    }
-    line(output, 3, &format!("_ => fail {}.TypeMismatch", ERROR_TYPE));
-    line(output, 2, "}");
-    Ok(())
-}
-
-fn render_enum_end(
-    output: &mut String,
-    indent: usize,
-    value: &str,
-) -> Result<(), SerializationDeriveError> {
-    line(output, indent, "match deserializer.next()? {");
-    line(
-        output,
-        indent + 1,
-        &format!("{}.EndEnum => {}", EVENT_TYPE, value),
-    );
-    line(
-        output,
-        indent + 1,
-        &format!("_ => fail {}.TypeMismatch", ERROR_TYPE),
-    );
-    line(output, indent, "}");
-    Ok(())
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct FieldPolicy {
     wire_name: String,
@@ -2363,7 +1971,7 @@ mod tests {
     fn record_provider_is_deterministic_and_maps_to_target() {
         let execution = derive(
             record_snapshot(),
-            SerializationDirection::Serialize,
+            SerializationDirection::Encode,
             &[],
             &[],
             DeriveTargetKind::Record,
@@ -2371,20 +1979,20 @@ mod tests {
         .unwrap();
         let output = &execution.response().outputs()[0];
         let source = std::str::from_utf8(output.bytes()).unwrap();
-        assert!(source.contains("serializer.startRecord(\"User\", 2)"));
+        assert!(source.contains("encoder.startRecord(\"User\", 2)"));
         assert!(
-            source.find("serializer.field(\"id\")").unwrap()
-                < source.find("serializer.field(\"name\")").unwrap()
+            source.find("encoder.field(\"id\")").unwrap()
+                < source.find("encoder.field(\"name\")").unwrap()
         );
         assert_eq!(output.mappings().len(), 1);
         assert_eq!(output.mappings()[0].origin(), span(10, 42));
     }
 
     #[test]
-    fn deserialize_provider_and_enum_shapes_are_generated() {
+    fn decode_provider_and_enum_shapes_are_generated() {
         let record = derive(
             record_snapshot(),
-            SerializationDirection::Deserialize,
+            SerializationDirection::Decode,
             &[],
             &[],
             DeriveTargetKind::Record,
@@ -2393,11 +2001,9 @@ mod tests {
         let record_source = std::str::from_utf8(record.response().outputs()[0].bytes()).unwrap();
         assert!(record_source.contains("StartRecord"));
         assert!(record_source.contains("EndRecord"));
-        assert!(record_source.contains("User { id, name }"));
+        assert!(record_source.contains("User { id: __tondo_value_0, name: __tondo_value_1 }"));
 
         for direction in [
-            SerializationDirection::Serialize,
-            SerializationDirection::Deserialize,
             SerializationDirection::Encode,
             SerializationDirection::Decode,
         ] {
@@ -2415,8 +2021,6 @@ mod tests {
             assert!(source.contains("Item"));
             assert!(source.contains("Named"));
             match direction {
-                SerializationDirection::Serialize => assert!(source.contains("endEnum")),
-                SerializationDirection::Deserialize => assert!(source.contains("EndEnum")),
                 SerializationDirection::Encode => assert!(source.contains("encoder.endEnum")),
                 SerializationDirection::Decode => {
                     assert!(source.contains("SerializationEvent.EndEnum"))
@@ -2740,14 +2344,16 @@ mod tests {
         let generic = derive_named(
             "Boxed",
             generic_record_snapshot(),
-            SerializationDirection::Serialize,
+            SerializationDirection::Encode,
             &["T"],
             &["T"],
             DeriveTargetKind::Record,
         )
         .unwrap();
         let generic_source = std::str::from_utf8(generic.response().outputs()[0].bytes()).unwrap();
-        assert!(generic_source.contains("impl [T: serialization.Serialize]"));
+        assert!(
+            generic_source.contains("impl [T: Discard + serialization.Encode]serialization.Encode")
+        );
         assert!(generic_source.contains("for Boxed[T]"));
 
         let newtype_snapshot = MetaSnapshot::new(
@@ -2766,33 +2372,6 @@ mod tests {
             .unwrap()],
         )
         .unwrap();
-        let newtype = derive_named(
-            "UserId",
-            newtype_snapshot.clone(),
-            SerializationDirection::Deserialize,
-            &[],
-            &[],
-            DeriveTargetKind::Newtype,
-        )
-        .unwrap();
-        let newtype_source = std::str::from_utf8(newtype.response().outputs()[0].bytes()).unwrap();
-        assert!(newtype_source.contains("let value: Int"));
-        assert!(newtype_source.contains("UserId(value)"));
-        let serialized = derive_named(
-            "UserId",
-            newtype_snapshot.clone(),
-            SerializationDirection::Serialize,
-            &[],
-            &[],
-            DeriveTargetKind::Newtype,
-        )
-        .unwrap();
-        assert!(
-            std::str::from_utf8(serialized.response().outputs()[0].bytes())
-                .unwrap()
-                .contains("self.value")
-        );
-
         for direction in [
             SerializationDirection::Encode,
             SerializationDirection::Decode,
@@ -2848,7 +2427,7 @@ mod tests {
         let missing = derive_named(
             "Missing",
             MetaSnapshot::new([], [], []).unwrap(),
-            SerializationDirection::Serialize,
+            SerializationDirection::Encode,
             &[],
             &[],
             DeriveTargetKind::Record,
@@ -2862,7 +2441,7 @@ mod tests {
         let missing_bound = derive_named(
             "Boxed",
             generic_record_snapshot(),
-            SerializationDirection::Serialize,
+            SerializationDirection::Encode,
             &["T"],
             &[],
             DeriveTargetKind::Record,
@@ -2892,7 +2471,7 @@ mod tests {
         let invalid = derive_named(
             "Broken",
             invalid_field,
-            SerializationDirection::Serialize,
+            SerializationDirection::Encode,
             &[],
             &[],
             DeriveTargetKind::Record,

@@ -516,9 +516,9 @@ impl FunctionType {
         self.is_async
     }
 
-    /// Tondo 0.1 terminology for the inferred suspension effect.  The
-    /// internal field remains named `is_async` while legacy bootstrap syntax
-    /// is accepted during the migration, but public contracts use `suspends`.
+    /// Tondo source terminology for the inferred suspension effect. The
+    /// internal field name is an implementation detail; source and rendered
+    /// interfaces always use the postfix `suspends` effect.
     pub fn suspends(&self) -> bool {
         self.is_async
     }
@@ -1012,10 +1012,7 @@ impl TypeInterner {
         self.render_iterative(ty)
     }
 
-    /// Renders the public interface spelling of a type.  Source compatibility
-    /// keeps the historical `async fn` representation available to bootstrap
-    /// fixtures through [`Self::canonical`], while exported interfaces use the
-    /// effect vocabulary of Tondo 0.1: `fn(...): T suspends`.
+    /// Renders the public interface spelling of a type.
     pub fn canonical_interface(&self, ty: TypeId) -> Result<String, TypeError> {
         self.render_iterative_with_effects(ty, true)
     }
@@ -1478,7 +1475,7 @@ impl TypeInterner {
     fn render_iterative_with_effects(
         &self,
         root: TypeId,
-        public_effects: bool,
+        _public_effects: bool,
     ) -> Result<String, TypeError> {
         self.kind(root)?;
         let mut output = String::new();
@@ -1512,21 +1509,12 @@ impl TypeInterner {
                     push_render_sequence(&mut pending, &items, Precedence::Union, ", ");
                 }
                 TypeKind::Function(function) => {
-                    if public_effects {
-                        output.push_str(if function.is_unsafe {
-                            "unsafe fn("
-                        } else {
-                            "fn("
-                        });
+                    output.push_str(if function.is_unsafe {
+                        "unsafe fn("
                     } else {
-                        output.push_str(match (function.is_async, function.is_unsafe) {
-                            (false, false) => "fn(",
-                            (true, false) => "async fn(",
-                            (false, true) => "unsafe fn(",
-                            (true, true) => "async unsafe fn(",
-                        });
-                    }
-                    if public_effects && function.is_async {
+                        "fn("
+                    });
+                    if function.is_async {
                         // The render stack is consumed in reverse order;
                         // enqueue the effect before the return annotation so
                         // it is emitted after the complete function type.
@@ -3176,7 +3164,7 @@ mod tests {
         );
         assert_eq!(
             interner.canonical(function).unwrap(),
-            "async unsafe fn(ref (Int | String), Int?, ...Int): Int? ! String"
+            "unsafe fn(ref (Int | String), Int?, ...Int): Int? ! String suspends"
         );
         assert_eq!(
             interner.canonical_interface(function).unwrap(),

@@ -1656,13 +1656,6 @@ impl<'a> FunctionBuilder<'a> {
         block: MirBlockId,
     ) -> Result<Option<MirBlockId>, MirError> {
         let expression = self.expression(action.expression())?.clone();
-        // `defer await call(...)` keeps the await wrapper in HIR so the
-        // checker can enforce async/liveness rules.  Cleanup itself starts
-        // from the underlying async call when the scope is drained.
-        let expression = match expression.kind() {
-            HirExpressionKind::Await { operation } => self.expression(*operation)?.clone(),
-            _ => expression,
-        };
         let guarded = action.guarded();
         let mut current = block;
         let (operation, guard) = match expression.kind() {
@@ -10038,8 +10031,8 @@ mod tests {
         let source = "fn build() {\n\
                           let sync: fn(): Int = () { 1 }\n\
                           let raw: unsafe fn(): Int = unsafe () { 2 }\n\
-                          let later: async fn(): Int = async () { 3 }\n\
-                          let both: async unsafe fn(): Int = async unsafe () { 4 }\n\
+                          let later: fn(): Int suspends = () { 3 }\n\
+                          let both: unsafe fn(): Int suspends = unsafe () { 4 }\n\
                           _ = sync()\n\
                           _ = sync\n\
                           _ = raw\n\

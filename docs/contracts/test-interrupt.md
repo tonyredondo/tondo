@@ -11,7 +11,7 @@ deterministic and directly testable.
 
 The first request records its origin and reason, stops dispatching new units,
 closes report/store staging, and moves every running worker to `Cancelling`.
-Each worker must acknowledge only after user cleanup (including `defer await`)
+Each worker must acknowledge only after user cleanup (including `defer`)
 and revocation of secrets, processes, handles, and resource registrations. A
 worker session is then closed. Exit `4` (`Interrupted`) is reachable only when
 all registered workers are closed; an empty worker set follows the same safe
@@ -39,8 +39,8 @@ events, dispatch decisions, and monotonic grace polling. It does not register
 signals or perform filesystem renames; those effects are wired by
 `UTEST-CLI-001` around this transaction.
 
-The executable regression `interrupt_waits_for_defer_await_cleanup_before_safe_exit`
+The executable regression `interrupt_waits_for_inferred_defer_cleanup_before_safe_exit`
 keeps a worker in `Cancelling` after an incomplete acknowledgement and reaches
-exit 4 only after cleanup (including `defer await`) and resource revocation are
+exit 4 only after cleanup (including `defer`) and resource revocation are
 both acknowledged. The forced-timeout model is covered separately by
 `cleanup_runs_lifo_after_error_and_is_skipped_for_forced_termination`.

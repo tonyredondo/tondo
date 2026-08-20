@@ -19,7 +19,7 @@ El registro conserva también el estado global de la auditoría: ahora es
 `verified` con cero gaps, porque `STD-CODEC-PUBLIC-001` cerró las rutas públicas
 de MessagePack/Protobuf y las tres fronteras build-only sin inventar superficie
 runtime. Esto no convierte el coordinador Core en una promoción global; el
-siguiente coordinador histórico del grupo es `STD-IMPL-002`.
+siguiente coordinador del grupo es `STD-IMPL-002`.
 
 ```text
 scripts/stdlib-implementation-coordination-check.sh

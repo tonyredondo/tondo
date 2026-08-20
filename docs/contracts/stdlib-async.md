@@ -10,15 +10,15 @@ usa `Channel`; el canal pertenece a STD-0.1B.
 Todas las funciones siguen declarándose con `fn`. Una firma sin cuerpo que
 pueda suspenderse debe escribir `suspends` después de su outcome. El efecto es
 parte de la interfaz y del hash ABI. Una función con cuerpo puede declarar el
-efecto o inferirlo transitivamente desde una llamada suspendible, `await`, un
+efecto o inferirlo transitivamente desde una llamada suspendible, un join, un
 `AsyncIterator` o cleanup suspendible. La inferencia nunca se basa en el nombre
 de la función.
 
 Una llamada directa suspendible espera automáticamente y conserva el tipo de
-resultado lógico; `await` delante de esa llamada es opcional. Un `Join` o un
-`Waiter` pendiente es un handle afín: solo `await handle` lo convierte en su
-resultado. `@sync` y `@nosuspend` son garantías negativas y rechazan cualquier
-camino suspendible, incluso si el caller omitió `await`.
+resultado lógico; `await` delante de esa llamada produce `E1611`. Un `Join`
+pendiente es un handle afín: solo `await handle` lo convierte en su resultado.
+`Waiter.wait()` es una llamada directa y también espera implícitamente. `@sync`
+y `@nosuspend` son garantías negativas y rechazan cualquier camino suspendible.
 
 ## Superficie nominal
 
@@ -75,7 +75,7 @@ streams ni depende de `Channel`.
 
 `STD-A-ASYNC-IMPL-001` cierra las dos rutas de consumo sin duplicar la API:
 
-- una llamada directa o `await cursor.collect(...)` usa el lowering MIR que
+- una llamada directa a `cursor.collect(...)` usa el lowering MIR que
   conserva el cursor y el buffer bajo el cleanup normal de la función;
 - `spawn cursor.collect(...)` transporta el witness estático de
   `AsyncIterator.next` por HIR, MIR y bytecode y ejecuta el mismo protocolo en
@@ -95,7 +95,7 @@ La prueba pública de estas rutas es
 [`tests/runtime/m11-std-async-impl-001.to`](../../tests/runtime/m11-std-async-impl-001.to);
 los límites directos permanecen además en
 [`tests/runtime/m11-std-async-iter-001.to`](../../tests/runtime/m11-std-async-iter-001.to)
-y el driver cubre el mismo flujo con `await tick()`, cancelación de scope y
+y el driver cubre el mismo flujo con `tick()`, cancelación de scope y
 rechazo de loans exclusivos en `spawn`.
 
 ## Límites y exclusiones
@@ -105,8 +105,8 @@ rechazo de loans exclusivos en `spawn`.
 - Los loans exclusivos pueden atravesar una espera secuencial, pero no pueden
   escapar a `spawn`, `spawn thread` ni a un `Completer` compartido.
 - `for item in source` selecciona `AsyncIterator` cuando no existe iterador
-  síncrono; `for await item in source` solo desambigua una fuente que expone
-  ambos protocolos. Ninguna forma añade `Channel` a STD-0.1A.
+  síncrono. Si ambos protocolos existen, `Iterator` tiene precedencia; no existe
+  `for await`. La iteración no añade `Channel` a STD-0.1A.
 - No hay callbacks, polling público, scheduler implícito ni wrappers de tarea.
 
 La implementación del cursor genérico, `collect(limit:)`, cancelación y

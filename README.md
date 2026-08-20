@@ -2,7 +2,7 @@
 
 **Development status:** Tondo 0.1 is not published. There is one current draft;
 the bootstrap corpus is only a regression suite for implemented behavior.
-Static metaprogramming, `defer await` and the remaining native testing
+Static metaprogramming, suspendible `defer` and the remaining native testing
 surfaces are still under implementation. The compact Tondo LLM Form transport
 is specified but its codec and CLI are not implemented yet.
 
@@ -90,10 +90,10 @@ values, write independence, identity, iteration, panic, or output.
 Async execution is implemented without a visible future wrapper or a parallel
 `async` API. Every function is declared with `fn`; the postfix `suspends`
 effect is required on bodyless contracts, may pin a stable promise on a body,
-and is otherwise inferred from suspendible calls, explicit `await`, async
+and is otherwise inferred from suspendible calls, joining pending work, async
 iteration, or cleanup. Public interfaces always expose it. A direct suspendible
-call waits implicitly and
-`await call()` is equivalent; only `spawn` preserves pending work and returns
+call always waits implicitly; `await` is reserved for consuming a pending
+`Join[T, E]`. Only `spawn` preserves pending work and returns
 one affine, scope-bound `Join[T, E]`. HIR follows that handle through bindings
 and containers, requires exactly one terminal consumption, and keeps every
 structured `ref` loan active until the handle is awaited or torn down. `Send`
@@ -197,17 +197,15 @@ four iteration forms are also verified through the VM. `for ref` observes
 stable `Array`, `Map`, and `Set` places; `for mut` and `for var` update stable
 writable `Array` and `Map` elements without exposing mutable keys or changing
 the collection traversed by the cursor. User-defined `Iterator[T]` targets
-retain one statically coherent element type. At this bootstrap regression boundary, synchronous
-`defer` captures
-its operands at registration,
-drains lexical scopes in LIFO order on normal and panic exits, and follows or
-disarms a unique affine guard through verified ownership transfers. Async
-cleanup cannot itself suspend there; structured task teardown runs before the defers
-of the abandoned task scope and cannot leak cancellation into a recoverable
-error type. The bootstrap regression corpus covers this implemented subset on
-the hosted VM; its evidence predates the draft's `derive`/meta, `defer await`,
-and `suite`/`test` additions and does not establish conformance for the complete
-current draft, another backend, profile, or capability set.
+retain one statically coherent element type. `defer` captures its operands at
+registration, infers suspension from direct calls in either its expression or
+block form, drains lexical scopes in LIFO order on normal and panic exits, and
+follows or disarms a unique affine guard through verified ownership transfers.
+Structured task teardown runs before the defers of an abandoned task scope and
+cannot leak cancellation into a recoverable error type. The single live
+regression corpus exercises the current draft on the hosted VM; it does not
+claim support for another backend, profile, capability set, or a feature still
+marked pending in the tracker.
 
 ## Project documentation
 
@@ -257,8 +255,6 @@ current draft, another backend, profile, or capability set.
 - `docs/measurements/tlf-token-study.md` records the tokenizer exploration that
   selected the current TLF draft shape.
 - `docs/contracts/types.md` records the canonical semantic type representation.
-- `docs/releases/0.1.0.md` is retained as historical archaeology only; it is
-  not a public release note or an active contract.
 
 ## CI test binaries
 

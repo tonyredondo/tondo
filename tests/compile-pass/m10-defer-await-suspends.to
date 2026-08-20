@@ -1,5 +1,0 @@
-fn cleanup() suspends {}
-
-fn main() {
-    defer await cleanup()
-}

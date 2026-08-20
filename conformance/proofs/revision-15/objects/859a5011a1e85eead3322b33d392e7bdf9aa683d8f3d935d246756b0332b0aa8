@@ -1,3 +1,0 @@
-fn helper(user: User): Int {
-    user.value + 1
-}

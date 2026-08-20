@@ -1,9 +1,0 @@
-async fn tick() {}
-
-async fn invalid(values: Array[Int]) {
-    var owned = values
-    for mut value in owned {
-        await tick()
-        value += 1
-    }
-}

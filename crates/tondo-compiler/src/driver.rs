@@ -370,7 +370,7 @@ impl CompilationRequest {
         self
     }
 
-    /// Supplies the values exposed by `std.process.args()` during `run`.
+    /// Supplies the argument values exposed by `std.env.snapshot()` during `run`.
     pub fn with_program_arguments(mut self, arguments: Vec<String>) -> Self {
         self.program_arguments = arguments;
         self
@@ -2202,7 +2202,7 @@ mod tests {
     fn test_operation_checks_console_stream_protocol_through_the_hir() {
         let request = operation_request(
             Operation::Check,
-            b"import std.console\nimport std.io\nimport std.bytes\nfn acquire(): io.Writer ! console.ConsoleError {\n console.stdout()\n}\nasync fn emit(data: bytes.Bytes): Int ! (io.IoError | console.ConsoleError) {\n var output = console.stdout()?\n await output.write(data)?\n}\n",
+            b"import std.console\nimport std.io\nimport std.bytes\nfn acquire(): io.Writer ! console.ConsoleError {\n console.stdout()\n}\nfn emit(data: bytes.Bytes): Int ! (io.IoError | console.ConsoleError) {\n var output = console.stdout()?\n output.write(data)?\n}\n",
             SourceForm::Module,
             ResourceLimits::default(),
         );
@@ -2268,7 +2268,7 @@ mod tests {
     fn test_operation_virtualizes_the_production_monotonic_clock() {
         let base = operation_request(
             Operation::Check,
-            b"import std.testing\nimport std.time\ntest virtual_clock {\n match await testing.withVirtualTime(async (clock) {\n  let before = time.now()?\n  await clock.advance(time.Duration.fromNanoseconds(100))\n  let after = time.now()?\n  assert(after.durationSince(before)?.toNanoseconds() == 100)\n }) {\n  ok(_) => ()\n  err(_) => testing.failNow(\"virtual clock failed\")\n }\n}\n",
+            b"import std.testing\nimport std.time\ntest virtual_clock {\n match testing.withVirtualTime((clock) {\n  let before = time.now()?\n  clock.advance(time.Duration.fromNanoseconds(100))\n  let after = time.now()?\n  assert(after.durationSince(before)?.toNanoseconds() == 100)\n }) {\n  ok(_) => ()\n  err(_) => testing.failNow(\"virtual clock failed\")\n }\n}\n",
             SourceForm::Module,
             ResourceLimits::default(),
         );
@@ -2301,7 +2301,7 @@ mod tests {
     fn test_operation_accepts_affine_virtual_time_body_and_settles_spawned_timers() {
         let base = operation_request(
             Operation::Check,
-            b"import std.bytes\nimport std.testing\nimport std.time\nasync fn exerciseVirtualTime(): Unit ! (bytes.BytesError | time.ClockError) {\n var affine = bytes.builder()?\n await testing.withVirtualTime(async (clock) {\n  _ = affine.finish()?\n  let before = time.now()?\n  scope {\n   let sleeper = spawn time.sleep(time.Duration.fromNanoseconds(40))\n   await clock.settle()\n   await sleeper?\n  }\n  let after = time.now()?\n  assert(after.durationSince(before)?.toNanoseconds() == 40)\n })?\n await testing.withVirtualTime(async (clock) {\n  _ = time.now()?\n  await clock.advance(time.Duration.fromNanoseconds(5))\n })?\n}\ntest virtual_settle {\n match await exerciseVirtualTime() {\n  ok(_) => ()\n  err(_) => testing.failNow(\"virtual time failed\")\n }\n}\n",
+            b"import std.bytes\nimport std.testing\nimport std.time\nfn exerciseVirtualTime(): Unit ! (bytes.BytesError | time.ClockError) {\n var affine = bytes.builder()?\n testing.withVirtualTime((clock) {\n  _ = affine.finish()?\n  let before = time.now()?\n  scope {\n   let sleeper = spawn time.sleep(time.Duration.fromNanoseconds(40))\n   clock.settle()\n   await sleeper?\n  }\n  let after = time.now()?\n  assert(after.durationSince(before)?.toNanoseconds() == 40)\n })?\n testing.withVirtualTime((clock) {\n  _ = time.now()?\n  clock.advance(time.Duration.fromNanoseconds(5))\n })?\n}\ntest virtual_settle {\n match exerciseVirtualTime() {\n  ok(_) => ()\n  err(_) => testing.failNow(\"virtual time failed\")\n }\n}\n",
             SourceForm::Module,
             ResourceLimits::default(),
         );
@@ -2336,7 +2336,7 @@ mod tests {
     fn test_operation_rejects_spawning_the_virtual_time_boundary() {
         let base = operation_request(
             Operation::Check,
-            b"import std.testing\nimport std.time\ntest invalid_spawn {\n scope {\n  let task = spawn testing.withVirtualTime(async (clock) {\n   _ = time.now()?\n   await clock.settle()\n  })\n  _ = await task\n }\n}\n",
+            b"import std.testing\nimport std.time\ntest invalid_spawn {\n scope {\n  let task = spawn testing.withVirtualTime((clock) {\n   _ = time.now()?\n   clock.settle()\n  })\n  _ = await task\n }\n}\n",
             SourceForm::Module,
             ResourceLimits::default(),
         );
@@ -2369,7 +2369,7 @@ mod tests {
     fn test_operation_rejects_non_send_virtual_time_body() {
         let base = operation_request(
             Operation::Check,
-            b"import std.testing\nfn consumeUnit(value: Unit) {\n match value {\n  () => ()\n }\n}\nasync fn ready(): Unit {}\ntest invalid_capture {\n scope {\n  let task = spawn ready()\n  match await testing.withVirtualTime(async (clock) {\n   _ = clock\n   _ = await task\n  }) {\n   ok(_) => ()\n   err(_) => ()\n  }\n }\n}\n",
+            b"import std.testing\nfn consumeUnit(value: Unit) {\n match value {\n  () => ()\n }\n}\nfn ready(): Unit suspends {}\ntest invalid_capture {\n scope {\n  let task = spawn ready()\n  match testing.withVirtualTime((clock) {\n   _ = clock\n   _ = await task\n  }) {\n   ok(_) => ()\n   err(_) => ()\n  }\n }\n}\n",
             SourceForm::Module,
             ResourceLimits::default(),
         );
@@ -2390,7 +2390,7 @@ mod tests {
     fn test_operation_closes_virtual_time_when_the_body_panics() {
         let base = operation_request(
             Operation::Check,
-            b"import std.testing\nimport std.time\ntest virtual_panic {\n match await testing.withVirtualTime(async (clock) {\n  _ = time.now()?\n  await clock.advance(time.Duration.fromNanoseconds(7))\n  panic(\"inside virtual time\")\n }) {\n  ok(_) => ()\n  err(_) => testing.failNow(\"unexpected clock error\")\n }\n}\n",
+            b"import std.testing\nimport std.time\ntest virtual_panic {\n match testing.withVirtualTime((clock) {\n  _ = time.now()?\n  clock.advance(time.Duration.fromNanoseconds(7))\n  panic(\"inside virtual time\")\n }) {\n  ok(_) => ()\n  err(_) => testing.failNow(\"unexpected clock error\")\n }\n}\n",
             SourceForm::Module,
             ResourceLimits::default(),
         );
@@ -2895,13 +2895,24 @@ mod tests {
     }
 
     #[test]
-    fn program_arguments_reach_process_args_without_cli_options() {
+    fn program_arguments_reach_env_snapshot_without_cli_options() {
         let source = br#"
 import std.console
-import std.process
+import std.env
 
-fn main() {
-    assert(process.args() == ["--flag", "two words", "*", "$HOME"])
+fn text(value: env.Value): String {
+    match value.asText() {
+        some(argumentText) => argumentText
+        none => panic("argument is not UTF-8")
+    }
+}
+
+fn main(): !env.EnvError {
+    let arguments = env.snapshot()?.arguments()
+    assert(text(arguments[0]) == "--flag")
+    assert(text(arguments[1]) == "two words")
+    assert(text(arguments[2]) == "*")
+    assert(text(arguments[3]) == "$HOME")
     console.print("args-ok\n")
 }
 "#;
@@ -2920,7 +2931,12 @@ fn main() {
             ]),
         )
         .unwrap();
-        assert_eq!(output.status(), CompilationStatus::Success);
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
         assert_eq!(output.stdout(), b"args-ok\n");
     }
 
@@ -3615,8 +3631,8 @@ fn main() {
 
         let asynchronous = execute(operation_request(
             Operation::Run,
-            b"async fn tick(): Int { 42 }\n\
-              let answer = await tick()\n\
+            b"fn tick(): Int suspends { 42 }\n\
+              let answer = tick()\n\
               scope {\n\
                   let job = spawn tick()\n\
                   assert(await job == answer)\n\
@@ -3786,8 +3802,8 @@ fn main() {
         let source = b"fn main() {\n\
               let sync: fn(): Int = () { 1 }\n\
               let raw: unsafe fn(): Int = unsafe () { 2 }\n\
-              let later: async fn(): Int = async () { 3 }\n\
-              let both: async unsafe fn(): Int = async unsafe () { 4 }\n\
+              let later: fn(): Int suspends = () { 3 }\n\
+              let both: unsafe fn(): Int suspends = unsafe () { 4 }\n\
               _ = sync\n\
               _ = raw\n\
               _ = later\n\
@@ -3828,8 +3844,8 @@ fn main() {
         );
 
         for source in [
-            &b"fn main() {\n    let operation = async (): Int { 1 }\n    _ = operation()\n}\n"[..],
-            &b"async fn operation(): Int { 1 }\nfn main() {\n    _ = operation()\n}\n"[..],
+            &b"fn main() {\n    let operation: fn(): Int suspends = (): Int { 1 }\n    _ = operation()\n}\n"[..],
+            &b"fn operation(): Int suspends { 1 }\nfn main() {\n    _ = operation()\n}\n"[..],
         ] {
             let output = execute(operation_request(
                 Operation::Run,
@@ -3885,9 +3901,9 @@ fn main() {
 
     #[test]
     fn async_unsafe_calls_keep_both_effects_visible() {
-        let source = b"async unsafe fn raw(value: Int): Int { value + 1 }\n\
-            async fn main() {\n\
-                let result = unsafe { await raw(41) }\n\
+        let source = b"unsafe fn raw(value: Int): Int suspends { value + 1 }\n\
+            fn main() {\n\
+                let result = unsafe { raw(41) }\n\
                 assert(result == 42)\n\
             }\n";
         let output = execute(operation_request(
@@ -3904,9 +3920,9 @@ fn main() {
             output.diagnostics().diagnostics()
         );
 
-        let invalid = b"async unsafe fn raw(): Int { 1 }\n\
-            async fn main() {\n\
-                _ = await raw()\n\
+        let invalid = b"unsafe fn raw(): Int suspends { 1 }\n\
+            fn main() {\n\
+                _ = raw()\n\
             }\n";
         let output = execute(operation_request(
             Operation::Run,
@@ -4292,10 +4308,10 @@ fn main() {
     }
 
     #[test]
-    fn async_main_executes_in_the_runtime_root_scope() {
+    fn inferred_suspending_main_executes_in_the_runtime_root_scope() {
         let output = execute(operation_request(
             Operation::Run,
-            b"async fn main() {}\n",
+            b"fn work() suspends {}\nfn main() {\n    scope {\n        let job = spawn work()\n        await job\n    }\n}\n",
             SourceForm::Script,
             ResourceLimits::default(),
         ))
@@ -4309,7 +4325,7 @@ fn main() {
     fn direct_suspension_is_inferred_and_join_can_cross_a_function_boundary() {
         let output = execute(operation_request(
             Operation::Run,
-            b"async fn work(): Int { 1 }\n\
+            b"fn work(): Int suspends { 1 }\n\
               fn prepare(): Join[Int, Never] {\n\
                   scope {\n\
                       return spawn thread work()\n\
@@ -4335,7 +4351,7 @@ fn main() {
             Operation::Run,
             b"type Counter = { value: Int }\n\
               impl AsyncIterator[Int] for Counter {\n\
-                  async fn next(mut self): Int? { none }\n\
+                  fn next(mut self): Int? suspends { none }\n\
               }\n\
               fn consume(cursor: Counter) {\n\
                   for item in cursor {\n\
@@ -4358,7 +4374,7 @@ fn main() {
             Operation::Run,
             b"type Counter = { remaining: Int }\n\
               impl AsyncIterator[Int] for Counter {\n\
-                  async fn next(mut self): Int? {\n\
+                  fn next(mut self): Int? suspends {\n\
                       if self.remaining == 0 {\n\
                           return none\n\
                       }\n\
@@ -4396,8 +4412,8 @@ fn main() {
             b"import std.async\n\
               type Counter = { remaining: Int }\n\
               impl AsyncIterator[Int] for Counter {\n\
-                  async fn next(mut self): Int? {\n\
-                      await tick()\n\
+                  fn next(mut self): Int? suspends {\n\
+                      tick()\n\
                       if self.remaining == 0 {\n\
                           return none\n\
                       }\n\
@@ -4408,7 +4424,7 @@ fn main() {
               }\n\
               type Blocked = { waiter: async.Waiter[Int, String] }\n\
               impl AsyncIterator[Int] for Blocked {\n\
-                  async fn next(mut self): Int? {\n\
+                  fn next(mut self): Int? suspends {\n\
                       let result = self.waiter.wait()\n\
                       match result {\n\
                           ok(value) => some(value)\n\
@@ -4416,7 +4432,7 @@ fn main() {
                       }\n\
                   }\n\
               }\n\
-              async fn tick() {}\n\
+              fn tick() suspends {}\n\
               fn bounded() {\n\
                   scope {\n\
                       let pending = spawn Counter { remaining: 3 }.collect(limit: 2)\n\
@@ -4570,7 +4586,7 @@ fn main() {
     }
 
     #[test]
-    fn inferred_defer_await_runs_without_an_async_modifier() {
+    fn inferred_suspendible_defer_runs_without_extra_syntax() {
         let output = execute(operation_request(
             Operation::Run,
             b"import std.async\n\
@@ -4589,7 +4605,7 @@ fn main() {
                   }\n\
               }\n\
               fn main() {\n\
-                  defer await cleanup()\n\
+                  defer cleanup()\n\
               }\n",
             SourceForm::Script,
             ResourceLimits::default(),
@@ -4706,7 +4722,7 @@ fn main() {
                   panic(\"cleanup\")\n\
               }\n\
               fn main() {\n\
-                  defer await cleanup()\n\
+                  defer cleanup()\n\
                   panic(\"primary\")\n\
               }\n",
             SourceForm::Script,
@@ -4726,20 +4742,20 @@ fn main() {
     fn structured_child_panics_use_creation_order_after_sibling_cleanup() {
         let output = execute(operation_request(
             Operation::Run,
-            b"async fn tick() {}\n\
-              async fn first() {\n\
-                  await tick()\n\
-                  await tick()\n\
-                  await tick()\n\
+            b"fn tick() suspends {}\n\
+              fn first() {\n\
+                  tick()\n\
+                  tick()\n\
+                  tick()\n\
                   panic(\"first child\")\n\
               }\n\
-              async fn second() {\n\
-                  await tick()\n\
-                  await tick()\n\
-                  await tick()\n\
+              fn second() {\n\
+                  tick()\n\
+                  tick()\n\
+                  tick()\n\
                   panic(\"second child\")\n\
               }\n\
-              async fn main() {\n\
+              fn main() {\n\
                   scope {\n\
                       let firstJob = spawn first()\n\
                       let secondJob = spawn second()\n\
@@ -4810,7 +4826,7 @@ fn main() {
                   console.print(\"cleanup\\n\")\n\
               }\n\
               fn main() {\n\
-                  defer await cleanup()\n\
+                  defer cleanup()\n\
                   for {}\n\
               }\n",
             SourceForm::Script,
@@ -4826,7 +4842,7 @@ fn main() {
         // A VM/toolchain resource failure is terminal rather than a language
         // unwind. It must retain `T0002` and must not manufacture a partial
         // user cleanup result; panic and cooperative cancellation are the
-        // paths that drain `defer await`.
+        // paths that drain inferred suspendible cleanup.
         assert!(output.stdout().is_empty());
     }
 
@@ -4843,7 +4859,7 @@ fn main() {
                   }\n\
               }\n\
               fn main() {\n\
-                  defer await cleanup()\n\
+                  defer cleanup()\n\
               }\n",
             SourceForm::Module,
             ResourceLimits::default(),

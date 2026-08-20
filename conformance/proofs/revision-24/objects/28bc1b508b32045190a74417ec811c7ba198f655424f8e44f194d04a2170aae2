@@ -1,5 +1,0 @@
-fn invalid(groups: var Array[Array[Int]]) {
-    for mut group in groups {
-        group = [9]
-    }
-}

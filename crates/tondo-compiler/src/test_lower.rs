@@ -1025,7 +1025,7 @@ mod tests {
     }
 
     #[test]
-    fn preserves_environment_domain_errors_async_and_cleanup() {
+    fn preserves_environment_domain_errors_suspension_and_cleanup() {
         let body = contract(
             "suite",
             TestEntryKind::SuiteSetup,

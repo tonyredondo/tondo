@@ -1,9 +1,0 @@
-async fn compute(): Int {
-    42
-}
-
-async fn invalid() {
-    let pending = spawn compute()
-    let value = await pending
-    assert(value == 42)
-}

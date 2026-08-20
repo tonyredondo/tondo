@@ -52,18 +52,23 @@ for marker in \
 done
 
 for marker in \
-    'bridge interno de' \
-    'No son una API pública de Tondo' \
+    'detalles internos del crate' \
+    'no son una API' \
+    'pública de Tondo' \
     'Encode[C]' \
     'Decode[C]'; do
     grep -Fq "$marker" docs/contracts/stdlib-serialization.md
 done
 
-jq -e '
-  .legacy_abi.status == "rust-internal-compatibility-only"
-  and .legacy_abi.tondo_public_surface == "forbidden"
-  and .legacy_abi.public_api_audit == "excluded-with-reason"
-' testing/stdlib-serialization.json >/dev/null
+jq -e 'has("legacy_abi") | not' testing/stdlib-serialization.json >/dev/null
+
+if grep -Eq 'serialization\.(Serialize|Deserialize)|std\.derive\.serialization\.(Serialize|Deserialize)|\b(SERIALIZE|DESERIALIZE)_(TRAIT|PROVIDER)\b|SerializationDirection::(Serialize|Deserialize)|Self::(Serialize|Deserialize)' \
+    crates/tondo-compiler/src/serialization_derive.rs || \
+    grep -Eq 'std\.derive\.serialization\.(Serialize|Deserialize)|\b(SERIALIZE|DESERIALIZE)_(TRAIT|PROVIDER)\b|SerializationDirection::(Serialize|Deserialize)|Self::(Serialize|Deserialize)' \
+        crates/tondo-compiler/src/meta_frontend.rs; then
+    echo "std.serialization owner tests: removed source providers remain" >&2
+    exit 1
+fi
 
 for symbol in \
     'pub trait Encoder' \
@@ -98,7 +103,7 @@ for test_name in \
     'dynamic_value_views_and_raw_bytes_are_owned_or_borrowed_explicitly' \
     'canonical_protocol_keeps_bytes_unit_and_maps_explicit' \
     'record_provider_is_deterministic_and_maps_to_target' \
-    'deserialize_provider_and_enum_shapes_are_generated' \
+    'decode_provider_and_enum_shapes_are_generated' \
     'specialized_codecs_and_field_annotations_are_deterministic' \
     'json_enum_provider_uses_one_externally_tagged_object' \
     'provider_rejects_missing_targets_bounds_and_member_names'; do

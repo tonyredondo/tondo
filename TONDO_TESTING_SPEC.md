@@ -1,10 +1,8 @@
 # Tondo: especificación del lenguaje y toolchain de testing
 
-- **Estado:** borrador normativo en desarrollo; implementación funcional disponible y conformidad T0 pendiente.
-- **Revisión:** 0.1-draft.3 — 2026-08-07.
+- **Estado:** borrador normativo en desarrollo; implementación funcional y gate T0 vivo disponibles.
 - **Edición objetivo:** Tondo 0.1.
 - **Especificación base:** [Tondo 0.1](./TONDO_LANGUAGE_SPEC.md).
-- **SHA-256 de la base:** `b436cb475e53c51eda008a6914fb58bae698d63e3de6fb84df5833a0e2c4114d`.
 - **Formatos de tooling:** `tondo-test-report-0.1/7`,
   `tondo-test-list-0.1/6`, `tondo-junit-report-0.1/4`,
   `tondo-test-artifacts-0.1/1` y `tondo-snapshot-store-0.1/1`.
@@ -26,7 +24,7 @@ proactiva, artefactos por intento y snapshots textuales complementan esa
 evidencia sin introducir subtests dinámicos ni estado global. Inputs secretos,
 interrupción externa y cleanup asíncrono tienen fronteras explícitas para que el
 runner nunca presente una ejecución parcial o no reproducible como completa.
-Forma parte del borrador consolidado Tondo 0.1 fijado por hash. La especificación
+Forma parte del único borrador consolidado Tondo 0.1. La especificación
 principal incorpora las keywords, grammar, semántica general y diagnósticos; este
 documento fija el contrato especializado del runner y sus formatos. El tracker
 es únicamente el plan de implementación. Un compilador no puede anunciar
@@ -137,15 +135,13 @@ ordinaria.
 
 Tondo todavía no ha publicado su primera versión. Por ello el lenguaje de
 testing se integra directamente en Tondo 0.1 y no crea una edición intermedia.
-Este documento identifica mediante SHA-256 el snapshot exacto de la
-especificación principal que complementa. Cambiarlo obliga a revisar
-referencias, compatibilidad y evidencia antes de actualizar el hash.
+Este documento y la especificación principal evolucionan como un único contrato
+vivo: cualquier cambio actualiza referencias, parser, formatter, diagnostics,
+tests y conformidad en el mismo bloque.
 
-El corpus bootstrap conserva la evidencia anterior a esta integración; no es
-una versión pública ni un segundo dialecto. La grammar, formatter, diagnostics y
-suite de conformidad del draft deben converger en el único contrato Tondo 0.1. Una
+No se conserva un corpus, snapshot o dialecto anterior a esta integración. Una
 implementación solo puede anunciar soporte parcial si declara expresamente los
-componentes que todavía no implementa.
+componentes del contrato actual que todavía no implementa.
 
 ### 2.2 `test` y `suite` son keywords en Tondo 0.1
 
@@ -155,9 +151,8 @@ Tondo 0.1 reserva `test` y `suite`. Por tanto:
 - Una función, variable, tipo, módulo o parámetro de usuario no puede llamarse
   `test` ni `suite`.
 - La API estándar utiliza el nombre de módulo `std.testing`, no `std.test`.
-- Fuente escrita contra el corpus bootstrap anterior que utilizara cualquiera
-  de ambos nombres como identificador debe renombrarlo antes de conformar con el
-  borrador final.
+- Los tests negativos pueden demostrar que ambos nombres se rechazan como
+  identificadores, pero no existe una ruta de compatibilidad que los acepte.
 
 Reservarlas globalmente evita keywords contextuales cuya interpretación dependa
 del source set o del lugar del parser.
@@ -222,39 +217,35 @@ privados del runner.
 
 Testing no añade `beforeAll`, `afterAll`, callbacks de teardown ni una operación
 privada para esperar cleanup. Tondo 0.1 admite en cualquier función o entrada
-una única forma visible de registrar una llamada suspendible infallible:
+la misma forma visible para registrar una llamada infallible, suspenda o no:
 
 ~~~tondo
-defer await Service.stop(service)
+defer Service.stop(service)
 ~~~
 
 La grammar consolidada de Tondo 0.1 contiene:
 
 ~~~ebnf
-defer_stmt         = "defer",
-                     ( deferred_suspendible_call | postfix_expression | block ) ;
-deferred_suspendible_call = "await", plain_postfix_expression ;
+defer_stmt = "defer", ( postfix_expression | block ) ;
 ~~~
 
-Tanto el `plain_postfix_expression` de `deferred_suspendible_call` como el
-`postfix_expression` ordinario deben terminar en un `call_suffix`. `await`
-pertenece a la forma diferida completa; no ejecuta ni inicia la llamada durante
-el registro.
+El `postfix_expression` debe terminar en un `call_suffix`. El compilador infiere
+si el cleanup suspende desde la llamada o desde las llamadas directas de un
+bloque; el registro nunca ejecuta ni inicia la operación.
 
 La llamada no se inicia al registrar el `defer`; sus operandos y ownership se
 reservan con las reglas ordinarias y se invoca y espera al abandonar el scope,
 en su posición LIFO. La forma:
 
-- Solo acepta una llamada `fn(...): Unit` infallible cuyo efecto suspendible se
-  infiere desde la operación registrada; `await` es obligatorio en esta forma
-  especial de `defer` para distinguirla del cleanup síncrono.
+- Solo acepta una llamada `fn(...): Unit` infallible; su efecto suspendible se
+  infiere desde la operación registrada, sin otra sintaxis.
 - Cuenta como punto de suspensión. Un test, setup o script, y cualquier función
   o cierre, infiere el efecto sin una keyword adicional; `@sync`/`@nosuspend`
   rechaza esta forma con `E1601`.
 - Admite como máximo el mismo único operando afín propietario que un `defer` de
   llamada ordinario.
-- No dispone de variante de bloque, no puede propagar error y no crea un hook de
-  testing.
+- La variante de bloque también infiere suspensión, pero no puede usar `await`,
+  `spawn` o `scope`, propagar un error ni crear un hook de testing.
 - Ejecuta las demás entradas de cleanup aunque produzca pánico y conserva la
   precedencia general de pánicos suprimidos.
 - Conserva las reglas ordinarias de liveness y `Send` para todo valor reservado
@@ -271,7 +262,7 @@ y cleanup antes de Gate T0. Una suite la reutiliza sin semántica especial:
 suite remoteApi {
     let service = TestService.start()?
     let endpoint: String = service.endpoint()
-    defer await TestService.stop(service)
+    defer TestService.stop(service)
 
     test reportsHealth {
         assert(readHealth(endpoint)?.ready)
@@ -485,8 +476,7 @@ en el reporte de tooling.
 ### 4.2 Suspensión y concurrencia
 
 No se escribe `async test` ni `async suite`. Las llamadas suspendibles esperan
-automáticamente en el body y el efecto se infiere; `await` solo permanece para
-consumir handles o como spelling explícito.
+automáticamente en el body y el efecto se infiere; `await` solo consume `Join`.
 
 ~~~tondo
 test loadsConfiguration {
@@ -501,7 +491,7 @@ El setup de suite puede suspender y propagar errores:
 suite remoteApi {
     let service = TestService.start()?
     let endpoint: String = service.endpoint()
-    defer await TestService.stop(service)
+    defer TestService.stop(service)
 
     test reportsHealth {
         assert(readHealth(endpoint)?.ready)
@@ -548,7 +538,7 @@ Dentro de una suite, un `defer` registrado por el setup pertenece al scope
 léxico de esa suite. Se ejecuta después de que terminen todos sus descendientes
 seleccionados, en LIFO y con las reglas ordinarias. Si el setup falla antes de
 alcanzar los miembros, se ejecutan los defers que ya hubiera registrado. La
-forma general `defer await` de 2.5 permite finalizar un recurso suspendible sin
+forma general `defer` de 2.5 permite finalizar un recurso suspendible sin
 introducir un hook de suite; conserva resultado `Unit` infallible, ownership,
 orden, pánico y límites de cualquier otro cleanup.
 
@@ -1048,7 +1038,7 @@ la suite se ejecuta de esta forma:
 4. El fallo de una hoja se registra y no impide ejecutar sus hermanos.
 5. Cuando han terminado todos los descendientes seleccionados, el runner
    abandona el scope de la suite y ejecuta y espera su cleanup ordinario,
-   incluidos los `defer await` de 2.5. Por estructura, suites internas terminan
+   incluidos los `defer` de 2.5. Por estructura, suites internas terminan
    antes que sus ancestras.
 
 No existe lifecycle por orden textual entre hojas. Todos los miembros de una
@@ -1086,7 +1076,7 @@ nunca llegó a admitir descendientes. `teardown` designa exclusivamente el
 cleanup iniciado después de que un setup correcto y todos sus descendientes
 seleccionados hayan terminado.
 
-Un fallo durante ese teardown conserva fase `teardown`. Un `defer await` es
+Un fallo durante ese teardown conserva fase `teardown`. Un `defer` es
 infallible en tipos, pero puede producir pánico, agotar recursos, exceder el
 timeout real o perder aislamiento igual que el resto de cleanup. Los resultados
 ya producidos por los descendientes no cambian ni se reetiquetan; la suite añade
@@ -1308,7 +1298,7 @@ conservan sus reglas ordinarias y siempre desmontan el dominio antes de terminar
 el intento. La llamada a `withVirtualTime` debe iniciarse directamente en la
 expresión ordinaria; su espera implícita no puede sustituirse por `spawn`,
 porque el cambio de proveedor de reloj es una frontera léxica del intento y no
-una tarea concurrente. `await` explícito es aceptable como documentación. Las tareas
+una tarea concurrente. `await` no acepta esta llamada directa. Las tareas
 que se quieran controlar se crean dentro de la closure y de un `scope`.
 
 Dentro del dominio:
@@ -1394,7 +1384,7 @@ runner:
 
 1. Deja de despachar nuevas entradas e iteraciones.
 2. Solicita cancelación cooperativa a cada entrada activa.
-3. Conduce hijos y cleanup, incluidos `defer await`, hasta completar o agotar el
+3. Conduce hijos y cleanup, incluidos `defer`, hasta completar o agotar el
    grace period real del resource profile.
 4. Revoca procesos y recursos de host rastreables y termina cualquier worker que
    no haya cooperado.
@@ -2691,7 +2681,7 @@ forma parte del runner.
 suite messageBroker {
     let broker = Broker.start()?
     let endpoint: String = broker.endpoint()
-    defer await Broker.stop(broker)
+    defer Broker.stop(broker)
 
     test publishesMessage {
         assert(publish(endpoint, "ready")?.accepted)
@@ -2700,7 +2690,7 @@ suite messageBroker {
 ~~~
 
 `Broker.stop` es una llamada suspendible infallible que consume el owner. El runner no
-ejecuta un callback oculto: al abandonar la suite alcanza el `defer await`
+ejecuta un callback oculto: al abandonar la suite alcanza el `defer`
 general, lo espera bajo el timeout de teardown y solo después finaliza el
 envelope.
 
@@ -2772,7 +2762,7 @@ El contrato inicial no incluye:
 - Redacción automática de secretos después de que el programa los haya copiado
   a un canal observable.
 - Reporte JSON/JUnit parcial presentado como completo después de interrupción.
-- Hooks de teardown exclusivos de testing; se reutiliza `defer await`.
+- Hooks de teardown exclusivos de testing; se reutiliza `defer`.
 
 Estas ausencias no impiden que `std.testing` o tooling posterior añadan
 utilidades explícitas. Cualquier operación que espere un pánico debe conservar
@@ -2805,14 +2795,14 @@ el binding correspondiente a cada report y vuelve a calcular la identidad
 actual antes de aceptar coverage o mutation. `ratchet check` conserva ambos
 digests por scope y rechaza un report antiguo, mezclado, modificado o generado
 con otro toolchain aunque sus métricas superen el baseline. `quality capture`
-guarda la identidad de la captura en el baseline histórico; ese dato describe
+guarda la identidad de la captura en el baseline vigente; ese dato describe
 su origen y no convierte el baseline en una excepción al gate actual.
 
 Los paths de `target`, los directorios temporales y los propios reportes no
 forman parte del árbol medido: cambiar la ubicación de build no invalida la
 evidencia, mientras que cambiar una fuente, un script o un flag sí. El binding
 es canónico, de campos cerrados y debe acompañar al report en CI y en cualquier
-ratchet o proof que lo consuma.
+ratchet que lo consuma.
 
 ## 14. Diagnósticos nuevos
 
@@ -2858,8 +2848,9 @@ El resto reutiliza diagnósticos existentes:
 Selector vacío, glob inválido, CODEOWNERS inválido, opciones de
 retry/repeat/shard/order/report/artifacts/snapshot, interrupción, timeout e
 infraestructura son diagnósticos del toolchain, no nuevos errores de compilación
-`E`. Tondo 0.1 permite `defer await` únicamente en la forma general fijada en
-2.5. `E1608` rechaza cualquier otro cleanup suspendible; `E1601` conserva la
+`E`. Tondo 0.1 infiere el cleanup suspendible en la forma general de `defer`
+fijada en 2.5. `E1608` rechaza `await`, `spawn`, `scope`, error o resultado no
+`Unit` dentro del cleanup; `E1601` conserva la
 frontera no suspendible de `@sync`/`@nosuspend`, `E1610` queda para un `await` o
 `scope` fuera de una entrada válida, y las violaciones de ownership/liveness
 conservan sus códigos `E14xx`.
@@ -3877,7 +3868,7 @@ versionada. El grupo cubre como mínimo:
 45. `virtual_time` por intento en JSON `/7`, orden y contadores canónicos,
     reinicio exacto entre retries, `tondo.virtual_time` en JUnit `/4`, duración
     JUnit real y equivalencia VM/backend para el mismo corpus temporal.
-46. `defer await` en Tondo 0.1: única llamada suspendible infallible, ownership afín,
+46. `defer` suspendible en Tondo 0.1: inferencia para llamada o bloque infallible, ownership afín,
     inferencia en test/setup/script y funciones, cleanup
     LIFO esperado, pánico/límites y rechazo de cualquier forma alternativa sin
     introducir hooks de suite.
@@ -3952,7 +3943,7 @@ test loadsValue {
 ~~~tondo
 suite serviceGroup {
     let service = Service.start()?
-    defer await Service.stop(service)
+    defer Service.stop(service)
 
     test responds {
         assert(service.ping().ready)
@@ -4046,5 +4037,5 @@ tondo test \
 > sobre las APIs de producción. Ownership, inputs, sharding, orden y reportes
 > son políticas explícitas del runner; glob selecciona sin depender del host,
 > retry confirma un fallo y repeat busca inestabilidad en fronteras nuevas.
-> Cleanup suspendible reutiliza `defer await`, no hooks. El resto del código continúa
+> Cleanup suspendible reutiliza `defer`, no hooks. El resto del código continúa
 > siendo Tondo ordinario.

@@ -15,7 +15,7 @@
     "lineage": "draft",
     "validate_command": "cargo run -p tondo-conformance --locked -- validate --root . --manifest conformance/draft/manifest.json --lineage draft",
     "run_command": "cargo run -p tondo-conformance --locked -- run --root . --manifest conformance/draft/manifest.json --lineage draft --adapter target/debug/tondo-reference-adapter --evidence target/reliability/evidence/layer-evidence.json --output target/reliability/evidence/conformance-result.json",
-    "result": "conformance/0.1/results/tondo-reference-draft-tondo-vm-hosted.json"
+    "result": "target/reliability/evidence/conformance-result.json"
   },
   "rules": {
     "one_owner_per_matrix_row": true,

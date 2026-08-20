@@ -5,8 +5,8 @@ fn answer(): Int {
     42
 }
 
-pub async fn answerAfterBackoff(delay: time.Duration): Int ! time.ClockError {
-    await time.sleep(delay)?
+pub fn answerAfterBackoff(delay: time.Duration): Int ! time.ClockError suspends {
+    time.sleep(delay)?
     answer()
 }
 

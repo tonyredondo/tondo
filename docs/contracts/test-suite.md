@@ -47,7 +47,7 @@ order; it never retries only the originally failing leaf while reusing setup.
 The compiler-generated names and operations are accepted only for
 `GeneratedTesting` sources. User test identifiers beginning with `__tondo` are
 rejected, and production artifacts cannot forge the internal lifecycle ABI.
-`defer await` is driven by the ordinary VM unwind path; there is no `afterAll`
+`defer` is driven by the ordinary VM unwind path; there is no `afterAll`
 hook or host-side substitute for language cleanup.
 
 ## Executable evidence

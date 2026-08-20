@@ -23,8 +23,8 @@ path implemented, plus TEXT-001 immutable UTF-8 strings and TEXT-004 distinct
 text and byte domains, and TEXT-002 Unicode-scalar String length, indexing, and
 slicing, plus TEXT-003 intrinsic/static Display dispatch and interpolation,
 plus VARIADIC-001/002 homogeneous final packs and whole-array spread, plus the
-canonical inferred-suspension `suspends` effect and implicit-await path (the
-explicit-await prototype remains only in the frozen corpus), EXEC-001/002,
+canonical inferred-suspension `suspends` effect and implicit-wait path,
+EXEC-001/002,
 SCOPE-001, SPAWN-001, JOIN-001,
 CANCEL-001/002, PANIC-ASYNC-001, SEND-001, SHARE-001, and MAIN-ASYNC-001
 
@@ -428,8 +428,8 @@ returns, every call argument, and unrelated operations reject it.
 
 The bootstrap `Call` operation remains deliberately synchronous when its
 suspendible-effect bit is clear. A direct call to a `suspends` callable is
-lowered to the same verified `Await` operation that an explicit `await call()`
-would have produced; source syntax does not change the ABI. `Spawn` is the only
+lowered to one verified implicit-wait operation; `await call()` is rejected and
+source syntax does not change the ABI. `Spawn` is the only
 initiation terminator that intentionally preserves a pending handle. Both
 rederive the operation's effect, protocol, outcome, arguments, capabilities,
 and control-flow contract, including the same unsafe-bit agreement. HIR supplies
@@ -657,7 +657,7 @@ Before execution, the verifier proves:
   logical result only on the normal edge, and admits only `Send` live values
   plus the current scope's sealed join exception;
 - every `RegisterDefer` contains one infallible `Unit` operation. Synchronous
-  entries use the `Deferred` call context; `defer await` entries use
+  entries use the `Deferred` call context; `defer` entries use
   `DeferredAsync` (the internal tag for a suspendible defer) and therefore retain
   exactly one suspendible call signature. Both
   snapshot all closed `Copy` operands, retain at most one complete affine guard

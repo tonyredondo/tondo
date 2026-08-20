@@ -1,4 +1,0 @@
-import main.api
-fn invalid(): api.Account {
-    api.Account { name: "Ada" }
-}

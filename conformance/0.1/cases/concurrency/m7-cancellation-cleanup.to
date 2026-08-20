@@ -4,24 +4,24 @@ enum WorkError {
     Failed
 }
 
-async fn tick() {}
+fn tick() suspends {}
 
-async fn child(): !WorkError {
+fn child(): !WorkError suspends {
     defer console.print("child-cleanup\n")
 
     for {
-        await tick()
+        tick()
     }
 }
 
-async fn leaveScope(): !WorkError {
+fn leaveScope(): !WorkError suspends {
     scope {
         let pending = spawn child()
         return
     }
 }
 
-async fn main(): !WorkError {
-    await leaveScope()?
+fn main(): !WorkError suspends {
+    leaveScope()?
     console.print("parent-complete\n")
 }

@@ -21,8 +21,7 @@ use crate::meta_diagnostics::{MetaDiagnosticEntry, derive_execution_entry, seman
 use crate::package::PackageGraph;
 use crate::resolve::{ResolvedProgram, Visibility};
 use crate::serialization_derive::{
-    DECODE_PROVIDER, DECODE_TRAIT, DESERIALIZE_PROVIDER, DESERIALIZE_TRAIT, ENCODE_PROVIDER,
-    ENCODE_TRAIT, SERIALIZE_PROVIDER, SERIALIZE_TRAIT, register_serialization_providers,
+    DECODE_PROVIDER, DECODE_TRAIT, ENCODE_PROVIDER, ENCODE_TRAIT, register_serialization_providers,
 };
 use crate::source::{FileId, ModulePath, SourceDatabase, SourceId, Span};
 use crate::syntax::{Parsed, SyntaxKind, SyntaxNodeRef, TokenKind};
@@ -209,8 +208,6 @@ fn model_error(error: impl std::fmt::Display) -> DeriveFrontendError {
 fn serialization_provider(identity: &str) -> Option<(&'static str, &'static str)> {
     let base = identity.split_once('[').map_or(identity, |(base, _)| base);
     Some(match base {
-        SERIALIZE_TRAIT => (SERIALIZE_TRAIT, SERIALIZE_PROVIDER),
-        DESERIALIZE_TRAIT => (DESERIALIZE_TRAIT, DESERIALIZE_PROVIDER),
         ENCODE_TRAIT => (ENCODE_TRAIT, ENCODE_PROVIDER),
         DECODE_TRAIT => (DECODE_TRAIT, DECODE_PROVIDER),
         _ => return None,
@@ -593,5 +590,24 @@ fn meta_visibility(visibility: Visibility) -> MetaVisibility {
     match visibility {
         Visibility::Public => MetaVisibility::Public,
         Visibility::Private => MetaVisibility::Private,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn source_serialization_providers_are_only_the_canonical_traits() {
+        assert_eq!(
+            serialization_provider("serialization.Encode[Json]"),
+            Some((ENCODE_TRAIT, ENCODE_PROVIDER))
+        );
+        assert_eq!(
+            serialization_provider("serialization.Decode[MessagePack]"),
+            Some((DECODE_TRAIT, DECODE_PROVIDER))
+        );
+        assert_eq!(serialization_provider("serialization.Serialize"), None);
+        assert_eq!(serialization_provider("serialization.Deserialize"), None);
     }
 }

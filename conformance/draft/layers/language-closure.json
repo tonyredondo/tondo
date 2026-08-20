@@ -4,7 +4,7 @@
   "edition": "0.1",
   "tasks": [
     "ASYNC-EFFECT-API-001",
-    "ASYNC-IMPLICIT-AWAIT-001",
+    "ASYNC-IMPLICIT-WAIT-001",
     "ASYNC-INFER-001",
     "ASYNC-JOIN-RETURN-001",
     "ASYNC-THREAD-SPAWN-001",
@@ -13,7 +13,7 @@
   ],
   "cases": [
     {
-      "id": "async-contracts",
+      "id": "call-suspension-contracts",
       "surface": "language",
       "requirements": [
         "TL01-11-10-R001",
@@ -46,9 +46,9 @@
         "rust:tondo-compiler:src::driver:structured_child_panics_use_creation_order_after_sibling_cleanup",
         "rust:tondo-compiler:src::hir::check:affine_availability_rejects_sequential_and_call_once_reuse",
         "rust:tondo-compiler:src::hir::check:join_can_be_returned_as_an_explicit_scope_handoff",
-        "rust:tondo-compiler:src::hir::check:source_calls_infer_suspension_and_insert_implicit_awaits",
-        "rust:tondo-compiler:src::hir::check:spawn_rejects_exclusive_loans_but_implicit_await_accepts_them",
-        "rust:tondo-compiler:src::hir::check:suspending_closures_accept_exclusive_parameters_and_await_direct_calls",
+        "rust:tondo-compiler:src::hir::check:source_calls_infer_suspension_and_insert_implicit_waits",
+        "rust:tondo-compiler:src::hir::check:spawn_rejects_exclusive_loans_but_implicit_wait_accepts_them",
+        "rust:tondo-compiler:src::hir::check:suspending_closures_accept_exclusive_parameters_and_implicit_waits",
         "rust:tondo-compiler:src::hir::check:suspending_receiver_traits_imply_send_for_implementations_generics_and_opaques",
         "rust:tondo-compiler:src::process_host:process_output_preserves_separate_streams_and_terminal_combined_bytes",
         "rust:tondo-compiler:src::project:exact_dependency_interfaces_link_and_pin_api_hashes",
@@ -71,7 +71,7 @@
         "rust:tondo-cli:tests::cli:doc_test_publishes_an_ordered_json_array_only_after_all_fences_pass",
         "rust:tondo-cli:tests::cli:doc_test_uses_the_normative_fixture_for_typed_fragments",
         "rust:tondo-compiler:tests::formatter_spec:normative_minimum_corpus_matches_byte_for_byte_and_is_idempotent",
-        "rust:tondo-conformance:tests::spec_contract:canonical_fixture_manifest_fence_has_published_hash"
+        "rust:tondo-conformance:tests::spec_contract:live_fixture_manifest_is_canonical_and_pinned_by_the_live_suite"
       ]
     }
   ]

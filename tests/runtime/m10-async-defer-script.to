@@ -1,8 +1,0 @@
-import std.console
-
-let cleanup = async () {
-    console.print("cleanup\n")
-}
-
-defer await cleanup()
-console.print("body\n")

@@ -990,9 +990,6 @@ impl<'a> TypeLowerer<'a> {
         let statuses = self
             .interner
             .intrinsic(IntrinsicType::Array, vec![exit_status])?;
-        let strings = self
-            .interner
-            .intrinsic(IntrinsicType::Array, vec![string])?;
         let string_map = self
             .interner
             .intrinsic(IntrinsicType::Map, vec![string, string])?;
@@ -3621,14 +3618,7 @@ impl<'a> TypeLowerer<'a> {
         if process_referenced {
             self.push_bootstrap_host_callable(
                 span,
-                HirBootstrapHostFunction::ProcessArgs,
-                Vec::new(),
-                None,
-                strings,
-            )?;
-            self.push_bootstrap_host_callable(
-                span,
-                HirBootstrapHostFunction::ProcessCmd,
+                HirBootstrapHostFunction::ProcessCommand,
                 vec![(string, false)],
                 Some(string),
                 command,
@@ -5156,8 +5146,7 @@ impl<'a> TypeLowerer<'a> {
         node: SyntaxNodeRef<'a>,
         environment: &TypeEnvironment,
     ) -> Result<TypeId, HirError> {
-        let is_async =
-            has_direct_token(node, TokenKind::Async) || has_direct_token(node, TokenKind::Suspends);
+        let is_async = has_direct_token(node, TokenKind::Suspends);
         let mut parameters = Vec::new();
         let mut variadic = None;
         if let Some(list) = node
@@ -5390,29 +5379,27 @@ impl<'a> TypeLowerer<'a> {
                     let self_type = environment
                         .contextual_self
                         .expect("trait environments always declare contextual Self");
-                    let mut methods = site
-                        .node
-                        .child_nodes()
-                        .filter(|child| child.kind() == SyntaxKind::TraitMethod)
-                        .filter_map(|method| {
-                            let name = first_identifier(method)?;
-                            let member = self.resolved.member_at(site.file, name.range())?;
-                            Some(HirTraitMethod {
-                                member: member.id(),
-                                has_default: method
-                                    .child_nodes()
-                                    .any(|child| child.kind() == SyntaxKind::Block),
-                                requires_self_send: (has_direct_token(method, TokenKind::Async)
-                                    || has_direct_token(method, TokenKind::Suspends)
-                                    || self.inferred_suspendible.contains(&(
-                                        site.file,
-                                        method.range().start(),
-                                        method.range().end(),
-                                    )))
-                                    && callable_has_receiver(method),
+                    let mut methods =
+                        site.node
+                            .child_nodes()
+                            .filter(|child| child.kind() == SyntaxKind::TraitMethod)
+                            .filter_map(|method| {
+                                let name = first_identifier(method)?;
+                                let member = self.resolved.member_at(site.file, name.range())?;
+                                Some(HirTraitMethod {
+                                    member: member.id(),
+                                    has_default: method
+                                        .child_nodes()
+                                        .any(|child| child.kind() == SyntaxKind::Block),
+                                    requires_self_send: (has_direct_token(
+                                        method,
+                                        TokenKind::Suspends,
+                                    ) || self.inferred_suspendible.contains(
+                                        &(site.file, method.range().start(), method.range().end()),
+                                    )) && callable_has_receiver(method),
+                                })
                             })
-                        })
-                        .collect::<Vec<_>>();
+                            .collect::<Vec<_>>();
                     methods.sort_by_key(HirTraitMethod::member);
                     HirTypeDeclarationKind::Trait(HirTraitDefinition { self_type, methods })
                 }
@@ -6991,8 +6978,7 @@ impl<'a> TypeLowerer<'a> {
         let name_range = callable_name_range(callable).unwrap_or_else(|| callable.range());
         let generic_arity = environment.next_position;
         let no_suspend = callable_has_no_suspend_attribute(callable);
-        let explicit_suspends = has_direct_token(callable, TokenKind::Async)
-            || has_direct_token(callable, TokenKind::Suspends);
+        let explicit_suspends = has_direct_token(callable, TokenKind::Suspends);
         if explicit_suspends && no_suspend {
             self.emit(
                 file,
@@ -7906,7 +7892,6 @@ fn collect_source_callables<'a>(
                 name: name.to_owned(),
                 has_body: body.is_some(),
                 direct_suspendible: direct_suspendible
-                    || has_direct_token(node, TokenKind::Async)
                     || has_direct_token(node, TokenKind::Suspends),
                 no_suspend,
                 called_names,
@@ -8924,8 +8909,8 @@ mod tests {
                  fn required(self, other: ref Self): T\n\
                  fn create[U](value: U): Self\n\
                  fn defaulted[U](self, value: U): U { value }\n\
-                 async fn poll(self): Bool { true }\n\
-                 async fn version(): Int { 1 }\n\
+                 fn poll(self): Bool suspends { true }\n\
+                 fn version(): Int suspends { 1 }\n\
              }\n\
              trait Empty {}\n",
         );
@@ -9561,7 +9546,7 @@ mod tests {
 
     #[test]
     fn async_functions_retain_the_same_opaque_success_contract() {
-        let (_, _, output) = lower("async fn delayed(): impl Discard ! String { 1 }\n");
+        let (_, _, output) = lower("fn delayed(): impl Discard ! String suspends { 1 }\n");
         assert!(
             output.diagnostics().is_empty(),
             "{:#?}",

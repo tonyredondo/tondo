@@ -7709,11 +7709,18 @@ fn execute(): String {
 
     #[test]
     fn bytecode_preserves_all_closure_effects_and_rederives_async_protocols() {
-        let source = "fn build() {\n\
+        let source = "fn suspendPoint() suspends {}\n\
+                      fn build() {\n\
                           let sync: fn(): Int = () { 1 }\n\
                           let raw: unsafe fn(): Int = unsafe () { 2 }\n\
-                          let later: async fn(): Int = async () { 3 }\n\
-                          let both: async unsafe fn(): Int = async unsafe () { 4 }\n\
+                          let later = (): Int {\n\
+                              suspendPoint()\n\
+                              3\n\
+                          }\n\
+                          let both = unsafe (): Int {\n\
+                              suspendPoint()\n\
+                              4\n\
+                          }\n\
                           _ = sync()\n\
                           _ = sync\n\
                           _ = raw\n\
@@ -7774,9 +7781,11 @@ fn execute(): String {
         let error = bc::verify_bytecode(&forged_call).unwrap_err();
         assert!(error.message().contains("initiation context"), "{error}");
 
-        let stateful = "fn build() {\n\
+        let stateful = "fn suspendPoint() suspends {}\n\
+                        fn build() {\n\
                             var count = 0\n\
-                            let operation = async (): Int {\n\
+                            let operation = (): Int {\n\
+                                suspendPoint()\n\
                                 count += 1\n\
                                 count\n\
                             }\n\
@@ -7812,7 +7821,7 @@ fn execute(): String {
     #[test]
     fn vm_entry_drives_async_bodies_but_rejects_unsafe_roots() {
         let program = lowered(
-            "async fn later(): Int { 1 }\n\
+            "fn later(): Int suspends { 1 }\n\
              unsafe fn raw(): Int { 2 }\n",
         );
         let mut host = RejectingHost;

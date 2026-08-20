@@ -59,7 +59,6 @@ pub(crate) fn observe_semantic(
     for query in &action.queries {
         results.push(run_query(&context, query)?);
     }
-    migrate_frozen_0_1_semantic_results(&action.source, &mut results)?;
     let diagnostics = normative_diagnostics(output.diagnostics())?;
     Ok(Observation {
         compilation,
@@ -74,127 +73,6 @@ pub(crate) fn observe_semantic(
             "queries": results
         }),
     })
-}
-
-/// Keeps the immutable bootstrap observation stable after `Command.start`
-/// became a suspending host operation. The source and expected JSON remain
-/// byte-for-byte historical; only the reference-adapter boundary projects the
-/// two newly inferred implicit awaits back to their original synchronous HIR
-/// shape. Current semantic requests are never rewritten.
-fn migrate_frozen_0_1_semantic_results(
-    action: &tondo_conformance::protocol::WireSourceAction,
-    results: &mut [Value],
-) -> Result<(), String> {
-    const FIXTURE: &str = "suite:semantic-queries/dynamic-terminal-map";
-    if !action
-        .sources
-        .iter()
-        .any(|source| source.source_id == FIXTURE)
-    {
-        return Ok(());
-    }
-
-    for result in results {
-        let Some(expressions) = result.get_mut("expressions").and_then(Value::as_array_mut) else {
-            continue;
-        };
-        let mut index = 0;
-        while index < expressions.len() {
-            if !is_frozen_command_start_function(&expressions[index]) {
-                index += 1;
-                continue;
-            }
-
-            let function = &mut expressions[index];
-            function["type"]["canonical"] =
-                Value::String("fn(Command): ProcessHandle ! ProcessError".into());
-            function["type"]["shape"]["async"] = Value::Bool(false);
-            refresh_expression_id(function)?;
-
-            let call_index = index + 1;
-            let call = expressions.get_mut(call_index).ok_or_else(|| {
-                "frozen Command.start function is not followed by its call".to_owned()
-            })?;
-            if call.get("kind").and_then(Value::as_str) != Some("async-call") {
-                return Err(
-                    "frozen Command.start call no longer has the expected HIR shape".into(),
-                );
-            }
-            call["kind"] = Value::String("call".into());
-            refresh_expression_id(call)?;
-            let call_span = call.get("span").cloned();
-
-            let await_index = call_index + 1;
-            let await_expression = expressions.get(await_index).ok_or_else(|| {
-                "frozen Command.start call is not followed by its inferred await".to_owned()
-            })?;
-            if await_expression.get("kind").and_then(Value::as_str) != Some("await")
-                || await_expression.get("span") != call_span.as_ref()
-            {
-                return Err(
-                    "frozen Command.start inferred await no longer has the expected HIR shape"
-                        .into(),
-                );
-            }
-            expressions.remove(await_index);
-            index = call_index + 1;
-        }
-    }
-    Ok(())
-}
-
-fn is_frozen_command_start_function(expression: &Value) -> bool {
-    expression.get("kind").and_then(Value::as_str) == Some("function")
-        && expression
-            .pointer("/type/canonical")
-            .and_then(Value::as_str)
-            == Some("async fn(Command): ProcessHandle ! ProcessError")
-        && expression
-            .pointer("/type/shape/async")
-            .and_then(Value::as_bool)
-            == Some(true)
-}
-
-fn refresh_expression_id(expression: &mut Value) -> Result<(), String> {
-    let span = expression
-        .get("span")
-        .and_then(Value::as_object)
-        .ok_or_else(|| "semantic expression is missing its span".to_owned())?;
-    let source_id = span
-        .get("source_id")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "semantic expression span is missing source_id".to_owned())?;
-    let module = span
-        .get("module")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "semantic expression span is missing module".to_owned())?;
-    let file = span
-        .get("file")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "semantic expression span is missing file".to_owned())?;
-    let start = span
-        .get("start")
-        .and_then(Value::as_u64)
-        .ok_or_else(|| "semantic expression span is missing start".to_owned())?;
-    let end = span
-        .get("end")
-        .and_then(Value::as_u64)
-        .ok_or_else(|| "semantic expression span is missing end".to_owned())?;
-    let kind = expression
-        .get("kind")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "semantic expression is missing its kind".to_owned())?;
-    let canonical = expression
-        .pointer("/type/canonical")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "semantic expression is missing its canonical type".to_owned())?;
-    let span_key = format!("{source_id}:{module}:{file}:{start}:{end}");
-    let id = stable_id(
-        "expression",
-        [span_key, kind.to_owned(), canonical.to_owned(), "0".into()],
-    );
-    expression["id"] = Value::String(id);
-    Ok(())
 }
 
 fn run_query(context: &QueryContext<'_>, query: &SemanticQuery) -> Result<Value, String> {

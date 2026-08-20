@@ -55,8 +55,7 @@
   "policy": {
     "fast_gate": "fmt + impacted package check/test + changed executable lines + diff mutation",
     "shared_frontier": "full test-gate",
-    "wave_boundary": "full test-gate + quality-gate + conformance proof",
-    "draft_evidence": "target/reliability/fast-gate/",
-    "promotion_proof": "conformance/proofs/"
+    "wave_boundary": "full test-gate + quality-gate + live conformance",
+    "draft_evidence": "target/reliability/fast-gate/"
   }
 }

@@ -43,7 +43,7 @@
     "UTEST-SNAPSHOT-001",
     "UTEST-SPEC-001",
     "UTEST-SUITE-001",
-    "UTEST-SUSPENSION-MIGRATION-001",
+    "UTEST-SUSPENSION-CONTRACT-001",
     "UTEST-VTIME-001"
   ],
   "cases": [
@@ -512,14 +512,14 @@
       ]
     },
     {
-      "id": "testing-46-defer-await",
-      "surface": "defer-await",
+      "id": "testing-46-defer-inference",
+      "surface": "defer-inference",
       "requirements": [
         "TL01-28-1-R001",
         "TL01-28-3-R001"
       ],
       "evidence": [
-        "rust:tondo-compiler:src::test_lower:preserves_environment_domain_errors_async_and_cleanup"
+        "rust:tondo-compiler:src::test_lower:preserves_environment_domain_errors_suspension_and_cleanup"
       ]
     },
     {
@@ -584,15 +584,16 @@
       ]
     },
     {
-      "id": "testing-53-suspension-migration",
+      "id": "testing-53-suspension-contract",
       "surface": "suspension",
       "requirements": [
         "TL01-28-3-R001"
       ],
       "evidence": [
-        "rust:tondo-reference-adapter:tests::suspension_migration:direct_and_explicit_wait_have_the_same_suspends_interface_hash",
-        "rust:tondo-reference-adapter:tests::suspension_migration:runtime_direct_suspension_uses_the_same_interface_observation",
-        "rust:tondo-reference-adapter:tests::suspension_migration:sync_boundaries_reject_direct_and_explicit_suspension_with_e1601"
+        "rust:tondo-reference-adapter:tests::suspension_contracts:direct_wait_has_one_stable_suspends_interface_hash",
+        "rust:tondo-reference-adapter:tests::suspension_contracts:explicit_await_rejects_a_direct_call_with_e1611",
+        "rust:tondo-reference-adapter:tests::suspension_contracts:runtime_direct_suspension_uses_the_same_interface_observation",
+        "rust:tondo-reference-adapter:tests::suspension_contracts:sync_boundaries_reject_inferred_suspension_with_e1601"
       ]
     }
   ]

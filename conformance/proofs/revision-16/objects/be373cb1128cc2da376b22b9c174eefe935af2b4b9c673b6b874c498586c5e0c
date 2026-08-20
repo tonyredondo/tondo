@@ -1,3 +1,0 @@
-fn invalid[T](value: T) {
-    _ = value
-}

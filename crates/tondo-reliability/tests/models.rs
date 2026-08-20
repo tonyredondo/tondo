@@ -436,8 +436,8 @@ fn structured_concurrency_model_covers_loans_terminals_cancellation_and_cleanup(
     let accepted = check(
         "structured-model-valid",
         "\
-async fn observe(value: ref Int): Int { value }
-async fn valid(): Int {
+fn observe(value: ref Int): Int suspends { value }
+fn valid(): Int suspends {
     var value = 1
     scope {
         let pending = spawn observe(ref value)
@@ -454,8 +454,8 @@ async fn valid(): Int {
     let rejected = check(
         "structured-model-invalid",
         "\
-async fn observe(value: ref Int): Int { value }
-async fn invalid(): Int {
+fn observe(value: ref Int): Int suspends { value }
+fn invalid(): Int suspends {
     var value = 1
     scope {
         let pending = spawn observe(ref value)

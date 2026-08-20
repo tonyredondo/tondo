@@ -1,6 +1,6 @@
-async fn observe[T: Discard + Send](value: ref T) {}
+fn observe[T: Discard + Send](value: ref T) suspends {}
 
-async fn invalid[T: Discard + Send](value: T) {
+fn invalid[T: Discard + Send](value: T) suspends {
     scope {
         let pending = spawn observe(ref value)
         await pending

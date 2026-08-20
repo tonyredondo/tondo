@@ -1,24 +1,37 @@
 {
   "format": "tondo-quality-baseline/1",
-  "revision": "UTEST-CLI-BACKEND-001-COV90",
+  "revision": "current-draft",
+  "provenance": {
+    "format": "tondo-quality-provenance/1",
+    "tree_sha256": "5bf40372e99608e8eded1776b482d014ec1091528d97e22c4a4e08bd8e59cf25",
+    "input_set_sha256": "fd280a7ff39432626298da3a8500a050c6957429d38b75070fbd787f64687ad4",
+    "file_count": 761,
+    "flags": [
+      "RUSTUP_TOOLCHAIN=1.93.0-x86_64-unknown-linux-gnu"
+    ],
+    "toolchain": {
+      "rustc": "rustc 1.93.0 (254b59607 2026-01-19)\nbinary: rustc\ncommit-hash: 254b59607d4417e9dffbc307138ae5c86280fe4c\ncommit-date: 2026-01-19\nhost: x86_64-unknown-linux-gnu\nrelease: 1.93.0\nLLVM version: 21.1.8",
+      "cargo": "cargo 1.93.0 (083ac5135 2025-12-15)"
+    }
+  },
   "coverage": {
     "tool": "cargo-llvm-cov 0.8.7",
     "command": "cargo llvm-cov --workspace --all-targets --json --output-path <coverage.json>",
     "global": {
       "lines": {
-        "count": 165251,
-        "covered": 149146,
-        "basis_points": 9025
+        "count": 215989,
+        "covered": 195502,
+        "basis_points": 9051
       },
       "functions": {
-        "count": 11947,
-        "covered": 10326,
-        "basis_points": 8643
+        "count": 15300,
+        "covered": 13269,
+        "basis_points": 8672
       },
       "regions": {
-        "count": 240061,
-        "covered": 212388,
-        "basis_points": 8847
+        "count": 316050,
+        "covered": 280564,
+        "basis_points": 8877
       }
     },
     "risk_scopes": [
@@ -32,19 +45,19 @@
         ],
         "metrics": {
           "lines": {
-            "count": 8758,
-            "covered": 8288,
-            "basis_points": 9463
+            "count": 9074,
+            "covered": 8600,
+            "basis_points": 9477
           },
           "functions": {
-            "count": 690,
-            "covered": 668,
-            "basis_points": 9681
+            "count": 716,
+            "covered": 696,
+            "basis_points": 9720
           },
           "regions": {
-            "count": 14906,
-            "covered": 13455,
-            "basis_points": 9026
+            "count": 15420,
+            "covered": 13946,
+            "basis_points": 9044
           }
         }
       },
@@ -62,19 +75,19 @@
         ],
         "metrics": {
           "lines": {
-            "count": 35341,
-            "covered": 32035,
-            "basis_points": 9064
+            "count": 38435,
+            "covered": 34878,
+            "basis_points": 9074
           },
           "functions": {
-            "count": 2074,
-            "covered": 1964,
-            "basis_points": 9469
+            "count": 2182,
+            "covered": 2069,
+            "basis_points": 9482
           },
           "regions": {
-            "count": 51979,
-            "covered": 44901,
-            "basis_points": 8638
+            "count": 55767,
+            "covered": 48203,
+            "basis_points": 8643
           }
         }
       },
@@ -87,19 +100,19 @@
         ],
         "metrics": {
           "lines": {
-            "count": 30836,
-            "covered": 27419,
-            "basis_points": 8891
+            "count": 32474,
+            "covered": 28965,
+            "basis_points": 8919
           },
           "functions": {
-            "count": 1836,
-            "covered": 1574,
-            "basis_points": 8572
+            "count": 1897,
+            "covered": 1627,
+            "basis_points": 8576
           },
           "regions": {
-            "count": 42164,
-            "covered": 37767,
-            "basis_points": 8957
+            "count": 44396,
+            "covered": 39800,
+            "basis_points": 8964
           }
         }
       },
@@ -111,19 +124,19 @@
         ],
         "metrics": {
           "lines": {
-            "count": 1047,
-            "covered": 1023,
-            "basis_points": 9770
+            "count": 1218,
+            "covered": 1198,
+            "basis_points": 9835
           },
           "functions": {
-            "count": 83,
-            "covered": 76,
-            "basis_points": 9156
+            "count": 93,
+            "covered": 86,
+            "basis_points": 9247
           },
           "regions": {
-            "count": 1195,
-            "covered": 1134,
-            "basis_points": 9489
+            "count": 1372,
+            "covered": 1311,
+            "basis_points": 9555
           }
         }
       },
@@ -135,19 +148,19 @@
         ],
         "metrics": {
           "lines": {
-            "count": 20466,
-            "covered": 18248,
-            "basis_points": 8916
+            "count": 24033,
+            "covered": 21447,
+            "basis_points": 8923
           },
           "functions": {
-            "count": 1312,
-            "covered": 1030,
-            "basis_points": 7850
+            "count": 1453,
+            "covered": 1141,
+            "basis_points": 7852
           },
           "regions": {
-            "count": 26451,
-            "covered": 23137,
-            "basis_points": 8747
+            "count": 31274,
+            "covered": 27474,
+            "basis_points": 8784
           }
         }
       },
@@ -162,19 +175,19 @@
         ],
         "metrics": {
           "lines": {
-            "count": 16132,
-            "covered": 14697,
-            "basis_points": 9110
+            "count": 19053,
+            "covered": 17515,
+            "basis_points": 9192
           },
           "functions": {
-            "count": 1396,
-            "covered": 1030,
-            "basis_points": 7378
+            "count": 1669,
+            "covered": 1279,
+            "basis_points": 7663
           },
           "regions": {
-            "count": 25204,
-            "covered": 22312,
-            "basis_points": 8852
+            "count": 30013,
+            "covered": 26901,
+            "basis_points": 8963
           }
         }
       }
@@ -191,25 +204,12 @@
       "crates/tondo-vm/src/runtime/heap.rs"
     ],
     "total": 30,
-    "caught": 26,
+    "caught": 27,
     "missed": 0,
     "timeout": 0,
-    "unviable": 4,
+    "unviable": 3,
     "score_basis_points": 10000,
     "minimum_score_basis_points": 10000,
     "survivors": []
-  },
-  "provenance": {
-    "format": "tondo-quality-provenance/1",
-    "tree_sha256": "73276fb54e2078d3ac54c18dcee8f140f25a672204d7fbff985e82522121a98a",
-    "input_set_sha256": "3f6d3b33f565eb185006e6f20774ff06638016e8a7ce06fb408b617667f91d0e",
-    "file_count": 678,
-    "flags": [
-      "RUSTUP_TOOLCHAIN=1.93.0-x86_64-unknown-linux-gnu"
-    ],
-    "toolchain": {
-      "rustc": "rustc 1.93.0 (254b59607 2026-01-19)\nbinary: rustc\ncommit-hash: 254b59607d4417e9dffbc307138ae5c86280fe4c\ncommit-date: 2026-01-19\nhost: x86_64-unknown-linux-gnu\nrelease: 1.93.0\nLLVM version: 21.1.8",
-      "cargo": "cargo 1.93.0 (083ac5135 2025-12-15)"
-    }
   }
 }

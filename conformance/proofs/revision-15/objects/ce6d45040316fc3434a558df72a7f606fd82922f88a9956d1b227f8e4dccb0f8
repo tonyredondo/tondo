@@ -1,7 +1,0 @@
-import std.process
-
-async fn main(): !process.ProcessError {
-    let _ = await process
-        .cmd("/definitely/missing/tondo-process-fixture")
-        .output()?
-}

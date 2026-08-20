@@ -48,14 +48,14 @@ pub struct Name(String);
 
 impl Name {
     pub fn new(value: impl AsRef<str>) -> Result<Self, NameError> {
-        Self::new_impl(value, false)
+        Self::new_impl(value)
     }
 
     pub(crate) fn new_path_component(value: impl AsRef<str>) -> Result<Self, NameError> {
-        Self::new_impl(value, true)
+        Self::new_impl(value)
     }
 
-    fn new_impl(value: impl AsRef<str>, allow_async: bool) -> Result<Self, NameError> {
+    fn new_impl(value: impl AsRef<str>) -> Result<Self, NameError> {
         let value = value.as_ref();
         if value.is_empty() {
             return Err(NameError::Empty);
@@ -64,8 +64,7 @@ impl Name {
         if normalized == "_" {
             return Err(NameError::Discard);
         }
-        if TokenKind::from_keyword(&normalized).is_some() && !(allow_async && normalized == "async")
-        {
+        if TokenKind::from_keyword(&normalized).is_some() {
             return Err(NameError::Keyword(normalized));
         }
         let mut characters = normalized.chars();
@@ -312,6 +311,10 @@ pub struct ModuleId {
 }
 
 impl ModuleId {
+    pub(crate) fn new(package: PackageId, path: ModulePath) -> Self {
+        Self { package, path }
+    }
+
     pub fn package(&self) -> &PackageId {
         &self.package
     }
@@ -529,10 +532,7 @@ impl PackageGraph {
         self.packages
             .get(package)
             .is_some_and(|node| node.modules.contains(path))
-            .then(|| ModuleId {
-                package: package.clone(),
-                path: path.clone(),
-            })
+            .then(|| ModuleId::new(package.clone(), path.clone()))
     }
 
     pub fn module_for_file(
@@ -606,10 +606,7 @@ impl PackageGraph {
         )
         .expect("validated names form a valid module path");
         self.module(package, &module_path).ok_or_else(|| {
-            let module = ModuleId {
-                package: package.clone(),
-                path: module_path,
-            };
+            let module = ModuleId::new(package.clone(), module_path);
             if package == &self.standard && self.standard.as_str() == "toolchain:std:0.1-bootstrap"
             {
                 let capability = match module.path().as_str() {
@@ -1021,6 +1018,7 @@ mod tests {
         assert!(matches!(Name::new("import"), Err(NameError::Keyword(_))));
         assert!(matches!(Name::new("suite"), Err(NameError::Keyword(_))));
         assert!(matches!(Name::new("test"), Err(NameError::Keyword(_))));
+        assert_eq!(Name::new("async").unwrap().as_str(), "async");
         assert!(matches!(
             Name::new("not valid!"),
             Err(NameError::InvalidIdentifier(_))

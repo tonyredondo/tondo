@@ -1,14 +1,14 @@
-async fn observe(value: ref Int): Int {
+fn observe(value: ref Int): Int suspends {
     value
 }
 
-async fn immediate(value: Int): Int {
+fn immediate(value: Int): Int suspends {
     value
 }
 
-async fn noop() {}
+fn noop() suspends {}
 
-async fn valid() {
+fn valid() suspends {
     scope {
         var value = 1
         let first = spawn observe(ref value)
@@ -20,7 +20,7 @@ async fn valid() {
     }
 }
 
-async fn outerJoinMayCrossAnInnerScope() {
+fn outerJoinMayCrossAnInnerScope() suspends {
     scope {
         let outer = spawn immediate(1)
         let carried = scope {
@@ -30,7 +30,7 @@ async fn outerJoinMayCrossAnInnerScope() {
     }
 }
 
-async fn wrappedJoinReleasesItsStructuredBorrow() {
+fn wrappedJoinReleasesItsStructuredBorrow() suspends {
     scope {
         var value = 1
         let wrapped = some(spawn observe(ref value))
@@ -45,7 +45,7 @@ async fn wrappedJoinReleasesItsStructuredBorrow() {
     }
 }
 
-async fn unitJoinMayBeAwaitedAsAStatement() {
+fn unitJoinMayBeAwaitedAsAStatement() suspends {
     scope {
         let pending = spawn noop()
         await pending

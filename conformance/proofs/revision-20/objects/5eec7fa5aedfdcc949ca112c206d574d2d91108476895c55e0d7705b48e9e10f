@@ -1,5 +1,0 @@
-fn invalid() {
-    for value in 42 {
-        ()
-    }
-}

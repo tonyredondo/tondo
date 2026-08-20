@@ -155,7 +155,7 @@ jq -n \
           elif ($has_contract_matrix | not) then
             {status: "partial", reason: "the owner has implementation tests, but no per-owner executable test matrix is declared", refs: ($owner.tests | unique)}
           elif $id == "std.async" then
-            {status: "partial", reason: "the implementation proof is historical kernel evidence; MODEL/TEST/FUZZ for the inferred ABI is pending", refs: ($owner.tests | unique)}
+            {status: "partial", reason: "the internal kernel evidence does not yet cover MODEL/TEST/FUZZ for the inferred ABI", refs: ($owner.tests | unique)}
           else
             {status: "partial", reason: "owner tests exist; per-leaf MODEL/TEST/FUZZ links and fuzz coverage remain to be coordinated by STD-TEST-001", refs: ($owner.tests | unique)}
           end;

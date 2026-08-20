@@ -30,7 +30,7 @@ jq -e '
   and .surface.inference_by_name == false
   and .surface.effect_in_interface_and_abi == true
   and .surface.direct_call_waits == true
-  and .surface.explicit_await_direct_call == "optional"
+  and .surface.explicit_await_direct_call == "forbidden"
   and .surface.explicit_await_handle == "required"
   and .surface.nosuspend_annotations == ["@sync", "@nosuspend"]
   and .types == ["Join[T, E]", "Waiter[T, E]", "Completer[T, E]", "AlreadyCompleted", "AsyncIterator[T]"]
@@ -53,6 +53,7 @@ jq -e '
   and .iterator.lazy == true
   and .iterator.backpressure == "one-next-at-a-time"
   and .iterator.close == "exactly-once-idempotent-before-terminal-outcome"
+  and .iterator.explicit_for_await == "forbidden"
   and .iterator.channel_dependency == false
   and .collect.limit == "finite-non-negative-maximum-elements"
   and .collect.zero == "empty-array-and-close"
@@ -61,7 +62,7 @@ jq -e '
   and .collect.error_type == "CollectionError"
   and .collect.close_on == ["success", "error", "cancel", "unwind"]
   and .implementation.status == "verified"
-  and .implementation.routes == ["direct-mir-await", "spawn-hir-mir-bytecode-vm"]
+  and .implementation.routes == ["implicit-direct-wait", "spawn-hir-mir-bytecode-vm"]
   and .implementation.cancellation == "structured-scope-cooperative"
   and .implementation.close == "owner-state-released-on-terminal-outcome"
   and .implementation.capacity_failure == "CollectionError-without-partial-publication"

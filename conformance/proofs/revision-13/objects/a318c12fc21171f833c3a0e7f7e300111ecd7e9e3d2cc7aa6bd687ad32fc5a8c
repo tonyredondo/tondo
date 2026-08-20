@@ -1,6 +1,0 @@
-fn invalid(value: Bool): Int {
-    match value {
-        some(_) => 1
-        _ => 0
-    }
-}

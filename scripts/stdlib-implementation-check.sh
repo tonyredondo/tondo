@@ -37,7 +37,7 @@ jq -e '
     "TONDO_TEST_TARGET=linux-x86_64 bash scripts/test-gate.sh"
   ]
   and .conformance_lineage == "conformance/draft/manifest.json"
-  and .historical_manifest_immutable == true
+  and .live_manifest_regenerated == true
   and .coverage_floor_basis_points == 9025
   and .release_gate == "STD-0.1 publication checklist remains separate and open"
 ' "$manifest" >/dev/null

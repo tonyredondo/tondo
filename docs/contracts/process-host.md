@@ -1,4 +1,4 @@
-# Bootstrap `std.process` contract
+# `std.process` contract
 
 **Status:** implemented normative M8 contract for the `tondo-vm-hosted`
 target.
@@ -6,14 +6,14 @@ target.
 ## Boundary
 
 `Command` and `Pipeline` are language intrinsics. `std.process` is the only
-bootstrap standard module that can construct or execute them. `std.bytes` owns
+standard module that can construct or execute them. `std.bytes` owns
 the canonical immutable `Bytes` value; process output exposes that type and
 decodes it through the language-level `String(Bytes)` conversion. The module is
 present only when the selected target advertises the registered `process`
 capability; importing it without that capability is rejected with `E1008`
 before HIR construction or runtime execution.
 
-The bootstrap surface is:
+The canonical surface is:
 
 ```tondo
 opaque ExitStatus
@@ -22,9 +22,7 @@ opaque ProcessError
 opaque ProcessExitError
 opaque terminal ProcessHandle
 
-fn args(): Array[String]
 fn command(program: String, arguments: ...String): Command
-// `cmd` is retained only as an internal bootstrap compatibility alias.
 fn shell(text: String): Command
 fn Command.mergeStderr(self): Command
 fn Pipeline.mergeStderr(self): Pipeline
@@ -59,7 +57,7 @@ failures. `ProcessExitError` represents a completed `check` for which at least
 one stage was unsuccessful and retains the complete `ProcessOutput`.
 `std.bytes.Utf8Error` represents strict UTF-8 decoding failure.
 
-Source annotations qualify these source-less bootstrap types through the
+Source annotations qualify these source-less intrinsic types through the
 module, for example `process.ProcessError`. A `check` result is a normal
 discriminated union and supports arms such as
 `err(process.ProcessError(_))` and
@@ -71,10 +69,6 @@ discriminated union and supports arms such as
 parsing, tokenization, globbing, interpolation, environment expansion, or
 execution. Every argument reaches the operating-system process API with the
 same sequence of Unicode scalar values received from its Tondo `String`.
-
-The compiler may still accept `process.cmd` while bootstrap fixtures migrate,
-but it lowers to the same typed command plan and is not part of the public
-stdlib surface.
 
 `shell` is the only shell constructor. It creates one explicit stage using the
 platform shell (`/bin/sh -c` on Unix and `cmd.exe /C` on Windows). No other
@@ -168,7 +162,7 @@ that an aborted VM run cannot leave children or zombies behind.
 
 ## CLI arguments
 
-For `tondo run script.to -- arg...`, `process.args()` returns only the values
-after `--`, in order and converted from the platform's UTF-8 command-line
-representation. `fmt` and `check` reject program arguments. Invalid non-UTF-8
-arguments are usage errors at the CLI boundary rather than lossy strings.
+For `tondo run script.to -- arg...`, `std.env.snapshot().arguments()` returns
+only the values after `--`, in order and represented as `env.Value.Text`.
+`fmt` and `check` reject program arguments. Invalid non-UTF-8 arguments are
+usage errors at the CLI boundary rather than lossy strings.

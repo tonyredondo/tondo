@@ -2,34 +2,23 @@
   "format": "tondo-conformance-draft-lineage",
   "lineage": "tondo-draft",
   "edition": "0.1",
-  "revision": 33,
   "state": "open",
-  "parent": {
-    "path": "conformance/draft/history/92439c3bbfd39398a4677ff7f44d366d2a57820875ca6ab55a5b9a66df1cda58.json",
-    "sha256": "92439c3bbfd39398a4677ff7f44d366d2a57820875ca6ab55a5b9a66df1cda58"
-  },
-  "baseline": {
-    "manifest": {
-      "path": "conformance/0.1/manifest.json",
-      "sha256": "6bb8fe5b151ef73f1d49b3d432a51ec18c7a634cf4c9d014eea81d6a351c6ffb"
-    },
-    "specification_snapshot": {
-      "path": "conformance/baseline/TONDO_LANGUAGE_SPEC.md",
-      "sha256": "ded4e17ab57836d032e5fb9e5be5dba03fc83ac6ff74cee90ab1bb7f8e5c7084"
-    }
+  "suite": {
+    "path": "conformance/0.1/manifest.json",
+    "sha256": "76393e0d387c2d543e5c9e43a0b4e215b0451dbb6ef03bf7b41b9db7986d1090"
   },
   "specifications": [
     {
       "path": "TONDO_LANGUAGE_SPEC.md",
-      "sha256": "b436cb475e53c51eda008a6914fb58bae698d63e3de6fb84df5833a0e2c4114d"
+      "sha256": "e45a42cb8a4d8b21111c39cfb475a9081dfc59fabd83b62f1cff19ce1aa18c48"
     },
     {
       "path": "TONDO_TESTING_SPEC.md",
-      "sha256": "26f4f30e5dceeee52b62d2dc601690cd30171f65e433468c94232839c803362d"
+      "sha256": "6ec8f12894eedf5d882bfcddf293bf137256e1f7070f00c08a422fec79f1cc85"
     },
     {
       "path": "TONDO_TOOLCHAIN_SPEC.md",
-      "sha256": "96217930e139a03d251b4ee424461ae66847cf76ae79961605f79c395fae4e5a"
+      "sha256": "b92a402928bebfa3776a9a9bfc9085b262b1289dfae4c828694e5b9f2469460d"
     }
   ],
   "case_layers": [
@@ -37,12 +26,10 @@
       "id": "finalization",
       "manifest": {
         "path": "conformance/draft/layers/finalization.json",
-        "sha256": "3b59e7fcfa27bd03d3c0b8e03e1cbe5ee2b5b120551ad478ddaa153207f34dfd"
+        "sha256": "4889c02a346d3e9b63086edfae9d75c95c27d47db509792a27622d1aac1c0d3f"
       },
       "tasks": [
         "ASYNC-DEFER-IMPL-001",
-        "CONF-SEAL-001",
-        "CONF-SEAL-FINAL-001",
         "META-REPRO-001",
         "UTEST-PROJECTS-001"
       ],
@@ -68,11 +55,11 @@
       "id": "language-closure",
       "manifest": {
         "path": "conformance/draft/layers/language-closure.json",
-        "sha256": "a29a1377daa225a23f355da141e9cb5799399751be98b8251767bd3856b42030"
+        "sha256": "4d1b913ab76f1629906962dc3ea95fdea1b50a6fd10dbf122812ca0e4d2e869e"
       },
       "tasks": [
         "ASYNC-EFFECT-API-001",
-        "ASYNC-IMPLICIT-AWAIT-001",
+        "ASYNC-IMPLICIT-WAIT-001",
         "ASYNC-INFER-001",
         "ASYNC-JOIN-RETURN-001",
         "ASYNC-THREAD-SPAWN-001",
@@ -151,7 +138,7 @@
       "id": "testing",
       "manifest": {
         "path": "conformance/draft/layers/testing.json",
-        "sha256": "182236372e80ca193bee38475257fe82ecf4853e939f3b99bd33ac1e65d72a58"
+        "sha256": "9d745bbd9d967a2c96c88ecb5987a186396a1b9186695f2b71e13960c8d6b502"
       },
       "tasks": [
         "UTEST-ARTIFACT-001",
@@ -194,7 +181,7 @@
         "UTEST-SNAPSHOT-001",
         "UTEST-SPEC-001",
         "UTEST-SUITE-001",
-        "UTEST-SUSPENSION-MIGRATION-001",
+        "UTEST-SUSPENSION-CONTRACT-001",
         "UTEST-VTIME-001"
       ],
       "requirements": [
@@ -205,5 +192,7 @@
       ]
     }
   ],
-  "pending_tasks": []
+  "pending_tasks": [
+    "CONF-SEAL-FINAL-001"
+  ]
 }
