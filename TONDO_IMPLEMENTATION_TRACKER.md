@@ -523,7 +523,7 @@ necesaria; la fragmentación del workspace no.
 | **M4 — Genéricos, traits y closures** | Sistema estático completo | Completado |
 | **M5 — Ownership, préstamos y memoria** | Modelo de valores completo | Completado |
 | **M6 — Colecciones, números y texto** | Gate G3: alpha utilizable | Completado |
-| **M7 — Async y concurrencia estructurada** | Tasks conformes + selección núcleo | Suspensión/tasks completadas; `select`/`selectable` pendientes |
+| **M7 — Async y concurrencia estructurada** | Tasks conformes + selección núcleo | Suspensión/tasks completadas; frontend `select`/`selectable` cerrado, semántica/lowering/runtime pendientes |
 | **M8 — Scripts y procesos** | Experiencia de scripting | Completado |
 | **M9 — Unsafe, targets y toolchain** | Gate G4: preview 0.1 | Completado |
 | **M10 — Corpus ejecutable** | Conformidad viva pre-`derive` | Completado |
@@ -2369,12 +2369,18 @@ adapters de streams y el worker OS nativo permanecen como leaves independientes.
   ejecutable vive en `tests/runtime/m11-std-async-iter-001.to`, el driver y
   `scripts/stdlib-async-test.sh`; el ABI de `AsyncIterator[T]` no cambia.
 
-- [ ] **ASYNC-SELECT-FRONTEND-001 — Implementar la sintaxis canónica de
+- [x] **ASYNC-SELECT-FRONTEND-001 — Implementar la sintaxis canónica de
   `select`.** Reservar `select`/`selectable`, añadir CST/AST lossless, gramática
   de brazos `let pattern = operation => body`, `else` único y final, recovery,
   formatter estable y doc-test pseudocode. Eliminar cualquier camino o fixture
   que modele selección mediante `async.select`, builders o valores `Case`; no
-  conservar compatibilidad del borrador descartado.
+  conservar compatibilidad del borrador descartado. Evidencia: el lexer reserva
+  ambos keywords; el parser conserva `SelectExpr`, `SelectArm` y
+  `SelectElseArm` en el CST/AST lossless, recupera brazos mal formados y no
+  crea ninguna ruta de selección basada en `async.select`; el formatter emite
+  brazos canónicos por línea. Los
+  tests unitarios cubren la forma con binding, `await Join`, control-transfer,
+  `selectable` en firmas/cierres, recovery, reparseo e idempotencia de tokens.
 
 - [ ] **ASYNC-SELECT-SEMA-001 — Tipar `selectable` y los brazos.** Incorporar la
   capacidad a tipos de función, traits, closures, interfaces y hash ABI;

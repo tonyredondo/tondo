@@ -312,7 +312,7 @@ impl Parser<'_> {
         if self.at(TokenKind::Colon) {
             self.parse_outcome_annotation(true)?;
         }
-        self.eat(TokenKind::Suspends);
+        self.eat_suspend_effect();
         self.expect_line_end()?;
         self.finish();
         Ok(())
@@ -486,7 +486,7 @@ impl Parser<'_> {
         if self.at(TokenKind::Colon) {
             self.parse_outcome_annotation(false)?;
         }
-        self.eat(TokenKind::Suspends);
+        self.eat_suspend_effect();
         if self.at(TokenKind::LBrace) {
             self.parse_block()?;
             self.expect_line_end()?;
@@ -601,7 +601,7 @@ impl Parser<'_> {
         if self.at(TokenKind::Colon) {
             self.parse_outcome_annotation(false)?;
         }
-        self.eat(TokenKind::Suspends);
+        self.eat_suspend_effect();
         self.parse_block()?;
         self.expect_line_end()?;
         self.finish();
@@ -630,7 +630,7 @@ impl Parser<'_> {
         if self.at(TokenKind::Colon) {
             self.parse_outcome_annotation(true)?;
         }
-        self.eat(TokenKind::Suspends);
+        self.eat_suspend_effect();
         self.parse_block()?;
         self.expect_line_end()?;
         self.finish();
@@ -1069,7 +1069,7 @@ impl Parser<'_> {
         if self.at(TokenKind::Colon) {
             self.parse_outcome_annotation(false)?;
         }
-        self.eat(TokenKind::Suspends);
+        self.eat_suspend_effect();
         self.finish();
         Ok(())
     }
@@ -1180,6 +1180,10 @@ impl Parser<'_> {
             TokenKind::For => self.parse_for_stmt(),
             _ => self.parse_expression_or_assignment_statement(false),
         }
+    }
+
+    fn eat_suspend_effect(&mut self) -> bool {
+        self.eat_any(&[TokenKind::Suspends, TokenKind::Selectable])
     }
 
     fn parse_binding_decl(&mut self) -> ParseResult {
@@ -1660,6 +1664,10 @@ impl Parser<'_> {
             }
             TokenKind::Match => {
                 self.parse_match_expression()?;
+                ExprShape::closed()
+            }
+            TokenKind::Select => {
+                self.parse_select_expression()?;
                 ExprShape::closed()
             }
             TokenKind::Unsafe if self.nth(1) == TokenKind::LParen => {
@@ -2164,6 +2172,10 @@ impl Parser<'_> {
                 self.parse_match_expression()?;
                 Ok(ExprShape::closed())
             }
+            TokenKind::Select => {
+                self.parse_select_expression()?;
+                Ok(ExprShape::closed())
+            }
             TokenKind::Unsafe if self.nth(1) == TokenKind::LParen => {
                 self.parse_closure_expression()?;
                 Ok(ExprShape::closed())
@@ -2548,6 +2560,7 @@ impl Parser<'_> {
         if self.at(TokenKind::Colon) {
             self.parse_outcome_annotation(false)?;
         }
+        self.eat_suspend_effect();
         self.parse_block()?;
         self.finish();
         Ok(())
@@ -2792,6 +2805,78 @@ impl Parser<'_> {
         }
         self.expect(TokenKind::RBrace)?;
         self.finish();
+        Ok(())
+    }
+
+    fn parse_select_expression(&mut self) -> ParseResult {
+        self.start(SyntaxKind::SelectExpr)?;
+        self.expect(TokenKind::Select)?;
+        self.expect(TokenKind::LBrace)?;
+        self.eat_newlines();
+
+        let mut arm_count = 0_u32;
+        let mut saw_else = false;
+        while !self.at_any(&[TokenKind::RBrace, TokenKind::Eof]) {
+            if self.at(TokenKind::Else) {
+                if saw_else {
+                    self.syntax_error("select allows only one else arm")?;
+                }
+                self.parse_select_else_arm()?;
+                saw_else = true;
+            } else {
+                if saw_else {
+                    self.syntax_error("the select else arm must be last")?;
+                }
+                self.parse_select_arm()?;
+                arm_count = arm_count.saturating_add(1);
+            }
+        }
+        if arm_count == 0 {
+            self.syntax_error("select requires at least one operational arm")?;
+        }
+        self.expect(TokenKind::RBrace)?;
+        self.finish();
+        Ok(())
+    }
+
+    fn parse_select_arm(&mut self) -> ParseResult {
+        self.start(SyntaxKind::SelectArm)?;
+        if self.eat(TokenKind::Let) {
+            self.parse_pattern()?;
+            self.expect(TokenKind::Eq)?;
+        }
+        self.parse_expression()?;
+        self.expect(TokenKind::FatArrow)?;
+        self.parse_select_arm_body()?;
+        self.finish_select_arm_separator()?;
+        self.finish();
+        Ok(())
+    }
+
+    fn parse_select_else_arm(&mut self) -> ParseResult {
+        self.start(SyntaxKind::SelectElseArm)?;
+        self.expect(TokenKind::Else)?;
+        self.expect(TokenKind::FatArrow)?;
+        self.parse_select_arm_body()?;
+        self.finish_select_arm_separator()?;
+        self.finish();
+        Ok(())
+    }
+
+    fn parse_select_arm_body(&mut self) -> ParseResult {
+        match self.current() {
+            TokenKind::Return => self.parse_control_transfer(SyntaxKind::ReturnStmt, true),
+            TokenKind::Fail => self.parse_control_transfer(SyntaxKind::FailStmt, false),
+            TokenKind::Break => self.parse_control_transfer(SyntaxKind::BreakStmt, true),
+            TokenKind::Continue => self.parse_control_transfer(SyntaxKind::ContinueStmt, true),
+            _ => self.parse_expression(),
+        }
+    }
+
+    fn finish_select_arm_separator(&mut self) -> ParseResult {
+        if !self.eat(TokenKind::Comma) {
+            self.expect_line_end()?;
+        }
         Ok(())
     }
 
@@ -3289,8 +3374,10 @@ impl Parser<'_> {
         };
 
         if self.nth(after_parameters) == TokenKind::LBrace
-            || (self.nth(after_parameters) == TokenKind::Suspends
-                && self.nth(after_parameters + 1) == TokenKind::LBrace)
+            || (matches!(
+                self.nth(after_parameters),
+                TokenKind::Suspends | TokenKind::Selectable
+            ) && self.nth(after_parameters + 1) == TokenKind::LBrace)
         {
             return true;
         }
@@ -4911,6 +4998,204 @@ fn edit(
                 .iter()
                 .any(|node| node.kind() == SyntaxKind::TupleAssignmentPattern)
         );
+    }
+
+    #[test]
+    fn select_expression_has_lossless_typed_arms_and_selectable_effects() {
+        let source = br#"fn receive(): Int selectable {
+    let result = select {
+        let value = receiver.receive() => consume(value)
+        await join => join
+        else => fallback()
+    }
+    result
+}
+fn closure(): Int {
+    let operation = (): Int selectable { 1 }
+    operation()
+}
+"#;
+        let (sources, file, parsed) = parse_source(source, ParseMode::Module);
+        assert!(
+            parsed.diagnostics().is_empty(),
+            "{:#?}",
+            parsed.diagnostics()
+        );
+        assert_eq!(
+            parsed
+                .cst()
+                .tokens()
+                .iter()
+                .filter(|token| token.kind() == TokenKind::Selectable)
+                .count(),
+            2
+        );
+        assert_eq!(
+            parsed
+                .cst()
+                .nodes()
+                .iter()
+                .filter(|node| node.kind() == SyntaxKind::SelectExpr)
+                .count(),
+            1
+        );
+        assert_eq!(
+            parsed
+                .cst()
+                .nodes()
+                .iter()
+                .filter(|node| node.kind() == SyntaxKind::SelectArm)
+                .count(),
+            2
+        );
+        assert_eq!(
+            parsed
+                .cst()
+                .nodes()
+                .iter()
+                .filter(|node| node.kind() == SyntaxKind::SelectElseArm)
+                .count(),
+            1
+        );
+        let function = parsed
+            .cst()
+            .root_node()
+            .child_nodes()
+            .find(|node| node.kind() == SyntaxKind::FunctionDecl)
+            .expect("function declaration");
+        let body = function
+            .child_nodes()
+            .find(|node| node.kind() == SyntaxKind::Block)
+            .expect("function body");
+        let binding = body
+            .child_nodes()
+            .find(|node| node.kind() == SyntaxKind::BindingDecl)
+            .expect("select binding");
+        let select = binding
+            .child_nodes()
+            .find_map(crate::syntax::ast::SelectExpr::cast)
+            .expect("select has a typed AST view");
+        assert_eq!(
+            select
+                .syntax()
+                .child_nodes()
+                .filter(|node| node.kind() == SyntaxKind::SelectArm)
+                .count(),
+            2
+        );
+        assert_lossless(&sources, file, &parsed, source);
+    }
+
+    #[test]
+    fn select_formatter_is_canonical_and_reparseable() {
+        let source = br#"fn choose(): Int {
+    let value = select { receive() => 1, else => 0, }
+    value
+}
+"#;
+        let (sources, file, parsed) = parse_source(source, ParseMode::Module);
+        assert!(
+            parsed.diagnostics().is_empty(),
+            "{:#?}",
+            parsed.diagnostics()
+        );
+        let formatted = format_parsed(&sources, file, &parsed)
+            .expect("select source formats")
+            .into_bytes();
+        let formatted_text = String::from_utf8(formatted.clone()).expect("formatter emits UTF-8");
+        assert!(formatted_text.contains("select {"));
+        assert!(formatted_text.contains("else => 0"));
+        assert!(!formatted_text.contains("async.select"));
+        let (reparsed_sources, reparsed_file, reparsed) =
+            parse_source(&formatted, ParseMode::Module);
+        assert!(
+            reparsed.diagnostics().is_empty(),
+            "formatted source: {formatted_text:?}; diagnostics: {:#?}",
+            reparsed.diagnostics()
+        );
+        let reformatted = format_parsed(&reparsed_sources, reparsed_file, &reparsed)
+            .expect("reparsed select source formats")
+            .into_bytes();
+        assert_eq!(reformatted, formatted, "select formatter must be stable");
+        let significant = |parsed: &Parsed| {
+            parsed
+                .cst()
+                .token_kinds_in_tree_order()
+                .into_iter()
+                .filter(|kind| !kind.is_trivia() && !matches!(kind, TokenKind::Nl | TokenKind::Eof))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(significant(&parsed), significant(&reparsed));
+    }
+
+    #[test]
+    fn select_arm_transfers_and_spilled_operands_parse() {
+        let source = br#"fn transfers(): Int {
+    let arithmetic = 1 + select {
+        2 => 2,
+
+        else => 0
+    }
+    let returned = select {
+        1 => return 1
+        else => return 0
+    }
+    for item in values {
+        select {
+            item => break
+            else => continue
+        }
+    }
+    let failed = select {
+        1 => fail 1
+        else => 0
+    }
+    arithmetic
+}
+"#;
+        let (sources, file, parsed) = parse_source(source, ParseMode::Module);
+        assert!(
+            parsed.diagnostics().is_empty(),
+            "{:#?}",
+            parsed.diagnostics()
+        );
+        let count = |kind| {
+            parsed
+                .cst()
+                .nodes()
+                .iter()
+                .filter(|node| node.kind() == kind)
+                .count()
+        };
+        assert_eq!(count(SyntaxKind::SelectExpr), 4);
+        assert_eq!(count(SyntaxKind::ReturnStmt), 2);
+        assert_eq!(count(SyntaxKind::FailStmt), 1);
+        assert_eq!(count(SyntaxKind::BreakStmt), 1);
+        assert_eq!(count(SyntaxKind::ContinueStmt), 1);
+        assert_lossless(&sources, file, &parsed, source);
+    }
+
+    #[test]
+    fn select_shape_recovery_preserves_following_source() {
+        for source in [
+            &b"select { }\nfn after(): Int { 1 }\n"[..],
+            &b"select { else => 0\nvalue => 1\nelse => 2\n }\nfn after(): Int { 1 }\n"[..],
+            &b"select { 1 => 1\nelse => 0\nelse => 2\n }\nfn after(): Int { 1 }\n"[..],
+            &b"select { 1 => 1\nelse => 0\n2 => 2\n }\nfn after(): Int { 1 }\n"[..],
+            &b"select { value 1\n }\nfn after(): Int { 1 }\n"[..],
+        ] {
+            let (sources, file, parsed) = parse_source(source, ParseMode::Script);
+            assert!(!parsed.diagnostics().is_empty(), "{source:?}");
+            assert!(
+                parsed
+                    .cst()
+                    .nodes()
+                    .iter()
+                    .any(|node| node.kind() == SyntaxKind::FunctionDecl),
+                "following declaration was not recovered: {source:?}"
+            );
+            assert_lossless(&sources, file, &parsed, source);
+        }
     }
 
     #[test]

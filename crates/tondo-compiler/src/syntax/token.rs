@@ -67,6 +67,8 @@ pub enum TokenKind {
     Ref,
     Return,
     Scope,
+    Select,
+    Selectable,
     SelfKw,
     Some,
     Spawn,
@@ -182,6 +184,8 @@ impl TokenKind {
                 | Self::Ref
                 | Self::Return
                 | Self::Scope
+                | Self::Select
+                | Self::Selectable
                 | Self::SelfKw
                 | Self::Some
                 | Self::Spawn
@@ -232,6 +236,8 @@ impl TokenKind {
             "ref" => Self::Ref,
             "return" => Self::Return,
             "scope" => Self::Scope,
+            "select" => Self::Select,
+            "selectable" => Self::Selectable,
             "self" => Self::SelfKw,
             "some" => Self::Some,
             "spawn" => Self::Spawn,

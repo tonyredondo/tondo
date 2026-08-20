@@ -279,7 +279,22 @@ mod tests {
                 .filter(|entry| entry.outcome == "absent")
                 .map(|entry| entry.requirement.as_str())
                 .collect::<Vec<_>>(),
-            ["TC01-10-1-4-R001"]
+            [
+                "TC01-10-1-4-R001",
+                "TL01-10-18-R001",
+                "TL01-11-10-R002",
+                "TL01-11-10-R003",
+                "TL01-11-10-R004",
+                "TL01-11-11-R001",
+                "TL01-11-12-2-R001",
+                "TL01-11-12-2-R002",
+                "TL01-12-3-R002",
+                "TL01-16-14-R005",
+                "TL01-23-12-R001",
+                "TL01-23-18-R001",
+                "TL01-23-19-R002",
+                "TL01-ASYNC-Y-CONCURRENCIA-ESTRUCTURADA-R001",
+            ]
         );
     }
 

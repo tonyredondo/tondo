@@ -185,6 +185,9 @@ define_ast_nodes! {
     IfExpr => IfExpr,
     MatchExpr => MatchExpr,
     MatchArm => MatchArm,
+    SelectExpr => SelectExpr,
+    SelectArm => SelectArm,
+    SelectElseArm => SelectElseArm,
     ClosureExpr => ClosureExpr,
     ClosureParameterList => ClosureParameterList,
     ClosureParameter => ClosureParameter,
@@ -329,6 +332,7 @@ define_ast_sum! {
     Expression {
         If(IfExpr),
         Match(MatchExpr),
+        Select(SelectExpr),
         Closure(ClosureExpr),
         Binary(BinaryExpr),
         Prefix(PrefixExpr),

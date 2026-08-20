@@ -61,18 +61,18 @@
           "status": "complete",
           "reason": null,
           "signatures": [
-            "std.async:31",
-            "std.async:32",
-            "std.async:33",
-            "std.async:34",
-            "std.async:35"
+            "std.async:35",
+            "std.async:36",
+            "std.async:37",
+            "std.async:38",
+            "std.async:39"
           ],
           "verified_signatures": [
-            "std.async:31",
-            "std.async:32",
-            "std.async:33",
-            "std.async:34",
-            "std.async:35"
+            "std.async:35",
+            "std.async:36",
+            "std.async:37",
+            "std.async:38",
+            "std.async:39"
           ],
           "refs": [
             "testing/stdlib-public-api.json"
@@ -219,44 +219,44 @@
           "status": "complete",
           "reason": null,
           "signatures": [
-            "std.collections:136",
-            "std.collections:137",
-            "std.collections:138",
-            "std.collections:139",
-            "std.collections:140",
             "std.collections:141",
             "std.collections:142",
+            "std.collections:143",
             "std.collections:144",
             "std.collections:145",
             "std.collections:146",
             "std.collections:147",
-            "std.collections:148",
             "std.collections:149",
+            "std.collections:150",
             "std.collections:151",
             "std.collections:152",
             "std.collections:153",
             "std.collections:154",
-            "std.collections:155"
+            "std.collections:156",
+            "std.collections:157",
+            "std.collections:158",
+            "std.collections:159",
+            "std.collections:160"
           ],
           "verified_signatures": [
-            "std.collections:136",
-            "std.collections:137",
-            "std.collections:138",
-            "std.collections:139",
-            "std.collections:140",
             "std.collections:141",
             "std.collections:142",
+            "std.collections:143",
             "std.collections:144",
             "std.collections:145",
             "std.collections:146",
             "std.collections:147",
-            "std.collections:148",
             "std.collections:149",
+            "std.collections:150",
             "std.collections:151",
             "std.collections:152",
             "std.collections:153",
             "std.collections:154",
-            "std.collections:155"
+            "std.collections:156",
+            "std.collections:157",
+            "std.collections:158",
+            "std.collections:159",
+            "std.collections:160"
           ],
           "refs": [
             "testing/stdlib-public-api.json"
@@ -580,18 +580,18 @@
           "status": "complete",
           "reason": null,
           "signatures": [
-            "std.format:237",
-            "std.format:238",
-            "std.format:239",
-            "std.format:240",
-            "std.format:241"
+            "std.format:242",
+            "std.format:243",
+            "std.format:244",
+            "std.format:245",
+            "std.format:246"
           ],
           "verified_signatures": [
-            "std.format:237",
-            "std.format:238",
-            "std.format:239",
-            "std.format:240",
-            "std.format:241"
+            "std.format:242",
+            "std.format:243",
+            "std.format:244",
+            "std.format:245",
+            "std.format:246"
           ],
           "refs": [
             "testing/stdlib-public-api.json"
@@ -757,16 +757,16 @@
           "status": "complete",
           "reason": null,
           "signatures": [
-            "std.io:267",
-            "std.io:268",
-            "std.io:269",
-            "std.io:270"
+            "std.io:272",
+            "std.io:273",
+            "std.io:274",
+            "std.io:275"
           ],
           "verified_signatures": [
-            "std.io:267",
-            "std.io:268",
-            "std.io:269",
-            "std.io:270"
+            "std.io:272",
+            "std.io:273",
+            "std.io:274",
+            "std.io:275"
           ],
           "refs": [
             "testing/stdlib-public-api.json"
@@ -832,16 +832,16 @@
           "status": "complete",
           "reason": null,
           "signatures": [
-            "std.iter:161",
-            "std.iter:162",
-            "std.iter:163",
-            "std.iter:164"
+            "std.iter:166",
+            "std.iter:167",
+            "std.iter:168",
+            "std.iter:169"
           ],
           "verified_signatures": [
-            "std.iter:161",
-            "std.iter:162",
-            "std.iter:163",
-            "std.iter:164"
+            "std.iter:166",
+            "std.iter:167",
+            "std.iter:168",
+            "std.iter:169"
           ],
           "refs": [
             "testing/stdlib-public-api.json"
@@ -1030,26 +1030,26 @@
           "status": "complete",
           "reason": null,
           "signatures": [
-            "std.math:217",
-            "std.math:218",
-            "std.math:219",
-            "std.math:220",
-            "std.math:221",
             "std.math:222",
             "std.math:223",
             "std.math:224",
-            "std.math:225"
+            "std.math:225",
+            "std.math:226",
+            "std.math:227",
+            "std.math:228",
+            "std.math:229",
+            "std.math:230"
           ],
           "verified_signatures": [
-            "std.math:217",
-            "std.math:218",
-            "std.math:219",
-            "std.math:220",
-            "std.math:221",
             "std.math:222",
             "std.math:223",
             "std.math:224",
-            "std.math:225"
+            "std.math:225",
+            "std.math:226",
+            "std.math:227",
+            "std.math:228",
+            "std.math:229",
+            "std.math:230"
           ],
           "refs": [
             "testing/stdlib-public-api.json"
@@ -1860,11 +1860,6 @@
           "status": "complete",
           "reason": null,
           "signatures": [
-            "std.text:101",
-            "std.text:102",
-            "std.text:103",
-            "std.text:104",
-            "std.text:105",
             "std.text:106",
             "std.text:107",
             "std.text:108",
@@ -1874,14 +1869,14 @@
             "std.text:112",
             "std.text:113",
             "std.text:114",
-            "std.text:118"
+            "std.text:115",
+            "std.text:116",
+            "std.text:117",
+            "std.text:118",
+            "std.text:119",
+            "std.text:123"
           ],
           "verified_signatures": [
-            "std.text:101",
-            "std.text:102",
-            "std.text:103",
-            "std.text:104",
-            "std.text:105",
             "std.text:106",
             "std.text:107",
             "std.text:108",
@@ -1891,7 +1886,12 @@
             "std.text:112",
             "std.text:113",
             "std.text:114",
-            "std.text:118"
+            "std.text:115",
+            "std.text:116",
+            "std.text:117",
+            "std.text:118",
+            "std.text:119",
+            "std.text:123"
           ],
           "refs": [
             "testing/stdlib-public-api.json"
@@ -1963,24 +1963,24 @@
           "status": "complete",
           "reason": null,
           "signatures": [
-            "std.time:40",
-            "std.time:41",
             "std.time:42",
             "std.time:43",
+            "std.time:44",
             "std.time:45",
-            "std.time:46",
             "std.time:47",
-            "std.time:48"
+            "std.time:48",
+            "std.time:49",
+            "std.time:50"
           ],
           "verified_signatures": [
-            "std.time:40",
-            "std.time:41",
             "std.time:42",
             "std.time:43",
+            "std.time:44",
             "std.time:45",
-            "std.time:46",
             "std.time:47",
-            "std.time:48"
+            "std.time:48",
+            "std.time:49",
+            "std.time:50"
           ],
           "refs": [
             "testing/stdlib-public-api.json"

@@ -1430,7 +1430,7 @@ El compilador debe aceptar el caso.
 
         assert!(language.iter().all(|requirement| matches!(
             requirement.status.as_str(),
-            "covered" | "stdlib-pending" | "target-not-applicable"
+            "covered" | "toolchain-limit" | "stdlib-pending" | "target-not-applicable"
         )));
 
         let audit = crate::gap_audit::GapAudit::load(&root.join(crate::gap_audit::PATH)).unwrap();
@@ -1485,6 +1485,7 @@ El compilador debe aceptar el caso.
                 "TL01-11-12-1-R001",
                 "TL01-11-12-1-R002",
                 "TL01-16-14-R002",
+                "TL01-16-14-R004",
                 "TL01-26-5-R001",
                 "TL01-26-5-R002",
                 "TL01-26-6-R001",

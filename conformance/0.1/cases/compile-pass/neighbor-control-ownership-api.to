@@ -2,7 +2,7 @@ pub type Pair = {
     left: Int
     right: Int
 }
-fn select(value: Bool): Int {
+fn choose(value: Bool): Int {
     match value {
         true => 1
         false => 0

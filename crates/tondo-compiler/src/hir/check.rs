@@ -2809,6 +2809,7 @@ impl<'a> ExpressionChecker<'a> {
             AstExpression::Block(_) => self.check_block(file, node, expected, context),
             AstExpression::If(_) => self.check_if(file, node, expected, context),
             AstExpression::Match(_) => self.check_match(file, node, expected, context),
+            AstExpression::Select(_) => self.check_select_frontend(file, node),
             AstExpression::Prefix(_) => self.check_prefix(file, node, expected, context),
             AstExpression::Binary(_) => self.check_binary(file, node, expected, context),
             AstExpression::Postfix(_) => self.check_postfix(file, node, expected, context),
@@ -2821,6 +2822,22 @@ impl<'a> ExpressionChecker<'a> {
             AstExpression::Scope(_) => self.check_async_scope(file, node, expected, context),
             AstExpression::Unsafe(_) => self.check_unsafe_block(file, node, expected, context),
         }
+    }
+
+    fn check_select_frontend(
+        &mut self,
+        file: FileId,
+        node: SyntaxNodeRef<'_>,
+    ) -> Result<HirExpressionId, HirError> {
+        self.complete = false;
+        self.emit(
+            self.sources.span(file, node.range())?,
+            "E1613",
+            "select syntax is available; semantic checking is pending",
+            Vec::new(),
+            None,
+        )?;
+        self.recovery_expression(file, node.range())
     }
 
     fn check_unsafe_block(
@@ -23125,6 +23142,24 @@ mod tests {
                 .expressions()
                 .any(|expression| matches!(expression.kind(), HirExpressionKind::Await { .. }))
         );
+    }
+
+    #[test]
+    fn select_frontend_reports_pending_semantic_boundary() {
+        let (_, _, output) = check(
+            "fn run(): Int {\n\
+                 select {\n\
+                     1 => 1\n\
+                     else => 0\n\
+                 }\n\
+             }\n",
+        );
+        assert_eq!(codes(&output), ["E1613"], "{:#?}", output.diagnostics());
+        assert_eq!(
+            output.diagnostics()[0].message(),
+            "select syntax is available; semantic checking is pending"
+        );
+        assert!(!output.is_complete());
     }
 
     #[test]

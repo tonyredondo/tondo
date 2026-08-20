@@ -424,7 +424,8 @@ impl<'a> Formatter<'a> {
             | SyntaxKind::ImplDecl
             | SyntaxKind::DeriveDecl
             | SyntaxKind::SuiteBlock
-            | SyntaxKind::MatchExpr => self.format_forced_braces(node),
+            | SyntaxKind::MatchExpr
+            | SyntaxKind::SelectExpr => self.format_forced_braces(node),
             SyntaxKind::RecordLikeExpr
             | SyntaxKind::RecordUpdateBody
             | SyntaxKind::RecordPattern => self.format_flexible_record(node),
@@ -447,7 +448,9 @@ impl<'a> Formatter<'a> {
             SyntaxKind::FunctionTypeItem => self.format_function_type_item(node),
             SyntaxKind::BinaryExpr => self.format_binary(node),
             SyntaxKind::Assignment => self.format_assignment(node),
-            SyntaxKind::MatchArm => self.format_match_arm(node),
+            SyntaxKind::MatchArm | SyntaxKind::SelectArm | SyntaxKind::SelectElseArm => {
+                self.format_match_arm(node)
+            }
             SyntaxKind::PostfixExpr => self.format_postfix(node),
             SyntaxKind::PathExpr => self.format_path_expression(node),
             SyntaxKind::PrefixExpr => self.format_prefix(node),

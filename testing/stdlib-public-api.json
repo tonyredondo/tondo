@@ -791,10 +791,10 @@
   ],
   "rows": [
     {
-      "id": "std.async:31",
+      "id": "std.async:35",
       "owner": "std.async",
       "contract": "docs/contracts/stdlib-async.md",
-      "line": 31,
+      "line": 35,
       "signature": "pub fn oneshot[T, E](): (Waiter[T, E], Completer[T, E])",
       "symbol": "std.async.oneshot",
       "operation": "oneshot",
@@ -839,10 +839,10 @@
       "status": "verified"
     },
     {
-      "id": "std.async:32",
+      "id": "std.async:36",
       "owner": "std.async",
       "contract": "docs/contracts/stdlib-async.md",
-      "line": 32,
+      "line": 36,
       "signature": "pub fn Waiter.wait(var self): T ! E suspends",
       "symbol": "std.async.Waiter.wait",
       "operation": "wait",
@@ -887,10 +887,10 @@
       "status": "verified"
     },
     {
-      "id": "std.async:33",
+      "id": "std.async:37",
       "owner": "std.async",
       "contract": "docs/contracts/stdlib-async.md",
-      "line": 33,
+      "line": 37,
       "signature": "pub fn Completer.complete(var self, value: T): Unit ! AlreadyCompleted",
       "symbol": "std.async.Completer.complete",
       "operation": "complete",
@@ -935,10 +935,10 @@
       "status": "verified"
     },
     {
-      "id": "std.async:34",
+      "id": "std.async:38",
       "owner": "std.async",
       "contract": "docs/contracts/stdlib-async.md",
-      "line": 34,
+      "line": 38,
       "signature": "pub fn Completer.fail(var self, error: E): Unit ! AlreadyCompleted",
       "symbol": "std.async.Completer.fail",
       "operation": "fail",
@@ -983,10 +983,10 @@
       "status": "verified"
     },
     {
-      "id": "std.async:35",
+      "id": "std.async:39",
       "owner": "std.async",
       "contract": "docs/contracts/stdlib-async.md",
-      "line": 35,
+      "line": 39,
       "signature": "pub fn Completer.cancel(var self): Unit ! AlreadyCompleted",
       "symbol": "std.async.Completer.cancel",
       "operation": "cancel",
@@ -1031,10 +1031,10 @@
       "status": "verified"
     },
     {
-      "id": "std.collections:136",
+      "id": "std.collections:141",
       "owner": "std.collections",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 136,
+      "line": 141,
       "signature": "pub fn Array.new[T](): Array[T]",
       "symbol": "std.collections.Array.new",
       "operation": "new",
@@ -1081,10 +1081,10 @@
       "status": "verified"
     },
     {
-      "id": "std.collections:137",
+      "id": "std.collections:142",
       "owner": "std.collections",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 137,
+      "line": 142,
       "signature": "pub fn Array.withCapacity[T](capacity: Int): Array[T] ! CollectionError",
       "symbol": "std.collections.Array.withCapacity",
       "operation": "withCapacity",
@@ -1131,10 +1131,10 @@
       "status": "verified"
     },
     {
-      "id": "std.collections:138",
+      "id": "std.collections:143",
       "owner": "std.collections",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 138,
+      "line": 143,
       "signature": "pub fn Array.length[T](self): Int",
       "symbol": "std.collections.Array.length",
       "operation": "length",
@@ -1181,10 +1181,10 @@
       "status": "verified"
     },
     {
-      "id": "std.collections:139",
+      "id": "std.collections:144",
       "owner": "std.collections",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 139,
+      "line": 144,
       "signature": "pub fn Array.get[T](self, index: Int): T?",
       "symbol": "std.collections.Array.get",
       "operation": "get",
@@ -1231,10 +1231,10 @@
       "status": "verified"
     },
     {
-      "id": "std.collections:140",
+      "id": "std.collections:145",
       "owner": "std.collections",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 140,
+      "line": 145,
       "signature": "pub fn Array.slice[T](self, start: Int, end: Int): Array[T] ! CollectionError",
       "symbol": "std.collections.Array.slice",
       "operation": "slice",
@@ -1281,10 +1281,10 @@
       "status": "verified"
     },
     {
-      "id": "std.collections:141",
+      "id": "std.collections:146",
       "owner": "std.collections",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 141,
+      "line": 146,
       "signature": "pub fn Array.push[T](var self, value: T): Unit ! CollectionError",
       "symbol": "std.collections.Array.push",
       "operation": "push",
@@ -1331,10 +1331,10 @@
       "status": "verified"
     },
     {
-      "id": "std.collections:142",
+      "id": "std.collections:147",
       "owner": "std.collections",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 142,
+      "line": 147,
       "signature": "pub fn Array.pop[T](var self): T?",
       "symbol": "std.collections.Array.pop",
       "operation": "pop",
@@ -1381,10 +1381,10 @@
       "status": "verified"
     },
     {
-      "id": "std.collections:144",
+      "id": "std.collections:149",
       "owner": "std.collections",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 144,
+      "line": 149,
       "signature": "pub fn Map.new[K: Key, V](): Map[K, V]",
       "symbol": "std.collections.Map.new",
       "operation": "new",
@@ -1431,10 +1431,10 @@
       "status": "verified"
     },
     {
-      "id": "std.collections:145",
+      "id": "std.collections:150",
       "owner": "std.collections",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 145,
+      "line": 150,
       "signature": "pub fn Map.get[K: Key, V](self, key: K): V?",
       "symbol": "std.collections.Map.get",
       "operation": "get",
@@ -1481,10 +1481,10 @@
       "status": "verified"
     },
     {
-      "id": "std.collections:146",
+      "id": "std.collections:151",
       "owner": "std.collections",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 146,
+      "line": 151,
       "signature": "pub fn Map.insert[K: Key, V](var self, key: K, value: V): V?",
       "symbol": "std.collections.Map.insert",
       "operation": "insert",
@@ -1531,10 +1531,10 @@
       "status": "verified"
     },
     {
-      "id": "std.collections:147",
+      "id": "std.collections:152",
       "owner": "std.collections",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 147,
+      "line": 152,
       "signature": "pub fn Map.remove[K: Key, V](var self, key: K): V?",
       "symbol": "std.collections.Map.remove",
       "operation": "remove",
@@ -1581,10 +1581,10 @@
       "status": "verified"
     },
     {
-      "id": "std.collections:148",
+      "id": "std.collections:153",
       "owner": "std.collections",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 148,
+      "line": 153,
       "signature": "pub fn Map.contains[K: Key, V](self, key: K): Bool",
       "symbol": "std.collections.Map.contains",
       "operation": "contains",
@@ -1631,10 +1631,10 @@
       "status": "verified"
     },
     {
-      "id": "std.collections:149",
+      "id": "std.collections:154",
       "owner": "std.collections",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 149,
+      "line": 154,
       "signature": "pub fn Map.entries[K: Key, V](self): Iterator[(K, V)]",
       "symbol": "std.collections.Map.entries",
       "operation": "entries",
@@ -1681,10 +1681,10 @@
       "status": "verified"
     },
     {
-      "id": "std.collections:151",
+      "id": "std.collections:156",
       "owner": "std.collections",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 151,
+      "line": 156,
       "signature": "pub fn Set.new[K: Key](): Set[K]",
       "symbol": "std.collections.Set.new",
       "operation": "new",
@@ -1731,10 +1731,10 @@
       "status": "verified"
     },
     {
-      "id": "std.collections:152",
+      "id": "std.collections:157",
       "owner": "std.collections",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 152,
+      "line": 157,
       "signature": "pub fn Set.insert[K: Key](var self, value: K): Bool",
       "symbol": "std.collections.Set.insert",
       "operation": "insert",
@@ -1781,10 +1781,10 @@
       "status": "verified"
     },
     {
-      "id": "std.collections:153",
+      "id": "std.collections:158",
       "owner": "std.collections",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 153,
+      "line": 158,
       "signature": "pub fn Set.remove[K: Key](var self, value: K): Bool",
       "symbol": "std.collections.Set.remove",
       "operation": "remove",
@@ -1831,10 +1831,10 @@
       "status": "verified"
     },
     {
-      "id": "std.collections:154",
+      "id": "std.collections:159",
       "owner": "std.collections",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 154,
+      "line": 159,
       "signature": "pub fn Set.contains[K: Key](self, value: K): Bool",
       "symbol": "std.collections.Set.contains",
       "operation": "contains",
@@ -1881,10 +1881,10 @@
       "status": "verified"
     },
     {
-      "id": "std.collections:155",
+      "id": "std.collections:160",
       "owner": "std.collections",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 155,
+      "line": 160,
       "signature": "pub fn Set.values[K: Key](self): Iterator[K]",
       "symbol": "std.collections.Set.values",
       "operation": "values",
@@ -3069,10 +3069,10 @@
       "status": "verified"
     },
     {
-      "id": "std.format:237",
+      "id": "std.format:242",
       "owner": "std.format",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 237,
+      "line": 242,
       "signature": "pub fn Builder.new(): Builder",
       "symbol": "std.format.Builder.new",
       "operation": "new",
@@ -3117,10 +3117,10 @@
       "status": "verified"
     },
     {
-      "id": "std.format:238",
+      "id": "std.format:243",
       "owner": "std.format",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 238,
+      "line": 243,
       "signature": "pub fn Builder.append(var self, value: String): Unit ! FormatError",
       "symbol": "std.format.Builder.append",
       "operation": "append",
@@ -3165,10 +3165,10 @@
       "status": "verified"
     },
     {
-      "id": "std.format:239",
+      "id": "std.format:244",
       "owner": "std.format",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 239,
+      "line": 244,
       "signature": "pub fn Builder.finish(var self): String ! FormatError",
       "symbol": "std.format.Builder.finish",
       "operation": "finish",
@@ -3213,10 +3213,10 @@
       "status": "verified"
     },
     {
-      "id": "std.format:240",
+      "id": "std.format:245",
       "owner": "std.format",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 240,
+      "line": 245,
       "signature": "pub fn format[T: Display](value: T): String ! FormatError",
       "symbol": "std.format.format",
       "operation": "format",
@@ -3261,10 +3261,10 @@
       "status": "verified"
     },
     {
-      "id": "std.format:241",
+      "id": "std.format:246",
       "owner": "std.format",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 241,
+      "line": 246,
       "signature": "pub fn join[T: Display](values: Array[T], separator: String): String ! FormatError",
       "symbol": "std.format.join",
       "operation": "join",
@@ -3981,10 +3981,10 @@
       "status": "verified"
     },
     {
-      "id": "std.io:267",
+      "id": "std.io:272",
       "owner": "std.io",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 267,
+      "line": 272,
       "signature": "pub fn defaultLimits(): IoLimits",
       "symbol": "std.io.defaultLimits",
       "operation": "defaultLimits",
@@ -4029,10 +4029,10 @@
       "status": "verified"
     },
     {
-      "id": "std.io:268",
+      "id": "std.io:273",
       "owner": "std.io",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 268,
+      "line": 273,
       "signature": "pub fn limits(maxBytes: Int, maxRead: Int): IoLimits ! IoError",
       "symbol": "std.io.limits",
       "operation": "limits",
@@ -4077,10 +4077,10 @@
       "status": "verified"
     },
     {
-      "id": "std.io:269",
+      "id": "std.io:274",
       "owner": "std.io",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 269,
+      "line": 274,
       "signature": "pub fn readAll[R: Reader](var reader: R, limits: IoLimits): Bytes ! IoError suspends",
       "symbol": "std.io.readAll",
       "operation": "readAll",
@@ -4125,10 +4125,10 @@
       "status": "verified"
     },
     {
-      "id": "std.io:270",
+      "id": "std.io:275",
       "owner": "std.io",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 270,
+      "line": 275,
       "signature": "pub fn writeAll(var writer: Writer, data: Bytes): Unit ! IoError suspends",
       "symbol": "std.io.writeAll",
       "operation": "writeAll",
@@ -4173,10 +4173,10 @@
       "status": "verified"
     },
     {
-      "id": "std.iter:161",
+      "id": "std.iter:166",
       "owner": "std.iter",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 161,
+      "line": 166,
       "signature": "pub fn Iterator.map[T, U](self, fn(T): U): Iterator[U]",
       "symbol": "std.iter.Iterator.map",
       "operation": "map",
@@ -4222,10 +4222,10 @@
       "status": "verified"
     },
     {
-      "id": "std.iter:162",
+      "id": "std.iter:167",
       "owner": "std.iter",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 162,
+      "line": 167,
       "signature": "pub fn Iterator.filter[T](self, fn(T): Bool): Iterator[T]",
       "symbol": "std.iter.Iterator.filter",
       "operation": "filter",
@@ -4271,10 +4271,10 @@
       "status": "verified"
     },
     {
-      "id": "std.iter:163",
+      "id": "std.iter:168",
       "owner": "std.iter",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 163,
+      "line": 168,
       "signature": "pub fn Iterator.take[T](self, count: Int): Iterator[T]",
       "symbol": "std.iter.Iterator.take",
       "operation": "take",
@@ -4320,10 +4320,10 @@
       "status": "verified"
     },
     {
-      "id": "std.iter:164",
+      "id": "std.iter:169",
       "owner": "std.iter",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 164,
+      "line": 169,
       "signature": "pub fn Iterator.collect[T](self): Array[T] ! CollectionError",
       "symbol": "std.iter.Iterator.collect",
       "operation": "collect",
@@ -5544,10 +5544,10 @@
       "status": "verified"
     },
     {
-      "id": "std.math:217",
+      "id": "std.math:222",
       "owner": "std.math",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 217,
+      "line": 222,
       "signature": "pub fn floor(value: Float): Float",
       "symbol": "std.math.floor",
       "operation": "floor",
@@ -5592,10 +5592,10 @@
       "status": "verified"
     },
     {
-      "id": "std.math:218",
+      "id": "std.math:223",
       "owner": "std.math",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 218,
+      "line": 223,
       "signature": "pub fn ceil(value: Float): Float",
       "symbol": "std.math.ceil",
       "operation": "ceil",
@@ -5640,10 +5640,10 @@
       "status": "verified"
     },
     {
-      "id": "std.math:219",
+      "id": "std.math:224",
       "owner": "std.math",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 219,
+      "line": 224,
       "signature": "pub fn round(value: Float): Float",
       "symbol": "std.math.round",
       "operation": "round",
@@ -5688,10 +5688,10 @@
       "status": "verified"
     },
     {
-      "id": "std.math:220",
+      "id": "std.math:225",
       "owner": "std.math",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 220,
+      "line": 225,
       "signature": "pub fn truncate(value: Float): Float",
       "symbol": "std.math.truncate",
       "operation": "truncate",
@@ -5736,10 +5736,10 @@
       "status": "verified"
     },
     {
-      "id": "std.math:221",
+      "id": "std.math:226",
       "owner": "std.math",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 221,
+      "line": 226,
       "signature": "pub fn sqrt(value: Float): Float ! MathError",
       "symbol": "std.math.sqrt",
       "operation": "sqrt",
@@ -5784,10 +5784,10 @@
       "status": "verified"
     },
     {
-      "id": "std.math:222",
+      "id": "std.math:227",
       "owner": "std.math",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 222,
+      "line": 227,
       "signature": "pub fn fma(a: Float, b: Float, c: Float): Float",
       "symbol": "std.math.fma",
       "operation": "fma",
@@ -5832,10 +5832,10 @@
       "status": "verified"
     },
     {
-      "id": "std.math:223",
+      "id": "std.math:228",
       "owner": "std.math",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 223,
+      "line": 228,
       "signature": "pub fn abs(value: Float): Float",
       "symbol": "std.math.abs",
       "operation": "abs",
@@ -5880,10 +5880,10 @@
       "status": "verified"
     },
     {
-      "id": "std.math:224",
+      "id": "std.math:229",
       "owner": "std.math",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 224,
+      "line": 229,
       "signature": "pub fn min(a: Float, b: Float): Float",
       "symbol": "std.math.min",
       "operation": "min",
@@ -5928,10 +5928,10 @@
       "status": "verified"
     },
     {
-      "id": "std.math:225",
+      "id": "std.math:230",
       "owner": "std.math",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 225,
+      "line": 230,
       "signature": "pub fn max(a: Float, b: Float): Float",
       "symbol": "std.math.max",
       "operation": "max",
@@ -10188,10 +10188,10 @@
       "status": "verified"
     },
     {
-      "id": "std.text:101",
+      "id": "std.text:106",
       "owner": "std.text",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 101,
+      "line": 106,
       "signature": "pub fn String.empty(): String",
       "symbol": "std.text.String.empty",
       "operation": "empty",
@@ -10236,10 +10236,10 @@
       "status": "verified"
     },
     {
-      "id": "std.text:102",
+      "id": "std.text:107",
       "owner": "std.text",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 102,
+      "line": 107,
       "signature": "pub fn String.fromChars(chars: Array[Char]): String ! TextError",
       "symbol": "std.text.String.fromChars",
       "operation": "fromChars",
@@ -10284,10 +10284,10 @@
       "status": "verified"
     },
     {
-      "id": "std.text:103",
+      "id": "std.text:108",
       "owner": "std.text",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 103,
+      "line": 108,
       "signature": "pub fn String.length(self): Int",
       "symbol": "std.text.String.length",
       "operation": "length",
@@ -10332,10 +10332,10 @@
       "status": "verified"
     },
     {
-      "id": "std.text:104",
+      "id": "std.text:109",
       "owner": "std.text",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 104,
+      "line": 109,
       "signature": "pub fn String.byteLength(self): Int",
       "symbol": "std.text.String.byteLength",
       "operation": "byteLength",
@@ -10380,10 +10380,10 @@
       "status": "verified"
     },
     {
-      "id": "std.text:105",
+      "id": "std.text:110",
       "owner": "std.text",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 105,
+      "line": 110,
       "signature": "pub fn String.get(self, index: Int): Char?",
       "symbol": "std.text.String.get",
       "operation": "get",
@@ -10428,10 +10428,10 @@
       "status": "verified"
     },
     {
-      "id": "std.text:106",
+      "id": "std.text:111",
       "owner": "std.text",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 106,
+      "line": 111,
       "signature": "pub fn String.slice(self, start: Int, end: Int): String ! TextError",
       "symbol": "std.text.String.slice",
       "operation": "slice",
@@ -10476,10 +10476,10 @@
       "status": "verified"
     },
     {
-      "id": "std.text:107",
+      "id": "std.text:112",
       "owner": "std.text",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 107,
+      "line": 112,
       "signature": "pub fn String.contains(self, needle: String): Bool",
       "symbol": "std.text.String.contains",
       "operation": "contains",
@@ -10524,10 +10524,10 @@
       "status": "verified"
     },
     {
-      "id": "std.text:108",
+      "id": "std.text:113",
       "owner": "std.text",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 108,
+      "line": 113,
       "signature": "pub fn String.startsWith(self, prefix: String): Bool",
       "symbol": "std.text.String.startsWith",
       "operation": "startsWith",
@@ -10572,10 +10572,10 @@
       "status": "verified"
     },
     {
-      "id": "std.text:109",
+      "id": "std.text:114",
       "owner": "std.text",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 109,
+      "line": 114,
       "signature": "pub fn String.endsWith(self, suffix: String): Bool",
       "symbol": "std.text.String.endsWith",
       "operation": "endsWith",
@@ -10620,10 +10620,10 @@
       "status": "verified"
     },
     {
-      "id": "std.text:110",
+      "id": "std.text:115",
       "owner": "std.text",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 110,
+      "line": 115,
       "signature": "pub fn String.find(self, needle: String): Int?",
       "symbol": "std.text.String.find",
       "operation": "find",
@@ -10668,10 +10668,10 @@
       "status": "verified"
     },
     {
-      "id": "std.text:111",
+      "id": "std.text:116",
       "owner": "std.text",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 111,
+      "line": 116,
       "signature": "pub fn String.replace(self, old: String, new: String): String",
       "symbol": "std.text.String.replace",
       "operation": "replace",
@@ -10716,10 +10716,10 @@
       "status": "verified"
     },
     {
-      "id": "std.text:112",
+      "id": "std.text:117",
       "owner": "std.text",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 112,
+      "line": 117,
       "signature": "pub fn String.trim(self): String",
       "symbol": "std.text.String.trim",
       "operation": "trim",
@@ -10764,10 +10764,10 @@
       "status": "verified"
     },
     {
-      "id": "std.text:113",
+      "id": "std.text:118",
       "owner": "std.text",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 113,
+      "line": 118,
       "signature": "pub fn String.toLowerAscii(self): String",
       "symbol": "std.text.String.toLowerAscii",
       "operation": "toLowerAscii",
@@ -10812,10 +10812,10 @@
       "status": "verified"
     },
     {
-      "id": "std.text:114",
+      "id": "std.text:119",
       "owner": "std.text",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 114,
+      "line": 119,
       "signature": "pub fn String.toUpperAscii(self): String",
       "symbol": "std.text.String.toUpperAscii",
       "operation": "toUpperAscii",
@@ -10860,10 +10860,10 @@
       "status": "verified"
     },
     {
-      "id": "std.text:118",
+      "id": "std.text:123",
       "owner": "std.text",
       "contract": "docs/contracts/stdlib-core.md",
-      "line": 118,
+      "line": 123,
       "signature": "pub fn String.chars(self): String",
       "symbol": "std.text.String.chars",
       "operation": "chars",
@@ -10908,10 +10908,10 @@
       "status": "verified"
     },
     {
-      "id": "std.time:40",
+      "id": "std.time:42",
       "owner": "std.time",
       "contract": "docs/contracts/stdlib-time.md",
-      "line": 40,
+      "line": 42,
       "signature": "pub fn now(): Instant ! ClockError",
       "symbol": "std.time.now",
       "operation": "now",
@@ -10956,10 +10956,10 @@
       "status": "verified"
     },
     {
-      "id": "std.time:41",
+      "id": "std.time:43",
       "owner": "std.time",
       "contract": "docs/contracts/stdlib-time.md",
-      "line": 41,
+      "line": 43,
       "signature": "pub fn resolution(): Duration ! ClockError",
       "symbol": "std.time.resolution",
       "operation": "resolution",
@@ -11004,10 +11004,10 @@
       "status": "verified"
     },
     {
-      "id": "std.time:42",
+      "id": "std.time:44",
       "owner": "std.time",
       "contract": "docs/contracts/stdlib-time.md",
-      "line": 42,
+      "line": 44,
       "signature": "pub fn deadline(after: Duration): Instant ! ClockError",
       "symbol": "std.time.deadline",
       "operation": "deadline",
@@ -11052,10 +11052,10 @@
       "status": "verified"
     },
     {
-      "id": "std.time:43",
+      "id": "std.time:45",
       "owner": "std.time",
       "contract": "docs/contracts/stdlib-time.md",
-      "line": 43,
+      "line": 45,
       "signature": "pub fn sleep(delay: Duration): Unit ! ClockError suspends",
       "symbol": "std.time.sleep",
       "operation": "sleep",
@@ -11100,10 +11100,10 @@
       "status": "verified"
     },
     {
-      "id": "std.time:45",
+      "id": "std.time:47",
       "owner": "std.time",
       "contract": "docs/contracts/stdlib-time.md",
-      "line": 45,
+      "line": 47,
       "signature": "pub fn Timer.after(delay: Duration): Timer ! ClockError",
       "symbol": "std.time.Timer.after",
       "operation": "after",
@@ -11148,10 +11148,10 @@
       "status": "verified"
     },
     {
-      "id": "std.time:46",
+      "id": "std.time:48",
       "owner": "std.time",
       "contract": "docs/contracts/stdlib-time.md",
-      "line": 46,
+      "line": 48,
       "signature": "pub fn Timer.at(deadline: Instant): Timer ! ClockError",
       "symbol": "std.time.Timer.at",
       "operation": "at",
@@ -11196,10 +11196,10 @@
       "status": "verified"
     },
     {
-      "id": "std.time:47",
+      "id": "std.time:49",
       "owner": "std.time",
       "contract": "docs/contracts/stdlib-time.md",
-      "line": 47,
+      "line": 49,
       "signature": "pub fn Timer.wait(self): Unit ! ClockError suspends",
       "symbol": "std.time.Timer.wait",
       "operation": "wait",
@@ -11244,10 +11244,10 @@
       "status": "verified"
     },
     {
-      "id": "std.time:48",
+      "id": "std.time:50",
       "owner": "std.time",
       "contract": "docs/contracts/stdlib-time.md",
-      "line": 48,
+      "line": 50,
       "signature": "pub fn Timer.cancel(self): Unit",
       "symbol": "std.time.Timer.cancel",
       "operation": "cancel",
