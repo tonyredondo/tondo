@@ -7,7 +7,7 @@ se han publicado
 
 **Edición de lenguaje compatible:** Tondo 0.1
 
-**Última actualización:** 2026-08-07
+**Última actualización:** 2026-08-20
 
 ---
 
@@ -854,7 +854,7 @@ el efecto se infiere y el cierre ocurre al salir. Si una fuente implementa
 también `Iterator[T]`, el protocolo síncrono tiene precedencia; no existe
 `for await`. La materialización solo ocurre mediante
 `collect(limit:)`, con un límite finito y sin publicar arrays parciales. La
-adaptación de `std.channel.Channel` pertenece a STD-0.1B y no es una
+adaptación de `std.channel.Receiver` pertenece a STD-0.1B y no es una
 dependencia de esta superficie A.
 
 La superficie nominal mínima de `std.async` es:
@@ -889,7 +889,51 @@ La superficie ejecutable y sus siete requisitos verificables están indexados en
 [`testing/stdlib-async.json`](./testing/stdlib-async.json) y el documento
 normativo fuente es [`docs/contracts/stdlib-async.md`](./docs/contracts/stdlib-async.md).
 
-### 9.4 Scheduler y backpressure
+### 9.4 Coordinación de múltiples operaciones
+
+`std.async.Group[T, E]` es el único owner estándar para un número dinámico de
+`Join[T, E]` homogéneos. Sustituye el contador manual de un `WaitGroup`, la
+agregación de `WhenAll` y el owner de `WhenAny` sin publicar `Task`, `Future`,
+callbacks ni un scheduler alternativo. Un `Join` movido al grupo deja de ser
+obligación del caller y cada operación del grupo conserva la cancelación
+estructurada y el cleanup del `scope` de procedencia.
+
+~~~tondo pseudocode
+pub type Group[T, E]
+pub type Completion[T, E] = {
+    index: Int
+    outcome: T ! E
+}
+
+pub fn group[T, E](): Group[T, E]
+pub fn Group.add(var self, job: Join[T, E])
+pub fn Group.all(self): Array[T] ! E suspends
+pub fn Group.settle(self): Array[T ! E] suspends
+pub fn Group.next(var self): Completion[T, E]? suspends
+pub fn Group.cancel(self) suspends
+~~~
+
+`all` devuelve los éxitos en orden de inserción. Un error recuperable solicita
+cancelación de los hijos restantes, drena sus cleanups y después retorna el
+error; si varios errores estaban confirmados, el menor índice de inserción fija
+el principal. `settle` espera todos los hijos sin cancelar por `E` y conserva un
+outcome por posición. `next` retira la siguiente finalización observable y usa
+`Completion.index` para correlacionarla con la inserción; su orden puede variar
+con el scheduler. `cancel` consume y drena todo el grupo. Ninguna de estas
+llamadas lleva `await` en fuente: son operaciones suspendibles directas. Un
+`Group` vivo es afín y no cumple `Discard`.
+
+Un conjunto fijo heterogéneo conserva handles separados; iniciarlos antes del
+primer `await` ya permite progreso concurrente. STD-0.1 no añade variadic
+generics heterogéneos, tuples awaitables ni overloads por aridad para abreviar
+ese caso. `Group[Unit, E]` cubre espera de workers sin `add`/`done` manuales.
+
+La superficie actual ejecutable de STD-0.1A sigue limitada a `Join`, `oneshot`
+y `AsyncIterator`; `Group` pertenece a la extensión STD-0.1B y no se considera
+implementado hasta cerrar sus celdas `IMPL`, `MODEL`, `TEST`, `FUZZ`, `PERF`,
+`CONF` y `DOC`.
+
+### 9.5 Scheduler y backpressure
 
 Una API suspendible de host:
 
@@ -903,7 +947,7 @@ Una API suspendible de host:
 La implementación puede usar event loops, workers o primitivas del sistema
 siempre que esos detalles no cambien el contrato.
 
-### 9.5 Cancelación
+### 9.6 Cancelación
 
 Una operación cancelable documenta:
 
@@ -916,7 +960,7 @@ Una operación cancelable documenta:
 No se promete preempción de código CPU. La cancelación continúa siendo
 cooperativa.
 
-### 9.6 Timeouts y deadlines
+### 9.7 Timeouts y deadlines
 
 Un timeout o deadline:
 
@@ -1711,7 +1755,7 @@ actualizar esta especificación y el tracker antes de implementar.
 | Métodos de tipos intrínsecos | Core | — | 0.1 | Option, Result, String, Array, Map, Set, Range e Iterator |
 | `std.bytes` | Core | — | 0.1 | `Bytes`, builders y conversión binaria explícita |
 | `std.io` | Core | — | 0.1 | Protocolos de lectura/escritura, buffers, EOF, partial I/O y errores portables |
-| `std.async` | Core | — | 0.1 | `Join`, `oneshot`, cancelación cooperativa y adaptación `AsyncIterator` |
+| `std.async` | Core | — | 0.1 | `Join`, `oneshot`, `Group`, cancelación cooperativa y adaptación `AsyncIterator` |
 | `std.math` | Core | — | 0.1 | Matemática escalar portable y semántica IEEE nombrada |
 | `std.format` | Core | — | 0.1 | Formatting explícito sobre `Display`, sin reflection |
 | `std.serialization` | Core | — | 0.1 | Traits estáticos, eventos estructurales y contratos compartidos de encode/decode |
@@ -1728,9 +1772,9 @@ actualizar esta especificación y el tracker antes de implementar.
 | `std.path` | Core | — | 0.1 | Paths nativos y operaciones puramente léxicas |
 | `std.regex` | Core | — | 0.1 | Expresiones regulares Unicode con complejidad y límites declarados |
 | `std.uuid` | Core + gated | `entropy` y/o `clock` para generación | 0.1 | UUID, parsing, formatting y generadores explícitos por versión |
-| `std.channel` | Core | — | 0.1 | Canales tipados, cierre, backpressure y selección cancelable |
-| `std.sync` | Core + gated | `threads` para operaciones cross-thread | 0.1 | Mutex, rwlock, condvar, semáforo y atomics con memoria explícita |
-| `std.executor` | Core + gated | `threads` para pools bloqueantes | 0.1 | Configuración de ejecución, actores y bridge de trabajo bloqueante |
+| `std.channel` | Core | — | 0.1 | Canales tipados con endpoints separados, cierre, backpressure y selección cancelable |
+| `std.sync` | Core + gated | `threads` para operaciones cross-thread | 0.1 | Mutex, rwlock, condición, semáforo, once, barrier y atomics con memoria explícita |
+| `std.executor` | Core + gated | `threads` para pools bloqueantes | 0.1 | Pools acotados, actores y bridge de trabajo bloqueante sobre el modelo async único |
 | `std.log` | Core + gated | `console`, `filesystem` o `network` por sink | 0.1 | Eventos estructurados, niveles, backpressure y sinks explícitos |
 | `std.console` | Capability-gated | `console` | 0.1 | stdin, stdout, stderr, texto, bytes y flushing |
 | `std.env` | Capability-gated | `environment` | 0.1 | Argumentos y environment runtime explícitos |
@@ -2073,7 +2117,155 @@ el proveedor real/virtual y la frontera suspendible descrita en
 reproducibles del plan cerrado, `STD-TIME-BASE-CONF-001` permanece pendiente y
 `std.time` no se anuncia como una superficie distribuida estable.
 
-### 14.4 Contratos cerrados de los owners STD-0.1A
+### 14.4 Concurrencia de aplicación de STD-0.1B
+
+Esta sección fija el shape y los invariantes que deben cerrar los contratos
+exhaustivos de `std.async`, `std.channel`, `std.sync` y `std.executor`. Es una
+superficie objetivo de STD-0.1B: no afirma que esos símbolos estén disponibles
+en el compilador actual. Ningún módulo puede promocionarse hasta que exista
+trazabilidad por firma y se cierren sus celdas de modelo, tests, fuzzing,
+rendimiento, conformidad y documentación.
+
+#### 14.4.1 Grupos de trabajo estructurado
+
+`std.async.Group[T, E]` tiene la superficie y semántica fijadas en la
+[sección 9.4](#94-coordinación-de-múltiples-operaciones). Es el agregado
+homogéneo para esperar todos los hijos, observar todos sus outcomes o consumir
+finalizaciones según ocurren. No existe `WaitGroup`: esperar workers sin valor
+usa `Group[Unit, E]`, por lo que nadie puede descoordinar manualmente un
+contador de los hijos que realmente existen.
+
+El grupo es afín, adopta cada `Join` que recibe y debe consumirse con `all`,
+`settle` o `cancel`. `next` retira una finalización, pero no elimina la
+obligación de cerrar el grupo restante. Es una utilidad de coordinación, no un
+executor: no inicia trabajo, no acepta closures y no crea un segundo scheduler.
+Su extensión contractual vive en
+[`docs/contracts/stdlib-async.md`](./docs/contracts/stdlib-async.md).
+
+#### 14.4.2 Canales y productor/consumidor
+
+Un canal separa nominalmente sus dos capacidades. `Sender[T]` y `Receiver[T]`
+son handles no `Copy`; `fork` crea de forma explícita otro endpoint sobre la
+misma identidad sin copiar ningún mensaje. Ambos son `Send + Share` cuando
+`T: Send`. `Sender[T]` cumple `Discard`: descartarlo equivale a cerrar ese
+sender. `Receiver[T]` conserva una obligación terminal porque puede ser el
+último owner de mensajes afines pendientes.
+
+El último sender cerrado hace que `receive` produzca `none` después de drenar
+el buffer. `Receiver.close` consume ese receiver; si era el último, cierra la
+recepción, despierta a los senders con su payload intacto y devuelve todos los
+mensajes ya comprometidos en orden. Si aún existen receivers, devuelve un array
+vacío. Ninguna ruta descarta un mensaje silenciosamente.
+
+La superficie mínima que debe cerrar `STD-CONC-001` es:
+
+~~~tondo pseudocode
+pub type Sender[T]
+pub type Receiver[T]
+pub type ChannelError
+pub enum SendError[T] {
+    Closed(T)
+    ResourceLimit(T)
+}
+pub enum TrySendError[T] {
+    Full(T)
+    Closed(T)
+    ResourceLimit(T)
+}
+pub enum TryReceive[T] {
+    Item(T)
+    Empty
+    Closed
+}
+
+pub fn bounded[T: Send](capacity: Int): (Sender[T], Receiver[T]) ! ChannelError
+pub fn unbounded[T: Send](): (Sender[T], Receiver[T]) ! ChannelError
+pub fn Sender.fork(ref self): Sender[T] ! ChannelError
+pub fn Sender.send(ref self, value: T): Unit ! SendError[T] suspends
+pub fn Sender.trySend(ref self, value: T): Unit ! TrySendError[T]
+pub fn Sender.close(self)
+pub fn Receiver.fork(ref self): Receiver[T] ! ChannelError
+pub fn Receiver.receive(ref self): T? suspends
+pub fn Receiver.tryReceive(ref self): TryReceive[T]
+pub fn Receiver.close(self): Array[T]
+~~~
+
+`bounded(0)` es rendezvous; una capacidad positiva aplica backpressure antes de
+aceptar el siguiente elemento. La forma sin límite se llama `unbounded` para
+que su riesgo de memoria nunca sea un default oculto. Una capacidad negativa
+es `ChannelError`. `send` espera espacio o receptor; `trySend` nunca suspende.
+Cuando el envío no se compromete, el error devuelve el valor afín al caller.
+
+`Receiver[T]` implementa `AsyncIterator[T]` cuando `T: Discard`: cada iteración
+espera implícitamente, preserva backpressure y termina al cerrar y drenar el
+canal. El bound es necesario porque salir pronto del `for` puede cerrar el
+último receiver y la sintaxis de iteración no tiene un resultado donde devolver
+mensajes pendientes afines. Para esos valores se usa `receive` y
+`Receiver.close` explícitos. No existe una variante `AsyncChannel`, una
+operación `receiveAsync` ni una materialización intermedia.
+
+#### 14.4.3 Selección cancelable
+
+La selección es una API de librería, no una keyword. Construye casos inertes
+para recibir, enviar, timers y señales de cancelación, y devuelve una unión
+nominal que identifica el caso ganador. Los casos heterogéneos requieren una
+unión explícita elegida por el programa; no dependen de `Any`, reflection ni
+overloads por aridad. La finalización de `Join` se coordina con `Group.next` en
+vez de convertir handles en casos de canal.
+
+Toda implementación de selección debe demostrar estas propiedades antes de
+publicar su ABI exacta:
+
+- Exactamente un caso se compromete y se observa una vez.
+- Los casos perdedores se desregistran atómicamente sin perder wakeups.
+- Un payload afín de un envío perdedor no se pierde, duplica ni consume.
+- Cancelar o destruir la selección desregistra todos los casos antes de liberar
+  su estado.
+- La política estándar es justa bajo contención continuada. Una prioridad
+  sesgada, si se admitiera, debe tener nombre explícito; nunca es el default.
+- Una selección vacía es error de construcción y todos sus límites de memoria
+  son finitos y observables.
+
+`STD-CONC-001` debe cerrar el tipo nominal de los casos, su unión de resultado,
+ownership y errores sin relajar estas propiedades. Ese cierre de spec precede
+a implementación: publicar una API cómoda sin una prueba de commit/rollback
+cancel-safe no satisface STD-0.1B.
+
+#### 14.4.4 Sincronización compartida
+
+`std.sync` proporciona `Mutex[T]`, `RwLock[T]`, guards afines, variables de
+condición, `Semaphore`/`Permit`, `Once[T, E]`, `Barrier` y atomics tipados con orden de
+memoria explícito. Un lock o permiso contendido suspende la task; no bloquea un
+worker cooperativo. Guards y permits liberan exactamente una vez por consumo,
+`defer`, cancelación o unwind.
+
+Tondo no utiliza poisoning implícito: un pánico ejecuta cleanup y libera el
+guard, mientras que los invariantes recuperables pertenecen al tipo protegido y
+a sus errores nominales. Tampoco existe `WaitGroup`; `scope` y
+`Group[Unit, E]` expresan la vida de los hijos sin un contador separado. Los
+atomics exigen seleccionar el memory ordering en la operación; la API no oculta
+un orden débil como default.
+
+Los tipos compartidos publican `Send`/`Share` solo cuando sus parámetros y la
+implementación interior lo demuestran. `threads` es necesario para semántica
+cross-thread real; un target que no la ofrezca rechaza esa operación en vez de
+simularla con ejecución single-thread.
+
+#### 14.4.5 Executors, pools y actores
+
+`std.executor` construye políticas de ejecución sobre `scope`, `spawn`,
+`Group`, canales y sincronización; no publica otro handle de tarea. Sus pools
+tienen capacidad y shutdown explícitos. El bridge bloqueante mueve trabajo a
+workers host acotados y su operación lógica declara `suspends`, de modo que el
+caller la llama secuencialmente o usa el `spawn` ordinario para solaparla.
+
+Un actor es un owner de estado con mailbox tipado y ciclo de vida estructurado,
+no una excepción al ownership. Shutdown, cancelación, saturación, pánico del
+worker y rechazo de nuevo trabajo tienen outcomes nominales y drenan el cleanup
+antes de completar. Ningún pool hereda capabilities o ambiente que el plan no
+haya declarado.
+
+### 14.5 Contratos cerrados de los owners STD-0.1A
 
 Las firmas exhaustivas de los owners de valores y host están en
 [`docs/contracts/stdlib-core.md`](./docs/contracts/stdlib-core.md) y
@@ -2164,7 +2356,7 @@ decisión es de bootstrap y no cambia el owner, la semántica ni la identidad de
 la API. Cada unidad debe publicar su source hash, modelo, tests, oracle escalar
 y conformance antes de cerrar S1A.
 
-### 14.5 Arquitectura común de serialización
+### 14.6 Arquitectura común de serialización
 
 Hay dos rutas deliberadamente distintas:
 
@@ -2246,7 +2438,7 @@ consume todos los valores pendientes en cada salida de error; el compilador
 aplica exactamente el mismo análisis de ownership al código generado y al
 escrito a mano.
 
-### 14.6 `std.serialization`
+### 14.7 `std.serialization`
 
 `std.serialization` posee los protocolos estáticos compartidos. La forma
 normativa exhaustiva está en
@@ -2370,7 +2562,7 @@ no introduce una capability ni semántica dependiente del target. El fuzz
 dedicado por operación, los baselines de allocations/memoria por target y
 `STD-CONF-001` siguen explícitamente como promoción posterior.
 
-### 14.7 `std.reflect`
+### 14.8 `std.reflect`
 
 `std.reflect` implementa reflection descriptiva, estática y retenida de forma
 explícita. No es un sistema de objetos dinámico ni una puerta lateral hacia el
@@ -2516,7 +2708,7 @@ reflection de valores y los límites de coste; `HOST` es
 estas pruebas en una promesa de reflection runtime ni cierra por sí sola los
 gates globales de conformidad o rendimiento.
 
-### 14.8 `std.meta`
+### 14.9 `std.meta`
 
 `std.meta` solo está presente en `target = tondo-meta`. Define los valores
 inmutables de `GenerateRequest`, `DeriveRequest`, `GenerateResponse`,
@@ -2544,7 +2736,7 @@ los presupuestos de compile-time y tamaño de fuente generada hasta su captura
 de promoción. No se interpreta esta evidencia como una publicación de la
 stdlib ni como una API runtime.
 
-### 14.9 `std.json`
+### 14.10 `std.json`
 
 `std.json` implementa JSON UTF-8 conforme a
 [RFC 8259](https://www.rfc-editor.org/rfc/rfc8259.html). Su superficie contiene:
@@ -2603,7 +2795,7 @@ Los tipos, options, limits, eventos y errores exhaustivos están cerrados en el
 [contrato fuente de `std.json`](./docs/contracts/stdlib-json.md). `next` devuelve
 `none` una sola vez tras la raíz y reader/writer son terminales tras error.
 
-### 14.10 `std.messagepack`
+### 14.11 `std.messagepack`
 
 `std.messagepack` implementa la
 [especificación MessagePack](https://github.com/msgpack/msgpack/blob/master/spec.md)
@@ -2738,7 +2930,7 @@ tienen caso runtime por diseño y lo declaran de forma explícita. Esta clausura
 documental describe el draft actual, no publica una release ni promueve las
 matrices de implementación, rendimiento o conformance.
 
-### 14.11 `std.protobuf`
+### 14.12 `std.protobuf`
 
 [Protobuf](https://protobuf.dev/programming-guides/encoding/) es schema-first.
 Un `.proto` entra al build como generator input y el programa estándar fijado
@@ -2819,7 +3011,7 @@ El mapping generado, el descriptor explícito, la evolución contra baseline TOM
 los eventos y los errores de wire/build están cerrados en el [contrato fuente de
 `std.protobuf`](./docs/contracts/stdlib-protobuf.md).
 
-### 14.12 Reglas de rendimiento de codecs
+### 14.13 Reglas de rendimiento de codecs
 
 Los tres codecs:
 

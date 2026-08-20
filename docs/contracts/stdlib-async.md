@@ -71,6 +71,54 @@ sin publicar un array parcial. El cursor se cierra tanto en éxito como en
 error, cancelación o unwind. `collect` no introduce una segunda API para
 streams ni depende de `Channel`.
 
+## Extensión de coordinación planificada para STD-0.1B
+
+La extensión B añade un único agregado homogéneo para coordinar un número
+dinámico de hijos ya iniciados. No cambia la superficie ejecutable de STD-0.1A
+ni afirma implementación actual:
+
+```tondo
+pub type Group[T, E]
+pub type Completion[T, E] = {
+    index: Int
+    outcome: T ! E
+}
+
+pub fn group[T, E](): Group[T, E]
+pub fn Group.add(var self, job: Join[T, E])
+pub fn Group.all(self): Array[T] ! E suspends
+pub fn Group.settle(self): Array[T ! E] suspends
+pub fn Group.next(var self): Completion[T, E]? suspends
+pub fn Group.cancel(self) suspends
+```
+
+Mover un `Join` a `add` transfiere al grupo su obligación de cancelación,
+espera y cleanup. `all`, `settle` y `cancel` consumen el grupo. `next` retira una
+finalización, pero el grupo restante conserva su obligación terminal y debe
+consumirse después. El grupo no inicia closures ni constituye un executor.
+
+`all` espera todos los hijos y devuelve valores por orden de inserción. Al
+confirmar un error recuperable, solicita cancelar los restantes, drena su
+cleanup y devuelve el error del menor índice entre los ya confirmados.
+`settle` no cancela por un `E`: devuelve un outcome por posición tras esperar
+todos. `next` usa orden real de finalización y conserva el índice estable de
+inserción. `cancel` solicita cancelación y drena todos los hijos antes de
+regresar. En un grupo vacío, `all` y `settle` devuelven arrays vacíos, `next`
+devuelve `none` y `cancel` completa inmediatamente.
+
+Las llamadas directas a esas operaciones suspendibles se esperan de manera
+implícita; solo un `Join` se consume con `await`. `Group[Unit, E]` sustituye un
+`WaitGroup` y evita contadores `add`/`done` separados de los hijos reales. Un
+conjunto fijo heterogéneo conserva sus handles y outcomes nominales separados;
+la stdlib no añade tuples awaitables, variadic generics heterogéneos ni
+overloads por aridad.
+
+`STD-ASYNC-GROUP-SPEC-001` cierra este contrato. La superficie no se promueve
+hasta completar `STD-ASYNC-GROUP-IMPL-001`, su modelo de estados afín, tests,
+fuzzing, presupuestos de rendimiento, conformidad VM/nativa y documentación
+ejecutable. `HOST` es no aplicable con razón normativa: `Group` compone el
+scheduler y `Join` existentes y no enlaza una primitiva host propia.
+
 ## Estado de implementación de STD-0.1A
 
 `STD-A-ASYNC-IMPL-001` cierra las dos rutas de consumo sin duplicar la API:

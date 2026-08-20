@@ -5,7 +5,7 @@
   "documents": [
     {
       "path": "TONDO_LANGUAGE_SPEC.md",
-      "sha256": "e45a42cb8a4d8b21111c39cfb475a9081dfc59fabd83b62f1cff19ce1aa18c48"
+      "sha256": "25500bf3f1232760ad0755aa06db5f8a840ba93209f5cc5cf59f0d4420ab1b19"
     },
     {
       "path": "TONDO_TESTING_SPEC.md",
@@ -17,10 +17,10 @@
     }
   ],
   "summary": {
-    "total": 368,
+    "total": 367,
     "by_outcome": {
       "absent": 1,
-      "implemented-without-trace": 365,
+      "implemented-without-trace": 364,
       "not-applicable": 2
     }
   },
@@ -1697,19 +1697,6 @@
       "text_sha256": "c467ab03276801b628ea8089da9f2204db5134d8b76c0a5df41051959851421e",
       "outcome": "implemented-without-trace",
       "reason": "TL01-16-14-R001 has an existing implementation at crates/tondo-compiler/src/hir/check.rs and executable evidence rust:tondo-compiler:src::hir::check:affine_availability_rejects_sequential_and_call_once_reuse; its six-dimension normative trace remains incomplete.",
-      "implementation": [
-        "crates/tondo-compiler/src/hir/check.rs"
-      ],
-      "tests": [
-        "rust:tondo-compiler:src::hir::check:affine_availability_rejects_sequential_and_call_once_reuse"
-      ],
-      "follow_up": null
-    },
-    {
-      "requirement": "TL01-16-14-R002",
-      "text_sha256": "0198f67a45417c7ef8c8d6ed6be2ff7b9cfcfb3c7ab81e0300967e09e36e4849",
-      "outcome": "implemented-without-trace",
-      "reason": "TL01-16-14-R002 has an existing implementation at crates/tondo-compiler/src/hir/check.rs and executable evidence rust:tondo-compiler:src::hir::check:affine_availability_rejects_sequential_and_call_once_reuse; its six-dimension normative trace remains incomplete.",
       "implementation": [
         "crates/tondo-compiler/src/hir/check.rs"
       ],

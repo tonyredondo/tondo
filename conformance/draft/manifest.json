@@ -5,12 +5,12 @@
   "state": "open",
   "suite": {
     "path": "conformance/0.1/manifest.json",
-    "sha256": "76393e0d387c2d543e5c9e43a0b4e215b0451dbb6ef03bf7b41b9db7986d1090"
+    "sha256": "c6c386ae297b531923d0e75ecb6bd4a3cea8a715ed40144f8c44a084f0960645"
   },
   "specifications": [
     {
       "path": "TONDO_LANGUAGE_SPEC.md",
-      "sha256": "e45a42cb8a4d8b21111c39cfb475a9081dfc59fabd83b62f1cff19ce1aa18c48"
+      "sha256": "25500bf3f1232760ad0755aa06db5f8a840ba93209f5cc5cf59f0d4420ab1b19"
     },
     {
       "path": "TONDO_TESTING_SPEC.md",

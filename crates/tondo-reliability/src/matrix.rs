@@ -1481,7 +1481,14 @@ El compilador debe aceptar el caso.
             .collect::<Vec<_>>();
         assert_eq!(
             stdlib_pending,
-            ["TL01-26-5-R001", "TL01-26-5-R002", "TL01-26-6-R001"]
+            [
+                "TL01-11-12-1-R001",
+                "TL01-11-12-1-R002",
+                "TL01-16-14-R002",
+                "TL01-26-5-R001",
+                "TL01-26-5-R002",
+                "TL01-26-6-R001",
+            ]
         );
     }
 

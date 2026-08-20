@@ -4,7 +4,7 @@
   "documents": [
     {
       "path": "TONDO_LANGUAGE_SPEC.md",
-      "sha256": "e45a42cb8a4d8b21111c39cfb475a9081dfc59fabd83b62f1cff19ce1aa18c48"
+      "sha256": "25500bf3f1232760ad0755aa06db5f8a840ba93209f5cc5cf59f0d4420ab1b19"
     },
     {
       "path": "TONDO_TESTING_SPEC.md",
@@ -5469,58 +5469,6 @@
     {
       "requirements": [
         "TL01-16-14-R001"
-      ],
-      "dimensions": {
-        "positive": {
-          "evidence": [
-            "conformance:concurrency/m7-structured-ref",
-            "rust:tondo-compiler:src::hir::check:affine_availability_rejects_sequential_and_call_once_reuse"
-          ],
-          "waiver": null
-        },
-        "rejection_or_failure": {
-          "evidence": [
-            "conformance:compile-fail/invalid-affine-transfer",
-            "rust:tondo-compiler:src::hir::check:expression_rejection_matrix_reaches_each_closed_semantic_boundary"
-          ],
-          "waiver": null
-        },
-        "boundary": {
-          "evidence": [
-            "conformance:compile-fail/invalid-affine-transfer",
-            "conformance:concurrency/m7-structured-ref",
-            "rust:tondo-compiler:src::hir::check:every_closed_capability_is_enforced_and_forwarded_parametrically"
-          ],
-          "waiver": null
-        },
-        "composition": {
-          "evidence": [
-            "conformance:concurrency/m7-structured-ref",
-            "rust:tondo-compiler:src::hir::check:operators_calls_and_discard_rules_use_the_checked_types"
-          ],
-          "waiver": null
-        },
-        "oracle": {
-          "evidence": [
-            "conformance:compile-fail/invalid-affine-transfer",
-            "conformance:concurrency/m7-structured-ref",
-            "rust:tondo-compiler:src::hir::check:affine_availability_rejects_sequential_and_call_once_reuse",
-            "rust:tondo-compiler:src::hir::check:closed_capability_matrix_covers_intrinsics_and_structural_values"
-          ],
-          "waiver": null
-        },
-        "public_boundary": {
-          "evidence": [
-            "conformance:compile-fail/invalid-affine-transfer",
-            "conformance:concurrency/m7-structured-ref"
-          ],
-          "waiver": null
-        }
-      }
-    },
-    {
-      "requirements": [
-        "TL01-16-14-R002"
       ],
       "dimensions": {
         "positive": {

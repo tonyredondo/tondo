@@ -4,7 +4,7 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
-for helper in scripts/fast-coverage-check.sh scripts/fast-gate.sh \
+for helper in scripts/documentation-gate.sh scripts/fast-coverage-check.sh scripts/fast-gate.sh \
     scripts/fast-gate-test.sh; do
     [[ -x "$helper" ]] || {
         echo "fast gate test: helper is not executable: $helper" >&2
@@ -20,20 +20,48 @@ assert_contains() {
     }
 }
 
+assert_not_contains() {
+    local haystack="$1" needle="$2"
+    if grep -Fq -- "$needle" <<< "$haystack"; then
+        echo "fast gate test: did not expect '$needle'" >&2
+        exit 1
+    fi
+}
+
+tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/tondo-fast-gate-test.XXXXXX")"
+trap 'rm -rf -- "$tmp_dir"' EXIT
+
+documentation="$(TONDO_FAST_CHANGED_FILES=$'TONDO_LANGUAGE_SPEC.md\ntesting/coverage-matrix.json\nconformance/0.1/cases/documentation/language-spec.expect.json' \
+    TONDO_FAST_GATE_DIR="$tmp_dir/documentation" \
+    bash scripts/fast-gate.sh --dry-run)"
+assert_contains "$documentation" "scope=documentation"
+assert_contains "$documentation" "documentation-gate"
+assert_not_contains "$documentation" "full-test-gate"
+assert_not_contains "$documentation" "changed-line-coverage"
+assert_not_contains "$documentation" "diff-mutation"
+
+test_only="$(TONDO_FAST_CHANGED_FILES='crates/tondo-reliability/tests/contract.rs' \
+    TONDO_FAST_GATE_DIR="$tmp_dir/test-only" \
+    bash scripts/fast-gate.sh --dry-run)"
+assert_contains "$test_only" "scope=impacted"
+assert_contains "$test_only" "test-tondo-reliability"
+assert_not_contains "$test_only" "changed-line-coverage"
+assert_not_contains "$test_only" "diff-mutation"
+
 impacted="$(TONDO_FAST_CHANGED_FILES=$'crates/tondo-stdlib/src/lib.rs\nscripts/fast-gate.sh' \
-    TONDO_FAST_GATE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/tondo-fast-gate-test.XXXXXX")" \
+    TONDO_FAST_GATE_DIR="$tmp_dir/impacted" \
     bash scripts/fast-gate.sh --dry-run)"
 assert_contains "$impacted" "scope=impacted"
 assert_contains "$impacted" "check-tondo-stdlib"
+assert_contains "$impacted" "changed-line-coverage"
+assert_contains "$impacted" "diff-mutation"
 
 shared="$(TONDO_FAST_CHANGED_FILES='crates/tondo-compiler/src/hir/check.rs' \
-    TONDO_FAST_GATE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/tondo-fast-gate-test.XXXXXX")" \
+    TONDO_FAST_GATE_DIR="$tmp_dir/shared" \
     bash scripts/fast-gate.sh --dry-run)"
 assert_contains "$shared" "scope=shared-frontier"
 assert_contains "$shared" "full-test-gate"
 
-tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/tondo-fast-gate-test.XXXXXX")"
-trap 'rm -rf -- "$tmp_dir"' EXIT
 diff_fixture="$tmp_dir/fixture.diff"
 coverage_fixture="$tmp_dir/coverage.json"
 printf '%s\n' \

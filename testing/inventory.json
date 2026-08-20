@@ -6,13 +6,13 @@
       "path": "TONDO_LANGUAGE_SPEC.md",
       "edition": "0.1",
       "status": "draft-normative",
-      "sha256": "e45a42cb8a4d8b21111c39cfb475a9081dfc59fabd83b62f1cff19ce1aa18c48"
+      "sha256": "25500bf3f1232760ad0755aa06db5f8a840ba93209f5cc5cf59f0d4420ab1b19"
     },
     {
       "path": "TONDO_STANDARD_LIBRARY_SPEC.md",
       "edition": "0.1",
       "status": "draft-pending",
-      "sha256": "545f7e75cc0580bef2b32430fc2d939472e373a709d3074e1618e2d155d77961"
+      "sha256": "b808dceca946455adb00aeef0d5756a5089215d763615e859d919a0a6a307899"
     },
     {
       "path": "TONDO_TESTING_SPEC.md",
@@ -30,14 +30,14 @@
       "path": "conformance/draft/manifest.json",
       "edition": "0.1",
       "status": "draft-open",
-      "sha256": "d4d3a1b1f0b7c99ca38d7abfeedb2f1b84e3c16bca0cf649dc5f5dec2c9033c7"
+      "sha256": "889d53a22a08002a597d1e861f56d5fab1cf44180193c4d5ffd6b88aa0419968"
     }
   ],
   "summary": {
-    "logical_tests": 2448,
-    "repetitions": 2667,
+    "logical_tests": 2449,
+    "repetitions": 2668,
     "physical_sources": 530,
-    "unique_source_hashes": 873,
+    "unique_source_hashes": 874,
     "by_kind": {
       "conformance-case": 203,
       "conformance-layer": 67,
@@ -45,20 +45,20 @@
       "fixture": 169,
       "fuzz-target": 5,
       "rust-test": 1656,
-      "spec-fence": 310
+      "spec-fence": 311
     },
     "by_status": {
       "campaign": 5,
       "draft-pending": 38,
       "executable": 2392,
-      "non-executable": 13
+      "non-executable": 14
     },
     "by_phase": {
       "bytecode": 149,
       "cli": 64,
       "concurrency": 7,
       "conformance": 338,
-      "documentation": 14,
+      "documentation": 15,
       "formatter": 30,
       "frontend": 6,
       "hir": 290,
@@ -3073,7 +3073,7 @@
       ],
       "oracle": "exact-observation",
       "repetitions": 1,
-      "source_sha256": "047d19c4811ce634b67565e3c39372da0a8d67e84a46e0f8f36ac2fd7db2ba45",
+      "source_sha256": "322eb9866e330a916988469454dfbe3d0f37a1496b324594fa0ae47cf3298d8c",
       "target": "tondo-vm-hosted",
       "document": "TONDO_LANGUAGE_SPEC.md",
       "edition": "0.1",
@@ -7544,7 +7544,7 @@
       "requirements": [],
       "oracle": "document-fence-observation",
       "repetitions": 1,
-      "source_sha256": "f50d186f37a03c8523f08bdd5fee5d8c111d12d016ed845a1f99f778ff8ae14c",
+      "source_sha256": "de0a6ce971853a84bc4b889bdea6375b5f556eccbf58d85525ad5220b8cd6375",
       "target": "tondo-vm-hosted",
       "document": "TONDO_LANGUAGE_SPEC.md",
       "edition": "0.1",
@@ -7562,7 +7562,7 @@
       "requirements": [],
       "oracle": "documentation-only",
       "repetitions": 1,
-      "source_sha256": "702e00af37289e62613515c4a4783834d56be55d57cceb4b0e62794fe1f9e286",
+      "source_sha256": "94b67d43eb1525a20956d4f375bce43fc2eb4e7f9e6b87e9732944b9be3b79aa",
       "target": "tondo-vm-hosted",
       "document": "TONDO_LANGUAGE_SPEC.md",
       "edition": "0.1",
@@ -7571,6 +7571,24 @@
     },
     {
       "id": "document:language-0.1:fence:0155",
+      "kind": "spec-fence",
+      "crate_name": "tondo-conformance",
+      "phase": "documentation",
+      "source": "TONDO_LANGUAGE_SPEC.md",
+      "fixture": null,
+      "group": "pseudocode",
+      "requirements": [],
+      "oracle": "documentation-only",
+      "repetitions": 1,
+      "source_sha256": "702e00af37289e62613515c4a4783834d56be55d57cceb4b0e62794fe1f9e286",
+      "target": "tondo-vm-hosted",
+      "document": "TONDO_LANGUAGE_SPEC.md",
+      "edition": "0.1",
+      "status": "non-executable",
+      "sidecars": []
+    },
+    {
+      "id": "document:language-0.1:fence:0156",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -7588,7 +7606,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0156",
+      "id": "document:language-0.1:fence:0157",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -7606,7 +7624,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0157",
+      "id": "document:language-0.1:fence:0158",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -7624,7 +7642,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0158",
+      "id": "document:language-0.1:fence:0159",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -7642,7 +7660,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0159",
+      "id": "document:language-0.1:fence:0160",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -7660,7 +7678,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0160",
+      "id": "document:language-0.1:fence:0161",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -7678,7 +7696,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0161",
+      "id": "document:language-0.1:fence:0162",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -7696,7 +7714,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0162",
+      "id": "document:language-0.1:fence:0163",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -7714,7 +7732,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0163",
+      "id": "document:language-0.1:fence:0164",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -7732,7 +7750,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0164",
+      "id": "document:language-0.1:fence:0165",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -7750,7 +7768,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0165",
+      "id": "document:language-0.1:fence:0166",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -7768,7 +7786,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0166",
+      "id": "document:language-0.1:fence:0167",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -7786,7 +7804,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0167",
+      "id": "document:language-0.1:fence:0168",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -7806,7 +7824,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0168",
+      "id": "document:language-0.1:fence:0169",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -7824,7 +7842,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0169",
+      "id": "document:language-0.1:fence:0170",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -7844,7 +7862,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0170",
+      "id": "document:language-0.1:fence:0171",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -7862,7 +7880,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0171",
+      "id": "document:language-0.1:fence:0172",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -7880,7 +7898,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0172",
+      "id": "document:language-0.1:fence:0173",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -7900,7 +7918,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0173",
+      "id": "document:language-0.1:fence:0174",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -7918,7 +7936,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0174",
+      "id": "document:language-0.1:fence:0175",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -7936,7 +7954,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0175",
+      "id": "document:language-0.1:fence:0176",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -7954,7 +7972,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0176",
+      "id": "document:language-0.1:fence:0177",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -7972,7 +7990,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0177",
+      "id": "document:language-0.1:fence:0178",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -7990,7 +8008,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0178",
+      "id": "document:language-0.1:fence:0179",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8008,7 +8026,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0179",
+      "id": "document:language-0.1:fence:0180",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8026,7 +8044,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0180",
+      "id": "document:language-0.1:fence:0181",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8044,7 +8062,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0181",
+      "id": "document:language-0.1:fence:0182",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8062,7 +8080,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0182",
+      "id": "document:language-0.1:fence:0183",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8080,7 +8098,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0183",
+      "id": "document:language-0.1:fence:0184",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8098,7 +8116,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0184",
+      "id": "document:language-0.1:fence:0185",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8116,7 +8134,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0185",
+      "id": "document:language-0.1:fence:0186",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8134,7 +8152,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0186",
+      "id": "document:language-0.1:fence:0187",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8152,7 +8170,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0187",
+      "id": "document:language-0.1:fence:0188",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8170,7 +8188,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0188",
+      "id": "document:language-0.1:fence:0189",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "documentation",
@@ -8188,7 +8206,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0189",
+      "id": "document:language-0.1:fence:0190",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8206,7 +8224,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0190",
+      "id": "document:language-0.1:fence:0191",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8224,7 +8242,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0191",
+      "id": "document:language-0.1:fence:0192",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8242,7 +8260,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0192",
+      "id": "document:language-0.1:fence:0193",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8262,7 +8280,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0193",
+      "id": "document:language-0.1:fence:0194",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8280,7 +8298,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0194",
+      "id": "document:language-0.1:fence:0195",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8298,7 +8316,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0195",
+      "id": "document:language-0.1:fence:0196",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8316,7 +8334,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0196",
+      "id": "document:language-0.1:fence:0197",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8334,7 +8352,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0197",
+      "id": "document:language-0.1:fence:0198",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8352,7 +8370,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0198",
+      "id": "document:language-0.1:fence:0199",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8370,7 +8388,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0199",
+      "id": "document:language-0.1:fence:0200",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8388,7 +8406,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0200",
+      "id": "document:language-0.1:fence:0201",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8406,7 +8424,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0201",
+      "id": "document:language-0.1:fence:0202",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8424,7 +8442,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0202",
+      "id": "document:language-0.1:fence:0203",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8442,7 +8460,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0203",
+      "id": "document:language-0.1:fence:0204",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8460,7 +8478,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0204",
+      "id": "document:language-0.1:fence:0205",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8478,7 +8496,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0205",
+      "id": "document:language-0.1:fence:0206",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8496,7 +8514,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0206",
+      "id": "document:language-0.1:fence:0207",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8514,7 +8532,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0207",
+      "id": "document:language-0.1:fence:0208",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8532,7 +8550,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0208",
+      "id": "document:language-0.1:fence:0209",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8550,7 +8568,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0209",
+      "id": "document:language-0.1:fence:0210",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8568,7 +8586,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0210",
+      "id": "document:language-0.1:fence:0211",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8586,7 +8604,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0211",
+      "id": "document:language-0.1:fence:0212",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8604,7 +8622,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0212",
+      "id": "document:language-0.1:fence:0213",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8622,7 +8640,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0213",
+      "id": "document:language-0.1:fence:0214",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8642,7 +8660,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0214",
+      "id": "document:language-0.1:fence:0215",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8660,7 +8678,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0215",
+      "id": "document:language-0.1:fence:0216",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8678,7 +8696,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0216",
+      "id": "document:language-0.1:fence:0217",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8696,7 +8714,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0217",
+      "id": "document:language-0.1:fence:0218",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8714,7 +8732,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0218",
+      "id": "document:language-0.1:fence:0219",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8732,7 +8750,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0219",
+      "id": "document:language-0.1:fence:0220",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8750,7 +8768,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0220",
+      "id": "document:language-0.1:fence:0221",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8768,7 +8786,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0221",
+      "id": "document:language-0.1:fence:0222",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8786,7 +8804,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0222",
+      "id": "document:language-0.1:fence:0223",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8804,7 +8822,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0223",
+      "id": "document:language-0.1:fence:0224",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8822,7 +8840,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0224",
+      "id": "document:language-0.1:fence:0225",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8840,7 +8858,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0225",
+      "id": "document:language-0.1:fence:0226",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8858,7 +8876,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0226",
+      "id": "document:language-0.1:fence:0227",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8876,7 +8894,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0227",
+      "id": "document:language-0.1:fence:0228",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8894,7 +8912,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0228",
+      "id": "document:language-0.1:fence:0229",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8912,7 +8930,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0229",
+      "id": "document:language-0.1:fence:0230",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8930,7 +8948,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0230",
+      "id": "document:language-0.1:fence:0231",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8948,7 +8966,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0231",
+      "id": "document:language-0.1:fence:0232",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8966,7 +8984,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0232",
+      "id": "document:language-0.1:fence:0233",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -8984,7 +9002,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0233",
+      "id": "document:language-0.1:fence:0234",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9002,7 +9020,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0234",
+      "id": "document:language-0.1:fence:0235",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9020,7 +9038,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0235",
+      "id": "document:language-0.1:fence:0236",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9038,7 +9056,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0236",
+      "id": "document:language-0.1:fence:0237",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9056,7 +9074,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0237",
+      "id": "document:language-0.1:fence:0238",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9074,7 +9092,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0238",
+      "id": "document:language-0.1:fence:0239",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9092,7 +9110,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0239",
+      "id": "document:language-0.1:fence:0240",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9110,7 +9128,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0240",
+      "id": "document:language-0.1:fence:0241",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9128,7 +9146,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0241",
+      "id": "document:language-0.1:fence:0242",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9146,7 +9164,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0242",
+      "id": "document:language-0.1:fence:0243",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9164,7 +9182,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0243",
+      "id": "document:language-0.1:fence:0244",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9182,7 +9200,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0244",
+      "id": "document:language-0.1:fence:0245",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9200,24 +9218,6 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0245",
-      "kind": "spec-fence",
-      "crate_name": "tondo-conformance",
-      "phase": "conformance",
-      "source": "TONDO_LANGUAGE_SPEC.md",
-      "fixture": null,
-      "group": "syntax",
-      "requirements": [],
-      "oracle": "document-fence-observation",
-      "repetitions": 1,
-      "source_sha256": "3694e69ee5128d1d03a2f84b31111da0a1e0f770c342e89c3b540359c6542aa4",
-      "target": "tondo-vm-hosted",
-      "document": "TONDO_LANGUAGE_SPEC.md",
-      "edition": "0.1",
-      "status": "executable",
-      "sidecars": []
-    },
-    {
       "id": "document:language-0.1:fence:0246",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
@@ -9228,7 +9228,7 @@
       "requirements": [],
       "oracle": "document-fence-observation",
       "repetitions": 1,
-      "source_sha256": "058530acc15f672411ff60d191021255b2490b95e9b6e036041791d98d5a19c0",
+      "source_sha256": "3694e69ee5128d1d03a2f84b31111da0a1e0f770c342e89c3b540359c6542aa4",
       "target": "tondo-vm-hosted",
       "document": "TONDO_LANGUAGE_SPEC.md",
       "edition": "0.1",
@@ -9246,7 +9246,7 @@
       "requirements": [],
       "oracle": "document-fence-observation",
       "repetitions": 1,
-      "source_sha256": "3694e69ee5128d1d03a2f84b31111da0a1e0f770c342e89c3b540359c6542aa4",
+      "source_sha256": "058530acc15f672411ff60d191021255b2490b95e9b6e036041791d98d5a19c0",
       "target": "tondo-vm-hosted",
       "document": "TONDO_LANGUAGE_SPEC.md",
       "edition": "0.1",
@@ -9255,6 +9255,24 @@
     },
     {
       "id": "document:language-0.1:fence:0248",
+      "kind": "spec-fence",
+      "crate_name": "tondo-conformance",
+      "phase": "conformance",
+      "source": "TONDO_LANGUAGE_SPEC.md",
+      "fixture": null,
+      "group": "syntax",
+      "requirements": [],
+      "oracle": "document-fence-observation",
+      "repetitions": 1,
+      "source_sha256": "3694e69ee5128d1d03a2f84b31111da0a1e0f770c342e89c3b540359c6542aa4",
+      "target": "tondo-vm-hosted",
+      "document": "TONDO_LANGUAGE_SPEC.md",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": []
+    },
+    {
+      "id": "document:language-0.1:fence:0249",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "documentation",
@@ -9272,7 +9290,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0249",
+      "id": "document:language-0.1:fence:0250",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9290,7 +9308,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0250",
+      "id": "document:language-0.1:fence:0251",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9308,7 +9326,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0251",
+      "id": "document:language-0.1:fence:0252",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9326,7 +9344,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0252",
+      "id": "document:language-0.1:fence:0253",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9346,7 +9364,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0253",
+      "id": "document:language-0.1:fence:0254",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9364,7 +9382,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0254",
+      "id": "document:language-0.1:fence:0255",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9382,7 +9400,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0255",
+      "id": "document:language-0.1:fence:0256",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9400,7 +9418,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0256",
+      "id": "document:language-0.1:fence:0257",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9418,7 +9436,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0257",
+      "id": "document:language-0.1:fence:0258",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9438,7 +9456,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0258",
+      "id": "document:language-0.1:fence:0259",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9456,7 +9474,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0259",
+      "id": "document:language-0.1:fence:0260",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9474,7 +9492,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0260",
+      "id": "document:language-0.1:fence:0261",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9492,7 +9510,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0261",
+      "id": "document:language-0.1:fence:0262",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9510,7 +9528,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0262",
+      "id": "document:language-0.1:fence:0263",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9528,7 +9546,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0263",
+      "id": "document:language-0.1:fence:0264",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9546,7 +9564,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0264",
+      "id": "document:language-0.1:fence:0265",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9564,7 +9582,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0265",
+      "id": "document:language-0.1:fence:0266",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9582,7 +9600,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0266",
+      "id": "document:language-0.1:fence:0267",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9600,7 +9618,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0267",
+      "id": "document:language-0.1:fence:0268",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9618,7 +9636,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0268",
+      "id": "document:language-0.1:fence:0269",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9636,7 +9654,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0269",
+      "id": "document:language-0.1:fence:0270",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9654,7 +9672,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0270",
+      "id": "document:language-0.1:fence:0271",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9672,7 +9690,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0271",
+      "id": "document:language-0.1:fence:0272",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9690,7 +9708,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0272",
+      "id": "document:language-0.1:fence:0273",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9708,7 +9726,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0273",
+      "id": "document:language-0.1:fence:0274",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9726,7 +9744,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0274",
+      "id": "document:language-0.1:fence:0275",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9744,7 +9762,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0275",
+      "id": "document:language-0.1:fence:0276",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9762,7 +9780,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0276",
+      "id": "document:language-0.1:fence:0277",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9780,7 +9798,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0277",
+      "id": "document:language-0.1:fence:0278",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9798,7 +9816,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0278",
+      "id": "document:language-0.1:fence:0279",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9816,7 +9834,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0279",
+      "id": "document:language-0.1:fence:0280",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9834,7 +9852,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0280",
+      "id": "document:language-0.1:fence:0281",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9852,7 +9870,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0281",
+      "id": "document:language-0.1:fence:0282",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9870,7 +9888,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0282",
+      "id": "document:language-0.1:fence:0283",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9888,7 +9906,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0283",
+      "id": "document:language-0.1:fence:0284",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9906,7 +9924,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0284",
+      "id": "document:language-0.1:fence:0285",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9924,7 +9942,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0285",
+      "id": "document:language-0.1:fence:0286",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9942,7 +9960,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0286",
+      "id": "document:language-0.1:fence:0287",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9960,7 +9978,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0287",
+      "id": "document:language-0.1:fence:0288",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9978,7 +9996,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0288",
+      "id": "document:language-0.1:fence:0289",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -9996,7 +10014,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0289",
+      "id": "document:language-0.1:fence:0290",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -10014,7 +10032,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0290",
+      "id": "document:language-0.1:fence:0291",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -10032,7 +10050,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0291",
+      "id": "document:language-0.1:fence:0292",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -10050,7 +10068,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0292",
+      "id": "document:language-0.1:fence:0293",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -10068,7 +10086,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0293",
+      "id": "document:language-0.1:fence:0294",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -10086,7 +10104,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0294",
+      "id": "document:language-0.1:fence:0295",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -10104,7 +10122,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0295",
+      "id": "document:language-0.1:fence:0296",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -10122,7 +10140,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0296",
+      "id": "document:language-0.1:fence:0297",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "documentation",
@@ -10140,7 +10158,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0297",
+      "id": "document:language-0.1:fence:0298",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "documentation",
@@ -10158,7 +10176,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0298",
+      "id": "document:language-0.1:fence:0299",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "documentation",
@@ -10176,7 +10194,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0299",
+      "id": "document:language-0.1:fence:0300",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "documentation",
@@ -10194,7 +10212,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0300",
+      "id": "document:language-0.1:fence:0301",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -10212,7 +10230,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0301",
+      "id": "document:language-0.1:fence:0302",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "documentation",
@@ -10230,7 +10248,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0302",
+      "id": "document:language-0.1:fence:0303",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -10248,7 +10266,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0303",
+      "id": "document:language-0.1:fence:0304",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -10266,7 +10284,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0304",
+      "id": "document:language-0.1:fence:0305",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -10284,7 +10302,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0305",
+      "id": "document:language-0.1:fence:0306",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "documentation",
@@ -10302,7 +10320,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0306",
+      "id": "document:language-0.1:fence:0307",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -10320,7 +10338,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0307",
+      "id": "document:language-0.1:fence:0308",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -10338,7 +10356,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0308",
+      "id": "document:language-0.1:fence:0309",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -10356,7 +10374,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0309",
+      "id": "document:language-0.1:fence:0310",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "conformance",
@@ -10374,7 +10392,7 @@
       "sidecars": []
     },
     {
-      "id": "document:language-0.1:fence:0310",
+      "id": "document:language-0.1:fence:0311",
       "kind": "spec-fence",
       "crate_name": "tondo-conformance",
       "phase": "documentation",
@@ -41336,7 +41354,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "6c64dc8c16ed240eb6b231006d3767b266adb3a06214406d1c38c41d99d8cf65",
+      "source_sha256": "328eced0a8cdd6c191ce55410a9a54d07ce5157cfc2b9b188162304ff08e79ec",
       "target": "host-rust",
       "document": null,
       "edition": "host",
@@ -41354,7 +41372,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "6c64dc8c16ed240eb6b231006d3767b266adb3a06214406d1c38c41d99d8cf65",
+      "source_sha256": "328eced0a8cdd6c191ce55410a9a54d07ce5157cfc2b9b188162304ff08e79ec",
       "target": "host-rust",
       "document": null,
       "edition": "host",
@@ -41372,7 +41390,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "6c64dc8c16ed240eb6b231006d3767b266adb3a06214406d1c38c41d99d8cf65",
+      "source_sha256": "328eced0a8cdd6c191ce55410a9a54d07ce5157cfc2b9b188162304ff08e79ec",
       "target": "host-rust",
       "document": null,
       "edition": "host",
@@ -41390,7 +41408,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "6c64dc8c16ed240eb6b231006d3767b266adb3a06214406d1c38c41d99d8cf65",
+      "source_sha256": "328eced0a8cdd6c191ce55410a9a54d07ce5157cfc2b9b188162304ff08e79ec",
       "target": "host-rust",
       "document": null,
       "edition": "host",
@@ -41408,7 +41426,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "6c64dc8c16ed240eb6b231006d3767b266adb3a06214406d1c38c41d99d8cf65",
+      "source_sha256": "328eced0a8cdd6c191ce55410a9a54d07ce5157cfc2b9b188162304ff08e79ec",
       "target": "host-rust",
       "document": null,
       "edition": "host",
@@ -41426,7 +41444,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "6c64dc8c16ed240eb6b231006d3767b266adb3a06214406d1c38c41d99d8cf65",
+      "source_sha256": "328eced0a8cdd6c191ce55410a9a54d07ce5157cfc2b9b188162304ff08e79ec",
       "target": "host-rust",
       "document": null,
       "edition": "host",
@@ -41444,7 +41462,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "6c64dc8c16ed240eb6b231006d3767b266adb3a06214406d1c38c41d99d8cf65",
+      "source_sha256": "328eced0a8cdd6c191ce55410a9a54d07ce5157cfc2b9b188162304ff08e79ec",
       "target": "host-rust",
       "document": null,
       "edition": "host",
@@ -41462,7 +41480,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "6c64dc8c16ed240eb6b231006d3767b266adb3a06214406d1c38c41d99d8cf65",
+      "source_sha256": "328eced0a8cdd6c191ce55410a9a54d07ce5157cfc2b9b188162304ff08e79ec",
       "target": "host-rust",
       "document": null,
       "edition": "host",
@@ -41480,7 +41498,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "6c64dc8c16ed240eb6b231006d3767b266adb3a06214406d1c38c41d99d8cf65",
+      "source_sha256": "328eced0a8cdd6c191ce55410a9a54d07ce5157cfc2b9b188162304ff08e79ec",
       "target": "host-rust",
       "document": null,
       "edition": "host",
@@ -41498,7 +41516,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "6c64dc8c16ed240eb6b231006d3767b266adb3a06214406d1c38c41d99d8cf65",
+      "source_sha256": "328eced0a8cdd6c191ce55410a9a54d07ce5157cfc2b9b188162304ff08e79ec",
       "target": "host-rust",
       "document": null,
       "edition": "host",
@@ -41516,7 +41534,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "6c64dc8c16ed240eb6b231006d3767b266adb3a06214406d1c38c41d99d8cf65",
+      "source_sha256": "328eced0a8cdd6c191ce55410a9a54d07ce5157cfc2b9b188162304ff08e79ec",
       "target": "host-rust",
       "document": null,
       "edition": "host",
@@ -41534,7 +41552,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "6c64dc8c16ed240eb6b231006d3767b266adb3a06214406d1c38c41d99d8cf65",
+      "source_sha256": "328eced0a8cdd6c191ce55410a9a54d07ce5157cfc2b9b188162304ff08e79ec",
       "target": "host-rust",
       "document": null,
       "edition": "host",

@@ -3055,7 +3055,8 @@ espera cada `next` implícitamente y no materializa un array. Si la fuente
 implementa ambos protocolos, `Iterator[T]` tiene precedencia. `break`, error, cancelación o salida del scope
 cierran el stream según su contrato. `collect(limit: ...)` es la operación
 explícita que materializa un `Array[T]`; exige límite cuando no se puede demostrar
-finitud. Un receiver de `Channel` puede adaptarse a este protocolo.
+finitud. `std.channel.Receiver[T]` se adapta a este protocolo cuando
+`T: Discard`; valores con obligación terminal conservan la API manual.
 `AsyncIterator` es distinto de `Iterator[T]`, aunque ambos conservan la regla de
 una implementación por target y elemento.
 
@@ -3818,9 +3819,11 @@ handle que produce.
 
 ~~~tondo
 fn prepare(): Join[Result, WorkerError] {
-    let job = spawn work()
-    do_other_work()
-    return job
+    scope {
+        let job = spawn work()
+        doOtherWork()
+        job
+    }
 }
 ~~~
 
@@ -3832,6 +3835,61 @@ observar por un poller ni guardar vivo al final del scope sin una terminación
 explícita. El runtime conserva sus roots hasta `await`, `cancel` observado,
 `detach` o transferencia por movimiento, incluso si el caller trabaja en otro
 thread.
+
+#### 11.12.1 Coordinación de múltiples hijos
+
+En la futura librería estándar, `Join[T, E]` continúa siendo la unidad mínima de
+ownership concurrente. Para un número dinámico de hijos homogéneos,
+`std.async.Group[T, E]` es el owner afín de varios `Join[T, E]`; no existe un
+contador manual `WaitGroup` ni otra familia `Task`/`Future`. Transferir un `Join`
+a un grupo transfiere también su obligación terminal, de modo que el contador
+de trabajo no puede separarse del trabajo real.
+
+La superficie canónica planificada es:
+
+~~~tondo pseudocode
+pub type Group[T, E]
+pub type Completion[T, E] = {
+    index: Int
+    outcome: T ! E
+}
+
+pub fn group[T, E](): Group[T, E]
+pub fn Group.add(var self, job: Join[T, E])
+pub fn Group.all(self): Array[T] ! E suspends
+pub fn Group.settle(self): Array[T ! E] suspends
+pub fn Group.next(var self): Completion[T, E]? suspends
+pub fn Group.cancel(self) suspends
+~~~
+
+`all`, `settle`, `next` y `cancel` son llamadas suspendibles directas y por tanto
+esperan implícitamente. No se escribe `await group.all()`: `await` permanece
+reservado para consumir un `Join` individual. `Group.all()` consume el grupo,
+devuelve resultados en orden de inserción y, ante el primer error recuperable
+confirmado, solicita cancelación de los hermanos, espera todo cleanup y devuelve
+ese error. Si más de un error ya estaba confirmado, el de menor índice de
+inserción es el principal. Pánico y cancelación exterior conservan las reglas del
+`scope` propietario.
+
+`Group.settle()` consume el grupo, no cancela hermanos por un `E` recuperable y
+devuelve todos los outcomes en orden de inserción. `Group.next()` espera el
+siguiente hijo que complete, lo retira y devuelve su índice estable y outcome;
+el orden de completado es deliberadamente observable y puede variar entre
+ejecuciones. `none` significa que el grupo ya estaba vacío. `Group.cancel()`
+consume el grupo, cancela todos sus hijos y no retorna hasta terminar sus
+cleanups. Sobre un grupo vacío, `all` y `settle` devuelven arrays vacíos, `next`
+devuelve `none` y `cancel` termina inmediatamente.
+
+En la futura librería estándar, un grupo vivo no cumple `Discard`. Debe
+consumirse mediante `all`, `settle` o `cancel`, o transferirse por movimiento
+antes de abandonar su scope. `next`
+retira una finalización, pero el grupo restante conserva esa obligación incluso
+después de devolver `none`. La transferencia solo es válida cuando las capturas
+y la procedencia de todos sus hijos podrían transferirse individualmente. Para
+un conjunto fijo y heterogéneo se conservan
+los `Join` separados y se espera cada uno; haber iniciado todos antes del primer
+`await` mantiene su ejecución concurrente sin introducir tuples mágicas ni
+variadic generics heterogéneos.
 
 ### 11.13 One-shot y completion
 
@@ -3855,8 +3913,9 @@ si solo implementa `AsyncIterator[T]`, espera implícitamente un elemento por
 implementa ambos protocolos, `Iterator[T]` tiene precedencia. La iteración no materializa arrays.
 `break`, error, cancelación o salida del scope cierra el stream.
 `collect(limit: ...)` es la operación explícita que materializa un `Array[T]`;
-exige límite si no se prueba finitud. Un receiver de `Channel` puede adaptarse a
-este protocolo.
+exige límite si no se prueba finitud. `std.channel.Receiver[T]` se adapta a este
+protocolo cuando `T: Discard`; valores con obligación terminal conservan la API
+manual.
 
 ### 11.15 Cancelación y efectos visibles
 
@@ -6093,7 +6152,34 @@ ownership afín directamente en su entorno sin ocultar sus capacidades. La llama
 devuelve un handle afín y joinable y hace visible cualquier fallo de creación.
 Ningún thread se separa silenciosamente de su handle.
 
-Los canales tipados, mutexes, atomics, actores y pools de trabajo pertenecen a la librería estándar, pero deben respetar `Send` y `Share`. Un `Channel[T]` solo transporta `T: Send`; enviar un `T` afín mueve el valor al canal. Tondo 0.1 no introduce un segundo modelo implícito de memoria compartida ni una keyword `select`; una futura operación de selección debe diseñarse de forma exhaustiva y cancelable.
+Los canales tipados, mutexes, atomics, actores y pools de trabajo pertenecen a
+la futura librería estándar, pero deben respetar `Send` y `Share`. `std.channel`
+separa `Sender[T]` y `Receiver[T]`, solo transporta `T: Send` y mueve un valor
+afín únicamente cuando el envío hace commit. La capacidad de un canal bounded
+es explícita; `0` significa rendezvous y un canal sin límite requiere el
+constructor nombrado `unbounded`. El envío normal aplica backpressure y ninguna
+política descarta elementos silenciosamente. `Receiver[T]` se adapta al único
+`AsyncIterator[T]` cuando `T: Discard`, por lo que `for` continúa siendo la
+forma de consumo lazy segura. Para valores con obligación terminal se usan
+`receive` y el cierre explícito que devuelve mensajes pendientes.
+
+En la futura librería estándar, la selección cancelable pertenece a `std.async`
+y `std.channel`: registra casos inertes, hace commit exactamente sobre uno y
+desregistra los perdedores sin perder mensajes, valores afines ni wakeups. Tondo
+0.1 no introduce un segundo modelo implícito de memoria compartida ni una
+keyword `select`. Un caso no es un `Future`, no se espera por separado y su API
+definitiva preserva el ownership de cualquier payload de un envío
+perdedor. Para esperar el primer `Join` de un conjunto se usa `Group.next()`, no
+`select`.
+
+`std.sync` contiene `Mutex[T]`, `RwLock[T]`, condition variables,
+`Semaphore`/`Permit`, `Once[T, E]`, `Barrier` y atomics con orden de memoria
+explícito. Guards y permits son afines y su liberación es terminal y visible;
+ninguna espera bloquea un worker cooperativo. No publica `WaitGroup`: el caso de
+uso está cubierto por `scope` y `Group[Unit, E]`. `std.executor` construye pools,
+actores y el bridge de trabajo bloqueante sobre estas primitivas; sus operaciones
+devuelven resultados lógicos suspendibles y el caller conserva `spawn` como la
+única forma de iniciar concurrencia.
 
 El trabajo bloqueante o intensivo de CPU no debe ejecutarse directamente en un
 worker cooperativo cuando pueda impedir el progreso de otras tasks. La librería

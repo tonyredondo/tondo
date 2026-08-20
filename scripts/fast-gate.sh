@@ -8,8 +8,11 @@ config="${TONDO_FAST_GATE_CONFIG:-testing/fast-gate.json}"
 jq -e '
     .format == "tondo-fast-gate/1"
     and .edition == "0.1"
+    and (.documentation_paths | length > 0)
+    and (.gate_policy_paths | length > 0)
+    and (.inline_test_tail_paths | type == "array")
     and .coverage.new_executable_line_min_basis_points == 10000
-    and .mutation.required_for_rust_source_changes == true
+    and .mutation.required_for_production_rust_changes == true
     and (.shared_paths | length > 0)
     and (.packages | length > 0)
 ' "$config" >/dev/null || {
@@ -125,8 +128,66 @@ fi
 
 mapfile -t changed_files < "$changed_file_list"
 rust_changed=0
+production_rust_changed=0
+inline_test_tail_changed=0
+external_test_changed=0
 full_required="$force_full"
 declare -A packages=()
+
+is_documentation() {
+    local path="$1"
+    local prefix
+    while IFS= read -r prefix; do
+        [[ -n "$prefix" ]] || continue
+        if [[ "$prefix" == */ ]]; then
+            [[ "$path" == "$prefix"* ]] && return 0
+        elif [[ "$path" == "$prefix" ]]; then
+            return 0
+        fi
+    done < <(jq -r '.documentation_paths[]' "$config")
+    return 1
+}
+
+is_gate_policy() {
+    local path="$1"
+    jq -e --arg path "$path" '.gate_policy_paths | index($path) != null' "$config" >/dev/null
+}
+
+is_test_path() {
+    local path="$1"
+    [[ "$path" == tests/*.rs || "$path" == */tests/*.rs ]]
+}
+
+is_inline_test_tail_change() {
+    local path="$1"
+    local marker
+    jq -e --arg path "$path" '.inline_test_tail_paths | index($path) != null' "$config" >/dev/null || return 1
+    [[ -f "$path" ]] || return 1
+    marker="$(awk '
+        previous == "#[cfg(test)]" && /^mod tests[[:space:]]*\{/ { marker = NR - 1 }
+        { previous = $0 }
+        END { if (marker > 0) print marker }
+    ' "$path")"
+    [[ -n "$marker" ]] || return 1
+    awk -v target="$path" -v marker="$marker" '
+        /^diff --git / { active = 0 }
+        /^\+\+\+ b\// {
+            file = substr($0, 7)
+            active = (file == target)
+            next
+        }
+        active && /^@@ / {
+            hunk = $0
+            hunk = substr(hunk, index(hunk, "+") + 1)
+            split(hunk, fields, " ")
+            split(fields[1], span, ",")
+            start = span[1] + 0
+            seen = 1
+            if (start < marker) invalid = 1
+        }
+        END { exit !(seen && !invalid) }
+    ' "$diff_file"
+}
 
 is_shared() {
     local path="$1"
@@ -155,7 +216,26 @@ package_for() {
 }
 
 for path in "${changed_files[@]}"; do
-    [[ "$path" == *.rs ]] && rust_changed=1
+    if [[ "$path" == *.rs ]]; then
+        rust_changed=1
+        if is_test_path "$path"; then
+            external_test_changed=1
+        elif is_inline_test_tail_change "$path"; then
+            inline_test_tail_changed=1
+        else
+            production_rust_changed=1
+        fi
+    fi
+    if is_gate_policy "$path"; then
+        gate_policy_changed=1
+        non_docs_changed=1
+        continue
+    fi
+    if is_documentation "$path"; then
+        docs_changed=1
+        continue
+    fi
+    non_docs_changed=1
     if is_shared "$path"; then
         full_required=1
     fi
@@ -165,7 +245,14 @@ for path in "${changed_files[@]}"; do
 done
 
 scope="impacted"
-if (( full_required )); then scope="shared-frontier"; fi
+docs_changed="${docs_changed:-0}"
+non_docs_changed="${non_docs_changed:-0}"
+gate_policy_changed="${gate_policy_changed:-0}"
+if (( full_required )); then
+    scope="shared-frontier"
+elif (( docs_changed && ! non_docs_changed )); then
+    scope="documentation"
+fi
 
 run() {
     local label="$1"
@@ -194,11 +281,21 @@ else
     if (( full_required )); then
         run full-test-gate bash scripts/test-gate.sh
     else
+        if (( docs_changed )); then
+            run documentation-gate bash scripts/documentation-gate.sh
+        fi
+        if (( gate_policy_changed )); then
+            run fast-gate-tests bash scripts/fast-gate-test.sh
+        fi
         for package in "${!packages[@]}"; do
             run "check-$package" cargo check -p "$package" --all-targets --locked
-            run "test-$package" cargo test -p "$package" --all-targets --locked
+            if (( inline_test_tail_changed && ! production_rust_changed && ! external_test_changed )); then
+                run "test-$package" cargo test -p "$package" --lib --locked
+            else
+                run "test-$package" cargo test -p "$package" --all-targets --locked
+            fi
         done
-        if (( rust_changed )); then
+        if (( production_rust_changed )); then
             if ! command -v cargo-llvm-cov >/dev/null 2>&1; then
                 echo "fast gate: cargo-llvm-cov is required for changed-line coverage" >&2
                 exit 1
@@ -239,8 +336,13 @@ jq -n \
     --arg head "$(git rev-parse HEAD)" \
     --arg base "${base:-explicit-diff}" \
     --argjson rust_changed "$rust_changed" \
+    --argjson production_rust_changed "$production_rust_changed" \
+    --argjson inline_test_tail_changed "$inline_test_tail_changed" \
+    --argjson external_test_changed "$external_test_changed" \
     --argjson full_required "$full_required" \
+    --argjson documentation_changed "$docs_changed" \
+    --argjson gate_policy_changed "$gate_policy_changed" \
     --argjson files "$(jq -Rsc 'split("\n") | map(select(length > 0))' "$changed_file_list")" \
-    '{format:$format,scope:$scope,head:$head,base:$base,rust_changed:$rust_changed,full_required:$full_required,changed_files:$files}' \
+    '{format:$format,scope:$scope,head:$head,base:$base,rust_changed:$rust_changed,production_rust_changed:$production_rust_changed,inline_test_tail_changed:$inline_test_tail_changed,external_test_changed:$external_test_changed,documentation_changed:$documentation_changed,gate_policy_changed:$gate_policy_changed,full_required:$full_required,changed_files:$files}' \
     > "$summary"
 echo "fast gate: OK scope=$scope files=${#changed_files[@]} evidence=$summary"

@@ -125,6 +125,13 @@ anteriores.
   protocolo lazy con backpressure; el único `for` selecciona `Iterator[T]` si
   está disponible y, en otro caso, espera `AsyncIterator[T]` implícitamente.
   `collect(limit:)` es la materialización explícita.
+- STD-0.1B añadirá `Group[T, E]` para coordinación homogénea `all`, `settle`,
+  `next` y cancelación drenada; sustituye tanto contadores `WaitGroup` como
+  agregadores `WhenAll`/`WhenAny` sin introducir otro handle de tarea.
+  `std.channel` cubrirá productor/consumidor y selección cancelable;
+  `std.sync` las primitivas compartidas, y `std.executor` pools, actores y el
+  bridge bloqueante. Todo reutiliza `suspends`, `spawn`, `Join`, scopes y
+  `AsyncIterator`.
 - `await` se reserva para consumir trabajo pendiente representado por un
   `Join[T, E]`. `Waiter.wait()` y cualquier otra operación suspendible directa
   usan la espera implícita normal.
@@ -422,13 +429,20 @@ cantidad de infraestructura necesaria antes del primer programa ejecutable.
 ### 3.2.1 Feedback por impacto
 
 - [x] **DEC-017 — Feedback por impacto y gates por tier.** Cada bloque usa
-  `scripts/fast-gate.sh`: formatter, paquetes afectados, cobertura de líneas
-  ejecutables nuevas al 100 % y mutación del diff. Fronteras compartidas,
-  registros normativos y scripts de gate escalan automáticamente a
-  `scripts/test-gate.sh`. Pushes y pull requests usan el tier `fast`; una wave
-  y la noche usan el tier `full`, que conserva test-gate, matriz portable,
-  fuzzing y quality-gate. La evidencia de fast gate vive en
-  `target/reliability/fast-gate/` y es siempre efímera.
+  `scripts/fast-gate.sh` y selecciona el mínimo tier suficiente. Cambios
+  exclusivamente documentales —specs, tracker y evidencia generada— usan
+  `scripts/documentation-gate.sh`: fences, conformance documental, matriz
+  normativa, grafo del tracker y contratos de stdlib, sin suite completa,
+  coverage ni mutation testing. Código Rust de producción aislado usa check/test
+  del paquete y exige cobertura de líneas ejecutables nuevas al 100 % y mutación
+  del diff; tests externos o cambios confinados a un módulo inline de tests
+  auditado ejecutan solo los targets de test afectados —`--lib` cuando todo el
+  cambio Rust está en ese módulo inline— sin recalcular métricas del producto;
+  fronteras compartidas escalan a `scripts/test-gate.sh`. Pushes y pull requests
+  usan este clasificador; solo una frontera compartida, límite de wave, cambio de
+  baseline, release candidate o afirmación portable exige el tier `full`, que
+  conserva test-gate, matriz portable, fuzzing y quality-gate. La evidencia de
+  fast gate vive en `target/reliability/fast-gate/` y es siempre efímera.
 
 - [x] **DEC-019 — `suspends` visible sin duplicar APIs.** El efecto es postfix,
   forma parte del tipo y del hash ABI, y aparece siempre en interfaces y
@@ -2309,8 +2323,8 @@ adapters de streams y el worker OS nativo permanecen como leaves independientes.
   intermedio. Si existen ambos protocolos, `Iterator[T]` tiene precedencia.
   `collect(limit:)` y las reglas
   genéricas de cierre/backpressure quedan separadas en `ASYNC-ITER-EXT-001`;
-  la adaptación concreta de `Channel` pertenece a STD-0.1B y se cierra en
-  `STD-CHANNEL-ASYNC-ITER-001`.
+  la adaptación concreta de `std.channel.Receiver[T]` bajo `T: Discard`
+  pertenece a STD-0.1B y se cierra en `STD-CHANNEL-ASYNC-ITER-001`.
 
 - [x] **ASYNC-ITER-EXT-001 — Completar streams genéricos en `std.async`.**
   `AsyncIterator.collect(limit:)` queda implementado como lowering MIR genérico
@@ -5111,7 +5125,8 @@ S1A; su estado se deriva de los registros machine-readable y no de este texto:
 
 **Objetivo:** añadir una implementación nativa de producción sin introducir una
 segunda semántica. Comienza únicamente después de Gates H0, T0, G5 y S1A,
-`DIAG-CI-001` y de cerrar los contratos runtime-facing `STD-CONC-001`,
+`DIAG-CI-001` y de cerrar los contratos runtime-facing
+`STD-ASYNC-GROUP-SPEC-001`, `STD-CONC-001`,
 `STD-SYNC-001`, `STD-EXEC-001` y la frontera host/cancelación de
 `STD-NET-001`. Esos módulos no se implementan todavía, pero sus requisitos y
 los perfiles `DIAG-*` alimentan elección de backend, memoria, debugging y ABI.
@@ -5447,7 +5462,9 @@ semántica:
 **Objetivo:** completar la primera stdlib sin convertir APIs de aplicación en
 nueva semántica del lenguaje. La fase tiene dos momentos:
 
-1. Después de `DIAG-SPEC-001` y antes de `DIAG-RUNTIME-001`/M11 se cierran `STD-CONC-001`, `STD-SYNC-001`, `STD-EXEC-001` y la
+1. Después de `DIAG-SPEC-001` y antes de `DIAG-RUNTIME-001`/M11 se cierran
+   `STD-ASYNC-GROUP-SPEC-001`, `STD-CONC-001`, `STD-SYNC-001`,
+   `STD-EXEC-001` y la
    frontera runtime/host de `STD-NET-001`; son inputs de DEC-013/014 y de la
    elección de backend, no una autorización para implementarlos. Sus contratos
    describen también los eventos que consume `DIAG-RUNTIME-001`; no añaden APIs
@@ -5463,31 +5480,46 @@ publica hasta cerrar el gate final.
 
 | Orden B | Owners | Dependencias duras | Momento |
 |---|---|---|---|
-| B0 | sync, channel, executor y frontera net | async/memoria/I/O/time A + `DIAG-SPEC-001` | contratos antes de `DIAG-RUNTIME-001` y M11 |
-| B1 | `std.sync` | DEC-014 + backend/VM schedulers | implementación tras N1 |
-| B2 | `std.channel` | sync + scheduler + ownership `Send` | tras B1 |
-| B3 | `std.executor` | sync/channel + bridge bloqueante | tras B2 |
-| B4 | civil time | time-base + timezone data versionada | paralelo a B1–B3 |
-| B5 | encoding/YAML/TOML/CBOR | bytes + I/O + serialization | paralelo tras N1 |
-| B6 | regex/UUID | text; UUID añade clock/entropy | paralelo tras N1 |
-| B7 | net | I/O + time + executor/cancelación | después de B3 |
-| B8 | log | format + time + I/O y sinks aplicables | después de owners de sinks |
-| B9 | integración/distribución | todos los micro-gates | S1 y después `REL-0.1-RC-001` |
+| B0 | async group, sync, channel, executor y frontera net | async/memoria/I/O/time A + `DIAG-SPEC-001` | contratos antes de `DIAG-RUNTIME-001` y M11 |
+| B1 | `std.async.Group` | `Join` + scopes + scheduler VM/nativo | implementación tras N1 |
+| B2 | `std.sync` | DEC-014 + backend/VM schedulers | tras B1 |
+| B3 | `std.channel` | sync + scheduler + ownership `Send` | tras B2 |
+| B4 | `std.executor` | group/sync/channel + bridge bloqueante | tras B3 |
+| B5 | civil time | time-base + timezone data versionada | paralelo a B1–B4 |
+| B6 | encoding/YAML/TOML/CBOR | bytes + I/O + serialization | paralelo tras N1 |
+| B7 | regex/UUID | text; UUID añade clock/entropy | paralelo tras N1 |
+| B8 | net | I/O + time + executor/cancelación | después de B4 |
+| B9 | log | format + time + I/O y sinks aplicables | después de owners de sinks |
+| B10 | integración/distribución | todos los micro-gates | S1 y después `REL-0.1-RC-001` |
 
 ### 21.1 Concurrencia y tiempo
 
-- [ ] **STD-CONC-001 — Especificar `std.channel`.** Tipos, cierre,
-  backpressure, selección cancelable, fairness declarada, ownership de
-  `T: Send`, cancelación y ausencia de una keyword `select` implícita quedan
-  fijados por API.
+- [ ] **STD-ASYNC-GROUP-SPEC-001 — Cerrar `std.async.Group`.** Fijar la
+  superficie `group/add/all/settle/next/cancel`, orden de inserción frente a
+  finalización, prioridad de errores, cancelación drenada, grupo vacío,
+  ownership afín y transferencia de `Join`. Debe registrar `HOST =
+  not-applicable` porque compone el scheduler existente, y no añadir
+  `WaitGroup`, tuples awaitables, overloads por aridad ni otro `Task`/`Future`.
 
-- [ ] **STD-SYNC-001 — Especificar `std.sync`.** Mutexes, rwlocks, condvars,
-  semáforos y atomics declaran `Send`/`Share`, poisoning si existe, orden de
-  memoria y prohibiciones dentro del scheduler.
+- [ ] **STD-CONC-001 — Especificar `std.channel`.** Tipos, cierre,
+  endpoints `Sender`/`Receiver`, capacidades 0/N y `unbounded` explícito,
+  `fork` explícito, backpressure, recuperación de payload afín al no comprometer
+  un envío, cierre terminal del receiver que devuelve mensajes pendientes,
+  adaptación `AsyncIterator` bajo `T: Discard`, selección cancelable con
+  commit/rollback exacto, fairness declarada, ownership de `T: Send`,
+  cancelación y ausencia de una keyword `select` implícita quedan fijados por
+  API.
+
+- [ ] **STD-SYNC-001 — Especificar `std.sync`.** Mutexes, rwlocks, guards,
+  condición, `Semaphore`/`Permit`, `Once[T, E]`, `Barrier` y atomics declaran
+  `Send`/`Share`, cleanup, cancelación, fairness, orden de memoria y
+  prohibiciones dentro del scheduler. Tondo no usa poisoning implícito ni un
+  `WaitGroup` separado.
 
 - [ ] **STD-EXEC-001 — Especificar `std.executor`.** Pools, actores y bridging
-  bloqueante no crean un segundo modelo async ni permiten que trabajo host
-  bloquee el progreso de tasks Tondo.
+  bloqueante tienen capacidad, saturación, shutdown y cancelación explícitos;
+  no crean un segundo modelo async, no heredan capabilities ambientales ni
+  permiten que trabajo host bloquee el progreso de tasks Tondo.
 
 - [ ] **STD-CIVIL-TIME-001 — Completar `std.time` con calendario civil.** Añadir
   `Date`, `Time`, `DateTime`, zonas horarias, reglas/versionado de timezone data
@@ -5538,20 +5570,45 @@ dimensión. `TEST/FUZZ` produce subregistros separados `MODEL`, `TEST` y `FUZZ`;
 la task puede ser una sola porque pertenece a un único owner, pero el gate
 rechaza cualquiera de los tres ausente. En `DOC`, “ejemplo ejecutable” significa
 ejemplo verificable por doc-test más un acceptance runtime enlazado, no que el
-doc runner ejecute efectos. Las tareas coordinadoras de 21.3.13 solo agregan
+doc runner ejecute efectos. Las tareas coordinadoras de 21.3.14 solo agregan
 estas leaves.
 
-#### 21.3.1 `std.sync`
+#### 21.3.1 Coordinación de `std.async`
+
+- [ ] **STD-ASYNC-GROUP-IMPL-001 — Implementar `Group[T, E]`.** Adoptar
+  `Join` homogéneos sin duplicar su frame ni outcome; implementar
+  `add/all/settle/next/cancel`, grupos vacíos, prioridad determinista de errores
+  y cancelación drenada sobre el scheduler único en VM y nativo. `HOST` es
+  `not-applicable`: no existe bridge ni primitiva host propia.
+- [ ] **STD-ASYNC-GROUP-TEST-001 — Modelar, probar y fuzzear grupos.** Mantener
+  registros separados `MODEL`, `TEST` y `FUZZ` para la máquina afín: secuencias
+  de add/next/terminal, éxito/error/pánico/cancelación, finalizaciones
+  simultáneas, transferencia entre scopes, grupo vacío, límites, cleanup único
+  y ausencia de hijos o handles perdidos bajo scheduling determinista y stress.
+- [ ] **STD-ASYNC-GROUP-PERF-001 — Medir grupos.** Fijar latencia y throughput
+  de `add`, fan-in `all`, `settle`, `next` y cancelación, además de memoria,
+  allocations, wakeups y tail latency por cardinalidad y target.
+- [ ] **STD-ASYNC-GROUP-CONF-001 — Conformar grupos.** Ejecutar el mismo corpus
+  observable en VM/nativo, incluidos orden, selección de error, cancelación,
+  pánico, cleanup y rechazo estático de usos afines inválidos.
+- [ ] **STD-ASYNC-GROUP-DOC-001 — Documentar grupos.** Publicar firmas,
+  ownership, orden, errores, cancelación, costes y ejemplos ejecutables de
+  `all`, `settle`, `next` y fan-out/fan-in sin `WaitGroup`.
+
+#### 21.3.2 `std.sync`
 
 - [ ] **STD-SYNC-IMPL-001 — Implementar la superficie portable de sync.**
-  Publicar mutex, rwlock, condvar, semáforo y atomics con ownership, poisoning y
-  memory ordering fijados por `STD-SYNC-001` sobre VM y runtime nativo.
+  Publicar mutex, rwlock, guards, condición, semáforo/permit, once, barrier y
+  atomics con ownership, cleanup sin poisoning implícito y memory ordering
+  fijados por `STD-SYNC-001` sobre VM y runtime nativo. No implementar un
+  contador `WaitGroup` paralelo a `Group[Unit, E]`.
 - [ ] **STD-SYNC-HOST-001 — Implementar parking y atomics del host.** Enlazar
   threads, wakeups y esperas mediante unidades fijadas, sin bloqueo del executor
   ni fallback single-thread que finja soporte cross-thread.
 - [ ] **STD-SYNC-TEST-001 — Modelar y endurecer sync.** Cubrir litmus de memoria,
-  races, wakeups perdidos, poisoning/cancelación, teardown y límites bajo
-  scheduling adversario y sanitización aplicable.
+  races, wakeups perdidos, liberación de guard/permit, pánico/cancelación,
+  once/barrier, teardown y límites bajo scheduling adversario y sanitización
+  aplicable.
 - [ ] **STD-SYNC-PERF-001 — Medir sync.** Fijar uncontended/contended latency,
   throughput, fairness, memoria y tail latency por target contra un oracle de
   corrección independiente.
@@ -5559,21 +5616,29 @@ estas leaves.
   capability-gated en VM/nativo, incluido rechazo estático cuando falte
   `threads`.
 - [ ] **STD-SYNC-DOC-001 — Documentar sync.** Publicar ordering, deadlocks,
-  poisoning, cancelación, costes y ejemplos ejecutables sin defaults ocultos.
+  ausencia de poisoning, cancelación, cleanup, costes y ejemplos ejecutables
+  sin defaults ocultos.
 
-#### 21.3.2 `std.channel`
+#### 21.3.3 `std.channel`
 
-- [ ] **STD-CHANNEL-IMPL-001 — Implementar canales tipados.** Publicar creación,
-  send/receive, cierre, backpressure y selección cancelable con `T: Send`, sin
-  keyword nueva ni tasks desligadas.
+- [ ] **STD-CHANNEL-IMPL-001 — Implementar canales tipados.** Publicar endpoints
+  `Sender`/`Receiver`, `bounded(0/N)`, `unbounded` explícito, send/receive,
+  fork, try-operations, cierre, devolución de pendientes, backpressure y
+  selección cancelable con `T: Send`, sin keyword nueva ni tasks desligadas. Un
+  envío no comprometido devuelve su payload afín intacto y el último receiver
+  no puede abandonar valores con obligación terminal.
 - [ ] **STD-CHANNEL-ASYNC-ITER-001 — Adaptar canales a `AsyncIterator`.**
-  Implementar la vista consumible de recepción sobre el protocolo ya cerrado,
-  preservando backpressure, cierre, cancelación y ownership sin materializar
-  arrays ni crear otro tipo de stream. Depende de `STD-CHANNEL-IMPL-001` y de
-  `ASYNC-ITER-EXT-001` y debe cerrar antes de la conformidad de `std.channel`.
+  Implementar la vista consumible bajo `T: Discard` sobre el protocolo ya
+  cerrado, preservando backpressure, cierre, cancelación y ownership sin
+  materializar arrays ni crear otro tipo de stream. Probar que salir pronto del
+  `for` no puede perder un valor afín; esos valores usan la API manual. Depende
+  de `STD-CHANNEL-IMPL-001` y de `ASYNC-ITER-EXT-001` y debe cerrar antes de la
+  conformidad de `std.channel`.
 - [ ] **STD-CHANNEL-TEST-001 — Modelar y fuzzear canales.** Cubrir buffers 0/N,
-  cierre concurrente, fairness declarada, cancelación, productores/consumidores
-  abandonados, límites y ausencia de mensajes duplicados o perdidos.
+  forma unbounded bajo límites, cierre concurrente, fairness declarada,
+  commit/rollback de selección, cancelación, productores/consumidores
+  abandonados, payloads afines y ausencia de mensajes o wakeups duplicados o
+  perdidos.
 - [ ] **STD-CHANNEL-PERF-001 — Medir canales.** Registrar throughput, tail
   latency, memoria, wakeups y backpressure con 1:1, N:1 y N:M.
 - [ ] **STD-CHANNEL-CONF-001 — Conformar canales.** Reutilizar el mismo corpus
@@ -5581,17 +5646,19 @@ estas leaves.
 - [ ] **STD-CHANNEL-DOC-001 — Documentar canales.** Fijar orden, cierre,
   cancelación, fairness, costes y ejemplos ejecutables de composición.
 
-#### 21.3.3 `std.executor`
+#### 21.3.4 `std.executor`
 
 - [ ] **STD-EXEC-IMPL-001 — Implementar executor, pools y actores.** Reutilizar
-  async estructurado, channels y sync; el bridge bloqueante retorna a scopes
-  Tondo y no crea un segundo `Task` público.
+  Group, async estructurado, channels y sync; pools/mailboxes son acotados o
+  nombran explícitamente su ausencia de límite, y el bridge bloqueante retorna
+  a scopes Tondo sin crear un segundo `Task` público.
 - [ ] **STD-EXEC-HOST-001 — Implementar workers host.** Enlazar pools y wakeups
   fijados por target, con límites, shutdown y revocación sin heredar ambiente ni
   bloquear el progreso cooperativo.
 - [ ] **STD-EXEC-TEST-001 — Modelar y endurecer executor.** Cubrir fairness,
-  starvation, cancelación, pánicos, actores muertos, shutdown, límites y races
-  con schedulers deterministas y stress real.
+  starvation, saturación, cancelación, pánicos, actores muertos, rechazo de
+  trabajo, shutdown drenado, límites y races con schedulers deterministas y
+  stress real.
 - [ ] **STD-EXEC-PERF-001 — Medir executor.** Fijar scheduling latency,
   throughput, tail, memoria, startup y coste de wakeup/bridge por target.
 - [ ] **STD-EXEC-CONF-001 — Conformar executor.** Comparar observaciones VM y
@@ -5599,7 +5666,7 @@ estas leaves.
 - [ ] **STD-EXEC-DOC-001 — Documentar executor.** Explicar scopes, pools,
   actores, bloqueo, cancelación, shutdown, costes y ejemplos ejecutables.
 
-#### 21.3.4 Calendario civil de `std.time`
+#### 21.3.5 Calendario civil de `std.time`
 
 - [ ] **STD-CIVIL-TIME-IMPL-001 — Implementar calendario y zonas.** Publicar
   Date, Time, DateTime, parsing/formatting, aritmética y conversiones de zona
@@ -5618,7 +5685,7 @@ estas leaves.
 - [ ] **STD-CIVIL-TIME-DOC-001 — Documentar tiempo civil.** Separar claramente
   monotónico/civil, gaps/folds, datos versionados, costes y ejemplos.
 
-#### 21.3.5 `std.encoding`
+#### 21.3.6 `std.encoding`
 
 - [ ] **STD-ENCODING-IMPL-001 — Implementar Base64 y hexadecimal.** Publicar
   APIs materializadas e incrementales bytes-first, con decode atómico, policies
@@ -5633,7 +5700,7 @@ estas leaves.
 - [ ] **STD-ENCODING-DOC-001 — Documentar encodings.** Publicar una única forma
   por policy, errores, costes y ejemplos materializados/streaming.
 
-#### 21.3.6 `std.yaml`
+#### 21.3.7 `std.yaml`
 
 - [ ] **STD-YAML-IMPL-001 — Implementar YAML seguro.** Publicar typed, dynamic y
   streaming sobre serialization con aliases/tags acotados y construcción
@@ -5647,7 +5714,7 @@ estas leaves.
 - [ ] **STD-YAML-DOC-001 — Documentar YAML.** Enumerar el subset seguro,
   policies, límites, costes y ejemplos ejecutables.
 
-#### 21.3.7 `std.toml`
+#### 21.3.8 `std.toml`
 
 - [ ] **STD-TOML-IMPL-001 — Implementar TOML.** Publicar typed, árbol dinámico y
   parser con spans sobre serialization, preservando fecha/hora, duplicados y
@@ -5662,7 +5729,7 @@ estas leaves.
 - [ ] **STD-TOML-DOC-001 — Documentar TOML.** Separar data format y
   `tondo.toml`, fijar policies, costes y ejemplos ejecutables.
 
-#### 21.3.8 `std.cbor`
+#### 21.3.9 `std.cbor`
 
 - [ ] **STD-CBOR-IMPL-001 — Implementar CBOR.** Publicar typed, dynamic y
   streaming con tags, longitudes definidas/indefinidas y modo determinista
@@ -5677,7 +5744,7 @@ estas leaves.
 - [ ] **STD-CBOR-DOC-001 — Documentar CBOR.** Explicar tags, determinismo,
   preservación, límites, costes y ejemplos ejecutables.
 
-#### 21.3.9 `std.regex`
+#### 21.3.10 `std.regex`
 
 - [ ] **STD-REGEX-IMPL-001 — Implementar regex acotado.** Publicar compile,
   match, find y replace con sintaxis/Unicode cerrados y memoria/tiempo sometidos
@@ -5692,7 +5759,7 @@ estas leaves.
 - [ ] **STD-REGEX-DOC-001 — Documentar regex.** Publicar sintaxis exacta,
   Unicode, captures, complejidad, límites y ejemplos ejecutables.
 
-#### 21.3.10 `std.uuid`
+#### 21.3.11 `std.uuid`
 
 - [ ] **STD-UUID-IMPL-001 — Implementar UUID.** Publicar representación,
   parse/format y generadores de las versiones fijadas, separando operaciones
@@ -5710,7 +5777,7 @@ estas leaves.
 - [ ] **STD-UUID-DOC-001 — Documentar UUID.** Explicar versiones, seguridad de
   generación, providers, errores, costes y ejemplos ejecutables.
 
-#### 21.3.11 `std.net`
+#### 21.3.12 `std.net`
 
 - [ ] **STD-NET-IMPL-001 — Implementar networking portable.** Publicar
   direcciones, DNS, streams, datagrams y frontera TLS con partial I/O,
@@ -5728,7 +5795,7 @@ estas leaves.
 - [ ] **STD-NET-DOC-001 — Documentar networking.** Publicar ownership,
   partial I/O, DNS/TLS, timeout, cancelación, errores, costes y ejemplos.
 
-#### 21.3.12 `std.log`
+#### 21.3.13 `std.log`
 
 - [ ] **STD-LOG-IMPL-001 — Implementar logging estructurado.** Publicar eventos,
   niveles, fields, filters y sinks explícitos con backpressure/fallo visible y
@@ -5746,16 +5813,16 @@ estas leaves.
 - [ ] **STD-LOG-DOC-001 — Documentar logging.** Publicar fields, filters,
   sinks, backpressure, fallos, costes y ejemplos ejecutables.
 
-#### 21.3.13 Coordinación de STD-0.1B
+#### 21.3.14 Coordinación de STD-0.1B
 
 - [ ] **STD-B-OWNER-MATRIX-001 — Materializar celdas B por owner.** Generar un
-  record canónico para cada módulo de 21.3.1–21.3.12 con `SPEC`, `IMPL`, `HOST`,
+  record canónico para cada módulo de 21.3.1–21.3.13 con `SPEC`, `IMPL`, `HOST`,
   `MODEL`, `TEST`, `FUZZ`, `PERF`, `CONF` y `DOC`. `HOST = not-applicable`
   requiere razón normativa y `MODEL/TEST/FUZZ` conservan identidades separadas;
   no se crean stubs ni tasks `HOST-NA` administrativas.
 
 - [ ] **STD-B-IMPL-001 — Coordinar implementación portable por owner.** Cada
-  task `*-IMPL-001` de 21.3.1–21.3.12 está cerrada y enlazada firma por firma;
+  task `*-IMPL-001` de 21.3.1–21.3.13 está cerrada y enlazada firma por firma;
   cualquier intrinsic o unidad privilegiada nueva tiene contrato y
   justificación explícitos.
 
@@ -6317,9 +6384,10 @@ Esta tabla es la fuente de reconciliación del estado actual.
     hasta que cada firma contractual atraviese una ruta pública real.
 27. [ ] **Wave 6 — Contratos que condicionan el backend.** Después de
     `DIAG-SPEC-001`, cerrar
-    `STD-CONC-001`, `STD-SYNC-001`, `STD-EXEC-001` y la frontera runtime de
-    `STD-NET-001`. Mini-gate: DEC-013/014 reciben requisitos completos sin
-    implementar todavía STD-0.1B.
+    `STD-ASYNC-GROUP-SPEC-001`, `STD-CONC-001`, `STD-SYNC-001`,
+    `STD-EXEC-001` y la frontera runtime de `STD-NET-001`. Mini-gate:
+    DEC-013/014 reciben requisitos completos sin implementar todavía
+    STD-0.1B.
 28. [ ] **Wave 7 — M11 correcto antes que optimizado.** Con Wave 6 cerrada,
     ejecutar `DIAG-RUNTIME-001 → (RACE-001 + LEAK-001 + DUMP-001) →
     DIAG-TEST-001 → DIAG-CI-001 → NATIVE-001 → NATIVE-MEM-ADR-001 →
@@ -6329,7 +6397,7 @@ Esta tabla es la fuente de reconciliación del estado actual.
     NATIVE-DIFF-001 → targets → NATIVE-REL-001`. Cerrar Gate N1.
 29. [ ] **Wave 8 — Completar STD-0.1B y candidato 0.1.** Terminar specs B,
     cerrar para cada owner las leaves `IMPL`, `HOST` aplicable, `TEST/FUZZ`,
-    `PERF`, `CONF` y `DOC` de 21.3.1–21.3.12, y después los coordinadores
+    `PERF`, `CONF` y `DOC` de 21.3.1–21.3.13, y después los coordinadores
     `STD-B-OWNER-MATRIX-001`, `STD-B-*` y `STD-S1-SEAL-001`; cerrar Gate S1. Solo después componer
     `REL-0.1-RC-001` con G5/T0/N1/S1 y después `REL-SUPPLY-001` /
     `REL-INSTALL-001` / `REL-PUBLISH-001`. Optimizaciones post-N1 avanzan por evidencia

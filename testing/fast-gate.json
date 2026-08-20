@@ -6,11 +6,40 @@
     "global_baseline_source": "testing/quality-baseline.json"
   },
   "mutation": {
-    "required_for_rust_source_changes": true,
+    "required_for_production_rust_changes": true,
     "jobs": 1,
     "timeout_seconds": 300,
     "build_timeout_seconds": 600
   },
+  "documentation_paths": [
+    "README.md",
+    "TONDO_IMPLEMENTATION_TRACKER.md",
+    "TONDO_LANGUAGE_SPEC.md",
+    "TONDO_LLM_FORM_SPEC.md",
+    "TONDO_STANDARD_LIBRARY_SPEC.md",
+    "TONDO_TESTING_SPEC.md",
+    "TONDO_TOOLCHAIN_SPEC.md",
+    "docs/",
+    "conformance/0.1/cases/documentation/",
+    "conformance/0.1/manifest.json",
+    "conformance/draft/manifest.json",
+    "testing/coverage-matrix.json",
+    "testing/doc-test-runtime-links.json",
+    "testing/inventory.json",
+    "testing/normative-evidence.json",
+    "testing/normative-gap-audit.json",
+    "testing/tracker-graph.json"
+  ],
+  "gate_policy_paths": [
+    "scripts/documentation-gate.sh",
+    "scripts/fast-coverage-check.sh",
+    "scripts/fast-gate-test.sh",
+    "scripts/fast-gate.sh",
+    "testing/fast-gate.json"
+  ],
+  "inline_test_tail_paths": [
+    "crates/tondo-reliability/src/matrix.rs"
+  ],
   "shared_paths": [
     "Cargo.toml",
     "Cargo.lock",
@@ -53,7 +82,8 @@
     { "prefix": "crates/tondo-vm/", "package": "tondo-vm" }
   ],
   "policy": {
-    "fast_gate": "fmt + impacted package check/test + changed executable lines + diff mutation",
+    "documentation_gate": "doc-test + documentation conformance + normative evidence + tracker lint + stdlib contracts; no workspace tests, coverage or mutation",
+    "fast_gate": "fmt + impacted package check/test; changed executable lines and diff mutation only for production Rust",
     "shared_frontier": "full test-gate",
     "wave_boundary": "full test-gate + quality-gate + live conformance",
     "draft_evidence": "target/reliability/fast-gate/"
