@@ -833,9 +833,42 @@ Set:
 Set["read", "write"]
 ~~~
 
+Colecciones concurrentes compartidas:
+
+~~~tondo pseudocode
+import std.sync
+
+let slots = sync.Array[10, 20, 30]
+let cache = sync.Map["one": 1, "two": 2]
+let visited = sync.Set["home", "settings"]
+let undo = sync.Stack[first, second, third]
+let jobs = sync.Queue[first, second, third]
+~~~
+
 Los literales vacíos `[]` y `Set[]` requieren contexto de tipo. `[:]` identifica
 siempre un map. `Set` es un nombre intrínseco del prelude, no una keyword, y no
 puede redeclararse como nombre no calificado.
+
+Las formas `sync.Array[...]`, `sync.Map[...]`, `sync.Set[...]`,
+`sync.Stack[...]` y `sync.Queue[...]` se reconocen por la identidad resuelta de
+los cinco tipos cerrados de `std.sync`, no por el texto `sync`. Por tanto un
+alias explícito del módulo conserva la sintaxis:
+
+~~~tondo pseudocode
+import std.sync as concurrent
+
+let jobs: concurrent.Queue[Job] = concurrent.Queue[]
+let cache: concurrent.Map[String, User] = concurrent.Map[:]
+~~~
+
+No son keywords, nombres del prelude ni un protocolo extensible de literales.
+Un tipo de usuario llamado `Queue` no adquiere esta construcción y los aliases
+globales `SArray`, `SMap` y `SSet` no existen. La forma calificada mantiene
+visible que el resultado posee identidad compartida y sincronización interior.
+Los elementos y entradas se evalúan primero de izquierda a derecha y la
+colección no se publica hasta quedar completamente construida. Los vacíos
+`sync.Array[]`, `sync.Set[]`, `sync.Stack[]` y `sync.Queue[]` requieren tipo
+esperado; `sync.Map[:]` identifica el map concurrente vacío.
 
 ### 5.12 Orden de evaluación
 
@@ -843,7 +876,7 @@ Toda evaluación es de izquierda a derecha:
 
 - Receptor antes que argumentos.
 - Argumentos en orden textual.
-- Elementos de arrays, maps y records en orden textual.
+- Elementos de arrays, maps, records y literales `std.sync` en orden textual.
 - Dentro de una entrada de map, clave antes que valor.
 - Operando izquierdo antes que derecho.
 - Interpolaciones en orden de aparición.
@@ -1283,6 +1316,11 @@ de módulo, bindings, parámetros —incluidos genéricos— o aliases de import
 independencia del namespace. Esta reserva cerrada garantiza, entre otras cosas,
 que `Set[...]`, `Ref(...)` y los constructores numéricos no cambien de categoría
 sintáctica por un binding local.
+
+Los cinco owners cerrados `std.sync.Array/Map/Set/Stack/Queue` son miembros
+calificados del módulo estándar, no redeclaraciones del prelude. Su integración
+literal se reconoce por identidad de declaración incluso bajo alias de módulo y
+no autoriza a otro módulo a introducir una forma contextual equivalente.
 
 Continúan sin ser keywords. La reserva no alcanza nombres de miembro que siempre
 se introducen y utilizan calificados: fields, variantes, métodos inherentes o de
@@ -6329,6 +6367,29 @@ El trabajo bloqueante o intensivo de CPU no debe ejecutarse directamente en un
 worker cooperativo cuando pueda impedir el progreso de otras tasks. La librería
 ofrecerá una frontera explícita hacia threads o un pool bloqueante.
 
+En la futura librería estándar, el mismo módulo posee las identidades compartidas
+`sync.Array[T]`, `sync.Map[K, V]`, `sync.Set[K]`, `sync.Stack[T]` y
+`sync.Queue[T]`. No son aliases
+de las colecciones de valor: copiarlas copia un handle hacia el mismo estado
+sincronizado. Cada operación individual es linealizable. Las operaciones sobre
+claves distintas o slots distintos pueden progresar en paralelo y una
+implementación no puede serializar todas las lecturas mediante un único lock
+exclusivo. `sync.Array` tiene longitud fija e índices estables; por ello no
+publica `push`, `pop`, inserción ni borrado estructural. La pila es LIFO y la
+cola MPMC es FIFO. `dequeue` y `pop` devuelven `none` inmediatamente cuando no
+hay elemento: esperar, aplicar backpressure o seleccionar readiness pertenece a
+`std.channel`, no a una segunda modalidad de queue.
+
+Las operaciones agregadas no observan accidentalmente un recorrido débil. Estos
+tipos no implementan directamente `Iterator`, aritmética de colecciones ni
+igualdad por contenido. `snapshot()` es la frontera explícita, coherente y
+suspendible hacia `Array`, `Map` o `Set` de valor; a partir del snapshot se usan
+los protocolos ordinarios. El orden de un snapshot es índice para
+`sync.Array`, orden linealizado de inserción para map/set, cima a base para
+stack y frente a fondo para queue. Inserciones concurrentes sin relación previa
+pueden linealizarse en cualquier orden, pero todos los observadores ven un
+estado compatible con ese único orden.
+
 #### Garantía de progreso cooperativo
 
 Una task está **runnable** cuando no espera una operación externa, un punto de
@@ -9177,6 +9238,7 @@ primary_expression
                 | tuple_or_group
                 | bracket_literal
                 | set_literal
+                | concurrent_collection_literal
                 | record_literal
                 | option_result_constructor
                 | scope_expression
@@ -9260,7 +9322,7 @@ Resolución:
 - Si el primer elemento contiene `:` de entrada: map.
 - En otro caso: array.
 
-### 23.24 Set
+### 23.24 Set y colecciones concurrentes
 
 ~~~ebnf
 set_literal     = CONTEXT_SET, "[",
@@ -9271,6 +9333,30 @@ set_literal     = CONTEXT_SET, "[",
 `CONTEXT_SET` es el identificador intrínseco exacto `Set` utilizado en posición
 de expresión antes de `[`. No es una keyword y no puede redeclararse como nombre
 no calificado porque pertenece al prelude.
+
+~~~ebnf
+concurrent_collection_literal
+                = CONTEXT_SYNC_SEQUENCE, "[",
+                  [ expression, { ",", expression }, [ "," ] ], "]"
+                | CONTEXT_SYNC_MAP, "[",
+                  ( ":", "]"
+                  | expression, ":", expression,
+                    { ",", expression, ":", expression },
+                    [ "," ], "]" ) ;
+~~~
+
+`CONTEXT_SYNC_SEQUENCE` solo acepta un path que, después de resolver imports y
+aliases, nombre exactamente `std.sync.Array`, `std.sync.Set`,
+`std.sync.Stack` o `std.sync.Queue`. `CONTEXT_SYNC_MAP` acepta únicamente
+`std.sync.Map`. Son terminales contextuales cerrados como `CONTEXT_SET`, pero
+exigen calificación de módulo y no reservan identificadores adicionales.
+
+El parser puede conservar inicialmente el mismo nodo de corchetes preliminar
+utilizado para `generic_args` e `index_suffix`. La resolución lo reclasifica
+como literal concurrente solo por identidad de declaración y posición de
+expresión. En particular, `sync.Array[Int]` en posición de tipo sigue siendo una
+aplicación genérica y `sync.Array[value]` en posición de expresión es un literal;
+ningún valor de runtime ni tipo esperado decide la categoría sintáctica.
 
 ### 23.25 Records y variantes
 
@@ -9963,9 +10049,14 @@ El núcleo no contiene:
 - `Span`.
 - `Dictionary` como alias de `Map`.
 - Maps ordenados y desordenados separados.
-- `Stack` y `Queue` separados.
+- `Stack` y `Queue` ordinarios separados de `Array`/`Deque`.
 
 `Array`, `Map`, `Set` y posteriormente `Deque` cubren las necesidades comunes con nombres únicos.
+Los tipos calificados `sync.Array`, `sync.Map`, `sync.Set`, `sync.Stack` y
+`sync.Queue` no contradicen esta regla: son handles con identidad compartida,
+linearización y sincronización interior, no aliases ni representaciones locales
+alternativas. No existen formas globales `SArray`, `SMap`, `SSet`, `Stack` o
+`Queue` en el prelude.
 
 ### 25.18 Concatenación mediante aritmética
 
@@ -10106,8 +10197,9 @@ anterior:
   generadores explícitos por versión, direcciones, DNS, sockets, datagrams y la
   frontera TLS.
 - `std.channel`, `std.sync` y `std.executor`: canales, mutexes, rwlocks,
-  condvars, semáforos, atomics, pools bloqueantes y actores sobre el único
-  modelo de concurrencia del lenguaje.
+  condvars, semáforos, atomics, colecciones compartidas linealizables —incluidos
+  stack LIFO y queue FIFO—, pools bloqueantes y actores sobre el único modelo de
+  concurrencia del lenguaje.
 - `std.log`, con eventos estructurados y sinks capability-gated.
 - El módulo test-only `std.testing`; discovery, ejecución y reportes se rigen
   además por la especificación normativa de testing.

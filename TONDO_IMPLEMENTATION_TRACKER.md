@@ -139,8 +139,9 @@ anteriores.
   `std.channel` cubrirá productor/consumidor mediante `send`/`receive`
   `selectable`; `select` también acepta timers, one-shots, `Group.next` y un
   número fijo de `Join` heterogéneos;
-  `std.sync` las primitivas compartidas, y `std.executor` pools, actores y el
-  bridge bloqueante. Todo reutiliza `suspends`, `spawn`, `Join`, scopes y
+  `std.sync` las primitivas y colecciones compartidas —incluidos array/map/set
+  linealizables y stack/queue—, y `std.executor` pools, actores y el bridge
+  bloqueante. Todo reutiliza `suspends`, `spawn`, `Join`, scopes y
   `AsyncIterator`.
 - `await` se reserva para consumir trabajo pendiente representado por un
   `Join[T, E]`. `Waiter.wait()` y cualquier otra operación suspendible directa
@@ -5622,7 +5623,15 @@ publica hasta cerrar el gate final.
 - [ ] **STD-SYNC-001 — Especificar `std.sync`.** Mutexes, rwlocks, guards,
   condición, `Semaphore`/`Permit`, `Once[T, E]`, `Barrier` y atomics declaran
   `Send`/`Share`, cleanup, cancelación, fairness, orden de memoria y
-  prohibiciones dentro del scheduler. Tondo no usa poisoning implícito ni un
+  prohibiciones dentro del scheduler. Cerrar además `sync.Array/Map/Set` con
+  operaciones por slot/key, `sync.Stack` LIFO y `sync.Queue` FIFO MPMC, bounds
+  de ownership, linearización, orden, snapshots coherentes, progreso y
+  separación respecto a `std.channel`. La construcción corta es únicamente
+  `sync.Array[...]`, `sync.Map[...]`, `sync.Set[...]`, `sync.Stack[...]` y
+  `sync.Queue[...]`, resuelta por identidad aun con alias de módulo; no existen
+  nombres globales `SArray`/`SMap`/`SSet`. `sync.Array` mantiene longitud fija e
+  índices estables y todas reutilizan el `CollectionError` canónico en vez de
+  publicar otro error equivalente. Tondo no usa poisoning implícito ni un
   `WaitGroup` separado.
 
 - [ ] **STD-EXEC-001 — Especificar `std.executor`.** Pools, actores y bridging
@@ -5723,12 +5732,53 @@ estas leaves.
 - [ ] **STD-SYNC-PERF-001 — Medir sync.** Fijar uncontended/contended latency,
   throughput, fairness, memoria y tail latency por target contra un oracle de
   corrección independiente.
+- [ ] **STD-SYNC-COLLECTION-FRONTEND-001 — Implementar literales concurrentes.**
+  Extender lexer/parser preliminar, CST, formatter, resolución por identidad de
+  declaración, tipos, HIR/MIR y diagnósticos para las cinco formas calificadas.
+  Los aliases de `std.sync` conservan la forma, los paths de usuario no pueden
+  optar al azúcar y posición de tipo frente a expresión resuelve
+  `sync.Array[T]` sin heurísticas de runtime. Cubrir vacíos, map `[:]`, trailing
+  comma, duplicados, recovery y round-trip sin crear keywords ni aliases del
+  prelude.
+- [ ] **STD-SYNC-COLLECTION-IMPL-001 — Implementar colecciones compartidas.**
+  Publicar handles `Copy + Discard + Send + Share`, array de longitud fija,
+  map/set ordenados por linearización, stack LIFO y queue FIFO MPMC. Integrar
+  compare-exchange no espurio, operaciones suspendibles bajo contención,
+  snapshots coherentes y límites recuperables mediante el `CollectionError`
+  canónico sobre los atomics/parking de `STD-SYNC-HOST-001`. Usar fast paths
+  CAS para slots/stack/queue y una
+  estrategia híbrida CAS/sharding/locks finos para map/set sin lock global de
+  lectura ni spin ilimitado; reclamación y ABA cooperan con GC y ownership.
+- [ ] **STD-SYNC-COLLECTION-TEST-001 — Modelar y fuzzear colecciones
+  compartidas.** Mantener modelos secuenciales de referencia y linearizability
+  histories para get/set/CAS, insert/remove, push/pop y enqueue/dequeue. Cubrir
+  carreras de primera/última entrada, duplicados, resize, orden concurrente,
+  slots y keys independientes, snapshot frente a writers, alias de handle,
+  último drop, valores afines `Discard`, cancelación, límites, ABA, reclamación,
+  pánico y scheduling determinista/stress; ninguna pérdida, duplicación, doble
+  drop ni use-after-free puede sobrevivir.
+- [ ] **STD-SYNC-COLLECTION-PERF-001 — Medir colecciones compartidas.** Fijar
+  fast path 1:1, lectura dominante, escrituras sobre keys independientes,
+  contención hot-key/hot-slot, MPMC, snapshot y resize por cardinalidad y cores.
+  Registrar throughput, p50/p99, escalabilidad, allocations, memoria, retries,
+  wakeups y parking frente a oracles equivalentes; el gate rechaza un lock
+  global accidental y selecciona por target la estrategia demostrablemente más
+  eficiente sin alterar semántica.
+- [ ] **STD-SYNC-COLLECTION-CONF-001 — Conformar colecciones compartidas.**
+  Ejecutar el mismo corpus observable en VM y nativo: literales y aliases,
+  bounds estáticos, outcomes, linearización, orden de snapshots, LIFO/FIFO,
+  límites, capability `threads` y rechazo de iteración/aritmética/equivalencia
+  directa. La evidencia de algoritmos internos no sustituye la igualdad de
+  resultados y cleanup entre backends.
 - [ ] **STD-SYNC-CONF-001 — Conformar sync.** Ejecutar casos portables y
   capability-gated en VM/nativo, incluido rechazo estático cuando falte
-  `threads`.
+  `threads`; agrega también `STD-SYNC-COLLECTION-CONF-001` y no puede cerrar el
+  owner dejando las colecciones solo documentadas.
 - [ ] **STD-SYNC-DOC-001 — Documentar sync.** Publicar ordering, deadlocks,
   ausencia de poisoning, cancelación, cleanup, costes y ejemplos ejecutables
-  sin defaults ocultos.
+  sin defaults ocultos. Incluir los cinco literales, array fijo, CAS, snapshots,
+  orden, LIFO/FIFO y la elección explícita entre queue no bloqueante y channel
+  con espera/backpressure.
 
 #### 21.3.3 `std.channel`
 

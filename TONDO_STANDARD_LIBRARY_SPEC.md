@@ -1786,7 +1786,7 @@ actualizar esta especificación y el tracker antes de implementar.
 | `std.regex` | Core | — | 0.1 | Expresiones regulares Unicode con complejidad y límites declarados |
 | `std.uuid` | Core + gated | `entropy` y/o `clock` para generación | 0.1 | UUID, parsing, formatting y generadores explícitos por versión |
 | `std.channel` | Core | — | 0.1 | Canales tipados con endpoints separados, cierre, backpressure y selección cancelable |
-| `std.sync` | Core + gated | `threads` para operaciones cross-thread | 0.1 | Mutex, rwlock, condición, semáforo, once, barrier y atomics con memoria explícita |
+| `std.sync` | Core + gated | `threads` para operaciones cross-thread | 0.1 | Mutex, rwlock, condición, semáforo, once, barrier, atomics y colecciones compartidas linealizables |
 | `std.executor` | Core + gated | `threads` para pools bloqueantes | 0.1 | Pools acotados, actores y bridge de trabajo bloqueante sobre el modelo async único |
 | `std.log` | Core + gated | `console`, `filesystem` o `network` por sink | 0.1 | Eventos estructurados, niveles, backpressure y sinks explícitos |
 | `std.console` | Capability-gated | `console` | 0.1 | stdin, stdout, stderr, texto, bytes y flushing |
@@ -2279,6 +2279,184 @@ Los tipos compartidos publican `Send`/`Share` solo cuando sus parámetros y la
 implementación interior lo demuestran. `threads` es necesario para semántica
 cross-thread real; un target que no la ofrezca rechaza esa operación en vez de
 simularla con ejecución single-thread.
+
+##### 14.4.4.1 Colecciones compartidas
+
+El módulo publica cinco identidades compartidas calificadas:
+
+~~~tondo pseudocode
+pub type sync.Array[T: Copy + Send + Share]
+pub type sync.Map[K: Key + Send + Share, V: Copy + Send + Share]
+pub type sync.Set[K: Key + Send + Share]
+pub type sync.Stack[T: Send + Discard]
+pub type sync.Queue[T: Send + Discard]
+
+pub enum sync.CompareExchange[T] {
+    Exchanged(T)
+    Mismatch(T)
+}
+~~~
+
+Cada valor de esos tipos es un handle `Copy + Discard + Send + Share`; copiarlo
+conserva la misma identidad. No cumple `Equatable` ni `Key`: igualdad de handles
+no sustituye igualdad de contenido. El último handle puede liberar valores
+pendientes, por lo que `Stack` y `Queue` exigen `T: Discard`. Los tres owners de
+lectura por copia exigen además `Copy + Send + Share`. Para compartir una
+identidad de usuario se almacena un `Ref[T]` que satisfaga esos bounds; no se
+relajan copiando direcciones raw.
+
+Las operaciones reutilizan el `CollectionError` canónico de `std.collections`:
+`InvalidIndex` para slots inválidos y `ResourceLimit` cuando no pueden completar
+una reserva o snapshot. `std.sync` no publica un error de colección paralelo.
+
+Las operaciones individuales son linealizables. Una operación marcada
+`suspends` puede completar por un fast path sin crear frame, pero conserva el
+efecto público para poder ceder o aparcar bajo contención sin bloquear un worker.
+Ninguna de estas operaciones es `selectable`: readiness y backpressure
+pertenecen a canales y a la expresión núcleo `select`.
+
+##### 14.4.4.2 Array, map y set compartidos
+
+La superficie mínima es:
+
+~~~tondo pseudocode
+pub fn sync.Array.length(ref self): Int
+pub fn sync.Array.isEmpty(ref self): Bool
+pub fn sync.Array.get(ref self, index: Int): T? suspends
+pub fn sync.Array.set(ref self, index: Int, value: T): T ! CollectionError suspends
+pub fn sync.Array[T: Copy + Equatable + Send + Share].compareExchange(
+    ref self,
+    index: Int,
+    expected: T,
+    desired: T,
+): sync.CompareExchange[T] ! CollectionError suspends
+pub fn sync.Array.snapshot(ref self): Array[T] ! CollectionError suspends
+
+pub fn sync.Map.length(ref self): Int
+pub fn sync.Map.isEmpty(ref self): Bool
+pub fn sync.Map.get(ref self, key: K): V? suspends
+pub fn sync.Map.contains(ref self, key: K): Bool suspends
+pub fn sync.Map.insert(ref self, key: K, value: V): V? ! CollectionError suspends
+pub fn sync.Map.remove(ref self, key: K): V? suspends
+pub fn sync.Map[
+    K: Key + Send + Share,
+    V: Copy + Equatable + Send + Share,
+].compareExchange(
+    ref self,
+    key: K,
+    expected: V?,
+    desired: V?,
+): sync.CompareExchange[V?] ! CollectionError suspends
+pub fn sync.Map.snapshot(ref self): Map[K, V] ! CollectionError suspends
+
+pub fn sync.Set.length(ref self): Int
+pub fn sync.Set.isEmpty(ref self): Bool
+pub fn sync.Set.contains(ref self, key: K): Bool suspends
+pub fn sync.Set.insert(ref self, key: K): Bool ! CollectionError suspends
+pub fn sync.Set.remove(ref self, key: K): Bool suspends
+pub fn sync.Set.snapshot(ref self): Set[K] ! CollectionError suspends
+~~~
+
+`sync.Array` tiene longitud fija desde su construcción. Cada slot mantiene un
+índice estable, `get` devuelve `none` fuera de rango y `set` devuelve el valor
+reemplazado. No existen `push`, `pop`, inserción, borrado ni resize estructural;
+la mutación de tamaño se expresa con `sync.Stack`, `sync.Queue`, map o set.
+`compareExchange` nunca falla de forma espuria: `Exchanged(previous)` significa
+que el estado coincidía y se reemplazó; `Mismatch(observed)` devuelve el estado
+que impidió el cambio. En map, `desired = none` elimina y `expected = none`
+compara contra ausencia, sin flattening cuando `V` ya es opcional.
+
+`sync.Map` y `sync.Set` conservan orden de inserción definido por el orden de
+linearización. Reemplazar una key no la mueve; eliminarla y reinsertarla la
+coloca al final. Dos inserciones realmente concurrentes pueden adoptar cualquier
+orden compatible con su linearización. Operaciones sobre keys distintas y slots
+distintos pueden progresar en paralelo: la implementación no serializa todas las
+lecturas mediante un único lock exclusivo.
+
+##### 14.4.4.3 Stack y queue compartidos
+
+`sync.Stack` es LIFO y `sync.Queue` es una cola FIFO multi-productor,
+multi-consumidor. Su superficie deliberadamente pequeña es:
+
+~~~tondo pseudocode
+pub fn sync.Stack.length(ref self): Int
+pub fn sync.Stack.isEmpty(ref self): Bool
+pub fn sync.Stack.push(ref self, value: T): Unit ! CollectionError suspends
+pub fn sync.Stack.pop(ref self): T? suspends
+pub fn sync.Stack[T: Copy + Send + Share].peek(ref self): T? suspends
+pub fn sync.Stack[T: Copy + Send + Share].snapshot(
+    ref self,
+): Array[T] ! CollectionError suspends
+
+pub fn sync.Queue.length(ref self): Int
+pub fn sync.Queue.isEmpty(ref self): Bool
+pub fn sync.Queue.enqueue(ref self, value: T): Unit ! CollectionError suspends
+pub fn sync.Queue.dequeue(ref self): T? suspends
+pub fn sync.Queue[T: Copy + Send + Share].peek(ref self): T? suspends
+pub fn sync.Queue[T: Copy + Send + Share].snapshot(
+    ref self,
+): Array[T] ! CollectionError suspends
+~~~
+
+`pop` y `dequeue` transfieren ownership únicamente al caller ganador y devuelven
+`none` inmediatamente cuando la estructura está vacía. No hay `waitPop`,
+`waitDequeue`, sufijos `Async` ni una queue con backpressure oculta. Esperar un
+productor, limitar capacidad o seleccionar entre fuentes utiliza
+`std.channel`. `peek` y `snapshot` dejan el elemento en la estructura y por eso
+solo existen cuando copiarlo y observarlo concurrentemente es seguro.
+
+##### 14.4.4.4 Literales, snapshots y orden
+
+La construcción corta canónica reutiliza corchetes detrás del módulo:
+
+~~~tondo pseudocode
+import std.sync
+
+let slots = sync.Array[1, 2, 3]
+let cache = sync.Map["one": 1, "two": 2]
+let visited = sync.Set["home", "settings"]
+let undo = sync.Stack[first, second, third]
+let jobs = sync.Queue[first, second, third]
+~~~
+
+El módulo puede importarse con alias; la resolución utiliza la identidad del
+tipo estándar. No existen aliases globales `SArray`, `SMap` o `SSet`. Los
+literales vacíos salvo map requieren tipo esperado y el map vacío se escribe
+`sync.Map[:]`. La construcción evalúa todos los operandos de izquierda a derecha
+antes de publicar el handle. Las duplicaciones de map/set siguen exactamente las
+reglas de los literales de valor equivalentes.
+
+En `sync.Stack[a, b, c]`, `c` es la cima y el primer `pop` devuelve `c`. En
+`sync.Queue[a, b, c]`, `a` está al frente y el primer `dequeue` devuelve `a`.
+`snapshot()` establece un punto de linearización coherente y materializa una
+colección ordinaria independiente: índice para array, inserción para map/set,
+cima a base para stack y frente a fondo para queue. Los owners compartidos no
+implementan directamente `Iterator`, operadores aritméticos ni igualdad por
+contenido; esas operaciones se realizan sobre el snapshot para no esconder una
+iteración débil ni múltiples lecturas inconsistentes.
+
+##### 14.4.4.5 Estrategia de implementación y progreso
+
+La semántica no fija un layout, pero sí una estrategia de rendimiento verificable:
+
+- `sync.Array` usa slots atómicos o nodos versionados y evita un lock global.
+- `sync.Stack` tiene un fast path CAS de estilo Treiber.
+- `sync.Queue` tiene un fast path FIFO CAS de estilo Michael-Scott.
+- `sync.Map` y `sync.Set` combinan lecturas sin lock global con CAS, sharding o
+  locks finos para escritura y resize; keys independientes no comparten una
+  exclusión global innecesaria.
+- Reclamation coopera con el GC y protege ABA, use-after-free y doble drop. Una
+  implementación nativa alternativa debe demostrar el mismo ownership.
+- Tras contención repetida se aplica backoff, yield o parking suspendible
+  acotado; nunca spin ilimitado ni bloqueo inadvertido del executor.
+
+El algoritmo concreto puede cambiar por target cuando los benchmarks lo
+justifiquen, pero no la linearización, el orden, los outcomes ni los efectos
+públicos. `snapshot` puede bloquear writers internamente en orden canónico o
+usar versionado y retry; no puede devolver una mezcla que jamás existió. Los
+gates de `std.sync` miden fast path, contención, escalado por cores, tail latency,
+allocations y memoria, además de probar progreso, ABA y reclamación bajo
+schedulers adversarios.
 
 #### 14.4.5 Executors, pools y actores
 
