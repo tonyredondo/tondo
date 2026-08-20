@@ -31,6 +31,7 @@
     "testing/tracker-graph.json"
   ],
   "gate_policy_paths": [
+    ".github/workflows/test.yml",
     "scripts/documentation-gate.sh",
     "scripts/fast-coverage-check.sh",
     "scripts/fast-gate-test.sh",

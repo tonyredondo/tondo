@@ -40,6 +40,9 @@ sources and their generated documentary records use the documentation tier.
 Unknown files remain in the impacted set and never silently bypass the
 formatter or package checks. `--dry-run` is deterministic and is used by
 `scripts/fast-gate-test.sh` to keep all three classifications executable.
+Pull requests compare against their base SHA; pushes compare the complete
+`before..head` event range rather than `HEAD^`, so publishing several local
+commits together cannot omit earlier changes from the impact set.
 
 The changed-line coverage rule is intentionally stricter than the global
 ratchet: executable lines added by a block must be covered by the package report

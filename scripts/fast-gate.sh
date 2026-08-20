@@ -296,7 +296,7 @@ else
             fi
         done
         if (( production_rust_changed )); then
-            if ! command -v cargo-llvm-cov >/dev/null 2>&1; then
+            if (( ! dry_run )) && ! command -v cargo-llvm-cov >/dev/null 2>&1; then
                 echo "fast gate: cargo-llvm-cov is required for changed-line coverage" >&2
                 exit 1
             fi
@@ -312,7 +312,7 @@ else
             if (( ! dry_run )); then
                 bash scripts/fast-coverage-check.sh "$diff_file" "$coverage_report" "$root"
             fi
-            if ! command -v cargo-mutants >/dev/null 2>&1; then
+            if (( ! dry_run )) && ! command -v cargo-mutants >/dev/null 2>&1; then
                 echo "fast gate: cargo-mutants is required for changed Rust source" >&2
                 exit 1
             fi

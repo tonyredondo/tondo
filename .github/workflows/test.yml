@@ -54,7 +54,7 @@ jobs:
         id: fast-tools
         if: github.event_name != 'workflow_dispatch' || inputs.tier == 'fast'
         env:
-          TONDO_FAST_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || 'HEAD^' }}
+          TONDO_FAST_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'push' && github.event.before || 'HEAD^' }}
         run: |
           if git diff --name-only "$TONDO_FAST_BASE...HEAD" | grep -Eq '\.rs$'; then
             echo "install=true" >> "$GITHUB_OUTPUT"
@@ -73,7 +73,7 @@ jobs:
         if: github.event_name != 'workflow_dispatch' || inputs.tier == 'fast'
         env:
           TONDO_TEST_TARGET: linux-x86_64
-          TONDO_FAST_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || 'HEAD^' }}
+          TONDO_FAST_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'push' && github.event.before || 'HEAD^' }}
           CARGO_INCREMENTAL: "1"
         run: bash scripts/fast-gate.sh
 

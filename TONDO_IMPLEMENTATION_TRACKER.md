@@ -439,8 +439,9 @@ cantidad de infraestructura necesaria antes del primer programa ejecutable.
   auditado ejecutan solo los targets de test afectados —`--lib` cuando todo el
   cambio Rust está en ese módulo inline— sin recalcular métricas del producto;
   fronteras compartidas escalan a `scripts/test-gate.sh`. Pushes y pull requests
-  usan este clasificador; solo una frontera compartida, límite de wave, cambio de
-  baseline, release candidate o afirmación portable exige el tier `full`, que
+  usan este clasificador sobre todo el rango `before..head` del evento, nunca
+  solo `HEAD^`; solo una frontera compartida, límite de wave, cambio de baseline,
+  release candidate o afirmación portable exige el tier `full`, que
   conserva test-gate, matriz portable, fuzzing y quality-gate. La evidencia de
   fast gate vive en `target/reliability/fast-gate/` y es siempre efímera.
 
