@@ -1,0 +1,63 @@
+{
+  "format": "tondo-stdlib-fuzz/1",
+  "edition": "0.1",
+  "phase": "STD-0.1A",
+  "status": "promoted",
+  "target": "stdlib_owners",
+  "route_selector": "input[0] modulo 22; payload is input[1..]",
+  "limits": {
+    "max_input_bytes": 65536,
+    "max_source_bytes": 8192,
+    "rss_limit_mb": 4096,
+    "timeout_seconds": 10
+  },
+  "campaigns": {
+    "smoke": {
+      "script": "scripts/fuzz-smoke.sh",
+      "runs": 128,
+      "seed": 1022
+    },
+    "nightly": {
+      "script": "scripts/fuzz-campaign.sh",
+      "max_total_time_seconds": 180,
+      "seed": 2022
+    }
+  },
+  "oracle": {
+    "type": "bounded-no-panic-and-owner-invariants",
+    "requirements": [
+      "successful inputs preserve the owner round-trip or model invariant",
+      "invalid inputs return a typed rejection without panicking",
+      "compiler probes retain deterministic diagnostics and accepted contracts"
+    ]
+  },
+  "regressions": {
+    "corpus_root": "fuzz/corpus/stdlib_owners",
+    "persist_minimized_inputs": true,
+    "replay_command": "cargo +nightly-2026-07-28 fuzz run stdlib_owners fuzz/corpus/stdlib_owners -- -runs=0"
+  },
+  "owners": [
+    {"id":"std.async","route":"std.async","corpus":"fuzz/corpus/stdlib_owners/std-async/seed","seed":3001,"limits":"compile-check and deterministic suspension contract","oracle":"accepted async declaration without panic"},
+    {"id":"std.bytes","route":"std.bytes","corpus":"fuzz/corpus/stdlib_owners/std-bytes/seed","seed":3002,"limits":"input <= 65536 bytes","oracle":"UTF-8 rejection and byte identity are deterministic"},
+    {"id":"std.collections","route":"std.collections","corpus":"fuzz/corpus/stdlib_owners/std-collections/seed","seed":3003,"limits":"16 generated elements","oracle":"map/set membership and cardinality agree"},
+    {"id":"std.console","route":"std.console","corpus":"fuzz/corpus/stdlib_owners/std-console/seed","seed":3004,"limits":"compile-check only; no host output","oracle":"console capability declaration remains accepted"},
+    {"id":"std.core","route":"std.core","corpus":"fuzz/corpus/stdlib_owners/std-core/seed","seed":3005,"limits":"compile-check of Option algebra","oracle":"Option fallback contract remains accepted"},
+    {"id":"std.env","route":"std.env","corpus":"fuzz/corpus/stdlib_owners/std-env/seed","seed":3006,"limits":"compile-check only; no process mutation","oracle":"environment snapshot contract remains accepted"},
+    {"id":"std.format","route":"std.format","corpus":"fuzz/corpus/stdlib_owners/std-format/seed","seed":3007,"limits":"output <= 256 bytes","oracle":"format and join respect bounded output"},
+    {"id":"std.fs","route":"std.fs","corpus":"fuzz/corpus/stdlib_owners/std-fs/seed","seed":3008,"limits":"compile-check only; no filesystem mutation","oracle":"filesystem capability declaration remains accepted"},
+    {"id":"std.io","route":"std.io","corpus":"fuzz/corpus/stdlib_owners/std-io/seed","seed":3009,"limits":"input <= 1024 bytes; chunk <= 8","oracle":"short reads and writes round-trip exactly"},
+    {"id":"std.iter","route":"std.iter","corpus":"fuzz/corpus/stdlib_owners/std-iter/seed","seed":3010,"limits":"compile-check of bounded adapters","oracle":"map/take/collect composition remains accepted"},
+    {"id":"std.json","route":"std.json","corpus":"fuzz/corpus/stdlib_owners/std-json/seed","seed":3011,"limits":"input <= 65536 bytes","oracle":"valid JSON re-encodes and invalid JSON rejects"},
+    {"id":"std.math","route":"std.math","corpus":"fuzz/corpus/stdlib_owners/std-math/seed","seed":3012,"limits":"one finite scalar derived from input","oracle":"IEEE kernels terminate for all special boundaries"},
+    {"id":"std.messagepack","route":"std.messagepack","corpus":"fuzz/corpus/stdlib_owners/std-messagepack/seed","seed":3013,"limits":"input <= 65536 bytes","oracle":"valid MessagePack deterministically re-encodes"},
+    {"id":"std.meta","route":"std.meta","corpus":"fuzz/corpus/stdlib_owners/std-meta/seed","seed":3014,"limits":"input <= 65536 bytes","oracle":"snapshot/request/response protocol probes are deterministic"},
+    {"id":"std.path","route":"std.path","corpus":"fuzz/corpus/stdlib_owners/std-path/seed","seed":3015,"limits":"native path <= 1024 bytes","oracle":"byte snapshots never normalize or panic"},
+    {"id":"std.process","route":"std.process","corpus":"fuzz/corpus/stdlib_owners/std-process/seed","seed":3016,"limits":"compile-check only; no process spawn","oracle":"process command capability declaration remains accepted"},
+    {"id":"std.protobuf","route":"std.protobuf","corpus":"fuzz/corpus/stdlib_owners/std-protobuf/seed","seed":3017,"limits":"input <= 65536 bytes","oracle":"wire validation and varint/field decoders reject safely"},
+    {"id":"std.reflect","route":"std.reflect","corpus":"fuzz/corpus/stdlib_owners/std-reflect/seed","seed":3018,"limits":"one bounded record in a closed catalog","oracle":"linked metadata retains exactly the rooted type"},
+    {"id":"std.serialization","route":"std.serialization","corpus":"fuzz/corpus/stdlib_owners/std-serialization/seed","seed":3019,"limits":"32 events and 1024 bytes","oracle":"event balance and Base64 round-trip hold"},
+    {"id":"std.testing","route":"std.testing","corpus":"fuzz/corpus/stdlib_owners/std-testing/seed","seed":3020,"limits":"diff input <= 256 bytes","oracle":"diff output stays bounded and tolerance is reflexive"},
+    {"id":"std.text","route":"std.text","corpus":"fuzz/corpus/stdlib_owners/std-text/seed","seed":3021,"limits":"input <= 65536 bytes","oracle":"UTF-8 scalar iteration and case transforms terminate"},
+    {"id":"std.time","route":"std.time","corpus":"fuzz/corpus/stdlib_owners/std-time/seed","seed":3022,"limits":"compile-check only; no wall-clock assertion","oracle":"time capability declaration remains accepted"}
+  ]
+}

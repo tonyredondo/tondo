@@ -38,5 +38,5 @@ scripts/stdlib-hosted-implementation-coordination-test.sh
 
 El estado `closed-coordination` solo afirma que este conjunto de owners
 comparte una prueba completa de implementación y capability; no afirma una
-publicación de Tondo ni cierra las celdas pendientes de fuzz, rendimiento o
-conformance.
+publicación de Tondo ni cierra las celdas pendientes de rendimiento o
+conformance; `STD-A-FUZZ-001` coordina el fuzz owner-aware por separado.

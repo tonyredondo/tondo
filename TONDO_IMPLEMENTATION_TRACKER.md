@@ -6,7 +6,8 @@ offline. `STD-CODEC-PUBLIC-001` ya cerró la auditoría pública global: las 214
 firmas tienen ruta contract → HIR → lowering → host/VM → caso público y los
 tres owners sin runtime están indexados como `build-only`/`not-applicable` con
 razón verificable. STD-0.1A/S1A sigue abierto por las celdas explícitas de
-fuzzing, rendimiento, conformidad y promoción; no se sobreafirma un cierre.
+rendimiento, conformidad, distribución y promoción; `STD-A-FUZZ-001` ya cerró
+la dimensión FUZZ para los 22 owners y no se sobreafirma un cierre global.
 La forma TLF para agentes ya tiene spec y estudio léxico, pero encoder, decoder,
 source maps, CLI y evaluación de generación permanecen pendientes. Tondo 0.1
 sigue en desarrollo y no ha sido publicado.
@@ -17,9 +18,9 @@ frontera compilador/runtime/CLI, con evidencia por intento y paridad VM/native.
 `DIAG-SPEC-001` es el prerrequisito explícito de la evaluación nativa; la
 existencia del contrato no implica que ningún detector esté implementado.
 
-**Versión del tracker:** 2.51
+**Versión del tracker:** 2.52
 
-**Última actualización:** 2026-08-19
+**Última actualización:** 2026-08-20
 
 **Especificaciones normativas:**
 
@@ -62,7 +63,8 @@ un bundle companion separado. El candidato del lenguaje fija G5 y S1; solo fija
 L0 cuando se construye además una distribución TLF, sin convertirla en requisito
 de Tondo 0.1.
 
-**Objetivo inmediato:** cerrar las leaves reales de Wave 5/S1A y después
+**Objetivo inmediato:** cerrar `STD-A-PERF-001`, la siguiente leaf real de
+Wave 5/S1A, y después
 `DIAG-SPEC-001`. El grafo activo ya está validado por `TRACKER-LINT-001`; con
 ese contrato se cierran las fronteras
 runtime-facing B0 de Wave 6; entonces avanzan `DIAG-RUNTIME-001`, `RACE-001`,
@@ -76,7 +78,8 @@ cerrados como contratos puros, y `PERF-001` ya fija el contrato de benchmark y
 baseline previo al backend. Después del linter se cierran las leaves reales de
 S1A y comienza `DIAG-SPEC-001`. `NATIVE-001` queda después de la compuerta de
 diagnóstico.
-Las celdas S1A de promoción siguen pendientes y no se sobreafirma su cierre.
+FUZZ está promovido para los 22 owners; las celdas restantes de promoción S1A
+siguen pendientes y no se sobreafirma su cierre.
 `CONF-GAP-IMPL-001`, `CONF-LAYER-RESULT-001` y
 `CONF-SEAL-FINAL-001` ya cierran T0/G5 con 409 requisitos cubiertos, nueve
 no aplicables y las tres fronteras `TL01-26-*` reservadas a S1A. Los contratos
@@ -4807,8 +4810,9 @@ administrativas que no implementan comportamiento.
   corpora y seis requisitos ejecutables; `testing/stdlib-owner-evidence.json`
   separa identidad/snapshots, builders, UTF-8, límites/rangos,
   properties/hot paths, conformidad y docs. `HOST` es explícitamente
-  `not-applicable` por ser un intrinsic compiler/VM-owned; fuzz dedicado y
-  captura de rendimiento siguen como promoción pendiente sin inventar métricas.
+  `not-applicable` por ser un intrinsic compiler/VM-owned; `STD-A-FUZZ-001`
+  promueve el fuzz owner-aware y la captura de rendimiento sigue como
+  promoción pendiente sin inventar métricas.
 - [x] **STD-A-TIME-EVIDENCE-001 — Cerrar evidencia del time-base.**
   `testing/stdlib-time.json` fija el contrato A0 capability-gated, sus cinco
   límites, nueve invariantes, tres corpora y seis requisitos ejecutables.
@@ -4818,8 +4822,9 @@ administrativas que no implementan comportamiento.
   sellado, parte de cero y solo avanza explícitamente. `process_host` ejecuta
   el corpus común para ambos providers y `driver` prueba capability ausente,
   sustitución virtual, settle, cancelación, dominios y cleanup. `HOST` queda
-  `verified`; fuzz dedicado y captura de rendimiento por provider permanecen
-  como promoción pendiente. `scripts/stdlib-time-check.sh` y
+  `verified`; `STD-A-FUZZ-001` promueve el fuzz owner-aware y la captura de
+  rendimiento por provider permanece como promoción pendiente.
+  `scripts/stdlib-time-check.sh` y
   `scripts/stdlib-time-test.sh` validan el contrato y sus negativos.
 - [x] **STD-A-ENV-EVIDENCE-001 — Cerrar evidencia de `std.env`.**
   `testing/stdlib-env.json` fija el contrato A0 capability-gated, sus tres
@@ -4830,8 +4835,8 @@ administrativas que no implementan comportamiento.
   solo el plan de inputs entregado en runtime; las pruebas cubren proveedor
   unavailable, nombres inválidos, entradas inyectadas, límites sin estado
   parcial y ausencia de lecturas de `PATH`/`HOME`. `HOST` queda `verified`;
-  fuzz dedicado y captura de rendimiento por capability permanecen como
-  promoción pendiente. `scripts/stdlib-env-check.sh` y
+  `STD-A-FUZZ-001` promueve el fuzz owner-aware y la captura de rendimiento por
+  capability permanece como promoción pendiente. `scripts/stdlib-env-check.sh` y
   `scripts/stdlib-env-test.sh` validan el contrato y sus negativos.
 - [x] **STD-A-CORE-EVIDENCE-001 — Cerrar evidencia Core.** `testing/stdlib-owner-evidence.json`
   registra las nueve celdas del owner intrínseco `std.core`: protocolos y
@@ -4839,17 +4844,18 @@ administrativas que no implementan comportamiento.
   bytecode/MIR, fixtures runtime y auditoría pública de las nueve firmas.
   `HOST` es explícitamente `not-applicable` por la frontera compiler/VM-owned.
   El corpus de admission fuzz cubre formas `Option`/`Result` y protocolos
-  genéricos; el fuzz específico de operaciones, la captura de rendimiento por
-  owner y la promoción global de conformance siguen visibles como pendientes.
+  genéricos; `STD-A-FUZZ-001` promueve el fuzz owner-aware, mientras la captura
+  de rendimiento por owner y la promoción global de conformance siguen visibles
+  como pendientes.
 - [x] **STD-A-TEXT-EVIDENCE-001 — Cerrar evidencia de texto.**
   `testing/stdlib-owner-evidence.json` registra las nueve celdas del owner
   intrínseco `std.text` y enlaza las quince firmas de `String` con el contrato
   de grupo, HIR/lowering, puente compiler/VM, fixtures Unicode, slicing por
   scalar, iteración y rechazo atómico de UTF-8 inválido. `HOST` es explícitamente
   `not-applicable`; el corpus bounded de UTF-8/admission fuzz y la auditoría
-  pública quedan verificados como evidencia disponible, mientras el fuzz de
-  operaciones, baselines de coste y `STD-CONF-001` permanecen pendientes de
-  promoción. `scripts/stdlib-text-test.sh` cubre negativos de contrato y
+  pública quedan verificados como evidencia disponible; `STD-A-FUZZ-001`
+  promueve el fuzz owner-aware, mientras baselines de coste y `STD-CONF-001`
+  permanecen pendientes de promoción. `scripts/stdlib-text-test.sh` cubre negativos de contrato y
   forma/cobertura de la API.
 - [x] **STD-A-COLL-EVIDENCE-001 — Cerrar evidencia de colecciones.**
   `testing/stdlib-owner-evidence.json` registra las nueve celdas del owner
@@ -4858,9 +4864,10 @@ administrativas que no implementan comportamiento.
   `m11-std-collections-001.to`. La evidencia cubre COW y semántica de valor,
   capacidad/errores atómicos, protocolo `Key`, hashing, orden de inserción,
   membership, reemplazo/eliminación e iteración lazy. `HOST` es explícitamente
-  `not-applicable`; admission fuzz y properties eager/COW quedan ejecutables,
-  mientras fuzz de operaciones, baselines de memoria/hash y `STD-CONF-001`
-  permanecen visibles como promoción posterior. `scripts/stdlib-collections-test.sh`
+  `not-applicable`; admission fuzz y properties eager/COW quedan ejecutables;
+  `STD-A-FUZZ-001` promueve el fuzz owner-aware, mientras baselines de
+  memoria/hash y `STD-CONF-001` permanecen visibles como promoción posterior.
+  `scripts/stdlib-collections-test.sh`
   valida negativos del contrato, símbolos, runtime, properties y las 18/18 filas
   de la auditoría pública.
 - [x] **STD-A-ITER-EVIDENCE-001 — Cerrar evidencia de iteradores.** `testing/stdlib-owner-evidence.json`
@@ -4871,8 +4878,9 @@ administrativas que no implementan comportamiento.
   rutas calificadas/genéricas, `take` negativo, `collect` acotado, cursores
   prestados, iteradores de usuario, agotamiento y trazado de callbacks. `HOST`
   es explícitamente `not-applicable`; admission fuzz y properties de cursor son
-  ejecutables, mientras fuzz de operaciones, baselines de retención/allocations/
-  materialización y `STD-CONF-001` permanecen visibles como promoción posterior.
+  ejecutables; `STD-A-FUZZ-001` promueve el fuzz owner-aware, mientras baselines
+  de retención/allocations/materialización y `STD-CONF-001` permanecen visibles
+  como promoción posterior.
   `scripts/stdlib-iter-test.sh` valida negativos de contrato, símbolos, fixture,
   properties y las 4/4 filas de la auditoría pública.
 - [x] **STD-A-MATH-EVIDENCE-001 — Cerrar evidencia matemática.** `testing/stdlib-owner-evidence.json`
@@ -4883,8 +4891,9 @@ administrativas que no implementan comportamiento.
   `sqrt`, properties Float32, diagnósticos de constantes y la auditoría 9/9.
   El scalar oracle es la ruta normativa 0.1 y no existe un camino SIMD o
   fast-math alternativo; cualquier vectorización futura deberá probar
-  equivalencia bit a bit. `HOST` es `not-applicable`; fuzz específico,
-  baselines de coste y `STD-CONF-001` siguen visibles como promoción posterior.
+  equivalencia bit a bit. `HOST` es `not-applicable`; `STD-A-FUZZ-001` promueve
+  el fuzz owner-aware, mientras baselines de coste y `STD-CONF-001` siguen
+  visibles como promoción posterior.
   `scripts/stdlib-math-test.sh` valida contratos negativos, símbolos, corpus,
   ausencia de rutas SIMD/fast-math y las 9/9 filas públicas.
 - [x] **STD-A-FMT-EVIDENCE-001 — Cerrar evidencia de formatting.** `std.format`
@@ -4892,8 +4901,9 @@ administrativas que no implementan comportamiento.
   `Display`/builder pasan por HIR/MIR/bytecode/VM, fixture público y auditoría
   de API. El corpus cubre vacío, límites exactos, separadores, errores de
   `Display`, receivers inválidos y atomicidad; `HOST` es `not-applicable`.
-  Properties/fuzz de operaciones y baselines de allocations/materialización
-  permanecen visibles como promoción posterior, sin inventar métricas.
+  `STD-A-FUZZ-001` promueve el fuzz owner-aware; baselines de
+  allocations/materialización permanecen visibles como promoción posterior,
+  sin inventar métricas.
   `scripts/stdlib-format-test.sh` valida contrato, símbolos, corpus, docs y
   las 5/5 filas públicas.
 - [x] **STD-A-IO-EVIDENCE-001 — Cerrar evidencia de I/O portable.** Las cuatro
@@ -4904,8 +4914,8 @@ administrativas que no implementan comportamiento.
   sobreescrituras, errores de `flush` y cancelación sin éxito parcial. `HOST` es
   `not-applicable`; los adaptadores pertenecen a `std.console`, `std.fs` y
   `std.process`. `scripts/stdlib-io-test.sh` valida contrato, símbolos, corpus,
-  docs y las 4/4 filas públicas; fuzz específico y baselines de coste quedan
-  visibles como promoción posterior.
+  docs y las 4/4 filas públicas; `STD-A-FUZZ-001` promueve el fuzz owner-aware
+  y los baselines de coste quedan visibles como promoción posterior.
 - [x] **STD-A-PATH-EVIDENCE-001 — Cerrar evidencia de paths.** Las diez
   firmas de `std.path` quedan trazadas por contrato hosted, HIR/lowering,
   bytecode/VM, kernel portable, fixture público y auditoría de API. `Path` es
@@ -4914,8 +4924,9 @@ administrativas que no implementan comportamiento.
   ocultos, extensiones vacías, separadores finales, joins rechazados y
   atomicidad de errores sin consultar el filesystem. `toBytes` devuelve una
   copia exacta y la prueba de host confirma que la frontera conserva esos
-  bytes. `HOST` es `not-applicable`; fuzz específico, baselines por owner y
-  `STD-CONF-001` permanecen visibles como promoción posterior.
+  bytes. `HOST` es `not-applicable`; `STD-A-FUZZ-001` promueve el fuzz
+  owner-aware, mientras baselines por owner y `STD-CONF-001` permanecen
+  visibles como promoción posterior.
   `scripts/stdlib-path-test.sh` valida contrato, símbolos, corpus, ausencia de
   capability, docs y las 10/10 filas públicas.
 - [x] **STD-A-CONSOLE-EVIDENCE-001 — Cerrar evidencia de consola.** Las siete
@@ -4924,9 +4935,10 @@ administrativas que no implementan comportamiento.
   estática de capability `console`, partial I/O, EOF, LF estable, flush
   explícito, errores UTF-8 atómicos y mensajes host opacos. HIR/lowering,
   bytecode/VM, host, fixture `m11-std-console-001.to`, auditoría pública 7/7 y
-  la matriz de evidencia quedan enlazados. `HOST` es `verified`; fuzz dedicado,
-  baselines de bytes/chunks/work-units y `STD-CONF-001` permanecen visibles como
-  promoción posterior. `scripts/stdlib-console-test.sh` valida negativos,
+  la matriz de evidencia quedan enlazados. `HOST` es `verified`;
+  `STD-A-FUZZ-001` promueve el fuzz owner-aware, mientras baselines de
+  bytes/chunks/work-units y `STD-CONF-001` permanecen visibles como promoción
+  posterior. `scripts/stdlib-console-test.sh` valida negativos,
   símbolos, corpus, capability, documentación y todas las filas públicas.
 - [x] **STD-A-FS-EVIDENCE-001 — Cerrar evidencia de filesystem.** Las catorce
   firmas públicas de `std.fs` quedan trazadas por contrato hosted, capability
@@ -4936,8 +4948,9 @@ administrativas que no implementan comportamiento.
   tipados y redactados, límites de materialización, `atomicWrite`, cancelación,
   tokens stale y cleanup normal/unwind. La frontera estática rechaza imports
   sin capability antes del lowering, y la auditoría pública mantiene 14/14.
-  `HOST` queda `verified`; fuzz dedicado, baselines por target y
-  `STD-CONF-001` permanecen visibles como promoción posterior.
+  `HOST` queda `verified`; `STD-A-FUZZ-001` promueve el fuzz owner-aware,
+  mientras baselines por target y `STD-CONF-001` permanecen visibles como
+  promoción posterior.
 - [x] **STD-A-PROC-EVIDENCE-001 — Cerrar evidencia de procesos.** Las diecisiete
   firmas públicas quedan trazadas por el contrato hosted, capability `process`,
   planes inertes `Command`/`Pipeline`, handles terminales, HIR/lowering,
@@ -4946,8 +4959,8 @@ administrativas que no implementan comportamiento.
   ventana del kernel, stdout/stderr separados, `combined`, redirección
   `mergeStderr`, estados de salida, errores de spawn, cancelación, panic/unwind
   y reaping. La auditoría pública mantiene 17/17 y `HOST` queda `verified`;
-  fuzz dedicado, baselines por target y `STD-CONF-001` permanecen visibles
-  como promoción posterior.
+  `STD-A-FUZZ-001` promueve el fuzz owner-aware, mientras baselines por target y
+  `STD-CONF-001` permanecen visibles como promoción posterior.
 - [x] **STD-A-SER-EVIDENCE-001 — Cerrar evidencia de serialization.** El
   protocolo común queda trazado por `Encoder`/`Decoder`, `Encode`/`Decode`, la
   máquina de eventos con frames explícitos, `Value`/`ValueView`/`Raw`, paths,
@@ -4955,30 +4968,32 @@ administrativas que no implementan comportamiento.
   enlazados con la frontera `tondo-meta`, source maps y diagnostics reproducibles;
   las pruebas cubren records, enums, newtypes, genéricos, attributes, límites,
   duplicados, longitudes, chunking y publicación sin valores parciales. `HOST`
-  es `not-applicable`; fuzz dedicado del protocolo, baselines de coste y
-  `STD-CONF-001` permanecen visibles como promoción posterior.
+  es `not-applicable`; `STD-A-FUZZ-001` promueve el fuzz owner-aware del
+  protocolo, mientras baselines de coste y `STD-CONF-001` permanecen visibles
+  como promoción posterior.
 - [x] **STD-A-JSON-EVIDENCE-001 — Cerrar evidencia de JSON.** Las rutas
   typed/dynamic/streaming quedan trazadas por el parser y writer de frames
   explícitos, `JsonNumber` exacto, límites, políticas, errores terminales,
   JCS/RFC 8785, fragmentos de un byte y la interoperabilidad bidireccional con
-  `serde_json`. `HOST` es no aplicable; fuzz dedicado, baselines de
-  allocations/memoria por target y `STD-CONF-001` permanecen como promoción
-  posterior.
+  `serde_json`. `HOST` es no aplicable; `STD-A-FUZZ-001` promueve el fuzz
+  owner-aware, mientras baselines de allocations/memoria por target y
+  `STD-CONF-001` permanecen como promoción posterior.
 - [x] **STD-A-MSGPACK-EVIDENCE-001 — Cerrar evidencia de MessagePack.** Las
   rutas typed/dynamic/streaming quedan trazadas por el modelo wire completo,
   formas no mínimas, enteros y bits de floats, binary/UTF-8, claves arbitrarias,
   ext/timestamp, determinismo, límites, fragmentos de un byte y la
-  interoperabilidad bidireccional con `rmpv`. `HOST` es no aplicable; fuzz
-  dedicado, baselines de allocations/memoria por target y `STD-CONF-001`
-  permanecen como promoción posterior.
+  interoperabilidad bidireccional con `rmpv`. `HOST` es no aplicable;
+  `STD-A-FUZZ-001` promueve el fuzz owner-aware, mientras baselines de
+  allocations/memoria por target y `STD-CONF-001` permanecen como promoción
+  posterior.
 - [x] **STD-A-PROTOBUF-EVIDENCE-001 — Cerrar evidencia de Protobuf.** La
   frontera TOML schema-first y las rutas wire typed/streaming quedan
   trazadas por proto3, presencia, repeated/packed, maps, oneof, enums abiertos,
   unknown fields/grupos, evolución, descriptor raíz, determinismo, límites,
   fragmentos de un byte y la interoperabilidad bidireccional con `prost`.
-  `HOST` es no aplicable; fuzz dedicado de schema/operaciones, baselines de
-  allocations/memoria por target y `STD-CONF-001` permanecen como promoción
-  posterior.
+  `HOST` es no aplicable; `STD-A-FUZZ-001` promueve el fuzz owner-aware de
+  schema/operaciones, mientras baselines de allocations/memoria por target y
+  `STD-CONF-001` permanecen como promoción posterior.
 - [x] **STD-A-TESTING-EVIDENCE-001 — Cerrar evidencia de `std.testing`.**
   El contrato pasa a `closed-contract` y el leaf de evidencia registra las
   nueve celdas. Las 25 firmas públicas quedan enlazadas con assertions,
@@ -4986,8 +5001,9 @@ administrativas que no implementan comportamiento.
   generación replayable, shrinking sellado, control terminal y virtual time.
   El bridge `HOST` es verificado por el worker; los proyectos de aceptación
   dogfoodéan importación test-only, hooks de control, retries/repeats,
-  selección/sharding y JSON/JUnit. Fuzz dedicado, dimensiones de coste aún no
-  capturadas y `STD-CONF-001` permanecen como celdas `partial` explícitas.
+  selección/sharding y JSON/JUnit. `STD-A-FUZZ-001` promueve el fuzz
+  owner-aware; dimensiones de coste aún no capturadas y `STD-CONF-001`
+  permanecen como celdas `partial` explícitas.
 
 - [x] **STD-MATRIX-ALL-001 — Construir la matriz normativa de stdlib.**
   `testing/stdlib-matrix.json` contiene 22 owners (incluidos los owners
@@ -5009,12 +5025,11 @@ administrativas que no implementan comportamiento.
   y campañas de fuzz. `scripts/stdlib-test-coordination-check.sh` regenera el
   registro y lo compara con la auditoría pública, la matriz normativa y
   `stdlib-owner-evidence`; sus tests negativos rechazan superficies sin ley,
-  owners sin comandos, firmas ausentes o fuzz parcial sin razón. El test Rust
+  owners sin comandos, firmas ausentes o rutas de fuzz incompletas. El test Rust
   `stdlib_owner_models` ejecuta la misma clausura y verifica que cada superficie
   pública tenga un modelo, incluyendo requisitos de owners sin filas de firma.
-  Los campos `MODEL` y `TEST` quedan verificados; los 20 campos `FUZZ` sin
-  target dedicado permanecen `partial` con corpus y razón explícitos, por lo
-  que esta coordinación no los promociona de forma ficticia. La siguiente
+  Los campos `MODEL` y `TEST` quedan verificados; `STD-A-FUZZ-001` promueve los
+  22 campos `FUZZ` owner-aware con corpus y seeds explícitos. La siguiente
   coordinación es `STD-CONF-001`.
 
 - [x] **STD-CODEC-KERNEL-001 — Validar los kernels de formatos existentes.**
@@ -5109,10 +5124,14 @@ S1A; su estado se deriva de los registros machine-readable y no de este texto:
   cancelación al salir de `scope`, loans secuenciales y el rechazo de loans
   exclusivos en `spawn`.
 
-- [ ] **STD-A-FUZZ-001 — Cerrar todas las celdas FUZZ aplicables de S1A.** El
-  generador toma cada fila `partial` de `testing/stdlib-matrix.json`, exige
-  target, corpus, seed, límites, oracle y persistencia de regresiones por owner,
-  y solo finaliza cuando no queda ninguna celda FUZZ aplicable sin `verified`.
+- [x] **STD-A-FUZZ-001 — Cerrar todas las celdas FUZZ aplicables de S1A.** El
+  target owner-aware `fuzz/fuzz_targets/stdlib_owners.rs` enruta las 22
+  superficies mediante selector reproducible, límites fijos y oráculos
+  ejecutables. `testing/stdlib-fuzz.json` registra target, corpus, seed,
+  límites, replay y persistencia de regresiones; `scripts/stdlib-fuzz-check.sh`
+  y su suite negativa comprueban rutas, corpus no vacíos, selectores y la
+  evidencia promovida. `testing/stdlib-owner-evidence.json` y las matrices
+  regeneradas muestran `FUZZ=verified` para los 22 owners (22/22, 0 partial).
 
 - [ ] **STD-A-PERF-001 — Capturar presupuestos completos por owner S1A.** Para
   cada hot path cerrar throughput/tail, allocations/bytes, memoria pico,
@@ -6340,7 +6359,8 @@ de `origin/main`), los tests ejecutables actuales y el gate local completo:
 | `ASYNC-INFER-001`, `ASYNC-IMPLICIT-AWAIT-001`, `ASYNC-EFFECT-API-001`, `ASYNC-SUSPENDS-DENOTE-001`, `ASYNC-JOIN-RETURN-001`, `ASYNC-THREAD-SPAWN-001`, `ASYNC-ONESHOT-001`, `ASYNC-ITER-001` | Cerradas | El efecto público es denotable en contratos y tipos, continúa infiriéndose en cuerpos, y el gate cubre inferencia, préstamos secuenciales, rechazo en `spawn`, `Join`, one-shot, thread lane e iteración async. |
 | `ASYNC-DEFER-IMPL-001` | **Cerrada** | Fixtures canónicos y de script cubren retorno, error exterior, pánico/supresión, LIFO, cancelación, host-backed cleanup e inferencia; negativos cubren `E1601`, `E1608`, `E1611`, `E1401`, `E1605`, `E1410` y `E1008`. Los tests de driver prueban `T0002`, capability y precedencia de panic; `test_runtime` fija timeout forzado y `test_interrupt` exige acknowledgement de cleanup antes de exit 4. |
 | `UTEST-SUSPENSION-MIGRATION-001` | Cerrada | Parser/CST acepta `@sync`/`@nosuspend`; HIR/checker preserva `fn` + inferencia, espera implícita y `E1601`; fixtures compile-pass/compile-fail/runtime canónicos y `crates/tondo-reference-adapter/tests/suspension_migration.rs` fijan equivalencia directa/`await`, consumo de `Waiter` y hashes de interfaz `suspends`. El corpus histórico `async fn` sigue congelado y separado. |
-| `STD-A-ASYNC-IMPL-001` | **Cerrada** | Implementación VM completa de `std.async`: ruta directa y `spawn` de `collect`, cursor genérico, límites, cancelación cooperativa, liberación terminal y loans; fuzz, rendimiento y conformance global siguen en sus leaves S1A. |
+| `STD-A-ASYNC-IMPL-001` | **Cerrada** | Implementación VM completa de `std.async`: ruta directa y `spawn` de `collect`, cursor genérico, límites, cancelación cooperativa, liberación terminal y loans; rendimiento y conformance global siguen en sus leaves S1A. |
+| `STD-A-FUZZ-001` | **Cerrada** | Target owner-aware con 22 rutas, corpus y seeds reproducibles, límites de entrada/source/RSS/timeout, oráculos de no-panic e invariantes por owner, replay de minimizados y campañas smoke/nightly integradas; `FUZZ=verified` 22/22. |
 | `STD-CHANNEL-ASYNC-ITER-001`, `NATIVE-THREAD-001` | **Pendientes reales** | Requieren adaptación de Channel en S1 y ejecución física en workers OS del backend nativo, respectivamente; no forman parte del bootstrap VM. |
 
 El gate oficial (`bash scripts/test-gate.sh`) se ejecutó después de esta
@@ -6447,7 +6467,8 @@ quedan cerrados como implementación/infraestructura. M10.7 y la implementación
 funcional de M10.6 permanecen cerradas. `CONF-DRAFT-001` también permanece
 cerrada. La auditoría ya ha vuelto a cerrar T0/G5 en la revision 24 y mantiene
 Wave 5/S1A abierta por dimensiones de evidencia y promoción parciales; la
-superficie pública ya está verificada en 214/214 firmas.
+superficie pública ya está verificada en 214/214 firmas y FUZZ está promovido
+22/22.
 `CONF-GAP-IMPL-001` cierra las 364 filas auditadas aplicables y conserva los dos
 no-goals exactos. `CONF-LAYER-RESULT-001` produce el resultado compuesto y
 `CONF-SEAL-FINAL-001` lo archiva con calidad y documentación en el candidato
@@ -6457,10 +6478,11 @@ Wave 6 no se declara iniciada antes de S1A.
 coordinación; `NATIVE-TARGET-DESC-001`, `NATIVE-ARTIFACT-001`,
 `NATIVE-LINK-PLAN-001`, `NATIVE-PUBLISH-SPEC-001` y `PERF-001` quedan cerrados
 como contratos puros. `TRACKER-LINT-001` está cerrado y su informe derivado
-registra 616 tareas y 12 gates en la revisión 2.51. `STD-A-ASYNC-API-001` ya
+registra 616 tareas y 12 gates en la revisión 2.52. `STD-A-ASYNC-API-001` ya
 cerró su contrato y auditoría, `ASYNC-DEFER-IMPL-001` cerró su hardening y
 `ASYNC-ITER-EXT-001` cerró el lowering genérico de `collect(limit:)` con
-evidencia runtime y `STD-A-ASYNC-IMPL-001` cerró su ejecución estructurada;
+evidencia runtime, `STD-A-ASYNC-IMPL-001` cerró su ejecución estructurada y
+`STD-A-FUZZ-001` cerró las 22 rutas owner-aware de fuzz;
 la siguiente frontera son las leaves y el seal
 reales de S1A. Solo
 entonces comienza `DIAG-SPEC-001`; la
@@ -6470,6 +6492,16 @@ instrumentación VM espera los contratos B0 y `NATIVE-001` espera
 ---
 
 ## 25. Historial del tracker
+
+### 2.52 — 2026-08-20
+
+- Se cierra `STD-A-FUZZ-001` con el target owner-aware
+  `fuzz/fuzz_targets/stdlib_owners.rs`: 22 rutas explícitas cubren los owners
+  `std.async`–`std.time` con límites, oráculos y corpus individuales.
+- `testing/stdlib-fuzz.json` fija seeds, replay, campañas smoke/nightly y
+  persistencia de regresiones; los checkers negativos detectan owners, rutas,
+  corpus o selectores ausentes. La evidencia coordinada queda en `FUZZ=verified`
+  22/22 y el siguiente bloque es `STD-A-PERF-001`.
 
 ### 2.51 — 2026-08-19
 

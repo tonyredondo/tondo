@@ -131,9 +131,9 @@ errores no incluyen rutas físicas adicionales ni fragmentos de contenido.
 
 La evidencia ejecutable está identificada por `STD-A-FS-EVIDENCE-001`: cubre
 las 14 firmas públicas, el contrato de capability, el modelo de handles, el
-adaptador host, el fixture runtime y los límites/cleanup. Fuzz específico,
-captura de rendimiento por target y conformance global permanecen explícitos
-como promoción posterior.
+adaptador host, el fixture runtime y los límites/cleanup. `STD-A-FUZZ-001`
+promueve el fuzz owner-aware; captura de rendimiento por target y conformance
+global permanecen explícitos como promoción posterior.
 
 ## `std.process`
 
@@ -192,6 +192,6 @@ inertes y handles terminales, HIR/lowering, bytecode/VM y el adaptador
 `process_host`. Las pruebas M8 cubren argv literal, shell explícito, las cuatro
 formas de pipe, backpressure con salida superior a la ventana del kernel,
 stdout/stderr separados, `combined`, redirección `mergeStderr`, estados de
-salida, errores de spawn, cancelación, panic/unwind y reaping. Fuzz dedicado,
-capturas de coste por target y `STD-CONF-001` permanecen explícitos como
-promoción posterior.
+salida, errores de spawn, cancelación, panic/unwind y reaping. `STD-A-FUZZ-001`
+promueve el fuzz owner-aware; capturas de coste por target y `STD-CONF-001`
+permanecen explícitos como promoción posterior.

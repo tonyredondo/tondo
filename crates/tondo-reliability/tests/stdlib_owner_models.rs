@@ -101,10 +101,10 @@ fn owners_without_signature_rows_still_model_each_normative_requirement() {
 }
 
 #[test]
-fn test_and_fuzz_evidence_is_executable_or_explicitly_partial() {
+fn test_and_fuzz_evidence_is_executable_and_promoted() {
     let root = root();
     let registry = load(&root, "testing/stdlib-test-coordination.json");
-    let mut partial_fuzz = 0;
+    let mut verified_fuzz = 0;
 
     for coordinated in registry["owners"].as_array().unwrap() {
         let id = coordinated["id"].as_str().unwrap();
@@ -122,19 +122,14 @@ fn test_and_fuzz_evidence_is_executable_or_explicitly_partial() {
 
         let fuzz = &coordinated["fuzz"];
         let status = fuzz["status"].as_str().unwrap();
-        assert!(matches!(status, "verified" | "partial"));
+        assert_eq!(status, "verified");
         assert!(!fuzz["campaigns"].as_array().unwrap().is_empty());
         assert!(!fuzz["refs"].as_array().unwrap().is_empty());
-        if status == "partial" {
-            partial_fuzz += 1;
-            assert!(
-                fuzz["reason"].as_str().is_some_and(
-                    |reason| reason.contains("dedicated") || reason.contains("promotion")
-                )
-            );
-        }
+        assert!(fuzz["reason"].is_null());
+        verified_fuzz += 1;
     }
 
-    assert!(partial_fuzz > 0);
-    assert_eq!(registry["summary"]["fuzz_partial"], partial_fuzz);
+    assert_eq!(verified_fuzz, 22);
+    assert_eq!(registry["summary"]["fuzz_verified"], verified_fuzz);
+    assert_eq!(registry["summary"]["fuzz_partial"], 0);
 }

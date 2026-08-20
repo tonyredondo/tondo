@@ -49,8 +49,8 @@ intrinsic compiler/VM-owned value and has no separate provider capability.
 
 The scalar implementation is the correctness oracle. SIMD or word-wide routes
 may be promoted only after the same results, errors, limits and ownership
-observables are demonstrated. Dedicated performance capture and fuzz promotion
-remain pending; no throughput or allocation claim is inferred from unit-test
+observables are demonstrated. `STD-A-FUZZ-001` promotes the owner-aware route;
+dedicated performance capture remains pending, and no throughput or allocation claim is inferred from unit-test
 timing. Run the contract, negative, and owner-evidence checks with:
 
 ```text

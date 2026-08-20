@@ -75,6 +75,6 @@ availability, sealed snapshot identity, ordered arguments, strict names and
 raw/text values, missing-entry and copy semantics, and atomic limits. The
 owner corpora cover invalid names, injected inputs and budget failures without
 consulting the ambient process environment. `HOST` is verified at the single
-`process_host` boundary; dedicated fuzz and capability-scoped performance
-promotion remain explicitly pending. The contract and its negative fixtures
+`process_host` boundary; `STD-A-FUZZ-001` now covers the owner-aware route;
+capability-scoped performance promotion remains explicitly pending. The contract and its negative fixtures
 are checked by `scripts/stdlib-env-check.sh` and `scripts/stdlib-env-test.sh`.

@@ -203,9 +203,9 @@ las nueve firmas públicas de `Option` y `Result` con sus símbolos HIR, lowerin
 MIR, agregados bytecode y ejecución VM. Las pruebas cubren instanciación
 genérica explícita e inferida, composición `map`/`mapErr`/`unwrapOr`, patrones
 de éxito y error, propagación y semántica de valores. El corpus de admission
-fuzz genera formas `Option`/`Result` y protocolos genéricos; la captura de fuzz
-específica de operaciones y los baselines de rendimiento por owner permanecen
-pendientes de promoción. `HOST` es `not-applicable`: el owner es intrínseco y
+fuzz genera formas `Option`/`Result` y protocolos genéricos; `STD-A-FUZZ-001`
+promueve la ruta owner-aware y los baselines de rendimiento por owner
+permanecen pendientes de promoción. `HOST` es `not-applicable`: el owner es intrínseco y
 compiler/VM-owned, sin capability ni consulta ambiental.
 
 ## `std.math`
@@ -289,8 +289,8 @@ errores después de datos aceptados, `flush` y cancelación sin publicar éxito
 parcial. `HOST` es `not-applicable`: console, filesystem y process poseen los
 adaptadores capability-gated y solo reutilizan estos protocolos. Las dimensiones
 de coste declaradas son bytes copiados, chunks procesados y work-units; sus
-baselines por owner, fuzz dedicado y promoción global de conformance siguen
-visibles como trabajo posterior.
+baselines por owner y promoción global de conformance siguen visibles como
+trabajo posterior; `STD-A-FUZZ-001` promueve el fuzz owner-aware.
 
 ## `std.serialization`
 
@@ -314,9 +314,9 @@ válidos, límites de scalar y errores de frontera. Los fixtures
 por scalar, iteración sin cursor adicional, transforms ASCII y rechazo
 atómico de UTF-8 inválido. `HOST` es `not-applicable`: no hay capability ni
 lectura ambiental separada. El corpus bounded de bytes/UTF-8 y el admission
-fuzz aportan cobertura de frontera; el fuzz específico de operaciones, los
-baselines de coste por owner y la promoción global de conformance siguen
-visibles como trabajo posterior.
+fuzz aportan cobertura de frontera; `STD-A-FUZZ-001` promueve el fuzz
+owner-aware y los baselines de coste por owner y la promoción global de
+conformance siguen visibles como trabajo posterior.
 
 ## Evidencia del owner intrínseco `std.collections`
 
@@ -333,9 +333,9 @@ orden normativo sin usar el layout interno como observable. Las properties de
 lowering comparan las rutas eager y COW sobre el mismo corpus y prueban el
 detach antes de escribir; el admission fuzz genera las formas intrínsecas de
 Array/Map/Set y sus límites. `HOST` es `not-applicable`: las colecciones son un
-owner intrínseco portable sin capability ni consulta ambiental. El fuzz de
-operaciones, los baselines de memoria/hash por owner y la promoción global de
-conformance permanecen explícitamente pendientes.
+owner intrínseco portable sin capability ni consulta ambiental. `STD-A-FUZZ-001`
+promueve el fuzz owner-aware; los baselines de memoria/hash por owner y la
+promoción global de conformance permanecen explícitamente pendientes.
 
 ## Evidencia del owner intrínseco `std.iter`
 
@@ -358,9 +358,10 @@ Las properties de lowering y los tests de runtime cubren iteración intrínseca
 prestada, dispatch estático de iteradores de usuario, guards de agotamiento,
 trazado de fuente/callbacks y rechazo de descriptores o estados corruptos. El
 admission fuzz aporta formas de cursor; `HOST` es `not-applicable` porque el
-owner es intrínseco portable sin capability ni consulta ambiental. El fuzz de
-operaciones, los baselines de retención/allocations/materialización y la
-promoción global de conformance permanecen explícitamente pendientes.
+owner es intrínseco portable sin capability ni consulta ambiental.
+`STD-A-FUZZ-001` promueve el fuzz owner-aware; los baselines de
+retención/allocations/materialización y la promoción global de conformance
+permanecen explícitamente pendientes.
 
 ## Evidencia del owner intrínseco `std.math`
 
@@ -379,6 +380,6 @@ runtime test de la frontera de `sqrt`. El kernel scalar es el scalar oracle
 canónico de 0.1: no existe una ruta SIMD alternativa ni fast-math observable;
 si un backend futuro vectoriza, debe demostrar equivalencia bit a bit con este
 oracle antes de cambiar la ruta. `HOST` es `not-applicable` porque el owner es
-intrínseco portable sin capability ni consulta ambiental. Fuzz específico,
-baselines de coste por owner y la promoción global de conformance siguen
-visibles como trabajo posterior.
+intrínseco portable sin capability ni consulta ambiental. `STD-A-FUZZ-001`
+promueve el fuzz owner-aware; baselines de coste por owner y la promoción
+global de conformance siguen visibles como trabajo posterior.

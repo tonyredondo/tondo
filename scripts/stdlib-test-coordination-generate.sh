@@ -123,7 +123,7 @@ jq -n \
           fuzz_verified: ([$owners[] | select(.fuzz.status == "verified")] | length),
           fuzz_partial: ([$owners[] | select(.fuzz.status == "partial")] | length)
         },
-        next_coordination: "STD-CONF-001"
+        next_coordination: "STD-A-PERF-001"
       }
     ' > "$output"
 

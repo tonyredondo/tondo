@@ -109,6 +109,10 @@ run_step stdlib-async-contract \
     scripts/stdlib-async-check.sh
 run_step stdlib-owner-evidence \
     scripts/stdlib-owner-evidence-check.sh
+run_step stdlib-fuzz-contract \
+    scripts/stdlib-fuzz-check.sh
+run_step stdlib-fuzz-tests \
+    scripts/stdlib-fuzz-test.sh
 run_step stdlib-meta-tests \
     scripts/stdlib-meta-test.sh
 run_step stdlib-reflect-tests \

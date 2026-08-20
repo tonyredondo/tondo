@@ -110,5 +110,6 @@ rechazo de loans exclusivos en `spawn`.
 - No hay callbacks, polling público, scheduler implícito ni wrappers de tarea.
 
 La implementación del cursor genérico, `collect(limit:)`, cancelación y
-backpressure queda verificada en `STD-A-ASYNC-IMPL-001`; las campañas de fuzz,
-rendimiento y conformidad global siguen siendo leaves independientes de S1A.
+backpressure queda verificada en `STD-A-ASYNC-IMPL-001`; `STD-A-FUZZ-001`
+promueve la ruta owner-aware y rendimiento y conformidad global siguen siendo
+leaves independientes de S1A.

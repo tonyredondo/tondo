@@ -23,7 +23,7 @@ jq -e '
   and .edition == "0.1"
   and .phase == "STD-0.1A"
   and .status == "closed-coordination"
-  and .next_coordination == "STD-CONF-001"
+  and .next_coordination == "STD-A-PERF-001"
   and .rules.one_owner_per_surface
   and .rules.every_surface_has_model_law
   and .rules.every_owner_has_test_commands
@@ -35,8 +35,8 @@ jq -e '
   and (.summary.public_signatures == 214)
   and (.summary.owner_requirements == 171)
   and (.summary.model_laws == 66)
-  and (.summary.fuzz_verified == 1)
-  and (.summary.fuzz_partial == 21)
+  and (.summary.fuzz_verified == 22)
+  and (.summary.fuzz_partial == 0)
   and all(.owners[];
     (.id | type == "string" and test("^std\\.[a-z]+$"))
     and (.leaf | type == "string" and startswith("STD-A-"))
@@ -50,10 +50,10 @@ jq -e '
     and (.test.status == "verified")
     and (.test.commands | type == "array" and length > 0)
     and (.test.refs | type == "array" and length > 0)
-    and (.fuzz.status | ["verified", "partial"] | index(.) != null)
+    and (.fuzz.status == "verified")
     and (.fuzz.campaigns | type == "array" and length > 0)
     and (.fuzz.refs | type == "array" and length > 0)
-    and (if .fuzz.status == "partial" then (.fuzz.reason | type == "string" and length > 0) else .fuzz.reason == null end)
+    and (.fuzz.reason == null)
   )
   and ([.owners[].public_api[].id] | unique | length) == 214
   and ([.owners[].public_api[].id] | unique | sort) == ([.owners[].public_api[].id] | sort)
@@ -98,4 +98,4 @@ while IFS= read -r command; do
     fi
 done < <(jq -r '.owners[].test.commands[]' "$coordination")
 
-echo "stdlib test coordination: OK (22 owners; 214 public signatures; 171 owner requirements; 66 model laws; fuzz gaps explicit)"
+echo "stdlib test coordination: OK (22 owners; 214 public signatures; 171 owner requirements; 66 model laws; all fuzz routes promoted)"

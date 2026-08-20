@@ -214,7 +214,7 @@ jq -e '
     and .cells.HOST.status == "verified"
     and .cells.MODEL.status == "verified"
     and .cells.TEST.status == "verified"
-    and .cells.FUZZ.status == "partial"
+    and .cells.FUZZ.status == "verified"
     and .cells.PERF.status == "partial"
     and .cells.CONF.status == "partial"
     and .cells.DOC.status == "verified")

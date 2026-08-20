@@ -111,21 +111,26 @@
           "status": "verified"
         },
         "MODEL/TEST/FUZZ": {
-          "reason": "the contract negative cases are deterministic, but a dedicated async iterator and cancellation fuzz target belongs to STD-A-FUZZ-001",
+          "reason": null,
           "refs": [
-            "TONDO_IMPLEMENTATION_TRACKER.md",
             "crates/tondo-compiler/src/driver.rs",
             "crates/tondo-compiler/src/hir/check.rs",
             "crates/tondo-compiler/src/hir/lower.rs",
             "docs/contracts/stdlib-async.md",
+            "fuzz/corpus/stdlib_owners/std-async/seed#seed=3001",
+            "fuzz/fuzz_targets/stdlib_owners.rs#route=std.async",
+            "scripts/fuzz-campaign.sh",
+            "scripts/fuzz-smoke.sh",
             "scripts/stdlib-async-check.sh",
             "scripts/stdlib-async-test.sh",
+            "scripts/stdlib-fuzz-check.sh",
             "testing/stdlib-async.json",
+            "testing/stdlib-fuzz.json#owner=std.async",
             "tests/runtime/m11-std-async-impl-001.to",
             "tests/runtime/m11-std-async-iter-001.to",
             "tests/runtime/m7-suspension-inferred.to"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "PERF": {
           "reason": "effect, handle and bounded-iterator budgets are declared, but owner hot-path baselines remain pending implementation",
@@ -225,17 +230,21 @@
           "status": "verified"
         },
         "MODEL/TEST/FUZZ": {
-          "reason": "the bounded byte and UTF-8 corpora are declared and boundary tests are executable, but no dedicated bytes fuzz target has been promoted",
+          "reason": null,
           "refs": [
             "crates/tondo-compiler/src/driver.rs",
             "crates/tondo-compiler/src/hir/check.rs",
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/process_host.rs",
             "crates/tondo-vm/src/bytecode/verify.rs",
-            "scripts/stdlib-bytes-test.sh",
-            "testing/stdlib-bytes.json"
+            "fuzz/corpus/stdlib_owners/std-bytes/seed#seed=3002",
+            "fuzz/fuzz_targets/stdlib_owners.rs#route=std.bytes",
+            "scripts/fuzz-campaign.sh",
+            "scripts/fuzz-smoke.sh",
+            "scripts/stdlib-fuzz-check.sh",
+            "testing/stdlib-fuzz.json#owner=std.bytes"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "PERF": {
           "reason": "copy, comparison, hashing and builder workloads are declared, but owner hot-path baselines remain pending promotion capture",
@@ -364,7 +373,7 @@
           "status": "verified"
         },
         "MODEL/TEST/FUZZ": {
-          "reason": "the admission corpus and collection property corpus exercise Array/Map/Set shapes, but no dedicated std.collections operation fuzz target has been promoted",
+          "reason": null,
           "refs": [
             "crates/tondo-compiler/src/bytecode/lower.rs",
             "crates/tondo-compiler/src/hir/check.rs",
@@ -372,13 +381,16 @@
             "crates/tondo-compiler/src/mir/lower.rs",
             "crates/tondo-compiler/src/process_host.rs",
             "crates/tondo-vm/src/runtime/execute.rs",
-            "fuzz/corpus/admission/scalar-seed",
-            "fuzz/corpus/admission/structural-seed",
-            "fuzz/fuzz_targets/admission.rs",
+            "fuzz/corpus/stdlib_owners/std-collections/seed#seed=3003",
+            "fuzz/fuzz_targets/stdlib_owners.rs#route=std.collections",
+            "scripts/fuzz-campaign.sh",
+            "scripts/fuzz-smoke.sh",
             "scripts/stdlib-collections-test.sh",
+            "scripts/stdlib-fuzz-check.sh",
+            "testing/stdlib-fuzz.json#owner=std.collections",
             "tests/runtime/m11-std-collections-001.to"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "PERF": {
           "reason": "COW copy, insertion-order hashing and bounded collection workloads are declared, but owner-specific baseline capture remains pending promotion",
@@ -496,17 +508,22 @@
           "status": "verified"
         },
         "MODEL/TEST/FUZZ": {
-          "reason": "the bounded stream, UTF-8 and capability corpus is executable, but no dedicated std.console operation fuzz target has been promoted",
+          "reason": null,
           "refs": [
             "crates/tondo-compiler/src/driver.rs",
             "crates/tondo-compiler/src/hir/check.rs",
             "crates/tondo-compiler/src/process_host.rs",
             "docs/contracts/stdlib-hosted.md",
-            "fuzz/fuzz_targets/admission.rs",
+            "fuzz/corpus/stdlib_owners/std-console/seed#seed=3004",
+            "fuzz/fuzz_targets/stdlib_owners.rs#route=std.console",
+            "scripts/fuzz-campaign.sh",
+            "scripts/fuzz-smoke.sh",
             "scripts/stdlib-console-test.sh",
+            "scripts/stdlib-fuzz-check.sh",
+            "testing/stdlib-fuzz.json#owner=std.console",
             "tests/runtime/m11-std-console-001.to"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "PERF": {
           "reason": "stream bytes, chunks and work-unit budgets are declared, but target-specific console hot-path baselines remain pending promotion",
@@ -621,20 +638,23 @@
           "status": "verified"
         },
         "MODEL/TEST/FUZZ": {
-          "reason": "the admission corpus and deterministic fuzz target generate Option/Result and generic protocol shapes, but no dedicated std.core operation fuzz target has been promoted",
+          "reason": null,
           "refs": [
             "crates/tondo-compiler/src/hir/check.rs",
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/mir/lower.rs",
             "crates/tondo-vm/src/runtime/execute.rs",
-            "fuzz/corpus/admission/scalar-seed",
-            "fuzz/corpus/admission/structural-seed",
-            "fuzz/fuzz_targets/admission.rs",
+            "fuzz/corpus/stdlib_owners/std-core/seed#seed=3005",
+            "fuzz/fuzz_targets/stdlib_owners.rs#route=std.core",
+            "scripts/fuzz-campaign.sh",
+            "scripts/fuzz-smoke.sh",
             "scripts/stdlib-core-test.sh",
+            "scripts/stdlib-fuzz-check.sh",
+            "testing/stdlib-fuzz.json#owner=std.core",
             "tests/runtime/m11-std-core-001.to",
             "tests/runtime/m11-std-core-002.to"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "PERF": {
           "reason": "core value construction, mapping and dispatch workloads are declared, but owner-specific baseline capture remains pending promotion",
@@ -745,17 +765,21 @@
           "status": "verified"
         },
         "MODEL/TEST/FUZZ": {
-          "reason": "the name-boundary, snapshot-input and budget-atomicity corpora are declared and executable, but no dedicated environment fuzz target has been promoted",
+          "reason": null,
           "refs": [
             "crates/tondo-compiler/src/driver.rs",
             "crates/tondo-compiler/src/process_host.rs",
             "crates/tondo-vm/src/runtime/execute.rs",
             "docs/contracts/stdlib-env.md",
-            "scripts/stdlib-env-test.sh",
-            "testing/stdlib-env.json",
+            "fuzz/corpus/stdlib_owners/std-env/seed#seed=3006",
+            "fuzz/fuzz_targets/stdlib_owners.rs#route=std.env",
+            "scripts/fuzz-campaign.sh",
+            "scripts/fuzz-smoke.sh",
+            "scripts/stdlib-fuzz-check.sh",
+            "testing/stdlib-fuzz.json#owner=std.env",
             "tests/runtime/m10-std-env-001.to"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "PERF": {
           "reason": "sealed snapshot, name validation and value-copy workloads are declared, but capability-scoped owner baseline capture remains pending promotion",
@@ -870,7 +894,7 @@
           "status": "verified"
         },
         "MODEL/TEST/FUZZ": {
-          "reason": "the bounded builder, Display and limit-boundary property corpus is executable, but no dedicated std.format operation fuzz target has been promoted",
+          "reason": null,
           "refs": [
             "crates/tondo-compiler/src/bytecode/lower.rs",
             "crates/tondo-compiler/src/hir/check.rs",
@@ -878,10 +902,16 @@
             "crates/tondo-compiler/src/process_host.rs",
             "crates/tondo-stdlib/src/format.rs",
             "crates/tondo-vm/src/runtime/execute.rs",
+            "fuzz/corpus/stdlib_owners/std-format/seed#seed=3007",
+            "fuzz/fuzz_targets/stdlib_owners.rs#route=std.format",
+            "scripts/fuzz-campaign.sh",
+            "scripts/fuzz-smoke.sh",
             "scripts/stdlib-format-test.sh",
+            "scripts/stdlib-fuzz-check.sh",
+            "testing/stdlib-fuzz.json#owner=std.format",
             "tests/runtime/m11-std-format-001.to"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "PERF": {
           "reason": "empty, representative and adversarial builder workloads plus allocation budgets are declared, but owner-specific allocation and materialization baselines remain pending promotion",
@@ -1009,17 +1039,22 @@
           "status": "verified"
         },
         "MODEL/TEST/FUZZ": {
-          "reason": "The bounded native-path, directory-order, byte-limit and failure corpus is executable, but no dedicated std.fs operation fuzz target has been promoted.",
+          "reason": null,
           "refs": [
             "crates/tondo-compiler/src/driver.rs",
             "crates/tondo-compiler/src/hir/capabilities.rs",
             "crates/tondo-compiler/src/process_host.rs",
             "docs/contracts/stdlib-hosted.md",
-            "fuzz/fuzz_targets/admission.rs",
+            "fuzz/corpus/stdlib_owners/std-fs/seed#seed=3008",
+            "fuzz/fuzz_targets/stdlib_owners.rs#route=std.fs",
+            "scripts/fuzz-campaign.sh",
+            "scripts/fuzz-smoke.sh",
             "scripts/stdlib-fs-test.sh",
+            "scripts/stdlib-fuzz-check.sh",
+            "testing/stdlib-fuzz.json#owner=std.fs",
             "tests/runtime/m11-std-fs-001.to"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "PERF": {
           "reason": "Bounded filesystem bytes, directory entries and work-unit budgets are declared; target-specific hot-path capture remains pending promotion.",
@@ -1134,18 +1169,23 @@
           "status": "verified"
         },
         "MODEL/TEST/FUZZ": {
-          "reason": "the bounded chunk-partition property corpus exercises Reader/Writer fragmentation, but no dedicated std.io operation fuzz target has been promoted",
+          "reason": null,
           "refs": [
             "crates/tondo-compiler/src/hir/check.rs",
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/process_host.rs",
             "crates/tondo-stdlib/src/io.rs",
             "crates/tondo-vm/src/runtime/execute.rs",
-            "fuzz/fuzz_targets/admission.rs",
+            "fuzz/corpus/stdlib_owners/std-io/seed#seed=3009",
+            "fuzz/fuzz_targets/stdlib_owners.rs#route=std.io",
+            "scripts/fuzz-campaign.sh",
+            "scripts/fuzz-smoke.sh",
+            "scripts/stdlib-fuzz-check.sh",
             "scripts/stdlib-io-test.sh",
+            "testing/stdlib-fuzz.json#owner=std.io",
             "tests/runtime/m11-std-io-001.to"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "PERF": {
           "reason": "bytes, chunks and work-unit budgets are declared, but owner-specific partial-I/O baselines remain pending promotion",
@@ -1257,21 +1297,24 @@
           "status": "verified"
         },
         "MODEL/TEST/FUZZ": {
-          "reason": "the admission corpus and iterator property/model tests exercise cursor shapes and adapter state, but no dedicated std.iter operation fuzz target has been promoted",
+          "reason": null,
           "refs": [
             "crates/tondo-compiler/src/bytecode/lower.rs",
             "crates/tondo-compiler/src/hir/check.rs",
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-vm/src/runtime/execute.rs",
             "crates/tondo-vm/src/runtime/heap.rs",
-            "fuzz/corpus/admission/scalar-seed",
-            "fuzz/corpus/admission/structural-seed",
-            "fuzz/fuzz_targets/admission.rs",
+            "fuzz/corpus/stdlib_owners/std-iter/seed#seed=3010",
+            "fuzz/fuzz_targets/stdlib_owners.rs#route=std.iter",
+            "scripts/fuzz-campaign.sh",
+            "scripts/fuzz-smoke.sh",
+            "scripts/stdlib-fuzz-check.sh",
             "scripts/stdlib-iter-test.sh",
+            "testing/stdlib-fuzz.json#owner=std.iter",
             "tests/runtime/m11-std-core-001.to",
             "tests/runtime/m11-std-iter-001.to"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "PERF": {
           "reason": "lazy adapter, callback retention and collect materialization workloads are declared, but owner-specific baseline capture remains pending promotion",
@@ -1407,16 +1450,20 @@
           "status": "verified"
         },
         "MODEL/TEST/FUZZ": {
-          "reason": "The shared codec fuzz target covers JSON validation and one-byte reader fragments, but no dedicated std.json operation fuzz target has been promoted.",
+          "reason": null,
           "refs": [
             "crates/tondo-stdlib/src/json_api.rs",
             "crates/tondo-stdlib/tests/codec_conformance.rs",
-            "fuzz/fuzz_targets/stdlib_codecs.rs",
+            "fuzz/corpus/stdlib_owners/std-json/seed#seed=3011",
+            "fuzz/fuzz_targets/stdlib_owners.rs#route=std.json",
+            "scripts/fuzz-campaign.sh",
+            "scripts/fuzz-smoke.sh",
+            "scripts/stdlib-fuzz-check.sh",
             "scripts/stdlib-json-test.sh",
-            "testing/stdlib-codec-conformance.json",
+            "testing/stdlib-fuzz.json#owner=std.json",
             "testing/stdlib-json.json"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "PERF": {
           "reason": "Typed, dynamic, streaming and canonical JSON workload identities are declared; owner allocation, memory and target baselines remain pending promotion.",
@@ -1534,18 +1581,24 @@
           "status": "verified"
         },
         "MODEL/TEST/FUZZ": {
-          "reason": "the bounded IEEE and numeric compiler corpora exercise Float32/Float boundaries and NaN or overflow diagnostics, but no dedicated std.math operation fuzz target has been promoted",
+          "reason": null,
           "refs": [
             "crates/tondo-compiler/src/hir/check.rs",
             "crates/tondo-compiler/src/hir/const_eval.rs",
             "crates/tondo-compiler/src/process_host.rs",
             "crates/tondo-stdlib/src/math.rs",
             "crates/tondo-vm/src/runtime/execute.rs",
+            "fuzz/corpus/stdlib_owners/std-math/seed#seed=3012",
+            "fuzz/fuzz_targets/stdlib_owners.rs#route=std.math",
+            "scripts/fuzz-campaign.sh",
+            "scripts/fuzz-smoke.sh",
+            "scripts/stdlib-fuzz-check.sh",
             "scripts/stdlib-math-test.sh",
+            "testing/stdlib-fuzz.json#owner=std.math",
             "tests/runtime/m11-std-math-001.to",
             "tests/runtime/m6-num-004-ieee.to"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "PERF": {
           "reason": "scalar fma throughput and tail latency are captured, but owner-specific allocation, code-size and scalar/SIMD equivalence baselines remain pending promotion",
@@ -1679,16 +1732,20 @@
           "status": "verified"
         },
         "MODEL/TEST/FUZZ": {
-          "reason": "The shared codec fuzz target covers MessagePack validation and one-byte reader fragments, but no dedicated std.messagepack operation fuzz target has been promoted.",
+          "reason": null,
           "refs": [
             "crates/tondo-stdlib/src/messagepack_api.rs",
             "crates/tondo-stdlib/tests/codec_conformance.rs",
-            "fuzz/fuzz_targets/stdlib_codecs.rs",
+            "fuzz/corpus/stdlib_owners/std-messagepack/seed#seed=3013",
+            "fuzz/fuzz_targets/stdlib_owners.rs#route=std.messagepack",
+            "scripts/fuzz-campaign.sh",
+            "scripts/fuzz-smoke.sh",
+            "scripts/stdlib-fuzz-check.sh",
             "scripts/stdlib-messagepack-test.sh",
-            "testing/stdlib-codec-conformance.json",
+            "testing/stdlib-fuzz.json#owner=std.messagepack",
             "testing/stdlib-messagepack.json"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "PERF": {
           "reason": "Typed, dynamic, streaming, extension and deterministic MessagePack workload identities are declared; owner allocation, memory and target baselines remain pending promotion.",
@@ -1791,12 +1848,15 @@
           "refs": [
             "crates/tondo-compiler/src/meta.rs",
             "crates/tondo-compiler/src/meta_atomic.rs",
-            "crates/tondo-compiler/src/meta_robust.rs",
             "crates/tondo-compiler/src/meta_vm.rs",
             "crates/tondo-compiler/src/std_meta.rs",
             "crates/tondo-compiler/tests/std_meta_conformance.rs",
-            "fuzz/corpus/protocols/empty-object",
-            "fuzz/fuzz_targets/protocols.rs"
+            "fuzz/corpus/stdlib_owners/std-meta/seed#seed=3014",
+            "fuzz/fuzz_targets/stdlib_owners.rs#route=std.meta",
+            "scripts/fuzz-campaign.sh",
+            "scripts/fuzz-smoke.sh",
+            "scripts/stdlib-fuzz-check.sh",
+            "testing/stdlib-fuzz.json#owner=std.meta"
           ],
           "status": "verified"
         },
@@ -1918,16 +1978,22 @@
           "status": "verified"
         },
         "MODEL/TEST/FUZZ": {
-          "reason": "the bounded deterministic native-byte corpus exercises UTF-8 rejection, exact snapshots and lexical boundaries, but no dedicated std.path operation fuzz target has been promoted",
+          "reason": null,
           "refs": [
             "crates/tondo-compiler/src/hir/check.rs",
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/process_host.rs",
             "crates/tondo-stdlib/src/path.rs",
+            "fuzz/corpus/stdlib_owners/std-path/seed#seed=3015",
+            "fuzz/fuzz_targets/stdlib_owners.rs#route=std.path",
+            "scripts/fuzz-campaign.sh",
+            "scripts/fuzz-smoke.sh",
+            "scripts/stdlib-fuzz-check.sh",
             "scripts/stdlib-path-test.sh",
+            "testing/stdlib-fuzz.json#owner=std.path",
             "tests/runtime/m11-std-path-001.to"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "PERF": {
           "reason": "bounded byte, component and work-unit budgets are declared, but owner-specific normalization and allocation baselines remain pending promotion",
@@ -2060,22 +2126,27 @@
           "status": "verified"
         },
         "MODEL/TEST/FUZZ": {
-          "reason": "The bounded process, pipe, stream and failure corpus is executable, but no dedicated std.process operation fuzz target has been promoted.",
+          "reason": null,
           "refs": [
             "crates/tondo-compiler/src/driver.rs",
             "crates/tondo-compiler/src/hir/terminal.rs",
             "crates/tondo-compiler/src/process_host.rs",
             "crates/tondo-vm/src/bytecode.rs",
             "docs/contracts/process-host.md",
-            "fuzz/fuzz_targets/admission.rs",
+            "fuzz/corpus/stdlib_owners/std-process/seed#seed=3016",
+            "fuzz/fuzz_targets/stdlib_owners.rs#route=std.process",
+            "scripts/fuzz-campaign.sh",
+            "scripts/fuzz-smoke.sh",
+            "scripts/stdlib-fuzz-check.sh",
             "scripts/stdlib-process-test.sh",
+            "testing/stdlib-fuzz.json#owner=std.process",
             "tests/runtime/m8-process-001.to",
             "tests/runtime/m8-process-cancel.to",
             "tests/runtime/m8-process-check-error.to",
             "tests/runtime/m8-process-panic-cleanup.to",
             "tests/runtime/m8-process-spawn-error.to"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "PERF": {
           "reason": "Deterministic child fixtures, stream-routing and reaping budgets are declared; target-specific process hot-path capture remains pending promotion.",
@@ -2210,16 +2281,20 @@
           "status": "verified"
         },
         "MODEL/TEST/FUZZ": {
-          "reason": "The shared codec fuzz target covers Protobuf validation, unknown records and one-byte reader fragments, but no dedicated std.protobuf operation or schema fuzz target has been promoted.",
+          "reason": null,
           "refs": [
             "crates/tondo-stdlib/src/protobuf_api.rs",
             "crates/tondo-stdlib/tests/codec_conformance.rs",
-            "fuzz/fuzz_targets/stdlib_codecs.rs",
+            "fuzz/corpus/stdlib_owners/std-protobuf/seed#seed=3017",
+            "fuzz/fuzz_targets/stdlib_owners.rs#route=std.protobuf",
+            "scripts/fuzz-campaign.sh",
+            "scripts/fuzz-smoke.sh",
+            "scripts/stdlib-fuzz-check.sh",
             "scripts/stdlib-protobuf-test.sh",
-            "testing/stdlib-codec-conformance.json",
+            "testing/stdlib-fuzz.json#owner=std.protobuf",
             "testing/stdlib-protobuf.json"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "PERF": {
           "reason": "Schema, typed wire, streaming, unknown-field and deterministic Protobuf workload identities are declared; owner allocation, memory and target baselines remain pending promotion.",
@@ -2317,13 +2392,17 @@
           "status": "verified"
         },
         "MODEL/TEST/FUZZ": {
-          "reason": "the bounded catalog corpus is declared and negative tests are executable, but no dedicated reflection fuzz target has been promoted",
+          "reason": null,
           "refs": [
             "crates/tondo-compiler/src/reflect.rs",
-            "scripts/stdlib-reflect-test.sh",
-            "testing/stdlib-reflect.json"
+            "fuzz/corpus/stdlib_owners/std-reflect/seed#seed=3018",
+            "fuzz/fuzz_targets/stdlib_owners.rs#route=std.reflect",
+            "scripts/fuzz-campaign.sh",
+            "scripts/fuzz-smoke.sh",
+            "scripts/stdlib-fuzz-check.sh",
+            "testing/stdlib-fuzz.json#owner=std.reflect"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "PERF": {
           "reason": "link-work and descriptor-size workloads are declared, but owner promotion capture remains pending",
@@ -2434,16 +2513,20 @@
           "status": "verified"
         },
         "MODEL/TEST/FUZZ": {
-          "reason": "The bounded codec and one-byte-fragment fuzz corpus exercises the shared boundary indirectly, but no dedicated std.serialization event-protocol fuzz target has been promoted.",
+          "reason": null,
           "refs": [
             "crates/tondo-compiler/src/meta_derive.rs",
             "crates/tondo-compiler/src/serialization_derive.rs",
             "crates/tondo-stdlib/src/serialization.rs",
-            "fuzz/fuzz_targets/protocols.rs",
-            "fuzz/fuzz_targets/stdlib_codecs.rs",
-            "scripts/stdlib-serialization-test.sh"
+            "fuzz/corpus/stdlib_owners/std-serialization/seed#seed=3019",
+            "fuzz/fuzz_targets/stdlib_owners.rs#route=std.serialization",
+            "scripts/fuzz-campaign.sh",
+            "scripts/fuzz-smoke.sh",
+            "scripts/stdlib-fuzz-check.sh",
+            "scripts/stdlib-serialization-test.sh",
+            "testing/stdlib-fuzz.json#owner=std.serialization"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "PERF": {
           "reason": "Shared event, typed streaming and derive budgets are declared; owner-specific hot-path and generated-source baselines remain pending promotion.",
@@ -2580,17 +2663,23 @@
           "status": "verified"
         },
         "MODEL/TEST/FUZZ": {
-          "reason": "No dedicated std.testing fuzz target is promoted; deterministic generators and shrinking, finite limits and isolated acceptance runs are covered by unit and runner tests while fuzz promotion remains explicit.",
+          "reason": null,
           "refs": [
             "crates/tondo-cli/tests/acceptance_projects.rs",
             "crates/tondo-compiler/src/process_host.rs",
             "crates/tondo-compiler/src/test_generation.rs",
             "crates/tondo-compiler/src/test_runtime.rs",
             "crates/tondo-stdlib/src/testing.rs",
+            "fuzz/corpus/stdlib_owners/std-testing/seed#seed=3020",
+            "fuzz/fuzz_targets/stdlib_owners.rs#route=std.testing",
+            "scripts/fuzz-campaign.sh",
+            "scripts/fuzz-smoke.sh",
+            "scripts/stdlib-fuzz-check.sh",
             "scripts/stdlib-testing-test.sh",
+            "testing/stdlib-fuzz.json#owner=std.testing",
             "testing/stdlib-testing.json"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "PERF": {
           "reason": "The representative diff workload captures throughput and tail latency; allocation, memory, startup, compile-time and code-size baselines remain pending owner promotion.",
@@ -2712,19 +2801,23 @@
           "status": "verified"
         },
         "MODEL/TEST/FUZZ": {
-          "reason": "the bounded Unicode and UTF-8 boundary corpora are declared and executable, but no dedicated std.text operation fuzz target has been promoted",
+          "reason": null,
           "refs": [
             "crates/tondo-compiler/src/hir/check.rs",
             "crates/tondo-compiler/src/hir/lower.rs",
             "crates/tondo-compiler/src/process_host.rs",
             "crates/tondo-vm/src/runtime/execute.rs",
-            "fuzz/fuzz_targets/admission.rs",
+            "fuzz/corpus/stdlib_owners/std-text/seed#seed=3021",
+            "fuzz/fuzz_targets/stdlib_owners.rs#route=std.text",
+            "scripts/fuzz-campaign.sh",
+            "scripts/fuzz-smoke.sh",
+            "scripts/stdlib-fuzz-check.sh",
             "scripts/stdlib-text-test.sh",
-            "testing/stdlib-bytes.json",
+            "testing/stdlib-fuzz.json#owner=std.text",
             "tests/runtime/m11-std-text-001.to",
             "tests/runtime/m11-std-text-002.to"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "PERF": {
           "reason": "scalar indexing, UTF-8 scanning and bounded transform workloads are declared, but owner-specific baseline capture remains pending promotion",
@@ -2836,16 +2929,20 @@
           "status": "verified"
         },
         "MODEL/TEST/FUZZ": {
-          "reason": "the time arithmetic, provider-equivalence and timer lifecycle corpora are declared and executable, but no dedicated time fuzz target has been promoted",
+          "reason": null,
           "refs": [
             "crates/tondo-compiler/src/driver.rs",
             "crates/tondo-compiler/src/process_host.rs",
             "crates/tondo-vm/src/runtime/execute.rs",
-            "scripts/stdlib-time-test.sh",
-            "testing/stdlib-time.json",
+            "fuzz/corpus/stdlib_owners/std-time/seed#seed=3022",
+            "fuzz/fuzz_targets/stdlib_owners.rs#route=std.time",
+            "scripts/fuzz-campaign.sh",
+            "scripts/fuzz-smoke.sh",
+            "scripts/stdlib-fuzz-check.sh",
+            "testing/stdlib-fuzz.json#owner=std.time",
             "tests/runtime/m10-std-time-001.to"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "PERF": {
           "reason": "real and virtual provider workloads are declared, but provider-scoped owner baseline capture remains pending promotion",
@@ -12933,8 +13030,7 @@
         "verified": 385
       },
       "MODEL/TEST/FUZZ": {
-        "partial": 379,
-        "verified": 6
+        "verified": 385
       },
       "PERF": {
         "partial": 385

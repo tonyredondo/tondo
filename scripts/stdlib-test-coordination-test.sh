@@ -32,7 +32,7 @@ jq '.owners[0].model.laws = []' testing/stdlib-test-coordination.json \
 expect_failure missing-model-law env TONDO_STDLIB_TEST_COORDINATION="$tmp_dir/missing-model-law.json" \
     scripts/stdlib-test-coordination-check.sh
 
-jq '.owners[0].fuzz.reason = null' testing/stdlib-test-coordination.json \
+jq '.owners[0].fuzz.status = "partial"' testing/stdlib-test-coordination.json \
     > "$tmp_dir/missing-fuzz-reason.json"
 expect_failure missing-fuzz-reason env TONDO_STDLIB_TEST_COORDINATION="$tmp_dir/missing-fuzz-reason.json" \
     scripts/stdlib-test-coordination-check.sh
@@ -57,8 +57,8 @@ jq -e '
     public_signatures: 214,
     owner_requirements: 171,
     model_laws: 66,
-    fuzz_verified: 1,
-    fuzz_partial: 21
+    fuzz_verified: 22,
+    fuzz_partial: 0
   }
 ' testing/stdlib-test-coordination.json >/dev/null
 

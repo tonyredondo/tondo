@@ -44,5 +44,12 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "stdlib_owners"
+path = "fuzz_targets/stdlib_owners.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 members = ["."]

@@ -28,4 +28,5 @@ scripts/stdlib-implementation-coordination-test.sh
 
 El estado `closed-coordination` solo significa que este conjunto de owners
 comparte una prueba de implementación consistente. No implica conformidad
-global, baseline de rendimiento, fuzz dedicado ni una publicación de Tondo.
+global, baseline de rendimiento ni una publicación de Tondo; `STD-A-FUZZ-001`
+coordina el fuzz owner-aware por separado.
