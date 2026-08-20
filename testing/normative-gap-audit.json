@@ -5,7 +5,7 @@
   "documents": [
     {
       "path": "TONDO_LANGUAGE_SPEC.md",
-      "sha256": "25500bf3f1232760ad0755aa06db5f8a840ba93209f5cc5cf59f0d4420ab1b19"
+      "sha256": "7e484facc9f4f48941b6ea3293c14a9d084f94339170199968ba46fcc942b1c8"
     },
     {
       "path": "TONDO_TESTING_SPEC.md",
@@ -17,10 +17,10 @@
     }
   ],
   "summary": {
-    "total": 367,
+    "total": 372,
     "by_outcome": {
-      "absent": 1,
-      "implemented-without-trace": 364,
+      "absent": 12,
+      "implemented-without-trace": 358,
       "not-applicable": 2
     }
   },
@@ -706,42 +706,57 @@
     },
     {
       "requirement": "TL01-11-10-R002",
-      "text_sha256": "6ac4b52f2f7ff565613cb342c581398dba1d5de3433bbe32c21b06efb025dea4",
-      "outcome": "implemented-without-trace",
-      "reason": "TL01-11-10-R002 has an existing implementation at crates/tondo-compiler/src/hir/check.rs and executable evidence rust:tondo-compiler:src::types:unification_shape_matrix_traverses_every_closed_constructor; its six-dimension normative trace remains incomplete.",
-      "implementation": [
-        "crates/tondo-compiler/src/hir/check.rs"
-      ],
-      "tests": [
-        "rust:tondo-compiler:src::types:unification_shape_matrix_traverses_every_closed_constructor"
-      ],
-      "follow_up": null
+      "text_sha256": "10da3a190cee366698af0a865b58a702d219bdc9d64a02ec03989ed0f4767d2e",
+      "outcome": "absent",
+      "reason": "TL01-11-10-R002 introduces the selectable capability and its exact type, ABI, inference, weakening, and trait contract; implementation is tracked by the ASYNC-SELECT task chain.",
+      "implementation": [],
+      "tests": [],
+      "follow_up": "CONF-GAP-IMPL-001:TL01-11-10-R002"
     },
     {
       "requirement": "TL01-11-10-R003",
-      "text_sha256": "24d090884f341f1c5a40294f6d36a379f8a3f0baae9ca07712c69559d3c05ee8",
-      "outcome": "implemented-without-trace",
-      "reason": "TL01-11-10-R003 has an existing implementation at crates/tondo-compiler/src/hir/check.rs and executable evidence rust:tondo-compiler:src::types:unification_shape_matrix_traverses_every_closed_constructor; its six-dimension normative trace remains incomplete.",
-      "implementation": [
-        "crates/tondo-compiler/src/hir/check.rs"
-      ],
-      "tests": [
-        "rust:tondo-compiler:src::types:unification_shape_matrix_traverses_every_closed_constructor"
-      ],
-      "follow_up": null
+      "text_sha256": "8b403cf77c9ba36db18da08d6c23b2264eaf4990e576620ef5c4f226602c41fa",
+      "outcome": "absent",
+      "reason": "TL01-11-10-R003 extends spawn eligibility to selectable calls; implementation is tracked by the ASYNC-SELECT semantic and lowering tasks.",
+      "implementation": [],
+      "tests": [],
+      "follow_up": "CONF-GAP-IMPL-001:TL01-11-10-R003"
+    },
+    {
+      "requirement": "TL01-11-10-R004",
+      "text_sha256": "c87edf320da7d11ef51be269efbc0d90c9632f4b60a99d2006eb6a84c69d4708",
+      "outcome": "absent",
+      "reason": "TL01-11-10-R004 extends the closed sync-context rejection to selectable calls; implementation is tracked by the ASYNC-SELECT semantic task.",
+      "implementation": [],
+      "tests": [],
+      "follow_up": "CONF-GAP-IMPL-001:TL01-11-10-R004"
     },
     {
       "requirement": "TL01-11-11-R001",
-      "text_sha256": "17b50671145af18c17d1167172590e4c176d1343bd8f08487bd9b2de2ff0101f",
-      "outcome": "implemented-without-trace",
-      "reason": "TL01-11-11-R001 has an existing implementation at crates/tondo-compiler/src/hir/check.rs and executable evidence rust:tondo-compiler:src::types:unification_shape_matrix_traverses_every_closed_constructor; its six-dimension normative trace remains incomplete.",
-      "implementation": [
-        "crates/tondo-compiler/src/hir/check.rs"
-      ],
-      "tests": [
-        "rust:tondo-compiler:src::types:unification_shape_matrix_traverses_every_closed_constructor"
-      ],
-      "follow_up": null
+      "text_sha256": "335a3894da14317b7a7e7e92a987615da8e953b688b70fb018477e62b0c9bc39",
+      "outcome": "absent",
+      "reason": "TL01-11-11-R001 adds selectable direct-call waiting and select-context suppression to the implicit suspension rules; implementation is tracked by the ASYNC-SELECT frontend and semantic tasks.",
+      "implementation": [],
+      "tests": [],
+      "follow_up": "CONF-GAP-IMPL-001:TL01-11-11-R001"
+    },
+    {
+      "requirement": "TL01-11-12-2-R001",
+      "text_sha256": "7c651e1ecf0650610e808dc6200118691249c63495a4a356cf6acb79ee69883d",
+      "outcome": "absent",
+      "reason": "TL01-11-12-2-R001 defines result binding, typing, and structured ownership for select arms; implementation is tracked by the ASYNC-SELECT semantic, ownership, and lowering tasks.",
+      "implementation": [],
+      "tests": [],
+      "follow_up": "CONF-GAP-IMPL-001:TL01-11-12-2-R001"
+    },
+    {
+      "requirement": "TL01-11-12-2-R002",
+      "text_sha256": "15c89d06107ec1d35fe056276ef165ac6ca4a85991209841bac1753646913bbf",
+      "outcome": "absent",
+      "reason": "TL01-11-12-2-R002 defines the non-empty select shape, suspension behavior, and rotating fairness contract; implementation is tracked by the ASYNC-SELECT runtime and test tasks.",
+      "implementation": [],
+      "tests": [],
+      "follow_up": "CONF-GAP-IMPL-001:TL01-11-12-2-R002"
     },
     {
       "requirement": "TL01-11-12-R001",
@@ -1044,16 +1059,12 @@
     },
     {
       "requirement": "TL01-12-3-R002",
-      "text_sha256": "8175df073f971c13144ceba8a2dca1188a1de8f1a47f4d79ce5b3079b5ca5b35",
-      "outcome": "implemented-without-trace",
-      "reason": "TL01-12-3-R002 has an existing implementation at crates/tondo-compiler/src/hir/check.rs and executable evidence rust:tondo-compiler:src::types:unification_shape_matrix_traverses_every_closed_constructor; its six-dimension normative trace remains incomplete.",
-      "implementation": [
-        "crates/tondo-compiler/src/hir/check.rs"
-      ],
-      "tests": [
-        "rust:tondo-compiler:src::types:unification_shape_matrix_traverses_every_closed_constructor"
-      ],
-      "follow_up": null
+      "text_sha256": "b0589680aa99763098dd89d6c90396e7910301b3012e61b29db824808ef2ed26",
+      "outcome": "absent",
+      "reason": "TL01-12-3-R002 extends receiver Send requirements to selectable trait methods; implementation is tracked by the ASYNC-SELECT semantic task.",
+      "implementation": [],
+      "tests": [],
+      "follow_up": "CONF-GAP-IMPL-001:TL01-12-3-R002"
     },
     {
       "requirement": "TL01-12-4-R001",
@@ -2470,16 +2481,12 @@
     },
     {
       "requirement": "TL01-23-12-R001",
-      "text_sha256": "fdcfc06189cf3bc715f0be280b9cfa1227df05b8c21148818cdf44677e28edec",
-      "outcome": "implemented-without-trace",
-      "reason": "TL01-23-12-R001 has an existing implementation at crates/tondo-compiler/src/syntax/parser.rs and executable evidence rust:tondo-compiler:src::syntax::parser:declarations_types_and_methods_parse_together; its six-dimension normative trace remains incomplete.",
-      "implementation": [
-        "crates/tondo-compiler/src/syntax/parser.rs"
-      ],
-      "tests": [
-        "rust:tondo-compiler:src::syntax::parser:declarations_types_and_methods_parse_together"
-      ],
-      "follow_up": null
+      "text_sha256": "7bed05fcdc0c6e41582dec31dda9e1f3f75b93ff9a5d633b5ec925095317ce73",
+      "outcome": "absent",
+      "reason": "TL01-23-12-R001 extends trait-method grammar with the selectable effect; parser implementation is tracked by ASYNC-SELECT-FRONTEND-001.",
+      "implementation": [],
+      "tests": [],
+      "follow_up": "CONF-GAP-IMPL-001:TL01-23-12-R001"
     },
     {
       "requirement": "TL01-23-13-R001",
@@ -2522,16 +2529,21 @@
     },
     {
       "requirement": "TL01-23-18-R001",
-      "text_sha256": "21b75b20eda09794cd92dfd3ff0e2f95d752884a5d0392c9149617d4fbdf9fd2",
-      "outcome": "implemented-without-trace",
-      "reason": "TL01-23-18-R001 has an existing implementation at crates/tondo-compiler/src/syntax/parser.rs and executable evidence rust:tondo-compiler:src::syntax::parser:declarations_types_and_methods_parse_together; its six-dimension normative trace remains incomplete.",
-      "implementation": [
-        "crates/tondo-compiler/src/syntax/parser.rs"
-      ],
-      "tests": [
-        "rust:tondo-compiler:src::syntax::parser:declarations_types_and_methods_parse_together"
-      ],
-      "follow_up": null
+      "text_sha256": "309c575feb86cfa12a3700615de4041afd00b449ee33ce9de0eb9189b797fbe8",
+      "outcome": "absent",
+      "reason": "TL01-23-18-R001 extends closure grammar and contextual effects with selectable; parser and type implementation are tracked by the ASYNC-SELECT frontend and semantic tasks.",
+      "implementation": [],
+      "tests": [],
+      "follow_up": "CONF-GAP-IMPL-001:TL01-23-18-R001"
+    },
+    {
+      "requirement": "TL01-23-19-R002",
+      "text_sha256": "c78c8aba3c808780e0522bc1bf5804b3c25bda664c2d4927968ab895708dcd3a",
+      "outcome": "absent",
+      "reason": "TL01-23-19-R002 adds select-arm suppression to postfix implicit-wait semantics; implementation is tracked by the ASYNC-SELECT frontend and semantic tasks.",
+      "implementation": [],
+      "tests": [],
+      "follow_up": "CONF-GAP-IMPL-001:TL01-23-19-R002"
     },
     {
       "requirement": "TL01-23-2-R001",
@@ -3442,6 +3454,15 @@
         "rust:tondo-compiler:src::types:unification_shape_matrix_traverses_every_closed_constructor"
       ],
       "follow_up": null
+    },
+    {
+      "requirement": "TL01-ASYNC-Y-CONCURRENCIA-ESTRUCTURADA-R001",
+      "text_sha256": "5e4f5a98dd3696830be0c248ab15c734716ec690c7627dbeb8d29829c6cfdeb4",
+      "outcome": "absent",
+      "reason": "TL01-ASYNC-Y-CONCURRENCIA-ESTRUCTURADA-R001 reserves the E1612 through E1615 select diagnostics; implementation is tracked by the ASYNC-SELECT frontend, semantic, and ownership tasks.",
+      "implementation": [],
+      "tests": [],
+      "follow_up": "CONF-GAP-IMPL-001:TL01-ASYNC-Y-CONCURRENCIA-ESTRUCTURADA-R001"
     },
     {
       "requirement": "TL01-BINDING-PRESTADO-R001",

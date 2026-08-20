@@ -1,7 +1,11 @@
-# Contrato de `std.async` para STD-0.1A
+# Contrato ejecutable de `std.async` para STD-0.1A
 
-Este documento es la fuente normativa de la superficie pública de `std.async`.
-El owner comparte el único efecto de suspensión de Tondo: `suspends`. No crea
+Este documento registra la superficie pública que ejecuta actualmente
+`std.async`. La especificación canónica ya exige `select` núcleo y la migración
+de `Waiter.wait` a `selectable`; hasta cerrar `ASYNC-SELECT-*` y
+`STD-A-SELECTABLE-IMPL-001`, el JSON y la firma ejecutable de este owner
+permanecen honestamente en `suspends` y no cuentan como conformidad de la nueva
+capacidad. El owner no crea
 una segunda familia `Task`/`Future`, no duplica APIs con sufijo `Async` y no
 usa `Channel`; el canal pertenece a STD-0.1B.
 
@@ -88,7 +92,7 @@ pub fn group[T, E](): Group[T, E]
 pub fn Group.add(var self, job: Join[T, E])
 pub fn Group.all(self): Array[T] ! E suspends
 pub fn Group.settle(self): Array[T ! E] suspends
-pub fn Group.next(var self): Completion[T, E]? suspends
+pub fn Group.next(var self): Completion[T, E]? selectable
 pub fn Group.cancel(self) suspends
 ```
 
@@ -109,15 +113,26 @@ devuelve `none` y `cancel` completa inmediatamente.
 Las llamadas directas a esas operaciones suspendibles se esperan de manera
 implícita; solo un `Join` se consume con `await`. `Group[Unit, E]` sustituye un
 `WaitGroup` y evita contadores `add`/`done` separados de los hijos reales. Un
-conjunto fijo heterogéneo conserva sus handles y outcomes nominales separados;
-la stdlib no añade tuples awaitables, variadic generics heterogéneos ni
-overloads por aridad.
+conjunto fijo heterogéneo conserva sus handles y outcomes nominales separados y
+puede esperar la primera finalización mediante `select`; los perdedores siguen
+perteneciendo al caller. La stdlib no añade tuples awaitables, variadic generics
+heterogéneos ni overloads por aridad.
 
 `STD-ASYNC-GROUP-SPEC-001` cierra este contrato. La superficie no se promueve
 hasta completar `STD-ASYNC-GROUP-IMPL-001`, su modelo de estados afín, tests,
 fuzzing, presupuestos de rendimiento, conformidad VM/nativa y documentación
 ejecutable. `HOST` es no aplicable con razón normativa: `Group` compone el
 scheduler y `Join` existentes y no enlaza una primitiva host propia.
+
+## Integración pendiente con `select`
+
+La forma final no añade `std.async.select`, builders ni valores `Case`. La
+expresión núcleo acepta `await join`, `Waiter.wait` y `Group.next`; estas dos
+últimas publican `selectable` cuando su ABI de registro/commit/rollback esté
+implementada. Un brazo perdedor no consume el `Join`, waiter o grupo, y la
+cancelación del scope desregistra todos los brazos antes del unwind. La
+implementación y evidencia actuales de STD-0.1A no satisfacen todavía este
+apartado.
 
 ## Estado de implementación de STD-0.1A
 

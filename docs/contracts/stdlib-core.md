@@ -63,11 +63,16 @@ sin cuerpo escriben `suspends` después del outcome y la interfaz canónica siem
 lo conserva. `Join` solo nace de
 `spawn` y se consume mediante `await handle`; la cancelación y el detach son
 operaciones terminales estructuradas. `await` delante de una llamada directa es
-opcional; para convertir un `Join` o `Waiter` pendiente en su resultado sigue
-siendo obligatorio. `Waiter.wait()` es una llamada suspendible directa y espera
-implícitamente. La inferencia de cuerpos es transitiva y nunca depende del
+inválido; solo un `Join` pendiente exige `await handle`. `Waiter.wait()` es una
+llamada suspendible directa y espera implícitamente. La inferencia de cuerpos es transitiva y nunca depende del
 nombre de una función; `@sync`/`@nosuspend` rechaza cualquier camino que
 suspenda.
+
+La especificación canónica incorpora además `select` y eleva `Waiter.wait` a
+`selectable`. Este resumen conserva la firma `suspends` mientras describe la
+implementación ejecutable actual; `STD-A-SELECTABLE-IMPL-001` debe migrar owner,
+ABI, evidencia y este bloque conjuntamente, sin añadir `std.async.select` ni
+otra operación pública.
 
 ```tondo
 pub type Join[T, E]

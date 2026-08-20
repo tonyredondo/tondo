@@ -67,6 +67,8 @@ Su superficie pretende combinar:
 - La idea de vistas compactas de los slices de Go y `Span<T>` de C#, sin lifetimes escritos por el usuario.
 - La concurrencia estructurada de Swift y Kotlin, manteniendo resultados ordinarios
   y un efecto de suspensión inferido.
+- La selección atómica de operaciones de Go, integrada como expresión y sin
+  convertir canales, timers o joins en futures de librería.
 - La composición de procesos de Bash y Nushell sin shell implícito.
 - La separación entre referencias seguras con identidad y punteros raw confinados a `unsafe`.
 
@@ -380,6 +382,8 @@ Una firma declara:
 - Capacidad de suspensión inferida desde llamadas suspendibles, `await`,
   iteración asíncrona o cleanup suspendible; `@sync`/`@nosuspend` puede imponer
   que una función nunca suspenda.
+- Capacidad `selectable` explícita cuando una operación suspendible admite
+  registro, commit y rollback atómicos dentro de `select`.
 - Precondiciones inseguras mediante `unsafe`, cuando el llamador debe garantizarlas.
 
 No hay excepciones comprobables fuera de la firma.
@@ -405,6 +409,8 @@ Ejemplos:
   handle pendiente. `spawn` expresa
   concurrencia y `spawn thread` expresa una frontera explícita de thread del
   sistema.
+- `select` espera una entre varias operaciones `selectable` o finalizaciones de
+  `Join` sin iniciar trabajo ni construir casos de librería.
 - Un script raíz se convierte en un único `main` implícito; los módulos importados permanecen libres de efectos.
 
 ---
@@ -561,7 +567,7 @@ else       enum       err        fail       false
 fn         for        if         impl       import
 in         let        match      mut        none
 not        ok         or         priv       pub
-ref        return     scope      self       some
+ref        return     scope      select     selectable self       some
 spawn      suite      suspends   test       thread     trait
 true       type       unsafe     var        with
 ~~~
@@ -577,7 +583,7 @@ true       type       unsafe     var        with
 | `continue` | Avanzar a la siguiente iteración |
 | `defer` | Registrar cleanup de scope |
 | `derive` | Solicitar una implementación estática generada de uno o más traits |
-| `else` | Rama alternativa de `if` |
+| `else` | Rama alternativa de `if` o fallback no bloqueante final de `select` |
 | `enum` | Declarar una unión nominal |
 | `err` | Construir o reconocer error de `Result` |
 | `fail` | Salir de una función por su canal de error |
@@ -600,6 +606,8 @@ true       type       unsafe     var        with
 | `ref` | Crear o declarar un préstamo compartido temporal |
 | `return` | Salir con éxito de una función |
 | `scope` | Delimitar la vida de tareas concurrentes estructuradas |
+| `select` | Elegir atómicamente una operación preparada o un `Join` completado |
+| `selectable` | Declarar que una operación suspendible admite el protocolo de selección atómica |
 | `self` | Receptor del método actual |
 | `some` | Construir o reconocer presencia de `Option` |
 | `spawn` | Iniciar una llamada asíncrona dentro de su `scope` propietario |
@@ -3397,8 +3405,12 @@ fn(var Array[String], String) suspends
 unsafe fn(Pointer[Byte]): Bytes ! IoError
 ~~~
 
+~~~tondo pseudocode
+fn(var Waiter[Int, IoError]) selectable
+~~~
+
 Las funciones nombradas pueden pasarse como valores si la firma coincide
-exactamente. `ref`, `mut`, `var`, el efecto `suspends`, `unsafe`, el
+exactamente. `ref`, `mut`, `var`, el efecto `suspends` o `selectable`, `unsafe`, el
 variádico, el éxito y el error forman parte del contrato; los nombres de
 parámetros no. Un valor cuyo tipo es
 literalmente `fn(...)` tiene representación uniforme y cumple siempre
@@ -3727,15 +3739,41 @@ promesa estable aunque la implementación actual complete sin suspender. Esta
 promesa no obliga a crear un frame cuando el optimizador demuestra que no es
 necesario.
 
-Toda interfaz pública canónica muestra siempre el efecto, tanto si fue escrito
-como si fue inferido. Por ello documentación, autocompletado y tipos importados
-permiten saber antes de la llamada que `get(...)` espera implícitamente y que
-`spawn get(...)` inicia trabajo concurrente. Cambiar entre `suspends` y no
-suspendible es drift de API. `@sync` y su alias `@nosuspend` garantizan que una
-función no suspenda y son incompatibles con un marcador `suspends` explícito.
+`selectable` es una capacidad de llamada más estricta que `suspends`. Una firma
+`selectable` también puede suspender, espera automáticamente en una llamada
+ordinaria y puede iniciarse mediante `spawn`, pero además ofrece al compilador
+una entrada de preparación, registro, commit y rollback para usarla como brazo
+de `select`. Forma parte del tipo de función, de la interfaz y del hash ABI:
 
-`suspends` es la condición visible necesaria para convertir una llamada directa
-en `spawn call()`: intentar lanzar una llamada no suspendible produce `E1611`.
+~~~tondo pseudocode
+pub fn Waiter.wait(var self): T ! E selectable
+~~~
+
+Una declaración escribe `selectable` en lugar de `suspends`, nunca ambos. La
+capacidad implica suspensión al comprobar una llamada, un bound o `@sync`, pero
+no se infiere transitivamente: una función que llama normalmente a una operación
+`selectable` infiere `suspends`. Para volver a publicar la garantía debe escribir
+`selectable` y el compilador debe verificar que todos sus caminos conservan el
+protocolo atómico. Una implementación que no pueda desregistrarse sin consumir
+el resultado, perder un wakeup o abandonar un payload produce `E1614`.
+
+Una operación `selectable` puede debilitarse contextualmente a un callable
+`suspends` cuando una API solo necesita esperarla. La conversión inversa no
+existe. Un método que implementa un requisito de trait conserva exactamente
+`selectable` o `suspends`; no se cambia esa garantía durante dispatch.
+
+Toda interfaz pública canónica muestra siempre `suspends` o `selectable`, tanto
+si el efecto de suspensión fue escrito como si fue inferido. Por ello
+documentación, autocompletado y tipos importados permiten saber antes de la
+llamada que `get(...)` espera implícitamente, que `spawn get(...)` inicia trabajo
+concurrente y si la operación puede aparecer en `select`. Cambiar entre
+síncrona, `suspends` y `selectable` es drift de API. `@sync` y su alias
+`@nosuspend` garantizan que una función no suspenda y son incompatibles con
+cualquiera de los dos marcadores.
+
+`suspends` o la capacidad más fuerte `selectable` es la condición visible
+necesaria para convertir una llamada directa en `spawn call()`: intentar lanzar
+una llamada no suspendible produce `E1611`.
 No es, por sí sola, una promesa de que todo uso pueda lanzarse. El call site
 también debe estar dentro de `scope`, soportar `CallOnce` y satisfacer las
 capacidades `Send`/`Share` y las reglas de préstamos de 11.12. IDE y
@@ -3759,13 +3797,14 @@ definición y Tondo mantiene una única forma canónica. `spawn call()` es la ú
 de conservar la operación pendiente y devuelve un `Join`; `spawn thread call()`
 elige además un thread del sistema operativo.
 
-Una función `@sync`/`@nosuspend` no puede contener una llamada que pueda
-suspenderse, aunque la llamada esté escrita sin `await`, y produce `E1601`.
+Una función `@sync`/`@nosuspend` no puede contener una llamada `suspends` o
+`selectable`, aunque la llamada esté escrita sin `await`, y produce `E1601`.
 Las funciones que no alcanzan una llamada suspendible siguen siendo síncronas y
 no crean un frame suspendible. Un valor vivo a través de cualquier frontera de
 suspensión, implícita o explícita, debe ser `Send`. Una función `unsafe` que
-suspende usa `unsafe fn(...): T suspends`; no existe una variante de declaración
-adicional para combinar ambos efectos.
+suspende usa `unsafe fn(...): T suspends` o
+`unsafe fn(...): T selectable`; no existe una variante de declaración adicional
+para combinar esos efectos.
 
 Un `ref T`, `mut T` o `var T` puede permanecer prestado durante una llamada
 suspendible **secuencial**, con espera implícita. El place se
@@ -3800,8 +3839,9 @@ suspendible, incluido `main`, un script y un test. Devuelve el resultado lógico
 consume el `Join[T, E]` y no propaga errores implícitamente:
 `await operation?` significa `(await operation)?`.
 
-Para una llamada directa cuyo tipo declara `suspends`, la única forma es
-`call()`: la espera se inserta de manera implícita. `await call()` produce
+Para una llamada directa cuyo tipo declara `suspends` o `selectable`, la única
+forma ordinaria es `call()`: la espera se inserta de manera implícita.
+`await call()` produce
 `E1611`. Para un `Join`, `await handle` debe escribirse: el handle no se convierte implícitamente
 en su resultado, porque hacerlo ocultaría el momento de join, cancelación y
 consumo afín. Un método suspendible como `waiter.wait()` sigue siendo una
@@ -3858,12 +3898,13 @@ pub fn group[T, E](): Group[T, E]
 pub fn Group.add(var self, job: Join[T, E])
 pub fn Group.all(self): Array[T] ! E suspends
 pub fn Group.settle(self): Array[T ! E] suspends
-pub fn Group.next(var self): Completion[T, E]? suspends
+pub fn Group.next(var self): Completion[T, E]? selectable
 pub fn Group.cancel(self) suspends
 ~~~
 
 `all`, `settle`, `next` y `cancel` son llamadas suspendibles directas y por tanto
-esperan implícitamente. No se escribe `await group.all()`: `await` permanece
+esperan implícitamente; `next` añade la garantía `selectable`. No se escribe
+`await group.all()`: `await` permanece
 reservado para consumir un `Join` individual. `Group.all()` consume el grupo,
 devuelve resultados en orden de inserción y, ante el primer error recuperable
 confirmado, solicita cancelación de los hermanos, espera todo cleanup y devuelve
@@ -3886,10 +3927,111 @@ antes de abandonar su scope. `next`
 retira una finalización, pero el grupo restante conserva esa obligación incluso
 después de devolver `none`. La transferencia solo es válida cuando las capturas
 y la procedencia de todos sus hijos podrían transferirse individualmente. Para
-un conjunto fijo y heterogéneo se conservan
-los `Join` separados y se espera cada uno; haber iniciado todos antes del primer
-`await` mantiene su ejecución concurrente sin introducir tuples mágicas ni
-variadic generics heterogéneos.
+un conjunto fijo y heterogéneo se conservan los `Join` separados: pueden
+esperarse individualmente o competir en `select`. Haber iniciado todos antes de
+la primera espera mantiene su ejecución concurrente sin introducir tuples
+mágicas ni variadic generics heterogéneos.
+
+#### 11.12.2 Selección estructurada con `select`
+
+`select` es una expresión del lenguaje para esperar varias alternativas sin
+convertirlas en `Future`, construir objetos `Case` ni llamar a
+`std.async.select`. Cada brazo contiene una llamada cuya firma es `selectable` o
+un `await` sobre un `Join`; el contexto de selección suprime la espera implícita
+de la llamada mientras registra sus condiciones de readiness.
+
+~~~tondo pseudocode
+enum Event {
+    Received(Message)
+    Sent
+    TimedOut
+}
+
+fn nextEvent(
+    inbox: Receiver[Message],
+    outbox: Sender[Job],
+    job: Job,
+): Event? ! (SendError[Job] | ClockError) {
+    select {
+        let message = inbox.receive()? => Event.Received(message)
+        outbox.send(job)? => Event.Sent
+        time.sleep(2.seconds)? => Event.TimedOut
+    }
+}
+~~~
+
+Los brazos se preparan y registran en orden léxico de arriba abajo, evaluando
+cada receptor y argumento exactamente una vez. Preparar un brazo no confirma su
+operación lógica. Cuando una o más alternativas están listas, el runtime elige
+una, hace commit exactamente una vez, desregistra todos los perdedores y solo
+entonces evalúa el cuerpo ganador. Un error, ausencia o `?` producido por la
+operación se observa después del commit; no hace que el selector pruebe otro
+brazo.
+
+La cabecera puede enlazar el resultado mediante
+`let pattern = operation`; el patrón debe ser irrefutable. Sin binding, el
+resultado de la operación queda sujeto a las reglas ordinarias de descarte. Los
+cuerpos se tipan y unifican igual que los brazos de `match`, incluido `Never` y
+el canal de error normal. `select` no crea una unión implícita: resultados
+heterogéneos se representan con un enum o unión elegida por el programa.
+
+Un brazo directo solo admite una llamada `selectable`. Una llamada meramente
+`suspends`, `spawn`, un cálculo arbitrario o un valor construido por una API de
+casos produce `E1612`. Para competir trabajo suspendible general, el programa lo
+inicia primero mediante `spawn` y selecciona después sus handles:
+
+~~~tondo pseudocode
+let outcome = select {
+    let value = await firstJob => Outcome.First(value)
+    let value = await secondJob => Outcome.Second(value)
+}
+~~~
+
+El `Join` ganador se consume exactamente como con `await` ordinario. Los joins
+perdedores no se cancelan ni se consumen: continúan perteneciendo al scope y
+conservan su obligación terminal. `select` cubre así conjuntos fijos y
+heterogéneos; `Group.next()` sigue siendo la forma para un conjunto dinámico y
+homogéneo ya iniciado.
+
+Un brazo `else` opcional, único y final se elige únicamente si ningún brazo está
+listo después del registro inicial. No espera, no tiene condición y conserva
+los owners de todas las alternativas perdedoras:
+
+~~~tondo pseudocode
+let event = select {
+    let item = receiver.receive() => Event.Item(item)
+    else => Event.NotReady
+}
+~~~
+
+Debe existir al menos un brazo operacional. Sin `else`, la expresión suspende
+hasta que una alternativa pueda comprometerse, falle, cierre o sea cancelada.
+La política estándar no privilegia el primer brazo bajo contención continuada;
+los empates usan fairness rotatoria. El scheduler determinista de testing fija
+esas decisiones mediante su seed, pero el programa de producción no puede
+depender de un ganador concreto entre alternativas simultáneamente listas.
+
+El ownership se analiza por rama. El payload afín de un envío solo se mueve en
+el camino donde ese envío gana; un perdedor lo recupera intacto. Del mismo modo,
+un receive perdedor no consume mensajes y un timer perdedor no queda armado. Al
+unir el control después de `select`, un owner se considera disponible solo si
+permanece disponible en todas las ramas alcanzables. Reservar el mismo owner
+afín de formas incompatibles en dos cabeceras produce `E1615`.
+
+La cancelación del scope convierte `select` en un punto de cancelación
+cooperativo: desregistra todos los brazos, restaura sus owners y continúa el
+unwind estructurado antes de publicar el outcome. No se modela como un brazo
+ambiental `scope.cancelled()`, porque capturar la cancelación del owner como dato
+permitiría ignorar su teardown. Una aplicación que necesite una señal de dominio
+seleccionable utiliza un token, timer, one-shot o canal explícito.
+
+La garantía `selectable` pertenece a la operación, no a su nombre ni al módulo
+que la declara. El ABI de selección mantiene fases separadas de
+prepare/register/commit/rollback y hace idempotente la desregistración frente a
+wakeups concurrentes. Los adaptadores estándar iniciales son `Waiter.wait`,
+`time.sleep`, `Timer.wait`, la finalización de `Join`, `Group.next` y las
+operaciones de canal que la especificación estándar marque expresamente. No se
+deduce selectabilidad de toda operación I/O o de toda firma `suspends`.
 
 ### 11.13 One-shot y completion
 
@@ -3924,8 +4066,9 @@ o explícitas, canales, timers, streams, procesos y comprobaciones de librería.
 Un pánico de hijo cancela hermanos, espera su cleanup y se propaga; el primer
 pánico por orden de creación es el principal. Las firmas reflejan errores con
 `! E`, préstamos con `ref`, mutación con `mut`/`var` y raw con `unsafe`. La
-suspensión es un efecto inferible y una propiedad `suspends` de la firma; no es
-un wrapper de retorno ni una segunda familia de APIs.
+suspensión es un efecto inferible y una propiedad `suspends` de la firma;
+`selectable` añade una garantía explícita no inferida sobre esa misma
+suspensión. Ninguna es un wrapper de retorno ni una segunda familia de APIs.
 
 ---
 
@@ -4002,7 +4145,8 @@ trait Compare {
 
 Un trait no contiene campos, constructores ni inicialización. Puede declarar una operación asociada sin `self`; se invoca mediante `Trait.operation[Implementer](...)` y permite contratos como decoding o fábricas estáticas sin reflection. Especificar el implementador elimina la ambigüedad incluso cuando el método no recibe ni devuelve `Self`.
 
-Un trait cuyo método está marcado `suspends` con receptor `self`, `mut self` o
+Un trait cuyo método está marcado `suspends` o `selectable` con receptor `self`,
+`mut self` o
 `var self` tiene el requisito
 intrínseco `Self: Send` de 11.10. Toda implementación debe satisfacerlo y, para
 comprobación genérica, `T: Trait` permite deducir también `T: Send`. No es
@@ -6163,14 +6307,14 @@ política descarta elementos silenciosamente. `Receiver[T]` se adapta al único
 forma de consumo lazy segura. Para valores con obligación terminal se usan
 `receive` y el cierre explícito que devuelve mensajes pendientes.
 
-En la futura librería estándar, la selección cancelable pertenece a `std.async`
-y `std.channel`: registra casos inertes, hace commit exactamente sobre uno y
-desregistra los perdedores sin perder mensajes, valores afines ni wakeups. Tondo
-0.1 no introduce un segundo modelo implícito de memoria compartida ni una
-keyword `select`. Un caso no es un `Future`, no se espera por separado y su API
-definitiva preserva el ownership de cualquier payload de un envío
-perdedor. Para esperar el primer `Join` de un conjunto se usa `Group.next()`, no
-`select`.
+La elección cancelable usa la expresión núcleo `select` de 11.12.2. La stdlib no
+publica `async.select`, constructores de casos ni un segundo scheduler: canales,
+timers, one-shots y otros owners solo declaran qué operaciones son
+`selectable` y proporcionan su entrada ABI de prepare/commit/rollback. Un
+receive perdedor no consume un mensaje y un envío perdedor recupera su payload
+afín intacto. Para un conjunto fijo de `Join` heterogéneos se usa `select`; para
+un conjunto dinámico homogéneo se usa `Group.next()`, que también puede formar
+un brazo seleccionable sin transferir el resto del grupo.
 
 `std.sync` contiene `Mutex[T]`, `RwLock[T]`, condition variables,
 `Semaphore`/`Permit`, `Once[T, E]`, `Barrier` y atomics con orden de memoria
@@ -6231,6 +6375,7 @@ El orden entre tareas concurrentes no está definido salvo por:
 
 - Secuencia dentro de una misma tarea.
 - `await` y finalización de joins.
+- El commit ganador de `select`.
 - Operaciones de canales.
 - Locks, atomics y otras primitivas con contrato de sincronización.
 
@@ -7275,9 +7420,10 @@ Fuera de bloques, listas y comentarios, cada producción de 23 se envuelve en un
 asignación o `=>`, y `softzero` antes del punto de una cadena. No se introduce un
 salto directamente después de una keyword: en particular, `return expression`,
 `if expression`, `for expression` y `match expression` conservan el primer token
-de su expresión en la misma línea; esa expresión puede partirse después en sus
-propios puntos seguros. Todo salto generado coincide así con una supresión de
-`NL` definida en 5.2. No existen otros puntos de salto implícitos.
+de su expresión en la misma línea, y `select {` permanece unido; esa expresión
+puede partirse después en sus propios puntos seguros. Todo salto generado
+coincide así con una supresión de `NL` definida en 5.2. No existen otros puntos
+de salto implícitos.
 
 Arrays, maps, sets, tuples, listas de parámetros y argumentos, argumentos y
 parámetros genéricos utilizan el mismo documento de lista:
@@ -7307,9 +7453,10 @@ parámetro ocupa una línea con coma final y el resultado comienza después del 
 de cierre. Los headers de `if`, `for` y `match` mantienen el comienzo de su
 expresión después de la keyword; si la expresión se parte por un operador o una
 cadena, su propia regla aporta la indentación y la llave de apertura permanece en
-la línea de su último token. Cada arm de `match` comienza en línea propia; un body
-simple permanece tras `=>` si su grupo cabe, y un bloque sigue las reglas de
-bloque.
+la línea de su último token. Cada arm de `match` o `select` comienza en línea
+propia; un body simple permanece tras `=>` si su grupo cabe, y un bloque sigue
+las reglas de bloque. El brazo `else` de `select` se emite siempre al final, sin
+coma y con el mismo layout.
 
 Formato corto:
 
@@ -7798,6 +7945,10 @@ oculten un diagnóstico independiente.
 | `E1609` | `invalid-suspend-signature` | Un `spawn` intenta transferir un receptor o parámetro exclusivo `mut`/`var`. |
 | `E1610` | `invalid-suspend-context` | `await` o `scope` aparece fuera de una función, cierre o script con efecto suspendible. |
 | `E1611` | `invalid-suspend-operand` | `await` o `spawn` recibe una forma que no representa la operación permitida. |
+| `E1612` | `invalid-select-operand` | Un brazo de `select` no contiene una llamada `selectable` ni `await` sobre un `Join`. |
+| `E1613` | `invalid-select-shape` | `select` está vacío, repite `else`, lo sitúa antes de otro brazo o usa un binding refutable. |
+| `E1614` | `invalid-selectable-contract` | Una declaración o implementación `selectable` no puede demostrar prepare/commit/rollback atómico y cancel-safe. |
+| `E1615` | `conflicting-select-ownership` | Dos brazos reservan el mismo owner afín de formas incompatibles o una unión de ramas pierde su estado de move. |
 
 #### Unsafe, programas y constantes
 
@@ -8333,8 +8484,9 @@ field_name      = identifier
                 | "for" | "if" | "impl" | "import" | "in"
                 | "let" | "match" | "mut" | "none" | "not"
                 | "ok" | "or" | "priv" | "pub" | "ref"
-                | "return" | "scope" | "self" | "some" | "spawn"
-                | "suite" | "test" | "trait" | "true" | "type"
+                | "return" | "scope" | "select" | "selectable"
+                | "self" | "some" | "spawn" | "suite" | "suspends"
+                | "test" | "thread" | "trait" | "true" | "type"
                 | "unsafe" | "var" | "with" ;
 
 decimal_digit   = "0"…"9" ;
@@ -8537,7 +8689,10 @@ tuple_type      = "(", type_expr, ",", type_expr,
 
 function_type   = [ function_modifiers ], "fn", "(",
                   [ function_type_list ], ")",
-                  [ outcome_annotation ], [ "suspends" ] ;
+                  [ outcome_annotation ], [ suspension_effect ] ;
+
+suspension_effect
+                = "suspends" | "selectable" ;
 
 function_modifiers
                 = "unsafe" ;
@@ -8649,7 +8804,7 @@ trait_decl      = [ visibility ], "trait", identifier,
 
 trait_method    = [ function_modifiers ], "fn", identifier,
                   [ generic_params ], parameter_list,
-                  [ outcome_annotation ], [ "suspends" ],
+                  [ outcome_annotation ], [ suspension_effect ],
                   ( NL | block, NL ) ;
 
 impl_decl       = "impl", [ generic_params ],
@@ -8664,13 +8819,14 @@ derive_decl     = "derive", [ generic_params ],
 implementation_method
                 = [ function_modifiers ], "fn", identifier,
                   [ generic_params ], parameter_list,
-                  [ outcome_annotation ], [ "suspends" ], block, NL ;
+                  [ outcome_annotation ], [ suspension_effect ], block, NL ;
 ~~~
 
 Un método de trait puede anteponer `unsafe` a `fn`; la implementación debe
-coincidir exactamente. Un método requerido sin cuerpo debe escribir
-`suspends`; un default puede declararlo o inferirlo desde el cuerpo. La
-implementación debe conservar exactamente ese efecto. El primer
+coincidir exactamente. Un método requerido sin cuerpo debe escribir `suspends`
+o `selectable`; un default puede declarar cualquiera, pero un cuerpo sin
+marcador solo infiere `suspends`. La implementación debe conservar exactamente
+ese efecto. El primer
 parámetro puede ser `self`, `mut self` o `var self`.
 
 En una llamada calificada a una operación de trait sin receptor, el primer argumento genérico después del nombre del método selecciona `Self`; no forma parte de los `generic_params` declarados por el método.
@@ -8684,7 +8840,7 @@ de traits normalizados, no una secuencia de expansiones observable. Un
 ~~~ebnf
 function_decl   = [ visibility ], [ function_modifiers ],
                   "fn", function_head, parameter_list,
-                  [ decl_outcome_annotation ], [ "suspends" ],
+                  [ decl_outcome_annotation ], [ suspension_effect ],
                   block, declaration_end ;
 
 function_head   = identifier, [ generic_params ]
@@ -8810,7 +8966,7 @@ Resolución:
   hereda el efecto de suspensión de 11.14. Si ambos existen, `Iterator[T]` tiene
   precedencia. `for await` no forma parte de la gramática.
 
-### 23.17 Expresiones condicionales y match
+### 23.17 Expresiones condicionales, `match` y `select`
 
 ~~~ebnf
 if_expression   = "if", expression, block,
@@ -8825,6 +8981,20 @@ match_arm       = pattern, [ "if", expression ], "=>",
                   match_arm_end ;
 
 match_arm_end   = NL | "," ;
+
+select_expression
+                = "select", "{", { NL }, select_arm,
+                  { NL | select_arm },
+                  [ select_else_arm ], { NL }, "}" ;
+
+select_arm      = [ "let", irrefutable_pattern, "=" ],
+                  postfix_expression, "=>",
+                  ( expression | block | control_transfer ),
+                  match_arm_end ;
+
+select_else_arm = "else", "=>",
+                  ( expression | block | control_transfer ),
+                  match_arm_end ;
 
 control_transfer
                 = return_stmt
@@ -8847,7 +9017,7 @@ termina el arm. El formatter canónico emite un arm por línea y omite esa coma.
 ~~~ebnf
 closure_expression
                 = [ function_modifiers ], closure_parameter_list,
-                  [ outcome_annotation ], block ;
+                  [ outcome_annotation ], [ suspension_effect ], block ;
 
 closure_parameter_list
                 = "(", [ closure_parameter,
@@ -8865,13 +9035,17 @@ parámetro `...T` debe ser único, final, nombrado y no puede tener
 cierre puede escribir solo su nombre. `_` puede conservar un modificador
 explícito con las reglas de 11.3, pero nunca ser variádico. El parser reconoce una
 `closure_parameter_list` cuando una lista entre paréntesis aparece seguida de una
-anotación de resultado opcional y un bloque. `fn` no introduce cierres.
+anotación de resultado y efecto opcionales y un bloque. Un cierre concreto sin
+marcador solo puede inferir `suspends`; uno escrito o esperado como `selectable`
+debe superar la misma comprobación atómica `E1614` que una función nombrada.
+`fn` no introduce cierres.
 
 ### 23.19 Jerarquía de expresiones
 
 ~~~ebnf
 expression      = if_expression
                 | match_expression
+                | select_expression
                 | closure_expression
                 | with_expression ;
 
@@ -8978,6 +9152,10 @@ Un postfix directo sobre el resultado también puede parentizarse:
 ~~~tondo
 let id = (await userJob).id
 ~~~
+
+La cabecera de un brazo `select` es la única excepción al await implícito: una
+llamada `selectable` debe prepararse y registrarse sin esperar hasta que ese brazo
+gana.
 
 Así `factory().fetch()` espera implícitamente la llamada suspendible formada por
 la cadena completa. Un `?` dentro de argumentos o de una expresión
@@ -9234,10 +9412,11 @@ El parser puede construir una AST preliminar antes de resolución para:
 - `Type(value)` en patrón: variante, newtype o discriminación de unión.
 - `(parameters) { ... }`: cierre o expresión agrupada seguida de un bloque inválido.
 - `(parameters) { ... }`: cierre; tras resolución, si llama una operación
-  `suspends`, usa `await`, itera un `AsyncIterator` o registra cleanup
-  suspendible, su efecto es suspendible.
-- Un cierre contextual sin marcador adopta el efecto del tipo esperado
-  `fn(...) suspends`; un cierre concreto continúa infiriéndolo desde su cuerpo.
+  `suspends`/`selectable`, usa `await`, itera un `AsyncIterator` o registra
+  cleanup suspendible, su efecto inferido es `suspends`.
+- Un cierre contextual sin marcador adopta `suspends` o `selectable` del tipo
+  esperado; para el segundo verifica `E1614`. Un cierre concreto continúa
+  infiriendo solo `suspends` desde su cuerpo.
 - `unsafe (parameters) { ... }`: cierre con contrato unsafe; esas mismas formas
   de suspensión lo hacen suspendible.
 - `unsafe (parameters) { ... }`: cierre unsafe; `unsafe { ... }` sigue siendo una
@@ -10456,7 +10635,8 @@ delimitándolo explícitamente.
 Para cada subárbol seleccionado, el runner ejecuta el setup de una suite una vez,
 después sus descendientes y finalmente abandona el scope léxico de la suite. Los
 `defer` registrados por el setup forman su teardown LIFO, incluso cuando el setup
-o un descendiente falla. Un `defer` que llama una operación `suspends` infiere el teardown suspendible; no
+o un descendiente falla. Un `defer` que llama una operación `suspends` o
+`selectable` infiere el teardown suspendible; no
 existen hooks `before`/`after` ni callbacks de lifecycle paralelos.
 
 Un descendiente solo puede leer un binding ancestral cuando fue declarado con
@@ -10546,8 +10726,12 @@ fn load(): Value ! Error
 fn log(values: ...String)
 fn transform[T: Discard + Display](value: T): String
 fn makeCounter(): impl CallMut[fn(): Int] + Discard
-fn fetch(): Value ! Error
+fn fetch(): Value ! Error suspends
 unsafe fn read(address: Pointer[Byte]): Byte
+~~~
+
+~~~tondo pseudocode
+fn waitForEvent(): Value ! Error selectable
 ~~~
 
 ### Tipos compactos
@@ -10610,6 +10794,12 @@ scope {
 
 ~~~tondo pseudocode
 defer cleanup()
+
+let event = select {
+    let item = receiver.receive() => Event.Item(item)
+    let value = await job => Event.Completed(value)
+    else => Event.NotReady
+}
 ~~~
 
 ### Errores

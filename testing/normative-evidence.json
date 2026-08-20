@@ -4,7 +4,7 @@
   "documents": [
     {
       "path": "TONDO_LANGUAGE_SPEC.md",
-      "sha256": "25500bf3f1232760ad0755aa06db5f8a840ba93209f5cc5cf59f0d4420ab1b19"
+      "sha256": "7e484facc9f4f48941b6ea3293c14a9d084f94339170199968ba46fcc942b1c8"
     },
     {
       "path": "TONDO_TESTING_SPEC.md",
@@ -1480,57 +1480,8 @@
     },
     {
       "requirements": [
-        "TL01-11-10-R002"
-      ],
-      "dimensions": {
-        "positive": {
-          "evidence": [
-            "conformance:runtime/m4-call-003-closures",
-            "rust:tondo-compiler:src::types:unification_shape_matrix_traverses_every_closed_constructor"
-          ],
-          "waiver": null
-        },
-        "rejection_or_failure": {
-          "evidence": [
-            "rust:tondo-compiler:src::hir::check:expression_rejection_matrix_reaches_each_closed_semantic_boundary"
-          ],
-          "waiver": null
-        },
-        "boundary": {
-          "evidence": [
-            "conformance:runtime/m4-call-003-closures",
-            "rust:tondo-compiler:src::hir::check:every_closed_capability_is_enforced_and_forwarded_parametrically"
-          ],
-          "waiver": null
-        },
-        "composition": {
-          "evidence": [
-            "conformance:runtime/m4-call-003-closures",
-            "rust:tondo-compiler:src::hir::check:operators_calls_and_discard_rules_use_the_checked_types"
-          ],
-          "waiver": null
-        },
-        "oracle": {
-          "evidence": [
-            "conformance:runtime/m4-call-003-closures",
-            "rust:tondo-compiler:src::hir::check:closed_capability_matrix_covers_intrinsics_and_structural_values",
-            "rust:tondo-compiler:src::types:unification_shape_matrix_traverses_every_closed_constructor"
-          ],
-          "waiver": null
-        },
-        "public_boundary": {
-          "evidence": [
-            "conformance:runtime/m4-call-003-closures"
-          ],
-          "waiver": null
-        }
-      }
-    },
-    {
-      "requirements": [
-        "TL01-11-10-R003",
-        "TL01-11-10-R004",
-        "TL01-11-10-R005"
+        "TL01-11-10-R005",
+        "TL01-11-10-R006"
       ],
       "dimensions": {
         "positive": {
@@ -1584,54 +1535,6 @@
             "conformance:runtime/m4-call-003-closures",
             "fixture:compile-fail/m7-spawn-exclusive-loan",
             "fixture:runtime/m7-suspends-exclusive-sequential"
-          ],
-          "waiver": null
-        }
-      }
-    },
-    {
-      "requirements": [
-        "TL01-11-11-R001"
-      ],
-      "dimensions": {
-        "positive": {
-          "evidence": [
-            "conformance:runtime/m4-call-003-closures",
-            "rust:tondo-compiler:src::types:unification_shape_matrix_traverses_every_closed_constructor"
-          ],
-          "waiver": null
-        },
-        "rejection_or_failure": {
-          "evidence": [
-            "rust:tondo-compiler:src::hir::check:expression_rejection_matrix_reaches_each_closed_semantic_boundary"
-          ],
-          "waiver": null
-        },
-        "boundary": {
-          "evidence": [
-            "conformance:runtime/m4-call-003-closures",
-            "rust:tondo-compiler:src::hir::check:every_closed_capability_is_enforced_and_forwarded_parametrically"
-          ],
-          "waiver": null
-        },
-        "composition": {
-          "evidence": [
-            "conformance:runtime/m4-call-003-closures",
-            "rust:tondo-compiler:src::hir::check:operators_calls_and_discard_rules_use_the_checked_types"
-          ],
-          "waiver": null
-        },
-        "oracle": {
-          "evidence": [
-            "conformance:runtime/m4-call-003-closures",
-            "rust:tondo-compiler:src::hir::check:closed_capability_matrix_covers_intrinsics_and_structural_values",
-            "rust:tondo-compiler:src::types:unification_shape_matrix_traverses_every_closed_constructor"
-          ],
-          "waiver": null
-        },
-        "public_boundary": {
-          "evidence": [
-            "conformance:runtime/m4-call-003-closures"
           ],
           "waiver": null
         }
@@ -2704,58 +2607,6 @@
     {
       "requirements": [
         "TL01-12-3-R001"
-      ],
-      "dimensions": {
-        "positive": {
-          "evidence": [
-            "conformance:compile-pass/m4-call-004-closure-effects",
-            "rust:tondo-compiler:src::types:unification_shape_matrix_traverses_every_closed_constructor"
-          ],
-          "waiver": null
-        },
-        "rejection_or_failure": {
-          "evidence": [
-            "conformance:compile-fail/nonterminating-trait-resolution",
-            "rust:tondo-compiler:src::hir::check:expression_rejection_matrix_reaches_each_closed_semantic_boundary"
-          ],
-          "waiver": null
-        },
-        "boundary": {
-          "evidence": [
-            "conformance:compile-fail/nonterminating-trait-resolution",
-            "conformance:compile-pass/m4-call-004-closure-effects",
-            "rust:tondo-compiler:src::hir::check:every_closed_capability_is_enforced_and_forwarded_parametrically"
-          ],
-          "waiver": null
-        },
-        "composition": {
-          "evidence": [
-            "conformance:compile-pass/m4-call-004-closure-effects",
-            "rust:tondo-compiler:src::hir::check:operators_calls_and_discard_rules_use_the_checked_types"
-          ],
-          "waiver": null
-        },
-        "oracle": {
-          "evidence": [
-            "conformance:compile-fail/nonterminating-trait-resolution",
-            "conformance:compile-pass/m4-call-004-closure-effects",
-            "rust:tondo-compiler:src::hir::check:closed_capability_matrix_covers_intrinsics_and_structural_values",
-            "rust:tondo-compiler:src::types:unification_shape_matrix_traverses_every_closed_constructor"
-          ],
-          "waiver": null
-        },
-        "public_boundary": {
-          "evidence": [
-            "conformance:compile-fail/nonterminating-trait-resolution",
-            "conformance:compile-pass/m4-call-004-closure-effects"
-          ],
-          "waiver": null
-        }
-      }
-    },
-    {
-      "requirements": [
-        "TL01-12-3-R002"
       ],
       "dimensions": {
         "positive": {
@@ -8561,58 +8412,6 @@
     },
     {
       "requirements": [
-        "TL01-23-12-R001"
-      ],
-      "dimensions": {
-        "positive": {
-          "evidence": [
-            "conformance:lex-parse-format/syntax-sequence",
-            "rust:tondo-compiler:src::syntax::parser:declarations_types_and_methods_parse_together"
-          ],
-          "waiver": null
-        },
-        "rejection_or_failure": {
-          "evidence": [
-            "conformance:compile-fail/invalid-syntax",
-            "rust:tondo-compiler:src::syntax::parser:structurally_invalid_compact_forms_report_e0004"
-          ],
-          "waiver": null
-        },
-        "boundary": {
-          "evidence": [
-            "conformance:compile-fail/invalid-syntax",
-            "conformance:lex-parse-format/syntax-sequence",
-            "rust:tondo-compiler:src::syntax::parser:parser_public_error_and_mode_surfaces_are_stable"
-          ],
-          "waiver": null
-        },
-        "composition": {
-          "evidence": [
-            "conformance:lex-parse-format/syntax-sequence",
-            "rust:tondo-compiler:src::syntax::parser:declarations_types_and_methods_parse_together"
-          ],
-          "waiver": null
-        },
-        "oracle": {
-          "evidence": [
-            "conformance:compile-fail/invalid-syntax",
-            "conformance:lex-parse-format/syntax-sequence",
-            "rust:tondo-compiler:src::syntax::parser:declarations_types_and_methods_parse_together",
-            "rust:tondo-compiler:src::syntax::parser:minimal_module_builds_a_lossless_cst"
-          ],
-          "waiver": null
-        },
-        "public_boundary": {
-          "evidence": [
-            "conformance:compile-fail/invalid-syntax",
-            "conformance:lex-parse-format/syntax-sequence"
-          ],
-          "waiver": null
-        }
-      }
-    },
-    {
-      "requirements": [
         "TL01-23-13-R001"
       ],
       "dimensions": {
@@ -8761,58 +8560,6 @@
     {
       "requirements": [
         "TL01-23-16-R001"
-      ],
-      "dimensions": {
-        "positive": {
-          "evidence": [
-            "conformance:lex-parse-format/syntax-sequence",
-            "rust:tondo-compiler:src::syntax::parser:declarations_types_and_methods_parse_together"
-          ],
-          "waiver": null
-        },
-        "rejection_or_failure": {
-          "evidence": [
-            "conformance:compile-fail/invalid-syntax",
-            "rust:tondo-compiler:src::syntax::parser:structurally_invalid_compact_forms_report_e0004"
-          ],
-          "waiver": null
-        },
-        "boundary": {
-          "evidence": [
-            "conformance:compile-fail/invalid-syntax",
-            "conformance:lex-parse-format/syntax-sequence",
-            "rust:tondo-compiler:src::syntax::parser:parser_public_error_and_mode_surfaces_are_stable"
-          ],
-          "waiver": null
-        },
-        "composition": {
-          "evidence": [
-            "conformance:lex-parse-format/syntax-sequence",
-            "rust:tondo-compiler:src::syntax::parser:declarations_types_and_methods_parse_together"
-          ],
-          "waiver": null
-        },
-        "oracle": {
-          "evidence": [
-            "conformance:compile-fail/invalid-syntax",
-            "conformance:lex-parse-format/syntax-sequence",
-            "rust:tondo-compiler:src::syntax::parser:declarations_types_and_methods_parse_together",
-            "rust:tondo-compiler:src::syntax::parser:minimal_module_builds_a_lossless_cst"
-          ],
-          "waiver": null
-        },
-        "public_boundary": {
-          "evidence": [
-            "conformance:compile-fail/invalid-syntax",
-            "conformance:lex-parse-format/syntax-sequence"
-          ],
-          "waiver": null
-        }
-      }
-    },
-    {
-      "requirements": [
-        "TL01-23-18-R001"
       ],
       "dimensions": {
         "positive": {

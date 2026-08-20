@@ -794,7 +794,7 @@ No materializa un array de forma oculta detrás de una API anunciada como lazy.
 
 ## 9. Sincronía, suspensión y cancelación
 
-### 9.1 Suspensión visible
+### 9.1 Suspensión visible y selección
 
 Todas las operaciones se declaran con `fn`. El compilador infiere un efecto de
 suspensión cuando el cuerpo llama a una operación `suspends`, consume un `Join`, itera
@@ -802,12 +802,19 @@ un `AsyncIterator` o registra cleanup suspendible. Las llamadas suspendibles
 ordinarias esperan automáticamente y devuelven el resultado lógico; no crean un
 wrapper `Task`/`Future` ni una segunda API.
 
-La interfaz pública imprime el efecto como `suspends` después del outcome y lo
-incluye en el hash ABI. Una declaración sin cuerpo debe escribirlo; una
-implementación con cuerpo puede declararlo o dejar que el compilador lo infiera.
-El marcador explícito fija la promesa pública aunque la ruta actual complete de
-inmediato. `@sync`/`@nosuspend` garantiza que una función no suspende, es
-incompatible con `suspends` y rechaza cualquier llamada suspendible.
+La interfaz pública imprime `suspends` después del outcome y lo incluye en el
+hash ABI. Una declaración sin cuerpo debe escribirlo; una implementación con
+cuerpo puede declararlo o dejar que el compilador lo infiera. El marcador
+explícito fija la promesa pública aunque la ruta actual complete de inmediato.
+`@sync`/`@nosuspend` garantiza que una función no suspende, es incompatible con
+un efecto suspendible y rechaza cualquier llamada suspendible.
+
+Una operación que además admite la expresión núcleo `select` publica
+`selectable` en lugar de `suspends`. Esta capacidad implica suspensión, pero
+añade prepare/register/commit/rollback atómico, forma parte de interfaz y ABI y
+no se infiere por llamar a otra operación seleccionable. La stdlib no publica
+`async.select`, objetos `Case` ni una segunda familia de operaciones: aporta
+operaciones `selectable` a la única construcción de control del lenguaje.
 
 Una operación síncrona:
 
@@ -866,7 +873,7 @@ pub type Completer[T, E]
 pub type AlreadyCompleted
 
 pub fn oneshot[T, E](): (Waiter[T, E], Completer[T, E])
-pub fn Waiter.wait(var self): T ! E suspends
+pub fn Waiter.wait(var self): T ! E selectable
 pub fn Completer.complete(var self, value: T): Unit ! AlreadyCompleted
 pub fn Completer.fail(var self, error: E): Unit ! AlreadyCompleted
 pub fn Completer.cancel(var self): Unit ! AlreadyCompleted
@@ -879,8 +886,9 @@ pub fn AsyncIterator.collect[T](var self, limit: Int): Array[T] ! CollectionErro
 ~~~
 
 `Join` no expone constructor, poller ni callback: solo nace de `spawn` y se
-consume con `await`. `Waiter.wait` es la operación suspendible de la pareja y
-se espera implícitamente en una llamada ordinaria;
+consume con `await`. `Waiter.wait` es la operación `selectable` de la pareja, se
+espera implícitamente en una llamada ordinaria y puede competir sin consumir el
+waiter perdedor;
 `Completer` puede completarse desde otro task o thread que cumpla `Send`. La
 segunda finalización no cambia el resultado de la primera y devuelve
 `AlreadyCompleted` de forma atómica.
@@ -909,7 +917,7 @@ pub fn group[T, E](): Group[T, E]
 pub fn Group.add(var self, job: Join[T, E])
 pub fn Group.all(self): Array[T] ! E suspends
 pub fn Group.settle(self): Array[T ! E] suspends
-pub fn Group.next(var self): Completion[T, E]? suspends
+pub fn Group.next(var self): Completion[T, E]? selectable
 pub fn Group.cancel(self) suspends
 ~~~
 
@@ -920,18 +928,23 @@ el principal. `settle` espera todos los hijos sin cancelar por `E` y conserva un
 outcome por posición. `next` retira la siguiente finalización observable y usa
 `Completion.index` para correlacionarla con la inserción; su orden puede variar
 con el scheduler. `cancel` consume y drena todo el grupo. Ninguna de estas
-llamadas lleva `await` en fuente: son operaciones suspendibles directas. Un
+llamadas lleva `await` en fuente: son operaciones suspendibles directas; `next`
+puede además aparecer en `select` sin retirar una finalización si pierde. Un
 `Group` vivo es afín y no cumple `Discard`.
 
-Un conjunto fijo heterogéneo conserva handles separados; iniciarlos antes del
-primer `await` ya permite progreso concurrente. STD-0.1 no añade variadic
-generics heterogéneos, tuples awaitables ni overloads por aridad para abreviar
-ese caso. `Group[Unit, E]` cubre espera de workers sin `add`/`done` manuales.
+Un conjunto fijo heterogéneo conserva handles separados y usa `select` cuando
+necesita la primera finalización; los handles perdedores continúan siendo owners
+del caller. Un conjunto dinámico homogéneo usa `Group.next`. STD-0.1 no añade
+variadic generics heterogéneos, tuples awaitables ni overloads por aridad para
+abreviar ese caso. `Group[Unit, E]` cubre espera de workers sin `add`/`done`
+manuales.
 
-La superficie actual ejecutable de STD-0.1A sigue limitada a `Join`, `oneshot`
-y `AsyncIterator`; `Group` pertenece a la extensión STD-0.1B y no se considera
-implementado hasta cerrar sus celdas `IMPL`, `MODEL`, `TEST`, `FUZZ`, `PERF`,
-`CONF` y `DOC`.
+La superficie ejecutable anterior a esta decisión cubre `Join`, `oneshot` y
+`AsyncIterator`, pero todavía publica `Waiter.wait` solo como `suspends`. La
+migración a `selectable` no se considera implementada hasta cerrar las tareas
+`ASYNC-SELECT-*` y `STD-A-SELECTABLE-IMPL-001` del tracker. `Group` pertenece a
+la extensión STD-0.1B y tampoco se considera implementado hasta cerrar sus
+celdas `IMPL`, `MODEL`, `TEST`, `FUZZ`, `PERF`, `CONF` y `DOC`.
 
 ### 9.5 Scheduler y backpressure
 
@@ -1963,13 +1976,13 @@ para representar también un deadline ya vencido. Las esperas y timers solo
 aceptan retrasos no negativos:
 
 ~~~tondo pseudocode
-pub fn sleep(delay: Duration): Unit ! ClockError suspends
+pub fn sleep(delay: Duration): Unit ! ClockError selectable
 
 pub type Timer
 
 pub fn Timer.after(delay: Duration): Timer ! ClockError
 pub fn Timer.at(deadline: Instant): Timer ! ClockError
-pub fn Timer.wait(self): Unit ! ClockError suspends
+pub fn Timer.wait(self): Unit ! ClockError selectable
 pub fn Timer.cancel(self): Unit
 ~~~
 
@@ -1984,7 +1997,9 @@ termine sin esperar.
 entre tasks que cumplan `Send`. `after` y `at` reservan el descriptor de forma
 atómica y devuelven `ClockError.ResourceLimit` sin dejar un timer parcial.
 `wait` consume el timer, espera hasta que el proveedor observe su deadline y
-constituye un punto cooperativo de cancelación. No se despierta antes del
+constituye un punto cooperativo de cancelación. Tanto `sleep` como `wait` son
+`selectable`: si pierden, desregistran el evento y `wait` conserva el `Timer`
+para la rama perdedora. No se despierta antes del
 deadline; el proveedor real puede completar después por latencia del target.
 `cancel` también consume el timer, es síncrono y completa la desregistración
 antes de retornar. Un timer no tiene
@@ -2181,11 +2196,11 @@ pub enum TryReceive[T] {
 pub fn bounded[T: Send](capacity: Int): (Sender[T], Receiver[T]) ! ChannelError
 pub fn unbounded[T: Send](): (Sender[T], Receiver[T]) ! ChannelError
 pub fn Sender.fork(ref self): Sender[T] ! ChannelError
-pub fn Sender.send(ref self, value: T): Unit ! SendError[T] suspends
+pub fn Sender.send(ref self, value: T): Unit ! SendError[T] selectable
 pub fn Sender.trySend(ref self, value: T): Unit ! TrySendError[T]
 pub fn Sender.close(self)
 pub fn Receiver.fork(ref self): Receiver[T] ! ChannelError
-pub fn Receiver.receive(ref self): T? suspends
+pub fn Receiver.receive(ref self): T? selectable
 pub fn Receiver.tryReceive(ref self): TryReceive[T]
 pub fn Receiver.close(self): Array[T]
 ~~~
@@ -2194,7 +2209,10 @@ pub fn Receiver.close(self): Array[T]
 aceptar el siguiente elemento. La forma sin límite se llama `unbounded` para
 que su riesgo de memoria nunca sea un default oculto. Una capacidad negativa
 es `ChannelError`. `send` espera espacio o receptor; `trySend` nunca suspende.
-Cuando el envío no se compromete, el error devuelve el valor afín al caller.
+Cuando el envío no se compromete, el error devuelve el valor afín al caller. En
+`select`, un brazo perdedor no produce ese error: conserva el valor en su rama y
+rollback elimina únicamente el registro provisional. `receive` perdedor no
+retira ningún mensaje.
 
 `Receiver[T]` implementa `AsyncIterator[T]` cuando `T: Discard`: cada iteración
 espera implícitamente, preserva backpressure y termina al cerrar y drenar el
@@ -2206,30 +2224,41 @@ operación `receiveAsync` ni una materialización intermedia.
 
 #### 14.4.3 Selección cancelable
 
-La selección es una API de librería, no una keyword. Construye casos inertes
-para recibir, enviar, timers y señales de cancelación, y devuelve una unión
-nominal que identifica el caso ganador. Los casos heterogéneos requieren una
-unión explícita elegida por el programa; no dependen de `Any`, reflection ni
-overloads por aridad. La finalización de `Join` se coordina con `Group.next` en
-vez de convertir handles en casos de canal.
+La selección pertenece a la expresión núcleo `select`; no existe
+`std.async.select`, un builder, un macro ni tipos públicos de caso. La stdlib
+expone una sola operación lógica y la marca `selectable` cuando puede registrar
+readiness, hacer commit una vez y revertir un perdedor. Una llamada ordinaria a
+esa misma operación espera implícitamente, de modo que no aparecen pares
+`send`/`sendAsync`, `receive`/`receiveCase` o `sleep`/`afterCase`.
+
+`Sender.send` y `Receiver.receive` son seleccionables. También lo son
+`Waiter.wait`, `time.sleep`, `Timer.wait`, `Group.next` y la finalización de un
+`Join` mediante la forma núcleo `await handle`. Los módulos posteriores pueden
+marcar otras operaciones únicamente si demuestran el mismo protocolo; una
+firma `suspends` no se vuelve seleccionable por pertenecer a I/O, red o proceso.
+Los resultados heterogéneos se convierten en un enum o unión explícita en los
+cuerpos de los brazos y no dependen de `Any`, reflection ni overloads por
+aridad.
 
 Toda implementación de selección debe demostrar estas propiedades antes de
 publicar su ABI exacta:
 
-- Exactamente un caso se compromete y se observa una vez.
+- Exactamente un brazo se compromete y se observa una vez.
 - Los casos perdedores se desregistran atómicamente sin perder wakeups.
 - Un payload afín de un envío perdedor no se pierde, duplica ni consume.
 - Cancelar o destruir la selección desregistra todos los casos antes de liberar
   su estado.
 - La política estándar es justa bajo contención continuada. Una prioridad
   sesgada, si se admitiera, debe tener nombre explícito; nunca es el default.
-- Una selección vacía es error de construcción y todos sus límites de memoria
+- `else` solo gana cuando ningún brazo está listo tras el registro inicial y no
+  introduce polling oculto.
+- Una selección sin brazo operacional es `E1613` y todos sus límites de memoria
   son finitos y observables.
 
-`STD-CONC-001` debe cerrar el tipo nominal de los casos, su unión de resultado,
-ownership y errores sin relajar estas propiedades. Ese cierre de spec precede
-a implementación: publicar una API cómoda sin una prueba de commit/rollback
-cancel-safe no satisface STD-0.1B.
+`STD-CONC-001` debe cerrar el protocolo de registro de canal, ownership, errores
+y fairness sin inventar una segunda representación pública. Ese cierre de spec
+precede a implementación: marcar una firma `selectable` sin una prueba de
+commit/rollback cancel-safe no satisface STD-0.1B.
 
 #### 14.4.4 Sincronización compartida
 

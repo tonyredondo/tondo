@@ -2,7 +2,9 @@
 
 **Status:** implementation evidence is covered in the hosted VM; the
 distribution/conformance identity remains pending for the unpublished Tondo
-0.1 draft
+0.1 draft. La ABI ejecutable todavía publica `sleep` y `Timer.wait` como
+`suspends`; la especificación canónica los eleva a `selectable` y el tracker no
+considera esa migración implementada hasta `STD-A-SELECTABLE-IMPL-001`.
 
 This contract describes the first `std.time` slice. It contains only a
 monotonic time-base: civil dates, wall-clock time, time zones, and calendar
@@ -52,6 +54,11 @@ pub fn Timer.cancel(self): Unit
 represented. `sleep` and timer creation reject negative delays with
 `ClockError.InvalidDelay`; zero remains a real suspension point. A timer
 is one-shot and has no reset or repeat operation.
+
+La migración `selectable` conserva estas mismas operaciones y resultados. En un
+brazo perdedor, `sleep` desregistra su evento y `Timer.wait` conserva el timer
+afín para esa rama; no aparecen `sleepAsync`, `afterCase` ni un selector de
+librería.
 
 ## Provider boundary
 
