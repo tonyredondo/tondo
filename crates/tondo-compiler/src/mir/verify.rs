@@ -3820,10 +3820,17 @@ impl Verifier<'_> {
             Ok(signature) => signature,
             Err(error) => return Err(MirInvariantError::new(context, error.to_string())),
         };
-        Ok(signature == expected
-            && closure
-                .protocols()
-                .supports(crate::hir::HirCallProtocol::Call))
+        let assignability = self
+            .hir
+            .interner()
+            .assignability(signature, expected)
+            .expect("verified callable signatures must be valid interner entries");
+        Ok(matches!(
+            assignability,
+            Some(crate::types::Assignability::Exact | crate::types::Assignability::EffectWeakening)
+        ) && closure
+            .protocols()
+            .supports(crate::hir::HirCallProtocol::Call))
     }
 
     fn callable_once_erasure_matches(
@@ -3849,10 +3856,17 @@ impl Verifier<'_> {
         let signature = TypeSubstitution::new(arguments.clone())
             .apply(&mut interner, closure.function_type())
             .map_err(|error| MirInvariantError::new(context, error.to_string()))?;
-        Ok(signature == expected
-            && closure
-                .protocols()
-                .supports(crate::hir::HirCallProtocol::CallOnce))
+        let assignability = self
+            .hir
+            .interner()
+            .assignability(signature, expected)
+            .expect("verified callable signatures must be valid interner entries");
+        Ok(matches!(
+            assignability,
+            Some(crate::types::Assignability::Exact | crate::types::Assignability::EffectWeakening)
+        ) && closure
+            .protocols()
+            .supports(crate::hir::HirCallProtocol::CallOnce))
     }
 
     fn nominal_field_matches(
@@ -9552,6 +9566,64 @@ mod tests {
         verify_mir(&resolved, &hir, &mir).unwrap();
         mutate(&resolved, &hir, &mut mir);
         verify_mir(&resolved, &hir, &mir).unwrap_err()
+    }
+
+    #[test]
+    fn selectable_closures_lower_and_verify_as_weakened_suspending_values() {
+        let source = "fn expose(): fn(): Int suspends {\n\
+             let operation: fn(): Int suspends = (): Int selectable { 1 }\n\
+             operation\n\
+         }\n";
+        let (resolved, hir, mir) = checked_mir(source);
+        verify_mir(&resolved, &hir, &mir).unwrap();
+    }
+
+    #[test]
+    fn selectable_closures_lower_through_call_once_erasure() {
+        let source = "fn target(): Int suspends { 1 }\n\
+             fn build(input: Int) {\n\
+                 let operation = (): Int selectable { input }\n\
+                 _ = operation\n\
+             }\n";
+        let (resolved, hir, mir) = checked_mir(source);
+        verify_mir(&resolved, &hir, &mir).unwrap();
+        let actual = hir
+            .expressions()
+            .find_map(|expression| match expression.kind() {
+                crate::hir::HirExpressionKind::Closure(_) => Some(expression.ty()),
+                _ => None,
+            })
+            .expect("the fixture contains a selectable closure");
+        let expected = hir
+            .callables()
+            .map(|callable| callable.function_type())
+            .find(|ty| {
+                matches!(
+                    hir.interner().kind(*ty),
+                    Ok(TypeKind::Function(function))
+                        if function.is_async()
+                            && !function.is_selectable()
+                            && function.outcome() == hir.interner().scalar(ScalarType::Int)
+                )
+            })
+            .expect("the fixture contains a suspending target signature");
+        let capabilities = CapabilityAnalysis::new(&hir, &resolved).unwrap();
+        let terminal_analysis = TerminalAnalysis::new(&hir, &resolved).unwrap();
+        let verifier = Verifier {
+            resolved: &resolved,
+            hir: &hir,
+            capability_analysis: &capabilities,
+            terminal_analysis,
+            capability_statuses: RefCell::new(BTreeMap::new()),
+            terminal_statuses: RefCell::new(BTreeMap::new()),
+            limits: MirVerificationLimits::default(),
+            dataflow_steps: Cell::new(0),
+        };
+        assert!(
+            verifier
+                .callable_once_erasure_matches(actual, expected, "selectable call once")
+                .unwrap()
+        );
     }
 
     fn projected_place(kind: MirProjectionKind) -> MirPlace {

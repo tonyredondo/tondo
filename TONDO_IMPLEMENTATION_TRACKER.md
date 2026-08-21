@@ -523,7 +523,7 @@ necesaria; la fragmentación del workspace no.
 | **M4 — Genéricos, traits y closures** | Sistema estático completo | Completado |
 | **M5 — Ownership, préstamos y memoria** | Modelo de valores completo | Completado |
 | **M6 — Colecciones, números y texto** | Gate G3: alpha utilizable | Completado |
-| **M7 — Async y concurrencia estructurada** | Tasks conformes + selección núcleo | Suspensión/tasks completadas; frontend `select`/`selectable` cerrado, semántica/lowering/runtime pendientes |
+| **M7 — Async y concurrencia estructurada** | Tasks conformes + selección núcleo | Suspensión/tasks completadas; frontend y semántica tipada de `select`/`selectable` cerradas, lowering/runtime pendientes |
 | **M8 — Scripts y procesos** | Experiencia de scripting | Completado |
 | **M9 — Unsafe, targets y toolchain** | Gate G4: preview 0.1 | Completado |
 | **M10 — Corpus ejecutable** | Conformidad viva pre-`derive` | Completado |
@@ -2382,12 +2382,22 @@ adapters de streams y el worker OS nativo permanecen como leaves independientes.
   tests unitarios cubren la forma con binding, `await Join`, control-transfer,
   `selectable` en firmas/cierres, recovery, reparseo e idempotencia de tokens.
 
-- [ ] **ASYNC-SELECT-SEMA-001 — Tipar `selectable` y los brazos.** Incorporar la
-  capacidad a tipos de función, traits, closures, interfaces y hash ABI;
-  permitir su debilitamiento cerrado a `suspends`, nunca la conversión inversa,
-  y no inferirla transitivamente. Validar llamadas `selectable`, `await Join`,
-  patterns irrefutables, `?` posterior al commit, unificación de bodies,
-  `@sync`/`@nosuspend` y precedencia de `E1612`–`E1614`.
+- [x] **ASYNC-SELECT-SEMA-001 — Tipar `selectable` y los brazos.** `FunctionType`
+  conserva la capacidad fuerte en tipos, sustitución, equivalencia, interfaces
+  canónicas y hash ABI; traits e implementaciones exigen el mismo contrato y
+  los cierres pueden adoptar el efecto contextual. La única relación adicional
+  es el debilitamiento cerrado `selectable` → `suspends` (`EffectWeakening`),
+  sin wrapper ni conversión inversa y sin inferencia transitiva de la capacidad.
+  El checker valida brazos directos `selectable`, `await Join`, propagación `?`
+  después de preparar la operación, bindings irrefutables, unificación de
+  cuerpos y `@sync`/`@nosuspend`; el contexto del brazo suprime la espera
+  implícita y da prioridad a `E1612`, mientras `E1613` cubre patrones/forma y
+  `E1614` contratos incompatibles. El parser conserva marcadores duplicados
+  para que `suspends selectable` produzca `E1614` y no un error sintáctico.
+  Evidencia: tests `select_semantics_*`, `selectable_*`, el test de tipos de
+  debilitamiento, contratos de trait y el gate focalizado de `tondo-compiler`.
+  La expresión aún queda como recovery marcada incompleta hasta
+  `ASYNC-SELECT-LOWER-001`; este bloque no afirma ejecución HIR/MIR/VM.
 
 - [ ] **ASYNC-SELECT-LOWER-001 — Bajar selección a HIR/MIR y bytecode
   verificable.** Representar prepare/register/commit/rollback, registro
@@ -2450,7 +2460,7 @@ adapters de streams y el worker OS nativo permanecen como leaves independientes.
 - [x] El código no depende del orden concreto de scheduling.
 - [x] Los roots de frames suspendidos permanecen vivos tras la migración de
   efectos inferidos.
-- [ ] `selectable` forma parte de tipos/interfaz/ABI y una llamada ordinaria
+- [x] `selectable` forma parte de tipos/interfaz/ABI y una llamada ordinaria
   conserva la espera implícita sin duplicar API.
 - [ ] `select` compromete exactamente un brazo, conserva owners perdedores y
   pasa modelo, fuzz, rendimiento y conformidad VM.

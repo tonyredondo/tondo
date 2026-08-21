@@ -311,6 +311,10 @@ struct BodyContext {
     in_unsafe_region: bool,
     structured_scope_depth: u32,
     async_initiation: Option<AsyncInitiation>,
+    /// The expression currently being prepared as a `select` operand.  It
+    /// suppresses the ordinary implicit wait only for that operation; the
+    /// select checker validates that the resulting callable is selectable.
+    select_operand: bool,
     in_defer_body: bool,
     /// The direct call registered by `defer call(...)`. A suspendible root is
     /// stored without an `Await` wrapper and awaited when the scope drains;
@@ -1395,8 +1399,9 @@ impl<'a> ExpressionChecker<'a> {
             TypeKind::Function(function) => function.clone(),
             _ => unreachable!("a script entry has a function type"),
         };
-        let final_function = self.program.interner.function(FunctionType::new(
+        let final_function = self.program.interner.function(FunctionType::with_effects(
             function.is_async(),
+            function.is_selectable(),
             function.is_unsafe(),
             Vec::new(),
             None,
@@ -2809,7 +2814,7 @@ impl<'a> ExpressionChecker<'a> {
             AstExpression::Block(_) => self.check_block(file, node, expected, context),
             AstExpression::If(_) => self.check_if(file, node, expected, context),
             AstExpression::Match(_) => self.check_match(file, node, expected, context),
-            AstExpression::Select(_) => self.check_select_frontend(file, node),
+            AstExpression::Select(_) => self.check_select(file, node, expected, context),
             AstExpression::Prefix(_) => self.check_prefix(file, node, expected, context),
             AstExpression::Binary(_) => self.check_binary(file, node, expected, context),
             AstExpression::Postfix(_) => self.check_postfix(file, node, expected, context),
@@ -2824,20 +2829,265 @@ impl<'a> ExpressionChecker<'a> {
         }
     }
 
-    fn check_select_frontend(
+    fn check_select(
         &mut self,
         file: FileId,
         node: SyntaxNodeRef<'_>,
+        expected: Option<ExpressionExpectation>,
+        context: &mut BodyContext,
     ) -> Result<HirExpressionId, HirError> {
+        let span = self.sources.span(file, node.range())?;
+        if context.no_suspend {
+            self.emit(
+                span,
+                "E1601",
+                "selection is not permitted in a `@sync`/`@nosuspend` context",
+                Vec::new(),
+                None,
+            )?;
+            return self.recovery_expression(file, node.range());
+        }
+        if !context.is_async && (context.callable_id.is_some() || context.callable.is_some()) {
+            context.is_async = true;
+            self.promote_callable_to_suspendible(context)?;
+        }
+
+        let operation_arms = node
+            .child_nodes()
+            .filter(|child| child.kind() == SyntaxKind::SelectArm)
+            .collect::<Vec<_>>();
+        let else_arms = node
+            .child_nodes()
+            .filter(|child| child.kind() == SyntaxKind::SelectElseArm)
+            .collect::<Vec<_>>();
+        // The parser enforces the select shape before this phase: at least one
+        // operation arm and at most one trailing `else`.  Keeping that grammar
+        // invariant here makes semantic checking total over the typed CST
+        // without duplicating parser diagnostics.
+        debug_assert!(!operation_arms.is_empty());
+        debug_assert!(else_arms.len() <= 1);
+        let mut valid = true;
+
+        let mut bodies = Vec::with_capacity(operation_arms.len() + else_arms.len());
+        for arm in operation_arms {
+            let pattern_node = arm
+                .child_nodes()
+                .find(|child| AstPattern::cast(*child).is_some());
+            let expressions = arm
+                .child_nodes()
+                .filter(|child| AstExpression::cast(*child).is_some())
+                .collect::<Vec<_>>();
+            let operation_node = expressions
+                .first()
+                .copied()
+                .expect("select arm operation is guaranteed by the parser");
+
+            // The operation is checked in a cloned context so its selectable
+            // call is registered without inserting the ordinary implicit
+            // `Await`.  The enclosing select is itself the suspension point.
+            let mut operation_context = context.clone();
+            operation_context.select_operand = true;
+            let operation =
+                self.check_expression(file, operation_node, None, &mut operation_context)?;
+            if !self.select_operation_is_valid(operation)? {
+                if self.expression_type(operation) != self.program.interner.error() {
+                    self.emit(
+                        self.sources.span(file, operation_node.range())?,
+                        "E1612",
+                        "a select arm requires a `selectable` operation or `await` on a `Join`",
+                        Vec::new(),
+                        None,
+                    )?;
+                }
+                valid = false;
+            }
+
+            let operation_type = self.expression_type(operation);
+            let mut arm_context = context.clone();
+            if let Some(pattern_node) = pattern_node {
+                let checked = self.check_pattern(
+                    file,
+                    pattern_node,
+                    operation_type,
+                    &mut arm_context,
+                    PatternContext::Binding,
+                )?;
+                if checked.valid
+                    && !self.pattern_is_irrefutable(
+                        &checked.shape,
+                        operation_type,
+                        self.sources.span(file, pattern_node.range())?,
+                    )?
+                {
+                    self.emit(
+                        self.sources.span(file, pattern_node.range())?,
+                        "E1613",
+                        "a select arm binding pattern must be irrefutable",
+                        Vec::new(),
+                        None,
+                    )?;
+                    valid = false;
+                }
+            }
+            let body = if let Some(body_node) = expressions.get(1).copied() {
+                self.check_expression(file, body_node, expected, &mut arm_context)?
+            } else {
+                let transfer = arm
+                    .child_nodes()
+                    .find(|child| {
+                        matches!(
+                            child.kind(),
+                            SyntaxKind::ReturnStmt
+                                | SyntaxKind::FailStmt
+                                | SyntaxKind::BreakStmt
+                                | SyntaxKind::ContinueStmt
+                        )
+                    })
+                    .expect("select arm body is guaranteed by the parser");
+                if transfer.kind() == SyntaxKind::FailStmt {
+                    self.check_fail(file, transfer, &mut arm_context)?
+                } else {
+                    self.check_control_transfer(file, transfer, &mut arm_context)?
+                }
+            };
+            bodies.push(body);
+        }
+
+        for arm in else_arms {
+            let mut arm_context = context.clone();
+            let body = if let Some(body_node) = arm
+                .child_nodes()
+                .find(|child| AstExpression::cast(*child).is_some())
+            {
+                self.check_expression(file, body_node, expected, &mut arm_context)?
+            } else {
+                let transfer = arm
+                    .child_nodes()
+                    .find(|child| {
+                        matches!(
+                            child.kind(),
+                            SyntaxKind::ReturnStmt
+                                | SyntaxKind::FailStmt
+                                | SyntaxKind::BreakStmt
+                                | SyntaxKind::ContinueStmt
+                        )
+                    })
+                    .expect("select else body is guaranteed by the parser");
+                if transfer.kind() == SyntaxKind::FailStmt {
+                    self.check_fail(file, transfer, &mut arm_context)?
+                } else {
+                    self.check_control_transfer(file, transfer, &mut arm_context)?
+                }
+            };
+            bodies.push(body);
+        }
+
+        let diverges = bodies.is_empty()
+            || !bodies
+                .iter()
+                .any(|body| self.expression_flow(*body).may_complete());
+        let ty = if diverges {
+            self.program.interner.scalar(ScalarType::Never)
+        } else if let Some(expected) = expected {
+            expected.resulting_type()
+        } else {
+            self.join_select_body_types(file, node.range(), &mut bodies)?
+        };
+
+        // The lowering block owns the executable select node.  Keeping a
+        // recovery expression here lets the semantic pass validate effects,
+        // patterns and body types without pretending that VM lowering exists.
         self.complete = false;
-        self.emit(
-            self.sources.span(file, node.range())?,
-            "E1613",
-            "select syntax is available; semantic checking is pending",
-            Vec::new(),
-            None,
-        )?;
-        self.recovery_expression(file, node.range())
+        if !valid {
+            return self.recovery_expression(file, node.range());
+        }
+        let recovery = self.recovery_expression(file, node.range())?;
+        self.program.expressions[recovery.index() as usize].ty = ty;
+        Ok(recovery)
+    }
+
+    fn select_operation_is_valid(&self, operation: HirExpressionId) -> Result<bool, HirError> {
+        let mut current = operation;
+        loop {
+            match self.program.expression(current).map(HirExpression::kind) {
+                Some(HirExpressionKind::AsyncCall { signature, .. }) => {
+                    return Ok(matches!(
+                        self.program.interner.kind(*signature)?,
+                        TypeKind::Function(function) if function.is_selectable()
+                    ));
+                }
+                Some(HirExpressionKind::Await { operation }) => {
+                    return Ok(matches!(
+                        self.program
+                            .interner
+                            .kind(self.expression_type(*operation))?,
+                        TypeKind::Intrinsic {
+                            constructor: IntrinsicType::Join,
+                            ..
+                        }
+                    ));
+                }
+                Some(HirExpressionKind::PropagateOption { value })
+                | Some(HirExpressionKind::PropagateResult { value, .. }) => {
+                    current = *value;
+                }
+                _ => return Ok(false),
+            }
+        }
+    }
+
+    fn join_select_body_types(
+        &mut self,
+        file: FileId,
+        range: TextRange,
+        bodies: &mut [HirExpressionId],
+    ) -> Result<TypeId, HirError> {
+        let never = self.program.interner.scalar(ScalarType::Never);
+        let error = self.program.interner.error();
+        let mut joined = None;
+        for index in 0..bodies.len() {
+            let ty = self.expression_type(bodies[index]);
+            if ty == error {
+                return Ok(error);
+            }
+            if ty == never {
+                continue;
+            }
+            let Some(current) = joined else {
+                joined = Some(ty);
+                continue;
+            };
+            if ty == current {
+                continue;
+            }
+            if self.program.interner.assignability(ty, current)?.is_some() {
+                bodies[index] = self.coerce_existing(bodies[index], current)?;
+                continue;
+            }
+            if self.program.interner.assignability(current, ty)?.is_some() {
+                for previous in &mut bodies[..index] {
+                    let previous_type = self.expression_type(*previous);
+                    if previous_type != never {
+                        *previous = self.coerce_existing(*previous, ty)?;
+                    }
+                }
+                joined = Some(ty);
+                continue;
+            }
+            self.emit(
+                self.sources.span(file, range)?,
+                "E1101",
+                format!(
+                    "select bodies infer incompatible types `{}` and `{}`",
+                    self.program.interner.canonical(current)?,
+                    self.program.interner.canonical(ty)?
+                ),
+                Vec::new(),
+                None,
+            )?;
+            return Ok(error);
+        }
+        Ok(joined.unwrap_or(never))
     }
 
     fn check_unsafe_block(
@@ -2874,6 +3124,12 @@ impl<'a> ExpressionChecker<'a> {
         let is_unsafe = node
             .child_tokens()
             .any(|token| token.kind() == TokenKind::Unsafe);
+        let explicit_selectable = node
+            .child_tokens()
+            .any(|token| token.kind() == TokenKind::Selectable);
+        let explicit_suspends = node
+            .child_tokens()
+            .any(|token| token.kind() == TokenKind::Suspends);
 
         let span = self.sources.span(file, node.range())?;
         let Some(body_node) = node
@@ -2913,6 +3169,38 @@ impl<'a> ExpressionChecker<'a> {
         let mut is_async = expected_function
             .as_ref()
             .is_some_and(FunctionType::is_async);
+        let mut is_selectable = expected_function
+            .as_ref()
+            .is_some_and(FunctionType::is_selectable);
+        if explicit_suspends
+            && expected_function
+                .as_ref()
+                .is_some_and(FunctionType::is_selectable)
+        {
+            self.emit(
+                span,
+                "E1102",
+                "a closure explicitly marked `suspends` cannot satisfy a `selectable` contract",
+                Vec::new(),
+                None,
+            )?;
+            return self.recovery_expression(file, node.range());
+        }
+        is_async |= explicit_suspends;
+        if explicit_selectable && explicit_suspends {
+            self.emit(
+                span,
+                "E1614",
+                "a closure must use either `suspends` or `selectable`, not both",
+                Vec::new(),
+                None,
+            )?;
+            return self.recovery_expression(file, node.range());
+        }
+        if explicit_selectable {
+            is_selectable = true;
+            is_async = true;
+        }
         let parameter_nodes = node
             .child_nodes()
             .find(|child| child.kind() == SyntaxKind::ClosureParameterList)
@@ -3201,8 +3489,9 @@ impl<'a> ExpressionChecker<'a> {
             outcome = inferred_outcome;
         }
 
-        let function_type = self.program.interner.function(FunctionType::new(
+        let function_type = self.program.interner.function(FunctionType::with_effects(
             is_async,
+            is_selectable,
             is_unsafe,
             function_parameters,
             variadic,
@@ -3212,7 +3501,15 @@ impl<'a> ExpressionChecker<'a> {
             && inferred_error_success.is_none()
         {
             let expected_type = self.program.interner.function(expected_function)?;
-            if function_type != expected_type {
+            let signature_compatible = function_type == expected_type
+                || self
+                    .program
+                    .interner
+                    .assignability(function_type, expected_type)?
+                    .is_some_and(|kind| {
+                        matches!(kind, Assignability::Exact | Assignability::EffectWeakening)
+                    });
+            if !signature_compatible {
                 self.emit(
                     span,
                     "E1102",
@@ -12316,8 +12613,9 @@ impl<'a> ExpressionChecker<'a> {
             return Ok(());
         }
         self.program.callables[index].function_type =
-            self.program.interner.function(FunctionType::new(
+            self.program.interner.function(FunctionType::with_effects(
                 true,
+                function.is_selectable(),
                 function.is_unsafe(),
                 function.parameters().to_vec(),
                 function.variadic(),
@@ -13326,7 +13624,15 @@ impl<'a> ExpressionChecker<'a> {
         let signature = TypeSubstitution::new(arguments)
             .apply(&mut self.program.interner, closure.function_type())?;
         let mut missing = Vec::new();
-        if signature != expected {
+        let signature_compatible = signature == expected
+            || self
+                .program
+                .interner
+                .assignability(signature, expected)?
+                .is_some_and(|kind| {
+                    matches!(kind, Assignability::Exact | Assignability::EffectWeakening)
+                });
+        if !signature_compatible {
             missing.push("an exact call signature");
         }
         if !closure.protocols().supports(required_protocol) {
@@ -19588,6 +19894,20 @@ impl<'a> ExpressionChecker<'a> {
             && context
                 .defer_invocation_root
                 .is_some_and(|root| root == range);
+        if context.select_operand
+            && contract.function.is_async()
+            && !contract.function.is_selectable()
+            && async_initiation.is_none()
+        {
+            self.emit(
+                call_span,
+                "E1612",
+                "a select arm requires a `selectable` operation or `await` on a `Join`",
+                Vec::new(),
+                None,
+            )?;
+            return self.recovery_expression(file, range);
+        }
         if contract.function.is_async()
             && async_initiation.is_none()
             && (!context.in_defer_body || context.defer_block)
@@ -19602,6 +19922,7 @@ impl<'a> ExpressionChecker<'a> {
         }
         let implicit_wait = contract.function.is_async()
             && async_initiation.is_none()
+            && !context.select_operand
             && (!context.in_defer_body || context.defer_block)
             && context.is_async;
         if contract.function.is_async() {
@@ -19615,7 +19936,11 @@ impl<'a> ExpressionChecker<'a> {
                 )?;
                 return self.recovery_expression(file, range);
             }
-            if async_initiation.is_none() && !implicit_wait && !deferred_root {
+            if async_initiation.is_none()
+                && !implicit_wait
+                && !deferred_root
+                && !context.select_operand
+            {
                 self.emit(
                     call_span,
                     "E1601",
@@ -22346,6 +22671,13 @@ mod tests {
     use super::*;
 
     fn check(source: &str) -> (SourceDatabase, ResolvedProgram, HirCheckOutput) {
+        check_with_diagnostic_limit(source, 100).expect("expression checking succeeds")
+    }
+
+    fn check_with_diagnostic_limit(
+        source: &str,
+        max_diagnostics: usize,
+    ) -> Result<(SourceDatabase, ResolvedProgram, HirCheckOutput), HirError> {
         let mut sources = SourceDatabase::new();
         let file = sources
             .add(SourceInput::virtual_file(
@@ -22397,11 +22729,10 @@ mod tests {
                 max_nodes: 100_000,
                 max_pattern_steps: 100_000,
                 max_trait_obligations: 100_000,
-                max_diagnostics: 100,
+                max_diagnostics,
             },
-        )
-        .unwrap();
-        (sources, resolved, checked)
+        )?;
+        Ok((sources, resolved, checked))
     }
 
     fn check_modules(inputs: &[(&str, &str, &str)]) -> HirCheckOutput {
@@ -23145,7 +23476,7 @@ mod tests {
     }
 
     #[test]
-    fn select_frontend_reports_pending_semantic_boundary() {
+    fn select_semantics_reject_non_selectable_operands() {
         let (_, _, output) = check(
             "fn run(): Int {\n\
                  select {\n\
@@ -23154,12 +23485,456 @@ mod tests {
                  }\n\
              }\n",
         );
-        assert_eq!(codes(&output), ["E1613"], "{:#?}", output.diagnostics());
-        assert_eq!(
-            output.diagnostics()[0].message(),
-            "select syntax is available; semantic checking is pending"
+        assert_eq!(codes(&output), ["E1612"], "{:#?}", output.diagnostics());
+        assert!(!output.is_complete());
+    }
+
+    #[test]
+    fn select_semantics_type_selectable_join_and_unify_bodies() {
+        let (_, _, output) = check(
+            "fn ready(): Int selectable { 1 }\n\
+             fn forward(): Int { ready() }\n\
+             fn run(): Int {\n\
+                 select {\n\
+                     let value = ready() => value\n\
+                     else => 0\n\
+                 }\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
         );
         assert!(!output.is_complete());
+        let ready = output
+            .program()
+            .callables()
+            .find(|callable| {
+                output
+                    .program()
+                    .interner()
+                    .canonical_interface(callable.function_type())
+                    .is_ok_and(|signature| signature == "fn(): Int selectable")
+            })
+            .expect("selectable callable is published with its stronger effect");
+        assert!(matches!(
+            output.program().interner().kind(ready.function_type()),
+            Ok(TypeKind::Function(function)) if function.is_selectable()
+        ));
+        let selectable_count = output
+            .program()
+            .callables()
+            .filter(|callable| {
+                matches!(
+                    output.program().interner().kind(callable.function_type()),
+                    Ok(TypeKind::Function(function)) if function.is_selectable()
+                )
+            })
+            .count();
+        assert_eq!(selectable_count, 1);
+        assert!(output.program().callables().any(|callable| {
+            matches!(
+                output.program().interner().kind(callable.function_type()),
+                Ok(TypeKind::Function(function))
+                    if function.is_async() && !function.is_selectable()
+            )
+        }));
+    }
+
+    #[test]
+    fn select_semantics_accepts_awaited_join_and_rejects_no_suspend_boundaries() {
+        let (_, _, output) = check(
+            "fn work(): Int suspends { 1 }\n\
+             fn prepare(): Join[Int, Never] {\n\
+                 scope {\n\
+                     return spawn work()\n\
+                 }\n\
+             }\n\
+             fn run(): Join[Int, Never] {\n\
+                 let pending = prepare()\n\
+                 let selected = select {\n\
+                     await pending => 1\n\
+                     else => 0\n\
+                 }\n\
+                 _ = selected\n\
+                 pending\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(!output.is_complete());
+
+        for attribute in ["sync", "nosuspend"] {
+            let source = format!(
+                "fn ready(): Int selectable {{ 1 }}\n\
+                 @{attribute}\n\
+                 fn invalid(): Int {{\n\
+                     select {{\n\
+                         ready() => 1\n\
+                         else => 0\n\
+                     }}\n\
+                 }}\n"
+            );
+            let (_, _, output) = check(&source);
+            assert_eq!(
+                codes(&output),
+                ["E1601"],
+                "{attribute}: {:#?}",
+                output.diagnostics()
+            );
+        }
+    }
+
+    #[test]
+    fn select_semantics_keeps_error_precedence_for_non_selectable_effects() {
+        let (_, _, direct) = check(
+            "fn wait(): Int suspends { 1 }\n\
+             fn invalid(): Int {\n\
+                 select {\n\
+                     wait() => 1\n\
+                     else => 0\n\
+                 }\n\
+             }\n",
+        );
+        assert_eq!(codes(&direct), ["E1612"], "{:#?}", direct.diagnostics());
+    }
+
+    #[test]
+    fn select_semantics_reject_refutable_patterns_and_incompatible_bodies() {
+        let (_, _, propagated) = check(
+            "fn maybe(): Int? selectable { some(1) }\n\
+             fn valid(): Int? {\n\
+                 select {\n\
+                     let value = maybe()? => value\n\
+                     else => 0\n\
+                 }\n\
+             }\n",
+        );
+        assert!(
+            propagated.diagnostics().is_empty(),
+            "{:#?}",
+            propagated.diagnostics()
+        );
+
+        let (_, _, pattern) = check(
+            "fn maybe(): Int? selectable { none }\n\
+             fn invalid(): Int {\n\
+                 select {\n\
+                     let some(value) = maybe() => value\n\
+                     else => 0\n\
+                 }\n\
+             }\n",
+        );
+        assert_eq!(codes(&pattern), ["E1613"], "{:#?}", pattern.diagnostics());
+
+        let (_, _, bodies) = check(
+            "fn ready(): Int selectable { 1 }\n\
+             fn invalid(): Int {\n\
+                 select {\n\
+                     ready() => 1\n\
+                     else => \"not an Int\"\n\
+                 }\n\
+             }\n",
+        );
+        assert_eq!(codes(&bodies), ["E1102"], "{:#?}", bodies.diagnostics());
+    }
+
+    #[test]
+    fn select_semantics_infers_joined_body_type_without_expected_return() {
+        let (_, _, output) = check(
+            "fn ready(): Int selectable { 1 }\n\
+             fn run() {\n\
+                 let operation = () {\n\
+                     select {\n\
+                         ready() => 1\n\
+                         else => 2\n\
+                     }\n\
+                 }\n\
+                 _ = operation\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(!output.is_complete());
+    }
+
+    #[test]
+    fn select_semantics_reports_incompatible_uncontextualized_body_types() {
+        let (_, _, output) = check(
+            "fn ready(): Int selectable { 1 }\n\
+             fn run() {\n\
+                 let operation = select {\n\
+                     ready() => 1\n\
+                     else => \"not an Int\"\n\
+                 }\n\
+                 _ = operation\n\
+             }\n",
+        );
+        assert_eq!(codes(&output), ["E1101"], "{:#?}", output.diagnostics());
+        assert!(!output.is_complete());
+    }
+
+    #[test]
+    fn select_semantics_joins_union_body_directions_without_context() {
+        let (_, _, output) = check(
+            "fn wide(): Int | String selectable { 1 }\n\
+             fn run() {\n\
+                 let first = select {\n\
+                     wide() => wide()\n\
+                     else => 1\n\
+                 }\n\
+                 let second = select {\n\
+                     wide() => 1\n\
+                     else => wide()\n\
+                 }\n\
+                 _ = (first, second)\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(!output.is_complete());
+    }
+
+    #[test]
+    fn select_semantics_handles_control_transfer_bodies() {
+        let (_, _, output) = check(
+            "fn ready(): Unit selectable {}\n\
+             fn returns(): Int {\n\
+                 select {\n\
+                     ready() => return 1\n\
+                     else => return 0\n\
+                 }\n\
+             }\n\
+             fn loops() {\n\
+                 for true {\n\
+                     select {\n\
+                         ready() => break\n\
+                         else => continue\n\
+                     }\n\
+                 }\n\
+             }\n\
+             fn fails(): Unit ! Int {\n\
+                 select {\n\
+                     ready() => fail 1\n\
+                     else => fail 2\n\
+                 }\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(!output.is_complete());
+    }
+
+    #[test]
+    fn select_semantics_accepts_await_and_propagated_operands() {
+        let (_, _, output) = check(
+            "fn work(): Int suspends { 1 }\n\
+             fn prepare(): Join[Int, Never] {\n\
+                 scope {\n\
+                     return spawn work()\n\
+                 }\n\
+             }\n\
+             fn maybe(): Int? selectable { some(1) }\n\
+             fn waiting(): Join[Int, Never] {\n\
+                     let pending = prepare()\n\
+                     let selected = select {\n\
+                         await pending => 1\n\
+                         else => 0\n\
+                     }\n\
+                     _ = selected\n\
+                     pending\n\
+             }\n\
+             fn propagated(): Int? {\n\
+                     select {\n\
+                         maybe()? => some(1)\n\
+                         else => some(0)\n\
+                     }\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(!output.is_complete());
+    }
+
+    #[test]
+    fn select_semantics_covers_result_and_recovered_operands() {
+        let (_, _, result) = check(
+            "fn maybe(): Int ! String selectable { ok(1) }\n\
+             fn propagated(): Int ! String {\n\
+                 select {\n\
+                     maybe()? => ok(1)\n\
+                     else => ok(0)\n\
+                 }\n\
+             }\n",
+        );
+        assert!(
+            result.diagnostics().is_empty(),
+            "{:#?}",
+            result.diagnostics()
+        );
+        assert!(!result.is_complete());
+
+        let (_, _, invalid) = check(
+            "fn invalid(): Int {\n\
+                 select {\n\
+                     1 + \"bad\" => 1\n\
+                     else => 0\n\
+                 }\n\
+             }\n",
+        );
+        assert!(!invalid.diagnostics().is_empty());
+        assert!(!invalid.is_complete());
+    }
+
+    #[test]
+    fn select_semantics_covers_explicit_closure_effect_markers() {
+        let (_, _, output) = check(
+            "fn expose(): fn(): Int suspends {\n\
+                 let operation = (): Int selectable { 1 }\n\
+                 operation\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+
+        let (_, _, conflict) = check(
+            "fn invalid() {\n\
+                 let operation = (): Int suspends selectable { 1 }\n\
+                 _ = operation\n\
+             }\n",
+        );
+        assert_eq!(codes(&conflict), ["E1614"], "{:#?}", conflict.diagnostics());
+    }
+
+    #[test]
+    fn select_semantics_propagates_diagnostic_limits_at_each_new_boundary() {
+        for source in [
+            "@sync\n\
+             fn invalid(): Int {\n\
+                 select {\n\
+                     1 => 1\n\
+                     else => 0\n\
+                 }\n\
+             }\n",
+            "fn invalid(): Int {\n\
+                 select {\n\
+                     1 => 1\n\
+                     else => 0\n\
+                 }\n\
+             }\n",
+            "fn maybe(): Int? selectable { some(1) }\n\
+             fn invalid(): Int {\n\
+                 select {\n\
+                     let some(value) = maybe() => value\n\
+                     else => 0\n\
+                 }\n\
+             }\n",
+            "fn ready(): Int selectable { 1 }\n\
+             fn run() {\n\
+                 let value = select {\n\
+                     ready() => 1\n\
+                     else => \"not an Int\"\n\
+                 }\n\
+                 _ = value\n\
+             }\n",
+            "fn invalid() {\n\
+                 let operation = (): Int suspends selectable { 1 }\n\
+                 _ = operation\n\
+             }\n",
+            "fn expose() {\n\
+                 let operation: fn(): Int selectable = (): Int suspends { 1 }\n\
+                 _ = operation\n\
+             }\n",
+        ] {
+            assert!(
+                matches!(
+                    check_with_diagnostic_limit(source, 0),
+                    Err(HirError::DiagnosticLimit { .. })
+                ),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn select_semantics_joins_divergent_and_value_bodies() {
+        let (_, _, output) = check(
+            "fn ready(): Unit selectable {}\n\
+             fn run() {\n\
+                 for true {\n\
+                     let value = select {\n\
+                         ready() => break\n\
+                         else => 0\n\
+                     }\n\
+                     _ = value\n\
+                 }\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(!output.is_complete());
+    }
+
+    #[test]
+    fn select_semantics_recovers_an_error_body_type() {
+        let (_, _, output) = check(
+            "fn ready(): Unit selectable {}\n\
+             fn run() {\n\
+                 let operation = select {\n\
+                     ready() => 1 + \"not an Int\"\n\
+                     else => 0\n\
+                 }\n\
+                 _ = operation\n\
+             }\n",
+        );
+        assert!(!output.diagnostics().is_empty());
+        assert!(!output.is_complete());
+    }
+
+    #[test]
+    fn selectable_function_values_can_weaken_to_suspends() {
+        let (_, _, output) = check(
+            "fn expose(): fn(): Int suspends {\n\
+                 let operation: fn(): Int selectable = () { 1 }\n\
+                 operation\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+
+        let (_, _, invalid) = check(
+            "fn expose() {\n\
+                 let operation: fn(): Int selectable = (): Int suspends { 1 }\n\
+                 _ = operation\n\
+             }\n",
+        );
+        assert_eq!(codes(&invalid), ["E1102"], "{:#?}", invalid.diagnostics());
     }
 
     #[test]

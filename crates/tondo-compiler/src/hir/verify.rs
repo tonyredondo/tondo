@@ -4763,7 +4763,15 @@ impl Verifier<'_> {
             Ok(signature) => signature,
             Err(error) => return Err(HirInvariantError::new(context, error.to_string())),
         };
-        Ok(signature == expected && closure.protocols.supports(super::HirCallProtocol::Call))
+        let assignability = self
+            .program
+            .interner
+            .assignability(signature, expected)
+            .expect("verified callable signatures must be valid interner entries");
+        Ok(matches!(
+            assignability,
+            Some(crate::types::Assignability::Exact | crate::types::Assignability::EffectWeakening)
+        ) && closure.protocols.supports(super::HirCallProtocol::Call))
     }
 
     fn callable_once_erasure_matches(
@@ -4796,7 +4804,15 @@ impl Verifier<'_> {
         let signature = TypeSubstitution::new(arguments.clone())
             .apply(&mut interner, closure.function_type)
             .map_err(|error| HirInvariantError::new(context, error.to_string()))?;
-        Ok(signature == expected && closure.protocols.supports(super::HirCallProtocol::CallOnce))
+        let assignability = self
+            .program
+            .interner
+            .assignability(signature, expected)
+            .expect("verified callable signatures must be valid interner entries");
+        Ok(matches!(
+            assignability,
+            Some(crate::types::Assignability::Exact | crate::types::Assignability::EffectWeakening)
+        ) && closure.protocols.supports(super::HirCallProtocol::CallOnce))
     }
 
     fn verify_statement(
@@ -7380,6 +7396,56 @@ mod tests {
         arguments[0] = string;
         let error = verify_typed_hir(&resolved, &inexact).unwrap_err();
         assert!(error.message().contains("exact substituted signature"));
+    }
+
+    #[test]
+    fn selectable_closures_can_be_verified_as_weakened_suspending_values() {
+        const SOURCE: &str = "fn expose(): fn(): Int suspends {\n\
+             let operation: fn(): Int suspends = (): Int selectable { 1 }\n\
+             operation\n\
+         }\n";
+        let (resolved, program) = checked_program_from(SOURCE);
+        verify_typed_hir(&resolved, &program).unwrap();
+    }
+
+    #[test]
+    fn selectable_closures_verify_through_call_once_erasure() {
+        const SOURCE: &str = "fn target(): Int suspends { 1 }\n\
+             fn build(input: Int) {\n\
+                 let operation = (): Int selectable { input }\n\
+                 _ = operation\n\
+             }\n";
+        let (resolved, program) = checked_program_from(SOURCE);
+        verify_typed_hir(&resolved, &program).unwrap();
+        let actual = program
+            .expressions()
+            .find_map(|expression| match expression.kind() {
+                HirExpressionKind::Closure(_) => Some(expression.ty()),
+                _ => None,
+            })
+            .expect("the fixture contains a selectable closure");
+        let expected = program
+            .callables()
+            .map(|callable| callable.function_type())
+            .find(|ty| {
+                matches!(
+                    program.interner().kind(*ty),
+                    Ok(TypeKind::Function(function))
+                        if function.is_async()
+                            && !function.is_selectable()
+                            && function.outcome() == program.interner().scalar(ScalarType::Int)
+                )
+            })
+            .expect("the fixture contains a suspending target signature");
+        let verifier = Verifier {
+            resolved: &resolved,
+            program: &program,
+        };
+        assert!(
+            verifier
+                .callable_once_erasure_matches(actual, expected, "selectable call once")
+                .unwrap()
+        );
     }
 
     #[test]

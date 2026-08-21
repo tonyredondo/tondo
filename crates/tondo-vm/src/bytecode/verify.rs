@@ -4645,6 +4645,9 @@ impl Verifier<'_> {
         if self.is_scalar(actual, BytecodeScalarType::Never) {
             return Ok(Some(BytecodeCoercion::Diverging));
         }
+        if self.effect_weakening_matches(actual, expected, context)? {
+            return Ok(Some(BytecodeCoercion::EffectWeakening));
+        }
         if self.callable_erasure_matches(actual, expected, context)? {
             return Ok(Some(BytecodeCoercion::CallableErasure));
         }
@@ -4674,6 +4677,27 @@ impl Verifier<'_> {
         Ok(None)
     }
 
+    fn effect_weakening_matches(
+        &self,
+        actual: BytecodeTypeId,
+        expected: BytecodeTypeId,
+        context: &str,
+    ) -> Result<bool, BytecodeVerificationError> {
+        let (BytecodeTypeKind::Function(actual), BytecodeTypeKind::Function(expected)) = (
+            &self.ty(actual, context)?.kind,
+            &self.ty(expected, context)?.kind,
+        ) else {
+            return Ok(false);
+        };
+        Ok(actual.is_selectable
+            && expected.is_async
+            && !expected.is_selectable
+            && actual.is_unsafe == expected.is_unsafe
+            && actual.parameters == expected.parameters
+            && actual.variadic == expected.variadic
+            && actual.outcome == expected.outcome)
+    }
+
     fn callable_erasure_matches(
         &self,
         actual: BytecodeTypeId,
@@ -4693,7 +4717,10 @@ impl Verifier<'_> {
             .closure
             .as_ref()
             .expect("closure lookup only returns closure callables");
-        if callable.function_type != expected || !closure.protocols.call {
+        if (callable.function_type != expected
+            && !self.effect_weakening_matches(callable.function_type, expected, context)?)
+            || !closure.protocols.call
+        {
             return Ok(false);
         }
         for capture in &closure.captures {
@@ -4729,7 +4756,10 @@ impl Verifier<'_> {
             .closure
             .as_ref()
             .expect("closure lookup only returns closure callables");
-        if callable.function_type != expected || !closure.protocols.call_once {
+        if (callable.function_type != expected
+            && !self.effect_weakening_matches(callable.function_type, expected, context)?)
+            || !closure.protocols.call_once
+        {
             return Ok(false);
         }
         for capture in &closure.captures {
@@ -11976,6 +12006,7 @@ mod tests {
             "fn(Int)",
             BytecodeTypeKind::Function(BytecodeFunctionType {
                 is_async: false,
+                is_selectable: false,
                 is_unsafe: false,
                 parameters: vec![BytecodeFunctionParameter {
                     mode: BytecodeParameterMode::Value,
@@ -13170,6 +13201,71 @@ mod tests {
     }
 
     #[test]
+    fn effect_weakening_coercion_accepts_selectable_function_values() {
+        let (mut program, ids) = catalog_program();
+        let selectable = push_type(
+            &mut program,
+            "fn(): Int selectable",
+            BytecodeTypeKind::Function(BytecodeFunctionType {
+                is_async: true,
+                is_selectable: true,
+                is_unsafe: false,
+                parameters: Vec::new(),
+                variadic: None,
+                outcome: ids.int,
+            }),
+        );
+        let suspends = push_type(
+            &mut program,
+            "fn(): Int suspends",
+            BytecodeTypeKind::Function(BytecodeFunctionType {
+                is_async: true,
+                is_selectable: false,
+                is_unsafe: false,
+                parameters: Vec::new(),
+                variadic: None,
+                outcome: ids.int,
+            }),
+        );
+        program.callables.push(BytecodeCallable {
+            name: "ready".into(),
+            generic_arity: 0,
+            parameters: Vec::new(),
+            outcome: ids.int,
+            function_type: selectable,
+            implementation: None,
+            closure: None,
+        });
+        let function = projection_function(&program, ids);
+        let verifier = verifier(&program);
+        verifier.verify_types().unwrap();
+        verifier
+            .verify_rvalue(
+                &function,
+                &BytecodeRvalue {
+                    ty: suspends,
+                    kind: BytecodeRvalueKind::Coerce {
+                        kind: BytecodeCoercion::EffectWeakening,
+                        value: BytecodeOperand {
+                            ty: selectable,
+                            kind: BytecodeOperandKind::Function {
+                                callable: BytecodeCallableId::new(1),
+                                arguments: Vec::new(),
+                            },
+                        },
+                    },
+                },
+                "selectable weakening",
+            )
+            .unwrap();
+        assert!(
+            !verifier
+                .effect_weakening_matches(ids.int, ids.int, "scalar")
+                .unwrap()
+        );
+    }
+
+    #[test]
     fn operation_matrix_covers_fallible_calls_collections_and_bootstrap_hosts() {
         let (mut program, ids) = catalog_program();
         let array_string = push_type(
@@ -13278,6 +13374,7 @@ mod tests {
             "fn() suspends",
             BytecodeTypeKind::Function(BytecodeFunctionType {
                 is_async: true,
+                is_selectable: false,
                 is_unsafe: false,
                 parameters: Vec::new(),
                 variadic: None,
@@ -13289,6 +13386,7 @@ mod tests {
             "fn()",
             BytecodeTypeKind::Function(BytecodeFunctionType {
                 is_async: false,
+                is_selectable: false,
                 is_unsafe: false,
                 parameters: Vec::new(),
                 variadic: None,
@@ -13300,6 +13398,7 @@ mod tests {
             "fn(Int) suspends",
             BytecodeTypeKind::Function(BytecodeFunctionType {
                 is_async: true,
+                is_selectable: false,
                 is_unsafe: false,
                 parameters: vec![BytecodeFunctionParameter {
                     mode: BytecodeParameterMode::Value,
@@ -13314,6 +13413,7 @@ mod tests {
             "fn(): Int suspends",
             BytecodeTypeKind::Function(BytecodeFunctionType {
                 is_async: true,
+                is_selectable: false,
                 is_unsafe: false,
                 parameters: Vec::new(),
                 variadic: None,
@@ -14668,6 +14768,7 @@ mod tests {
             "fn(): Int",
             BytecodeTypeKind::Function(BytecodeFunctionType {
                 is_async: false,
+                is_selectable: false,
                 is_unsafe: false,
                 parameters: Vec::new(),
                 variadic: None,
@@ -15042,6 +15143,7 @@ mod tests {
             "fn(): Int",
             BytecodeTypeKind::Function(BytecodeFunctionType {
                 is_async: false,
+                is_selectable: false,
                 is_unsafe: false,
                 parameters: Vec::new(),
                 variadic: None,

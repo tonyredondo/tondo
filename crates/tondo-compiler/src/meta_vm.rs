@@ -473,6 +473,7 @@ mod tests {
                     name: "fn(): Unit".into(),
                     kind: BytecodeTypeKind::Function(BytecodeFunctionType {
                         is_async: false,
+                        is_selectable: false,
                         is_unsafe: false,
                         parameters: Vec::new(),
                         variadic: None,

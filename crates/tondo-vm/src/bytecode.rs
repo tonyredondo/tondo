@@ -632,6 +632,7 @@ pub enum BytecodeCursorMode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BytecodeFunctionType {
     pub is_async: bool,
+    pub is_selectable: bool,
     pub is_unsafe: bool,
     pub parameters: Vec<BytecodeFunctionParameter>,
     pub variadic: Option<BytecodeTypeId>,
@@ -1091,6 +1092,7 @@ pub enum BytecodeAggregateKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BytecodeCoercion {
     Exact,
+    EffectWeakening,
     Opaque,
     CallableErasure,
     CallableOnceErasure,

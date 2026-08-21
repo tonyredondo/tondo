@@ -401,6 +401,10 @@ pub enum ParameterMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Assignability {
     Exact,
+    /// A `selectable` callable is used where only its weaker `suspends`
+    /// contract is required.  This is a type-level weakening; no runtime
+    /// representation or wrapper is introduced.
+    EffectWeakening,
     Opaque,
     CallableErasure,
     CallableOnceErasure,
@@ -489,6 +493,7 @@ impl FunctionParameter {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct FunctionType {
     is_async: bool,
+    is_selectable: bool,
     is_unsafe: bool,
     parameters: Vec<FunctionParameter>,
     variadic: Option<TypeId>,
@@ -505,6 +510,28 @@ impl FunctionType {
     ) -> Self {
         Self {
             is_async,
+            is_selectable: false,
+            is_unsafe,
+            parameters,
+            variadic,
+            outcome,
+        }
+    }
+
+    /// Builds a function type with its complete public effect contract.
+    /// `selectable` is the stronger form of suspension and therefore always
+    /// implies `suspends`.
+    pub fn with_effects(
+        is_async: bool,
+        is_selectable: bool,
+        is_unsafe: bool,
+        parameters: Vec<FunctionParameter>,
+        variadic: Option<TypeId>,
+        outcome: TypeId,
+    ) -> Self {
+        Self {
+            is_async: is_async || is_selectable,
+            is_selectable,
             is_unsafe,
             parameters,
             variadic,
@@ -521,6 +548,14 @@ impl FunctionType {
     /// interfaces always use the postfix `suspends` effect.
     pub fn suspends(&self) -> bool {
         self.is_async
+    }
+
+    pub fn is_selectable(&self) -> bool {
+        self.is_selectable
+    }
+
+    pub fn selectable(&self) -> bool {
+        self.is_selectable
     }
 
     pub fn is_unsafe(&self) -> bool {
@@ -1037,6 +1072,24 @@ impl TypeInterner {
             return Ok(Some(Assignability::Diverging));
         }
 
+        // `selectable` is a strictly stronger callable effect.  It may be
+        // passed to a consumer that only requires `suspends`, but the reverse
+        // direction is intentionally rejected.  Function parameters and
+        // outcomes remain invariant; only this closed effect weakening is
+        // allowed.
+        if let (TypeKind::Function(actual), TypeKind::Function(expected)) =
+            (self.kind(actual)?, self.kind(expected)?)
+            && actual.is_selectable
+            && expected.is_async
+            && !expected.is_selectable
+            && actual.is_unsafe == expected.is_unsafe
+            && actual.parameters == expected.parameters
+            && actual.variadic == expected.variadic
+            && actual.outcome == expected.outcome
+        {
+            return Ok(Some(Assignability::EffectWeakening));
+        }
+
         if let TypeKind::Union(expected_members) = self.kind(expected)? {
             let actual_members = match self.kind(actual)? {
                 TypeKind::Union(members) => members.as_slice(),
@@ -1268,6 +1321,7 @@ impl TypeInterner {
                 }
                 (TypeKind::Function(left), TypeKind::Function(right))
                     if left.is_async == right.is_async
+                        && left.is_selectable == right.is_selectable
                         && left.is_unsafe == right.is_unsafe
                         && left.parameters.len() == right.parameters.len()
                         && left.variadic.is_some() == right.variadic.is_some() =>
@@ -1518,7 +1572,14 @@ impl TypeInterner {
                         // The render stack is consumed in reverse order;
                         // enqueue the effect before the return annotation so
                         // it is emitted after the complete function type.
-                        pending.push(RenderTask::Text(" suspends".into()));
+                        pending.push(RenderTask::Text(
+                            if function.is_selectable {
+                                " selectable"
+                            } else {
+                                " suspends"
+                            }
+                            .into(),
+                        ));
                     }
                     if function.outcome != self.scalar(ScalarType::Unit) {
                         pending.push(RenderTask::Type(function.outcome, Precedence::Union));
@@ -1789,6 +1850,7 @@ impl ScopedTypeUnifier {
             }
             (TypeKind::Function(left_function), TypeKind::Function(right_function))
                 if left_function.is_async == right_function.is_async
+                    && left_function.is_selectable == right_function.is_selectable
                     && left_function.is_unsafe == right_function.is_unsafe
                     && left_function.parameters.len() == right_function.parameters.len()
                     && left_function.variadic.is_some() == right_function.variadic.is_some() =>
@@ -2062,6 +2124,7 @@ impl ScopedTypeUnifier {
                     if left_items.len() == right_items.len() => {}
                 (TypeKind::Function(left_function), TypeKind::Function(right_function))
                     if left_function.is_async == right_function.is_async
+                        && left_function.is_selectable == right_function.is_selectable
                         && left_function.is_unsafe == right_function.is_unsafe
                         && left_function.parameters.len() == right_function.parameters.len()
                         && left_function.variadic.is_some()
@@ -2313,8 +2376,9 @@ impl TypeSubstitution {
                     arguments,
                 } => interner.nominal(identity, arguments.into_iter().map(get).collect())?,
                 TypeKind::Tuple(items) => interner.tuple(items.into_iter().map(get).collect())?,
-                TypeKind::Function(function) => interner.function(FunctionType::new(
+                TypeKind::Function(function) => interner.function(FunctionType::with_effects(
                     function.is_async,
+                    function.is_selectable,
                     function.is_unsafe,
                     function
                         .parameters
@@ -2491,6 +2555,7 @@ impl InferenceContext {
                 }
                 (TypeKind::Function(left), TypeKind::Function(right))
                     if left.is_async == right.is_async
+                        && left.is_selectable == right.is_selectable
                         && left.is_unsafe == right.is_unsafe
                         && left.parameters.len() == right.parameters.len()
                         && left.variadic.is_some() == right.variadic.is_some() =>
@@ -2788,8 +2853,9 @@ fn rebuild_resolved_kind(
             arguments,
         } => interner.nominal(identity, arguments.into_iter().map(get).collect())?,
         TypeKind::Tuple(items) => interner.tuple(items.into_iter().map(get).collect())?,
-        TypeKind::Function(function) => interner.function(FunctionType::new(
+        TypeKind::Function(function) => interner.function(FunctionType::with_effects(
             function.is_async,
+            function.is_selectable,
             function.is_unsafe,
             function
                 .parameters
@@ -3169,6 +3235,45 @@ mod tests {
         assert_eq!(
             interner.canonical_interface(function).unwrap(),
             "unsafe fn(ref (Int | String), Int?, ...Int): Int? ! String suspends"
+        );
+    }
+
+    #[test]
+    fn selectable_is_stronger_than_suspends_and_weakens_only_downward() {
+        let mut interner = TypeInterner::default();
+        let int = interner.scalar(ScalarType::Int);
+        let selectable = interner
+            .function(FunctionType::with_effects(
+                true,
+                true,
+                false,
+                vec![FunctionParameter::new(ParameterMode::Value, int)],
+                None,
+                int,
+            ))
+            .unwrap();
+        let suspends = interner
+            .function(FunctionType::with_effects(
+                true,
+                false,
+                false,
+                vec![FunctionParameter::new(ParameterMode::Value, int)],
+                None,
+                int,
+            ))
+            .unwrap();
+        assert_eq!(
+            interner.canonical(selectable).unwrap(),
+            "fn(Int): Int selectable"
+        );
+        assert_eq!(
+            interner.assignability(selectable, suspends).unwrap(),
+            Some(Assignability::EffectWeakening)
+        );
+        assert_eq!(interner.assignability(suspends, selectable).unwrap(), None);
+        assert_eq!(
+            interner.assignability(selectable, selectable).unwrap(),
+            Some(Assignability::Exact)
         );
     }
 

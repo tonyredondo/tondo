@@ -1183,7 +1183,11 @@ impl Parser<'_> {
     }
 
     fn eat_suspend_effect(&mut self) -> bool {
-        self.eat_any(&[TokenKind::Suspends, TokenKind::Selectable])
+        let mut consumed = false;
+        while self.eat_any(&[TokenKind::Suspends, TokenKind::Selectable]) {
+            consumed = true;
+        }
+        consumed
     }
 
     fn parse_binding_decl(&mut self) -> ParseResult {
@@ -3373,12 +3377,14 @@ impl Parser<'_> {
             }
         };
 
-        if self.nth(after_parameters) == TokenKind::LBrace
-            || (matches!(
-                self.nth(after_parameters),
-                TokenKind::Suspends | TokenKind::Selectable
-            ) && self.nth(after_parameters + 1) == TokenKind::LBrace)
-        {
+        let mut after_effects = after_parameters;
+        while matches!(
+            self.nth(after_effects),
+            TokenKind::Suspends | TokenKind::Selectable
+        ) {
+            after_effects += 1;
+        }
+        if self.nth(after_effects) == TokenKind::LBrace {
             return true;
         }
         if self.nth(after_parameters) != TokenKind::Colon {

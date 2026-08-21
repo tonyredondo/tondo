@@ -254,6 +254,7 @@ impl NameResolver<'_> {
                 SyntaxKind::BindingDecl => self.resolve_binding(item)?,
                 SyntaxKind::ForStmt => self.resolve_for(item)?,
                 SyntaxKind::MatchExpr => self.resolve_match(item)?,
+                SyntaxKind::SelectExpr => self.resolve_select(item)?,
                 _ => self.walk(item, Some(SyntaxKind::Block))?,
             }
         }
@@ -336,6 +337,39 @@ impl NameResolver<'_> {
         Ok(())
     }
 
+    fn resolve_select(&mut self, expression: SyntaxNodeRef<'_>) -> Result<(), ResolveError> {
+        for child in expression.child_nodes() {
+            match child.kind() {
+                SyntaxKind::SelectArm => self.resolve_select_arm(child)?,
+                SyntaxKind::SelectElseArm => {
+                    for nested in child.child_nodes() {
+                        self.walk(nested, Some(SyntaxKind::SelectElseArm))?;
+                    }
+                }
+                _ => self.walk(child, Some(SyntaxKind::SelectExpr))?,
+            }
+        }
+        Ok(())
+    }
+
+    fn resolve_select_arm(&mut self, arm: SyntaxNodeRef<'_>) -> Result<(), ResolveError> {
+        self.push_scope();
+        let pattern = arm.child_nodes().find(|child| is_pattern(child.kind()));
+        if let Some(pattern) = pattern {
+            self.resolve_pattern_references(pattern)?;
+            let mut tokens = Vec::new();
+            collect_pattern_bindings(pattern, &mut tokens);
+            self.declare_tokens(tokens, Namespace::Value, LocalKind::Pattern)?;
+        }
+        for child in arm.child_nodes() {
+            if Some(child) != pattern {
+                self.walk(child, Some(SyntaxKind::SelectArm))?;
+            }
+        }
+        self.scopes.pop();
+        Ok(())
+    }
+
     fn resolve_closure(&mut self, closure: SyntaxNodeRef<'_>) -> Result<(), ResolveError> {
         let parameters = closure
             .child_nodes()
@@ -386,6 +420,7 @@ impl NameResolver<'_> {
             SyntaxKind::BindingDecl => return self.resolve_binding(node),
             SyntaxKind::ForStmt => return self.resolve_for(node),
             SyntaxKind::MatchExpr => return self.resolve_match(node),
+            SyntaxKind::SelectExpr => return self.resolve_select(node),
             SyntaxKind::ClosureExpr => return self.resolve_closure(node),
             SyntaxKind::BracketPostfix => return self.resolve_preliminary_bracket(node),
             SyntaxKind::SelfExpr => return self.resolve_receiver(node),

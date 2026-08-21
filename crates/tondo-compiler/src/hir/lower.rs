@@ -5146,7 +5146,19 @@ impl<'a> TypeLowerer<'a> {
         node: SyntaxNodeRef<'a>,
         environment: &TypeEnvironment,
     ) -> Result<TypeId, HirError> {
-        let is_async = has_direct_token(node, TokenKind::Suspends);
+        let explicit_suspends = has_direct_token(node, TokenKind::Suspends);
+        let is_selectable = has_direct_token(node, TokenKind::Selectable);
+        if explicit_suspends && is_selectable {
+            self.emit(
+                file,
+                node.range(),
+                "E1614",
+                "a function type must use either `suspends` or `selectable`, not both",
+                None,
+                None,
+            )?;
+        }
+        let is_async = explicit_suspends || is_selectable;
         let mut parameters = Vec::new();
         let mut variadic = None;
         if let Some(list) = node
@@ -5213,8 +5225,9 @@ impl<'a> TypeLowerer<'a> {
         )? {
             Ok(self.interner.error())
         } else {
-            Ok(self.interner.function(FunctionType::new(
+            Ok(self.interner.function(FunctionType::with_effects(
                 is_async,
+                is_selectable,
                 has_direct_token(node, TokenKind::Unsafe),
                 parameters,
                 variadic,
@@ -6979,7 +6992,18 @@ impl<'a> TypeLowerer<'a> {
         let generic_arity = environment.next_position;
         let no_suspend = callable_has_no_suspend_attribute(callable);
         let explicit_suspends = has_direct_token(callable, TokenKind::Suspends);
-        if explicit_suspends && no_suspend {
+        let explicit_selectable = has_direct_token(callable, TokenKind::Selectable);
+        if explicit_suspends && explicit_selectable {
+            self.emit(
+                file,
+                callable.range(),
+                "E1614",
+                "a callable must use either `suspends` or `selectable`, not both",
+                None,
+                None,
+            )?;
+        }
+        if (explicit_suspends || explicit_selectable) && no_suspend {
             self.emit(
                 file,
                 callable.range(),
@@ -6990,6 +7014,7 @@ impl<'a> TypeLowerer<'a> {
             )?;
         }
         let is_async = (explicit_suspends
+            || explicit_selectable
             || self.inferred_suspendible.contains(&(
                 file,
                 callable.range().start(),
@@ -7135,8 +7160,9 @@ impl<'a> TypeLowerer<'a> {
         let function_type = if signature_has_recovery {
             self.interner.error()
         } else {
-            self.interner.function(FunctionType::new(
+            self.interner.function(FunctionType::with_effects(
                 is_async,
+                explicit_selectable,
                 is_unsafe,
                 function_parameters,
                 variadic,
@@ -7892,7 +7918,8 @@ fn collect_source_callables<'a>(
                 name: name.to_owned(),
                 has_body: body.is_some(),
                 direct_suspendible: direct_suspendible
-                    || has_direct_token(node, TokenKind::Suspends),
+                    || has_direct_token(node, TokenKind::Suspends)
+                    || has_direct_token(node, TokenKind::Selectable),
                 no_suspend,
                 called_names,
             });
@@ -8770,6 +8797,36 @@ mod tests {
             let (_, _, output) = lower(&format!("@{attribute}\nfn invalid() suspends {{}}\n"));
             assert_eq!(codes(&output), ["E1601"], "{attribute}");
         }
+    }
+
+    #[test]
+    fn selectable_and_suspends_are_mutually_exclusive() {
+        let (_, _, output) = lower("fn invalid(): Int suspends selectable { 1 }\n");
+        assert_eq!(codes(&output), ["E1614"], "{:#?}", output.diagnostics());
+    }
+
+    #[test]
+    fn selectable_trait_contracts_are_preserved_by_implementations() {
+        let (_, _, output) = lower(
+            "trait Ready {\n\
+                 fn next(): Int selectable\n\
+             }\n\
+             type Token = { value: Int }\n\
+             impl Ready for Token {\n\
+                 fn next(): Int selectable { 1 }\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.program().callables().any(|callable| {
+            matches!(
+                output.program().interner().kind(callable.function_type()),
+                Ok(TypeKind::Function(function)) if function.is_selectable()
+            )
+        }));
     }
 
     #[test]

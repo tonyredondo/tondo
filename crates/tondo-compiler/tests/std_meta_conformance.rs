@@ -136,6 +136,7 @@ fn meta_target_admits_no_ambient_or_unsafe_surface() {
                 name: "unsafe fn(): Unit".into(),
                 kind: BytecodeTypeKind::Function(BytecodeFunctionType {
                     is_async: false,
+                    is_selectable: false,
                     is_unsafe: true,
                     parameters: Vec::new(),
                     variadic: None,

@@ -488,8 +488,9 @@ impl HirProgram {
                     arguments,
                 } => interner.nominal(identity, arguments.into_iter().map(get).collect())?,
                 TypeKind::Tuple(items) => interner.tuple(items.into_iter().map(get).collect())?,
-                TypeKind::Function(function) => interner.function(FunctionType::new(
+                TypeKind::Function(function) => interner.function(FunctionType::with_effects(
                     function.is_async(),
+                    function.is_selectable(),
                     function.is_unsafe(),
                     function
                         .parameters()

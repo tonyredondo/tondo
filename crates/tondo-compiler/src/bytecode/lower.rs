@@ -1605,6 +1605,7 @@ impl TypeCatalog {
     ) -> Result<bc::BytecodeFunctionType, BytecodeError> {
         Ok(bc::BytecodeFunctionType {
             is_async: function.is_async(),
+            is_selectable: function.is_selectable(),
             is_unsafe: function.is_unsafe(),
             parameters: function
                 .parameters()
@@ -4393,6 +4394,7 @@ fn call_protocol(value: HirCallProtocol) -> bc::BytecodeCallProtocol {
 fn coercion(value: Assignability) -> bc::BytecodeCoercion {
     match value {
         Assignability::Exact => bc::BytecodeCoercion::Exact,
+        Assignability::EffectWeakening => bc::BytecodeCoercion::EffectWeakening,
         Assignability::Opaque => bc::BytecodeCoercion::Opaque,
         Assignability::CallableErasure => bc::BytecodeCoercion::CallableErasure,
         Assignability::CallableOnceErasure => bc::BytecodeCoercion::CallableOnceErasure,

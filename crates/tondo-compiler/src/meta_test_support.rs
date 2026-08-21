@@ -33,6 +33,7 @@ pub(crate) fn string_artifact(value: &str) -> MetaVmArtifact {
                 name: "fn(): String".into(),
                 kind: BytecodeTypeKind::Function(BytecodeFunctionType {
                     is_async: false,
+                    is_selectable: false,
                     is_unsafe: false,
                     parameters: Vec::new(),
                     variadic: None,

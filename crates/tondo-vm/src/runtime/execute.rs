@@ -5227,6 +5227,7 @@ impl Engine<'_, '_> {
                 let value_result = self.evaluate_operand(frame, value)?;
                 match kind {
                     BytecodeCoercion::Exact
+                    | BytecodeCoercion::EffectWeakening
                     | BytecodeCoercion::Opaque
                     | BytecodeCoercion::CallableErasure
                     | BytecodeCoercion::CallableOnceErasure => Ok(value_result),
@@ -11854,6 +11855,7 @@ mod tests {
             name: "fn main()".into(),
             kind: BytecodeTypeKind::Function(BytecodeFunctionType {
                 is_async: false,
+                is_selectable: false,
                 is_unsafe: false,
                 parameters: Vec::new(),
                 variadic: None,
@@ -12745,6 +12747,7 @@ mod tests {
             name: "fn(ref VirtualTime): Unit".into(),
             kind: BytecodeTypeKind::Function(BytecodeFunctionType {
                 is_async: false,
+                is_selectable: false,
                 is_unsafe: false,
                 parameters: vec![BytecodeFunctionParameter {
                     mode: BytecodeParameterMode::Ref,
