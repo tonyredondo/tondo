@@ -19,7 +19,7 @@ frontera compilador/runtime/CLI, con evidencia por intento y paridad VM/native.
 `DIAG-SPEC-001` es el prerrequisito explícito de la evaluación nativa; la
 existencia del contrato no implica que ningún detector esté implementado.
 
-**Última actualización:** 2026-08-20
+**Última actualización:** 2026-08-21
 
 **Especificaciones normativas:**
 
@@ -63,8 +63,9 @@ un bundle companion separado. El futuro candidato del lenguaje fijará G5 y S1;
 solo fijará L0 cuando se construya además una distribución TLF, sin convertirla
 en requisito de Tondo 0.1.
 
-**Objetivo inmediato:** implementar el slice `ASYNC-SELECT-FRONTEND-001 →
-ASYNC-SELECT-VM-CONF-001`, incluida la migración
+**Objetivo inmediato:** continuar el slice `ASYNC-SELECT-FRONTEND-001 →
+ASYNC-SELECT-VM-CONF-001` en `ASYNC-SELECT-LOWER-001` —el frontend y la
+semántica tipada ya están cerrados—, incluida la migración
 `STD-A-SELECTABLE-IMPL-001`; después se retoma `STD-A-PERF-001` y finalmente
 `DIAG-SPEC-001`. El grafo activo se valida con `TRACKER-LINT-001`; con
 ese contrato se cierran las fronteras
@@ -6564,7 +6565,9 @@ Esta tabla es la fuente de reconciliación del estado actual.
     orden de cierre es:
     - lenguaje/select: `ASYNC-SELECT-FRONTEND-001 → ASYNC-SELECT-SEMA-001 →
       ASYNC-SELECT-LOWER-001`; después runtime y ownership cierran en paralelo,
-      alimentan `STD-A-SELECTABLE-IMPL-001 → ASYNC-SELECT-TEST-001 →
+      alimentan `STD-A-SELECTABLE-IMPL-001` —que además exige los ya cerrados
+      `STD-A-ASYNC-IMPL-001` y `STD-TIME-BASE-CONF-001`— y continúa con
+      `ASYNC-SELECT-TEST-001 →
       ASYNC-SELECT-PERF-001 → ASYNC-SELECT-VM-CONF-001`;
     - A1: `STD-CORE-IMPL-001`, `STD-TEXT-IMPL-001`, `STD-COLL-IMPL-001`,
       `STD-ITER-IMPL-001`, `STD-FMT-IMPL-001` y `STD-IO-IMPL-001`;

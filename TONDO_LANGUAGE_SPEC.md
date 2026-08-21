@@ -48,6 +48,7 @@ Apéndices:
 - [Apéndice A. Referencia rápida](#apéndice-a-referencia-rápida)
 - [Apéndice B. Declaración de diseño](#apéndice-b-declaración-de-diseño)
 - [Apéndice C. Fixtures normativos de documentación](#apéndice-c-fixtures-normativos-de-documentación)
+- [Apéndice D. Layout convencional de proyectos](#apéndice-d-layout-convencional-de-proyectos)
 
 ---
 
