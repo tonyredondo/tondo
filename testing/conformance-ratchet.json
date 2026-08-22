@@ -7,11 +7,11 @@
   },
   "inventory": {
     "path": "testing/inventory.json",
-    "sha256": "35501e3154b1254d46881b83efd784c8018062e9c194055420882fdb0f8024a2"
+    "sha256": "ee0eecebfbf2ca3d74b90eb05251ffaa41f51b2e6bf1de2eeb9d4c06f7e493a7"
   },
   "matrix": {
     "path": "testing/coverage-matrix.json",
-    "sha256": "b97e3d3aa0c780bbb044cd00c709d5f4450fb48d89aa4a6c35cdd78bc1441d01"
+    "sha256": "46226e14e30a487beef3bbcdf9964e1b2332f19152017db686c868483eec1ac4"
   },
   "gap_audit": {
     "path": "testing/normative-gap-audit.json",
@@ -28,17 +28,17 @@
   "coverage": {
     "status": "validated",
     "reason": "the supplied coverage report passed the quality and provenance gates",
-    "report_sha256": "7634ac9e0866126897c01d04e4e22be46cdd62cec4b65cd89ad734f682e83e7b",
-    "provenance_sha256": "18c90ea082e2e2befa40850c124e6681452aac4e473cf8518be685632acf4072",
-    "tree_sha256": "686f4a4a2fa4a76220f3e33debb8ac94d737debb27c0c71dcdc3e98cb805f0ad",
+    "report_sha256": "a05387df917cebccd034d07f8dfb859efd8ae9e87386f60396758951096bb1ca",
+    "provenance_sha256": "657b336cf67501c0d9dae8d416d7b50866b0208ab43bda0d390c0342c9d9b972",
+    "tree_sha256": "0bb37bc00246bb9fce20862aa1129ddec2f97bfbb73625244d8b6d095fe5c4c8",
     "input_set_sha256": "b7cd1baf22a5853661562e5cca5131bb2b299243ded46c1b686fa8c2abffeea8"
   },
   "mutation": {
     "status": "validated",
     "reason": "the supplied mutation report passed the quality and provenance gates",
-    "report_sha256": "33872691a55b86e82a773df68d35c3a39538e433e6bf2bddc8dbdbd6e644f3c4",
-    "provenance_sha256": "18c90ea082e2e2befa40850c124e6681452aac4e473cf8518be685632acf4072",
-    "tree_sha256": "686f4a4a2fa4a76220f3e33debb8ac94d737debb27c0c71dcdc3e98cb805f0ad",
+    "report_sha256": "b1bfdcf9374f14a2c7a14cea81153f5e85e685b81349082f0fbdaf396f46dc4b",
+    "provenance_sha256": "657b336cf67501c0d9dae8d416d7b50866b0208ab43bda0d390c0342c9d9b972",
+    "tree_sha256": "0bb37bc00246bb9fce20862aa1129ddec2f97bfbb73625244d8b6d095fe5c4c8",
     "input_set_sha256": "b7cd1baf22a5853661562e5cca5131bb2b299243ded46c1b686fa8c2abffeea8"
   }
 }

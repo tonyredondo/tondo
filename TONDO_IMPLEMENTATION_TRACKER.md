@@ -19,7 +19,7 @@ frontera compilador/runtime/CLI, con evidencia por intento y paridad VM/native.
 `DIAG-SPEC-001` es el prerrequisito explícito de la evaluación nativa; la
 existencia del contrato no implica que ningún detector esté implementado.
 
-**Última actualización:** 2026-08-21
+**Última actualización:** 2026-08-22
 
 **Especificaciones normativas:**
 
@@ -64,8 +64,9 @@ solo fijará L0 cuando se construya además una distribución TLF, sin convertir
 en requisito de Tondo 0.1.
 
 **Objetivo inmediato:** continuar el slice `ASYNC-SELECT-FRONTEND-001 →
-ASYNC-SELECT-VM-CONF-001` en `ASYNC-SELECT-LOWER-001` —el frontend y la
-semántica tipada ya están cerrados—, incluida la migración
+ASYNC-SELECT-VM-CONF-001` en `ASYNC-SELECT-RUNTIME-001` y
+`ASYNC-SELECT-OWN-001` —el frontend, la semántica tipada y el lowering
+verificable ya están cerrados—, incluida la migración
 `STD-A-SELECTABLE-IMPL-001`; después se retoma `STD-A-PERF-001` y finalmente
 `DIAG-SPEC-001`. El grafo activo se valida con `TRACKER-LINT-001`; con
 ese contrato se cierran las fronteras
@@ -524,7 +525,7 @@ necesaria; la fragmentación del workspace no.
 | **M4 — Genéricos, traits y closures** | Sistema estático completo | Completado |
 | **M5 — Ownership, préstamos y memoria** | Modelo de valores completo | Completado |
 | **M6 — Colecciones, números y texto** | Gate G3: alpha utilizable | Completado |
-| **M7 — Async y concurrencia estructurada** | Tasks conformes + selección núcleo | Suspensión/tasks completadas; frontend y semántica tipada de `select`/`selectable` cerradas, lowering/runtime pendientes |
+| **M7 — Async y concurrencia estructurada** | Tasks conformes + selección núcleo | Suspensión/tasks completadas; frontend, semántica tipada y lowering verificable de `select`/`selectable` cerrados, selector cooperativo y ownership branch-sensitive pendientes |
 | **M8 — Scripts y procesos** | Experiencia de scripting | Completado |
 | **M9 — Unsafe, targets y toolchain** | Gate G4: preview 0.1 | Completado |
 | **M10 — Corpus ejecutable** | Conformidad viva pre-`derive` | Completado |
@@ -2400,12 +2401,22 @@ adapters de streams y el worker OS nativo permanecen como leaves independientes.
   La expresión aún queda como recovery marcada incompleta hasta
   `ASYNC-SELECT-LOWER-001`; este bloque no afirma ejecución HIR/MIR/VM.
 
-- [ ] **ASYNC-SELECT-LOWER-001 — Bajar selección a HIR/MIR y bytecode
+- [x] **ASYNC-SELECT-LOWER-001 — Bajar selección a HIR/MIR y bytecode
   verificable.** Representar prepare/register/commit/rollback, registro
   izquierda-a-derecha, un único ganador, `else` como snapshot no bloqueante y
   cleanup explícito de perdedores. El verificador debe rechazar bytecode que
   salte fases, comprometa más de un brazo, observe el resultado antes de commit
-  o publique una tabla de brazos sin límites comprobados.
+  o publique una tabla de brazos sin límites comprobados. Evidencia: HIR
+  ejecutable `Select` con operaciones por brazo, wrappers `?` reproducidos en
+  el cuerpo ganador; MIR y bytecode con protocolo de fases
+  `BeginSelect → RegisterSelectArm×N → CommitSelect` (capacidad ≤64 verificada)
+  y análisis de flujo dedicado en ambos verificadores que rechaza regiones
+  reentradas, registros fuera de orden, instrucciones interleaved antes del
+  commit, tablas que no coinciden con los registros y commits huérfanos; tests
+  positivos de desensamblado y negativos de bytecode forjado en
+  `bytecode/lower.rs`. El selector cooperativo permanece en
+  `ASYNC-SELECT-RUNTIME-001`: la VM mantiene registro de región y frontera
+  determinista hasta su aterrizaje.
 
 - [ ] **ASYNC-SELECT-RUNTIME-001 — Implementar el selector cooperativo.** Usar
   un registro idempotente por brazo, arbitraje único y fairness rotatoria sin

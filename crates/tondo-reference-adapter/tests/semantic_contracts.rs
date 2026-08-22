@@ -618,6 +618,91 @@ fn semantic_queries_and_snapshot_cover_advanced_language_contracts_end_to_end() 
     );
 }
 
+const SELECT_SNAPSHOT_SOURCE: &str = "\
+fn ready(): Int selectable {
+    1
+}
+
+fn work(): Int suspends {
+    4
+}
+
+fn prepare(): Join[Int, Never] {
+    scope {
+        return spawn work()
+    }
+}
+
+fn run(): Int suspends {
+    let pending = prepare()
+    let selected = select {
+        ready() => 1
+        await pending => 4
+        else => 0
+    }
+    _ = selected
+    let done = await pending
+    done
+}
+";
+
+#[test]
+fn semantic_snapshot_reports_select_registration_events() {
+    let action = WireSourceAction {
+        operation: WireOperation::Check,
+        form: WireSourceForm::Module,
+        root: "select.to".into(),
+        sources: vec![WireSource {
+            source_id: "test:semantic-select".into(),
+            module: "main".into(),
+            logical_path: "select.to".into(),
+            contents_hex: tondo_conformance::encode_hex(SELECT_SNAPSHOT_SOURCE.as_bytes()),
+        }],
+        warning_profiles: Vec::new(),
+        arguments: Vec::new(),
+        gc_threshold: None,
+        include_interface: false,
+    };
+    let request = AdapterRequest::new(
+        7,
+        "semantic-select",
+        TargetSelection {
+            name: "tondo-vm-hosted".into(),
+            profile: "hosted".into(),
+            capabilities: vec!["console".into(), "process".into()],
+        },
+        AdapterAction::Semantic(WireSemanticAction {
+            source: action,
+            queries: vec![SemanticQuery::SemanticSnapshot {
+                file: "select.to".into(),
+            }],
+        }),
+    );
+
+    let response = ReferenceAdapter.handle(&request);
+    let AdapterResult::Ok { observation } = response.result else {
+        panic!("select semantic request must succeed: {response:#?}");
+    };
+    assert_eq!(
+        observation.compilation,
+        CompilationState::Success,
+        "{:#?}",
+        observation.diagnostics
+    );
+    let snapshot = &observation.data["queries"][0];
+    assert_eq!(snapshot["schema"], "tondo-semantic-snapshot-0.1/1");
+    assert!(
+        snapshot["ownership"]["functions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|function| function["affine_values"].as_array().unwrap())
+            .flat_map(|value| value["events"].as_array().unwrap())
+            .any(|event| event["cause"] == "select-register"),
+        "select registration events are missing: {snapshot}"
+    );
+}
+
 fn occurrence_span(source: &str, needle: &str, occurrence: usize) -> (u32, u32) {
     let start = source
         .match_indices(needle)

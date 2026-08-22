@@ -80,6 +80,13 @@ pub struct MirProgram {
 }
 
 impl MirProgram {
+    /// Test-only mutable access for verifier fixtures that forge malformed
+    /// MIR shapes.
+    #[cfg(test)]
+    pub fn functions_mut_for_tests(&mut self) -> &mut BTreeMap<MirFunctionId, MirFunction> {
+        &mut self.functions
+    }
+
     pub fn functions(&self) -> impl ExactSizeIterator<Item = &MirFunction> {
         self.functions.values()
     }
@@ -114,6 +121,12 @@ pub struct MirFunction {
 }
 
 impl MirFunction {
+    /// Test-only mutable access for verifier fixtures.
+    #[cfg(test)]
+    pub fn blocks_mut_for_tests(&mut self) -> &mut Vec<MirBasicBlock> {
+        &mut self.blocks
+    }
+
     pub fn id(&self) -> MirFunctionId {
         self.id
     }
@@ -267,6 +280,18 @@ pub struct MirBasicBlock {
 }
 
 impl MirBasicBlock {
+    /// Test-only mutable access for verifier fixtures.
+    #[cfg(test)]
+    pub fn statements_mut_for_tests(&mut self) -> &mut Vec<MirStatement> {
+        &mut self.statements
+    }
+
+    /// Test-only mutable access for verifier fixtures.
+    #[cfg(test)]
+    pub fn set_terminator_for_tests(&mut self, terminator: MirTerminator) {
+        self.terminator = terminator;
+    }
+
     pub fn kind(&self) -> MirBlockKind {
         self.kind
     }
@@ -323,6 +348,50 @@ pub enum MirStatementKind {
         to: MirPlace,
     },
     DisarmCleanup(MirPlace),
+    BeginSelect {
+        capacity: u32,
+    },
+    RegisterSelectArm {
+        index: u32,
+        registration: MirSelectRegistration,
+    },
+}
+
+/// One arm registration of a selection region.  A selectable call enters
+/// its prepare phase; a pending `Join` observes its owner place without
+/// consuming it — losers are restored and the winner commits, so
+/// branch-sensitive moves stay with `ASYNC-SELECT-OWN-001`.
+#[derive(Debug, Clone)]
+pub enum MirSelectRegistration {
+    Call(MirOperation),
+    Join(MirPlace),
+}
+
+/// Upper bound on selectable arms per selection region.  The lowering emits
+/// one registration per source arm; both MIR and bytecode verifiers reject
+/// regions whose arm table exceeds this checked bound.
+pub const MAX_SELECT_ARMS: u32 = 64;
+
+/// One committed winner of a selection region: where the operation payload
+/// lands (when the arm binds it) and which block runs the arm body.
+#[derive(Debug, Clone)]
+pub struct MirSelectArm {
+    payload: Option<MirPlace>,
+    target: MirBlockId,
+}
+
+impl MirSelectArm {
+    pub fn new(payload: Option<MirPlace>, target: MirBlockId) -> Self {
+        Self { payload, target }
+    }
+
+    pub fn payload(&self) -> Option<&MirPlace> {
+        self.payload.as_ref()
+    }
+
+    pub fn target(&self) -> MirBlockId {
+        self.target
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -829,6 +898,11 @@ pub enum MirTerminatorKind {
     },
     DrainUnwind {
         target: MirBlockId,
+    },
+    CommitSelect {
+        arms: Vec<MirSelectArm>,
+        else_target: Option<MirBlockId>,
+        unwind: MirBlockId,
     },
     Return,
     ResumePanic,

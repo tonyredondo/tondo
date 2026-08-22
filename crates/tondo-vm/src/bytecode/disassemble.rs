@@ -160,6 +160,23 @@ fn instruction_text(instruction: &BytecodeInstructionKind) -> String {
         BytecodeInstructionKind::DisarmCleanup(place) => {
             format!("disarm_cleanup {}", place_text(place))
         }
+        BytecodeInstructionKind::BeginSelect { capacity } => {
+            format!("begin_select arms<={capacity}")
+        }
+        BytecodeInstructionKind::RegisterSelectArm {
+            index,
+            registration,
+        } => format!(
+            "register_select_arm #{index} {:?}",
+            match registration {
+                BytecodeSelectRegistration::Call(operation) => {
+                    format!("call {:?}", operation.kind)
+                }
+                BytecodeSelectRegistration::Join(place) => {
+                    format!("join {}", place_text(place))
+                }
+            }
+        ),
     }
 }
 
@@ -290,6 +307,22 @@ fn terminator_text(terminator: &BytecodeTerminatorKind) -> String {
             target.index(),
             unwind.index()
         ),
+        BytecodeTerminatorKind::CommitSelect {
+            arms,
+            else_target,
+            unwind,
+        } => format!(
+            "commit_select arms={} else={} unwind b{} -> {:?}",
+            arms.len(),
+            else_target.map(|target| target.index()).unwrap_or(u32::MAX),
+            unwind.index(),
+            arms.iter()
+                .map(|arm| (
+                    arm.payload().map(|payload| place_text(payload)),
+                    arm.target().index()
+                ))
+                .collect::<Vec<_>>()
+        ),
         BytecodeTerminatorKind::DrainUnwind { target } => {
             format!("drain_unwind -> b{}", target.index())
         }
@@ -379,6 +412,11 @@ mod tests {
                 to: place(),
             },
             BytecodeInstructionKind::DisarmCleanup(place()),
+            BytecodeInstructionKind::BeginSelect { capacity: 2 },
+            BytecodeInstructionKind::RegisterSelectArm {
+                index: 0,
+                registration: BytecodeSelectRegistration::Join(place()),
+            },
         ];
         for instruction in &instructions {
             assert!(!instruction_text(instruction).is_empty());
@@ -458,6 +496,11 @@ mod tests {
                 unwind: block,
             },
             BytecodeTerminatorKind::DrainUnwind { target: block },
+            BytecodeTerminatorKind::CommitSelect {
+                arms: vec![BytecodeSelectArm::new(Some(place()), block)],
+                else_target: Some(block),
+                unwind: block,
+            },
             BytecodeTerminatorKind::Return,
             BytecodeTerminatorKind::ResumePanic,
             BytecodeTerminatorKind::Unreachable,

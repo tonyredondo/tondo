@@ -33,10 +33,11 @@ use super::{
     HirGenericParameter, HirIndexAccess, HirIterationProtocol, HirLiteral, HirLoopId, HirMapEntry,
     HirMatchArm, HirMatchMode, HirMemberReference, HirNominalShape, HirParameter, HirPattern,
     HirPatternField, HirPatternId, HirPatternKind, HirPrefixOperator, HirPreludeTraitMethod,
-    HirProgram, HirRangeKind, HirRecordFieldValue, HirScopeId, HirSerializationTraitMethod,
-    HirSpawnKind, HirStatement, HirTraitConstructor, HirTypeDeclarationKind, HirValueCategory,
-    HirVariantPayload, HirVariantValue, HirWriteKind, TerminalAnalysis, TraitQuery,
-    TraitSelectionError, analyze_availability, analyze_closure_captures, select_implementation,
+    HirProgram, HirRangeKind, HirRecordFieldValue, HirScopeId, HirSelectArm,
+    HirSerializationTraitMethod, HirSpawnKind, HirStatement, HirTraitConstructor,
+    HirTypeDeclarationKind, HirValueCategory, HirVariantPayload, HirVariantValue, HirWriteKind,
+    TerminalAnalysis, TraitQuery, TraitSelectionError, analyze_availability,
+    analyze_closure_captures, select_implementation,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2439,6 +2440,15 @@ impl<'a> ExpressionChecker<'a> {
                 ),
                 HirExpressionKind::Await { operation }
                 | HirExpressionKind::Spawn { operation, .. } => pending.push(*operation),
+                HirExpressionKind::Select { arms, else_body } => {
+                    for arm in arms {
+                        pending.push(arm.operation());
+                        pending.push(arm.body());
+                    }
+                    if let Some(else_body) = else_body {
+                        pending.push(*else_body);
+                    }
+                }
                 HirExpressionKind::Scope { body } => pending.push(*body),
                 HirExpressionKind::PreludePanic { message } => pending.push(*message),
                 HirExpressionKind::PreludeAssert {
@@ -2837,7 +2847,9 @@ impl<'a> ExpressionChecker<'a> {
         context: &mut BodyContext,
     ) -> Result<HirExpressionId, HirError> {
         let span = self.sources.span(file, node.range())?;
+        let diagnostics_before = self.diagnostics.len();
         if context.no_suspend {
+            self.complete = false;
             self.emit(
                 span,
                 "E1601",
@@ -2867,6 +2879,7 @@ impl<'a> ExpressionChecker<'a> {
         debug_assert!(!operation_arms.is_empty());
         debug_assert!(else_arms.len() <= 1);
         let mut valid = true;
+        let mut arm_pieces = Vec::with_capacity(operation_arms.len());
 
         let mut bodies = Vec::with_capacity(operation_arms.len() + else_arms.len());
         for arm in operation_arms {
@@ -2904,6 +2917,7 @@ impl<'a> ExpressionChecker<'a> {
 
             let operation_type = self.expression_type(operation);
             let mut arm_context = context.clone();
+            let mut pattern_id = None;
             if let Some(pattern_node) = pattern_node {
                 let checked = self.check_pattern(
                     file,
@@ -2928,6 +2942,7 @@ impl<'a> ExpressionChecker<'a> {
                     )?;
                     valid = false;
                 }
+                pattern_id = Some(checked.id);
             }
             let body = if let Some(body_node) = expressions.get(1).copied() {
                 self.check_expression(file, body_node, expected, &mut arm_context)?
@@ -2951,8 +2966,14 @@ impl<'a> ExpressionChecker<'a> {
                 }
             };
             bodies.push(body);
+            arm_pieces.push(HirSelectArm {
+                operation,
+                pattern: pattern_id,
+                body,
+            });
         }
 
+        let mut else_body = None;
         for arm in else_arms {
             let mut arm_context = context.clone();
             let body = if let Some(body_node) = arm
@@ -2980,6 +3001,7 @@ impl<'a> ExpressionChecker<'a> {
                 }
             };
             bodies.push(body);
+            else_body = Some(body);
         }
 
         let diverges = bodies.is_empty()
@@ -2994,16 +3016,32 @@ impl<'a> ExpressionChecker<'a> {
             self.join_select_body_types(file, node.range(), &mut bodies)?
         };
 
-        // The lowering block owns the executable select node.  Keeping a
-        // recovery expression here lets the semantic pass validate effects,
-        // patterns and body types without pretending that VM lowering exists.
-        self.complete = false;
-        if !valid {
-            return self.recovery_expression(file, node.range());
+        // A semantically valid, diagnostic-free select lowers to an
+        // executable HIR node; the MIR lowering owns its phase protocol.
+        // Any error keeps the recovery path so diagnostics stay the single
+        // failure signal.
+        let had_errors = self.diagnostics[diagnostics_before..]
+            .iter()
+            .any(|diagnostic| diagnostic.severity() == Severity::Error);
+        if !valid || had_errors {
+            self.complete = false;
+            let recovery = self.recovery_expression(file, node.range())?;
+            self.program.expressions[recovery.index() as usize].ty = ty;
+            return Ok(recovery);
         }
-        let recovery = self.recovery_expression(file, node.range())?;
-        self.program.expressions[recovery.index() as usize].ty = ty;
-        Ok(recovery)
+        for (index, piece) in arm_pieces.iter_mut().enumerate() {
+            piece.body = bodies[index];
+        }
+        let else_body = else_body.map(|_| bodies[arm_pieces.len()]);
+        self.allocate_expression(HirExpression {
+            span,
+            ty,
+            category: HirValueCategory::Value,
+            kind: HirExpressionKind::Select {
+                arms: arm_pieces,
+                else_body,
+            },
+        })
     }
 
     fn select_operation_is_valid(&self, operation: HirExpressionId) -> Result<bool, HirError> {
@@ -21454,6 +21492,29 @@ impl<'a> ExpressionChecker<'a> {
                 };
                 summary
             }
+            HirExpressionKind::Select { arms, else_body } => {
+                let mut summary = FlowSummary::completes();
+                let mut may_complete = false;
+                let bodies_iter = arms
+                    .iter()
+                    .map(|arm| arm.body())
+                    .chain(else_body.iter().copied());
+                for body in bodies_iter {
+                    let body_summary = self.expression_summary(body);
+                    summary.breaks.extend(body_summary.breaks);
+                    may_complete |= body_summary.flow.may_complete();
+                }
+                if !may_complete {
+                    for arm in arms {
+                        let operation = self.expression_summary(arm.operation());
+                        summary.breaks.extend(operation.breaks);
+                    }
+                    summary.flow = HirFlow::Diverges;
+                    return summary;
+                }
+                summary.flow = HirFlow::MayComplete;
+                summary
+            }
             HirExpressionKind::Return { value } => {
                 let mut summary = value
                     .map(|value| self.expression_summary(value))
@@ -21804,6 +21865,15 @@ fn closure_protocol_expression_children(kind: &HirExpressionKind) -> Vec<HirExpr
         | HirExpressionKind::Block { .. }
         | HirExpressionKind::Call { .. }
         | HirExpressionKind::AsyncCall { .. } => {}
+        HirExpressionKind::Select { arms, else_body } => {
+            for arm in arms {
+                children.push(arm.operation());
+                children.push(arm.body());
+            }
+            if let Some(else_body) = else_body {
+                children.push(*else_body);
+            }
+        }
         HirExpressionKind::InterpolatedString { values, .. }
         | HirExpressionKind::Tuple(values)
         | HirExpressionKind::Array(values)
@@ -23506,7 +23576,7 @@ mod tests {
             "{:#?}",
             output.diagnostics()
         );
-        assert!(!output.is_complete());
+        assert!(output.is_complete());
         let ready = output
             .program()
             .callables()
@@ -23566,7 +23636,7 @@ mod tests {
             "{:#?}",
             output.diagnostics()
         );
-        assert!(!output.is_complete());
+        assert!(output.is_complete());
 
         for attribute in ["sync", "nosuspend"] {
             let source = format!(
@@ -23662,7 +23732,7 @@ mod tests {
             "{:#?}",
             output.diagnostics()
         );
-        assert!(!output.is_complete());
+        assert!(output.is_complete());
     }
 
     #[test]
@@ -23702,7 +23772,7 @@ mod tests {
             "{:#?}",
             output.diagnostics()
         );
-        assert!(!output.is_complete());
+        assert!(output.is_complete());
     }
 
     #[test]
@@ -23735,7 +23805,7 @@ mod tests {
             "{:#?}",
             output.diagnostics()
         );
-        assert!(!output.is_complete());
+        assert!(output.is_complete());
     }
 
     #[test]
@@ -23769,7 +23839,7 @@ mod tests {
             "{:#?}",
             output.diagnostics()
         );
-        assert!(!output.is_complete());
+        assert!(output.is_complete());
     }
 
     #[test]
@@ -23788,7 +23858,7 @@ mod tests {
             "{:#?}",
             result.diagnostics()
         );
-        assert!(!result.is_complete());
+        assert!(result.is_complete());
 
         let (_, _, invalid) = check(
             "fn invalid(): Int {\n\
@@ -23895,7 +23965,7 @@ mod tests {
             "{:#?}",
             output.diagnostics()
         );
-        assert!(!output.is_complete());
+        assert!(output.is_complete());
     }
 
     #[test]

@@ -22,10 +22,18 @@ use super::{
     MirBootstrapHostFunction, MirCallArgument, MirConstant, MirError, MirFunction, MirFunctionId,
     MirLoan, MirLoanId, MirLoanKind, MirLocal, MirLocalId, MirLocalKind, MirOperand,
     MirOperandKind, MirOperation, MirOperationKind, MirPlace, MirProgram, MirProjection,
-    MirProjectionKind, MirRvalue, MirRvalueKind, MirSliceBounds, MirStatement, MirStatementKind,
-    MirTag, MirTerminator, MirTerminatorKind, MirVerificationLimits,
+    MirProjectionKind, MirRvalue, MirRvalueKind, MirSelectArm, MirSelectRegistration,
+    MirSliceBounds, MirStatement,
+    MirStatementKind, MirTag, MirTerminator, MirTerminatorKind, MirVerificationLimits,
     verify_mir_with_capability_analysis, verify_mir_with_limits,
 };
+
+/// Propagate wrapper replayed over a select arm payload before binding.
+#[derive(Debug, Clone, Copy)]
+enum SelectWrapper {
+    Option { item_ty: TypeId },
+    Result { success_ty: TypeId, error_coercion: crate::types::Assignability },
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MirLoweringLimits {
@@ -154,6 +162,7 @@ pub fn lower_to_mir(
     }
     Ok(program)
 }
+
 
 struct OpenBlock {
     kind: MirBlockKind,
@@ -1187,6 +1196,9 @@ impl<'a> FunctionBuilder<'a> {
                 span,
                 message: "an async call escaped its await or spawn owner".into(),
             }),
+            HirExpressionKind::Select { arms, else_body } => {
+                self.lower_select(arms, *else_body, span, destination, block)
+            }
             HirExpressionKind::Await { operation } => {
                 let operation_expression = self.expression(*operation)?.clone();
                 let (current, awaitable) = match operation_expression.kind() {
@@ -4420,6 +4432,251 @@ impl<'a> FunctionBuilder<'a> {
         Ok(Some(join))
     }
 
+    /// Lowers a verified `select` expression into its phase protocol:
+    /// `BeginSelect` opens the region, one `RegisterSelectArm` per arm
+    /// registers left to right, and `CommitSelect` waits for exactly one
+    /// winner (or takes the non-blocking `else` snapshot), writes the
+    /// winner payload and jumps to the arm body.  Arm bodies replay any
+    /// propagate wrappers over the raw payload before binding it.
+    fn lower_select(
+        &mut self,
+        arms: &[crate::hir::HirSelectArm],
+        else_body: Option<HirExpressionId>,
+        span: Span,
+        destination: MirPlace,
+        block: MirBlockId,
+    ) -> Result<Option<MirBlockId>, MirError> {
+        if arms.len() > crate::mir::MAX_SELECT_ARMS as usize {
+            return Err(MirError::Construction {
+                span,
+                message: format!(
+                    "select has {} arms; the verified limit is {}",
+                    arms.len(),
+                    crate::mir::MAX_SELECT_ARMS
+                ),
+            });
+        }
+        let mut current = block;
+        self.push_statement(
+            current,
+            span,
+            MirStatementKind::BeginSelect {
+                capacity: arms.len() as u32,
+            },
+        )?;
+
+        let mut registrations = Vec::with_capacity(arms.len());
+        let mut body_blocks = Vec::with_capacity(arms.len());
+        for (index, piece) in arms.iter().enumerate() {
+            let operation = self.expression(piece.operation())?.clone();
+            let (inner_id, _wrappers) = self.select_registration(piece.operation())?;
+            let inner = self.expression(inner_id)?.clone();
+            enum EitherRegistration {
+                Call(MirOperation),
+                Join(MirPlace),
+            }
+            let awaitable = match inner.kind() {
+                HirExpressionKind::AsyncCall {
+                    callee,
+                    arguments,
+                    signature,
+                    protocol,
+                    unsafe_call,
+                } => {
+                    let Some((next, registered)) = self.lower_call_operation(
+                        *callee,
+                        arguments,
+                        *signature,
+                        *protocol,
+                        *unsafe_call,
+                        inner.ty(),
+                        current,
+                    )?
+                    else {
+                        return Ok(None);
+                    };
+                    current = next;
+                    for place in operation_move_places(&registered) {
+                        self.push_statement(
+                            current,
+                            span,
+                            MirStatementKind::DisarmCleanup(place),
+                        )?;
+                    }
+                    EitherRegistration::Call(registered)
+                }
+                HirExpressionKind::Await { operation } => {
+                    // Registration observes the pending handle's owner place
+                    // without consuming it: losers are restored and only the
+                    // winner commits.  Branch-sensitive moves land with
+                    // ASYNC-SELECT-OWN-001.
+                    let operand = self.expression(*operation)?;
+                    let HirExpressionKind::Local(local) = operand.kind() else {
+                        return Err(MirError::Construction {
+                            span,
+                            message: "a select arm must await a materialized local `Join`"
+                                .into(),
+                        });
+                    };
+                    EitherRegistration::Join(self.source_place(*local, span)?)
+                }
+                _ => {
+                    return Err(MirError::Construction {
+                        span,
+                        message: "select arm operation is neither a selectable call nor an await over Join".into(),
+                    });
+                }
+            };
+            self.push_statement(
+                current,
+                span,
+                MirStatementKind::RegisterSelectArm {
+                    index: index as u32,
+                    registration: match awaitable {
+                        EitherRegistration::Call(operation) => {
+                            MirSelectRegistration::Call(operation)
+                        }
+                        EitherRegistration::Join(place) => MirSelectRegistration::Join(place),
+                    },
+                },
+            )?;
+            registrations.push((operation.ty(), inner.ty()));
+        }
+
+        let unwind = self.current_unwind(span)?;
+        let mut payload_places = Vec::with_capacity(arms.len());
+        let mut commit_arms = Vec::with_capacity(arms.len());
+        for (_, raw_ty) in &registrations {
+            let local = self.allocate_temporary(*raw_ty, span, current)?;
+            let payload = self.local_place(local);
+            let target = self.allocate_block(MirBlockKind::Normal)?;
+            payload_places.push(payload.clone());
+            commit_arms.push(MirSelectArm::new(Some(payload), target));
+            body_blocks.push(target);
+        }
+        let else_target = match else_body {
+            Some(_) => Some(self.allocate_block(MirBlockKind::Normal)?),
+            None => None,
+        };
+        let join = self.allocate_block(MirBlockKind::Normal)?;
+        self.terminate(
+            current,
+            span,
+            MirTerminatorKind::CommitSelect {
+                arms: commit_arms,
+                else_target,
+                unwind,
+            },
+        )?;
+
+        for (index, piece) in arms.iter().enumerate() {
+            let payload = payload_places[index].clone();
+            let mut arm_block = body_blocks[index];
+            let (_, wrappers) = self.select_registration(piece.operation())?;
+            let mut operand = self.transfer_place(payload, span)?;
+            for wrapper in wrappers {
+                operand = match wrapper {
+                    SelectWrapper::Option { item_ty } => {
+                        // The propagate switch may exit the function; the
+                        // value path continues into the next replay stage.
+                        let staging = self.allocate_temporary(item_ty, span, arm_block)?;
+                        let staged = self.local_place(staging);
+                        let Some(next) = self
+                            .propagate_option_operand(
+                                operand, item_ty, span, staged, arm_block,
+                            )?
+                            else {
+                                return Ok(None);
+                            };
+                        arm_block = next;
+                        self.transfer_local(staging, span)?
+                    }
+                    SelectWrapper::Result {
+                        success_ty,
+                        error_coercion,
+                    } => {
+                        let staging = self.allocate_temporary(success_ty, span, arm_block)?;
+                        let staged = self.local_place(staging);
+                        let Some(next) = self.propagate_result_operand(
+                            operand,
+                            error_coercion,
+                            success_ty,
+                            span,
+                            staged,
+                            arm_block,
+                        )?
+                        else {
+                            return Ok(None);
+                        };
+                        arm_block = next;
+                        self.transfer_local(staging, span)?
+                    }
+                };
+            }
+            if let Some(pattern) = piece.pattern() {
+                let Some(next) = self.bind_irrefutable(pattern, operand, arm_block)? else {
+                    return Ok(None);
+                };
+                arm_block = next;
+            }
+            let Some(body_end) =
+                self.lower_expression(piece.body(), destination.clone(), arm_block)?
+            else {
+                return Ok(None);
+            };
+            self.terminate(body_end, span, MirTerminatorKind::Goto { target: join })?;
+        }
+
+        if let Some(else_body) = else_body {
+            let block = else_target.expect("else target allocated with an else body");
+            let Some(body_end) = self.lower_expression(else_body, destination.clone(), block)?
+            else {
+                return Ok(None);
+            };
+            self.terminate(body_end, span, MirTerminatorKind::Goto { target: join })?;
+        }
+
+        self.register_fallback(join, span, destination)?;
+        Ok(Some(join))
+    }
+
+    /// Unwraps propagate wrappers from a select arm operation, returning the
+    /// registrable expression (a selectable call or an `await` over `Join`)
+    /// together with the wrapper chain in outer-to-inner application order.
+    fn select_registration(
+        &self,
+        root: HirExpressionId,
+    ) -> Result<(HirExpressionId, Vec<SelectWrapper>), MirError> {
+        let mut wrappers = Vec::new();
+        let mut current = root;
+        loop {
+            let expression = self.expression(current)?;
+            match expression.kind() {
+                HirExpressionKind::PropagateOption { .. } => {
+                    wrappers.push(SelectWrapper::Option {
+                        item_ty: expression.ty(),
+                    });
+                }
+                HirExpressionKind::PropagateResult { error_coercion, .. } => {
+                    wrappers.push(SelectWrapper::Result {
+                        success_ty: expression.ty(),
+                        error_coercion: *error_coercion,
+                    });
+                }
+                _ => break,
+            }
+            let (
+                HirExpressionKind::PropagateOption { value }
+                | HirExpressionKind::PropagateResult { value, .. }
+            ) = self.expression(current)?.kind().clone()
+            else {
+                break;
+            };
+            current = value;
+        }
+        Ok((current, wrappers))
+    }
+
     fn lower_propagate_option(
         &mut self,
         value: HirExpressionId,
@@ -4431,6 +4688,17 @@ impl<'a> FunctionBuilder<'a> {
         let Some((block, option)) = self.lower_value(value, block)? else {
             return Ok(None);
         };
+        self.propagate_option_operand(option, item_ty, span, destination, block)
+    }
+
+    fn propagate_option_operand(
+        &mut self,
+        option: MirOperand,
+        item_ty: TypeId,
+        span: Span,
+        destination: MirPlace,
+        block: MirBlockId,
+    ) -> Result<Option<MirBlockId>, MirError> {
         let some = self.allocate_block(MirBlockKind::Normal)?;
         let none = self.allocate_block(MirBlockKind::Normal)?;
         self.terminate(
@@ -4529,6 +4797,25 @@ impl<'a> FunctionBuilder<'a> {
         let Some((block, result)) = self.lower_value(value, block)? else {
             return Ok(None);
         };
+        self.propagate_result_operand(
+            result,
+            error_coercion,
+            success_ty,
+            span,
+            destination,
+            block,
+        )
+    }
+
+    fn propagate_result_operand(
+        &mut self,
+        result: MirOperand,
+        error_coercion: crate::types::Assignability,
+        success_ty: TypeId,
+        span: Span,
+        destination: MirPlace,
+        block: MirBlockId,
+    ) -> Result<Option<MirBlockId>, MirError> {
         let result_owner = self.operand_place(&result, span)?.clone();
         let TypeKind::Result {
             success: source_success,
@@ -6000,6 +6287,23 @@ impl<'a> FunctionBuilder<'a> {
             MirTerminatorKind::DrainUnwind { target: next } => MirTerminatorKind::DrainUnwind {
                 target: target(self, next)?,
             },
+            MirTerminatorKind::CommitSelect {
+                arms,
+                else_target,
+                unwind,
+            } => MirTerminatorKind::CommitSelect {
+                arms: arms
+                    .into_iter()
+                    .map(|arm| {
+                        Ok(MirSelectArm::new(
+                            arm.payload.clone(),
+                            target(self, arm.target)?,
+                        ))
+                    })
+                    .collect::<Result<_, MirError>>()?,
+                else_target: else_target.map(|next| target(self, next)).transpose()?,
+                unwind,
+            },
             MirTerminatorKind::ValidateLoan {
                 loan,
                 against,
@@ -6676,7 +6980,9 @@ fn populate_runtime_loan_checks(
                 | MirStatementKind::RegisterDefer { .. }
                 | MirStatementKind::RegisterFallback { .. }
                 | MirStatementKind::RetargetCleanup { .. }
-                | MirStatementKind::DisarmCleanup(_) => {}
+                | MirStatementKind::DisarmCleanup(_)
+                | MirStatementKind::BeginSelect { .. } => {}
+                MirStatementKind::RegisterSelectArm { .. } => {}
             }
         }
 
@@ -6722,6 +7028,20 @@ fn populate_runtime_loan_checks(
                     propagate(*target, active.clone())?;
                 }
                 propagate(*otherwise, active)?;
+            }
+            MirTerminatorKind::CommitSelect {
+                arms,
+                else_target,
+                unwind,
+                ..
+            } => {
+                for arm in arms {
+                    propagate(arm.target(), active.clone())?;
+                }
+                if let Some(else_target) = else_target {
+                    propagate(*else_target, active.clone())?;
+                }
+                propagate(*unwind, active)?;
             }
             MirTerminatorKind::Invoke {
                 operation,
@@ -7107,6 +7427,16 @@ fn normal_successors(terminator: &MirTerminatorKind) -> Vec<MirBlockId> {
         | MirTerminatorKind::DrainDefers { target, .. }
         | MirTerminatorKind::DrainScopes { target, .. } => vec![*target],
         MirTerminatorKind::DrainUnwind { target } => vec![*target],
+        MirTerminatorKind::CommitSelect {
+            arms,
+            else_target,
+            unwind,
+        } => arms
+            .iter()
+            .map(|arm| arm.target())
+            .chain(else_target.iter().copied())
+            .chain([*unwind])
+            .collect(),
         MirTerminatorKind::Return
         | MirTerminatorKind::ResumePanic
         | MirTerminatorKind::Unreachable => Vec::new(),
@@ -7155,6 +7485,13 @@ fn collect_statement_region_uses(
         MirStatementKind::RegisterFallback { owner, .. } => {
             collect_place_region_uses(owner, loans, output);
         }
+        MirStatementKind::BeginSelect { .. } => {}
+        MirStatementKind::RegisterSelectArm { registration, .. } => match registration {
+            MirSelectRegistration::Call(operation) => {
+                collect_operation_region_uses(operation, loans, output);
+            }
+            MirSelectRegistration::Join(_) => {}
+        },
         MirStatementKind::RetargetCleanup { from, to } => {
             collect_place_region_uses(from, loans, output);
             collect_place_region_uses(to, loans, output);
@@ -7223,6 +7560,13 @@ fn collect_terminator_region_uses(
         } => {
             collect_operation_region_uses(operation, loans, output);
             collect_place_region_uses(destination, loans, output);
+        }
+        MirTerminatorKind::CommitSelect { arms, .. } => {
+            for arm in arms {
+                if let Some(payload) = arm.payload() {
+                    collect_place_region_uses(payload, loans, output);
+                }
+            }
         }
         MirTerminatorKind::IteratorNext {
             state,

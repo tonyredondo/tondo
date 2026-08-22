@@ -3270,6 +3270,7 @@ impl Verifier<'_> {
         }
         self.verify_control_and_dataflow(function, &context)?;
         self.verify_defer_flow(function, &context)?;
+        self.verify_select_flow(function, &context)?;
         self.verify_task_scope_flow(function, &context)?;
         self.verify_suspension_liveness(function, &context)?;
         Ok(())
@@ -3614,6 +3615,62 @@ impl Verifier<'_> {
                     }
                 }
             }
+            BytecodeInstructionKind::BeginSelect { capacity } => {
+                if block_kind != BytecodeBlockKind::Normal
+                    || !self.function_is_async(function, context)?
+                {
+                    return Err(BytecodeVerificationError::new(
+                        context,
+                        "select registration appears outside ordinary async code",
+                    ));
+                }
+                if *capacity == 0 || *capacity > MAX_SELECT_ARMS {
+                    return Err(BytecodeVerificationError::new(
+                        context,
+                        format!(
+                            "select region declares {capacity} arms outside the checked bound 1..={MAX_SELECT_ARMS}"
+                        ),
+                    ));
+                }
+            }
+            BytecodeInstructionKind::RegisterSelectArm {
+                    registration,
+                    ..
+                } => {
+                    if block_kind != BytecodeBlockKind::Normal
+                        || !self.function_is_async(function, context)?
+                    {
+                        return Err(BytecodeVerificationError::new(
+                            context,
+                            "select registration appears outside ordinary async code",
+                        ));
+                    }
+                    match registration {
+                        BytecodeSelectRegistration::Call(operation) => {
+                            self.verify_operation(
+                                function,
+                                operation,
+                                OperationContext::Await,
+                                context,
+                            )?;
+                        }
+                        BytecodeSelectRegistration::Join(place) => {
+                            self.verify_place(function, place, context)?;
+                            if !matches!(
+                                self.ty(place.ty, context)?.kind,
+                                BytecodeTypeKind::Intrinsic {
+                                    constructor: BytecodeIntrinsicType::Join,
+                                    ..
+                                }
+                            ) {
+                                return Err(BytecodeVerificationError::new(
+                                    context,
+                                    "select registered a non-Join handle",
+                                ));
+                            }
+                        }
+                    }
+                }
             BytecodeInstructionKind::RegisterFallback { owner, .. } => {
                 if block_kind != BytecodeBlockKind::Normal {
                     return Err(BytecodeVerificationError::new(
@@ -6375,6 +6432,42 @@ impl Verifier<'_> {
                 self.normal_target(function, *target, context)?;
                 self.cleanup_target(function, *unwind, context)?;
             }
+            BytecodeTerminatorKind::CommitSelect {
+                arms,
+                else_target,
+                unwind,
+            } => {
+                if block.kind != BytecodeBlockKind::Normal
+                    || !self.function_is_async(function, context)?
+                {
+                    return Err(terminator_error(context));
+                }
+                if arms.is_empty() || arms.len() > MAX_SELECT_ARMS as usize {
+                    return Err(BytecodeVerificationError::new(
+                        context,
+                        format!(
+                            "commit table has {} arms outside the checked bound 1..={MAX_SELECT_ARMS}",
+                            arms.len()
+                        ),
+                    ));
+                }
+                for arm in arms {
+                    if let Some(payload) = arm.payload() {
+                        self.verify_place(function, payload, context)?;
+                        if place_contains_ref_value(payload) {
+                            return Err(BytecodeVerificationError::new(
+                                context,
+                                "`Ref[T].value` is a read-only projection",
+                            ));
+                        }
+                    }
+                    self.normal_target(function, arm.target(), context)?;
+                }
+                if let Some(else_target) = else_target {
+                    self.normal_target(function, *else_target, context)?;
+                }
+                self.cleanup_target(function, *unwind, context)?;
+            }
             BytecodeTerminatorKind::Spawn {
                 operation,
                 destination,
@@ -6843,6 +6936,89 @@ impl Verifier<'_> {
         Ok(())
     }
 
+    /// Selection phase protocol: within a block, `BeginSelect` opens a
+    /// region, exactly `capacity` `RegisterSelectArm` steps follow in order,
+    /// and only `CommitSelect` may close it.  Nothing else — statements or
+    /// terminators — may run while a region is open, so phases cannot be
+    /// skipped, arms cannot commit twice, the payload cannot be observed
+    /// before commit, and arm tables stay inside their checked bound.
+    fn verify_select_flow(
+        &self,
+        function: &BytecodeFunction,
+        context: &str,
+    ) -> Result<(), BytecodeVerificationError> {
+        for (block_index, block) in function.blocks.iter().enumerate() {
+            let block_context = format!("{context} block#{block_index}");
+            let mut open: Option<(u32, u32)> = None;
+            for (sequence, instruction) in block.instructions.iter().enumerate() {
+                let statement_context = format!("{block_context} instruction#{sequence}");
+                match &instruction.kind {
+                    BytecodeInstructionKind::BeginSelect { capacity } => {
+                        if open.is_some() {
+                            return Err(BytecodeVerificationError::new(
+                                &statement_context,
+                                "selection region is re-entered before its commit",
+                            ));
+                        }
+                        open = Some((*capacity, 0));
+                    }
+                    BytecodeInstructionKind::RegisterSelectArm { index, .. } => {
+                        let Some((capacity, registered)) = &mut open else {
+                            return Err(BytecodeVerificationError::new(
+                                &statement_context,
+                                "select arm registration outside a selection region",
+                            ));
+                        };
+                        if *index != *registered {
+                            return Err(BytecodeVerificationError::new(
+                                &statement_context,
+                                "select arm registration skips or duplicates a phase",
+                            ));
+                        }
+                        *registered += 1;
+                        if *registered > *capacity {
+                            return Err(BytecodeVerificationError::new(
+                                &statement_context,
+                                "select registrations exceed the declared arm bound",
+                            ));
+                        }
+                    }
+                    _ if open.is_some() => {
+                        return Err(BytecodeVerificationError::new(
+                            &statement_context,
+                            "only arm registration may appear inside a selection region",
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+            match &block.terminator.kind {
+                BytecodeTerminatorKind::CommitSelect { arms, .. } => {
+                    let Some((capacity, registered)) = open else {
+                        return Err(BytecodeVerificationError::new(
+                            &block_context,
+                            "select commit has no open selection region",
+                        ));
+                    };
+                    if arms.len() as u32 != registered || registered != capacity {
+                        return Err(BytecodeVerificationError::new(
+                            &block_context,
+                            "select commit table does not match its registered arms",
+                        ));
+                    }
+                }
+                _ if open.is_some() => {
+                    return Err(BytecodeVerificationError::new(
+                        &block_context,
+                        "selection region reaches a terminator before its commit",
+                    ));
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
     fn verify_defer_flow(
         &self,
         function: &BytecodeFunction,
@@ -6860,7 +7036,7 @@ impl Verifier<'_> {
                 )
             })
             .filter_map(|instruction| match &instruction.kind {
-                BytecodeInstructionKind::RegisterFallback { owner, .. } => {
+            BytecodeInstructionKind::RegisterFallback { owner, .. } => {
                     Some(LocalAccess::from_place(owner))
                 }
                 _ => None,
@@ -7061,6 +7237,8 @@ impl Verifier<'_> {
                                 },
                             );
                         }
+                        BytecodeInstructionKind::BeginSelect { .. }
+                        | BytecodeInstructionKind::RegisterSelectArm { .. } => {}
                         BytecodeInstructionKind::RetargetCleanup { from, to } => {
                             let from = LocalAccess::from_place(from);
                             let to = LocalAccess::from_place(to);
@@ -7282,6 +7460,7 @@ impl Verifier<'_> {
                     | BytecodeTerminatorKind::DrainDefers { .. }
                     | BytecodeTerminatorKind::DrainScopes { .. }
                     | BytecodeTerminatorKind::DrainUnwind { .. }
+                    | BytecodeTerminatorKind::CommitSelect { .. }
                     | BytecodeTerminatorKind::Return
                     | BytecodeTerminatorKind::ResumePanic
                     | BytecodeTerminatorKind::Unreachable => {}
@@ -7763,7 +7942,41 @@ impl Verifier<'_> {
                     propagate(*target, state)?;
                     propagate(*unwind, LoanFlowState::default())?;
                 }
-                BytecodeTerminatorKind::Spawn {
+                BytecodeTerminatorKind::CommitSelect {
+                    arms,
+                    else_target,
+                    unwind,
+                } => {
+                    for loan in &state.active {
+                        if self.loan(function, *loan, &block_context)?.mode
+                            != BytecodeParameterMode::Ref
+                        {
+                            return Err(BytecodeVerificationError::new(
+                                &block_context,
+                                "exclusive loan crosses a select suspension",
+                            ));
+                        }
+                    }
+                    for arm in arms {
+                        let edge_state = state.clone();
+                        if let Some(payload) = arm.payload() {
+                            self.verify_loan_local_access(
+                                function,
+                                &static_integers,
+                                &edge_state.active,
+                                &LocalEvent::Write(LocalAccess::from_place(payload)),
+                                None,
+                                &block_context,
+                            )?;
+                        }
+                        propagate(arm.target(), edge_state)?;
+                    }
+                    if let Some(else_target) = else_target {
+                        propagate(*else_target, state.clone())?;
+                    }
+                    propagate(*unwind, LoanFlowState::default())?;
+                }
+            BytecodeTerminatorKind::Spawn {
                     destination,
                     target,
                     unwind,
@@ -10106,7 +10319,18 @@ fn bytecode_loan_events(function: &BytecodeFunction, block: &BytecodeBlock) -> V
             }
             BytecodeInstructionKind::EnterTaskScope { .. }
             | BytecodeInstructionKind::RetargetCleanup { .. }
-            | BytecodeInstructionKind::DisarmCleanup(_) => {}
+            | BytecodeInstructionKind::DisarmCleanup(_)
+            | BytecodeInstructionKind::BeginSelect { .. } => {}
+            BytecodeInstructionKind::RegisterSelectArm {
+                registration,
+                ..
+            } => {
+                let mut local = Vec::new();
+                if let BytecodeSelectRegistration::Call(operation) = registration {
+                    push_operation_events(operation, &mut local);
+                }
+                events.extend(local.into_iter().map(LoanEvent::Local));
+            },
         }
     }
     let mut local = Vec::new();
@@ -10136,6 +10360,13 @@ fn bytecode_loan_events(function: &BytecodeFunction, block: &BytecodeBlock) -> V
             BytecodeAwaitable::Call(operation) => push_operation_events(operation, &mut local),
             BytecodeAwaitable::Join(join) => push_operand_events(join, &mut local),
         },
+        BytecodeTerminatorKind::CommitSelect { arms, .. } => {
+            for arm in arms {
+                if let Some(payload) = arm.payload() {
+                    push_destination_events(payload, &mut local);
+                }
+            }
+        }
         BytecodeTerminatorKind::Spawn { operation, .. } => {
             push_operation_events(operation, &mut local);
         }
@@ -10305,6 +10536,29 @@ fn successor_edges(terminator: &BytecodeTerminatorKind) -> Vec<SuccessorEdge> {
         | BytecodeTerminatorKind::DrainDefers { target, unwind, .. }
         | BytecodeTerminatorKind::DrainScopes { target, unwind, .. } => {
             vec![edge(*target), edge(*unwind)]
+        }
+        BytecodeTerminatorKind::CommitSelect {
+            arms,
+            else_target,
+            unwind,
+        } => {
+            let mut successors = Vec::new();
+            for arm in arms {
+                if let Some(payload) = arm.payload() {
+                    successors.push(SuccessorEdge {
+                        target: arm.target(),
+                        refinement: None,
+                        writes: Some(payload.clone()),
+                    });
+                } else {
+                    successors.push(edge(arm.target()));
+                }
+            }
+            for target in else_target.iter().copied() {
+                successors.push(edge(target));
+            }
+            successors.push(edge(*unwind));
+            successors
         }
         BytecodeTerminatorKind::DrainUnwind { target } => vec![edge(*target)],
         BytecodeTerminatorKind::Return
@@ -10876,6 +11130,13 @@ fn static_integer_slots(
             | BytecodeTerminatorKind::Await { destination, .. }
             | BytecodeTerminatorKind::Spawn { destination, .. }
             | BytecodeTerminatorKind::IteratorNext { destination, .. } => record(destination, None),
+            BytecodeTerminatorKind::CommitSelect { arms, .. } => {
+                for arm in arms {
+                    if let Some(payload) = arm.payload() {
+                        record(payload, None);
+                    }
+                }
+            }
             BytecodeTerminatorKind::Goto { .. }
             | BytecodeTerminatorKind::BranchBool { .. }
             | BytecodeTerminatorKind::BranchTag { .. }
@@ -11056,7 +11317,17 @@ fn local_events(function: &BytecodeFunction, block: &BytecodeBlock) -> Vec<Local
             }
             BytecodeInstructionKind::EnterTaskScope { .. }
             | BytecodeInstructionKind::RetargetCleanup { .. }
-            | BytecodeInstructionKind::DisarmCleanup(_) => {}
+            | BytecodeInstructionKind::DisarmCleanup(_)
+            | BytecodeInstructionKind::BeginSelect { .. } => {}
+            BytecodeInstructionKind::RegisterSelectArm {
+                registration,
+                ..
+            } => match registration {
+                BytecodeSelectRegistration::Call(operation) => {
+                    push_operation_events(operation, &mut events);
+                }
+                BytecodeSelectRegistration::Join(_) => {}
+            }
         }
     }
     match &block.terminator.kind {
@@ -11133,6 +11404,13 @@ fn local_events(function: &BytecodeFunction, block: &BytecodeBlock) -> Vec<Local
                 push_resolve_place_events(&loan.place, &mut events);
             }
         }
+        BytecodeTerminatorKind::CommitSelect { arms, .. } => {
+            for arm in arms {
+                if let Some(payload) = arm.payload() {
+                    push_destination_reads(payload, true, &mut events);
+                }
+            }
+        }
         BytecodeTerminatorKind::Return => events.push(LocalEvent::Read(LocalAccess {
             slot: function.return_slot,
             path: Vec::new(),
@@ -11161,6 +11439,8 @@ fn tag_events(function: &BytecodeFunction, block: &BytecodeBlock) -> Vec<TagEven
             BytecodeInstructionKind::RegisterDefer { action, .. } => {
                 push_tag_operation(function, action, &mut events);
             }
+            BytecodeInstructionKind::BeginSelect { .. }
+            | BytecodeInstructionKind::RegisterSelectArm { .. } => {}
         }
     }
     match &block.terminator.kind {
@@ -11229,6 +11509,13 @@ fn tag_events(function: &BytecodeFunction, block: &BytecodeBlock) -> Vec<TagEven
         BytecodeTerminatorKind::ValidateLoan { loan, .. } => {
             if let Some(loan) = function.loans.get(loan.index() as usize) {
                 push_tag_place(function, &loan.place, false, &mut events);
+            }
+        }
+        BytecodeTerminatorKind::CommitSelect { arms, .. } => {
+            for arm in arms {
+                if let Some(payload) = arm.payload() {
+                    push_tag_place(function, payload, true, &mut events);
+                }
             }
         }
     }

@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use tondo_vm::bytecode as bc;
 
 use super::{BytecodeError, BytecodeLoweringLimits};
+use crate::mir::MirSelectRegistration;
 use crate::hir::{
     CapabilityAnalysis, CapabilityAssumptions, HirBootstrapHostFunction, HirCallProtocol,
     HirCallableId, HirCapability, HirClosureId, HirConstantValue, HirConstantValueKind,
@@ -1834,6 +1835,13 @@ fn collect_function_types(function: &MirFunction, types: &mut BTreeSet<TypeId>) 
                     collect_place_types(to, types);
                 }
                 MirStatementKind::DisarmCleanup(place) => collect_place_types(place, types),
+                MirStatementKind::BeginSelect { .. } => {}
+                MirStatementKind::RegisterSelectArm { registration, .. } => match registration {
+                    MirSelectRegistration::Call(operation) => {
+                        collect_operation_types(operation, types);
+                    }
+                    MirSelectRegistration::Join(place) => collect_place_types(place, types),
+                },
             }
         }
         collect_terminator_types(block.terminator(), types);
@@ -2048,6 +2056,13 @@ fn collect_terminator_types(terminator: &MirTerminator, types: &mut BTreeSet<Typ
             collect_operation_types(operation, types);
             collect_place_types(destination, types);
         }
+        MirTerminatorKind::CommitSelect { arms, .. } => {
+            for arm in arms {
+                if let Some(payload) = arm.payload() {
+                    collect_place_types(payload, types);
+                }
+            }
+        }
         MirTerminatorKind::IteratorNext {
             state,
             destination,
@@ -2089,6 +2104,13 @@ fn collect_function_references(function: &MirFunction, references: &mut Vec<Func
                 MirStatementKind::RegisterDefer { action, .. } => {
                     collect_operation_function_references(action, references);
                 }
+                MirStatementKind::RegisterSelectArm { registration, .. } => match registration {
+                    MirSelectRegistration::Call(operation) => {
+                        collect_operation_function_references(operation, references);
+                    }
+                    MirSelectRegistration::Join(_) => {}
+                },
+                MirStatementKind::BeginSelect { .. } => {}
                 MirStatementKind::StorageLive(_)
                 | MirStatementKind::StorageDead(_)
                 | MirStatementKind::EnterTaskScope { .. }
@@ -2297,7 +2319,8 @@ fn collect_terminator_function_references(
         | MirTerminatorKind::ValidateLoan { .. }
         | MirTerminatorKind::DrainDefers { .. }
         | MirTerminatorKind::DrainScopes { .. }
-        | MirTerminatorKind::DrainUnwind { .. } => {}
+        | MirTerminatorKind::DrainUnwind { .. }
+        | MirTerminatorKind::CommitSelect { .. } => {}
         MirTerminatorKind::SwitchBool { condition, .. } => {
             collect_operand_function_references(condition, references);
         }
@@ -2869,6 +2892,15 @@ fn lower_function(
                 MirStatementKind::RegisterFallback { owner, .. } => {
                     collect_place_types(owner, &mut function_types);
                 }
+                MirStatementKind::BeginSelect { .. } => {}
+                MirStatementKind::RegisterSelectArm { registration, .. } => match registration {
+                    MirSelectRegistration::Call(operation) => {
+                        collect_operation_types(operation, &mut function_types);
+                    }
+                    MirSelectRegistration::Join(place) => {
+                        collect_place_types(place, &mut function_types);
+                    }
+                },
                 MirStatementKind::RetargetCleanup { from, to } => {
                     collect_place_types(from, &mut function_types);
                     collect_place_types(to, &mut function_types);
@@ -3003,6 +3035,25 @@ fn lower_statement(
     type_map: &BTreeMap<TypeId, TypeId>,
 ) -> Result<bc::BytecodeInstruction, BytecodeError> {
     let kind = match statement.kind() {
+        MirStatementKind::BeginSelect { capacity } => {
+            bc::BytecodeInstructionKind::BeginSelect {
+                capacity: *capacity,
+            }
+        }
+        MirStatementKind::RegisterSelectArm {
+            index,
+            registration,
+        } => bc::BytecodeInstructionKind::RegisterSelectArm {
+            index: *index,
+            registration: match registration {
+                MirSelectRegistration::Call(operation) => bc::BytecodeSelectRegistration::Call(
+                    lower_operation(operation, false, context, type_map)?,
+                ),
+                MirSelectRegistration::Join(place) => bc::BytecodeSelectRegistration::Join(
+                    lower_place(place, context, type_map)?,
+                ),
+            },
+        },
         MirStatementKind::StorageLive(local) => {
             bc::BytecodeInstructionKind::StorageLive(bc::BytecodeSlotId::new(local.index()))
         }
@@ -3240,6 +3291,25 @@ fn lower_terminator(
                 .map(|scope| bc::BytecodeScopeId::new(scope.index()))
                 .collect(),
             target: block_id(*target),
+            unwind: block_id(*unwind),
+        },
+        MirTerminatorKind::CommitSelect {
+            arms,
+            else_target,
+            unwind,
+        } => bc::BytecodeTerminatorKind::CommitSelect {
+            arms: arms
+                .iter()
+                .map(|arm| {
+                    Ok(bc::BytecodeSelectArm::new(
+                        arm.payload()
+                            .map(|payload| lower_place(payload, context, type_map))
+                            .transpose()?,
+                        block_id(arm.target()),
+                    ))
+                })
+                .collect::<Result<_, BytecodeError>>()?,
+            else_target: else_target.map(block_id),
             unwind: block_id(*unwind),
         },
         MirTerminatorKind::DrainUnwind { target } => bc::BytecodeTerminatorKind::DrainUnwind {
@@ -4568,6 +4638,265 @@ mod tests {
         let source = trait_dispatch_selection_error(TraitSelectionError::Ambiguous, span);
         assert!(prelude.to_string().contains("trait dispatch"));
         assert!(source.to_string().contains("trait dispatch"));
+    }
+
+    const SELECT_SOURCE: &str = "fn ready(): Int selectable { 1 }\n\
+         fn run(): Int {\n\
+             select {\n\
+                 ready() => 1\n\
+                 else => 0\n\
+             }\n\
+         }\n";
+
+    #[test]
+    fn select_lowers_to_the_verified_phase_protocol() {
+        let program = lowered(SELECT_SOURCE);
+        bc::verify_bytecode(&program).expect("select bytecode verifies");
+        let text = tondo_vm::bytecode::disassemble::disassemble(&program);
+        assert!(text.contains("begin_select"), "{text}");
+        assert!(text.contains("register_select_arm #0"), "{text}");
+        assert!(text.contains("commit_select"), "{text}");
+    }
+
+    #[test]
+    fn select_verifier_rejects_a_skipped_registration_phase() {
+        let mut program = lowered(SELECT_SOURCE);
+        {
+            let function = select_function_mut(&mut program);
+            for block in &mut function.blocks {
+                block.instructions.retain(|instruction| {
+                    !matches!(
+                        instruction.kind,
+                        bc::BytecodeInstructionKind::BeginSelect { .. }
+                    )
+                });
+            }
+        }
+        let error = bc::verify_bytecode(&program).expect_err("missing begin must fail");
+        assert!(
+            error.message().contains("outside a selection region"),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn select_verifier_rejects_a_duplicate_arm_phase() {
+        let mut program = lowered(SELECT_SOURCE);
+        let function = select_function_mut(&mut program);
+        let position = function.blocks[0]
+            .instructions
+            .iter()
+            .position(|instruction| {
+                matches!(
+                    instruction.kind,
+                    bc::BytecodeInstructionKind::RegisterSelectArm { index: 0, .. }
+                )
+            })
+            .expect("arm 0 registration exists");
+        let duplicate = function.blocks[0].instructions[position].clone();
+        if let bc::BytecodeInstructionKind::RegisterSelectArm { index, .. } = &duplicate.kind {
+            let _ = index;
+        }
+        function.blocks[0].instructions.insert(position + 1, duplicate);
+        let error = bc::verify_bytecode(&program).expect_err("duplicate phase must fail");
+        assert!(
+            error.message().contains("skips or duplicates"),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn select_verifier_rejects_an_interleaved_observation_before_commit() {
+        let mut program = lowered(SELECT_SOURCE);
+        {
+            let smuggled = program
+                .functions
+                .iter()
+                .flat_map(|candidate| candidate.blocks.iter())
+                .flat_map(|block| block.instructions.iter())
+                .find(|instruction| {
+                    matches!(instruction.kind, bc::BytecodeInstructionKind::StorageLive(_))
+                        || matches!(
+                            instruction.kind,
+                            bc::BytecodeInstructionKind::Store { .. }
+                        )
+                })
+                .cloned()
+                .expect("another function supplies a benign instruction");
+            let function = select_function_mut(&mut program);
+            let position = function.blocks[0]
+                .instructions
+                .iter()
+                .position(|instruction| {
+                    matches!(
+                        instruction.kind,
+                        bc::BytecodeInstructionKind::RegisterSelectArm { .. }
+                    )
+                })
+                .expect("a registration exists");
+            function
+                .blocks
+                .first_mut()
+                .expect("block 0 exists")
+                .instructions
+                .insert(position + 1, smuggled);
+        }
+        let error = bc::verify_bytecode(&program).expect_err("interleaving must fail");
+        assert!(
+            error.message().contains("only arm registration may appear"),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn select_verifier_rejects_a_commit_without_an_open_region() {
+        let mut program = lowered(SELECT_SOURCE);
+        {
+            let function = select_function_mut(&mut program);
+            for block in &mut function.blocks {
+                block.instructions.retain(|instruction| {
+                    !matches!(
+                        instruction.kind,
+                        bc::BytecodeInstructionKind::BeginSelect { .. }
+                            | bc::BytecodeInstructionKind::RegisterSelectArm { .. }
+                    )
+                });
+            }
+        }
+        let error = bc::verify_bytecode(&program).expect_err("orphan commit must fail");
+        assert!(
+            error.message().contains("no open selection region"),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn select_lowers_join_and_operation_arms_end_to_end() {
+        let source = "fn ready(): Int selectable { 1 }\n\
+             fn work(): Int suspends { 4 }\n\
+             fn prepare(): Join[Int, Never] {\n\
+                 scope {\n\
+                     return spawn work()\n\
+                 }\n\
+             }\n\
+             fn run(): Int suspends {\n\
+                 let pending = prepare()\n\
+                 let selected = select {\n\
+                     ready() => 1\n\
+                     await pending => 4\n\
+                     else => 0\n\
+                 }\n\
+                 _ = selected\n\
+                 let done = await pending\n\
+                 done\n\
+             }\n";
+        let program = lowered(source);
+        bc::verify_bytecode(&program).expect("multi-arm select verifies");
+        let text = tondo_vm::bytecode::disassemble::disassemble(&program);
+        assert!(text.contains("register_select_arm #1"), "{text}");
+    }
+
+    #[test]
+    fn select_lowers_result_propagated_arms_end_to_end() {
+        let source = "fn attempt(): Result[Int, String] selectable { ok(3) }\n\
+             fn run(): Result[Int, String] {\n\
+                 let selected = select {\n\
+                     let outcome = attempt()? => outcome\n\
+                     else => 0\n\
+                 }\n\
+                 selected\n\
+             }\n";
+        let program = lowered(source);
+        bc::verify_bytecode(&program).expect("result select verifies");
+        let text = tondo_vm::bytecode::disassemble::disassemble(&program);
+        assert!(text.contains("begin_select"), "{text}");
+    }
+
+    #[test]
+    fn select_runtime_boundary_reports_the_pending_cooperative_selector() {
+        let program = lowered(SELECT_SOURCE);
+        bc::verify_bytecode(&program).expect("select bytecode verifies");
+        let entry = function_id(&program, "run");
+        let mut host = RejectingHost;
+        let error = execute_with_limits(&program, entry, &mut host, VmLimits::default())
+            .expect_err("the cooperative selector lands with ASYNC-SELECT-RUNTIME-001");
+        match error {
+            VmError::Invariant(message) => {
+                assert!(
+                    message.contains("ASYNC-SELECT-RUNTIME-001"),
+                    "{message}"
+                );
+            }
+            other => panic!("expected the select runtime boundary, got {other}"),
+        }
+    }
+
+    #[test]
+    fn select_verifier_rejects_unbounded_regions() {
+        let mut program = lowered(SELECT_SOURCE);
+        {
+            let function = select_function_mut(&mut program);
+            for block in &mut function.blocks {
+                for instruction in &mut block.instructions {
+                    if matches!(
+                        instruction.kind,
+                        bc::BytecodeInstructionKind::BeginSelect { .. }
+                    ) {
+                        instruction.kind = bc::BytecodeInstructionKind::BeginSelect {
+                            capacity: 0,
+                        };
+                    }
+                }
+            }
+        }
+        let error = bc::verify_bytecode(&program).expect_err("capacity 0 must fail");
+        assert!(error.message().contains("outside the checked bound"), "{error:?}");
+    }
+
+    #[test]
+    fn select_verifier_rejects_non_join_handles() {
+        let mut program = lowered(SELECT_SOURCE);
+        {
+            let callable_id = select_function_mut(&mut program).callable;
+            let outcome = program.callables[callable_id.index() as usize].outcome;
+            let return_slot = select_function_mut(&mut program).return_slot;
+            let function = select_function_mut(&mut program);
+            for block in &mut function.blocks {
+                for instruction in &mut block.instructions {
+                    if matches!(
+                        instruction.kind,
+                        bc::BytecodeInstructionKind::RegisterSelectArm { .. }
+                    ) {
+                        instruction.kind = bc::BytecodeInstructionKind::RegisterSelectArm {
+                            index: 0,
+                            registration: bc::BytecodeSelectRegistration::Join(bc::BytecodePlace {
+                                slot: return_slot,
+                                ty: outcome,
+                                projections: Vec::new(),
+                                source_loan: None,
+                            }),
+                        };
+                    }
+                }
+            }
+        }
+        let error = bc::verify_bytecode(&program).expect_err("a non-Join handle must fail");
+        assert!(error.message().contains("non-Join handle"), "{error:?}");
+    }
+
+    fn select_function_mut(
+        program: &mut bc::BytecodeProgram,
+    ) -> &mut bc::BytecodeFunction {
+        let index = program
+            .callables
+            .iter()
+            .position(|callable| callable.name.ends_with("run"))
+            .expect("the select source declares `run`");
+        program
+            .functions
+            .iter_mut()
+            .find(|function| function.callable.index() == index as u32)
+            .expect("`run` lowers to a function body")
     }
 
     fn lowered(source: &str) -> bc::BytecodeProgram {

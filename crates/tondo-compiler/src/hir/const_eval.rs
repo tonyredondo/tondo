@@ -120,9 +120,10 @@ pub(super) fn evaluate(
                     | HirExpressionKind::BootstrapHostCall { .. }
                     | HirExpressionKind::PropagateOption { .. }
                     | HirExpressionKind::PropagateResult { .. }
-                    | HirExpressionKind::If { .. }
-                    | HirExpressionKind::Match { .. }
-                    | HirExpressionKind::Return { .. }
+        | HirExpressionKind::If { .. }
+        | HirExpressionKind::Match { .. }
+        | HirExpressionKind::Select { .. }
+        | HirExpressionKind::Return { .. }
                     | HirExpressionKind::Fail { .. }
                     | HirExpressionKind::Break { .. }
                     | HirExpressionKind::Continue { .. } => {
@@ -222,6 +223,11 @@ fn constant_children(kind: &HirExpressionKind) -> Vec<HirExpressionId> {
         HirExpressionKind::Tuple(items)
         | HirExpressionKind::Array(items)
         | HirExpressionKind::Set(items) => items.clone(),
+        HirExpressionKind::Select { arms, else_body } => arms
+            .iter()
+            .flat_map(|arm| [arm.operation(), arm.body()])
+            .chain(else_body.iter().copied())
+            .collect(),
         HirExpressionKind::Map { entries, .. } => entries
             .iter()
             .flat_map(|entry| [entry.key(), entry.value()])
@@ -352,6 +358,9 @@ fn evaluate_composite(
             .ok_or(ConstantEvaluationError::Unavailable)
     };
     let result = match kind {
+        HirExpressionKind::Select { .. } => {
+            return Err(ConstantEvaluationError::Unavailable)
+        }
         HirExpressionKind::Tuple(items) => HirConstantValueKind::Tuple(
             items
                 .iter()

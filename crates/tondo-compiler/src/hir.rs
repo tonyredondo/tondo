@@ -327,6 +327,12 @@ pub struct HirProgram {
 }
 
 impl HirProgram {
+    /// Test-only mutable access for typed-HIR verifier fixtures.
+    #[cfg(test)]
+    pub fn expressions_mut_for_tests(&mut self) -> &mut Vec<HirExpression> {
+        &mut self.expressions
+    }
+
     pub fn interner(&self) -> &TypeInterner {
         &self.interner
     }
@@ -2230,6 +2236,12 @@ impl HirExpression {
     pub fn kind(&self) -> &HirExpressionKind {
         &self.kind
     }
+
+    /// Test-only mutable access for typed-HIR verifier fixtures.
+    #[cfg(test)]
+    pub fn kind_mut_for_tests(&mut self) -> &mut HirExpressionKind {
+        &mut self.kind
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2473,6 +2485,10 @@ pub enum HirExpressionKind {
         operation: HirExpressionId,
         kind: HirSpawnKind,
     },
+    Select {
+        arms: Vec<HirSelectArm>,
+        else_body: Option<HirExpressionId>,
+    },
     Scope {
         body: HirExpressionId,
     },
@@ -2539,6 +2555,32 @@ pub enum HirExpressionKind {
 pub enum HirSpawnKind {
     Task,
     Thread,
+}
+
+/// One operational arm of a `select` expression.  The operation is either a
+/// call to a `selectable` function or an `await` over an affine `Join`; the
+/// optional irrefutable pattern binds the committed payload before the arm
+/// body runs.  Arms are registered left to right and exactly one of them
+/// commits.
+#[derive(Debug, Clone)]
+pub struct HirSelectArm {
+    operation: HirExpressionId,
+    pattern: Option<HirPatternId>,
+    body: HirExpressionId,
+}
+
+impl HirSelectArm {
+    pub fn operation(&self) -> HirExpressionId {
+        self.operation
+    }
+
+    pub fn pattern(&self) -> Option<HirPatternId> {
+        self.pattern
+    }
+
+    pub fn body(&self) -> HirExpressionId {
+        self.body
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

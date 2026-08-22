@@ -3698,6 +3698,24 @@ impl Verifier<'_> {
                 _ => None,
             })
             .collect::<BTreeSet<_>>();
+        // A select arm registers its selectable call without an implicit
+        // wait: the select owns the suspension through any propagate chain.
+        let mut select_owned_operations = BTreeSet::new();
+        for expression in &self.program.expressions {
+            if let HirExpressionKind::Select { arms, .. } = &expression.kind {
+                for arm in arms {
+                    let mut current = Some(arm.operation());
+                    while let Some(id) = current {
+                        select_owned_operations.insert(id);
+                        current = match self.program.expression(id).map(HirExpression::kind) {
+                            Some(HirExpressionKind::PropagateOption { value })
+                            | Some(HirExpressionKind::PropagateResult { value, .. }) => Some(*value),
+                            _ => None,
+                        };
+                    }
+                }
+            }
+        }
         for (index, expression) in self.program.expressions.iter().enumerate() {
             let id = HirExpressionId(index as u32);
             let context = format!("expression#{}", id.index());
@@ -3720,6 +3738,7 @@ impl Verifier<'_> {
                     Some(HirExpressionKind::AsyncCall { .. })
                 ) {
                     if !deferred_calls.contains(&child)
+                        && !select_owned_operations.contains(&child)
                         && !matches!(
                             expression.kind,
                             HirExpressionKind::Await { operation }
@@ -3876,6 +3895,42 @@ impl Verifier<'_> {
             ));
         }
         Ok(())
+    }
+
+    /// A select arm operation is a `selectable` call, an `await` over an
+    /// affine `Join`, or a propagate wrapper around either shape.
+    fn verify_select_operation_shape(
+        &self,
+        operation: &HirExpression,
+        context: &str,
+    ) -> Result<(), HirInvariantError> {
+        match &operation.kind {
+            HirExpressionKind::AsyncCall { .. } => Ok(()),
+            HirExpressionKind::Await { operation } => {
+                let operand = self.expression(*operation, context)?;
+                if matches!(
+                    self.program.interner.kind(operand.ty),
+                    Ok(TypeKind::Intrinsic {
+                        constructor: IntrinsicType::Join,
+                        ..
+                    })
+                ) {
+                    Ok(())
+                } else {
+                    Err(HirInvariantError::new(
+                        context,
+                        "select await operand is not a pending Join",
+                    ))
+                }
+            }
+            HirExpressionKind::PropagateOption { value }
+            | HirExpressionKind::PropagateResult { value, .. } => self
+                .verify_select_operation_shape(self.expression(*value, context)?, context),
+            _ => Err(HirInvariantError::new(
+                context,
+                "select arm operation is neither a selectable call nor an await over Join",
+            )),
+        }
     }
 
     fn verify_expression_names(
@@ -4594,6 +4649,67 @@ impl Verifier<'_> {
             } => {
                 for statement in statements {
                     self.verify_statement(*scope, statement, context)?;
+                }
+            }
+            HirExpressionKind::Select { arms, else_body } => {
+                if arms.is_empty() {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "select has no operational arms",
+                    ));
+                }
+                for arm in arms {
+                    let operation = self.expression(arm.operation(), context)?;
+                    self.verify_select_operation_shape(operation, context)?;
+                    if let Some(pattern) = arm.pattern() {
+                        let stored = self.program.pattern(pattern).ok_or_else(|| {
+                            HirInvariantError::new(
+                                context,
+                                format!(
+                                    "select references unknown pattern#{}",
+                                    pattern.index()
+                                ),
+                            )
+                        })?;
+                        if matches!(
+                            stored.kind(),
+                            HirPatternKind::BorrowBinding {
+                                mode: ParameterMode::Mut | ParameterMode::Var,
+                                ..
+                            }
+                        ) {
+                            return Err(HirInvariantError::new(
+                                context,
+                                "select pattern contains an exclusive loan binding",
+                            ));
+                        }
+                    }
+                    let body = self.expression(arm.body(), context)?;
+                    if body.ty != expression.ty
+                        && !matches!(
+                            self.program.interner.kind(body.ty),
+                            Ok(TypeKind::Scalar(ScalarType::Never))
+                        )
+                    {
+                        return Err(HirInvariantError::new(
+                            context,
+                            "select arm body type differs from the unified selection type",
+                        ));
+                    }
+                }
+                if let Some(else_body) = else_body {
+                    let body = self.expression(*else_body, context)?;
+                    if body.ty != expression.ty
+                        && !matches!(
+                            self.program.interner.kind(body.ty),
+                            Ok(TypeKind::Scalar(ScalarType::Never))
+                        )
+                    {
+                        return Err(HirInvariantError::new(
+                            context,
+                            "select else body type differs from the unified selection type",
+                        ));
+                    }
                 }
             }
             HirExpressionKind::Match { arms, .. } => {
@@ -6162,6 +6278,15 @@ fn expression_children(expression: &HirExpression) -> Vec<HirExpressionId> {
         | HirExpressionKind::Receiver
         | HirExpressionKind::Break { .. }
         | HirExpressionKind::Continue { .. } => {}
+        HirExpressionKind::Select { arms, else_body } => {
+            for arm in arms {
+                children.push(arm.operation());
+                children.push(arm.body());
+            }
+            if let Some(else_body) = else_body {
+                children.push(*else_body);
+            }
+        }
         HirExpressionKind::InterpolatedString { values, .. }
         | HirExpressionKind::Tuple(values)
         | HirExpressionKind::Array(values)
@@ -6472,6 +6597,119 @@ mod tests {
         checked_program_from(
             "fn main() {\n    let value = 1\n    assert(value == 1)\n    _ = value\n}\n",
         )
+    }
+
+    const SELECT_VERIFY_SOURCE: &str = "fn ready(): Int selectable { 1 }\n\
+         fn run(): Int suspends {\n\
+             let selected = select {\n\
+                 ready() => 1\n\
+                 else => 0\n\
+             }\n\
+             selected\n\
+         }\n";
+
+    #[test]
+    fn typed_hir_verifier_accepts_a_valid_select() {
+        let (resolved, program) = checked_program_from(SELECT_VERIFY_SOURCE);
+        super::verify_typed_hir(&resolved, &program).expect("a valid select verifies");
+        assert!(
+            program
+                .expressions()
+                .any(|expression| matches!(expression.kind(), HirExpressionKind::Select { .. })),
+            "the fixture contains a select"
+        );
+    }
+
+    #[test]
+    fn typed_hir_verifier_rejects_empty_select_arms() {
+        let (resolved, mut program) = checked_program_from(SELECT_VERIFY_SOURCE);
+        for expression in program.expressions_mut_for_tests().iter_mut() {
+            if matches!(expression.kind, HirExpressionKind::Select { .. }) {
+                let HirExpressionKind::Select { arms, .. } = &mut expression.kind else {
+                    unreachable!()
+                };
+                arms.clear();
+            }
+        }
+        let error = super::verify_typed_hir(&resolved, &program)
+            .expect_err("an empty select must be rejected");
+        assert!(format!("{error}").contains("no operational arms"), "{error}");
+    }
+
+    #[test]
+    fn typed_hir_verifier_rejects_body_type_mismatches() {
+        let (resolved, mut program) = checked_program_from(SELECT_VERIFY_SOURCE);
+        let interner = program.interner.clone();
+        let never_ty = interner.scalar(ScalarType::String);
+        let body_ids: Vec<_> = program
+            .expressions()
+            .filter_map(|expression| match expression.kind() {
+                HirExpressionKind::Select { arms, .. } => arms.first().map(|arm| arm.body()),
+                _ => None,
+            })
+            .collect();
+        for id in body_ids {
+            program.expressions_mut_for_tests()[id.index() as usize].ty = never_ty;
+        }
+        let error = super::verify_typed_hir(&resolved, &program)
+            .expect_err("a mismatched body type must be rejected");
+        assert!(
+            format!("{error}").contains("body type differs"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn typed_hir_verifier_rejects_else_body_type_mismatches() {
+        let source = "fn ready(): Int selectable { 1 }\n\
+             fn run(): Int suspends {\n\
+                 let selected = select {\n\
+                     ready() => 1\n\
+                     else => 0\n\
+                 }\n\
+                 selected\n\
+             }\n";
+        let (resolved, mut program) = checked_program_from(source);
+        let interner = program.interner.clone();
+        let string_ty = interner.scalar(ScalarType::String);
+        let else_ids: Vec<_> = program
+            .expressions()
+            .filter_map(|expression| match expression.kind() {
+                HirExpressionKind::Select { else_body: Some(id), .. } => Some(*id),
+                _ => None,
+            })
+            .collect();
+        for id in else_ids {
+            program.expressions_mut_for_tests()[id.index() as usize].ty = string_ty;
+        }
+        let error = super::verify_typed_hir(&resolved, &program)
+            .expect_err("a mismatched else body must be rejected");
+        assert!(
+            format!("{error}").contains("else body type differs"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn typed_hir_verifier_rejects_unsupported_arm_operations() {
+        let (resolved, mut program) = checked_program_from(SELECT_VERIFY_SOURCE);
+        let operation_ids: Vec<_> = program
+            .expressions()
+            .filter_map(|expression| match expression.kind() {
+                HirExpressionKind::Select { arms, .. } => arms.first().map(|arm| arm.operation()),
+                _ => None,
+            })
+            .collect();
+        for id in operation_ids {
+            let target = program.expressions_mut_for_tests()[id.index() as usize].kind_mut_for_tests();
+            *target = HirExpressionKind::Literal(HirLiteral::Integer("7".into()));
+        }
+        let error = super::verify_typed_hir(&resolved, &program)
+            .expect_err("an integer operation is not a selectable registration");
+        assert!(
+            format!("{error}").contains("neither a selectable call"),
+            "{error}"
+        );
     }
 
     fn checked_program_from(source: &str) -> (ResolvedProgram, HirProgram) {

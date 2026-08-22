@@ -13,6 +13,7 @@ use tondo_compiler::mir::{
     MirAwaitable, MirFunction, MirFunctionId, MirLoanId, MirLoanKind, MirLocalId, MirLocalKind,
     MirOperand, MirOperandKind, MirOperation, MirOperationKind, MirPlace, MirProjectionKind,
     MirRvalue, MirRvalueKind, MirStatementKind, MirTerminatorKind, lower_to_mir,
+    MirSelectRegistration,
 };
 use tondo_compiler::resolve::{
     LocalId, LocalKind, MemberId, MemberKind, MemberOwner, ResolvedName, SymbolId, Visibility,
@@ -1673,7 +1674,22 @@ fn affine_value_facts(
                 MirStatementKind::RegisterFallback { .. }
                 | MirStatementKind::EnterTaskScope { .. }
                 | MirStatementKind::RetargetCleanup { .. }
-                | MirStatementKind::DisarmCleanup(_) => {}
+                | MirStatementKind::DisarmCleanup(_)
+                | MirStatementKind::BeginSelect { .. } => {}
+                MirStatementKind::RegisterSelectArm { registration, .. } => {
+                    if let MirSelectRegistration::Join(place) = registration {
+                        push_affine_event(
+                            model,
+                            &mut values,
+                            place.local(),
+                            &block_id,
+                            sequence,
+                            statement.span(),
+                            "observed",
+                            "select-register",
+                        )?;
+                    }
+                }
             }
         }
         let mut moved = Vec::new();
@@ -1891,6 +1907,7 @@ fn collect_terminator_moves(kind: &MirTerminatorKind, output: &mut Vec<MirLocalI
         | MirTerminatorKind::DrainDefers { .. }
         | MirTerminatorKind::DrainScopes { .. }
         | MirTerminatorKind::DrainUnwind { .. }
+        | MirTerminatorKind::CommitSelect { .. }
         | MirTerminatorKind::Return
         | MirTerminatorKind::ResumePanic
         | MirTerminatorKind::Unreachable => {}
@@ -2849,6 +2866,7 @@ fn expression_kind_name(kind: &HirExpressionKind) -> &'static str {
         HirExpressionKind::AsyncCall { .. } => "async-call",
         HirExpressionKind::Await { .. } => "await",
         HirExpressionKind::Spawn { .. } => "spawn",
+        HirExpressionKind::Select { .. } => "select",
         HirExpressionKind::Scope { .. } => "scope",
         HirExpressionKind::PreludePanic { .. } => "panic",
         HirExpressionKind::PreludeAssert { .. } => "assert",

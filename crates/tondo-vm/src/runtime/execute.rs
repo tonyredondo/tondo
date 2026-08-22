@@ -416,6 +416,13 @@ struct Frame {
     cleanups: Vec<RuntimeCleanup>,
     task_scopes: Vec<usize>,
     continuation: Option<CallContinuation>,
+    select: Option<RuntimeSelectRegion>,
+}
+
+#[derive(Debug)]
+struct RuntimeSelectRegion {
+    capacity: u32,
+    registered: u32,
 }
 
 impl Frame {
@@ -2060,7 +2067,9 @@ impl<'program, 'host> Engine<'program, 'host> {
                 | BytecodeInstructionKind::RegisterDefer { .. }
                 | BytecodeInstructionKind::RegisterFallback { .. }
                 | BytecodeInstructionKind::RetargetCleanup { .. }
-                | BytecodeInstructionKind::DisarmCleanup(_) => None,
+                | BytecodeInstructionKind::DisarmCleanup(_)
+                | BytecodeInstructionKind::BeginSelect { .. }
+                | BytecodeInstructionKind::RegisterSelectArm { .. } => None,
             })
             .collect::<std::collections::BTreeSet<_>>();
         let mut slots = function
@@ -2102,6 +2111,7 @@ impl<'program, 'host> Engine<'program, 'host> {
             cleanups: Vec::new(),
             task_scopes: Vec::new(),
             continuation,
+            select: None,
         });
         self.statistics.peak_stack_depth = self
             .statistics
@@ -2199,6 +2209,24 @@ impl<'program, 'host> Engine<'program, 'host> {
             }
             BytecodeInstructionKind::DisarmCleanup(place) => {
                 self.disarm_cleanup(frame, place)?;
+            }
+            BytecodeInstructionKind::BeginSelect { capacity } => {
+                self.frames[frame].select = Some(RuntimeSelectRegion {
+                    capacity: *capacity,
+                    registered: 0,
+                });
+            }
+            BytecodeInstructionKind::RegisterSelectArm { index, .. } => {
+                let region = self.frames[frame]
+                    .select
+                    .as_mut()
+                    .ok_or_else(|| VmError::invariant("arm registration has no open selection"))?;
+                if *index != region.registered || region.registered >= region.capacity {
+                    return Err(VmError::invariant(
+                        "select arm registration skipped or duplicated",
+                    ));
+                }
+                region.registered += 1;
             }
         }
         Ok(())
@@ -3763,6 +3791,22 @@ impl<'program, 'host> Engine<'program, 'host> {
                 target,
                 unwind,
             } => self.drain_explicit_scopes(frame, scopes, *target, *unwind)?,
+            BytecodeTerminatorKind::CommitSelect { arms, .. } => {
+                let region = self.frames[frame]
+                    .select
+                    .take()
+                    .ok_or_else(|| VmError::invariant("commit reached with no open selection"))?;
+                if arms.len() as u32 != region.capacity
+                    || region.registered != region.capacity
+                {
+                    return Err(VmError::invariant(
+                        "select commit does not match its registered arm table",
+                    ));
+                }
+                return Err(VmError::invariant(
+                    "select execution arrives with ASYNC-SELECT-RUNTIME-001",
+                ));
+            }
             BytecodeTerminatorKind::DrainUnwind { target } => {
                 let scopes = self.frames[frame]
                     .task_scopes
@@ -11363,6 +11407,7 @@ mod tests {
             cleanups: Vec::new(),
             task_scopes: Vec::new(),
             continuation: None,
+            select: None,
         });
         RuntimeFallback {
             scope: BytecodeScopeId::new(0),

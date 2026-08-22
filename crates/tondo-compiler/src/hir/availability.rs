@@ -949,6 +949,9 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 mode,
                 arms,
             } => self.match_expression(*scrutinee, *mode, arms, state, live_after)?,
+            HirExpressionKind::Select { arms, else_body } => {
+                self.select_expression(arms, *else_body, state, live_after)?
+            }
             HirExpressionKind::Return { value } => {
                 let baseline = handoff_baseline(&state);
                 let mut flow = if let Some(value) = value {
@@ -1379,6 +1382,80 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         }
     }
 
+    /// Availability flow for a `select`: arm operations register left to
+    /// right over the incoming state, then exactly one body runs.  Bodies are
+    /// modeled as `if` branches from the post-registration state because the
+    /// commit picks one winner; the payload itself is a fresh temporary that
+    /// never aliases pre-declared locals.
+    fn select_expression(
+        &mut self,
+        arms: &[super::HirSelectArm],
+        else_body: Option<HirExpressionId>,
+        state: AvailabilityState,
+        live_after: &BTreeSet<LocalId>,
+    ) -> Result<AvailabilityFlow, TypeError> {
+        let mut branch_uses = BTreeSet::new();
+        for arm in arms {
+            branch_uses.extend(self.expression_entry_liveness(arm.body(), live_after));
+        }
+        if let Some(else_body) = else_body {
+            branch_uses.extend(self.expression_entry_liveness(else_body, live_after));
+        }
+        let mut accumulated = AvailabilityFlow::default();
+        let mut current = state;
+        for piece in arms {
+            // Registration must not consume a pending `Join`: descend past
+            // propagate wrappers and observe the operand instead of letting
+            // the generic `Await` handler transfer it.  Losers are restored;
+            // branch-sensitive ownership lands with ASYNC-SELECT-OWN-001.
+            let mut root = piece.operation();
+            loop {
+                let next = match self.program.expression(root).map(super::HirExpression::kind) {
+                    Some(HirExpressionKind::PropagateOption { value })
+                    | Some(HirExpressionKind::PropagateResult { value, .. }) => Some(*value),
+                    _ => None,
+                };
+                let Some(next) = next else { break };
+                root = next;
+            }
+            let mut operation_flow = match self
+                .program
+                .expression(root)
+                .map(super::HirExpression::kind)
+            {
+                Some(HirExpressionKind::Await { operation }) => {
+                    self.expression(*operation, current, Demand::Observe, &BTreeSet::new())?
+                }
+                _ => self.expression(
+                    piece.operation(),
+                    current,
+                    Demand::Observe,
+                    &BTreeSet::new(),
+                )?,
+            };
+            let Some(next) = operation_flow.normal.take() else {
+                accumulated.merge(operation_flow);
+                return Ok(accumulated);
+            };
+            accumulated.merge(operation_flow);
+            current = next;
+        }
+        for piece in arms {
+            let body_flow = self.expression(
+                piece.body(),
+                current.clone(),
+                Demand::Transfer,
+                live_after,
+            )?;
+            accumulated.merge(body_flow);
+        }
+        if let Some(else_body) = else_body {
+            let else_flow = self.expression(else_body, current, Demand::Transfer, live_after)?;
+            accumulated.merge(else_flow);
+        }
+        Ok(accumulated)
+    }
+
     fn if_expression(
         &mut self,
         condition: HirExpressionId,
@@ -1386,8 +1463,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         else_branch: Option<HirExpressionId>,
         state: AvailabilityState,
         live_after: &BTreeSet<LocalId>,
-    ) -> Result<AvailabilityFlow, TypeError> {
-        let mut branch_uses = self.expression_entry_liveness(then_branch, live_after);
+    ) -> Result<AvailabilityFlow, TypeError> {        let mut branch_uses = self.expression_entry_liveness(then_branch, live_after);
         if let Some(else_branch) = else_branch {
             branch_uses.extend(
                 self.expression_entry_liveness(else_branch, live_after)
@@ -3708,6 +3784,15 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                     expression_source(arm.body());
                 }
             }
+            HirExpressionKind::Select { arms, else_body } => {
+                for arm in arms {
+                    expression_source(arm.operation());
+                    expression_source(arm.body());
+                }
+                if let Some(else_body) = else_body {
+                    expression_source(*else_body);
+                }
+            }
             // Places are retargeted where their complete transfer is known.
             // `spawn` creates its own provenance and `await` consumes it.
             _ => {}
@@ -4191,6 +4276,15 @@ fn expression_children(kind: &HirExpressionKind) -> Vec<HirExpressionId> {
         | HirExpressionKind::Receiver
         | HirExpressionKind::Break { .. }
         | HirExpressionKind::Continue { .. } => {}
+        HirExpressionKind::Select { arms, else_body } => {
+            for arm in arms {
+                children.push(arm.operation());
+                children.push(arm.body());
+            }
+            if let Some(else_body) = else_body {
+                children.push(*else_body);
+            }
+        }
         HirExpressionKind::InterpolatedString { values, .. }
         | HirExpressionKind::Tuple(values)
         | HirExpressionKind::Array(values)

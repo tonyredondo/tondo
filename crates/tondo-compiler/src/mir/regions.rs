@@ -243,6 +243,13 @@ pub(super) fn static_integer_locals(
             | MirTerminatorKind::Await { destination, .. }
             | MirTerminatorKind::Spawn { destination, .. }
             | MirTerminatorKind::IteratorNext { destination, .. } => record(destination, None),
+            MirTerminatorKind::CommitSelect { arms, .. } => {
+                for arm in arms {
+                    if let Some(payload) = arm.payload() {
+                        record(payload, None);
+                    }
+                }
+            }
             MirTerminatorKind::Goto { .. }
             | MirTerminatorKind::SwitchBool { .. }
             | MirTerminatorKind::SwitchTag { .. }

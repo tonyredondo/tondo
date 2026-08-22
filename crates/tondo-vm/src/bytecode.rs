@@ -4,7 +4,7 @@
 //! indices are request-local, every executable value lives in an explicit
 //! frame slot, and all control-flow targets remain visible to verification.
 
-mod disassemble;
+pub mod disassemble;
 mod verify;
 
 pub use disassemble::disassemble;
@@ -878,7 +878,28 @@ pub enum BytecodeInstructionKind {
         to: BytecodePlace,
     },
     DisarmCleanup(BytecodePlace),
+    BeginSelect {
+        capacity: u32,
+    },
+    RegisterSelectArm {
+        index: u32,
+        registration: BytecodeSelectRegistration,
+    },
 }
+
+/// One arm registration of a selection region.  A selectable call enters
+/// its prepare phase; a pending `Join` observes its owner slot without
+/// consuming it — the winner commits and losers are restored.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BytecodeSelectRegistration {
+    Call(BytecodeOperation),
+    Join(BytecodePlace),
+}
+
+/// Upper bound on selectable arms per selection region.  Mirrors the MIR
+/// limit; the bytecode verifier rejects regions whose arm table exceeds this
+/// checked bound.
+pub const MAX_SELECT_ARMS: u32 = 64;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BytecodePlace {
@@ -1443,9 +1464,36 @@ pub enum BytecodeTerminatorKind {
     DrainUnwind {
         target: BytecodeBlockId,
     },
+    CommitSelect {
+        arms: Vec<BytecodeSelectArm>,
+        else_target: Option<BytecodeBlockId>,
+        unwind: BytecodeBlockId,
+    },
     Return,
     ResumePanic,
     Unreachable,
+}
+
+/// One committed winner of a selection region: where the operation payload
+/// lands (when the arm binds it) and which block runs the arm body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BytecodeSelectArm {
+    payload: Option<BytecodePlace>,
+    target: BytecodeBlockId,
+}
+
+impl BytecodeSelectArm {
+    pub fn new(payload: Option<BytecodePlace>, target: BytecodeBlockId) -> Self {
+        Self { payload, target }
+    }
+
+    pub fn payload(&self) -> Option<&BytecodePlace> {
+        self.payload.as_ref()
+    }
+
+    pub fn target(&self) -> BytecodeBlockId {
+        self.target
+    }
 }
 
 /// Structured spawn lane.  Both lanes return the same affine `Join`; the
