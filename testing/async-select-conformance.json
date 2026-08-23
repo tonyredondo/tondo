@@ -8,7 +8,7 @@
   "suite": "tondo-conformance-draft",
   "result_format": "tondo-conformance-result-draft/2",
   "manifest": "conformance/0.1/manifest.json",
-  "manifest_sha256": "117f2499c4a69938752715afa0a2b27e5c3240af4af32e8f295cb37a5c8c029a",
+  "manifest_sha256": "35ad9cc951064ea0d669ace4d9c293271901e25b5973fc9353b6ec14a37d8537",
   "target": "tondo-vm-hosted",
   "profile": "hosted",
   "pipeline": [
@@ -25,7 +25,7 @@
     {
       "id": "concurrency/select-join-loser-runtime",
       "fixture": "conformance/0.1/cases/concurrency/select-join-loser-runtime.to",
-      "fixture_sha256": "e63774cfee9476004ff1f986057d44399ea09dfd44ab8e0c3ede2ee7f4a2c8b8",
+      "fixture_sha256": "2e214227f5533c42bef4525da3cd753980edfda0382429a85f88d39ce240ac4e",
       "group": "concurrency",
       "repetitions": 32,
       "observation_sha256": "5815b75aa7e938f757e7c689e95245367836d7496be7fae8d210a3e27b6f158c"
@@ -33,7 +33,7 @@
     {
       "id": "concurrency/select-join-runtime",
       "fixture": "conformance/0.1/cases/concurrency/select-join-runtime.to",
-      "fixture_sha256": "759bb9045c3932f00e46cc51cb205f5800414d6f7aacb21065bfe72fe8bbdf50",
+      "fixture_sha256": "b997c7230a1282c8d4df259562b140bccd8bf22be5eef48d1e04e49660431970",
       "group": "concurrency",
       "repetitions": 32,
       "observation_sha256": "5815b75aa7e938f757e7c689e95245367836d7496be7fae8d210a3e27b6f158c"
@@ -41,7 +41,7 @@
     {
       "id": "concurrency/select-runtime",
       "fixture": "conformance/0.1/cases/concurrency/select-runtime.to",
-      "fixture_sha256": "f77d3fe3563463751ee0bffff3fbc6d94b0d855570991716fc716730e6d8b9c9",
+      "fixture_sha256": "04f1768d9537804d184e4b9afb0e6c76e4d6dfe485c97ce25e41958f4b502cf5",
       "group": "concurrency",
       "repetitions": 32,
       "observation_sha256": "5815b75aa7e938f757e7c689e95245367836d7496be7fae8d210a3e27b6f158c"
