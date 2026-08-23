@@ -217,7 +217,6 @@
     "keyword-addition"
   ],
   "next_blocks": [
-    "STD-SYNC-001",
     "STD-EXEC-001",
     "STD-NET-001"
   ]

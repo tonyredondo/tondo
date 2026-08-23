@@ -1,0 +1,747 @@
+{
+  "format": "tondo-stdlib-owner-contract/1",
+  "owner": "std.sync",
+  "parent_owner": "std",
+  "edition": "0.1",
+  "phase": "STD-0.1B",
+  "task": "STD-SYNC-001",
+  "status": "contract-locked",
+  "contract": "docs/contracts/stdlib-sync.md",
+  "spec": "TONDO_STANDARD_LIBRARY_SPEC.md",
+  "language_spec": "TONDO_LANGUAGE_SPEC.md",
+  "layer": "B2",
+  "kind": "runtime-facing",
+  "target": "tondo-vm-hosted-and-native",
+  "capability": {
+    "cooperative_tasks": "available-without-threads",
+    "cross_thread": "requires-threads",
+    "missing_cross_thread": "static-capability-error",
+    "scheduler_blocking": "forbidden"
+  },
+  "host": {
+    "status": "required-after-native-gate",
+    "reason": "std.sync needs scheduler parking, wakeups, host atomics and reclamation on VM and native runtimes; cooperative tasks must never block an executor worker"
+  },
+  "surface": {
+    "types": [
+      "SyncError = { InvalidCapacity, InvalidParties, ResourceLimit, ReentrantLock, ReentrantInitialization, Broken }",
+      "Mutex[T]",
+      "MutexGuard[T]",
+      "RwLock[T]",
+      "ReadGuard[T]",
+      "WriteGuard[T]",
+      "Condition",
+      "Semaphore",
+      "Permit",
+      "Once[T, E]",
+      "Barrier",
+      "BarrierRole = { Leader, Follower }",
+      "Atomic[T]",
+      "MemoryOrder = { Relaxed, Acquire, Release, AcqRel, SeqCst }",
+      "CompareExchange[T] = { Exchanged(T), Mismatch(T) }",
+      "CollectionError"
+    ],
+    "signatures": [
+      {
+        "id": "mutex",
+        "signature": "pub fn mutex[T: Send](value: T): Mutex[T] ! SyncError",
+        "kind": "constructor",
+        "effect": "sync"
+      },
+      {
+        "id": "mutex-lock",
+        "signature": "pub fn Mutex.lock(ref self): MutexGuard[T] ! SyncError suspends",
+        "kind": "exclusive-acquire",
+        "effect": "suspends"
+      },
+      {
+        "id": "mutex-try-lock",
+        "signature": "pub fn Mutex.tryLock(ref self): MutexGuard[T]?",
+        "kind": "exclusive-try-acquire",
+        "effect": "sync"
+      },
+      {
+        "id": "mutex-guard-get",
+        "signature": "pub fn MutexGuard.get(ref self): ref T",
+        "kind": "shared-observe",
+        "effect": "sync"
+      },
+      {
+        "id": "mutex-guard-get-mut",
+        "signature": "pub fn MutexGuard.getMut(mut self): mut T",
+        "kind": "exclusive-observe",
+        "effect": "sync"
+      },
+      {
+        "id": "mutex-guard-unlock",
+        "signature": "pub fn MutexGuard.unlock(self): Unit",
+        "kind": "terminal-release",
+        "effect": "sync"
+      },
+      {
+        "id": "rw-lock",
+        "signature": "pub fn rwLock[T: Send](value: T): RwLock[T] ! SyncError",
+        "kind": "constructor",
+        "effect": "sync"
+      },
+      {
+        "id": "rw-read",
+        "signature": "pub fn RwLock.read(ref self): ReadGuard[T] ! SyncError suspends",
+        "kind": "shared-acquire",
+        "effect": "suspends"
+      },
+      {
+        "id": "rw-try-read",
+        "signature": "pub fn RwLock.tryRead(ref self): ReadGuard[T]?",
+        "kind": "shared-try-acquire",
+        "effect": "sync"
+      },
+      {
+        "id": "read-guard-get",
+        "signature": "pub fn ReadGuard.get(ref self): ref T",
+        "kind": "shared-observe",
+        "effect": "sync"
+      },
+      {
+        "id": "read-guard-unlock",
+        "signature": "pub fn ReadGuard.unlock(self): Unit",
+        "kind": "terminal-release",
+        "effect": "sync"
+      },
+      {
+        "id": "rw-write",
+        "signature": "pub fn RwLock.write(ref self): WriteGuard[T] ! SyncError suspends",
+        "kind": "exclusive-acquire",
+        "effect": "suspends"
+      },
+      {
+        "id": "rw-try-write",
+        "signature": "pub fn RwLock.tryWrite(ref self): WriteGuard[T]?",
+        "kind": "exclusive-try-acquire",
+        "effect": "sync"
+      },
+      {
+        "id": "write-guard-get",
+        "signature": "pub fn WriteGuard.get(ref self): ref T",
+        "kind": "shared-observe",
+        "effect": "sync"
+      },
+      {
+        "id": "write-guard-get-mut",
+        "signature": "pub fn WriteGuard.getMut(mut self): mut T",
+        "kind": "exclusive-observe",
+        "effect": "sync"
+      },
+      {
+        "id": "write-guard-unlock",
+        "signature": "pub fn WriteGuard.unlock(self): Unit",
+        "kind": "terminal-release",
+        "effect": "sync"
+      },
+      {
+        "id": "condition",
+        "signature": "pub fn condition(): Condition ! SyncError",
+        "kind": "constructor",
+        "effect": "sync"
+      },
+      {
+        "id": "condition-wait",
+        "signature": "pub fn Condition.wait[T](var guard: MutexGuard[T]): MutexGuard[T] suspends",
+        "kind": "unlock-wait-reacquire",
+        "effect": "suspends"
+      },
+      {
+        "id": "condition-notify-one",
+        "signature": "pub fn Condition.notifyOne(ref self): Unit",
+        "kind": "wake-one",
+        "effect": "sync"
+      },
+      {
+        "id": "condition-notify-all",
+        "signature": "pub fn Condition.notifyAll(ref self): Unit",
+        "kind": "wake-all",
+        "effect": "sync"
+      },
+      {
+        "id": "semaphore",
+        "signature": "pub fn semaphore(capacity: Int): Semaphore ! SyncError",
+        "kind": "constructor",
+        "effect": "sync"
+      },
+      {
+        "id": "semaphore-acquire",
+        "signature": "pub fn Semaphore.acquire(ref self): Permit suspends",
+        "kind": "permit-acquire",
+        "effect": "suspends"
+      },
+      {
+        "id": "semaphore-try-acquire",
+        "signature": "pub fn Semaphore.tryAcquire(ref self): Permit?",
+        "kind": "permit-try-acquire",
+        "effect": "sync"
+      },
+      {
+        "id": "permit-release",
+        "signature": "pub fn Permit.release(self): Unit",
+        "kind": "terminal-release",
+        "effect": "sync"
+      },
+      {
+        "id": "once",
+        "signature": "pub fn once[T, E](): Once[T, E]",
+        "kind": "constructor",
+        "effect": "sync"
+      },
+      {
+        "id": "once-get",
+        "signature": "pub fn Once.get(ref self): ref T?",
+        "kind": "nonblocking-observe",
+        "effect": "sync"
+      },
+      {
+        "id": "once-get-or-init",
+        "signature": "pub fn Once.getOrInit(ref self, init: fn(): T ! E suspends): ref T ! E suspends",
+        "kind": "lazy-initialize",
+        "effect": "suspends"
+      },
+      {
+        "id": "once-is-ready",
+        "signature": "pub fn Once.isReady(ref self): Bool",
+        "kind": "state-observe",
+        "effect": "sync"
+      },
+      {
+        "id": "barrier",
+        "signature": "pub fn barrier(parties: Int): Barrier ! SyncError",
+        "kind": "constructor",
+        "effect": "sync"
+      },
+      {
+        "id": "barrier-wait",
+        "signature": "pub fn Barrier.wait(ref self): BarrierRole ! SyncError suspends",
+        "kind": "generation-arrive",
+        "effect": "suspends"
+      },
+      {
+        "id": "atomic",
+        "signature": "pub fn atomic[T: Copy + Equatable + Send + Share](value: T): Atomic[T]",
+        "kind": "constructor",
+        "effect": "sync"
+      },
+      {
+        "id": "atomic-load",
+        "signature": "pub fn Atomic.load(ref self, order: MemoryOrder): T",
+        "kind": "atomic-load",
+        "effect": "sync"
+      },
+      {
+        "id": "atomic-store",
+        "signature": "pub fn Atomic.store(ref self, value: T, order: MemoryOrder): Unit",
+        "kind": "atomic-store",
+        "effect": "sync"
+      },
+      {
+        "id": "atomic-swap",
+        "signature": "pub fn Atomic.swap(ref self, value: T, order: MemoryOrder): T",
+        "kind": "atomic-rmw",
+        "effect": "sync"
+      },
+      {
+        "id": "atomic-compare-exchange",
+        "signature": "pub fn Atomic.compareExchange(ref self, expected: T, desired: T, success: MemoryOrder, failure: MemoryOrder): CompareExchange[T]",
+        "kind": "atomic-compare-exchange",
+        "effect": "sync"
+      }
+    ],
+    "direct_call_waits": true,
+    "explicit_await_direct_call": "forbidden",
+    "explicit_await_join": "required",
+    "inference_by_name": false,
+    "bodyless_requires_effect": true,
+    "bodyful_inference": "allowed",
+    "selectable_operations": [],
+    "order_arguments_are_compile_time_constants": true
+  },
+  "ownership": {
+    "handle_copy": true,
+    "handle_clone": false,
+    "handle_discard": "release-handle-only",
+    "handle_send": "when T: Send",
+    "handle_share": "when protected-state-bound-allows-share",
+    "guard_affine": true,
+    "guard_copy": false,
+    "guard_clone": false,
+    "guard_discard": "auto-release-exactly-once",
+    "permit_affine": true,
+    "permit_copy": false,
+    "permit_clone": false,
+    "permit_discard": "auto-release-exactly-once",
+    "guard_transfer": "only-when-guard-T-is-Send",
+    "permit_transfer": "Send-but-not-Share",
+    "borrow_lifetime": "bounded-by-guard-or-once-handle",
+    "mutex_guard_cleanup": ["explicit-unlock", "defer", "cancellation", "panic-unwind"],
+    "permit_cleanup": ["explicit-release", "defer", "cancellation", "panic-unwind"],
+    "implicit_poisoning": false,
+    "post_release_use": "compile-error",
+    "copying_handle_copies_identity": true,
+    "collections_use_same_handle_rule": true
+  },
+  "locks": {
+    "mutex": {
+      "kind": "non-recursive-exclusive",
+      "reentrant": "SyncError.ReentrantLock",
+      "fairness": "FIFO-registration-with-bounded-barging",
+      "cancellation_before_acquire": "unregister-without-lock",
+      "cancellation_while_held": "release-before-unwind",
+      "worker_blocking": false
+    },
+    "rwlock": {
+      "readers": "concurrent",
+      "writer_exclusion": "exclusive",
+      "writer_preference": "bounded-writer-preference",
+      "upgrade": "not-published",
+      "downgrade": "not-published",
+      "cancellation_before_acquire": "unregister-without-lock",
+      "cancellation_while_held": "release-before-unwind",
+      "worker_blocking": false
+    },
+    "condition": {
+      "wait_protocol": "atomically-release-then-register-and-reacquire-before-return",
+      "spurious_wakeups": "hidden-and-rechecked",
+      "cancelled_wait": "reacquire-guard-before-unwind",
+      "notify_one": "wake-oldest-compatible-waiter",
+      "notify_all": "wake-all-registered-waiters",
+      "predicate_loop_required": true
+    }
+  },
+  "semaphore": {
+    "capacity": "fixed-positive",
+    "initial_permits": "capacity",
+    "zero_or_negative": "SyncError.InvalidCapacity",
+    "acquire": "FIFO-registration-and-no-permit-before-commit",
+    "try_acquire": "returns-none-without-suspending",
+    "release": "one-permit-exactly-once",
+    "over_release": "compile-error-or-panic-before-state-mutation",
+    "cancelled_wait": "unregister-without-consuming-permit",
+    "worker_blocking": false
+  },
+  "once": {
+    "states": ["uninitialized", "initializing", "ready"],
+    "initial": "uninitialized",
+    "single_initializer": true,
+    "waiters": "suspend-until-ready-or-initializer-outcome",
+    "success": "publish-once-and-return-ref",
+    "declared_error": "return-error-and-reset-to-uninitialized",
+    "cancelled_initializer": "reset-to-uninitialized-after-cleanup",
+    "panic_initializer": "reset-to-uninitialized-after-cleanup",
+    "reentrant_initializer": "SyncError.ReentrantInitialization",
+    "mutation_after_ready": "not-published",
+    "sticky_failure": "use-Once[Result[T, E], Never]-explicitly"
+  },
+  "barrier": {
+    "parties": "fixed-positive",
+    "invalid_parties": "SyncError.InvalidParties",
+    "generations": "reusable-after-completion",
+    "last_arriver": "BarrierRole.Leader",
+    "other_arrivers": "BarrierRole.Follower",
+    "cancellation": "break-generation-and-wake-all",
+    "broken_wait": "SyncError.Broken",
+    "worker_blocking": false
+  },
+  "atomics": {
+    "allowed_T": "Copy + Equatable + Send + Share",
+    "operations": ["load", "store", "swap", "compareExchange"],
+    "compare_exchange": "strong-no-spurious-failure",
+    "mismatch": "returns-observed-value-without-write",
+    "memory_orders": ["Relaxed", "Acquire", "Release", "AcqRel", "SeqCst"],
+    "invalid_order": "static-error-for-constant-order",
+    "failure_order_restrictions": "failure-not-Release-or-AcqRel-and-not-stronger-than-success",
+    "default_order": "forbidden",
+    "wait_notify": "use-Condition-or-channel",
+    "worker_blocking": false
+  },
+  "collections": {
+    "identities": [
+      "sync.Array[T: Copy + Send + Share]",
+      "sync.Map[K: Key + Send + Share, V: Copy + Send + Share]",
+      "sync.Set[K: Key + Send + Share]",
+      "sync.Stack[T: Send + Discard]",
+      "sync.Queue[T: Send + Discard]"
+    ],
+    "handle_traits": "Copy + Discard + Send + Share",
+    "identity_sharing": "copy-handle-same-state",
+    "signatures": [
+      {
+        "id": "array-length",
+        "signature": "pub fn sync.Array.length(ref self): Int",
+        "effect": "sync"
+      },
+      {
+        "id": "array-empty",
+        "signature": "pub fn sync.Array.isEmpty(ref self): Bool",
+        "effect": "sync"
+      },
+      {
+        "id": "array-get",
+        "signature": "pub fn sync.Array.get(ref self, index: Int): T? suspends",
+        "effect": "suspends"
+      },
+      {
+        "id": "array-set",
+        "signature": "pub fn sync.Array.set(ref self, index: Int, value: T): T ! CollectionError suspends",
+        "effect": "suspends"
+      },
+      {
+        "id": "array-compare-exchange",
+        "signature": "pub fn sync.Array[T: Copy + Equatable + Send + Share].compareExchange(ref self, index: Int, expected: T, desired: T): CompareExchange[T] ! CollectionError suspends",
+        "effect": "suspends"
+      },
+      {
+        "id": "array-snapshot",
+        "signature": "pub fn sync.Array.snapshot(ref self): Array[T] ! CollectionError suspends",
+        "effect": "suspends"
+      },
+      {
+        "id": "map-length",
+        "signature": "pub fn sync.Map.length(ref self): Int",
+        "effect": "sync"
+      },
+      {
+        "id": "map-empty",
+        "signature": "pub fn sync.Map.isEmpty(ref self): Bool",
+        "effect": "sync"
+      },
+      {
+        "id": "map-get",
+        "signature": "pub fn sync.Map.get(ref self, key: K): V? suspends",
+        "effect": "suspends"
+      },
+      {
+        "id": "map-contains",
+        "signature": "pub fn sync.Map.contains(ref self, key: K): Bool suspends",
+        "effect": "suspends"
+      },
+      {
+        "id": "map-insert",
+        "signature": "pub fn sync.Map.insert(ref self, key: K, value: V): V? ! CollectionError suspends",
+        "effect": "suspends"
+      },
+      {
+        "id": "map-remove",
+        "signature": "pub fn sync.Map.remove(ref self, key: K): V? suspends",
+        "effect": "suspends"
+      },
+      {
+        "id": "map-compare-exchange",
+        "signature": "pub fn sync.Map[K: Key + Send + Share, V: Copy + Equatable + Send + Share].compareExchange(ref self, key: K, expected: V?, desired: V?): CompareExchange[V?] ! CollectionError suspends",
+        "effect": "suspends"
+      },
+      {
+        "id": "map-snapshot",
+        "signature": "pub fn sync.Map.snapshot(ref self): Map[K, V] ! CollectionError suspends",
+        "effect": "suspends"
+      },
+      {
+        "id": "set-length",
+        "signature": "pub fn sync.Set.length(ref self): Int",
+        "effect": "sync"
+      },
+      {
+        "id": "set-empty",
+        "signature": "pub fn sync.Set.isEmpty(ref self): Bool",
+        "effect": "sync"
+      },
+      {
+        "id": "set-contains",
+        "signature": "pub fn sync.Set.contains(ref self, key: K): Bool suspends",
+        "effect": "suspends"
+      },
+      {
+        "id": "set-insert",
+        "signature": "pub fn sync.Set.insert(ref self, key: K): Bool ! CollectionError suspends",
+        "effect": "suspends"
+      },
+      {
+        "id": "set-remove",
+        "signature": "pub fn sync.Set.remove(ref self, key: K): Bool suspends",
+        "effect": "suspends"
+      },
+      {
+        "id": "set-snapshot",
+        "signature": "pub fn sync.Set.snapshot(ref self): Set[K] ! CollectionError suspends",
+        "effect": "suspends"
+      },
+      {
+        "id": "stack-length",
+        "signature": "pub fn sync.Stack.length(ref self): Int",
+        "effect": "sync"
+      },
+      {
+        "id": "stack-empty",
+        "signature": "pub fn sync.Stack.isEmpty(ref self): Bool",
+        "effect": "sync"
+      },
+      {
+        "id": "stack-push",
+        "signature": "pub fn sync.Stack.push(ref self, value: T): Unit ! CollectionError suspends",
+        "effect": "suspends"
+      },
+      {
+        "id": "stack-pop",
+        "signature": "pub fn sync.Stack.pop(ref self): T? suspends",
+        "effect": "suspends"
+      },
+      {
+        "id": "stack-peek",
+        "signature": "pub fn sync.Stack[T: Copy + Send + Share].peek(ref self): T? suspends",
+        "effect": "suspends"
+      },
+      {
+        "id": "stack-snapshot",
+        "signature": "pub fn sync.Stack[T: Copy + Send + Share].snapshot(ref self): Array[T] ! CollectionError suspends",
+        "effect": "suspends"
+      },
+      {
+        "id": "queue-length",
+        "signature": "pub fn sync.Queue.length(ref self): Int",
+        "effect": "sync"
+      },
+      {
+        "id": "queue-empty",
+        "signature": "pub fn sync.Queue.isEmpty(ref self): Bool",
+        "effect": "sync"
+      },
+      {
+        "id": "queue-enqueue",
+        "signature": "pub fn sync.Queue.enqueue(ref self, value: T): Unit ! CollectionError suspends",
+        "effect": "suspends"
+      },
+      {
+        "id": "queue-dequeue",
+        "signature": "pub fn sync.Queue.dequeue(ref self): T? suspends",
+        "effect": "suspends"
+      },
+      {
+        "id": "queue-peek",
+        "signature": "pub fn sync.Queue[T: Copy + Send + Share].peek(ref self): T? suspends",
+        "effect": "suspends"
+      },
+      {
+        "id": "queue-snapshot",
+        "signature": "pub fn sync.Queue[T: Copy + Send + Share].snapshot(ref self): Array[T] ! CollectionError suspends",
+        "effect": "suspends"
+      }
+    ],
+    "compare_exchange": "strong-no-spurious-failure",
+    "array": {
+      "length": "fixed",
+      "index": "stable",
+      "set_outcome": "returns-replaced-value",
+      "structural_mutation": "forbidden"
+    },
+    "map": {
+      "order": "insertion-by-linearization",
+      "replace_moves_key": false,
+      "remove_reinsert_moves_to_end": true
+    },
+    "set": {
+      "order": "insertion-by-linearization",
+      "remove_reinsert_moves_to_end": true
+    },
+    "stack": {
+      "order": "LIFO",
+      "empty_pop": "none",
+      "iteration": "copy-only-and-non-destructive"
+    },
+    "queue": {
+      "order": "FIFO-MPMC",
+      "empty_dequeue": "none",
+      "iteration": "copy-only-and-non-destructive"
+    },
+    "operations_suspend_under_contention": true,
+    "operations_selectable": false,
+    "snapshot": "one-linearization-coherent-value-collection",
+    "direct_for": {
+      "protocol": "AsyncIterator",
+      "horizon": "finite-structural-O1",
+      "binding": "value-only",
+      "post_cursor_insertions": "excluded",
+      "lock_held_in_body": false,
+      "materialization": "forbidden",
+      "ordering": "array-index;map-set-linearized-insertion;stack-top-down;queue-front-first"
+    },
+    "literal_forms": [
+      "sync.Array[...]",
+      "sync.Map[...]",
+      "sync.Set[...]",
+      "sync.Stack[...]",
+      "sync.Queue[...]"
+    ],
+    "global_aliases": ["SArray", "SMap", "SSet"],
+    "global_aliases_status": "forbidden",
+    "collection_error": "std.collections.CollectionError"
+  },
+  "fairness": {
+    "lock_waiters": "FIFO-registration-with-bounded-barging",
+    "condition_waiters": "FIFO-registration",
+    "semaphore_waiters": "FIFO-registration",
+    "barrier": "all-arrivals-in-generation",
+    "starvation_default": "forbidden-under-cooperative-scheduler",
+    "scheduler_order_is_promise": false
+  },
+  "cancellation": {
+    "waiter_unregister_before_scope_exit": true,
+    "held_guard_release_before_unwind": true,
+    "held_permit_release_before_unwind": true,
+    "condition_reacquires_before_unwind": true,
+    "once_initializer_cleanup_before_reset": true,
+    "barrier_breaks_generation": true,
+    "no_detached_waiters": true
+  },
+  "diagnostics": {
+    "event_namespace": "std.sync",
+    "events": [
+      "sync.mutex.create",
+      "sync.mutex.wait",
+      "sync.mutex.acquire",
+      "sync.mutex.release",
+      "sync.rwlock.wait",
+      "sync.rwlock.acquire",
+      "sync.rwlock.release",
+      "sync.condition.wait",
+      "sync.condition.notify",
+      "sync.semaphore.acquire",
+      "sync.semaphore.release",
+      "sync.once.initialize",
+      "sync.once.publish",
+      "sync.barrier.arrive",
+      "sync.barrier.complete",
+      "sync.barrier.break",
+      "sync.atomic.operation",
+      "sync.collection.operation",
+      "sync.collection.snapshot",
+      "sync.collection.cursor"
+    ],
+    "required_fields": [
+      "run_id",
+      "task_id",
+      "thread_id",
+      "resource_id",
+      "event_sequence",
+      "state",
+      "queued"
+    ],
+    "payloads": "omitted-by-default",
+    "source_revision": "required",
+    "runtime_hooks_public": false
+  },
+  "exclusions": [
+    "WaitGroup",
+    "Task",
+    "Future",
+    "async-lock",
+    "lockAsync",
+    "unlockAsync",
+    "recursive-mutex",
+    "implicit-poisoning",
+    "implicit-memory-order",
+    "weak-compare-exchange",
+    "atomic-wait",
+    "atomic-notify",
+    "public-scheduler",
+    "global-lock-order-api",
+    "spin-until-ready",
+    "hidden-worker-blocking",
+    "selectable-collection-operation",
+    "waitPop",
+    "waitDequeue",
+    "hidden-unbounded-queue",
+    "SArray",
+    "SMap",
+    "SSet",
+    "borrowed-for-binding",
+    "live-global-collection-view",
+    "snapshot-by-copy-without-linearization",
+    "runtime-reflection-hooks"
+  ],
+  "negative_cases": [
+    "mutex-is-not-sendable-without-bound",
+    "mutex-reentrant-lock",
+    "guard-is-copyable",
+    "guard-is-cloneable",
+    "guard-dropped-without-release",
+    "guard-used-after-unlock",
+    "guard-borrow-escapes-owner",
+    "lock-blocks-cooperative-worker",
+    "rwlock-writer-starvation",
+    "rwlock-upgrade-is-published",
+    "condition-waits-without-guard",
+    "condition-loses-notification",
+    "condition-cancel-does-not-reacquire",
+    "condition-exposes-spurious-wakeup",
+    "semaphore-zero-capacity",
+    "semaphore-negative-capacity",
+    "permit-is-copyable",
+    "permit-double-release",
+    "permit-leak-on-unwind",
+    "semaphore-cancel-consumes-permit",
+    "once-runs-two-initializers",
+    "once-error-poisons-implicitly",
+    "once-cancel-leaves-initializing",
+    "once-reentrant-initializer-deadlocks",
+    "barrier-zero-parties",
+    "barrier-cancel-does-not-break",
+    "barrier-broken-generation-releases-as-success",
+    "atomic-hides-memory-order",
+    "atomic-invalid-failure-order",
+    "atomic-spurious-compare-exchange",
+    "atomic-default-order",
+    "collection-handle-copies-content",
+    "collection-array-resizes",
+    "collection-map-reorders-on-replace",
+    "collection-cas-spurious-failure",
+    "collection-for-borrows-reference",
+    "collection-for-holds-lock-in-body",
+    "collection-for-live-infinite-horizon",
+    "collection-snapshot-is-mixed-state",
+    "collection-publishes-select-api",
+    "sync-publishes-waitgroup",
+    "diagnostics-publish-payloads"
+  ],
+  "implementation": {
+    "status": "pending-after-native-gate",
+    "public_api_promoted": false,
+    "host": "required-after-native-gate",
+    "required_follow_ups": [
+      "STD-SYNC-IMPL-001",
+      "STD-SYNC-HOST-001",
+      "STD-SYNC-TEST-001",
+      "STD-SYNC-PERF-001",
+      "STD-SYNC-COLLECTION-FRONTEND-001",
+      "STD-SYNC-COLLECTION-IMPL-001",
+      "STD-SYNC-COLLECTION-ITER-001",
+      "STD-SYNC-COLLECTION-TEST-001",
+      "STD-SYNC-COLLECTION-PERF-001",
+      "STD-SYNC-COLLECTION-CONF-001",
+      "STD-SYNC-CONF-001",
+      "STD-SYNC-DOC-001"
+    ]
+  },
+  "promotion": {
+    "implementation_pending": [
+      "STD-SYNC-IMPL-001",
+      "STD-SYNC-HOST-001",
+      "STD-SYNC-TEST-001",
+      "STD-SYNC-PERF-001",
+      "STD-SYNC-COLLECTION-FRONTEND-001",
+      "STD-SYNC-COLLECTION-IMPL-001",
+      "STD-SYNC-COLLECTION-ITER-001",
+      "STD-SYNC-COLLECTION-TEST-001",
+      "STD-SYNC-COLLECTION-PERF-001",
+      "STD-SYNC-COLLECTION-CONF-001",
+      "STD-SYNC-CONF-001",
+      "STD-SYNC-DOC-001"
+    ],
+    "next_blocks": ["STD-EXEC-001", "STD-NET-001"]
+  }
+}

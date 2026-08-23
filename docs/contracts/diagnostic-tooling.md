@@ -2,9 +2,9 @@
 
 **Estado:** `contract-locked` para Tondo 0.1. `DEC-018` y
 `DIAG-SPEC-001` fijan esta superficie; el contrato runtime-facing de
-`std.async.Group` y `std.channel` ya están cerrados por
-`STD-ASYNC-GROUP-SPEC-001` y `STD-CONC-001`. La implementación runtime queda
-pendiente de `STD-SYNC-001`, `STD-EXEC-001`, `STD-NET-001` y los bloques
+`std.async.Group`, `std.channel` y `std.sync` ya están cerrados por
+`STD-ASYNC-GROUP-SPEC-001`, `STD-CONC-001` y `STD-SYNC-001`. La implementación
+runtime queda pendiente de `STD-EXEC-001`, `STD-NET-001` y los bloques
 `DIAG-*` posteriores.
 
 Este documento define la frontera entre el lenguaje, el runtime y las
@@ -177,7 +177,8 @@ La ejecución se divide en bloques del tracker:
 | `DIAG-SPEC-001` | Profiles, envelope, identidad, privacidad, límites y CLI | `PERF-001`, contratos CLI/testing |
 | `STD-ASYNC-GROUP-SPEC-001` | Contrato de `Group`, ownership, orden, cancelación drenada y eventos privados; sin implementación pública | `DIAG-SPEC-001`, `ASYNC-SELECT-VM-CONF-001`, S1A |
 | `STD-CONC-001` | Contrato de canales, ownership, backpressure, cierre, selección cancelable, fairness y eventos privados; sin implementación pública | `DIAG-SPEC-001`, `ASYNC-SELECT-VM-CONF-001`, S1A |
-| `STD-SYNC-001` / `STD-EXEC-001` / `STD-NET-001` | Contratos runtime-facing y eventos observables, sin implementación pública | `DIAG-SPEC-001`, foundations STD-0.1A |
+| `STD-SYNC-001` | Contrato de locks, atomics, colecciones compartidas y eventos observables, sin implementación pública | `DIAG-SPEC-001`, foundations STD-0.1A |
+| `STD-EXEC-001` / `STD-NET-001` | Contratos runtime-facing y eventos observables, sin implementación pública | `DIAG-SPEC-001`, foundations STD-0.1A |
 | `DIAG-RUNTIME-001` | Registro de task/thread, eventos de memoria, roots, recursos y source maps en VM | `DIAG-SPEC-001`, contratos runtime-facing B0, VM hosted |
 | `RACE-001` | Detector VM sobre tasks, memoria, unsafe y primitivas internas; corpus positivo/negativo | `DIAG-RUNTIME-001` |
 | `LEAK-001` | Retención GC y recursos hosted con snapshots reproducibles | `DIAG-RUNTIME-001` |

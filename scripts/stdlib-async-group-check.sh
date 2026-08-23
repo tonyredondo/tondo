@@ -135,9 +135,7 @@ jq -e '
     "STD-ASYNC-GROUP-CONF-001",
     "STD-ASYNC-GROUP-DOC-001"
   ]
-  and .promotion.next_blocks == [
-    "STD-SYNC-001", "STD-EXEC-001", "STD-NET-001"
-  ]
+  and .promotion.next_blocks == ["STD-EXEC-001", "STD-NET-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable Group contract"
 
 for path in \

@@ -2309,6 +2309,13 @@ memoria explícito. Un lock o permiso contendido suspende la task; no bloquea un
 worker cooperativo. Guards y permits liberan exactamente una vez por consumo,
 `defer`, cancelación o unwind.
 
+El contrato machine-readable cerrado por `STD-SYNC-001` está en
+[`testing/stdlib-sync.json`](./testing/stdlib-sync.json) y su explicación
+normativa está en [`docs/contracts/stdlib-sync.md`](./docs/contracts/stdlib-sync.md).
+Estos artefactos fijan la superficie y sus negativos; la implementación pública
+queda `required-after-native-gate` y no se adelanta por tener una firma en la
+spec.
+
 Tondo no utiliza poisoning implícito: un pánico ejecuta cleanup y libera el
 guard, mientras que los invariantes recuperables pertenecen al tipo protegido y
 a sus errores nominales. Tampoco existe `WaitGroup`; `scope` y
@@ -2320,6 +2327,91 @@ Los tipos compartidos publican `Send`/`Share` solo cuando sus parámetros y la
 implementación interior lo demuestran. `threads` es necesario para semántica
 cross-thread real; un target que no la ofrezca rechaza esa operación en vez de
 simularla con ejecución single-thread.
+
+##### 14.4.4.0 Superficie de sincronización
+
+La superficie canónica de las primitivas es:
+
+~~~tondo pseudocode
+pub enum SyncError {
+    InvalidCapacity
+    InvalidParties
+    ResourceLimit
+    ReentrantLock
+    ReentrantInitialization
+    Broken
+}
+
+pub type Mutex[T]
+pub type MutexGuard[T]
+pub type RwLock[T]
+pub type ReadGuard[T]
+pub type WriteGuard[T]
+pub type Condition
+pub type Semaphore
+pub type Permit
+pub type Once[T, E]
+pub type Barrier
+
+pub enum BarrierRole { Leader Follower }
+pub enum MemoryOrder { Relaxed Acquire Release AcqRel SeqCst }
+pub enum CompareExchange[T] { Exchanged(T) Mismatch(T) }
+pub type Atomic[T]
+
+pub fn mutex[T: Send](value: T): Mutex[T] ! SyncError
+pub fn Mutex.lock(ref self): MutexGuard[T] ! SyncError suspends
+pub fn Mutex.tryLock(ref self): MutexGuard[T]?
+pub fn MutexGuard.get(ref self): ref T
+pub fn MutexGuard.getMut(mut self): mut T
+pub fn MutexGuard.unlock(self): Unit
+
+pub fn rwLock[T: Send](value: T): RwLock[T] ! SyncError
+pub fn RwLock.read(ref self): ReadGuard[T] ! SyncError suspends
+pub fn RwLock.tryRead(ref self): ReadGuard[T]?
+pub fn ReadGuard.get(ref self): ref T
+pub fn ReadGuard.unlock(self): Unit
+pub fn RwLock.write(ref self): WriteGuard[T] ! SyncError suspends
+pub fn RwLock.tryWrite(ref self): WriteGuard[T]?
+pub fn WriteGuard.get(ref self): ref T
+pub fn WriteGuard.getMut(mut self): mut T
+pub fn WriteGuard.unlock(self): Unit
+
+pub fn condition(): Condition ! SyncError
+pub fn Condition.wait[T](var guard: MutexGuard[T]): MutexGuard[T] suspends
+pub fn Condition.notifyOne(ref self): Unit
+pub fn Condition.notifyAll(ref self): Unit
+
+pub fn semaphore(capacity: Int): Semaphore ! SyncError
+pub fn Semaphore.acquire(ref self): Permit suspends
+pub fn Semaphore.tryAcquire(ref self): Permit?
+pub fn Permit.release(self): Unit
+
+pub fn once[T, E](): Once[T, E]
+pub fn Once.get(ref self): ref T?
+pub fn Once.getOrInit(ref self, init: fn(): T ! E suspends): ref T ! E suspends
+pub fn Once.isReady(ref self): Bool
+
+pub fn barrier(parties: Int): Barrier ! SyncError
+pub fn Barrier.wait(ref self): BarrierRole ! SyncError suspends
+
+pub fn atomic[T: Copy + Equatable + Send + Share](value: T): Atomic[T]
+pub fn Atomic.load(ref self, order: MemoryOrder): T
+pub fn Atomic.store(ref self, value: T, order: MemoryOrder): Unit
+pub fn Atomic.swap(ref self, value: T, order: MemoryOrder): T
+pub fn Atomic.compareExchange(ref self, expected: T, desired: T, success: MemoryOrder, failure: MemoryOrder): CompareExchange[T]
+~~~
+
+Los guards y permits son afines, no `Copy` ni `Clone`, y satisfacen `Discard`
+para liberar exactamente una vez mediante `unlock`/`release`, `defer`,
+cancelación o unwind. No hay poisoning implícito. `Mutex` no es reentrante:
+una adquisición recursiva devuelve `SyncError.ReentrantLock`. `RwLock` no publica
+upgrade/downgrade. `Condition.wait` libera y registra atómicamente, y vuelve a
+adquirir el mismo guard antes de retornar; las wakeups espurias se ocultan y el
+caller mantiene su bucle de predicado. `semaphore` exige capacidad positiva,
+`Once` resetea a `uninitialized` tras error/cancelación/pánico del initializer y
+`Barrier` rompe la generación ante cancelación. Los atomics exigen un
+`MemoryOrder` constante de compilación, CAS fuerte sin fallo espurio y ningún
+orden por defecto. Ninguna de estas operaciones es `selectable`.
 
 ##### 14.4.4.1 Colecciones compartidas
 

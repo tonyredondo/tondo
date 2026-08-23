@@ -287,10 +287,6 @@
       "STD-CHANNEL-CONF-001",
       "STD-CHANNEL-DOC-001"
     ],
-    "next_blocks": [
-      "STD-SYNC-001",
-      "STD-EXEC-001",
-      "STD-NET-001"
-    ]
+    "next_blocks": ["STD-EXEC-001", "STD-NET-001"]
   }
 }

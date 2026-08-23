@@ -83,6 +83,10 @@ run_step stdlib-channel-contract \
     scripts/stdlib-channel-check.sh
 run_step stdlib-channel-contract-tests \
     scripts/stdlib-channel-test.sh
+run_step stdlib-sync-contract \
+    scripts/stdlib-sync-check.sh
+run_step stdlib-sync-contract-tests \
+    scripts/stdlib-sync-test.sh
 run_step stdlib-performance-contract \
     scripts/stdlib-performance-check.sh
 run_step native-target-descriptor-contract \
