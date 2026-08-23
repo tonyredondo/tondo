@@ -497,22 +497,22 @@
           "status": "complete",
           "reason": null,
           "signatures": [
-            "std.env:28",
             "std.env:29",
             "std.env:30",
             "std.env:31",
             "std.env:32",
             "std.env:33",
-            "std.env:34"
+            "std.env:34",
+            "std.env:35"
           ],
           "verified_signatures": [
-            "std.env:28",
             "std.env:29",
             "std.env:30",
             "std.env:31",
             "std.env:32",
             "std.env:33",
-            "std.env:34"
+            "std.env:34",
+            "std.env:35"
           ],
           "refs": [
             "testing/stdlib-public-api.json"

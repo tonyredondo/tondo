@@ -662,13 +662,13 @@
         "requirement:std.env:snapshot-identity-and-sealing"
       ],
       "signature_rows": [
-        "signature:std.env:28",
         "signature:std.env:29",
         "signature:std.env:30",
         "signature:std.env:31",
         "signature:std.env:32",
         "signature:std.env:33",
-        "signature:std.env:34"
+        "signature:std.env:34",
+        "signature:std.env:35"
       ],
       "source_set": "stdlib-hosted",
       "stage_order": [
@@ -4940,36 +4940,12 @@
     },
     {
       "dimensions_ref": "owner:std.env",
-      "id": "signature:std.env:28",
-      "kind": "signature",
-      "layer": "A0",
-      "owner": "std.env",
-      "scope": "STD-0.1A",
-      "signature": "pub fn snapshot(): Snapshot ! EnvError",
-      "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.env:28",
-        "contract": "docs/contracts/stdlib-env.md",
-        "line": 28
-      },
-      "stage_refs": {
-        "CONF": "owner:std.env:CONF",
-        "DOC": "owner:std.env:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.env:28:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.env:28:MODEL/TEST/FUZZ",
-        "PERF": "owner:std.env:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.env:28:SPEC"
-      },
-      "status": "verified",
-      "symbol": "std.env.snapshot"
-    },
-    {
-      "dimensions_ref": "owner:std.env",
       "id": "signature:std.env:29",
       "kind": "signature",
       "layer": "A0",
       "owner": "std.env",
       "scope": "STD-0.1A",
-      "signature": "pub fn Name.fromText(value: String): Name ! EnvError",
+      "signature": "pub fn snapshot(): Snapshot ! EnvError",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.env:29",
         "contract": "docs/contracts/stdlib-env.md",
@@ -4984,7 +4960,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.env:29:SPEC"
       },
       "status": "verified",
-      "symbol": "std.env.Name.fromText"
+      "symbol": "std.env.snapshot"
     },
     {
       "dimensions_ref": "owner:std.env",
@@ -4993,7 +4969,7 @@
       "layer": "A0",
       "owner": "std.env",
       "scope": "STD-0.1A",
-      "signature": "pub fn Name.fromBytes(value: bytes.Bytes): Name ! EnvError",
+      "signature": "pub fn Name.fromText(value: String): Name ! EnvError",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.env:30",
         "contract": "docs/contracts/stdlib-env.md",
@@ -5008,7 +4984,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.env:30:SPEC"
       },
       "status": "verified",
-      "symbol": "std.env.Name.fromBytes"
+      "symbol": "std.env.Name.fromText"
     },
     {
       "dimensions_ref": "owner:std.env",
@@ -5017,7 +4993,7 @@
       "layer": "A0",
       "owner": "std.env",
       "scope": "STD-0.1A",
-      "signature": "pub fn Snapshot.arguments(ref self): Array[Value]",
+      "signature": "pub fn Name.fromBytes(value: bytes.Bytes): Name ! EnvError",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.env:31",
         "contract": "docs/contracts/stdlib-env.md",
@@ -5032,7 +5008,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.env:31:SPEC"
       },
       "status": "verified",
-      "symbol": "std.env.Snapshot.arguments"
+      "symbol": "std.env.Name.fromBytes"
     },
     {
       "dimensions_ref": "owner:std.env",
@@ -5041,7 +5017,7 @@
       "layer": "A0",
       "owner": "std.env",
       "scope": "STD-0.1A",
-      "signature": "pub fn Snapshot.get(ref self, name: Name): Option[Value] ! EnvError",
+      "signature": "pub fn Snapshot.arguments(ref self): Array[Value]",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.env:32",
         "contract": "docs/contracts/stdlib-env.md",
@@ -5056,7 +5032,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.env:32:SPEC"
       },
       "status": "verified",
-      "symbol": "std.env.Snapshot.get"
+      "symbol": "std.env.Snapshot.arguments"
     },
     {
       "dimensions_ref": "owner:std.env",
@@ -5065,7 +5041,7 @@
       "layer": "A0",
       "owner": "std.env",
       "scope": "STD-0.1A",
-      "signature": "pub fn Value.asText(ref self): Option[String]",
+      "signature": "pub fn Snapshot.get(ref self, name: Name): Option[Value] ! EnvError",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.env:33",
         "contract": "docs/contracts/stdlib-env.md",
@@ -5080,7 +5056,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.env:33:SPEC"
       },
       "status": "verified",
-      "symbol": "std.env.Value.asText"
+      "symbol": "std.env.Snapshot.get"
     },
     {
       "dimensions_ref": "owner:std.env",
@@ -5089,7 +5065,7 @@
       "layer": "A0",
       "owner": "std.env",
       "scope": "STD-0.1A",
-      "signature": "pub fn Value.asBytes(ref self): bytes.Bytes",
+      "signature": "pub fn Value.asText(ref self): Option[String]",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.env:34",
         "contract": "docs/contracts/stdlib-env.md",
@@ -5102,6 +5078,30 @@
         "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.env:34:MODEL/TEST/FUZZ",
         "PERF": "owner:std.env:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.env:34:SPEC"
+      },
+      "status": "verified",
+      "symbol": "std.env.Value.asText"
+    },
+    {
+      "dimensions_ref": "owner:std.env",
+      "id": "signature:std.env:35",
+      "kind": "signature",
+      "layer": "A0",
+      "owner": "std.env",
+      "scope": "STD-0.1A",
+      "signature": "pub fn Value.asBytes(ref self): bytes.Bytes",
+      "source": {
+        "audit": "testing/stdlib-public-api.json#rows/std.env:35",
+        "contract": "docs/contracts/stdlib-env.md",
+        "line": 35
+      },
+      "stage_refs": {
+        "CONF": "owner:std.env:CONF",
+        "DOC": "owner:std.env:DOC",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.env:35:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.env:35:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.env:PERF",
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.env:35:SPEC"
       },
       "status": "verified",
       "symbol": "std.env.Value.asBytes"

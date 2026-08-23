@@ -957,13 +957,13 @@
       "status": "verified",
       "reason": null,
       "public_signatures": [
-        "std.env:28",
         "std.env:29",
         "std.env:30",
         "std.env:31",
         "std.env:32",
         "std.env:33",
-        "std.env:34"
+        "std.env:34",
+        "std.env:35"
       ],
       "requirements": [
         "requirement:std.env:arguments-and-order",
@@ -1029,15 +1029,6 @@
           ]
         },
         {
-          "id": "signature:std.env:28",
-          "kind": "signature",
-          "status": "verified",
-          "reason": null,
-          "refs": [
-            "testing/stdlib-conformance.json#owners/std.env"
-          ]
-        },
-        {
           "id": "signature:std.env:29",
           "kind": "signature",
           "status": "verified",
@@ -1084,6 +1075,15 @@
         },
         {
           "id": "signature:std.env:34",
+          "kind": "signature",
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "testing/stdlib-conformance.json#owners/std.env"
+          ]
+        },
+        {
+          "id": "signature:std.env:35",
           "kind": "signature",
           "status": "verified",
           "reason": null,
