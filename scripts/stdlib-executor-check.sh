@@ -180,7 +180,7 @@ jq -e '
     "STD-EXEC-DOC-001"
   ]
   and .promotion.implementation_pending == .implementation.required_follow_ups
-  and .promotion.next_blocks == ["STD-NET-001", "DIAG-RUNTIME-001"]
+  and .promotion.next_blocks == ["STD-CIVIL-TIME-001", "STD-ENCODING-001", "DIAG-RUNTIME-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable executor contract"
 
 for path in \

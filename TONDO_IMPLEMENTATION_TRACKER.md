@@ -83,8 +83,9 @@ limpios producen el mismo paquete VM content-addressed, con instalación,
 ejecución y desinstalación verificadas. `STD-S1A-SEAL-001` ha cerrado el
 bundle técnico del draft con auditoría estricta y cero celdas aplicables
 abiertas; `DIAG-SPEC-001` ya cerró su contrato D0 y los contratos de
-`std.async.Group`, `std.channel`, `std.sync` y `std.executor` ya están cerrados
-como contratos runtime-facing. El siguiente contrato es `STD-NET-001`. El grafo
+`std.async.Group`, `std.channel`, `std.sync`, `std.executor` y `std.net` ya están
+cerrados como contratos runtime-facing. La frontera contractual B0 continúa con
+`STD-CIVIL-TIME-001` y `STD-ENCODING-001`. El grafo
 activo se valida con `TRACKER-LINT-001`; con el contrato D0 cerrado, se cierran ahora las fronteras
 runtime-facing B0 de Wave 6; entonces avanzan `DIAG-RUNTIME-001`, `RACE-001`,
 `LEAK-001`, `DUMP-001`, `DIAG-TEST-001` y `DIAG-CI-001` antes de la evaluación
@@ -5775,7 +5776,8 @@ publica hasta cerrar el gate final.
   `scripts/stdlib-executor-check.sh` y
   `scripts/stdlib-executor-test.sh`, integrados en `test-gate.sh`. La
   implementación permanece pendiente de las leaves `STD-EXEC-*` después de
-  `NATIVE-001`; el siguiente contrato B0 es `STD-NET-001`.
+  `NATIVE-001`; los siguientes contratos B0 son `STD-CIVIL-TIME-001` y
+  `STD-ENCODING-001`.
 
 - [ ] **STD-CIVIL-TIME-001 — Completar `std.time` con calendario civil.** Añadir
   `Date`, `Time`, `DateTime`, zonas horarias, reglas/versionado de timezone data
@@ -5785,9 +5787,21 @@ publica hasta cerrar el gate final.
 
 ### 21.2 Aplicación y datos
 
-- [ ] **STD-NET-001 — Especificar `std.net` capability-gated.** Direcciones,
-  DNS, sockets, streams, datagrams, TLS boundary, timeouts y cancelación
-  exponen errores portables y no realizan I/O implícito.
+- [x] **STD-NET-001 — Especificar `std.net` capability-gated.** El registro
+  [`testing/stdlib-net.json`](./testing/stdlib-net.json) y el contrato
+  [`docs/contracts/stdlib-net.md`](./docs/contracts/stdlib-net.md) cierran la
+  superficie de direcciones, DNS explícito, TCP con partial I/O y split afín,
+  UDP datagram-atómico, TLS con `PlatformRoots`, límites finitos, deadlines
+  monotónicos, cancelación cooperativa, cleanup y eventos privados. `network`
+  es capability obligatoria, `clock` solo se solicita para deadlines; no hay
+  I/O por import, retries, proxies ambientales, resolución implícita,
+  futures duplicados, TLS inseguro ni `std.net.select`. `accept`, lectura TCP y
+  recepción UDP son los únicos adapters `selectable`; el resto usa la
+  suspensión implícita única de Tondo. Los checks negativos están en
+  `scripts/stdlib-net-check.sh` y `scripts/stdlib-net-test.sh`, integrados en
+  `test-gate.sh`. La implementación y el host siguen pendientes de las leaves
+  `STD-NET-*` tras `NATIVE-001`; el siguiente orden contractual es
+  `STD-CIVIL-TIME-001` → `STD-ENCODING-001`.
 
 - [ ] **STD-ENCODING-001 — Especificar `std.encoding`.** Base64, hexadecimal y
   sus variantes fijan alfabetos, padding, canonicalidad, streaming, límites y
@@ -6717,10 +6731,10 @@ Esta tabla es la fuente de reconciliación del estado actual.
     real.
 27. [ ] **Wave 6 — Contratos que condicionan el backend.** Después de
     `ASYNC-SELECT-VM-CONF-001` y `DIAG-SPEC-001`, están cerrados
-    `STD-ASYNC-GROUP-SPEC-001`, `STD-CONC-001`, `STD-SYNC-001` y
-    `STD-EXEC-001`; falta la frontera runtime de `STD-NET-001`. Mini-gate:
-    DEC-013/014 reciben requisitos completos sin implementar todavía
-    STD-0.1B.
+    `STD-ASYNC-GROUP-SPEC-001`, `STD-CONC-001`, `STD-SYNC-001`,
+    `STD-EXEC-001` y `STD-NET-001`; las siguientes fronteras contractuales son
+    `STD-CIVIL-TIME-001` y `STD-ENCODING-001`. Mini-gate: DEC-013/014 reciben
+    requisitos completos sin implementar todavía STD-0.1B.
 28. [ ] **Wave 7 — M11 correcto antes que optimizado.** Con Wave 6 cerrada,
     ejecutar `DIAG-RUNTIME-001 → (RACE-001 + LEAK-001 + DUMP-001) →
     DIAG-TEST-001 → DIAG-CI-001 → NATIVE-001 → NATIVE-MEM-ADR-001 →
@@ -6788,8 +6802,9 @@ resultado compuesto vivos. `CONF-SEAL-FINAL-001` permanece pendiente para el
 primer release. `STD-IMPL-001`, `STD-IMPL-002` y `STD-CODEC-PUBLIC-001` están cerrados;
 Wave 6 continúa con los contratos runtime-facing B0 después del seal S1A y del
 contrato D0 de diagnóstico; `STD-ASYNC-GROUP-SPEC-001`, `STD-CONC-001`,
-`STD-SYNC-001` y `STD-EXEC-001` ya tienen registros y negativos ejecutables, y
-queda la frontera runtime de `STD-NET-001`.
+`STD-SYNC-001`, `STD-EXEC-001` y `STD-NET-001` ya tienen registros y negativos
+ejecutables; siguen las leaves de implementación y las siguientes fronteras
+contractuales `STD-CIVIL-TIME-001` y `STD-ENCODING-001`.
 `STD-IMPL-001` y `STD-IMPL-002` quedan ahora cerrados por sus gates de
 coordinación; `NATIVE-TARGET-DESC-001`, `NATIVE-ARTIFACT-001`,
 `NATIVE-LINK-PLAN-001`, `NATIVE-PUBLISH-SPEC-001` y `PERF-001` quedan cerrados
@@ -6805,8 +6820,9 @@ casos del draft) con evidencia hash-bound. `STD-A-DIST-001` promovió el
 paquete VM reproducible (dos snapshots, instalación, ejecución y
 desinstalación). `STD-S1A-SEAL-001` cerró el bundle técnico del draft y
 `DIAG-SPEC-001` cerró el contrato D0; `STD-ASYNC-GROUP-SPEC-001`, `STD-CONC-001`,
-`STD-SYNC-001` y `STD-EXEC-001` cerraron cuatro fronteras B0 y la siguiente es
-`STD-NET-001`. La instrumentación VM espera el cierre de esa frontera,
+`STD-SYNC-001`, `STD-EXEC-001` y `STD-NET-001` cerraron cinco fronteras B0; las
+siguientes son `STD-CIVIL-TIME-001` y `STD-ENCODING-001`. La instrumentación VM
+espera el cierre de las fronteras B0 contractuales,
 mientras `NATIVE-001` espera
 `DIAG-CI-001`.
 

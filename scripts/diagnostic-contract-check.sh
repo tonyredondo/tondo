@@ -118,7 +118,7 @@ jq -e '
   }
   and ((.negative_cases | unique | length) == (.negative_cases | length))
   and (.negative_cases | length) == 18
-  and .next_blocks == ["STD-EXEC-001", "STD-NET-001"]
+  and .next_blocks == ["DIAG-RUNTIME-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable contract"
 
 for path in \

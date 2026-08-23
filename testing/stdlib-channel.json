@@ -287,6 +287,6 @@
       "STD-CHANNEL-CONF-001",
       "STD-CHANNEL-DOC-001"
     ],
-    "next_blocks": ["STD-EXEC-001", "STD-NET-001"]
+    "next_blocks": ["STD-CIVIL-TIME-001", "STD-ENCODING-001"]
   }
 }

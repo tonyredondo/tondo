@@ -216,8 +216,5 @@
     "stdlib-parallel-api",
     "keyword-addition"
   ],
-  "next_blocks": [
-    "STD-EXEC-001",
-    "STD-NET-001"
-  ]
+  "next_blocks": ["DIAG-RUNTIME-001"]
 }

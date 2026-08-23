@@ -226,6 +226,6 @@
       "STD-ASYNC-GROUP-CONF-001",
       "STD-ASYNC-GROUP-DOC-001"
     ],
-    "next_blocks": ["STD-EXEC-001", "STD-NET-001"]
+    "next_blocks": ["STD-CIVIL-TIME-001", "STD-ENCODING-001"]
   }
 }

@@ -7,7 +7,7 @@ se han publicado
 
 **Edición de lenguaje compatible:** Tondo 0.1
 
-**Última actualización:** 2026-08-20
+**Última actualización:** 2026-08-24
 
 ---
 
@@ -65,9 +65,9 @@ Esta revisión no fija todavía:
   formatting estático sobre `Display`, sus builders y sus límites están fijados
   en `docs/contracts/stdlib-core.md`.
 - Los métodos concretos de strings, colecciones e iteradores.
-- Las declaraciones exhaustivas de consola, filesystem, procesos,
-  networking, concurrencia, calendario civil, codecs adicionales, regex, UUID
-  y logging.
+- Las declaraciones exhaustivas de consola, filesystem, procesos, concurrencia,
+  calendario civil, codecs adicionales, regex, UUID y logging. `std.net` es la
+  excepción ya cerrada por su contrato owner en la sección 14.4.6.
 - Las declaraciones exhaustivas de cada operación de JSON, MessagePack y
   Protobuf; este documento sí fija sus owners, arquitectura y garantías comunes.
 - La representación interna de ningún tipo.
@@ -1846,8 +1846,9 @@ actualizar esta especificación y el tracker antes de implementar.
 El catálogo y sus propietarios son normativos. Las declaraciones exhaustivas de
 las veintinueve superficies permanecen pendientes, salvo el núcleo sellado que
 `TONDO_TESTING_SPEC.md` ya fija para `std.testing`, `std.bytes`, el sustrato
-monotónico de `std.time` y el snapshot read-only de `std.env`. No existe un
-contrato bootstrap separado: el corpus consume siempre este borrador.
+monotónico de `std.time`, el snapshot read-only de `std.env` y el contrato
+runtime-facing de `std.net` en la sección 14.4.6. No existe un contrato
+bootstrap separado: el corpus consume siempre este borrador.
 
 La implementación usa dos gates internos sin crear versiones distintas:
 
@@ -2658,6 +2659,43 @@ registro machine-readable en
 [`testing/stdlib-executor.json`](./testing/stdlib-executor.json). Ese registro
 fija capacidad, backpressure, actores, bridge bloqueante, lifecycle,
 capabilities y eventos privados sin promover todavía una implementación
+runtime.
+
+#### 14.4.6 Networking
+
+`std.net` es un owner capability-gated: el target debe declarar `network` y un
+import nunca abre sockets, consulta DNS, lee proxies o certificados, crea tasks
+ni toca el entorno. `clock` solo es necesario cuando el caller construye un
+`NetOptions` con un `Instant` de deadline; `none` no instala un timeout
+ambiental. Las operaciones suspendibles siguen el modelo único de Tondo: una
+llamada directa espera implícitamente y el solapamiento usa el `spawn`/`Join`
+ordinario, sin `connectAsync`, futures o una API paralela.
+
+El contrato normativo y el registro único son
+[`docs/contracts/stdlib-net.md`](./docs/contracts/stdlib-net.md) y
+[`testing/stdlib-net.json`](./testing/stdlib-net.json). Fijan:
+
+- valores explícitos para nombres, direcciones y puertos, con DNS solo mediante
+  `resolve`, sin resolución implícita en `connect`, retries ni Happy Eyeballs
+  ambiental;
+- límites finitos y por operación (`NetLimits`/`NetOptions`), errores nominales,
+  deadlines monotónicos y cancelación cooperativa con cleanup antes de publicar
+  `Timeout` o salir del scope;
+- TCP con partial I/O observable, `ReadResult.Eof`, `TcpStream.shutdown` antes
+  de `split`, mitades afines de lectura/escritura y `selectable` únicamente en
+  `accept` y lectura;
+- UDP con datagrams atómicos, `DatagramTooLarge` sin truncación y recepción
+  `selectable`, sin promesas de entrega, orden o unicidad; y
+- una frontera TLS target-declared con `PlatformRoots` por defecto, SNI y
+  verificación de hostname, sin modo inseguro, downgrade a plaintext ni
+  publicación del stream antes del handshake.
+
+Los handles son afines, no se copian ni se comparten; `close` es explícito y la
+conformance comprueba ownership, commit/rollback, límites, cancelación,
+diagnóstico privado y ausencia de efectos por import. La superficie queda
+`contract-locked`, pero sus adaptadores VM/host, implementación, tests de
+conformance, benchmarks y documentación de uso siguen pendientes de las leaves
+`STD-NET-*` posteriores a `NATIVE-001`; este contrato no promociona aún símbolos
 runtime.
 
 ### 14.5 Contratos cerrados de los owners STD-0.1A
