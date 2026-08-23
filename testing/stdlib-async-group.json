@@ -1,0 +1,236 @@
+{
+  "format": "tondo-stdlib-owner-contract/1",
+  "owner": "std.async.group",
+  "parent_owner": "std.async",
+  "edition": "0.1",
+  "phase": "STD-0.1B",
+  "task": "STD-ASYNC-GROUP-SPEC-001",
+  "status": "contract-locked",
+  "contract": "docs/contracts/stdlib-async.md",
+  "spec": "TONDO_STANDARD_LIBRARY_SPEC.md",
+  "layer": "B1",
+  "kind": "intrinsic",
+  "target": "tondo-vm-hosted",
+  "host": {
+    "status": "not-applicable",
+    "reason": "Group composes the existing scheduler and Join; it has no host bridge or host primitive of its own"
+  },
+  "surface": {
+    "types": [
+      "Group[T, E]",
+      "Completion[T, E] = { index: Int, outcome: T ! E }"
+    ],
+    "signatures": [
+      {
+        "id": "group",
+        "signature": "pub fn group[T, E](): Group[T, E]",
+        "kind": "constructor",
+        "effect": "sync"
+      },
+      {
+        "id": "group-add",
+        "signature": "pub fn Group.add(var self, job: Join[T, E]): Unit",
+        "kind": "move-join",
+        "effect": "sync"
+      },
+      {
+        "id": "group-all",
+        "signature": "pub fn Group.all(self): Array[T] ! E suspends",
+        "kind": "terminal-consumer",
+        "effect": "suspends"
+      },
+      {
+        "id": "group-settle",
+        "signature": "pub fn Group.settle(self): Array[T ! E] suspends",
+        "kind": "terminal-consumer",
+        "effect": "suspends"
+      },
+      {
+        "id": "group-next",
+        "signature": "pub fn Group.next(var self): Completion[T, E]? selectable",
+        "kind": "completion-consumer",
+        "effect": "selectable"
+      },
+      {
+        "id": "group-cancel",
+        "signature": "pub fn Group.cancel(self): Unit suspends",
+        "kind": "terminal-consumer",
+        "effect": "suspends"
+      }
+    ],
+    "direct_call_waits": true,
+    "explicit_await_direct_call": "forbidden",
+    "explicit_await_join": "required",
+    "inference_by_name": false,
+    "bodyless_requires_effect": true,
+    "bodyful_inference": "allowed",
+    "selectable_operations": ["group-next"]
+  },
+  "ownership": {
+    "affine": true,
+    "copy": false,
+    "clone": false,
+    "discard": false,
+    "join_add_transfers": "wait-cancel-cleanup-obligation-to-group",
+    "group_transfer": "allowed-when-send",
+    "terminal_consumers": ["group-all", "group-settle", "group-cancel"],
+    "next_preserves_group_owner": true,
+    "scope_exit": ["terminal-consumer", "transfer"],
+    "implicit_drop": "compile-error",
+    "post_terminal_use": "compile-error",
+    "join_use_after_add": "compile-error"
+  },
+  "state_machine": {
+    "states": ["open", "waiting", "ready-to-consume", "consumed"],
+    "initial": "open",
+    "add_from": ["open", "waiting"],
+    "add_to": "open",
+    "next_from": ["open", "waiting", "ready-to-consume"],
+    "next_to": ["waiting", "ready-to-consume"],
+    "terminal_from": ["open", "waiting", "ready-to-consume"],
+    "terminal_to": "consumed",
+    "none_is_terminal": false,
+    "terminal_obligation_after_next_none": true,
+    "completion_queue_is_fifo_by_observation": true
+  },
+  "ordering": {
+    "index_base": 0,
+    "index_assignment": "monotonic-insertion-order",
+    "index_stability": "stable-for-group-lifetime",
+    "all_values": "insertion-order",
+    "settle_outcomes": "insertion-order",
+    "next": "actual-terminal-completion-order",
+    "next_tie_break": "lower-insertion-index",
+    "scheduler_order_is_promise": false,
+    "completion_is_observable_only_after_commit": true,
+    "losing_select_branch_mutates": false
+  },
+  "all": {
+    "waits_for_every_child": true,
+    "empty": "empty-array-success",
+    "success_array_is_partial": false,
+    "error_requests_cancel_of_unfinished": true,
+    "error_drains_cleanup": true,
+    "error_priority": "lowest-insertion-index-among-child-errors",
+    "cancelled_children_synthesize_error": false,
+    "panic": "drain-cleanup-then-propagate",
+    "result_order": "insertion-order"
+  },
+  "settle": {
+    "waits_for_every_child": true,
+    "empty": "empty-array-success",
+    "error_cancels_siblings": false,
+    "outcome_per_child": true,
+    "outcome_order": "insertion-order",
+    "success_array_is_partial": false,
+    "panic": "drain-cleanup-then-propagate"
+  },
+  "next": {
+    "selectable": true,
+    "empty": "none-immediately",
+    "no_completed_child": "suspends-until-one-terminal",
+    "removes_one_completion": true,
+    "none_after_all_removed": "none-with-group-still-affine",
+    "losing_select_branch": "rollback-without-removal",
+    "winning_select_branch": "commit-one-removal",
+    "completion_payload": "value-or-declared-error"
+  },
+  "cancel": {
+    "requests_all_live_children": true,
+    "request_order": "insertion-order",
+    "drains_all_children": true,
+    "waits_for_cleanup": true,
+    "returns_outcome": "Unit-success",
+    "empty": "immediate-success",
+    "idempotent": false,
+    "terminal": true
+  },
+  "diagnostics": {
+    "event_namespace": "std.async.group",
+    "events": [
+      "group.create",
+      "group.add",
+      "group.select.prepare",
+      "group.select.commit",
+      "group.select.rollback",
+      "group.child.cancel-request",
+      "group.child.terminal",
+      "group.drain",
+      "group.consume"
+    ],
+    "required_fields": [
+      "run_id",
+      "task_id",
+      "group_id",
+      "child_index",
+      "event_sequence",
+      "state"
+    ],
+    "payloads": "omitted-by-default",
+    "source_revision": "required",
+    "runtime_hooks_public": false
+  },
+  "exclusions": [
+    "WaitGroup",
+    "Task",
+    "Future",
+    "tuple-awaitable",
+    "heterogeneous-variadic-generic",
+    "arity-overload",
+    "public-poller",
+    "public-callback",
+    "scheduler-constructor",
+    "implicit-detach",
+    "stdlib-select-api",
+    "host-bridge"
+  ],
+  "negative_cases": [
+    "group-is-copyable",
+    "group-is-discardable",
+    "join-remains-owned-after-add",
+    "group-dropped-with-live-child",
+    "group-used-after-terminal-consumer",
+    "group-add-after-terminal-consumer",
+    "explicit-await-on-group-all",
+    "explicit-await-on-group-next",
+    "group-next-is-not-selectable",
+    "losing-select-branch-removes-completion",
+    "next-reorders-by-insertion",
+    "all-returns-partial-array-on-error",
+    "all-returns-first-arrival-error",
+    "all-skips-cancellation-drain",
+    "settle-cancels-on-child-error",
+    "settle-reorders-outcomes-by-completion",
+    "cancel-returns-before-cleanup",
+    "cancel-synthesizes-public-error",
+    "group-starts-an-executor",
+    "group-publishes-waitgroup-or-task-api"
+  ],
+  "implementation": {
+    "status": "pending-after-native-gate",
+    "public_api_promoted": false,
+    "host": "not-applicable",
+    "required_follow_ups": [
+      "STD-ASYNC-GROUP-IMPL-001",
+      "STD-ASYNC-GROUP-TEST-001",
+      "STD-ASYNC-GROUP-PERF-001",
+      "STD-ASYNC-GROUP-CONF-001",
+      "STD-ASYNC-GROUP-DOC-001"
+    ]
+  },
+  "promotion": {
+    "implementation_pending": [
+      "STD-ASYNC-GROUP-IMPL-001",
+      "STD-ASYNC-GROUP-TEST-001",
+      "STD-ASYNC-GROUP-PERF-001",
+      "STD-ASYNC-GROUP-CONF-001",
+      "STD-ASYNC-GROUP-DOC-001"
+    ],
+    "next_blocks": [
+      "STD-CONC-001",
+      "STD-SYNC-001",
+      "STD-EXEC-001",
+      "STD-NET-001"
+    ]
+  }
+}

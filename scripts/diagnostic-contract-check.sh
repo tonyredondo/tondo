@@ -119,8 +119,7 @@ jq -e '
   and ((.negative_cases | unique | length) == (.negative_cases | length))
   and (.negative_cases | length) == 18
   and .next_blocks == [
-    "STD-ASYNC-GROUP-SPEC-001", "STD-CONC-001", "STD-SYNC-001",
-    "STD-EXEC-001", "STD-NET-001"
+    "STD-CONC-001", "STD-SYNC-001", "STD-EXEC-001", "STD-NET-001"
   ]
 ' "$contract" >/dev/null || die "invalid machine-readable contract"
 

@@ -81,7 +81,8 @@ observación ejecutada. `STD-A-DIST-001` también está promovido: dos snapshots
 limpios producen el mismo paquete VM content-addressed, con instalación,
 ejecución y desinstalación verificadas. `STD-S1A-SEAL-001` ha cerrado el
 bundle técnico del draft con auditoría estricta y cero celdas aplicables
-abiertas; el siguiente bloque es `DIAG-SPEC-001`. El grafo activo se valida con
+abiertas; `DIAG-SPEC-001` ya cerró su contrato D0 y el siguiente bloque es
+`STD-ASYNC-GROUP-SPEC-001`. El grafo activo se valida con
 `TRACKER-LINT-001`; con el contrato D0 cerrado, se cierran ahora las fronteras
 runtime-facing B0 de Wave 6; entonces avanzan `DIAG-RUNTIME-001`, `RACE-001`,
 `LEAK-001`, `DUMP-001`, `DIAG-TEST-001` y `DIAG-CI-001` antes de la evaluación
@@ -5683,7 +5684,7 @@ semántica:
 nueva semántica del lenguaje. La fase tiene dos momentos:
 
 1. Después de `DIAG-SPEC-001` y antes de `DIAG-RUNTIME-001`/M11 se cierran
-   `STD-ASYNC-GROUP-SPEC-001`, `STD-CONC-001`, `STD-SYNC-001`,
+   `STD-CONC-001`, `STD-SYNC-001`,
    `STD-EXEC-001` y la
    frontera runtime/host de `STD-NET-001`; son inputs de DEC-013/014 y de la
    elección de backend, no una autorización para implementarlos. Sus contratos
@@ -5714,13 +5715,17 @@ publica hasta cerrar el gate final.
 
 ### 21.1 Concurrencia y tiempo
 
-- [ ] **STD-ASYNC-GROUP-SPEC-001 — Cerrar `std.async.Group`.** Fijar la
-  superficie `group/add/all/settle/next/cancel`, orden de inserción frente a
-  finalización, prioridad de errores, cancelación drenada, grupo vacío,
-  ownership afín, transferencia de `Join` y `next` `selectable` sin retirar una
-  finalización al perder. Debe registrar `HOST =
-  not-applicable` porque compone el scheduler existente, y no añadir
+- [x] **STD-ASYNC-GROUP-SPEC-001 — Cerrar `std.async.Group`.** El registro
+  [`testing/stdlib-async-group.json`](./testing/stdlib-async-group.json) fija
+  `group/add/all/settle/next/cancel`, firmas con efectos, estados afines,
+  transferencia de `Join`, índices estables, orden de inserción frente a
+  finalización, prioridad de errores por índice, cancelación drenada, grupo
+  vacío y rollback no mutante de `next` cuando pierde `select`. Los negativos
+  ejecutables están en `scripts/stdlib-async-group-check.sh` y
+  `scripts/stdlib-async-group-test.sh`, ambos integrados en `test-gate.sh`.
+  `HOST = not-applicable` porque compone el scheduler existente; no se añaden
   `WaitGroup`, tuples awaitables, overloads por aridad ni otro `Task`/`Future`.
+  La implementación pública sigue pendiente de las leaves B1.
 
 - [ ] **STD-CONC-001 — Especificar `std.channel`.** Tipos, cierre,
   endpoints `Sender`/`Receiver`, capacidades 0/N y `unbounded` explícito,
@@ -6692,8 +6697,8 @@ Esta tabla es la fuente de reconciliación del estado actual.
     únicamente después de que cada firma contractual atravesó una ruta pública
     real.
 27. [ ] **Wave 6 — Contratos que condicionan el backend.** Después de
-    `ASYNC-SELECT-VM-CONF-001` y `DIAG-SPEC-001`, cerrar
-    `STD-ASYNC-GROUP-SPEC-001`, `STD-CONC-001`, `STD-SYNC-001`,
+    `ASYNC-SELECT-VM-CONF-001` y `DIAG-SPEC-001`, queda cerrado
+    `STD-ASYNC-GROUP-SPEC-001`; faltan `STD-CONC-001`, `STD-SYNC-001`,
     `STD-EXEC-001` y la frontera runtime de `STD-NET-001`. Mini-gate:
     DEC-013/014 reciben requisitos completos sin implementar todavía
     STD-0.1B.
@@ -6778,8 +6783,10 @@ evidencia runtime, `STD-A-ASYNC-IMPL-001` cerró su ejecución estructurada y
 casos del draft) con evidencia hash-bound. `STD-A-DIST-001` promovió el
 paquete VM reproducible (dos snapshots, instalación, ejecución y
 desinstalación). `STD-S1A-SEAL-001` cerró el bundle técnico del draft y
-`DIAG-SPEC-001` cerró el contrato D0; la siguiente frontera son los contratos
-B0 y la instrumentación VM espera su cierre, mientras `NATIVE-001` espera
+`DIAG-SPEC-001` cerró el contrato D0; `STD-ASYNC-GROUP-SPEC-001` cerró la
+primera frontera B0 y la siguiente son `STD-CONC-001`, `STD-SYNC-001`,
+`STD-EXEC-001` y `STD-NET-001`. La instrumentación VM espera su cierre,
+mientras `NATIVE-001` espera
 `DIAG-CI-001`.
 
 ---

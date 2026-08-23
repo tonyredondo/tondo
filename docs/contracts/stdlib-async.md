@@ -1,7 +1,8 @@
 # Contrato ejecutable de `std.async` para STD-0.1A
 
 Este documento registra la superficie pública que ejecuta actualmente
-`std.async`. La especificación canónica exige `select` núcleo y
+`std.async` y el contrato cerrado de `std.async.Group` para STD-0.1B. La
+especificación canónica exige `select` núcleo y
 `Waiter.wait` publica `selectable`; la VM ya registra, compromete y desregistra
 ese adapter junto con los adapters de tiempo. El owner no crea
 una segunda familia `Task`/`Future`, no duplica APIs con sufijo `Async` y no
@@ -76,11 +77,13 @@ sin publicar un array parcial. El cursor se cierra tanto en éxito como en
 error, cancelación o unwind. `collect` no introduce una segunda API para
 streams ni depende de `Channel`.
 
-## Extensión de coordinación planificada para STD-0.1B
+## Contrato de coordinación de STD-0.1B
 
 La extensión B añade un único agregado homogéneo para coordinar un número
-dinámico de hijos ya iniciados. No cambia la superficie ejecutable de STD-0.1A
-ni afirma implementación actual:
+dinámico de hijos ya iniciados. El contrato machine-readable está en
+[`testing/stdlib-async-group.json`](../../testing/stdlib-async-group.json) y
+queda cerrado por `STD-ASYNC-GROUP-SPEC-001`. Esto fija la semántica, pero no
+afirma implementación runtime:
 
 ```tondo
 pub type Group[T, E]
@@ -90,26 +93,38 @@ pub type Completion[T, E] = {
 }
 
 pub fn group[T, E](): Group[T, E]
-pub fn Group.add(var self, job: Join[T, E])
+pub fn Group.add(var self, job: Join[T, E]): Unit
 pub fn Group.all(self): Array[T] ! E suspends
 pub fn Group.settle(self): Array[T ! E] suspends
 pub fn Group.next(var self): Completion[T, E]? selectable
-pub fn Group.cancel(self) suspends
+pub fn Group.cancel(self): Unit suspends
 ```
 
 Mover un `Join` a `add` transfiere al grupo su obligación de cancelación,
-espera y cleanup. `all`, `settle` y `cancel` consumen el grupo. `next` retira una
-finalización, pero el grupo restante conserva su obligación terminal y debe
-consumirse después. El grupo no inicia closures ni constituye un executor.
+espera y cleanup. `Group` es afín: no es `Copy`, `Clone` ni `Discard`; un `Join`
+movido ya no puede usarse por el caller y un grupo vivo debe terminarse o
+transferirse antes de salir del scope. `all`, `settle` y `cancel` consumen el
+grupo. `next` retira una finalización, pero el grupo restante conserva su
+obligación terminal incluso cuando devuelve `none`; el caller debe consumirlo
+después. El grupo no inicia closures ni constituye un executor.
 
+Los índices son cero-based, monótonos y estables durante la vida del grupo.
 `all` espera todos los hijos y devuelve valores por orden de inserción. Al
 confirmar un error recuperable, solicita cancelar los restantes, drena su
-cleanup y devuelve el error del menor índice entre los ya confirmados.
+cleanup y devuelve el error del menor índice entre todos los errores del hijo
+que hayan terminado; nunca publica un array parcial. No se sintetiza un `E`
+para representar la cancelación. Si un hijo entra en pánico, el grupo drena
+cleanup y propaga el pánico después del drain.
+
 `settle` no cancela por un `E`: devuelve un outcome por posición tras esperar
-todos. `next` usa orden real de finalización y conserva el índice estable de
-inserción. `cancel` solicita cancelación y drena todos los hijos antes de
-regresar. En un grupo vacío, `all` y `settle` devuelven arrays vacíos, `next`
-devuelve `none` y `cancel` completa inmediatamente.
+todos, también en orden de inserción. `next` usa orden real de finalización y
+conserva el índice estable de inserción; empates se rompen por el índice menor.
+Su operación seleccionable no retira nada durante `prepare`; solo el brazo
+ganador de `select` retira una finalización en `commit`, y un perdedor hace
+`rollback` sin mutación. `cancel` solicita cancelación en orden de inserción y
+drena todos los hijos y su cleanup antes de regresar. En un grupo vacío, `all`
+y `settle` devuelven arrays vacíos, `next` devuelve `none` inmediatamente y
+`cancel` completa inmediatamente.
 
 Las llamadas directas a esas operaciones suspendibles se esperan de manera
 implícita; solo un `Join` se consume con `await`. `Group[Unit, E]` sustituye un
@@ -119,11 +134,20 @@ puede esperar la primera finalización mediante `select`; los perdedores siguen
 perteneciendo al caller. La stdlib no añade tuples awaitables, variadic generics
 heterogéneos ni overloads por aridad.
 
-`STD-ASYNC-GROUP-SPEC-001` cierra este contrato. La superficie no se promueve
-hasta completar `STD-ASYNC-GROUP-IMPL-001`, su modelo de estados afín, tests,
-fuzzing, presupuestos de rendimiento, conformidad VM/nativa y documentación
-ejecutable. `HOST` es no aplicable con razón normativa: `Group` compone el
-scheduler y `Join` existentes y no enlaza una primitiva host propia.
+La superficie no se promueve hasta completar `STD-ASYNC-GROUP-IMPL-001`, su
+modelo de estados afín, tests, fuzzing, presupuestos de rendimiento, conformidad
+VM/nativa y documentación ejecutable. `HOST = not-applicable`: `Group` compone
+el scheduler y `Join` existentes y no enlaza una primitiva host propia.
+
+### Eventos observables para diagnóstico
+
+El runtime futuro puede registrar los eventos internos
+`std.async.group/{create,add,select.prepare,select.commit,select.rollback,
+child.cancel-request,child.terminal,drain,consume}`. Cada evento lleva como
+mínimo `run_id`, `task_id`, `group_id`, `child_index`, `event_sequence`, `state`
+y `source_revision`; los payloads de usuario se omiten por defecto. Estos son
+hooks privados consumidos por `DIAG-RUNTIME-001`, no una API pública de
+instrumentación.
 
 ## Integración con `select`
 
@@ -131,8 +155,9 @@ La forma final no añade `std.async.select`, builders ni valores `Case`. La
 expresión núcleo acepta `await join`, `Waiter.wait` y `Group.next`; `Waiter.wait`
 publica ya `selectable` y usa la ABI de registro/commit/rollback de la VM. Un
 brazo perdedor no consume el `Join`, waiter o grupo, y la cancelación del scope
-desregistra todos los brazos antes del unwind. `Group.next` pertenece todavía a
-STD-0.1B y no se considera implementado en esta superficie.
+desregistra todos los brazos antes del unwind. `Group.next` está contractualmente
+cerrado en STD-0.1B, pero no se considera implementado hasta cerrar sus leaves
+`IMPL`, `MODEL`, `TEST`, `FUZZ`, `PERF`, `CONF` y `DOC`.
 
 ## Estado de implementación de STD-0.1A
 

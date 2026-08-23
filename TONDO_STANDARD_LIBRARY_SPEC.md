@@ -914,11 +914,11 @@ pub type Completion[T, E] = {
 }
 
 pub fn group[T, E](): Group[T, E]
-pub fn Group.add(var self, job: Join[T, E])
+pub fn Group.add(var self, job: Join[T, E]): Unit
 pub fn Group.all(self): Array[T] ! E suspends
 pub fn Group.settle(self): Array[T ! E] suspends
 pub fn Group.next(var self): Completion[T, E]? selectable
-pub fn Group.cancel(self) suspends
+pub fn Group.cancel(self): Unit suspends
 ~~~
 
 `all` devuelve los éxitos en orden de inserción. Un error recuperable solicita
@@ -942,8 +942,11 @@ manuales.
 La superficie ejecutable cubre `Join`, `oneshot`, `AsyncIterator` y el adapter
 `selectable` de `Waiter.wait`. Los adapters de tiempo (`sleep` y `Timer.wait`)
 usan la misma entrada de selección; `Group` pertenece a la extensión STD-0.1B
-y tampoco se considera implementado hasta cerrar sus celdas `IMPL`, `MODEL`,
-`TEST`, `FUZZ`, `PERF`, `CONF` y `DOC`.
+y tiene su contrato machine-readable en
+[`testing/stdlib-async-group.json`](./testing/stdlib-async-group.json). Su
+superficie está contractualmente cerrada, pero tampoco se considera
+implementada hasta cerrar sus celdas `IMPL`, `MODEL`, `TEST`, `FUZZ`, `PERF`,
+`CONF` y `DOC`.
 
 ### 9.5 Scheduler y backpressure
 

@@ -12,7 +12,7 @@
       "path": "TONDO_STANDARD_LIBRARY_SPEC.md",
       "edition": "0.1",
       "status": "draft-pending",
-      "sha256": "30807df51a458bdf2916814c75d83a7d7c6ee8826e86a6cc43af17ab8f81e13d"
+      "sha256": "b6f1dbf8162b7ed5b980f4a76cab675668e1ee55b8b3a92cdc521ffabf02d7e3"
     },
     {
       "path": "TONDO_TESTING_SPEC.md",
@@ -24,13 +24,13 @@
       "path": "TONDO_TOOLCHAIN_SPEC.md",
       "edition": "0.1",
       "status": "draft-normative",
-      "sha256": "b92a402928bebfa3776a9a9bfc9085b262b1289dfae4c828694e5b9f2469460d"
+      "sha256": "e704a2aebc315331a8ea5de79bd3483c18dce42ce7411bab8e0d17bd78c68f10"
     },
     {
       "path": "conformance/draft/manifest.json",
       "edition": "0.1",
       "status": "draft-open",
-      "sha256": "807a59e0254a51bd2aafc927fc7fb3720672c3b0266032d14ac1977cfff79597"
+      "sha256": "01a2d68ff755f1235ba28e6c0edab4d7a5afd169aa8dbe2c2904daeb57c07285"
     }
   ],
   "summary": {
