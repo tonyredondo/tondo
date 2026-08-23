@@ -79,6 +79,10 @@ run_step stdlib-async-group-contract \
     scripts/stdlib-async-group-check.sh
 run_step stdlib-async-group-contract-tests \
     scripts/stdlib-async-group-test.sh
+run_step stdlib-channel-contract \
+    scripts/stdlib-channel-check.sh
+run_step stdlib-channel-contract-tests \
+    scripts/stdlib-channel-test.sh
 run_step stdlib-performance-contract \
     scripts/stdlib-performance-check.sh
 run_step native-target-descriptor-contract \

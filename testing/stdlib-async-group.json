@@ -227,7 +227,6 @@
       "STD-ASYNC-GROUP-DOC-001"
     ],
     "next_blocks": [
-      "STD-CONC-001",
       "STD-SYNC-001",
       "STD-EXEC-001",
       "STD-NET-001"

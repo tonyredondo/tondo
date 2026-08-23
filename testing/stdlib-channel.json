@@ -1,0 +1,296 @@
+{
+  "format": "tondo-stdlib-owner-contract/1",
+  "owner": "std.channel",
+  "parent_owner": "std.async",
+  "edition": "0.1",
+  "phase": "STD-0.1B",
+  "task": "STD-CONC-001",
+  "status": "contract-locked",
+  "contract": "docs/contracts/stdlib-channel.md",
+  "spec": "TONDO_STANDARD_LIBRARY_SPEC.md",
+  "layer": "B0",
+  "kind": "runtime-facing",
+  "target": "tondo-vm-hosted-and-native",
+  "host": {
+    "status": "required-after-native-gate",
+    "reason": "Channel needs scheduler wakeups, bounded queue storage and atomic endpoint state on VM and native runtimes; it does not read an ambient host capability"
+  },
+  "surface": {
+    "types": [
+      "Sender[T]",
+      "Receiver[T]",
+      "ChannelError = { InvalidCapacity, ResourceLimit }",
+      "SendError[T] = { Closed(T), ResourceLimit(T) }",
+      "TrySendError[T] = { Full(T), Closed(T), ResourceLimit(T) }",
+      "TryReceive[T] = { Item(T), Empty, Closed }"
+    ],
+    "signatures": [
+      {
+        "id": "bounded",
+        "signature": "pub fn bounded[T: Send](capacity: Int): (Sender[T], Receiver[T]) ! ChannelError",
+        "kind": "constructor",
+        "effect": "sync"
+      },
+      {
+        "id": "unbounded",
+        "signature": "pub fn unbounded[T: Send](): (Sender[T], Receiver[T]) ! ChannelError",
+        "kind": "constructor",
+        "effect": "sync"
+      },
+      {
+        "id": "sender-fork",
+        "signature": "pub fn Sender.fork(ref self): Sender[T] ! ChannelError",
+        "kind": "endpoint-fork",
+        "effect": "sync"
+      },
+      {
+        "id": "sender-send",
+        "signature": "pub fn Sender.send(ref self, value: T): Unit ! SendError[T] selectable",
+        "kind": "blocking-send",
+        "effect": "selectable"
+      },
+      {
+        "id": "sender-try-send",
+        "signature": "pub fn Sender.trySend(ref self, value: T): Unit ! TrySendError[T]",
+        "kind": "nonblocking-send",
+        "effect": "sync"
+      },
+      {
+        "id": "sender-close",
+        "signature": "pub fn Sender.close(self): Unit",
+        "kind": "terminal-send",
+        "effect": "sync"
+      },
+      {
+        "id": "receiver-fork",
+        "signature": "pub fn Receiver.fork(ref self): Receiver[T] ! ChannelError",
+        "kind": "endpoint-fork",
+        "effect": "sync"
+      },
+      {
+        "id": "receiver-receive",
+        "signature": "pub fn Receiver.receive(ref self): T? selectable",
+        "kind": "blocking-receive",
+        "effect": "selectable"
+      },
+      {
+        "id": "receiver-try-receive",
+        "signature": "pub fn Receiver.tryReceive(ref self): TryReceive[T]",
+        "kind": "nonblocking-receive",
+        "effect": "sync"
+      },
+      {
+        "id": "receiver-close",
+        "signature": "pub fn Receiver.close(self): Array[T]",
+        "kind": "terminal-receive",
+        "effect": "sync"
+      }
+    ],
+    "direct_call_waits": true,
+    "explicit_await_direct_call": "forbidden",
+    "explicit_await_join": "required",
+    "inference_by_name": false,
+    "bodyless_requires_effect": true,
+    "bodyful_inference": "allowed",
+    "selectable_operations": ["sender-send", "receiver-receive"]
+  },
+  "ownership": {
+    "sender_copy": false,
+    "receiver_copy": false,
+    "sender_clone": false,
+    "receiver_clone": false,
+    "sender_send": true,
+    "receiver_send": true,
+    "sender_share": true,
+    "receiver_share": true,
+    "sender_discard": "close-endpoint",
+    "receiver_discard": false,
+    "fork_is_explicit": true,
+    "fork_shares_identity": true,
+    "send_value_commit": "moves-only-on-linearization",
+    "send_value_on_failure": "returned-inside-error",
+    "receive_value_commit": "moves-only-on-linearization",
+    "receiver_close_returns_pending": "only-last-receiver",
+    "implicit_drop": "sender-closes; receiver-compile-error",
+    "use_after_close": "compile-error",
+    "payload_bound": "T: Send",
+    "iterator_bound": "T: Discard"
+  },
+  "capacity": {
+    "zero": "rendezvous",
+    "positive": "finite-buffer-with-backpressure",
+    "negative": "ChannelError.InvalidCapacity",
+    "unbounded": "explicit-constructor-only",
+    "unbounded_limit": "finite-runtime-resource-limit",
+    "queue_order": "FIFO-by-commit",
+    "capacity_counts_committed_values_only": true,
+    "no_hidden_polling": true
+  },
+  "state_machine": {
+    "states": ["open", "sender-closed", "receiver-closed", "drained"],
+    "initial": "open",
+    "sender_close": "decrement-sender-count; last-sender-closes-input",
+    "receiver_close": "decrement-receiver-count; last-receiver-closes-input",
+    "last_sender_with_buffer": "receive-drains-then-none",
+    "last_receiver": "wake-senders-with-intact-payload-and-return-buffer",
+    "both_closed": "drained",
+    "close_is_idempotent": false,
+    "post_close_operation": "compile-error"
+  },
+  "send": {
+    "blocking": "waits-for-space-or-receiver",
+    "success": "Unit-after-commit",
+    "closed": "Closed(value)",
+    "resource_limit": "ResourceLimit(value)",
+    "try_full": "Full(value)",
+    "select_prepare_mutates": false,
+    "select_commit": "one-linearization-and-value-move",
+    "select_rollback": "unregister-with-value-still-owned-by-sender",
+    "cancel_before_commit": "value-remains-with-caller",
+    "no_duplicate_commit": true
+  },
+  "receive": {
+    "blocking": "waits-for-value-or-closed-and-drained",
+    "success": "Some(value)",
+    "closed_and_drained": "none",
+    "try_empty": "Empty",
+    "try_closed": "Closed",
+    "select_prepare_mutates": false,
+    "select_commit": "one-linearization-and-value-move",
+    "select_rollback": "unregister-with-value-still-in-channel",
+    "cancel_before_commit": "no-value-removed",
+    "no_duplicate_receive": true
+  },
+  "iterator": {
+    "protocol": "AsyncIterator[T]",
+    "bound": "T: Discard",
+    "one_element_per_next": true,
+    "end": "none-after-last-sender-and-buffer-drained",
+    "backpressure": "one-next-at-a-time",
+    "early_exit": "receiver-close-and-discard-pending-values",
+    "affine_values": "manual-receive-and-close-required",
+    "materialization": "forbidden"
+  },
+  "fairness": {
+    "waiter_order": "FIFO-registration-per-operation",
+    "same_channel_tie": "oldest-compatible-registration",
+    "select_tie": "core-select-rotation",
+    "starvation_default": "forbidden-under-cooperative-scheduler",
+    "cross_channel_order": "not-promised",
+    "scheduler_order_is_promise": false
+  },
+  "cancellation": {
+    "waiting_send": "unregister-before-commit-and-retain-value",
+    "waiting_receive": "unregister-before-commit-and-retain-channel-value",
+    "close_wakes_waiters": true,
+    "cleanup_before_scope_exit": true,
+    "lost_select_branch": "rollback-before-unwind",
+    "no_detached_waiters": true
+  },
+  "diagnostics": {
+    "event_namespace": "std.channel",
+    "events": [
+      "channel.create",
+      "channel.sender.fork",
+      "channel.receiver.fork",
+      "channel.send.prepare",
+      "channel.send.commit",
+      "channel.send.rollback",
+      "channel.receive.prepare",
+      "channel.receive.commit",
+      "channel.receive.rollback",
+      "channel.sender.close",
+      "channel.receiver.close",
+      "channel.wake",
+      "channel.drain"
+    ],
+    "required_fields": [
+      "run_id",
+      "task_id",
+      "channel_id",
+      "endpoint_id",
+      "event_sequence",
+      "state",
+      "capacity",
+      "queued"
+    ],
+    "payloads": "omitted-by-default",
+    "source_revision": "required",
+    "runtime_hooks_public": false
+  },
+  "exclusions": [
+    "AsyncChannel",
+    "sendAsync",
+    "receiveAsync",
+    "waitSend",
+    "waitReceive",
+    "waitPop",
+    "Task",
+    "Future",
+    "public-poller",
+    "public-callback",
+    "stdlib-select-api",
+    "select-builder",
+    "implicit-unbounded-default",
+    "implicit-endpoint-clone",
+    "global-lock-order-api",
+    "detached-waiter"
+  ],
+  "negative_cases": [
+    "negative-capacity",
+    "unbounded-is-not-default",
+    "sender-is-copyable",
+    "receiver-is-copyable",
+    "implicit-endpoint-clone",
+    "receiver-drop-without-close",
+    "use-after-sender-close",
+    "use-after-receiver-close",
+    "send-without-send-bound",
+    "iterator-without-discard-bound",
+    "send-moves-before-commit",
+    "failed-send-loses-payload",
+    "losing-select-send-consumes-payload",
+    "losing-select-receive-removes-value",
+    "cancelled-send-loses-payload",
+    "cancelled-receive-removes-value",
+    "receive-reorders-commits",
+    "last-sender-skips-buffer",
+    "last-receiver-drops-buffer",
+    "close-returns-before-wakeup-cleanup",
+    "try-send-suspends",
+    "try-receive-suspends",
+    "async-iterator-materializes-array",
+    "channel-publishes-select-api",
+    "channel-starts-executor",
+    "fairness-allows-starvation",
+    "diagnostics-publish-payloads"
+  ],
+  "implementation": {
+    "status": "pending-after-native-gate",
+    "public_api_promoted": false,
+    "host": "required-after-native-gate",
+    "required_follow_ups": [
+      "STD-CHANNEL-IMPL-001",
+      "STD-CHANNEL-ASYNC-ITER-001",
+      "STD-CHANNEL-TEST-001",
+      "STD-CHANNEL-PERF-001",
+      "STD-CHANNEL-CONF-001",
+      "STD-CHANNEL-DOC-001"
+    ]
+  },
+  "promotion": {
+    "implementation_pending": [
+      "STD-CHANNEL-IMPL-001",
+      "STD-CHANNEL-ASYNC-ITER-001",
+      "STD-CHANNEL-TEST-001",
+      "STD-CHANNEL-PERF-001",
+      "STD-CHANNEL-CONF-001",
+      "STD-CHANNEL-DOC-001"
+    ],
+    "next_blocks": [
+      "STD-SYNC-001",
+      "STD-EXEC-001",
+      "STD-NET-001"
+    ]
+  }
+}

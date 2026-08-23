@@ -81,8 +81,9 @@ observación ejecutada. `STD-A-DIST-001` también está promovido: dos snapshots
 limpios producen el mismo paquete VM content-addressed, con instalación,
 ejecución y desinstalación verificadas. `STD-S1A-SEAL-001` ha cerrado el
 bundle técnico del draft con auditoría estricta y cero celdas aplicables
-abiertas; `DIAG-SPEC-001` ya cerró su contrato D0 y el siguiente bloque es
-`STD-ASYNC-GROUP-SPEC-001`. El grafo activo se valida con
+abiertas; `DIAG-SPEC-001` ya cerró su contrato D0 y los contratos de
+`std.async.Group` y `std.channel` ya están cerrados. El siguiente bloque es
+`STD-SYNC-001`. El grafo activo se valida con
 `TRACKER-LINT-001`; con el contrato D0 cerrado, se cierran ahora las fronteras
 runtime-facing B0 de Wave 6; entonces avanzan `DIAG-RUNTIME-001`, `RACE-001`,
 `LEAK-001`, `DUMP-001`, `DIAG-TEST-001` y `DIAG-CI-001` antes de la evaluación
@@ -5727,14 +5728,21 @@ publica hasta cerrar el gate final.
   `WaitGroup`, tuples awaitables, overloads por aridad ni otro `Task`/`Future`.
   La implementación pública sigue pendiente de las leaves B1.
 
-- [ ] **STD-CONC-001 — Especificar `std.channel`.** Tipos, cierre,
-  endpoints `Sender`/`Receiver`, capacidades 0/N y `unbounded` explícito,
-  `fork` explícito, backpressure, recuperación de payload afín al no comprometer
-  un envío, cierre terminal del receiver que devuelve mensajes pendientes,
+- [x] **STD-CONC-001 — Especificar `std.channel`.** El registro
+  [`testing/stdlib-channel.json`](./testing/stdlib-channel.json) y el contrato
+  [`docs/contracts/stdlib-channel.md`](./docs/contracts/stdlib-channel.md)
+  cierran `Sender`/`Receiver`, `ChannelError`, `SendError` y `TryReceive`,
+  capacidades `bounded(0/N)` y `unbounded` explícito, `fork`, backpressure,
+  recuperación de payload afín al no comprometer un envío, estados de cierre y
+  drenado, cierre terminal del receiver que devuelve mensajes pendientes,
   adaptación `AsyncIterator` bajo `T: Discard`, `send`/`receive` `selectable`
-  sobre el `select` núcleo, commit/rollback exacto, fairness declarada,
-  ownership de `T: Send` y cancelación. No define selector, casos, macros ni
-  operaciones paralelas de selección.
+  sobre el `select` núcleo, commit/rollback cancel-safe, fairness FIFO de
+  registros, ownership `T: Send`, cancelación y eventos privados para
+  `DIAG-RUNTIME-001`. Los negativos ejecutables son
+  `scripts/stdlib-channel-check.sh` y `scripts/stdlib-channel-test.sh`,
+  integrados en `test-gate.sh`. La implementación y el bridge host siguen
+  pendientes de las leaves `STD-CHANNEL-*`; no se define selector, casos,
+  macros ni operaciones paralelas de selección.
 
 - [ ] **STD-SYNC-001 — Especificar `std.sync`.** Mutexes, rwlocks, guards,
   condición, `Semaphore`/`Permit`, `Once[T, E]`, `Barrier` y atomics declaran
@@ -6697,8 +6705,8 @@ Esta tabla es la fuente de reconciliación del estado actual.
     únicamente después de que cada firma contractual atravesó una ruta pública
     real.
 27. [ ] **Wave 6 — Contratos que condicionan el backend.** Después de
-    `ASYNC-SELECT-VM-CONF-001` y `DIAG-SPEC-001`, queda cerrado
-    `STD-ASYNC-GROUP-SPEC-001`; faltan `STD-CONC-001`, `STD-SYNC-001`,
+    `ASYNC-SELECT-VM-CONF-001` y `DIAG-SPEC-001`, quedan cerrados
+    `STD-ASYNC-GROUP-SPEC-001` y `STD-CONC-001`; faltan `STD-SYNC-001`,
     `STD-EXEC-001` y la frontera runtime de `STD-NET-001`. Mini-gate:
     DEC-013/014 reciben requisitos completos sin implementar todavía
     STD-0.1B.
@@ -6783,9 +6791,9 @@ evidencia runtime, `STD-A-ASYNC-IMPL-001` cerró su ejecución estructurada y
 casos del draft) con evidencia hash-bound. `STD-A-DIST-001` promovió el
 paquete VM reproducible (dos snapshots, instalación, ejecución y
 desinstalación). `STD-S1A-SEAL-001` cerró el bundle técnico del draft y
-`DIAG-SPEC-001` cerró el contrato D0; `STD-ASYNC-GROUP-SPEC-001` cerró la
-primera frontera B0 y la siguiente son `STD-CONC-001`, `STD-SYNC-001`,
-`STD-EXEC-001` y `STD-NET-001`. La instrumentación VM espera su cierre,
+`DIAG-SPEC-001` cerró el contrato D0; `STD-ASYNC-GROUP-SPEC-001` y
+`STD-CONC-001` cerraron las dos primeras fronteras B0 y las siguientes son
+`STD-SYNC-001`, `STD-EXEC-001` y `STD-NET-001`. La instrumentación VM espera su cierre,
 mientras `NATIVE-001` espera
 `DIAG-CI-001`.
 

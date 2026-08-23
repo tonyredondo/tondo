@@ -2176,10 +2176,20 @@ vacío. Ninguna ruta descarta un mensaje silenciosamente.
 
 La superficie mínima que debe cerrar `STD-CONC-001` es:
 
+El registro machine-readable y sus negativos ejecutables viven en
+[`testing/stdlib-channel.json`](./testing/stdlib-channel.json); el contrato
+normativo ampliado está en
+[`docs/contracts/stdlib-channel.md`](./docs/contracts/stdlib-channel.md).
+`STD-CONC-001` queda cerrado como contrato runtime-facing, pero no promociona
+una implementación pública antes de sus leaves `STD-CHANNEL-*`.
+
 ~~~tondo pseudocode
 pub type Sender[T]
 pub type Receiver[T]
-pub type ChannelError
+pub enum ChannelError {
+    InvalidCapacity
+    ResourceLimit
+}
 pub enum SendError[T] {
     Closed(T)
     ResourceLimit(T)
@@ -2200,7 +2210,7 @@ pub fn unbounded[T: Send](): (Sender[T], Receiver[T]) ! ChannelError
 pub fn Sender.fork(ref self): Sender[T] ! ChannelError
 pub fn Sender.send(ref self, value: T): Unit ! SendError[T] selectable
 pub fn Sender.trySend(ref self, value: T): Unit ! TrySendError[T]
-pub fn Sender.close(self)
+pub fn Sender.close(self): Unit
 pub fn Receiver.fork(ref self): Receiver[T] ! ChannelError
 pub fn Receiver.receive(ref self): T? selectable
 pub fn Receiver.tryReceive(ref self): TryReceive[T]
@@ -2208,13 +2218,34 @@ pub fn Receiver.close(self): Array[T]
 ~~~
 
 `bounded(0)` es rendezvous; una capacidad positiva aplica backpressure antes de
-aceptar el siguiente elemento. La forma sin límite se llama `unbounded` para
-que su riesgo de memoria nunca sea un default oculto. Una capacidad negativa
-es `ChannelError`. `send` espera espacio o receptor; `trySend` nunca suspende.
-Cuando el envío no se compromete, el error devuelve el valor afín al caller. En
-`select`, un brazo perdedor no produce ese error: conserva el valor en su rama y
-rollback elimina únicamente el registro provisional. `receive` perdedor no
-retira ningún mensaje.
+aceptar el siguiente elemento. Una capacidad negativa produce
+`ChannelError.InvalidCapacity`; si no se pueden reservar las estructuras,
+produce `ChannelError.ResourceLimit`. La forma sin límite se llama `unbounded`
+para que su riesgo de memoria nunca sea un default oculto: también queda sujeta
+a un límite finito del perfil de recursos y puede devolver
+`SendError.ResourceLimit(value)`.
+
+`Sender` y `Receiver` no son `Copy` ni `Clone`; `fork` comparte identidad de
+forma explícita. El sender satisface `Discard` y cerrar ese endpoint consume su
+owner. El receiver no se puede abandonar implícitamente y debe cerrar su
+obligación terminal. El payload de `send` se mueve solo al comprometerse; si la
+operación no se compromete, `Closed(value)`, `Full(value)` o
+`ResourceLimit(value)` lo devuelve intacto. `trySend` nunca suspende.
+
+El canal sigue los estados `open`, `sender-closed`, `receiver-closed` y
+`drained`. El último sender cierra la entrada, pero los receivers drenan el
+buffer antes de observar `none`. El último receiver cierra la salida, despierta
+a los senders con sus payloads intactos y devuelve los valores ya comprometidos
+en un array FIFO; si quedan receivers, devuelve un array vacío y no retira esos
+valores. Ninguna ruta descarta silenciosamente ownership pendiente.
+
+`send` y `receive` son seleccionables mediante el protocolo núcleo
+`prepare → commit → rollback`: preparar no mueve ni retira, exactamente un
+ganador hace la linearización y los perdedores se desregistran sin mutar el
+canal. Cancelar una espera conserva el payload del sender o el valor del canal
+y ejecuta cleanup antes del unwind. Los waiters compatibles del mismo canal se
+atienden por FIFO de registro; los empates entre canales usan la rotación justa
+de `select` y no crean un orden global nuevo.
 
 `Receiver[T]` implementa `AsyncIterator[T]` cuando `T: Discard`: cada iteración
 espera implícitamente, preserva backpressure y termina al cerrar y drenar el
@@ -2223,6 +2254,14 @@ canal. El bound es necesario porque salir pronto del `for` puede cerrar el
 mensajes pendientes afines. Para esos valores se usa `receive` y
 `Receiver.close` explícitos. No existe una variante `AsyncChannel`, una
 operación `receiveAsync` ni una materialización intermedia.
+
+El runtime puede emitir hooks privados en `std.channel` para
+`create`, `sender.fork`, `receiver.fork`, `send.prepare`, `send.commit`,
+`send.rollback`, `receive.prepare`, `receive.commit`, `receive.rollback`,
+`sender.close`, `receiver.close`, `wake` y `drain`. Cada evento lleva
+`run_id`, `task_id`, `channel_id`, `endpoint_id`, `event_sequence`, `state`,
+`capacity`, `queued` y `source_revision`; los payloads se omiten por defecto.
+`DIAG-RUNTIME-001` consume estos eventos, que no forman una API pública.
 
 #### 14.4.3 Selección cancelable
 
