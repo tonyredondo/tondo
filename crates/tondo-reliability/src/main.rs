@@ -427,7 +427,7 @@ fn load_provenance(path: &Path) -> Result<QualityProvenance, String> {
     Ok(provenance)
 }
 
-fn generate_all(root: &Path) -> Result<String, String> {
+fn build_evidence(root: &Path) -> Result<(inventory::Inventory, matrix::CoverageMatrix), String> {
     tracker::lint(root)?;
     spec_structure::validate_repository(root)?;
     let inventory = inventory::build(root)?;
@@ -435,6 +435,11 @@ fn generate_all(root: &Path) -> Result<String, String> {
     validate_regressions(root, &inventory)?;
     let matrix = matrix::build(root, &inventory)?;
     validate_gap_audit(root, &matrix, &inventory)?;
+    Ok((inventory, matrix))
+}
+
+fn generate_all(root: &Path) -> Result<String, String> {
+    let (inventory, matrix) = build_evidence(root)?;
     let inventory_changed =
         write_if_changed(&root.join(INVENTORY_PATH), &canonical_json(&inventory)?)?;
     let matrix_changed = write_if_changed(&root.join(MATRIX_PATH), &canonical_json(&matrix)?)?;
@@ -448,15 +453,9 @@ fn generate_all(root: &Path) -> Result<String, String> {
 }
 
 fn check_all(root: &Path) -> Result<String, String> {
-    tracker::lint(root)?;
-    spec_structure::validate_repository(root)?;
-    let inventory = inventory::build(root)?;
-    inventory::validate(&inventory)?;
-    validate_regressions(root, &inventory)?;
+    let (inventory, matrix) = build_evidence(root)?;
     check_bytes(&root.join(INVENTORY_PATH), &canonical_json(&inventory)?)?;
-    let matrix = matrix::build(root, &inventory)?;
     check_bytes(&root.join(MATRIX_PATH), &canonical_json(&matrix)?)?;
-    validate_gap_audit(root, &matrix, &inventory)?;
     QualityBaseline::load(&root.join(QUALITY_BASELINE_PATH))?;
     Ok(format!(
         "reliability evidence is current: {} tests, {} requirements",
@@ -561,36 +560,18 @@ mod tests {
 
     use super::*;
 
-    struct EvidenceSnapshot {
-        root: PathBuf,
-        inventory: Vec<u8>,
-        matrix: Vec<u8>,
-    }
-
-    impl EvidenceSnapshot {
-        fn capture(root: &Path) -> Self {
-            Self {
-                root: root.to_owned(),
-                inventory: fs::read(root.join(INVENTORY_PATH)).unwrap(),
-                matrix: fs::read(root.join(MATRIX_PATH)).unwrap(),
-            }
-        }
-    }
-
-    impl Drop for EvidenceSnapshot {
-        fn drop(&mut self) {
-            fs::write(self.root.join(INVENTORY_PATH), &self.inventory).unwrap();
-            fs::write(self.root.join(MATRIX_PATH), &self.matrix).unwrap();
-        }
-    }
-
     #[test]
-    fn evidence_generators_are_callable_as_one_closed_pipeline() {
+    fn evidence_builders_are_callable_as_one_closed_pipeline() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let _snapshot = EvidenceSnapshot::capture(&root);
-        assert!(generate_all(&root).unwrap().contains("inventory"));
-        assert!(generate_inventory(&root).unwrap().contains("logical tests"));
-        assert!(generate_matrix(&root).unwrap().contains("requirements"));
+        let (inventory, matrix) = build_evidence(&root).unwrap();
+        assert_eq!(
+            canonical_json(&inventory).unwrap(),
+            fs::read(root.join(INVENTORY_PATH)).unwrap()
+        );
+        assert_eq!(
+            canonical_json(&matrix).unwrap(),
+            fs::read(root.join(MATRIX_PATH)).unwrap()
+        );
         assert!(
             check_all(&root)
                 .unwrap()
