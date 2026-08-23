@@ -72,7 +72,8 @@ standard-library specification; it does not infer promotion from a missing
 owner observation. The public codec audit and `STD-A-CONF-001` execution are
 closed for the current draft; the native target
 descriptor, native artifact and link plan are now closed as pure contracts and
-the next implementation block is `STD-A-DIST-001`.
+the VM distribution is promoted by `STD-A-DIST-001`; the next block is the S1A
+seal.
 
 The A0 `std.meta` owner has a dedicated contract at
 [`testing/stdlib-meta.json`](../../testing/stdlib-meta.json) and a separate
@@ -309,8 +310,8 @@ current tree, manifest, contract and command-log hashes; the matrix has
 385/385 verified rows and no partial or pending `CONF` cells. Codec owners
 retain their external bidirectional/fragmented cases, and `std.async` retains
 its seven-row contract and public fixtures. This promotes conformance for the
-unpublished draft only; `STD-A-DIST-001` is the next block and the S1A seal is
-still open.
+unpublished draft only; `STD-A-DIST-001` also promotes the relocatable VM
+package and the S1A seal is still open.
 
 The hosted bridge is intentionally a draft distribution boundary: the VM
 validates the typed operation before invoking the host, and the host returns a

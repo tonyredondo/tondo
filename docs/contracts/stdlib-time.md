@@ -1,8 +1,8 @@
 # `std.time` monotonic time contract
 
-**Status:** implementation evidence is covered in the hosted VM; the
-distribution/conformance identity remains pending for the unpublished Tondo
-0.1 draft. La ABI ejecutable publica `sleep` y `Timer.wait` como
+**Status:** implementation evidence is covered in the hosted VM and the
+distribution/conformance identity is promoted for the unpublished Tondo 0.1
+draft; the S1A seal remains open. La ABI ejecutable publica `sleep` y `Timer.wait` como
 `selectable`: una llamada directa sigue esperando implícitamente y ambas
 operaciones pueden registrarse como brazos de `select`.
 

@@ -24,7 +24,7 @@ jq -e '
   and .phase == "STD-0.1A"
   and .status == "promoted"
   and .promotion.status == "promoted"
-  and .promotion.next_coordination == "STD-A-DIST-001"
+  and .promotion.next_coordination == "STD-S1A-SEAL-001"
   and .promotion.matrix_status == "verified"
   and .rules.one_owner_per_matrix_row
   and .rules.every_matrix_row_has_conf_record

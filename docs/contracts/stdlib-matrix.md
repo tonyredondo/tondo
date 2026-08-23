@@ -33,9 +33,10 @@ sus módulos aparecen solo en `catalogs.future_modules` y no se convierten en
 requisitos implícitos de la fase actual.
 
 En el árbol actual la matriz está en estado `verified`: las 385 filas tienen
-las seis etapas explícitas y `CONF` está promovido por `STD-A-CONF-001`. La
-promoción solo certifica el draft ejecutable; `STD-A-DIST-001` y el sellado S1A
-siguen siendo gates posteriores y no constituyen una release.
+las seis etapas explícitas y `CONF` está promovido por `STD-A-CONF-001`. La distribución
+VM reproducible está promovida por `STD-A-DIST-001`; el sellado
+S1A sigue siendo el gate posterior y ninguna de estas evidencias constituye
+una release.
 
 ## Celdas obligatorias
 
@@ -226,7 +227,8 @@ explícita solo para las fronteras normativas `not-applicable` de PERF. El
 checker regenera y cruza la identidad de todas las filas, exige referencias y
 comandos existentes y verifica la promoción; los tests negativos y el test Rust
 `stdlib_conformance_coordination` rechazan omisiones, sobreclaims y drift. La
-matriz actual queda `verified`; el siguiente bloque es `STD-A-DIST-001` (con
+matriz actual queda `verified`; `STD-A-DIST-001` ya está promovido mediante su
+paquete VM reproducible (con
 `NATIVE-TARGET-DESC-001`, `NATIVE-ARTIFACT-001` y `NATIVE-LINK-PLAN-001` ya
 cerrados), y el seal S1A sigue pendiente.
 

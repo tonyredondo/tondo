@@ -1,7 +1,8 @@
 # `std.env` runtime snapshot contract
 
 **Status:** specification and hosted implementation closed for the current
-Tondo 0.1 draft; distribution conformance remains pending.
+Tondo 0.1 draft; distribution conformance is promoted and the S1A seal remains
+open.
 
 `std.env` is the single owner for process arguments and environment inputs. It
 is capability-gated by `environment`, reads only at runtime, and never turns a

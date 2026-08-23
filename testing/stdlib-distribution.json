@@ -1,0 +1,78 @@
+{
+  "format": "tondo-stdlib-distribution-contract/1",
+  "owner": "toolchain.std_distribution",
+  "edition": "0.1",
+  "phase": "STD-0.1A",
+  "status": "closed-contract",
+  "distribution_format": "tondo-stdlib-vm-distribution/1",
+  "package_id": "toolchain:std:0.1-bootstrap",
+  "target": "tondo-vm-hosted",
+  "profile": "hosted",
+  "required_sections": [
+    "bin",
+    "capabilities",
+    "docs",
+    "examples",
+    "interfaces",
+    "manifests",
+    "providers",
+    "sources",
+    "units"
+  ],
+  "required_records": [
+    "package_id",
+    "edition",
+    "target",
+    "profile",
+    "source_hashes",
+    "interface_hashes",
+    "unit_hashes",
+    "provider_hashes",
+    "manifest_hashes",
+    "documentation_hashes",
+    "capability_matrix_hash",
+    "example_hashes",
+    "payload_hash",
+    "reproducible"
+  ],
+  "archive": {
+    "format": "tar-ustar",
+    "ordering": "lexicographic-path",
+    "mtime": 0,
+    "numeric_owner": true,
+    "source_workspaces": 2,
+    "byte_identical": true
+  },
+  "installation": {
+    "workspace": "empty-directory-only",
+    "source_tree": "not-consulted-after-install",
+    "verification": "manifest-and-file-hash-before-run",
+    "example": "examples/m11-std-core-001.to",
+    "runner": "bin/tondo"
+  },
+  "uninstallation": {
+    "scope": "installed-package-root-only",
+    "preserves_workspace": true,
+    "no_source_tree_mutation": true
+  },
+  "capabilities": {
+    "std.console": ["console"],
+    "std.env": ["environment"],
+    "std.fs": ["filesystem"],
+    "std.process": ["process"],
+    "std.time": ["clock"]
+  },
+  "negative_cases": [
+    "archive-differs-between-clean-workspaces",
+    "binary-missing",
+    "contract-drift",
+    "example-missing",
+    "manifest-hash-mismatch",
+    "payload-hash-mismatch",
+    "source-tree-required-after-install",
+    "workspace-not-empty",
+    "wrong-package-id"
+  ],
+  "next_blocks": ["STD-S1A-SEAL-001"],
+  "public_release": false
+}

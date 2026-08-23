@@ -100,7 +100,7 @@ jq -n \
           status: "promoted",
           reason: "STD-A-CONF-001 executed every owner command and runtime sidecar, plus the complete 206-case draft suite",
           matrix_status: $m.status,
-          next_coordination: "STD-A-DIST-001"
+          next_coordination: "STD-S1A-SEAL-001"
         }
       }
     ' > "$output"
