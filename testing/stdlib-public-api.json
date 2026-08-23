@@ -2733,10 +2733,10 @@
       "status": "verified"
     },
     {
-      "id": "std.env:28",
+      "id": "std.env:29",
       "owner": "std.env",
       "contract": "docs/contracts/stdlib-env.md",
-      "line": 28,
+      "line": 29,
       "signature": "pub fn snapshot(): Snapshot ! EnvError",
       "symbol": "std.env.snapshot",
       "operation": "snapshot",
@@ -2781,10 +2781,10 @@
       "status": "verified"
     },
     {
-      "id": "std.env:29",
+      "id": "std.env:30",
       "owner": "std.env",
       "contract": "docs/contracts/stdlib-env.md",
-      "line": 29,
+      "line": 30,
       "signature": "pub fn Name.fromText(value: String): Name ! EnvError",
       "symbol": "std.env.Name.fromText",
       "operation": "fromText",
@@ -2829,10 +2829,10 @@
       "status": "verified"
     },
     {
-      "id": "std.env:30",
+      "id": "std.env:31",
       "owner": "std.env",
       "contract": "docs/contracts/stdlib-env.md",
-      "line": 30,
+      "line": 31,
       "signature": "pub fn Name.fromBytes(value: bytes.Bytes): Name ! EnvError",
       "symbol": "std.env.Name.fromBytes",
       "operation": "fromBytes",
@@ -2877,10 +2877,10 @@
       "status": "verified"
     },
     {
-      "id": "std.env:31",
+      "id": "std.env:32",
       "owner": "std.env",
       "contract": "docs/contracts/stdlib-env.md",
-      "line": 31,
+      "line": 32,
       "signature": "pub fn Snapshot.arguments(ref self): Array[Value]",
       "symbol": "std.env.Snapshot.arguments",
       "operation": "arguments",
@@ -2925,10 +2925,10 @@
       "status": "verified"
     },
     {
-      "id": "std.env:32",
+      "id": "std.env:33",
       "owner": "std.env",
       "contract": "docs/contracts/stdlib-env.md",
-      "line": 32,
+      "line": 33,
       "signature": "pub fn Snapshot.get(ref self, name: Name): Option[Value] ! EnvError",
       "symbol": "std.env.Snapshot.get",
       "operation": "get",
@@ -2973,10 +2973,10 @@
       "status": "verified"
     },
     {
-      "id": "std.env:33",
+      "id": "std.env:34",
       "owner": "std.env",
       "contract": "docs/contracts/stdlib-env.md",
-      "line": 33,
+      "line": 34,
       "signature": "pub fn Value.asText(ref self): Option[String]",
       "symbol": "std.env.Value.asText",
       "operation": "asText",
@@ -3021,10 +3021,10 @@
       "status": "verified"
     },
     {
-      "id": "std.env:34",
+      "id": "std.env:35",
       "owner": "std.env",
       "contract": "docs/contracts/stdlib-env.md",
-      "line": 34,
+      "line": 35,
       "signature": "pub fn Value.asBytes(ref self): bytes.Bytes",
       "symbol": "std.env.Value.asBytes",
       "operation": "asBytes",
