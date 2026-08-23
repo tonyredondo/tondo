@@ -47,6 +47,16 @@ The workspace is clean, the Rust toolchain is pinned, and the seed is
 steps, managed memory, output bytes and duration. The limits are safety bounds
 for the harness; they do not change Tondo program semantics.
 
+The async-selection leaf uses the same identity and sampling rules through
+`testing/async-select-performance.json`. Its probe executes the verified VM
+registration and commit path for ready and pending selections with 1, 2, 8
+and 64 arms, and compares the one-arm path with a direct `Join` handoff. The
+report preserves latency samples and records managed allocations, runtime
+frame bytes, registrations, arm scans and wakeups. These counters are
+diagnostic observations, not language semantics: they make linear frame
+growth, the pending two-pass scan and one wakeup per parked selection
+machine-checkable without exposing VM layout to Tondo programs.
+
 The manifest includes four compile workloads and ten runtime workloads; two of
 the fourteen are explicitly adversarial boundaries. The runtime set contains
 representative STD-0.1A programs for core, collections, text, codecs, I/O,

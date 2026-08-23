@@ -214,6 +214,22 @@ pub struct VmStatistics {
     pub peak_stack_depth: u32,
     pub peak_live_objects: u32,
     pub peak_live_bytes: u64,
+    /// Number of selection commits performed by the cooperative scheduler.
+    pub select_commits: u64,
+    /// Number of arms registered in selection regions.
+    pub select_registrations: u64,
+    /// Number of selection regions that had to park their owner.
+    pub select_waits: u64,
+    /// Number of parked selection owners woken by a dependency completion.
+    pub select_wakeups: u64,
+    /// Number of arm table entries inspected by selection arbitration.
+    pub select_arm_scans: u64,
+    /// Number of runtime arm-table allocations created by `BeginSelect`.
+    pub select_frame_allocations: u64,
+    /// Peak bytes reserved for one runtime selection arm table.
+    pub select_peak_frame_bytes: u64,
+    /// Largest selection arm table observed in this run.
+    pub select_peak_arms: u32,
 }
 
 /// Stable language panic identity.

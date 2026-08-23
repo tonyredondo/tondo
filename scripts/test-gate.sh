@@ -67,6 +67,10 @@ run_step performance-contract \
     scripts/performance-check.sh
 run_step performance-tests \
     scripts/performance-test.sh
+run_step async-select-performance-contract-tests \
+    scripts/async-select-performance-test.sh
+run_step async-select-performance \
+    scripts/async-select-performance.sh
 run_step stdlib-performance-contract \
     scripts/stdlib-performance-check.sh
 run_step native-target-descriptor-contract \

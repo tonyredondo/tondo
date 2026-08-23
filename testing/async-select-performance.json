@@ -1,0 +1,116 @@
+{
+  "format": "tondo-async-select-performance/1",
+  "edition": "0.1",
+  "task": "ASYNC-SELECT-PERF-001",
+  "target": "tondo-vm-hosted",
+  "backend": "bytecode-vm",
+  "profile": "test",
+  "probe": {
+    "path": "crates/tondo-vm/src/runtime/execute.rs",
+    "test": "runtime::execute::tests::select_performance_probe",
+    "sha256": "425bcb89821a42abcf5b98c53811402f8de4be13f2118c87fe5463d7f0d87cef"
+  },
+  "protocol": {
+    "clock": "monotonic",
+    "warmup_iterations": 3,
+    "measurement_repetitions": 9,
+    "independent_processes": 3,
+    "minimum_sample_count": 27,
+    "batch_operations": 64,
+    "deterministic_seed": "tondo-perf-0.1",
+    "outliers": "report-not-delete"
+  },
+  "identity_fields": [
+    "suite",
+    "workload_id",
+    "probe_sha256",
+    "target",
+    "backend",
+    "profile",
+    "toolchain",
+    "flags",
+    "git_revision"
+  ],
+  "forbidden_identity": [
+    "ambient_environment",
+    "cpu_frequency",
+    "pid",
+    "path",
+    "timestamp"
+  ],
+  "metrics": [
+    "latency",
+    "throughput",
+    "allocation_count",
+    "frame_bytes",
+    "registered_arms",
+    "arm_scans",
+    "wakeups",
+    "tail_latency"
+  ],
+  "workloads": [
+    {
+      "id": "select-ready-1",
+      "mode": "ready",
+      "arms": 1,
+      "comparison": "select-direct-1"
+    },
+    {
+      "id": "select-pending-1",
+      "mode": "pending",
+      "arms": 1,
+      "comparison": null
+    },
+    {
+      "id": "select-ready-2",
+      "mode": "ready",
+      "arms": 2,
+      "comparison": null
+    },
+    {
+      "id": "select-pending-2",
+      "mode": "pending",
+      "arms": 2,
+      "comparison": null
+    },
+    {
+      "id": "select-ready-8",
+      "mode": "ready",
+      "arms": 8,
+      "comparison": null
+    },
+    {
+      "id": "select-pending-8",
+      "mode": "pending",
+      "arms": 8,
+      "comparison": null
+    },
+    {
+      "id": "select-ready-64",
+      "mode": "ready",
+      "arms": 64,
+      "comparison": null
+    },
+    {
+      "id": "select-pending-64",
+      "mode": "pending",
+      "arms": 64,
+      "comparison": null
+    },
+    {
+      "id": "direct-ready-1",
+      "mode": "direct",
+      "arms": 1,
+      "comparison": null
+    }
+  ],
+  "invariants": {
+    "managed_allocations_per_operation": 0,
+    "frame_bytes": "linear-in-arm-count",
+    "pending_arm_scans": "exactly-two-passes",
+    "ready_arm_scans": "at-least-one-full-pass",
+    "wakeup": "one-per-pending-operation",
+    "direct_comparison": "select-ready-1-and-direct-ready-1-share-the-join-handoff"
+  },
+  "report": "target/reliability/evidence/async-select-performance.json"
+}

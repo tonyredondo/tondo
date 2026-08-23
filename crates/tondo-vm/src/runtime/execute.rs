@@ -1130,11 +1130,15 @@ impl<'program, 'host> Engine<'program, 'host> {
         if !matches!(record.status, TaskStatus::Waiting(_)) {
             return Ok(());
         }
+        let was_select = matches!(record.status, TaskStatus::Waiting(TaskWait::Select { .. }));
         let TaskStatus::Waiting(wait) = std::mem::replace(&mut record.status, TaskStatus::Runnable)
         else {
             unreachable!("status was checked as waiting");
         };
         record.resume = Some(wait);
+        if was_select {
+            self.statistics.select_wakeups = self.statistics.select_wakeups.saturating_add(1);
+        }
         self.enqueue_task(task)
     }
 
@@ -2380,6 +2384,14 @@ impl<'program, 'host> Engine<'program, 'host> {
                     registered: 0,
                     arms: Vec::with_capacity(*capacity as usize),
                 });
+                self.statistics.select_frame_allocations =
+                    self.statistics.select_frame_allocations.saturating_add(1);
+                self.statistics.select_peak_frame_bytes =
+                    self.statistics.select_peak_frame_bytes.max(
+                        (*capacity as u64)
+                            .saturating_mul(std::mem::size_of::<RuntimeSelectArm>() as u64),
+                    );
+                self.statistics.select_peak_arms = self.statistics.select_peak_arms.max(*capacity);
             }
             BytecodeInstructionKind::RegisterSelectArm {
                 index,
@@ -2525,6 +2537,8 @@ impl<'program, 'host> Engine<'program, 'host> {
             .ok_or_else(|| VmError::invariant("select region disappeared during registration"))?;
         region.arms.push(RuntimeSelectArm { task, owned, owner });
         region.registered += 1;
+        self.statistics.select_registrations =
+            self.statistics.select_registrations.saturating_add(1);
         Ok(())
     }
 
@@ -3621,6 +3635,7 @@ impl<'program, 'host> Engine<'program, 'host> {
         else_target: Option<BytecodeBlockId>,
         unwind: BytecodeBlockId,
     ) -> Result<(), VmError> {
+        self.statistics.select_commits = self.statistics.select_commits.saturating_add(1);
         if self.tasks[self.current_task].cancel_requested
             || self.current_scope_has_unobserved_panic(frame)?
         {
@@ -3657,6 +3672,8 @@ impl<'program, 'host> Engine<'program, 'host> {
             for offset in 0..runtime_arms.len() {
                 let index = (start + offset) % runtime_arms.len();
                 let task = runtime_arms[index].task;
+                self.statistics.select_arm_scans =
+                    self.statistics.select_arm_scans.saturating_add(1);
                 let Some(TaskStatus::Complete(Some(completion))) =
                     self.tasks.get(task).map(|record| &record.status)
                 else {
@@ -3689,6 +3706,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                 return Ok(());
             }
             let dependencies = runtime_arms.iter().map(|arm| arm.task).collect::<Vec<_>>();
+            self.statistics.select_waits = self.statistics.select_waits.saturating_add(1);
             self.park_current(TaskWait::Select { unwind }, &dependencies)?;
             return Ok(());
         };
@@ -11569,6 +11587,9 @@ fn collection_length_fits_int(length: usize) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::hint::black_box;
+    use std::time::Instant;
+
     use crate::bytecode::{
         BytecodeAggregateKind, BytecodeBinaryOperator, BytecodeBlockId, BytecodeCallArgumentTarget,
         BytecodeCallable, BytecodeCallableId, BytecodeCapabilitySet, BytecodeClosure,
@@ -11576,14 +11597,14 @@ mod tests {
         BytecodeConstantValueKind, BytecodeConstantVariantValue, BytecodeContainmentKind,
         BytecodeCursorMode, BytecodeField, BytecodeFrameTraceDescriptor, BytecodeFunction,
         BytecodeFunctionId, BytecodeFunctionParameter, BytecodeFunctionType, BytecodeIndexAccess,
-        BytecodeIntrinsicType, BytecodeLoanId, BytecodeNominal, BytecodeNominalId,
-        BytecodeNominalShape, BytecodeNumericConversionError, BytecodeOperand, BytecodeOperandKind,
-        BytecodeOperation, BytecodeOperationKind, BytecodeParameter, BytecodeParameterMode,
-        BytecodePlace, BytecodePrefixOperator, BytecodeProgram, BytecodeRangeKind,
-        BytecodeScalarType, BytecodeScopeId, BytecodeSelectArm, BytecodeSelectRegistration,
-        BytecodeSliceBounds, BytecodeSlotId, BytecodeSpan, BytecodeTraceDescriptor, BytecodeType,
-        BytecodeTypeId, BytecodeTypeKind, BytecodeVariant, BytecodeVariantPayload,
-        derive_trace_metadata,
+        BytecodeInstruction, BytecodeInstructionKind, BytecodeIntrinsicType, BytecodeLoanId,
+        BytecodeNominal, BytecodeNominalId, BytecodeNominalShape, BytecodeNumericConversionError,
+        BytecodeOperand, BytecodeOperandKind, BytecodeOperation, BytecodeOperationKind,
+        BytecodeParameter, BytecodeParameterMode, BytecodePlace, BytecodePrefixOperator,
+        BytecodeProgram, BytecodeRangeKind, BytecodeScalarType, BytecodeScopeId, BytecodeSelectArm,
+        BytecodeSelectRegistration, BytecodeSliceBounds, BytecodeSlot, BytecodeSlotId,
+        BytecodeSlotKind, BytecodeSpan, BytecodeTraceDescriptor, BytecodeType, BytecodeTypeId,
+        BytecodeTypeKind, BytecodeVariant, BytecodeVariantPayload, derive_trace_metadata,
     };
 
     use super::{
@@ -11593,12 +11614,12 @@ mod tests {
         RuntimeDefer, RuntimeFallback, RuntimeHostValueKind, RuntimeJoin, RuntimeLoan,
         RuntimeSelectArm, RuntimeSelectRegion, RuntimeTaskScope, RuntimeType, RuntimeUnwind,
         RuntimeValue, SlotState, TaskCompletion, TaskRecord, TaskStatus, TaskWait, Value,
-        ValueCopyStrategy, VmError, VmHost, VmLimits, VmPanic, VmStackFrame, VmTestNodeKind,
-        VmTestNodeOutcome, clone_field, clone_index, clone_present, collection_length_fits_int,
-        convert_numeric, integer_bounds, integer_shape, next_unicode_scalar,
-        operand_materialized_slot, operation_access_place, paths_overlap, present,
-        queue_object_equality, queue_payload_equality, runtime_host_kind, set_field, set_index,
-        slice_indices, snapshot_value, take_field, take_index, take_option,
+        ValueCopyStrategy, VmError, VmHost, VmLimits, VmPanic, VmStackFrame, VmStatistics,
+        VmTestNodeKind, VmTestNodeOutcome, clone_field, clone_index, clone_present,
+        collection_length_fits_int, convert_numeric, integer_bounds, integer_shape,
+        next_unicode_scalar, operand_materialized_slot, operation_access_place, paths_overlap,
+        present, queue_object_equality, queue_payload_equality, runtime_host_kind, set_field,
+        set_index, slice_indices, snapshot_value, take_field, take_index, take_option,
     };
 
     fn root_pressure_program() -> BytecodeProgram {
@@ -12008,6 +12029,307 @@ mod tests {
             task_scopes: Vec::new(),
             continuation: None,
             select: Some(region),
+        }
+    }
+
+    const SELECT_PERF_BATCH: usize = 64;
+    const SELECT_PERF_WARMUPS: usize = 3;
+    const SELECT_PERF_SAMPLES: usize = 9;
+
+    #[derive(Debug, Clone, Copy)]
+    struct SelectPerfSample {
+        nanos_per_operation: u128,
+        statistics: VmStatistics,
+    }
+
+    fn select_perf_program(arm_count: usize, join_ty: BytecodeTypeId) -> BytecodeProgram {
+        let mut program = terminal_fallback_program();
+        let span = BytecodeSpan {
+            file: 0,
+            start: 0,
+            end: 0,
+        };
+        program.functions.push(BytecodeFunction {
+            callable: BytecodeCallableId::new(0),
+            source: span,
+            types: vec![join_ty],
+            spans: vec![span],
+            slots: (0..arm_count)
+                .map(|local| BytecodeSlot {
+                    ty: join_ty,
+                    span: crate::bytecode::BytecodeSpanId::new(0),
+                    kind: BytecodeSlotKind::User {
+                        local: local as u32,
+                    },
+                })
+                .collect(),
+            loans: Vec::new(),
+            parameters: Vec::new(),
+            return_slot: BytecodeSlotId::new(0),
+            entry: BytecodeBlockId::new(0),
+            unwind: BytecodeBlockId::new(0),
+            blocks: Vec::new(),
+        });
+        program
+    }
+
+    fn select_perf_engine<'program, 'host>(
+        program: &'program BytecodeProgram,
+        host: &'host mut RejectingHost,
+        trace: crate::bytecode::BytecodeTraceMetadata,
+        arm_count: usize,
+    ) -> Engine<'program, 'host> {
+        let mut engine = Engine::new(
+            program,
+            host,
+            VmLimits::default(),
+            ValueCopyStrategy::default(),
+            trace,
+        );
+        engine.tasks.push(scheduler_task(TaskStatus::Running));
+        for _ in 0..arm_count {
+            let mut task = scheduler_task(TaskStatus::Runnable);
+            task.join_consumed = false;
+            engine.tasks.push(task);
+        }
+        engine.frames.push(Frame {
+            function: BytecodeFunctionId::new(0),
+            block: BytecodeBlockId::new(0),
+            instruction: 0,
+            slots: vec![SlotState::Uninitialized; arm_count],
+            loans: Vec::new(),
+            cleanups: Vec::new(),
+            task_scopes: Vec::new(),
+            continuation: None,
+            select: None,
+        });
+        engine
+    }
+
+    fn reset_select_perf_iteration(engine: &mut Engine<'_, '_>, arm_count: usize, pending: bool) {
+        engine.pending_unwind = None;
+        engine.current_task = 0;
+        engine.frames[0].block = BytecodeBlockId::new(0);
+        engine.frames[0].instruction = 0;
+        engine.frames[0].select = None;
+        engine.frames[0].slots = (0..arm_count)
+            .map(|task| {
+                SlotState::Value(Value::Join(RuntimeJoin {
+                    task: task + 1,
+                    scope: super::TRANSFERRED_JOIN_SCOPE,
+                }))
+            })
+            .collect();
+        engine.tasks[0].status = TaskStatus::Running;
+        engine.tasks[0].resume = None;
+        engine.tasks[0].waiters.clear();
+        engine.tasks[0].cancel_requested = false;
+        for task in engine.tasks.iter_mut().skip(1) {
+            task.status = if pending {
+                TaskStatus::Runnable
+            } else {
+                TaskStatus::Complete(Some(TaskCompletion::Returned(Value::Unit)))
+            };
+            task.resume = None;
+            task.waiters.clear();
+            task.cancel_requested = false;
+            task.join_consumed = false;
+            task.queued = false;
+            task.discard_completion = false;
+        }
+    }
+
+    fn select_perf_once(
+        engine: &mut Engine<'_, '_>,
+        begin: &BytecodeInstruction,
+        registrations: &[BytecodeInstruction],
+        arms: &[BytecodeSelectArm],
+        arm_count: usize,
+        pending: bool,
+    ) -> Result<(), VmError> {
+        reset_select_perf_iteration(engine, arm_count, pending);
+        engine.execute_instruction(0, begin)?;
+        for instruction in registrations {
+            engine.execute_instruction(0, instruction)?;
+        }
+        engine.execute_select_commit(0, arms, None, BytecodeBlockId::new(0))?;
+        if pending {
+            engine.complete_task(1, TaskCompletion::Returned(Value::Unit))?;
+            assert!(engine.resume_current_task()?);
+        }
+        black_box(engine.frames[0].block);
+        Ok(())
+    }
+
+    fn select_perf_sample(arm_count: usize, pending: bool) -> Result<SelectPerfSample, VmError> {
+        let join_ty = BytecodeTypeId::new(19);
+        let program = select_perf_program(arm_count, join_ty);
+        let trace = derive_trace_metadata(&program)
+            .map_err(|error| VmError::invariant(error.to_string()))?;
+        let mut host = RejectingHost;
+        let mut engine = select_perf_engine(&program, &mut host, trace, arm_count);
+        let span = crate::bytecode::BytecodeSpanId::new(0);
+        let begin = BytecodeInstruction {
+            span,
+            kind: BytecodeInstructionKind::BeginSelect {
+                capacity: arm_count as u32,
+            },
+        };
+        let registrations = (0..arm_count)
+            .map(|index| BytecodeInstruction {
+                span,
+                kind: BytecodeInstructionKind::RegisterSelectArm {
+                    index: index as u32,
+                    registration: BytecodeSelectRegistration::Join(BytecodePlace {
+                        slot: BytecodeSlotId::new(index as u32),
+                        ty: join_ty,
+                        projections: Vec::new(),
+                        source_loan: None,
+                    }),
+                },
+            })
+            .collect::<Vec<_>>();
+        let arms = (0..arm_count)
+            .map(|index| BytecodeSelectArm::new(None, BytecodeBlockId::new(index as u32 + 1)))
+            .collect::<Vec<_>>();
+
+        for _ in 0..SELECT_PERF_WARMUPS {
+            select_perf_once(
+                &mut engine,
+                &begin,
+                &registrations,
+                &arms,
+                arm_count,
+                pending,
+            )?;
+        }
+        engine.statistics = VmStatistics::default();
+        let started = Instant::now();
+        for _ in 0..SELECT_PERF_BATCH {
+            select_perf_once(
+                &mut engine,
+                &begin,
+                &registrations,
+                &arms,
+                arm_count,
+                pending,
+            )?;
+        }
+        let elapsed = started.elapsed().as_nanos();
+        Ok(SelectPerfSample {
+            nanos_per_operation: elapsed / SELECT_PERF_BATCH as u128,
+            statistics: engine.statistics,
+        })
+    }
+
+    fn direct_perf_sample() -> Result<SelectPerfSample, VmError> {
+        let join_ty = BytecodeTypeId::new(19);
+        let program = select_perf_program(1, join_ty);
+        let trace = derive_trace_metadata(&program)
+            .map_err(|error| VmError::invariant(error.to_string()))?;
+        let mut host = RejectingHost;
+        let mut engine = select_perf_engine(&program, &mut host, trace, 1);
+        let owner = BytecodePlace {
+            slot: BytecodeSlotId::new(0),
+            ty: join_ty,
+            projections: Vec::new(),
+            source_loan: None,
+        };
+        for _ in 0..SELECT_PERF_WARMUPS {
+            reset_select_perf_iteration(&mut engine, 1, false);
+            let join = engine.consume_join_owner(0, &owner)?;
+            let _ = engine.take_task_completion(join.task)?;
+        }
+        engine.statistics = VmStatistics::default();
+        let started = Instant::now();
+        for _ in 0..SELECT_PERF_BATCH {
+            reset_select_perf_iteration(&mut engine, 1, false);
+            let join = engine.consume_join_owner(0, &owner)?;
+            let _ = engine.take_task_completion(join.task)?;
+        }
+        Ok(SelectPerfSample {
+            nanos_per_operation: started.elapsed().as_nanos() / SELECT_PERF_BATCH as u128,
+            statistics: engine.statistics,
+        })
+    }
+
+    fn print_select_perf_workload(
+        workload: &str,
+        arm_count: usize,
+        pending: bool,
+    ) -> Result<(), VmError> {
+        for _ in 0..SELECT_PERF_SAMPLES {
+            let sample = select_perf_sample(arm_count, pending)?;
+            let statistics = sample.statistics;
+            assert_eq!(
+                statistics.select_commits, SELECT_PERF_BATCH as u64,
+                "{workload} commit count"
+            );
+            assert_eq!(
+                statistics.select_registrations,
+                (SELECT_PERF_BATCH * arm_count) as u64,
+                "{workload} registration count"
+            );
+            assert_eq!(
+                statistics.select_waits,
+                u64::from(pending) * SELECT_PERF_BATCH as u64,
+                "{workload} wait count"
+            );
+            assert_eq!(
+                statistics.select_wakeups,
+                u64::from(pending) * SELECT_PERF_BATCH as u64,
+                "{workload} wakeup count"
+            );
+            assert_eq!(
+                statistics.select_frame_allocations, SELECT_PERF_BATCH as u64,
+                "{workload} frame allocation count"
+            );
+            assert_eq!(
+                statistics.select_peak_frame_bytes,
+                (arm_count * std::mem::size_of::<RuntimeSelectArm>()) as u64,
+                "{workload} frame bytes"
+            );
+            assert_eq!(statistics.select_peak_arms, arm_count as u32);
+            assert_eq!(statistics.allocations, 0, "{workload} managed allocations");
+            assert!(statistics.select_arm_scans >= (SELECT_PERF_BATCH * arm_count) as u64);
+            if pending {
+                assert_eq!(
+                    statistics.select_arm_scans,
+                    (SELECT_PERF_BATCH * arm_count * 2) as u64,
+                    "{workload} pending scans"
+                );
+            }
+            println!(
+                "TONDO_SELECT_PERF\t{workload}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                sample.nanos_per_operation,
+                statistics.select_commits / SELECT_PERF_BATCH as u64,
+                statistics.select_registrations / SELECT_PERF_BATCH as u64,
+                statistics.select_waits / SELECT_PERF_BATCH as u64,
+                statistics.select_wakeups / SELECT_PERF_BATCH as u64,
+                statistics.select_arm_scans / SELECT_PERF_BATCH as u64,
+                statistics.select_frame_allocations / SELECT_PERF_BATCH as u64,
+                statistics.select_peak_frame_bytes,
+                statistics.select_peak_arms,
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn select_performance_probe() {
+        for arm_count in [1, 2, 8, 64] {
+            print_select_perf_workload(&format!("select-ready-{arm_count}"), arm_count, false)
+                .unwrap();
+            print_select_perf_workload(&format!("select-pending-{arm_count}"), arm_count, true)
+                .unwrap();
+        }
+        for _ in 0..SELECT_PERF_SAMPLES {
+            let sample = direct_perf_sample().unwrap();
+            assert_eq!(sample.statistics, VmStatistics::default());
+            println!(
+                "TONDO_SELECT_PERF\tdirect-ready-1\t{}\t0\t0\t0\t0\t0\t0\t0\t0",
+                sample.nanos_per_operation
+            );
         }
     }
 

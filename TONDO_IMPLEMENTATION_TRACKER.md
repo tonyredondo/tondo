@@ -65,10 +65,10 @@ en requisito de Tondo 0.1.
 
 **Objetivo inmediato:** cerrar el slice ejecutable de `select`: frontend,
 semántica tipada, lowering verificable, runtime cooperativo, ownership
-branch-sensitive, adapters `Waiter`/time y el modelo/tests deterministas ya
-están cerrados; `ASYNC-SELECT-PERF-001` sigue siendo la única hoja de medición
-pendiente antes de conformar el corpus completo en `ASYNC-SELECT-VM-CONF-001`.
-Después se retoma `STD-A-PERF-001` y finalmente
+branch-sensitive, adapters `Waiter`/time, modelo/tests deterministas y
+presupuestos de rendimiento reproducibles ya están cerrados. El siguiente
+paso es conformar el corpus completo en `ASYNC-SELECT-VM-CONF-001`; después se
+retoma `STD-A-PERF-001` y finalmente
 `DIAG-SPEC-001`. El grafo activo se valida con `TRACKER-LINT-001`; con
 ese contrato se cierran las fronteras
 runtime-facing B0 de Wave 6; entonces avanzan `DIAG-RUNTIME-001`, `RACE-001`,
@@ -525,7 +525,7 @@ necesaria; la fragmentación del workspace no.
 | **M4 — Genéricos, traits y closures** | Sistema estático completo | Completado |
 | **M5 — Ownership, préstamos y memoria** | Modelo de valores completo | Completado |
 | **M6 — Colecciones, números y texto** | Gate G3: alpha utilizable | Completado |
-| **M7 — Async y concurrencia estructurada** | Tasks conformes + selección núcleo | Suspensión/tasks completadas; frontend, semántica tipada, lowering verificable, selector cooperativo, ownership branch-sensitive, modelo/tests y adapters `selectable` cerrados; performance del selector y conformidad VM pendientes |
+| **M7 — Async y concurrencia estructurada** | Tasks conformes + selección núcleo | Suspensión/tasks, frontend, semántica tipada, lowering verificable, selector cooperativo, ownership branch-sensitive, modelo/tests, adapters `selectable` y baseline de rendimiento del selector cerrados; conformidad VM pendiente |
 | **M8 — Scripts y procesos** | Experiencia de scripting | Completado |
 | **M9 — Unsafe, targets y toolchain** | Gate G4: preview 0.1 | Completado |
 | **M10 — Corpus ejecutable** | Conformidad viva pre-`derive` | Completado |
@@ -2446,21 +2446,27 @@ adapters de streams y el worker OS nativo permanecen como leaves independientes.
   `Waiter.wait` y `Timer.wait` en el camino público, sin fijar un scheduling
   concreto.
 
-- [ ] **ASYNC-SELECT-PERF-001 — Fijar presupuestos del selector VM.** Medir
-  latencia ready/pending, throughput, allocations, bytes de frame, registros,
-  wakeups y tail latency para 1/2/8/64 brazos; comparar `select` de un brazo con
-  la llamada directa y impedir polling, crecimiento no acotado o regresiones de
-  complejidad respecto al número de brazos. Sigue abierta hasta registrar un
-  benchmark reproducible con baseline de target y muestras suficientes; los
-  tests de propiedades no se promocionan como evidencia de rendimiento.
+- [x] **ASYNC-SELECT-PERF-001 — Fijar presupuestos del selector VM.**
+  `scripts/async-select-performance.sh` ejecuta el probe real
+  `runtime::execute::tests::select_performance_probe` en tres procesos
+  independientes, con tres warmups y nueve mediciones por proceso (27 muestras
+  por workload). Registra latencia ready/pending, throughput, allocations
+  gestionadas, bytes de frame, registros, scans, wakeups y p95/p99 para
+  1/2/8/64 brazos, además de la comparación `direct-ready-1`. Los contadores
+  del VM demuestran cero allocations gestionadas por operación, frame lineal
+  en el número de brazos, dos pasadas exactas en pending y un wakeup por
+  operación pendiente. El informe reproducible se escribe en
+  `target/reliability/evidence/async-select-performance.json`; el contrato y
+  sus negativos están en `testing/async-select-performance.json` y
+  `scripts/async-select-performance-test.sh`.
 
 - [ ] **ASYNC-SELECT-VM-CONF-001 — Conformar `select` sobre la VM.** El corpus
   público ya tiene casos de `Waiter`, time y `Join` y la ejecución dirigida
   recorre parser → formatter → interfaz → bytecode verificado → VM; la
-  promoción queda bloqueada honestamente por `ASYNC-SELECT-PERF-001`, su
-  dependencia dura. Al cerrarse ese presupuesto se ratchetearán
-  matriz/inventario y los casos 0.1; los requisitos nativos permanecen
-  explícitamente pendientes en `NATIVE-SELECT-001`.
+  la promoción queda pendiente hasta ratchetear el resultado dirigido contra
+  el corpus 0.1 y sus observaciones exactas; el presupuesto ya está cerrado.
+  Los requisitos nativos permanecen explícitamente pendientes en
+  `NATIVE-SELECT-001`.
 
 - [ ] **NATIVE-THREAD-001 — Mapear la lane `Thread` a workers OS en el backend
   nativo.** La VM bootstrap conserva semántica cooperativa determinista; el
@@ -6593,8 +6599,8 @@ Esta tabla es la fuente de reconciliación del estado actual.
       alimentan `STD-A-SELECTABLE-IMPL-001` —que además exige los ya cerrados
       `STD-A-ASYNC-IMPL-001` y `STD-TIME-BASE-CONF-001`— y continúa con
       `ASYNC-SELECT-TEST-001 →
-      ASYNC-SELECT-PERF-001 → ASYNC-SELECT-VM-CONF-001` (tests/model cerrado;
-      performance es el siguiente bloqueo real);
+      ASYNC-SELECT-PERF-001 → ASYNC-SELECT-VM-CONF-001` (tests/model y
+      performance cerrados; la conformidad VM es el siguiente bloque);
     - A1: `STD-CORE-IMPL-001`, `STD-TEXT-IMPL-001`, `STD-COLL-IMPL-001`,
       `STD-ITER-IMPL-001`, `STD-FMT-IMPL-001` y `STD-IO-IMPL-001`;
     - A2: `STD-FS-IMPL-001` y `STD-PROC-IMPL-001`, preservando path/console;
