@@ -1566,14 +1566,18 @@ números. La baseline debe capturarse antes de `NATIVE-001`, `NATIVE-ABI-001` o
 promover una optimización, y las gates de captura, comparación y promoción
 deben conservar la baseline anterior ante cualquier fallo.
 
-La planificación transversal de diagnóstico dinámico está en
+El contrato transversal de diagnóstico dinámico está en
 [`docs/contracts/diagnostic-tooling.md`](./docs/contracts/diagnostic-tooling.md)
-y en RFC-019. La dirección conserva una sola superficie opt-in para
+y en RFC-019, con el registro machine-readable
+[`testing/diagnostic-tooling.json`](./testing/diagnostic-tooling.json). La
+dirección conserva una sola superficie opt-in para
 `race`, `leaks` y `crash`, con `tondo dump analyze` para los artefactos `.tdump`;
 no añade keywords ni APIs paralelas a la stdlib. La evaluación de `NATIVE-001`
 incorpora la paridad de esos perfiles, source maps, identidad de
 task/thread, hooks de memoria/GC, unwind y redacción. Un target sin una de esas
-capacidades la declara como `unsupported-diagnostic-profile` y no la omite.
+capacidades la declara como `unsupported-diagnostic-profile` y no la omite. El
+contrato D0 está cerrado; la instrumentación runtime y la paridad nativa siguen
+pendientes de sus milestones.
 
 ### 10.2 Doc-tests
 

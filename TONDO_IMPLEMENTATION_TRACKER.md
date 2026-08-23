@@ -67,7 +67,8 @@ un bundle companion separado. El futuro candidato del lenguaje fijará G5 y S1;
 solo fijará L0 cuando se construya además una distribución TLF, sin convertirla
 en requisito de Tondo 0.1.
 
-**Objetivo inmediato:** iniciar Wave 6 con `DIAG-SPEC-001`: el slice
+**Objetivo inmediato:** iniciar los contratos runtime-facing B0 de Wave 6 tras
+cerrar `DEC-018` y `DIAG-SPEC-001`: el slice
 ejecutable de `select` ya está cerrado en la VM hosted —frontend,
 semántica tipada, lowering verificable, runtime cooperativo, ownership
 branch-sensitive, adapters `Waiter`/time, modelo/tests deterministas y
@@ -81,8 +82,7 @@ limpios producen el mismo paquete VM content-addressed, con instalación,
 ejecución y desinstalación verificadas. `STD-S1A-SEAL-001` ha cerrado el
 bundle técnico del draft con auditoría estricta y cero celdas aplicables
 abiertas; el siguiente bloque es `DIAG-SPEC-001`. El grafo activo se valida con
-`TRACKER-LINT-001`; con
-ese contrato se cierran las fronteras
+`TRACKER-LINT-001`; con el contrato D0 cerrado, se cierran ahora las fronteras
 runtime-facing B0 de Wave 6; entonces avanzan `DIAG-RUNTIME-001`, `RACE-001`,
 `LEAK-001`, `DUMP-001`, `DIAG-TEST-001` y `DIAG-CI-001` antes de la evaluación
 coordinada de `NATIVE-001`. El cierre coordinado de
@@ -92,9 +92,9 @@ y los tres owners build-only tienen una frontera explícita; no se fabrican
 funciones runtime para ellos. `NATIVE-TARGET-DESC-001` y
 `NATIVE-ARTIFACT-001`, `NATIVE-LINK-PLAN-001` y `NATIVE-PUBLISH-SPEC-001` están
 cerrados como contratos puros, y `PERF-001` ya fija el contrato de benchmark y
-baseline previo al backend. Con la conformance pública, la distribución y el
-seal S1A promovidos como evidencia técnica del draft, comienza
-`DIAG-SPEC-001`.
+baseline previo al backend. Con la conformance pública, la distribución, el
+seal S1A y el contrato D0 promovidos como evidencia técnica del draft,
+comienzan los contratos runtime-facing B0.
 `NATIVE-001` queda después de la compuerta de
 diagnóstico.
 FUZZ está promovido para los 22 owners; la distribución está promovida y el
@@ -418,11 +418,13 @@ cantidad de infraestructura necesaria antes del primer programa ejecutable.
   threads, FFI privilegiada, roots/retainers, ledger de recursos y estrategia
   de verificación de `LEAK-001`.
 
-- [ ] **DEC-018 — Diagnóstico dinámico sin APIs paralelas.**
-  `DIAG-SPEC-001` cierra los perfiles `race`, `leaks` y `crash`, el envelope
-  `tondo-diagnostic-report/1`, el dump `tondo-dump/1`, privacidad, límites y
-  exit status. Runtime, CLI y runner comparten esa identidad; la stdlib no
-  añade `std.race`, `std.leaks` ni `std.crash`.
+- [x] **DEC-018 — Diagnóstico dinámico sin APIs paralelas.**
+  La decisión acepta una única superficie opt-in para `race`, `leaks` y
+  `crash`, conserva intacto `tondo-diagnostics-json/1`, prohíbe keywords y
+  APIs paralelas en `std`, exige `unsupported-diagnostic-profile` explícito y
+  mantiene payloads redactados por defecto. La decisión queda fijada por
+  [`docs/contracts/diagnostic-tooling.md`](./docs/contracts/diagnostic-tooling.md),
+  RFC-019 y `testing/diagnostic-tooling.json`; no afirma implementación runtime.
 
 - [x] **DEC-015 — Testing first-class integrado en 0.1.** La especificación
   [`TONDO_TESTING_SPEC.md`](./TONDO_TESTING_SPEC.md) forma parte del mismo
@@ -721,7 +723,7 @@ no una promesa de implementación ya cerrada:
 
 | ID | Prioridad | Alcance | Estado |
 |---|---:|---|---|
-| `DIAG-SPEC-001` | P0 | Profiles, envelope, dumps, identidad, privacidad, límites y CLI | Pendiente |
+| `DIAG-SPEC-001` | P0 | Profiles, envelope, dumps, identidad, privacidad, límites y CLI | Contrato cerrado; runtime pendiente |
 | `DIAG-RUNTIME-001` | P0 | Eventos de memoria/sync, task/thread registry, roots, recursos y source maps en VM | Pendiente |
 | `RACE-001` | P0 | Race detector dinámico con happens-before, stacks y corpus positivo/negativo | Pendiente |
 | `LEAK-001` | P0 | Retención GC, recursos afines, FFI y snapshots de crecimiento | Pendiente |
@@ -5431,18 +5433,21 @@ pueden retrasar el primer backend correcto.
   cifras en el contrato. El registro, documentación, negativos y gates viven
   en `testing/performance.json`, `docs/contracts/performance.md`,
   `scripts/performance-check.sh` y `scripts/performance-test.sh`, integrados en
-  `scripts/test-gate.sh`. Este contrato desbloquea `DIAG-SPEC-001`; en la cola
-  global, `TRACKER-LINT-001` y el seal S1A ya están completados antes de iniciar
-  ese bloque, y `NATIVE-001` queda después de la compuerta de diagnóstico.
+  `scripts/test-gate.sh`. Este contrato y el seal S1A desbloquearon
+  `DIAG-SPEC-001`; su contrato D0 está ahora cerrado y los siguientes bloques
+  son las fronteras runtime-facing B0, con `NATIVE-001` después de la
+  compuerta de diagnóstico.
 
-- [ ] **DIAG-SPEC-001 — Cerrar el contrato unificado de diagnóstico dinámico.**
+- [x] **DIAG-SPEC-001 — Cerrar el contrato unificado de diagnóstico dinámico.**
   Fijar profiles `race`, `leaks` y `crash`, el envelope
   `tondo-diagnostic-report/1`, el dump `tondo-dump/1`, exit status, límites,
   privacidad, identidad por target/backend/toolchain y la forma CLI de
   `tondo run/test --diagnostics` y `tondo dump analyze`. Mantener intacto el
   schema de diagnostics de compilación y no añadir keywords ni APIs paralelas
-  en `std`; el contrato y RFC son
-  `docs/contracts/diagnostic-tooling.md` y `docs/rfc/019-diagnostic-tooling.md`.
+  en `std`. El registro `testing/diagnostic-tooling.json`, los checks
+  `scripts/diagnostic-contract-check.sh`/`diagnostic-contract-test.sh`, el
+  contrato y RFC congelan la superficie y sus negativos; la implementación
+  runtime sigue pendiente de los bloques B0/`DIAG-RUNTIME-001`.
 
 - [ ] **DIAG-RUNTIME-001 — Exponer instrumentación interna verificable.**
   Después de los contratos runtime-facing B0, registrar en la VM task/thread IDs, accesos y sincronización, roots y
@@ -6757,7 +6762,8 @@ del selector está ratcheteada y la paridad nativa sigue reservada a
 `CONF-GAP-IMPL-001` y `CONF-LAYER-RESULT-001` producen la trazabilidad y el
 resultado compuesto vivos. `CONF-SEAL-FINAL-001` permanece pendiente para el
 primer release. `STD-IMPL-001`, `STD-IMPL-002` y `STD-CODEC-PUBLIC-001` están cerrados;
-Wave 6 puede comenzar después del seal S1A.
+Wave 6 comienza ahora por sus contratos runtime-facing B0 después del seal
+S1A y del contrato D0 de diagnóstico.
 `STD-IMPL-001` y `STD-IMPL-002` quedan ahora cerrados por sus gates de
 coordinación; `NATIVE-TARGET-DESC-001`, `NATIVE-ARTIFACT-001`,
 `NATIVE-LINK-PLAN-001`, `NATIVE-PUBLISH-SPEC-001` y `PERF-001` quedan cerrados
@@ -6771,9 +6777,9 @@ evidencia runtime, `STD-A-ASYNC-IMPL-001` cerró su ejecución estructurada y
 `STD-A-CONF-001` promovió la ejecución pública (22 owners, 385 filas y 206
 casos del draft) con evidencia hash-bound. `STD-A-DIST-001` promovió el
 paquete VM reproducible (dos snapshots, instalación, ejecución y
-desinstalación). `STD-S1A-SEAL-001` cerró el bundle técnico del draft; la
-siguiente frontera es `DIAG-SPEC-001`; la
-instrumentación VM espera los contratos B0 y `NATIVE-001` espera
+desinstalación). `STD-S1A-SEAL-001` cerró el bundle técnico del draft y
+`DIAG-SPEC-001` cerró el contrato D0; la siguiente frontera son los contratos
+B0 y la instrumentación VM espera su cierre, mientras `NATIVE-001` espera
 `DIAG-CI-001`.
 
 ---

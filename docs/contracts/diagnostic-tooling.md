@@ -1,7 +1,9 @@
 # Contrato de tooling dinámico de diagnóstico
 
-**Estado:** contrato de planificación para Tondo 0.1; la implementación queda
-pendiente de los bloques `DIAG-*` del tracker.
+**Estado:** `contract-locked` para Tondo 0.1. `DEC-018` y
+`DIAG-SPEC-001` fijan esta superficie; la implementación runtime queda
+pendiente de `STD-ASYNC-GROUP-SPEC-001`, `STD-CONC-001`, `STD-SYNC-001`,
+`STD-EXEC-001`, `STD-NET-001` y los bloques `DIAG-*` posteriores.
 
 Este documento define la frontera entre el lenguaje, el runtime y las
 herramientas que ayudan a encontrar fallos de concurrencia, retención de
@@ -18,12 +20,13 @@ tondo test --diagnostics <race|leaks|crash|all>[,...] ...
 tondo dump analyze <file.tdump> [--format human|json]
 ```
 
-La grafía final de las opciones se congela en `DIAG-SPEC-001`, pero la forma
-conceptual no cambia: el compilador/runtime instrumenta la ejecución y el CLI
-materializa reportes y artefactos. `tondo check` conserva su función estática y
-no arranca un runtime dinámico. Los perfiles no requieren un `tondo.json`, una
-variable de entorno ni un cambio de edición; son overrides explícitos de una
-invocación.
+La grafía y el envelope finales están congelados en el contrato machine-readable
+[`testing/diagnostic-tooling.json`](../../testing/diagnostic-tooling.json).
+El compilador/runtime instrumenta la ejecución y el CLI materializa reportes y
+artefactos cuando los bloques de implementación estén cerrados. `tondo check`
+conserva su función estática y no arranca un runtime dinámico. Los perfiles no
+requieren un `tondo.json`, una variable de entorno ni un cambio de edición; son
+overrides explícitos de una invocación.
 
 Los perfiles son:
 
@@ -120,14 +123,34 @@ run_id + test_id/attempt + shard + profile + target + backend + toolchain
 ```
 
 e incluye estado, observaciones, limitaciones, hashes de artefactos y paths
-lógicos. `tondo test` enlaza el reporte y los `.tdump` al intento concreto en el
-artifact store ya definido; JSON y JUnit proyectan la misma referencia sin
-duplicar payloads. Retries, repeat y shards conservan la identidad del test y
-crean un proceso limpio por intento.
+lógicos. Los campos de identidad obligatorios son `run_id`, `attempt_id`,
+`shard`, `profile`, `target`, `backend`, `toolchain` y `source_revision`; la
+ordenación es identidad, tipo de observación y span de origen. Un reporte limpio
+solo describe caminos observados y nunca es una prueba estática de ausencia.
+`tondo test` enlaza el reporte y los `.tdump` al intento concreto en el artifact
+store ya definido; JSON y JUnit proyectan la misma referencia sin duplicar
+payloads. Retries, repeat y shards conservan la identidad del test y crean un
+proceso limpio por intento.
 
 Las campañas de `race` y `leaks` son lanes explícitas de CI por su coste. Una
 campaña instrumentada no sustituye la suite normal ni rebaja el baseline de
 cobertura, mutation o rendimiento; añade evidencia adicional y un gate propio.
+
+### 5.1 Exit status y límites
+
+El contrato usa la tabla de salida existente del CLI: `0` indica éxito sin
+hallazgo, `1` un hallazgo dinámico observado, `2` un perfil inválido o no
+soportado y `3` un fallo del toolchain. `101` se conserva para un panic del
+programa cuando no existe un hallazgo dinámico de mayor precedencia. La
+precedencia es `toolchain_failure`, `unsupported_or_invalid_profile`,
+`finding`, `program_exit_status`; el `program_exit_status` original siempre
+queda en el reporte.
+
+Los límites cerrados son tres perfiles por invocación, 16 MiB por reporte,
+256 MiB por dump, 100.000 observaciones, 1.000.000 eventos, 256 frames de
+stack, 256 retainers por objeto y 4.096 eventos de scheduler. El runtime falla
+cerrado al alcanzar un límite y debe registrar truncación o indisponibilidad;
+no puede descartar silenciosamente observaciones.
 
 ## 6. Frontera con lenguaje y stdlib
 
@@ -172,11 +195,19 @@ implementación de STD-0.1B no publica APIs paralelas para satisfacerlos.
 `LEAK-001` no depende del modelo de memoria nativo: primero prueba la VM y el
 ledger hosted; `DIAG-NATIVE-001` prueba después ARC/ciclos/FFI nativos.
 
-## 8. No objetivos de esta revisión
+## 8. Fronteras normativas de `DEC-018`
+
+`DEC-018` acepta una única superficie de diagnóstico opt-in, mantiene intacto
+`tondo-diagnostics-json/1`, prohíbe keywords y APIs paralelas en `std`, exige
+estado `unsupported-diagnostic-profile` explícito y fija redacción/payloads
+fuera del envelope por defecto. Estas son decisiones de diseño, no una
+afirmación de que el runtime ya instrumenta la VM.
+
+## 9. No objetivos de esta revisión
 
 - No se promete soporte de todas las plataformas antes de elegir backend.
 - No se añade un profiler general, un heap snapshot público ni un uploader.
 - No se trata un reporte limpio como prueba estática de ausencia de races o
   fugas.
-- No se marca ningún bloque `DIAG-*`, `NATIVE-*` o S1A como implementado por la
-  mera existencia de este contrato.
+- No se marca ningún bloque `DIAG-RUNTIME-*`, `NATIVE-*` o S1A como
+  implementado por la mera existencia de este contrato.

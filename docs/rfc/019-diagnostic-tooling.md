@@ -1,8 +1,10 @@
 # RFC-019: tooling dinámico de diagnóstico
 
-**Estado:** propuesta de planificación para Tondo 0.1
+**Estado:** aceptada; contrato D0 bloqueado para Tondo 0.1
 **Propietario:** toolchain/runtime
 **Contrato:** [`docs/contracts/diagnostic-tooling.md`](../contracts/diagnostic-tooling.md)
+**Decisión:** `DEC-018`
+**Registro machine-readable:** [`testing/diagnostic-tooling.json`](../../testing/diagnostic-tooling.json)
 
 ## Resumen
 
@@ -11,7 +13,9 @@ reales: races, retención de memoria/recursos y terminaciones fatales. La
 propuesta añade perfiles dinámicos opt-in al CLI y un analizador de dumps, con
 una semántica común entre la VM y el futuro backend nativo. No añade keywords,
 no duplica APIs sync/async y no convierte la stdlib en un framework de
-instrumentación.
+instrumentación. `DEC-018` acepta esta frontera y `DIAG-SPEC-001` congela ahora
+sus envelopes, límites, privacidad, identidad y exit status; los detectores
+siguen sin implementación runtime.
 
 La motivación toma como referencia los límites conocidos de los detectores
 dinámicos: Go documenta que su race detector observa únicamente rutas
@@ -41,12 +45,14 @@ honestidad en sus reportes y gates:
 5. **Privacidad cerrada:** los dumps no se suben, los payloads de usuario se
    redactan por defecto y cada campo no disponible queda señalado, nunca
    inventado.
+6. **Contrato ejecutable:** el JSON normativo y sus checks negativos son la
+   fuente de reconciliación; la mera existencia del RFC no implementa perfiles.
 
 ## Fases de implementación
 
 | Fase | Bloques | Resultado verificable |
 |---|---|---|
-| D0 Contrato | `DIAG-SPEC-001` | Schema de reporte/dump, perfiles, identidad, privacidad, exit status y negativos |
+| D0 Contrato | `DIAG-SPEC-001` | Schema de reporte/dump, perfiles, identidad, privacidad, exit status y negativos; cerrado |
 | D0.5 Fronteras runtime | `STD-CONC-001`, `STD-SYNC-001`, `STD-EXEC-001`, `STD-NET-001` | Contratos de eventos que consumirá la instrumentación, sin implementar todavía los owners |
 | D1 Instrumentación VM | `DIAG-RUNTIME-001` | Registro de task/thread, eventos de memoria/sync, roots, recursos, source maps y quiescencia |
 | D2 Detectores | `RACE-001`, `LEAK-001` | Corpus positivo/negativo, reducción de reportes, límites y coste medido |

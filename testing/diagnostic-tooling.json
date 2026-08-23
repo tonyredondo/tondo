@@ -1,0 +1,226 @@
+{
+  "format": "tondo-diagnostic-tooling/1",
+  "owner": "toolchain.diagnostics",
+  "edition": "0.1",
+  "phase": "DIAG-SPEC-001",
+  "status": "contract-locked",
+  "contract": "docs/contracts/diagnostic-tooling.md",
+  "rfc": "docs/rfc/019-diagnostic-tooling.md",
+  "compilation_diagnostics_contract": "docs/contracts/diagnostics-json.md",
+  "public_stdlib_api": false,
+  "runtime_implementation": "pending-diagnostic-runtime",
+  "profiles": [
+    {
+      "id": "race",
+      "finding_kind": "race",
+      "event_sources": [
+        "memory-access",
+        "synchronization",
+        "task-lifecycle",
+        "thread-lifecycle"
+      ],
+      "required_context": [
+        "access-kind",
+        "logical-range",
+        "source-map",
+        "task-or-thread",
+        "access-stack",
+        "creation-stack",
+        "missing-happens-before"
+      ],
+      "unsupported_code": "unsupported-diagnostic-profile"
+    },
+    {
+      "id": "leaks",
+      "finding_kind": "leak",
+      "event_sources": [
+        "managed-retention",
+        "affine-resource",
+        "native-allocation",
+        "growth-snapshot"
+      ],
+      "required_context": [
+        "allocation-or-acquisition-stack",
+        "owner",
+        "retainers",
+        "cleanup-state",
+        "size",
+        "first-view",
+        "last-view",
+        "quiescence"
+      ],
+      "unsupported_code": "unsupported-diagnostic-profile"
+    },
+    {
+      "id": "crash",
+      "finding_kind": "crash",
+      "event_sources": [
+        "panic",
+        "fatal-signal",
+        "abort",
+        "unrecoverable-termination"
+      ],
+      "required_context": [
+        "termination-reason",
+        "program-exit-status",
+        "thread-stacks",
+        "task-stacks",
+        "scheduler-tail",
+        "resource-summary",
+        "redaction"
+      ],
+      "unsupported_code": "unsupported-diagnostic-profile"
+    }
+  ],
+  "all": {
+    "expands_to": ["race", "leaks", "crash"],
+    "report_order": ["race", "leaks", "crash"]
+  },
+  "report": {
+    "format": "tondo-diagnostic-report/1",
+    "observed_only": true,
+    "limitations_required": true,
+    "required_fields": [
+      "format",
+      "run_id",
+      "attempt_id",
+      "shard",
+      "profile",
+      "status",
+      "target",
+      "backend",
+      "toolchain",
+      "source_revision",
+      "observations",
+      "limitations",
+      "artifacts",
+      "privacy",
+      "program_exit_status",
+      "command_exit_status"
+    ],
+    "status_values": ["clean", "finding", "unsupported", "failed"],
+    "identity_fields": [
+      "run_id",
+      "attempt_id",
+      "shard",
+      "profile",
+      "target",
+      "backend",
+      "toolchain",
+      "source_revision"
+    ],
+    "artifact_hash": "sha256",
+    "ordering": "identity-then-observation-kind-then-source-span",
+    "no_payloads_by_default": true
+  },
+  "dump": {
+    "format": "tondo-dump/1",
+    "extension": ".tdump",
+    "content_address": "sha256",
+    "required_sections": [
+      "header",
+      "termination",
+      "identity",
+      "stacks",
+      "heap_summary",
+      "resource_ledger",
+      "scheduler_tail",
+      "redaction",
+      "limitations"
+    ],
+    "optional_sections": ["registers", "source_maps", "retainers"],
+    "user_payloads": "omitted-by-default",
+    "analyzer": {
+      "command": "tondo dump analyze <file.tdump>",
+      "formats": ["human", "json"],
+      "network": false,
+      "executes_dump_code": false
+    }
+  },
+  "cli": {
+    "diagnostics_option": "--diagnostics",
+    "profile_separator": ",",
+    "commands": [
+      "tondo run --diagnostics <race|leaks|crash|all>[,...] ...",
+      "tondo test --diagnostics <race|leaks|crash|all>[,...] ...",
+      "tondo dump analyze <file.tdump> [--format human|json]"
+    ],
+    "project_configuration": "forbidden",
+    "environment_configuration": "forbidden",
+    "compilation_diagnostics_unchanged": true,
+    "stdlib_api_added": false,
+    "source_keywords_added": false
+  },
+  "exit_status": {
+    "success": 0,
+    "finding": 1,
+    "unsupported_or_invalid_profile": 2,
+    "toolchain_failure": 3,
+    "panic_without_dynamic_finding": 101,
+    "precedence": ["toolchain_failure", "unsupported_or_invalid_profile", "finding", "program_exit_status"],
+    "program_exit_status_preserved_in_report": true
+  },
+  "limits": {
+    "max_profiles_per_invocation": 3,
+    "max_report_bytes": 16777216,
+    "max_dump_bytes": 268435456,
+    "max_observations": 100000,
+    "max_events": 1000000,
+    "max_stack_depth": 256,
+    "max_retainers_per_object": 256,
+    "max_scheduler_tail_events": 4096,
+    "limits_are_fail_closed": true,
+    "truncation_is_reported": true
+  },
+  "privacy": {
+    "payloads": "redacted-by-default",
+    "logical_paths_only": true,
+    "secrets": "never-emitted-by-default",
+    "network_upload": false,
+    "environment_reads": "allowlisted-toolchain-identity-only",
+    "redaction_and_truncation_are_reported": true
+  },
+  "lifecycle": {
+    "fresh_process_per_attempt": true,
+    "retry_state_isolated": true,
+    "shard_state_isolated": true,
+    "suite_state_isolated": true,
+    "quiescence_required_for_leaks": true,
+    "signal_path_async_signal_safe_only": true
+  },
+  "boundaries": {
+    "compilation_diagnostics_schema_unchanged": true,
+    "no_parallel_stdlib_api": true,
+    "vm_first": true,
+    "native_parity_required_before_native_gate": true,
+    "clean_report_is_not_static_proof": true,
+    "unsupported_is_explicit": true
+  },
+  "negative_cases": [
+    "unknown-profile",
+    "duplicate-profile",
+    "empty-profile-list",
+    "profile-list-too-large",
+    "invalid-profile-separator",
+    "unsupported-target-profile",
+    "report-missing-identity",
+    "report-missing-limitation",
+    "report-observation-over-limit",
+    "dump-wrong-format",
+    "dump-corrupt-section",
+    "dump-payload-without-opt-in",
+    "dump-analyzer-network-attempt",
+    "dump-analyzer-exec-attempt",
+    "retry-state-reuse",
+    "compilation-schema-drift",
+    "stdlib-parallel-api",
+    "keyword-addition"
+  ],
+  "next_blocks": [
+    "STD-ASYNC-GROUP-SPEC-001",
+    "STD-CONC-001",
+    "STD-SYNC-001",
+    "STD-EXEC-001",
+    "STD-NET-001"
+  ]
+}
