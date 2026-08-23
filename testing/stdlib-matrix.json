@@ -50,11 +50,11 @@
         "requirement:std.async:suspends-visibility"
       ],
       "signature_rows": [
-        "signature:std.async:35",
         "signature:std.async:36",
         "signature:std.async:37",
         "signature:std.async:38",
-        "signature:std.async:39"
+        "signature:std.async:39",
+        "signature:std.async:40"
       ],
       "source_set": "stdlib-core",
       "stage_order": [
@@ -3029,36 +3029,12 @@
     },
     {
       "dimensions_ref": "owner:std.async",
-      "id": "signature:std.async:35",
-      "kind": "signature",
-      "layer": "A1",
-      "owner": "std.async",
-      "scope": "STD-0.1A",
-      "signature": "pub fn oneshot[T, E](): (Waiter[T, E], Completer[T, E])",
-      "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.async:35",
-        "contract": "docs/contracts/stdlib-async.md",
-        "line": 35
-      },
-      "stage_refs": {
-        "CONF": "owner:std.async:CONF",
-        "DOC": "owner:std.async:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.async:35:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.async:35:MODEL/TEST/FUZZ",
-        "PERF": "owner:std.async:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.async:35:SPEC"
-      },
-      "status": "verified",
-      "symbol": "std.async.oneshot"
-    },
-    {
-      "dimensions_ref": "owner:std.async",
       "id": "signature:std.async:36",
       "kind": "signature",
       "layer": "A1",
       "owner": "std.async",
       "scope": "STD-0.1A",
-      "signature": "pub fn Waiter.wait(var self): T ! E selectable",
+      "signature": "pub fn oneshot[T, E](): (Waiter[T, E], Completer[T, E])",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.async:36",
         "contract": "docs/contracts/stdlib-async.md",
@@ -3073,7 +3049,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.async:36:SPEC"
       },
       "status": "verified",
-      "symbol": "std.async.Waiter.wait"
+      "symbol": "std.async.oneshot"
     },
     {
       "dimensions_ref": "owner:std.async",
@@ -3082,7 +3058,7 @@
       "layer": "A1",
       "owner": "std.async",
       "scope": "STD-0.1A",
-      "signature": "pub fn Completer.complete(var self, value: T): Unit ! AlreadyCompleted",
+      "signature": "pub fn Waiter.wait(var self): T ! E selectable",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.async:37",
         "contract": "docs/contracts/stdlib-async.md",
@@ -3097,7 +3073,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.async:37:SPEC"
       },
       "status": "verified",
-      "symbol": "std.async.Completer.complete"
+      "symbol": "std.async.Waiter.wait"
     },
     {
       "dimensions_ref": "owner:std.async",
@@ -3106,7 +3082,7 @@
       "layer": "A1",
       "owner": "std.async",
       "scope": "STD-0.1A",
-      "signature": "pub fn Completer.fail(var self, error: E): Unit ! AlreadyCompleted",
+      "signature": "pub fn Completer.complete(var self, value: T): Unit ! AlreadyCompleted",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.async:38",
         "contract": "docs/contracts/stdlib-async.md",
@@ -3121,7 +3097,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.async:38:SPEC"
       },
       "status": "verified",
-      "symbol": "std.async.Completer.fail"
+      "symbol": "std.async.Completer.complete"
     },
     {
       "dimensions_ref": "owner:std.async",
@@ -3130,7 +3106,7 @@
       "layer": "A1",
       "owner": "std.async",
       "scope": "STD-0.1A",
-      "signature": "pub fn Completer.cancel(var self): Unit ! AlreadyCompleted",
+      "signature": "pub fn Completer.fail(var self, error: E): Unit ! AlreadyCompleted",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.async:39",
         "contract": "docs/contracts/stdlib-async.md",
@@ -3143,6 +3119,30 @@
         "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.async:39:MODEL/TEST/FUZZ",
         "PERF": "owner:std.async:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.async:39:SPEC"
+      },
+      "status": "verified",
+      "symbol": "std.async.Completer.fail"
+    },
+    {
+      "dimensions_ref": "owner:std.async",
+      "id": "signature:std.async:40",
+      "kind": "signature",
+      "layer": "A1",
+      "owner": "std.async",
+      "scope": "STD-0.1A",
+      "signature": "pub fn Completer.cancel(var self): Unit ! AlreadyCompleted",
+      "source": {
+        "audit": "testing/stdlib-public-api.json#rows/std.async:40",
+        "contract": "docs/contracts/stdlib-async.md",
+        "line": 40
+      },
+      "stage_refs": {
+        "CONF": "owner:std.async:CONF",
+        "DOC": "owner:std.async:DOC",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.async:40:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.async:40:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.async:PERF",
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.async:40:SPEC"
       },
       "status": "verified",
       "symbol": "std.async.Completer.cancel"

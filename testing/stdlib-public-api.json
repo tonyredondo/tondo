@@ -791,10 +791,10 @@
   ],
   "rows": [
     {
-      "id": "std.async:35",
+      "id": "std.async:36",
       "owner": "std.async",
       "contract": "docs/contracts/stdlib-async.md",
-      "line": 35,
+      "line": 36,
       "signature": "pub fn oneshot[T, E](): (Waiter[T, E], Completer[T, E])",
       "symbol": "std.async.oneshot",
       "operation": "oneshot",
@@ -839,10 +839,10 @@
       "status": "verified"
     },
     {
-      "id": "std.async:36",
+      "id": "std.async:37",
       "owner": "std.async",
       "contract": "docs/contracts/stdlib-async.md",
-      "line": 36,
+      "line": 37,
       "signature": "pub fn Waiter.wait(var self): T ! E selectable",
       "symbol": "std.async.Waiter.wait",
       "operation": "wait",
@@ -887,10 +887,10 @@
       "status": "verified"
     },
     {
-      "id": "std.async:37",
+      "id": "std.async:38",
       "owner": "std.async",
       "contract": "docs/contracts/stdlib-async.md",
-      "line": 37,
+      "line": 38,
       "signature": "pub fn Completer.complete(var self, value: T): Unit ! AlreadyCompleted",
       "symbol": "std.async.Completer.complete",
       "operation": "complete",
@@ -935,10 +935,10 @@
       "status": "verified"
     },
     {
-      "id": "std.async:38",
+      "id": "std.async:39",
       "owner": "std.async",
       "contract": "docs/contracts/stdlib-async.md",
-      "line": 38,
+      "line": 39,
       "signature": "pub fn Completer.fail(var self, error: E): Unit ! AlreadyCompleted",
       "symbol": "std.async.Completer.fail",
       "operation": "fail",
@@ -983,10 +983,10 @@
       "status": "verified"
     },
     {
-      "id": "std.async:39",
+      "id": "std.async:40",
       "owner": "std.async",
       "contract": "docs/contracts/stdlib-async.md",
-      "line": 39,
+      "line": 40,
       "signature": "pub fn Completer.cancel(var self): Unit ! AlreadyCompleted",
       "symbol": "std.async.Completer.cancel",
       "operation": "cancel",

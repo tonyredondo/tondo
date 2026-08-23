@@ -35,11 +35,11 @@
       "status": "verified",
       "reason": null,
       "public_signatures": [
-        "std.async:35",
         "std.async:36",
         "std.async:37",
         "std.async:38",
-        "std.async:39"
+        "std.async:39",
+        "std.async:40"
       ],
       "requirements": [
         "requirement:std.async:async-iterator",
@@ -115,15 +115,6 @@
           ]
         },
         {
-          "id": "signature:std.async:35",
-          "kind": "signature",
-          "status": "verified",
-          "reason": null,
-          "refs": [
-            "testing/stdlib-conformance.json#owners/std.async"
-          ]
-        },
-        {
           "id": "signature:std.async:36",
           "kind": "signature",
           "status": "verified",
@@ -152,6 +143,15 @@
         },
         {
           "id": "signature:std.async:39",
+          "kind": "signature",
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "testing/stdlib-conformance.json#owners/std.async"
+          ]
+        },
+        {
+          "id": "signature:std.async:40",
           "kind": "signature",
           "status": "verified",
           "reason": null,
