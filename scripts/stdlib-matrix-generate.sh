@@ -120,10 +120,10 @@ jq -n \
         (performance_owner($id; $manifest)) as $owner
         | if $owner == null then
             {status: "gap", reason: "owner is absent from the performance coordinator", refs: [], observed_dimensions: [], pending_dimensions: []}
-          elif $owner.state == "captured-partial" then
-            {status: "partial", reason: "only the dimensions listed as observed are captured; promotion remains pending", refs: ["testing/stdlib-performance-conformance.json#owners/" + $id], observed_dimensions: ($owner.dimensions // []), pending_dimensions: ($owner.pending_dimensions // [])}
+          elif $owner.state == "captured" then
+            {status: "verified", reason: null, refs: ["testing/stdlib-performance-conformance.json#owners/" + $id], observed_dimensions: ($owner.dimensions // []), pending_dimensions: []}
           else
-            {status: "pending", reason: $owner.reason, refs: ["testing/stdlib-performance-conformance.json#owners/" + $id], observed_dimensions: [], pending_dimensions: (($contract.dimensions | map(.id)) // [])}
+            {status: "not-applicable", reason: $owner.reason, refs: ["testing/stdlib-performance-conformance.json#owners/" + $id], observed_dimensions: [], pending_dimensions: []}
           end;
 
     def conformance_stage($id; $codec):

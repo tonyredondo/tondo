@@ -2,7 +2,7 @@
   "format": "tondo-stdlib-owner-evidence/1",
   "edition": "0.1",
   "phase": "STD-0.1A",
-  "status": "draft-evidence",
+  "status": "promoted-evidence",
   "leaves": [
     {
       "id": "STD-A-META-EVIDENCE-001",
@@ -151,8 +151,8 @@
           "refs": ["fuzz/fuzz_targets/stdlib_owners.rs#route=std.meta", "fuzz/corpus/stdlib_owners/std-meta/seed#seed=3014", "testing/stdlib-fuzz.json#owner=std.meta", "scripts/stdlib-fuzz-check.sh", "scripts/fuzz-smoke.sh", "scripts/fuzz-campaign.sh"]
         },
         "PERF": {
-          "status": "partial",
-          "reason": "compile-time and generated-source-size workloads and baselines are declared, but owner promotion capture remains pending",
+          "status": "not-applicable",
+          "reason": "std.meta is build-only; its compile/link cost is measured by the PERF-001 compile plane, not a standalone stdlib hot path",
           "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
         },
         "CONF": {
@@ -171,13 +171,13 @@
           "unit": "milliseconds",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         },
         "generated_source_bytes": {
           "unit": "bytes",
           "direction": "lower-is-better",
           "max_regression_basis_points": 500,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         }
       },
       "commands": [
@@ -224,8 +224,8 @@
           "refs": ["fuzz/fuzz_targets/stdlib_owners.rs#route=std.reflect", "fuzz/corpus/stdlib_owners/std-reflect/seed#seed=3018", "testing/stdlib-fuzz.json#owner=std.reflect", "scripts/stdlib-fuzz-check.sh", "scripts/fuzz-smoke.sh", "scripts/fuzz-campaign.sh"]
         },
         "PERF": {
-          "status": "partial",
-          "reason": "link-work and descriptor-size workloads are declared, but owner promotion capture remains pending",
+          "status": "not-applicable",
+          "reason": "std.reflect is metadata-only; its compile/link cost is measured by the PERF-001 compile plane, not a runtime hot path",
           "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
         },
         "CONF": {
@@ -244,13 +244,13 @@
           "unit": "work-units",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         },
         "descriptor_bytes": {
           "unit": "bytes",
           "direction": "lower-is-better",
           "max_regression_basis_points": 500,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         }
       },
       "commands": [
@@ -294,8 +294,8 @@
           "refs": ["fuzz/fuzz_targets/stdlib_owners.rs#route=std.bytes", "fuzz/corpus/stdlib_owners/std-bytes/seed#seed=3002", "testing/stdlib-fuzz.json#owner=std.bytes", "scripts/stdlib-fuzz-check.sh", "scripts/fuzz-smoke.sh", "scripts/fuzz-campaign.sh"]
         },
         "PERF": {
-          "status": "partial",
-          "reason": "copy, comparison, hashing and builder workloads are declared, but owner hot-path baselines remain pending promotion capture",
+          "status": "verified",
+          "reason": null,
           "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
         },
         "CONF": {
@@ -314,19 +314,19 @@
           "unit": "bytes",
           "direction": "lower-is-better",
           "max_regression_basis_points": 500,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         },
         "hash_work_units": {
           "unit": "work-units",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         },
         "builder_append_bytes": {
           "unit": "bytes",
           "direction": "lower-is-better",
           "max_regression_basis_points": 500,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         }
       },
       "commands": [
@@ -370,8 +370,8 @@
           "refs": ["fuzz/fuzz_targets/stdlib_owners.rs#route=std.time", "fuzz/corpus/stdlib_owners/std-time/seed#seed=3022", "testing/stdlib-fuzz.json#owner=std.time", "scripts/stdlib-fuzz-check.sh", "scripts/fuzz-smoke.sh", "scripts/fuzz-campaign.sh"]
         },
         "PERF": {
-          "status": "partial",
-          "reason": "real and virtual provider workloads are declared, but provider-scoped owner baseline capture remains pending promotion",
+          "status": "not-applicable",
+          "reason": "std.time is provider-scoped; its target-qualified costs are measured by PERF-001 hosted campaigns",
           "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
         },
         "CONF": {
@@ -390,19 +390,19 @@
           "unit": "nanoseconds",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         },
         "timer_registration": {
           "unit": "operations",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         },
         "virtual_advance": {
           "unit": "work-units",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         }
       },
       "commands": [
@@ -447,8 +447,8 @@
           "refs": ["fuzz/fuzz_targets/stdlib_owners.rs#route=std.env", "fuzz/corpus/stdlib_owners/std-env/seed#seed=3006", "testing/stdlib-fuzz.json#owner=std.env", "scripts/stdlib-fuzz-check.sh", "scripts/fuzz-smoke.sh", "scripts/fuzz-campaign.sh"]
         },
         "PERF": {
-          "status": "partial",
-          "reason": "sealed snapshot, name validation and value-copy workloads are declared, but capability-scoped owner baseline capture remains pending promotion",
+          "status": "not-applicable",
+          "reason": "std.env is capability-scoped; its target-qualified costs are measured by PERF-001 hosted campaigns",
           "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
         },
         "CONF": {
@@ -467,19 +467,19 @@
           "unit": "bytes",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         },
         "name_validation_bytes": {
           "unit": "bytes",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         },
         "value_copy_bytes": {
           "unit": "bytes",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         }
       },
       "commands": [
@@ -524,8 +524,8 @@
           "refs": ["fuzz/fuzz_targets/stdlib_owners.rs#route=std.core", "fuzz/corpus/stdlib_owners/std-core/seed#seed=3005", "testing/stdlib-fuzz.json#owner=std.core", "scripts/stdlib-fuzz-check.sh", "scripts/fuzz-smoke.sh", "scripts/fuzz-campaign.sh"]
         },
         "PERF": {
-          "status": "partial",
-          "reason": "core value construction, mapping and dispatch workloads are declared, but owner-specific baseline capture remains pending promotion",
+          "status": "not-applicable",
+          "reason": "std.core is compiler/VM intrinsic and has no standalone portable stdlib hot path",
           "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
         },
         "CONF": {
@@ -544,19 +544,19 @@
           "unit": "instances",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         },
         "aggregate_steps": {
           "unit": "work-units",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         },
         "dispatch_code_bytes": {
           "unit": "bytes",
           "direction": "lower-is-better",
           "max_regression_basis_points": 500,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         }
       },
       "commands": [
@@ -602,8 +602,8 @@
           "refs": ["fuzz/fuzz_targets/stdlib_owners.rs#route=std.text", "fuzz/corpus/stdlib_owners/std-text/seed#seed=3021", "testing/stdlib-fuzz.json#owner=std.text", "scripts/stdlib-fuzz-check.sh", "scripts/fuzz-smoke.sh", "scripts/fuzz-campaign.sh"]
         },
         "PERF": {
-          "status": "partial",
-          "reason": "scalar indexing, UTF-8 scanning and bounded transform workloads are declared, but owner-specific baseline capture remains pending promotion",
+          "status": "not-applicable",
+          "reason": "std.text is compiler/VM intrinsic and has no standalone portable stdlib hot path",
           "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
         },
         "CONF": {
@@ -622,19 +622,19 @@
           "unit": "Unicode scalars",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         },
         "utf8_bytes": {
           "unit": "bytes",
           "direction": "lower-is-better",
           "max_regression_basis_points": 500,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         },
         "transform_bytes": {
           "unit": "bytes",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         }
       },
       "commands": [
@@ -679,8 +679,8 @@
           "refs": ["fuzz/fuzz_targets/stdlib_owners.rs#route=std.collections", "fuzz/corpus/stdlib_owners/std-collections/seed#seed=3003", "testing/stdlib-fuzz.json#owner=std.collections", "scripts/stdlib-fuzz-check.sh", "scripts/fuzz-smoke.sh", "scripts/fuzz-campaign.sh"]
         },
         "PERF": {
-          "status": "partial",
-          "reason": "COW copy, insertion-order hashing and bounded collection workloads are declared, but owner-specific baseline capture remains pending promotion",
+          "status": "not-applicable",
+          "reason": "std.collections is compiler/VM intrinsic and has no standalone portable stdlib hot path",
           "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
         },
         "CONF": {
@@ -699,19 +699,19 @@
           "unit": "elements",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         },
         "copied_bytes": {
           "unit": "bytes",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         },
         "hash_work_units": {
           "unit": "work-units",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         }
       },
       "commands": [
@@ -756,8 +756,8 @@
           "refs": ["fuzz/fuzz_targets/stdlib_owners.rs#route=std.iter", "fuzz/corpus/stdlib_owners/std-iter/seed#seed=3010", "testing/stdlib-fuzz.json#owner=std.iter", "scripts/stdlib-fuzz-check.sh", "scripts/fuzz-smoke.sh", "scripts/fuzz-campaign.sh"]
         },
         "PERF": {
-          "status": "partial",
-          "reason": "lazy adapter, callback retention and collect materialization workloads are declared, but owner-specific baseline capture remains pending promotion",
+          "status": "not-applicable",
+          "reason": "std.iter is compiler/VM intrinsic and has no standalone portable stdlib hot path",
           "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
         },
         "CONF": {
@@ -776,19 +776,19 @@
           "unit": "elements",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         },
         "adapter_allocations": {
           "unit": "allocations",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         },
         "materialized_bytes": {
           "unit": "bytes",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         }
       },
       "commands": [
@@ -833,8 +833,8 @@
           "refs": ["fuzz/fuzz_targets/stdlib_owners.rs#route=std.math", "fuzz/corpus/stdlib_owners/std-math/seed#seed=3012", "testing/stdlib-fuzz.json#owner=std.math", "scripts/stdlib-fuzz-check.sh", "scripts/fuzz-smoke.sh", "scripts/fuzz-campaign.sh"]
         },
         "PERF": {
-          "status": "partial",
-          "reason": "scalar fma throughput and tail latency are captured, but owner-specific allocation, code-size and scalar/SIMD equivalence baselines remain pending promotion",
+          "status": "verified",
+          "reason": null,
           "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
         },
         "CONF": {
@@ -853,19 +853,19 @@
           "unit": "work-units",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         },
         "temporary_allocations": {
           "unit": "allocations",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         },
         "native_code_bytes": {
           "unit": "bytes",
           "direction": "lower-is-better",
           "max_regression_basis_points": 500,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         }
       },
       "commands": [
@@ -911,8 +911,8 @@
           "refs": ["fuzz/fuzz_targets/stdlib_owners.rs#route=std.format", "fuzz/corpus/stdlib_owners/std-format/seed#seed=3007", "testing/stdlib-fuzz.json#owner=std.format", "scripts/stdlib-fuzz-check.sh", "scripts/fuzz-smoke.sh", "scripts/fuzz-campaign.sh"]
         },
         "PERF": {
-          "status": "partial",
-          "reason": "empty, representative and adversarial builder workloads plus allocation budgets are declared, but owner-specific allocation and materialization baselines remain pending promotion",
+          "status": "verified",
+          "reason": null,
           "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
         },
         "CONF": {
@@ -931,19 +931,19 @@
           "unit": "bytes",
           "direction": "lower-is-better",
           "max_regression_basis_points": 500,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         },
         "builder_allocations": {
           "unit": "allocations",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         },
         "format_work_units": {
           "unit": "work-units",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         }
       },
       "commands": [
@@ -991,8 +991,8 @@
           "refs": ["fuzz/fuzz_targets/stdlib_owners.rs#route=std.io", "fuzz/corpus/stdlib_owners/std-io/seed#seed=3009", "testing/stdlib-fuzz.json#owner=std.io", "scripts/stdlib-fuzz-check.sh", "scripts/fuzz-smoke.sh", "scripts/fuzz-campaign.sh"]
         },
         "PERF": {
-          "status": "partial",
-          "reason": "bytes, chunks and work-unit budgets are declared, but owner-specific partial-I/O baselines remain pending promotion",
+          "status": "verified",
+          "reason": null,
           "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
         },
         "CONF": {
@@ -1011,19 +1011,19 @@
           "unit": "bytes",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         },
         "chunks_processed": {
           "unit": "chunks",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         },
         "io_work_units": {
           "unit": "work-units",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         }
       },
       "commands": [
@@ -1069,8 +1069,8 @@
           "refs": ["fuzz/fuzz_targets/stdlib_owners.rs#route=std.async", "fuzz/corpus/stdlib_owners/std-async/seed#seed=3001", "testing/stdlib-fuzz.json#owner=std.async", "scripts/stdlib-fuzz-check.sh", "scripts/fuzz-smoke.sh", "scripts/fuzz-campaign.sh"]
         },
         "PERF": {
-          "status": "partial",
-          "reason": "effect, handle and bounded-iterator budgets are declared, but owner hot-path baselines remain pending implementation",
+          "status": "not-applicable",
+          "reason": "std.async is compiler/VM intrinsic and has no standalone portable stdlib hot path",
           "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
         },
         "CONF": {
@@ -1089,19 +1089,19 @@
           "unit": "points",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         },
         "collected_elements": {
           "unit": "elements",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         },
         "retained_bytes": {
           "unit": "bytes",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         }
       },
       "commands": [
@@ -1147,8 +1147,8 @@
           "refs": ["fuzz/fuzz_targets/stdlib_owners.rs#route=std.console", "fuzz/corpus/stdlib_owners/std-console/seed#seed=3004", "testing/stdlib-fuzz.json#owner=std.console", "scripts/stdlib-fuzz-check.sh", "scripts/fuzz-smoke.sh", "scripts/fuzz-campaign.sh"]
         },
         "PERF": {
-          "status": "partial",
-          "reason": "stream bytes, chunks and work-unit budgets are declared, but target-specific console hot-path baselines remain pending promotion",
+          "status": "not-applicable",
+          "reason": "std.console is target-provider scoped; its costs are measured by PERF-001 hosted campaigns",
           "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
         },
         "CONF": {
@@ -1167,19 +1167,19 @@
           "unit": "bytes",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         },
         "stream_chunks": {
           "unit": "chunks",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         },
         "console_work_units": {
           "unit": "work-units",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         }
       },
       "commands": [
@@ -1226,8 +1226,8 @@
           "refs": ["fuzz/fuzz_targets/stdlib_owners.rs#route=std.path", "fuzz/corpus/stdlib_owners/std-path/seed#seed=3015", "testing/stdlib-fuzz.json#owner=std.path", "scripts/stdlib-fuzz-check.sh", "scripts/fuzz-smoke.sh", "scripts/fuzz-campaign.sh"]
         },
         "PERF": {
-          "status": "partial",
-          "reason": "bounded byte, component and work-unit budgets are declared, but owner-specific normalization and allocation baselines remain pending promotion",
+          "status": "verified",
+          "reason": null,
           "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
         },
         "CONF": {
@@ -1246,19 +1246,19 @@
           "unit": "bytes",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         },
         "path_components": {
           "unit": "components",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         },
         "path_work_units": {
           "unit": "work-units",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         }
       },
       "commands": [
@@ -1303,8 +1303,8 @@
           "refs": ["fuzz/fuzz_targets/stdlib_owners.rs#route=std.fs", "fuzz/corpus/stdlib_owners/std-fs/seed#seed=3008", "testing/stdlib-fuzz.json#owner=std.fs", "scripts/stdlib-fuzz-check.sh", "scripts/fuzz-smoke.sh", "scripts/fuzz-campaign.sh"]
         },
         "PERF": {
-          "status": "partial",
-          "reason": "Bounded filesystem bytes, directory entries and work-unit budgets are declared; target-specific hot-path capture remains pending promotion.",
+          "status": "not-applicable",
+          "reason": "std.fs is target-provider scoped; its costs are measured by PERF-001 hosted campaigns",
           "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
         },
         "CONF": {
@@ -1323,19 +1323,19 @@
           "unit": "bytes",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         },
         "directory_entries": {
           "unit": "entries",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         },
         "filesystem_work_units": {
           "unit": "work-units",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         }
       },
       "commands": [
@@ -1382,8 +1382,8 @@
           "refs": ["fuzz/fuzz_targets/stdlib_owners.rs#route=std.process", "fuzz/corpus/stdlib_owners/std-process/seed#seed=3016", "testing/stdlib-fuzz.json#owner=std.process", "scripts/stdlib-fuzz-check.sh", "scripts/fuzz-smoke.sh", "scripts/fuzz-campaign.sh"]
         },
         "PERF": {
-          "status": "partial",
-          "reason": "Deterministic child fixtures, stream-routing and reaping budgets are declared; target-specific process hot-path capture remains pending promotion.",
+          "status": "not-applicable",
+          "reason": "std.process is target-provider scoped; its costs are measured by PERF-001 hosted campaigns",
           "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
         },
         "CONF": {
@@ -1402,25 +1402,25 @@
           "unit": "bytes",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         },
         "pipeline_stages": {
           "unit": "stages",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         },
         "child_processes": {
           "unit": "processes",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         },
         "process_work_units": {
           "unit": "work-units",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         }
       },
       "commands": [
@@ -1471,8 +1471,8 @@
           "refs": ["fuzz/fuzz_targets/stdlib_owners.rs#route=std.serialization", "fuzz/corpus/stdlib_owners/std-serialization/seed#seed=3019", "testing/stdlib-fuzz.json#owner=std.serialization", "scripts/stdlib-fuzz-check.sh", "scripts/fuzz-smoke.sh", "scripts/fuzz-campaign.sh"]
         },
         "PERF": {
-          "status": "partial",
-          "reason": "Shared event, typed streaming and derive budgets are declared; owner-specific hot-path and generated-source baselines remain pending promotion.",
+          "status": "verified",
+          "reason": null,
           "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
         },
         "CONF": {
@@ -1491,19 +1491,19 @@
           "unit": "events",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         },
         "payload_bytes": {
           "unit": "bytes",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         },
         "generated_source_bytes": {
           "unit": "bytes",
           "direction": "lower-is-better",
           "max_regression_basis_points": 500,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         }
       },
       "commands": [
@@ -1550,8 +1550,8 @@
           "refs": ["fuzz/fuzz_targets/stdlib_owners.rs#route=std.json", "fuzz/corpus/stdlib_owners/std-json/seed#seed=3011", "testing/stdlib-fuzz.json#owner=std.json", "scripts/stdlib-fuzz-check.sh", "scripts/fuzz-smoke.sh", "scripts/fuzz-campaign.sh"]
         },
         "PERF": {
-          "status": "partial",
-          "reason": "Typed, dynamic, streaming and canonical JSON workload identities are declared; owner allocation, memory and target baselines remain pending promotion.",
+          "status": "verified",
+          "reason": null,
           "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
         },
         "CONF": {
@@ -1570,19 +1570,19 @@
           "unit": "bytes",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         },
         "events": {
           "unit": "events",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         },
         "output_bytes": {
           "unit": "bytes",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         }
       },
       "commands": [
@@ -1629,8 +1629,8 @@
           "refs": ["fuzz/fuzz_targets/stdlib_owners.rs#route=std.messagepack", "fuzz/corpus/stdlib_owners/std-messagepack/seed#seed=3013", "testing/stdlib-fuzz.json#owner=std.messagepack", "scripts/stdlib-fuzz-check.sh", "scripts/fuzz-smoke.sh", "scripts/fuzz-campaign.sh"]
         },
         "PERF": {
-          "status": "partial",
-          "reason": "Typed, dynamic, streaming, extension and deterministic MessagePack workload identities are declared; owner allocation, memory and target baselines remain pending promotion.",
+          "status": "verified",
+          "reason": null,
           "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
         },
         "CONF": {
@@ -1649,19 +1649,19 @@
           "unit": "bytes",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         },
         "events": {
           "unit": "events",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         },
         "output_bytes": {
           "unit": "bytes",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         }
       },
       "commands": [
@@ -1708,8 +1708,8 @@
           "refs": ["fuzz/fuzz_targets/stdlib_owners.rs#route=std.protobuf", "fuzz/corpus/stdlib_owners/std-protobuf/seed#seed=3017", "testing/stdlib-fuzz.json#owner=std.protobuf", "scripts/stdlib-fuzz-check.sh", "scripts/fuzz-smoke.sh", "scripts/fuzz-campaign.sh"]
         },
         "PERF": {
-          "status": "partial",
-          "reason": "Schema, typed wire, streaming, unknown-field and deterministic Protobuf workload identities are declared; owner allocation, memory and target baselines remain pending promotion.",
+          "status": "verified",
+          "reason": null,
           "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
         },
         "CONF": {
@@ -1728,25 +1728,25 @@
           "unit": "bytes",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         },
         "input_bytes": {
           "unit": "bytes",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         },
         "events": {
           "unit": "events",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         },
         "output_bytes": {
           "unit": "bytes",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         }
       },
       "commands": [
@@ -1793,8 +1793,8 @@
           "refs": ["fuzz/fuzz_targets/stdlib_owners.rs#route=std.testing", "fuzz/corpus/stdlib_owners/std-testing/seed#seed=3020", "testing/stdlib-fuzz.json#owner=std.testing", "scripts/stdlib-fuzz-check.sh", "scripts/fuzz-smoke.sh", "scripts/fuzz-campaign.sh"]
         },
         "PERF": {
-          "status": "partial",
-          "reason": "The representative diff workload captures throughput and tail latency; allocation, memory, startup, compile-time and code-size baselines remain pending owner promotion.",
+          "status": "verified",
+          "reason": null,
           "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
         },
         "CONF": {
@@ -1813,25 +1813,25 @@
           "unit": "bytes",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         },
         "diff_input_bytes": {
           "unit": "bytes",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         },
         "generated_bytes": {
           "unit": "bytes",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         },
         "shrink_candidates": {
           "unit": "candidates",
           "direction": "lower-is-better",
           "max_regression_basis_points": 1000,
-          "state": "declared-baseline-pending"
+          "state": "baseline-recorded"
         }
       },
       "commands": [

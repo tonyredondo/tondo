@@ -19,7 +19,7 @@ jq -e '
     | .format == "tondo-stdlib-performance/1"
     and .edition == "0.1"
     and .phase == "STD-0.1A"
-    and .status == "draft-contract"
+    and .status == "baseline-promoted"
     and .measurement.clock == "monotonic"
     and .measurement.warmup_iterations == 3
     and .measurement.measurement_repetitions == 9
@@ -51,6 +51,11 @@ jq -e '
         "overflow", "ownership", "value"
     ]
     and .oracle_policy.optimized_route == "must-fallback-to-oracle-compatible-portable-route"
+    and (.oracle_policy.allocation_observation | type == "string" and length > 0)
+    and .not_applicable_policy.allowed == true
+    and .not_applicable_policy.requires_normative_reason == true
+    and .not_applicable_policy.deferred_is_not_promotion == true
+    and .not_applicable_policy.target_qualified_plane == "PERF-001"
     and .kernel_policy.allowed == [
         "automatic-vectorization", "lookup-table", "simd", "specialization",
         "target-multiversioning", "word-at-a-time"

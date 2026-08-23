@@ -68,7 +68,9 @@ ejecutable de `select` ya está cerrado en la VM hosted —frontend,
 semántica tipada, lowering verificable, runtime cooperativo, ownership
 branch-sensitive, adapters `Waiter`/time, modelo/tests deterministas y
 presupuestos de rendimiento reproducibles y corpus de conformidad completo ya
-están cerrados. El siguiente paso es retomar `STD-A-PERF-001` y finalmente
+están cerrados. `STD-A-PERF-001` está promovido: diez owners portables tienen
+las ocho dimensiones en seis workloads y los doce owners restantes tienen
+fronteras normativas `not-applicable` hacia `PERF-001`. El siguiente paso es
 `DIAG-SPEC-001`. El grafo activo se valida con `TRACKER-LINT-001`; con
 ese contrato se cierran las fronteras
 runtime-facing B0 de Wave 6; entonces avanzan `DIAG-RUNTIME-001`, `RACE-001`,
@@ -5211,11 +5213,22 @@ S1A; su estado se deriva de los registros machine-readable y no de este texto:
   evidencia promovida. `testing/stdlib-owner-evidence.json` y las matrices
   regeneradas muestran `FUZZ=verified` para los 22 owners (22/22, 0 partial).
 
-- [ ] **STD-A-PERF-001 — Capturar presupuestos completos por owner S1A.** Para
-  cada hot path cerrar throughput/tail, allocations/bytes, memoria pico,
-  startup, code size y compile time sobre identidad de target revisada. Un owner
-  sin hot path registra `not-applicable` con razón normativa; diferido no cuenta
-  como promoción.
+- [x] **STD-A-PERF-001 — Capturar presupuestos completos por owner S1A.** El
+  probe owner-aware (`crates/tondo-stdlib/examples/stdlib_performance_probe.rs`)
+  cubre diez kernels portables (`std.bytes`, `std.format`, `std.io`, `std.json`,
+  `std.math`, `std.messagepack`, `std.path`, `std.protobuf`,
+  `std.serialization`, `std.testing`) en las seis workloads normativas, con
+  27 muestras por identidad. El reporte captura las ocho dimensiones
+  `throughput`, `tail_latency`, `allocations_per_operation`,
+  `allocated_bytes_per_operation`, `peak_memory`, `startup`, `code_size` y
+  `compile_time`; las asignaciones portables usan el oracle estable
+  `logical-owned-buffer` y la campaña registra ambiente, binario, compilación,
+  memoria y arranque. Los doce owners intrínsecos, build-only o host-provider
+  sin hot path portable quedan `not-applicable` con razón normativa y frontera
+  `PERF-001`; no hay dimensiones diferidas ni estados parciales. Los gates
+  `scripts/stdlib-performance-{check,report,conformance}.sh`, sus negativos,
+  `testing/stdlib-owner-evidence.json` y la matriz regenerada cierran la
+  promoción.
 
 - [ ] **STD-A-CONF-001 — Ejecutar conformidad pública completa de S1A.**
   Convertir cada fila `pending`/`partial` de
@@ -5245,7 +5258,8 @@ S1A; su estado se deriva de los registros machine-readable y no de este texto:
   sustituye un shim ni mantiene dos propietarios públicos.
 - [ ] Cada owner A registra por separado spec, implementación/host, tests/model,
   performance aplicable, conformidad y docs; ninguna tarea umbrella oculta una
-  celda pendiente.
+  celda pendiente. `PERF` ya está promovido o tiene una frontera normativa
+  `not-applicable`; `CONF` continúa explícitamente en `STD-A-CONF-001`.
 - [x] El sustrato monotónico de `Duration`, `Instant`, suspensión, timers y
   deadlines es único para producción/testing, está modelado y funciona con
   proveedor real o virtual sin cambiar bytecode de usuario.
@@ -6713,8 +6727,10 @@ conteos directamente del tracker. `STD-A-ASYNC-API-001` ya
 cerró su contrato y auditoría, `ASYNC-DEFER-IMPL-001` cerró su hardening y
 `ASYNC-ITER-EXT-001` cerró el lowering genérico de `collect(limit:)` con
 evidencia runtime, `STD-A-ASYNC-IMPL-001` cerró su ejecución estructurada y
-`STD-A-FUZZ-001` cerró las 22 rutas owner-aware de fuzz. La siguiente frontera
-es `STD-A-PERF-001`, seguida de las leaves y el seal reales de S1A. Solo
+`STD-A-FUZZ-001` cerró las 22 rutas owner-aware de fuzz y
+`STD-A-PERF-001` promovió los baselines portables y fronteras target-qualified.
+La siguiente frontera es `STD-A-CONF-001`, seguida de las leaves y el seal
+reales de S1A. Solo
 entonces comienza `DIAG-SPEC-001`; la
 instrumentación VM espera los contratos B0 y `NATIVE-001` espera
 `DIAG-CI-001`.

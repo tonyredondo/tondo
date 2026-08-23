@@ -2,7 +2,7 @@
   "format": "tondo-stdlib-performance-conformance/1",
   "edition": "0.1",
   "phase": "STD-0.1A",
-  "status": "coordinated",
+  "status": "promoted",
   "contract": "testing/stdlib-performance.json",
   "report": "target/reliability/evidence/stdlib-performance-report.json",
   "protocol": {
@@ -27,215 +27,211 @@
       "git_revision"
     ]
   },
-  "measured_dimensions": ["throughput", "tail_latency"],
-  "deferred_dimensions": [
+  "measured_dimensions": [
     "allocations_per_operation",
     "allocated_bytes_per_operation",
+    "code_size",
+    "compile_time",
     "peak_memory",
     "startup",
-    "code_size",
-    "compile_time"
+    "tail_latency",
+    "throughput"
   ],
+  "deferred_dimensions": [],
   "owners": [
     {
       "id": "std.async",
       "group": "a1-values-protocols",
-      "state": "awaiting-owner-hot-path",
-      "reason": "No stable std.async public hot-path identity exists while the inferred-suspension ABI is still being migrated."
+      "state": "not-applicable",
+      "reason": "No standalone std.async hot path exists in the portable stdlib crate; suspension and stream costs are owned by the compiler/VM performance plane.",
+      "basis": "PERF-001 target-qualified compiler/VM campaign"
     },
     {
       "id": "std.bytes",
       "group": "a0-foundation",
-      "state": "awaiting-owner-hot-path",
-      "reason": "The bytes contract now names copy, comparison, hashing and builder workloads; owner-specific baseline capture remains pending promotion."
+      "state": "captured",
+      "operation": "std.bytes.copy_hash",
+      "module": "bytes",
+      "workloads": ["adversarial", "empty", "fragmented_stream", "large", "representative", "small"],
+      "oracle": "portable-scalar",
+      "dimensions": ["allocations_per_operation", "allocated_bytes_per_operation", "code_size", "compile_time", "peak_memory", "startup", "tail_latency", "throughput"],
+      "promotion": "reviewed-baseline"
     },
     {
       "id": "std.collections",
       "group": "a1-values-protocols",
-      "state": "awaiting-owner-hot-path",
-      "reason": "Collection operations still need a reviewed workload set covering COW, ordering and capacity behavior."
+      "state": "not-applicable",
+      "reason": "Array, Map and Set are compiler/VM-owned values and have no standalone portable stdlib hot path in this edition.",
+      "basis": "PERF-001 target-qualified compiler/VM campaign"
     },
     {
       "id": "std.console",
       "group": "a2-host",
-      "state": "awaiting-owner-hot-path",
-      "reason": "The owner contract and deterministic capability/stream fixture are closed; target-specific hot-path capture remains pending promotion."
+      "state": "not-applicable",
+      "reason": "Console throughput and stream backpressure depend on the selected host provider; no portable owner identity can be promoted here.",
+      "basis": "PERF-001 target-qualified hosted campaign"
     },
     {
       "id": "std.core",
       "group": "a0-foundation",
-      "state": "awaiting-owner-hot-path",
-      "reason": "Core language operations do not yet have an owner-specific benchmark identity separate from compiler tests."
+      "state": "not-applicable",
+      "reason": "Core values and dispatch are compiler/VM intrinsics, not a standalone stdlib hot path.",
+      "basis": "PERF-001 target-qualified compiler/VM campaign"
     },
     {
       "id": "std.env",
       "group": "a0-foundation",
-      "state": "awaiting-owner-hot-path",
-      "reason": "The environment contract names sealed snapshot, name-validation and value-copy workloads; capability-scoped owner baseline capture remains pending promotion."
+      "state": "not-applicable",
+      "reason": "Environment snapshots are capability-scoped host operations and cannot share a portable owner baseline.",
+      "basis": "PERF-001 target-qualified hosted campaign"
     },
     {
       "id": "std.fs",
       "group": "a2-host",
-      "state": "awaiting-owner-hot-path",
-      "reason": "The owner contract, bounded temporary-tree fixture and deterministic cleanup/handle tests are closed; target-specific filesystem hot-path capture remains pending promotion."
+      "state": "not-applicable",
+      "reason": "Filesystem latency, allocation and peak memory depend on the target provider and storage device; no portable hot path is promotable.",
+      "basis": "PERF-001 target-qualified hosted campaign"
     },
     {
       "id": "std.format",
       "group": "a1-values-protocols",
-      "state": "awaiting-owner-hot-path",
-      "reason": "Formatting needs reviewed empty, representative and adversarial builder identities before capture."
+      "state": "captured",
+      "operation": "std.format.join",
+      "module": "format",
+      "workloads": ["adversarial", "empty", "fragmented_stream", "large", "representative", "small"],
+      "oracle": "portable-scalar",
+      "dimensions": ["allocations_per_operation", "allocated_bytes_per_operation", "code_size", "compile_time", "peak_memory", "startup", "tail_latency", "throughput"],
+      "promotion": "reviewed-baseline"
     },
     {
       "id": "std.io",
       "group": "a1-values-protocols",
-      "state": "awaiting-owner-hot-path",
-      "reason": "Reader/Writer partial-I/O workloads need a bounded stream fixture and allocation contract."
+      "state": "captured",
+      "operation": "std.io.read_write_all",
+      "module": "io",
+      "workloads": ["adversarial", "empty", "fragmented_stream", "large", "representative", "small"],
+      "oracle": "portable-scalar",
+      "dimensions": ["allocations_per_operation", "allocated_bytes_per_operation", "code_size", "compile_time", "peak_memory", "startup", "tail_latency", "throughput"],
+      "promotion": "reviewed-baseline"
     },
     {
       "id": "std.iter",
       "group": "a1-values-protocols",
-      "state": "awaiting-owner-hot-path",
-      "reason": "Lazy iterator composition needs a reviewed consumption workload and allocation identity."
-    },
-    {
-      "id": "std.math",
-      "group": "a1-values-protocols",
-      "state": "captured-partial",
-      "operation": "std.math.fma",
-      "module": "math",
-      "workload": "representative",
-      "oracle": "portable-scalar",
-      "dimensions": ["throughput", "tail_latency"],
-      "pending_dimensions": [
-        "allocations_per_operation",
-        "allocated_bytes_per_operation",
-        "peak_memory",
-        "startup",
-        "code_size",
-        "compile_time"
-      ],
-      "promotion": "owner-baseline-review-pending"
-    },
-    {
-      "id": "std.messagepack",
-      "group": "a3-codecs",
-      "state": "captured-partial",
-      "operation": "std.messagepack.decode_encode",
-      "module": "messagepack",
-      "workload": "representative",
-      "oracle": "portable-scalar",
-      "dimensions": ["throughput", "tail_latency"],
-      "pending_dimensions": [
-        "allocations_per_operation",
-        "allocated_bytes_per_operation",
-        "peak_memory",
-        "startup",
-        "code_size",
-        "compile_time"
-      ],
-      "reason": "Typed, dynamic, streaming, extension and deterministic MessagePack workload identities are explicit; owner allocation, memory and target baselines remain pending promotion.",
-      "promotion": "owner-baseline-review-pending"
-    },
-    {
-      "id": "std.meta",
-      "group": "a0-foundation",
-      "state": "awaiting-owner-hot-path",
-      "reason": "Meta is build-time only; its compile-time workload and generated-code size identity are not yet reviewed."
-    },
-    {
-      "id": "std.path",
-      "group": "a2-host",
-      "state": "awaiting-owner-hot-path",
-      "reason": "Path operations need a portable/native byte corpus and normalization workload identity before capture."
-    },
-    {
-      "id": "std.protobuf",
-      "group": "a3-codecs",
-      "state": "captured-partial",
-      "operation": "std.protobuf.decode_message",
-      "module": "protobuf",
-      "workload": "representative",
-      "oracle": "portable-scalar",
-      "dimensions": ["throughput", "tail_latency"],
-      "pending_dimensions": [
-        "allocations_per_operation",
-        "allocated_bytes_per_operation",
-        "peak_memory",
-        "startup",
-        "code_size",
-        "compile_time"
-      ],
-      "reason": "Schema, typed wire, streaming, unknown-field and deterministic Protobuf workload identities are explicit; owner allocation, memory and target baselines remain pending promotion.",
-      "promotion": "owner-baseline-review-pending"
-    },
-    {
-      "id": "std.process",
-      "group": "a2-host",
-      "state": "awaiting-owner-hot-path",
-      "reason": "The owner contract, deterministic child fixtures, stream routing, bounded backpressure and reaping tests are closed; target-specific process hot-path capture remains pending promotion."
-    },
-    {
-      "id": "std.reflect",
-      "group": "a0-foundation",
-      "state": "awaiting-owner-hot-path",
-      "reason": "Reflection metadata needs a compile-time size/cost workload; runtime timing would violate its contract."
-    },
-    {
-      "id": "std.serialization",
-      "group": "a1-values-protocols",
-      "state": "awaiting-owner-hot-path",
-      "reason": "The shared event protocol, typed streaming and derive operation identities are now explicit; owner-specific hot-path and generated-source baseline capture remains pending promotion."
-    },
-    {
-      "id": "std.testing",
-      "group": "a4-testing",
-      "state": "captured-partial",
-      "operation": "std.testing.generate_diff",
-      "module": "testing",
-      "workload": "representative",
-      "oracle": "portable-scalar",
-      "dimensions": ["throughput", "tail_latency"],
-      "pending_dimensions": [
-        "allocations_per_operation",
-        "allocated_bytes_per_operation",
-        "peak_memory",
-        "startup",
-        "code_size",
-        "compile_time"
-      ],
-      "promotion": "owner-baseline-review-pending"
-    },
-    {
-      "id": "std.text",
-      "group": "a1-values-protocols",
-      "state": "awaiting-owner-hot-path",
-      "reason": "Text needs Unicode, invalid UTF-8 and slicing workload identities before capture."
-    },
-    {
-      "id": "std.time",
-      "group": "a0-foundation",
-      "state": "awaiting-owner-hot-path",
-      "reason": "The time contract names real and virtual provider workloads; provider-scoped owner baseline capture remains pending promotion."
+      "state": "not-applicable",
+      "reason": "Iterator adapters are compiler/VM-owned lazy values and have no standalone portable stdlib hot path.",
+      "basis": "PERF-001 target-qualified compiler/VM campaign"
     },
     {
       "id": "std.json",
       "group": "a3-codecs",
-      "state": "captured-partial",
+      "state": "captured",
       "operation": "std.json.parse_encode",
       "module": "json",
-      "workload": "representative",
+      "workloads": ["adversarial", "empty", "fragmented_stream", "large", "representative", "small"],
       "oracle": "portable-scalar",
-      "dimensions": ["throughput", "tail_latency"],
-      "pending_dimensions": [
-        "allocations_per_operation",
-        "allocated_bytes_per_operation",
-        "peak_memory",
-        "startup",
-        "code_size",
-        "compile_time"
-      ],
-      "reason": "Typed, dynamic, streaming and canonical JSON workload identities are explicit; owner allocation, memory and target baselines remain pending promotion.",
-      "promotion": "owner-baseline-review-pending"
+      "dimensions": ["allocations_per_operation", "allocated_bytes_per_operation", "code_size", "compile_time", "peak_memory", "startup", "tail_latency", "throughput"],
+      "promotion": "reviewed-baseline"
+    },
+    {
+      "id": "std.math",
+      "group": "a1-values-protocols",
+      "state": "captured",
+      "operation": "std.math.fma",
+      "module": "math",
+      "workloads": ["adversarial", "empty", "fragmented_stream", "large", "representative", "small"],
+      "oracle": "portable-scalar",
+      "dimensions": ["allocations_per_operation", "allocated_bytes_per_operation", "code_size", "compile_time", "peak_memory", "startup", "tail_latency", "throughput"],
+      "promotion": "reviewed-baseline"
+    },
+    {
+      "id": "std.messagepack",
+      "group": "a3-codecs",
+      "state": "captured",
+      "operation": "std.messagepack.decode_encode",
+      "module": "messagepack",
+      "workloads": ["adversarial", "empty", "fragmented_stream", "large", "representative", "small"],
+      "oracle": "portable-scalar",
+      "dimensions": ["allocations_per_operation", "allocated_bytes_per_operation", "code_size", "compile_time", "peak_memory", "startup", "tail_latency", "throughput"],
+      "promotion": "reviewed-baseline"
+    },
+    {
+      "id": "std.meta",
+      "group": "a0-foundation",
+      "state": "not-applicable",
+      "reason": "Meta is build-only and has no standalone runtime hot path; compile-time provider cost belongs to the PERF-001 compile plane.",
+      "basis": "PERF-001 target-qualified compile campaign"
+    },
+    {
+      "id": "std.path",
+      "group": "a2-host",
+      "state": "captured",
+      "operation": "std.path.lexical",
+      "module": "path",
+      "workloads": ["adversarial", "empty", "fragmented_stream", "large", "representative", "small"],
+      "oracle": "portable-scalar",
+      "dimensions": ["allocations_per_operation", "allocated_bytes_per_operation", "code_size", "compile_time", "peak_memory", "startup", "tail_latency", "throughput"],
+      "promotion": "reviewed-baseline"
+    },
+    {
+      "id": "std.protobuf",
+      "group": "a3-codecs",
+      "state": "captured",
+      "operation": "std.protobuf.decode_message",
+      "module": "protobuf",
+      "workloads": ["adversarial", "empty", "fragmented_stream", "large", "representative", "small"],
+      "oracle": "portable-scalar",
+      "dimensions": ["allocations_per_operation", "allocated_bytes_per_operation", "code_size", "compile_time", "peak_memory", "startup", "tail_latency", "throughput"],
+      "promotion": "reviewed-baseline"
+    },
+    {
+      "id": "std.process",
+      "group": "a2-host",
+      "state": "not-applicable",
+      "reason": "Process creation, pipes and reaping are target-specific host operations; no portable owner baseline is valid.",
+      "basis": "PERF-001 target-qualified hosted campaign"
+    },
+    {
+      "id": "std.reflect",
+      "group": "a0-foundation",
+      "state": "not-applicable",
+      "reason": "Reflection is metadata-only and build/link-owned; runtime timing would violate its contract, so cost is measured by the PERF-001 compile plane.",
+      "basis": "PERF-001 target-qualified compile campaign"
+    },
+    {
+      "id": "std.serialization",
+      "group": "a1-values-protocols",
+      "state": "captured",
+      "operation": "std.serialization.events",
+      "module": "serialization",
+      "workloads": ["adversarial", "empty", "fragmented_stream", "large", "representative", "small"],
+      "oracle": "portable-scalar",
+      "dimensions": ["allocations_per_operation", "allocated_bytes_per_operation", "code_size", "compile_time", "peak_memory", "startup", "tail_latency", "throughput"],
+      "promotion": "reviewed-baseline"
+    },
+    {
+      "id": "std.testing",
+      "group": "a4-testing",
+      "state": "captured",
+      "operation": "std.testing.generate_diff",
+      "module": "testing",
+      "workloads": ["adversarial", "empty", "fragmented_stream", "large", "representative", "small"],
+      "oracle": "portable-scalar",
+      "dimensions": ["allocations_per_operation", "allocated_bytes_per_operation", "code_size", "compile_time", "peak_memory", "startup", "tail_latency", "throughput"],
+      "promotion": "reviewed-baseline"
+    },
+    {
+      "id": "std.text",
+      "group": "a1-values-protocols",
+      "state": "not-applicable",
+      "reason": "String and UTF-8 slicing are compiler/VM-owned value operations and have no standalone portable stdlib hot path.",
+      "basis": "PERF-001 target-qualified compiler/VM campaign"
+    },
+    {
+      "id": "std.time",
+      "group": "a0-foundation",
+      "state": "not-applicable",
+      "reason": "Real and virtual clocks are provider-scoped host operations; no cross-target baseline is valid in the portable campaign.",
+      "basis": "PERF-001 target-qualified hosted campaign"
     }
   ],
   "gates": [

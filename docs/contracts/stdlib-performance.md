@@ -1,7 +1,7 @@
 # Standard Library performance contract
 
-**Status:** accepted design contract for `STD-0.1A`; no module is published by
-this document alone.
+**Status:** baseline promoted for `STD-0.1A`; no module is published by this
+document alone.
 
 `STD-PERF-001` defines how Tondo evaluates performance without turning a
 machine-specific benchmark number into language semantics. The canonical
@@ -9,6 +9,9 @@ machine-readable record is [`testing/stdlib-performance.json`](../../testing/std
 The record fixes the protocol, dimensions, default regression budgets, workload
 classes, owner groups and promotion gates. Concrete module contracts add their
 operation IDs, input identities and absolute baselines before implementation.
+The promoted campaign currently has ten portable owners and twelve normative
+`not-applicable` owners; the latter are measured by the target-qualified
+`PERF-001` compiler/VM or hosted planes.
 
 ## One protocol
 
@@ -108,6 +111,13 @@ Owners must distinguish:
 - collector convenience APIs from streaming APIs; and
 - reusable capacity from newly allocated capacity.
 
+The portable campaign records `allocations_per_operation` and
+`allocated_bytes_per_operation` using the stable `logical-owned-buffer`
+observation: each owner reports the owned result buffers and bytes it publishes
+to the caller. Raw allocator-call counts are backend evidence and belong to
+`PERF-001`, so they cannot make a portable baseline vary with the Rust allocator
+or operating system.
+
 A materializing convenience function may collect the same semantic machine used
 by a streaming writer, but it cannot introduce a second parser or encoder with
 different errors. Typed decoding must not materialize a dynamic DOM first.
@@ -131,17 +141,17 @@ Each owner passes four gates:
 `STD-PERF-CONF-001` coordinates these owner reports through
 [`testing/stdlib-performance-conformance.json`](../../testing/stdlib-performance-conformance.json)
 and `scripts/stdlib-performance-conformance.sh`. The coordinator has one row
-for every stdlib owner: a captured row names its operation, workload, scalar
-oracle and measured dimensions; an owner without a reviewed hot-path identity is
-explicitly deferred with a reason. It never accepts an omitted owner, a report
-that claims dimensions it did not measure, a missing environment field, or a
-sample set shorter than the protocol. The current probe captures throughput and
-tail latency for five portable kernels; allocations, memory, startup, code size
-and compile-time remain explicit owner-promotion work until their workloads and
-baselines are reviewed. The coordinator does not replace the owner gates, accept
-a missing report, or average incompatible targets into a green number. VM and
-native backends are compared by semantic observation first; their performance
-baselines remain separate.
+for every stdlib owner: a captured row names its operation, all six workloads,
+scalar oracle and all eight dimensions; an owner without a standalone hot-path
+identity is `not-applicable` with a normative `PERF-001` boundary. It never
+accepts an omitted owner, a deferred dimension, a report that claims dimensions
+it did not measure, a missing environment field, or a sample set shorter than
+the protocol. The campaign report contains 60 measurements (ten owners × six
+workloads), 27 samples per measurement, plus process-level startup/memory and
+campaign build/code-size observations. The coordinator does not replace the
+owner gates, accept a missing report, or average incompatible targets into a
+green number. VM and native backends are compared by semantic observation
+first; their performance baselines remain separate.
 
 ## What is not a guarantee
 

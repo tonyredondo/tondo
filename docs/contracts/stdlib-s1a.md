@@ -68,8 +68,8 @@ The aggregate owner graph and capability/API rules live in the single
 machine-readable integration contract
 [`testing/stdlib-spec.json`](../../testing/stdlib-spec.json). The strict gate
 validates its topological order and links it to this document and the canonical
-standard-library specification; it does not promote pending fuzz/performance/
-conformance dimensions. The public codec audit is closed; the native target
+standard-library specification; it does not promote pending fuzz/conformance
+dimensions. The public codec audit is closed; the native target
 descriptor, native artifact and link plan are now closed as pure contracts and
 the next implementation block is `NATIVE-PUBLISH-SPEC-001`.
 
@@ -77,13 +77,15 @@ The A0 `std.meta` owner has a dedicated contract at
 [`testing/stdlib-meta.json`](../../testing/stdlib-meta.json) and a separate
 cell record at [`testing/stdlib-owner-evidence.json`](../../testing/stdlib-owner-evidence.json).
 Its build-only `HOST` cell is explicitly `not-applicable`; compile-time and
-generated-source-size budgets remain visible as pending promotion evidence.
+generated-source-size costs are measured by the target-qualified PERF-001
+compile plane.
 The A0 `std.reflect` owner has the same explicit boundary in
 [`testing/stdlib-reflect.json`](../../testing/stdlib-reflect.json): its
 metadata-only implementation has no runtime host adapter, and its roots,
 privacy, artifact-local identity and no-value-reflection evidence are kept in
-the same per-owner cell record. Link-work and descriptor-size budgets remain
-pending promotion capture rather than being inferred from unit-test timing.
+the same per-owner cell record. Link-work and descriptor-size costs remain in
+the target-qualified PERF-001 compile plane rather than being inferred from
+unit-test timing.
 The intrinsic `std.bytes` owner is closed by
 [`testing/stdlib-bytes.json`](../../testing/stdlib-bytes.json) and its
 `STD-A-BYTES-EVIDENCE-001` cell record. Its evidence covers identity,
@@ -98,7 +100,7 @@ are traced through static protocol checks, generic specialization, composition,
 bytecode aggregates and VM execution. `HOST` is explicitly `not-applicable`
 because the owner is compiler/VM-owned; admission fuzz covers the generated
 Option/Result and protocol shapes; `STD-A-FUZZ-001` promotes the operation
-route while owner-specific performance baselines remain pending promotion.
+route while the intrinsic cost is measured by the PERF-001 compiler/VM plane.
 The intrinsic `std.text` owner is closed by the shared group contract
 [`testing/stdlib-core.json`](../../testing/stdlib-core.json) and its
 `STD-A-TEXT-EVIDENCE-001` cell record. All fifteen `String` signatures are
@@ -107,7 +109,7 @@ value construction and the Unicode runtime fixtures: scalar indexing and
 slicing, iteration, search/replace, ASCII transforms and atomic invalid UTF-8
 rejection are covered. `HOST` is explicitly `not-applicable`; bounded UTF-8
 corpora are linked, and `STD-A-FUZZ-001` promotes the operation route while the
-owner cost baseline remains pending promotion.
+owner cost remains in the PERF-001 compiler/VM plane.
 The intrinsic `std.collections` owner is closed by the shared group contract
 [`testing/stdlib-core.json`](../../testing/stdlib-core.json) and its
 `STD-A-COLL-EVIDENCE-001` cell record. All eighteen `Array`, `Map` and `Set`
@@ -117,8 +119,8 @@ atomic capacity errors, insertion order, key membership, replacement/removal
 and lazy map/set iteration; lowering properties compare eager and COW copies
 and the admission corpus exercises the intrinsic collection shapes. `HOST` is
 explicitly `not-applicable`; `STD-A-FUZZ-001` promotes the operation route,
-while owner memory/hash baselines and global conformance promotion remain
-pending.
+while memory/hash cost remains in the PERF-001 compiler/VM plane; global
+conformance promotion remains pending.
 The intrinsic `std.iter` owner is closed by the shared group contract
 [`testing/stdlib-core.json`](../../testing/stdlib-core.json) and its
 `STD-A-ITER-EVIDENCE-001` cell record. All four `Iterator` signatures are
@@ -129,8 +131,8 @@ synchronous callbacks and closures, qualified/generic dispatch, negative
 exhaustion guards; the VM heap tests trace sources and callbacks and reject
 malformed iterator state. `HOST` is explicitly `not-applicable`;
 `STD-A-FUZZ-001` promotes the operation route, while owner
-retention/allocation/materialization baselines and global
-conformance promotion remain pending.
+retention/allocation/materialization cost remains in the PERF-001 compiler/VM
+plane; global conformance promotion remains pending.
 The intrinsic `std.math` owner is closed by the shared group contract
 [`testing/stdlib-core.json`](../../testing/stdlib-core.json) and its
 `STD-A-MATH-EVIDENCE-001` cell record. All nine scalar signatures are traced
@@ -142,8 +144,9 @@ properties cover Float32 rounding and compile-time NaN diagnostics. The
 portable scalar implementation is the 0.1 scalar oracle: there is no separate
 SIMD or fast-math path, and any future vectorized backend must prove bitwise
 equivalence before promotion. `HOST` is explicitly `not-applicable`;
-`STD-A-FUZZ-001` promotes the operation route, while owner cost baselines and
-global conformance promotion remain pending.
+`STD-A-FUZZ-001` promotes the operation route; `std.math.fma` has a promoted
+baseline for all six workloads and eight dimensions, while global conformance
+promotion remains pending.
 The intrinsic `std.format` owner is closed by the shared group contract
 [`testing/stdlib-core.json`](../../testing/stdlib-core.json) and its
 `STD-A-FMT-EVIDENCE-001` cell record. All five signatures are traced through
@@ -152,8 +155,8 @@ the compiler/VM bridge and `m11-std-format-001.to`. Exact-limit properties,
 separator boundaries, empty inputs, invalid receivers and failing `Display`
 implementations prove that rejected appends do not mutate observable output.
 `HOST` is explicitly `not-applicable`; `STD-A-FUZZ-001` promotes the operation
-route and owner allocation or materialization baselines remain pending
-promotion, while the public API and documentation links are verified.
+route and `std.format.join` has a promoted baseline for all six workloads and
+eight dimensions, while the public API and documentation links are verified.
 The portable `std.io` owner is closed by the shared group contract
 [`testing/stdlib-core.json`](../../testing/stdlib-core.json) and its
 `STD-A-IO-EVIDENCE-001` cell record. Reader/Writer, `IoLimits`, `readAll` and
@@ -162,8 +165,9 @@ The portable `std.io` owner is closed by the shared group contract
 invalid chunks, zero-progress writers, post-write flush failures and
 cancellation prove bounded atomic outcomes. `HOST` is explicitly
 `not-applicable` because console, filesystem and process own the hosted
-adapters; `STD-A-FUZZ-001` promotes the operation route, while owner cost
-baselines and global conformance promotion remain pending.
+adapters; `STD-A-FUZZ-001` promotes the operation route; `std.io.read_write_all`
+has a promoted baseline for all six workloads and eight dimensions, while
+global conformance promotion remains pending.
 The capability-gated `std.time` owner is closed for hosted evidence by
 [`testing/stdlib-time.json`](../../testing/stdlib-time.json) and its
 `STD-A-TIME-EVIDENCE-001` cell record. It separates the duration/instant/timer
@@ -189,7 +193,8 @@ and rejects NUL, separators in components and the 32 KiB resource boundary
 atomically. The bounded deterministic corpus and compiler/VM host fixture
 exercise every public operation without touching the filesystem; `HOST` is
 explicitly `not-applicable`. `STD-A-FUZZ-001` promotes the owner-aware route;
-owner cost baselines and global conformance promotion remain pending.
+`std.path.lexical` has a promoted baseline for all six workloads and eight
+dimensions; global conformance promotion remains pending.
 
 The capability-gated `std.console` owner is closed for hosted evidence by the
 same shared contract and the `STD-A-CONSOLE-EVIDENCE-001` cell record. Its
@@ -199,8 +204,8 @@ check rejects a target without `console`; the host fixture covers partial
 reads, EOF, stable LF output, explicit flush, invalid UTF-8, wrong-stream
 handles and typed/redacted failures without publishing partial state. `HOST`
 is verified at the compiler/VM boundary. `STD-A-FUZZ-001` promotes the
-operation route; target hot-path cost baselines and global conformance
-promotion remain pending.
+operation route; target hot-path cost is measured by the PERF-001 hosted plane
+and global conformance promotion remains pending.
 
 The capability-gated `std.fs` owner is closed for hosted evidence by the same
 shared contract and the `STD-A-FS-EVIDENCE-001` cell record. Its fourteen public
@@ -210,7 +215,8 @@ adapter. The runtime fixture covers native-byte paths, ordered directory
 listing, typed errors, short reads/writes, bounded materialization,
 `atomicWrite`, stale-token rejection, cancellation and cleanup on unwind;
 `HOST` is verified. `STD-A-FUZZ-001` promotes the owner-aware route; target
-hot-path cost baselines and global conformance promotion remain pending.
+hot-path cost is measured by the PERF-001 hosted plane and global conformance
+promotion remains pending.
 
 The capability-gated `std.process` owner is closed for hosted evidence by the
 `STD-A-PROC-EVIDENCE-001` cell record. Its seventeen public signatures are
@@ -220,8 +226,9 @@ plans, terminal `ProcessHandle`, HIR/lowering, bytecode/VM and the
 shell use, all four pipe shapes, bounded backpressure, separate and combined
 output, typed stderr redirection, exit data versus recoverable errors,
 cancellation, panic/unwind cleanup and child reaping; `HOST` is verified.
-`STD-A-FUZZ-001` promotes the owner-aware route; target hot-path cost baselines
-and global conformance promotion remain pending.
+`STD-A-FUZZ-001` promotes the owner-aware route; target hot-path cost is
+measured by the PERF-001 hosted plane and global conformance promotion remains
+pending.
 
 The portable `std.serialization` owner is closed for evidence by the
 `STD-A-SER-EVIDENCE-001` cell record. Its common `Encoder`/`Decoder` and
@@ -231,8 +238,9 @@ the stdlib kernel. The hermetic build-only providers preserve codec identity,
 field order, attributes, source maps and diagnostics for records, enums,
 newtypes and generics; tests cover limits, duplicate fields, lengths and
 atomic failures. `HOST` is not applicable; `STD-A-FUZZ-001` promotes the
-event-protocol route, while target hot-path baselines and global conformance
-promotion remain pending.
+event-protocol route; `std.serialization.events` has a promoted baseline for
+all six workloads and eight dimensions, while global conformance promotion
+remains pending.
 
 The portable `std.json` owner is closed for evidence by the
 `STD-A-JSON-EVIDENCE-001` cell record. Its typed, dynamic and streaming routes
@@ -241,8 +249,9 @@ numbers, Unicode, duplicate-field policies, JCS/RFC 8785 canonicalization,
 limits, terminal errors, one-byte fragmentation and bidirectional
 `serde_json` interoperability. `HOST` is not applicable because the compiler
 bridge has no ambient capability or target-specific codec semantics.
-`STD-A-FUZZ-001` promotes the operation route; allocation/memory and target
-baselines, and global conformance promotion remain pending.
+`STD-A-FUZZ-001` promotes the operation route; `std.json.parse_encode` has a
+promoted baseline for all six workloads and eight dimensions, while global
+conformance promotion remains pending.
 
 The portable `std.messagepack` owner is closed for evidence by the
 `STD-A-MSGPACK-EVIDENCE-001` cell record. Its typed, dynamic and streaming
@@ -252,8 +261,9 @@ deterministic ordering, finite limits and terminal errors. Tests prove
 one-byte fragmentation equivalence and bidirectional interoperability with
 `rmpv`; `HOST` is not applicable because the compiler bridge has no ambient
 capability or target-specific wire semantics. `STD-A-FUZZ-001` promotes the
-operation route; allocation/memory and target baselines, and global
-conformance promotion remain pending.
+operation route; `std.messagepack.decode_encode` has a promoted baseline for
+all six workloads and eight dimensions, while global conformance promotion
+remains pending.
 
 The portable/build-only `std.protobuf` owner is closed for evidence by the
 `STD-A-PROTOBUF-EVIDENCE-001` cell record. Its TOML schema-first boundary and
@@ -264,8 +274,8 @@ evolution. Tests prove schema-bound streaming, one-byte fragmentation,
 atomic terminal failures and bidirectional `prost` interoperability. `HOST`
 is not applicable because wire execution is portable and generation is
 hermetic build-only; `STD-A-FUZZ-001` promotes the schema/operation route,
-while allocation/memory and target baselines, and global conformance promotion
-remain pending.
+`std.protobuf.decode_message` has a promoted baseline for all six workloads and
+eight dimensions, while global conformance promotion remains pending.
 
 The test-only `std.testing` owner is closed for evidence by
 `STD-A-TESTING-EVIDENCE-001`. Its typed assertions, bounded text diffs and
@@ -274,8 +284,9 @@ deterministic generators, compiler-sealed shrinking and sealed runner bridge
 are traced through stdlib, compiler and VM paths. Acceptance projects dogfood
 control terminals, retries/repeats, selection/sharding, JSON/JUnit reports and
 the production-import rejection; `HOST` is verified at the worker bridge.
-`STD-A-FUZZ-001` now provides the dedicated `std.testing` route; the full owner
-performance/conformance promotions remain explicit partial cells rather than
+`STD-A-FUZZ-001` now provides the dedicated `std.testing` route;
+`STD-A-PERF-001` promotes its eight performance dimensions, while
+`STD-A-CONF-001` remains an explicit conformance promotion gate rather than
 being inferred from unit-test execution.
 
 `STD-TEST-001` closes the cross-owner test coordination in
@@ -334,11 +345,13 @@ fragmentation, truncation, finite limits and unknown-wire preservation in
 `testing/stdlib-codec-conformance.json`. `scripts/stdlib-performance-report.sh` captures
 27 independent samples per hot-path module from three processes, including the
 recorded environment and measured dimensions. The owner coordinator in
-`testing/stdlib-performance-conformance.json` rejects omitted owners and
-overstated dimensions; deferred owners carry an explicit reason until their
-workload identity is reviewed. The strict gate runs the report, coordinator,
-negative coordinator tests, complete workspace tests and draft conformance
-adapter together.
+`testing/stdlib-performance-conformance.json` rejects omitted owners, deferred
+dimensions and overstated measurements. Ten portable owners carry promoted
+baselines for all six workloads and eight dimensions; the remaining twelve
+owners carry a normative `not-applicable` boundary to the target-qualified
+`PERF-001` compiler/VM or hosted plane. The strict gate runs the report,
+coordinator, negative coordinator tests, complete workspace tests and draft
+conformance adapter together.
 
 The live conformance lineage is explicitly
 `conformance/draft/manifest.json` and its base suite is

@@ -160,7 +160,8 @@ jq -e '
     and .cells.MODEL.status == "verified"
     and .cells.TEST.status == "verified"
     and .cells.FUZZ.status == "verified"
-    and .cells.PERF.status == "partial"
+    and .cells.PERF.status == "verified"
+    and .cells.PERF.reason == null
     and .cells.CONF.status == "partial"
     and .cells.DOC.status == "verified")
 ' testing/stdlib-owner-evidence.json >/dev/null
@@ -169,8 +170,8 @@ jq -e '
   any(.owners[]; .id == "std.testing"
     and .group == "a4-testing"
     and .operation == "std.testing.generate_diff"
-    and .state == "captured-partial"
-    and .workload == "representative")
+    and .state == "captured"
+    and ((.workloads | sort) == ["adversarial", "empty", "fragmented_stream", "large", "representative", "small"]))
 ' testing/stdlib-performance-conformance.json >/dev/null
 
 echo "std.testing owner tests: OK"

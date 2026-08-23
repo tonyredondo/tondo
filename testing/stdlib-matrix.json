@@ -24,16 +24,7 @@
       "dependencies": [],
       "dimensions": {
         "observed": [],
-        "pending": [
-          "allocated_bytes_per_operation",
-          "allocations_per_operation",
-          "code_size",
-          "compile_time",
-          "peak_memory",
-          "startup",
-          "tail_latency",
-          "throughput"
-        ],
+        "pending": [],
         "required": [
           "allocated_bytes_per_operation",
           "allocations_per_operation",
@@ -133,13 +124,13 @@
           "status": "verified"
         },
         "PERF": {
-          "reason": "effect, handle and bounded-iterator budgets are declared, but owner hot-path baselines remain pending implementation",
+          "reason": "std.async is compiler/VM intrinsic and has no standalone portable stdlib hot path",
           "refs": [
             "testing/stdlib-performance.json",
             "testing/stdlib-performance-conformance.json",
             "docs/contracts/stdlib-performance.md"
           ],
-          "status": "partial"
+          "status": "not-applicable"
         },
         "SPEC": {
           "reason": null,
@@ -157,8 +148,7 @@
       "contract": "docs/contracts/stdlib-bytes.md",
       "dependencies": [],
       "dimensions": {
-        "observed": [],
-        "pending": [
+        "observed": [
           "allocated_bytes_per_operation",
           "allocations_per_operation",
           "code_size",
@@ -168,6 +158,7 @@
           "tail_latency",
           "throughput"
         ],
+        "pending": [],
         "required": [
           "allocated_bytes_per_operation",
           "allocations_per_operation",
@@ -247,13 +238,13 @@
           "status": "verified"
         },
         "PERF": {
-          "reason": "copy, comparison, hashing and builder workloads are declared, but owner hot-path baselines remain pending promotion capture",
+          "reason": null,
           "refs": [
             "testing/stdlib-performance.json",
             "testing/stdlib-performance-conformance.json",
             "docs/contracts/stdlib-performance.md"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "SPEC": {
           "reason": null,
@@ -273,16 +264,7 @@
       ],
       "dimensions": {
         "observed": [],
-        "pending": [
-          "allocated_bytes_per_operation",
-          "allocations_per_operation",
-          "code_size",
-          "compile_time",
-          "peak_memory",
-          "startup",
-          "tail_latency",
-          "throughput"
-        ],
+        "pending": [],
         "required": [
           "allocated_bytes_per_operation",
           "allocations_per_operation",
@@ -393,13 +375,13 @@
           "status": "verified"
         },
         "PERF": {
-          "reason": "COW copy, insertion-order hashing and bounded collection workloads are declared, but owner-specific baseline capture remains pending promotion",
+          "reason": "std.collections is compiler/VM intrinsic and has no standalone portable stdlib hot path",
           "refs": [
             "testing/stdlib-performance.json",
             "testing/stdlib-performance-conformance.json",
             "docs/contracts/stdlib-performance.md"
           ],
-          "status": "partial"
+          "status": "not-applicable"
         },
         "SPEC": {
           "reason": null,
@@ -420,16 +402,7 @@
       ],
       "dimensions": {
         "observed": [],
-        "pending": [
-          "allocated_bytes_per_operation",
-          "allocations_per_operation",
-          "code_size",
-          "compile_time",
-          "peak_memory",
-          "startup",
-          "tail_latency",
-          "throughput"
-        ],
+        "pending": [],
         "required": [
           "allocated_bytes_per_operation",
           "allocations_per_operation",
@@ -526,13 +499,13 @@
           "status": "verified"
         },
         "PERF": {
-          "reason": "stream bytes, chunks and work-unit budgets are declared, but target-specific console hot-path baselines remain pending promotion",
+          "reason": "std.console is target-provider scoped; its costs are measured by PERF-001 hosted campaigns",
           "refs": [
             "testing/stdlib-performance.json",
             "testing/stdlib-performance-conformance.json",
             "docs/contracts/stdlib-performance.md"
           ],
-          "status": "partial"
+          "status": "not-applicable"
         },
         "SPEC": {
           "reason": null,
@@ -551,16 +524,7 @@
       "dependencies": [],
       "dimensions": {
         "observed": [],
-        "pending": [
-          "allocated_bytes_per_operation",
-          "allocations_per_operation",
-          "code_size",
-          "compile_time",
-          "peak_memory",
-          "startup",
-          "tail_latency",
-          "throughput"
-        ],
+        "pending": [],
         "required": [
           "allocated_bytes_per_operation",
           "allocations_per_operation",
@@ -657,13 +621,13 @@
           "status": "verified"
         },
         "PERF": {
-          "reason": "core value construction, mapping and dispatch workloads are declared, but owner-specific baseline capture remains pending promotion",
+          "reason": "std.core is compiler/VM intrinsic and has no standalone portable stdlib hot path",
           "refs": [
             "testing/stdlib-performance.json",
             "testing/stdlib-performance-conformance.json",
             "docs/contracts/stdlib-performance.md"
           ],
-          "status": "partial"
+          "status": "not-applicable"
         },
         "SPEC": {
           "reason": null,
@@ -684,16 +648,7 @@
       ],
       "dimensions": {
         "observed": [],
-        "pending": [
-          "allocated_bytes_per_operation",
-          "allocations_per_operation",
-          "code_size",
-          "compile_time",
-          "peak_memory",
-          "startup",
-          "tail_latency",
-          "throughput"
-        ],
+        "pending": [],
         "required": [
           "allocated_bytes_per_operation",
           "allocations_per_operation",
@@ -782,13 +737,13 @@
           "status": "verified"
         },
         "PERF": {
-          "reason": "sealed snapshot, name validation and value-copy workloads are declared, but capability-scoped owner baseline capture remains pending promotion",
+          "reason": "std.env is capability-scoped; its target-qualified costs are measured by PERF-001 hosted campaigns",
           "refs": [
             "testing/stdlib-performance.json",
             "testing/stdlib-performance-conformance.json",
             "docs/contracts/stdlib-performance.md"
           ],
-          "status": "partial"
+          "status": "not-applicable"
         },
         "SPEC": {
           "reason": null,
@@ -807,8 +762,7 @@
         "std.text"
       ],
       "dimensions": {
-        "observed": [],
-        "pending": [
+        "observed": [
           "allocated_bytes_per_operation",
           "allocations_per_operation",
           "code_size",
@@ -818,6 +772,7 @@
           "tail_latency",
           "throughput"
         ],
+        "pending": [],
         "required": [
           "allocated_bytes_per_operation",
           "allocations_per_operation",
@@ -914,13 +869,13 @@
           "status": "verified"
         },
         "PERF": {
-          "reason": "empty, representative and adversarial builder workloads plus allocation budgets are declared, but owner-specific allocation and materialization baselines remain pending promotion",
+          "reason": null,
           "refs": [
             "testing/stdlib-performance.json",
             "testing/stdlib-performance-conformance.json",
             "docs/contracts/stdlib-performance.md"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "SPEC": {
           "reason": null,
@@ -942,16 +897,7 @@
       ],
       "dimensions": {
         "observed": [],
-        "pending": [
-          "allocated_bytes_per_operation",
-          "allocations_per_operation",
-          "code_size",
-          "compile_time",
-          "peak_memory",
-          "startup",
-          "tail_latency",
-          "throughput"
-        ],
+        "pending": [],
         "required": [
           "allocated_bytes_per_operation",
           "allocations_per_operation",
@@ -1057,13 +1003,13 @@
           "status": "verified"
         },
         "PERF": {
-          "reason": "Bounded filesystem bytes, directory entries and work-unit budgets are declared; target-specific hot-path capture remains pending promotion.",
+          "reason": "std.fs is target-provider scoped; its costs are measured by PERF-001 hosted campaigns",
           "refs": [
             "testing/stdlib-performance.json",
             "testing/stdlib-performance-conformance.json",
             "docs/contracts/stdlib-performance.md"
           ],
-          "status": "partial"
+          "status": "not-applicable"
         },
         "SPEC": {
           "reason": null,
@@ -1083,8 +1029,7 @@
         "std.core"
       ],
       "dimensions": {
-        "observed": [],
-        "pending": [
+        "observed": [
           "allocated_bytes_per_operation",
           "allocations_per_operation",
           "code_size",
@@ -1094,6 +1039,7 @@
           "tail_latency",
           "throughput"
         ],
+        "pending": [],
         "required": [
           "allocated_bytes_per_operation",
           "allocations_per_operation",
@@ -1188,13 +1134,13 @@
           "status": "verified"
         },
         "PERF": {
-          "reason": "bytes, chunks and work-unit budgets are declared, but owner-specific partial-I/O baselines remain pending promotion",
+          "reason": null,
           "refs": [
             "testing/stdlib-performance.json",
             "testing/stdlib-performance-conformance.json",
             "docs/contracts/stdlib-performance.md"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "SPEC": {
           "reason": null,
@@ -1215,16 +1161,7 @@
       ],
       "dimensions": {
         "observed": [],
-        "pending": [
-          "allocated_bytes_per_operation",
-          "allocations_per_operation",
-          "code_size",
-          "compile_time",
-          "peak_memory",
-          "startup",
-          "tail_latency",
-          "throughput"
-        ],
+        "pending": [],
         "required": [
           "allocated_bytes_per_operation",
           "allocations_per_operation",
@@ -1317,13 +1254,13 @@
           "status": "verified"
         },
         "PERF": {
-          "reason": "lazy adapter, callback retention and collect materialization workloads are declared, but owner-specific baseline capture remains pending promotion",
+          "reason": "std.iter is compiler/VM intrinsic and has no standalone portable stdlib hot path",
           "refs": [
             "testing/stdlib-performance.json",
             "testing/stdlib-performance-conformance.json",
             "docs/contracts/stdlib-performance.md"
           ],
-          "status": "partial"
+          "status": "not-applicable"
         },
         "SPEC": {
           "reason": null,
@@ -1345,17 +1282,16 @@
       ],
       "dimensions": {
         "observed": [
-          "tail_latency",
-          "throughput"
-        ],
-        "pending": [
           "allocated_bytes_per_operation",
           "allocations_per_operation",
           "code_size",
           "compile_time",
           "peak_memory",
-          "startup"
+          "startup",
+          "tail_latency",
+          "throughput"
         ],
+        "pending": [],
         "required": [
           "allocated_bytes_per_operation",
           "allocations_per_operation",
@@ -1466,13 +1402,13 @@
           "status": "verified"
         },
         "PERF": {
-          "reason": "Typed, dynamic, streaming and canonical JSON workload identities are declared; owner allocation, memory and target baselines remain pending promotion.",
+          "reason": null,
           "refs": [
             "testing/stdlib-performance.json",
             "testing/stdlib-performance-conformance.json",
             "docs/contracts/stdlib-performance.md"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "SPEC": {
           "reason": null,
@@ -1493,17 +1429,16 @@
       ],
       "dimensions": {
         "observed": [
-          "tail_latency",
-          "throughput"
-        ],
-        "pending": [
           "allocated_bytes_per_operation",
           "allocations_per_operation",
           "code_size",
           "compile_time",
           "peak_memory",
-          "startup"
+          "startup",
+          "tail_latency",
+          "throughput"
         ],
+        "pending": [],
         "required": [
           "allocated_bytes_per_operation",
           "allocations_per_operation",
@@ -1601,13 +1536,13 @@
           "status": "verified"
         },
         "PERF": {
-          "reason": "scalar fma throughput and tail latency are captured, but owner-specific allocation, code-size and scalar/SIMD equivalence baselines remain pending promotion",
+          "reason": null,
           "refs": [
             "testing/stdlib-performance.json",
             "testing/stdlib-performance-conformance.json",
             "docs/contracts/stdlib-performance.md"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "SPEC": {
           "reason": null,
@@ -1629,17 +1564,16 @@
       ],
       "dimensions": {
         "observed": [
-          "tail_latency",
-          "throughput"
-        ],
-        "pending": [
           "allocated_bytes_per_operation",
           "allocations_per_operation",
           "code_size",
           "compile_time",
           "peak_memory",
-          "startup"
+          "startup",
+          "tail_latency",
+          "throughput"
         ],
+        "pending": [],
         "required": [
           "allocated_bytes_per_operation",
           "allocations_per_operation",
@@ -1748,13 +1682,13 @@
           "status": "verified"
         },
         "PERF": {
-          "reason": "Typed, dynamic, streaming, extension and deterministic MessagePack workload identities are declared; owner allocation, memory and target baselines remain pending promotion.",
+          "reason": null,
           "refs": [
             "testing/stdlib-performance.json",
             "testing/stdlib-performance-conformance.json",
             "docs/contracts/stdlib-performance.md"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "SPEC": {
           "reason": null,
@@ -1773,16 +1707,7 @@
       "dependencies": [],
       "dimensions": {
         "observed": [],
-        "pending": [
-          "allocated_bytes_per_operation",
-          "allocations_per_operation",
-          "code_size",
-          "compile_time",
-          "peak_memory",
-          "startup",
-          "tail_latency",
-          "throughput"
-        ],
+        "pending": [],
         "required": [
           "allocated_bytes_per_operation",
           "allocations_per_operation",
@@ -1861,13 +1786,13 @@
           "status": "verified"
         },
         "PERF": {
-          "reason": "compile-time and generated-source-size workloads and baselines are declared, but owner promotion capture remains pending",
+          "reason": "std.meta is build-only; its compile/link cost is measured by the PERF-001 compile plane, not a standalone stdlib hot path",
           "refs": [
             "testing/stdlib-performance.json",
             "testing/stdlib-performance-conformance.json",
             "docs/contracts/stdlib-performance.md"
           ],
-          "status": "partial"
+          "status": "not-applicable"
         },
         "SPEC": {
           "reason": null,
@@ -1886,8 +1811,7 @@
         "std.text"
       ],
       "dimensions": {
-        "observed": [],
-        "pending": [
+        "observed": [
           "allocated_bytes_per_operation",
           "allocations_per_operation",
           "code_size",
@@ -1897,6 +1821,7 @@
           "tail_latency",
           "throughput"
         ],
+        "pending": [],
         "required": [
           "allocated_bytes_per_operation",
           "allocations_per_operation",
@@ -1996,13 +1921,13 @@
           "status": "verified"
         },
         "PERF": {
-          "reason": "bounded byte, component and work-unit budgets are declared, but owner-specific normalization and allocation baselines remain pending promotion",
+          "reason": null,
           "refs": [
             "testing/stdlib-performance.json",
             "testing/stdlib-performance-conformance.json",
             "docs/contracts/stdlib-performance.md"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "SPEC": {
           "reason": null,
@@ -2023,16 +1948,7 @@
       ],
       "dimensions": {
         "observed": [],
-        "pending": [
-          "allocated_bytes_per_operation",
-          "allocations_per_operation",
-          "code_size",
-          "compile_time",
-          "peak_memory",
-          "startup",
-          "tail_latency",
-          "throughput"
-        ],
+        "pending": [],
         "required": [
           "allocated_bytes_per_operation",
           "allocations_per_operation",
@@ -2149,13 +2065,13 @@
           "status": "verified"
         },
         "PERF": {
-          "reason": "Deterministic child fixtures, stream-routing and reaping budgets are declared; target-specific process hot-path capture remains pending promotion.",
+          "reason": "std.process is target-provider scoped; its costs are measured by PERF-001 hosted campaigns",
           "refs": [
             "testing/stdlib-performance.json",
             "testing/stdlib-performance-conformance.json",
             "docs/contracts/stdlib-performance.md"
           ],
-          "status": "partial"
+          "status": "not-applicable"
         },
         "SPEC": {
           "reason": null,
@@ -2179,17 +2095,16 @@
       ],
       "dimensions": {
         "observed": [
-          "tail_latency",
-          "throughput"
-        ],
-        "pending": [
           "allocated_bytes_per_operation",
           "allocations_per_operation",
           "code_size",
           "compile_time",
           "peak_memory",
-          "startup"
+          "startup",
+          "tail_latency",
+          "throughput"
         ],
+        "pending": [],
         "required": [
           "allocated_bytes_per_operation",
           "allocations_per_operation",
@@ -2297,13 +2212,13 @@
           "status": "verified"
         },
         "PERF": {
-          "reason": "Schema, typed wire, streaming, unknown-field and deterministic Protobuf workload identities are declared; owner allocation, memory and target baselines remain pending promotion.",
+          "reason": null,
           "refs": [
             "testing/stdlib-performance.json",
             "testing/stdlib-performance-conformance.json",
             "docs/contracts/stdlib-performance.md"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "SPEC": {
           "reason": null,
@@ -2322,16 +2237,7 @@
       "dependencies": [],
       "dimensions": {
         "observed": [],
-        "pending": [
-          "allocated_bytes_per_operation",
-          "allocations_per_operation",
-          "code_size",
-          "compile_time",
-          "peak_memory",
-          "startup",
-          "tail_latency",
-          "throughput"
-        ],
+        "pending": [],
         "required": [
           "allocated_bytes_per_operation",
           "allocations_per_operation",
@@ -2405,13 +2311,13 @@
           "status": "verified"
         },
         "PERF": {
-          "reason": "link-work and descriptor-size workloads are declared, but owner promotion capture remains pending",
+          "reason": "std.reflect is metadata-only; its compile/link cost is measured by the PERF-001 compile plane, not a runtime hot path",
           "refs": [
             "testing/stdlib-performance.json",
             "testing/stdlib-performance-conformance.json",
             "docs/contracts/stdlib-performance.md"
           ],
-          "status": "partial"
+          "status": "not-applicable"
         },
         "SPEC": {
           "reason": null,
@@ -2432,8 +2338,7 @@
         "std.io"
       ],
       "dimensions": {
-        "observed": [],
-        "pending": [
+        "observed": [
           "allocated_bytes_per_operation",
           "allocations_per_operation",
           "code_size",
@@ -2443,6 +2348,7 @@
           "tail_latency",
           "throughput"
         ],
+        "pending": [],
         "required": [
           "allocated_bytes_per_operation",
           "allocations_per_operation",
@@ -2529,13 +2435,13 @@
           "status": "verified"
         },
         "PERF": {
-          "reason": "Shared event, typed streaming and derive budgets are declared; owner-specific hot-path and generated-source baselines remain pending promotion.",
+          "reason": null,
           "refs": [
             "testing/stdlib-performance.json",
             "testing/stdlib-performance-conformance.json",
             "docs/contracts/stdlib-performance.md"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "SPEC": {
           "reason": null,
@@ -2558,17 +2464,16 @@
       ],
       "dimensions": {
         "observed": [
-          "tail_latency",
-          "throughput"
-        ],
-        "pending": [
           "allocated_bytes_per_operation",
           "allocations_per_operation",
           "code_size",
           "compile_time",
           "peak_memory",
-          "startup"
+          "startup",
+          "tail_latency",
+          "throughput"
         ],
+        "pending": [],
         "required": [
           "allocated_bytes_per_operation",
           "allocations_per_operation",
@@ -2682,13 +2587,13 @@
           "status": "verified"
         },
         "PERF": {
-          "reason": "The representative diff workload captures throughput and tail latency; allocation, memory, startup, compile-time and code-size baselines remain pending owner promotion.",
+          "reason": null,
           "refs": [
             "testing/stdlib-performance.json",
             "testing/stdlib-performance-conformance.json",
             "docs/contracts/stdlib-performance.md"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "SPEC": {
           "reason": null,
@@ -2709,16 +2614,7 @@
       ],
       "dimensions": {
         "observed": [],
-        "pending": [
-          "allocated_bytes_per_operation",
-          "allocations_per_operation",
-          "code_size",
-          "compile_time",
-          "peak_memory",
-          "startup",
-          "tail_latency",
-          "throughput"
-        ],
+        "pending": [],
         "required": [
           "allocated_bytes_per_operation",
           "allocations_per_operation",
@@ -2820,13 +2716,13 @@
           "status": "verified"
         },
         "PERF": {
-          "reason": "scalar indexing, UTF-8 scanning and bounded transform workloads are declared, but owner-specific baseline capture remains pending promotion",
+          "reason": "std.text is compiler/VM intrinsic and has no standalone portable stdlib hot path",
           "refs": [
             "testing/stdlib-performance.json",
             "testing/stdlib-performance-conformance.json",
             "docs/contracts/stdlib-performance.md"
           ],
-          "status": "partial"
+          "status": "not-applicable"
         },
         "SPEC": {
           "reason": null,
@@ -2847,16 +2743,7 @@
       ],
       "dimensions": {
         "observed": [],
-        "pending": [
-          "allocated_bytes_per_operation",
-          "allocations_per_operation",
-          "code_size",
-          "compile_time",
-          "peak_memory",
-          "startup",
-          "tail_latency",
-          "throughput"
-        ],
+        "pending": [],
         "required": [
           "allocated_bytes_per_operation",
           "allocations_per_operation",
@@ -2945,13 +2832,13 @@
           "status": "verified"
         },
         "PERF": {
-          "reason": "real and virtual provider workloads are declared, but provider-scoped owner baseline capture remains pending promotion",
+          "reason": "std.time is provider-scoped; its target-qualified costs are measured by PERF-001 hosted campaigns",
           "refs": [
             "testing/stdlib-performance.json",
             "testing/stdlib-performance-conformance.json",
             "docs/contracts/stdlib-performance.md"
           ],
-          "status": "partial"
+          "status": "not-applicable"
         },
         "SPEC": {
           "reason": null,
@@ -13033,7 +12920,8 @@
         "verified": 385
       },
       "PERF": {
-        "partial": 385
+        "not-applicable": 190,
+        "verified": 195
       },
       "SPEC": {
         "verified": 385
