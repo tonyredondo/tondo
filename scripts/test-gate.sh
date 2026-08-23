@@ -87,6 +87,10 @@ run_step stdlib-sync-contract \
     scripts/stdlib-sync-check.sh
 run_step stdlib-sync-contract-tests \
     scripts/stdlib-sync-test.sh
+run_step stdlib-executor-contract \
+    scripts/stdlib-executor-check.sh
+run_step stdlib-executor-contract-tests \
+    scripts/stdlib-executor-test.sh
 run_step stdlib-performance-contract \
     scripts/stdlib-performance-check.sh
 run_step native-target-descriptor-contract \

@@ -41,6 +41,7 @@ existencia del contrato no implica que ningún detector esté implementado.
 - [Contrato de owner de `std.serialization`](./docs/contracts/stdlib-serialization.md)
 - [Contrato de owner de `std.testing`](./docs/contracts/stdlib-testing.md)
 - [Contrato de owner de `std.async`](./docs/contracts/stdlib-async.md)
+- [Contrato de owner de `std.executor`](./docs/contracts/stdlib-executor.md)
 - [Matriz normativa de owners y firmas de stdlib](./docs/contracts/stdlib-matrix.md)
 - [Contrato de campañas de generación del runner](./docs/contracts/test-generation.md)
 - [Contrato de fast gate y tiers de evidencia](./docs/contracts/fast-gate.md)
@@ -82,9 +83,9 @@ limpios producen el mismo paquete VM content-addressed, con instalación,
 ejecución y desinstalación verificadas. `STD-S1A-SEAL-001` ha cerrado el
 bundle técnico del draft con auditoría estricta y cero celdas aplicables
 abiertas; `DIAG-SPEC-001` ya cerró su contrato D0 y los contratos de
-`std.async.Group`, `std.channel` y `std.sync` ya están cerrados como contratos
-runtime-facing. El siguiente bloque es `STD-EXEC-001`. El grafo activo se valida con
-`TRACKER-LINT-001`; con el contrato D0 cerrado, se cierran ahora las fronteras
+`std.async.Group`, `std.channel`, `std.sync` y `std.executor` ya están cerrados
+como contratos runtime-facing. El siguiente contrato es `STD-NET-001`. El grafo
+activo se valida con `TRACKER-LINT-001`; con el contrato D0 cerrado, se cierran ahora las fronteras
 runtime-facing B0 de Wave 6; entonces avanzan `DIAG-RUNTIME-001`, `RACE-001`,
 `LEAK-001`, `DUMP-001`, `DIAG-TEST-001` y `DIAG-CI-001` antes de la evaluación
 coordinada de `NATIVE-001`. El cierre coordinado de
@@ -5761,10 +5762,20 @@ publica hasta cerrar el gate final.
   `scripts/stdlib-sync-test.sh`, integrados en `test-gate.sh`. La implementación
   y el host siguen pendientes de las leaves `STD-SYNC-*` tras `NATIVE-001`.
 
-- [ ] **STD-EXEC-001 — Especificar `std.executor`.** Pools, actores y bridging
-  bloqueante tienen capacidad, saturación, shutdown y cancelación explícitos;
-  no crean un segundo modelo async, no heredan capabilities ambientales ni
-  permiten que trabajo host bloquee el progreso de tasks Tondo.
+- [x] **STD-EXEC-001 — Especificar `std.executor`.** El registro
+  [`testing/stdlib-executor.json`](./testing/stdlib-executor.json) y el contrato
+  [`docs/contracts/stdlib-executor.md`](./docs/contracts/stdlib-executor.md)
+  cierran pools cooperativos acotados, actores con mailbox FIFO, el bridge de
+  trabajo bloqueante con capability `threads`, backpressure, saturación,
+  shutdown, cancelación y cleanup. `submit` reutiliza `Join` y el scheduler
+  estructurado existente; `selectable` solo aparece en el envío de mensajes del
+  actor. El bridge no admite funciones suspendibles, no bloquea workers
+  cooperativos, no hereda estado ambiental y nunca fuerza la terminación de un
+  job host. Los checks negativos están en
+  `scripts/stdlib-executor-check.sh` y
+  `scripts/stdlib-executor-test.sh`, integrados en `test-gate.sh`. La
+  implementación permanece pendiente de las leaves `STD-EXEC-*` después de
+  `NATIVE-001`; el siguiente contrato B0 es `STD-NET-001`.
 
 - [ ] **STD-CIVIL-TIME-001 — Completar `std.time` con calendario civil.** Añadir
   `Date`, `Time`, `DateTime`, zonas horarias, reglas/versionado de timezone data
@@ -6705,9 +6716,9 @@ Esta tabla es la fuente de reconciliación del estado actual.
     únicamente después de que cada firma contractual atravesó una ruta pública
     real.
 27. [ ] **Wave 6 — Contratos que condicionan el backend.** Después de
-    `ASYNC-SELECT-VM-CONF-001` y `DIAG-SPEC-001`, quedan cerrados
-    `STD-ASYNC-GROUP-SPEC-001`, `STD-CONC-001` y `STD-SYNC-001`; faltan
-    `STD-EXEC-001` y la frontera runtime de `STD-NET-001`. Mini-gate:
+    `ASYNC-SELECT-VM-CONF-001` y `DIAG-SPEC-001`, están cerrados
+    `STD-ASYNC-GROUP-SPEC-001`, `STD-CONC-001`, `STD-SYNC-001` y
+    `STD-EXEC-001`; falta la frontera runtime de `STD-NET-001`. Mini-gate:
     DEC-013/014 reciben requisitos completos sin implementar todavía
     STD-0.1B.
 28. [ ] **Wave 7 — M11 correcto antes que optimizado.** Con Wave 6 cerrada,
@@ -6776,9 +6787,9 @@ del selector está ratcheteada y la paridad nativa sigue reservada a
 resultado compuesto vivos. `CONF-SEAL-FINAL-001` permanece pendiente para el
 primer release. `STD-IMPL-001`, `STD-IMPL-002` y `STD-CODEC-PUBLIC-001` están cerrados;
 Wave 6 continúa con los contratos runtime-facing B0 después del seal S1A y del
-contrato D0 de diagnóstico; `STD-ASYNC-GROUP-SPEC-001`, `STD-CONC-001` y
-`STD-SYNC-001` ya tienen registros y negativos ejecutables, y quedan
-`STD-EXEC-001` y la frontera runtime de `STD-NET-001`.
+contrato D0 de diagnóstico; `STD-ASYNC-GROUP-SPEC-001`, `STD-CONC-001`,
+`STD-SYNC-001` y `STD-EXEC-001` ya tienen registros y negativos ejecutables, y
+queda la frontera runtime de `STD-NET-001`.
 `STD-IMPL-001` y `STD-IMPL-002` quedan ahora cerrados por sus gates de
 coordinación; `NATIVE-TARGET-DESC-001`, `NATIVE-ARTIFACT-001`,
 `NATIVE-LINK-PLAN-001`, `NATIVE-PUBLISH-SPEC-001` y `PERF-001` quedan cerrados
@@ -6793,9 +6804,9 @@ evidencia runtime, `STD-A-ASYNC-IMPL-001` cerró su ejecución estructurada y
 casos del draft) con evidencia hash-bound. `STD-A-DIST-001` promovió el
 paquete VM reproducible (dos snapshots, instalación, ejecución y
 desinstalación). `STD-S1A-SEAL-001` cerró el bundle técnico del draft y
-`DIAG-SPEC-001` cerró el contrato D0; `STD-ASYNC-GROUP-SPEC-001`,
-`STD-CONC-001` y `STD-SYNC-001` cerraron tres fronteras B0 y las siguientes son
-`STD-EXEC-001` y `STD-NET-001`. La instrumentación VM espera su cierre,
+`DIAG-SPEC-001` cerró el contrato D0; `STD-ASYNC-GROUP-SPEC-001`, `STD-CONC-001`,
+`STD-SYNC-001` y `STD-EXEC-001` cerraron cuatro fronteras B0 y la siguiente es
+`STD-NET-001`. La instrumentación VM espera el cierre de esa frontera,
 mientras `NATIVE-001` espera
 `DIAG-CI-001`.
 

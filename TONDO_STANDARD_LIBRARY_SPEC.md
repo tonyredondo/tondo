@@ -2652,6 +2652,14 @@ worker y rechazo de nuevo trabajo tienen outcomes nominales y drenan el cleanup
 antes de completar. Ningún pool hereda capabilities o ambiente que el plan no
 haya declarado.
 
+El contrato exhaustivo de este owner está en
+[`docs/contracts/stdlib-executor.md`](./docs/contracts/stdlib-executor.md) y su
+registro machine-readable en
+[`testing/stdlib-executor.json`](./testing/stdlib-executor.json). Ese registro
+fija capacidad, backpressure, actores, bridge bloqueante, lifecycle,
+capabilities y eventos privados sin promover todavía una implementación
+runtime.
+
 ### 14.5 Contratos cerrados de los owners STD-0.1A
 
 Las firmas exhaustivas de los owners de valores y host están en

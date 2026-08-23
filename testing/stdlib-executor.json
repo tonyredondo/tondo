@@ -1,0 +1,331 @@
+{
+  "format": "tondo-stdlib-owner-contract/1",
+  "owner": "std.executor",
+  "parent_owner": "std",
+  "edition": "0.1",
+  "phase": "STD-0.1B",
+  "task": "STD-EXEC-001",
+  "status": "contract-locked",
+  "contract": "docs/contracts/stdlib-executor.md",
+  "spec": "TONDO_STANDARD_LIBRARY_SPEC.md",
+  "language_spec": "TONDO_LANGUAGE_SPEC.md",
+  "layer": "B4",
+  "kind": "runtime-facing",
+  "target": "tondo-vm-hosted-and-native",
+  "capability": {
+    "cooperative_pool": "available-without-threads",
+    "blocking_pool": "requires-threads",
+    "missing_threads": "static-capability-error",
+    "ambient_lookup": false,
+    "scheduler_blocking": "forbidden"
+  },
+  "host": {
+    "status": "required-after-native-gate",
+    "reason": "std.executor needs bounded scheduler admission, worker wakeups and a threads capability for the blocking bridge; it must not block cooperative workers or inherit ambient host state"
+  },
+  "surface": {
+    "types": [
+      "Pool",
+      "BlockingPool",
+      "Actor[S, M, E]",
+      "ActorRef[M]",
+      "ExecutorError = { InvalidWorkers, InvalidCapacity, ResourceLimit, CapabilityMissing }",
+      "SubmitError = { Saturated, Closed, Cancelled, ResourceLimit }",
+      "ActorSendError[M] = { Saturated(M), Closed(M), Cancelled(M), Terminated(M), ResourceLimit(M) }"
+    ],
+    "signatures": [
+      {
+        "id": "pool",
+        "signature": "pub fn pool(workers: Int, capacity: Int): Pool ! ExecutorError",
+        "kind": "cooperative-pool-constructor",
+        "effect": "sync"
+      },
+      {
+        "id": "blocking-pool",
+        "signature": "pub fn blockingPool(workers: Int, capacity: Int): BlockingPool ! ExecutorError",
+        "kind": "blocking-pool-constructor",
+        "effect": "sync"
+      },
+      {
+        "id": "pool-submit",
+        "signature": "pub fn Pool.submit[T, E](ref self, job: fn(): T ! E suspends): Join[T, E] ! SubmitError suspends",
+        "kind": "backpressured-submit",
+        "effect": "suspends"
+      },
+      {
+        "id": "pool-try-submit",
+        "signature": "pub fn Pool.trySubmit[T, E](ref self, job: fn(): T ! E suspends): Join[T, E] ! SubmitError",
+        "kind": "nonblocking-submit",
+        "effect": "sync"
+      },
+      {
+        "id": "pool-actor",
+        "signature": "pub fn Pool.actor[S: Send + Discard, M: Send + Discard, E](ref self, state: S, capacity: Int, step: fn(mut S, M): Unit ! E suspends): Actor[S, M, E] ! ExecutorError",
+        "kind": "actor-constructor",
+        "effect": "sync"
+      },
+      {
+        "id": "pool-shutdown",
+        "signature": "pub fn Pool.shutdown(self): Unit suspends",
+        "kind": "graceful-terminal",
+        "effect": "suspends"
+      },
+      {
+        "id": "pool-cancel",
+        "signature": "pub fn Pool.cancel(self): Unit suspends",
+        "kind": "cancel-terminal",
+        "effect": "suspends"
+      },
+      {
+        "id": "actor-send",
+        "signature": "pub fn ActorRef.send(ref self, message: M): Unit ! ActorSendError[M] selectable",
+        "kind": "backpressured-message",
+        "effect": "selectable"
+      },
+      {
+        "id": "actor-try-send",
+        "signature": "pub fn ActorRef.trySend(ref self, message: M): Unit ! ActorSendError[M]",
+        "kind": "nonblocking-message",
+        "effect": "sync"
+      },
+      {
+        "id": "actor-stop",
+        "signature": "pub fn Actor.stop(self): Unit ! E suspends",
+        "kind": "actor-terminal",
+        "effect": "suspends"
+      },
+      {
+        "id": "blocking-run",
+        "signature": "pub fn BlockingPool.run[T, E](ref self, job: fn(): T ! E): T ! E suspends",
+        "kind": "blocking-bridge",
+        "effect": "suspends"
+      },
+      {
+        "id": "blocking-shutdown",
+        "signature": "pub fn BlockingPool.shutdown(self): Unit suspends",
+        "kind": "graceful-terminal",
+        "effect": "suspends"
+      },
+      {
+        "id": "blocking-cancel",
+        "signature": "pub fn BlockingPool.cancel(self): Unit suspends",
+        "kind": "cancel-terminal",
+        "effect": "suspends"
+      }
+    ],
+    "direct_call_waits": true,
+    "explicit_await_direct_call": "forbidden",
+    "explicit_await_join": "required",
+    "inference_by_name": false,
+    "bodyless_requires_effect": true,
+    "bodyful_inference": "allowed",
+    "selectable_operations": ["actor-send"]
+  },
+  "ownership": {
+    "pool_affine": true,
+    "blocking_pool_affine": true,
+    "pool_copy": false,
+    "blocking_pool_copy": false,
+    "pool_clone": false,
+    "blocking_pool_clone": false,
+    "pool_discard": false,
+    "blocking_pool_discard": false,
+    "actor_affine": true,
+    "actor_copy": false,
+    "actor_ref_copy": true,
+    "actor_ref_send": true,
+    "actor_ref_share": true,
+    "job_transfer": "moves-on-admission-commit",
+    "job_on_rejection": "caller-retains-job",
+    "actor_state_bound": "S: Send + Discard",
+    "actor_message_bound": "M: Send + Discard",
+    "terminal_consumers": ["pool-shutdown", "pool-cancel", "blocking-shutdown", "blocking-cancel", "actor-stop"],
+    "scope_exit": ["terminal-consumer", "transfer"],
+    "implicit_drop": "compile-error",
+    "post_terminal_use": "compile-error",
+    "join_obligation": "caller-consumes-existing-Join-contract"
+  },
+  "capacity": {
+    "workers": "positive-finite",
+    "queue_capacity": "non-negative-finite",
+    "zero_queue": "running-slots-only",
+    "negative_workers": "ExecutorError.InvalidWorkers",
+    "negative_capacity": "ExecutorError.InvalidCapacity",
+    "unrepresentable_limits": "ExecutorError.ResourceLimit",
+    "global_default": "forbidden",
+    "ambient_cpu_default": "forbidden",
+    "admission_counts": "running-and-queued-jobs",
+    "queue_order": "FIFO-admission",
+    "saturation": "explicit-SubmitError.Saturated",
+    "no_hidden_polling": true
+  },
+  "pool": {
+    "kind": "cooperative-tondo-scheduler-policy",
+    "submit": "waits-for-admission-or-terminal-state",
+    "try_submit": "immediate-only",
+    "accepted_job": "scheduled-through-existing-spawn-and-Join",
+    "new_task_type": false,
+    "scheduler": "existing-structured-scheduler",
+    "running_limit": "workers",
+    "queued_limit": "capacity-after-running-slots",
+    "shutdown": "reject-new-drain-accepted-work-and-cleanup",
+    "cancel": "reject-new-request-cooperative-cancel-and-drain",
+    "cancelled_waiter": "Cancelled",
+    "terminal": "consumed-after-drain",
+    "starvation": "forbidden-by-default-under-cooperative-scheduler",
+    "panic": "normal-unwind-after-cleanup"
+  },
+  "blocking": {
+    "capability": "threads",
+    "job_effect": "non-suspendible",
+    "job_forbidden": ["suspends", "spawn", "spawn-thread", "select", "local-loan-escape"],
+    "run": "waits-for-admission-and-host-result-without-blocking-cooperative-worker",
+    "workers": "bounded-host-threads",
+    "queue": "finite-explicit-capacity",
+    "cancel_queued": "do-not-start-and-release",
+    "cancel_running": "wait-for-safe-host-return",
+    "force_kill": false,
+    "ambient_state": "forbidden",
+    "result_boundary": "typed-outcome-or-host-error-through-normal-result",
+    "worker_blocking": "allowed-only-inside-blocking-pool"
+  },
+  "actor": {
+    "state_owner": "single-actor-affine-owner",
+    "mailbox": "finite-explicit-capacity",
+    "mailbox_order": "FIFO-by-commit",
+    "handler_concurrency": "one-message-at-a-time",
+    "handler_effect": "suspends-allowed",
+    "message_commit": "moves-only-on-linearization",
+    "message_on_failure": "returned-inside-ActorSendError",
+    "send_select_prepare": "no-state-or-message-mutation",
+    "send_select_commit": "one-mailbox-linearization",
+    "send_select_rollback": "unregister-with-message-still-owned-by-sender",
+    "stop": "close-mailbox-cancel-handler-drain-cleanup",
+    "pending_messages": "discarded-under-M-Discard",
+    "handler_error": "actor-terminal-and-propagated-by-stop",
+    "panic": "normal-unwind-after-mailbox-cleanup",
+    "post_terminal_send": "Terminated(message)",
+    "no_restart": true,
+    "no_detached_actor": true
+  },
+  "lifecycle": {
+    "pool_states": ["open", "shutting-down", "cancelling", "drained"],
+    "initial": "open",
+    "shutdown_from": ["open"],
+    "cancel_from": ["open", "shutting-down"],
+    "drain_before_success": true,
+    "shutdown_rejects_new": true,
+    "cancel_rejects_new": true,
+    "terminal_consumers_non_idempotent": true,
+    "blocking_cancel_never_force_kills": true,
+    "actor_states": ["running", "stopping", "terminated"],
+    "actor_stop_from": ["running"],
+    "actor_stop_drains": true,
+    "scope_exit_requires_terminal_or_transfer": true
+  },
+  "diagnostics": {
+    "event_namespace": "std.executor",
+    "events": [
+      "pool.create",
+      "pool.submit.wait",
+      "pool.submit.accept",
+      "pool.submit.reject",
+      "pool.worker.start",
+      "pool.worker.idle",
+      "pool.worker.stop",
+      "pool.shutdown",
+      "pool.cancel",
+      "blocking.submit",
+      "blocking.start",
+      "blocking.finish",
+      "actor.create",
+      "actor.send.prepare",
+      "actor.send.commit",
+      "actor.send.rollback",
+      "actor.message.start",
+      "actor.message.finish",
+      "actor.terminate"
+    ],
+    "required_fields": ["run_id", "task_id", "pool_id", "worker_id", "operation_id", "event_sequence", "state"],
+    "payloads": "omitted-by-default",
+    "source_revision": "required",
+    "runtime_hooks_public": false
+  },
+  "exclusions": [
+    "Task",
+    "Future",
+    "AsyncPool",
+    "ExecutorHandle",
+    "global-executor",
+    "ambient-defaults",
+    "implicit-unbounded-queue",
+    "force-kill",
+    "public-poller",
+    "completion-callback",
+    "public-priority",
+    "observable-work-stealing",
+    "submitAsync",
+    "runAsync",
+    "waitAsync",
+    "implicit-thread-conversion",
+    "blocking-cooperative-fallback",
+    "detached-actor"
+  ],
+  "negative_cases": [
+    "zero-workers",
+    "negative-capacity",
+    "unrepresentable-capacity",
+    "ambient-worker-default",
+    "pool-is-copyable",
+    "pool-is-discardable",
+    "pool-dropped-with-live-jobs",
+    "job-consumed-before-admission",
+    "rejected-job-is-lost",
+    "submit-hides-saturation",
+    "try-submit-suspends",
+    "submit-publishes-task-type",
+    "pool-creates-second-scheduler",
+    "shutdown-accepts-new-job",
+    "cancel-returns-before-drain",
+    "cancel-force-kills-blocking-job",
+    "blocking-pool-without-threads",
+    "blocking-job-is-suspendible",
+    "blocking-job-captures-local-loan",
+    "blocking-job-runs-on-cooperative-worker",
+    "blocking-pool-inherits-ambient-state",
+    "actor-state-lacks-send-bound",
+    "actor-message-lacks-discard-bound",
+    "actor-processes-two-messages-concurrently",
+    "actor-send-loses-message",
+    "losing-select-send-consumes-message",
+    "actor-mailbox-is-unbounded",
+    "actor-restarts-after-error",
+    "actor-drop-skips-drain",
+    "actor-ref-copies-state",
+    "diagnostics-publish-user-payloads"
+  ],
+  "implementation": {
+    "status": "pending-after-native-gate",
+    "public_api_promoted": false,
+    "host": "required-after-native-gate",
+    "required_follow_ups": [
+      "STD-EXEC-IMPL-001",
+      "STD-EXEC-HOST-001",
+      "STD-EXEC-TEST-001",
+      "STD-EXEC-PERF-001",
+      "STD-EXEC-CONF-001",
+      "STD-EXEC-DOC-001"
+    ]
+  },
+  "promotion": {
+    "implementation_pending": [
+      "STD-EXEC-IMPL-001",
+      "STD-EXEC-HOST-001",
+      "STD-EXEC-TEST-001",
+      "STD-EXEC-PERF-001",
+      "STD-EXEC-CONF-001",
+      "STD-EXEC-DOC-001"
+    ],
+    "next_blocks": ["STD-NET-001", "DIAG-RUNTIME-001"]
+  }
+}
