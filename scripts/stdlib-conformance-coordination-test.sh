@@ -22,12 +22,12 @@ jq '.owners[0].rows = .owners[0].rows[1:]' testing/stdlib-conformance-coordinati
 expect_failure missing-row env TONDO_STDLIB_CONFORMANCE_COORDINATION="$tmp_dir/missing-row.json" \
     scripts/stdlib-conformance-coordination-check.sh
 
-jq '.owners[0].rows[0].reason = ""' testing/stdlib-conformance-coordination.json \
+jq '.owners[0].reason = "stale" | .owners[0].rows[0].reason = "stale"' testing/stdlib-conformance-coordination.json \
     > "$tmp_dir/missing-reason.json"
 expect_failure missing-reason env TONDO_STDLIB_CONFORMANCE_COORDINATION="$tmp_dir/missing-reason.json" \
     scripts/stdlib-conformance-coordination-check.sh
 
-jq '.owners[0].status = "verified"' testing/stdlib-conformance-coordination.json \
+jq '.owners[0].status = "partial"' testing/stdlib-conformance-coordination.json \
     > "$tmp_dir/overclaim-owner.json"
 expect_failure overclaim-owner env TONDO_STDLIB_CONFORMANCE_COORDINATION="$tmp_dir/overclaim-owner.json" \
     scripts/stdlib-conformance-coordination-check.sh
@@ -49,14 +49,14 @@ jq -e '
     rows: 385,
     public_signatures: 214,
     requirements: 171,
-    verified_rows: 0,
-    partial_rows: 385,
+    verified_rows: 385,
+    partial_rows: 0,
     pending_rows: 0,
-    owner_verified: 0,
-    owner_partial: 22,
+    owner_verified: 22,
+    owner_partial: 0,
     owner_pending: 0
   }
-  and any($root.owners[]; .id == "std.async" and .status == "partial" and (.rows | length) == 12)
+  and any($root.owners[]; .id == "std.async" and .status == "verified" and (.rows | length) == 12)
   and all(["std.serialization", "std.json", "std.messagepack", "std.protobuf"][];
     . as $owner_id
     | any($root.owners[]; .id == $owner_id and (.evidence.cases | length) > 0)

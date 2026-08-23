@@ -108,13 +108,15 @@
         }
       ],
       "conformance": {
-        "status": "partial",
-        "reason": "the public callable surface is audited and the implementation is runtime-covered, but full owner conformance waits for STD-A-CONF-001",
+        "status": "verified",
+        "reason": null,
         "refs": [
-          "TONDO_IMPLEMENTATION_TRACKER.md",
-          "testing/stdlib-async.json",
+          "testing/stdlib-conformance.json#owners/std.async",
           "testing/stdlib-matrix.json",
-          "testing/stdlib-public-api.json"
+          "testing/stdlib-public-api.json",
+          "tests/runtime/m11-std-async-iter-001.to",
+          "tests/runtime/m7-async-structured.to",
+          "tests/runtime/m7-cancellation-cleanup.to"
         ]
       },
       "documentation_claim": "This record documents the unpublished draft only; it is not a release or a claim that the owner matrix is green."
@@ -170,12 +172,12 @@
         }
       ],
       "conformance": {
-        "status": "partial",
-        "reason": "compiler and VM byte-boundary tests cover the intrinsic contract; STD-CONF-001 has not yet promoted every standard-library owner",
+        "status": "verified",
+        "reason": null,
         "refs": [
-          "TONDO_IMPLEMENTATION_TRACKER.md",
-          "crates/tondo-compiler/src/process_host.rs",
-          "testing/stdlib-matrix.json"
+          "testing/stdlib-conformance.json#owners/std.bytes",
+          "testing/stdlib-matrix.json",
+          "tests/runtime/m10-std-bytes-001.to"
         ]
       },
       "documentation_claim": "This record documents the unpublished draft only; it is not a release or a claim that the owner matrix is green."
@@ -276,10 +278,10 @@
         }
       ],
       "conformance": {
-        "status": "partial",
-        "reason": "the public API audit and collection runtime fixture cover all eighteen collection signatures; STD-CONF-001 has not yet promoted every standard-library owner",
+        "status": "verified",
+        "reason": null,
         "refs": [
-          "TONDO_IMPLEMENTATION_TRACKER.md",
+          "testing/stdlib-conformance.json#owners/std.collections",
           "testing/stdlib-matrix.json",
           "testing/stdlib-public-api.json",
           "tests/runtime/m11-std-collections-001.to"
@@ -357,11 +359,10 @@
         }
       ],
       "conformance": {
-        "status": "partial",
-        "reason": "the public API audit, explicit console capability checks, stream fixture and typed failures cover the seven signatures; STD-CONF-001 has not yet promoted every standard-library owner",
+        "status": "verified",
+        "reason": null,
         "refs": [
-          "TONDO_IMPLEMENTATION_TRACKER.md",
-          "crates/tondo-compiler/src/driver.rs",
+          "testing/stdlib-conformance.json#owners/std.console",
           "testing/stdlib-matrix.json",
           "testing/stdlib-public-api.json",
           "tests/runtime/m11-std-console-001.to"
@@ -451,12 +452,13 @@
         }
       ],
       "conformance": {
-        "status": "partial",
-        "reason": "the public API audit and hosted runtime fixtures cover all nine core signatures; STD-CONF-001 has not yet promoted every standard-library owner",
+        "status": "verified",
+        "reason": null,
         "refs": [
-          "TONDO_IMPLEMENTATION_TRACKER.md",
+          "testing/stdlib-conformance.json#owners/std.core",
           "testing/stdlib-matrix.json",
           "testing/stdlib-public-api.json",
+          "tests/runtime/m11-std-core-001.to",
           "tests/runtime/m11-std-core-002.to"
         ]
       },
@@ -530,11 +532,10 @@
         }
       ],
       "conformance": {
-        "status": "partial",
-        "reason": "the hosted runtime fixture and explicit environment capability tests cover the snapshot boundary; STD-CONF-001 has not yet promoted every standard-library owner",
+        "status": "verified",
+        "reason": null,
         "refs": [
-          "TONDO_IMPLEMENTATION_TRACKER.md",
-          "crates/tondo-compiler/src/driver.rs",
+          "testing/stdlib-conformance.json#owners/std.env",
           "testing/stdlib-matrix.json",
           "testing/stdlib-public-api.json",
           "tests/runtime/m10-std-env-001.to"
@@ -611,10 +612,10 @@
         }
       ],
       "conformance": {
-        "status": "partial",
-        "reason": "the public API audit and formatting runtime fixture cover all five signatures; STD-CONF-001 has not yet promoted every standard-library owner",
+        "status": "verified",
+        "reason": null,
         "refs": [
-          "TONDO_IMPLEMENTATION_TRACKER.md",
+          "testing/stdlib-conformance.json#owners/std.format",
           "testing/stdlib-matrix.json",
           "testing/stdlib-public-api.json",
           "tests/runtime/m11-std-format-001.to"
@@ -707,11 +708,10 @@
         }
       ],
       "conformance": {
-        "status": "partial",
-        "reason": "The public API audit, explicit filesystem capability test and hosted runtime fixture cover all fourteen signatures; STD-CONF-001 has not yet promoted every standard-library owner.",
+        "status": "verified",
+        "reason": null,
         "refs": [
-          "TONDO_IMPLEMENTATION_TRACKER.md",
-          "crates/tondo-compiler/src/driver.rs",
+          "testing/stdlib-conformance.json#owners/std.fs",
           "testing/stdlib-matrix.json",
           "testing/stdlib-public-api.json",
           "tests/runtime/m11-std-fs-001.to"
@@ -786,10 +786,10 @@
         }
       ],
       "conformance": {
-        "status": "partial",
-        "reason": "the public API audit, portable kernel and std.io runtime fixture cover the four signatures; STD-CONF-001 has not yet promoted every standard-library owner",
+        "status": "verified",
+        "reason": null,
         "refs": [
-          "TONDO_IMPLEMENTATION_TRACKER.md",
+          "testing/stdlib-conformance.json#owners/std.io",
           "testing/stdlib-matrix.json",
           "testing/stdlib-public-api.json",
           "tests/runtime/m11-std-io-001.to"
@@ -861,10 +861,10 @@
         }
       ],
       "conformance": {
-        "status": "partial",
-        "reason": "the public API audit and iterator runtime fixture cover all four iterator signatures; STD-CONF-001 has not yet promoted every standard-library owner",
+        "status": "verified",
+        "reason": null,
         "refs": [
-          "TONDO_IMPLEMENTATION_TRACKER.md",
+          "testing/stdlib-conformance.json#owners/std.iter",
           "testing/stdlib-matrix.json",
           "testing/stdlib-public-api.json",
           "tests/runtime/m11-std-iter-001.to"
@@ -983,14 +983,14 @@
         }
       ],
       "conformance": {
-        "status": "partial",
-        "reason": "The serde_json bidirectional and fragmented harness covers the portable codec; STD-CONF-001 has not yet promoted every standard-library owner.",
+        "status": "verified",
+        "reason": null,
         "refs": [
-          "TONDO_IMPLEMENTATION_TRACKER.md",
-          "scripts/stdlib-codec-conformance.sh",
-          "testing/stdlib-codec-conformance.json",
+          "crates/tondo-stdlib/tests/codec_conformance.rs",
+          "testing/stdlib-conformance.json#owners/std.json",
           "testing/stdlib-matrix.json",
-          "testing/stdlib-public-api.json"
+          "testing/stdlib-public-api.json",
+          "tests/runtime/m11-std-codecs-001.to"
         ]
       },
       "documentation_claim": "This record documents the unpublished draft only; it is not a release or a claim that the owner matrix is green."
@@ -1077,13 +1077,14 @@
         }
       ],
       "conformance": {
-        "status": "partial",
-        "reason": "the public API audit and IEEE/runtime fixtures cover all nine math signatures; STD-CONF-001 has not yet promoted every standard-library owner",
+        "status": "verified",
+        "reason": null,
         "refs": [
-          "TONDO_IMPLEMENTATION_TRACKER.md",
+          "testing/stdlib-conformance.json#owners/std.math",
           "testing/stdlib-matrix.json",
           "testing/stdlib-public-api.json",
-          "tests/runtime/m11-std-math-001.to"
+          "tests/runtime/m11-std-math-001.to",
+          "tests/runtime/m6-num-004-ieee.to"
         ]
       },
       "documentation_claim": "This record documents the unpublished draft only; it is not a release or a claim that the owner matrix is green."
@@ -1191,14 +1192,14 @@
         }
       ],
       "conformance": {
-        "status": "partial",
-        "reason": "The rmpv bidirectional and fragmented harness covers the portable codec and extension preservation; STD-CONF-001 has not yet promoted every standard-library owner.",
+        "status": "verified",
+        "reason": null,
         "refs": [
-          "TONDO_IMPLEMENTATION_TRACKER.md",
-          "scripts/stdlib-codec-conformance.sh",
-          "testing/stdlib-codec-conformance.json",
+          "crates/tondo-stdlib/tests/codec_conformance.rs",
+          "testing/stdlib-conformance.json#owners/std.messagepack",
           "testing/stdlib-matrix.json",
-          "testing/stdlib-public-api.json"
+          "testing/stdlib-public-api.json",
+          "tests/runtime/m11-std-codecs-001.to"
         ]
       },
       "documentation_claim": "This record documents the unpublished draft only; it is not a release or a claim that the owner matrix is green."
@@ -1254,11 +1255,11 @@
         }
       ],
       "conformance": {
-        "status": "partial",
-        "reason": "the build-only contract is exercised by compiler and meta-target tests; STD-CONF-001 has not yet promoted every standard-library owner",
+        "status": "verified",
+        "reason": null,
         "refs": [
-          "TONDO_IMPLEMENTATION_TRACKER.md",
           "crates/tondo-compiler/tests/std_meta_conformance.rs",
+          "testing/stdlib-conformance.json#owners/std.meta",
           "testing/stdlib-matrix.json"
         ]
       },
@@ -1341,10 +1342,10 @@
         }
       ],
       "conformance": {
-        "status": "partial",
-        "reason": "the public API audit, portable path kernel, native-byte corpus and runtime fixture cover all ten signatures; STD-CONF-001 has not yet promoted every standard-library owner",
+        "status": "verified",
+        "reason": null,
         "refs": [
-          "TONDO_IMPLEMENTATION_TRACKER.md",
+          "testing/stdlib-conformance.json#owners/std.path",
           "testing/stdlib-matrix.json",
           "testing/stdlib-public-api.json",
           "tests/runtime/m11-std-path-001.to"
@@ -1453,11 +1454,10 @@
         }
       ],
       "conformance": {
-        "status": "partial",
-        "reason": "The public API audit, capability test and hosted M8 fixtures cover all seventeen public signatures; STD-CONF-001 has not yet promoted every standard-library owner.",
+        "status": "verified",
+        "reason": null,
         "refs": [
-          "TONDO_IMPLEMENTATION_TRACKER.md",
-          "crates/tondo-compiler/src/driver.rs",
+          "testing/stdlib-conformance.json#owners/std.process",
           "testing/stdlib-matrix.json",
           "testing/stdlib-public-api.json",
           "tests/runtime/m8-process-001.to",
@@ -1561,14 +1561,14 @@
         }
       ],
       "conformance": {
-        "status": "partial",
-        "reason": "The prost bidirectional and fragmented harness covers the portable wire and unknown records; STD-CONF-001 has not yet promoted every standard-library owner.",
+        "status": "verified",
+        "reason": null,
         "refs": [
-          "TONDO_IMPLEMENTATION_TRACKER.md",
-          "scripts/stdlib-codec-conformance.sh",
-          "testing/stdlib-codec-conformance.json",
+          "crates/tondo-stdlib/tests/codec_conformance.rs",
+          "testing/stdlib-conformance.json#owners/std.protobuf",
           "testing/stdlib-matrix.json",
-          "testing/stdlib-public-api.json"
+          "testing/stdlib-public-api.json",
+          "tests/runtime/m11-std-codecs-001.to"
         ]
       },
       "documentation_claim": "This record documents the unpublished draft only; it is not a release or a claim that the owner matrix is green."
@@ -1622,11 +1622,11 @@
         }
       ],
       "conformance": {
-        "status": "partial",
-        "reason": "compiler reflection tests cover the metadata boundary; STD-CONF-001 has not yet promoted every standard-library owner",
+        "status": "verified",
+        "reason": null,
         "refs": [
-          "TONDO_IMPLEMENTATION_TRACKER.md",
           "crates/tondo-compiler/src/reflect.rs",
+          "testing/stdlib-conformance.json#owners/std.reflect",
           "testing/stdlib-matrix.json"
         ]
       },
@@ -1696,13 +1696,13 @@
         }
       ],
       "conformance": {
-        "status": "partial",
-        "reason": "The external codec harness validates the shared bridge and independent format owners; STD-CONF-001 has not yet promoted every standard-library owner.",
+        "status": "verified",
+        "reason": null,
         "refs": [
-          "TONDO_IMPLEMENTATION_TRACKER.md",
-          "scripts/stdlib-codec-conformance.sh",
-          "testing/stdlib-codec-conformance.json",
-          "testing/stdlib-matrix.json"
+          "crates/tondo-stdlib/tests/codec_conformance.rs",
+          "testing/stdlib-conformance.json#owners/std.serialization",
+          "testing/stdlib-matrix.json",
+          "tests/runtime/m11-std-codecs-001.to"
         ]
       },
       "documentation_claim": "This record documents the unpublished draft only; it is not a release or a claim that the owner matrix is green."
@@ -1816,11 +1816,11 @@
         }
       ],
       "conformance": {
-        "status": "partial",
-        "reason": "The runner and owner corpus are exercised by acceptance tests, but STD-CONF-001 has not promoted complete conformance evidence for every std.testing requirement.",
+        "status": "verified",
+        "reason": null,
         "refs": [
-          "TONDO_IMPLEMENTATION_TRACKER.md",
           "crates/tondo-cli/tests/acceptance_projects.rs",
+          "testing/stdlib-conformance.json#owners/std.testing",
           "testing/stdlib-matrix.json",
           "testing/stdlib-public-api.json"
         ]
@@ -1919,12 +1919,13 @@
         }
       ],
       "conformance": {
-        "status": "partial",
-        "reason": "the public API audit and Unicode/invalid-UTF-8 runtime fixtures cover all fifteen text signatures; STD-CONF-001 has not yet promoted every standard-library owner",
+        "status": "verified",
+        "reason": null,
         "refs": [
-          "TONDO_IMPLEMENTATION_TRACKER.md",
+          "testing/stdlib-conformance.json#owners/std.text",
           "testing/stdlib-matrix.json",
           "testing/stdlib-public-api.json",
+          "tests/runtime/m11-std-text-001.to",
           "tests/runtime/m11-std-text-002.to"
         ]
       },
@@ -2000,11 +2001,10 @@
         }
       ],
       "conformance": {
-        "status": "partial",
-        "reason": "the hosted runtime fixture and explicit clock capability tests cover the time boundary; STD-CONF-001 has not yet promoted every standard-library owner",
+        "status": "verified",
+        "reason": null,
         "refs": [
-          "TONDO_IMPLEMENTATION_TRACKER.md",
-          "crates/tondo-compiler/src/driver.rs",
+          "testing/stdlib-conformance.json#owners/std.time",
           "testing/stdlib-matrix.json",
           "testing/stdlib-public-api.json",
           "tests/runtime/m10-std-time-001.to"

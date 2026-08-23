@@ -1,0 +1,1157 @@
+{
+  "format": "tondo-stdlib-conformance/1",
+  "edition": "0.1",
+  "phase": "STD-0.1A",
+  "status": "promoted",
+  "sources": {
+    "normative_matrix": "testing/stdlib-matrix.json",
+    "documentation": "testing/stdlib-documentation.json",
+    "owner_evidence": "testing/stdlib-owner-evidence.json",
+    "public_api": "testing/stdlib-public-api.json",
+    "draft_manifest": "conformance/0.1/manifest.json",
+    "result": "target/reliability/evidence/conformance-result.json"
+  },
+  "runner": {
+    "lineage": "draft",
+    "manifest": "conformance/0.1/manifest.json",
+    "manifest_sha256": "117f2499c4a69938752715afa0a2b27e5c3240af4af32e8f295cb37a5c8c029a",
+    "full_suite_case_count": 206,
+    "validate_command": "cargo run -p tondo-conformance --locked -- validate --root . --manifest conformance/draft/manifest.json --lineage draft",
+    "run_command": "cargo run -p tondo-conformance --locked -- run --root . --manifest conformance/draft/manifest.json --lineage draft --adapter target/debug/tondo-reference-adapter --evidence target/reliability/evidence/layer-evidence.json --output target/reliability/evidence/conformance-result.json",
+    "owner_command_policy": "each owner command and every runtime/example case must pass"
+  },
+  "rules": {
+    "every_matrix_row_has_observation": true,
+    "verified_requires_current_observation": true,
+    "runtime_cases_compare_exit_and_stdout_sidecars": true,
+    "compiler_and_external_cases_run_the_declared_command": true,
+    "capability_and_cancellation_cases_are_included": true,
+    "coordination_is_not_evidence": true
+  },
+  "owners": [
+    {
+      "id": "std.async",
+      "layer": "A1",
+      "status": "verified",
+      "public_signatures": [
+        "signature:std.async:35",
+        "signature:std.async:36",
+        "signature:std.async:37",
+        "signature:std.async:38",
+        "signature:std.async:39"
+      ],
+      "requirements": [
+        "requirement:std.async:async-iterator",
+        "requirement:std.async:bounded-collect",
+        "requirement:std.async:close-backpressure",
+        "requirement:std.async:join-affinity",
+        "requirement:std.async:no-channel-in-a",
+        "requirement:std.async:oneshot-completion",
+        "requirement:std.async:suspends-visibility"
+      ],
+      "rows": {
+        "signatures": 5,
+        "requirements": 7,
+        "total": 12
+      },
+      "owner_command": "scripts/stdlib-async-test.sh",
+      "cases": [
+        {
+          "id": "async-cancellation",
+          "kind": "runtime",
+          "source": "tests/runtime/m7-cancellation-cleanup.to",
+          "command": "scripts/test-gate.sh",
+          "verification": "fixture-sidecars"
+        },
+        {
+          "id": "async-iterator-collect",
+          "kind": "runtime",
+          "source": "tests/runtime/m11-std-async-iter-001.to",
+          "command": "scripts/stdlib-async-test.sh",
+          "verification": "fixture-sidecars"
+        },
+        {
+          "id": "async-structured",
+          "kind": "runtime",
+          "source": "tests/runtime/m7-async-structured.to",
+          "command": "scripts/test-gate.sh",
+          "verification": "fixture-sidecars"
+        }
+      ],
+      "refs": [
+        "testing/stdlib-conformance.json#owners/std.async",
+        "testing/stdlib-public-api.json",
+        "tests/runtime/m11-std-async-iter-001.to",
+        "tests/runtime/m7-async-structured.to",
+        "tests/runtime/m7-cancellation-cleanup.to"
+      ],
+      "scope": "public-owner-and-runtime"
+    },
+    {
+      "id": "std.bytes",
+      "layer": "A0",
+      "status": "verified",
+      "public_signatures": [],
+      "requirements": [
+        "requirement:std.bytes:builder-atomicity",
+        "requirement:std.bytes:catalog-shape",
+        "requirement:std.bytes:limits-and-ranges",
+        "requirement:std.bytes:ownership-and-snapshots",
+        "requirement:std.bytes:properties-and-hot-paths",
+        "requirement:std.bytes:utf8-conversion"
+      ],
+      "rows": {
+        "signatures": 0,
+        "requirements": 6,
+        "total": 6
+      },
+      "owner_command": "scripts/stdlib-bytes-test.sh",
+      "cases": [
+        {
+          "id": "bytes-public",
+          "kind": "runtime",
+          "source": "tests/runtime/m10-std-bytes-001.to",
+          "command": "scripts/stdlib-bytes-test.sh",
+          "verification": "fixture-sidecars"
+        }
+      ],
+      "refs": [
+        "testing/stdlib-conformance.json#owners/std.bytes",
+        "tests/runtime/m10-std-bytes-001.to"
+      ],
+      "scope": "public-owner-and-runtime"
+    },
+    {
+      "id": "std.collections",
+      "layer": "A1",
+      "status": "verified",
+      "public_signatures": [
+        "signature:std.collections:139",
+        "signature:std.collections:140",
+        "signature:std.collections:141",
+        "signature:std.collections:142",
+        "signature:std.collections:143",
+        "signature:std.collections:144",
+        "signature:std.collections:145",
+        "signature:std.collections:147",
+        "signature:std.collections:148",
+        "signature:std.collections:149",
+        "signature:std.collections:150",
+        "signature:std.collections:151",
+        "signature:std.collections:152",
+        "signature:std.collections:154",
+        "signature:std.collections:155",
+        "signature:std.collections:156",
+        "signature:std.collections:157",
+        "signature:std.collections:158"
+      ],
+      "requirements": [
+        "requirement:std.collections:async-cancellation",
+        "requirement:std.collections:composition",
+        "requirement:std.collections:determinism",
+        "requirement:std.collections:empty-values",
+        "requirement:std.collections:error-priority",
+        "requirement:std.collections:limits",
+        "requirement:std.collections:ownership"
+      ],
+      "rows": {
+        "signatures": 18,
+        "requirements": 7,
+        "total": 25
+      },
+      "owner_command": "scripts/stdlib-collections-test.sh",
+      "cases": [
+        {
+          "id": "collections-public",
+          "kind": "runtime",
+          "source": "tests/runtime/m11-std-collections-001.to",
+          "command": "scripts/stdlib-collections-test.sh",
+          "verification": "fixture-sidecars"
+        }
+      ],
+      "refs": [
+        "testing/stdlib-conformance.json#owners/std.collections",
+        "testing/stdlib-public-api.json",
+        "tests/runtime/m11-std-collections-001.to"
+      ],
+      "scope": "public-owner-and-runtime"
+    },
+    {
+      "id": "std.console",
+      "layer": "A2",
+      "status": "verified",
+      "public_signatures": [
+        "signature:std.console:10",
+        "signature:std.console:11",
+        "signature:std.console:12",
+        "signature:std.console:13",
+        "signature:std.console:14",
+        "signature:std.console:15",
+        "signature:std.console:16"
+      ],
+      "requirements": [
+        "requirement:std.console:cancellation",
+        "requirement:std.console:capability-absent",
+        "requirement:std.console:capability-present",
+        "requirement:std.console:cleanup-on-unwind",
+        "requirement:std.console:combined-output-order",
+        "requirement:std.console:empty-input",
+        "requirement:std.console:host-error-redaction",
+        "requirement:std.console:partial-io",
+        "requirement:std.console:pipeline-redirection"
+      ],
+      "rows": {
+        "signatures": 7,
+        "requirements": 9,
+        "total": 16
+      },
+      "owner_command": "scripts/stdlib-console-test.sh",
+      "cases": [
+        {
+          "id": "console-public",
+          "kind": "runtime",
+          "source": "tests/runtime/m11-std-console-001.to",
+          "command": "scripts/stdlib-console-test.sh",
+          "verification": "fixture-sidecars"
+        }
+      ],
+      "refs": [
+        "testing/stdlib-conformance.json#owners/std.console",
+        "testing/stdlib-public-api.json",
+        "tests/runtime/m11-std-console-001.to"
+      ],
+      "scope": "public-owner-and-runtime"
+    },
+    {
+      "id": "std.core",
+      "layer": "A1",
+      "status": "verified",
+      "public_signatures": [
+        "signature:std.core:28",
+        "signature:std.core:29",
+        "signature:std.core:30",
+        "signature:std.core:31",
+        "signature:std.core:33",
+        "signature:std.core:34",
+        "signature:std.core:35",
+        "signature:std.core:36",
+        "signature:std.core:37"
+      ],
+      "requirements": [
+        "requirement:std.core:async-cancellation",
+        "requirement:std.core:composition",
+        "requirement:std.core:determinism",
+        "requirement:std.core:empty-values",
+        "requirement:std.core:error-priority",
+        "requirement:std.core:limits",
+        "requirement:std.core:ownership"
+      ],
+      "rows": {
+        "signatures": 9,
+        "requirements": 7,
+        "total": 16
+      },
+      "owner_command": "scripts/stdlib-core-test.sh",
+      "cases": [
+        {
+          "id": "core-intrinsics",
+          "kind": "runtime",
+          "source": "tests/runtime/m11-std-core-001.to",
+          "command": "scripts/stdlib-core-test.sh",
+          "verification": "fixture-sidecars"
+        },
+        {
+          "id": "core-protocols",
+          "kind": "runtime",
+          "source": "tests/runtime/m11-std-core-002.to",
+          "command": "scripts/stdlib-core-test.sh",
+          "verification": "fixture-sidecars"
+        }
+      ],
+      "refs": [
+        "testing/stdlib-conformance.json#owners/std.core",
+        "testing/stdlib-public-api.json",
+        "tests/runtime/m11-std-core-001.to",
+        "tests/runtime/m11-std-core-002.to"
+      ],
+      "scope": "public-owner-and-runtime"
+    },
+    {
+      "id": "std.env",
+      "layer": "A0",
+      "status": "verified",
+      "public_signatures": [
+        "signature:std.env:28",
+        "signature:std.env:29",
+        "signature:std.env:30",
+        "signature:std.env:31",
+        "signature:std.env:32",
+        "signature:std.env:33",
+        "signature:std.env:34"
+      ],
+      "requirements": [
+        "requirement:std.env:arguments-and-order",
+        "requirement:std.env:capability-and-availability",
+        "requirement:std.env:limits-and-atomicity",
+        "requirement:std.env:missing-and-copying",
+        "requirement:std.env:names-and-values",
+        "requirement:std.env:snapshot-identity-and-sealing"
+      ],
+      "rows": {
+        "signatures": 7,
+        "requirements": 6,
+        "total": 13
+      },
+      "owner_command": "scripts/stdlib-env-test.sh",
+      "cases": [
+        {
+          "id": "env-snapshot",
+          "kind": "runtime",
+          "source": "tests/runtime/m10-std-env-001.to",
+          "command": "scripts/stdlib-env-test.sh",
+          "verification": "fixture-sidecars"
+        }
+      ],
+      "refs": [
+        "testing/stdlib-conformance.json#owners/std.env",
+        "testing/stdlib-public-api.json",
+        "tests/runtime/m10-std-env-001.to"
+      ],
+      "scope": "public-owner-and-runtime"
+    },
+    {
+      "id": "std.format",
+      "layer": "A1",
+      "status": "verified",
+      "public_signatures": [
+        "signature:std.format:240",
+        "signature:std.format:241",
+        "signature:std.format:242",
+        "signature:std.format:243",
+        "signature:std.format:244"
+      ],
+      "requirements": [
+        "requirement:std.format:async-cancellation",
+        "requirement:std.format:composition",
+        "requirement:std.format:determinism",
+        "requirement:std.format:empty-values",
+        "requirement:std.format:error-priority",
+        "requirement:std.format:limits",
+        "requirement:std.format:ownership"
+      ],
+      "rows": {
+        "signatures": 5,
+        "requirements": 7,
+        "total": 12
+      },
+      "owner_command": "scripts/stdlib-format-test.sh",
+      "cases": [
+        {
+          "id": "format-public",
+          "kind": "runtime",
+          "source": "tests/runtime/m11-std-format-001.to",
+          "command": "scripts/stdlib-format-test.sh",
+          "verification": "fixture-sidecars"
+        }
+      ],
+      "refs": [
+        "testing/stdlib-conformance.json#owners/std.format",
+        "testing/stdlib-public-api.json",
+        "tests/runtime/m11-std-format-001.to"
+      ],
+      "scope": "public-owner-and-runtime"
+    },
+    {
+      "id": "std.fs",
+      "layer": "A2",
+      "status": "verified",
+      "public_signatures": [
+        "signature:std.fs:85",
+        "signature:std.fs:86",
+        "signature:std.fs:87",
+        "signature:std.fs:88",
+        "signature:std.fs:89",
+        "signature:std.fs:90",
+        "signature:std.fs:91",
+        "signature:std.fs:92",
+        "signature:std.fs:93",
+        "signature:std.fs:94",
+        "signature:std.fs:95",
+        "signature:std.fs:96",
+        "signature:std.fs:97",
+        "signature:std.fs:98"
+      ],
+      "requirements": [
+        "requirement:std.fs:cancellation",
+        "requirement:std.fs:capability-absent",
+        "requirement:std.fs:capability-present",
+        "requirement:std.fs:cleanup-on-unwind",
+        "requirement:std.fs:combined-output-order",
+        "requirement:std.fs:empty-input",
+        "requirement:std.fs:host-error-redaction",
+        "requirement:std.fs:partial-io",
+        "requirement:std.fs:pipeline-redirection"
+      ],
+      "rows": {
+        "signatures": 14,
+        "requirements": 9,
+        "total": 23
+      },
+      "owner_command": "scripts/stdlib-fs-test.sh",
+      "cases": [
+        {
+          "id": "filesystem-public",
+          "kind": "runtime",
+          "source": "tests/runtime/m11-std-fs-001.to",
+          "command": "scripts/stdlib-fs-test.sh",
+          "verification": "fixture-sidecars"
+        }
+      ],
+      "refs": [
+        "testing/stdlib-conformance.json#owners/std.fs",
+        "testing/stdlib-public-api.json",
+        "tests/runtime/m11-std-fs-001.to"
+      ],
+      "scope": "public-owner-and-runtime"
+    },
+    {
+      "id": "std.io",
+      "layer": "A1",
+      "status": "verified",
+      "public_signatures": [
+        "signature:std.io:270",
+        "signature:std.io:271",
+        "signature:std.io:272",
+        "signature:std.io:273"
+      ],
+      "requirements": [
+        "requirement:std.io:async-cancellation",
+        "requirement:std.io:composition",
+        "requirement:std.io:determinism",
+        "requirement:std.io:empty-values",
+        "requirement:std.io:error-priority",
+        "requirement:std.io:limits",
+        "requirement:std.io:ownership"
+      ],
+      "rows": {
+        "signatures": 4,
+        "requirements": 7,
+        "total": 11
+      },
+      "owner_command": "scripts/stdlib-io-test.sh",
+      "cases": [
+        {
+          "id": "io-public",
+          "kind": "runtime",
+          "source": "tests/runtime/m11-std-io-001.to",
+          "command": "scripts/stdlib-io-test.sh",
+          "verification": "fixture-sidecars"
+        }
+      ],
+      "refs": [
+        "testing/stdlib-conformance.json#owners/std.io",
+        "testing/stdlib-public-api.json",
+        "tests/runtime/m11-std-io-001.to"
+      ],
+      "scope": "public-owner-and-runtime"
+    },
+    {
+      "id": "std.iter",
+      "layer": "A1",
+      "status": "verified",
+      "public_signatures": [
+        "signature:std.iter:164",
+        "signature:std.iter:165",
+        "signature:std.iter:166",
+        "signature:std.iter:167"
+      ],
+      "requirements": [
+        "requirement:std.iter:async-cancellation",
+        "requirement:std.iter:composition",
+        "requirement:std.iter:determinism",
+        "requirement:std.iter:empty-values",
+        "requirement:std.iter:error-priority",
+        "requirement:std.iter:limits",
+        "requirement:std.iter:ownership"
+      ],
+      "rows": {
+        "signatures": 4,
+        "requirements": 7,
+        "total": 11
+      },
+      "owner_command": "scripts/stdlib-iter-test.sh",
+      "cases": [
+        {
+          "id": "iter-public",
+          "kind": "runtime",
+          "source": "tests/runtime/m11-std-iter-001.to",
+          "command": "scripts/stdlib-iter-test.sh",
+          "verification": "fixture-sidecars"
+        }
+      ],
+      "refs": [
+        "testing/stdlib-conformance.json#owners/std.iter",
+        "testing/stdlib-public-api.json",
+        "tests/runtime/m11-std-iter-001.to"
+      ],
+      "scope": "public-owner-and-runtime"
+    },
+    {
+      "id": "std.json",
+      "layer": "A3",
+      "status": "verified",
+      "public_signatures": [
+        "signature:std.json:143",
+        "signature:std.json:144",
+        "signature:std.json:145",
+        "signature:std.json:146",
+        "signature:std.json:147",
+        "signature:std.json:148",
+        "signature:std.json:149",
+        "signature:std.json:150",
+        "signature:std.json:151",
+        "signature:std.json:153",
+        "signature:std.json:154",
+        "signature:std.json:155",
+        "signature:std.json:156",
+        "signature:std.json:157",
+        "signature:std.json:158",
+        "signature:std.json:160",
+        "signature:std.json:161",
+        "signature:std.json:162",
+        "signature:std.json:163",
+        "signature:std.json:164",
+        "signature:std.json:166",
+        "signature:std.json:167",
+        "signature:std.json:168"
+      ],
+      "requirements": [
+        "requirement:std.json:canonical",
+        "requirement:std.json:dynamic-value",
+        "requirement:std.json:interoperability",
+        "requirement:std.json:limits",
+        "requirement:std.json:numbers",
+        "requirement:std.json:streaming",
+        "requirement:std.json:syntax",
+        "requirement:std.json:typed-direct",
+        "requirement:std.json:unicode"
+      ],
+      "rows": {
+        "signatures": 23,
+        "requirements": 9,
+        "total": 32
+      },
+      "owner_command": "scripts/stdlib-json-test.sh",
+      "cases": [
+        {
+          "id": "codecs-json",
+          "kind": "runtime",
+          "source": "tests/runtime/m11-std-codecs-001.to",
+          "command": "scripts/stdlib-json-test.sh",
+          "verification": "fixture-sidecars"
+        },
+        {
+          "id": "codecs-json-external",
+          "kind": "external",
+          "source": "crates/tondo-stdlib/tests/codec_conformance.rs",
+          "command": "scripts/stdlib-codec-conformance.sh",
+          "verification": "external-harness"
+        }
+      ],
+      "refs": [
+        "crates/tondo-stdlib/tests/codec_conformance.rs",
+        "testing/stdlib-conformance.json#owners/std.json",
+        "testing/stdlib-public-api.json",
+        "tests/runtime/m11-std-codecs-001.to"
+      ],
+      "scope": "public-owner-and-runtime"
+    },
+    {
+      "id": "std.math",
+      "layer": "A1",
+      "status": "verified",
+      "public_signatures": [
+        "signature:std.math:220",
+        "signature:std.math:221",
+        "signature:std.math:222",
+        "signature:std.math:223",
+        "signature:std.math:224",
+        "signature:std.math:225",
+        "signature:std.math:226",
+        "signature:std.math:227",
+        "signature:std.math:228"
+      ],
+      "requirements": [
+        "requirement:std.math:async-cancellation",
+        "requirement:std.math:composition",
+        "requirement:std.math:determinism",
+        "requirement:std.math:empty-values",
+        "requirement:std.math:error-priority",
+        "requirement:std.math:limits",
+        "requirement:std.math:ownership"
+      ],
+      "rows": {
+        "signatures": 9,
+        "requirements": 7,
+        "total": 16
+      },
+      "owner_command": "scripts/stdlib-math-test.sh",
+      "cases": [
+        {
+          "id": "math-ieee",
+          "kind": "runtime",
+          "source": "tests/runtime/m6-num-004-ieee.to",
+          "command": "scripts/stdlib-math-test.sh",
+          "verification": "fixture-sidecars"
+        },
+        {
+          "id": "math-public",
+          "kind": "runtime",
+          "source": "tests/runtime/m11-std-math-001.to",
+          "command": "scripts/stdlib-math-test.sh",
+          "verification": "fixture-sidecars"
+        }
+      ],
+      "refs": [
+        "testing/stdlib-conformance.json#owners/std.math",
+        "testing/stdlib-public-api.json",
+        "tests/runtime/m11-std-math-001.to",
+        "tests/runtime/m6-num-004-ieee.to"
+      ],
+      "scope": "public-owner-and-runtime"
+    },
+    {
+      "id": "std.messagepack",
+      "layer": "A3",
+      "status": "verified",
+      "public_signatures": [
+        "signature:std.messagepack:100",
+        "signature:std.messagepack:101",
+        "signature:std.messagepack:102",
+        "signature:std.messagepack:104",
+        "signature:std.messagepack:105",
+        "signature:std.messagepack:106",
+        "signature:std.messagepack:85",
+        "signature:std.messagepack:86",
+        "signature:std.messagepack:87",
+        "signature:std.messagepack:88",
+        "signature:std.messagepack:89",
+        "signature:std.messagepack:90",
+        "signature:std.messagepack:91",
+        "signature:std.messagepack:92",
+        "signature:std.messagepack:93",
+        "signature:std.messagepack:95",
+        "signature:std.messagepack:96",
+        "signature:std.messagepack:98",
+        "signature:std.messagepack:99"
+      ],
+      "requirements": [
+        "requirement:std.messagepack:deterministic",
+        "requirement:std.messagepack:extensions",
+        "requirement:std.messagepack:interoperability",
+        "requirement:std.messagepack:limits",
+        "requirement:std.messagepack:maps",
+        "requirement:std.messagepack:minimal-forms",
+        "requirement:std.messagepack:numeric-bits",
+        "requirement:std.messagepack:streaming",
+        "requirement:std.messagepack:text-and-binary",
+        "requirement:std.messagepack:typed-direct",
+        "requirement:std.messagepack:wire-model"
+      ],
+      "rows": {
+        "signatures": 19,
+        "requirements": 11,
+        "total": 30
+      },
+      "owner_command": "scripts/stdlib-messagepack-test.sh",
+      "cases": [
+        {
+          "id": "codecs-messagepack",
+          "kind": "runtime",
+          "source": "tests/runtime/m11-std-codecs-001.to",
+          "command": "scripts/stdlib-messagepack-test.sh",
+          "verification": "fixture-sidecars"
+        },
+        {
+          "id": "codecs-messagepack-external",
+          "kind": "external",
+          "source": "crates/tondo-stdlib/tests/codec_conformance.rs",
+          "command": "scripts/stdlib-codec-conformance.sh",
+          "verification": "external-harness"
+        }
+      ],
+      "refs": [
+        "crates/tondo-stdlib/tests/codec_conformance.rs",
+        "testing/stdlib-conformance.json#owners/std.messagepack",
+        "testing/stdlib-public-api.json",
+        "tests/runtime/m11-std-codecs-001.to"
+      ],
+      "scope": "public-owner-and-runtime"
+    },
+    {
+      "id": "std.meta",
+      "layer": "A0",
+      "status": "verified",
+      "public_signatures": [],
+      "requirements": [
+        "requirement:std.meta:canonical-rendering",
+        "requirement:std.meta:compile-time-budget",
+        "requirement:std.meta:meta-target-boundary",
+        "requirement:std.meta:request-response",
+        "requirement:std.meta:snapshot-model",
+        "requirement:std.meta:source-builder"
+      ],
+      "rows": {
+        "signatures": 0,
+        "requirements": 6,
+        "total": 6
+      },
+      "owner_command": "scripts/stdlib-meta-test.sh",
+      "cases": [
+        {
+          "id": "meta-conformance",
+          "kind": "compiler",
+          "source": "crates/tondo-compiler/tests/std_meta_conformance.rs",
+          "command": "scripts/stdlib-meta-test.sh",
+          "verification": "compiler-test"
+        }
+      ],
+      "refs": [
+        "crates/tondo-compiler/tests/std_meta_conformance.rs",
+        "testing/stdlib-conformance.json#owners/std.meta"
+      ],
+      "scope": "compiler-build-only"
+    },
+    {
+      "id": "std.path",
+      "layer": "A2",
+      "status": "verified",
+      "public_signatures": [
+        "signature:std.path:47",
+        "signature:std.path:48",
+        "signature:std.path:49",
+        "signature:std.path:50",
+        "signature:std.path:51",
+        "signature:std.path:52",
+        "signature:std.path:53",
+        "signature:std.path:54",
+        "signature:std.path:55",
+        "signature:std.path:56"
+      ],
+      "requirements": [
+        "requirement:std.path:cancellation",
+        "requirement:std.path:capability-absent",
+        "requirement:std.path:capability-present",
+        "requirement:std.path:cleanup-on-unwind",
+        "requirement:std.path:combined-output-order",
+        "requirement:std.path:empty-input",
+        "requirement:std.path:host-error-redaction",
+        "requirement:std.path:partial-io",
+        "requirement:std.path:pipeline-redirection"
+      ],
+      "rows": {
+        "signatures": 10,
+        "requirements": 9,
+        "total": 19
+      },
+      "owner_command": "scripts/stdlib-path-test.sh",
+      "cases": [
+        {
+          "id": "path-public",
+          "kind": "runtime",
+          "source": "tests/runtime/m11-std-path-001.to",
+          "command": "scripts/stdlib-path-test.sh",
+          "verification": "fixture-sidecars"
+        }
+      ],
+      "refs": [
+        "testing/stdlib-conformance.json#owners/std.path",
+        "testing/stdlib-public-api.json",
+        "tests/runtime/m11-std-path-001.to"
+      ],
+      "scope": "public-owner-and-runtime"
+    },
+    {
+      "id": "std.process",
+      "layer": "A2",
+      "status": "verified",
+      "public_signatures": [
+        "signature:std.process:148",
+        "signature:std.process:149",
+        "signature:std.process:150",
+        "signature:std.process:151",
+        "signature:std.process:152",
+        "signature:std.process:153",
+        "signature:std.process:154",
+        "signature:std.process:155",
+        "signature:std.process:156",
+        "signature:std.process:157",
+        "signature:std.process:158",
+        "signature:std.process:159",
+        "signature:std.process:160",
+        "signature:std.process:161",
+        "signature:std.process:162",
+        "signature:std.process:163",
+        "signature:std.process:164"
+      ],
+      "requirements": [
+        "requirement:std.process:cancellation",
+        "requirement:std.process:capability-absent",
+        "requirement:std.process:capability-present",
+        "requirement:std.process:cleanup-on-unwind",
+        "requirement:std.process:combined-output-order",
+        "requirement:std.process:empty-input",
+        "requirement:std.process:host-error-redaction",
+        "requirement:std.process:partial-io",
+        "requirement:std.process:pipeline-redirection"
+      ],
+      "rows": {
+        "signatures": 17,
+        "requirements": 9,
+        "total": 26
+      },
+      "owner_command": "scripts/stdlib-process-test.sh",
+      "cases": [
+        {
+          "id": "process-cancellation",
+          "kind": "runtime",
+          "source": "tests/runtime/m8-process-cancel.to",
+          "command": "scripts/stdlib-process-test.sh",
+          "verification": "fixture-sidecars"
+        },
+        {
+          "id": "process-public",
+          "kind": "runtime",
+          "source": "tests/runtime/m8-process-001.to",
+          "command": "scripts/stdlib-process-test.sh",
+          "verification": "fixture-sidecars"
+        }
+      ],
+      "refs": [
+        "testing/stdlib-conformance.json#owners/std.process",
+        "testing/stdlib-public-api.json",
+        "tests/runtime/m8-process-001.to",
+        "tests/runtime/m8-process-cancel.to"
+      ],
+      "scope": "public-owner-and-runtime"
+    },
+    {
+      "id": "std.protobuf",
+      "layer": "A3",
+      "status": "verified",
+      "public_signatures": [
+        "signature:std.protobuf:113",
+        "signature:std.protobuf:114",
+        "signature:std.protobuf:115",
+        "signature:std.protobuf:116",
+        "signature:std.protobuf:117",
+        "signature:std.protobuf:119",
+        "signature:std.protobuf:120",
+        "signature:std.protobuf:121",
+        "signature:std.protobuf:122",
+        "signature:std.protobuf:123",
+        "signature:std.protobuf:125",
+        "signature:std.protobuf:126",
+        "signature:std.protobuf:127",
+        "signature:std.protobuf:129",
+        "signature:std.protobuf:130"
+      ],
+      "requirements": [
+        "requirement:std.protobuf:deterministic",
+        "requirement:std.protobuf:evolution",
+        "requirement:std.protobuf:interoperability",
+        "requirement:std.protobuf:limits",
+        "requirement:std.protobuf:maps",
+        "requirement:std.protobuf:open-enums",
+        "requirement:std.protobuf:presence",
+        "requirement:std.protobuf:repeated-and-packed",
+        "requirement:std.protobuf:scalar-mapping",
+        "requirement:std.protobuf:schema-inputs",
+        "requirement:std.protobuf:streaming",
+        "requirement:std.protobuf:typed-direct",
+        "requirement:std.protobuf:unknown-fields",
+        "requirement:std.protobuf:wire-model"
+      ],
+      "rows": {
+        "signatures": 15,
+        "requirements": 14,
+        "total": 29
+      },
+      "owner_command": "scripts/stdlib-protobuf-test.sh",
+      "cases": [
+        {
+          "id": "codecs-protobuf",
+          "kind": "runtime",
+          "source": "tests/runtime/m11-std-codecs-001.to",
+          "command": "scripts/stdlib-protobuf-test.sh",
+          "verification": "fixture-sidecars"
+        },
+        {
+          "id": "codecs-protobuf-external",
+          "kind": "external",
+          "source": "crates/tondo-stdlib/tests/codec_conformance.rs",
+          "command": "scripts/stdlib-codec-conformance.sh",
+          "verification": "external-harness"
+        }
+      ],
+      "refs": [
+        "crates/tondo-stdlib/tests/codec_conformance.rs",
+        "testing/stdlib-conformance.json#owners/std.protobuf",
+        "testing/stdlib-public-api.json",
+        "tests/runtime/m11-std-codecs-001.to"
+      ],
+      "scope": "public-owner-and-runtime"
+    },
+    {
+      "id": "std.reflect",
+      "layer": "A0",
+      "status": "verified",
+      "public_signatures": [],
+      "requirements": [
+        "requirement:std.reflect:artifact-local-identity",
+        "requirement:std.reflect:catalog-shape",
+        "requirement:std.reflect:malformed-inputs-and-cost",
+        "requirement:std.reflect:no-runtime-reflection",
+        "requirement:std.reflect:privacy",
+        "requirement:std.reflect:root-closure"
+      ],
+      "rows": {
+        "signatures": 0,
+        "requirements": 6,
+        "total": 6
+      },
+      "owner_command": "scripts/stdlib-reflect-test.sh",
+      "cases": [
+        {
+          "id": "reflect-metadata",
+          "kind": "compiler",
+          "source": "crates/tondo-compiler/src/reflect.rs",
+          "command": "scripts/stdlib-reflect-test.sh",
+          "verification": "compiler-test"
+        }
+      ],
+      "refs": [
+        "crates/tondo-compiler/src/reflect.rs",
+        "testing/stdlib-conformance.json#owners/std.reflect"
+      ],
+      "scope": "compiler-metadata-only"
+    },
+    {
+      "id": "std.serialization",
+      "layer": "A3",
+      "status": "verified",
+      "public_signatures": [],
+      "requirements": [
+        "requirement:std.serialization:async-cancellation",
+        "requirement:std.serialization:composition",
+        "requirement:std.serialization:determinism",
+        "requirement:std.serialization:empty-values",
+        "requirement:std.serialization:error-priority",
+        "requirement:std.serialization:limits",
+        "requirement:std.serialization:ownership"
+      ],
+      "rows": {
+        "signatures": 0,
+        "requirements": 7,
+        "total": 7
+      },
+      "owner_command": "scripts/stdlib-serialization-test.sh",
+      "cases": [
+        {
+          "id": "serialization-codec-entry",
+          "kind": "runtime",
+          "source": "tests/runtime/m11-std-codecs-001.to",
+          "command": "scripts/stdlib-serialization-test.sh",
+          "verification": "fixture-sidecars"
+        },
+        {
+          "id": "serialization-external",
+          "kind": "external",
+          "source": "crates/tondo-stdlib/tests/codec_conformance.rs",
+          "command": "scripts/stdlib-codec-conformance.sh",
+          "verification": "external-harness"
+        }
+      ],
+      "refs": [
+        "crates/tondo-stdlib/tests/codec_conformance.rs",
+        "testing/stdlib-conformance.json#owners/std.serialization",
+        "tests/runtime/m11-std-codecs-001.to"
+      ],
+      "scope": "public-owner-and-runtime"
+    },
+    {
+      "id": "std.testing",
+      "layer": "A4",
+      "status": "verified",
+      "public_signatures": [
+        "signature:std.testing:148",
+        "signature:std.testing:149",
+        "signature:std.testing:150",
+        "signature:std.testing:187",
+        "signature:std.testing:188",
+        "signature:std.testing:189",
+        "signature:std.testing:190",
+        "signature:std.testing:238",
+        "signature:std.testing:239",
+        "signature:std.testing:240",
+        "signature:std.testing:282",
+        "signature:std.testing:283",
+        "signature:std.testing:284",
+        "signature:std.testing:285",
+        "signature:std.testing:286",
+        "signature:std.testing:287",
+        "signature:std.testing:288",
+        "signature:std.testing:289",
+        "signature:std.testing:290",
+        "signature:std.testing:296",
+        "signature:std.testing:69",
+        "signature:std.testing:70",
+        "signature:std.testing:71",
+        "signature:std.testing:72",
+        "signature:std.testing:73"
+      ],
+      "requirements": [
+        "requirement:std.testing:assertions",
+        "requirement:std.testing:core-compatibility",
+        "requirement:std.testing:float-tolerance",
+        "requirement:std.testing:generation",
+        "requirement:std.testing:option-result",
+        "requirement:std.testing:shrinking",
+        "requirement:std.testing:temporary",
+        "requirement:std.testing:text-diff"
+      ],
+      "rows": {
+        "signatures": 25,
+        "requirements": 8,
+        "total": 33
+      },
+      "owner_command": "scripts/stdlib-testing-test.sh",
+      "cases": [
+        {
+          "id": "testing-acceptance",
+          "kind": "acceptance",
+          "source": "crates/tondo-cli/tests/acceptance_projects.rs",
+          "command": "cargo test -p tondo-cli --locked --test acceptance_projects",
+          "verification": "acceptance-test"
+        }
+      ],
+      "refs": [
+        "crates/tondo-cli/tests/acceptance_projects.rs",
+        "testing/stdlib-conformance.json#owners/std.testing",
+        "testing/stdlib-public-api.json"
+      ],
+      "scope": "public-owner-and-runtime"
+    },
+    {
+      "id": "std.text",
+      "layer": "A1",
+      "status": "verified",
+      "public_signatures": [
+        "signature:std.text:104",
+        "signature:std.text:105",
+        "signature:std.text:106",
+        "signature:std.text:107",
+        "signature:std.text:108",
+        "signature:std.text:109",
+        "signature:std.text:110",
+        "signature:std.text:111",
+        "signature:std.text:112",
+        "signature:std.text:113",
+        "signature:std.text:114",
+        "signature:std.text:115",
+        "signature:std.text:116",
+        "signature:std.text:117",
+        "signature:std.text:121"
+      ],
+      "requirements": [
+        "requirement:std.text:async-cancellation",
+        "requirement:std.text:composition",
+        "requirement:std.text:determinism",
+        "requirement:std.text:empty-values",
+        "requirement:std.text:error-priority",
+        "requirement:std.text:limits",
+        "requirement:std.text:ownership"
+      ],
+      "rows": {
+        "signatures": 15,
+        "requirements": 7,
+        "total": 22
+      },
+      "owner_command": "scripts/stdlib-text-test.sh",
+      "cases": [
+        {
+          "id": "text-index-slice",
+          "kind": "runtime",
+          "source": "tests/runtime/m11-std-text-002.to",
+          "command": "scripts/stdlib-text-test.sh",
+          "verification": "fixture-sidecars"
+        },
+        {
+          "id": "text-public",
+          "kind": "runtime",
+          "source": "tests/runtime/m11-std-text-001.to",
+          "command": "scripts/stdlib-text-test.sh",
+          "verification": "fixture-sidecars"
+        }
+      ],
+      "refs": [
+        "testing/stdlib-conformance.json#owners/std.text",
+        "testing/stdlib-public-api.json",
+        "tests/runtime/m11-std-text-001.to",
+        "tests/runtime/m11-std-text-002.to"
+      ],
+      "scope": "public-owner-and-runtime"
+    },
+    {
+      "id": "std.time",
+      "layer": "A0",
+      "status": "verified",
+      "public_signatures": [
+        "signature:std.time:42",
+        "signature:std.time:43",
+        "signature:std.time:44",
+        "signature:std.time:45",
+        "signature:std.time:47",
+        "signature:std.time:48",
+        "signature:std.time:49",
+        "signature:std.time:50"
+      ],
+      "requirements": [
+        "requirement:std.time:capability-and-conformance",
+        "requirement:std.time:limits-and-errors",
+        "requirement:std.time:model-and-identity",
+        "requirement:std.time:real-provider",
+        "requirement:std.time:timers-and-cancellation",
+        "requirement:std.time:virtual-provider"
+      ],
+      "rows": {
+        "signatures": 8,
+        "requirements": 6,
+        "total": 14
+      },
+      "owner_command": "scripts/stdlib-time-test.sh",
+      "cases": [
+        {
+          "id": "time-monotonic",
+          "kind": "runtime",
+          "source": "tests/runtime/m10-std-time-001.to",
+          "command": "scripts/stdlib-time-test.sh",
+          "verification": "fixture-sidecars"
+        }
+      ],
+      "refs": [
+        "testing/stdlib-conformance.json#owners/std.time",
+        "testing/stdlib-public-api.json",
+        "tests/runtime/m10-std-time-001.to"
+      ],
+      "scope": "public-owner-and-runtime"
+    }
+  ],
+  "summary": {
+    "owners": 22,
+    "signatures": 214,
+    "requirements": 171,
+    "rows": 385,
+    "cases": 32
+  }
+}

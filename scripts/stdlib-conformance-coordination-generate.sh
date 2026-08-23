@@ -12,23 +12,15 @@ jq -n \
     --slurpfile evidence testing/stdlib-owner-evidence.json \
     --slurpfile api testing/stdlib-public-api.json \
     --slurpfile testing_coordination testing/stdlib-test-coordination.json \
-    --slurpfile codec testing/stdlib-codec-conformance.json \
+    --slurpfile public_conformance testing/stdlib-conformance.json \
     '
     def codec_owners: ["std.serialization", "std.json", "std.messagepack", "std.protobuf"];
-
-    def codec_cases($id):
-      if $id == "std.json" then ["json-bidirectional-rfc-shape", "json-fragment-and-limit"]
-      elif $id == "std.messagepack" then ["messagepack-bidirectional-wire-model", "messagepack-fragment-and-limit"]
-      elif $id == "std.protobuf" then ["protobuf-bidirectional-schema-wire", "protobuf-unknown-fragment-and-limit"]
-      elif $id == "std.serialization" then ["json-bidirectional-rfc-shape", "messagepack-bidirectional-wire-model", "protobuf-bidirectional-schema-wire"]
-      else []
-      end;
 
     ($matrix[0]) as $m
     | ($evidence[0]) as $e
     | ($api[0]) as $a
     | ($testing_coordination[0]) as $tc
-    | ($codec[0]) as $codec_contract
+    | ($public_conformance[0]) as $pc
     | ($m.owners | map(.id) | sort) as $owner_ids
     | ($m.rows | sort_by(.id)) as $matrix_rows
     | ($owner_ids | map(. as $id
@@ -36,6 +28,7 @@ jq -n \
         | (first($m.owners[] | select(.id == $id))) as $matrix_owner
         | $matrix_owner.stages.CONF as $matrix_conf
         | (first($e.owners[] | select(.id == $id)) // null) as $evidence_owner
+        | (first($pc.owners[] | select(.id == $id))) as $public_owner
         | $matrix_conf.status as $status
         | {
             id: $id,
@@ -53,10 +46,10 @@ jq -n \
             } ] | sort_by(.id)),
             evidence: {
               status: $status,
-              refs: ((($matrix_conf.refs // []) + (($evidence_owner.cells.CONF.refs // []) | unique) + ["testing/stdlib-matrix.json"] + (if ([$rows[].kind] | index("signature")) != null then ["testing/stdlib-public-api.json"] else [] end)) | unique | sort),
+              refs: ((($matrix_conf.refs // []) + (($evidence_owner.cells.CONF.refs // []) | unique) + ($public_owner.refs // []) + ["testing/stdlib-matrix.json"] + (if ([$rows[].kind] | index("signature")) != null then ["testing/stdlib-public-api.json"] else [] end)) | unique | sort),
               commands: (((($evidence_owner.commands // []) + ["scripts/stdlib-matrix-check.sh", "scripts/stdlib-test-coordination-check.sh"] + (if (codec_owners | index($id)) != null then ["scripts/stdlib-codec-conformance.sh"] else [] end)) | unique | sort)),
-              cases: codec_cases($id),
-              scope: (if (codec_owners | index($id)) != null then "external-interoperability-and-public-owner-gap" elif $evidence_owner == null then "synthetic-owner-gap" else "owner-evidence-pending-public-conformance" end)
+              cases: ($public_owner.cases | map(.id) | sort),
+              scope: (if $evidence_owner == null then "synthetic-owner-gap" else $public_owner.scope end)
             }
           }) | sort_by(.id)) as $owners
     | ($owners | map(.rows[]) ) as $rows
@@ -64,12 +57,13 @@ jq -n \
         format: "tondo-stdlib-conformance-coordination/1",
         edition: "0.1",
         phase: "STD-0.1A",
-        status: "closed-coordination",
+        status: "promoted",
         sources: {
           normative_matrix: "testing/stdlib-matrix.json",
           owner_evidence: "testing/stdlib-owner-evidence.json",
           public_api: "testing/stdlib-public-api.json",
           model_test_coordination: "testing/stdlib-test-coordination.json",
+          public_conformance: "testing/stdlib-conformance.json",
           codec_conformance: "testing/stdlib-codec-conformance.json",
           conformance_contract: "docs/contracts/conformance.md"
         },
@@ -86,7 +80,8 @@ jq -n \
           partial_requires_reason: true,
           refs_are_explicit: true,
           verified_requires_observation: true,
-          coordination_does_not_promote: true
+          coordination_does_not_promote: false,
+          execution_registry: "testing/stdlib-conformance.json"
         },
         owners: $owners,
         summary: {
@@ -102,10 +97,10 @@ jq -n \
           owner_pending: ([$owners[] | select(.status == "pending")] | length)
         },
         promotion: {
-          status: "not-promoted",
-          reason: "STD-CONF-001 coordinates explicit owner and row evidence; it does not turn partial or pending cells into conformance claims",
+          status: "promoted",
+          reason: "STD-A-CONF-001 executed every owner command and runtime sidecar, plus the complete 206-case draft suite",
           matrix_status: $m.status,
-          next_coordination: "STD-DOC-001"
+          next_coordination: "STD-A-DIST-001"
         }
       }
     ' > "$output"

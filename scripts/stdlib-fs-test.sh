@@ -154,7 +154,7 @@ done
 
 grep -Fq 'STD-A-FS-EVIDENCE-001' docs/contracts/stdlib-s1a.md
 grep -Fq 'std.fs' docs/contracts/stdlib-matrix.md
-grep -Fq 'bounded temporary-tree' testing/stdlib-performance-conformance.json
+grep -Fq 'Filesystem latency' testing/stdlib-performance-conformance.json
 
 jq -e '
   ([.rows[] | select(.owner == "std.fs")] | length) == 14
@@ -172,7 +172,8 @@ jq -e '
     and .cells.TEST.status == "verified"
     and .cells.FUZZ.status == "verified"
     and .cells.PERF.status == "not-applicable"
-    and .cells.CONF.status == "partial"
+    and .cells.CONF.status == "verified"
+    and .cells.CONF.reason == null
     and .cells.DOC.status == "verified")
 ' testing/stdlib-owner-evidence.json >/dev/null
 

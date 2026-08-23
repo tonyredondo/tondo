@@ -139,7 +139,8 @@ jq -e '
     and .cells.FUZZ.status == "verified"
     and .cells.PERF.status == "verified"
     and .cells.PERF.reason == null
-    and .cells.CONF.status == "partial"
+    and .cells.CONF.status == "verified"
+    and .cells.CONF.reason == null
     and .cells.DOC.status == "verified")
 ' testing/stdlib-owner-evidence.json >/dev/null
 

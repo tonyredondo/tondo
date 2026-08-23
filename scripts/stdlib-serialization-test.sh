@@ -124,7 +124,8 @@ grep -Fq 'stdlib_codecs' fuzz/Cargo.toml
 grep -Fq 'one-byte-fragments' testing/stdlib-codec-conformance.json
 grep -Fq 'STD-A-SER-EVIDENCE-001' docs/contracts/stdlib-s1a.md
 grep -Fq 'std.serialization' docs/contracts/stdlib-matrix.md
-grep -Fq 'event protocol' testing/stdlib-performance-conformance.json
+grep -Fq '"operation": "std.serialization.events"' \
+    testing/stdlib-performance-conformance.json
 
 jq -e '
   .owners == ["std.core","std.text","std.collections","std.iter","std.math","std.format","std.io","std.serialization"]

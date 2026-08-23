@@ -22,17 +22,18 @@ jq -e '
   .format == "tondo-stdlib-conformance-coordination/1"
   and .edition == "0.1"
   and .phase == "STD-0.1A"
-  and .status == "closed-coordination"
-  and .promotion.status == "not-promoted"
-  and .promotion.next_coordination == "STD-DOC-001"
-  and .promotion.matrix_status == "open-gaps"
+  and .status == "promoted"
+  and .promotion.status == "promoted"
+  and .promotion.next_coordination == "STD-A-DIST-001"
+  and .promotion.matrix_status == "verified"
   and .rules.one_owner_per_matrix_row
   and .rules.every_matrix_row_has_conf_record
   and .rules.pending_requires_reason
   and .rules.partial_requires_reason
   and .rules.refs_are_explicit
   and .rules.verified_requires_observation
-  and .rules.coordination_does_not_promote
+  and (.rules.coordination_does_not_promote == false)
+  and .rules.execution_registry == "testing/stdlib-conformance.json"
   and (.owners | type == "array" and length == 22)
   and ([.owners[].id] | unique | length) == 22
   and (.summary == {
@@ -40,11 +41,11 @@ jq -e '
     rows: 385,
     public_signatures: 214,
     requirements: 171,
-    verified_rows: 0,
-    partial_rows: 385,
+    verified_rows: 385,
+    partial_rows: 0,
     pending_rows: 0,
-    owner_verified: 0,
-    owner_partial: 22,
+    owner_verified: 22,
+    owner_partial: 0,
     owner_pending: 0
   })
   and all(.owners[];
@@ -52,24 +53,24 @@ jq -e '
     and (.rows | type == "array" and length > 0)
     and (.public_signatures | type == "array")
     and (.requirements | type == "array")
-    and (.status | IN("verified", "partial", "pending"))
-    and (.reason | type == "string" and length > 0)
+    and .status == "verified"
+    and .reason == null
     and (.evidence.status == .status)
     and (.evidence.refs | type == "array" and length > 0)
     and (.evidence.commands | type == "array" and length > 0)
-    and (.evidence.cases | type == "array")
+    and (.evidence.cases | type == "array" and length > 0)
     and (.evidence.scope | type == "string" and length > 0)
     and all(.rows[];
       ((.id | type) == "string" and (.id | (startswith("signature:") or startswith("requirement:"))))
       and (.kind | IN("signature", "requirement"))
-      and (.status | IN("verified", "partial", "pending", "gap"))
-      and (if .status == "verified" then .reason == null else (.reason | type == "string" and length > 0) end)
+      and .status == "verified"
+      and .reason == null
       and (.refs | type == "array" and length > 0)
     )
   )
   and ([.owners[].rows[].id] | unique | length) == 385
   and ([.owners[].rows[].id] | sort) == ([.owners[].rows[].id] | unique | sort)
-  and all(.owners[]; (.status != "verified" or all(.rows[]; .status == "verified")))
+    and all(.owners[]; .status == "verified" and all(.rows[]; .status == "verified"))
 ' "$coordination" >/dev/null || {
     echo "stdlib conformance coordination: invalid registry" >&2
     exit 1
@@ -113,4 +114,4 @@ while IFS= read -r command; do
     fi
 done < <(jq -r '.owners[].evidence.commands[]' "$coordination")
 
-echo "stdlib conformance coordination: OK (22 owners; 385 rows; 214 signatures; 171 requirements; gaps explicit; promotion withheld)"
+echo "stdlib conformance coordination: OK (22 owners; 385 verified rows; 214 signatures; 171 requirements; promotion recorded)"

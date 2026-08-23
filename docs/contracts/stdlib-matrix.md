@@ -32,6 +32,11 @@ como catálogo futuro cerrado:
 sus módulos aparecen solo en `catalogs.future_modules` y no se convierten en
 requisitos implícitos de la fase actual.
 
+En el árbol actual la matriz está en estado `verified`: las 385 filas tienen
+las seis etapas explícitas y `CONF` está promovido por `STD-A-CONF-001`. La
+promoción solo certifica el draft ejecutable; `STD-A-DIST-001` y el sellado S1A
+siguen siendo gates posteriores y no constituyen una release.
+
 ## Celdas obligatorias
 
 Cada fila contiene referencias explícitas a las seis celdas:
@@ -97,7 +102,8 @@ el corpus de overflow/subnormales, las properties de redondeo y la auditoría
 pública enlazan las nueve firmas; el scalar oracle es la referencia normativa y
 no hay una ruta SIMD alternativa en 0.1. `STD-A-FUZZ-001` promueve el fuzz
 owner-aware; `std.math.fma` tiene baseline promovido en las seis workloads y
-las ocho dimensiones; la conformance global sigue abierta en `STD-CONF-001`.
+las ocho dimensiones; la conformance pública queda promovida por
+`STD-A-CONF-001`.
 
 `std.format` conserva `HOST` como `not-applicable`: `Display`, `Builder`,
 `format` y `join` son intrínsecos portables y no consultan capabilities ni el
@@ -105,7 +111,7 @@ entorno. El fixture público, las properties de límites exactos/atomicidad, la
 verificación estática y la auditoría de las cinco firmas quedan enlazados por
 `STD-A-FMT-EVIDENCE-001`; `STD-A-FUZZ-001` promueve el fuzz owner-aware;
 `std.format.join` tiene baseline promovido en las seis workloads y las ocho
-dimensiones; `STD-CONF-001` sigue abierto.
+dimensiones; la conformance pública queda promovida por `STD-A-CONF-001`.
 
 `std.io` conserva `HOST` como `not-applicable`: Reader/Writer, `IoLimits`,
 `readAll` y `writeAll` son protocolos portables y no conceden capabilities por
@@ -113,7 +119,8 @@ importarse. La fixture pública y el kernel cubren particiones de chunks, EOF,
 short I/O, límites, progreso, errores de `flush` y cancelación; la auditoría de
 las cuatro firmas queda enlazada por `STD-A-IO-EVIDENCE-001`. `STD-A-FUZZ-001`
 promueve el fuzz owner-aware; `std.io.read_write_all` tiene baseline promovido
-en las seis workloads y las ocho dimensiones; `STD-CONF-001` sigue abierto;
+en las seis workloads y las ocho dimensiones; la conformance pública queda
+promovida por `STD-A-CONF-001`;
 los adaptadores pertenecen a `std.console`,
 `std.fs` y `std.process`.
 
@@ -123,7 +130,8 @@ bytes nativos, UTF-8 estricto, NFC/NFD sin normalización, `.`/`..`, raíces,
 extensiones, joins atómicos y el límite de 32 KiB; la auditoría de sus diez
 firmas queda enlazada por `STD-A-PATH-EVIDENCE-001`. `STD-A-FUZZ-001` promueve
 el fuzz owner-aware; `std.path.lexical` tiene baseline promovido en las seis
-workloads y las ocho dimensiones; `STD-CONF-001` sigue abierto.
+workloads y las ocho dimensiones; la conformance pública queda promovida por
+`STD-A-CONF-001`.
 
 `std.console` conserva `HOST` como `verified`: la capability `console` se
 comprueba antes del lowering y el adaptador conserva tokens separados para
@@ -132,7 +140,8 @@ pruebas host cubren partial I/O, EOF, LF estable, errores de UTF-8 y handles
 incorrectos sin publicar estado parcial; la auditoría de las siete firmas queda
 enlazada por `STD-A-CONSOLE-EVIDENCE-001`. `STD-A-FUZZ-001` promueve el fuzz
 owner-aware; el coste de `std.console` queda en la campaña PERF-001 hosted por
-ser target-provider scoped, y `STD-CONF-001` sigue abierto explícitamente.
+ser target-provider scoped, y la conformance pública queda promovida por
+`STD-A-CONF-001`.
 
 `std.fs` conserva `HOST` como `verified`: la capability `filesystem` se
 comprueba antes del lowering y no se concede por importar el módulo. El fixture
@@ -141,7 +150,7 @@ cancelación, límites atómicos, errores tipados, orden lexicográfico de bytes
 `atomicWrite`; las 14 firmas quedan enlazadas por
 `STD-A-FS-EVIDENCE-001`. `STD-A-FUZZ-001` promueve el fuzz owner-aware; el
 coste de `std.fs` queda en la campaña PERF-001 hosted por ser target-provider
-scoped, y `STD-CONF-001` sigue abierto explícitamente.
+scoped, y la conformance pública queda promovida por `STD-A-CONF-001`.
 
 `std.process` conserva `HOST` como `verified`: la capability `process` se
 comprueba antes del lowering y no se concede por importar el módulo. Los planes
@@ -150,8 +159,8 @@ firmas públicas por `STD-A-PROC-EVIDENCE-001`; los fixtures cubren argv literal
 shell explícito, las cuatro formas de pipe, backpressure, streams separados y
 `combined`, redirección `mergeStderr`, errores, cancelación, cleanup y reaping.
 `STD-A-FUZZ-001` promueve el fuzz owner-aware; el coste de `std.process` queda
-en la campaña PERF-001 hosted por ser target-provider scoped, y
-`STD-CONF-001` sigue abierto explícitamente.
+en la campaña PERF-001 hosted por ser target-provider scoped, y la conformance
+pública queda promovida por `STD-A-CONF-001`.
 
 `std.serialization` conserva `HOST` como `not-applicable`: es el protocolo de
 eventos portable compartido por los codecs y sus providers de derive son
@@ -159,8 +168,8 @@ herméticos y build-only. `STD-A-SER-EVIDENCE-001` enlaza traits, frames,
 `Value`/`Raw`, límites, chunking, publicación atómica, records, enums,
 genéricos, attributes, source maps y diagnostics con el kernel y sus tests.
 `STD-A-FUZZ-001` promueve el fuzz del event protocol; `std.serialization.events`
-tiene baseline promovido en las seis workloads y las ocho dimensiones, y
-`STD-CONF-001` sigue abierto explícitamente.
+tiene baseline promovido en las seis workloads y las ocho dimensiones, y la
+conformance pública queda promovida por `STD-A-CONF-001`.
 
 `std.json` conserva `HOST` como `not-applicable`: es un codec portable con
 parser y writer de frames explícitos, y el bridge del compilador no consulta
@@ -168,7 +177,7 @@ capabilities ni el target. `STD-A-JSON-EVIDENCE-001` enlaza sus 22 firmas con
 las rutas typed/dynamic/streaming, `JsonNumber`, JCS, límites, fragmentos de un
 byte, el fuzz owner-aware de `STD-A-FUZZ-001` e interoperabilidad `serde_json`.
 `std.json.parse_encode` tiene baseline promovido en las seis workloads y las
-ocho dimensiones; `STD-CONF-001` sigue abierto.
+ocho dimensiones; la conformance pública queda promovida por `STD-A-CONF-001`.
 
 `std.messagepack` conserva `HOST` como `not-applicable`: es un codec binario
 portable con frames explícitos, claves arbitrarias y extensiones preservadas.
@@ -176,7 +185,8 @@ portable con frames explícitos, claves arbitrarias y extensiones preservadas.
 no mínimas, floats, binary/UTF-8, ext/timestamp, determinismo, límites,
 fragmentos de un byte, el fuzz owner-aware de `STD-A-FUZZ-001` e interoperabilidad
 `rmpv`. `std.messagepack.decode_encode` tiene baseline promovido en las seis
-workloads y las ocho dimensiones; `STD-CONF-001` sigue abierto.
+workloads y las ocho dimensiones; la conformance pública queda promovida por
+`STD-A-CONF-001`.
 
 `std.protobuf` conserva `HOST` como `not-applicable`: el wire es portable y el
 generator es build-only, hermético y alimentado únicamente por `tondo.toml` y
@@ -185,7 +195,8 @@ schema-first proto3, presencia, repeated/packed, maps, oneof, enums abiertos,
 unknown fields/grupos, evolución, descriptor raíz, determinismo, límites,
 fragmentos de un byte, el fuzz owner-aware de `STD-A-FUZZ-001` e interoperabilidad
 `prost`. `std.protobuf.decode_message` tiene baseline promovido en las seis
-workloads y las ocho dimensiones; `STD-CONF-001` sigue abierto.
+workloads y las ocho dimensiones; la conformance pública queda promovida por
+`STD-A-CONF-001`.
 
 `std.testing` es test-only y conserva `HOST` como `verified`: el worker bridge
 es el único adaptador y la producción no puede importar el módulo. El leaf
@@ -194,8 +205,8 @@ diffs, tolerancias, consumo de `Option`/`Result`, temporales aislados,
 generación determinista, shrinking sellado, control del runner y fixtures de
 dogfooding. `STD-A-FUZZ-001` ha promovido la ruta owner-aware de `std.testing`;
 `std.testing.generate_diff` tiene baseline promovido en las seis workloads y
-las ocho dimensiones, mientras `STD-CONF-001` sigue abierta con sus razones
-explícitas.
+las ocho dimensiones; la conformance pública queda promovida por
+`STD-A-CONF-001`.
 
 `STD-TEST-001` añade `testing/stdlib-test-coordination.json`, un registro
 generado que liga las 214 firmas y 171 requisitos a 66 leyes de modelo,
@@ -206,23 +217,23 @@ mantiene performance y conformance como dimensiones independientes. La prueba Ru
 crear un segundo owner ni una API alternativa.
 
 `STD-CONF-001` añade `testing/stdlib-conformance-coordination.json`, que
-materializa una fila `CONF` por cada una de las 385 filas de esta matriz. Cada
-owner conserva sus comandos, referencias, casos de interoperabilidad cuando
-existen y el estado derivado de sus filas; `std.async` aporta siete filas de
-contrato, con cinco callable auditadas y la implementación genérica pendiente;
-los demás gaps continúan `partial` sin sobreafirmar conformance.
-El checker regenera y cruza la identidad de todas las filas, exige razones y
-referencias existentes y mantiene `promotion.status=not-promoted`; los tests
-negativos y el test Rust `stdlib_conformance_coordination` rechazan omisiones,
-sobreclaims y drift. La matriz sigue `open-gaps` por celdas de promoción
-pendientes; el siguiente bloque de implementación global es
-`NATIVE-PUBLISH-SPEC-001` (con `NATIVE-TARGET-DESC-001`,
-`NATIVE-ARTIFACT-001` y `NATIVE-LINK-PLAN-001` ya cerrados).
+materializa una fila `CONF` por cada una de las 385 filas de esta matriz.
+`STD-A-CONF-001` añade el registro ejecutable
+`testing/stdlib-conformance.json`: los 22 owner commands, sus fixtures
+públicos y el corpus draft de 206 casos se ejecutan con sidecars y hashes de
+procedencia. El resultado deja las 385 filas en `verified`, con una razón
+explícita solo para las fronteras normativas `not-applicable` de PERF. El
+checker regenera y cruza la identidad de todas las filas, exige referencias y
+comandos existentes y verifica la promoción; los tests negativos y el test Rust
+`stdlib_conformance_coordination` rechazan omisiones, sobreclaims y drift. La
+matriz actual queda `verified`; el siguiente bloque es `STD-A-DIST-001` (con
+`NATIVE-TARGET-DESC-001`, `NATIVE-ARTIFACT-001` y `NATIVE-LINK-PLAN-001` ya
+cerrados), y el seal S1A sigue pendiente.
 
 `STD-DOC-001` añade `testing/stdlib-documentation.json`, el índice que enlaza
 cada owner con sus documentos, fronteras `kernel`/`bridge`/`public_api` y
 programas representativos. La auditoría de API conserva `complete`/`partial`/
 `not-applicable` sin inferir estados desde el kernel; los fixtures runtime
 exigen sidecars y los providers sin runtime aplicable llevan una razón. Esta
-documentación es para el draft no publicado y no cambia el estado `open-gaps`
-de la matriz.
+documentación es para el draft no publicado y no convierte la promoción de
+conformance en una release.

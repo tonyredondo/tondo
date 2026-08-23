@@ -40,6 +40,10 @@ jq -e '
     and (.cells.PERF.status | ["verified", "not-applicable"] | index(.) != null)
     and (if .cells.PERF.status == "verified" then .cells.PERF.reason == null else (.cells.PERF.reason | length > 0) end)
     and any(.cells.PERF.refs[]; contains("stdlib-performance"))
+    and (if (.id | IN("std.meta", "std.reflect", "std.bytes", "std.core", "std.text", "std.collections", "std.iter", "std.math", "std.format", "std.io", "std.async", "std.path", "std.serialization", "std.json", "std.messagepack", "std.protobuf")) then
+          .cells.HOST.status == "not-applicable"
+          and (.cells.HOST.reason | type == "string" and length > 0)
+        else true end)
     and (.budgets | type == "object" and length > 0)
     and all(.budgets[];
       (.unit | type == "string" and length > 0)
@@ -53,8 +57,13 @@ jq -e '
   and (any(.leaves[]; .id == "STD-A-META-EVIDENCE-001" and .owners == ["std.meta"]))
   and (any(.leaves[]; .id == "STD-A-REFLECT-EVIDENCE-001" and .owners == ["std.reflect"]))
   and (any(.leaves[]; .id == "STD-A-BYTES-EVIDENCE-001" and .owners == ["std.bytes"]))
-  and (any(.leaves[]; .id == "STD-A-TESTING-EVIDENCE-001" and .owners == ["std.testing"]))
-  and (all(.owners[]; .cells.FUZZ.status == "verified" and .cells.FUZZ.reason == null))
+    and (any(.leaves[]; .id == "STD-A-TESTING-EVIDENCE-001" and .owners == ["std.testing"]))
+    and (all(.owners[]; .cells.FUZZ.status == "verified" and .cells.FUZZ.reason == null))
+    and (all(.owners[];
+      .cells.CONF.status == "verified"
+      and .cells.CONF.reason == null
+      and any(.cells.CONF.refs[]; startswith("testing/stdlib-conformance.json#owners/"))
+    ))
 ' "$evidence" >/dev/null || die "invalid promoted evidence registry"
 
 while IFS=$'\t' read -r leaf contract owner; do
@@ -77,4 +86,4 @@ while IFS= read -r command; do
     fi
 done < <(jq -r '.owners[].commands[]' "$evidence")
 
-echo "stdlib owner evidence: OK (22 owners; performance promoted or normative not-applicable; all FUZZ routes promoted)"
+echo "stdlib owner evidence: OK (22 owners; CONF/PERF promoted or normative not-applicable; all FUZZ routes promoted)"

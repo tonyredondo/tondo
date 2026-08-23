@@ -205,7 +205,8 @@ grep -Fq 'idempotent cleanup' docs/contracts/process-host.md
 grep -Fq 'reap every child' docs/contracts/process-host.md
 grep -Fq 'STD-A-PROC-EVIDENCE-001' docs/contracts/stdlib-s1a.md
 grep -Fq 'std.process' docs/contracts/stdlib-matrix.md
-grep -Fq 'deterministic child fixtures' testing/stdlib-performance-conformance.json
+grep -Fq 'Process creation, pipes and reaping are target-specific host operations' \
+    testing/stdlib-performance-conformance.json
 
 jq -e '
   ([.rows[] | select(.owner == "std.process")] | length) == 17
@@ -223,7 +224,8 @@ jq -e '
     and .cells.TEST.status == "verified"
     and .cells.FUZZ.status == "verified"
     and .cells.PERF.status == "not-applicable"
-    and .cells.CONF.status == "partial"
+    and .cells.CONF.status == "verified"
+    and .cells.CONF.reason == null
     and .cells.DOC.status == "verified")
 ' testing/stdlib-owner-evidence.json >/dev/null
 

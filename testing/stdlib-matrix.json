@@ -67,13 +67,11 @@
       ],
       "stages": {
         "CONF": {
-          "reason": "the public callable surface is audited and the implementation is runtime-covered, but full owner conformance waits for STD-A-CONF-001",
+          "reason": null,
           "refs": [
-            "testing/stdlib-public-api.json",
-            "testing/stdlib-async.json",
-            "TONDO_IMPLEMENTATION_TRACKER.md"
+            "testing/stdlib-conformance.json#owners/std.async"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "DOC": {
           "reason": null,
@@ -142,7 +140,7 @@
           "status": "verified"
         }
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "contract": "docs/contracts/stdlib-bytes.md",
@@ -193,12 +191,11 @@
       ],
       "stages": {
         "CONF": {
-          "reason": "compiler and VM byte-boundary tests cover the intrinsic contract; STD-CONF-001 has not yet promoted every standard-library owner",
+          "reason": null,
           "refs": [
-            "crates/tondo-compiler/src/process_host.rs",
-            "TONDO_IMPLEMENTATION_TRACKER.md"
+            "testing/stdlib-conformance.json#owners/std.bytes"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "DOC": {
           "reason": null,
@@ -255,7 +252,7 @@
           "status": "verified"
         }
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "contract": "docs/contracts/stdlib-core.md",
@@ -320,13 +317,11 @@
       ],
       "stages": {
         "CONF": {
-          "reason": "the public API audit and collection runtime fixture cover all eighteen collection signatures; STD-CONF-001 has not yet promoted every standard-library owner",
+          "reason": null,
           "refs": [
-            "testing/stdlib-public-api.json",
-            "tests/runtime/m11-std-collections-001.to",
-            "TONDO_IMPLEMENTATION_TRACKER.md"
+            "testing/stdlib-conformance.json#owners/std.collections"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "DOC": {
           "reason": null,
@@ -393,7 +388,7 @@
           "status": "verified"
         }
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "contract": "docs/contracts/stdlib-hosted.md",
@@ -449,14 +444,11 @@
       ],
       "stages": {
         "CONF": {
-          "reason": "the public API audit, explicit console capability checks, stream fixture and typed failures cover the seven signatures; STD-CONF-001 has not yet promoted every standard-library owner",
+          "reason": null,
           "refs": [
-            "testing/stdlib-public-api.json",
-            "tests/runtime/m11-std-console-001.to",
-            "crates/tondo-compiler/src/driver.rs",
-            "TONDO_IMPLEMENTATION_TRACKER.md"
+            "testing/stdlib-conformance.json#owners/std.console"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "DOC": {
           "reason": null,
@@ -517,7 +509,7 @@
           "status": "verified"
         }
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "contract": "docs/contracts/stdlib-core.md",
@@ -571,13 +563,11 @@
       ],
       "stages": {
         "CONF": {
-          "reason": "the public API audit and hosted runtime fixtures cover all nine core signatures; STD-CONF-001 has not yet promoted every standard-library owner",
+          "reason": null,
           "refs": [
-            "testing/stdlib-public-api.json",
-            "tests/runtime/m11-std-core-002.to",
-            "TONDO_IMPLEMENTATION_TRACKER.md"
+            "testing/stdlib-conformance.json#owners/std.core"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "DOC": {
           "reason": null,
@@ -639,7 +629,7 @@
           "status": "verified"
         }
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "contract": "docs/contracts/stdlib-env.md",
@@ -691,13 +681,11 @@
       ],
       "stages": {
         "CONF": {
-          "reason": "the hosted runtime fixture and explicit environment capability tests cover the snapshot boundary; STD-CONF-001 has not yet promoted every standard-library owner",
+          "reason": null,
           "refs": [
-            "tests/runtime/m10-std-env-001.to",
-            "crates/tondo-compiler/src/driver.rs",
-            "TONDO_IMPLEMENTATION_TRACKER.md"
+            "testing/stdlib-conformance.json#owners/std.env"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "DOC": {
           "reason": null,
@@ -754,7 +742,7 @@
           "status": "verified"
         }
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "contract": "docs/contracts/stdlib-core.md",
@@ -815,13 +803,11 @@
       ],
       "stages": {
         "CONF": {
-          "reason": "the public API audit and formatting runtime fixture cover all five signatures; STD-CONF-001 has not yet promoted every standard-library owner",
+          "reason": null,
           "refs": [
-            "testing/stdlib-public-api.json",
-            "tests/runtime/m11-std-format-001.to",
-            "TONDO_IMPLEMENTATION_TRACKER.md"
+            "testing/stdlib-conformance.json#owners/std.format"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "DOC": {
           "reason": null,
@@ -887,7 +873,7 @@
           "status": "verified"
         }
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "contract": "docs/contracts/stdlib-hosted.md",
@@ -951,14 +937,11 @@
       ],
       "stages": {
         "CONF": {
-          "reason": "The public API audit, explicit filesystem capability test and hosted runtime fixture cover all fourteen signatures; STD-CONF-001 has not yet promoted every standard-library owner.",
+          "reason": null,
           "refs": [
-            "testing/stdlib-public-api.json",
-            "tests/runtime/m11-std-fs-001.to",
-            "crates/tondo-compiler/src/driver.rs",
-            "TONDO_IMPLEMENTATION_TRACKER.md"
+            "testing/stdlib-conformance.json#owners/std.fs"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "DOC": {
           "reason": null,
@@ -1021,7 +1004,7 @@
           "status": "verified"
         }
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "contract": "docs/contracts/stdlib-core.md",
@@ -1081,13 +1064,11 @@
       ],
       "stages": {
         "CONF": {
-          "reason": "the public API audit, portable kernel and std.io runtime fixture cover the four signatures; STD-CONF-001 has not yet promoted every standard-library owner",
+          "reason": null,
           "refs": [
-            "testing/stdlib-public-api.json",
-            "tests/runtime/m11-std-io-001.to",
-            "TONDO_IMPLEMENTATION_TRACKER.md"
+            "testing/stdlib-conformance.json#owners/std.io"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "DOC": {
           "reason": null,
@@ -1152,7 +1133,7 @@
           "status": "verified"
         }
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "contract": "docs/contracts/stdlib-core.md",
@@ -1203,13 +1184,11 @@
       ],
       "stages": {
         "CONF": {
-          "reason": "the public API audit and iterator runtime fixture cover all four iterator signatures; STD-CONF-001 has not yet promoted every standard-library owner",
+          "reason": null,
           "refs": [
-            "testing/stdlib-public-api.json",
-            "tests/runtime/m11-std-iter-001.to",
-            "TONDO_IMPLEMENTATION_TRACKER.md"
+            "testing/stdlib-conformance.json#owners/std.iter"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "DOC": {
           "reason": null,
@@ -1272,7 +1251,7 @@
           "status": "verified"
         }
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "contract": "docs/contracts/stdlib-json.md",
@@ -1354,13 +1333,11 @@
       ],
       "stages": {
         "CONF": {
-          "reason": "The serde_json bidirectional and fragmented harness covers the portable codec; STD-CONF-001 has not yet promoted every standard-library owner.",
+          "reason": null,
           "refs": [
-            "testing/stdlib-codec-conformance.json",
-            "scripts/stdlib-codec-conformance.sh",
-            "TONDO_IMPLEMENTATION_TRACKER.md"
+            "testing/stdlib-conformance.json#owners/std.json"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "DOC": {
           "reason": null,
@@ -1420,7 +1397,7 @@
           "status": "verified"
         }
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "contract": "docs/contracts/stdlib-core.md",
@@ -1485,13 +1462,11 @@
       ],
       "stages": {
         "CONF": {
-          "reason": "the public API audit and IEEE/runtime fixtures cover all nine math signatures; STD-CONF-001 has not yet promoted every standard-library owner",
+          "reason": null,
           "refs": [
-            "testing/stdlib-public-api.json",
-            "tests/runtime/m11-std-math-001.to",
-            "TONDO_IMPLEMENTATION_TRACKER.md"
+            "testing/stdlib-conformance.json#owners/std.math"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "DOC": {
           "reason": null,
@@ -1554,7 +1529,7 @@
           "status": "verified"
         }
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "contract": "docs/contracts/stdlib-messagepack.md",
@@ -1634,13 +1609,11 @@
       ],
       "stages": {
         "CONF": {
-          "reason": "The rmpv bidirectional and fragmented harness covers the portable codec and extension preservation; STD-CONF-001 has not yet promoted every standard-library owner.",
+          "reason": null,
           "refs": [
-            "testing/stdlib-codec-conformance.json",
-            "scripts/stdlib-codec-conformance.sh",
-            "TONDO_IMPLEMENTATION_TRACKER.md"
+            "testing/stdlib-conformance.json#owners/std.messagepack"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "DOC": {
           "reason": null,
@@ -1700,7 +1673,7 @@
           "status": "verified"
         }
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "contract": "docs/contracts/std-meta.md",
@@ -1742,12 +1715,11 @@
       ],
       "stages": {
         "CONF": {
-          "reason": "the build-only contract is exercised by compiler and meta-target tests; STD-CONF-001 has not yet promoted every standard-library owner",
+          "reason": null,
           "refs": [
-            "crates/tondo-compiler/tests/std_meta_conformance.rs",
-            "TONDO_IMPLEMENTATION_TRACKER.md"
+            "testing/stdlib-conformance.json#owners/std.meta"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "DOC": {
           "reason": null,
@@ -1803,7 +1775,7 @@
           "status": "verified"
         }
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "contract": "docs/contracts/stdlib-hosted.md",
@@ -1871,13 +1843,11 @@
       ],
       "stages": {
         "CONF": {
-          "reason": "the public API audit, portable path kernel, native-byte corpus and runtime fixture cover all ten signatures; STD-CONF-001 has not yet promoted every standard-library owner",
+          "reason": null,
           "refs": [
-            "testing/stdlib-public-api.json",
-            "tests/runtime/m11-std-path-001.to",
-            "TONDO_IMPLEMENTATION_TRACKER.md"
+            "testing/stdlib-conformance.json#owners/std.path"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "DOC": {
           "reason": null,
@@ -1939,7 +1909,7 @@
           "status": "verified"
         }
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "contract": "docs/contracts/stdlib-hosted.md",
@@ -2005,15 +1975,11 @@
       ],
       "stages": {
         "CONF": {
-          "reason": "The public API audit, capability test and hosted M8 fixtures cover all seventeen public signatures; STD-CONF-001 has not yet promoted every standard-library owner.",
+          "reason": null,
           "refs": [
-            "testing/stdlib-public-api.json",
-            "tests/runtime/m8-process-001.to",
-            "tests/runtime/m8-process-cancel.to",
-            "crates/tondo-compiler/src/driver.rs",
-            "TONDO_IMPLEMENTATION_TRACKER.md"
+            "testing/stdlib-conformance.json#owners/std.process"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "DOC": {
           "reason": null,
@@ -2084,7 +2050,7 @@
           "status": "verified"
         }
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "contract": "docs/contracts/stdlib-protobuf.md",
@@ -2164,13 +2130,11 @@
       ],
       "stages": {
         "CONF": {
-          "reason": "The prost bidirectional and fragmented harness covers the portable wire and unknown records; STD-CONF-001 has not yet promoted every standard-library owner.",
+          "reason": null,
           "refs": [
-            "testing/stdlib-codec-conformance.json",
-            "scripts/stdlib-codec-conformance.sh",
-            "TONDO_IMPLEMENTATION_TRACKER.md"
+            "testing/stdlib-conformance.json#owners/std.protobuf"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "DOC": {
           "reason": null,
@@ -2230,7 +2194,7 @@
           "status": "verified"
         }
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "contract": "docs/contracts/std-reflect.md",
@@ -2272,12 +2236,11 @@
       ],
       "stages": {
         "CONF": {
-          "reason": "compiler reflection tests cover the metadata boundary; STD-CONF-001 has not yet promoted every standard-library owner",
+          "reason": null,
           "refs": [
-            "crates/tondo-compiler/src/reflect.rs",
-            "TONDO_IMPLEMENTATION_TRACKER.md"
+            "testing/stdlib-conformance.json#owners/std.reflect"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "DOC": {
           "reason": null,
@@ -2328,7 +2291,7 @@
           "status": "verified"
         }
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "contract": "docs/contracts/stdlib-serialization.md",
@@ -2385,13 +2348,11 @@
       ],
       "stages": {
         "CONF": {
-          "reason": "The external codec harness validates the shared bridge and independent format owners; STD-CONF-001 has not yet promoted every standard-library owner.",
+          "reason": null,
           "refs": [
-            "testing/stdlib-codec-conformance.json",
-            "scripts/stdlib-codec-conformance.sh",
-            "TONDO_IMPLEMENTATION_TRACKER.md"
+            "testing/stdlib-conformance.json#owners/std.serialization"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "DOC": {
           "reason": null,
@@ -2454,7 +2415,7 @@
           "status": "verified"
         }
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "contract": "docs/contracts/stdlib-testing.md",
@@ -2536,12 +2497,11 @@
       ],
       "stages": {
         "CONF": {
-          "reason": "The runner and owner corpus are exercised by acceptance tests, but STD-CONF-001 has not promoted complete conformance evidence for every std.testing requirement.",
+          "reason": null,
           "refs": [
-            "crates/tondo-cli/tests/acceptance_projects.rs",
-            "TONDO_IMPLEMENTATION_TRACKER.md"
+            "testing/stdlib-conformance.json#owners/std.testing"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "DOC": {
           "reason": null,
@@ -2605,7 +2565,7 @@
           "status": "verified"
         }
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "contract": "docs/contracts/stdlib-core.md",
@@ -2667,13 +2627,11 @@
       ],
       "stages": {
         "CONF": {
-          "reason": "the public API audit and Unicode/invalid-UTF-8 runtime fixtures cover all fifteen text signatures; STD-CONF-001 has not yet promoted every standard-library owner",
+          "reason": null,
           "refs": [
-            "testing/stdlib-public-api.json",
-            "tests/runtime/m11-std-text-002.to",
-            "TONDO_IMPLEMENTATION_TRACKER.md"
+            "testing/stdlib-conformance.json#owners/std.text"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "DOC": {
           "reason": null,
@@ -2734,7 +2692,7 @@
           "status": "verified"
         }
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "contract": "docs/contracts/stdlib-time.md",
@@ -2787,13 +2745,11 @@
       ],
       "stages": {
         "CONF": {
-          "reason": "the hosted runtime fixture and explicit clock capability tests cover the time boundary; STD-CONF-001 has not yet promoted every standard-library owner",
+          "reason": null,
           "refs": [
-            "tests/runtime/m10-std-time-001.to",
-            "crates/tondo-compiler/src/driver.rs",
-            "TONDO_IMPLEMENTATION_TRACKER.md"
+            "testing/stdlib-conformance.json#owners/std.time"
           ],
-          "status": "partial"
+          "status": "verified"
         },
         "DOC": {
           "reason": null,
@@ -2849,7 +2805,7 @@
           "status": "verified"
         }
       },
-      "status": "open-gaps"
+      "status": "verified"
     }
   ],
   "phase": "STD-0.1A",
@@ -2883,7 +2839,7 @@
         "PERF": "owner:std.async:PERF",
         "SPEC": "owner:std.async:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.async",
@@ -2915,7 +2871,7 @@
         "PERF": "owner:std.async:PERF",
         "SPEC": "owner:std.async:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.async",
@@ -2947,7 +2903,7 @@
         "PERF": "owner:std.async:PERF",
         "SPEC": "owner:std.async:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.async",
@@ -2978,7 +2934,7 @@
         "PERF": "owner:std.async:PERF",
         "SPEC": "owner:std.async:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.async",
@@ -3006,7 +2962,7 @@
         "PERF": "owner:std.async:PERF",
         "SPEC": "owner:std.async:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.async",
@@ -3038,7 +2994,7 @@
         "PERF": "owner:std.async:PERF",
         "SPEC": "owner:std.async:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.async",
@@ -3069,7 +3025,7 @@
         "PERF": "owner:std.async:PERF",
         "SPEC": "owner:std.async:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.async",
@@ -3092,7 +3048,7 @@
         "PERF": "owner:std.async:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.async:35:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.async.oneshot"
     },
     {
@@ -3116,7 +3072,7 @@
         "PERF": "owner:std.async:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.async:36:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.async.Waiter.wait"
     },
     {
@@ -3140,7 +3096,7 @@
         "PERF": "owner:std.async:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.async:37:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.async.Completer.complete"
     },
     {
@@ -3164,7 +3120,7 @@
         "PERF": "owner:std.async:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.async:38:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.async.Completer.fail"
     },
     {
@@ -3188,7 +3144,7 @@
         "PERF": "owner:std.async:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.async:39:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.async.Completer.cancel"
     },
     {
@@ -3221,7 +3177,7 @@
         "PERF": "owner:std.bytes:PERF",
         "SPEC": "owner:std.bytes:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.bytes",
@@ -3253,7 +3209,7 @@
         "PERF": "owner:std.bytes:PERF",
         "SPEC": "owner:std.bytes:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.bytes",
@@ -3285,7 +3241,7 @@
         "PERF": "owner:std.bytes:PERF",
         "SPEC": "owner:std.bytes:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.bytes",
@@ -3316,7 +3272,7 @@
         "PERF": "owner:std.bytes:PERF",
         "SPEC": "owner:std.bytes:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.bytes",
@@ -3348,7 +3304,7 @@
         "PERF": "owner:std.bytes:PERF",
         "SPEC": "owner:std.bytes:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.bytes",
@@ -3379,7 +3335,7 @@
         "PERF": "owner:std.bytes:PERF",
         "SPEC": "owner:std.bytes:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.collections",
@@ -3405,7 +3361,7 @@
         "PERF": "owner:std.collections:PERF",
         "SPEC": "owner:std.collections:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.collections",
@@ -3431,7 +3387,7 @@
         "PERF": "owner:std.collections:PERF",
         "SPEC": "owner:std.collections:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.collections",
@@ -3457,7 +3413,7 @@
         "PERF": "owner:std.collections:PERF",
         "SPEC": "owner:std.collections:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.collections",
@@ -3483,7 +3439,7 @@
         "PERF": "owner:std.collections:PERF",
         "SPEC": "owner:std.collections:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.collections",
@@ -3509,7 +3465,7 @@
         "PERF": "owner:std.collections:PERF",
         "SPEC": "owner:std.collections:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.collections",
@@ -3535,7 +3491,7 @@
         "PERF": "owner:std.collections:PERF",
         "SPEC": "owner:std.collections:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.collections",
@@ -3561,7 +3517,7 @@
         "PERF": "owner:std.collections:PERF",
         "SPEC": "owner:std.collections:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.collections",
@@ -3584,7 +3540,7 @@
         "PERF": "owner:std.collections:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.collections:139:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.collections.Array.new"
     },
     {
@@ -3608,7 +3564,7 @@
         "PERF": "owner:std.collections:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.collections:140:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.collections.Array.withCapacity"
     },
     {
@@ -3632,7 +3588,7 @@
         "PERF": "owner:std.collections:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.collections:141:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.collections.Array.length"
     },
     {
@@ -3656,7 +3612,7 @@
         "PERF": "owner:std.collections:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.collections:142:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.collections.Array.get"
     },
     {
@@ -3680,7 +3636,7 @@
         "PERF": "owner:std.collections:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.collections:143:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.collections.Array.slice"
     },
     {
@@ -3704,7 +3660,7 @@
         "PERF": "owner:std.collections:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.collections:144:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.collections.Array.push"
     },
     {
@@ -3728,7 +3684,7 @@
         "PERF": "owner:std.collections:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.collections:145:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.collections.Array.pop"
     },
     {
@@ -3752,7 +3708,7 @@
         "PERF": "owner:std.collections:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.collections:147:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.collections.Map.new"
     },
     {
@@ -3776,7 +3732,7 @@
         "PERF": "owner:std.collections:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.collections:148:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.collections.Map.get"
     },
     {
@@ -3800,7 +3756,7 @@
         "PERF": "owner:std.collections:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.collections:149:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.collections.Map.insert"
     },
     {
@@ -3824,7 +3780,7 @@
         "PERF": "owner:std.collections:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.collections:150:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.collections.Map.remove"
     },
     {
@@ -3848,7 +3804,7 @@
         "PERF": "owner:std.collections:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.collections:151:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.collections.Map.contains"
     },
     {
@@ -3872,7 +3828,7 @@
         "PERF": "owner:std.collections:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.collections:152:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.collections.Map.entries"
     },
     {
@@ -3896,7 +3852,7 @@
         "PERF": "owner:std.collections:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.collections:154:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.collections.Set.new"
     },
     {
@@ -3920,7 +3876,7 @@
         "PERF": "owner:std.collections:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.collections:155:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.collections.Set.insert"
     },
     {
@@ -3944,7 +3900,7 @@
         "PERF": "owner:std.collections:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.collections:156:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.collections.Set.remove"
     },
     {
@@ -3968,7 +3924,7 @@
         "PERF": "owner:std.collections:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.collections:157:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.collections.Set.contains"
     },
     {
@@ -3992,7 +3948,7 @@
         "PERF": "owner:std.collections:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.collections:158:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.collections.Set.values"
     },
     {
@@ -4019,7 +3975,7 @@
         "PERF": "owner:std.console:PERF",
         "SPEC": "owner:std.console:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.console",
@@ -4045,7 +4001,7 @@
         "PERF": "owner:std.console:PERF",
         "SPEC": "owner:std.console:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.console",
@@ -4071,7 +4027,7 @@
         "PERF": "owner:std.console:PERF",
         "SPEC": "owner:std.console:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.console",
@@ -4097,7 +4053,7 @@
         "PERF": "owner:std.console:PERF",
         "SPEC": "owner:std.console:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.console",
@@ -4123,7 +4079,7 @@
         "PERF": "owner:std.console:PERF",
         "SPEC": "owner:std.console:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.console",
@@ -4149,7 +4105,7 @@
         "PERF": "owner:std.console:PERF",
         "SPEC": "owner:std.console:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.console",
@@ -4175,7 +4131,7 @@
         "PERF": "owner:std.console:PERF",
         "SPEC": "owner:std.console:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.console",
@@ -4201,7 +4157,7 @@
         "PERF": "owner:std.console:PERF",
         "SPEC": "owner:std.console:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.console",
@@ -4227,7 +4183,7 @@
         "PERF": "owner:std.console:PERF",
         "SPEC": "owner:std.console:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.console",
@@ -4250,7 +4206,7 @@
         "PERF": "owner:std.console:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.console:10:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.console.stdin"
     },
     {
@@ -4274,7 +4230,7 @@
         "PERF": "owner:std.console:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.console:11:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.console.stdout"
     },
     {
@@ -4298,7 +4254,7 @@
         "PERF": "owner:std.console:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.console:12:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.console.stderr"
     },
     {
@@ -4322,7 +4278,7 @@
         "PERF": "owner:std.console:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.console:13:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.console.readLine"
     },
     {
@@ -4346,7 +4302,7 @@
         "PERF": "owner:std.console:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.console:14:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.console.print"
     },
     {
@@ -4370,7 +4326,7 @@
         "PERF": "owner:std.console:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.console:15:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.console.println"
     },
     {
@@ -4394,7 +4350,7 @@
         "PERF": "owner:std.console:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.console:16:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.console.flush"
     },
     {
@@ -4421,7 +4377,7 @@
         "PERF": "owner:std.core:PERF",
         "SPEC": "owner:std.core:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.core",
@@ -4447,7 +4403,7 @@
         "PERF": "owner:std.core:PERF",
         "SPEC": "owner:std.core:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.core",
@@ -4473,7 +4429,7 @@
         "PERF": "owner:std.core:PERF",
         "SPEC": "owner:std.core:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.core",
@@ -4499,7 +4455,7 @@
         "PERF": "owner:std.core:PERF",
         "SPEC": "owner:std.core:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.core",
@@ -4525,7 +4481,7 @@
         "PERF": "owner:std.core:PERF",
         "SPEC": "owner:std.core:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.core",
@@ -4551,7 +4507,7 @@
         "PERF": "owner:std.core:PERF",
         "SPEC": "owner:std.core:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.core",
@@ -4577,7 +4533,7 @@
         "PERF": "owner:std.core:PERF",
         "SPEC": "owner:std.core:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.core",
@@ -4600,7 +4556,7 @@
         "PERF": "owner:std.core:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.core:28:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.core.Option.some"
     },
     {
@@ -4624,7 +4580,7 @@
         "PERF": "owner:std.core:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.core:29:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.core.Option.none"
     },
     {
@@ -4648,7 +4604,7 @@
         "PERF": "owner:std.core:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.core:30:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.core.Option.unwrapOr"
     },
     {
@@ -4672,7 +4628,7 @@
         "PERF": "owner:std.core:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.core:31:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.core.Option.map"
     },
     {
@@ -4696,7 +4652,7 @@
         "PERF": "owner:std.core:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.core:33:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.core.Result.ok"
     },
     {
@@ -4720,7 +4676,7 @@
         "PERF": "owner:std.core:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.core:34:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.core.Result.err"
     },
     {
@@ -4744,7 +4700,7 @@
         "PERF": "owner:std.core:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.core:35:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.core.Result.map"
     },
     {
@@ -4768,7 +4724,7 @@
         "PERF": "owner:std.core:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.core:36:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.core.Result.mapErr"
     },
     {
@@ -4792,7 +4748,7 @@
         "PERF": "owner:std.core:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.core:37:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.core.Result.unwrapOr"
     },
     {
@@ -4824,7 +4780,7 @@
         "PERF": "owner:std.env:PERF",
         "SPEC": "owner:std.env:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.env",
@@ -4855,7 +4811,7 @@
         "PERF": "owner:std.env:PERF",
         "SPEC": "owner:std.env:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.env",
@@ -4886,7 +4842,7 @@
         "PERF": "owner:std.env:PERF",
         "SPEC": "owner:std.env:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.env",
@@ -4918,7 +4874,7 @@
         "PERF": "owner:std.env:PERF",
         "SPEC": "owner:std.env:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.env",
@@ -4950,7 +4906,7 @@
         "PERF": "owner:std.env:PERF",
         "SPEC": "owner:std.env:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.env",
@@ -4980,7 +4936,7 @@
         "PERF": "owner:std.env:PERF",
         "SPEC": "owner:std.env:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.env",
@@ -5003,7 +4959,7 @@
         "PERF": "owner:std.env:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.env:28:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.env.snapshot"
     },
     {
@@ -5027,7 +4983,7 @@
         "PERF": "owner:std.env:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.env:29:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.env.Name.fromText"
     },
     {
@@ -5051,7 +5007,7 @@
         "PERF": "owner:std.env:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.env:30:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.env.Name.fromBytes"
     },
     {
@@ -5075,7 +5031,7 @@
         "PERF": "owner:std.env:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.env:31:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.env.Snapshot.arguments"
     },
     {
@@ -5099,7 +5055,7 @@
         "PERF": "owner:std.env:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.env:32:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.env.Snapshot.get"
     },
     {
@@ -5123,7 +5079,7 @@
         "PERF": "owner:std.env:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.env:33:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.env.Value.asText"
     },
     {
@@ -5147,7 +5103,7 @@
         "PERF": "owner:std.env:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.env:34:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.env.Value.asBytes"
     },
     {
@@ -5174,7 +5130,7 @@
         "PERF": "owner:std.format:PERF",
         "SPEC": "owner:std.format:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.format",
@@ -5200,7 +5156,7 @@
         "PERF": "owner:std.format:PERF",
         "SPEC": "owner:std.format:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.format",
@@ -5226,7 +5182,7 @@
         "PERF": "owner:std.format:PERF",
         "SPEC": "owner:std.format:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.format",
@@ -5252,7 +5208,7 @@
         "PERF": "owner:std.format:PERF",
         "SPEC": "owner:std.format:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.format",
@@ -5278,7 +5234,7 @@
         "PERF": "owner:std.format:PERF",
         "SPEC": "owner:std.format:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.format",
@@ -5304,7 +5260,7 @@
         "PERF": "owner:std.format:PERF",
         "SPEC": "owner:std.format:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.format",
@@ -5330,7 +5286,7 @@
         "PERF": "owner:std.format:PERF",
         "SPEC": "owner:std.format:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.format",
@@ -5353,7 +5309,7 @@
         "PERF": "owner:std.format:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.format:240:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.format.Builder.new"
     },
     {
@@ -5377,7 +5333,7 @@
         "PERF": "owner:std.format:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.format:241:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.format.Builder.append"
     },
     {
@@ -5401,7 +5357,7 @@
         "PERF": "owner:std.format:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.format:242:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.format.Builder.finish"
     },
     {
@@ -5425,7 +5381,7 @@
         "PERF": "owner:std.format:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.format:243:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.format.format"
     },
     {
@@ -5449,7 +5405,7 @@
         "PERF": "owner:std.format:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.format:244:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.format.join"
     },
     {
@@ -5476,7 +5432,7 @@
         "PERF": "owner:std.fs:PERF",
         "SPEC": "owner:std.fs:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.fs",
@@ -5502,7 +5458,7 @@
         "PERF": "owner:std.fs:PERF",
         "SPEC": "owner:std.fs:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.fs",
@@ -5528,7 +5484,7 @@
         "PERF": "owner:std.fs:PERF",
         "SPEC": "owner:std.fs:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.fs",
@@ -5554,7 +5510,7 @@
         "PERF": "owner:std.fs:PERF",
         "SPEC": "owner:std.fs:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.fs",
@@ -5580,7 +5536,7 @@
         "PERF": "owner:std.fs:PERF",
         "SPEC": "owner:std.fs:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.fs",
@@ -5606,7 +5562,7 @@
         "PERF": "owner:std.fs:PERF",
         "SPEC": "owner:std.fs:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.fs",
@@ -5632,7 +5588,7 @@
         "PERF": "owner:std.fs:PERF",
         "SPEC": "owner:std.fs:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.fs",
@@ -5658,7 +5614,7 @@
         "PERF": "owner:std.fs:PERF",
         "SPEC": "owner:std.fs:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.fs",
@@ -5684,7 +5640,7 @@
         "PERF": "owner:std.fs:PERF",
         "SPEC": "owner:std.fs:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.fs",
@@ -5707,7 +5663,7 @@
         "PERF": "owner:std.fs:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:85:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.fs.open"
     },
     {
@@ -5731,7 +5687,7 @@
         "PERF": "owner:std.fs:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:86:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.fs.openDirectory"
     },
     {
@@ -5755,7 +5711,7 @@
         "PERF": "owner:std.fs:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:87:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.fs.readAll"
     },
     {
@@ -5779,7 +5735,7 @@
         "PERF": "owner:std.fs:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:88:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.fs.writeAll"
     },
     {
@@ -5803,7 +5759,7 @@
         "PERF": "owner:std.fs:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:89:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.fs.createDirectory"
     },
     {
@@ -5827,7 +5783,7 @@
         "PERF": "owner:std.fs:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:90:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.fs.remove"
     },
     {
@@ -5851,7 +5807,7 @@
         "PERF": "owner:std.fs:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:91:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.fs.metadata"
     },
     {
@@ -5875,7 +5831,7 @@
         "PERF": "owner:std.fs:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:92:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.fs.list"
     },
     {
@@ -5899,7 +5855,7 @@
         "PERF": "owner:std.fs:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:93:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.fs.rename"
     },
     {
@@ -5923,7 +5879,7 @@
         "PERF": "owner:std.fs:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:94:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.fs.atomicWrite"
     },
     {
@@ -5947,7 +5903,7 @@
         "PERF": "owner:std.fs:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:95:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.fs.File.read"
     },
     {
@@ -5971,7 +5927,7 @@
         "PERF": "owner:std.fs:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:96:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.fs.File.write"
     },
     {
@@ -5995,7 +5951,7 @@
         "PERF": "owner:std.fs:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:97:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.fs.File.flush"
     },
     {
@@ -6019,7 +5975,7 @@
         "PERF": "owner:std.fs:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.fs:98:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.fs.Directory.list"
     },
     {
@@ -6046,7 +6002,7 @@
         "PERF": "owner:std.io:PERF",
         "SPEC": "owner:std.io:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.io",
@@ -6072,7 +6028,7 @@
         "PERF": "owner:std.io:PERF",
         "SPEC": "owner:std.io:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.io",
@@ -6098,7 +6054,7 @@
         "PERF": "owner:std.io:PERF",
         "SPEC": "owner:std.io:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.io",
@@ -6124,7 +6080,7 @@
         "PERF": "owner:std.io:PERF",
         "SPEC": "owner:std.io:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.io",
@@ -6150,7 +6106,7 @@
         "PERF": "owner:std.io:PERF",
         "SPEC": "owner:std.io:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.io",
@@ -6176,7 +6132,7 @@
         "PERF": "owner:std.io:PERF",
         "SPEC": "owner:std.io:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.io",
@@ -6202,7 +6158,7 @@
         "PERF": "owner:std.io:PERF",
         "SPEC": "owner:std.io:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.io",
@@ -6225,7 +6181,7 @@
         "PERF": "owner:std.io:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.io:270:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.io.defaultLimits"
     },
     {
@@ -6249,7 +6205,7 @@
         "PERF": "owner:std.io:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.io:271:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.io.limits"
     },
     {
@@ -6273,7 +6229,7 @@
         "PERF": "owner:std.io:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.io:272:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.io.readAll"
     },
     {
@@ -6297,7 +6253,7 @@
         "PERF": "owner:std.io:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.io:273:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.io.writeAll"
     },
     {
@@ -6324,7 +6280,7 @@
         "PERF": "owner:std.iter:PERF",
         "SPEC": "owner:std.iter:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.iter",
@@ -6350,7 +6306,7 @@
         "PERF": "owner:std.iter:PERF",
         "SPEC": "owner:std.iter:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.iter",
@@ -6376,7 +6332,7 @@
         "PERF": "owner:std.iter:PERF",
         "SPEC": "owner:std.iter:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.iter",
@@ -6402,7 +6358,7 @@
         "PERF": "owner:std.iter:PERF",
         "SPEC": "owner:std.iter:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.iter",
@@ -6428,7 +6384,7 @@
         "PERF": "owner:std.iter:PERF",
         "SPEC": "owner:std.iter:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.iter",
@@ -6454,7 +6410,7 @@
         "PERF": "owner:std.iter:PERF",
         "SPEC": "owner:std.iter:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.iter",
@@ -6480,7 +6436,7 @@
         "PERF": "owner:std.iter:PERF",
         "SPEC": "owner:std.iter:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.iter",
@@ -6503,7 +6459,7 @@
         "PERF": "owner:std.iter:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.iter:164:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.iter.Iterator.map"
     },
     {
@@ -6527,7 +6483,7 @@
         "PERF": "owner:std.iter:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.iter:165:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.iter.Iterator.filter"
     },
     {
@@ -6551,7 +6507,7 @@
         "PERF": "owner:std.iter:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.iter:166:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.iter.Iterator.take"
     },
     {
@@ -6575,7 +6531,7 @@
         "PERF": "owner:std.iter:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.iter:167:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.iter.Iterator.collect"
     },
     {
@@ -6607,7 +6563,7 @@
         "PERF": "owner:std.json:PERF",
         "SPEC": "owner:std.json:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.json",
@@ -6638,7 +6594,7 @@
         "PERF": "owner:std.json:PERF",
         "SPEC": "owner:std.json:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.json",
@@ -6669,7 +6625,7 @@
         "PERF": "owner:std.json:PERF",
         "SPEC": "owner:std.json:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.json",
@@ -6700,7 +6656,7 @@
         "PERF": "owner:std.json:PERF",
         "SPEC": "owner:std.json:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.json",
@@ -6731,7 +6687,7 @@
         "PERF": "owner:std.json:PERF",
         "SPEC": "owner:std.json:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.json",
@@ -6762,7 +6718,7 @@
         "PERF": "owner:std.json:PERF",
         "SPEC": "owner:std.json:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.json",
@@ -6792,7 +6748,7 @@
         "PERF": "owner:std.json:PERF",
         "SPEC": "owner:std.json:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.json",
@@ -6823,7 +6779,7 @@
         "PERF": "owner:std.json:PERF",
         "SPEC": "owner:std.json:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.json",
@@ -6853,7 +6809,7 @@
         "PERF": "owner:std.json:PERF",
         "SPEC": "owner:std.json:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.json",
@@ -6876,7 +6832,7 @@
         "PERF": "owner:std.json:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.json:143:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.json.parse"
     },
     {
@@ -6900,7 +6856,7 @@
         "PERF": "owner:std.json:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.json:144:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.json.parseView"
     },
     {
@@ -6924,7 +6880,7 @@
         "PERF": "owner:std.json:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.json:145:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.json.decode"
     },
     {
@@ -6948,7 +6904,7 @@
         "PERF": "owner:std.json:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.json:146:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.json.encode"
     },
     {
@@ -6972,7 +6928,7 @@
         "PERF": "owner:std.json:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.json:147:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.json.validate"
     },
     {
@@ -6996,7 +6952,7 @@
         "PERF": "owner:std.json:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.json:148:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.json.canonicalize"
     },
     {
@@ -7020,7 +6976,7 @@
         "PERF": "owner:std.json:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.json:149:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.json.encodeCanonical"
     },
     {
@@ -7044,7 +7000,7 @@
         "PERF": "owner:std.json:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.json:150:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.json.raw"
     },
     {
@@ -7068,7 +7024,7 @@
         "PERF": "owner:std.json:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.json:151:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.json.rawUnchecked"
     },
     {
@@ -7092,7 +7048,7 @@
         "PERF": "owner:std.json:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.json:153:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.json.JsonNumber.parse"
     },
     {
@@ -7116,7 +7072,7 @@
         "PERF": "owner:std.json:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.json:154:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.json.JsonNumber.text"
     },
     {
@@ -7140,7 +7096,7 @@
         "PERF": "owner:std.json:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.json:155:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.json.JsonNumber.toInt"
     },
     {
@@ -7164,7 +7120,7 @@
         "PERF": "owner:std.json:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.json:156:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.json.JsonNumber.toUInt"
     },
     {
@@ -7188,7 +7144,7 @@
         "PERF": "owner:std.json:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.json:157:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.json.JsonNumber.toFloat32"
     },
     {
@@ -7212,7 +7168,7 @@
         "PERF": "owner:std.json:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.json:158:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.json.JsonNumber.toFloat64"
     },
     {
@@ -7236,7 +7192,7 @@
         "PERF": "owner:std.json:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.json:160:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.json.JsonReader.fromBytes"
     },
     {
@@ -7260,7 +7216,7 @@
         "PERF": "owner:std.json:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.json:161:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.json.JsonReader.fromReader"
     },
     {
@@ -7284,7 +7240,7 @@
         "PERF": "owner:std.json:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.json:162:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.json.JsonReader.next"
     },
     {
@@ -7308,7 +7264,7 @@
         "PERF": "owner:std.json:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.json:163:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.json.JsonReader.own"
     },
     {
@@ -7332,7 +7288,7 @@
         "PERF": "owner:std.json:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.json:164:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.json.JsonReader.finish"
     },
     {
@@ -7356,7 +7312,7 @@
         "PERF": "owner:std.json:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.json:166:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.json.JsonWriter.toWriter"
     },
     {
@@ -7380,7 +7336,7 @@
         "PERF": "owner:std.json:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.json:167:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.json.JsonWriter.write"
     },
     {
@@ -7404,7 +7360,7 @@
         "PERF": "owner:std.json:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.json:168:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.json.JsonWriter.finish"
     },
     {
@@ -7431,7 +7387,7 @@
         "PERF": "owner:std.math:PERF",
         "SPEC": "owner:std.math:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.math",
@@ -7457,7 +7413,7 @@
         "PERF": "owner:std.math:PERF",
         "SPEC": "owner:std.math:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.math",
@@ -7483,7 +7439,7 @@
         "PERF": "owner:std.math:PERF",
         "SPEC": "owner:std.math:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.math",
@@ -7509,7 +7465,7 @@
         "PERF": "owner:std.math:PERF",
         "SPEC": "owner:std.math:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.math",
@@ -7535,7 +7491,7 @@
         "PERF": "owner:std.math:PERF",
         "SPEC": "owner:std.math:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.math",
@@ -7561,7 +7517,7 @@
         "PERF": "owner:std.math:PERF",
         "SPEC": "owner:std.math:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.math",
@@ -7587,7 +7543,7 @@
         "PERF": "owner:std.math:PERF",
         "SPEC": "owner:std.math:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.math",
@@ -7610,7 +7566,7 @@
         "PERF": "owner:std.math:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.math:220:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.math.floor"
     },
     {
@@ -7634,7 +7590,7 @@
         "PERF": "owner:std.math:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.math:221:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.math.ceil"
     },
     {
@@ -7658,7 +7614,7 @@
         "PERF": "owner:std.math:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.math:222:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.math.round"
     },
     {
@@ -7682,7 +7638,7 @@
         "PERF": "owner:std.math:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.math:223:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.math.truncate"
     },
     {
@@ -7706,7 +7662,7 @@
         "PERF": "owner:std.math:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.math:224:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.math.sqrt"
     },
     {
@@ -7730,7 +7686,7 @@
         "PERF": "owner:std.math:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.math:225:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.math.fma"
     },
     {
@@ -7754,7 +7710,7 @@
         "PERF": "owner:std.math:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.math:226:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.math.abs"
     },
     {
@@ -7778,7 +7734,7 @@
         "PERF": "owner:std.math:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.math:227:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.math.min"
     },
     {
@@ -7802,7 +7758,7 @@
         "PERF": "owner:std.math:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.math:228:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.math.max"
     },
     {
@@ -7834,7 +7790,7 @@
         "PERF": "owner:std.messagepack:PERF",
         "SPEC": "owner:std.messagepack:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.messagepack",
@@ -7865,7 +7821,7 @@
         "PERF": "owner:std.messagepack:PERF",
         "SPEC": "owner:std.messagepack:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.messagepack",
@@ -7896,7 +7852,7 @@
         "PERF": "owner:std.messagepack:PERF",
         "SPEC": "owner:std.messagepack:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.messagepack",
@@ -7927,7 +7883,7 @@
         "PERF": "owner:std.messagepack:PERF",
         "SPEC": "owner:std.messagepack:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.messagepack",
@@ -7958,7 +7914,7 @@
         "PERF": "owner:std.messagepack:PERF",
         "SPEC": "owner:std.messagepack:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.messagepack",
@@ -7988,7 +7944,7 @@
         "PERF": "owner:std.messagepack:PERF",
         "SPEC": "owner:std.messagepack:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.messagepack",
@@ -8020,7 +7976,7 @@
         "PERF": "owner:std.messagepack:PERF",
         "SPEC": "owner:std.messagepack:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.messagepack",
@@ -8051,7 +8007,7 @@
         "PERF": "owner:std.messagepack:PERF",
         "SPEC": "owner:std.messagepack:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.messagepack",
@@ -8082,7 +8038,7 @@
         "PERF": "owner:std.messagepack:PERF",
         "SPEC": "owner:std.messagepack:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.messagepack",
@@ -8113,7 +8069,7 @@
         "PERF": "owner:std.messagepack:PERF",
         "SPEC": "owner:std.messagepack:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.messagepack",
@@ -8143,7 +8099,7 @@
         "PERF": "owner:std.messagepack:PERF",
         "SPEC": "owner:std.messagepack:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.messagepack",
@@ -8166,7 +8122,7 @@
         "PERF": "owner:std.messagepack:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.messagepack:85:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.messagepack.parse"
     },
     {
@@ -8190,7 +8146,7 @@
         "PERF": "owner:std.messagepack:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.messagepack:86:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.messagepack.parseView"
     },
     {
@@ -8214,7 +8170,7 @@
         "PERF": "owner:std.messagepack:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.messagepack:87:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.messagepack.decode"
     },
     {
@@ -8238,7 +8194,7 @@
         "PERF": "owner:std.messagepack:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.messagepack:88:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.messagepack.encode"
     },
     {
@@ -8262,7 +8218,7 @@
         "PERF": "owner:std.messagepack:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.messagepack:89:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.messagepack.encode"
     },
     {
@@ -8286,7 +8242,7 @@
         "PERF": "owner:std.messagepack:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.messagepack:90:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.messagepack.validate"
     },
     {
@@ -8310,7 +8266,7 @@
         "PERF": "owner:std.messagepack:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.messagepack:91:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.messagepack.encodeDeterministic"
     },
     {
@@ -8334,7 +8290,7 @@
         "PERF": "owner:std.messagepack:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.messagepack:92:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.messagepack.raw"
     },
     {
@@ -8358,7 +8314,7 @@
         "PERF": "owner:std.messagepack:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.messagepack:93:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.messagepack.rawUnchecked"
     },
     {
@@ -8382,7 +8338,7 @@
         "PERF": "owner:std.messagepack:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.messagepack:95:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.messagepack.MessagePackTimestamp.fromExt"
     },
     {
@@ -8406,7 +8362,7 @@
         "PERF": "owner:std.messagepack:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.messagepack:96:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.messagepack.MessagePackTimestamp.toExt"
     },
     {
@@ -8430,7 +8386,7 @@
         "PERF": "owner:std.messagepack:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.messagepack:98:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.messagepack.MessagePackReader.fromBytes"
     },
     {
@@ -8454,7 +8410,7 @@
         "PERF": "owner:std.messagepack:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.messagepack:99:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.messagepack.MessagePackReader.fromReader"
     },
     {
@@ -8478,7 +8434,7 @@
         "PERF": "owner:std.messagepack:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.messagepack:100:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.messagepack.MessagePackReader.next"
     },
     {
@@ -8502,7 +8458,7 @@
         "PERF": "owner:std.messagepack:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.messagepack:101:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.messagepack.MessagePackReader.own"
     },
     {
@@ -8526,7 +8482,7 @@
         "PERF": "owner:std.messagepack:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.messagepack:102:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.messagepack.MessagePackReader.finish"
     },
     {
@@ -8550,7 +8506,7 @@
         "PERF": "owner:std.messagepack:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.messagepack:104:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.messagepack.MessagePackWriter.toWriter"
     },
     {
@@ -8574,7 +8530,7 @@
         "PERF": "owner:std.messagepack:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.messagepack:105:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.messagepack.MessagePackWriter.write"
     },
     {
@@ -8598,7 +8554,7 @@
         "PERF": "owner:std.messagepack:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.messagepack:106:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.messagepack.MessagePackWriter.finish"
     },
     {
@@ -8631,7 +8587,7 @@
         "PERF": "owner:std.meta:PERF",
         "SPEC": "owner:std.meta:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.meta",
@@ -8663,7 +8619,7 @@
         "PERF": "owner:std.meta:PERF",
         "SPEC": "owner:std.meta:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.meta",
@@ -8694,7 +8650,7 @@
         "PERF": "owner:std.meta:PERF",
         "SPEC": "owner:std.meta:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.meta",
@@ -8726,7 +8682,7 @@
         "PERF": "owner:std.meta:PERF",
         "SPEC": "owner:std.meta:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.meta",
@@ -8758,7 +8714,7 @@
         "PERF": "owner:std.meta:PERF",
         "SPEC": "owner:std.meta:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.meta",
@@ -8791,7 +8747,7 @@
         "PERF": "owner:std.meta:PERF",
         "SPEC": "owner:std.meta:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.path",
@@ -8817,7 +8773,7 @@
         "PERF": "owner:std.path:PERF",
         "SPEC": "owner:std.path:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.path",
@@ -8843,7 +8799,7 @@
         "PERF": "owner:std.path:PERF",
         "SPEC": "owner:std.path:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.path",
@@ -8869,7 +8825,7 @@
         "PERF": "owner:std.path:PERF",
         "SPEC": "owner:std.path:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.path",
@@ -8895,7 +8851,7 @@
         "PERF": "owner:std.path:PERF",
         "SPEC": "owner:std.path:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.path",
@@ -8921,7 +8877,7 @@
         "PERF": "owner:std.path:PERF",
         "SPEC": "owner:std.path:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.path",
@@ -8947,7 +8903,7 @@
         "PERF": "owner:std.path:PERF",
         "SPEC": "owner:std.path:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.path",
@@ -8973,7 +8929,7 @@
         "PERF": "owner:std.path:PERF",
         "SPEC": "owner:std.path:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.path",
@@ -8999,7 +8955,7 @@
         "PERF": "owner:std.path:PERF",
         "SPEC": "owner:std.path:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.path",
@@ -9025,7 +8981,7 @@
         "PERF": "owner:std.path:PERF",
         "SPEC": "owner:std.path:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.path",
@@ -9048,7 +9004,7 @@
         "PERF": "owner:std.path:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.path:47:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.path.Path.fromString"
     },
     {
@@ -9072,7 +9028,7 @@
         "PERF": "owner:std.path:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.path:48:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.path.Path.fromBytes"
     },
     {
@@ -9096,7 +9052,7 @@
         "PERF": "owner:std.path:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.path:49:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.path.Path.join"
     },
     {
@@ -9120,7 +9076,7 @@
         "PERF": "owner:std.path:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.path:50:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.path.Path.parent"
     },
     {
@@ -9144,7 +9100,7 @@
         "PERF": "owner:std.path:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.path:51:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.path.Path.fileName"
     },
     {
@@ -9168,7 +9124,7 @@
         "PERF": "owner:std.path:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.path:52:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.path.Path.extension"
     },
     {
@@ -9192,7 +9148,7 @@
         "PERF": "owner:std.path:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.path:53:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.path.Path.kind"
     },
     {
@@ -9216,7 +9172,7 @@
         "PERF": "owner:std.path:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.path:54:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.path.Path.isEmpty"
     },
     {
@@ -9240,7 +9196,7 @@
         "PERF": "owner:std.path:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.path:55:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.path.Path.toString"
     },
     {
@@ -9264,7 +9220,7 @@
         "PERF": "owner:std.path:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.path:56:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.path.Path.toBytes"
     },
     {
@@ -9291,7 +9247,7 @@
         "PERF": "owner:std.process:PERF",
         "SPEC": "owner:std.process:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.process",
@@ -9317,7 +9273,7 @@
         "PERF": "owner:std.process:PERF",
         "SPEC": "owner:std.process:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.process",
@@ -9343,7 +9299,7 @@
         "PERF": "owner:std.process:PERF",
         "SPEC": "owner:std.process:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.process",
@@ -9369,7 +9325,7 @@
         "PERF": "owner:std.process:PERF",
         "SPEC": "owner:std.process:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.process",
@@ -9395,7 +9351,7 @@
         "PERF": "owner:std.process:PERF",
         "SPEC": "owner:std.process:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.process",
@@ -9421,7 +9377,7 @@
         "PERF": "owner:std.process:PERF",
         "SPEC": "owner:std.process:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.process",
@@ -9447,7 +9403,7 @@
         "PERF": "owner:std.process:PERF",
         "SPEC": "owner:std.process:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.process",
@@ -9473,7 +9429,7 @@
         "PERF": "owner:std.process:PERF",
         "SPEC": "owner:std.process:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.process",
@@ -9499,7 +9455,7 @@
         "PERF": "owner:std.process:PERF",
         "SPEC": "owner:std.process:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.process",
@@ -9522,7 +9478,7 @@
         "PERF": "owner:std.process:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:148:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.process.command"
     },
     {
@@ -9546,7 +9502,7 @@
         "PERF": "owner:std.process:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:149:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.process.shell"
     },
     {
@@ -9570,7 +9526,7 @@
         "PERF": "owner:std.process:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:150:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.process.pipe"
     },
     {
@@ -9594,7 +9550,7 @@
         "PERF": "owner:std.process:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:151:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.process.Command.mergeStderr"
     },
     {
@@ -9618,7 +9574,7 @@
         "PERF": "owner:std.process:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:152:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.process.Pipeline.mergeStderr"
     },
     {
@@ -9642,7 +9598,7 @@
         "PERF": "owner:std.process:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:153:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.process.Command.run"
     },
     {
@@ -9666,7 +9622,7 @@
         "PERF": "owner:std.process:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:154:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.process.Command.output"
     },
     {
@@ -9690,7 +9646,7 @@
         "PERF": "owner:std.process:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:155:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.process.Command.check"
     },
     {
@@ -9714,7 +9670,7 @@
         "PERF": "owner:std.process:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:156:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.process.Command.start"
     },
     {
@@ -9738,7 +9694,7 @@
         "PERF": "owner:std.process:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:157:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.process.ProcessHandle.wait"
     },
     {
@@ -9762,7 +9718,7 @@
         "PERF": "owner:std.process:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:158:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.process.ProcessHandle.cancel"
     },
     {
@@ -9786,7 +9742,7 @@
         "PERF": "owner:std.process:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:159:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.process.ProcessOutput.stdout"
     },
     {
@@ -9810,7 +9766,7 @@
         "PERF": "owner:std.process:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:160:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.process.ProcessOutput.stderr"
     },
     {
@@ -9834,7 +9790,7 @@
         "PERF": "owner:std.process:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:161:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.process.ProcessOutput.combined"
     },
     {
@@ -9858,7 +9814,7 @@
         "PERF": "owner:std.process:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:162:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.process.ProcessOutput.statuses"
     },
     {
@@ -9882,7 +9838,7 @@
         "PERF": "owner:std.process:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:163:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.process.ExitStatus.code"
     },
     {
@@ -9906,7 +9862,7 @@
         "PERF": "owner:std.process:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.process:164:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.process.ExitStatus.success"
     },
     {
@@ -9939,7 +9895,7 @@
         "PERF": "owner:std.protobuf:PERF",
         "SPEC": "owner:std.protobuf:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.protobuf",
@@ -9970,7 +9926,7 @@
         "PERF": "owner:std.protobuf:PERF",
         "SPEC": "owner:std.protobuf:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.protobuf",
@@ -10001,7 +9957,7 @@
         "PERF": "owner:std.protobuf:PERF",
         "SPEC": "owner:std.protobuf:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.protobuf",
@@ -10032,7 +9988,7 @@
         "PERF": "owner:std.protobuf:PERF",
         "SPEC": "owner:std.protobuf:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.protobuf",
@@ -10063,7 +10019,7 @@
         "PERF": "owner:std.protobuf:PERF",
         "SPEC": "owner:std.protobuf:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.protobuf",
@@ -10094,7 +10050,7 @@
         "PERF": "owner:std.protobuf:PERF",
         "SPEC": "owner:std.protobuf:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.protobuf",
@@ -10125,7 +10081,7 @@
         "PERF": "owner:std.protobuf:PERF",
         "SPEC": "owner:std.protobuf:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.protobuf",
@@ -10157,7 +10113,7 @@
         "PERF": "owner:std.protobuf:PERF",
         "SPEC": "owner:std.protobuf:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.protobuf",
@@ -10190,7 +10146,7 @@
         "PERF": "owner:std.protobuf:PERF",
         "SPEC": "owner:std.protobuf:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.protobuf",
@@ -10221,7 +10177,7 @@
         "PERF": "owner:std.protobuf:PERF",
         "SPEC": "owner:std.protobuf:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.protobuf",
@@ -10253,7 +10209,7 @@
         "PERF": "owner:std.protobuf:PERF",
         "SPEC": "owner:std.protobuf:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.protobuf",
@@ -10284,7 +10240,7 @@
         "PERF": "owner:std.protobuf:PERF",
         "SPEC": "owner:std.protobuf:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.protobuf",
@@ -10316,7 +10272,7 @@
         "PERF": "owner:std.protobuf:PERF",
         "SPEC": "owner:std.protobuf:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.protobuf",
@@ -10349,7 +10305,7 @@
         "PERF": "owner:std.protobuf:PERF",
         "SPEC": "owner:std.protobuf:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.protobuf",
@@ -10372,7 +10328,7 @@
         "PERF": "owner:std.protobuf:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.protobuf:113:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.protobuf.decode"
     },
     {
@@ -10396,7 +10352,7 @@
         "PERF": "owner:std.protobuf:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.protobuf:114:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.protobuf.encode"
     },
     {
@@ -10420,7 +10376,7 @@
         "PERF": "owner:std.protobuf:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.protobuf:115:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.protobuf.encodeDeterministic"
     },
     {
@@ -10444,7 +10400,7 @@
         "PERF": "owner:std.protobuf:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.protobuf:116:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.protobuf.validate"
     },
     {
@@ -10468,7 +10424,7 @@
         "PERF": "owner:std.protobuf:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.protobuf:117:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.protobuf.descriptor"
     },
     {
@@ -10492,7 +10448,7 @@
         "PERF": "owner:std.protobuf:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.protobuf:119:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.protobuf.ProtoReader"
     },
     {
@@ -10516,7 +10472,7 @@
         "PERF": "owner:std.protobuf:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.protobuf:120:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.protobuf.ProtoReader"
     },
     {
@@ -10540,7 +10496,7 @@
         "PERF": "owner:std.protobuf:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.protobuf:121:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.protobuf.ProtoReader"
     },
     {
@@ -10564,7 +10520,7 @@
         "PERF": "owner:std.protobuf:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.protobuf:122:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.protobuf.ProtoReader"
     },
     {
@@ -10588,7 +10544,7 @@
         "PERF": "owner:std.protobuf:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.protobuf:123:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.protobuf.ProtoReader"
     },
     {
@@ -10612,7 +10568,7 @@
         "PERF": "owner:std.protobuf:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.protobuf:125:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.protobuf.ProtoWriter"
     },
     {
@@ -10636,7 +10592,7 @@
         "PERF": "owner:std.protobuf:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.protobuf:126:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.protobuf.ProtoWriter"
     },
     {
@@ -10660,7 +10616,7 @@
         "PERF": "owner:std.protobuf:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.protobuf:127:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.protobuf.ProtoWriter"
     },
     {
@@ -10684,7 +10640,7 @@
         "PERF": "owner:std.protobuf:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.protobuf:129:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.protobuf.UnknownFields.count"
     },
     {
@@ -10708,7 +10664,7 @@
         "PERF": "owner:std.protobuf:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.protobuf:130:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.protobuf.UnknownFields.discard"
     },
     {
@@ -10740,7 +10696,7 @@
         "PERF": "owner:std.reflect:PERF",
         "SPEC": "owner:std.reflect:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.reflect",
@@ -10772,7 +10728,7 @@
         "PERF": "owner:std.reflect:PERF",
         "SPEC": "owner:std.reflect:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.reflect",
@@ -10804,7 +10760,7 @@
         "PERF": "owner:std.reflect:PERF",
         "SPEC": "owner:std.reflect:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.reflect",
@@ -10835,7 +10791,7 @@
         "PERF": "owner:std.reflect:PERF",
         "SPEC": "owner:std.reflect:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.reflect",
@@ -10866,7 +10822,7 @@
         "PERF": "owner:std.reflect:PERF",
         "SPEC": "owner:std.reflect:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.reflect",
@@ -10897,7 +10853,7 @@
         "PERF": "owner:std.reflect:PERF",
         "SPEC": "owner:std.reflect:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.serialization",
@@ -10923,7 +10879,7 @@
         "PERF": "owner:std.serialization:PERF",
         "SPEC": "owner:std.serialization:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.serialization",
@@ -10949,7 +10905,7 @@
         "PERF": "owner:std.serialization:PERF",
         "SPEC": "owner:std.serialization:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.serialization",
@@ -10975,7 +10931,7 @@
         "PERF": "owner:std.serialization:PERF",
         "SPEC": "owner:std.serialization:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.serialization",
@@ -11001,7 +10957,7 @@
         "PERF": "owner:std.serialization:PERF",
         "SPEC": "owner:std.serialization:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.serialization",
@@ -11027,7 +10983,7 @@
         "PERF": "owner:std.serialization:PERF",
         "SPEC": "owner:std.serialization:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.serialization",
@@ -11053,7 +11009,7 @@
         "PERF": "owner:std.serialization:PERF",
         "SPEC": "owner:std.serialization:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.serialization",
@@ -11079,7 +11035,7 @@
         "PERF": "owner:std.serialization:PERF",
         "SPEC": "owner:std.serialization:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.testing",
@@ -11111,7 +11067,7 @@
         "PERF": "owner:std.testing:PERF",
         "SPEC": "owner:std.testing:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.testing",
@@ -11143,7 +11099,7 @@
         "PERF": "owner:std.testing:PERF",
         "SPEC": "owner:std.testing:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.testing",
@@ -11175,7 +11131,7 @@
         "PERF": "owner:std.testing:PERF",
         "SPEC": "owner:std.testing:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.testing",
@@ -11208,7 +11164,7 @@
         "PERF": "owner:std.testing:PERF",
         "SPEC": "owner:std.testing:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.testing",
@@ -11240,7 +11196,7 @@
         "PERF": "owner:std.testing:PERF",
         "SPEC": "owner:std.testing:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.testing",
@@ -11273,7 +11229,7 @@
         "PERF": "owner:std.testing:PERF",
         "SPEC": "owner:std.testing:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.testing",
@@ -11306,7 +11262,7 @@
         "PERF": "owner:std.testing:PERF",
         "SPEC": "owner:std.testing:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.testing",
@@ -11338,7 +11294,7 @@
         "PERF": "owner:std.testing:PERF",
         "SPEC": "owner:std.testing:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.testing",
@@ -11361,7 +11317,7 @@
         "PERF": "owner:std.testing:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:69:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.testing.assertEqual"
     },
     {
@@ -11385,7 +11341,7 @@
         "PERF": "owner:std.testing:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:70:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.testing.assertNotEqual"
     },
     {
@@ -11409,7 +11365,7 @@
         "PERF": "owner:std.testing:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:71:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.testing.assertTextEqual"
     },
     {
@@ -11433,7 +11389,7 @@
         "PERF": "owner:std.testing:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:72:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.testing.diffText"
     },
     {
@@ -11457,7 +11413,7 @@
         "PERF": "owner:std.testing:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:73:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.testing.TextDiff.render"
     },
     {
@@ -11481,7 +11437,7 @@
         "PERF": "owner:std.testing:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:148:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.testing.FloatTolerance.from"
     },
     {
@@ -11505,7 +11461,7 @@
         "PERF": "owner:std.testing:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:149:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.testing.assertFloatNear"
     },
     {
@@ -11529,7 +11485,7 @@
         "PERF": "owner:std.testing:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:150:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.testing.assertFloat32Near"
     },
     {
@@ -11553,7 +11509,7 @@
         "PERF": "owner:std.testing:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:187:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.testing.assertSome"
     },
     {
@@ -11577,7 +11533,7 @@
         "PERF": "owner:std.testing:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:188:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.testing.assertNone"
     },
     {
@@ -11601,7 +11557,7 @@
         "PERF": "owner:std.testing:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:189:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.testing.assertOk"
     },
     {
@@ -11625,7 +11581,7 @@
         "PERF": "owner:std.testing:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:190:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.testing.assertErr"
     },
     {
@@ -11649,7 +11605,7 @@
         "PERF": "owner:std.testing:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:238:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.testing.tempDirectory"
     },
     {
@@ -11673,7 +11629,7 @@
         "PERF": "owner:std.testing:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:239:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.testing.TempDirectory.path"
     },
     {
@@ -11697,7 +11653,7 @@
         "PERF": "owner:std.testing:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:240:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.testing.TempDirectory.cleanup"
     },
     {
@@ -11721,7 +11677,7 @@
         "PERF": "owner:std.testing:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:282:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.testing.Generator.new"
     },
     {
@@ -11745,7 +11701,7 @@
         "PERF": "owner:std.testing:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:283:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.testing.Generator.forCase"
     },
     {
@@ -11769,7 +11725,7 @@
         "PERF": "owner:std.testing:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:284:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.testing.Generator.id"
     },
     {
@@ -11793,7 +11749,7 @@
         "PERF": "owner:std.testing:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:285:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.testing.Generator.drawCount"
     },
     {
@@ -11817,7 +11773,7 @@
         "PERF": "owner:std.testing:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:286:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.testing.Generator.nextUInt"
     },
     {
@@ -11841,7 +11797,7 @@
         "PERF": "owner:std.testing:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:287:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.testing.Generator.nextBool"
     },
     {
@@ -11865,7 +11821,7 @@
         "PERF": "owner:std.testing:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:288:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.testing.Generator.nextInt"
     },
     {
@@ -11889,7 +11845,7 @@
         "PERF": "owner:std.testing:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:289:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.testing.Generator.nextBytes"
     },
     {
@@ -11913,7 +11869,7 @@
         "PERF": "owner:std.testing:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:290:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.testing.Generator.nextText"
     },
     {
@@ -11937,7 +11893,7 @@
         "PERF": "owner:std.testing:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.testing:296:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.testing.shrink"
     },
     {
@@ -11964,7 +11920,7 @@
         "PERF": "owner:std.text:PERF",
         "SPEC": "owner:std.text:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.text",
@@ -11990,7 +11946,7 @@
         "PERF": "owner:std.text:PERF",
         "SPEC": "owner:std.text:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.text",
@@ -12016,7 +11972,7 @@
         "PERF": "owner:std.text:PERF",
         "SPEC": "owner:std.text:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.text",
@@ -12042,7 +11998,7 @@
         "PERF": "owner:std.text:PERF",
         "SPEC": "owner:std.text:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.text",
@@ -12068,7 +12024,7 @@
         "PERF": "owner:std.text:PERF",
         "SPEC": "owner:std.text:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.text",
@@ -12094,7 +12050,7 @@
         "PERF": "owner:std.text:PERF",
         "SPEC": "owner:std.text:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.text",
@@ -12120,7 +12076,7 @@
         "PERF": "owner:std.text:PERF",
         "SPEC": "owner:std.text:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.text",
@@ -12143,7 +12099,7 @@
         "PERF": "owner:std.text:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.text:104:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.text.String.empty"
     },
     {
@@ -12167,7 +12123,7 @@
         "PERF": "owner:std.text:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.text:105:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.text.String.fromChars"
     },
     {
@@ -12191,7 +12147,7 @@
         "PERF": "owner:std.text:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.text:106:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.text.String.length"
     },
     {
@@ -12215,7 +12171,7 @@
         "PERF": "owner:std.text:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.text:107:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.text.String.byteLength"
     },
     {
@@ -12239,7 +12195,7 @@
         "PERF": "owner:std.text:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.text:108:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.text.String.get"
     },
     {
@@ -12263,7 +12219,7 @@
         "PERF": "owner:std.text:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.text:109:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.text.String.slice"
     },
     {
@@ -12287,7 +12243,7 @@
         "PERF": "owner:std.text:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.text:110:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.text.String.contains"
     },
     {
@@ -12311,7 +12267,7 @@
         "PERF": "owner:std.text:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.text:111:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.text.String.startsWith"
     },
     {
@@ -12335,7 +12291,7 @@
         "PERF": "owner:std.text:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.text:112:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.text.String.endsWith"
     },
     {
@@ -12359,7 +12315,7 @@
         "PERF": "owner:std.text:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.text:113:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.text.String.find"
     },
     {
@@ -12383,7 +12339,7 @@
         "PERF": "owner:std.text:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.text:114:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.text.String.replace"
     },
     {
@@ -12407,7 +12363,7 @@
         "PERF": "owner:std.text:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.text:115:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.text.String.trim"
     },
     {
@@ -12431,7 +12387,7 @@
         "PERF": "owner:std.text:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.text:116:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.text.String.toLowerAscii"
     },
     {
@@ -12455,7 +12411,7 @@
         "PERF": "owner:std.text:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.text:117:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.text.String.toUpperAscii"
     },
     {
@@ -12479,7 +12435,7 @@
         "PERF": "owner:std.text:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.text:121:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.text.String.chars"
     },
     {
@@ -12511,7 +12467,7 @@
         "PERF": "owner:std.time:PERF",
         "SPEC": "owner:std.time:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.time",
@@ -12543,7 +12499,7 @@
         "PERF": "owner:std.time:PERF",
         "SPEC": "owner:std.time:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.time",
@@ -12575,7 +12531,7 @@
         "PERF": "owner:std.time:PERF",
         "SPEC": "owner:std.time:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.time",
@@ -12606,7 +12562,7 @@
         "PERF": "owner:std.time:PERF",
         "SPEC": "owner:std.time:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.time",
@@ -12638,7 +12594,7 @@
         "PERF": "owner:std.time:PERF",
         "SPEC": "owner:std.time:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.time",
@@ -12669,7 +12625,7 @@
         "PERF": "owner:std.time:PERF",
         "SPEC": "owner:std.time:SPEC"
       },
-      "status": "open-gaps"
+      "status": "verified"
     },
     {
       "dimensions_ref": "owner:std.time",
@@ -12692,7 +12648,7 @@
         "PERF": "owner:std.time:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.time:42:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.time.now"
     },
     {
@@ -12716,7 +12672,7 @@
         "PERF": "owner:std.time:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.time:43:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.time.resolution"
     },
     {
@@ -12740,7 +12696,7 @@
         "PERF": "owner:std.time:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.time:44:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.time.deadline"
     },
     {
@@ -12764,7 +12720,7 @@
         "PERF": "owner:std.time:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.time:45:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.time.sleep"
     },
     {
@@ -12788,7 +12744,7 @@
         "PERF": "owner:std.time:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.time:47:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.time.Timer.after"
     },
     {
@@ -12812,7 +12768,7 @@
         "PERF": "owner:std.time:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.time:48:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.time.Timer.at"
     },
     {
@@ -12836,7 +12792,7 @@
         "PERF": "owner:std.time:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.time:49:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.time.Timer.wait"
     },
     {
@@ -12860,7 +12816,7 @@
         "PERF": "owner:std.time:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.time:50:SPEC"
       },
-      "status": "open-gaps",
+      "status": "verified",
       "symbol": "std.time.Timer.cancel"
     }
   ],
@@ -12897,18 +12853,19 @@
     "owner_evidence": "testing/stdlib-owner-evidence.json",
     "performance_contract": "testing/stdlib-performance.json",
     "performance_coordinator": "testing/stdlib-performance-conformance.json",
-    "public_api": "testing/stdlib-public-api.json"
+    "public_api": "testing/stdlib-public-api.json",
+    "public_conformance": "testing/stdlib-conformance.json"
   },
-  "status": "open-gaps",
+  "status": "verified",
   "summary": {
-    "open_rows": 385,
+    "open_rows": 0,
     "owners": 22,
     "requirements": 171,
     "rows": 385,
     "signatures": 214,
     "stage_counts": {
       "CONF": {
-        "partial": 385
+        "verified": 385
       },
       "DOC": {
         "verified": 385
@@ -12927,6 +12884,6 @@
         "verified": 385
       }
     },
-    "verified_rows": 0
+    "verified_rows": 385
   }
 }

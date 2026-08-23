@@ -21,6 +21,7 @@ for path in \
     testing/stdlib-spec.json \
     testing/stdlib-performance.json \
     testing/stdlib-performance-conformance.json \
+    testing/stdlib-conformance.json \
     testing/stdlib-codec-conformance.json \
     testing/stdlib-core.json \
     testing/stdlib-hosted.json \
@@ -50,6 +51,7 @@ jq -n \
     --slurpfile integration testing/stdlib-spec.json \
     --slurpfile performance testing/stdlib-performance.json \
     --slurpfile performance_conformance testing/stdlib-performance-conformance.json \
+    --slurpfile public_conformance testing/stdlib-conformance.json \
     --slurpfile codec_conformance testing/stdlib-codec-conformance.json \
     --slurpfile core testing/stdlib-core.json \
     --slurpfile hosted testing/stdlib-hosted.json \
@@ -126,12 +128,15 @@ jq -n \
             {status: "not-applicable", reason: $owner.reason, refs: ["testing/stdlib-performance-conformance.json#owners/" + $id], observed_dimensions: [], pending_dimensions: []}
           end;
 
-    def conformance_stage($id; $codec):
-        if (["std.serialization", "std.json", "std.messagepack", "std.protobuf"] | index($id)) != null then
-            {status: "partial", reason: "the external codec harness is closed for the kernel and bridge, but the owner matrix still has public API gaps", refs: ["testing/stdlib-codec-conformance.json", "scripts/stdlib-codec-conformance.sh"]}
-        else
-            {status: "pending", reason: "STD-CONF-001 remains open until the owner has complete public evidence", refs: ["TONDO_IMPLEMENTATION_TRACKER.md#STD-CONF-001"]}
-        end;
+    def conformance_stage($id; $public_conformance):
+        (first($public_conformance.owners[] | select(.id == $id)) // null) as $owner
+        | if $owner != null and $owner.status == "verified" then
+            {status: "verified", reason: null, refs: ["testing/stdlib-conformance.json#owners/" + $id]}
+          elif $owner != null then
+            {status: "partial", reason: "public conformance is not promoted for this owner", refs: ["testing/stdlib-conformance.json#owners/" + $id]}
+          else
+            {status: "gap", reason: "owner is absent from the public conformance registry", refs: ["testing/stdlib-conformance.json"]}
+          end;
 
     def doc_stage($doc):
         if ($doc | type) == "string" and ($doc | length) > 0 then
@@ -181,7 +186,7 @@ jq -n \
           end;
 
     def row_status($stages):
-        if all($stages[]; .status == "verified") then "verified" else "open-gaps" end;
+        if all($stages[]; .status == "verified" or .status == "not-applicable") then "verified" else "open-gaps" end;
 
     def performance_dimensions($id; $contract; $manifest):
         (performance_group($id; $contract)) as $group
@@ -211,16 +216,16 @@ jq -n \
           else $owner.contract
           end;
 
-    def owner_stage_templates($id; $manifest; $integration; $performance_contract; $performance_manifest; $codec; $sources; $evidence):
+    def owner_stage_templates($id; $manifest; $integration; $performance_contract; $performance_manifest; $public_conformance; $sources; $evidence):
         (owner_contract($id; $sources)) as $source
         | (if $source == null then
             {status: "partial", reason: "no executable owner test_matrix entry exists; the placeholder makes the missing contract explicit", refs: [contract_for_owner($id; $integration)]}
           else
             {status: "verified", reason: null, refs: [source_for_owner($id; $sources), contract_for_owner($id; $integration)]}
           end) as $spec_stage
-        | [{id: "SPEC", value: evidence_stage($id; "SPEC"; $spec_stage; $evidence)}, {id: "IMPL/HOST", value: evidence_stage($id; "IMPL/HOST"; implementation_stage($id; $manifest); $evidence)}, {id: "MODEL/TEST/FUZZ", value: evidence_stage($id; "MODEL/TEST/FUZZ"; model_stage($id; $manifest; owner_has_test_matrix($id; $sources)); $evidence)}, {id: "PERF", value: evidence_stage($id; "PERF"; performance_stage($id; $performance_contract; $performance_manifest); $evidence)}, {id: "CONF", value: evidence_stage($id; "CONF"; conformance_stage($id; $codec); $evidence)}, {id: "DOC", value: evidence_stage($id; "DOC"; doc_stage(contract_for_owner($id; $integration)); $evidence)}];
+        | [{id: "SPEC", value: evidence_stage($id; "SPEC"; $spec_stage; $evidence)}, {id: "IMPL/HOST", value: evidence_stage($id; "IMPL/HOST"; implementation_stage($id; $manifest); $evidence)}, {id: "MODEL/TEST/FUZZ", value: evidence_stage($id; "MODEL/TEST/FUZZ"; model_stage($id; $manifest; owner_has_test_matrix($id; $sources)); $evidence)}, {id: "PERF", value: evidence_stage($id; "PERF"; performance_stage($id; $performance_contract; $performance_manifest); $evidence)}, {id: "CONF", value: evidence_stage($id; "CONF"; conformance_stage($id; $public_conformance); $evidence)}, {id: "DOC", value: evidence_stage($id; "DOC"; doc_stage(contract_for_owner($id; $integration)); $evidence)}];
 
-    def owner_rows($id; $manifest; $api; $integration; $performance_contract; $performance_manifest; $codec; $sources; $evidence):
+    def owner_rows($id; $manifest; $api; $integration; $performance_contract; $performance_manifest; $public_conformance; $sources; $evidence):
         (spec_owner($id; $integration)) as $spec
         | (implementation_owner($id; $manifest)) as $implementation
         | (performance_dimensions($id; $performance_contract; $performance_manifest)) as $dimensions
@@ -234,13 +239,13 @@ jq -n \
                 {status: "verified", reason: null, refs: [source_for_owner($id; $sources), contract_for_owner($id; $integration)]}
               end) as $spec_stage
             | (model_stage($id; $manifest; ($requirement.synthetic // false) | not)) as $model
-            | [{id: "SPEC", value: evidence_stage($id; "SPEC"; $spec_stage; $evidence)}, {id: "IMPL/HOST", value: evidence_stage($id; "IMPL/HOST"; $owner_impl; $evidence)}, {id: "MODEL/TEST/FUZZ", value: evidence_stage($id; "MODEL/TEST/FUZZ"; $model; $evidence)}, {id: "PERF", value: evidence_stage($id; "PERF"; $perf; $evidence)}, {id: "CONF", value: evidence_stage($id; "CONF"; conformance_stage($id; $codec); $evidence)}, {id: "DOC", value: evidence_stage($id; "DOC"; $doc; $evidence)}] as $stages
+            | [{id: "SPEC", value: evidence_stage($id; "SPEC"; $spec_stage; $evidence)}, {id: "IMPL/HOST", value: evidence_stage($id; "IMPL/HOST"; $owner_impl; $evidence)}, {id: "MODEL/TEST/FUZZ", value: evidence_stage($id; "MODEL/TEST/FUZZ"; $model; $evidence)}, {id: "PERF", value: evidence_stage($id; "PERF"; $perf; $evidence)}, {id: "CONF", value: evidence_stage($id; "CONF"; conformance_stage($id; $public_conformance); $evidence)}, {id: "DOC", value: evidence_stage($id; "DOC"; $doc; $evidence)}] as $stages
             | {id: ("requirement:" + $id + ":" + $requirement.id), kind: "requirement", owner: $id, layer: ($implementation.layer // ($spec.source_set // "A0")), scope: "STD-0.1A", requirement: $requirement, source: {contract: contract_for_owner($id; $integration), owner_contract: source_for_owner($id; $sources)}, dimensions: $dimensions, stages: $stages, status: row_status($stages | map(.value))}
         )) as $requirement_rows
         | ($api.rows | map(select(.owner == $id)) | map(. as $row
             | (audit_implementation_stage($row)) as $impl_stage
             | (audit_model_stage($row; $owner_impl)) as $model_stage
-            | [{id: "SPEC", value: evidence_stage($id; "SPEC"; {status: "verified", reason: null, refs: [$row.contract + "#" + ($row.line | tostring)]}; $evidence)}, {id: "IMPL/HOST", value: evidence_stage($id; "IMPL/HOST"; $impl_stage; $evidence)}, {id: "MODEL/TEST/FUZZ", value: evidence_stage($id; "MODEL/TEST/FUZZ"; $model_stage; $evidence)}, {id: "PERF", value: evidence_stage($id; "PERF"; $perf; $evidence)}, {id: "CONF", value: evidence_stage($id; "CONF"; conformance_stage($id; $codec); $evidence)}, {id: "DOC", value: evidence_stage($id; "DOC"; $doc; $evidence)}] as $stages
+            | [{id: "SPEC", value: evidence_stage($id; "SPEC"; {status: "verified", reason: null, refs: [$row.contract + "#" + ($row.line | tostring)]}; $evidence)}, {id: "IMPL/HOST", value: evidence_stage($id; "IMPL/HOST"; $impl_stage; $evidence)}, {id: "MODEL/TEST/FUZZ", value: evidence_stage($id; "MODEL/TEST/FUZZ"; $model_stage; $evidence)}, {id: "PERF", value: evidence_stage($id; "PERF"; $perf; $evidence)}, {id: "CONF", value: evidence_stage($id; "CONF"; conformance_stage($id; $public_conformance); $evidence)}, {id: "DOC", value: evidence_stage($id; "DOC"; $doc; $evidence)}] as $stages
             | {id: ("signature:" + $row.id), kind: "signature", owner: $id, layer: ($implementation.layer // ($spec.source_set // "A0")), scope: "STD-0.1A", signature: $row.signature, symbol: $row.symbol, source: {contract: $row.contract, line: $row.line, audit: ("testing/stdlib-public-api.json#rows/" + $row.id)}, dimensions: $dimensions, stages: $stages, status: row_status($stages | map(.value))}
         )) as $signature_rows
         | ($requirement_rows + $signature_rows);
@@ -251,6 +256,7 @@ jq -n \
     | ($performance[0]) as $performance_contract
     | ($performance_conformance[0]) as $performance_manifest
     | ($codec_conformance[0]) as $codec
+    | ($public_conformance[0]) as $public_conformance
     | ($owner_evidence) as $evidence
     | ([
         {path: "testing/stdlib-meta.json", data: $meta_owner[0]},
@@ -268,16 +274,16 @@ jq -n \
         {path: "testing/stdlib-testing.json", data: $testing_owner[0]}
     ]) as $sources
     | (($integration_contract.owner_contracts | map(.id)) + ["std.bytes"] | unique) as $owner_ids
-    | ($owner_ids | map(. as $id | {id: $id, rows: owner_rows($id; $manifest; $api; $integration_contract; $performance_contract; $performance_manifest; $codec; $sources; $evidence)})) as $bundles
+    | ($owner_ids | map(. as $id | {id: $id, rows: owner_rows($id; $manifest; $api; $integration_contract; $performance_contract; $performance_manifest; $public_conformance; $sources; $evidence)})) as $bundles
     | ($bundles | map(.rows[]) | sort_by([.owner, .kind, (.source.line // 0), (.requirement.id // ""), .id])) as $rows
-    | ($bundles | map(.id as $id | (spec_owner($id; $integration_contract)) as $spec | (implementation_owner($id; $manifest)) as $implementation | (performance_dimensions($id; $performance_contract; $performance_manifest)) as $dimensions | {id: $id, layer: ($implementation.layer // "A0"), source_set: ($spec.source_set // "stdlib-core"), dependencies: ($spec.dependencies // []), contract: contract_for_owner($id; $integration_contract), owner_contract: source_for_owner($id; $sources), implementation_indexed: ($implementation != null), dimensions: $dimensions, stages: (owner_stage_templates($id; $manifest; $integration_contract; $performance_contract; $performance_manifest; $codec; $sources; $evidence) | reduce .[] as $stage ({}; .[$stage.id] = $stage.value)), signature_rows: ([ $rows[] | select(.owner == $id and .kind == "signature") | .id ]), requirement_rows: ([ $rows[] | select(.owner == $id and .kind == "requirement") | .id ]), status: (if any($rows[]; .owner == $id and .status == "open-gaps") then "open-gaps" else "verified" end)})) as $owners
+    | ($bundles | map(.id as $id | (spec_owner($id; $integration_contract)) as $spec | (implementation_owner($id; $manifest)) as $implementation | (performance_dimensions($id; $performance_contract; $performance_manifest)) as $dimensions | {id: $id, layer: ($implementation.layer // "A0"), source_set: ($spec.source_set // "stdlib-core"), dependencies: ($spec.dependencies // []), contract: contract_for_owner($id; $integration_contract), owner_contract: source_for_owner($id; $sources), implementation_indexed: ($implementation != null), dimensions: $dimensions, stages: (owner_stage_templates($id; $manifest; $integration_contract; $performance_contract; $performance_manifest; $public_conformance; $sources; $evidence) | reduce .[] as $stage ({}; .[$stage.id] = $stage.value)), signature_rows: ([ $rows[] | select(.owner == $id and .kind == "signature") | .id ]), requirement_rows: ([ $rows[] | select(.owner == $id and .kind == "requirement") | .id ]), status: (if any($rows[]; .owner == $id and .status == "open-gaps") then "open-gaps" else "verified" end)})) as $owners
     | {
         format: "tondo-stdlib-normative-matrix/1",
         edition: "0.1",
         phase: "STD-0.1A",
         status: (if any($rows[]; .status == "open-gaps") then "open-gaps" else "verified" end),
         catalogs: {current: "STD-0.1A", future_closed: "STD-0.1B", future_modules: ["std.encoding", "std.yaml", "std.toml", "std.cbor", "std.regex", "std.uuid", "std.channel", "std.sync", "std.executor", "std.log", "std.net"]},
-        sources: {canonical_spec: "TONDO_STANDARD_LIBRARY_SPEC.md", integration: "testing/stdlib-spec.json", implementation: "testing/stdlib-implementation.json", owner_contracts: ["testing/stdlib-meta.json", "testing/stdlib-reflect.json", "testing/stdlib-bytes.json", "testing/stdlib-time.json", "testing/stdlib-env.json", "testing/stdlib-async.json"], owner_evidence: "testing/stdlib-owner-evidence.json", public_api: "testing/stdlib-public-api.json", performance_contract: "testing/stdlib-performance.json", performance_coordinator: "testing/stdlib-performance-conformance.json", codec_conformance: "testing/stdlib-codec-conformance.json"},
+        sources: {canonical_spec: "TONDO_STANDARD_LIBRARY_SPEC.md", integration: "testing/stdlib-spec.json", implementation: "testing/stdlib-implementation.json", owner_contracts: ["testing/stdlib-meta.json", "testing/stdlib-reflect.json", "testing/stdlib-bytes.json", "testing/stdlib-time.json", "testing/stdlib-env.json", "testing/stdlib-async.json"], owner_evidence: "testing/stdlib-owner-evidence.json", public_api: "testing/stdlib-public-api.json", performance_contract: "testing/stdlib-performance.json", performance_coordinator: "testing/stdlib-performance-conformance.json", public_conformance: "testing/stdlib-conformance.json", codec_conformance: "testing/stdlib-codec-conformance.json"},
         rules: {required_stages: ["SPEC", "IMPL/HOST", "MODEL/TEST/FUZZ", "PERF", "CONF", "DOC"], one_owner_per_signature: true, one_owner_per_requirement: true, pending_requires_reason: true, not_applicable_requires_reason: true, future_catalog_not_implicitly_current: true},
         owners: $owners,
         rows: $rows,

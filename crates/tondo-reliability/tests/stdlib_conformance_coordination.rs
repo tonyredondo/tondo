@@ -31,8 +31,8 @@ fn every_normative_matrix_row_has_an_explicit_conformance_record() {
     let matrix = load(&root, "testing/stdlib-matrix.json");
     let coordinated = rows_by_id(&registry);
 
-    assert_eq!(registry["status"], "closed-coordination");
-    assert_eq!(registry["promotion"]["status"], "not-promoted");
+    assert_eq!(registry["status"], "promoted");
+    assert_eq!(registry["promotion"]["status"], "promoted");
 
     let matrix_rows = matrix["rows"].as_array().unwrap();
     assert_eq!(matrix_rows.len(), 385);
@@ -55,17 +55,12 @@ fn every_normative_matrix_row_has_an_explicit_conformance_record() {
         assert_eq!(row["reason"], owner_conf["stages"]["CONF"]["reason"]);
         assert_eq!(row["refs"], owner_conf["stages"]["CONF"]["refs"]);
         assert!(!row["refs"].as_array().unwrap().is_empty());
-        if row["status"] != "verified" {
-            assert!(
-                row["reason"]
-                    .as_str()
-                    .is_some_and(|reason| !reason.is_empty())
-            );
-        }
+        assert_eq!(row["status"], "verified");
+        assert!(row["reason"].is_null());
     }
 
     assert_eq!(registry["summary"]["rows"], matrix_rows.len());
-    assert_eq!(registry["summary"]["verified_rows"], 0);
+    assert_eq!(registry["summary"]["verified_rows"], matrix_rows.len());
 }
 
 #[test]
@@ -86,19 +81,10 @@ fn owner_closure_and_promotion_boundary_are_explicit() {
 
     for owner in owners(&registry) {
         let rows = owner["rows"].as_array().unwrap();
-        let expected_status = if rows.iter().any(|row| row["status"] == "pending") {
-            "pending"
-        } else if rows
-            .iter()
-            .any(|row| row["status"] == "partial" || row["status"] == "gap")
-        {
-            "partial"
-        } else {
-            "verified"
-        };
+        let expected_status = "verified";
         assert_eq!(owner["status"], expected_status);
         assert_eq!(owner["evidence"]["status"], expected_status);
-        assert!(!owner["reason"].as_str().unwrap().is_empty());
+        assert!(owner["reason"].is_null());
         assert!(!owner["evidence"]["refs"].as_array().unwrap().is_empty());
         assert!(!owner["evidence"]["commands"].as_array().unwrap().is_empty());
         if expected_status == "verified" {
@@ -106,8 +92,8 @@ fn owner_closure_and_promotion_boundary_are_explicit() {
         }
     }
 
-    assert_eq!(registry["promotion"]["matrix_status"], "open-gaps");
-    assert_eq!(registry["promotion"]["next_coordination"], "STD-DOC-001");
+    assert_eq!(registry["promotion"]["matrix_status"], "verified");
+    assert_eq!(registry["promotion"]["next_coordination"], "STD-A-DIST-001");
 }
 
 #[test]
@@ -141,16 +127,12 @@ fn conformance_commands_and_codec_observations_are_linked() {
                     .as_array()
                     .is_some_and(|cases| !cases.is_empty())
             );
-            assert!(
-                owner["evidence"]["refs"]
-                    .as_array()
+            assert!(owner["evidence"]["refs"].as_array().unwrap().iter().any(
+                |reference| reference
+                    .as_str()
                     .unwrap()
-                    .iter()
-                    .any(|reference| reference
-                        .as_str()
-                        .unwrap()
-                        .contains("stdlib-codec-conformance"))
-            );
+                    .contains("stdlib-conformance.json#owners/")
+            ));
         }
     }
     assert!(codec_owners.is_empty());
@@ -158,6 +140,6 @@ fn conformance_commands_and_codec_observations_are_linked() {
     let async_owner = owners(&registry)
         .find(|owner| owner["id"] == "std.async")
         .unwrap();
-    assert_eq!(async_owner["status"], "partial");
-    assert!(!async_owner["reason"].as_str().unwrap().is_empty());
+    assert_eq!(async_owner["status"], "verified");
+    assert!(async_owner["reason"].is_null());
 }

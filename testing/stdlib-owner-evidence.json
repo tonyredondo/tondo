@@ -7,112 +7,156 @@
     {
       "id": "STD-A-META-EVIDENCE-001",
       "contract": "testing/stdlib-meta.json",
-      "owners": ["std.meta"]
+      "owners": [
+        "std.meta"
+      ]
     },
     {
       "id": "STD-A-REFLECT-EVIDENCE-001",
       "contract": "testing/stdlib-reflect.json",
-      "owners": ["std.reflect"]
+      "owners": [
+        "std.reflect"
+      ]
     },
     {
       "id": "STD-A-BYTES-EVIDENCE-001",
       "contract": "testing/stdlib-bytes.json",
-      "owners": ["std.bytes"]
+      "owners": [
+        "std.bytes"
+      ]
     },
     {
       "id": "STD-A-TIME-EVIDENCE-001",
       "contract": "testing/stdlib-time.json",
-      "owners": ["std.time"]
+      "owners": [
+        "std.time"
+      ]
     },
     {
       "id": "STD-A-ENV-EVIDENCE-001",
       "contract": "testing/stdlib-env.json",
-      "owners": ["std.env"]
+      "owners": [
+        "std.env"
+      ]
     },
     {
       "id": "STD-A-CORE-EVIDENCE-001",
       "contract": "testing/stdlib-core.json",
-      "owners": ["std.core"]
+      "owners": [
+        "std.core"
+      ]
     },
     {
       "id": "STD-A-TEXT-EVIDENCE-001",
       "contract": "testing/stdlib-core.json",
-      "owners": ["std.text"]
+      "owners": [
+        "std.text"
+      ]
     },
     {
       "id": "STD-A-COLL-EVIDENCE-001",
       "contract": "testing/stdlib-core.json",
-      "owners": ["std.collections"]
+      "owners": [
+        "std.collections"
+      ]
     },
     {
       "id": "STD-A-ITER-EVIDENCE-001",
       "contract": "testing/stdlib-core.json",
-      "owners": ["std.iter"]
+      "owners": [
+        "std.iter"
+      ]
     },
     {
       "id": "STD-A-MATH-EVIDENCE-001",
       "contract": "testing/stdlib-core.json",
-      "owners": ["std.math"]
+      "owners": [
+        "std.math"
+      ]
     },
     {
       "id": "STD-A-FMT-EVIDENCE-001",
       "contract": "testing/stdlib-core.json",
-      "owners": ["std.format"]
+      "owners": [
+        "std.format"
+      ]
     },
     {
       "id": "STD-A-IO-EVIDENCE-001",
       "contract": "testing/stdlib-core.json",
-      "owners": ["std.io"]
+      "owners": [
+        "std.io"
+      ]
     },
     {
       "id": "STD-A-ASYNC-API-001",
       "contract": "testing/stdlib-async.json",
-      "owners": ["std.async"]
+      "owners": [
+        "std.async"
+      ]
     },
     {
       "id": "STD-A-PATH-EVIDENCE-001",
       "contract": "testing/stdlib-hosted.json",
-      "owners": ["std.path"]
+      "owners": [
+        "std.path"
+      ]
     },
     {
       "id": "STD-A-CONSOLE-EVIDENCE-001",
       "contract": "testing/stdlib-hosted.json",
-      "owners": ["std.console"]
+      "owners": [
+        "std.console"
+      ]
     },
     {
       "id": "STD-A-FS-EVIDENCE-001",
       "contract": "testing/stdlib-hosted.json",
-      "owners": ["std.fs"]
+      "owners": [
+        "std.fs"
+      ]
     },
     {
       "id": "STD-A-PROC-EVIDENCE-001",
       "contract": "testing/stdlib-hosted.json",
-      "owners": ["std.process"]
+      "owners": [
+        "std.process"
+      ]
     },
     {
       "id": "STD-A-SER-EVIDENCE-001",
       "contract": "testing/stdlib-core.json",
-      "owners": ["std.serialization"]
+      "owners": [
+        "std.serialization"
+      ]
     },
     {
       "id": "STD-A-JSON-EVIDENCE-001",
       "contract": "testing/stdlib-json.json",
-      "owners": ["std.json"]
+      "owners": [
+        "std.json"
+      ]
     },
     {
       "id": "STD-A-MSGPACK-EVIDENCE-001",
       "contract": "testing/stdlib-messagepack.json",
-      "owners": ["std.messagepack"]
+      "owners": [
+        "std.messagepack"
+      ]
     },
     {
       "id": "STD-A-PROTOBUF-EVIDENCE-001",
       "contract": "testing/stdlib-protobuf.json",
-      "owners": ["std.protobuf"]
+      "owners": [
+        "std.protobuf"
+      ]
     },
     {
       "id": "STD-A-TESTING-EVIDENCE-001",
       "contract": "testing/stdlib-testing.json",
-      "owners": ["std.testing"]
+      "owners": [
+        "std.testing"
+      ]
     }
   ],
   "owners": [
@@ -123,47 +167,82 @@
         "SPEC": {
           "status": "verified",
           "reason": null,
-          "refs": ["docs/contracts/std-meta.md", "TONDO_STANDARD_LIBRARY_SPEC.md"]
+          "refs": [
+            "docs/contracts/std-meta.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md"
+          ]
         },
         "IMPL": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-compiler/src/meta.rs", "crates/tondo-compiler/src/std_meta.rs", "crates/tondo-compiler/src/meta_vm.rs"]
+          "refs": [
+            "crates/tondo-compiler/src/meta.rs",
+            "crates/tondo-compiler/src/std_meta.rs",
+            "crates/tondo-compiler/src/meta_vm.rs"
+          ]
         },
         "HOST": {
           "status": "not-applicable",
           "reason": "std.meta is build-only; provider execution is admitted by the separate tondo-meta VM boundary and has no runtime host adapter",
-          "refs": ["docs/contracts/std-meta.md", "crates/tondo-compiler/src/meta_vm.rs"]
+          "refs": [
+            "docs/contracts/std-meta.md",
+            "crates/tondo-compiler/src/meta_vm.rs"
+          ]
         },
         "MODEL": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-compiler/src/meta.rs", "crates/tondo-compiler/src/meta_atomic.rs", "crates/tondo-compiler/src/meta_vm.rs"]
+          "refs": [
+            "crates/tondo-compiler/src/meta.rs",
+            "crates/tondo-compiler/src/meta_atomic.rs",
+            "crates/tondo-compiler/src/meta_vm.rs"
+          ]
         },
         "TEST": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-compiler/src/meta.rs", "crates/tondo-compiler/src/std_meta.rs", "crates/tondo-compiler/tests/std_meta_conformance.rs"]
+          "refs": [
+            "crates/tondo-compiler/src/meta.rs",
+            "crates/tondo-compiler/src/std_meta.rs",
+            "crates/tondo-compiler/tests/std_meta_conformance.rs"
+          ]
         },
         "FUZZ": {
           "status": "verified",
           "reason": null,
-          "refs": ["fuzz/fuzz_targets/stdlib_owners.rs#route=std.meta", "fuzz/corpus/stdlib_owners/std-meta/seed#seed=3014", "testing/stdlib-fuzz.json#owner=std.meta", "scripts/stdlib-fuzz-check.sh", "scripts/fuzz-smoke.sh", "scripts/fuzz-campaign.sh"]
+          "refs": [
+            "fuzz/fuzz_targets/stdlib_owners.rs#route=std.meta",
+            "fuzz/corpus/stdlib_owners/std-meta/seed#seed=3014",
+            "testing/stdlib-fuzz.json#owner=std.meta",
+            "scripts/stdlib-fuzz-check.sh",
+            "scripts/fuzz-smoke.sh",
+            "scripts/fuzz-campaign.sh"
+          ]
         },
         "PERF": {
           "status": "not-applicable",
           "reason": "std.meta is build-only; its compile/link cost is measured by the PERF-001 compile plane, not a standalone stdlib hot path",
-          "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
+          "refs": [
+            "testing/stdlib-performance.json",
+            "testing/stdlib-performance-conformance.json",
+            "docs/contracts/stdlib-performance.md"
+          ]
         },
         "CONF": {
-          "status": "partial",
-          "reason": "the build-only contract is exercised by compiler and meta-target tests; STD-CONF-001 has not yet promoted every standard-library owner",
-          "refs": ["crates/tondo-compiler/tests/std_meta_conformance.rs", "TONDO_IMPLEMENTATION_TRACKER.md"]
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "testing/stdlib-conformance.json#owners/std.meta"
+          ]
         },
         "DOC": {
           "status": "verified",
           "reason": null,
-          "refs": ["docs/contracts/std-meta.md", "TONDO_STANDARD_LIBRARY_SPEC.md", "docs/contracts/stdlib-s1a.md"]
+          "refs": [
+            "docs/contracts/std-meta.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md",
+            "docs/contracts/stdlib-s1a.md"
+          ]
         }
       },
       "budgets": {
@@ -196,47 +275,76 @@
         "SPEC": {
           "status": "verified",
           "reason": null,
-          "refs": ["docs/contracts/std-reflect.md", "TONDO_STANDARD_LIBRARY_SPEC.md"]
+          "refs": [
+            "docs/contracts/std-reflect.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md"
+          ]
         },
         "IMPL": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-compiler/src/reflect.rs"]
+          "refs": [
+            "crates/tondo-compiler/src/reflect.rs"
+          ]
         },
         "HOST": {
           "status": "not-applicable",
           "reason": "std.reflect is metadata-only and has no runtime host adapter or ambient provider",
-          "refs": ["docs/contracts/std-reflect.md", "testing/stdlib-reflect.json"]
+          "refs": [
+            "docs/contracts/std-reflect.md",
+            "testing/stdlib-reflect.json"
+          ]
         },
         "MODEL": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-compiler/src/reflect.rs"]
+          "refs": [
+            "crates/tondo-compiler/src/reflect.rs"
+          ]
         },
         "TEST": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-compiler/src/reflect.rs"]
+          "refs": [
+            "crates/tondo-compiler/src/reflect.rs"
+          ]
         },
         "FUZZ": {
           "status": "verified",
           "reason": null,
-          "refs": ["fuzz/fuzz_targets/stdlib_owners.rs#route=std.reflect", "fuzz/corpus/stdlib_owners/std-reflect/seed#seed=3018", "testing/stdlib-fuzz.json#owner=std.reflect", "scripts/stdlib-fuzz-check.sh", "scripts/fuzz-smoke.sh", "scripts/fuzz-campaign.sh"]
+          "refs": [
+            "fuzz/fuzz_targets/stdlib_owners.rs#route=std.reflect",
+            "fuzz/corpus/stdlib_owners/std-reflect/seed#seed=3018",
+            "testing/stdlib-fuzz.json#owner=std.reflect",
+            "scripts/stdlib-fuzz-check.sh",
+            "scripts/fuzz-smoke.sh",
+            "scripts/fuzz-campaign.sh"
+          ]
         },
         "PERF": {
           "status": "not-applicable",
           "reason": "std.reflect is metadata-only; its compile/link cost is measured by the PERF-001 compile plane, not a runtime hot path",
-          "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
+          "refs": [
+            "testing/stdlib-performance.json",
+            "testing/stdlib-performance-conformance.json",
+            "docs/contracts/stdlib-performance.md"
+          ]
         },
         "CONF": {
-          "status": "partial",
-          "reason": "compiler reflection tests cover the metadata boundary; STD-CONF-001 has not yet promoted every standard-library owner",
-          "refs": ["crates/tondo-compiler/src/reflect.rs", "TONDO_IMPLEMENTATION_TRACKER.md"]
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "testing/stdlib-conformance.json#owners/std.reflect"
+          ]
         },
         "DOC": {
           "status": "verified",
           "reason": null,
-          "refs": ["docs/contracts/std-reflect.md", "TONDO_STANDARD_LIBRARY_SPEC.md", "docs/contracts/stdlib-s1a.md"]
+          "refs": [
+            "docs/contracts/std-reflect.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md",
+            "docs/contracts/stdlib-s1a.md"
+          ]
         }
       },
       "budgets": {
@@ -266,47 +374,82 @@
         "SPEC": {
           "status": "verified",
           "reason": null,
-          "refs": ["docs/contracts/stdlib-bytes.md", "TONDO_STANDARD_LIBRARY_SPEC.md"]
+          "refs": [
+            "docs/contracts/stdlib-bytes.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md"
+          ]
         },
         "IMPL": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/hir/check.rs", "crates/tondo-vm/src/runtime/execute.rs"]
+          "refs": [
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ]
         },
         "HOST": {
           "status": "not-applicable",
           "reason": "std.bytes is an intrinsic portable owner; its compiler-owned bridge has no separate capability provider or ambient host dependency",
-          "refs": ["docs/contracts/stdlib-bytes.md", "testing/stdlib-bytes.json"]
+          "refs": [
+            "docs/contracts/stdlib-bytes.md",
+            "testing/stdlib-bytes.json"
+          ]
         },
         "MODEL": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs", "crates/tondo-vm/src/bytecode/verify.rs"]
+          "refs": [
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-vm/src/bytecode/verify.rs"
+          ]
         },
         "TEST": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/driver.rs"]
+          "refs": [
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/driver.rs"
+          ]
         },
         "FUZZ": {
           "status": "verified",
           "reason": null,
-          "refs": ["fuzz/fuzz_targets/stdlib_owners.rs#route=std.bytes", "fuzz/corpus/stdlib_owners/std-bytes/seed#seed=3002", "testing/stdlib-fuzz.json#owner=std.bytes", "scripts/stdlib-fuzz-check.sh", "scripts/fuzz-smoke.sh", "scripts/fuzz-campaign.sh"]
+          "refs": [
+            "fuzz/fuzz_targets/stdlib_owners.rs#route=std.bytes",
+            "fuzz/corpus/stdlib_owners/std-bytes/seed#seed=3002",
+            "testing/stdlib-fuzz.json#owner=std.bytes",
+            "scripts/stdlib-fuzz-check.sh",
+            "scripts/fuzz-smoke.sh",
+            "scripts/fuzz-campaign.sh"
+          ]
         },
         "PERF": {
           "status": "verified",
           "reason": null,
-          "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
+          "refs": [
+            "testing/stdlib-performance.json",
+            "testing/stdlib-performance-conformance.json",
+            "docs/contracts/stdlib-performance.md"
+          ]
         },
         "CONF": {
-          "status": "partial",
-          "reason": "compiler and VM byte-boundary tests cover the intrinsic contract; STD-CONF-001 has not yet promoted every standard-library owner",
-          "refs": ["crates/tondo-compiler/src/process_host.rs", "TONDO_IMPLEMENTATION_TRACKER.md"]
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "testing/stdlib-conformance.json#owners/std.bytes"
+          ]
         },
         "DOC": {
           "status": "verified",
           "reason": null,
-          "refs": ["docs/contracts/stdlib-bytes.md", "TONDO_STANDARD_LIBRARY_SPEC.md", "docs/contracts/stdlib-s1a.md"]
+          "refs": [
+            "docs/contracts/stdlib-bytes.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md",
+            "docs/contracts/stdlib-s1a.md"
+          ]
         }
       },
       "budgets": {
@@ -342,47 +485,82 @@
         "SPEC": {
           "status": "verified",
           "reason": null,
-          "refs": ["docs/contracts/stdlib-time.md", "TONDO_STANDARD_LIBRARY_SPEC.md"]
+          "refs": [
+            "docs/contracts/stdlib-time.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md"
+          ]
         },
         "IMPL": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs"]
+          "refs": [
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs"
+          ]
         },
         "HOST": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/driver.rs", "docs/contracts/stdlib-time.md"]
+          "refs": [
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-compiler/src/driver.rs",
+            "docs/contracts/stdlib-time.md"
+          ]
         },
         "MODEL": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-compiler/src/process_host.rs", "crates/tondo-vm/src/runtime/execute.rs"]
+          "refs": [
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ]
         },
         "TEST": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/driver.rs", "tests/runtime/m10-std-time-001.to"]
+          "refs": [
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-compiler/src/driver.rs",
+            "tests/runtime/m10-std-time-001.to"
+          ]
         },
         "FUZZ": {
           "status": "verified",
           "reason": null,
-          "refs": ["fuzz/fuzz_targets/stdlib_owners.rs#route=std.time", "fuzz/corpus/stdlib_owners/std-time/seed#seed=3022", "testing/stdlib-fuzz.json#owner=std.time", "scripts/stdlib-fuzz-check.sh", "scripts/fuzz-smoke.sh", "scripts/fuzz-campaign.sh"]
+          "refs": [
+            "fuzz/fuzz_targets/stdlib_owners.rs#route=std.time",
+            "fuzz/corpus/stdlib_owners/std-time/seed#seed=3022",
+            "testing/stdlib-fuzz.json#owner=std.time",
+            "scripts/stdlib-fuzz-check.sh",
+            "scripts/fuzz-smoke.sh",
+            "scripts/fuzz-campaign.sh"
+          ]
         },
         "PERF": {
           "status": "not-applicable",
           "reason": "std.time is provider-scoped; its target-qualified costs are measured by PERF-001 hosted campaigns",
-          "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
+          "refs": [
+            "testing/stdlib-performance.json",
+            "testing/stdlib-performance-conformance.json",
+            "docs/contracts/stdlib-performance.md"
+          ]
         },
         "CONF": {
-          "status": "partial",
-          "reason": "the hosted runtime fixture and explicit clock capability tests cover the time boundary; STD-CONF-001 has not yet promoted every standard-library owner",
-          "refs": ["tests/runtime/m10-std-time-001.to", "crates/tondo-compiler/src/driver.rs", "TONDO_IMPLEMENTATION_TRACKER.md"]
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "testing/stdlib-conformance.json#owners/std.time"
+          ]
         },
         "DOC": {
           "status": "verified",
           "reason": null,
-          "refs": ["docs/contracts/stdlib-time.md", "TONDO_STANDARD_LIBRARY_SPEC.md", "docs/contracts/stdlib-s1a.md"]
+          "refs": [
+            "docs/contracts/stdlib-time.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md",
+            "docs/contracts/stdlib-s1a.md"
+          ]
         }
       },
       "budgets": {
@@ -419,47 +597,83 @@
         "SPEC": {
           "status": "verified",
           "reason": null,
-          "refs": ["docs/contracts/stdlib-env.md", "TONDO_STANDARD_LIBRARY_SPEC.md"]
+          "refs": [
+            "docs/contracts/stdlib-env.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md"
+          ]
         },
         "IMPL": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs"]
+          "refs": [
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs"
+          ]
         },
         "HOST": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/driver.rs", "docs/contracts/stdlib-env.md"]
+          "refs": [
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-compiler/src/driver.rs",
+            "docs/contracts/stdlib-env.md"
+          ]
         },
         "MODEL": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-compiler/src/process_host.rs", "crates/tondo-vm/src/runtime/execute.rs", "docs/contracts/stdlib-env.md"]
+          "refs": [
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-vm/src/runtime/execute.rs",
+            "docs/contracts/stdlib-env.md"
+          ]
         },
         "TEST": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/driver.rs", "tests/runtime/m10-std-env-001.to"]
+          "refs": [
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-compiler/src/driver.rs",
+            "tests/runtime/m10-std-env-001.to"
+          ]
         },
         "FUZZ": {
           "status": "verified",
           "reason": null,
-          "refs": ["fuzz/fuzz_targets/stdlib_owners.rs#route=std.env", "fuzz/corpus/stdlib_owners/std-env/seed#seed=3006", "testing/stdlib-fuzz.json#owner=std.env", "scripts/stdlib-fuzz-check.sh", "scripts/fuzz-smoke.sh", "scripts/fuzz-campaign.sh"]
+          "refs": [
+            "fuzz/fuzz_targets/stdlib_owners.rs#route=std.env",
+            "fuzz/corpus/stdlib_owners/std-env/seed#seed=3006",
+            "testing/stdlib-fuzz.json#owner=std.env",
+            "scripts/stdlib-fuzz-check.sh",
+            "scripts/fuzz-smoke.sh",
+            "scripts/fuzz-campaign.sh"
+          ]
         },
         "PERF": {
           "status": "not-applicable",
           "reason": "std.env is capability-scoped; its target-qualified costs are measured by PERF-001 hosted campaigns",
-          "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
+          "refs": [
+            "testing/stdlib-performance.json",
+            "testing/stdlib-performance-conformance.json",
+            "docs/contracts/stdlib-performance.md"
+          ]
         },
         "CONF": {
-          "status": "partial",
-          "reason": "the hosted runtime fixture and explicit environment capability tests cover the snapshot boundary; STD-CONF-001 has not yet promoted every standard-library owner",
-          "refs": ["tests/runtime/m10-std-env-001.to", "crates/tondo-compiler/src/driver.rs", "TONDO_IMPLEMENTATION_TRACKER.md"]
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "testing/stdlib-conformance.json#owners/std.env"
+          ]
         },
         "DOC": {
           "status": "verified",
           "reason": null,
-          "refs": ["docs/contracts/stdlib-env.md", "TONDO_STANDARD_LIBRARY_SPEC.md", "docs/contracts/stdlib-s1a.md"]
+          "refs": [
+            "docs/contracts/stdlib-env.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md",
+            "docs/contracts/stdlib-s1a.md"
+          ]
         }
       },
       "budgets": {
@@ -496,47 +710,89 @@
         "SPEC": {
           "status": "verified",
           "reason": null,
-          "refs": ["testing/stdlib-core.json", "docs/contracts/stdlib-core.md", "TONDO_STANDARD_LIBRARY_SPEC.md"]
+          "refs": [
+            "testing/stdlib-core.json",
+            "docs/contracts/stdlib-core.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md"
+          ]
         },
         "IMPL": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs", "crates/tondo-compiler/src/hir/verify.rs", "crates/tondo-compiler/src/mir/lower.rs", "crates/tondo-vm/src/runtime/execute.rs"]
+          "refs": [
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-compiler/src/hir/verify.rs",
+            "crates/tondo-compiler/src/mir/lower.rs",
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ]
         },
         "HOST": {
           "status": "not-applicable",
           "reason": "std.core is an intrinsic compiler/VM-owned value boundary; it has no separate capability provider or ambient host adapter",
-          "refs": ["docs/contracts/stdlib-core.md", "testing/stdlib-core.json", "crates/tondo-vm/src/runtime/execute.rs"]
+          "refs": [
+            "docs/contracts/stdlib-core.md",
+            "testing/stdlib-core.json",
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ]
         },
         "MODEL": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs", "crates/tondo-compiler/src/mir/lower.rs", "crates/tondo-vm/src/runtime/execute.rs"]
+          "refs": [
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-compiler/src/mir/lower.rs",
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ]
         },
         "TEST": {
           "status": "verified",
           "reason": null,
-          "refs": ["tests/runtime/m11-std-core-001.to", "tests/runtime/m11-std-core-002.to", "crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/mir/lower.rs", "scripts/stdlib-core-test.sh"]
+          "refs": [
+            "tests/runtime/m11-std-core-001.to",
+            "tests/runtime/m11-std-core-002.to",
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/mir/lower.rs",
+            "scripts/stdlib-core-test.sh"
+          ]
         },
         "FUZZ": {
           "status": "verified",
           "reason": null,
-          "refs": ["fuzz/fuzz_targets/stdlib_owners.rs#route=std.core", "fuzz/corpus/stdlib_owners/std-core/seed#seed=3005", "testing/stdlib-fuzz.json#owner=std.core", "scripts/stdlib-fuzz-check.sh", "scripts/fuzz-smoke.sh", "scripts/fuzz-campaign.sh"]
+          "refs": [
+            "fuzz/fuzz_targets/stdlib_owners.rs#route=std.core",
+            "fuzz/corpus/stdlib_owners/std-core/seed#seed=3005",
+            "testing/stdlib-fuzz.json#owner=std.core",
+            "scripts/stdlib-fuzz-check.sh",
+            "scripts/fuzz-smoke.sh",
+            "scripts/fuzz-campaign.sh"
+          ]
         },
         "PERF": {
           "status": "not-applicable",
           "reason": "std.core is compiler/VM intrinsic and has no standalone portable stdlib hot path",
-          "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
+          "refs": [
+            "testing/stdlib-performance.json",
+            "testing/stdlib-performance-conformance.json",
+            "docs/contracts/stdlib-performance.md"
+          ]
         },
         "CONF": {
-          "status": "partial",
-          "reason": "the public API audit and hosted runtime fixtures cover all nine core signatures; STD-CONF-001 has not yet promoted every standard-library owner",
-          "refs": ["testing/stdlib-public-api.json", "tests/runtime/m11-std-core-002.to", "TONDO_IMPLEMENTATION_TRACKER.md"]
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "testing/stdlib-conformance.json#owners/std.core"
+          ]
         },
         "DOC": {
           "status": "verified",
           "reason": null,
-          "refs": ["docs/contracts/stdlib-core.md", "TONDO_STANDARD_LIBRARY_SPEC.md", "docs/contracts/stdlib-s1a.md"]
+          "refs": [
+            "docs/contracts/stdlib-core.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md",
+            "docs/contracts/stdlib-s1a.md"
+          ]
         }
       },
       "budgets": {
@@ -574,47 +830,85 @@
         "SPEC": {
           "status": "verified",
           "reason": null,
-          "refs": ["testing/stdlib-core.json", "docs/contracts/stdlib-core.md", "TONDO_STANDARD_LIBRARY_SPEC.md"]
+          "refs": [
+            "testing/stdlib-core.json",
+            "docs/contracts/stdlib-core.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md"
+          ]
         },
         "IMPL": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs", "crates/tondo-compiler/src/process_host.rs", "crates/tondo-vm/src/runtime/execute.rs"]
+          "refs": [
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ]
         },
         "HOST": {
           "status": "not-applicable",
           "reason": "std.text is an intrinsic portable owner; its compiler-owned String bridge has no separate capability provider or ambient host dependency",
-          "refs": ["docs/contracts/stdlib-core.md", "testing/stdlib-core.json"]
+          "refs": [
+            "docs/contracts/stdlib-core.md",
+            "testing/stdlib-core.json"
+          ]
         },
         "MODEL": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs", "crates/tondo-vm/src/runtime/execute.rs"]
+          "refs": [
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ]
         },
         "TEST": {
           "status": "verified",
           "reason": null,
-          "refs": ["tests/runtime/m11-std-text-001.to", "tests/runtime/m11-std-text-002.to", "crates/tondo-compiler/src/process_host.rs", "scripts/stdlib-text-test.sh"]
+          "refs": [
+            "tests/runtime/m11-std-text-001.to",
+            "tests/runtime/m11-std-text-002.to",
+            "crates/tondo-compiler/src/process_host.rs",
+            "scripts/stdlib-text-test.sh"
+          ]
         },
         "FUZZ": {
           "status": "verified",
           "reason": null,
-          "refs": ["fuzz/fuzz_targets/stdlib_owners.rs#route=std.text", "fuzz/corpus/stdlib_owners/std-text/seed#seed=3021", "testing/stdlib-fuzz.json#owner=std.text", "scripts/stdlib-fuzz-check.sh", "scripts/fuzz-smoke.sh", "scripts/fuzz-campaign.sh"]
+          "refs": [
+            "fuzz/fuzz_targets/stdlib_owners.rs#route=std.text",
+            "fuzz/corpus/stdlib_owners/std-text/seed#seed=3021",
+            "testing/stdlib-fuzz.json#owner=std.text",
+            "scripts/stdlib-fuzz-check.sh",
+            "scripts/fuzz-smoke.sh",
+            "scripts/fuzz-campaign.sh"
+          ]
         },
         "PERF": {
           "status": "not-applicable",
           "reason": "std.text is compiler/VM intrinsic and has no standalone portable stdlib hot path",
-          "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
+          "refs": [
+            "testing/stdlib-performance.json",
+            "testing/stdlib-performance-conformance.json",
+            "docs/contracts/stdlib-performance.md"
+          ]
         },
         "CONF": {
-          "status": "partial",
-          "reason": "the public API audit and Unicode/invalid-UTF-8 runtime fixtures cover all fifteen text signatures; STD-CONF-001 has not yet promoted every standard-library owner",
-          "refs": ["testing/stdlib-public-api.json", "tests/runtime/m11-std-text-002.to", "TONDO_IMPLEMENTATION_TRACKER.md"]
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "testing/stdlib-conformance.json#owners/std.text"
+          ]
         },
         "DOC": {
           "status": "verified",
           "reason": null,
-          "refs": ["docs/contracts/stdlib-core.md", "TONDO_STANDARD_LIBRARY_SPEC.md", "docs/contracts/stdlib-s1a.md"]
+          "refs": [
+            "docs/contracts/stdlib-core.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md",
+            "docs/contracts/stdlib-s1a.md"
+          ]
         }
       },
       "budgets": {
@@ -651,47 +945,92 @@
         "SPEC": {
           "status": "verified",
           "reason": null,
-          "refs": ["testing/stdlib-core.json", "docs/contracts/stdlib-core.md", "TONDO_STANDARD_LIBRARY_SPEC.md"]
+          "refs": [
+            "testing/stdlib-core.json",
+            "docs/contracts/stdlib-core.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md"
+          ]
         },
         "IMPL": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs", "crates/tondo-compiler/src/hir/verify.rs", "crates/tondo-compiler/src/mir/lower.rs", "crates/tondo-compiler/src/process_host.rs", "crates/tondo-vm/src/bytecode.rs", "crates/tondo-vm/src/bytecode/verify.rs", "crates/tondo-vm/src/runtime.rs", "crates/tondo-vm/src/runtime/execute.rs"]
+          "refs": [
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-compiler/src/hir/verify.rs",
+            "crates/tondo-compiler/src/mir/lower.rs",
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-vm/src/bytecode.rs",
+            "crates/tondo-vm/src/bytecode/verify.rs",
+            "crates/tondo-vm/src/runtime.rs",
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ]
         },
         "HOST": {
           "status": "not-applicable",
           "reason": "std.collections is an intrinsic portable owner; its compiler/VM collection bridge has no separate capability provider or ambient host dependency",
-          "refs": ["docs/contracts/stdlib-core.md", "testing/stdlib-core.json", "crates/tondo-vm/src/runtime/execute.rs"]
+          "refs": [
+            "docs/contracts/stdlib-core.md",
+            "testing/stdlib-core.json",
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ]
         },
         "MODEL": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs", "crates/tondo-compiler/src/mir/lower.rs", "crates/tondo-vm/src/runtime/execute.rs"]
+          "refs": [
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-compiler/src/mir/lower.rs",
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ]
         },
         "TEST": {
           "status": "verified",
           "reason": null,
-          "refs": ["tests/runtime/m11-std-collections-001.to", "crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/bytecode/lower.rs", "scripts/stdlib-collections-test.sh"]
+          "refs": [
+            "tests/runtime/m11-std-collections-001.to",
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-compiler/src/bytecode/lower.rs",
+            "scripts/stdlib-collections-test.sh"
+          ]
         },
         "FUZZ": {
           "status": "verified",
           "reason": null,
-          "refs": ["fuzz/fuzz_targets/stdlib_owners.rs#route=std.collections", "fuzz/corpus/stdlib_owners/std-collections/seed#seed=3003", "testing/stdlib-fuzz.json#owner=std.collections", "scripts/stdlib-fuzz-check.sh", "scripts/fuzz-smoke.sh", "scripts/fuzz-campaign.sh"]
+          "refs": [
+            "fuzz/fuzz_targets/stdlib_owners.rs#route=std.collections",
+            "fuzz/corpus/stdlib_owners/std-collections/seed#seed=3003",
+            "testing/stdlib-fuzz.json#owner=std.collections",
+            "scripts/stdlib-fuzz-check.sh",
+            "scripts/fuzz-smoke.sh",
+            "scripts/fuzz-campaign.sh"
+          ]
         },
         "PERF": {
           "status": "not-applicable",
           "reason": "std.collections is compiler/VM intrinsic and has no standalone portable stdlib hot path",
-          "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
+          "refs": [
+            "testing/stdlib-performance.json",
+            "testing/stdlib-performance-conformance.json",
+            "docs/contracts/stdlib-performance.md"
+          ]
         },
         "CONF": {
-          "status": "partial",
-          "reason": "the public API audit and collection runtime fixture cover all eighteen collection signatures; STD-CONF-001 has not yet promoted every standard-library owner",
-          "refs": ["testing/stdlib-public-api.json", "tests/runtime/m11-std-collections-001.to", "TONDO_IMPLEMENTATION_TRACKER.md"]
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "testing/stdlib-conformance.json#owners/std.collections"
+          ]
         },
         "DOC": {
           "status": "verified",
           "reason": null,
-          "refs": ["docs/contracts/stdlib-core.md", "TONDO_STANDARD_LIBRARY_SPEC.md", "docs/contracts/stdlib-s1a.md"]
+          "refs": [
+            "docs/contracts/stdlib-core.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md",
+            "docs/contracts/stdlib-s1a.md"
+          ]
         }
       },
       "budgets": {
@@ -728,47 +1067,91 @@
         "SPEC": {
           "status": "verified",
           "reason": null,
-          "refs": ["testing/stdlib-core.json", "docs/contracts/stdlib-core.md", "TONDO_STANDARD_LIBRARY_SPEC.md"]
+          "refs": [
+            "testing/stdlib-core.json",
+            "docs/contracts/stdlib-core.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md"
+          ]
         },
         "IMPL": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-compiler/src/hir.rs", "crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs", "crates/tondo-vm/src/runtime/heap.rs", "crates/tondo-vm/src/runtime/execute.rs"]
+          "refs": [
+            "crates/tondo-compiler/src/hir.rs",
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-vm/src/runtime/heap.rs",
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ]
         },
         "HOST": {
           "status": "not-applicable",
           "reason": "std.iter is an intrinsic portable owner; its compiler/VM iterator adapters have no separate capability provider or ambient host dependency",
-          "refs": ["docs/contracts/stdlib-core.md", "testing/stdlib-core.json", "crates/tondo-vm/src/runtime/execute.rs"]
+          "refs": [
+            "docs/contracts/stdlib-core.md",
+            "testing/stdlib-core.json",
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ]
         },
         "MODEL": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs", "crates/tondo-compiler/src/bytecode/lower.rs", "crates/tondo-vm/src/runtime/heap.rs", "crates/tondo-vm/src/runtime/execute.rs"]
+          "refs": [
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-compiler/src/bytecode/lower.rs",
+            "crates/tondo-vm/src/runtime/heap.rs",
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ]
         },
         "TEST": {
           "status": "verified",
           "reason": null,
-          "refs": ["tests/runtime/m11-std-iter-001.to", "tests/runtime/m11-std-core-001.to", "crates/tondo-compiler/src/bytecode/lower.rs", "crates/tondo-vm/src/runtime/heap.rs", "crates/tondo-vm/src/runtime/execute.rs", "scripts/stdlib-iter-test.sh"]
+          "refs": [
+            "tests/runtime/m11-std-iter-001.to",
+            "tests/runtime/m11-std-core-001.to",
+            "crates/tondo-compiler/src/bytecode/lower.rs",
+            "crates/tondo-vm/src/runtime/heap.rs",
+            "crates/tondo-vm/src/runtime/execute.rs",
+            "scripts/stdlib-iter-test.sh"
+          ]
         },
         "FUZZ": {
           "status": "verified",
           "reason": null,
-          "refs": ["fuzz/fuzz_targets/stdlib_owners.rs#route=std.iter", "fuzz/corpus/stdlib_owners/std-iter/seed#seed=3010", "testing/stdlib-fuzz.json#owner=std.iter", "scripts/stdlib-fuzz-check.sh", "scripts/fuzz-smoke.sh", "scripts/fuzz-campaign.sh"]
+          "refs": [
+            "fuzz/fuzz_targets/stdlib_owners.rs#route=std.iter",
+            "fuzz/corpus/stdlib_owners/std-iter/seed#seed=3010",
+            "testing/stdlib-fuzz.json#owner=std.iter",
+            "scripts/stdlib-fuzz-check.sh",
+            "scripts/fuzz-smoke.sh",
+            "scripts/fuzz-campaign.sh"
+          ]
         },
         "PERF": {
           "status": "not-applicable",
           "reason": "std.iter is compiler/VM intrinsic and has no standalone portable stdlib hot path",
-          "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
+          "refs": [
+            "testing/stdlib-performance.json",
+            "testing/stdlib-performance-conformance.json",
+            "docs/contracts/stdlib-performance.md"
+          ]
         },
         "CONF": {
-          "status": "partial",
-          "reason": "the public API audit and iterator runtime fixture cover all four iterator signatures; STD-CONF-001 has not yet promoted every standard-library owner",
-          "refs": ["testing/stdlib-public-api.json", "tests/runtime/m11-std-iter-001.to", "TONDO_IMPLEMENTATION_TRACKER.md"]
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "testing/stdlib-conformance.json#owners/std.iter"
+          ]
         },
         "DOC": {
           "status": "verified",
           "reason": null,
-          "refs": ["docs/contracts/stdlib-core.md", "TONDO_STANDARD_LIBRARY_SPEC.md", "docs/contracts/stdlib-s1a.md"]
+          "refs": [
+            "docs/contracts/stdlib-core.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md",
+            "docs/contracts/stdlib-s1a.md"
+          ]
         }
       },
       "budgets": {
@@ -805,47 +1188,90 @@
         "SPEC": {
           "status": "verified",
           "reason": null,
-          "refs": ["testing/stdlib-core.json", "docs/contracts/stdlib-core.md", "TONDO_STANDARD_LIBRARY_SPEC.md"]
+          "refs": [
+            "testing/stdlib-core.json",
+            "docs/contracts/stdlib-core.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md"
+          ]
         },
         "IMPL": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-stdlib/src/math.rs", "crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs", "crates/tondo-compiler/src/process_host.rs", "crates/tondo-vm/src/runtime/execute.rs"]
+          "refs": [
+            "crates/tondo-stdlib/src/math.rs",
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ]
         },
         "HOST": {
           "status": "not-applicable",
           "reason": "std.math is an intrinsic portable scalar owner; its compiler/VM bridge has no separate capability provider or ambient host dependency",
-          "refs": ["docs/contracts/stdlib-core.md", "testing/stdlib-core.json", "crates/tondo-compiler/src/process_host.rs"]
+          "refs": [
+            "docs/contracts/stdlib-core.md",
+            "testing/stdlib-core.json",
+            "crates/tondo-compiler/src/process_host.rs"
+          ]
         },
         "MODEL": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-stdlib/src/math.rs", "crates/tondo-compiler/src/hir/const_eval.rs", "crates/tondo-compiler/src/hir/check.rs", "crates/tondo-vm/src/runtime/execute.rs"]
+          "refs": [
+            "crates/tondo-stdlib/src/math.rs",
+            "crates/tondo-compiler/src/hir/const_eval.rs",
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ]
         },
         "TEST": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-stdlib/src/math.rs", "tests/runtime/m11-std-math-001.to", "tests/runtime/m6-num-004-ieee.to", "crates/tondo-compiler/src/process_host.rs", "crates/tondo-vm/src/runtime/execute.rs", "scripts/stdlib-math-test.sh"]
+          "refs": [
+            "crates/tondo-stdlib/src/math.rs",
+            "tests/runtime/m11-std-math-001.to",
+            "tests/runtime/m6-num-004-ieee.to",
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-vm/src/runtime/execute.rs",
+            "scripts/stdlib-math-test.sh"
+          ]
         },
         "FUZZ": {
           "status": "verified",
           "reason": null,
-          "refs": ["fuzz/fuzz_targets/stdlib_owners.rs#route=std.math", "fuzz/corpus/stdlib_owners/std-math/seed#seed=3012", "testing/stdlib-fuzz.json#owner=std.math", "scripts/stdlib-fuzz-check.sh", "scripts/fuzz-smoke.sh", "scripts/fuzz-campaign.sh"]
+          "refs": [
+            "fuzz/fuzz_targets/stdlib_owners.rs#route=std.math",
+            "fuzz/corpus/stdlib_owners/std-math/seed#seed=3012",
+            "testing/stdlib-fuzz.json#owner=std.math",
+            "scripts/stdlib-fuzz-check.sh",
+            "scripts/fuzz-smoke.sh",
+            "scripts/fuzz-campaign.sh"
+          ]
         },
         "PERF": {
           "status": "verified",
           "reason": null,
-          "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
+          "refs": [
+            "testing/stdlib-performance.json",
+            "testing/stdlib-performance-conformance.json",
+            "docs/contracts/stdlib-performance.md"
+          ]
         },
         "CONF": {
-          "status": "partial",
-          "reason": "the public API audit and IEEE/runtime fixtures cover all nine math signatures; STD-CONF-001 has not yet promoted every standard-library owner",
-          "refs": ["testing/stdlib-public-api.json", "tests/runtime/m11-std-math-001.to", "TONDO_IMPLEMENTATION_TRACKER.md"]
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "testing/stdlib-conformance.json#owners/std.math"
+          ]
         },
         "DOC": {
           "status": "verified",
           "reason": null,
-          "refs": ["docs/contracts/stdlib-core.md", "TONDO_STANDARD_LIBRARY_SPEC.md", "docs/contracts/stdlib-s1a.md"]
+          "refs": [
+            "docs/contracts/stdlib-core.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md",
+            "docs/contracts/stdlib-s1a.md"
+          ]
         }
       },
       "budgets": {
@@ -883,47 +1309,95 @@
         "SPEC": {
           "status": "verified",
           "reason": null,
-          "refs": ["testing/stdlib-core.json", "docs/contracts/stdlib-core.md", "TONDO_STANDARD_LIBRARY_SPEC.md"]
+          "refs": [
+            "testing/stdlib-core.json",
+            "docs/contracts/stdlib-core.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md"
+          ]
         },
         "IMPL": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-stdlib/src/format.rs", "crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs", "crates/tondo-compiler/src/mir/verify.rs", "crates/tondo-compiler/src/bytecode/lower.rs", "crates/tondo-compiler/src/process_host.rs", "crates/tondo-vm/src/runtime/execute.rs"]
+          "refs": [
+            "crates/tondo-stdlib/src/format.rs",
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-compiler/src/mir/verify.rs",
+            "crates/tondo-compiler/src/bytecode/lower.rs",
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ]
         },
         "HOST": {
           "status": "not-applicable",
           "reason": "std.format is an intrinsic portable formatting owner; its compiler/VM bridge has no separate capability provider or ambient host dependency",
-          "refs": ["docs/contracts/stdlib-core.md", "testing/stdlib-core.json", "crates/tondo-compiler/src/process_host.rs"]
+          "refs": [
+            "docs/contracts/stdlib-core.md",
+            "testing/stdlib-core.json",
+            "crates/tondo-compiler/src/process_host.rs"
+          ]
         },
         "MODEL": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-stdlib/src/format.rs", "crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/mir/verify.rs", "crates/tondo-compiler/src/bytecode/lower.rs", "crates/tondo-vm/src/runtime/execute.rs"]
+          "refs": [
+            "crates/tondo-stdlib/src/format.rs",
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/mir/verify.rs",
+            "crates/tondo-compiler/src/bytecode/lower.rs",
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ]
         },
         "TEST": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-stdlib/src/format.rs", "crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/mir/verify.rs", "crates/tondo-compiler/src/bytecode/lower.rs", "crates/tondo-vm/src/runtime/execute.rs", "tests/runtime/m11-std-format-001.to", "scripts/stdlib-format-test.sh"]
+          "refs": [
+            "crates/tondo-stdlib/src/format.rs",
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-compiler/src/mir/verify.rs",
+            "crates/tondo-compiler/src/bytecode/lower.rs",
+            "crates/tondo-vm/src/runtime/execute.rs",
+            "tests/runtime/m11-std-format-001.to",
+            "scripts/stdlib-format-test.sh"
+          ]
         },
         "FUZZ": {
           "status": "verified",
           "reason": null,
-          "refs": ["fuzz/fuzz_targets/stdlib_owners.rs#route=std.format", "fuzz/corpus/stdlib_owners/std-format/seed#seed=3007", "testing/stdlib-fuzz.json#owner=std.format", "scripts/stdlib-fuzz-check.sh", "scripts/fuzz-smoke.sh", "scripts/fuzz-campaign.sh"]
+          "refs": [
+            "fuzz/fuzz_targets/stdlib_owners.rs#route=std.format",
+            "fuzz/corpus/stdlib_owners/std-format/seed#seed=3007",
+            "testing/stdlib-fuzz.json#owner=std.format",
+            "scripts/stdlib-fuzz-check.sh",
+            "scripts/fuzz-smoke.sh",
+            "scripts/fuzz-campaign.sh"
+          ]
         },
         "PERF": {
           "status": "verified",
           "reason": null,
-          "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
+          "refs": [
+            "testing/stdlib-performance.json",
+            "testing/stdlib-performance-conformance.json",
+            "docs/contracts/stdlib-performance.md"
+          ]
         },
         "CONF": {
-          "status": "partial",
-          "reason": "the public API audit and formatting runtime fixture cover all five signatures; STD-CONF-001 has not yet promoted every standard-library owner",
-          "refs": ["testing/stdlib-public-api.json", "tests/runtime/m11-std-format-001.to", "TONDO_IMPLEMENTATION_TRACKER.md"]
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "testing/stdlib-conformance.json#owners/std.format"
+          ]
         },
         "DOC": {
           "status": "verified",
           "reason": null,
-          "refs": ["docs/contracts/stdlib-core.md", "TONDO_STANDARD_LIBRARY_SPEC.md", "docs/contracts/stdlib-s1a.md", "docs/contracts/stdlib-matrix.md"]
+          "refs": [
+            "docs/contracts/stdlib-core.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md",
+            "docs/contracts/stdlib-s1a.md",
+            "docs/contracts/stdlib-matrix.md"
+          ]
         }
       },
       "budgets": {
@@ -963,47 +1437,91 @@
         "SPEC": {
           "status": "verified",
           "reason": null,
-          "refs": ["testing/stdlib-core.json", "docs/contracts/stdlib-core.md", "TONDO_STANDARD_LIBRARY_SPEC.md"]
+          "refs": [
+            "testing/stdlib-core.json",
+            "docs/contracts/stdlib-core.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md"
+          ]
         },
         "IMPL": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-stdlib/src/io.rs", "crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs", "crates/tondo-compiler/src/mir/verify.rs", "crates/tondo-compiler/src/process_host.rs", "crates/tondo-vm/src/bytecode/verify.rs", "crates/tondo-vm/src/runtime/execute.rs"]
+          "refs": [
+            "crates/tondo-stdlib/src/io.rs",
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-compiler/src/mir/verify.rs",
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-vm/src/bytecode/verify.rs",
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ]
         },
         "HOST": {
           "status": "not-applicable",
           "reason": "std.io owns portable Reader/Writer protocols; console, filesystem and process own the capability-gated adapters",
-          "refs": ["docs/contracts/stdlib-core.md", "TONDO_STANDARD_LIBRARY_SPEC.md", "crates/tondo-compiler/src/process_host.rs"]
+          "refs": [
+            "docs/contracts/stdlib-core.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md",
+            "crates/tondo-compiler/src/process_host.rs"
+          ]
         },
         "MODEL": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-stdlib/src/io.rs", "crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs", "crates/tondo-vm/src/runtime/execute.rs"]
+          "refs": [
+            "crates/tondo-stdlib/src/io.rs",
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ]
         },
         "TEST": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-stdlib/src/io.rs", "crates/tondo-compiler/src/process_host.rs", "tests/runtime/m11-std-io-001.to", "scripts/stdlib-io-test.sh"]
+          "refs": [
+            "crates/tondo-stdlib/src/io.rs",
+            "crates/tondo-compiler/src/process_host.rs",
+            "tests/runtime/m11-std-io-001.to",
+            "scripts/stdlib-io-test.sh"
+          ]
         },
         "FUZZ": {
           "status": "verified",
           "reason": null,
-          "refs": ["fuzz/fuzz_targets/stdlib_owners.rs#route=std.io", "fuzz/corpus/stdlib_owners/std-io/seed#seed=3009", "testing/stdlib-fuzz.json#owner=std.io", "scripts/stdlib-fuzz-check.sh", "scripts/fuzz-smoke.sh", "scripts/fuzz-campaign.sh"]
+          "refs": [
+            "fuzz/fuzz_targets/stdlib_owners.rs#route=std.io",
+            "fuzz/corpus/stdlib_owners/std-io/seed#seed=3009",
+            "testing/stdlib-fuzz.json#owner=std.io",
+            "scripts/stdlib-fuzz-check.sh",
+            "scripts/fuzz-smoke.sh",
+            "scripts/fuzz-campaign.sh"
+          ]
         },
         "PERF": {
           "status": "verified",
           "reason": null,
-          "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
+          "refs": [
+            "testing/stdlib-performance.json",
+            "testing/stdlib-performance-conformance.json",
+            "docs/contracts/stdlib-performance.md"
+          ]
         },
         "CONF": {
-          "status": "partial",
-          "reason": "the public API audit, portable kernel and std.io runtime fixture cover the four signatures; STD-CONF-001 has not yet promoted every standard-library owner",
-          "refs": ["testing/stdlib-public-api.json", "tests/runtime/m11-std-io-001.to", "TONDO_IMPLEMENTATION_TRACKER.md"]
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "testing/stdlib-conformance.json#owners/std.io"
+          ]
         },
         "DOC": {
           "status": "verified",
           "reason": null,
-          "refs": ["docs/contracts/stdlib-core.md", "TONDO_STANDARD_LIBRARY_SPEC.md", "docs/contracts/stdlib-s1a.md", "docs/contracts/stdlib-matrix.md"]
+          "refs": [
+            "docs/contracts/stdlib-core.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md",
+            "docs/contracts/stdlib-s1a.md",
+            "docs/contracts/stdlib-matrix.md"
+          ]
         }
       },
       "budgets": {
@@ -1041,47 +1559,94 @@
         "SPEC": {
           "status": "verified",
           "reason": null,
-          "refs": ["testing/stdlib-async.json", "docs/contracts/stdlib-async.md", "TONDO_STANDARD_LIBRARY_SPEC.md"]
+          "refs": [
+            "testing/stdlib-async.json",
+            "docs/contracts/stdlib-async.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md"
+          ]
         },
         "IMPL": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs", "crates/tondo-compiler/src/mir/lower.rs", "crates/tondo-compiler/src/bytecode/lower.rs", "crates/tondo-vm/src/bytecode.rs", "crates/tondo-vm/src/bytecode/verify.rs", "crates/tondo-vm/src/runtime/execute.rs", "testing/stdlib-implementation.json", "TONDO_IMPLEMENTATION_TRACKER.md"]
+          "refs": [
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-compiler/src/mir/lower.rs",
+            "crates/tondo-compiler/src/bytecode/lower.rs",
+            "crates/tondo-vm/src/bytecode.rs",
+            "crates/tondo-vm/src/bytecode/verify.rs",
+            "crates/tondo-vm/src/runtime/execute.rs",
+            "testing/stdlib-implementation.json",
+            "TONDO_IMPLEMENTATION_TRACKER.md"
+          ]
         },
         "HOST": {
           "status": "not-applicable",
           "reason": "std.async is an intrinsic language/VM owner; it has no capability-gated host provider",
-          "refs": ["testing/stdlib-async.json", "crates/tondo-vm/src/runtime/execute.rs"]
+          "refs": [
+            "testing/stdlib-async.json",
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ]
         },
         "MODEL": {
           "status": "verified",
           "reason": null,
-          "refs": ["testing/stdlib-async.json", "docs/contracts/stdlib-async.md", "crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs"]
+          "refs": [
+            "testing/stdlib-async.json",
+            "docs/contracts/stdlib-async.md",
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs"
+          ]
         },
         "TEST": {
           "status": "verified",
           "reason": null,
-          "refs": ["scripts/stdlib-async-check.sh", "scripts/stdlib-async-test.sh", "tests/runtime/m7-suspension-inferred.to", "tests/runtime/m11-std-async-iter-001.to", "tests/runtime/m11-std-async-impl-001.to", "crates/tondo-compiler/src/driver.rs"]
+          "refs": [
+            "scripts/stdlib-async-check.sh",
+            "scripts/stdlib-async-test.sh",
+            "tests/runtime/m7-suspension-inferred.to",
+            "tests/runtime/m11-std-async-iter-001.to",
+            "tests/runtime/m11-std-async-impl-001.to",
+            "crates/tondo-compiler/src/driver.rs"
+          ]
         },
         "FUZZ": {
           "status": "verified",
           "reason": null,
-          "refs": ["fuzz/fuzz_targets/stdlib_owners.rs#route=std.async", "fuzz/corpus/stdlib_owners/std-async/seed#seed=3001", "testing/stdlib-fuzz.json#owner=std.async", "scripts/stdlib-fuzz-check.sh", "scripts/fuzz-smoke.sh", "scripts/fuzz-campaign.sh"]
+          "refs": [
+            "fuzz/fuzz_targets/stdlib_owners.rs#route=std.async",
+            "fuzz/corpus/stdlib_owners/std-async/seed#seed=3001",
+            "testing/stdlib-fuzz.json#owner=std.async",
+            "scripts/stdlib-fuzz-check.sh",
+            "scripts/fuzz-smoke.sh",
+            "scripts/fuzz-campaign.sh"
+          ]
         },
         "PERF": {
           "status": "not-applicable",
           "reason": "std.async is compiler/VM intrinsic and has no standalone portable stdlib hot path",
-          "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
+          "refs": [
+            "testing/stdlib-performance.json",
+            "testing/stdlib-performance-conformance.json",
+            "docs/contracts/stdlib-performance.md"
+          ]
         },
         "CONF": {
-          "status": "partial",
-          "reason": "the public callable surface is audited and the implementation is runtime-covered, but full owner conformance waits for STD-A-CONF-001",
-          "refs": ["testing/stdlib-public-api.json", "testing/stdlib-async.json", "TONDO_IMPLEMENTATION_TRACKER.md"]
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "testing/stdlib-conformance.json#owners/std.async"
+          ]
         },
         "DOC": {
           "status": "verified",
           "reason": null,
-          "refs": ["docs/contracts/stdlib-async.md", "docs/contracts/stdlib-core.md", "TONDO_STANDARD_LIBRARY_SPEC.md", "docs/contracts/stdlib-s1a.md"]
+          "refs": [
+            "docs/contracts/stdlib-async.md",
+            "docs/contracts/stdlib-core.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md",
+            "docs/contracts/stdlib-s1a.md"
+          ]
         }
       },
       "budgets": {
@@ -1119,47 +1684,87 @@
         "SPEC": {
           "status": "verified",
           "reason": null,
-          "refs": ["testing/stdlib-hosted.json", "docs/contracts/stdlib-hosted.md", "TONDO_STANDARD_LIBRARY_SPEC.md"]
+          "refs": [
+            "testing/stdlib-hosted.json",
+            "docs/contracts/stdlib-hosted.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md"
+          ]
         },
         "IMPL": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs", "crates/tondo-vm/src/runtime/execute.rs"]
+          "refs": [
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ]
         },
         "HOST": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/driver.rs", "docs/contracts/stdlib-hosted.md"]
+          "refs": [
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-compiler/src/driver.rs",
+            "docs/contracts/stdlib-hosted.md"
+          ]
         },
         "MODEL": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/hir/check.rs", "docs/contracts/stdlib-hosted.md"]
+          "refs": [
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-compiler/src/hir/check.rs",
+            "docs/contracts/stdlib-hosted.md"
+          ]
         },
         "TEST": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/driver.rs", "tests/runtime/m11-std-console-001.to", "scripts/stdlib-console-test.sh"]
+          "refs": [
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-compiler/src/driver.rs",
+            "tests/runtime/m11-std-console-001.to",
+            "scripts/stdlib-console-test.sh"
+          ]
         },
         "FUZZ": {
           "status": "verified",
           "reason": null,
-          "refs": ["fuzz/fuzz_targets/stdlib_owners.rs#route=std.console", "fuzz/corpus/stdlib_owners/std-console/seed#seed=3004", "testing/stdlib-fuzz.json#owner=std.console", "scripts/stdlib-fuzz-check.sh", "scripts/fuzz-smoke.sh", "scripts/fuzz-campaign.sh"]
+          "refs": [
+            "fuzz/fuzz_targets/stdlib_owners.rs#route=std.console",
+            "fuzz/corpus/stdlib_owners/std-console/seed#seed=3004",
+            "testing/stdlib-fuzz.json#owner=std.console",
+            "scripts/stdlib-fuzz-check.sh",
+            "scripts/fuzz-smoke.sh",
+            "scripts/fuzz-campaign.sh"
+          ]
         },
         "PERF": {
           "status": "not-applicable",
           "reason": "std.console is target-provider scoped; its costs are measured by PERF-001 hosted campaigns",
-          "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
+          "refs": [
+            "testing/stdlib-performance.json",
+            "testing/stdlib-performance-conformance.json",
+            "docs/contracts/stdlib-performance.md"
+          ]
         },
         "CONF": {
-          "status": "partial",
-          "reason": "the public API audit, explicit console capability checks, stream fixture and typed failures cover the seven signatures; STD-CONF-001 has not yet promoted every standard-library owner",
-          "refs": ["testing/stdlib-public-api.json", "tests/runtime/m11-std-console-001.to", "crates/tondo-compiler/src/driver.rs", "TONDO_IMPLEMENTATION_TRACKER.md"]
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "testing/stdlib-conformance.json#owners/std.console"
+          ]
         },
         "DOC": {
           "status": "verified",
           "reason": null,
-          "refs": ["docs/contracts/stdlib-hosted.md", "TONDO_STANDARD_LIBRARY_SPEC.md", "docs/contracts/stdlib-s1a.md", "docs/contracts/stdlib-matrix.md"]
+          "refs": [
+            "docs/contracts/stdlib-hosted.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md",
+            "docs/contracts/stdlib-s1a.md",
+            "docs/contracts/stdlib-matrix.md"
+          ]
         }
       },
       "budgets": {
@@ -1198,47 +1803,89 @@
         "SPEC": {
           "status": "verified",
           "reason": null,
-          "refs": ["testing/stdlib-hosted.json", "docs/contracts/stdlib-hosted.md", "TONDO_STANDARD_LIBRARY_SPEC.md"]
+          "refs": [
+            "testing/stdlib-hosted.json",
+            "docs/contracts/stdlib-hosted.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md"
+          ]
         },
         "IMPL": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-stdlib/src/path.rs", "crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs", "crates/tondo-compiler/src/process_host.rs", "crates/tondo-vm/src/runtime/execute.rs"]
+          "refs": [
+            "crates/tondo-stdlib/src/path.rs",
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ]
         },
         "HOST": {
           "status": "not-applicable",
           "reason": "std.path is purely lexical; it preserves native bytes and does not consult the filesystem or an ambient capability",
-          "refs": ["docs/contracts/stdlib-hosted.md", "TONDO_STANDARD_LIBRARY_SPEC.md", "crates/tondo-stdlib/src/path.rs"]
+          "refs": [
+            "docs/contracts/stdlib-hosted.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md",
+            "crates/tondo-stdlib/src/path.rs"
+          ]
         },
         "MODEL": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-stdlib/src/path.rs", "crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs", "crates/tondo-compiler/src/process_host.rs"]
+          "refs": [
+            "crates/tondo-stdlib/src/path.rs",
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-compiler/src/process_host.rs"
+          ]
         },
         "TEST": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-stdlib/src/path.rs", "crates/tondo-compiler/src/process_host.rs", "tests/runtime/m11-std-path-001.to", "scripts/stdlib-path-test.sh"]
+          "refs": [
+            "crates/tondo-stdlib/src/path.rs",
+            "crates/tondo-compiler/src/process_host.rs",
+            "tests/runtime/m11-std-path-001.to",
+            "scripts/stdlib-path-test.sh"
+          ]
         },
         "FUZZ": {
           "status": "verified",
           "reason": null,
-          "refs": ["fuzz/fuzz_targets/stdlib_owners.rs#route=std.path", "fuzz/corpus/stdlib_owners/std-path/seed#seed=3015", "testing/stdlib-fuzz.json#owner=std.path", "scripts/stdlib-fuzz-check.sh", "scripts/fuzz-smoke.sh", "scripts/fuzz-campaign.sh"]
+          "refs": [
+            "fuzz/fuzz_targets/stdlib_owners.rs#route=std.path",
+            "fuzz/corpus/stdlib_owners/std-path/seed#seed=3015",
+            "testing/stdlib-fuzz.json#owner=std.path",
+            "scripts/stdlib-fuzz-check.sh",
+            "scripts/fuzz-smoke.sh",
+            "scripts/fuzz-campaign.sh"
+          ]
         },
         "PERF": {
           "status": "verified",
           "reason": null,
-          "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
+          "refs": [
+            "testing/stdlib-performance.json",
+            "testing/stdlib-performance-conformance.json",
+            "docs/contracts/stdlib-performance.md"
+          ]
         },
         "CONF": {
-          "status": "partial",
-          "reason": "the public API audit, portable path kernel, native-byte corpus and runtime fixture cover all ten signatures; STD-CONF-001 has not yet promoted every standard-library owner",
-          "refs": ["testing/stdlib-public-api.json", "tests/runtime/m11-std-path-001.to", "TONDO_IMPLEMENTATION_TRACKER.md"]
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "testing/stdlib-conformance.json#owners/std.path"
+          ]
         },
         "DOC": {
           "status": "verified",
           "reason": null,
-          "refs": ["docs/contracts/stdlib-hosted.md", "TONDO_STANDARD_LIBRARY_SPEC.md", "docs/contracts/stdlib-s1a.md", "docs/contracts/stdlib-matrix.md"]
+          "refs": [
+            "docs/contracts/stdlib-hosted.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md",
+            "docs/contracts/stdlib-s1a.md",
+            "docs/contracts/stdlib-matrix.md"
+          ]
         }
       },
       "budgets": {
@@ -1275,47 +1922,88 @@
         "SPEC": {
           "status": "verified",
           "reason": null,
-          "refs": ["testing/stdlib-hosted.json", "docs/contracts/stdlib-hosted.md", "TONDO_STANDARD_LIBRARY_SPEC.md"]
+          "refs": [
+            "testing/stdlib-hosted.json",
+            "docs/contracts/stdlib-hosted.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md"
+          ]
         },
         "IMPL": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs", "crates/tondo-vm/src/bytecode.rs", "crates/tondo-vm/src/bytecode/verify.rs", "crates/tondo-vm/src/runtime/execute.rs"]
+          "refs": [
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-vm/src/bytecode.rs",
+            "crates/tondo-vm/src/bytecode/verify.rs",
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ]
         },
         "HOST": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/driver.rs", "docs/contracts/stdlib-hosted.md"]
+          "refs": [
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-compiler/src/driver.rs",
+            "docs/contracts/stdlib-hosted.md"
+          ]
         },
         "MODEL": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/hir/capabilities.rs", "docs/contracts/stdlib-hosted.md"]
+          "refs": [
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-compiler/src/hir/capabilities.rs",
+            "docs/contracts/stdlib-hosted.md"
+          ]
         },
         "TEST": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/driver.rs", "tests/runtime/m11-std-fs-001.to", "scripts/stdlib-fs-test.sh"]
+          "refs": [
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-compiler/src/driver.rs",
+            "tests/runtime/m11-std-fs-001.to",
+            "scripts/stdlib-fs-test.sh"
+          ]
         },
         "FUZZ": {
           "status": "verified",
           "reason": null,
-          "refs": ["fuzz/fuzz_targets/stdlib_owners.rs#route=std.fs", "fuzz/corpus/stdlib_owners/std-fs/seed#seed=3008", "testing/stdlib-fuzz.json#owner=std.fs", "scripts/stdlib-fuzz-check.sh", "scripts/fuzz-smoke.sh", "scripts/fuzz-campaign.sh"]
+          "refs": [
+            "fuzz/fuzz_targets/stdlib_owners.rs#route=std.fs",
+            "fuzz/corpus/stdlib_owners/std-fs/seed#seed=3008",
+            "testing/stdlib-fuzz.json#owner=std.fs",
+            "scripts/stdlib-fuzz-check.sh",
+            "scripts/fuzz-smoke.sh",
+            "scripts/fuzz-campaign.sh"
+          ]
         },
         "PERF": {
           "status": "not-applicable",
           "reason": "std.fs is target-provider scoped; its costs are measured by PERF-001 hosted campaigns",
-          "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
+          "refs": [
+            "testing/stdlib-performance.json",
+            "testing/stdlib-performance-conformance.json",
+            "docs/contracts/stdlib-performance.md"
+          ]
         },
         "CONF": {
-          "status": "partial",
-          "reason": "The public API audit, explicit filesystem capability test and hosted runtime fixture cover all fourteen signatures; STD-CONF-001 has not yet promoted every standard-library owner.",
-          "refs": ["testing/stdlib-public-api.json", "tests/runtime/m11-std-fs-001.to", "crates/tondo-compiler/src/driver.rs", "TONDO_IMPLEMENTATION_TRACKER.md"]
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "testing/stdlib-conformance.json#owners/std.fs"
+          ]
         },
         "DOC": {
           "status": "verified",
           "reason": null,
-          "refs": ["docs/contracts/stdlib-hosted.md", "TONDO_STANDARD_LIBRARY_SPEC.md", "docs/contracts/stdlib-s1a.md", "docs/contracts/stdlib-matrix.md"]
+          "refs": [
+            "docs/contracts/stdlib-hosted.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md",
+            "docs/contracts/stdlib-s1a.md",
+            "docs/contracts/stdlib-matrix.md"
+          ]
         }
       },
       "budgets": {
@@ -1354,47 +2042,96 @@
         "SPEC": {
           "status": "verified",
           "reason": null,
-          "refs": ["testing/stdlib-hosted.json", "docs/contracts/stdlib-hosted.md", "TONDO_STANDARD_LIBRARY_SPEC.md", "docs/contracts/process-host.md"]
+          "refs": [
+            "testing/stdlib-hosted.json",
+            "docs/contracts/stdlib-hosted.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md",
+            "docs/contracts/process-host.md"
+          ]
         },
         "IMPL": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs", "crates/tondo-compiler/src/bytecode/lower.rs", "crates/tondo-vm/src/bytecode.rs", "crates/tondo-vm/src/bytecode/verify.rs", "crates/tondo-vm/src/runtime/execute.rs"]
+          "refs": [
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs",
+            "crates/tondo-compiler/src/bytecode/lower.rs",
+            "crates/tondo-vm/src/bytecode.rs",
+            "crates/tondo-vm/src/bytecode/verify.rs",
+            "crates/tondo-vm/src/runtime/execute.rs"
+          ]
         },
         "HOST": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/driver.rs", "docs/contracts/process-host.md"]
+          "refs": [
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-compiler/src/driver.rs",
+            "docs/contracts/process-host.md"
+          ]
         },
         "MODEL": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/hir/terminal.rs", "crates/tondo-vm/src/bytecode.rs", "docs/contracts/process-host.md"]
+          "refs": [
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-compiler/src/hir/terminal.rs",
+            "crates/tondo-vm/src/bytecode.rs",
+            "docs/contracts/process-host.md"
+          ]
         },
         "TEST": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/driver.rs", "tests/runtime/m8-process-001.to", "tests/runtime/m8-process-cancel.to", "tests/runtime/m8-process-panic-cleanup.to", "tests/runtime/m8-process-check-error.to", "tests/runtime/m8-process-spawn-error.to", "scripts/stdlib-process-test.sh"]
+          "refs": [
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-compiler/src/driver.rs",
+            "tests/runtime/m8-process-001.to",
+            "tests/runtime/m8-process-cancel.to",
+            "tests/runtime/m8-process-panic-cleanup.to",
+            "tests/runtime/m8-process-check-error.to",
+            "tests/runtime/m8-process-spawn-error.to",
+            "scripts/stdlib-process-test.sh"
+          ]
         },
         "FUZZ": {
           "status": "verified",
           "reason": null,
-          "refs": ["fuzz/fuzz_targets/stdlib_owners.rs#route=std.process", "fuzz/corpus/stdlib_owners/std-process/seed#seed=3016", "testing/stdlib-fuzz.json#owner=std.process", "scripts/stdlib-fuzz-check.sh", "scripts/fuzz-smoke.sh", "scripts/fuzz-campaign.sh"]
+          "refs": [
+            "fuzz/fuzz_targets/stdlib_owners.rs#route=std.process",
+            "fuzz/corpus/stdlib_owners/std-process/seed#seed=3016",
+            "testing/stdlib-fuzz.json#owner=std.process",
+            "scripts/stdlib-fuzz-check.sh",
+            "scripts/fuzz-smoke.sh",
+            "scripts/fuzz-campaign.sh"
+          ]
         },
         "PERF": {
           "status": "not-applicable",
           "reason": "std.process is target-provider scoped; its costs are measured by PERF-001 hosted campaigns",
-          "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
+          "refs": [
+            "testing/stdlib-performance.json",
+            "testing/stdlib-performance-conformance.json",
+            "docs/contracts/stdlib-performance.md"
+          ]
         },
         "CONF": {
-          "status": "partial",
-          "reason": "The public API audit, capability test and hosted M8 fixtures cover all seventeen public signatures; STD-CONF-001 has not yet promoted every standard-library owner.",
-          "refs": ["testing/stdlib-public-api.json", "tests/runtime/m8-process-001.to", "tests/runtime/m8-process-cancel.to", "crates/tondo-compiler/src/driver.rs", "TONDO_IMPLEMENTATION_TRACKER.md"]
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "testing/stdlib-conformance.json#owners/std.process"
+          ]
         },
         "DOC": {
           "status": "verified",
           "reason": null,
-          "refs": ["docs/contracts/stdlib-hosted.md", "docs/contracts/process-host.md", "TONDO_STANDARD_LIBRARY_SPEC.md", "docs/contracts/stdlib-s1a.md", "docs/contracts/stdlib-matrix.md"]
+          "refs": [
+            "docs/contracts/stdlib-hosted.md",
+            "docs/contracts/process-host.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md",
+            "docs/contracts/stdlib-s1a.md",
+            "docs/contracts/stdlib-matrix.md"
+          ]
         }
       },
       "budgets": {
@@ -1443,47 +2180,90 @@
         "SPEC": {
           "status": "verified",
           "reason": null,
-          "refs": ["testing/stdlib-core.json", "testing/stdlib-serialization.json", "docs/contracts/stdlib-serialization.md", "TONDO_STANDARD_LIBRARY_SPEC.md"]
+          "refs": [
+            "testing/stdlib-core.json",
+            "testing/stdlib-serialization.json",
+            "docs/contracts/stdlib-serialization.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md"
+          ]
         },
         "IMPL": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-stdlib/src/serialization.rs", "crates/tondo-compiler/src/meta_derive.rs", "crates/tondo-compiler/src/serialization_derive.rs", "crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs"]
+          "refs": [
+            "crates/tondo-stdlib/src/serialization.rs",
+            "crates/tondo-compiler/src/meta_derive.rs",
+            "crates/tondo-compiler/src/serialization_derive.rs",
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs"
+          ]
         },
         "HOST": {
           "status": "not-applicable",
           "reason": "std.serialization is a portable event protocol and hermetic build-only derive boundary; it has no capability-gated runtime host adapter",
-          "refs": ["testing/stdlib-serialization.json", "docs/contracts/stdlib-serialization.md", "crates/tondo-compiler/src/meta_vm.rs"]
+          "refs": [
+            "testing/stdlib-serialization.json",
+            "docs/contracts/stdlib-serialization.md",
+            "crates/tondo-compiler/src/meta_vm.rs"
+          ]
         },
         "MODEL": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-stdlib/src/serialization.rs", "crates/tondo-compiler/src/meta_derive.rs", "crates/tondo-compiler/src/serialization_derive.rs"]
+          "refs": [
+            "crates/tondo-stdlib/src/serialization.rs",
+            "crates/tondo-compiler/src/meta_derive.rs",
+            "crates/tondo-compiler/src/serialization_derive.rs"
+          ]
         },
         "TEST": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-stdlib/src/serialization.rs", "crates/tondo-compiler/src/meta_derive.rs", "crates/tondo-compiler/src/serialization_derive.rs", "scripts/stdlib-serialization-test.sh"]
+          "refs": [
+            "crates/tondo-stdlib/src/serialization.rs",
+            "crates/tondo-compiler/src/meta_derive.rs",
+            "crates/tondo-compiler/src/serialization_derive.rs",
+            "scripts/stdlib-serialization-test.sh"
+          ]
         },
         "FUZZ": {
           "status": "verified",
           "reason": null,
-          "refs": ["fuzz/fuzz_targets/stdlib_owners.rs#route=std.serialization", "fuzz/corpus/stdlib_owners/std-serialization/seed#seed=3019", "testing/stdlib-fuzz.json#owner=std.serialization", "scripts/stdlib-fuzz-check.sh", "scripts/fuzz-smoke.sh", "scripts/fuzz-campaign.sh"]
+          "refs": [
+            "fuzz/fuzz_targets/stdlib_owners.rs#route=std.serialization",
+            "fuzz/corpus/stdlib_owners/std-serialization/seed#seed=3019",
+            "testing/stdlib-fuzz.json#owner=std.serialization",
+            "scripts/stdlib-fuzz-check.sh",
+            "scripts/fuzz-smoke.sh",
+            "scripts/fuzz-campaign.sh"
+          ]
         },
         "PERF": {
           "status": "verified",
           "reason": null,
-          "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
+          "refs": [
+            "testing/stdlib-performance.json",
+            "testing/stdlib-performance-conformance.json",
+            "docs/contracts/stdlib-performance.md"
+          ]
         },
         "CONF": {
-          "status": "partial",
-          "reason": "The external codec harness validates the shared bridge and independent format owners; STD-CONF-001 has not yet promoted every standard-library owner.",
-          "refs": ["testing/stdlib-codec-conformance.json", "scripts/stdlib-codec-conformance.sh", "TONDO_IMPLEMENTATION_TRACKER.md"]
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "testing/stdlib-conformance.json#owners/std.serialization"
+          ]
         },
         "DOC": {
           "status": "verified",
           "reason": null,
-          "refs": ["docs/contracts/stdlib-serialization.md", "docs/contracts/stdlib-core.md", "TONDO_STANDARD_LIBRARY_SPEC.md", "docs/contracts/stdlib-s1a.md", "docs/contracts/stdlib-matrix.md"]
+          "refs": [
+            "docs/contracts/stdlib-serialization.md",
+            "docs/contracts/stdlib-core.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md",
+            "docs/contracts/stdlib-s1a.md",
+            "docs/contracts/stdlib-matrix.md"
+          ]
         }
       },
       "budgets": {
@@ -1522,47 +2302,86 @@
         "SPEC": {
           "status": "verified",
           "reason": null,
-          "refs": ["testing/stdlib-json.json", "docs/contracts/stdlib-json.md", "TONDO_STANDARD_LIBRARY_SPEC.md"]
+          "refs": [
+            "testing/stdlib-json.json",
+            "docs/contracts/stdlib-json.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md"
+          ]
         },
         "IMPL": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-stdlib/src/json_api.rs", "crates/tondo-stdlib/src/json.rs", "crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs"]
+          "refs": [
+            "crates/tondo-stdlib/src/json_api.rs",
+            "crates/tondo-stdlib/src/json.rs",
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs"
+          ]
         },
         "HOST": {
           "status": "not-applicable",
           "reason": "std.json is a portable codec; its compiler bridge has no ambient capability provider or target-specific host semantics",
-          "refs": ["testing/stdlib-json.json", "docs/contracts/stdlib-json.md", "crates/tondo-compiler/src/process_host.rs"]
+          "refs": [
+            "testing/stdlib-json.json",
+            "docs/contracts/stdlib-json.md",
+            "crates/tondo-compiler/src/process_host.rs"
+          ]
         },
         "MODEL": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-stdlib/src/json_api.rs", "testing/stdlib-json.json"]
+          "refs": [
+            "crates/tondo-stdlib/src/json_api.rs",
+            "testing/stdlib-json.json"
+          ]
         },
         "TEST": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-stdlib/src/json_api.rs", "crates/tondo-stdlib/tests/codec_conformance.rs", "scripts/stdlib-json-test.sh"]
+          "refs": [
+            "crates/tondo-stdlib/src/json_api.rs",
+            "crates/tondo-stdlib/tests/codec_conformance.rs",
+            "scripts/stdlib-json-test.sh"
+          ]
         },
         "FUZZ": {
           "status": "verified",
           "reason": null,
-          "refs": ["fuzz/fuzz_targets/stdlib_owners.rs#route=std.json", "fuzz/corpus/stdlib_owners/std-json/seed#seed=3011", "testing/stdlib-fuzz.json#owner=std.json", "scripts/stdlib-fuzz-check.sh", "scripts/fuzz-smoke.sh", "scripts/fuzz-campaign.sh"]
+          "refs": [
+            "fuzz/fuzz_targets/stdlib_owners.rs#route=std.json",
+            "fuzz/corpus/stdlib_owners/std-json/seed#seed=3011",
+            "testing/stdlib-fuzz.json#owner=std.json",
+            "scripts/stdlib-fuzz-check.sh",
+            "scripts/fuzz-smoke.sh",
+            "scripts/fuzz-campaign.sh"
+          ]
         },
         "PERF": {
           "status": "verified",
           "reason": null,
-          "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
+          "refs": [
+            "testing/stdlib-performance.json",
+            "testing/stdlib-performance-conformance.json",
+            "docs/contracts/stdlib-performance.md"
+          ]
         },
         "CONF": {
-          "status": "partial",
-          "reason": "The serde_json bidirectional and fragmented harness covers the portable codec; STD-CONF-001 has not yet promoted every standard-library owner.",
-          "refs": ["testing/stdlib-codec-conformance.json", "scripts/stdlib-codec-conformance.sh", "TONDO_IMPLEMENTATION_TRACKER.md"]
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "testing/stdlib-conformance.json#owners/std.json"
+          ]
         },
         "DOC": {
           "status": "verified",
           "reason": null,
-          "refs": ["docs/contracts/stdlib-json.md", "TONDO_STANDARD_LIBRARY_SPEC.md", "docs/contracts/stdlib-s1a.md", "docs/contracts/stdlib-matrix.md"]
+          "refs": [
+            "docs/contracts/stdlib-json.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md",
+            "docs/contracts/stdlib-s1a.md",
+            "docs/contracts/stdlib-matrix.md"
+          ]
         }
       },
       "budgets": {
@@ -1601,47 +2420,86 @@
         "SPEC": {
           "status": "verified",
           "reason": null,
-          "refs": ["testing/stdlib-messagepack.json", "docs/contracts/stdlib-messagepack.md", "TONDO_STANDARD_LIBRARY_SPEC.md"]
+          "refs": [
+            "testing/stdlib-messagepack.json",
+            "docs/contracts/stdlib-messagepack.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md"
+          ]
         },
         "IMPL": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-stdlib/src/messagepack_api.rs", "crates/tondo-stdlib/src/messagepack.rs", "crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs"]
+          "refs": [
+            "crates/tondo-stdlib/src/messagepack_api.rs",
+            "crates/tondo-stdlib/src/messagepack.rs",
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs"
+          ]
         },
         "HOST": {
           "status": "not-applicable",
           "reason": "std.messagepack is a portable binary codec; its compiler bridge has no ambient capability provider or target-specific wire semantics",
-          "refs": ["testing/stdlib-messagepack.json", "docs/contracts/stdlib-messagepack.md", "crates/tondo-compiler/src/process_host.rs"]
+          "refs": [
+            "testing/stdlib-messagepack.json",
+            "docs/contracts/stdlib-messagepack.md",
+            "crates/tondo-compiler/src/process_host.rs"
+          ]
         },
         "MODEL": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-stdlib/src/messagepack_api.rs", "testing/stdlib-messagepack.json"]
+          "refs": [
+            "crates/tondo-stdlib/src/messagepack_api.rs",
+            "testing/stdlib-messagepack.json"
+          ]
         },
         "TEST": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-stdlib/src/messagepack_api.rs", "crates/tondo-stdlib/tests/codec_conformance.rs", "scripts/stdlib-messagepack-test.sh"]
+          "refs": [
+            "crates/tondo-stdlib/src/messagepack_api.rs",
+            "crates/tondo-stdlib/tests/codec_conformance.rs",
+            "scripts/stdlib-messagepack-test.sh"
+          ]
         },
         "FUZZ": {
           "status": "verified",
           "reason": null,
-          "refs": ["fuzz/fuzz_targets/stdlib_owners.rs#route=std.messagepack", "fuzz/corpus/stdlib_owners/std-messagepack/seed#seed=3013", "testing/stdlib-fuzz.json#owner=std.messagepack", "scripts/stdlib-fuzz-check.sh", "scripts/fuzz-smoke.sh", "scripts/fuzz-campaign.sh"]
+          "refs": [
+            "fuzz/fuzz_targets/stdlib_owners.rs#route=std.messagepack",
+            "fuzz/corpus/stdlib_owners/std-messagepack/seed#seed=3013",
+            "testing/stdlib-fuzz.json#owner=std.messagepack",
+            "scripts/stdlib-fuzz-check.sh",
+            "scripts/fuzz-smoke.sh",
+            "scripts/fuzz-campaign.sh"
+          ]
         },
         "PERF": {
           "status": "verified",
           "reason": null,
-          "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
+          "refs": [
+            "testing/stdlib-performance.json",
+            "testing/stdlib-performance-conformance.json",
+            "docs/contracts/stdlib-performance.md"
+          ]
         },
         "CONF": {
-          "status": "partial",
-          "reason": "The rmpv bidirectional and fragmented harness covers the portable codec and extension preservation; STD-CONF-001 has not yet promoted every standard-library owner.",
-          "refs": ["testing/stdlib-codec-conformance.json", "scripts/stdlib-codec-conformance.sh", "TONDO_IMPLEMENTATION_TRACKER.md"]
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "testing/stdlib-conformance.json#owners/std.messagepack"
+          ]
         },
         "DOC": {
           "status": "verified",
           "reason": null,
-          "refs": ["docs/contracts/stdlib-messagepack.md", "TONDO_STANDARD_LIBRARY_SPEC.md", "docs/contracts/stdlib-s1a.md", "docs/contracts/stdlib-matrix.md"]
+          "refs": [
+            "docs/contracts/stdlib-messagepack.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md",
+            "docs/contracts/stdlib-s1a.md",
+            "docs/contracts/stdlib-matrix.md"
+          ]
         }
       },
       "budgets": {
@@ -1680,47 +2538,86 @@
         "SPEC": {
           "status": "verified",
           "reason": null,
-          "refs": ["testing/stdlib-protobuf.json", "docs/contracts/stdlib-protobuf.md", "TONDO_STANDARD_LIBRARY_SPEC.md"]
+          "refs": [
+            "testing/stdlib-protobuf.json",
+            "docs/contracts/stdlib-protobuf.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md"
+          ]
         },
         "IMPL": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-stdlib/src/protobuf_api.rs", "crates/tondo-stdlib/src/protobuf.rs", "crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs"]
+          "refs": [
+            "crates/tondo-stdlib/src/protobuf_api.rs",
+            "crates/tondo-stdlib/src/protobuf.rs",
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs"
+          ]
         },
         "HOST": {
           "status": "not-applicable",
           "reason": "std.protobuf wire and schema generation are portable or build-only; the compiler bridge has no ambient capability provider or target-specific wire semantics",
-          "refs": ["testing/stdlib-protobuf.json", "docs/contracts/stdlib-protobuf.md", "crates/tondo-compiler/src/process_host.rs"]
+          "refs": [
+            "testing/stdlib-protobuf.json",
+            "docs/contracts/stdlib-protobuf.md",
+            "crates/tondo-compiler/src/process_host.rs"
+          ]
         },
         "MODEL": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-stdlib/src/protobuf_api.rs", "testing/stdlib-protobuf.json"]
+          "refs": [
+            "crates/tondo-stdlib/src/protobuf_api.rs",
+            "testing/stdlib-protobuf.json"
+          ]
         },
         "TEST": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-stdlib/src/protobuf_api.rs", "crates/tondo-stdlib/tests/codec_conformance.rs", "scripts/stdlib-protobuf-test.sh"]
+          "refs": [
+            "crates/tondo-stdlib/src/protobuf_api.rs",
+            "crates/tondo-stdlib/tests/codec_conformance.rs",
+            "scripts/stdlib-protobuf-test.sh"
+          ]
         },
         "FUZZ": {
           "status": "verified",
           "reason": null,
-          "refs": ["fuzz/fuzz_targets/stdlib_owners.rs#route=std.protobuf", "fuzz/corpus/stdlib_owners/std-protobuf/seed#seed=3017", "testing/stdlib-fuzz.json#owner=std.protobuf", "scripts/stdlib-fuzz-check.sh", "scripts/fuzz-smoke.sh", "scripts/fuzz-campaign.sh"]
+          "refs": [
+            "fuzz/fuzz_targets/stdlib_owners.rs#route=std.protobuf",
+            "fuzz/corpus/stdlib_owners/std-protobuf/seed#seed=3017",
+            "testing/stdlib-fuzz.json#owner=std.protobuf",
+            "scripts/stdlib-fuzz-check.sh",
+            "scripts/fuzz-smoke.sh",
+            "scripts/fuzz-campaign.sh"
+          ]
         },
         "PERF": {
           "status": "verified",
           "reason": null,
-          "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
+          "refs": [
+            "testing/stdlib-performance.json",
+            "testing/stdlib-performance-conformance.json",
+            "docs/contracts/stdlib-performance.md"
+          ]
         },
         "CONF": {
-          "status": "partial",
-          "reason": "The prost bidirectional and fragmented harness covers the portable wire and unknown records; STD-CONF-001 has not yet promoted every standard-library owner.",
-          "refs": ["testing/stdlib-codec-conformance.json", "scripts/stdlib-codec-conformance.sh", "TONDO_IMPLEMENTATION_TRACKER.md"]
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "testing/stdlib-conformance.json#owners/std.protobuf"
+          ]
         },
         "DOC": {
           "status": "verified",
           "reason": null,
-          "refs": ["docs/contracts/stdlib-protobuf.md", "TONDO_STANDARD_LIBRARY_SPEC.md", "docs/contracts/stdlib-s1a.md", "docs/contracts/stdlib-matrix.md"]
+          "refs": [
+            "docs/contracts/stdlib-protobuf.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md",
+            "docs/contracts/stdlib-s1a.md",
+            "docs/contracts/stdlib-matrix.md"
+          ]
         }
       },
       "budgets": {
@@ -1765,47 +2662,93 @@
         "SPEC": {
           "status": "verified",
           "reason": null,
-          "refs": ["testing/stdlib-testing.json", "docs/contracts/stdlib-testing.md", "TONDO_TESTING_SPEC.md"]
+          "refs": [
+            "testing/stdlib-testing.json",
+            "docs/contracts/stdlib-testing.md",
+            "TONDO_TESTING_SPEC.md"
+          ]
         },
         "IMPL": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-stdlib/src/testing.rs", "crates/tondo-compiler/src/test_runtime.rs", "crates/tondo-compiler/src/test_generation.rs", "crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/hir/check.rs", "crates/tondo-compiler/src/hir/lower.rs"]
+          "refs": [
+            "crates/tondo-stdlib/src/testing.rs",
+            "crates/tondo-compiler/src/test_runtime.rs",
+            "crates/tondo-compiler/src/test_generation.rs",
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-compiler/src/hir/check.rs",
+            "crates/tondo-compiler/src/hir/lower.rs"
+          ]
         },
         "HOST": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-compiler/src/process_host.rs", "crates/tondo-compiler/src/test_runtime.rs", "crates/tondo-cli/tests/acceptance_projects.rs"]
+          "refs": [
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-compiler/src/test_runtime.rs",
+            "crates/tondo-cli/tests/acceptance_projects.rs"
+          ]
         },
         "MODEL": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-stdlib/src/testing.rs", "crates/tondo-compiler/src/test_generation.rs", "crates/tondo-compiler/src/test_runtime.rs", "testing/stdlib-testing.json"]
+          "refs": [
+            "crates/tondo-stdlib/src/testing.rs",
+            "crates/tondo-compiler/src/test_generation.rs",
+            "crates/tondo-compiler/src/test_runtime.rs",
+            "testing/stdlib-testing.json"
+          ]
         },
         "TEST": {
           "status": "verified",
           "reason": null,
-          "refs": ["crates/tondo-stdlib/src/testing.rs", "crates/tondo-compiler/src/test_generation.rs", "crates/tondo-compiler/src/test_runtime.rs", "crates/tondo-compiler/src/process_host.rs", "crates/tondo-cli/tests/acceptance_projects.rs", "scripts/stdlib-testing-test.sh"]
+          "refs": [
+            "crates/tondo-stdlib/src/testing.rs",
+            "crates/tondo-compiler/src/test_generation.rs",
+            "crates/tondo-compiler/src/test_runtime.rs",
+            "crates/tondo-compiler/src/process_host.rs",
+            "crates/tondo-cli/tests/acceptance_projects.rs",
+            "scripts/stdlib-testing-test.sh"
+          ]
         },
         "FUZZ": {
           "status": "verified",
           "reason": null,
-          "refs": ["fuzz/fuzz_targets/stdlib_owners.rs#route=std.testing", "fuzz/corpus/stdlib_owners/std-testing/seed#seed=3020", "testing/stdlib-fuzz.json#owner=std.testing", "scripts/stdlib-fuzz-check.sh", "scripts/fuzz-smoke.sh", "scripts/fuzz-campaign.sh"]
+          "refs": [
+            "fuzz/fuzz_targets/stdlib_owners.rs#route=std.testing",
+            "fuzz/corpus/stdlib_owners/std-testing/seed#seed=3020",
+            "testing/stdlib-fuzz.json#owner=std.testing",
+            "scripts/stdlib-fuzz-check.sh",
+            "scripts/fuzz-smoke.sh",
+            "scripts/fuzz-campaign.sh"
+          ]
         },
         "PERF": {
           "status": "verified",
           "reason": null,
-          "refs": ["testing/stdlib-performance.json", "testing/stdlib-performance-conformance.json", "docs/contracts/stdlib-performance.md"]
+          "refs": [
+            "testing/stdlib-performance.json",
+            "testing/stdlib-performance-conformance.json",
+            "docs/contracts/stdlib-performance.md"
+          ]
         },
         "CONF": {
-          "status": "partial",
-          "reason": "The runner and owner corpus are exercised by acceptance tests, but STD-CONF-001 has not promoted complete conformance evidence for every std.testing requirement.",
-          "refs": ["crates/tondo-cli/tests/acceptance_projects.rs", "TONDO_IMPLEMENTATION_TRACKER.md"]
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "testing/stdlib-conformance.json#owners/std.testing"
+          ]
         },
         "DOC": {
           "status": "verified",
           "reason": null,
-          "refs": ["docs/contracts/stdlib-testing.md", "TONDO_TESTING_SPEC.md", "TONDO_STANDARD_LIBRARY_SPEC.md", "docs/contracts/stdlib-s1a.md", "docs/contracts/stdlib-matrix.md"]
+          "refs": [
+            "docs/contracts/stdlib-testing.md",
+            "TONDO_TESTING_SPEC.md",
+            "TONDO_STANDARD_LIBRARY_SPEC.md",
+            "docs/contracts/stdlib-s1a.md",
+            "docs/contracts/stdlib-matrix.md"
+          ]
         }
       },
       "budgets": {

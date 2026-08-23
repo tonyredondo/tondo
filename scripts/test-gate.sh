@@ -189,6 +189,12 @@ run_step stdlib-normative-matrix \
     scripts/stdlib-matrix-check.sh
 run_step stdlib-normative-matrix-tests \
     scripts/stdlib-matrix-test.sh
+run_step stdlib-conformance \
+    scripts/stdlib-conformance.sh
+run_step stdlib-conformance-tests \
+    scripts/stdlib-conformance-test.sh
+run_step stdlib-conformance-check \
+    scripts/stdlib-conformance-check.sh
 run_step stdlib-codec-conformance \
     scripts/stdlib-codec-conformance.sh
 run_step stdlib-conformance-coordination \

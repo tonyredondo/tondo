@@ -100,4 +100,4 @@ while IFS= read -r ref; do
 done < <(jq -r '.owners[].stages[] | .refs[]' "$matrix")
 
 summary="$(jq -r '"\(.summary.owners) owners; \(.summary.signatures) signatures; \(.summary.requirements) requirements"' "$matrix")"
-echo "stdlib normative matrix: OK ($summary; open gaps explicit)"
+echo "stdlib normative matrix: OK ($summary; all owner stages explicit)"
