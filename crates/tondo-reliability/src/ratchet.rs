@@ -272,7 +272,7 @@ mod tests {
     fn repository_ratchet_requires_reports_for_draft_case_layers() {
         let root = repository_root();
         let lineage = DraftLineage::load(&root, DRAFT_LINEAGE_PATH).unwrap();
-        assert_eq!(lineage.manifest().case_layers.len(), 4);
+        assert_eq!(lineage.manifest().case_layers.len(), 5);
         assert!(
             scope_evidence(&root, "coverage", None, None, true, |_, _| Ok(Vec::new())).is_err()
         );

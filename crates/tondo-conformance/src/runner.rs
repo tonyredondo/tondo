@@ -2473,7 +2473,7 @@ mod tests {
                 .iter()
                 .flat_map(|layer| &layer.cases)
                 .count(),
-            67
+            69
         );
 
         assert!(compose_suite_result(&lineage, suite_result.clone(), b"not json").is_err());

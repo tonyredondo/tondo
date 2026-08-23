@@ -497,16 +497,18 @@ mod tests {
             first.suite().manifest().specification.sha256,
             sha256(first.specification("TONDO_LANGUAGE_SPEC.md").unwrap())
         );
-        assert_eq!(first.case_layers().len(), 4);
-        assert_eq!(first.case_layers()[0].layer, "finalization");
-        assert_eq!(first.case_layers()[0].cases.len(), 6);
-        assert_eq!(first.case_layers()[1].layer, "language-closure");
-        assert_eq!(first.case_layers()[1].cases.len(), 2);
-        assert_eq!(first.case_layers()[2].layer, "meta");
-        assert_eq!(first.case_layers()[2].cases.len(), 6);
-        assert_eq!(first.case_layers()[3].layer, "testing");
-        assert_eq!(first.case_layers()[3].cases.len(), 53);
-        assert_eq!(first.implemented_requirements().len(), 56);
+        assert_eq!(first.case_layers().len(), 5);
+        assert_eq!(first.case_layers()[0].layer, "async-select");
+        assert_eq!(first.case_layers()[0].cases.len(), 2);
+        assert_eq!(first.case_layers()[1].layer, "finalization");
+        assert_eq!(first.case_layers()[1].cases.len(), 6);
+        assert_eq!(first.case_layers()[2].layer, "language-closure");
+        assert_eq!(first.case_layers()[2].cases.len(), 2);
+        assert_eq!(first.case_layers()[3].layer, "meta");
+        assert_eq!(first.case_layers()[3].cases.len(), 6);
+        assert_eq!(first.case_layers()[4].layer, "testing");
+        assert_eq!(first.case_layers()[4].cases.len(), 53);
+        assert_eq!(first.implemented_requirements().len(), 60);
         assert_eq!(first.manifest().pending_tasks, ["CONF-SEAL-FINAL-001"]);
         assert!(first.check_sealable().is_err());
     }

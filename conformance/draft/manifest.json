@@ -23,6 +23,24 @@
   ],
   "case_layers": [
     {
+      "id": "async-select",
+      "manifest": {
+        "path": "conformance/draft/layers/async-select.json",
+        "sha256": "aee4c44a7d64635872a3ad18165aba2fdfea2b6519fcdde132103e2f343b56b5"
+      },
+      "tasks": [
+        "ASYNC-SELECT-VM-CONF-001"
+      ],
+      "requirements": [
+        "TL01-11-10-R002",
+        "TL01-11-11-R001",
+        "TL01-11-12-2-R001",
+        "TL01-11-12-2-R002",
+        "TL01-23-19-R002",
+        "TL01-ASYNC-Y-CONCURRENCIA-ESTRUCTURADA-R001"
+      ]
+    },
+    {
       "id": "finalization",
       "manifest": {
         "path": "conformance/draft/layers/finalization.json",

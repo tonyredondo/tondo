@@ -15,7 +15,7 @@
       "sha256": "b92a402928bebfa3776a9a9bfc9085b262b1289dfae4c828694e5b9f2469460d"
     }
   ],
-  "inventory_sha256": "c4b6ebb97db143266a33149e09c7631f5478b030f418585d4d526730cf16fb8e",
+  "inventory_sha256": "7b41f24b17f39ed0f91441f2ed8caaa0a5c3c732c03a60e95340c78cf11768da",
   "target": "tondo-vm-hosted",
   "summary": {
     "total": 436,
@@ -3884,34 +3884,34 @@
       "phase": "types-hir",
       "risk": "high",
       "status": "toolchain-limit",
-      "classification_reason": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage.",
+      "classification_reason": "A live draft case layer names this requirement, but no reviewed executable evidence claim covers it.",
       "evidence": [
         "TONDO_LANGUAGE_SPEC.md:4034#11-12-2-selección-estructurada-con-select"
       ],
       "dimensions": {
         "positive": {
           "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "waiver": "A live draft case layer names this requirement, but no reviewed executable evidence claim covers it."
         },
         "rejection_or_failure": {
           "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "waiver": "A live draft case layer names this requirement, but no reviewed executable evidence claim covers it."
         },
         "boundary": {
           "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "waiver": "A live draft case layer names this requirement, but no reviewed executable evidence claim covers it."
         },
         "composition": {
           "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "waiver": "A live draft case layer names this requirement, but no reviewed executable evidence claim covers it."
         },
         "oracle": {
           "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "waiver": "A live draft case layer names this requirement, but no reviewed executable evidence claim covers it."
         },
         "public_boundary": {
           "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "waiver": "A live draft case layer names this requirement, but no reviewed executable evidence claim covers it."
         }
       }
     },
@@ -3928,34 +3928,34 @@
       "phase": "types-hir",
       "risk": "high",
       "status": "toolchain-limit",
-      "classification_reason": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage.",
+      "classification_reason": "A live draft case layer names this requirement, but no reviewed executable evidence claim covers it.",
       "evidence": [
         "TONDO_LANGUAGE_SPEC.md:4070#11-12-2-selección-estructurada-con-select"
       ],
       "dimensions": {
         "positive": {
           "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "waiver": "A live draft case layer names this requirement, but no reviewed executable evidence claim covers it."
         },
         "rejection_or_failure": {
           "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "waiver": "A live draft case layer names this requirement, but no reviewed executable evidence claim covers it."
         },
         "boundary": {
           "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "waiver": "A live draft case layer names this requirement, but no reviewed executable evidence claim covers it."
         },
         "composition": {
           "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "waiver": "A live draft case layer names this requirement, but no reviewed executable evidence claim covers it."
         },
         "oracle": {
           "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "waiver": "A live draft case layer names this requirement, but no reviewed executable evidence claim covers it."
         },
         "public_boundary": {
           "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "waiver": "A live draft case layer names this requirement, but no reviewed executable evidence claim covers it."
         }
       }
     },
@@ -14885,34 +14885,34 @@
       "phase": "grammar",
       "risk": "high",
       "status": "toolchain-limit",
-      "classification_reason": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage.",
+      "classification_reason": "A live draft case layer names this requirement, but no reviewed executable evidence claim covers it.",
       "evidence": [
         "TONDO_LANGUAGE_SPEC.md:9278#23-19-jerarquía-de-expresiones"
       ],
       "dimensions": {
         "positive": {
           "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "waiver": "A live draft case layer names this requirement, but no reviewed executable evidence claim covers it."
         },
         "rejection_or_failure": {
           "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "waiver": "A live draft case layer names this requirement, but no reviewed executable evidence claim covers it."
         },
         "boundary": {
           "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "waiver": "A live draft case layer names this requirement, but no reviewed executable evidence claim covers it."
         },
         "composition": {
           "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "waiver": "A live draft case layer names this requirement, but no reviewed executable evidence claim covers it."
         },
         "oracle": {
           "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "waiver": "A live draft case layer names this requirement, but no reviewed executable evidence claim covers it."
         },
         "public_boundary": {
           "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "waiver": "A live draft case layer names this requirement, but no reviewed executable evidence claim covers it."
         }
       }
     },
@@ -21246,34 +21246,34 @@
       "phase": "language-contract",
       "risk": "low",
       "status": "toolchain-limit",
-      "classification_reason": "The named diagnostic has no complete executable evidence set linked to this prose requirement.",
+      "classification_reason": "A live draft case layer names this requirement, but no reviewed executable evidence claim covers it.",
       "evidence": [
         "TONDO_LANGUAGE_SPEC.md:8056#async-y-concurrencia-estructurada"
       ],
       "dimensions": {
         "positive": {
           "evidence": [],
-          "waiver": "The named diagnostic has no complete executable evidence set linked to this prose requirement."
+          "waiver": "A live draft case layer names this requirement, but no reviewed executable evidence claim covers it."
         },
         "rejection_or_failure": {
           "evidence": [],
-          "waiver": "The named diagnostic has no complete executable evidence set linked to this prose requirement."
+          "waiver": "A live draft case layer names this requirement, but no reviewed executable evidence claim covers it."
         },
         "boundary": {
           "evidence": [],
-          "waiver": "The named diagnostic has no complete executable evidence set linked to this prose requirement."
+          "waiver": "A live draft case layer names this requirement, but no reviewed executable evidence claim covers it."
         },
         "composition": {
           "evidence": [],
-          "waiver": "The named diagnostic has no complete executable evidence set linked to this prose requirement."
+          "waiver": "A live draft case layer names this requirement, but no reviewed executable evidence claim covers it."
         },
         "oracle": {
           "evidence": [],
-          "waiver": "The named diagnostic has no complete executable evidence set linked to this prose requirement."
+          "waiver": "A live draft case layer names this requirement, but no reviewed executable evidence claim covers it."
         },
         "public_boundary": {
           "evidence": [],
-          "waiver": "The named diagnostic has no complete executable evidence set linked to this prose requirement."
+          "waiver": "A live draft case layer names this requirement, but no reviewed executable evidence claim covers it."
         }
       }
     },

@@ -1,0 +1,63 @@
+{
+  "format": "tondo-async-select-conformance/1",
+  "edition": "0.1",
+  "task": "ASYNC-SELECT-VM-CONF-001",
+  "owner": "tondo-vm",
+  "status": "closed",
+  "lineage": "tondo-draft",
+  "suite": "tondo-conformance-draft",
+  "result_format": "tondo-conformance-result-draft/2",
+  "manifest": "conformance/0.1/manifest.json",
+  "manifest_sha256": "117f2499c4a69938752715afa0a2b27e5c3240af4af32e8f295cb37a5c8c029a",
+  "target": "tondo-vm-hosted",
+  "profile": "hosted",
+  "pipeline": [
+    "parser",
+    "formatter",
+    "interface",
+    "bytecode",
+    "verified-bytecode",
+    "vm"
+  ],
+  "oracle": "exact-observation-hashes",
+  "full_suite_case_count": 206,
+  "cases": [
+    {
+      "id": "concurrency/select-join-loser-runtime",
+      "fixture": "conformance/0.1/cases/concurrency/select-join-loser-runtime.to",
+      "fixture_sha256": "e63774cfee9476004ff1f986057d44399ea09dfd44ab8e0c3ede2ee7f4a2c8b8",
+      "group": "concurrency",
+      "repetitions": 32,
+      "observation_sha256": "5815b75aa7e938f757e7c689e95245367836d7496be7fae8d210a3e27b6f158c"
+    },
+    {
+      "id": "concurrency/select-join-runtime",
+      "fixture": "conformance/0.1/cases/concurrency/select-join-runtime.to",
+      "fixture_sha256": "759bb9045c3932f00e46cc51cb205f5800414d6f7aacb21065bfe72fe8bbdf50",
+      "group": "concurrency",
+      "repetitions": 32,
+      "observation_sha256": "5815b75aa7e938f757e7c689e95245367836d7496be7fae8d210a3e27b6f158c"
+    },
+    {
+      "id": "concurrency/select-runtime",
+      "fixture": "conformance/0.1/cases/concurrency/select-runtime.to",
+      "fixture_sha256": "f77d3fe3563463751ee0bffff3fbc6d94b0d855570991716fc716730e6d8b9c9",
+      "group": "concurrency",
+      "repetitions": 32,
+      "observation_sha256": "5815b75aa7e938f757e7c689e95245367836d7496be7fae8d210a3e27b6f158c"
+    }
+  ],
+  "invariants": {
+    "full_suite_passed": true,
+    "selected_cases_are_concurrency": true,
+    "repetitions_are_exact": true,
+    "observations_are_identical_per_case": true,
+    "all_selected_observations_match_expected": true,
+    "native_backend_claim": false
+  },
+  "report": "target/reliability/evidence/async-select-conformance.json",
+  "next_blocks": [
+    "STD-A-PERF-001",
+    "DIAG-SPEC-001"
+  ]
+}

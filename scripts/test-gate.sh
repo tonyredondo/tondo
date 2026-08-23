@@ -218,3 +218,7 @@ run_step conformance-run \
     --adapter "$cargo_target_dir/debug/tondo-reference-adapter" \
     --evidence "$evidence/layer-evidence.json" \
     --output "$evidence/conformance-result.json"
+run_step async-select-conformance \
+    scripts/async-select-conformance.sh
+run_step async-select-conformance-contract-tests \
+    scripts/async-select-conformance-test.sh
