@@ -93,7 +93,10 @@ fn owner_closure_and_promotion_boundary_are_explicit() {
     }
 
     assert_eq!(registry["promotion"]["matrix_status"], "verified");
-    assert_eq!(registry["promotion"]["next_coordination"], "STD-A-DIST-001");
+    assert_eq!(
+        registry["promotion"]["next_coordination"],
+        "STD-S1A-SEAL-001"
+    );
 }
 
 #[test]
