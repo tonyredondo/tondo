@@ -889,7 +889,8 @@ pub enum BytecodeInstructionKind {
 
 /// One arm registration of a selection region.  A selectable call enters
 /// its prepare phase; a pending `Join` observes its owner slot without
-/// consuming it — the winner commits and losers are restored.
+/// consuming it — the winner commits, join losers remain owned by the caller,
+/// and runtime-owned call arms are cancelled on rollback.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BytecodeSelectRegistration {
     Call(BytecodeOperation),

@@ -3709,7 +3709,9 @@ impl Verifier<'_> {
                         select_owned_operations.insert(id);
                         current = match self.program.expression(id).map(HirExpression::kind) {
                             Some(HirExpressionKind::PropagateOption { value })
-                            | Some(HirExpressionKind::PropagateResult { value, .. }) => Some(*value),
+                            | Some(HirExpressionKind::PropagateResult { value, .. }) => {
+                                Some(*value)
+                            }
                             _ => None,
                         };
                     }
@@ -3905,7 +3907,26 @@ impl Verifier<'_> {
         context: &str,
     ) -> Result<(), HirInvariantError> {
         match &operation.kind {
-            HirExpressionKind::AsyncCall { .. } => Ok(()),
+            HirExpressionKind::AsyncCall { signature, .. } => {
+                let TypeKind::Function(function) = self
+                    .program
+                    .interner
+                    .kind(*signature)
+                    .map_err(|error| HirInvariantError::new(context, error.to_string()))?
+                else {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "select call signature is not a function",
+                    ));
+                };
+                if !function.is_selectable() {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "select arm call is async but not selectable",
+                    ));
+                }
+                Ok(())
+            }
             HirExpressionKind::Await { operation } => {
                 let operand = self.expression(*operation, context)?;
                 if matches!(
@@ -3924,8 +3945,9 @@ impl Verifier<'_> {
                 }
             }
             HirExpressionKind::PropagateOption { value }
-            | HirExpressionKind::PropagateResult { value, .. } => self
-                .verify_select_operation_shape(self.expression(*value, context)?, context),
+            | HirExpressionKind::PropagateResult { value, .. } => {
+                self.verify_select_operation_shape(self.expression(*value, context)?, context)
+            }
             _ => Err(HirInvariantError::new(
                 context,
                 "select arm operation is neither a selectable call nor an await over Join",
@@ -4665,10 +4687,7 @@ impl Verifier<'_> {
                         let stored = self.program.pattern(pattern).ok_or_else(|| {
                             HirInvariantError::new(
                                 context,
-                                format!(
-                                    "select references unknown pattern#{}",
-                                    pattern.index()
-                                ),
+                                format!("select references unknown pattern#{}", pattern.index()),
                             )
                         })?;
                         if matches!(
@@ -6608,6 +6627,18 @@ mod tests {
              selected\n\
          }\n";
 
+    const SELECT_VERIFY_NON_SELECTABLE_SOURCE: &str = "fn ready(): Int selectable { 1 }\n\
+         fn wait(): Int suspends { 1 }\n\
+         fn run(): Int suspends {\n\
+             let pending = wait()\n\
+             let selected = select {\n\
+                 ready() => 1\n\
+                 else => 0\n\
+             }\n\
+             _ = pending\n\
+             selected\n\
+         }\n";
+
     #[test]
     fn typed_hir_verifier_accepts_a_valid_select() {
         let (resolved, program) = checked_program_from(SELECT_VERIFY_SOURCE);
@@ -6633,7 +6664,10 @@ mod tests {
         }
         let error = super::verify_typed_hir(&resolved, &program)
             .expect_err("an empty select must be rejected");
-        assert!(format!("{error}").contains("no operational arms"), "{error}");
+        assert!(
+            format!("{error}").contains("no operational arms"),
+            "{error}"
+        );
     }
 
     #[test]
@@ -6653,10 +6687,7 @@ mod tests {
         }
         let error = super::verify_typed_hir(&resolved, &program)
             .expect_err("a mismatched body type must be rejected");
-        assert!(
-            format!("{error}").contains("body type differs"),
-            "{error}"
-        );
+        assert!(format!("{error}").contains("body type differs"), "{error}");
     }
 
     #[test]
@@ -6675,7 +6706,10 @@ mod tests {
         let else_ids: Vec<_> = program
             .expressions()
             .filter_map(|expression| match expression.kind() {
-                HirExpressionKind::Select { else_body: Some(id), .. } => Some(*id),
+                HirExpressionKind::Select {
+                    else_body: Some(id),
+                    ..
+                } => Some(*id),
                 _ => None,
             })
             .collect();
@@ -6701,11 +6735,171 @@ mod tests {
             })
             .collect();
         for id in operation_ids {
-            let target = program.expressions_mut_for_tests()[id.index() as usize].kind_mut_for_tests();
+            let target =
+                program.expressions_mut_for_tests()[id.index() as usize].kind_mut_for_tests();
             *target = HirExpressionKind::Literal(HirLiteral::Integer("7".into()));
         }
         let error = super::verify_typed_hir(&resolved, &program)
             .expect_err("an integer operation is not a selectable registration");
+        assert!(
+            format!("{error}").contains("neither a selectable call"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn typed_hir_verifier_rejects_each_select_operation_shape_boundary() {
+        let select_operation = |program: &HirProgram| {
+            program
+                .expressions_with_ids()
+                .find_map(|(_, expression)| {
+                    matches!(expression.kind(), HirExpressionKind::Select { .. }).then(|| {
+                        match expression.kind() {
+                            HirExpressionKind::Select { arms, .. } => arms[0].operation(),
+                            _ => unreachable!(),
+                        }
+                    })
+                })
+                .expect("the fixture contains a select arm")
+        };
+        let literal = |program: &HirProgram| {
+            program
+                .expressions_with_ids()
+                .find_map(|(id, expression)| {
+                    matches!(expression.kind(), HirExpressionKind::Literal(_)).then_some(id)
+                })
+                .expect("the fixture contains a literal")
+        };
+
+        let (resolved, program) = checked_program_from(SELECT_VERIFY_SOURCE);
+        let verifier = Verifier {
+            resolved: &resolved,
+            program: &program,
+        };
+        let operation_id = select_operation(&program);
+        let literal_id = literal(&program);
+        let original = program
+            .expressions_with_ids()
+            .find_map(|(id, expression)| (id == operation_id).then_some(expression.clone()))
+            .expect("the select operation exists");
+
+        let mut non_join = original.clone();
+        non_join.kind = HirExpressionKind::Await {
+            operation: literal_id,
+        };
+        let error = verifier
+            .verify_select_operation_shape(&non_join, "select test")
+            .expect_err("an await over a non-Join must be rejected");
+        assert!(format!("{error}").contains("not a pending Join"), "{error}");
+
+        let non_selectable = program
+            .callables()
+            .find(|callable| {
+                matches!(
+                    program.interner().kind(callable.function_type()),
+                    Ok(TypeKind::Function(function))
+                        if function.is_async() && !function.is_selectable()
+                )
+            })
+            .expect("the fixture contains an inferred suspending callable")
+            .function_type();
+        let mut non_selectable_call = original.clone();
+        let HirExpressionKind::AsyncCall { signature, .. } = &mut non_selectable_call.kind else {
+            panic!("the select operation is an async call");
+        };
+        *signature = non_selectable;
+        let error = verifier
+            .verify_select_operation_shape(&non_selectable_call, "select test")
+            .expect_err("a non-selectable async call must be rejected");
+        assert!(format!("{error}").contains("not selectable"), "{error}");
+
+        let mut non_function_call = original.clone();
+        let HirExpressionKind::AsyncCall { signature, .. } = &mut non_function_call.kind else {
+            panic!("the select operation is an async call");
+        };
+        *signature = program.interner().scalar(ScalarType::Int);
+        let error = verifier
+            .verify_select_operation_shape(&non_function_call, "select test")
+            .expect_err("a non-function select signature must be rejected");
+        assert!(format!("{error}").contains("not a function"), "{error}");
+
+        let mut wrapped = original.clone();
+        wrapped.kind = HirExpressionKind::PropagateOption { value: literal_id };
+        let error = verifier
+            .verify_select_operation_shape(&wrapped, "select test")
+            .expect_err("a propagate wrapper around a non-select operation must be rejected");
+        assert!(
+            format!("{error}").contains("neither a selectable call"),
+            "{error}"
+        );
+
+        let (resolved, mut program) = checked_program_from(SELECT_VERIFY_SOURCE);
+        let operation = select_operation(&program);
+        let literal_id = literal(&program);
+        *program.expressions_mut_for_tests()[operation.index() as usize].kind_mut_for_tests() =
+            HirExpressionKind::Await {
+                operation: literal_id,
+            };
+        let error = super::verify_typed_hir(&resolved, &program)
+            .expect_err("an await over a non-Join must be rejected");
+        assert!(format!("{error}").contains("await operand"), "{error}");
+
+        let (resolved, mut program) = checked_program_from(SELECT_VERIFY_NON_SELECTABLE_SOURCE);
+        let operation = select_operation(&program);
+        let (replacement, non_selectable) = program
+            .expressions_with_ids()
+            .find_map(|(id, expression)| match expression.kind() {
+                HirExpressionKind::Function(callable)
+                    if matches!(
+                        program
+                            .callable(*callable)
+                            .and_then(|signature| program.interner().kind(signature.function_type()).ok()),
+                        Some(TypeKind::Function(function))
+                            if function.is_async() && !function.is_selectable()
+                    ) =>
+                    {
+                    Some((
+                        id,
+                        program.callable(*callable).expect("callable exists").function_type(),
+                    ))
+                    }
+                _ => None,
+            })
+            .expect("the fixture contains an inferred suspending callable");
+        let target =
+            program.expressions_mut_for_tests()[operation.index() as usize].kind_mut_for_tests();
+        let HirExpressionKind::AsyncCall {
+            callee, signature, ..
+        } = target
+        else {
+            panic!("the select arm is an async call");
+        };
+        *callee = replacement;
+        *signature = non_selectable;
+        let error = super::verify_typed_hir(&resolved, &program)
+            .expect_err("a non-selectable async call must be rejected");
+        assert!(format!("{error}").contains("not selectable"), "{error}");
+
+        let (resolved, mut program) = checked_program_from(SELECT_VERIFY_SOURCE);
+        let operation = select_operation(&program);
+        let int = program.interner().scalar(ScalarType::Int);
+        let target =
+            program.expressions_mut_for_tests()[operation.index() as usize].kind_mut_for_tests();
+        let HirExpressionKind::AsyncCall { signature, .. } = target else {
+            panic!("the select arm is an async call");
+        };
+        *signature = int;
+        let error = super::verify_typed_hir(&resolved, &program)
+            .expect_err("a non-function select signature must be rejected");
+        assert!(format!("{error}").contains("call metadata"), "{error}");
+
+        let (resolved, mut program) = checked_program_from(SELECT_VERIFY_SOURCE);
+        let operation = select_operation(&program);
+        let literal_id = literal(&program);
+        *program.expressions_mut_for_tests()[operation.index() as usize].kind_mut_for_tests() =
+            HirExpressionKind::PropagateOption { value: literal_id };
+        let error = super::verify_typed_hir(&resolved, &program)
+            .expect_err("a propagate wrapper around a non-select operation must be rejected");
         assert!(
             format!("{error}").contains("neither a selectable call"),
             "{error}"

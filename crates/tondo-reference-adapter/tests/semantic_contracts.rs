@@ -636,13 +636,11 @@ fn prepare(): Join[Int, Never] {
 fn run(): Int suspends {
     let pending = prepare()
     let selected = select {
-        ready() => 1
+        ready() => await pending
         await pending => 4
-        else => 0
+        else => await pending
     }
-    _ = selected
-    let done = await pending
-    done
+    selected
 }
 ";
 

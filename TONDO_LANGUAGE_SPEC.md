@@ -4090,8 +4090,10 @@ seleccionable utiliza un token, timer, one-shot o canal explícito.
 
 La garantía `selectable` pertenece a la operación, no a su nombre ni al módulo
 que la declara. El ABI de selección mantiene fases separadas de
-prepare/register/commit/rollback y hace idempotente la desregistración frente a
-wakeups concurrentes. Los adaptadores estándar iniciales son `Waiter.wait`,
+prepare/register/commit y un rollback interno del estado runtime; no existe un
+opcode público `RollbackSelect`. La desregistración es idempotente frente a
+wakeups concurrentes y el runtime cancela/descarte los trabajos propiedad del
+selector antes de continuar el unwind. Los adaptadores estándar iniciales son `Waiter.wait`,
 `time.sleep`, `Timer.wait`, la finalización de `Join`, `Group.next` y las
 operaciones de canal que la especificación estándar marque expresamente. No se
 deduce selectabilidad de toda operación I/O o de toda firma `suspends`.

@@ -12,11 +12,11 @@ use crate::bytecode::{
     BytecodeNumericConversionError, BytecodeOperand, BytecodeOperandKind, BytecodeOperation,
     BytecodeOperationKind, BytecodeParameterMode, BytecodePlace, BytecodePrefixOperator,
     BytecodeProgram, BytecodeProjection, BytecodeProjectionKind, BytecodeRangeKind, BytecodeRvalue,
-    BytecodeRvalueKind, BytecodeScalarType, BytecodeScopeId, BytecodeSlotId, BytecodeSpan,
-    BytecodeTag, BytecodeTerminator, BytecodeTerminatorKind, BytecodeTraceDescriptor,
-    BytecodeTraceMetadata, BytecodeTypeId, BytecodeTypeKind, BytecodeVariantPayload,
-    BytecodeVerificationLimits, normalize_array_index, normalize_array_slice_indices,
-    verify_bytecode_with_trace_metadata,
+    BytecodeRvalueKind, BytecodeScalarType, BytecodeScopeId, BytecodeSelectRegistration,
+    BytecodeSlotId, BytecodeSpan, BytecodeTag, BytecodeTerminator, BytecodeTerminatorKind,
+    BytecodeTraceDescriptor, BytecodeTraceMetadata, BytecodeTypeId, BytecodeTypeKind,
+    BytecodeVariantPayload, BytecodeVerificationLimits, normalize_array_index,
+    normalize_array_slice_indices, verify_bytecode_with_trace_metadata,
 };
 use crate::literal;
 
@@ -423,6 +423,14 @@ struct Frame {
 struct RuntimeSelectRegion {
     capacity: u32,
     registered: u32,
+    arms: Vec<RuntimeSelectArm>,
+}
+
+#[derive(Debug, Clone)]
+struct RuntimeSelectArm {
+    task: usize,
+    owned: bool,
+    owner: Option<BytecodePlace>,
 }
 
 impl Frame {
@@ -501,6 +509,9 @@ enum TaskWait {
         id: u64,
         outcome: BytecodeTypeId,
     },
+    Select {
+        unwind: BytecodeBlockId,
+    },
     Scope,
 }
 
@@ -540,6 +551,7 @@ struct TaskRecord {
     parent_scope: Option<usize>,
     join_consumed: bool,
     panic_observed: bool,
+    discard_completion: bool,
 }
 
 /// State owned by a spawned `AsyncIterator.collect` operation.  The iterator
@@ -583,6 +595,7 @@ struct Engine<'program, 'host> {
     statistics: VmStatistics,
     callable_names: Vec<String>,
     nominal_names: Vec<String>,
+    select_rotation: u64,
 }
 
 impl<'program, 'host> Engine<'program, 'host> {
@@ -620,6 +633,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                 .iter()
                 .map(|nominal| nominal.name.clone())
                 .collect(),
+            select_rotation: 0,
         }
     }
 
@@ -645,6 +659,7 @@ impl<'program, 'host> Engine<'program, 'host> {
             parent_scope: None,
             join_consumed: true,
             panic_observed: false,
+            discard_completion: false,
         });
         self.push_frame(entry, Vec::new(), None)?;
 
@@ -796,6 +811,19 @@ impl<'program, 'host> Engine<'program, 'host> {
                         Ok(false)
                     }
                 }
+            }
+            TaskWait::Select { unwind } => {
+                let frame = self
+                    .frames
+                    .len()
+                    .checked_sub(1)
+                    .ok_or_else(|| VmError::invariant("a resumed select has no frame"))?;
+                if self.tasks[self.current_task].cancel_requested
+                    || self.current_scope_has_unobserved_panic(frame)?
+                {
+                    self.begin_cancel(frame, unwind)?;
+                }
+                Ok(true)
             }
             TaskWait::HostCall {
                 call,
@@ -1115,9 +1143,18 @@ impl<'program, 'host> Engine<'program, 'host> {
     }
 
     fn complete_task(&mut self, task: usize, completion: TaskCompletion) -> Result<(), VmError> {
-        let panicked = matches!(completion, TaskCompletion::Panicked(_));
+        let discard = self
+            .tasks
+            .get(task)
+            .ok_or_else(|| VmError::invariant("completed task does not exist"))?
+            .discard_completion;
+        let panicked = !discard && matches!(completion, TaskCompletion::Panicked(_));
         let parent_scope = self.tasks[task].parent_scope;
-        self.tasks[task].status = TaskStatus::Complete(Some(completion));
+        self.tasks[task].status = if discard {
+            TaskStatus::Consumed
+        } else {
+            TaskStatus::Complete(Some(completion))
+        };
         if let Some(scope) = parent_scope {
             let (owner, siblings) = {
                 let scope = self
@@ -1184,6 +1221,23 @@ impl<'program, 'host> Engine<'program, 'host> {
         self.wake_task(task)
     }
 
+    fn discard_task_completion(&mut self, task: usize) -> Result<(), VmError> {
+        let status = &self
+            .tasks
+            .get(task)
+            .ok_or_else(|| VmError::invariant("cannot discard an invalid task"))?
+            .status;
+        if matches!(status, TaskStatus::Complete(_)) {
+            self.take_task_completion(task)?;
+        } else if matches!(status, TaskStatus::Consumed) {
+            return Ok(());
+        } else {
+            self.tasks[task].discard_completion = true;
+            self.request_cancel(task)?;
+        }
+        Ok(())
+    }
+
     fn finish_root_task(&mut self) -> Result<VmExecution, VmError> {
         if self
             .tasks
@@ -1225,6 +1279,15 @@ impl<'program, 'host> Engine<'program, 'host> {
         arguments: Vec<Value>,
         scope: usize,
     ) -> Result<usize, VmError> {
+        self.spawn_task_with_scope(function, arguments, Some(scope))
+    }
+
+    fn spawn_task_with_scope(
+        &mut self,
+        function: BytecodeFunctionId,
+        arguments: Vec<Value>,
+        scope: Option<usize>,
+    ) -> Result<usize, VmError> {
         let parent_frames = std::mem::take(&mut self.frames);
         let pushed = self.push_frame(function, arguments, None);
         let child_frames = std::mem::take(&mut self.frames);
@@ -1241,16 +1304,19 @@ impl<'program, 'host> Engine<'program, 'host> {
             queued: false,
             cancel_requested: false,
             waiters: Vec::new(),
-            parent_scope: Some(scope),
+            parent_scope: scope,
             join_consumed: false,
             panic_observed: false,
+            discard_completion: false,
         });
-        self.task_scopes
-            .get_mut(scope)
-            .and_then(Option::as_mut)
-            .ok_or_else(|| VmError::invariant("spawn targets a missing task scope"))?
-            .children
-            .push(task);
+        if let Some(scope) = scope {
+            self.task_scopes
+                .get_mut(scope)
+                .and_then(Option::as_mut)
+                .ok_or_else(|| VmError::invariant("spawn targets a missing task scope"))?
+                .children
+                .push(task);
+        }
         self.enqueue_task(task)?;
         Ok(task)
     }
@@ -1262,6 +1328,17 @@ impl<'program, 'host> Engine<'program, 'host> {
         limit: Value,
         outcome: BytecodeTypeId,
         scope: usize,
+    ) -> Result<usize, VmError> {
+        self.spawn_async_iterator_collect_with_scope(cursor, next, limit, outcome, Some(scope))
+    }
+
+    fn spawn_async_iterator_collect_with_scope(
+        &mut self,
+        cursor: Value,
+        next: Value,
+        limit: Value,
+        outcome: BytecodeTypeId,
+        scope: Option<usize>,
     ) -> Result<usize, VmError> {
         let (array, _element) = self.result_array_type(outcome)?;
         let Value::Integer(remaining) = limit else {
@@ -1284,19 +1361,22 @@ impl<'program, 'host> Engine<'program, 'host> {
             queued: false,
             cancel_requested: false,
             waiters: Vec::new(),
-            parent_scope: Some(scope),
+            parent_scope: scope,
             join_consumed: false,
             panic_observed: false,
+            discard_completion: false,
         });
-        let scope_state = match self.task_scopes.get_mut(scope) {
-            Some(Some(scope_state)) => scope_state,
-            _ => {
-                return Err(VmError::invariant(
-                    "collect spawn targets a missing task scope",
-                ));
-            }
-        };
-        scope_state.children.push(task);
+        if let Some(scope) = scope {
+            let scope_state = match self.task_scopes.get_mut(scope) {
+                Some(Some(scope_state)) => scope_state,
+                _ => {
+                    return Err(VmError::invariant(
+                        "collect spawn targets a missing task scope",
+                    ));
+                }
+            };
+            scope_state.children.push(task);
+        }
         self.enqueue_task(task)?;
         Ok(task)
     }
@@ -1518,6 +1598,15 @@ impl<'program, 'host> Engine<'program, 'host> {
         outcome: BytecodeTypeId,
         scope: usize,
     ) -> Result<usize, VmError> {
+        self.spawn_host_task_with_scope(call, outcome, Some(scope))
+    }
+
+    fn spawn_host_task_with_scope(
+        &mut self,
+        call: u64,
+        outcome: BytecodeTypeId,
+        scope: Option<usize>,
+    ) -> Result<usize, VmError> {
         let task = self.tasks.len();
         self.tasks.push(TaskRecord {
             frames: Vec::new(),
@@ -1528,16 +1617,19 @@ impl<'program, 'host> Engine<'program, 'host> {
             queued: false,
             cancel_requested: false,
             waiters: Vec::new(),
-            parent_scope: Some(scope),
+            parent_scope: scope,
             join_consumed: false,
             panic_observed: false,
+            discard_completion: false,
         });
-        self.task_scopes
-            .get_mut(scope)
-            .and_then(Option::as_mut)
-            .ok_or_else(|| VmError::invariant("host spawn targets a missing task scope"))?
-            .children
-            .push(task);
+        if let Some(scope) = scope {
+            self.task_scopes
+                .get_mut(scope)
+                .and_then(Option::as_mut)
+                .ok_or_else(|| VmError::invariant("host spawn targets a missing task scope"))?
+                .children
+                .push(task);
+        }
         Ok(task)
     }
 
@@ -1555,6 +1647,7 @@ impl<'program, 'host> Engine<'program, 'host> {
             parent_scope: Some(scope),
             join_consumed: false,
             panic_observed: false,
+            discard_completion: false,
         });
         self.task_scopes
             .get_mut(scope)
@@ -1565,11 +1658,42 @@ impl<'program, 'host> Engine<'program, 'host> {
         Ok(task)
     }
 
+    /// A selectable call may complete synchronously and therefore need no
+    /// lexical task scope. Keep its completion in the same affine task table
+    /// so the commit path has one uniform winner/loser protocol.
+    fn spawn_select_value_task(&mut self, value: Value) -> Result<usize, VmError> {
+        let task = self.tasks.len();
+        self.tasks.push(TaskRecord {
+            frames: Vec::new(),
+            pending_unwind: None,
+            async_collect: None,
+            status: TaskStatus::Complete(Some(TaskCompletion::Returned(value))),
+            resume: None,
+            queued: false,
+            cancel_requested: false,
+            waiters: Vec::new(),
+            parent_scope: None,
+            join_consumed: true,
+            panic_observed: false,
+            discard_completion: false,
+        });
+        Ok(task)
+    }
+
     fn spawn_oneshot_task(
         &mut self,
         id: u64,
         outcome: BytecodeTypeId,
         scope: usize,
+    ) -> Result<usize, VmError> {
+        self.spawn_oneshot_task_with_scope(id, outcome, Some(scope))
+    }
+
+    fn spawn_oneshot_task_with_scope(
+        &mut self,
+        id: u64,
+        outcome: BytecodeTypeId,
+        scope: Option<usize>,
     ) -> Result<usize, VmError> {
         let completion = self
             .oneshots
@@ -1577,7 +1701,7 @@ impl<'program, 'host> Engine<'program, 'host> {
             .ok_or_else(|| VmError::invariant("one-shot task references an unknown id"))?;
         match completion.completion.as_ref() {
             Some(OneShotCompletion::Cancelled) => {
-                return self.spawn_cancelled_task(scope);
+                return self.spawn_cancelled_task_with_scope(scope);
             }
             Some(_) => {
                 return Err(VmError::invariant(
@@ -1601,20 +1725,23 @@ impl<'program, 'host> Engine<'program, 'host> {
             queued: false,
             cancel_requested: false,
             waiters: Vec::new(),
-            parent_scope: Some(scope),
+            parent_scope: scope,
             join_consumed: false,
             panic_observed: false,
+            discard_completion: false,
         });
-        self.task_scopes
-            .get_mut(scope)
-            .and_then(Option::as_mut)
-            .ok_or_else(|| VmError::invariant("one-shot task targets a missing task scope"))?
-            .children
-            .push(task);
+        if let Some(scope) = scope {
+            self.task_scopes
+                .get_mut(scope)
+                .and_then(Option::as_mut)
+                .ok_or_else(|| VmError::invariant("one-shot task targets a missing task scope"))?
+                .children
+                .push(task);
+        }
         Ok(task)
     }
 
-    fn spawn_cancelled_task(&mut self, scope: usize) -> Result<usize, VmError> {
+    fn spawn_cancelled_task_with_scope(&mut self, scope: Option<usize>) -> Result<usize, VmError> {
         let task = self.tasks.len();
         self.tasks.push(TaskRecord {
             frames: Vec::new(),
@@ -1625,16 +1752,19 @@ impl<'program, 'host> Engine<'program, 'host> {
             queued: false,
             cancel_requested: false,
             waiters: Vec::new(),
-            parent_scope: Some(scope),
+            parent_scope: scope,
             join_consumed: false,
             panic_observed: false,
+            discard_completion: false,
         });
-        self.task_scopes
-            .get_mut(scope)
-            .and_then(Option::as_mut)
-            .ok_or_else(|| VmError::invariant("cancelled task targets a missing task scope"))?
-            .children
-            .push(task);
+        if let Some(scope) = scope {
+            self.task_scopes
+                .get_mut(scope)
+                .and_then(Option::as_mut)
+                .ok_or_else(|| VmError::invariant("cancelled task targets a missing task scope"))?
+                .children
+                .push(task);
+        }
         Ok(task)
     }
 
@@ -1654,6 +1784,32 @@ impl<'program, 'host> Engine<'program, 'host> {
             ));
         }
         Ok(id)
+    }
+
+    fn select_task_scope(&self, frame: usize) -> Result<Option<usize>, VmError> {
+        let Some(id) = self.frames[frame].task_scopes.last().copied() else {
+            return Ok(None);
+        };
+        let scope = self
+            .task_scopes
+            .get(id)
+            .and_then(Option::as_ref)
+            .ok_or_else(|| VmError::invariant("select task scope state is missing"))?;
+        if scope.owner != self.current_task || scope.closed {
+            return Err(VmError::invariant(
+                "select does not target the active innermost task scope",
+            ));
+        }
+        Ok(Some(id))
+    }
+
+    fn current_function(
+        &self,
+        frame: usize,
+    ) -> Result<&crate::bytecode::BytecodeFunction, VmError> {
+        self.program
+            .function(self.frames[frame].function)
+            .ok_or_else(|| VmError::invariant("frame has an invalid function"))
     }
 
     fn current_scope_has_unobserved_panic(&self, _frame: usize) -> Result<bool, VmError> {
@@ -2211,24 +2367,164 @@ impl<'program, 'host> Engine<'program, 'host> {
                 self.disarm_cleanup(frame, place)?;
             }
             BytecodeInstructionKind::BeginSelect { capacity } => {
+                if *capacity == 0 || *capacity > crate::bytecode::MAX_SELECT_ARMS {
+                    return Err(VmError::invariant(
+                        "select capacity is outside the verified runtime limit",
+                    ));
+                }
+                if self.frames[frame].select.is_some() {
+                    return Err(VmError::invariant("a select region is already open"));
+                }
                 self.frames[frame].select = Some(RuntimeSelectRegion {
                     capacity: *capacity,
                     registered: 0,
+                    arms: Vec::with_capacity(*capacity as usize),
                 });
             }
-            BytecodeInstructionKind::RegisterSelectArm { index, .. } => {
-                let region = self.frames[frame]
-                    .select
-                    .as_mut()
-                    .ok_or_else(|| VmError::invariant("arm registration has no open selection"))?;
-                if *index != region.registered || region.registered >= region.capacity {
-                    return Err(VmError::invariant(
-                        "select arm registration skipped or duplicated",
-                    ));
-                }
-                region.registered += 1;
+            BytecodeInstructionKind::RegisterSelectArm {
+                index,
+                registration,
+            } => {
+                self.register_select_arm(frame, *index, registration, instruction.span)?;
             }
         }
+        Ok(())
+    }
+
+    fn register_select_arm(
+        &mut self,
+        frame: usize,
+        index: u32,
+        registration: &BytecodeSelectRegistration,
+        span_id: crate::bytecode::BytecodeSpanId,
+    ) -> Result<(), VmError> {
+        let span = self.resolve_span(frame, span_id)?;
+        let (registered, capacity) = {
+            let region = self.frames[frame]
+                .select
+                .as_ref()
+                .ok_or_else(|| VmError::invariant("arm registration has no open selection"))?;
+            (region.registered, region.capacity)
+        };
+        if index != registered || registered >= capacity {
+            return Err(VmError::invariant(
+                "select arm registration skipped or duplicated",
+            ));
+        }
+
+        let (task, owned, owner) = match registration {
+            BytecodeSelectRegistration::Join(owner) => {
+                let value = self.read_place(frame, owner)?;
+                let Value::Join(join) = value else {
+                    return Err(VmError::invariant(
+                        "select Join registration has no task handle",
+                    ));
+                };
+                let task_record = self
+                    .tasks
+                    .get(join.task)
+                    .ok_or_else(|| VmError::invariant("select Join references an invalid task"))?;
+                let transferred = join.scope == TRANSFERRED_JOIN_SCOPE;
+                if (!transferred
+                    && (task_record.parent_scope != Some(join.scope)
+                        || !self.frames[frame].task_scopes.contains(&join.scope)))
+                    || (transferred && task_record.parent_scope.is_some())
+                    || task_record.join_consumed
+                {
+                    return Err(VmError::invariant(
+                        "select Join was consumed twice or belongs to the wrong task scope",
+                    ));
+                }
+                (join.task, false, Some(owner.clone()))
+            }
+            BytecodeSelectRegistration::Call(operation) => {
+                let result = self.evaluate_operation(frame, operation, span)?;
+                let task = match result {
+                    OperationResult::Call {
+                        function,
+                        arguments,
+                    } => {
+                        let scope = self.select_task_scope(frame)?;
+                        self.spawn_task_with_scope(function, arguments, scope)?
+                    }
+                    OperationResult::HostAsync {
+                        name,
+                        arguments,
+                        outcome,
+                    } => {
+                        let scope = self.select_task_scope(frame)?;
+                        let call = self.host.start_async(&name, &arguments)?;
+                        self.spawn_host_task_with_scope(call, outcome, scope)?
+                    }
+                    OperationResult::AsyncIteratorCollect {
+                        cursor,
+                        next,
+                        limit,
+                        outcome,
+                    } => {
+                        let scope = self.select_task_scope(frame)?;
+                        self.spawn_async_iterator_collect_with_scope(
+                            cursor, next, limit, outcome, scope,
+                        )?
+                    }
+                    OperationResult::OneShotWait { id, outcome } => {
+                        let scope = self.select_task_scope(frame)?;
+                        let cancelled = self
+                            .oneshots
+                            .get(&id)
+                            .ok_or_else(|| {
+                                VmError::invariant("select one-shot references an unknown id")
+                            })?
+                            .completion
+                            .as_ref()
+                            .is_some_and(|completion| {
+                                matches!(completion, OneShotCompletion::Cancelled)
+                            });
+                        if cancelled {
+                            self.spawn_cancelled_task_with_scope(scope)?
+                        } else {
+                            self.spawn_oneshot_task_with_scope(id, outcome, scope)?
+                        }
+                    }
+                    OperationResult::Value(value) => self.spawn_select_value_task(value)?,
+                    OperationResult::Panic(code, message) => {
+                        let unwind = self.current_function(frame)?.unwind;
+                        self.begin_panic(frame, code, message, span, unwind)?;
+                        return Ok(());
+                    }
+                    OperationResult::TestBoundaryCall { .. } => {
+                        return Err(VmError::invariant(
+                            "an internal test boundary cannot be registered in select",
+                        ));
+                    }
+                    OperationResult::VirtualTimeBoundaryCall { .. } => {
+                        return Err(VmError::invariant(
+                            "a virtual-time boundary cannot be registered in select",
+                        ));
+                    }
+                };
+                (task, true, None)
+            }
+        };
+
+        let duplicate = self.frames[frame]
+            .select
+            .as_ref()
+            .ok_or_else(|| VmError::invariant("select region disappeared during registration"))?
+            .arms
+            .iter()
+            .any(|arm| arm.task == task);
+        if duplicate {
+            return Err(VmError::invariant(
+                "select registers the same task more than once",
+            ));
+        }
+        let region = self.frames[frame]
+            .select
+            .as_mut()
+            .ok_or_else(|| VmError::invariant("select region disappeared during registration"))?;
+        region.arms.push(RuntimeSelectArm { task, owned, owner });
+        region.registered += 1;
         Ok(())
     }
 
@@ -3318,6 +3614,148 @@ impl<'program, 'host> Engine<'program, 'host> {
         Ok(())
     }
 
+    fn execute_select_commit(
+        &mut self,
+        frame: usize,
+        arms: &[crate::bytecode::BytecodeSelectArm],
+        else_target: Option<BytecodeBlockId>,
+        unwind: BytecodeBlockId,
+    ) -> Result<(), VmError> {
+        if self.tasks[self.current_task].cancel_requested
+            || self.current_scope_has_unobserved_panic(frame)?
+        {
+            self.abort_select(frame)?;
+            self.begin_cancel(frame, unwind)?;
+            return Ok(());
+        }
+
+        let (capacity, registered, runtime_arms) = {
+            let region = self.frames[frame]
+                .select
+                .as_ref()
+                .ok_or_else(|| VmError::invariant("commit reached with no open selection"))?;
+            (region.capacity, region.registered, region.arms.clone())
+        };
+        if arms.len() as u32 != capacity
+            || registered != capacity
+            || runtime_arms.len() != arms.len()
+        {
+            return Err(VmError::invariant(
+                "select commit does not match its registered arm table",
+            ));
+        }
+
+        let start = if runtime_arms.is_empty() {
+            0
+        } else {
+            (self.select_rotation as usize) % runtime_arms.len()
+        };
+        let mut winner = None;
+        // A panic is always observable by the owning scope. Prefer a ready
+        // panic over a value so a sibling cannot hide structured failure.
+        for panic_only in [true, false] {
+            for offset in 0..runtime_arms.len() {
+                let index = (start + offset) % runtime_arms.len();
+                let task = runtime_arms[index].task;
+                let Some(TaskStatus::Complete(Some(completion))) =
+                    self.tasks.get(task).map(|record| &record.status)
+                else {
+                    continue;
+                };
+                let is_panic = matches!(completion, TaskCompletion::Panicked(_));
+                if is_panic == panic_only {
+                    winner = Some(index);
+                    break;
+                }
+            }
+            if winner.is_some() {
+                break;
+            }
+        }
+
+        let Some(winner_index) = winner else {
+            if let Some(target) = else_target {
+                let region = self.frames[frame]
+                    .select
+                    .take()
+                    .ok_or_else(|| VmError::invariant("select region disappeared at else"))?;
+                for arm in region.arms {
+                    if arm.owned {
+                        self.discard_task_completion(arm.task)?;
+                    }
+                }
+                self.select_rotation = self.select_rotation.wrapping_add(1);
+                self.jump(frame, target);
+                return Ok(());
+            }
+            let dependencies = runtime_arms.iter().map(|arm| arm.task).collect::<Vec<_>>();
+            self.park_current(TaskWait::Select { unwind }, &dependencies)?;
+            return Ok(());
+        };
+
+        let region = self.frames[frame]
+            .select
+            .take()
+            .ok_or_else(|| VmError::invariant("select region disappeared at commit"))?;
+        let winner_arm =
+            region.arms.get(winner_index).cloned().ok_or_else(|| {
+                VmError::invariant("select winner index is outside its arm table")
+            })?;
+        for (index, arm) in region.arms.into_iter().enumerate() {
+            if index != winner_index && arm.owned {
+                self.discard_task_completion(arm.task)?;
+            }
+        }
+        if let Some(owner) = winner_arm.owner.as_ref() {
+            let consumed = self.consume_join_owner(frame, owner)?;
+            if consumed.task != winner_arm.task {
+                return Err(VmError::invariant(
+                    "select winner Join changed its child identity",
+                ));
+            }
+        }
+        self.select_rotation = self.select_rotation.wrapping_add(1);
+        let parent_scope = self.tasks[winner_arm.task].parent_scope;
+        let completion = self
+            .take_task_completion(winner_arm.task)?
+            .ok_or_else(|| VmError::invariant("ready select arm has no completion"))?;
+        let arm = arms
+            .get(winner_index)
+            .ok_or_else(|| VmError::invariant("select winner has no bytecode arm"))?;
+        match completion {
+            TaskCompletion::Returned(value) => {
+                if let Some(payload) = arm.payload() {
+                    self.write_place(frame, payload, value)?;
+                }
+                self.jump(frame, arm.target());
+            }
+            TaskCompletion::Panicked(panic) => {
+                self.begin_propagated_panic(frame, panic, unwind)?;
+            }
+            TaskCompletion::Cancelled => {
+                self.begin_cancel(frame, unwind)?;
+            }
+        }
+        if let Some(scope) = parent_scope
+            && self.task_scopes.get(scope).is_some_and(Option::is_some)
+        {
+            self.release_task_scope_if_consumed(scope)?;
+        }
+        Ok(())
+    }
+
+    fn abort_select(&mut self, frame: usize) -> Result<(), VmError> {
+        let Some(region) = self.frames[frame].select.take() else {
+            return Ok(());
+        };
+        for arm in region.arms {
+            if arm.owned {
+                self.discard_task_completion(arm.task)?;
+            }
+        }
+        Ok(())
+    }
+
     fn execute_terminator(
         &mut self,
         frame: usize,
@@ -3791,21 +4229,12 @@ impl<'program, 'host> Engine<'program, 'host> {
                 target,
                 unwind,
             } => self.drain_explicit_scopes(frame, scopes, *target, *unwind)?,
-            BytecodeTerminatorKind::CommitSelect { arms, .. } => {
-                let region = self.frames[frame]
-                    .select
-                    .take()
-                    .ok_or_else(|| VmError::invariant("commit reached with no open selection"))?;
-                if arms.len() as u32 != region.capacity
-                    || region.registered != region.capacity
-                {
-                    return Err(VmError::invariant(
-                        "select commit does not match its registered arm table",
-                    ));
-                }
-                return Err(VmError::invariant(
-                    "select execution arrives with ASYNC-SELECT-RUNTIME-001",
-                ));
+            BytecodeTerminatorKind::CommitSelect {
+                arms,
+                else_target,
+                unwind,
+            } => {
+                self.execute_select_commit(frame, arms, *else_target, *unwind)?;
             }
             BytecodeTerminatorKind::DrainUnwind { target } => {
                 let scopes = self.frames[frame]
@@ -4177,6 +4606,7 @@ impl<'program, 'host> Engine<'program, 'host> {
         span: BytecodeSpan,
         unwind: BytecodeBlockId,
     ) -> Result<(), VmError> {
+        self.abort_select(frame)?;
         let stack = self
             .frames
             .iter()
@@ -4228,6 +4658,7 @@ impl<'program, 'host> Engine<'program, 'host> {
         panic: VmPanic,
         unwind: BytecodeBlockId,
     ) -> Result<(), VmError> {
+        self.abort_select(frame)?;
         if let Some(RuntimeUnwind::Panic(primary)) = &mut self.pending_unwind {
             primary.suppressed.push(panic);
         } else {
@@ -4239,6 +4670,7 @@ impl<'program, 'host> Engine<'program, 'host> {
     }
 
     fn begin_cancel(&mut self, frame: usize, unwind: BytecodeBlockId) -> Result<(), VmError> {
+        self.abort_select(frame)?;
         if self.pending_unwind.is_none() {
             self.pending_unwind = Some(RuntimeUnwind::Cancelled);
         }
@@ -11148,9 +11580,10 @@ mod tests {
         BytecodeNominalShape, BytecodeNumericConversionError, BytecodeOperand, BytecodeOperandKind,
         BytecodeOperation, BytecodeOperationKind, BytecodeParameter, BytecodeParameterMode,
         BytecodePlace, BytecodePrefixOperator, BytecodeProgram, BytecodeRangeKind,
-        BytecodeScalarType, BytecodeScopeId, BytecodeSliceBounds, BytecodeSlotId, BytecodeSpan,
-        BytecodeTraceDescriptor, BytecodeType, BytecodeTypeId, BytecodeTypeKind, BytecodeVariant,
-        BytecodeVariantPayload, derive_trace_metadata,
+        BytecodeScalarType, BytecodeScopeId, BytecodeSelectArm, BytecodeSelectRegistration,
+        BytecodeSliceBounds, BytecodeSlotId, BytecodeSpan, BytecodeTraceDescriptor, BytecodeType,
+        BytecodeTypeId, BytecodeTypeKind, BytecodeVariant, BytecodeVariantPayload,
+        derive_trace_metadata,
     };
 
     use super::{
@@ -11158,8 +11591,9 @@ mod tests {
         IteratorAdapter, OneShotCompletion, OneShotState, OperationResult, PanicCode,
         PlaceComponent, PlaceFailure, RejectingHost, ResolvedPlacePath, RuntimeCleanup,
         RuntimeDefer, RuntimeFallback, RuntimeHostValueKind, RuntimeJoin, RuntimeLoan,
-        RuntimeTaskScope, RuntimeType, RuntimeValue, SlotState, TaskCompletion, TaskRecord,
-        TaskStatus, TaskWait, Value, ValueCopyStrategy, VmError, VmHost, VmLimits, VmTestNodeKind,
+        RuntimeSelectArm, RuntimeSelectRegion, RuntimeTaskScope, RuntimeType, RuntimeUnwind,
+        RuntimeValue, SlotState, TaskCompletion, TaskRecord, TaskStatus, TaskWait, Value,
+        ValueCopyStrategy, VmError, VmHost, VmLimits, VmPanic, VmStackFrame, VmTestNodeKind,
         VmTestNodeOutcome, clone_field, clone_index, clone_present, collection_length_fits_int,
         convert_numeric, integer_bounds, integer_shape, next_unicode_scalar,
         operand_materialized_slot, operation_access_place, paths_overlap, present,
@@ -11559,7 +11993,541 @@ mod tests {
             parent_scope: None,
             join_consumed: true,
             panic_observed: false,
+            discard_completion: false,
         }
+    }
+
+    fn select_test_frame(region: RuntimeSelectRegion) -> Frame {
+        Frame {
+            function: BytecodeFunctionId::new(0),
+            block: BytecodeBlockId::new(0),
+            instruction: 0,
+            slots: Vec::new(),
+            loans: Vec::new(),
+            cleanups: Vec::new(),
+            task_scopes: Vec::new(),
+            continuation: None,
+            select: Some(region),
+        }
+    }
+
+    #[test]
+    fn select_commit_has_one_winner_and_consumes_owned_losers() {
+        let program = root_pressure_program();
+        let trace = derive_trace_metadata(&program).unwrap();
+        let mut host = RejectingHost;
+        let mut engine = Engine::new(
+            &program,
+            &mut host,
+            VmLimits::default(),
+            ValueCopyStrategy::default(),
+            trace,
+        );
+        engine.tasks.push(scheduler_task(TaskStatus::Running));
+        engine.tasks.push(scheduler_task(TaskStatus::Complete(Some(
+            TaskCompletion::Returned(Value::Integer(1)),
+        ))));
+        engine.tasks.push(scheduler_task(TaskStatus::Complete(Some(
+            TaskCompletion::Returned(Value::Integer(2)),
+        ))));
+        engine.frames.push(select_test_frame(RuntimeSelectRegion {
+            capacity: 2,
+            registered: 2,
+            arms: vec![
+                RuntimeSelectArm {
+                    task: 1,
+                    owned: true,
+                    owner: None,
+                },
+                RuntimeSelectArm {
+                    task: 2,
+                    owned: true,
+                    owner: None,
+                },
+            ],
+        }));
+        let arms = vec![
+            BytecodeSelectArm::new(None, BytecodeBlockId::new(7)),
+            BytecodeSelectArm::new(None, BytecodeBlockId::new(8)),
+        ];
+        engine
+            .execute_select_commit(0, &arms, None, BytecodeBlockId::new(9))
+            .unwrap();
+        assert_eq!(engine.frames[0].block, BytecodeBlockId::new(7));
+        assert!(matches!(engine.tasks[1].status, TaskStatus::Consumed));
+        assert!(matches!(engine.tasks[2].status, TaskStatus::Consumed));
+        assert_eq!(engine.select_rotation, 1);
+    }
+
+    #[test]
+    fn select_commit_rotation_changes_the_winner_for_the_next_tie() {
+        let program = root_pressure_program();
+        let trace = derive_trace_metadata(&program).unwrap();
+        let mut host = RejectingHost;
+        let mut engine = Engine::new(
+            &program,
+            &mut host,
+            VmLimits::default(),
+            ValueCopyStrategy::default(),
+            trace,
+        );
+        engine.tasks.push(scheduler_task(TaskStatus::Running));
+        engine.tasks.push(scheduler_task(TaskStatus::Complete(Some(
+            TaskCompletion::Returned(Value::Unit),
+        ))));
+        engine.tasks.push(scheduler_task(TaskStatus::Complete(Some(
+            TaskCompletion::Returned(Value::Unit),
+        ))));
+        engine.select_rotation = 1;
+        engine.frames.push(select_test_frame(RuntimeSelectRegion {
+            capacity: 2,
+            registered: 2,
+            arms: vec![
+                RuntimeSelectArm {
+                    task: 1,
+                    owned: true,
+                    owner: None,
+                },
+                RuntimeSelectArm {
+                    task: 2,
+                    owned: true,
+                    owner: None,
+                },
+            ],
+        }));
+        let arms = vec![
+            BytecodeSelectArm::new(None, BytecodeBlockId::new(11)),
+            BytecodeSelectArm::new(None, BytecodeBlockId::new(12)),
+        ];
+        engine
+            .execute_select_commit(0, &arms, None, BytecodeBlockId::new(13))
+            .unwrap();
+        assert_eq!(engine.frames[0].block, BytecodeBlockId::new(12));
+        assert_eq!(engine.select_rotation, 2);
+    }
+
+    #[test]
+    fn select_abort_cancels_only_tasks_owned_by_the_selector() {
+        let program = root_pressure_program();
+        let trace = derive_trace_metadata(&program).unwrap();
+        let mut host = RejectingHost;
+        let mut engine = Engine::new(
+            &program,
+            &mut host,
+            VmLimits::default(),
+            ValueCopyStrategy::default(),
+            trace,
+        );
+        engine.tasks.push(scheduler_task(TaskStatus::Running));
+        engine.tasks.push(scheduler_task(TaskStatus::Runnable));
+        engine.frames.push(select_test_frame(RuntimeSelectRegion {
+            capacity: 1,
+            registered: 1,
+            arms: vec![RuntimeSelectArm {
+                task: 1,
+                owned: true,
+                owner: None,
+            }],
+        }));
+        engine.abort_select(0).unwrap();
+        assert!(engine.frames[0].select.is_none());
+        assert!(engine.tasks[1].cancel_requested);
+        assert!(engine.tasks[1].discard_completion);
+    }
+
+    #[test]
+    fn select_runtime_covers_wait_else_cancel_and_detached_task_ownership() {
+        let program = root_pressure_program();
+        let trace = derive_trace_metadata(&program).unwrap();
+        let mut host = RejectingHost;
+        let mut engine = Engine::new(
+            &program,
+            &mut host,
+            VmLimits::default(),
+            ValueCopyStrategy::default(),
+            trace,
+        );
+        engine.tasks.push(scheduler_task(TaskStatus::Running));
+        engine.tasks.push(scheduler_task(TaskStatus::Runnable));
+        engine.frames.push(select_test_frame(RuntimeSelectRegion {
+            capacity: 1,
+            registered: 1,
+            arms: vec![RuntimeSelectArm {
+                task: 1,
+                owned: true,
+                owner: None,
+            }],
+        }));
+        let arms = vec![BytecodeSelectArm::new(None, BytecodeBlockId::new(3))];
+        engine
+            .execute_select_commit(0, &arms, None, BytecodeBlockId::new(4))
+            .unwrap();
+        assert!(matches!(
+            engine.tasks[0].status,
+            TaskStatus::Waiting(TaskWait::Select { .. })
+        ));
+        assert_eq!(engine.tasks[1].waiters, [0]);
+
+        let mut else_host = RejectingHost;
+        let mut else_engine = Engine::new(
+            &program,
+            &mut else_host,
+            VmLimits::default(),
+            ValueCopyStrategy::default(),
+            derive_trace_metadata(&program).unwrap(),
+        );
+        else_engine.tasks.push(scheduler_task(TaskStatus::Running));
+        else_engine.tasks.push(scheduler_task(TaskStatus::Runnable));
+        else_engine
+            .frames
+            .push(select_test_frame(RuntimeSelectRegion {
+                capacity: 1,
+                registered: 1,
+                arms: vec![RuntimeSelectArm {
+                    task: 1,
+                    owned: true,
+                    owner: None,
+                }],
+            }));
+        else_engine
+            .execute_select_commit(
+                0,
+                &arms,
+                Some(BytecodeBlockId::new(5)),
+                BytecodeBlockId::new(6),
+            )
+            .unwrap();
+        assert_eq!(else_engine.frames[0].block, BytecodeBlockId::new(5));
+        assert!(else_engine.tasks[1].cancel_requested);
+        assert!(else_engine.tasks[1].discard_completion);
+
+        let mut cancelled_host = RejectingHost;
+        let mut cancelled_engine = Engine::new(
+            &program,
+            &mut cancelled_host,
+            VmLimits::default(),
+            ValueCopyStrategy::default(),
+            derive_trace_metadata(&program).unwrap(),
+        );
+        cancelled_engine
+            .tasks
+            .push(scheduler_task(TaskStatus::Running));
+        cancelled_engine
+            .tasks
+            .push(scheduler_task(TaskStatus::Runnable));
+        cancelled_engine.tasks[0].cancel_requested = true;
+        cancelled_engine
+            .frames
+            .push(select_test_frame(RuntimeSelectRegion {
+                capacity: 1,
+                registered: 1,
+                arms: vec![RuntimeSelectArm {
+                    task: 1,
+                    owned: true,
+                    owner: None,
+                }],
+            }));
+        cancelled_engine
+            .execute_select_commit(0, &arms, None, BytecodeBlockId::new(7))
+            .unwrap();
+        assert!(cancelled_engine.pending_unwind.is_some());
+        assert_eq!(cancelled_engine.frames[0].block, BytecodeBlockId::new(7));
+
+        let mut winner_host = RejectingHost;
+        let mut winner_engine = Engine::new(
+            &program,
+            &mut winner_host,
+            VmLimits::default(),
+            ValueCopyStrategy::default(),
+            derive_trace_metadata(&program).unwrap(),
+        );
+        winner_engine
+            .tasks
+            .push(scheduler_task(TaskStatus::Running));
+        winner_engine
+            .tasks
+            .push(scheduler_task(TaskStatus::Complete(Some(
+                TaskCompletion::Cancelled,
+            ))));
+        winner_engine
+            .frames
+            .push(select_test_frame(RuntimeSelectRegion {
+                capacity: 1,
+                registered: 1,
+                arms: vec![RuntimeSelectArm {
+                    task: 1,
+                    owned: false,
+                    owner: None,
+                }],
+            }));
+        winner_engine
+            .execute_select_commit(0, &arms, None, BytecodeBlockId::new(8))
+            .unwrap();
+        assert!(winner_engine.pending_unwind.is_some());
+        assert_eq!(winner_engine.frames[0].block, BytecodeBlockId::new(8));
+
+        let mut detached_program = root_pressure_program();
+        let result_ty = BytecodeTypeId::new(detached_program.types.len() as u32);
+        detached_program.types.push(BytecodeType {
+            name: "Array[Int] ! Int".into(),
+            kind: BytecodeTypeKind::Result {
+                success: BytecodeTypeId::new(6),
+                error: BytecodeTypeId::new(5),
+            },
+        });
+        let mut detached_host = RejectingHost;
+        let mut detached_engine = Engine::new(
+            &detached_program,
+            &mut detached_host,
+            VmLimits::default(),
+            ValueCopyStrategy::default(),
+            derive_trace_metadata(&detached_program).unwrap(),
+        );
+        detached_engine
+            .tasks
+            .push(scheduler_task(TaskStatus::Running));
+        let mut detached_frame = select_test_frame(RuntimeSelectRegion {
+            capacity: 1,
+            registered: 0,
+            arms: Vec::new(),
+        });
+        detached_frame.select = None;
+        detached_engine.frames.push(detached_frame);
+        assert_eq!(detached_engine.select_task_scope(0).unwrap(), None);
+        let value_task = detached_engine
+            .spawn_select_value_task(Value::Integer(9))
+            .unwrap();
+        assert!(matches!(
+            detached_engine.tasks[value_task].status,
+            TaskStatus::Complete(Some(TaskCompletion::Returned(Value::Integer(9))))
+        ));
+
+        let collect_task = detached_engine
+            .spawn_async_iterator_collect_with_scope(
+                Value::Unit,
+                Value::Unit,
+                Value::Integer(0),
+                result_ty,
+                None,
+            )
+            .unwrap();
+        let host_task = detached_engine
+            .spawn_host_task_with_scope(11, result_ty, None)
+            .unwrap();
+        detached_engine.oneshots.insert(11, OneShotState::default());
+        let oneshot_task = detached_engine
+            .spawn_oneshot_task_with_scope(11, result_ty, None)
+            .unwrap();
+        let cancelled_task = detached_engine
+            .spawn_cancelled_task_with_scope(None)
+            .unwrap();
+        assert!(matches!(
+            detached_engine.tasks[collect_task].status,
+            TaskStatus::Runnable
+        ));
+        assert!(matches!(
+            detached_engine.tasks[host_task].status,
+            TaskStatus::Waiting(TaskWait::HostTask { .. })
+        ));
+        assert!(matches!(
+            detached_engine.tasks[oneshot_task].status,
+            TaskStatus::Waiting(TaskWait::OneShotTask { .. })
+        ));
+        assert!(matches!(
+            detached_engine.tasks[cancelled_task].status,
+            TaskStatus::Complete(Some(TaskCompletion::Cancelled))
+        ));
+
+        let completed = detached_engine.tasks.len();
+        detached_engine
+            .tasks
+            .push(scheduler_task(TaskStatus::Complete(Some(
+                TaskCompletion::Returned(Value::Unit),
+            ))));
+        detached_engine.discard_task_completion(completed).unwrap();
+        assert!(matches!(
+            detached_engine.tasks[completed].status,
+            TaskStatus::Consumed
+        ));
+        let consumed = detached_engine.tasks.len();
+        detached_engine
+            .tasks
+            .push(scheduler_task(TaskStatus::Consumed));
+        detached_engine.discard_task_completion(consumed).unwrap();
+        let pending = detached_engine.tasks.len();
+        detached_engine
+            .tasks
+            .push(scheduler_task(TaskStatus::Runnable));
+        detached_engine.discard_task_completion(pending).unwrap();
+        assert!(detached_engine.tasks[pending].cancel_requested);
+
+        detached_engine.tasks[0].resume = Some(TaskWait::Select {
+            unwind: BytecodeBlockId::new(9),
+        });
+        assert!(detached_engine.resume_current_task().unwrap());
+        detached_engine.tasks[0].cancel_requested = true;
+        detached_engine.tasks[0].resume = Some(TaskWait::Select {
+            unwind: BytecodeBlockId::new(10),
+        });
+        assert!(detached_engine.resume_current_task().unwrap());
+        assert!(detached_engine.pending_unwind.is_some());
+    }
+
+    #[test]
+    fn select_registration_covers_join_operation_and_unobserved_panic_resume() {
+        let mut program = root_pressure_program();
+        let int = BytecodeTypeId::new(5);
+        let join = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "Join[Int, Int]".into(),
+            kind: BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::Join,
+                arguments: vec![int, int],
+            },
+        });
+        program.functions.push(BytecodeFunction {
+            callable: BytecodeCallableId::new(0),
+            source: BytecodeSpan {
+                file: 0,
+                start: 0,
+                end: 0,
+            },
+            types: Vec::new(),
+            spans: vec![BytecodeSpan {
+                file: 0,
+                start: 0,
+                end: 0,
+            }],
+            slots: Vec::new(),
+            loans: Vec::new(),
+            parameters: Vec::new(),
+            return_slot: BytecodeSlotId::new(0),
+            entry: BytecodeBlockId::new(0),
+            unwind: BytecodeBlockId::new(0),
+            blocks: Vec::new(),
+        });
+
+        let trace = derive_trace_metadata(&program).unwrap();
+        let mut host = RejectingHost;
+        let mut engine = Engine::new(
+            &program,
+            &mut host,
+            VmLimits::default(),
+            ValueCopyStrategy::default(),
+            trace,
+        );
+        engine.tasks.push(scheduler_task(TaskStatus::Running));
+        engine.tasks.push(scheduler_task(TaskStatus::Complete(Some(
+            TaskCompletion::Returned(Value::Integer(7)),
+        ))));
+        engine.tasks[1].join_consumed = false;
+        engine.frames.push({
+            let mut frame = select_test_frame(RuntimeSelectRegion {
+                capacity: 2,
+                registered: 0,
+                arms: Vec::new(),
+            });
+            frame.slots = vec![SlotState::Value(Value::Join(RuntimeJoin {
+                task: 1,
+                scope: super::TRANSFERRED_JOIN_SCOPE,
+            }))];
+            frame
+        });
+        assert!(engine.current_function(0).is_ok());
+        let owner = BytecodePlace {
+            slot: BytecodeSlotId::new(0),
+            ty: join,
+            projections: Vec::new(),
+            source_loan: None,
+        };
+        engine
+            .register_select_arm(
+                0,
+                0,
+                &BytecodeSelectRegistration::Join(owner),
+                crate::bytecode::BytecodeSpanId::new(0),
+            )
+            .unwrap();
+        let constant = |value: &str| BytecodeOperand {
+            ty: int,
+            kind: BytecodeOperandKind::Constant(BytecodeConstant::Integer(value.into())),
+        };
+        let operation = BytecodeOperation {
+            ty: int,
+            kind: BytecodeOperationKind::CheckedBinary {
+                operator: BytecodeBinaryOperator::Add,
+                left: constant("2"),
+                right: constant("3"),
+            },
+        };
+        engine
+            .register_select_arm(
+                0,
+                1,
+                &BytecodeSelectRegistration::Call(operation),
+                crate::bytecode::BytecodeSpanId::new(0),
+            )
+            .unwrap();
+        assert_eq!(engine.frames[0].select.as_ref().unwrap().registered, 2);
+        assert_eq!(engine.tasks.len(), 3);
+        assert!(matches!(
+            engine.tasks[2].status,
+            TaskStatus::Complete(Some(TaskCompletion::Returned(Value::Integer(5))))
+        ));
+
+        let mut panic_host = RejectingHost;
+        let mut panic_engine = Engine::new(
+            &program,
+            &mut panic_host,
+            VmLimits::default(),
+            ValueCopyStrategy::default(),
+            derive_trace_metadata(&program).unwrap(),
+        );
+        panic_engine.tasks.push(scheduler_task(TaskStatus::Running));
+        let child_panic = VmPanic {
+            code: PanicCode::ExplicitPanic,
+            message: "child".into(),
+            span: BytecodeSpan {
+                file: 0,
+                start: 0,
+                end: 0,
+            },
+            stack: vec![VmStackFrame {
+                function: "child".into(),
+                span: BytecodeSpan {
+                    file: 0,
+                    start: 0,
+                    end: 0,
+                },
+            }],
+            suppressed: Vec::new(),
+        };
+        panic_engine
+            .tasks
+            .push(scheduler_task(TaskStatus::Complete(Some(
+                TaskCompletion::Panicked(child_panic),
+            ))));
+        panic_engine.task_scopes.push(Some(RuntimeTaskScope {
+            source: BytecodeScopeId::new(0),
+            owner: 0,
+            children: vec![1],
+            closed: false,
+        }));
+        let mut frame = select_test_frame(RuntimeSelectRegion {
+            capacity: 1,
+            registered: 0,
+            arms: Vec::new(),
+        });
+        frame.task_scopes.push(0);
+        panic_engine.frames.push(frame);
+        panic_engine.tasks[0].resume = Some(TaskWait::Select {
+            unwind: BytecodeBlockId::new(11),
+        });
+        assert!(panic_engine.resume_current_task().unwrap());
+        assert!(matches!(
+            panic_engine.pending_unwind,
+            Some(RuntimeUnwind::Cancelled)
+        ));
     }
 
     #[test]
@@ -11874,9 +12842,9 @@ mod tests {
         );
 
         let completed = engine.spawn_completed_task(Value::Integer(42), 0).unwrap();
-        let cancelled = engine.spawn_cancelled_task(0).unwrap();
+        let cancelled = engine.spawn_cancelled_task_with_scope(Some(0)).unwrap();
         assert!(engine.spawn_completed_task(Value::Unit, 99).is_err());
-        assert!(engine.spawn_cancelled_task(99).is_err());
+        assert!(engine.spawn_cancelled_task_with_scope(Some(99)).is_err());
 
         assert!(matches!(
             engine.tasks[completed].status,
@@ -12455,6 +13423,10 @@ mod tests {
             );
             engine.execute_terminal_fallback(0, fallback).unwrap();
         }
+        assert!(matches!(
+            host.invoke("unsupported", &[]),
+            Err(VmError::UnsupportedHostCall(name)) if name == "unsupported"
+        ));
         assert_eq!(host.cleaned, [RuntimeValue::String("process".into())]);
     }
 
@@ -12474,6 +13446,10 @@ mod tests {
         }
 
         let mut host = MinimalHost;
+        assert!(matches!(
+            host.invoke("unsupported", &[]),
+            Err(VmError::UnsupportedHostCall(name)) if name == "unsupported"
+        ));
         assert!(matches!(
             host.start_async("work", &[]),
             Err(VmError::UnsupportedHostCall(name)) if name == "work"
@@ -14000,6 +14976,10 @@ mod tests {
         let program = root_pressure_program();
         let trace = derive_trace_metadata(&program).unwrap();
         let mut host = ReadyHost::default();
+        assert!(matches!(
+            host.invoke("unsupported", &[]),
+            Err(VmError::UnsupportedHostCall(name)) if name == "unsupported"
+        ));
         {
             let mut engine = Engine::new(
                 &program,

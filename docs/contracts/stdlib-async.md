@@ -1,11 +1,9 @@
 # Contrato ejecutable de `std.async` para STD-0.1A
 
 Este documento registra la superficie pública que ejecuta actualmente
-`std.async`. La especificación canónica ya exige `select` núcleo y la migración
-de `Waiter.wait` a `selectable`; hasta cerrar `ASYNC-SELECT-*` y
-`STD-A-SELECTABLE-IMPL-001`, el JSON y la firma ejecutable de este owner
-permanecen honestamente en `suspends` y no cuentan como conformidad de la nueva
-capacidad. El owner no crea
+`std.async`. La especificación canónica exige `select` núcleo y
+`Waiter.wait` publica `selectable`; la VM ya registra, compromete y desregistra
+ese adapter junto con los adapters de tiempo. El owner no crea
 una segunda familia `Task`/`Future`, no duplica APIs con sufijo `Async` y no
 usa `Channel`; el canal pertenece a STD-0.1B.
 
@@ -21,7 +19,9 @@ de la función.
 Una llamada directa suspendible espera automáticamente y conserva el tipo de
 resultado lógico; `await` delante de esa llamada produce `E1611`. Un `Join`
 pendiente es un handle afín: solo `await handle` lo convierte en su resultado.
-`Waiter.wait()` es una llamada directa y también espera implícitamente. `@sync`
+`Waiter.wait()` es una llamada directa y también espera implícitamente; su
+capacidad pública es `selectable`, por lo que puede aparecer directamente como
+brazo de `select`. `@sync`
 y `@nosuspend` son garantías negativas y rechazan cualquier camino suspendible.
 
 ## Superficie nominal
@@ -33,7 +33,7 @@ pub type Completer[T, E]
 pub type AlreadyCompleted
 
 pub fn oneshot[T, E](): (Waiter[T, E], Completer[T, E])
-pub fn Waiter.wait(var self): T ! E suspends
+pub fn Waiter.wait(var self): T ! E selectable
 pub fn Completer.complete(var self, value: T): Unit ! AlreadyCompleted
 pub fn Completer.fail(var self, error: E): Unit ! AlreadyCompleted
 pub fn Completer.cancel(var self): Unit ! AlreadyCompleted
@@ -58,7 +58,8 @@ solo puede consumirse una vez.
 `oneshot` separa el consumidor (`Waiter`) del productor (`Completer`).
 `complete`, `fail` y `cancel` compiten atómicamente; exactamente una operación
 gana y las posteriores devuelven `AlreadyCompleted`. `Waiter.wait` consume el
-waiter una vez y declara `suspends`; `Completer` puede transferirse a un task o
+waiter una vez, espera implícitamente en una llamada directa y conserva su
+registro de `select` hasta el commit; `Completer` puede transferirse a un task o
 thread que satisfaga `Send`.
 
 `AsyncIterator.next` produce como máximo un elemento por llamada. `none` es el
@@ -124,15 +125,14 @@ fuzzing, presupuestos de rendimiento, conformidad VM/nativa y documentación
 ejecutable. `HOST` es no aplicable con razón normativa: `Group` compone el
 scheduler y `Join` existentes y no enlaza una primitiva host propia.
 
-## Integración pendiente con `select`
+## Integración con `select`
 
 La forma final no añade `std.async.select`, builders ni valores `Case`. La
-expresión núcleo acepta `await join`, `Waiter.wait` y `Group.next`; estas dos
-últimas publican `selectable` cuando su ABI de registro/commit/rollback esté
-implementada. Un brazo perdedor no consume el `Join`, waiter o grupo, y la
-cancelación del scope desregistra todos los brazos antes del unwind. La
-implementación y evidencia actuales de STD-0.1A no satisfacen todavía este
-apartado.
+expresión núcleo acepta `await join`, `Waiter.wait` y `Group.next`; `Waiter.wait`
+publica ya `selectable` y usa la ABI de registro/commit/rollback de la VM. Un
+brazo perdedor no consume el `Join`, waiter o grupo, y la cancelación del scope
+desregistra todos los brazos antes del unwind. `Group.next` pertenece todavía a
+STD-0.1B y no se considera implementado en esta superficie.
 
 ## Estado de implementación de STD-0.1A
 

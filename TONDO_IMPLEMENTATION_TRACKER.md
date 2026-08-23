@@ -63,19 +63,19 @@ un bundle companion separado. El futuro candidato del lenguaje fijará G5 y S1;
 solo fijará L0 cuando se construya además una distribución TLF, sin convertirla
 en requisito de Tondo 0.1.
 
-**Objetivo inmediato:** continuar el slice `ASYNC-SELECT-FRONTEND-001 →
-ASYNC-SELECT-VM-CONF-001` en `ASYNC-SELECT-RUNTIME-001` y
-`ASYNC-SELECT-OWN-001` —el frontend, la semántica tipada y el lowering
-verificable ya están cerrados—, incluida la migración
-`STD-A-SELECTABLE-IMPL-001`; después se retoma `STD-A-PERF-001` y finalmente
+**Objetivo inmediato:** cerrar el slice ejecutable de `select`: frontend,
+semántica tipada, lowering verificable, runtime cooperativo, ownership
+branch-sensitive, adapters `Waiter`/time y el modelo/tests deterministas ya
+están cerrados; `ASYNC-SELECT-PERF-001` sigue siendo la única hoja de medición
+pendiente antes de conformar el corpus completo en `ASYNC-SELECT-VM-CONF-001`.
+Después se retoma `STD-A-PERF-001` y finalmente
 `DIAG-SPEC-001`. El grafo activo se valida con `TRACKER-LINT-001`; con
 ese contrato se cierran las fronteras
 runtime-facing B0 de Wave 6; entonces avanzan `DIAG-RUNTIME-001`, `RACE-001`,
 `LEAK-001`, `DUMP-001`, `DIAG-TEST-001` y `DIAG-CI-001` antes de la evaluación
 coordinada de `NATIVE-001`. El cierre coordinado de
 `STD-CODEC-PUBLIC-001` ya verificó su superficie, pero el conteo global
-214/214 describe las firmas ejecutables anteriores a DEC-020 y debe regenerarse
-al migrar los tres adapters `selectable`;
+214/214 ya incluye los tres adapters `selectable` de DEC-020;
 y los tres owners build-only tienen una frontera explícita; no se fabrican
 funciones runtime para ellos. `NATIVE-TARGET-DESC-001` y
 `NATIVE-ARTIFACT-001`, `NATIVE-LINK-PLAN-001` y `NATIVE-PUBLISH-SPEC-001` están
@@ -525,7 +525,7 @@ necesaria; la fragmentación del workspace no.
 | **M4 — Genéricos, traits y closures** | Sistema estático completo | Completado |
 | **M5 — Ownership, préstamos y memoria** | Modelo de valores completo | Completado |
 | **M6 — Colecciones, números y texto** | Gate G3: alpha utilizable | Completado |
-| **M7 — Async y concurrencia estructurada** | Tasks conformes + selección núcleo | Suspensión/tasks completadas; frontend, semántica tipada y lowering verificable de `select`/`selectable` cerrados, selector cooperativo y ownership branch-sensitive pendientes |
+| **M7 — Async y concurrencia estructurada** | Tasks conformes + selección núcleo | Suspensión/tasks completadas; frontend, semántica tipada, lowering verificable, selector cooperativo, ownership branch-sensitive, modelo/tests y adapters `selectable` cerrados; performance del selector y conformidad VM pendientes |
 | **M8 — Scripts y procesos** | Experiencia de scripting | Completado |
 | **M9 — Unsafe, targets y toolchain** | Gate G4: preview 0.1 | Completado |
 | **M10 — Corpus ejecutable** | Conformidad viva pre-`derive` | Completado |
@@ -534,7 +534,7 @@ necesaria; la fragmentación del workspace no.
 | **M10.7 — Metaprogramación estática** | `derive`, generators, meta VM y contribución a G5 | Completado |
 | **M10.6 — Testing de usuario Tondo 0.1** | Implementación de `tondo test` y contribución a G5 | Completado; incluido en el gate T0 vivo |
 | **DIAG — Tooling dinámico** | Race detector, leak/retention detector, crash dumps y runner integrado | Planificado; prerrequisito de M11 |
-| **STD-0.1A — Foundation + Hosted** | Base estándar necesaria para meta, testing y backend | Arquitectura/owners base cerrados; delta `selectable`, rendimiento, conformance y promoción pendientes |
+| **STD-0.1A — Foundation + Hosted** | Base estándar necesaria para meta, testing y backend | Arquitectura/owners base cerrados; runtime `selectable` ejecutable y auditado; rendimiento, conformance y promoción pendientes |
 | **M11 — Backend nativo y optimización** | Implementación de producción | Futuro |
 | **STD-0.1B — Concurrency + Application** | Contratos runtime antes de M11; implementación tras N1 | Arquitectura base cerrada; contratos y código pendientes |
 | **TLF — Forma para agentes** | Transporte compacto hacia Tondo canónico | Spec y estudio exploratorio completados; reproducción, implementación, evaluación y bundle L0 pendientes |
@@ -670,7 +670,7 @@ el trabajo.
 | `ASYNC-SELECT-SEMA-001` | `ASYNC-SELECT-FRONTEND-001` y DEC-020 | Canales o backend nativo |
 | `ASYNC-SELECT-LOWER-001` | semántica de efecto/arms y scheduler M7 existente | STD-0.1B |
 | `STD-A-SELECTABLE-IMPL-001` | lowering/ownership de `select`, `Waiter` y time-base implementados | `Group` o canales |
-| `ASYNC-SELECT-VM-CONF-001` | frontend, lowering, ownership, adapters y modelo/tests de selección | Backend nativo |
+| `ASYNC-SELECT-VM-CONF-001` | frontend, lowering, ownership, adapters, modelo/tests y presupuesto de rendimiento del selector | Backend nativo |
 | Gate G5 vivo | `DOC-TEST-001`, `DOC-TEST-CONF-001`, `CONF-MATRIX-ALL-001`, `CONF-GAP-AUDIT-001`, `CONF-GAP-IMPL-001`, `CONF-LAYER-RESULT-001`, `QUALITY-EVIDENCE-BIND-001` y `CONF-SEAL-FINAL-001` | STD-0.1A completa |
 | `DIAG-SPEC-001` | `PERF-001`, contrato CLI/testing y RFC-019 | Implementación de detectores |
 | Contratos runtime-facing B0 | `DIAG-SPEC-001`, foundations STD-0.1A y `ASYNC-SELECT-VM-CONF-001` | `DIAG-RUNTIME-001` o backend nativo |
@@ -2402,7 +2402,8 @@ adapters de streams y el worker OS nativo permanecen como leaves independientes.
   `ASYNC-SELECT-LOWER-001`; este bloque no afirma ejecución HIR/MIR/VM.
 
 - [x] **ASYNC-SELECT-LOWER-001 — Bajar selección a HIR/MIR y bytecode
-  verificable.** Representar prepare/register/commit/rollback, registro
+  verificable.** Representar prepare/register/commit y teardown de rollback
+  en el estado runtime, registro
   izquierda-a-derecha, un único ganador, `else` como snapshot no bloqueante y
   cleanup explícito de perdedores. El verificador debe rechazar bytecode que
   salte fases, comprometa más de un brazo, observe el resultado antes de commit
@@ -2415,40 +2416,51 @@ adapters de streams y el worker OS nativo permanecen como leaves independientes.
   commit, tablas que no coinciden con los registros y commits huérfanos; tests
   positivos de desensamblado y negativos de bytecode forjado en
   `bytecode/lower.rs`. El selector cooperativo permanece en
-  `ASYNC-SELECT-RUNTIME-001`: la VM mantiene registro de región y frontera
-  determinista hasta su aterrizaje.
+  `ASYNC-SELECT-RUNTIME-001`: la VM ya consume ese protocolo; no se atribuye
+  aquí la ejecución cooperativa ni la política de ownership.
 
-- [ ] **ASYNC-SELECT-RUNTIME-001 — Implementar el selector cooperativo.** Usar
-  un registro idempotente por brazo, arbitraje único y fairness rotatoria sin
-  sesgo léxico sostenido; integrar wakeups simultáneos, cierre/error ready,
-  cancelación de scope y teardown antes de reanudar el owner. No iniciar tasks,
-  no bloquear el worker y no crear un scheduler paralelo.
+- [x] **ASYNC-SELECT-RUNTIME-001 — Implementar el selector cooperativo.** La
+  VM mantiene un registro por brazo, espera sin bloquear en `TaskWait::Select`,
+  despierta de forma idempotente ante completions simultáneos, arbitra con
+  rotación y compromete un único ganador. `else` es snapshot no bloqueante;
+  resultados normales, errores, pánicos y cancelación pasan por el mismo
+  cleanup. Los brazos `Call`, host async, one-shot, `AsyncIterator.collect` y
+  `Join` se integran con el scheduler existente, sin scheduler paralelo.
 
-- [ ] **ASYNC-SELECT-OWN-001 — Hacer branch-sensitive el ownership de
-  selección.** Mover payloads de send y `Join` solo en la rama ganadora,
-  restaurar owners perdedores, impedir dos reservas incompatibles con `E1615` y
-  unir estados de move después de la expresión. Cubrir `let`/`var`, tuples,
-  errores que devuelven payload, `else`, return/fail/pánico y cancelación durante
-  cada fase.
+- [x] **ASYNC-SELECT-OWN-001 — Hacer branch-sensitive el ownership de
+  selección.** El análisis de disponibilidad conserva cada `Join` durante el
+  registro y lo transfiere únicamente al cuerpo ganador; los cuerpos de
+  perdedores y `else` lo mantienen disponible. La VM consume solo el owner
+  ganador, cancela/descarte las tareas que pertenecen al selector y deja los
+  `Join` perdedores awaitables. Se validan además los tipos de registration y
+  payload en MIR/bytecode y se conserva la afinidad en pánico/cancelación.
 
-- [ ] **ASYNC-SELECT-TEST-001 — Modelar, probar y fuzzear el núcleo de
-  selección.** Mantener un modelo de referencia independiente y properties de
-  exactamente un commit, cero pérdidas/duplicados, wake idempotente, fairness
-  bajo contención y cleanup único. Cubrir 0/1/N brazos, ready simultáneo,
-  pending, close/error, `else`, cancelación, pánico, joins heterogéneos, one-shot
-  y timers, además de todos los negativos `E1612`–`E1615`.
+- [x] **ASYNC-SELECT-TEST-001 — Modelar, probar y fuzzear el núcleo de
+  selección.** `SelectModel` en `crates/tondo-reliability/tests/models.rs`
+  recorre 4.096 seeds deterministas y comprueba exactamente un commit,
+  rotación sin starvation, wake idempotente, cancelación/cleanup único y
+  owners perdedores. Los tests HIR/MIR/bytecode cubren los negativos
+  `E1612`–`E1615`, límites de forma y payload; los tests VM cubren 0/1/N,
+  ready/pending, `else`, pánico/cancelación, `Join` heterogéneo y one-shot.
+  La fixture ejecutable `tests/runtime/m11-std-async-selectable-001.to` cubre
+  `Waiter.wait` y `Timer.wait` en el camino público, sin fijar un scheduling
+  concreto.
 
 - [ ] **ASYNC-SELECT-PERF-001 — Fijar presupuestos del selector VM.** Medir
   latencia ready/pending, throughput, allocations, bytes de frame, registros,
   wakeups y tail latency para 1/2/8/64 brazos; comparar `select` de un brazo con
   la llamada directa y impedir polling, crecimiento no acotado o regresiones de
-  complejidad respecto al número de brazos.
+  complejidad respecto al número de brazos. Sigue abierta hasta registrar un
+  benchmark reproducible con baseline de target y muestras suficientes; los
+  tests de propiedades no se promocionan como evidencia de rendimiento.
 
-- [ ] **ASYNC-SELECT-VM-CONF-001 — Conformar `select` sobre la VM.** Ejecutar el
-  mismo corpus público a través de parser, formatter, interfaz importada,
-  bytecode verificado y runtime, incluidos `Waiter`, time y `Join`; ratchetear
-  matriz/inventario y mantener los requisitos nativos explícitamente pendientes
-  en `NATIVE-SELECT-001` en vez de atribuir portabilidad anticipada.
+- [ ] **ASYNC-SELECT-VM-CONF-001 — Conformar `select` sobre la VM.** El corpus
+  público ya tiene casos de `Waiter`, time y `Join` y la ejecución dirigida
+  recorre parser → formatter → interfaz → bytecode verificado → VM; la
+  promoción queda bloqueada honestamente por `ASYNC-SELECT-PERF-001`, su
+  dependencia dura. Al cerrarse ese presupuesto se ratchetearán
+  matriz/inventario y los casos 0.1; los requisitos nativos permanecen
+  explícitamente pendientes en `NATIVE-SELECT-001`.
 
 - [ ] **NATIVE-THREAD-001 — Mapear la lane `Thread` a workers OS en el backend
   nativo.** La VM bootstrap conserva semántica cooperativa determinista; el
@@ -2474,8 +2486,9 @@ adapters de streams y el worker OS nativo permanecen como leaves independientes.
   efectos inferidos.
 - [x] `selectable` forma parte de tipos/interfaz/ABI y una llamada ordinaria
   conserva la espera implícita sin duplicar API.
-- [ ] `select` compromete exactamente un brazo, conserva owners perdedores y
-  pasa modelo, fuzz, rendimiento y conformidad VM.
+- [ ] `select` compromete exactamente un brazo y conserva owners perdedores;
+  modelo/tests, adapters y ejecución dirigida están cerrados; quedan el
+  presupuesto de rendimiento y la conformidad VM promocionada.
 
 ---
 
@@ -5152,8 +5165,8 @@ S1A; su estado se deriva de los registros machine-readable y no de este texto:
   `Join`, `Waiter`/`Completer`, `AsyncIterator`, `collect(limit:)`, cierre y
   backpressure sin `Channel`, que pertenece a STD-0.1B. La auditoría pública
   verificó las cinco firmas callable ejecutables de esa base (214/214 en total);
-  DEC-020 deja abierta la migración de `Waiter.wait` a `selectable` en
-  `STD-A-SELECTABLE-IMPL-001`, mientras la
+  DEC-020 ya está incorporada en la auditoría y en los hashes de interfaz;
+  `STD-A-SELECTABLE-IMPL-001` queda cerrado, mientras la
   implementación genérica de iteradores, materialización y cancelación queda
   explícitamente en `STD-A-ASYNC-IMPL-001`.
 
@@ -5168,13 +5181,15 @@ S1A; su estado se deriva de los registros machine-readable y no de este texto:
   cancelación al salir de `scope`, loans secuenciales y el rechazo de loans
   exclusivos en `spawn`.
 
-- [ ] **STD-A-SELECTABLE-IMPL-001 — Migrar one-shot y time-base al protocolo
-  seleccionable.** Cambiar `Waiter.wait`, `time.sleep` y `Timer.wait` de
-  `suspends` a `selectable` en contratos, interfaces, hashes, HIR, lowering,
-  runtime y auditorías públicas, sin renombrar métodos ni duplicarlos. Un brazo
-  perdedor conserva el waiter o timer según ownership, libera su registro y no
-  altera el resultado de la llamada directa. Actualizar conjuntamente los
-  owner JSON y evidencia solo cuando la ruta pública sea ejecutable.
+- [x] **STD-A-SELECTABLE-IMPL-001 — Migrar one-shot y time-base al protocolo
+  seleccionable.** `Waiter.wait`, `time.sleep` y `Timer.wait` usan ahora
+  `selectable` en contratos, interfaces, hashes, HIR, lowering, runtime y
+  auditorías públicas, sin renombrar métodos ni duplicarlos. La VM registra
+  sus operaciones como brazos atómicos, conserva ownership, cancela/descarte
+  perdedores y mantiene el resultado de la llamada directa. Evidencia:
+  `testing/stdlib-public-api.json` (214/214), los checkers de `std.async` y
+  `std.time`, tests estáticos de HIR y la fixture pública
+  `tests/runtime/m11-std-async-selectable-001.to` (one-shot + timer).
 
 - [x] **STD-A-FUZZ-001 — Cerrar todas las celdas FUZZ aplicables de S1A.** El
   target owner-aware `fuzz/fuzz_targets/stdlib_owners.rs` enruta las 22
@@ -6569,17 +6584,17 @@ parte del diseño. `testing/conformance-ratchet.json` se regenera contra el
 
 Esta tabla es la fuente de reconciliación del estado actual.
 26. [ ] **Wave 5 — STD-0.1A por layers.** Los contratos, slices A0 y kernels
-    iniciales están cerrados; la auditoría pública verifica 214/214 firmas del
-    árbol ejecutable previo y debe incorporar el delta `selectable` de DEC-020.
-    DEC-020 añade primero el slice vertical de lenguaje que esos owners
-    necesitan. Permanecen las dimensiones de evidencia y promoción de S1A. El
+    iniciales están cerrados; la auditoría pública verifica 214/214 firmas y ya
+    incorpora el delta `selectable` de DEC-020. Permanecen las dimensiones de
+    evidencia y promoción de S1A. El
     orden de cierre es:
     - lenguaje/select: `ASYNC-SELECT-FRONTEND-001 → ASYNC-SELECT-SEMA-001 →
       ASYNC-SELECT-LOWER-001`; después runtime y ownership cierran en paralelo,
       alimentan `STD-A-SELECTABLE-IMPL-001` —que además exige los ya cerrados
       `STD-A-ASYNC-IMPL-001` y `STD-TIME-BASE-CONF-001`— y continúa con
       `ASYNC-SELECT-TEST-001 →
-      ASYNC-SELECT-PERF-001 → ASYNC-SELECT-VM-CONF-001`;
+      ASYNC-SELECT-PERF-001 → ASYNC-SELECT-VM-CONF-001` (tests/model cerrado;
+      performance es el siguiente bloqueo real);
     - A1: `STD-CORE-IMPL-001`, `STD-TEXT-IMPL-001`, `STD-COLL-IMPL-001`,
       `STD-ITER-IMPL-001`, `STD-FMT-IMPL-001` y `STD-IO-IMPL-001`;
     - A2: `STD-FS-IMPL-001` y `STD-PROC-IMPL-001`, preservando path/console;
@@ -6596,7 +6611,7 @@ Esta tabla es la fuente de reconciliación del estado actual.
       ya tienen auditoría pública completa; quedan sus gates de codec,
       rendimiento, fuzzing y promoción;
     - A4: `STD-TESTING-SHRINK-001 → STD-TESTING-IMPL-001`; y
-    - A5: `STD-PUBLIC-API-AUDIT-001` (base cerrada, delta DEC-020 pendiente) → leaves
+    - A5: `STD-PUBLIC-API-AUDIT-001` (214/214 regenerado con DEC-020) → leaves
       `STD-A-*-EVIDENCE` →
       STD-TEST-001 / STD-CODEC-CONF-001 / STD-PERF-CONF-001 →
       STD-MATRIX-ALL-001 → STD-CONF-001 → STD-DOC-001 →
@@ -6663,14 +6678,16 @@ G0 -> TLF spec + reproducible benchmark -> codec/maps/CLI
 
 M4, M5, M6, la base suspendible de M7, M8, M9, el corpus vivo M10, M10.5,
 M10.5b y Gates G4/H0 quedan cerrados como implementación/infraestructura. La
-extensión núcleo `select` de M7 permanece abierta por DEC-020. M10.7 y la implementación
+extensión núcleo `select` de M7 está implementada en frontend, semántica,
+lowering, VM, ownership, modelo y adapters; permanece abierta únicamente por
+el presupuesto de rendimiento y la conformidad VM promocionada. M10.7 y la implementación
 funcional de M10.6 permanecen cerradas. `CONF-DRAFT-001` también permanece
 cerrada. La auditoría mantiene T0 verificable sobre el árbol actual y G5 abierto
 hasta el primer candidato real. Wave 5/S1A sigue abierta por dimensiones de
 evidencia y promoción parciales; la
-superficie ejecutable previa está verificada en 214/214 firmas y FUZZ está
-promovido 22/22; esas cifras no cubren todavía los efectos `selectable` ni el
-selector núcleo.
+superficie ejecutable está verificada en 214/214 firmas y FUZZ está promovido
+22/22; la auditoría ya incluye los efectos `selectable`, mientras el selector
+núcleo mantiene pendientes sólo rendimiento y conformidad promocionada.
 `CONF-GAP-IMPL-001` y `CONF-LAYER-RESULT-001` producen la trazabilidad y el
 resultado compuesto vivos. `CONF-SEAL-FINAL-001` permanece pendiente para el
 primer release. `STD-IMPL-001`, `STD-IMPL-002` y `STD-CODEC-PUBLIC-001` están cerrados;

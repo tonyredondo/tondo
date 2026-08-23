@@ -23560,6 +23560,69 @@ mod tests {
     }
 
     #[test]
+    fn select_semantics_covers_a_single_arm_without_else() {
+        let (_, _, no_else) = check(
+            "fn ready(): Int selectable { 1 }\n\
+             fn run(): Int {\n\
+                 select {\n\
+                     ready() => 1\n\
+                 }\n\
+             }\n",
+        );
+        assert!(
+            no_else.diagnostics().is_empty(),
+            "{:#?}",
+            no_else.diagnostics()
+        );
+        assert!(no_else.is_complete());
+    }
+
+    #[test]
+    fn select_semantics_accepts_compiler_owned_selectable_adapters() {
+        let (_, _, output) = check(
+            "import std.async\n\
+             import std.time\n\
+             fn waiter_case() {\n\
+                 let pair = async.oneshot[Int, Never]()\n\
+                 var (waiter, completer) = pair\n\
+                 _ = completer.complete(7)\n\
+                 let value = select {\n\
+                     waiter.wait() => 7\n\
+                 }\n\
+                 assert(value == 7)\n\
+             }\n\
+             fn time_case(): Unit ! (time.ClockError | time.DurationError) {\n\
+                 let zero = time.Duration.fromMilliseconds(0)?\n\
+                 let timer = time.Timer.after(zero)?\n\
+                 let value = select {\n\
+                     timer.wait()? => ()\n\
+                 }\n\
+                 value\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+        let selectable = output
+            .program()
+            .callables()
+            .filter(|callable| {
+                matches!(
+                    output.program().interner().kind(callable.function_type()),
+                    Ok(TypeKind::Function(function)) if function.is_selectable()
+                )
+            })
+            .count();
+        assert!(
+            selectable >= 3,
+            "expected waiter and time adapters: {selectable}"
+        );
+    }
+
+    #[test]
     fn select_semantics_type_selectable_join_and_unify_bodies() {
         let (_, _, output) = check(
             "fn ready(): Int selectable { 1 }\n\
@@ -23621,14 +23684,16 @@ mod tests {
                      return spawn work()\n\
                  }\n\
              }\n\
-             fn run(): Join[Int, Never] {\n\
+             fn ready(): Int selectable { 1 }\n\
+             fn run(): Int {\n\
                  let pending = prepare()\n\
                  let selected = select {\n\
+                     ready() => await pending\n\
                      await pending => 1\n\
-                     else => 0\n\
+                     else => await pending\n\
                  }\n\
                  _ = selected\n\
-                 pending\n\
+                 selected\n\
              }\n",
         );
         assert!(
@@ -23806,6 +23871,25 @@ mod tests {
             output.diagnostics()
         );
         assert!(output.is_complete());
+
+        let (_, _, leaked_join) = check(
+            "fn work(): Int suspends { 1 }\n\
+             fn prepare(): Join[Int, Never] {\n\
+                 scope {\n\
+                     return spawn work()\n\
+                 }\n\
+             }\n\
+             fn ready(): Unit selectable {}\n\
+             fn invalid(): Int {\n\
+                 let pending = prepare()\n\
+                 select {\n\
+                     ready() => return 1\n\
+                     await pending => return 2\n\
+                     else => return 0\n\
+                 }\n\
+             }\n",
+        );
+        assert_eq!(codes(&leaked_join), ["E1404"]);
     }
 
     #[test]
@@ -23817,15 +23901,17 @@ mod tests {
                      return spawn work()\n\
                  }\n\
              }\n\
+             fn ready(): Int selectable { 1 }\n\
              fn maybe(): Int? selectable { some(1) }\n\
-             fn waiting(): Join[Int, Never] {\n\
+             fn waiting(): Int {\n\
                      let pending = prepare()\n\
                      let selected = select {\n\
+                         ready() => await pending\n\
                          await pending => 1\n\
-                         else => 0\n\
+                         else => await pending\n\
                      }\n\
                      _ = selected\n\
-                     pending\n\
+                     selected\n\
              }\n\
              fn propagated(): Int? {\n\
                      select {\n\

@@ -317,10 +317,7 @@ fn terminator_text(terminator: &BytecodeTerminatorKind) -> String {
             else_target.map(|target| target.index()).unwrap_or(u32::MAX),
             unwind.index(),
             arms.iter()
-                .map(|arm| (
-                    arm.payload().map(|payload| place_text(payload)),
-                    arm.target().index()
-                ))
+                .map(|arm| (arm.payload().map(place_text), arm.target().index()))
                 .collect::<Vec<_>>()
         ),
         BytecodeTerminatorKind::DrainUnwind { target } => {

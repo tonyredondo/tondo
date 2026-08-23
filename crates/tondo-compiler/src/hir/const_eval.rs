@@ -120,10 +120,10 @@ pub(super) fn evaluate(
                     | HirExpressionKind::BootstrapHostCall { .. }
                     | HirExpressionKind::PropagateOption { .. }
                     | HirExpressionKind::PropagateResult { .. }
-        | HirExpressionKind::If { .. }
-        | HirExpressionKind::Match { .. }
-        | HirExpressionKind::Select { .. }
-        | HirExpressionKind::Return { .. }
+                    | HirExpressionKind::If { .. }
+                    | HirExpressionKind::Match { .. }
+                    | HirExpressionKind::Select { .. }
+                    | HirExpressionKind::Return { .. }
                     | HirExpressionKind::Fail { .. }
                     | HirExpressionKind::Break { .. }
                     | HirExpressionKind::Continue { .. } => {
@@ -358,9 +358,7 @@ fn evaluate_composite(
             .ok_or(ConstantEvaluationError::Unavailable)
     };
     let result = match kind {
-        HirExpressionKind::Select { .. } => {
-            return Err(ConstantEvaluationError::Unavailable)
-        }
+        HirExpressionKind::Select { .. } => return Err(ConstantEvaluationError::Unavailable),
         HirExpressionKind::Tuple(items) => HirConstantValueKind::Tuple(
             items
                 .iter()

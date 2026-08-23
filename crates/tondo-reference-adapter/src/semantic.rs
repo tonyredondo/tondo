@@ -12,8 +12,8 @@ use tondo_compiler::hir::{
 use tondo_compiler::mir::{
     MirAwaitable, MirFunction, MirFunctionId, MirLoanId, MirLoanKind, MirLocalId, MirLocalKind,
     MirOperand, MirOperandKind, MirOperation, MirOperationKind, MirPlace, MirProjectionKind,
-    MirRvalue, MirRvalueKind, MirStatementKind, MirTerminatorKind, lower_to_mir,
-    MirSelectRegistration,
+    MirRvalue, MirRvalueKind, MirSelectRegistration, MirStatementKind, MirTerminatorKind,
+    lower_to_mir,
 };
 use tondo_compiler::resolve::{
     LocalId, LocalKind, MemberId, MemberKind, MemberOwner, ResolvedName, SymbolId, Visibility,

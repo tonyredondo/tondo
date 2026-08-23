@@ -18,12 +18,11 @@ use crate::types::{
 };
 
 use super::{
-
     MirAggregateKind, MirAwaitable, MirBasicBlock, MirBlockId, MirBlockKind, MirFunction,
     MirFunctionId, MirLoanId, MirLoanKind, MirLocalId, MirLocalKind, MirOperand, MirOperandKind,
     MirOperation, MirOperationKind, MirPlace, MirProgram, MirProjection, MirProjectionKind,
-    MirRvalue, MirRvalueKind, MirStatement, MirStatementKind, MirTag, MirTerminatorKind,
-    MirSelectRegistration,
+    MirRvalue, MirRvalueKind, MirSelectRegistration, MirStatement, MirStatementKind, MirTag,
+    MirTerminatorKind,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,12 +94,16 @@ enum MirOperationContext {
     Deferred,
     DeferredAsync,
     Await,
+    Select,
     Spawn,
 }
 
 impl MirOperationContext {
     fn expects_async(self) -> bool {
-        matches!(self, Self::DeferredAsync | Self::Await | Self::Spawn)
+        matches!(
+            self,
+            Self::DeferredAsync | Self::Await | Self::Select | Self::Spawn
+        )
     }
 
     fn is_deferred(self) -> bool {
@@ -515,23 +518,49 @@ fn defer_disarm_is_confirmed(
     scope: crate::hir::HirScopeId,
     pending: Option<PendingDeferTransition>,
 ) -> bool {
-    if block.statements[statement + 1..].iter().any(|statement| {
+    let tail = &block.statements[statement + 1..];
+    if tail.iter().any(|statement| {
         !matches!(
-            statement.kind,
-            MirStatementKind::ReleaseLoan(_) | MirStatementKind::DisarmCleanup(_)
+            &statement.kind,
+            MirStatementKind::ReleaseLoan(_)
+                | MirStatementKind::DisarmCleanup(_)
+                | MirStatementKind::RegisterSelectArm { .. }
         )
     }) {
         return false;
     }
+    let select_handoff = tail.iter().any(|statement| {
+        matches!(
+            &statement.kind,
+            MirStatementKind::RegisterSelectArm { registration, .. }
+                if select_registration_moves_defer_guard(registration, place)
+        )
+    });
     match pending {
         Some(PendingDeferTransition::Retarget) => false,
         Some(PendingDeferTransition::Disarm) => block_exits_defer_scope(function, block, scope),
         None => {
             terminator_moves_defer_guard(&block.terminator.kind, place)
                 || preceding_assignment_copies_complete_sum_payload(block, statement, place)
+                || select_handoff
                 || block_exits_defer_scope(function, block, scope)
         }
     }
+}
+
+fn select_registration_moves_defer_guard(
+    registration: &MirSelectRegistration,
+    guard: &LocalAccess,
+) -> bool {
+    let MirSelectRegistration::Call(operation) = registration else {
+        return false;
+    };
+    operation_operands(operation).into_iter().any(|operand| {
+        matches!(
+            operand.kind(),
+            MirOperandKind::Move(place) if LocalAccess::from_place(place) == *guard
+        )
+    })
 }
 
 fn preceding_assignment_copies_complete_sum_payload(
@@ -1728,19 +1757,15 @@ impl Verifier<'_> {
                             self.verify_operation(
                                 function,
                                 operation,
-                                MirOperationContext::Await,
+                                MirOperationContext::Select,
                                 &context,
                             )?;
                         }
                         MirSelectRegistration::Join(place) => {
                             self.verify_place(function, place, &context)?;
-                            let kind = self
-                                .hir
-                                .interner()
-                                .kind(place.ty)
-                                .map_err(|error| {
-                                    MirInvariantError::new(&context, error.to_string())
-                                })?;
+                            let kind = self.hir.interner().kind(place.ty).map_err(|error| {
+                                MirInvariantError::new(&context, error.to_string())
+                            })?;
                             if !matches!(
                                 kind,
                                 TypeKind::Intrinsic {
@@ -5383,6 +5408,12 @@ impl Verifier<'_> {
                 "call effects differ from their MIR initiation context",
             ));
         }
+        if operation_context == MirOperationContext::Select && !call_signature.is_selectable() {
+            return Err(MirInvariantError::new(
+                context,
+                "select registration call is async but not selectable",
+            ));
+        }
         if call_signature.outcome() != outcome {
             return Err(MirInvariantError::new(
                 context,
@@ -5881,10 +5912,11 @@ impl Verifier<'_> {
 
     /// Selection phase protocol: within a block, `BeginSelect` opens a
     /// region, exactly `capacity` `RegisterSelectArm` steps follow in order,
-    /// and only `CommitSelect` may close it.  Nothing else — statements or
-    /// terminators — may run while a region is open, so phases cannot be
-    /// skipped, arms cannot commit twice, the payload cannot be observed
-    /// before commit, and arm tables stay inside their checked bound.
+    /// and only `CommitSelect` may close it.  Loan reservations/releases are
+    /// permitted as compiler-generated arm preparation; no user-visible
+    /// operation or terminator may run while a region is open, so phases
+    /// cannot be skipped, arms cannot commit twice, the payload cannot be
+    /// observed before commit, and arm tables stay inside their checked bound.
     fn verify_select_flow(
         &self,
         function: &MirFunction,
@@ -5893,8 +5925,11 @@ impl Verifier<'_> {
         for (block_index, block) in function.blocks.iter().enumerate() {
             let block_context = format!("{context} block#{block_index}");
             let mut open: Option<(u32, u32)> = None;
+            let mut registered_types = Vec::new();
             for (sequence, statement) in block.statements.iter().enumerate() {
                 let statement_context = format!("{block_context} statement#{sequence}");
+                let arm_preparation_allowed =
+                    matches!(open, Some((capacity, registered)) if registered < capacity);
                 match &statement.kind {
                     MirStatementKind::BeginSelect { capacity } => {
                         if open.is_some() {
@@ -5904,8 +5939,12 @@ impl Verifier<'_> {
                             ));
                         }
                         open = Some((*capacity, 0));
+                        registered_types.clear();
                     }
-                    MirStatementKind::RegisterSelectArm { index, .. } => {
+                    MirStatementKind::RegisterSelectArm {
+                        index,
+                        registration,
+                    } => {
                         let Some((capacity, registered)) = &mut open else {
                             return Err(MirInvariantError::new(
                                 &statement_context,
@@ -5925,7 +5964,21 @@ impl Verifier<'_> {
                                 "select registrations exceed the declared arm bound",
                             ));
                         }
+                        registered_types.push(match registration {
+                            MirSelectRegistration::Call(operation) => operation.ty,
+                            MirSelectRegistration::Join(place) => {
+                                self.join_logical_outcome(place.ty(), &statement_context)?
+                            }
+                        });
                     }
+                    MirStatementKind::ReserveLoan(_) | MirStatementKind::ReleaseLoan(_)
+                        if arm_preparation_allowed => {}
+                    MirStatementKind::StorageLive(_)
+                    | MirStatementKind::StorageDead(_)
+                    | MirStatementKind::Assign { .. }
+                    | MirStatementKind::RetargetCleanup { .. }
+                    | MirStatementKind::DisarmCleanup(_)
+                        if arm_preparation_allowed => {}
                     _ if open.is_some() => {
                         return Err(MirInvariantError::new(
                             &statement_context,
@@ -5948,6 +6001,28 @@ impl Verifier<'_> {
                             &block_context,
                             "select commit table does not match its registered arms",
                         ));
+                    }
+                    for (index, arm) in arms.iter().enumerate() {
+                        let Some(payload) = arm.payload() else {
+                            continue;
+                        };
+                        let expected = registered_types.get(index).ok_or_else(|| {
+                            MirInvariantError::new(
+                                &block_context,
+                                "select commit payload has no matching registration",
+                            )
+                        })?;
+                        if payload.ty() != *expected {
+                            return Err(MirInvariantError::new(
+                                &block_context,
+                                format!(
+                                    "select payload type {} does not match registration {} type {}",
+                                    payload.ty(),
+                                    index,
+                                    expected
+                                ),
+                            ));
+                        }
                     }
                 }
                 _ if open.is_some() => {
@@ -6378,9 +6453,8 @@ impl Verifier<'_> {
                     MirTerminatorKind::CommitSelect { arms, .. } => {
                         for arm in arms {
                             if let Some(payload) = arm.payload() {
-                                terminator_events.push(LocalEvent::Write(
-                                    LocalAccess::from_place(payload),
-                                ));
+                                terminator_events
+                                    .push(LocalEvent::Write(LocalAccess::from_place(payload)));
                             }
                         }
                     }
@@ -6924,8 +6998,7 @@ impl Verifier<'_> {
                     unwind,
                 } => {
                     for loan in &state.active {
-                        if self.loan(function, *loan, &block_context)?.mode != ParameterMode::Ref
-                        {
+                        if self.loan(function, *loan, &block_context)?.mode != ParameterMode::Ref {
                             return Err(MirInvariantError::new(
                                 &block_context,
                                 "exclusive loan crosses a select suspension",
@@ -8066,16 +8139,14 @@ impl Verifier<'_> {
                 | MirStatementKind::RetargetCleanup { .. }
                 | MirStatementKind::DisarmCleanup(_)
                 | MirStatementKind::BeginSelect { .. } => {}
-                MirStatementKind::RegisterSelectArm { registration, .. } => {
-                    match registration {
-                        MirSelectRegistration::Call(operation) => {
-                            push_operation_events(operation, &mut events);
-                        }
-                        MirSelectRegistration::Join(place) => {
-                            push_destination_reads(place, false, &mut events);
-                        }
+                MirStatementKind::RegisterSelectArm { registration, .. } => match registration {
+                    MirSelectRegistration::Call(operation) => {
+                        push_operation_events(operation, &mut events);
                     }
-                }
+                    MirSelectRegistration::Join(place) => {
+                        push_destination_reads(place, false, &mut events);
+                    }
+                },
             }
         }
         match &block.terminator.kind {
@@ -8424,6 +8495,21 @@ fn mir_loan_events(function: &MirFunction, block: &MirBasicBlock) -> Vec<LoanEve
                     MirSelectRegistration::Join(_) => {}
                 }
                 events.extend(local.into_iter().map(LoanEvent::Local));
+                if let MirSelectRegistration::Call(MirOperation {
+                    kind: MirOperationKind::Call { arguments, .. },
+                    ..
+                }) = registration
+                {
+                    events.push(LoanEvent::Consume(
+                        arguments
+                            .iter()
+                            .filter_map(|argument| match &argument.value.kind {
+                                MirOperandKind::Loan(loan) => Some(*loan),
+                                _ => None,
+                            })
+                            .collect(),
+                    ));
+                }
             }
         }
     }
@@ -8566,8 +8652,7 @@ fn tag_events(function: &MirFunction, block: &MirBasicBlock) -> Vec<TagEvent> {
             MirStatementKind::RegisterDefer { action, .. } => {
                 push_tag_operation(function, action, &mut events);
             }
-            MirStatementKind::BeginSelect { .. }
-            | MirStatementKind::RegisterSelectArm { .. } => {}
+            MirStatementKind::BeginSelect { .. } | MirStatementKind::RegisterSelectArm { .. } => {}
         }
     }
     match &block.terminator.kind {
@@ -9876,9 +9961,7 @@ mod tests {
              selected\n\
          }\n";
 
-    fn select_run_function_mut(
-        program: &mut MirProgram,
-    ) -> &mut crate::mir::MirFunction {
+    fn select_run_function_mut(program: &mut MirProgram) -> &mut crate::mir::MirFunction {
         program
             .functions_mut_for_tests()
             .values_mut()
@@ -9908,9 +9991,8 @@ mod tests {
     fn assert_select_flow_error(source_mutation: impl FnOnce(&mut MirProgram), needle: &str) {
         let (resolved, hir, mut mir) = checked_mir(SELECT_MIR_SOURCE);
         source_mutation(&mut mir);
-        let error = verify_mir(&resolved, &hir, &mir)
-            .err()
-            .expect("the forged selection must be rejected");
+        let error =
+            verify_mir(&resolved, &hir, &mir).expect_err("the forged selection must be rejected");
         let message = error.to_string();
         assert!(
             message.contains(needle),
@@ -9924,10 +10006,11 @@ mod tests {
             |program| {
                 let function = select_run_function_mut(program);
                 let index = region_block(function);
-                function
-                    .blocks_mut_for_tests()[index]
+                function.blocks_mut_for_tests()[index]
                     .statements_mut_for_tests()
-                    .retain(|statement| !matches!(statement.kind(), MirStatementKind::BeginSelect { .. }));
+                    .retain(|statement| {
+                        !matches!(statement.kind(), MirStatementKind::BeginSelect { .. })
+                    });
             },
             "outside a selection region",
         );
@@ -9942,10 +10025,9 @@ mod tests {
                 let statements = function.blocks_mut_for_tests()[index].statements_mut_for_tests();
                 let position = statements
                     .iter()
-                    .position(|statement| matches!(
-                        statement.kind(),
-                        MirStatementKind::RegisterSelectArm { .. }
-                    ))
+                    .position(|statement| {
+                        matches!(statement.kind(), MirStatementKind::RegisterSelectArm { .. })
+                    })
                     .expect("a registration exists");
                 let duplicate = statements[position].clone();
                 statements.insert(position + 1, duplicate);
@@ -9977,10 +10059,9 @@ mod tests {
                 let statements = function.blocks_mut_for_tests()[index].statements_mut_for_tests();
                 let position = statements
                     .iter()
-                    .position(|statement| matches!(
-                        statement.kind(),
-                        MirStatementKind::RegisterSelectArm { .. }
-                    ))
+                    .position(|statement| {
+                        matches!(statement.kind(), MirStatementKind::RegisterSelectArm { .. })
+                    })
                     .expect("a registration exists");
                 statements.insert(position + 1, smuggled);
             },
@@ -9994,14 +10075,15 @@ mod tests {
             |program| {
                 let function = select_run_function_mut(program);
                 let index = region_block(function);
-                function
-                    .blocks_mut_for_tests()[index]
+                function.blocks_mut_for_tests()[index]
                     .statements_mut_for_tests()
-                    .retain(|statement| matches!(
-                        statement.kind(),
-                        MirStatementKind::BeginSelect { .. }
-                            | MirStatementKind::RegisterSelectArm { .. }
-                    ) == false);
+                    .retain(|statement| {
+                        !matches!(
+                            statement.kind(),
+                            MirStatementKind::BeginSelect { .. }
+                                | MirStatementKind::RegisterSelectArm { .. }
+                        )
+                    });
             },
             "no open selection region",
         );
@@ -10016,10 +10098,9 @@ mod tests {
                 let statements = function.blocks_mut_for_tests()[index].statements_mut_for_tests();
                 let begin = statements
                     .iter()
-                    .position(|statement| matches!(
-                        statement.kind(),
-                        MirStatementKind::BeginSelect { .. }
-                    ))
+                    .position(|statement| {
+                        matches!(statement.kind(), MirStatementKind::BeginSelect { .. })
+                    })
                     .expect("begin exists");
                 let reopened = statements[begin].clone();
                 statements.insert(begin + 1, reopened);
@@ -10037,10 +10118,9 @@ mod tests {
                 let statements = function.blocks_mut_for_tests()[index].statements_mut_for_tests();
                 let position = statements
                     .iter()
-                    .position(|statement| matches!(
-                        statement.kind(),
-                        MirStatementKind::BeginSelect { .. }
-                    ))
+                    .position(|statement| {
+                        matches!(statement.kind(), MirStatementKind::BeginSelect { .. })
+                    })
                     .expect("begin exists");
                 statements[position] = MirStatement {
                     span: statements[position].span,
@@ -10061,10 +10141,9 @@ mod tests {
                 let statements = function.blocks_mut_for_tests()[index].statements_mut_for_tests();
                 let position = statements
                     .iter()
-                    .position(|statement| matches!(
-                        statement.kind(),
-                        MirStatementKind::RegisterSelectArm { .. }
-                    ))
+                    .position(|statement| {
+                        matches!(statement.kind(), MirStatementKind::RegisterSelectArm { .. })
+                    })
                     .expect("a registration exists");
                 (
                     statements[position].span,
@@ -10089,13 +10168,9 @@ mod tests {
                 },
             };
         }
-        let error = verify_mir(&resolved, &hir, &mir)
-            .err()
-            .expect("a non-Join handle must be rejected");
-        assert!(
-            format!("{error}").contains("non-Join handle"),
-            "{error}"
-        );
+        let error =
+            verify_mir(&resolved, &hir, &mir).expect_err("a non-Join handle must be rejected");
+        assert!(format!("{error}").contains("non-Join handle"), "{error}");
     }
 
     #[test]
@@ -10107,15 +10182,80 @@ mod tests {
                 let statements = function.blocks_mut_for_tests()[index].statements_mut_for_tests();
                 let position = statements
                     .iter()
-                    .position(|statement| matches!(
-                        statement.kind(),
-                        MirStatementKind::RegisterSelectArm { index: 0, .. }
-                    ))
+                    .position(|statement| {
+                        matches!(
+                            statement.kind(),
+                            MirStatementKind::RegisterSelectArm { index: 0, .. }
+                        )
+                    })
                     .expect("arm 0 registration exists");
                 statements.remove(position);
             },
             "does not match its registered arms",
         );
+    }
+
+    #[test]
+    fn select_verifier_rejects_a_payload_type_mismatch() {
+        let (resolved, hir, mut mir) = checked_mir(SELECT_MIR_SOURCE);
+        let wrong_type = hir.interner().scalar(ScalarType::String);
+        let (block_index, terminator) = {
+            let function = select_run_function_mut(&mut mir);
+            function
+                .blocks()
+                .enumerate()
+                .find_map(|(index, block)| {
+                    matches!(
+                        block.terminator().kind(),
+                        MirTerminatorKind::CommitSelect { .. }
+                    )
+                    .then(|| (index, block.terminator().clone()))
+                })
+                .expect("the fixture contains a select commit")
+        };
+        let MirTerminatorKind::CommitSelect {
+            mut arms,
+            else_target,
+            unwind,
+        } = terminator.kind
+        else {
+            unreachable!("the fixture contains a select commit");
+        };
+        let original = arms[0].payload().cloned().expect("the arm binds a payload");
+        let target = arms[0].target();
+        arms[0] = crate::mir::MirSelectArm::new(
+            Some(crate::mir::MirPlace {
+                ty: wrong_type,
+                ..original
+            }),
+            target,
+        );
+        let function = select_run_function_mut(&mut mir);
+        function.blocks_mut_for_tests()[block_index].set_terminator_for_tests(MirTerminator {
+            span: terminator.span,
+            kind: MirTerminatorKind::CommitSelect {
+                arms,
+                else_target,
+                unwind,
+            },
+        });
+        let capabilities = CapabilityAnalysis::new(&hir, &resolved).unwrap();
+        let terminal_analysis = TerminalAnalysis::new(&hir, &resolved).unwrap();
+        let verifier = Verifier {
+            resolved: &resolved,
+            hir: &hir,
+            capability_analysis: &capabilities,
+            terminal_analysis,
+            capability_statuses: RefCell::new(BTreeMap::new()),
+            terminal_statuses: RefCell::new(BTreeMap::new()),
+            limits: MirVerificationLimits::default(),
+            dataflow_steps: Cell::new(0),
+        };
+        let function = select_run_function_mut(&mut mir);
+        let error = verifier
+            .verify_select_flow(function, "select payload test")
+            .expect_err("a mismatched select payload must be rejected");
+        assert!(error.message().contains("payload type"), "{error}");
     }
 
     #[test]

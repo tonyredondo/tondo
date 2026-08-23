@@ -2,9 +2,9 @@
 
 **Status:** implementation evidence is covered in the hosted VM; the
 distribution/conformance identity remains pending for the unpublished Tondo
-0.1 draft. La ABI ejecutable todavía publica `sleep` y `Timer.wait` como
-`suspends`; la especificación canónica los eleva a `selectable` y el tracker no
-considera esa migración implementada hasta `STD-A-SELECTABLE-IMPL-001`.
+0.1 draft. La ABI ejecutable publica `sleep` y `Timer.wait` como
+`selectable`: una llamada directa sigue esperando implícitamente y ambas
+operaciones pueden registrarse como brazos de `select`.
 
 This contract describes the first `std.time` slice. It contains only a
 monotonic time-base: civil dates, wall-clock time, time zones, and calendar
@@ -42,11 +42,11 @@ pub enum ClockError {
 pub fn now(): Instant ! ClockError
 pub fn resolution(): Duration ! ClockError
 pub fn deadline(after: Duration): Instant ! ClockError
-pub fn sleep(delay: Duration): Unit ! ClockError suspends
+pub fn sleep(delay: Duration): Unit ! ClockError selectable
 
 pub fn Timer.after(delay: Duration): Timer ! ClockError
 pub fn Timer.at(deadline: Instant): Timer ! ClockError
-pub fn Timer.wait(self): Unit ! ClockError suspends
+pub fn Timer.wait(self): Unit ! ClockError selectable
 pub fn Timer.cancel(self): Unit
 ~~~
 

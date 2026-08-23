@@ -3327,6 +3327,14 @@ impl HirBootstrapHostFunction {
         )
     }
 
+    /// Host operations with an atomic prepare/register/commit protocol.
+    pub const fn is_selectable(self) -> bool {
+        matches!(
+            self,
+            Self::AsyncWaiterWait | Self::TimeSleep | Self::TimerWait
+        )
+    }
+
     pub const fn is_unsafe(self) -> bool {
         matches!(self, Self::JsonRawUnchecked | Self::MessagePackRawUnchecked)
     }

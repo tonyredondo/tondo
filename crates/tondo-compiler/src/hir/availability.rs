@@ -1385,8 +1385,8 @@ impl<'a, 'f> Analyzer<'a, 'f> {
     /// Availability flow for a `select`: arm operations register left to
     /// right over the incoming state, then exactly one body runs.  Bodies are
     /// modeled as `if` branches from the post-registration state because the
-    /// commit picks one winner; the payload itself is a fresh temporary that
-    /// never aliases pre-declared locals.
+    /// commit picks one winner; a Join owner is transferred only in its own
+    /// winning branch and remains available in loser/else branches.
     fn select_expression(
         &mut self,
         arms: &[super::HirSelectArm],
@@ -1403,14 +1403,20 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         }
         let mut accumulated = AvailabilityFlow::default();
         let mut current = state;
+        let mut join_owners = Vec::with_capacity(arms.len());
         for piece in arms {
             // Registration must not consume a pending `Join`: descend past
             // propagate wrappers and observe the operand instead of letting
-            // the generic `Await` handler transfer it.  Losers are restored;
-            // branch-sensitive ownership lands with ASYNC-SELECT-OWN-001.
+            // the generic `Await` handler transfer it.  The winning body
+            // below consumes that owner on its own branch; loser and `else`
+            // branches retain it.
             let mut root = piece.operation();
             loop {
-                let next = match self.program.expression(root).map(super::HirExpression::kind) {
+                let next = match self
+                    .program
+                    .expression(root)
+                    .map(super::HirExpression::kind)
+                {
                     Some(HirExpressionKind::PropagateOption { value })
                     | Some(HirExpressionKind::PropagateResult { value, .. }) => Some(*value),
                     _ => None,
@@ -1439,14 +1445,37 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             };
             accumulated.merge(operation_flow);
             current = next;
+            join_owners.push(
+                match self
+                    .program
+                    .expression(root)
+                    .map(super::HirExpression::kind)
+                {
+                    Some(HirExpressionKind::Await { operation }) => Some(*operation),
+                    _ => None,
+                },
+            );
         }
-        for piece in arms {
-            let body_flow = self.expression(
-                piece.body(),
-                current.clone(),
-                Demand::Transfer,
-                live_after,
-            )?;
+        for (piece, join_owner) in arms.iter().zip(join_owners) {
+            let branch_entry = if let Some(join_owner) = join_owner {
+                let transfer_flow = self.expression(
+                    join_owner,
+                    current.clone(),
+                    Demand::Transfer,
+                    &BTreeSet::new(),
+                )?;
+                match transfer_flow.normal {
+                    Some(transfer) => transfer,
+                    None => {
+                        accumulated.merge(transfer_flow);
+                        continue;
+                    }
+                }
+            } else {
+                current.clone()
+            };
+            let body_flow =
+                self.expression(piece.body(), branch_entry, Demand::Transfer, live_after)?;
             accumulated.merge(body_flow);
         }
         if let Some(else_body) = else_body {
@@ -1463,7 +1492,8 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         else_branch: Option<HirExpressionId>,
         state: AvailabilityState,
         live_after: &BTreeSet<LocalId>,
-    ) -> Result<AvailabilityFlow, TypeError> {        let mut branch_uses = self.expression_entry_liveness(then_branch, live_after);
+    ) -> Result<AvailabilityFlow, TypeError> {
+        let mut branch_uses = self.expression_entry_liveness(then_branch, live_after);
         if let Some(else_branch) = else_branch {
             branch_uses.extend(
                 self.expression_entry_liveness(else_branch, live_after)

@@ -64,15 +64,13 @@ lo conserva. `Join` solo nace de
 `spawn` y se consume mediante `await handle`; la cancelación y el detach son
 operaciones terminales estructuradas. `await` delante de una llamada directa es
 inválido; solo un `Join` pendiente exige `await handle`. `Waiter.wait()` es una
-llamada suspendible directa y espera implícitamente. La inferencia de cuerpos es transitiva y nunca depende del
+llamada `selectable` directa y espera implícitamente. La inferencia de cuerpos es transitiva y nunca depende del
 nombre de una función; `@sync`/`@nosuspend` rechaza cualquier camino que
 suspenda.
 
 La especificación canónica incorpora además `select` y eleva `Waiter.wait` a
-`selectable`. Este resumen conserva la firma `suspends` mientras describe la
-implementación ejecutable actual; `STD-A-SELECTABLE-IMPL-001` debe migrar owner,
-ABI, evidencia y este bloque conjuntamente, sin añadir `std.async.select` ni
-otra operación pública.
+`selectable`; `sleep` y `Timer.wait` conservan la misma capacidad en el
+contrato de tiempo. No se añade `std.async.select` ni otra operación pública.
 
 ```tondo
 pub type Join[T, E]
@@ -81,7 +79,7 @@ pub type Completer[T, E]
 pub type AlreadyCompleted
 
 pub fn oneshot[T, E](): (Waiter[T, E], Completer[T, E])
-pub fn Waiter.wait(var self): T ! E suspends
+pub fn Waiter.wait(var self): T ! E selectable
 pub fn Completer.complete(var self, value: T): Unit ! AlreadyCompleted
 pub fn Completer.fail(var self, error: E): Unit ! AlreadyCompleted
 pub fn Completer.cancel(var self): Unit ! AlreadyCompleted

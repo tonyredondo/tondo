@@ -14,6 +14,7 @@
     "bodyful_inference": "allowed",
     "inference_by_name": false,
     "effect_in_interface_and_abi": true,
+    "selectable_effects": ["waiter-wait"],
     "direct_call_waits": true,
     "explicit_await_direct_call": "forbidden",
     "explicit_await_handle": "required",
@@ -28,7 +29,7 @@
   ],
   "signatures": [
     {"id":"oneshot","signature":"pub fn oneshot[T, E](): (Waiter[T, E], Completer[T, E])","effect":"sync","kind":"constructor"},
-    {"id":"waiter-wait","signature":"pub fn Waiter.wait(var self): T ! E suspends","effect":"suspends","kind":"method"},
+    {"id":"waiter-wait","signature":"pub fn Waiter.wait(var self): T ! E selectable","effect":"selectable","kind":"method"},
     {"id":"completer-complete","signature":"pub fn Completer.complete(var self, value: T): Unit ! AlreadyCompleted","effect":"sync","kind":"method"},
     {"id":"completer-fail","signature":"pub fn Completer.fail(var self, error: E): Unit ! AlreadyCompleted","effect":"sync","kind":"method"},
     {"id":"completer-cancel","signature":"pub fn Completer.cancel(var self): Unit ! AlreadyCompleted","effect":"sync","kind":"method"},

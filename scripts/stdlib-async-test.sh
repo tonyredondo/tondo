@@ -30,7 +30,7 @@ for marker in \
     'pub type Join[T, E]' \
     'pub type Waiter[T, E]' \
     'pub type Completer[T, E]' \
-    'pub fn Waiter.wait(var self): T ! E suspends' \
+    'pub fn Waiter.wait(var self): T ! E selectable' \
     'pub fn Completer.complete(var self, value: T): Unit ! AlreadyCompleted' \
     'fn next(mut self): T? suspends' \
     'pub fn AsyncIterator.collect[T](var self, limit: Int): Array[T] ! CollectionError suspends'; do
@@ -78,6 +78,7 @@ grep -Fq 'async_iterator_collect_spawn_uses_the_same_generic_cursor_and_cancella
 jq -e '
   .owner == "std.async"
   and any(.signatures[]; .id == "async-iterator-collect" and .effect == "suspends")
+  and any(.signatures[]; .id == "waiter-wait" and .effect == "selectable")
   and .surface.bodyless_requires_effect == true
   and .surface.inference_by_name == false
   and .implementation.status == "verified"

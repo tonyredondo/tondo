@@ -618,12 +618,16 @@ enum OperationContext {
     Deferred,
     DeferredAsync,
     Await,
+    Select,
     Spawn,
 }
 
 impl OperationContext {
     fn expects_async(self) -> bool {
-        matches!(self, Self::DeferredAsync | Self::Await | Self::Spawn)
+        matches!(
+            self,
+            Self::DeferredAsync | Self::Await | Self::Select | Self::Spawn
+        )
     }
 
     fn is_deferred(self) -> bool {
@@ -3633,44 +3637,41 @@ impl Verifier<'_> {
                     ));
                 }
             }
-            BytecodeInstructionKind::RegisterSelectArm {
-                    registration,
-                    ..
-                } => {
-                    if block_kind != BytecodeBlockKind::Normal
-                        || !self.function_is_async(function, context)?
-                    {
-                        return Err(BytecodeVerificationError::new(
+            BytecodeInstructionKind::RegisterSelectArm { registration, .. } => {
+                if block_kind != BytecodeBlockKind::Normal
+                    || !self.function_is_async(function, context)?
+                {
+                    return Err(BytecodeVerificationError::new(
+                        context,
+                        "select registration appears outside ordinary async code",
+                    ));
+                }
+                match registration {
+                    BytecodeSelectRegistration::Call(operation) => {
+                        self.verify_operation(
+                            function,
+                            operation,
+                            OperationContext::Select,
                             context,
-                            "select registration appears outside ordinary async code",
-                        ));
+                        )?;
                     }
-                    match registration {
-                        BytecodeSelectRegistration::Call(operation) => {
-                            self.verify_operation(
-                                function,
-                                operation,
-                                OperationContext::Await,
-                                context,
-                            )?;
-                        }
-                        BytecodeSelectRegistration::Join(place) => {
-                            self.verify_place(function, place, context)?;
-                            if !matches!(
-                                self.ty(place.ty, context)?.kind,
-                                BytecodeTypeKind::Intrinsic {
-                                    constructor: BytecodeIntrinsicType::Join,
-                                    ..
-                                }
-                            ) {
-                                return Err(BytecodeVerificationError::new(
-                                    context,
-                                    "select registered a non-Join handle",
-                                ));
+                    BytecodeSelectRegistration::Join(place) => {
+                        self.verify_place(function, place, context)?;
+                        if !matches!(
+                            self.ty(place.ty, context)?.kind,
+                            BytecodeTypeKind::Intrinsic {
+                                constructor: BytecodeIntrinsicType::Join,
+                                ..
                             }
+                        ) {
+                            return Err(BytecodeVerificationError::new(
+                                context,
+                                "select registered a non-Join handle",
+                            ));
                         }
                     }
                 }
+            }
             BytecodeInstructionKind::RegisterFallback { owner, .. } => {
                 if block_kind != BytecodeBlockKind::Normal {
                     return Err(BytecodeVerificationError::new(
@@ -5975,6 +5976,12 @@ impl Verifier<'_> {
                 "call effects differ from their bytecode initiation context",
             ));
         }
+        if operation_context == OperationContext::Select && !function_type.is_selectable {
+            return Err(BytecodeVerificationError::new(
+                context,
+                "select registration call is async but not selectable",
+            ));
+        }
         if function_type.outcome != outcome {
             return Err(operation_error(context));
         }
@@ -6938,10 +6945,11 @@ impl Verifier<'_> {
 
     /// Selection phase protocol: within a block, `BeginSelect` opens a
     /// region, exactly `capacity` `RegisterSelectArm` steps follow in order,
-    /// and only `CommitSelect` may close it.  Nothing else — statements or
-    /// terminators — may run while a region is open, so phases cannot be
-    /// skipped, arms cannot commit twice, the payload cannot be observed
-    /// before commit, and arm tables stay inside their checked bound.
+    /// and only `CommitSelect` may close it.  Loan and storage preparation
+    /// emitted for arm arguments is permitted; no user-visible operation or
+    /// terminator may run while a region is open, so phases cannot be skipped,
+    /// arms cannot commit twice, the payload cannot be observed before commit,
+    /// and arm tables stay inside their checked bound.
     fn verify_select_flow(
         &self,
         function: &BytecodeFunction,
@@ -6950,8 +6958,11 @@ impl Verifier<'_> {
         for (block_index, block) in function.blocks.iter().enumerate() {
             let block_context = format!("{context} block#{block_index}");
             let mut open: Option<(u32, u32)> = None;
+            let mut registered_types = Vec::new();
             for (sequence, instruction) in block.instructions.iter().enumerate() {
                 let statement_context = format!("{block_context} instruction#{sequence}");
+                let arm_preparation_allowed =
+                    matches!(open, Some((capacity, registered)) if registered < capacity);
                 match &instruction.kind {
                     BytecodeInstructionKind::BeginSelect { capacity } => {
                         if open.is_some() {
@@ -6961,8 +6972,12 @@ impl Verifier<'_> {
                             ));
                         }
                         open = Some((*capacity, 0));
+                        registered_types.clear();
                     }
-                    BytecodeInstructionKind::RegisterSelectArm { index, .. } => {
+                    BytecodeInstructionKind::RegisterSelectArm {
+                        index,
+                        registration,
+                    } => {
                         let Some((capacity, registered)) = &mut open else {
                             return Err(BytecodeVerificationError::new(
                                 &statement_context,
@@ -6982,7 +6997,21 @@ impl Verifier<'_> {
                                 "select registrations exceed the declared arm bound",
                             ));
                         }
+                        registered_types.push(match registration {
+                            BytecodeSelectRegistration::Call(operation) => operation.ty,
+                            BytecodeSelectRegistration::Join(place) => {
+                                self.join_logical_outcome(place.ty, &statement_context)?
+                            }
+                        });
                     }
+                    BytecodeInstructionKind::ReserveLoan(_)
+                    | BytecodeInstructionKind::ReleaseLoan(_)
+                    | BytecodeInstructionKind::StorageLive(_)
+                    | BytecodeInstructionKind::StorageDead(_)
+                    | BytecodeInstructionKind::Store { .. }
+                    | BytecodeInstructionKind::RetargetCleanup { .. }
+                    | BytecodeInstructionKind::DisarmCleanup(_)
+                        if arm_preparation_allowed => {}
                     _ if open.is_some() => {
                         return Err(BytecodeVerificationError::new(
                             &statement_context,
@@ -7005,6 +7034,26 @@ impl Verifier<'_> {
                             &block_context,
                             "select commit table does not match its registered arms",
                         ));
+                    }
+                    for (index, arm) in arms.iter().enumerate() {
+                        let Some(payload) = arm.payload() else {
+                            continue;
+                        };
+                        let expected = registered_types.get(index).ok_or_else(|| {
+                            BytecodeVerificationError::new(
+                                &block_context,
+                                "select commit payload has no matching registration",
+                            )
+                        })?;
+                        if payload.ty != *expected {
+                            return Err(BytecodeVerificationError::new(
+                                &block_context,
+                                format!(
+                                    "select payload type {:?} does not match registration {} type {:?}",
+                                    payload.ty, index, expected
+                                ),
+                            ));
+                        }
                     }
                 }
                 _ if open.is_some() => {
@@ -7036,7 +7085,7 @@ impl Verifier<'_> {
                 )
             })
             .filter_map(|instruction| match &instruction.kind {
-            BytecodeInstructionKind::RegisterFallback { owner, .. } => {
+                BytecodeInstructionKind::RegisterFallback { owner, .. } => {
                     Some(LocalAccess::from_place(owner))
                 }
                 _ => None,
@@ -7976,7 +8025,7 @@ impl Verifier<'_> {
                     }
                     propagate(*unwind, LoanFlowState::default())?;
                 }
-            BytecodeTerminatorKind::Spawn {
+                BytecodeTerminatorKind::Spawn {
                     destination,
                     target,
                     unwind,
@@ -10028,26 +10077,49 @@ fn defer_disarm_is_confirmed(
     scope: BytecodeScopeId,
     pending: Option<PendingDeferTransition>,
 ) -> bool {
-    if block.instructions[instruction + 1..]
-        .iter()
-        .any(|instruction| {
-            !matches!(
-                instruction.kind,
-                BytecodeInstructionKind::ReleaseLoan(_) | BytecodeInstructionKind::DisarmCleanup(_)
-            )
-        })
-    {
+    let tail = &block.instructions[instruction + 1..];
+    if tail.iter().any(|instruction| {
+        !matches!(
+            &instruction.kind,
+            BytecodeInstructionKind::ReleaseLoan(_)
+                | BytecodeInstructionKind::DisarmCleanup(_)
+                | BytecodeInstructionKind::RegisterSelectArm { .. }
+        )
+    }) {
         return false;
     }
+    let select_handoff = tail.iter().any(|instruction| {
+        matches!(
+            &instruction.kind,
+            BytecodeInstructionKind::RegisterSelectArm { registration, .. }
+                if select_registration_moves_defer_guard(registration, place)
+        )
+    });
     match pending {
         Some(PendingDeferTransition::Retarget) => false,
         Some(PendingDeferTransition::Disarm) => block_exits_defer_scope(function, block, scope),
         None => {
             terminator_moves_defer_guard(&block.terminator.kind, place)
                 || preceding_store_copies_complete_sum_payload(block, instruction, place)
+                || select_handoff
                 || block_exits_defer_scope(function, block, scope)
         }
     }
+}
+
+fn select_registration_moves_defer_guard(
+    registration: &BytecodeSelectRegistration,
+    guard: &LocalAccess,
+) -> bool {
+    let BytecodeSelectRegistration::Call(operation) = registration else {
+        return false;
+    };
+    operation_operands(operation).into_iter().any(|operand| {
+        matches!(
+            &operand.kind,
+            BytecodeOperandKind::Move(place) if LocalAccess::from_place(place) == *guard
+        )
+    })
 }
 
 fn preceding_store_copies_complete_sum_payload(
@@ -10321,16 +10393,26 @@ fn bytecode_loan_events(function: &BytecodeFunction, block: &BytecodeBlock) -> V
             | BytecodeInstructionKind::RetargetCleanup { .. }
             | BytecodeInstructionKind::DisarmCleanup(_)
             | BytecodeInstructionKind::BeginSelect { .. } => {}
-            BytecodeInstructionKind::RegisterSelectArm {
-                registration,
-                ..
-            } => {
+            BytecodeInstructionKind::RegisterSelectArm { registration, .. } => {
                 let mut local = Vec::new();
                 if let BytecodeSelectRegistration::Call(operation) = registration {
                     push_operation_events(operation, &mut local);
                 }
                 events.extend(local.into_iter().map(LoanEvent::Local));
-            },
+                if let BytecodeSelectRegistration::Call(operation) = registration
+                    && let BytecodeOperationKind::Call { arguments, .. } = &operation.kind
+                {
+                    events.push(LoanEvent::Consume(
+                        arguments
+                            .iter()
+                            .filter_map(|argument| match &argument.value.kind {
+                                BytecodeOperandKind::Loan(loan) => Some(*loan),
+                                _ => None,
+                            })
+                            .collect(),
+                    ));
+                }
+            }
         }
     }
     let mut local = Vec::new();
@@ -11319,15 +11401,12 @@ fn local_events(function: &BytecodeFunction, block: &BytecodeBlock) -> Vec<Local
             | BytecodeInstructionKind::RetargetCleanup { .. }
             | BytecodeInstructionKind::DisarmCleanup(_)
             | BytecodeInstructionKind::BeginSelect { .. } => {}
-            BytecodeInstructionKind::RegisterSelectArm {
-                registration,
-                ..
-            } => match registration {
+            BytecodeInstructionKind::RegisterSelectArm { registration, .. } => match registration {
                 BytecodeSelectRegistration::Call(operation) => {
                     push_operation_events(operation, &mut events);
                 }
                 BytecodeSelectRegistration::Join(_) => {}
-            }
+            },
         }
     }
     match &block.terminator.kind {

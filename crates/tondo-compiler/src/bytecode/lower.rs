@@ -3,7 +3,6 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use tondo_vm::bytecode as bc;
 
 use super::{BytecodeError, BytecodeLoweringLimits};
-use crate::mir::MirSelectRegistration;
 use crate::hir::{
     CapabilityAnalysis, CapabilityAssumptions, HirBootstrapHostFunction, HirCallProtocol,
     HirCallableId, HirCapability, HirClosureId, HirConstantValue, HirConstantValueKind,
@@ -11,6 +10,7 @@ use crate::hir::{
     HirTraitConstructor, HirTraitMethodKey, HirTypeDeclarationKind, HirVariantPayload, TraitQuery,
     TraitSelectionError, analyze_closure_captures, select_implementation,
 };
+use crate::mir::MirSelectRegistration;
 use crate::mir::{
     MirAggregateKind, MirAwaitable, MirBasicBlock, MirBlockKind, MirCallArgument, MirConstant,
     MirFunction, MirLoanKind, MirLocalKind, MirOperand, MirOperandKind, MirOperation,
@@ -3035,11 +3035,9 @@ fn lower_statement(
     type_map: &BTreeMap<TypeId, TypeId>,
 ) -> Result<bc::BytecodeInstruction, BytecodeError> {
     let kind = match statement.kind() {
-        MirStatementKind::BeginSelect { capacity } => {
-            bc::BytecodeInstructionKind::BeginSelect {
-                capacity: *capacity,
-            }
-        }
+        MirStatementKind::BeginSelect { capacity } => bc::BytecodeInstructionKind::BeginSelect {
+            capacity: *capacity,
+        },
         MirStatementKind::RegisterSelectArm {
             index,
             registration,
@@ -3049,9 +3047,9 @@ fn lower_statement(
                 MirSelectRegistration::Call(operation) => bc::BytecodeSelectRegistration::Call(
                     lower_operation(operation, false, context, type_map)?,
                 ),
-                MirSelectRegistration::Join(place) => bc::BytecodeSelectRegistration::Join(
-                    lower_place(place, context, type_map)?,
-                ),
+                MirSelectRegistration::Join(place) => {
+                    bc::BytecodeSelectRegistration::Join(lower_place(place, context, type_map)?)
+                }
             },
         },
         MirStatementKind::StorageLive(local) => {
@@ -4697,12 +4695,11 @@ mod tests {
         if let bc::BytecodeInstructionKind::RegisterSelectArm { index, .. } = &duplicate.kind {
             let _ = index;
         }
-        function.blocks[0].instructions.insert(position + 1, duplicate);
+        function.blocks[0]
+            .instructions
+            .insert(position + 1, duplicate);
         let error = bc::verify_bytecode(&program).expect_err("duplicate phase must fail");
-        assert!(
-            error.message().contains("skips or duplicates"),
-            "{error:?}"
-        );
+        assert!(error.message().contains("skips or duplicates"), "{error:?}");
     }
 
     #[test]
@@ -4715,11 +4712,10 @@ mod tests {
                 .flat_map(|candidate| candidate.blocks.iter())
                 .flat_map(|block| block.instructions.iter())
                 .find(|instruction| {
-                    matches!(instruction.kind, bc::BytecodeInstructionKind::StorageLive(_))
-                        || matches!(
-                            instruction.kind,
-                            bc::BytecodeInstructionKind::Store { .. }
-                        )
+                    matches!(
+                        instruction.kind,
+                        bc::BytecodeInstructionKind::StorageLive(_)
+                    ) || matches!(instruction.kind, bc::BytecodeInstructionKind::Store { .. })
                 })
                 .cloned()
                 .expect("another function supplies a benign instruction");
@@ -4782,13 +4778,11 @@ mod tests {
              fn run(): Int suspends {\n\
                  let pending = prepare()\n\
                  let selected = select {\n\
-                     ready() => 1\n\
+                     ready() => await pending\n\
                      await pending => 4\n\
-                     else => 0\n\
+                     else => await pending\n\
                  }\n\
-                 _ = selected\n\
-                 let done = await pending\n\
-                 done\n\
+                 selected\n\
              }\n";
         let program = lowered(source);
         bc::verify_bytecode(&program).expect("multi-arm select verifies");
@@ -4813,22 +4807,146 @@ mod tests {
     }
 
     #[test]
-    fn select_runtime_boundary_reports_the_pending_cooperative_selector() {
+    fn select_runtime_takes_else_before_a_runnable_arm_completes() {
         let program = lowered(SELECT_SOURCE);
         bc::verify_bytecode(&program).expect("select bytecode verifies");
         let entry = function_id(&program, "run");
         let mut host = RejectingHost;
-        let error = execute_with_limits(&program, entry, &mut host, VmLimits::default())
-            .expect_err("the cooperative selector lands with ASYNC-SELECT-RUNTIME-001");
-        match error {
-            VmError::Invariant(message) => {
-                assert!(
-                    message.contains("ASYNC-SELECT-RUNTIME-001"),
-                    "{message}"
-                );
-            }
-            other => panic!("expected the select runtime boundary, got {other}"),
-        }
+        let execution = execute_with_limits(&program, entry, &mut host, VmLimits::default())
+            .expect("the non-blocking selector completes without a task scope");
+        assert_eq!(
+            execution.outcome,
+            VmOutcome::Returned(RuntimeValue::Integer(0))
+        );
+    }
+
+    #[test]
+    fn select_runtime_waits_for_a_selectable_call_and_consumes_only_the_winner() {
+        let program = lowered(
+            "fn work(): Int selectable { 4 }\n\
+             fn run(): Int suspends {\n\
+                 let selected = select {\n\
+                     let value = work() => value\n\
+                 }\n\
+                 selected\n\
+             }\n",
+        );
+        bc::verify_bytecode(&program).expect("join select bytecode verifies");
+        let mut host = RejectingHost;
+        let execution = execute_with_limits(
+            &program,
+            function_id(&program, "run"),
+            &mut host,
+            VmLimits::default(),
+        )
+        .expect("a completed join arm must wake its selector");
+        assert_eq!(
+            execution.outcome,
+            VmOutcome::Returned(RuntimeValue::Integer(4))
+        );
+    }
+
+    #[test]
+    fn select_runtime_consumes_a_join_winner() {
+        let program = lowered(
+            "fn work(): Int suspends { 4 }\n\
+             fn prepare(): Join[Int, Never] {\n\
+                 scope {\n\
+                     return spawn work()\n\
+                 }\n\
+             }\n\
+             fn run(): Int suspends {\n\
+                 let pending = prepare()\n\
+                 let selected = select {\n\
+                     let value = await pending => value\n\
+                 }\n\
+                 selected\n\
+             }\n",
+        );
+        bc::verify_bytecode(&program).expect("join select bytecode verifies");
+        let mut host = RejectingHost;
+        let execution = execute_with_limits(
+            &program,
+            function_id(&program, "run"),
+            &mut host,
+            VmLimits::default(),
+        )
+        .expect("a completed join arm must wake its selector");
+        assert_eq!(
+            execution.outcome,
+            VmOutcome::Returned(RuntimeValue::Integer(4))
+        );
+    }
+
+    #[test]
+    fn select_runtime_preserves_and_then_consumes_a_join_loser() {
+        let program = lowered(
+            "fn left_work(): Int suspends { 1 }\n\
+             fn right_work(): Int suspends { 2 }\n\
+             fn left_job(): Join[Int, Never] {\n\
+                 scope {\n\
+                     return spawn left_work()\n\
+                 }\n\
+             }\n\
+             fn right_job(): Join[Int, Never] {\n\
+                 scope {\n\
+                     return spawn right_work()\n\
+                 }\n\
+             }\n\
+             fn run(): Int suspends {\n\
+                 let left = left_job()\n\
+                 let right = right_job()\n\
+                 let selected = select {\n\
+                     let first = await left => {\n\
+                         let other = await right\n\
+                         first + other\n\
+                     }\n\
+                     let second = await right => {\n\
+                         let other = await left\n\
+                         second + other\n\
+                     }\n\
+                 }\n\
+                 selected\n\
+             }\n",
+        );
+        bc::verify_bytecode(&program).expect("join loser bytecode verifies");
+        let mut host = RejectingHost;
+        let execution = execute_with_limits(
+            &program,
+            function_id(&program, "run"),
+            &mut host,
+            VmLimits::default(),
+        )
+        .expect("the losing Join must remain awaitable");
+        assert_eq!(
+            execution.outcome,
+            VmOutcome::Returned(RuntimeValue::Integer(3))
+        );
+    }
+
+    #[test]
+    fn select_runtime_propagates_a_ready_arm_panic() {
+        let program = lowered(
+            "fn boom(): Int selectable { panic(\"boom\") }\n\
+             fn run(): Int suspends {\n\
+                 select {\n\
+                     boom() => 1\n\
+                 }\n\
+             }\n",
+        );
+        bc::verify_bytecode(&program).expect("panic select bytecode verifies");
+        let mut host = RejectingHost;
+        let execution = execute_with_limits(
+            &program,
+            function_id(&program, "run"),
+            &mut host,
+            VmLimits::default(),
+        )
+        .expect("a selected panic is a language outcome");
+        let VmOutcome::Panicked(panic) = execution.outcome else {
+            panic!("the selected panic must propagate");
+        };
+        assert_eq!(panic.code, PanicCode::ExplicitPanic);
     }
 
     #[test]
@@ -4842,15 +4960,16 @@ mod tests {
                         instruction.kind,
                         bc::BytecodeInstructionKind::BeginSelect { .. }
                     ) {
-                        instruction.kind = bc::BytecodeInstructionKind::BeginSelect {
-                            capacity: 0,
-                        };
+                        instruction.kind = bc::BytecodeInstructionKind::BeginSelect { capacity: 0 };
                     }
                 }
             }
         }
         let error = bc::verify_bytecode(&program).expect_err("capacity 0 must fail");
-        assert!(error.message().contains("outside the checked bound"), "{error:?}");
+        assert!(
+            error.message().contains("outside the checked bound"),
+            "{error:?}"
+        );
     }
 
     #[test]
@@ -4884,9 +5003,7 @@ mod tests {
         assert!(error.message().contains("non-Join handle"), "{error:?}");
     }
 
-    fn select_function_mut(
-        program: &mut bc::BytecodeProgram,
-    ) -> &mut bc::BytecodeFunction {
+    fn select_function_mut(program: &mut bc::BytecodeProgram) -> &mut bc::BytecodeFunction {
         let index = program
             .callables
             .iter()

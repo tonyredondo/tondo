@@ -29,13 +29,15 @@ jq -e '
   and .surface.bodyful_inference == "allowed"
   and .surface.inference_by_name == false
   and .surface.effect_in_interface_and_abi == true
+  and .surface.selectable_effects == ["waiter-wait"]
   and .surface.direct_call_waits == true
   and .surface.explicit_await_direct_call == "forbidden"
   and .surface.explicit_await_handle == "required"
   and .surface.nosuspend_annotations == ["@sync", "@nosuspend"]
   and .types == ["Join[T, E]", "Waiter[T, E]", "Completer[T, E]", "AlreadyCompleted", "AsyncIterator[T]"]
   and ([.signatures[].id] | unique) == ["async-iterator-collect", "async-iterator-next", "completer-cancel", "completer-complete", "completer-fail", "oneshot", "waiter-wait"]
-  and ([.signatures[] | select(.effect == "suspends") | .id] | sort) == ["async-iterator-collect", "async-iterator-next", "waiter-wait"]
+  and ([.signatures[] | select(.effect == "suspends") | .id] | sort) == ["async-iterator-collect", "async-iterator-next"]
+  and ([.signatures[] | select(.effect == "selectable") | .id] | sort) == ["waiter-wait"]
   and all(.signatures[]; (.signature | type == "string" and length > 0) and (.kind | type == "string" and length > 0))
   and .join.origin == ["spawn call()", "spawn thread call()"]
   and .join.affine == true

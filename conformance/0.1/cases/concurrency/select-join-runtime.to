@@ -1,0 +1,17 @@
+fn work(): Int suspends {
+    4
+}
+
+fn prepare(): Join[Int, Never] {
+    scope {
+        return spawn work()
+    }
+}
+
+fn main() suspends {
+    let pending = prepare()
+    let selected = select {
+        let value = await pending => value
+    }
+    assert(selected == 4)
+}

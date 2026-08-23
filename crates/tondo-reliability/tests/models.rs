@@ -73,6 +73,161 @@ fn map_operation_sequences_match_an_insertion_order_model() {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SelectReadiness {
+    Pending,
+    Ready,
+    Panicked,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SelectModelArm {
+    readiness: SelectReadiness,
+    owned: bool,
+    cancelled: bool,
+    consumed: bool,
+}
+
+#[derive(Debug, Clone)]
+struct SelectModel {
+    arms: Vec<SelectModelArm>,
+    rotation: usize,
+    wakeups: usize,
+}
+
+impl SelectModel {
+    fn commit(&mut self, has_else: bool) -> Option<usize> {
+        let start = self.rotation % self.arms.len();
+        let mut winner = None;
+        for panic_only in [true, false] {
+            for offset in 0..self.arms.len() {
+                let index = (start + offset) % self.arms.len();
+                let arm = self.arms[index];
+                let is_panic = arm.readiness == SelectReadiness::Panicked;
+                let ready = is_panic || arm.readiness == SelectReadiness::Ready;
+                if ready && is_panic == panic_only {
+                    winner = Some(index);
+                    break;
+                }
+            }
+            if winner.is_some() {
+                break;
+            }
+        }
+        let Some(winner) = winner else {
+            if has_else {
+                for arm in &mut self.arms {
+                    if arm.owned {
+                        arm.cancelled = true;
+                    }
+                }
+            }
+            return None;
+        };
+        for (index, arm) in self.arms.iter_mut().enumerate() {
+            if index == winner {
+                arm.consumed = true;
+            } else if arm.owned {
+                arm.cancelled = true;
+            }
+        }
+        self.rotation = self.rotation.wrapping_add(1);
+        Some(winner)
+    }
+
+    fn wake(&mut self) {
+        self.wakeups = self.wakeups.saturating_add(1);
+    }
+}
+
+#[test]
+fn select_model_preserves_single_commit_and_structured_cleanup() {
+    for seed in 0..4_096_u64 {
+        let mut generator = Generator::new(0x51ec_7a11 + seed);
+        let count = generator.choose(8) + 1;
+        let arms = (0..count)
+            .map(|_| SelectModelArm {
+                readiness: match generator.choose(3) {
+                    0 => SelectReadiness::Pending,
+                    1 => SelectReadiness::Ready,
+                    _ => SelectReadiness::Panicked,
+                },
+                owned: generator.choose(2) == 0,
+                cancelled: false,
+                consumed: false,
+            })
+            .collect::<Vec<_>>();
+        let mut model = SelectModel {
+            arms,
+            rotation: 0,
+            wakeups: 0,
+        };
+        let ready_count = model
+            .arms
+            .iter()
+            .filter(|arm| {
+                matches!(
+                    arm.readiness,
+                    SelectReadiness::Ready | SelectReadiness::Panicked
+                )
+            })
+            .count();
+        model.wake();
+        model.wake();
+        assert_eq!(
+            model.wakeups, 2,
+            "wakeup delivery must be observable and idempotent"
+        );
+        let winner = model.commit(generator.choose(2) == 0);
+        if ready_count == 0 {
+            assert!(winner.is_none());
+        } else {
+            let winner = winner.expect("a ready arm must commit");
+            assert_eq!(model.arms.iter().filter(|arm| arm.consumed).count(), 1);
+            assert!(model.arms[winner].consumed);
+            assert!(
+                model
+                    .arms
+                    .iter()
+                    .enumerate()
+                    .all(|(index, arm)| index == winner || !arm.owned || arm.cancelled)
+            );
+        }
+    }
+}
+
+#[test]
+fn select_model_rotates_ties_without_lexical_starvation() {
+    let mut model = SelectModel {
+        arms: vec![
+            SelectModelArm {
+                readiness: SelectReadiness::Ready,
+                owned: true,
+                cancelled: false,
+                consumed: false,
+            },
+            SelectModelArm {
+                readiness: SelectReadiness::Ready,
+                owned: true,
+                cancelled: false,
+                consumed: false,
+            },
+        ],
+        rotation: 0,
+        wakeups: 0,
+    };
+    let mut winners = Vec::new();
+    for _ in 0..8 {
+        let winner = model.commit(false).expect("the tie has a ready winner");
+        winners.push(winner);
+        for arm in &mut model.arms {
+            arm.cancelled = false;
+            arm.consumed = false;
+        }
+    }
+    assert_eq!(winners, [0, 1, 0, 1, 0, 1, 0, 1]);
+}
+
 #[test]
 fn array_index_and_slice_helpers_match_a_mathematical_model() {
     let mut generator = Generator::new(0x5eed_f00d);

@@ -3877,8 +3877,9 @@ impl<'a> TypeLowerer<'a> {
                 bounds: bounds.get(&position).cloned().unwrap_or_default(),
             })
             .collect::<Vec<_>>();
-        let function_type = self.interner.function(FunctionType::new(
+        let function_type = self.interner.function(FunctionType::with_effects(
             function.is_async(),
+            function.is_selectable(),
             function.is_unsafe(),
             function_parameters,
             None,
@@ -3988,8 +3989,9 @@ impl<'a> TypeLowerer<'a> {
                 discard: false,
             });
         }
-        let function_type = self.interner.function(FunctionType::new(
+        let function_type = self.interner.function(FunctionType::with_effects(
             function.is_async(),
+            function.is_selectable(),
             function.is_unsafe(),
             function_parameters,
             variadic,
@@ -7906,6 +7908,7 @@ fn collect_source_callables<'a>(
                                 SyntaxKind::AwaitExpr,
                                 SyntaxKind::SpawnExpr,
                                 SyntaxKind::ScopeExpr,
+                                SyntaxKind::SelectExpr,
                             ],
                         ),
                         called_names(body),

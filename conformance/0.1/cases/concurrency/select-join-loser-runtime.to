@@ -1,0 +1,35 @@
+fn leftWork(): Int suspends {
+    1
+}
+
+fn rightWork(): Int suspends {
+    2
+}
+
+fn leftJob(): Join[Int, Never] {
+    scope {
+        return spawn leftWork()
+    }
+}
+
+fn rightJob(): Join[Int, Never] {
+    scope {
+        return spawn rightWork()
+    }
+}
+
+fn main() suspends {
+    let left = leftJob()
+    let right = rightJob()
+    let selected = select {
+        let first = await left => {
+            let other = await right
+            first + other
+        }
+        let second = await right => {
+            let other = await left
+            second + other
+        }
+    }
+    assert(selected == 3)
+}

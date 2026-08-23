@@ -359,8 +359,9 @@ pub enum MirStatementKind {
 
 /// One arm registration of a selection region.  A selectable call enters
 /// its prepare phase; a pending `Join` observes its owner place without
-/// consuming it — losers are restored and the winner commits, so
-/// branch-sensitive moves stay with `ASYNC-SELECT-OWN-001`.
+/// consuming it — Join losers remain owned by the caller and runtime-owned
+/// call losers are cancelled during rollback, so branch-sensitive moves stay
+/// explicit in the winner body.
 #[derive(Debug, Clone)]
 pub enum MirSelectRegistration {
     Call(MirOperation),

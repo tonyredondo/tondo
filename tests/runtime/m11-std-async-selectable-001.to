@@ -1,0 +1,32 @@
+import std.async
+import std.console
+import std.time
+
+fn oneshot_case(): Int {
+    let pair = async.oneshot[Int, String]()
+    var (waiter, completer) = pair
+    _ = completer.complete(7)
+    let selected = select {
+        let value = waiter.wait() => value
+    }
+    match selected {
+        ok(value) => value
+        err(_) => panic("unexpected one-shot error")
+    }
+}
+
+fn timer_case(): Unit ! (time.ClockError | time.DurationError) {
+    let zero = time.Duration.fromMilliseconds(0)?
+    let timer = time.Timer.after(zero)?
+    select {
+        timer.wait()? => ()
+    }
+}
+
+fn main() {
+    assert(oneshot_case() == 7)
+    match timer_case() {
+        ok(_) => console.print("selectable-ok\n")
+        err(_) => panic("selectable adapter failed")
+    }
+}

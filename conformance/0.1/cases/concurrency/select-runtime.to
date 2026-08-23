@@ -1,0 +1,10 @@
+fn work(): Int selectable {
+    4
+}
+
+fn main() suspends {
+    let selected = select {
+        let value = work() => value
+    }
+    assert(selected == 4)
+}

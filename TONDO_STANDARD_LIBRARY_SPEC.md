@@ -849,8 +849,8 @@ transferir cada handle. `cancel` solicita cancelación y el `Join` aún requiere
 consume el handle y lo entrega a un supervisor, sin permitir préstamos locales.
 
 `std.async.oneshot[T, E]` divide una operación en `Waiter` y `Completer`. El
-waiter se consume una vez; `Waiter.wait()` es una llamada suspendible ordinaria
-y por tanto espera implícitamente, mientras que un valor `Waiter` o `Join` sin
+waiter se consume una vez; `Waiter.wait()` es una llamada `selectable` y por
+tanto espera implícitamente, mientras que un valor `Waiter` o `Join` sin
 consumir solo puede convertirse en resultado mediante `await handle`. Completar,
 fallar o cancelar es atómico y una segunda finalización produce
 `AlreadyCompleted`. No hay callbacks ni scheduler implícito.
@@ -939,12 +939,11 @@ variadic generics heterogéneos, tuples awaitables ni overloads por aridad para
 abreviar ese caso. `Group[Unit, E]` cubre espera de workers sin `add`/`done`
 manuales.
 
-La superficie ejecutable anterior a esta decisión cubre `Join`, `oneshot` y
-`AsyncIterator`, pero todavía publica `Waiter.wait` solo como `suspends`. La
-migración a `selectable` no se considera implementada hasta cerrar las tareas
-`ASYNC-SELECT-*` y `STD-A-SELECTABLE-IMPL-001` del tracker. `Group` pertenece a
-la extensión STD-0.1B y tampoco se considera implementado hasta cerrar sus
-celdas `IMPL`, `MODEL`, `TEST`, `FUZZ`, `PERF`, `CONF` y `DOC`.
+La superficie ejecutable cubre `Join`, `oneshot`, `AsyncIterator` y el adapter
+`selectable` de `Waiter.wait`. Los adapters de tiempo (`sleep` y `Timer.wait`)
+usan la misma entrada de selección; `Group` pertenece a la extensión STD-0.1B
+y tampoco se considera implementado hasta cerrar sus celdas `IMPL`, `MODEL`,
+`TEST`, `FUZZ`, `PERF`, `CONF` y `DOC`.
 
 ### 9.5 Scheduler y backpressure
 

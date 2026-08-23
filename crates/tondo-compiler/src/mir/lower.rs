@@ -23,16 +23,20 @@ use super::{
     MirLoan, MirLoanId, MirLoanKind, MirLocal, MirLocalId, MirLocalKind, MirOperand,
     MirOperandKind, MirOperation, MirOperationKind, MirPlace, MirProgram, MirProjection,
     MirProjectionKind, MirRvalue, MirRvalueKind, MirSelectArm, MirSelectRegistration,
-    MirSliceBounds, MirStatement,
-    MirStatementKind, MirTag, MirTerminator, MirTerminatorKind, MirVerificationLimits,
-    verify_mir_with_capability_analysis, verify_mir_with_limits,
+    MirSliceBounds, MirStatement, MirStatementKind, MirTag, MirTerminator, MirTerminatorKind,
+    MirVerificationLimits, verify_mir_with_capability_analysis, verify_mir_with_limits,
 };
 
 /// Propagate wrapper replayed over a select arm payload before binding.
 #[derive(Debug, Clone, Copy)]
 enum SelectWrapper {
-    Option { item_ty: TypeId },
-    Result { success_ty: TypeId, error_coercion: crate::types::Assignability },
+    Option {
+        item_ty: TypeId,
+    },
+    Result {
+        success_ty: TypeId,
+        error_coercion: crate::types::Assignability,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -162,7 +166,6 @@ pub fn lower_to_mir(
     }
     Ok(program)
 }
-
 
 struct OpenBlock {
     kind: MirBlockKind,
@@ -4497,25 +4500,20 @@ impl<'a> FunctionBuilder<'a> {
                     };
                     current = next;
                     for place in operation_move_places(&registered) {
-                        self.push_statement(
-                            current,
-                            span,
-                            MirStatementKind::DisarmCleanup(place),
-                        )?;
+                        self.push_statement(current, span, MirStatementKind::DisarmCleanup(place))?;
                     }
                     EitherRegistration::Call(registered)
                 }
                 HirExpressionKind::Await { operation } => {
                     // Registration observes the pending handle's owner place
-                    // without consuming it: losers are restored and only the
-                    // winner commits.  Branch-sensitive moves land with
-                    // ASYNC-SELECT-OWN-001.
+                    // without consuming it: Join losers remain available and
+                    // only the winner body transfers the owner. Runtime-owned
+                    // call losers are cancelled by the selector teardown.
                     let operand = self.expression(*operation)?;
                     let HirExpressionKind::Local(local) = operand.kind() else {
                         return Err(MirError::Construction {
                             span,
-                            message: "a select arm must await a materialized local `Join`"
-                                .into(),
+                            message: "a select arm must await a materialized local `Join`".into(),
                         });
                     };
                     EitherRegistration::Join(self.source_place(*local, span)?)
@@ -4582,12 +4580,10 @@ impl<'a> FunctionBuilder<'a> {
                         let staging = self.allocate_temporary(item_ty, span, arm_block)?;
                         let staged = self.local_place(staging);
                         let Some(next) = self
-                            .propagate_option_operand(
-                                operand, item_ty, span, staged, arm_block,
-                            )?
-                            else {
-                                return Ok(None);
-                            };
+                            .propagate_option_operand(operand, item_ty, span, staged, arm_block)?
+                        else {
+                            return Ok(None);
+                        };
                         arm_block = next;
                         self.transfer_local(staging, span)?
                     }
@@ -4665,10 +4661,9 @@ impl<'a> FunctionBuilder<'a> {
                 }
                 _ => break,
             }
-            let (
-                HirExpressionKind::PropagateOption { value }
-                | HirExpressionKind::PropagateResult { value, .. }
-            ) = self.expression(current)?.kind().clone()
+            let (HirExpressionKind::PropagateOption { value }
+            | HirExpressionKind::PropagateResult { value, .. }) =
+                self.expression(current)?.kind().clone()
             else {
                 break;
             };
@@ -4797,14 +4792,7 @@ impl<'a> FunctionBuilder<'a> {
         let Some((block, result)) = self.lower_value(value, block)? else {
             return Ok(None);
         };
-        self.propagate_result_operand(
-            result,
-            error_coercion,
-            success_ty,
-            span,
-            destination,
-            block,
-        )
+        self.propagate_result_operand(result, error_coercion, success_ty, span, destination, block)
     }
 
     fn propagate_result_operand(
@@ -6948,9 +6936,9 @@ fn populate_runtime_loan_checks(
         let block = &function.blocks[index];
         for statement in &block.statements {
             consume_runtime_loan_analysis_step(&mut steps, limits)?;
-            match statement.kind {
+            match &statement.kind {
                 MirStatementKind::ReserveLoan(loan) => {
-                    if !active.insert(loan) {
+                    if !active.insert(*loan) {
                         return Err(MirError::Construction {
                             span: statement.span,
                             message: format!(
@@ -6961,7 +6949,7 @@ fn populate_runtime_loan_checks(
                     }
                 }
                 MirStatementKind::ReleaseLoan(loan) => {
-                    if !active.remove(&loan) {
+                    if !active.remove(loan) {
                         return Err(MirError::Construction {
                             span: statement.span,
                             message: format!(
@@ -6982,7 +6970,15 @@ fn populate_runtime_loan_checks(
                 | MirStatementKind::RetargetCleanup { .. }
                 | MirStatementKind::DisarmCleanup(_)
                 | MirStatementKind::BeginSelect { .. } => {}
-                MirStatementKind::RegisterSelectArm { .. } => {}
+                MirStatementKind::RegisterSelectArm { registration, .. } => {
+                    if let MirSelectRegistration::Call(operation) = registration {
+                        // Registration transfers the call's affine argument
+                        // ownership to the selector.  There is no Invoke or
+                        // Await terminator for this operation, so consume its
+                        // call-local loans at the registration boundary.
+                        consume_operation_loans(operation, &mut active, statement.span)?;
+                    }
+                }
             }
         }
 
