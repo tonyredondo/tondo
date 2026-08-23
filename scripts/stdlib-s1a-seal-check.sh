@@ -120,7 +120,13 @@ bundle_id="$(jq -r '.bundle_id' "$seal")"
 
 mapfile -t archive_files < <(tar --format=ustar -tf "$archive" | awk 'index($0, "tondo-stdlib-s1a/") == 1 && $0 !~ /\/$/')
 mapfile -t manifest_files < <(jq -r '.files[].path' "$manifest" | sed 's#^#tondo-stdlib-s1a/#')
-[[ "${archive_files[*]}" == "${manifest_files[*]}" ]] || die "archive file set differs from the canonical manifest"
+mapfile -t expected_archive_files < <(
+    {
+        printf '%s\n' "${manifest_files[@]}"
+        printf '%s\n' "tondo-stdlib-s1a/metadata/manifest.json"
+    } | LC_ALL=C sort
+)
+[[ "${archive_files[*]}" == "${expected_archive_files[*]}" ]] || die "archive file set differs from the canonical manifest"
 
 bundle_root="$seal_dir/bundle/tondo-stdlib-s1a"
 while IFS=$'\t' read -r path expected_sha expected_bytes; do
