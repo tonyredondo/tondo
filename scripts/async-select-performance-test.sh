@@ -4,6 +4,7 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
+mkdir -p "$root/.tmp"
 tmp="$(mktemp -d "$root/.tmp/tondo-async-select-performance-test.XXXXXX")"
 trap 'rm -rf -- "$tmp"' EXIT
 

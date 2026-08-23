@@ -43,6 +43,7 @@ tree_sha256="$(cargo run -p tondo-reliability --locked -- quality provenance --r
 [[ "$revision" =~ ^[0-9a-f]{40}$ ]] || die "invalid Git revision"
 [[ "$tree_sha256" =~ ^[0-9a-f]{64}$ ]] || die "invalid reliability tree hash"
 
+mkdir -p "$root/.tmp"
 work="$(mktemp -d "$root/.tmp/tondo-stdlib-s1a-seal.XXXXXX")"
 trap 'rm -rf -- "$work"' EXIT
 logs="$work/logs"

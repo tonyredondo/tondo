@@ -60,6 +60,7 @@ if [[ "${TONDO_SELECT_PERF_ALLOW_DIRTY:-0}" != 1 ]]; then
     [[ -z "$(git status --porcelain)" ]] || die "workspace must be clean"
 fi
 
+mkdir -p "$root/.tmp"
 tmp="$(mktemp -d "$root/.tmp/tondo-select-performance.XXXXXX")"
 trap 'rm -rf -- "$tmp"' EXIT
 samples="$tmp/samples.tsv"
