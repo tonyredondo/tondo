@@ -127,12 +127,16 @@ fn conformance_commands_and_codec_observations_are_linked() {
                     .as_array()
                     .is_some_and(|cases| !cases.is_empty())
             );
-            assert!(owner["evidence"]["refs"].as_array().unwrap().iter().any(
-                |reference| reference
-                    .as_str()
+            assert!(
+                owner["evidence"]["refs"]
+                    .as_array()
                     .unwrap()
-                    .contains("stdlib-conformance.json#owners/")
-            ));
+                    .iter()
+                    .any(|reference| reference
+                        .as_str()
+                        .unwrap()
+                        .contains("stdlib-conformance.json#owners/"))
+            );
         }
     }
     assert!(codec_owners.is_empty());

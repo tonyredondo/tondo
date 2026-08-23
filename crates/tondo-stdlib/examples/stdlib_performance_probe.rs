@@ -53,9 +53,7 @@ fn sample(
         let nanos = started.elapsed().as_nanos() / BATCH as u128;
         allocations /= BATCH as u64;
         allocated_bytes /= BATCH as u64;
-        println!(
-            "{module}\t{operation_id}\t{workload}\t{nanos}\t{allocations}\t{allocated_bytes}"
-        );
+        println!("{module}\t{operation_id}\t{workload}\t{nanos}\t{allocations}\t{allocated_bytes}");
     }
 }
 
@@ -82,10 +80,8 @@ fn messagepack_cycle(input: &[u8]) -> AllocationObservation {
 }
 
 fn protobuf_decode(input: &[u8]) -> AllocationObservation {
-    let decoded = protobuf::decode_message(
-        black_box(input),
-        protobuf::ProtoDecodeOptions::default(),
-    );
+    let decoded =
+        protobuf::decode_message(black_box(input), protobuf::ProtoDecodeOptions::default());
     let _ = black_box(decoded);
     observed(1, input.len())
 }
@@ -110,7 +106,10 @@ fn io_round_trip(input: &[u8], chunk: usize) -> AllocationObservation {
 fn path_walk(input: &str, component: &str) -> AllocationObservation {
     let path = path::Path::from_string(input).expect("valid lexical path");
     let joined = path.join(component).expect("valid component");
-    let bytes = joined.as_bytes().len().saturating_add(joined.to_bytes().len());
+    let bytes = joined
+        .as_bytes()
+        .len()
+        .saturating_add(joined.to_bytes().len());
     black_box((joined.file_name(), joined.extension(), joined.to_bytes()));
     observed(3, bytes)
 }
@@ -137,16 +136,22 @@ fn serialize_events(value: i128, bytes: &[u8]) -> AllocationObservation {
     )
     .expect("array end event");
     let events = serializer.finish().expect("bounded event stream");
-    let owned_bytes = bytes.len().saturating_add(std::mem::size_of_val(events.as_slice()));
+    let owned_bytes = bytes
+        .len()
+        .saturating_add(std::mem::size_of_val(events.as_slice()));
     black_box(events);
     observed(1, owned_bytes)
 }
 
 fn bytes_copy_hash(input: &[u8]) -> AllocationObservation {
     let owned = serialization::Bytes::from_slice(input);
-    black_box((owned.clone(), owned.as_slice().iter().fold(0_u64, |hash, byte| {
-        hash.wrapping_mul(1_099_511_628_211).wrapping_add(u64::from(*byte))
-    })));
+    black_box((
+        owned.clone(),
+        owned.as_slice().iter().fold(0_u64, |hash, byte| {
+            hash.wrapping_mul(1_099_511_628_211)
+                .wrapping_add(u64::from(*byte))
+        }),
+    ));
     observed(2, input.len().saturating_mul(2))
 }
 
@@ -173,14 +178,22 @@ fn main() {
         ),
         (
             "large",
-            format!("[{}]", (0..256).map(|value| value.to_string()).collect::<Vec<_>>().join(","))
-                .into_bytes(),
+            format!(
+                "[{}]",
+                (0..256)
+                    .map(|value| value.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
+            .into_bytes(),
         ),
         ("fragmented_stream", br#"{"chunks":[1,2,3,4]}"#.to_vec()),
         ("adversarial", br#"{"unterminated":[1,2"#.to_vec()),
     ];
     for (workload, input) in &json_inputs {
-        sample("json", "std.json.parse_encode", workload, || json_cycle(input));
+        sample("json", "std.json.parse_encode", workload, || {
+            json_cycle(input)
+        });
     }
 
     let messagepack_values = [
@@ -216,15 +229,21 @@ fn main() {
         } else {
             encoded
         };
-        sample("messagepack", "std.messagepack.decode_encode", workload, || {
-            messagepack_cycle(&input)
-        });
+        sample(
+            "messagepack",
+            "std.messagepack.decode_encode",
+            workload,
+            || messagepack_cycle(&input),
+        );
     }
 
     let protobuf_inputs = [
         ("empty", Vec::new()),
         ("small", vec![0x08, 0x01]),
-        ("representative", vec![0x08, 0x01, 0x12, 0x03, b'o', b'k', b'!']),
+        (
+            "representative",
+            vec![0x08, 0x01, 0x12, 0x03, b'o', b'k', b'!'],
+        ),
         ("large", (0..128).flat_map(|_| [0x08, 0x01]).collect()),
         ("fragmented_stream", vec![0x12, 0x03, b'o', b'k', b'!']),
         ("adversarial", vec![0x80; 12]),
@@ -244,7 +263,9 @@ fn main() {
         ("adversarial", "x".repeat(4096)),
     ];
     for (workload, input) in &text_inputs {
-        sample("testing", "std.testing.generate_diff", workload, || testing_diff(input));
+        sample("testing", "std.testing.generate_diff", workload, || {
+            testing_diff(input)
+        });
     }
 
     let math_inputs = [
@@ -265,13 +286,21 @@ fn main() {
     let format_inputs = [
         ("empty", Vec::new()),
         ("small", vec!["ok".to_owned()]),
-        ("representative", vec!["tondo".to_owned(), "stdlib".to_owned()]),
+        (
+            "representative",
+            vec!["tondo".to_owned(), "stdlib".to_owned()],
+        ),
         ("large", (0..256).map(|value| value.to_string()).collect()),
-        ("fragmented_stream", vec!["a".to_owned(), "b".to_owned(), "c".to_owned()]),
+        (
+            "fragmented_stream",
+            vec!["a".to_owned(), "b".to_owned(), "c".to_owned()],
+        ),
         ("adversarial", vec!["x".repeat(16 * 1024)]),
     ];
     for (workload, values) in &format_inputs {
-        sample("format", "std.format.join", workload, || format_join(values, ","));
+        sample("format", "std.format.join", workload, || {
+            format_join(values, ",")
+        });
     }
 
     let io_inputs = [
@@ -283,7 +312,9 @@ fn main() {
         ("adversarial", vec![b'x'; 64 * 1024], 3),
     ];
     for (workload, input, chunk) in &io_inputs {
-        sample("io", "std.io.read_write_all", workload, || io_round_trip(input, *chunk));
+        sample("io", "std.io.read_write_all", workload, || {
+            io_round_trip(input, *chunk)
+        });
     }
 
     let path_inputs = [
@@ -295,7 +326,9 @@ fn main() {
         ("adversarial", &"x".repeat(1024), "leaf"),
     ];
     for (workload, input, component) in &path_inputs {
-        sample("path", "std.path.lexical", workload, || path_walk(input, component));
+        sample("path", "std.path.lexical", workload, || {
+            path_walk(input, component)
+        });
     }
 
     let bytes_inputs = [
@@ -307,7 +340,9 @@ fn main() {
         ("adversarial", vec![0xff; 32 * 1024]),
     ];
     for (workload, input) in &bytes_inputs {
-        sample("bytes", "std.bytes.copy_hash", workload, || bytes_copy_hash(input));
+        sample("bytes", "std.bytes.copy_hash", workload, || {
+            bytes_copy_hash(input)
+        });
     }
 
     let event_inputs = [
@@ -319,8 +354,11 @@ fn main() {
         ("adversarial", i128::MAX, vec![0xff; 4096]),
     ];
     for (workload, value, input) in &event_inputs {
-        sample("serialization", "std.serialization.events", workload, || {
-            serialize_events(*value, input)
-        });
+        sample(
+            "serialization",
+            "std.serialization.events",
+            workload,
+            || serialize_events(*value, input),
+        );
     }
 }
