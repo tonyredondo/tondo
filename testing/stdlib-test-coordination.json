@@ -526,37 +526,37 @@
       "contract": "testing/stdlib-env.json",
       "public_api": [
         {
-          "id": "std.env:28",
+          "id": "std.env:29",
           "symbol": "std.env.snapshot",
           "signature": "pub fn snapshot(): Snapshot ! EnvError"
         },
         {
-          "id": "std.env:29",
+          "id": "std.env:30",
           "symbol": "std.env.Name.fromText",
           "signature": "pub fn Name.fromText(value: String): Name ! EnvError"
         },
         {
-          "id": "std.env:30",
+          "id": "std.env:31",
           "symbol": "std.env.Name.fromBytes",
           "signature": "pub fn Name.fromBytes(value: bytes.Bytes): Name ! EnvError"
         },
         {
-          "id": "std.env:31",
+          "id": "std.env:32",
           "symbol": "std.env.Snapshot.arguments",
           "signature": "pub fn Snapshot.arguments(ref self): Array[Value]"
         },
         {
-          "id": "std.env:32",
+          "id": "std.env:33",
           "symbol": "std.env.Snapshot.get",
           "signature": "pub fn Snapshot.get(ref self, name: Name): Option[Value] ! EnvError"
         },
         {
-          "id": "std.env:33",
+          "id": "std.env:34",
           "symbol": "std.env.Value.asText",
           "signature": "pub fn Value.asText(ref self): Option[String]"
         },
         {
-          "id": "std.env:34",
+          "id": "std.env:35",
           "symbol": "std.env.Value.asBytes",
           "signature": "pub fn Value.asBytes(ref self): bytes.Bytes"
         }
