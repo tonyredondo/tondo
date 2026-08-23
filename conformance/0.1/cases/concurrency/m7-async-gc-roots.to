@@ -14,7 +14,7 @@ fn completedValue(): Array[String] suspends {
     ["left", "right"]
 }
 
-fn holdSuspendedValue(): String suspends {
+fn holdSuspendedValue(): String {
     let retained = "retained"
     scope {
         let pending = spawn pressure()
@@ -23,7 +23,7 @@ fn holdSuspendedValue(): String suspends {
     retained
 }
 
-fn main() suspends {
+fn main() {
     scope {
         let completed = spawn completedValue()
         let allocating = spawn pressure()

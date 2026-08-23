@@ -1,6 +1,6 @@
 import std.async
 
-fn wait_once(waiter: async.Waiter[Int, String]): Int ! String suspends {
+fn wait_once(waiter: async.Waiter[Int, String]): Int ! String {
     var owned = waiter
     owned.wait()
 }

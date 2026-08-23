@@ -2,7 +2,7 @@ fn work(): Int selectable {
     4
 }
 
-fn main() suspends {
+fn main() {
     let selected = select {
         let value = work() => value
     }

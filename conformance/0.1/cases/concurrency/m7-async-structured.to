@@ -10,7 +10,7 @@ fn combine(left: Int, right: Int): Int suspends {
     first + second
 }
 
-fn main() suspends {
+fn main() {
     let sequential = combine(20, 22)
     assert(sequential == 42)
 

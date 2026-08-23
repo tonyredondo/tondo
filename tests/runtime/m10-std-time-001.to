@@ -9,7 +9,7 @@ fn elapsed_between(start: time.Instant, end: time.Instant): time.Duration ! time
     end.durationSince(start)?
 }
 
-fn main(): !(time.ClockError | time.DurationError) suspends {
+fn main(): !(time.ClockError | time.DurationError) {
     let resolution = checked_resolution()?
     assert(not resolution.isNegative())
     let start = time.now()?

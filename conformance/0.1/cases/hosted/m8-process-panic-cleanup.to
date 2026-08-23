@@ -4,7 +4,7 @@ fn failChild() suspends {
     panic("process sibling panic")
 }
 
-fn main(): !process.ProcessError suspends {
+fn main(): !process.ProcessError {
     scope {
         let running = spawn process.shell("exec sleep 30").output()
         let failing = spawn failChild()

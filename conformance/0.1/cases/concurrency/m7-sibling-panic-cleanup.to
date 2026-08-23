@@ -2,7 +2,7 @@ import std.console
 
 fn tick() suspends {}
 
-fn sibling() suspends {
+fn sibling() {
     defer console.print("sibling-cleanup\n")
 
     for {
@@ -10,12 +10,12 @@ fn sibling() suspends {
     }
 }
 
-fn failChild() suspends {
+fn failChild() {
     tick()
     panic("structured child panic")
 }
 
-fn main() suspends {
+fn main() {
     scope {
         let waiting = spawn sibling()
         let failing = spawn failChild()

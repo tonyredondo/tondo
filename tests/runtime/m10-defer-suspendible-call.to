@@ -4,7 +4,7 @@ fn cleanup(message: String) suspends {
     console.print(message)
 }
 
-fn main() suspends {
+fn main() {
     defer cleanup("cleanup\n")
     console.print("body\n")
 }

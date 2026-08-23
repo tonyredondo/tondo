@@ -9,7 +9,7 @@ fn argument(value: env.Value): String {
     }
 }
 
-fn cleanup(handle: process.ProcessHandle) suspends {
+fn cleanup(handle: process.ProcessHandle) {
     match handle.cancel() {
         ok(_) => (),
         err(_) => panic("cancel")

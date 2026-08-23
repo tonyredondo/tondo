@@ -8,7 +8,7 @@ fn prepare(): Join[Int, Never] {
     }
 }
 
-fn main() suspends {
+fn main() {
     let pending = prepare()
     let selected = select {
         let value = await pending => value

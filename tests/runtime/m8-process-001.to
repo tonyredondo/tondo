@@ -17,7 +17,7 @@ fn pipelineText(pipeline: Pipeline): String ! (process.ProcessError | bytes.Utf8
     String(output.stdout)?
 }
 
-fn main(): !(process.ProcessError | bytes.Utf8Error | env.EnvError) suspends {
+fn main(): !(process.ProcessError | bytes.Utf8Error | env.EnvError) {
     let hostArguments = env.snapshot()?.arguments()
     let streamCommand = argument(hostArguments[0])
     let sleepCommand = argument(hostArguments[1])

@@ -6,7 +6,7 @@ enum WorkError {
 
 fn tick() suspends {}
 
-fn child(): !WorkError suspends {
+fn child(): !WorkError {
     defer console.print("child-cleanup\n")
 
     for {
@@ -14,14 +14,14 @@ fn child(): !WorkError suspends {
     }
 }
 
-fn leaveScope(): !WorkError suspends {
+fn leaveScope(): !WorkError {
     scope {
         let pending = spawn child()
         return
     }
 }
 
-fn main(): !WorkError suspends {
+fn main(): !WorkError {
     leaveScope()?
     console.print("parent-complete\n")
 }

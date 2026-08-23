@@ -2,7 +2,7 @@ import std.bytes
 import std.console
 import std.io
 
-fn main(): !(console.ConsoleError | io.IoError | bytes.BytesError) suspends {
+fn main(): !(console.ConsoleError | io.IoError | bytes.BytesError) {
     var input = console.stdin()?
     let limits = io.defaultLimits()
     let data = io.readAll(var input, limits)?

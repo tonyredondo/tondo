@@ -3,7 +3,7 @@ import std.path
 import std.fs
 import std.bytes
 
-fn main(): !(path.PathError | fs.FsError | bytes.BytesError | bytes.Utf8Error) suspends {
+fn main(): !(path.PathError | fs.FsError | bytes.BytesError | bytes.Utf8Error) {
     let existing = path.fromString("Cargo.toml")?
     let _contents = fs.readAll(existing)?
 

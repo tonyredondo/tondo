@@ -8,7 +8,7 @@ fn pipelineText(pipeline: Pipeline): String ! (process.ProcessError | bytes.Utf8
     String(output.stdout)?
 }
 
-fn main(): !(process.ProcessError | bytes.Utf8Error | env.EnvError) suspends {
+fn main(): !(process.ProcessError | bytes.Utf8Error | env.EnvError) {
     match env.snapshot()?.arguments() {
         [] => ()
         [_, ..] => assert(false)

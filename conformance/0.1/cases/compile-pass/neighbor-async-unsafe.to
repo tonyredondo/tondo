@@ -4,7 +4,7 @@ unsafe fn raw(value: Int): Int {
 fn delayed(): Int suspends {
     1
 }
-fn valid() suspends {
+fn valid() {
     let direct = unsafe {
         raw(40)
     }

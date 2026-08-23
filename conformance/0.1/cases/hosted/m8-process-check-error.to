@@ -1,5 +1,5 @@
 import std.process
 
-fn main(): !(process.ProcessError | process.ProcessExitError) suspends {
+fn main(): !(process.ProcessError | process.ProcessExitError) {
     let _ = process.shell("exit 7").check()?
 }

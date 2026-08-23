@@ -4,11 +4,11 @@ fn observe(value: ref String): String suspends {
     identity(ref value)
 }
 
-fn identity(value: ref String): String suspends {
+fn identity(value: ref String): String {
     value
 }
 
-fn main() suspends {
+fn main() {
     scope {
         var value = "before"
         let pending = spawn observe(ref value)

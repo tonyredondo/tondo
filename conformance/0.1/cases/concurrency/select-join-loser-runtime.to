@@ -18,7 +18,7 @@ fn rightJob(): Join[Int, Never] {
     }
 }
 
-fn main() suspends {
+fn main() {
     let left = leftJob()
     let right = rightJob()
     let selected = select {

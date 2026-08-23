@@ -1,6 +1,6 @@
 import std.process
 
-fn main(): !process.ProcessError suspends {
+fn main(): !process.ProcessError {
     let _ = process.command("/definitely/missing/tondo-process-fixture")
         .output()?
 }

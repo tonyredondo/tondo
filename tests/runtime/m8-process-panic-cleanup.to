@@ -12,7 +12,7 @@ fn failChild() suspends {
     panic("process sibling panic")
 }
 
-fn main(): !(process.ProcessError | env.EnvError) suspends {
+fn main(): !(process.ProcessError | env.EnvError) {
     let hostArguments = env.snapshot()?.arguments()
     scope {
         let running = spawn process.shell(argument(hostArguments[0])).output()

@@ -6,7 +6,7 @@ fn cleanup() suspends {
     console.print("cleanup\n")
 }
 
-fn child() suspends {
+fn child() {
     defer cleanup()
     for {
         tick()

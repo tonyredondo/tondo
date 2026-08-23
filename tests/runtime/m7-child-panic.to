@@ -2,7 +2,7 @@ fn failChild(): Int suspends {
     panic("child panic")
 }
 
-fn main() suspends {
+fn main() {
     scope {
         let child = spawn failChild()
         let value = await child

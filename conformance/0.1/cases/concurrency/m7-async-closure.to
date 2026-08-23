@@ -2,7 +2,7 @@ import std.console
 
 fn tick() suspends {}
 
-fn main() suspends {
+fn main() {
     let factor = 2
     let operation = (value: Int): Int {
         tick()

@@ -22,7 +22,7 @@ fn consume(handle: process.ProcessHandle): Never {
     panic("duplicate-key guard failed")
 }
 
-fn main(): !process.ProcessError suspends {
+fn main(): !process.ProcessError {
     let (first, second) = startPair()?
     let jobs: Map[String, process.ProcessHandle] = [
         key(): first,
