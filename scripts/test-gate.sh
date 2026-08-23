@@ -234,3 +234,7 @@ run_step async-select-conformance \
     scripts/async-select-conformance.sh
 run_step async-select-conformance-contract-tests \
     scripts/async-select-conformance-test.sh
+run_step stdlib-s1a-seal \
+    scripts/stdlib-s1a-seal.sh
+run_step stdlib-s1a-seal-tests \
+    scripts/stdlib-s1a-seal-test.sh

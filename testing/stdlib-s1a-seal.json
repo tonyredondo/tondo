@@ -1,0 +1,208 @@
+{
+  "format": "tondo-stdlib-s1a-seal-contract/1",
+  "owner": "toolchain.std_s1a_seal",
+  "edition": "0.1",
+  "phase": "STD-0.1A",
+  "status": "closed-contract",
+  "scope": "stdlib-foundation-hosted-draft-only",
+  "bundle": {
+    "format": "tondo-stdlib-s1a-seal/1",
+    "directory": "target/reliability/evidence/stdlib-s1a-seal",
+    "archive_pattern": "tondo-stdlib-s1a-<payload-sha256>.tar",
+    "archive_format": "tar-ustar",
+    "source_policy": "clean-git-head",
+    "content_address": "payload-sha256",
+    "public_release": false,
+    "separate_from": ["G5", "N1", "TLF"]
+  },
+  "required_inputs": [
+    "TONDO_STANDARD_LIBRARY_SPEC.md",
+    "docs/contracts/stdlib-s1a.md",
+    "docs/contracts/stdlib-s1a-seal.md",
+    "docs/contracts/stdlib-public-api-audit.md",
+    "testing/stdlib-s1a-seal.json",
+    "testing/stdlib-async.json",
+    "testing/stdlib-fuzz.json",
+    "testing/stdlib-performance.json",
+    "testing/stdlib-performance-conformance.json",
+    "testing/stdlib-conformance.json",
+    "testing/stdlib-conformance-coordination.json",
+    "testing/stdlib-distribution.json",
+    "testing/stdlib-documentation.json",
+    "testing/stdlib-hosted-implementation-coordination.json",
+    "testing/stdlib-implementation-coordination.json",
+    "testing/stdlib-matrix.json",
+    "testing/stdlib-owner-evidence.json",
+    "testing/stdlib-public-api.json",
+    "testing/stdlib-test-coordination.json",
+    "testing/async-select-conformance.json",
+    "testing/async-select-performance.json"
+  ],
+  "required_evidence": [
+    {
+      "id": "STD-A-CONF-001",
+      "path": "target/reliability/evidence/stdlib-conformance.json",
+      "format": "tondo-stdlib-conformance-evidence/1",
+      "status": "passed",
+      "revision_field": "revision",
+      "tree_field": "tree_sha256"
+    },
+    {
+      "id": "STD-A-DIST-001",
+      "path": "target/reliability/evidence/stdlib-distribution/stdlib-distribution.json",
+      "format": "tondo-stdlib-distribution-evidence/1",
+      "status": "promoted-draft",
+      "revision_field": null,
+      "tree_field": null
+    },
+    {
+      "id": "STD-A-PERF-001",
+      "path": "target/reliability/evidence/stdlib-performance-report.json",
+      "format": "tondo-stdlib-performance-report/1",
+      "status": null,
+      "revision_field": "git_revision",
+      "tree_field": null
+    },
+    {
+      "id": "ASYNC-SELECT-VM-CONF-001",
+      "path": "target/reliability/evidence/async-select-conformance.json",
+      "format": "tondo-async-select-conformance/1",
+      "status": "passed",
+      "revision_field": "revision",
+      "tree_field": null
+    },
+    {
+      "id": "ASYNC-SELECT-PERF-001",
+      "path": "target/reliability/evidence/async-select-performance.json",
+      "format": "tondo-async-select-performance-report/1",
+      "status": null,
+      "revision_field": "git_revision",
+      "tree_field": null
+    }
+  ],
+  "required_checks": [
+    "scripts/stdlib-async-check.sh",
+    "scripts/stdlib-async-test.sh",
+    "scripts/stdlib-fuzz-check.sh",
+    "scripts/stdlib-fuzz-test.sh",
+    "scripts/stdlib-owner-evidence-check.sh",
+    "scripts/stdlib-public-api-audit.sh --strict",
+    "scripts/stdlib-public-api-audit-test.sh",
+    "scripts/stdlib-matrix-check.sh",
+    "scripts/stdlib-matrix-test.sh",
+    "scripts/stdlib-test-coordination-check.sh",
+    "scripts/stdlib-test-coordination-test.sh",
+    "scripts/stdlib-conformance-check.sh",
+    "scripts/stdlib-conformance-test.sh",
+    "scripts/stdlib-conformance-coordination-check.sh",
+    "scripts/stdlib-conformance-coordination-test.sh",
+    "scripts/stdlib-documentation-check.sh",
+    "scripts/stdlib-documentation-test.sh",
+    "scripts/stdlib-implementation-coordination-check.sh",
+    "scripts/stdlib-implementation-coordination-test.sh",
+    "scripts/stdlib-hosted-implementation-coordination-check.sh",
+    "scripts/stdlib-hosted-implementation-coordination-test.sh",
+    "scripts/stdlib-performance-check.sh",
+    "scripts/stdlib-performance-conformance.sh",
+    "scripts/stdlib-performance-conformance-test.sh",
+    "scripts/stdlib-distribution-check.sh",
+    "scripts/stdlib-distribution-test.sh",
+    "scripts/async-select-conformance.sh",
+    "scripts/async-select-conformance-test.sh"
+  ],
+  "requirements": [
+    {
+      "id": "STD-A-ASYNC-IMPL-001",
+      "source": "testing/stdlib-async.json",
+      "proof": "implementation.status=verified and promotion.implementation_pending=[]"
+    },
+    {
+      "id": "STD-A-SELECTABLE-IMPL-001",
+      "source": "testing/async-select-conformance.json",
+      "proof": "status=closed and selected VM conformance evidence passes"
+    },
+    {
+      "id": "ASYNC-SELECT-VM-CONF-001",
+      "source": "target/reliability/evidence/async-select-conformance.json",
+      "proof": "206-case composed suite and exact selected observations"
+    },
+    {
+      "id": "STD-A-FUZZ-001",
+      "source": "testing/stdlib-owner-evidence.json",
+      "proof": "all 22 owner FUZZ cells are verified"
+    },
+    {
+      "id": "STD-A-PERF-001",
+      "source": "testing/stdlib-performance-conformance.json",
+      "proof": "10 captured owners, 12 normative not-applicable owners, zero deferred dimensions"
+    },
+    {
+      "id": "STD-A-CONF-001",
+      "source": "target/reliability/evidence/stdlib-conformance.json",
+      "proof": "22 owners, 385 rows, 206 draft cases passed"
+    },
+    {
+      "id": "STD-A-DIST-001",
+      "source": "target/reliability/evidence/stdlib-distribution/stdlib-distribution.json",
+      "proof": "two clean snapshots and byte-identical VM package"
+    }
+  ],
+  "invariants": {
+    "public_api": {
+      "strict": true,
+      "owners": 21,
+      "signatures": 214,
+      "gaps": 0
+    },
+    "matrix": {
+      "owners": 22,
+      "requirements": 171,
+      "rows": 385,
+      "open_rows": 0,
+      "status": "verified",
+      "applicable_open_cells": 0
+    },
+    "fuzz": {
+      "owners": 22,
+      "verified": 22,
+      "partial": 0
+    },
+    "performance": {
+      "captured_owners": 10,
+      "not_applicable_owners": 12,
+      "deferred_dimensions": []
+    },
+    "conformance": {
+      "owners": 22,
+      "rows": 385,
+      "cases": 206,
+      "passed": true
+    },
+    "distribution": {
+      "clean_source_workspaces": 2,
+      "byte_identical": true,
+      "public_release": false
+    },
+    "claims": {
+      "g5": false,
+      "native_backend": false,
+      "tlf": false,
+      "public_release": false
+    }
+  },
+  "negative_cases": [
+    "dirty-workspace",
+    "evidence-revision-drift",
+    "matrix-open-cell",
+    "public-api-gap",
+    "distribution-not-reproducible",
+    "performance-deferred-dimension",
+    "bundle-manifest-mismatch",
+    "archive-payload-mismatch",
+    "g5-claim",
+    "native-backend-claim",
+    "tlf-claim"
+  ],
+  "next_blocks": ["DIAG-SPEC-001"],
+  "public_release": false
+}

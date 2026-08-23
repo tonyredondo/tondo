@@ -1,8 +1,9 @@
 # STD-0.1A implementation and S1A evidence
 
-Status: `implemented-draft`. This document closes the technical Wave 5/S1A
-gate for the current Tondo draft; it does not publish `STD-0.1.0` and does not
-replace the publication checklist in `TONDO_STANDARD_LIBRARY_SPEC.md`.
+Status: `sealed-draft`. `STD-S1A-SEAL-001` closes the technical Wave 5/S1A
+gate for the current Tondo draft with a separate reproducible bundle; it does
+not publish `STD-0.1.0` and does not replace the publication checklist in
+`TONDO_STANDARD_LIBRARY_SPEC.md`.
 
 ## Documentation registry and boundary vocabulary
 
@@ -311,7 +312,8 @@ current tree, manifest, contract and command-log hashes; the matrix has
 retain their external bidirectional/fragmented cases, and `std.async` retains
 its seven-row contract and public fixtures. This promotes conformance for the
 unpublished draft only; `STD-A-DIST-001` also promotes the relocatable VM
-package and the S1A seal is still open.
+package, and `STD-S1A-SEAL-001` seals those inputs as a separate draft-only
+bundle.
 
 The hosted bridge is intentionally a draft distribution boundary: the VM
 validates the typed operation before invoking the host, and the host returns a

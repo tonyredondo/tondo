@@ -6,9 +6,10 @@ de release; no existe un candidato pre-release ni una revisión histórica que
 mantener. `STD-CODEC-PUBLIC-001` ya cerró la auditoría pública global: las 214
 firmas tienen ruta contract → HIR → lowering → host/VM → caso público y los
 tres owners sin runtime están indexados como `build-only`/`not-applicable` con
-razón verificable. STD-0.1A/S1A sigue abierto por el sellado final; la
-distribución VM, las dimensiones de rendimiento y la conformidad pública ya
-están promovidas con evidencia ejecutada. `STD-A-FUZZ-001` ya cerró la dimensión
+razón verificable. STD-0.1A/S1A está sellado como draft técnico; la
+distribución VM, las dimensiones de rendimiento y la conformidad pública están
+promovidas con evidencia ejecutada y un bundle content-addressed independiente.
+`STD-A-FUZZ-001` ya cerró la dimensión
 FUZZ para los 22 owners y no se sobreafirma un cierre global.
 La forma TLF para agentes ya tiene spec y estudio léxico, pero encoder, decoder,
 source maps, CLI y evaluación de generación permanecen pendientes. Tondo 0.1
@@ -48,6 +49,7 @@ existencia del contrato no implica que ningún detector esté implementado.
 - [Contrato de owners Core STD-0.1A](./docs/contracts/stdlib-core.md)
 - [Contrato de owners Hosted STD-0.1A](./docs/contracts/stdlib-hosted.md)
 - [Contrato de distribución VM STD-0.1A](./docs/contracts/stdlib-distribution.md)
+- [Contrato del seal S1A STD-0.1A](./docs/contracts/stdlib-s1a-seal.md)
 
 **RFCs de planificación:**
 
@@ -65,7 +67,7 @@ un bundle companion separado. El futuro candidato del lenguaje fijará G5 y S1;
 solo fijará L0 cuando se construya además una distribución TLF, sin convertirla
 en requisito de Tondo 0.1.
 
-**Objetivo inmediato:** continuar Wave 5 con las leaves de `STD-0.1A`: el slice
+**Objetivo inmediato:** iniciar Wave 6 con `DIAG-SPEC-001`: el slice
 ejecutable de `select` ya está cerrado en la VM hosted —frontend,
 semántica tipada, lowering verificable, runtime cooperativo, ownership
 branch-sensitive, adapters `Waiter`/time, modelo/tests deterministas y
@@ -76,8 +78,9 @@ fronteras normativas `not-applicable` hacia `PERF-001`. `STD-A-CONF-001`
 también está promovido: sus 22 owners, 385 filas y 206 casos del draft tienen
 observación ejecutada. `STD-A-DIST-001` también está promovido: dos snapshots
 limpios producen el mismo paquete VM content-addressed, con instalación,
-ejecución y desinstalación verificadas. El siguiente paso es el sellado S1A;
-después comienza `DIAG-SPEC-001`. El grafo activo se valida con
+ejecución y desinstalación verificadas. `STD-S1A-SEAL-001` ha cerrado el
+bundle técnico del draft con auditoría estricta y cero celdas aplicables
+abiertas; el siguiente bloque es `DIAG-SPEC-001`. El grafo activo se valida con
 `TRACKER-LINT-001`; con
 ese contrato se cierran las fronteras
 runtime-facing B0 de Wave 6; entonces avanzan `DIAG-RUNTIME-001`, `RACE-001`,
@@ -89,12 +92,14 @@ y los tres owners build-only tienen una frontera explícita; no se fabrican
 funciones runtime para ellos. `NATIVE-TARGET-DESC-001` y
 `NATIVE-ARTIFACT-001`, `NATIVE-LINK-PLAN-001` y `NATIVE-PUBLISH-SPEC-001` están
 cerrados como contratos puros, y `PERF-001` ya fija el contrato de benchmark y
-baseline previo al backend. Con la conformance pública y la distribución
-promovidas, solo queda el sellado S1A; después comienza `DIAG-SPEC-001`.
+baseline previo al backend. Con la conformance pública, la distribución y el
+seal S1A promovidos como evidencia técnica del draft, comienza
+`DIAG-SPEC-001`.
 `NATIVE-001` queda después de la compuerta de
 diagnóstico.
 FUZZ está promovido para los 22 owners; la distribución está promovida y el
-seal S1A sigue pendiente, sin sobreafirmar su cierre.
+seal S1A está cerrado como bundle técnico del draft, sin sobreafirmar G5, N1,
+TLF ni una publicación.
 `CONF-GAP-IMPL-001` y `CONF-LAYER-RESULT-001` mantienen T0 verificable sobre el
 árbol actual. `CONF-SEAL-FINAL-001` queda reservado para el primer candidato
 real; los límites `TL01-26-*` pertenecen a S1A. Los contratos
@@ -544,7 +549,7 @@ necesaria; la fragmentación del workspace no.
 | **M10.7 — Metaprogramación estática** | `derive`, generators, meta VM y contribución a G5 | Completado |
 | **M10.6 — Testing de usuario Tondo 0.1** | Implementación de `tondo test` y contribución a G5 | Completado; incluido en el gate T0 vivo |
 | **DIAG — Tooling dinámico** | Race detector, leak/retention detector, crash dumps y runner integrado | Planificado; prerrequisito de M11 |
-| **STD-0.1A — Foundation + Hosted** | Base estándar necesaria para meta, testing y backend | Arquitectura/owners base cerrados; runtime `selectable` ejecutable, auditado y conforme en VM; quedan las dimensiones globales de rendimiento, promoción y distribución |
+| **STD-0.1A — Foundation + Hosted** | Base estándar necesaria para meta, testing y backend | S1A sellado como draft técnico; bundle reproducible, auditoría 214/214, matriz sin gaps aplicables y claims de publicación/backend/TLF desactivados |
 | **M11 — Backend nativo y optimización** | Implementación de producción | Futuro |
 | **STD-0.1B — Concurrency + Application** | Contratos runtime antes de M11; implementación tras N1 | Arquitectura base cerrada; contratos y código pendientes |
 | **TLF — Forma para agentes** | Transporte compacto hacia Tondo canónico | Spec y estudio exploratorio completados; reproducción, implementación, evaluación y bundle L0 pendientes |
@@ -4805,8 +4810,8 @@ Las leaves A3 solo pueden marcarse `[x]` cuando cumplen todos estos puntos:
   visibles los huecos; `--strict` falla ante cualquiera. No acepta un path Rust
   aislado, un fixture que llama otra operación, una prueba documental ni un
   alias bootstrap. El registro actual está verificado en `214/214`, con cero
-  gaps; la promoción de S1A sigue bloqueada únicamente por sus gates de
-  rendimiento, fuzzing, conformance y sellado.
+  gaps; el bundle `STD-S1A-SEAL-001` fija la promoción técnica del draft sin
+  convertirla en una release.
 
 - [x] **STD-IMPL-001 — Coordinar implementación Core por owner.** Cierra cuando
   `STD-CORE-IMPL-001`, `STD-TEXT-IMPL-001`, `STD-COLL-IMPL-001`,
@@ -5094,8 +5099,8 @@ administrativas que no implementan comportamiento.
   negativos. La matriz coordina STD-0.1A sin introducir el catálogo cerrado
   STD-0.1B en G5; `STD-TEST-001`, `STD-DOC-001` y `STD-A-CONF-001` quedan
   cerrados para sus respectivas dimensiones; `STD-A-DIST-001` promueve la
-  distribución VM reproducible y solo el sellado S1A sigue explícitamente
-  pendiente.
+  distribución VM reproducible y el sellado S1A queda explícitamente cerrado
+  como bundle técnico del draft.
 
 - [x] **STD-TEST-001 — Coordinar modelos y properties por owner.**
   `testing/stdlib-test-coordination.json` liga los 22 owners A, las 214 firmas
@@ -5266,16 +5271,21 @@ S1A; su estado se deriva de los registros machine-readable y no de este texto:
   La evidencia queda en `target/reliability/evidence/stdlib-distribution/`;
   es una promoción del draft, no una publicación.
 
-- [ ] **STD-S1A-SEAL-001 — Sellar Gate S1A desde evidencia derivada.** Exigir
+- [x] **STD-S1A-SEAL-001 — Sellar Gate S1A desde evidencia derivada.** Exigir
   `STD-A-ASYNC-IMPL-001`, `STD-A-SELECTABLE-IMPL-001`,
   `ASYNC-SELECT-VM-CONF-001`, `STD-A-FUZZ-001`, `STD-A-PERF-001`,
   `STD-A-CONF-001`, `STD-A-DIST-001`, auditoría pública estricta y cero celdas
   aplicables abiertas en la matriz. Emitir un bundle content-addressed separado
-  de G5, del backend nativo y de TLF; no editar estados a mano.
+  de G5, del backend nativo y de TLF; no editar estados a mano. El contrato
+  `testing/stdlib-s1a-seal.json`, `scripts/stdlib-s1a-seal.sh` y su verificador
+  independiente producen y validan `tondo-stdlib-s1a-<payload-sha256>.tar`,
+  ligado al Git HEAD limpio, a los reportes frescos y a la distribución VM;
+  el bundle declara `public_release=false`, `g5=false`, `native_backend=false`
+  y `tlf=false`.
 
 ### Gate S1A — Standard Library 0.1 foundation
 
-- [ ] La spec estándar fija todas las firmas de su catálogo Core + Hosted
+- [x] La spec estándar fija todas las firmas de su catálogo Core + Hosted
   incluidas en STD-0.1A y mantiene cerrado el catálogo posterior de STD-0.1B.
 - [x] Los slices tempranos de meta, reflect, bytes, time-base y env read-only
   conservan las mismas identidades y contratos usados por M10.7/M10.6; S1A no
@@ -5284,35 +5294,35 @@ S1A; su estado se deriva de los registros machine-readable y no de este texto:
   performance aplicable, conformidad y docs; ninguna tarea umbrella oculta una
   celda pendiente. `PERF` está promovido o tiene una frontera normativa
   `not-applicable`, `CONF` está promovido mediante `STD-A-CONF-001` y la
-  distribución VM está promovida mediante `STD-A-DIST-001`; el sello S1A sigue
-  siendo un gate independiente.
+  distribución VM está promovida mediante `STD-A-DIST-001`; el sello S1A es un
+  bundle técnico independiente ya verificado.
 - [x] El sustrato monotónico de `Duration`, `Instant`, suspensión, timers y
   deadlines es único para producción/testing, está modelado y funciona con
   proveedor real o virtual sin cambiar bytecode de usuario.
-- [ ] Toda la superficie Core se ejecuta sobre la VM sin depender de una ABI
+- [x] Toda la superficie Core se ejecuta sobre la VM sin depender de una ABI
   nativa; no basta con intrinsics y kernels parciales.
-- [ ] `select` y los adapters `Waiter`/time ejecutan prepare/commit/rollback
+- [x] `select` y los adapters `Waiter`/time ejecutan prepare/commit/rollback
   sobre la VM con ownership y fairness conformes; una firma `suspends` antigua
   no satisface esta celda.
-- [ ] Cada API hosted exige la capability correcta y conserva los claims del
+- [x] Cada API hosted exige la capability correcta y conserva los claims del
   target candidato Tondo 0.1.
-- [ ] `derive` de serialization, JSON, MessagePack y Protobuf schema-first se
+- [x] `derive` de serialization, JSON, MessagePack y Protobuf schema-first se
   ejecutan sin reflection runtime, DOM intermedio obligatorio ni inputs
   ambientales.
-- [ ] Los codecs pasan interoperabilidad, fuzzing, streaming, límites,
+- [x] Los codecs pasan interoperabilidad, fuzzing, streaming, límites,
   preservación y gates de rendimiento sobre oracle escalar y kernels
   optimizados.
-- [ ] Modelos, properties, ejemplos y conformidad estándar cubren sus contratos
+- [x] Modelos, properties, ejemplos y conformidad estándar cubren sus contratos
   positivos, negativos, límites y composición.
 - [x] La distribución de STD-0.1A es reproducible, cerrada y versionada con
   firmas, units y providers realmente implementados; `STD-A-DIST-001` prueba
   dos snapshots limpios, instalación, ejecución y desinstalación sin depender
   del árbol fuente.
-- [ ] `STD-S1A-SEAL-001` verifica cero gaps aplicables y reproduce el bundle
+- [x] `STD-S1A-SEAL-001` verifica cero gaps aplicables y reproduce el bundle
   desde inputs cerrados; ninguna coordinación `[x]` sustituye esta compuerta.
-- [ ] Los programas representativos pasan el gate estricto y proporcionan el
+- [x] Los programas representativos pasan el gate estricto y proporcionan el
   corpus funcional inicial para `PERF-001`, `DIAG-*` y `NATIVE-001`.
-- [ ] `std.testing` está especificado, implementado y probado con su propio
+- [x] `std.testing` está especificado, implementado y probado con su propio
   runner público; un proyecto puede escribir tests útiles usando solo
   `assert` y enriquecerlos mediante imports explícitos, sin crear un segundo
   formato de snapshots, artifacts o generated cases.
@@ -5422,7 +5432,7 @@ pueden retrasar el primer backend correcto.
   en `testing/performance.json`, `docs/contracts/performance.md`,
   `scripts/performance-check.sh` y `scripts/performance-test.sh`, integrados en
   `scripts/test-gate.sh`. Este contrato desbloquea `DIAG-SPEC-001`; en la cola
-  global, `TRACKER-LINT-001` y el seal real de S1A se completan antes de iniciar
+  global, `TRACKER-LINT-001` y el seal S1A ya están completados antes de iniciar
   ese bloque, y `NATIVE-001` queda después de la compuerta de diagnóstico.
 
 - [ ] **DIAG-SPEC-001 — Cerrar el contrato unificado de diagnóstico dinámico.**
@@ -6636,11 +6646,11 @@ parte del diseño. `testing/conformance-ratchet.json` se regenera contra el
 único corpus vivo y sus case layers actuales.
 
 Esta tabla es la fuente de reconciliación del estado actual.
-26. [ ] **Wave 5 — STD-0.1A por layers.** Los contratos, slices A0 y kernels
+26. [x] **Wave 5 — STD-0.1A por layers.** Los contratos, slices A0 y kernels
     iniciales están cerrados; la auditoría pública verifica 214/214 firmas y ya
-    incorpora el delta `selectable` de DEC-020. Permanecen las dimensiones de
-    evidencia y promoción de S1A. El
-    orden de cierre es:
+    incorpora el delta `selectable` de DEC-020. Las dimensiones de evidencia y
+    promoción de S1A quedaron cerradas por el bundle técnico reproducible. El
+    orden de cierre fue:
     - lenguaje/select: `ASYNC-SELECT-FRONTEND-001 → ASYNC-SELECT-SEMA-001 →
       ASYNC-SELECT-LOWER-001`; después runtime y ownership cierran en paralelo,
       alimentan `STD-A-SELECTABLE-IMPL-001` —que además exige los ya cerrados
@@ -6671,9 +6681,11 @@ Esta tabla es la fuente de reconciliación del estado actual.
       (`STD-A-ASYNC-API-001` (cerrado) → `ASYNC-ITER-EXT-001` →
       `STD-A-ASYNC-IMPL-001`; `ASYNC-DEFER-IMPL-001` cerrado) +
       `STD-A-FUZZ-001` + `STD-A-PERF-001` + `STD-A-CONF-001` +
-      `STD-A-DIST-001` → `STD-S1A-SEAL-001`.
-    Los owners independientes pueden avanzar en paralelo, pero S1A no cierra
-    hasta que cada firma contractual atraviese una ruta pública real.
+      `STD-A-DIST-001` → `STD-S1A-SEAL-001`; el bundle técnico queda reproducible
+      y verificado, por lo que Wave 5 termina sin abrir G5 ni una publicación.
+    Los owners independientes pudieron avanzar en paralelo; el seal cerró S1A
+    únicamente después de que cada firma contractual atravesó una ruta pública
+    real.
 27. [ ] **Wave 6 — Contratos que condicionan el backend.** Después de
     `ASYNC-SELECT-VM-CONF-001` y `DIAG-SPEC-001`, cerrar
     `STD-ASYNC-GROUP-SPEC-001`, `STD-CONC-001`, `STD-SYNC-001`,
@@ -6736,16 +6748,16 @@ lowering, VM, ownership, modelo y adapters; su presupuesto y conformidad VM
 hosted están ratcheteados. M10.7 y la implementación
 funcional de M10.6 permanecen cerradas. `CONF-DRAFT-001` también permanece
 cerrada. La auditoría mantiene T0 verificable sobre el árbol actual y G5 abierto
-hasta el primer candidato real. Wave 5/S1A sigue abierta por el sellado final;
+hasta el primer candidato real. Wave 5/S1A queda cerrada como draft técnico
+por `STD-S1A-SEAL-001`;
 la superficie ejecutable está verificada en 214/214 firmas y FUZZ está promovido
-22/22; la auditoría ya incluye los efectos `selectable`, mientras el selector
-núcleo mantiene pendientes únicamente las dimensiones globales de S1A; la
-conformidad hosted del selector ya está ratcheteada y la paridad nativa sigue
-en `NATIVE-SELECT-001`.
+22/22; la auditoría ya incluye los efectos `selectable`, la conformidad hosted
+del selector está ratcheteada y la paridad nativa sigue reservada a
+`NATIVE-SELECT-001`.
 `CONF-GAP-IMPL-001` y `CONF-LAYER-RESULT-001` producen la trazabilidad y el
 resultado compuesto vivos. `CONF-SEAL-FINAL-001` permanece pendiente para el
 primer release. `STD-IMPL-001`, `STD-IMPL-002` y `STD-CODEC-PUBLIC-001` están cerrados;
-Wave 6 no se declara iniciada antes de S1A.
+Wave 6 puede comenzar después del seal S1A.
 `STD-IMPL-001` y `STD-IMPL-002` quedan ahora cerrados por sus gates de
 coordinación; `NATIVE-TARGET-DESC-001`, `NATIVE-ARTIFACT-001`,
 `NATIVE-LINK-PLAN-001`, `NATIVE-PUBLISH-SPEC-001` y `PERF-001` quedan cerrados
@@ -6759,8 +6771,8 @@ evidencia runtime, `STD-A-ASYNC-IMPL-001` cerró su ejecución estructurada y
 `STD-A-CONF-001` promovió la ejecución pública (22 owners, 385 filas y 206
 casos del draft) con evidencia hash-bound. `STD-A-DIST-001` promovió el
 paquete VM reproducible (dos snapshots, instalación, ejecución y
-desinstalación). La siguiente frontera es el seal real de S1A. Solo entonces comienza
-`DIAG-SPEC-001`; la
+desinstalación). `STD-S1A-SEAL-001` cerró el bundle técnico del draft; la
+siguiente frontera es `DIAG-SPEC-001`; la
 instrumentación VM espera los contratos B0 y `NATIVE-001` espera
 `DIAG-CI-001`.
 
