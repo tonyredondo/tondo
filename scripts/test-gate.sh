@@ -123,6 +123,10 @@ run_step stdlib-uuid-contract \
     scripts/stdlib-uuid-check.sh
 run_step stdlib-uuid-contract-tests \
     scripts/stdlib-uuid-test.sh
+run_step stdlib-log-contract \
+    scripts/stdlib-log-check.sh
+run_step stdlib-log-contract-tests \
+    scripts/stdlib-log-test.sh
 run_step stdlib-performance-contract \
     scripts/stdlib-performance-check.sh
 run_step native-target-descriptor-contract \

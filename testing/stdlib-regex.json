@@ -226,7 +226,7 @@
       {"id": "performance", "requires": ["scalar-oracle", "adversarial-input", "target-qualified-report", "allocation-report"]},
       {"id": "promote", "requires": ["linear-safety-proof", "deterministic-errors", "unicode-descriptor-parity", "STD-PERF-001-report"]}
     ],
-    "next_blocks": ["STD-LOG-001", "DIAG-RUNTIME-001"]
+    "next_blocks": ["DIAG-RUNTIME-001"]
   },
   "implementation": {
     "status": "pending-after-native-gate",

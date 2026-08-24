@@ -40,7 +40,8 @@
       "STD-CONC-001",
       "STD-EXEC-001",
       "STD-NET-001",
-      "STD-SYNC-001"
+      "STD-SYNC-001",
+      "STD-LOG-001"
     ],
     "RACE-001": ["DIAG-RUNTIME-001"],
     "LEAK-001": ["DIAG-RUNTIME-001"],

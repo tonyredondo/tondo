@@ -87,7 +87,7 @@ jq -e '
   and .streaming.stack == "explicit-bounded-frames-and-worklists"
   and .errors.partial_success == false
   and .implementation.public_api_promoted == false
-  and .promotion.next_blocks == ["STD-LOG-001", "DIAG-RUNTIME-001"]
+  and .promotion.next_blocks == ["DIAG-RUNTIME-001"]
 ' testing/stdlib-cbor.json >/dev/null
 
 echo "std.cbor tests: OK (RFC 8949; tags; undefined; indefinite chunks; deterministic ordering; limits)"

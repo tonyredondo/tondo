@@ -251,7 +251,7 @@
     ]
   },
   "promotion": {
-    "next_blocks": ["STD-LOG-001", "DIAG-RUNTIME-001"],
+    "next_blocks": ["DIAG-RUNTIME-001"],
     "runtime_gate": "DIAG-RUNTIME-001",
     "native_gate": "NATIVE-001"
   }

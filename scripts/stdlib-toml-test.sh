@@ -86,7 +86,7 @@ jq -e '
   and .errors.partial_success == false
   and .performance.scalar_oracle == true
   and .implementation.public_api_promoted == false
-  and .promotion.next_blocks == ["STD-LOG-001", "DIAG-RUNTIME-001"]
+  and .promotion.next_blocks == ["DIAG-RUNTIME-001"]
 ' testing/stdlib-toml.json >/dev/null
 
 echo "std.toml tests: OK (TOML 1.1.0; dates; tables; duplicates; spans; streaming; toolchain boundary)"

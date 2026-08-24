@@ -80,7 +80,7 @@ jq -e '
   and .ownership.global_registry == false
   and .performance.generation_state == "no-global-lock-counter-or-registry"
   and .implementation.public_api_promoted == false
-  and .promotion.next_blocks == ["STD-LOG-001", "DIAG-RUNTIME-001"]
+  and .promotion.next_blocks == ["DIAG-RUNTIME-001"]
 ' testing/stdlib-uuid.json >/dev/null
 
 echo "std.uuid tests: OK (RFC vectors; text/bytes; v4/v5/v7; capabilities; no hidden state)"

@@ -169,7 +169,7 @@ jq -e '
   and .collections.direct_for.post_cursor_insertions == "excluded"
   and .collections.direct_for.lock_held_in_body == false
   and .collections.direct_for.materialization == "forbidden"
-  and .promotion.next_blocks == ["STD-LOG-001", "DIAG-RUNTIME-001"]
+  and .promotion.next_blocks == ["DIAG-RUNTIME-001"]
   and .implementation.status == "pending-after-native-gate"
   and .implementation.public_api_promoted == false
   and .implementation.host == "required-after-native-gate"

@@ -3796,7 +3796,54 @@ rendimiento, conformance y documentación de uso permanecen pendientes de
 `STD-UUID-IMPL-001`, `STD-UUID-HOST-001`, `STD-UUID-TEST-001`,
 `STD-UUID-PERF-001`, `STD-UUID-CONF-001` y `STD-UUID-DOC-001`.
 
-### 14.18 Reglas de rendimiento de codecs
+### 14.18 `std.log`
+
+`std.log` separa la construcción pura de un evento de su entrega a un sink.
+`LogLevel` es el orden cerrado `Trace < Debug < Info < Warn < Error`; no existe
+`Fatal`, porque terminar el programa desde logging ocultaría control de flujo.
+`LogEvent` contiene level, target UTF-8 no vacío, mensaje, fields estructurados
+y un `UtcDateTime?` opcional. El módulo nunca consulta `CivilClock` por su
+cuenta: si el caller quiere timestamp debe obtenerlo explícitamente mediante
+`std.time` y pasarlo al evento.
+
+`LogValue` admite `Null`, booleanos, enteros, floats finitos, texto, bytes,
+arrays, objects y `Redacted`. `Fields` es un mapa ordenado de claves UTF-8
+únicas; duplicados, controles, `NUL`, límites y mutaciones parciales se
+rechazan antes de publicar. `Text` escribe una única línea escapada y
+`JsonLines` usa el schema `tondo-log-event-0.1/1`, orden raíz fijo y fields en
+orden UTF-8; bytes se representan en Base64 RFC 4648 y `Redacted` nunca se
+obtiene por heurística.
+
+El protocolo estático `LogSink` ofrece `write`, `flush` y `close`. `Logger` es
+un owner explícito de un sink: no existe logger global, fallback implícito a
+stderr, worker detached, queue ilimitada o configuración desde environment.
+`ConsoleSink` requiere `console`, `FileSink` requiere `filesystem` y un sink
+de red implementa el mismo protocolo sobre un writer/transporte explícito con
+`network`; DNS, TLS y retry pertenecen a sus owners. `Block` suspende y espera
+capacidad, `Reject` devuelve `LogError.Backpressure` sin consumir el evento y
+`Drop` devuelve `LogReceipt.Dropped`. Todo sink es finito y sus llamadas
+concurrentes se linearizan por orden de commit; `flush` y `close` conservan
+errores, cancelación y cleanup visibles.
+
+La superficie no duplica APIs async: `Logger.emit`, `flush` y `close` son
+`suspends` y una llamada directa espera automáticamente; no hay
+`logAsync`, polling ni `std.log.select`. El core de eventos no requiere host,
+las capabilities solo aparecen en los constructores de sinks y la ausencia
+produce `E1008`. El oracle scalar recorre valores anidados con frames
+explícitos; SIMD y buffers especializados solo se promueven tras equivalencia
+de bytes, errores, allocations y límites.
+
+El contrato machine-readable, la documentación normativa y los negativos son
+[`testing/stdlib-log.json`](./testing/stdlib-log.json),
+[`docs/contracts/stdlib-log.md`](./docs/contracts/stdlib-log.md),
+[`scripts/stdlib-log-check.sh`](./scripts/stdlib-log-check.sh) y
+[`scripts/stdlib-log-test.sh`](./scripts/stdlib-log-test.sh). El diseño B0
+queda cerrado por `STD-LOG-001`; implementación, bridges de host, tests,
+fuzzing, rendimiento, conformance y documentación de uso siguen pendientes de
+`STD-LOG-IMPL-001`, `STD-LOG-HOST-001`, `STD-LOG-TEST-001`,
+`STD-LOG-PERF-001`, `STD-LOG-CONF-001` y `STD-LOG-DOC-001`.
+
+### 14.19 Reglas de rendimiento de codecs
 
 Los codecs de datos:
 

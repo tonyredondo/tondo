@@ -148,7 +148,7 @@ jq -e '
   and all(.corpora[]; .required == true and (.focus | length) > 0)
   and ((.exclusions | unique | length) == (.exclusions | length))
   and ([.promotion.gates[].id] == ["design", "implementation", "conformance", "performance", "promote"])
-  and .promotion.next_blocks == ["STD-LOG-001", "DIAG-RUNTIME-001"]
+  and .promotion.next_blocks == ["DIAG-RUNTIME-001"]
   and .implementation.status == "pending-after-native-gate"
   and .implementation.public_api_promoted == false
   and .implementation.host == "required-after-native-gate"

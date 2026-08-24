@@ -1,0 +1,307 @@
+{
+  "format": "tondo-stdlib-owner-contract/1",
+  "owner": "std.log",
+  "parent_owner": "std",
+  "edition": "0.1",
+  "phase": "STD-0.1B",
+  "task": "STD-LOG-001",
+  "status": "contract-locked",
+  "contract": "docs/contracts/stdlib-log.md",
+  "spec": "TONDO_STANDARD_LIBRARY_SPEC.md",
+  "language_spec": "TONDO_LANGUAGE_SPEC.md",
+  "layer": "B0",
+  "kind": "runtime-facing",
+  "target": "tondo-vm-hosted-and-native",
+  "dependencies": ["std.bytes", "std.encoding", "std.io", "std.path", "std.console", "std.fs", "std.net", "std.time"],
+  "capabilities": {
+    "required": [],
+    "optional": ["console", "filesystem", "network", "civil-clock"],
+    "source_sets": {
+      "core": [],
+      "console": ["console"],
+      "file": ["filesystem"],
+      "network": ["network"],
+      "timestamp": ["civil-clock"]
+    },
+    "import_effect": "none",
+    "ambient_lookup": false,
+    "compile_time_query": false,
+    "missing_capability": "static-E1008",
+    "forbidden": [
+      "global-logger",
+      "environment-config",
+      "implicit-stderr",
+      "unbounded-queue",
+      "hidden-thread",
+      "drop-oldest",
+      "heuristic-redaction",
+      "automatic-retry",
+      "rotation",
+      "dns",
+      "tls",
+      "reconnect",
+      "metrics-exporter",
+      "tracing-exporter"
+    ]
+  },
+  "event": {
+    "levels": ["Trace", "Debug", "Info", "Warn", "Error"],
+    "ordering": "Trace-less-than-Debug-less-than-Info-less-than-Warn-less-than-Error",
+    "minimum_filter": "event-level-greater-than-or-equal-to-minimumLevel",
+    "fatal_level": "forbidden",
+    "target": "non-empty-utf8",
+    "message": "utf8",
+    "timestamp": "explicit-optional-UtcDateTime-no-ambient-clock",
+    "event_mutability": "immutable",
+    "event_identity": "no-pid-task-id-path-or-host-secret"
+  },
+  "values": {
+    "variants": ["Null", "Bool", "Int", "UInt", "Float", "Text", "Bytes", "Array", "Object", "Redacted"],
+    "float_policy": "finite-only",
+    "bytes_policy": "preserve-and-json-base64",
+    "redacted_policy": "explicit-token-no-heuristic-scanning",
+    "objects": "ordered-unique-utf8-key-fields",
+    "arrays": "ordered-bounded-log-values",
+    "normalization": "none",
+    "locale": "forbidden"
+  },
+  "fields": {
+    "container": "ordered-unique-map",
+    "duplicate": "reject-without-mutation",
+    "key_encoding": "utf8",
+    "key_nul": "reject",
+    "key_controls": "reject",
+    "key_normalization": "none",
+    "text_order": "insertion",
+    "json_order": "utf8-byte-lexicographic",
+    "partial_mutation": false
+  },
+  "formats": {
+    "closed": ["Text", "JsonLines"],
+    "text": {
+      "record": "one-utf8-line-per-event",
+      "order": "level-target-message-fields",
+      "escaping": "lf-cr-tab-backslash-quote-control",
+      "bytes": "b64-rfc4648-canonical",
+      "final_lf": true
+    },
+    "json_lines": {
+      "schema": "tondo-log-event-0.1/1",
+      "root_order": ["schema", "level", "target", "message", "time", "fields"],
+      "time": "null-or-rfc3339-utc",
+      "bytes": "object-with-$bytes-base64",
+      "redacted": "object-with-$redacted-true",
+      "duplicate_keys": "reject",
+      "final_lf": true,
+      "extra_whitespace": "reject"
+    }
+  },
+  "backpressure": {
+    "policies": ["Block", "Reject", "Drop"],
+    "block": "suspends-until-accepted-and-cancel-safe",
+    "reject": "LogError.Backpressure-no-consume",
+    "drop": "LogReceipt.Dropped-observable",
+    "drop_oldest": "forbidden",
+    "queue": "finite-explicit-capacity",
+    "unbounded": false
+  },
+  "sinks": {
+    "protocol": "LogSink",
+    "methods": ["write", "flush", "close"],
+    "write": "linearizable-and-suspendible",
+    "flush": "all-accepted-before-call-reach-writer",
+    "close": "terminal-drain-flush-consume",
+    "console": {
+      "type": "ConsoleSink",
+      "capability": "console",
+      "streams": ["Stdout", "Stderr"],
+      "implicit_fallback": false
+    },
+    "file": {
+      "type": "FileSink",
+      "capability": "filesystem",
+      "modes": ["Append", "Truncate"],
+      "parent_creation": "forbidden",
+      "rotation": "forbidden"
+    },
+    "network": {
+      "provider": "LogSink-over-explicit-std.io.Writer-or-std.net-transport",
+      "capability": "network",
+      "dns": "forbidden",
+      "tls": "owned-by-std.net",
+      "retry": "forbidden"
+    }
+  },
+  "api": {
+    "module": "std.log",
+    "types": [
+      "LogLevel", "LogValue", "LogFormat", "ConsoleStream", "FileMode", "Backpressure",
+      "LogReceipt", "LogError", "Fields", "LogEvent", "LogLimits", "SinkOptions",
+      "LoggerOptions", "LogSink", "ConsoleSink", "FileSink", "Logger[S]"
+    ],
+    "traits": ["LogSink"],
+    "functions": [
+      "LogLimits.defaults", "LogLimits.create", "Fields.empty", "Fields.put", "Fields.get",
+      "Fields.count", "LogEvent.create", "LogEvent.level", "LogEvent.target", "LogEvent.message",
+      "LogEvent.fields", "LogEvent.timestamp", "SinkOptions.create", "LoggerOptions.create",
+      "ConsoleSink.create", "FileSink.create", "Logger.create", "Logger.enabled", "Logger.emit",
+      "Logger.flush", "Logger.close"
+    ],
+    "annotations": [],
+    "direct_call_waits": true,
+    "explicit_await_direct_call": "forbidden",
+    "explicit_await_join": "unchanged-by-language",
+    "inference_by_name": false,
+    "bodyless_requires_effect": true,
+    "bodyful_inference": "allowed",
+    "selectable_operations": [],
+    "no_async_duplicate_api": true,
+    "no_global_logger": true
+  },
+  "surface": {
+    "types": [
+      "LogLevel", "LogValue", "LogFormat", "ConsoleStream", "FileMode", "Backpressure",
+      "LogReceipt", "LogError", "Fields", "LogEvent", "LogLimits", "SinkOptions",
+      "LoggerOptions", "LogSink", "ConsoleSink", "FileSink", "Logger[S]"
+    ],
+    "trait_methods": [
+      {"id": "sink-write", "signature": "fn LogSink.write(var self, event: LogEvent): LogReceipt ! LogError suspends", "effect": "suspends"},
+      {"id": "sink-flush", "signature": "fn LogSink.flush(var self): Unit ! LogError suspends", "effect": "suspends"},
+      {"id": "sink-close", "signature": "fn LogSink.close(self): Unit ! LogError suspends", "effect": "suspends"}
+    ],
+    "signatures": [
+      {"id": "limits-defaults", "signature": "pub fn LogLimits.defaults(): LogLimits", "kind": "fixed-default-limits", "effect": "pure"},
+      {"id": "limits-create", "signature": "pub fn LogLimits.create(maxEventBytes: Int, maxFields: Int, maxDepth: Int, maxFieldKeyBytes: Int, maxStringBytes: Int, maxQueueEntries: Int): LogLimits ! LogError", "kind": "limit-constructor", "effect": "pure"},
+      {"id": "fields-empty", "signature": "pub fn Fields.empty(): Fields", "kind": "field-builder", "effect": "pure"},
+      {"id": "fields-put", "signature": "pub fn Fields.put(var self, key: String, value: LogValue): Unit ! LogError", "kind": "field-insert", "effect": "pure"},
+      {"id": "fields-get", "signature": "pub fn Fields.get(self, key: String): LogValue?", "kind": "field-lookup", "effect": "pure"},
+      {"id": "fields-count", "signature": "pub fn Fields.count(self): Int", "kind": "field-count", "effect": "pure"},
+      {"id": "event-create", "signature": "pub fn LogEvent.create(level: LogLevel, target: String, message: String, fields: Fields, timestamp: UtcDateTime?): LogEvent ! LogError", "kind": "event-constructor", "effect": "pure"},
+      {"id": "event-level", "signature": "pub fn LogEvent.level(self): LogLevel", "kind": "event-accessor", "effect": "pure"},
+      {"id": "event-target", "signature": "pub fn LogEvent.target(self): String", "kind": "event-accessor", "effect": "pure"},
+      {"id": "event-message", "signature": "pub fn LogEvent.message(self): String", "kind": "event-accessor", "effect": "pure"},
+      {"id": "event-fields", "signature": "pub fn LogEvent.fields(self): Fields", "kind": "event-accessor", "effect": "pure"},
+      {"id": "event-timestamp", "signature": "pub fn LogEvent.timestamp(self): UtcDateTime?", "kind": "event-accessor", "effect": "pure"},
+      {"id": "sink-options-create", "signature": "pub fn SinkOptions.create(format: LogFormat, backpressure: Backpressure, capacity: Int, limits: LogLimits): SinkOptions ! LogError", "kind": "sink-options", "effect": "pure"},
+      {"id": "logger-options-create", "signature": "pub fn LoggerOptions.create(minimumLevel: LogLevel): LoggerOptions", "kind": "logger-options", "effect": "pure"},
+      {"id": "console-sink-create", "signature": "pub fn ConsoleSink.create(stream: ConsoleStream, options: SinkOptions): ConsoleSink ! LogError", "kind": "console-sink", "effect": "console"},
+      {"id": "file-sink-create", "signature": "pub fn FileSink.create(path: Path, mode: FileMode, options: SinkOptions): FileSink ! LogError", "kind": "file-sink", "effect": "filesystem"},
+      {"id": "logger-create", "signature": "pub fn Logger.create[S: LogSink](sink: S, options: LoggerOptions): Logger[S] ! LogError", "kind": "logger-constructor", "effect": "pure"},
+      {"id": "logger-enabled", "signature": "pub fn Logger.enabled(ref self, level: LogLevel): Bool", "kind": "level-filter", "effect": "pure"},
+      {"id": "logger-emit", "signature": "pub fn Logger.emit(ref self, event: LogEvent): LogReceipt ! LogError suspends", "kind": "event-submit", "effect": "suspends"},
+      {"id": "logger-flush", "signature": "pub fn Logger.flush(ref self): Unit ! LogError suspends", "kind": "sink-flush", "effect": "suspends"},
+      {"id": "logger-close", "signature": "pub fn Logger.close(self): Unit ! LogError suspends", "kind": "logger-terminal", "effect": "suspends"}
+    ],
+    "direct_call_waits": true,
+    "explicit_await_direct_call": "forbidden",
+    "explicit_await_join": "unchanged-by-language",
+    "inference_by_name": false,
+    "bodyless_requires_effect": true,
+    "bodyful_inference": "allowed",
+    "selectable_operations": [],
+    "no_async_duplicate_api": true
+  },
+  "ownership": {
+    "event_copyable": true,
+    "event_sendable": true,
+    "event_shareable": true,
+    "fields_logical_copy": true,
+    "logger_affine": true,
+    "logger_sendable": true,
+    "logger_shareable": true,
+    "logger_copyable": false,
+    "logger_cloneable": false,
+    "sink_affine": true,
+    "sink_copyable": false,
+    "sink_cloneable": false,
+    "sink_close_terminal": true,
+    "event_no_mutable_alias": true,
+    "failed_emit_event": "not-published-and-logical-owner-preserved",
+    "close_waits_in_flight": true,
+    "post_close_use": "compile-error"
+  },
+  "limits": [
+    {"id": "max_event_bytes", "unit": "bytes", "scope": "event-before-sink", "default": 1048576, "check": "before-format"},
+    {"id": "max_fields", "unit": "entries", "scope": "event", "default": 64, "check": "before-publish"},
+    {"id": "max_depth", "unit": "frames", "scope": "nested-values", "default": 16, "check": "before-recurse"},
+    {"id": "max_field_key_bytes", "unit": "bytes", "scope": "key", "default": 128, "check": "before-insert"},
+    {"id": "max_string_bytes", "unit": "bytes", "scope": "message-and-values", "default": 65536, "check": "before-copy"},
+    {"id": "max_queue_entries", "unit": "entries", "scope": "sink-queue", "default": 1024, "check": "before-reserve"}
+  ],
+  "errors": {
+    "type": "LogError",
+    "location": "event-field-format-sink-boundary",
+    "partial_success": false,
+    "kinds": ["InvalidTarget", "InvalidFieldKey", "DuplicateField", "InvalidLimit", "ResourceLimit", "NonFiniteValue", "Backpressure", "Closed", "Cancelled", "CapabilityMissing", "UnsupportedFormat", "Io", "Host"]
+  },
+  "performance": {
+    "filtered_event_cost": "level-comparison-only",
+    "scalar_oracle": true,
+    "iterative_value_frames": true,
+    "simd_allowed_after_equivalence": true,
+    "format_allocation": "bounded-by-event-and-limits",
+    "queue_capacity": "finite-explicit",
+    "concurrency": "per-sink-linearization",
+    "claims_before_perf_gate": "forbidden",
+    "measurements": ["disabled-cost", "accepted-throughput", "dropped-throughput", "flush-tail", "allocations", "queue-bytes"]
+  },
+  "test_matrix": [
+    {"id": "event-model", "required": true, "observables": ["levels", "target", "message", "timestamp", "copy", "send", "share"]},
+    {"id": "fields", "required": true, "observables": ["ordered", "duplicate", "utf8-key", "nested", "redacted", "no-partial-mutation"]},
+    {"id": "formats", "required": true, "observables": ["text-escape", "json-schema", "bytes-base64", "finite-float", "single-lf"]},
+    {"id": "filter", "required": true, "observables": ["minimum-level", "enabled", "filtered-no-sink", "filtered-no-queue"]},
+    {"id": "backpressure", "required": true, "observables": ["block", "reject", "drop", "receipt", "capacity", "cancel"]},
+    {"id": "concurrency", "required": true, "observables": ["linearization", "commit-order", "close-in-flight", "post-close"]},
+    {"id": "sinks", "required": true, "observables": ["console-capability", "filesystem-capability", "network-protocol", "short-write", "flush", "close"]},
+    {"id": "failures", "required": true, "observables": ["capability", "format", "resource", "io", "atomic-publication"]},
+    {"id": "privacy", "required": true, "observables": ["redacted-token", "no-heuristic", "no-host-metadata", "explicit-secret-boundary"]},
+    {"id": "vm-native-parity", "required": true, "observables": ["records", "receipts", "errors", "limits", "ordering", "policies"]}
+  ],
+  "corpora": [
+    {"id": "level-and-filter", "source": "owner-generated", "required": true, "focus": ["all-levels", "threshold", "enabled", "filtered"]},
+    {"id": "fields-and-values", "source": "owner-generated", "required": true, "focus": ["scalars", "nested", "duplicate", "keys", "redacted", "float"]},
+    {"id": "text-format", "source": "owner-generated", "required": true, "focus": ["escapes", "ordering", "bytes", "single-line"]},
+    {"id": "json-lines-format", "source": "owner-generated", "required": true, "focus": ["schema", "root-order", "field-order", "base64", "redacted", "canonical-lf"]},
+    {"id": "limits", "source": "owner-generated", "required": true, "focus": ["event", "fields", "depth", "key", "string", "queue"]},
+    {"id": "backpressure-and-cancel", "source": "owner-generated", "required": true, "focus": ["block", "reject", "drop", "cancel", "no-loss"]},
+    {"id": "sink-failures", "source": "owner-generated", "required": true, "focus": ["capability", "short-write", "io", "flush", "close", "races"]},
+    {"id": "vm-native-parity", "source": "owner-generated", "required": true, "focus": ["records", "receipts", "errors", "limits", "ordering", "policies"]}
+  ],
+  "exclusions": [
+    "fatal-level",
+    "global-logger",
+    "environment-configured-levels",
+    "sampling",
+    "implicit-batching",
+    "unbounded-queue",
+    "drop-oldest",
+    "hidden-thread",
+    "automatic-retry",
+    "rotation",
+    "dns",
+    "tls",
+    "reconnect",
+    "metrics-exporter",
+    "tracing-exporter",
+    "callback-api",
+    "heuristic-secret-redaction",
+    "log-async-duplicate",
+    "stdlib-select"
+  ],
+  "promotion": {
+    "gates": [
+      {"id": "design", "requires": ["event-model", "field-ownership", "format-schemas", "capability-boundary", "backpressure-policy"]},
+      {"id": "implementation", "requires": ["immutable-events", "atomic-fields", "finite-queues", "linearizable-sink", "terminal-close"]},
+      {"id": "conformance", "requires": ["format-corpus", "backpressure-observations", "sink-capability-denial", "vm-native-parity"]},
+      {"id": "performance", "requires": ["filtered-cost", "format-allocation-report", "queue-throughput-report", "target-qualified-report"]},
+      {"id": "promote", "requires": ["explicit-redaction", "no-global-state", "no-hidden-control", "STD-PERF-001-report"]}
+    ],
+    "next_blocks": ["DIAG-RUNTIME-001"]
+  },
+  "implementation": {
+    "status": "pending-after-native-gate",
+    "public_api_promoted": false,
+    "host": "required-after-native-gate",
+    "required_follow_ups": ["STD-LOG-IMPL-001", "STD-LOG-HOST-001", "STD-LOG-TEST-001", "STD-LOG-PERF-001", "STD-LOG-CONF-001", "STD-LOG-DOC-001"]
+  }
+}

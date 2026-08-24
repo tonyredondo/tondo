@@ -254,6 +254,6 @@
       {"id":"performance","required":true},
       {"id":"promote","required":true}
     ],
-    "next_blocks": ["STD-LOG-001", "DIAG-RUNTIME-001"]
+    "next_blocks": ["DIAG-RUNTIME-001"]
   }
 }

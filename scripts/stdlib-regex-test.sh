@@ -79,7 +79,7 @@ jq -e '
   and .performance.scalar_oracle == true
   and .performance.simd_allowed_after_equivalence == true
   and .implementation.public_api_promoted == false
-  and .promotion.next_blocks == ["STD-LOG-001", "DIAG-RUNTIME-001"]
+  and .promotion.next_blocks == ["DIAG-RUNTIME-001"]
 ' testing/stdlib-regex.json >/dev/null
 
 echo "std.regex tests: OK (syntax; Unicode; captures; zero-width progress; bounded linear safety)"
