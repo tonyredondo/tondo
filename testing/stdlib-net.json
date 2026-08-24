@@ -251,7 +251,7 @@
     ]
   },
   "promotion": {
-    "next_blocks": ["STD-CBOR-001"],
+    "next_blocks": ["STD-REGEX-001"],
     "runtime_gate": "DIAG-RUNTIME-001",
     "native_gate": "NATIVE-001"
   }

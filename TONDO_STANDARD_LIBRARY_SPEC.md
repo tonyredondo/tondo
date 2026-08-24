@@ -3650,7 +3650,66 @@ queda cerrado como diseño B0; implementación, host, fuzzing, rendimiento,
 conformance y documentación de uso permanecen pendientes de
 `STD-TOML-IMPL-001` y sus leaves posteriores a `NATIVE-001`.
 
-### 14.15 Reglas de rendimiento de codecs
+### 14.15 `std.cbor`
+
+`std.cbor` implementa el modelo de datos de CBOR de RFC 8949. Es un codec
+binario general y no un protocolo de aplicación, un compilador CDDL ni una
+facade de MessagePack. El documento de la API fija un único data item por
+entrada materializada: trailing data se rechaza, aunque un transporte externo
+pueda concatenar items con su propio framing.
+
+El wire model acepta los major types 0 a 7: `UInt`, negativos representados
+como magnitud `-1 - n`, byte strings, text strings UTF-8, arrays, maps, tags y
+simples/floats. Se aceptan longitudes definidas e indefinidas para bytes,
+texto, arrays y maps; el break solo cierra el frame indefinido actual. Los
+valores `null`, `undefined`, `true` y `false` son variantes distintas, los
+simples no asignados se conservan y `Float16` conserva sus bits mediante
+`CborFloat16`. Un `CborTag` conserva el número `UInt64` y el item anidado; no
+hay resolución implícita de tags de tiempo, bignum, decimal, contenido CBOR o
+tags privados.
+
+La ruta dinámica usa `CborValue` con `Array[CborEntry]` para maps, de forma que
+las claves pueden ser cualquier data item y el orden/duplicados son
+observables. `CborValueView` presta payloads hasta el siguiente evento y
+`CborRaw` conserva bytes exactos, incluida la forma de longitud y el float
+original. `parse`, `parseView`, `validate`, `decode`, `encode`,
+`encodeDeterministic` y `raw` comparten el contrato de
+`std.serialization`; typed encode/decode se generan en compile time sin DOM
+dinámico intermedio.
+
+`CborReader` y `CborWriter` exponen eventos para tags, simples, floats,
+containers y chunks indefinidos (`StartBytes`/`ByteChunk`/`EndBytes` y sus
+equivalentes de texto). Usan frames/worklists explícitos, son invariantes al
+fragmentar la entrada y quedan terminales tras `finish`, EOF inválido, límite
+o error de I/O. Solo las fronteras `std.io.Reader`/`Writer` suspenden; no hay
+API async duplicada ni `selectable`.
+
+El modo ordinario acepta formas no mínimas y conserva bits de NaN. El modo
+`encodeDeterministic` aplica los requisitos core de RFC 8949: additional
+information y floats en la forma preferida más corta, longitudes definidas,
+NaN quieto binario-16 estable, arrays/tags en orden semántico y claves de map
+ordenadas por los bytes de su encoding determinista. Una colisión o una clave
+fuera de orden se rechaza; la API no presenta esta policy como una
+canonicalización universal de todos los protocolos CBOR.
+
+Los límites cubren bytes de documento/output, profundidad, items de arrays,
+pares de maps, bytes de texto/bytes, chunks, tags, simples y eventos. Los
+errores incluyen `CborErrorKind`, span half-open de bytes y path estable de
+`ArrayIndex`/`MapEntry`/`MapKey`/`MapValue`/`Tag`; nunca se publica un valor
+parcial ni se consume la pila recursiva del host. No hay includes, environment,
+locale, timezone lookup, reflection registry ni schema discovery.
+
+El contrato machine-readable, la documentación y los negativos ejecutables
+son [`testing/stdlib-cbor.json`](./testing/stdlib-cbor.json),
+[`docs/contracts/stdlib-cbor.md`](./docs/contracts/stdlib-cbor.md),
+[`scripts/stdlib-cbor-check.sh`](./scripts/stdlib-cbor-check.sh) y
+[`scripts/stdlib-cbor-test.sh`](./scripts/stdlib-cbor-test.sh). El diseño B0
+queda cerrado por `STD-CBOR-001`; implementación, host, tests/fuzzing,
+rendimiento, conformance y documentación de uso permanecen pendientes de
+`STD-CBOR-IMPL-001`, `STD-CBOR-TEST-001`, `STD-CBOR-PERF-001`,
+`STD-CBOR-CONF-001` y `STD-CBOR-DOC-001`.
+
+### 14.16 Reglas de rendimiento de codecs
 
 Los codecs de datos:
 
@@ -3665,6 +3724,9 @@ Los codecs de datos:
   host ni expandir aliases sin presupuesto;
 - mantienen frames/worklists explícitos para TOML, sin usar la pila recursiva
   del host ni una tabla de paths sin límite;
+- mantienen frames/worklists explícitos para CBOR, validando breaks,
+  longitudes indefinidas, tags y mapas arbitrarios sin consumir la pila
+  recursiva del host;
 - pueden usar SIMD o kernels nativos bajo las reglas de 11.6; y
 - demuestran equivalencia mediante vectores oficiales, fuzzing diferencial,
   round trips, corpus adversario, implementaciones externas y comparación

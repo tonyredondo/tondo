@@ -111,7 +111,7 @@ jq -e '
   and .implementation.public_api_promoted == false
   and .implementation.host == "required-after-native-gate"
   and .implementation.required_follow_ups == ["STD-CIVIL-TIME-IMPL-001", "STD-CIVIL-TIME-HOST-001", "STD-CIVIL-TIME-TEST-001", "STD-CIVIL-TIME-PERF-001", "STD-CIVIL-TIME-CONF-001", "STD-CIVIL-TIME-DOC-001"]
-  and .promotion.next_blocks == ["STD-CBOR-001", "DIAG-RUNTIME-001"]
+  and .promotion.next_blocks == ["STD-REGEX-001", "DIAG-RUNTIME-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable civil-time contract"
 
 for path in \

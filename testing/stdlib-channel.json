@@ -287,6 +287,6 @@
       "STD-CHANNEL-CONF-001",
       "STD-CHANNEL-DOC-001"
     ],
-    "next_blocks": ["STD-CBOR-001"]
+    "next_blocks": ["STD-REGEX-001"]
   }
 }

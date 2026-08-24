@@ -111,6 +111,10 @@ run_step stdlib-toml-contract \
     scripts/stdlib-toml-check.sh
 run_step stdlib-toml-contract-tests \
     scripts/stdlib-toml-test.sh
+run_step stdlib-cbor-contract \
+    scripts/stdlib-cbor-check.sh
+run_step stdlib-cbor-contract-tests \
+    scripts/stdlib-cbor-test.sh
 run_step stdlib-performance-contract \
     scripts/stdlib-performance-check.sh
 run_step native-target-descriptor-contract \

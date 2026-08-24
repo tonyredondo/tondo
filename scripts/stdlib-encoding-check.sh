@@ -114,7 +114,7 @@ jq -e '
   and .implementation.public_api_promoted == false
   and .implementation.host == "required-after-native-gate"
   and .implementation.required_follow_ups == ["STD-ENCODING-IMPL-001", "STD-ENCODING-TEST-001", "STD-ENCODING-PERF-001", "STD-ENCODING-CONF-001", "STD-ENCODING-DOC-001"]
-  and .promotion.next_blocks == ["STD-CBOR-001", "DIAG-RUNTIME-001"]
+  and .promotion.next_blocks == ["STD-REGEX-001", "DIAG-RUNTIME-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable encoding contract"
 
 for path in \

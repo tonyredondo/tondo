@@ -254,6 +254,6 @@
       {"id":"performance","required":true},
       {"id":"promote","required":true}
     ],
-    "next_blocks": ["STD-CBOR-001", "STD-REGEX-001", "STD-ID-001", "STD-LOG-001", "DIAG-RUNTIME-001"]
+    "next_blocks": ["STD-REGEX-001", "STD-ID-001", "STD-LOG-001", "DIAG-RUNTIME-001"]
   }
 }
