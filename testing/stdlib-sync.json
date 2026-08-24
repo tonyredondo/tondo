@@ -742,6 +742,6 @@
       "STD-SYNC-CONF-001",
       "STD-SYNC-DOC-001"
     ],
-    "next_blocks": ["STD-ENCODING-001"]
+    "next_blocks": ["STD-YAML-001"]
   }
 }

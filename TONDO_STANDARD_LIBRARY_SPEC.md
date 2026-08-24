@@ -1025,8 +1025,12 @@ Texto y datos binarios no se convierten implícitamente:
 La frontera general de decodificación exige un encoding explícito y devuelve
 error ante input inválido. `String(Bytes)` es la conversión explícita y
 canónica del encoding UTF-8; tampoco realiza replacement decoding. Los demás
-encodings se seleccionan por nombre en `std.encoding` y codificar texto produce
-los bytes exactos del encoding elegido.
+encodings se seleccionan mediante las policies nominales de `std.encoding` y
+codificar texto produce los bytes exactos del encoding elegido. El contrato
+cerrado de Base64 y hexadecimal está en
+[`docs/contracts/stdlib-encoding.md`](./docs/contracts/stdlib-encoding.md), con
+registro único en [`testing/stdlib-encoding.json`](./testing/stdlib-encoding.json);
+no hay whitespace permisivo, autodetección ni owner binario alternativo.
 
 `Bytes` tiene un único propietario canónico en `std.bytes`; I/O, console,
 filesystem, process y testing lo reutilizan.
@@ -1871,7 +1875,8 @@ La implementación usa dos gates internos sin crear versiones distintas:
   `std.messagepack`, `std.protobuf`, el sustrato monotónico de `std.time`,
   `std.path`, `std.console`, `std.env`, `std.fs`, `std.process` y
   `std.testing`. Es el corpus mínimo que debe existir antes del backend nativo.
-- **STD-0.1B / S1** completa `std.encoding`, `std.yaml`, `std.toml`,
+- **STD-0.1B / S1** completa el contrato e implementación de `std.encoding`,
+  `std.yaml`, `std.toml`,
   `std.cbor`, calendario civil y zonas de `std.time`, `std.regex`, `std.uuid`,
   `std.channel`, `std.sync`, `std.executor`, `std.log` y `std.net` sobre VM y
   backend nativo.
@@ -2757,6 +2762,81 @@ conformance, benchmarks y documentación de uso siguen pendientes de las leaves
 `STD-NET-*` posteriores a `NATIVE-001`; este contrato no promociona aún símbolos
 runtime.
 
+#### 14.4.7 `std.encoding`
+
+`std.encoding` es el owner único de los encodings binario-texto de STD-0.1B.
+No es un facade de JSON, MessagePack, Protobuf, YAML o TOML: esos módulos
+conservan sus propios wire models y solo reutilizan la misma política Base64
+cuando una anotación lo solicita. `std.encoding` no requiere capability y su
+import no realiza I/O.
+
+El contrato machine-readable y sus checks negativos viven en
+[`testing/stdlib-encoding.json`](./testing/stdlib-encoding.json),
+[`docs/contracts/stdlib-encoding.md`](./docs/contracts/stdlib-encoding.md),
+[`scripts/stdlib-encoding-check.sh`](./scripts/stdlib-encoding-check.sh) y
+[`scripts/stdlib-encoding-test.sh`](./scripts/stdlib-encoding-test.sh). Esos
+artefactos cierran el diseño B0, no promocionan todavía una implementación
+runtime ni un backend nativo.
+
+La superficie canónica es:
+
+~~~tondo pseudocode
+pub enum Base64Alphabet { Standard, UrlSafe }
+pub enum Base64Padding { Required, Omitted }
+pub enum HexCase { Lower, Upper, Any }
+
+pub type EncodingError = { kind: EncodingErrorKind, offset: Int }
+pub type EncodingLimits = { maxInputBytes: Int, maxOutputBytes: Int }
+pub type Base64Options = { alphabet: Base64Alphabet, padding: Base64Padding, limits: EncodingLimits }
+pub type HexOptions = { case: HexCase, limits: EncodingLimits }
+
+pub fn EncodingLimits.defaults(): EncodingLimits
+pub fn EncodingLimits.create(maxInputBytes: Int, maxOutputBytes: Int): EncodingLimits ! EncodingError
+pub fn Base64Options.standard(limits: EncodingLimits): Base64Options
+pub fn Base64Options.urlSafe(limits: EncodingLimits): Base64Options
+pub fn Base64Options.urlSafeUnpadded(limits: EncodingLimits): Base64Options
+pub fn Base64Options.encode(self, input: Bytes): Bytes ! EncodingError
+pub fn Base64Options.decode(self, input: Bytes): Bytes ! EncodingError
+pub fn Base64Options.encodeTo(self, input: Bytes, var output: std.io.Writer): Unit ! EncodingError suspends
+pub fn Base64Options.decodeFrom(self, var input: std.io.Reader): Bytes ! EncodingError suspends
+pub fn Base64Options.encoder(self): Base64Encoder ! EncodingError
+pub fn Base64Options.decoder(self): Base64Decoder ! EncodingError
+
+pub fn HexOptions.lower(limits: EncodingLimits): HexOptions
+pub fn HexOptions.upper(limits: EncodingLimits): HexOptions
+pub fn HexOptions.anyCase(limits: EncodingLimits): HexOptions
+pub fn HexOptions.encode(self, input: Bytes): Bytes ! EncodingError
+pub fn HexOptions.decode(self, input: Bytes): Bytes ! EncodingError
+pub fn HexOptions.encodeTo(self, input: Bytes, var output: std.io.Writer): Unit ! EncodingError suspends
+pub fn HexOptions.decodeFrom(self, var input: std.io.Reader): Bytes ! EncodingError suspends
+pub fn HexOptions.encoder(self): HexEncoder ! EncodingError
+pub fn HexOptions.decoder(self): HexDecoder ! EncodingError
+~~~
+
+Base64 usa RFC 4648 estándar o URL-safe, con padding requerido u omitido
+seleccionado explícitamente. El encoder es siempre canónico; el decoder es
+estricto respecto al alfabeto, padding, bits de relleno, whitespace y datos
+posteriores. Hexadecimal emite dos dígitos ASCII por byte; `Lower` y `Upper`
+son estrictas y `Any` acepta ambas cases pero siempre emite lowercase. No se
+aceptan prefijos `0x`, separadores, MIME line-wrapping, autodetección ni
+reemplazo de caracteres.
+
+Las operaciones materializadas son collectors de los mismos estados
+incrementales `Base64Encoder`/`Base64Decoder`/`HexEncoder`/`HexDecoder`.
+`push` devuelve solo quanta completos, `finish` valida el carry y publica el
+último fragmento; dividir por cualquier frontera produce el mismo output y
+error. Los handles son afines y quedan terminales tras `finish` o error. Los
+límites acumulados de input/output se comprueban antes de publicar; un fallo de
+límite en `push` no cambia el carry. Los adapters `Reader`/`Writer` usan
+`std.io` y el único modelo de suspensión de Tondo, sin APIs `Async` duplicadas
+ni operaciones `selectable`.
+
+La ruta escalar es el oráculo. SIMD y multiversionado solo pueden promoverse
+después de demostrar equivalencia de bytes, errores, offsets, límites y
+terminalidad. La implementación y sus celdas `HOST`, `TEST`, `PERF`, `CONF` y
+`DOC` permanecen pendientes de `NATIVE-001` y de las leaves
+`STD-ENCODING-IMPL-001` a `STD-ENCODING-DOC-001`.
+
 ### 14.5 Contratos cerrados de los owners STD-0.1A
 
 Las firmas exhaustivas de los owners de valores y host están en
@@ -2984,7 +3064,9 @@ longitudes exactas cuando se declaran y cierres balanceados. Los frames son
 explícitos y acotados; no se usa la pila de llamadas del host.
 
 `Encoder.base64` y `Decoder.base64` son la única operación común para la policy
-de bytes representados como Base64 RFC 4648 canónico. El derive JSON la activa
+de bytes representados como Base64 RFC 4648 canónico. Su alfabeto, padding,
+canonicalidad, límites y streaming son los fijados por el contrato de
+[`std.encoding`](./docs/contracts/stdlib-encoding.md). El derive JSON la activa
 solo con `@json(base64)`; no construye `Value` ni acepta alfabetos/padding
 alternativos.
 

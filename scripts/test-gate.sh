@@ -99,6 +99,10 @@ run_step stdlib-civil-time-contract \
     scripts/stdlib-civil-time-check.sh
 run_step stdlib-civil-time-contract-tests \
     scripts/stdlib-civil-time-test.sh
+run_step stdlib-encoding-contract \
+    scripts/stdlib-encoding-check.sh
+run_step stdlib-encoding-contract-tests \
+    scripts/stdlib-encoding-test.sh
 run_step stdlib-performance-contract \
     scripts/stdlib-performance-check.sh
 run_step native-target-descriptor-contract \

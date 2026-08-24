@@ -1,0 +1,224 @@
+{
+  "format": "tondo-stdlib-owner-contract/1",
+  "owner": "std.encoding",
+  "parent_owner": "std",
+  "edition": "0.1",
+  "phase": "STD-0.1B",
+  "task": "STD-ENCODING-001",
+  "status": "contract-locked",
+  "contract": "docs/contracts/stdlib-encoding.md",
+  "spec": "TONDO_STANDARD_LIBRARY_SPEC.md",
+  "language_spec": "TONDO_LANGUAGE_SPEC.md",
+  "layer": "B6",
+  "kind": "runtime-facing",
+  "target": "tondo-vm-hosted-and-native",
+  "dependencies": ["std.bytes", "std.io"],
+  "capabilities": {
+    "required": [],
+    "optional": [],
+    "import_effect": "none",
+    "ambient_lookup": false,
+    "forbidden": [
+      "ambient-host",
+      "environment",
+      "filesystem",
+      "network",
+      "process",
+      "clock",
+      "civil-clock",
+      "entropy",
+      "threads",
+      "dynamic-linking",
+      "runtime-value-reflection"
+    ]
+  },
+  "wire": {
+    "base64": {
+      "standard_alphabet": "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
+      "url_safe_alphabet": "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_",
+      "padding": ["Required", "Omitted"],
+      "whitespace": "reject",
+      "line_wrapping": "forbidden",
+      "prefixes": "forbidden",
+      "mixed_alphabet": "reject",
+      "non_zero_pad_bits": "reject"
+    },
+    "hex": {
+      "digits": "ASCII-0-9-a-f-A-F",
+      "prefix": "forbidden",
+      "separators": "forbidden",
+      "odd_length": "reject",
+      "output_case": "policy-selected"
+    },
+    "text_encoding": "ASCII-output-and-input-alphabet-only"
+  },
+  "surface": {
+    "types": [
+      "Base64Alphabet",
+      "Base64Padding",
+      "HexCase",
+      "EncodingErrorKind",
+      "EncodingError",
+      "EncodingLimits",
+      "Base64Options",
+      "HexOptions",
+      "Base64Encoder",
+      "Base64Decoder",
+      "HexEncoder",
+      "HexDecoder"
+    ],
+    "signatures": [
+      {"id":"limits-defaults","signature":"pub fn EncodingLimits.defaults(): EncodingLimits","kind":"limits","effect":"pure"},
+      {"id":"limits-create","signature":"pub fn EncodingLimits.create(maxInputBytes: Int, maxOutputBytes: Int): EncodingLimits ! EncodingError","kind":"limits","effect":"pure"},
+      {"id":"base64-options-create","signature":"pub fn Base64Options.create(alphabet: Base64Alphabet, padding: Base64Padding, limits: EncodingLimits): Base64Options","kind":"policy","effect":"pure"},
+      {"id":"base64-options-standard","signature":"pub fn Base64Options.standard(limits: EncodingLimits): Base64Options","kind":"policy","effect":"pure"},
+      {"id":"base64-options-url-safe","signature":"pub fn Base64Options.urlSafe(limits: EncodingLimits): Base64Options","kind":"policy","effect":"pure"},
+      {"id":"base64-options-url-safe-unpadded","signature":"pub fn Base64Options.urlSafeUnpadded(limits: EncodingLimits): Base64Options","kind":"policy","effect":"pure"},
+      {"id":"base64-encode","signature":"pub fn Base64Options.encode(self, input: Bytes): Bytes ! EncodingError","kind":"materialized-encode","effect":"pure"},
+      {"id":"base64-decode","signature":"pub fn Base64Options.decode(self, input: Bytes): Bytes ! EncodingError","kind":"materialized-decode","effect":"pure"},
+      {"id":"base64-encode-to","signature":"pub fn Base64Options.encodeTo(self, input: Bytes, var output: std.io.Writer): Unit ! EncodingError suspends","kind":"writer-encode","effect":"suspends"},
+      {"id":"base64-decode-from","signature":"pub fn Base64Options.decodeFrom(self, var input: std.io.Reader): Bytes ! EncodingError suspends","kind":"reader-decode","effect":"suspends"},
+      {"id":"base64-encoder","signature":"pub fn Base64Options.encoder(self): Base64Encoder ! EncodingError","kind":"stream-state","effect":"pure"},
+      {"id":"base64-decoder","signature":"pub fn Base64Options.decoder(self): Base64Decoder ! EncodingError","kind":"stream-state","effect":"pure"},
+      {"id":"hex-options-create","signature":"pub fn HexOptions.create(case: HexCase, limits: EncodingLimits): HexOptions","kind":"policy","effect":"pure"},
+      {"id":"hex-options-lower","signature":"pub fn HexOptions.lower(limits: EncodingLimits): HexOptions","kind":"policy","effect":"pure"},
+      {"id":"hex-options-upper","signature":"pub fn HexOptions.upper(limits: EncodingLimits): HexOptions","kind":"policy","effect":"pure"},
+      {"id":"hex-options-any-case","signature":"pub fn HexOptions.anyCase(limits: EncodingLimits): HexOptions","kind":"policy","effect":"pure"},
+      {"id":"hex-encode","signature":"pub fn HexOptions.encode(self, input: Bytes): Bytes ! EncodingError","kind":"materialized-encode","effect":"pure"},
+      {"id":"hex-decode","signature":"pub fn HexOptions.decode(self, input: Bytes): Bytes ! EncodingError","kind":"materialized-decode","effect":"pure"},
+      {"id":"hex-encode-to","signature":"pub fn HexOptions.encodeTo(self, input: Bytes, var output: std.io.Writer): Unit ! EncodingError suspends","kind":"writer-encode","effect":"suspends"},
+      {"id":"hex-decode-from","signature":"pub fn HexOptions.decodeFrom(self, var input: std.io.Reader): Bytes ! EncodingError suspends","kind":"reader-decode","effect":"suspends"},
+      {"id":"hex-encoder","signature":"pub fn HexOptions.encoder(self): HexEncoder ! EncodingError","kind":"stream-state","effect":"pure"},
+      {"id":"hex-decoder","signature":"pub fn HexOptions.decoder(self): HexDecoder ! EncodingError","kind":"stream-state","effect":"pure"},
+      {"id":"base64-encoder-push","signature":"pub fn Base64Encoder.push(var self, chunk: Bytes): Bytes ! EncodingError","kind":"stream-push","effect":"pure"},
+      {"id":"base64-encoder-finish","signature":"pub fn Base64Encoder.finish(var self): Bytes ! EncodingError","kind":"stream-finish","effect":"pure"},
+      {"id":"base64-decoder-push","signature":"pub fn Base64Decoder.push(var self, chunk: Bytes): Bytes ! EncodingError","kind":"stream-push","effect":"pure"},
+      {"id":"base64-decoder-finish","signature":"pub fn Base64Decoder.finish(var self): Bytes ! EncodingError","kind":"stream-finish","effect":"pure"},
+      {"id":"hex-encoder-push","signature":"pub fn HexEncoder.push(var self, chunk: Bytes): Bytes ! EncodingError","kind":"stream-push","effect":"pure"},
+      {"id":"hex-encoder-finish","signature":"pub fn HexEncoder.finish(var self): Bytes ! EncodingError","kind":"stream-finish","effect":"pure"},
+      {"id":"hex-decoder-push","signature":"pub fn HexDecoder.push(var self, chunk: Bytes): Bytes ! EncodingError","kind":"stream-push","effect":"pure"},
+      {"id":"hex-decoder-finish","signature":"pub fn HexDecoder.finish(var self): Bytes ! EncodingError","kind":"stream-finish","effect":"pure"}
+    ],
+    "direct_call_waits": false,
+    "explicit_await_direct_call": "forbidden",
+    "explicit_await_join": "unchanged-by-language",
+    "inference_by_name": false,
+    "bodyless_requires_effect": true,
+    "bodyful_inference": "allowed",
+    "selectable_operations": [],
+    "no_async_duplicate_api": true
+  },
+  "policies": {
+    "base64": {
+      "standard": {"alphabet":"Standard","padding":"Required"},
+      "url_safe": {"alphabet":"UrlSafe","padding":"Required"},
+      "url_safe_unpadded": {"alphabet":"UrlSafe","padding":"Omitted"},
+      "decode": "strict-policy-alphabet-padding-and-zero-pad-bits",
+      "canonical_output": true,
+      "standard_unpadded": "create-explicitly"
+    },
+    "hex": {
+      "lower": {"output":"Lower","input":"Lower"},
+      "upper": {"output":"Upper","input":"Upper"},
+      "any_case": {"output":"Lower","input":"Lower-or-Upper"},
+      "canonical_output": true
+    },
+    "no_ambient_defaults": true,
+    "no_permissive_decode": true
+  },
+  "streaming": {
+    "materialized_is_collector": true,
+    "chunk_boundary_invariant": true,
+    "reader_input": "std.io.Reader-until-EOF",
+    "writer_output": "std.io.Writer-via-writeAll",
+    "base64_encoder_carry_bytes": 2,
+    "base64_decoder_pending_chars": 3,
+    "hex_encoder_carry_bytes": 0,
+    "hex_decoder_pending_nibbles": 1,
+    "empty_chunk": "no-state-change",
+    "finish_required": true,
+    "error_state": "terminal",
+    "post_finish": "EncodingError.Closed",
+    "resource_limit_push": "atomic-no-state-change",
+    "writer_error": "terminal-after-error",
+    "partial_tondo_result": "never-published"
+  },
+  "ownership": {
+    "bytes_owner": "std.bytes.Bytes",
+    "policies_copy": true,
+    "stream_handles_affine": true,
+    "stream_handles_copy": false,
+    "stream_handles_share": false,
+    "stream_handles_send": true,
+    "writer_borrow": "ends-at-operation-return",
+    "input_alias": "never-retained"
+  },
+  "limits": [
+    {"id":"max_input_bytes","unit":"bytes","scope":"materialized-and-cumulative-stream","source":"EncodingLimits.maxInputBytes"},
+    {"id":"max_output_bytes","unit":"bytes","scope":"materialized-and-cumulative-stream","source":"EncodingLimits.maxOutputBytes"},
+    {"id":"base64_carry","unit":"bytes-or-chars","scope":"incremental-state","source":"fixed-quantum-carry"},
+    {"id":"hex_pending_nibble","unit":"nibbles","scope":"incremental-state","source":"fixed-quantum-carry"},
+    {"id":"vm_heap","unit":"bytes","scope":"all-materialized-buffers","source":"ResourceLimits.max_vm_heap_bytes"}
+  ],
+  "errors": {
+    "type": "EncodingError",
+    "location": "offset-is-observed-input-bytes-before-failure",
+    "kinds": ["InvalidLimit", "InvalidCharacter", "InvalidLength", "InvalidPadding", "NonCanonical", "ResourceLimit", "Io", "Closed", "NoProgress"],
+    "terminal_after": ["InvalidCharacter", "InvalidLength", "InvalidPadding", "NonCanonical", "ResourceLimit", "Io", "Closed", "NoProgress"],
+    "partial_success": false
+  },
+  "performance": {
+    "scalar_oracle": true,
+    "simd_allowed_after_equivalence": true,
+    "dispatch": "target-declared-and-size-based",
+    "input_copy_policy": "no-retained-input-alias",
+    "streaming_allocation": "bounded-by-chunk-and-limits",
+    "required_measurements": ["throughput", "tail-latency", "bytes-copied", "allocations", "code-size", "simd-crossover"],
+    "claims_before_perf_gate": "forbidden"
+  },
+  "test_matrix": [
+    {"id":"policy-catalog","required":true,"observables":["all-alphabets","all-padding-modes","hex-case-policies","closed-signatures"]},
+    {"id":"base64-canonical","required":true,"observables":["rfc4648-vectors","url-safe-vectors","padding","zero-pad-bits","mixed-alphabet-rejection"]},
+    {"id":"hex-canonical","required":true,"observables":["lower","upper","any-case","odd-length","prefix-and-separator-rejection"]},
+    {"id":"fragmentation","required":true,"observables":["one-byte-chunks","quantum-boundaries","empty-chunks","reader-eof","writer-short-writes"]},
+    {"id":"limits-and-atomicity","required":true,"observables":["input-limit","output-limit","overflow","push-no-mutation","no-partial-result"]},
+    {"id":"lifecycle-and-errors","required":true,"observables":["finish-required","terminal-error","closed-after-finish","no-progress","io-error-offset"]},
+    {"id":"scalar-and-optimized-equivalence","required":true,"observables":["scalar-reference","optimized-route","bytes-errors-offsets","ownership"]}
+  ],
+  "corpora": [
+    {"id":"base64-rfc4648","source":"owner-generated","required":true,"focus":["empty","one-byte","two-byte","three-byte","large","standard","url-safe"]},
+    {"id":"base64-invalid","source":"owner-generated","required":true,"focus":["invalid-char","wrong-padding","non-zero-pad-bits","mixed-alphabet","whitespace","trailing-data"]},
+    {"id":"hex-vectors","source":"owner-generated","required":true,"focus":["empty","zero","all-byte-values","lower","upper","any-case"]},
+    {"id":"fragmentation-and-limits","source":"owner-generated","required":true,"focus":["one-byte","quantum-boundary","empty-chunk","reader-eof","short-writer","input-limit","output-limit"]}
+  ],
+  "exclusions": [
+    "mime-line-wrapping",
+    "whitespace-permissive-decode",
+    "base32",
+    "base85",
+    "percent-encoding",
+    "url-escaping",
+    "text-transcoding",
+    "cryptography",
+    "compression",
+    "autodetection",
+    "ambient-locale",
+    "unbounded-stream-buffer"
+  ],
+  "implementation": {
+    "status": "pending-after-native-gate",
+    "public_api_promoted": false,
+    "host": "required-after-native-gate",
+    "required_follow_ups": ["STD-ENCODING-IMPL-001", "STD-ENCODING-TEST-001", "STD-ENCODING-PERF-001", "STD-ENCODING-CONF-001", "STD-ENCODING-DOC-001"]
+  },
+  "promotion": {
+    "gates": [
+      {"id":"design","required":true},
+      {"id":"implementation","required":true},
+      {"id":"conformance","required":true},
+      {"id":"performance","required":true},
+      {"id":"promote","required":true}
+    ],
+    "next_blocks": ["STD-YAML-001", "DIAG-RUNTIME-001"]
+  }
+}

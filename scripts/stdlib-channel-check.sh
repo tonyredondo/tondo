@@ -154,7 +154,7 @@ jq -e '
     "STD-CHANNEL-CONF-001",
     "STD-CHANNEL-DOC-001"
   ]
-  and .promotion.next_blocks == ["STD-ENCODING-001"]
+  and .promotion.next_blocks == ["STD-YAML-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable channel contract"
 
 for path in \

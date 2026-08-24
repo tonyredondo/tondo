@@ -226,6 +226,6 @@
       "STD-ASYNC-GROUP-CONF-001",
       "STD-ASYNC-GROUP-DOC-001"
     ],
-    "next_blocks": ["STD-ENCODING-001"]
+    "next_blocks": ["STD-YAML-001"]
   }
 }
