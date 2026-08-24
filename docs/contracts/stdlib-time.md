@@ -6,9 +6,11 @@ draft; the S1A seal remains open. La ABI ejecutable publica `sleep` y `Timer.wai
 `selectable`: una llamada directa sigue esperando implícitamente y ambas
 operaciones pueden registrarse como brazos de `select`.
 
-This contract describes the first `std.time` slice. It contains only a
-monotonic time-base: civil dates, wall-clock time, time zones, and calendar
-conversion are separate work in STD-0.1B.
+This contract describes the monotonic `std.time` slice (STD-0.1A). Civil dates,
+wall-clock time, time zones, and calendar conversion are defined separately in
+the locked STD-0.1B contract
+[`stdlib-civil-time.md`](./stdlib-civil-time.md); they never add a second
+`Duration`, `Instant`, timer, or deadline API.
 
 ## Values and representation
 

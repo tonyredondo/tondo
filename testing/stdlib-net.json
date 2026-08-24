@@ -251,7 +251,7 @@
     ]
   },
   "promotion": {
-    "next_blocks": ["STD-CIVIL-TIME-001", "STD-ENCODING-001"],
+    "next_blocks": ["STD-ENCODING-001"],
     "runtime_gate": "DIAG-RUNTIME-001",
     "native_gate": "NATIVE-001"
   }

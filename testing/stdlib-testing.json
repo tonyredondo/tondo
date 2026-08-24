@@ -23,7 +23,7 @@
     "core": [],
     "temporary": ["filesystem"],
     "forbidden": [
-      "console", "environment", "clock", "entropy", "network", "process", "threads"
+      "console", "environment", "clock", "civil-clock", "entropy", "network", "process", "threads"
     ]
   },
   "assertions": {

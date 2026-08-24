@@ -25,6 +25,7 @@
       "environment",
       "process",
       "clock",
+      "civil-clock",
       "entropy",
       "network",
       "threads",

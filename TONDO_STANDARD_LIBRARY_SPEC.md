@@ -66,8 +66,9 @@ Esta revisión no fija todavía:
   en `docs/contracts/stdlib-core.md`.
 - Los métodos concretos de strings, colecciones e iteradores.
 - Las declaraciones exhaustivas de consola, filesystem, procesos, concurrencia,
-  calendario civil, codecs adicionales, regex, UUID y logging. `std.net` es la
-  excepción ya cerrada por su contrato owner en la sección 14.4.6.
+  codecs adicionales, regex, UUID y logging. `std.net` y el calendario civil de
+  `std.time` son las excepciones ya cerradas por sus contratos owner en las
+  secciones 14.3.7 y 14.4.6.
 - Las declaraciones exhaustivas de cada operación de JSON, MessagePack y
   Protobuf; este documento sí fija sus owners, arquitectura y garantías comunes.
 - La representación interna de ningún tipo.
@@ -461,6 +462,7 @@ STD-0.1 utiliza el registro `tondo-capabilities-draft` definido por el toolchain
 
 ~~~text
 clock
+civil-clock
 console
 dynamic-linking
 entropy
@@ -508,6 +510,10 @@ la separación conserva una identidad coherente. El caso inicial es `std.time`:
 - `Duration` y sus operaciones puras son core.
 - Las operaciones que consultan o suspenden contra un proveedor monotónico
   requieren `clock`.
+- El calendario civil, parsing y aritmética son core cuando el target ha
+  seleccionado el bundle de zonas versionado. Consultar la hora de pared
+  requiere la capability separada `civil-clock`; relacionarla con un
+  `Instant` requiere además `clock`.
 - El target y la capability forman parte de la interfaz, por lo que la
   disponibilidad parcial nunca es ambigua.
 
@@ -1783,7 +1789,7 @@ actualizar esta especificación y el tracker antes de implementar.
 | `std.yaml` | Core | — | 0.1 | YAML seguro, tipado y streaming sobre `std.serialization`, con límites explícitos |
 | `std.toml` | Core | — | 0.1 | TOML tipado y árbol dinámico explícito, preservando errores con spans |
 | `std.cbor` | Core | — | 0.1 | CBOR tipado, streaming y modo determinista explícito |
-| `std.time` | Core + gated | `clock` para proveedor | 0.1 | Time-base monotónico en STD-0.1A; calendario civil y zonas horarias versionadas en STD-0.1B |
+| `std.time` | Core + gated | `clock` monotónico; `civil-clock` para reloj de pared y anclas | 0.1 | Time-base monotónico, calendario civil y zonas horarias versionadas |
 | `std.path` | Core | — | 0.1 | Paths nativos y operaciones puramente léxicas |
 | `std.regex` | Core | — | 0.1 | Expresiones regulares Unicode con complejidad y límites declarados |
 | `std.uuid` | Core + gated | `entropy` y/o `clock` para generación | 0.1 | UUID, parsing, formatting y generadores explícitos por versión |
@@ -1809,6 +1815,10 @@ actualizar esta especificación y el tracker antes de implementar.
 - `std.path` no toca el filesystem.
 - `std.time.Duration` es usable sin `clock`; consultar tiempo o suspenderse
   contra un proveedor requiere `clock`.
+- El calendario civil, parsing y aritmética son core cuando el target ha
+  seleccionado el bundle de zonas versionado. Consultar la hora de pared
+  requiere la capability separada `civil-clock`; relacionarla con un
+  `Instant` requiere además `clock`.
 - `std.console` no es un alias de `std.format`.
 - `std.serialization` es el único owner de los traits estructurales compartidos;
   no existe un facade universal `std.codec` que oculte el formato.
@@ -1825,8 +1835,11 @@ actualizar esta especificación y el tracker antes de implementar.
   un segundo tipo de future.
 - `std.time` separa estrictamente el reloj monotónico del calendario civil. El
   time-base de `Duration`, `Instant`, timers y deadlines pertenece a STD-0.1A;
-  los datos de zona horaria son inputs versionados de la distribución en
-  STD-0.1B, nunca una consulta ambiental durante compilación.
+  los tipos civiles y los datos de zona horaria versionados pertenecen al
+  contrato B0 de STD-0.1B, nunca a una consulta ambiental durante compilación.
+  `civil-clock` es una capability distinta de `clock`: la primera habilita
+  lecturas de pared y la segunda el proveedor monotónico y las anclas que
+  relacionan ambos dominios.
 - `std.net` no concede red por import: cada target debe seleccionar `network` y
   cada operación conserva I/O, timeout y cancelación en su firma.
 - `std.uuid` separa representación y parsing core de cualquier generador que
@@ -1846,9 +1859,10 @@ actualizar esta especificación y el tracker antes de implementar.
 El catálogo y sus propietarios son normativos. Las declaraciones exhaustivas de
 las veintinueve superficies permanecen pendientes, salvo el núcleo sellado que
 `TONDO_TESTING_SPEC.md` ya fija para `std.testing`, `std.bytes`, el sustrato
-monotónico de `std.time`, el snapshot read-only de `std.env` y el contrato
-runtime-facing de `std.net` en la sección 14.4.6. No existe un contrato
-bootstrap separado: el corpus consume siempre este borrador.
+monotónico y civil de `std.time`, el snapshot read-only de `std.env` y los
+contratos runtime-facing de `std.net` y `std.time` civil en las secciones
+14.3.7 y 14.4.6. No existe un contrato bootstrap separado: el corpus consume
+siempre este borrador.
 
 La implementación usa dos gates internos sin crear versiones distintas:
 
@@ -1866,12 +1880,12 @@ S1A no es una release ni permite publicar una stdlib incompleta como 0.1.0.
 Todos los módulos de ambas fases comparten una distribución, PackageId y
 política de compatibilidad; Gate S1 fija sus hashes finales.
 
-### 14.3 `std.time`: sustrato monotónico de STD-0.1A
+### 14.3 `std.time`: time-base y calendario civil
 
-Esta sección cierra únicamente el time-base necesario para producción y
-testing. El calendario civil, las zonas horarias, el reloj de pared y las
-conversiones a fechas pertenecen a STD-0.1B y no pueden introducirse como una
-dependencia implícita de este contrato.
+Las subsecciones 14.3.1–14.3.6 cierran el time-base monotónico necesario para
+producción y testing. La subsección 14.3.7 cierra el calendario civil de
+STD-0.1B. Ninguna de las dos superficies introduce una dependencia implícita
+entre reloj monotónico, reloj de pared, locale o zona horaria.
 
 #### 14.3.1 Valores portables
 
@@ -2030,9 +2044,10 @@ virtual se rechazan dentro de él por `DomainMismatch`.
 
 El time-base no consulta `TZ`, locale, epoch Unix, hora civil ni red. `Date`,
 `Time`, `DateTime`, zonas horarias, resolución de calendario y conversiones
-entre calendario e instante se especificarán e implementarán en STD-0.1B con
-datos versionados. Ninguna API de STD-0.1A puede aceptar un `Instant` donde
-espere una fecha civil o viceversa.
+entre calendario e instante están definidas en el contrato B0 de la sección
+[14.3.7](#1437-calendario-civil-y-zonas-versionadas), con datos versionados.
+Ninguna API de este sustrato puede aceptar un `Instant` donde espere una fecha
+civil o viceversa.
 
 #### 14.3.5 `std.env`: snapshot runtime explícito
 
@@ -2134,6 +2149,50 @@ el proveedor real/virtual y la frontera suspendible descrita en
 `docs/contracts/stdlib-time.md`; mientras no existan los bytes y hashes
 reproducibles del plan cerrado, `STD-TIME-BASE-CONF-001` permanece pendiente y
 `std.time` no se anuncia como una superficie distribuida estable.
+
+#### 14.3.7 Calendario civil y zonas versionadas
+
+El contrato normativo de la segunda parte de `std.time` es
+[`docs/contracts/stdlib-civil-time.md`](./docs/contracts/stdlib-civil-time.md) y
+su registro único es
+[`testing/stdlib-civil-time.json`](./testing/stdlib-civil-time.json). El
+contrato está cerrado como `STD-CIVIL-TIME-001`, pero sus adaptadores y leaves
+de implementación siguen pendientes; cerrar la especificación no promociona
+los símbolos en el compilador actual.
+
+Esta superficie usa un calendario gregoriano proléptico con años `1..9999`, no
+admite leap seconds y mantiene `Date`, `Time`, `DateTime`, `UtcDateTime` y
+`UtcOffset` como
+valores puros. Parsing, formato, componentes y aritmética comprueban límites y
+no consultan capabilities. `Date.addMonths` y `Date.addYears` exigen la
+política explícita `Reject` o `Clamp`; no existe un default cultural u oculto.
+`Duration` sigue perteneciendo al owner monotónico existente y no se introduce
+un segundo tipo de intervalo.
+
+Los IDs de zona se validan como IANA canónicos o `UTC`. `zoneDatabase()` solo
+selecciona el bundle inmutable que el target declaró con `(version, sha256)`;
+no busca `TZ`, locale, filesystem, red, environment ni zona local del sistema.
+`TimeZone.offsetAt` devuelve el tipo pequeño `UtcOffset` en segundos y
+`resolve` son consultas puras sobre ese snapshot. Una
+resolución local siempre recibe `ResolvePolicy`: `Reject` informa un gap o fold,
+`Earlier`/`Later` escogen explícitamente una ocurrencia de un fold y
+`ShiftForward` avanza un gap y escoge la segunda ocurrencia. Nunca se sustituye
+una zona ausente por UTC.
+
+`CivilClock.now` y `CivilClock.sample` son las únicas lecturas del reloj de
+pared y requieren `civil-clock`; `sample` requiere además `clock`. Son llamadas
+síncronas y no `selectable`. La muestra devuelve un `CivilAnchor` con un
+`Instant` monotónico y un `UtcDateTime` observados en la misma frontera. Sus
+conversiones son aritmética comprobada dentro del dominio/horizonte del
+ancla, no una conversión Unix ni una lectura viva posterior. Si los dominios no
+coinciden se devuelve `CivilError.DomainMismatch`.
+
+La igualdad de un `ZonedDateTime` incluye UTC, ID de zona y versión del bundle;
+dos folds con distinto offset no se confunden. Los valores son
+`Copy + Discard + Send + Share`, no handles de host. Las operaciones son
+síncronas, acotadas y portables; un backend puede emplear tablas compactas o
+SIMD para lotes solo si conserva bytes, errores, límites y resultados
+idénticos. Los hooks privados de diagnóstico omiten payloads por defecto.
 
 ### 14.4 Concurrencia de aplicación de STD-0.1B
 

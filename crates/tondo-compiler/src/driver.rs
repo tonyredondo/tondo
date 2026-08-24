@@ -123,6 +123,7 @@ impl CapabilityName {
                 | "console"
                 | "environment"
                 | "clock"
+                | "civil-clock"
                 | "entropy"
                 | "dynamic-linking"
         ) {
@@ -2672,6 +2673,7 @@ mod tests {
         assert!(accepted.diagnostics().diagnostics().is_empty());
 
         assert!(CapabilityName::new("console").is_ok());
+        assert!(CapabilityName::new("civil-clock").is_ok());
         let stream_source = b"import std.console\nimport std.io\n\nfn acquire_input(): io.Reader ! console.ConsoleError {\n    console.stdin()\n}\n\nfn acquire_output(): io.Writer ! console.ConsoleError {\n    console.stdout()\n}\n";
         let stream_checked = execute(operation_request(
             Operation::Check,

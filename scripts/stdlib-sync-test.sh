@@ -93,7 +93,7 @@ jq -e '
   and .collections.snapshot == "one-linearization-coherent-value-collection"
   and .collections.direct_for.binding == "value-only"
   and .implementation.public_api_promoted == false
-  and .promotion.next_blocks == ["STD-CIVIL-TIME-001", "STD-ENCODING-001"]
+  and .promotion.next_blocks == ["STD-ENCODING-001"]
 ' testing/stdlib-sync.json >/dev/null
 
 echo "std.sync tests: OK (negative contract cases; cleanup; ordering; collections; promotion anchors)"

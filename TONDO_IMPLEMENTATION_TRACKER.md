@@ -83,9 +83,9 @@ limpios producen el mismo paquete VM content-addressed, con instalación,
 ejecución y desinstalación verificadas. `STD-S1A-SEAL-001` ha cerrado el
 bundle técnico del draft con auditoría estricta y cero celdas aplicables
 abiertas; `DIAG-SPEC-001` ya cerró su contrato D0 y los contratos de
-`std.async.Group`, `std.channel`, `std.sync`, `std.executor` y `std.net` ya están
-cerrados como contratos runtime-facing. La frontera contractual B0 continúa con
-`STD-CIVIL-TIME-001` y `STD-ENCODING-001`. El grafo
+`std.async.Group`, `std.channel`, `std.sync`, `std.executor`, `std.net` y el
+calendario civil de `std.time` ya están cerrados como contratos runtime-facing.
+La frontera contractual B0 continúa con `STD-ENCODING-001`. El grafo
 activo se valida con `TRACKER-LINT-001`; con el contrato D0 cerrado, se cierran ahora las fronteras
 runtime-facing B0 de Wave 6; entonces avanzan `DIAG-RUNTIME-001`, `RACE-001`,
 `LEAK-001`, `DUMP-001`, `DIAG-TEST-001` y `DIAG-CI-001` antes de la evaluación
@@ -2914,9 +2914,9 @@ de M10.6, STD-0.1A, M11 y STD-0.1B.
   opaco como cobertura de las rutas que ejecuta.
 
 - [x] **COV-002 — Elevar y ratchetear la baseline sin exclusiones.** La
-  observación completa alcanza 119.622/132.793 líneas (90,08 %),
-  7.866/9.102 funciones (86,42 %) y 169.052/191.782 regiones (88,15 %).
-  El gate conserva floors truncados de 9.008, 8.642 y 8.814 basis points y
+  recaptura vigente alcanza 199.747/220.585 líneas (90,55 %),
+  13.505/15.562 funciones (86,78 %) y 286.225/322.383 regiones (88,78 %).
+  El gate conserva floors truncados de 9.055, 8.678 y 8.878 basis points y
   floors independientes para parser, checkers, verifiers, heap, ejecución y
   protocolos no confiables. Branch y MC/DC no se interpretan como 0 %: Rust
   1.93.0 con LLVM 21.1.8 publica ambos contadores con cero unidades
@@ -2925,10 +2925,10 @@ de M10.6, STD-0.1A, M11 y STD-0.1B.
   el porcentaje global permanezca por encima del valor anterior.
 
 - [x] **MUT-002 — Revalidar la resistencia tras el hardening.** La selección
-  vigente contiene exactamente 30 mutantes: 26 ejecutables detectados, cuatro
+  vigente contiene exactamente 30 mutantes: 27 ejecutables detectados, tres
   inviables, cero timeouts y cero supervivientes. Ninguno de los cuatro archivos
-  de producción seleccionados cambió durante este hardening; el reporte fijado se
-  verifica contra la baseline recapturada antes de publicarla.
+  de producción seleccionados cambió durante esta recaptura; el reporte fijado se
+  verifica contra la baseline vigente antes de publicarla.
 
 ### Gate H0 — Infraestructura de fiabilidad
 
@@ -5776,14 +5776,23 @@ publica hasta cerrar el gate final.
   `scripts/stdlib-executor-check.sh` y
   `scripts/stdlib-executor-test.sh`, integrados en `test-gate.sh`. La
   implementación permanece pendiente de las leaves `STD-EXEC-*` después de
-  `NATIVE-001`; los siguientes contratos B0 son `STD-CIVIL-TIME-001` y
-  `STD-ENCODING-001`.
+  `NATIVE-001`; el siguiente contrato B0 es `STD-ENCODING-001`.
 
-- [ ] **STD-CIVIL-TIME-001 — Completar `std.time` con calendario civil.** Añadir
-  `Date`, `Time`, `DateTime`, zonas horarias, reglas/versionado de timezone data
-  y conversión explícita respecto al sustrato monotónico ya fijado. No
-  duplicar `Duration`, `Instant`, suspensión, timers ni deadlines y no hacer que
-  compilación consulte reloj.
+- [x] **STD-CIVIL-TIME-001 — Cerrar el contrato civil de `std.time`.** El
+  registro [`testing/stdlib-civil-time.json`](./testing/stdlib-civil-time.json)
+  y el contrato [`docs/contracts/stdlib-civil-time.md`](./docs/contracts/stdlib-civil-time.md)
+  fijan `Date`, `Time`, `DateTime`, `UtcDateTime`, parsing/formatting
+  canónico, aritmética gregoriana comprobada, `ZoneId`, bundle de timezone
+  versionado por `(version, sha256)`, `TimeZone`, gaps/folds con policy
+  explícita, `civil-clock` separado de `clock` y `CivilAnchor` para la única
+  conversión monotónica/civil. No hay consulta de `TZ`/locale durante build,
+  fallback UTC, `select`, API async duplicada ni un segundo `Duration` o
+  `Instant`. Los checks negativos están en
+  `scripts/stdlib-civil-time-check.sh` y
+  `scripts/stdlib-civil-time-test.sh`, integrados en `test-gate.sh`. El
+  contrato está cerrado, pero la implementación, el bundle host, tests,
+  rendimiento, conformance y documentación de uso siguen pendientes de las
+  leaves `STD-CIVIL-TIME-*`; el siguiente contrato es `STD-ENCODING-001`.
 
 ### 21.2 Aplicación y datos
 
@@ -5801,7 +5810,7 @@ publica hasta cerrar el gate final.
   `scripts/stdlib-net-check.sh` y `scripts/stdlib-net-test.sh`, integrados en
   `test-gate.sh`. La implementación y el host siguen pendientes de las leaves
   `STD-NET-*` tras `NATIVE-001`; el siguiente orden contractual es
-  `STD-CIVIL-TIME-001` → `STD-ENCODING-001`.
+  `STD-ENCODING-001`.
 
 - [ ] **STD-ENCODING-001 — Especificar `std.encoding`.** Base64, hexadecimal y
   sus variantes fijan alfabetos, padding, canonicalidad, streaming, límites y
@@ -6678,8 +6687,9 @@ completo; los conteos se regeneran y no son contratos fijados a un commit:
 El gate oficial (`bash scripts/test-gate.sh`) se ejecutó después de esta
 reconciliación y selló la evidencia final de workspace, conformance, reliability,
 doc-tests, rustdoc y contratos de stdlib. La evidencia de calidad instrumentada
-alcanzó 90,52% de líneas (`9052` bp), 86,47% de funciones y 88,72% de regiones,
-superando el baseline de 90,25% de líneas (`9025` bp). La campaña oficial de
+alcanza 90,55% de líneas (`9055` bp), 86,78% de funciones y 88,78% de regiones;
+la baseline se recapturó sobre este árbol después de la evolución de los bloques
+de `select` y conserva esos floors sin exclusiones. La campaña oficial de
 mutación terminó con 30 mutantes seleccionados: 27 detectados, cero
 supervivientes, cero timeouts y tres inviables; por tanto el score sobre los
 mutantes ejecutables es 100% (`10000` bp). El gate usa un staging hermano de
@@ -6732,8 +6742,8 @@ Esta tabla es la fuente de reconciliación del estado actual.
 27. [ ] **Wave 6 — Contratos que condicionan el backend.** Después de
     `ASYNC-SELECT-VM-CONF-001` y `DIAG-SPEC-001`, están cerrados
     `STD-ASYNC-GROUP-SPEC-001`, `STD-CONC-001`, `STD-SYNC-001`,
-    `STD-EXEC-001` y `STD-NET-001`; las siguientes fronteras contractuales son
-    `STD-CIVIL-TIME-001` y `STD-ENCODING-001`. Mini-gate: DEC-013/014 reciben
+    `STD-EXEC-001`, `STD-NET-001` y `STD-CIVIL-TIME-001`; la siguiente frontera
+    contractual es `STD-ENCODING-001`. Mini-gate: DEC-013/014 reciben
     requisitos completos sin implementar todavía STD-0.1B.
 28. [ ] **Wave 7 — M11 correcto antes que optimizado.** Con Wave 6 cerrada,
     ejecutar `DIAG-RUNTIME-001 → (RACE-001 + LEAK-001 + DUMP-001) →
@@ -6802,9 +6812,9 @@ resultado compuesto vivos. `CONF-SEAL-FINAL-001` permanece pendiente para el
 primer release. `STD-IMPL-001`, `STD-IMPL-002` y `STD-CODEC-PUBLIC-001` están cerrados;
 Wave 6 continúa con los contratos runtime-facing B0 después del seal S1A y del
 contrato D0 de diagnóstico; `STD-ASYNC-GROUP-SPEC-001`, `STD-CONC-001`,
-`STD-SYNC-001`, `STD-EXEC-001` y `STD-NET-001` ya tienen registros y negativos
-ejecutables; siguen las leaves de implementación y las siguientes fronteras
-contractuales `STD-CIVIL-TIME-001` y `STD-ENCODING-001`.
+`STD-SYNC-001`, `STD-EXEC-001`, `STD-NET-001` y `STD-CIVIL-TIME-001` ya tienen
+registros y negativos ejecutables; siguen las leaves de implementación y la
+siguiente frontera contractual `STD-ENCODING-001`.
 `STD-IMPL-001` y `STD-IMPL-002` quedan ahora cerrados por sus gates de
 coordinación; `NATIVE-TARGET-DESC-001`, `NATIVE-ARTIFACT-001`,
 `NATIVE-LINK-PLAN-001`, `NATIVE-PUBLISH-SPEC-001` y `PERF-001` quedan cerrados
@@ -6820,8 +6830,8 @@ casos del draft) con evidencia hash-bound. `STD-A-DIST-001` promovió el
 paquete VM reproducible (dos snapshots, instalación, ejecución y
 desinstalación). `STD-S1A-SEAL-001` cerró el bundle técnico del draft y
 `DIAG-SPEC-001` cerró el contrato D0; `STD-ASYNC-GROUP-SPEC-001`, `STD-CONC-001`,
-`STD-SYNC-001`, `STD-EXEC-001` y `STD-NET-001` cerraron cinco fronteras B0; las
-siguientes son `STD-CIVIL-TIME-001` y `STD-ENCODING-001`. La instrumentación VM
+`STD-SYNC-001`, `STD-EXEC-001`, `STD-NET-001` y `STD-CIVIL-TIME-001` cerraron
+seis fronteras B0; la siguiente es `STD-ENCODING-001`. La instrumentación VM
 espera el cierre de las fronteras B0 contractuales,
 mientras `NATIVE-001` espera
 `DIAG-CI-001`.

@@ -7330,6 +7330,7 @@ network
 console
 environment
 clock
+civil-clock
 entropy
 dynamic-linking
 ~~~

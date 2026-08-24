@@ -81,7 +81,7 @@ jq -e '
   and .actor.send_select_rollback == "unregister-with-message-still-owned-by-sender"
   and .lifecycle.drain_before_success == true
   and .implementation.public_api_promoted == false
-  and .promotion.next_blocks == ["STD-CIVIL-TIME-001", "STD-ENCODING-001", "DIAG-RUNTIME-001"]
+  and .promotion.next_blocks == ["STD-ENCODING-001", "DIAG-RUNTIME-001"]
 ' testing/stdlib-executor.json >/dev/null
 
 echo "std.executor tests: OK (negative contract cases; admission; actors; blocking bridge; lifecycle and capability anchors)"

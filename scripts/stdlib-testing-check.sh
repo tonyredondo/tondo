@@ -43,7 +43,7 @@ jq -e '
     and .capabilities.core == []
     and .capabilities.temporary == ["filesystem"]
     and .capabilities.forbidden == [
-      "console", "environment", "clock", "entropy", "network", "process", "threads"
+      "console", "environment", "clock", "civil-clock", "entropy", "network", "process", "threads"
     ]
     and .assertions.failure == "P0007"
     and .assertions.value_observation == "ref-no-move"

@@ -192,7 +192,6 @@ fallback bloqueante dentro del scheduler cooperativo.
 La implementación queda pendiente de
 `STD-EXEC-IMPL-001`, `STD-EXEC-HOST-001`, `STD-EXEC-TEST-001`,
 `STD-EXEC-PERF-001`, `STD-EXEC-CONF-001` y `STD-EXEC-DOC-001`. Los contratos
-runtime-facing de `std.executor` y `std.net` ya están cerrados;
+runtime-facing de `std.executor`, `std.net` y `std.time` civil ya están cerrados;
 `DIAG-RUNTIME-001` puede comenzar cuando se abra la compuerta de diagnóstico,
-mientras los siguientes contratos de la lane de stdlib son
-`STD-CIVIL-TIME-001` y `STD-ENCODING-001`.
+mientras el siguiente contrato de la lane de stdlib es `STD-ENCODING-001`.
