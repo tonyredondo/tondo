@@ -194,4 +194,4 @@ La implementación queda pendiente de
 `STD-EXEC-PERF-001`, `STD-EXEC-CONF-001` y `STD-EXEC-DOC-001`. Los contratos
 runtime-facing de `std.executor`, `std.net` y `std.time` civil ya están cerrados;
 `DIAG-RUNTIME-001` puede comenzar cuando se abra la compuerta de diagnóstico,
-mientras el siguiente contrato de la lane de stdlib es `STD-YAML-001`.
+mientras el siguiente contrato de la lane de stdlib es `STD-TOML-001`.

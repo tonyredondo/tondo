@@ -308,6 +308,6 @@
       {"id":"performance","requires":["parse-budget","lookup-budget","conversion-budget","bundle-memory-budget"]},
       {"id":"promote","requires":["STD-S1-SEAL-001","coverage-baseline","hash-bound-timezone-data"]}
     ],
-    "next_blocks":["STD-YAML-001","DIAG-RUNTIME-001"]
+    "next_blocks":["STD-TOML-001","DIAG-RUNTIME-001"]
   }
 }

@@ -3585,9 +3585,42 @@ El mapping generado, el descriptor explícito, la evolución contra baseline TOM
 los eventos y los errores de wire/build están cerrados en el [contrato fuente de
 `std.protobuf`](./docs/contracts/stdlib-protobuf.md).
 
-### 14.13 Reglas de rendimiento de codecs
+### 14.13 `std.yaml`
 
-Los tres codecs:
+`std.yaml` es el owner de un subset seguro y portable de YAML 1.2. No intenta
+reproducir los dialectos históricos de YAML ni convierte el parser en una
+superficie de ejecución: el schema implícito es Core, las keys dinámicas son
+textuales, los tags admitidos son únicamente los tipos core cerrados y no se
+aceptan custom tags, includes, merge keys, timestamps implícitos, mappings con
+keys no textuales o valores no finitos.
+
+La API expone `YamlValue`/`YamlValueView`, `YamlReader`/`YamlWriter`,
+`parse`/`parseAll`, `decode`/`decodeAll`, `validate`, `encode` y
+`encodeCanonical`. La ruta tipada usa `Encode[Yaml]`/`Decode[Yaml]` sin
+materializar el árbol dinámico; la ruta dinámica usa `Object(Map[String,
+YamlValue])` y expande anchors como copias lógicas. Los aliases se permiten solo
+con límites explícitos de cantidad y expansión, no pueden formar ciclos ni
+cruzar documentos, y `<<` no tiene semántica implícita.
+
+Los readers y writers comparten una máquina de eventos con frames explícitos,
+document boundaries, anchors y aliases. `YamlError` conserva kind, byte offset,
+línea, columna y path `Key`/`Index`; ningún límite publica un valor parcial. La
+entrada es UTF-8, la indentación usa espacios, `true`/`false` son los únicos
+booleanos implícitos y fechas/timestamps permanecen texto. El owner no requiere
+capability, no consulta el entorno y no publica operaciones `selectable`.
+
+El contrato machine-readable, la documentación operativa y sus checks negativos
+son [`testing/stdlib-yaml.json`](./testing/stdlib-yaml.json),
+[`docs/contracts/stdlib-yaml.md`](./docs/contracts/stdlib-yaml.md),
+[`scripts/stdlib-yaml-check.sh`](./scripts/stdlib-yaml-check.sh) y
+[`scripts/stdlib-yaml-test.sh`](./scripts/stdlib-yaml-test.sh). El contrato
+queda cerrado como diseño B0; implementación, host, fuzzing, rendimiento,
+conformance y documentación de uso permanecen pendientes de sus leaves tras
+`NATIVE-001`.
+
+### 14.14 Reglas de rendimiento de codecs
+
+Los codecs de datos:
 
 - decodifican tipos estáticos directamente, sin DOM intermedio;
 - escriben a buffers crecientes con reservas comprobadas o a `Writer`;
@@ -3596,6 +3629,8 @@ Los tres codecs:
 - evitan transcoding cuando input y output ya son UTF-8 válido;
 - mantienen fast paths para ASCII, búsqueda de caracteres especiales, varints y
   copias de bytes;
+- mantienen frames/worklists explícitos para YAML, sin usar la pila recursiva del
+  host ni expandir aliases sin presupuesto;
 - pueden usar SIMD o kernels nativos bajo las reglas de 11.6; y
 - demuestran equivalencia mediante vectores oficiales, fuzzing diferencial,
   round trips, corpus adversario, implementaciones externas y comparación

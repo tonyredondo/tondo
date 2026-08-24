@@ -251,7 +251,7 @@
     ]
   },
   "promotion": {
-    "next_blocks": ["STD-YAML-001"],
+    "next_blocks": ["STD-TOML-001"],
     "runtime_gate": "DIAG-RUNTIME-001",
     "native_gate": "NATIVE-001"
   }

@@ -219,6 +219,6 @@
       {"id":"performance","required":true},
       {"id":"promote","required":true}
     ],
-    "next_blocks": ["STD-YAML-001", "DIAG-RUNTIME-001"]
+    "next_blocks": ["STD-TOML-001", "DIAG-RUNTIME-001"]
   }
 }
