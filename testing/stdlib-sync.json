@@ -742,6 +742,6 @@
       "STD-SYNC-CONF-001",
       "STD-SYNC-DOC-001"
     ],
-    "next_blocks": ["STD-TOML-001"]
+    "next_blocks": ["STD-CBOR-001"]
   }
 }

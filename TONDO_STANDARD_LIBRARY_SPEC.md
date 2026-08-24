@@ -3618,7 +3618,39 @@ queda cerrado como diseño B0; implementación, host, fuzzing, rendimiento,
 conformance y documentación de uso permanecen pendientes de sus leaves tras
 `NATIVE-001`.
 
-### 14.14 Reglas de rendimiento de codecs
+### 14.14 `std.toml`
+
+`std.toml` es el codec de datos de TOML 1.1.0 y no el parser del toolchain.
+Acepta una única raíz TOML UTF-8, claves bare/quoted/dotted, los cuatro tipos
+de string, números con bases/underscores, floats finitos y no finitos,
+booleanos, fecha/hora civil, arrays heterogéneos, inline tables cerradas,
+tables y arrays-of-tables. Los comentarios se descartan y no hay includes,
+interpolación de environment, locale, TZ ni ejecución.
+
+La API expone `TomlValue`/`TomlValueView`, `TomlReader`/`TomlWriter`,
+`parse`/`parseView`, `decode`, `validate`, `encode` y `encodeCanonical`. Las
+fechas usan `std.time`; un offset fijo se conserva en `TomlOffsetDateTime` y
+no se convierte implícitamente en zona horaria. La precisión se limita a
+nanosegundos: fracciones superiores a nueve dígitos producen un error para no
+perder datos. Tables, dotted keys y arrays-of-tables se resuelven con paths
+explícitos; duplicados, colisiones scalar/table y extensión de inline tables
+se rechazan antes de publicar un valor.
+
+El reader/writer usa eventos con frames y worklists acotados. Los spans son
+half-open en bytes UTF-8, con línea/columna y path `Key`/`Index`; el parser es
+invariante al chunking y no publica resultados parciales. Solo la frontera de
+`std.io.Reader`/`Writer` suspende y no existe una API `selectable` duplicada.
+
+El contrato machine-readable, la documentación y los checks negativos son
+[`testing/stdlib-toml.json`](./testing/stdlib-toml.json),
+[`docs/contracts/stdlib-toml.md`](./docs/contracts/stdlib-toml.md),
+[`scripts/stdlib-toml-check.sh`](./scripts/stdlib-toml-check.sh) y
+[`scripts/stdlib-toml-test.sh`](./scripts/stdlib-toml-test.sh). El contrato
+queda cerrado como diseño B0; implementación, host, fuzzing, rendimiento,
+conformance y documentación de uso permanecen pendientes de
+`STD-TOML-IMPL-001` y sus leaves posteriores a `NATIVE-001`.
+
+### 14.15 Reglas de rendimiento de codecs
 
 Los codecs de datos:
 
@@ -3631,6 +3663,8 @@ Los codecs de datos:
   copias de bytes;
 - mantienen frames/worklists explícitos para YAML, sin usar la pila recursiva del
   host ni expandir aliases sin presupuesto;
+- mantienen frames/worklists explícitos para TOML, sin usar la pila recursiva
+  del host ni una tabla de paths sin límite;
 - pueden usar SIMD o kernels nativos bajo las reglas de 11.6; y
 - demuestran equivalencia mediante vectores oficiales, fuzzing diferencial,
   round trips, corpus adversario, implementaciones externas y comparación

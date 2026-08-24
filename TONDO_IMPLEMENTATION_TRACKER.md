@@ -86,9 +86,9 @@ bundle técnico del draft con auditoría estricta y cero celdas aplicables
 abiertas; `DIAG-SPEC-001` ya cerró su contrato D0 y los contratos de
 `std.async.Group`, `std.channel`, `std.sync`, `std.executor`, `std.net` y el
 calendario civil de `std.time` ya están cerrados como contratos runtime-facing.
-`std.encoding` y `std.yaml` ya han cerrado sus fronteras contractuales B0; las
-siguientes son `STD-TOML-001`, `STD-CBOR-001`, `STD-REGEX-001`, `STD-ID-001` y
-`STD-LOG-001`. El grafo
+`std.encoding`, `std.yaml` y `std.toml` ya han cerrado sus fronteras
+contractuales B0; las siguientes son `STD-CBOR-001`, `STD-REGEX-001`,
+`STD-ID-001` y `STD-LOG-001`. El grafo
 activo se valida con `TRACKER-LINT-001`; con el contrato D0 cerrado, se cierran ahora las fronteras
 runtime-facing B0 de Wave 6; entonces avanzan `DIAG-RUNTIME-001`, `RACE-001`,
 `LEAK-001`, `DUMP-001`, `DIAG-TEST-001` y `DIAG-CI-001` antes de la evaluación
@@ -5779,7 +5779,7 @@ publica hasta cerrar el gate final.
   `scripts/stdlib-executor-check.sh` y
   `scripts/stdlib-executor-test.sh`, integrados en `test-gate.sh`. La
   implementación permanece pendiente de las leaves `STD-EXEC-*` después de
-  `NATIVE-001`; el siguiente contrato B0 es `STD-TOML-001`.
+  `NATIVE-001`; el siguiente contrato B0 es `STD-CBOR-001`.
 
 - [x] **STD-CIVIL-TIME-001 — Cerrar el contrato civil de `std.time`.** El
   registro [`testing/stdlib-civil-time.json`](./testing/stdlib-civil-time.json)
@@ -5795,7 +5795,7 @@ publica hasta cerrar el gate final.
   `scripts/stdlib-civil-time-test.sh`, integrados en `test-gate.sh`. El
   contrato está cerrado, pero la implementación, el bundle host, tests,
   rendimiento, conformance y documentación de uso siguen pendientes de las
-  leaves `STD-CIVIL-TIME-*`; el siguiente contrato es `STD-TOML-001`.
+  leaves `STD-CIVIL-TIME-*`; el siguiente contrato es `STD-CBOR-001`.
 
 ### 21.2 Aplicación y datos
 
@@ -5813,7 +5813,7 @@ publica hasta cerrar el gate final.
   `scripts/stdlib-net-check.sh` y `scripts/stdlib-net-test.sh`, integrados en
   `test-gate.sh`. La implementación y el host siguen pendientes de las leaves
   `STD-NET-*` tras `NATIVE-001`; el siguiente orden contractual es
-  `STD-TOML-001`.
+  `STD-CBOR-001`.
 
 - [x] **STD-ENCODING-001 — Especificar `std.encoding`.** El registro
   [`testing/stdlib-encoding.json`](./testing/stdlib-encoding.json), el contrato
@@ -5826,7 +5826,7 @@ publica hasta cerrar el gate final.
   owner binario alternativo ni API async duplicada. La implementación, host,
   tests de corpus, rendimiento, conformance y documentación de uso permanecen
   pendientes de las leaves `STD-ENCODING-*` posteriores a `NATIVE-001`; el
-  siguiente contrato es `STD-TOML-001`.
+  siguiente contrato es `STD-CBOR-001`.
 
 - [x] **STD-YAML-001 — Especificar `std.yaml`.** El contrato
   [`docs/contracts/stdlib-yaml.md`](./docs/contracts/stdlib-yaml.md) y el
@@ -5846,12 +5846,28 @@ publica hasta cerrar el gate final.
   implementación, host, tests, fuzzing, rendimiento, conformance y
   documentación de uso siguen pendientes de `STD-YAML-IMPL-001` y sus leaves
   posteriores a `NATIVE-001`; los siguientes contratos son
-  `STD-TOML-001`, `STD-CBOR-001`, `STD-REGEX-001`, `STD-ID-001` y
-  `STD-LOG-001`.
+  `STD-CBOR-001`, `STD-REGEX-001`, `STD-ID-001` y `STD-LOG-001`.
 
-- [ ] **STD-TOML-001 — Especificar `std.toml`.** Fijar versión TOML, modelo de
-  fecha/hora, APIs tipadas/dinámicas, spans, duplicados, streaming aplicable,
-  límites y errores sin confundirlo con `tondo.toml` del toolchain.
+- [x] **STD-TOML-001 — Especificar `std.toml`.** El contrato
+  [`docs/contracts/stdlib-toml.md`](./docs/contracts/stdlib-toml.md) y el
+  registro [`testing/stdlib-toml.json`](./testing/stdlib-toml.json) fijan el
+  perfil TOML 1.1.0: UTF-8 case-sensitive, raíz única, claves bare/quoted/
+  dotted, strings basic/literal multilinea, números con bases y underscores,
+  floats `inf`/`nan`, los cuatro tipos fecha/hora, arrays heterogéneos, inline
+  tables cerradas, tables y arrays-of-tables. El modelo `TomlValue` conserva
+  orden de tablas y arrays; los tipos temporales reutilizan `std.time` y un
+  offset fijo vive en `TomlOffsetDateTime`, sin lookup de zona ni reloj.
+  Duplicados, colisiones scalar/table, extensión de inline table y valores
+  fuera de los rangos lossless son rechazos atómicos con `TomlSpan` half-open,
+  línea, columna y path estable. Fracciones temporales de más de nueve dígitos
+  se rechazan para no truncar nanosegundos. `TomlReader`/`TomlWriter` exponen
+  eventos balanceados con frames/worklists explícitos, invariancia al
+  chunking, límites finitos y suspensión solo en la frontera `std.io`; no hay
+  API `selectable`, includes, interpolación de environment ni semántica de
+  `tondo.toml`. Los negativos están en `scripts/stdlib-toml-check.sh` y
+  `scripts/stdlib-toml-test.sh`, integrados en `test-gate.sh`. La implementación,
+  host, tests/fuzzing, rendimiento, conformance y documentación de uso quedan
+  pendientes de `STD-TOML-IMPL-001` y sus leaves posteriores a `NATIVE-001`.
 
 - [ ] **STD-CBOR-001 — Especificar `std.cbor`.** Fijar modelo de datos, tags,
   valores indefinidos, streaming, límites y modo determinista sobre
@@ -6768,11 +6784,12 @@ Esta tabla es la fuente de reconciliación del estado actual.
     Los owners independientes pudieron avanzar en paralelo; el seal cerró S1A
     únicamente después de que cada firma contractual atravesó una ruta pública
     real.
-27. [ ] **Wave 6 — Contratos que condicionan el backend.** Después de
+27. [x] **Wave 6 — Contratos que condicionan el backend.** Después de
     `ASYNC-SELECT-VM-CONF-001` y `DIAG-SPEC-001`, están cerrados
     `STD-ASYNC-GROUP-SPEC-001`, `STD-CONC-001`, `STD-SYNC-001`,
-    `STD-EXEC-001`, `STD-NET-001`, `STD-CIVIL-TIME-001`, `STD-ENCODING-001` y
-    `STD-YAML-001`; la siguiente frontera contractual es `STD-TOML-001`.
+    `STD-EXEC-001`, `STD-NET-001`, `STD-CIVIL-TIME-001`, `STD-ENCODING-001`,
+    `STD-YAML-001` y `STD-TOML-001`; la siguiente frontera contractual es
+    `STD-CBOR-001`.
     Mini-gate: DEC-013/014 reciben requisitos completos sin implementar todavía
     STD-0.1B.
 28. [ ] **Wave 7 — M11 correcto antes que optimizado.** Con Wave 6 cerrada,
@@ -6843,9 +6860,9 @@ primer release. `STD-IMPL-001`, `STD-IMPL-002` y `STD-CODEC-PUBLIC-001` están c
 Wave 6 continúa con los contratos runtime-facing B0 después del seal S1A y del
 contrato D0 de diagnóstico; `STD-ASYNC-GROUP-SPEC-001`, `STD-CONC-001`,
 `STD-SYNC-001`, `STD-EXEC-001`, `STD-NET-001`, `STD-CIVIL-TIME-001`,
-`STD-ENCODING-001` y `STD-YAML-001` ya tienen registros y negativos
-ejecutables; siguen las leaves de implementación y la siguiente frontera
-contractual `STD-TOML-001`.
+`STD-ENCODING-001`, `STD-YAML-001` y `STD-TOML-001` ya tienen registros y
+negativos ejecutables; siguen las leaves de implementación y la siguiente
+frontera contractual `STD-CBOR-001`.
 `STD-IMPL-001` y `STD-IMPL-002` quedan ahora cerrados por sus gates de
 coordinación; `NATIVE-TARGET-DESC-001`, `NATIVE-ARTIFACT-001`,
 `NATIVE-LINK-PLAN-001`, `NATIVE-PUBLISH-SPEC-001` y `PERF-001` quedan cerrados
@@ -6862,8 +6879,8 @@ paquete VM reproducible (dos snapshots, instalación, ejecución y
 desinstalación). `STD-S1A-SEAL-001` cerró el bundle técnico del draft y
 `DIAG-SPEC-001` cerró el contrato D0; `STD-ASYNC-GROUP-SPEC-001`, `STD-CONC-001`,
 `STD-SYNC-001`, `STD-EXEC-001`, `STD-NET-001`, `STD-CIVIL-TIME-001`,
-`STD-ENCODING-001` y `STD-YAML-001` cerraron ocho fronteras B0; la siguiente
-es `STD-TOML-001`.
+`STD-ENCODING-001`, `STD-YAML-001` y `STD-TOML-001` cerraron nueve fronteras
+B0; la siguiente es `STD-CBOR-001`.
 La instrumentación VM
 espera el cierre de las fronteras B0 contractuales,
 mientras `NATIVE-001` espera

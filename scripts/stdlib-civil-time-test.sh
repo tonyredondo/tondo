@@ -79,7 +79,7 @@ jq -e '
   and .anchor.domain_check == "CivilError.DomainMismatch"
   and .anchor.live_refresh == false
   and .implementation.public_api_promoted == false
-  and .promotion.next_blocks == ["STD-TOML-001", "DIAG-RUNTIME-001"]
+  and .promotion.next_blocks == ["STD-CBOR-001", "DIAG-RUNTIME-001"]
 ' testing/stdlib-civil-time.json >/dev/null
 
 echo "std.time civil tests: OK (negative capabilities; parsing; versioned zones; gap/fold policies; anchor boundary)"

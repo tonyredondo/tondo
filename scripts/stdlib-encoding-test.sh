@@ -73,7 +73,7 @@ jq -e '
   and .performance.scalar_oracle == true
   and .performance.simd_allowed_after_equivalence == true
   and .implementation.public_api_promoted == false
-  and .promotion.next_blocks == ["STD-TOML-001", "DIAG-RUNTIME-001"]
+  and .promotion.next_blocks == ["STD-CBOR-001", "DIAG-RUNTIME-001"]
 ' testing/stdlib-encoding.json >/dev/null
 
 echo "std.encoding tests: OK (policy negatives; canonicality; chunking; limits; lifecycle; promotion boundary)"

@@ -107,6 +107,10 @@ run_step stdlib-yaml-contract \
     scripts/stdlib-yaml-check.sh
 run_step stdlib-yaml-contract-tests \
     scripts/stdlib-yaml-test.sh
+run_step stdlib-toml-contract \
+    scripts/stdlib-toml-check.sh
+run_step stdlib-toml-contract-tests \
+    scripts/stdlib-toml-test.sh
 run_step stdlib-performance-contract \
     scripts/stdlib-performance-check.sh
 run_step native-target-descriptor-contract \
