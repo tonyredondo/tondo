@@ -115,7 +115,7 @@ jq -e '
   and all(.corpora[]; .source == "owner-generated" and .required == true and (.focus | length) > 0)
   and ((.exclusions | unique | length) == (.exclusions | length))
   and ([.promotion.gates[].id] == ["design", "implementation", "conformance", "performance", "promote"])
-  and .promotion.next_blocks == ["STD-ID-001", "STD-LOG-001", "DIAG-RUNTIME-001"]
+  and .promotion.next_blocks == ["STD-LOG-001", "DIAG-RUNTIME-001"]
   and .implementation.status == "pending-after-native-gate"
   and .implementation.public_api_promoted == false
   and .implementation.host == "not-applicable-pure-core"

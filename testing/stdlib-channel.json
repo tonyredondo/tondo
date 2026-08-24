@@ -287,6 +287,6 @@
       "STD-CHANNEL-CONF-001",
       "STD-CHANNEL-DOC-001"
     ],
-    "next_blocks": ["STD-ID-001", "STD-LOG-001", "DIAG-RUNTIME-001"]
+    "next_blocks": ["STD-LOG-001", "DIAG-RUNTIME-001"]
   }
 }

@@ -112,7 +112,7 @@ jq -e '
   and .implementation.public_api_promoted == false
   and .implementation.host == "required-after-native-gate"
   and .implementation.required_follow_ups == ["STD-NET-IMPL-001", "STD-NET-HOST-001", "STD-NET-TEST-001", "STD-NET-PERF-001", "STD-NET-CONF-001", "STD-NET-DOC-001"]
-  and .promotion.next_blocks == ["STD-ID-001", "STD-LOG-001", "DIAG-RUNTIME-001"]
+  and .promotion.next_blocks == ["STD-LOG-001", "DIAG-RUNTIME-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable net contract"
 
 for path in \

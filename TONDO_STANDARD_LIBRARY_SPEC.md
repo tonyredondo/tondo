@@ -1796,7 +1796,7 @@ actualizar esta especificación y el tracker antes de implementar.
 | `std.time` | Core + gated | `clock` monotónico; `civil-clock` para reloj de pared y anclas | 0.1 | Time-base monotónico, calendario civil y zonas horarias versionadas |
 | `std.path` | Core | — | 0.1 | Paths nativos y operaciones puramente léxicas |
 | `std.regex` | Core | — | 0.1 | Expresiones regulares Unicode con complejidad y límites declarados |
-| `std.uuid` | Core + gated | `entropy` y/o `clock` para generación | 0.1 | UUID, parsing, formatting y generadores explícitos por versión |
+| `std.uuid` | Core + gated | `entropy` y/o `civil-clock` para generación | 0.1 | UUID, parsing, formatting y generadores explícitos por versión |
 | `std.channel` | Core | — | 0.1 | Canales tipados con endpoints separados, cierre, backpressure y selección cancelable |
 | `std.sync` | Core + gated | `threads` para operaciones cross-thread | 0.1 | Mutex, rwlock, condición, semáforo, once, barrier, atomics y colecciones compartidas linealizables |
 | `std.executor` | Core + gated | `threads` para pools bloqueantes | 0.1 | Pools acotados, actores y bridge de trabajo bloqueante sobre el modelo async único |
@@ -1847,7 +1847,8 @@ actualizar esta especificación y el tracker antes de implementar.
 - `std.net` no concede red por import: cada target debe seleccionar `network` y
   cada operación conserva I/O, timeout y cancelación en su firma.
 - `std.uuid` separa representación y parsing core de cualquier generador que
-  requiera `entropy` o `clock`.
+  requiera `entropy` o `civil-clock`; v7 nunca usa el `clock` monotónico como
+  sustituto del reloj UTC.
 - `std.log` define eventos puros en core; cada sink declara sus capabilities y
   política de backpressure sin alterar silenciosamente el control del programa.
 - Los argumentos del programa se obtienen mediante
@@ -3758,7 +3759,44 @@ conformance y documentación de uso siguen pendientes de
 `STD-REGEX-IMPL-001`, `STD-REGEX-TEST-001`, `STD-REGEX-PERF-001`,
 `STD-REGEX-CONF-001` y `STD-REGEX-DOC-001`.
 
-### 14.17 Reglas de rendimiento de codecs
+### 14.17 `std.uuid`
+
+`std.uuid` fija un valor inmutable de 128 bits interoperable con RFC 9562. La
+representación usa 16 bytes big-endian de red, es `Copy`, `Eq`, `Ord`, `Hash`,
+`Send` y `Share`, y puede utilizarse como clave de `Map` o `Set`. `Uuid.parse`
+acepta la forma dashed `8-4-4-4-12` y el prefijo `urn:uuid:` con hex en ambos
+casos; `Uuid.toString` siempre produce una única forma dashed en minúsculas.
+No se aceptan compact UUIDs, braces, whitespace, conversiones COM GUID ni
+normalización de texto. `nil`, `max`, `fromBytes`, `toBytes`, variant y version
+son operaciones core y no consultan el host.
+
+Solo se generan v4, v5 y v7. v4 requiere la capability `entropy` y fija 122
+bits aleatorios; v5 es determinista sobre `namespace.bytes || name` con SHA-1
+y no es un secreto; v7 combina 48 bits de milisegundos Unix UTC con 74 bits de
+entropía y requiere `civil-clock + entropy`. v7 no mantiene contadores, locks,
+retries ni estado global y no promete monotonicidad estricta. El parser puede
+conservar valores externos de cualquier versión o variante; los generadores
+solo producen la variante RFC 9562. La ausencia de capabilities es `E1008` y
+los fallos del provider se normalizan a `UuidError` sin fallback ambiental.
+
+`Uuid.v4`, `Uuid.v5` y `Uuid.v7` son síncronas y no `selectable`; no existe una
+API async duplicada. Los límites cubren texto (45 bytes), bytes (16), nombre
+v5 (16 MiB), requests de entropía y heap; cualquier exceso falla antes de
+publicar un resultado. Comparación y hash son lexicográficos sobre los bytes,
+independientes del timestamp o la versión. El camino scalar de ancho fijo es el
+oracle; SIMD solo puede promoverse tras equivalencia byte a byte.
+
+El contrato machine-readable, la documentación normativa y los negativos son
+[`testing/stdlib-uuid.json`](./testing/stdlib-uuid.json),
+[`docs/contracts/stdlib-uuid.md`](./docs/contracts/stdlib-uuid.md),
+[`scripts/stdlib-uuid-check.sh`](./scripts/stdlib-uuid-check.sh) y
+[`scripts/stdlib-uuid-test.sh`](./scripts/stdlib-uuid-test.sh). El diseño B0
+queda cerrado por `STD-ID-001`; implementación, providers, tests/fuzzing,
+rendimiento, conformance y documentación de uso permanecen pendientes de
+`STD-UUID-IMPL-001`, `STD-UUID-HOST-001`, `STD-UUID-TEST-001`,
+`STD-UUID-PERF-001`, `STD-UUID-CONF-001` y `STD-UUID-DOC-001`.
+
+### 14.18 Reglas de rendimiento de codecs
 
 Los codecs de datos:
 

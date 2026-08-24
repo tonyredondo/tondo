@@ -1,0 +1,239 @@
+{
+  "format": "tondo-stdlib-owner-contract/1",
+  "owner": "std.uuid",
+  "parent_owner": "std",
+  "edition": "0.1",
+  "phase": "STD-0.1B",
+  "task": "STD-ID-001",
+  "status": "contract-locked",
+  "contract": "docs/contracts/stdlib-uuid.md",
+  "spec": "TONDO_STANDARD_LIBRARY_SPEC.md",
+  "language_spec": "TONDO_LANGUAGE_SPEC.md",
+  "layer": "B7",
+  "kind": "runtime-facing",
+  "target": "tondo-vm-hosted-and-native",
+  "dependencies": ["std.bytes", "std.time"],
+  "capabilities": {
+    "required": [],
+    "optional": ["entropy", "civil-clock"],
+    "source_sets": {
+      "core": [],
+      "v4": ["entropy"],
+      "v7": ["civil-clock", "entropy"]
+    },
+    "import_effect": "none",
+    "ambient_lookup": false,
+    "compile_time_query": false,
+    "missing_capability": "static-E1008",
+    "forbidden": [
+      "environment",
+      "filesystem",
+      "network",
+      "process",
+      "threads",
+      "locale",
+      "timezone-lookup",
+      "global-rng",
+      "clock-jitter-fallback",
+      "collision-registry",
+      "hidden-retry"
+    ]
+  },
+  "standard": {
+    "spec": "RFC 9562",
+    "rfc": "9562",
+    "obsoletes": "RFC 4122",
+    "width_bits": 128,
+    "width_bytes": 16,
+    "variant": "rfc9562-10",
+    "byte_order": "network-big-endian",
+    "nil": "00000000-0000-0000-0000-000000000000",
+    "max": "ffffffff-ffff-ffff-ffff-ffffffffffff",
+    "parse_external_versions": true,
+    "parse_external_variants": true
+  },
+  "versions": {
+    "generated": ["v4", "v5", "v7"],
+    "parsed": "all-128-bit-values",
+    "v4": {
+      "purpose": "random",
+      "capabilities": ["entropy"],
+      "random_bits": 122,
+      "provider_bytes": 16,
+      "retry": "none"
+    },
+    "v5": {
+      "purpose": "name-based",
+      "algorithm": "SHA-1",
+      "capabilities": [],
+      "input": "namespace-bytes-concat-name-bytes",
+      "deterministic": true,
+      "security": "not-a-secret-or-authenticator"
+    },
+    "v7": {
+      "purpose": "unix-millisecond-time-ordered-prefix",
+      "capabilities": ["civil-clock", "entropy"],
+      "timestamp_bits": 48,
+      "timestamp_unit": "unix-milliseconds-utc-no-leap-seconds",
+      "random_bits": 74,
+      "provider_bytes": 10,
+      "strict_monotonicity": false,
+      "retry": "none"
+    },
+    "generation_excluded": ["v1", "v2", "v3", "v6", "v8"]
+  },
+  "text": {
+    "canonical": "8-4-4-4-12-lowercase-hex",
+    "accepted_forms": ["dashed-36", "urn-uuid-prefix-plus-dashed-36"],
+    "hex_case": "accept-both-output-lowercase",
+    "urn_prefix": "case-insensitive-urn-uuid",
+    "max_bytes": 45,
+    "whitespace": "reject",
+    "braces": "reject",
+    "compact_32_hex": "reject",
+    "other_uri_schemes": "reject",
+    "normalization": "none",
+    "locale": "forbidden"
+  },
+  "bytes": {
+    "exact_length": 16,
+    "order": "network-big-endian",
+    "from_bytes": "copy",
+    "to_bytes": "copy",
+    "native_endian": "never",
+    "com_guid_layout": "not-supported"
+  },
+  "variant": {
+    "values": ["Rfc9562", "Ncs", "Microsoft", "Future"],
+    "generated": "Rfc9562-only",
+    "version_observation": "nibble-0-through-15-informational-for-non-rfc"
+  },
+  "api": {
+    "module": "std.uuid",
+    "types": ["Uuid", "UuidVariant", "UuidErrorKind", "UuidError"],
+    "functions": ["nil", "max", "parse", "fromBytes", "toBytes", "toString", "version", "variant", "isNil", "isMax", "compare", "v4", "v5", "v7"],
+    "annotations": [],
+    "terminal_state": "not-applicable-pure-value",
+    "typed_dispatch": "not-applicable",
+    "no_async_duplicate_api": true,
+    "selectable_operations": [],
+    "provider_injection": "capability-source-set",
+    "testing_provider": "sealed-std.testing-envelope"
+  },
+  "surface": {
+    "types": ["Uuid", "UuidError", "UuidErrorKind", "UuidVariant"],
+    "signatures": [
+      {"id": "nil", "signature": "pub fn Uuid.nil(): Uuid", "kind": "sentinel", "effect": "pure"},
+      {"id": "max", "signature": "pub fn Uuid.max(): Uuid", "kind": "sentinel", "effect": "pure"},
+      {"id": "parse", "signature": "pub fn Uuid.parse(text: String): Uuid ! UuidError", "kind": "parse", "effect": "pure"},
+      {"id": "from-bytes", "signature": "pub fn Uuid.fromBytes(bytes: Bytes): Uuid ! UuidError", "kind": "bytes", "effect": "pure"},
+      {"id": "to-bytes", "signature": "pub fn Uuid.toBytes(self): Bytes", "kind": "bytes", "effect": "pure"},
+      {"id": "to-string", "signature": "pub fn Uuid.toString(self): String", "kind": "format", "effect": "pure"},
+      {"id": "version", "signature": "pub fn Uuid.version(self): Int", "kind": "introspection", "effect": "pure"},
+      {"id": "variant", "signature": "pub fn Uuid.variant(self): UuidVariant", "kind": "introspection", "effect": "pure"},
+      {"id": "is-nil", "signature": "pub fn Uuid.isNil(self): Bool", "kind": "predicate", "effect": "pure"},
+      {"id": "is-max", "signature": "pub fn Uuid.isMax(self): Bool", "kind": "predicate", "effect": "pure"},
+      {"id": "compare", "signature": "pub fn Uuid.compare(self, other: Uuid): Int", "kind": "ordering", "effect": "pure"},
+      {"id": "v4", "signature": "pub fn Uuid.v4(): Uuid ! UuidError", "kind": "random-generator", "effect": "entropy"},
+      {"id": "v5", "signature": "pub fn Uuid.v5(namespace: Uuid, name: Bytes): Uuid ! UuidError", "kind": "name-generator", "effect": "pure"},
+      {"id": "v7", "signature": "pub fn Uuid.v7(): Uuid ! UuidError", "kind": "time-generator", "effect": "civil-clock-and-entropy"}
+    ],
+    "direct_call_waits": false,
+    "explicit_await_direct_call": "forbidden",
+    "explicit_await_join": "unchanged-by-language",
+    "inference_by_name": false,
+    "bodyless_requires_effect": true,
+    "bodyful_inference": "allowed",
+    "selectable_operations": [],
+    "no_async_duplicate_api": true
+  },
+  "ownership": {
+    "uuid_copyable": true,
+    "uuid_sendable": true,
+    "uuid_shareable": true,
+    "uuid_hashable": true,
+    "uuid_orderable": true,
+    "contains_host_handle": false,
+    "mutable_aliases": false,
+    "from_bytes_copies": true,
+    "to_bytes_copies": true,
+    "provider_state_published": false,
+    "global_registry": false
+  },
+  "limits": [
+    {"id": "max_text_bytes", "unit": "bytes", "scope": "parse", "default": 45, "check": "before-parse"},
+    {"id": "uuid_bytes", "unit": "bytes", "scope": "value", "default": 16, "check": "exact-before-copy"},
+    {"id": "max_name_bytes", "unit": "bytes", "scope": "v5-input", "default": 16777216, "check": "before-hash"},
+    {"id": "max_entropy_bytes", "unit": "bytes-per-call", "scope": "v4-or-v7-provider", "default": 16, "check": "before-provider"},
+    {"id": "vm_heap", "unit": "runtime-defined", "scope": "host-and-materialized-results", "default": "target", "check": "before-publish"}
+  ],
+  "errors": {
+    "type": "UuidError",
+    "location": "text-byte-offset-or-provider-boundary",
+    "partial_success": false,
+    "kinds": ["InvalidTextLength", "InvalidCharacter", "InvalidSeparator", "InvalidUrnPrefix", "InvalidBytesLength", "NameLimitExceeded", "TimestampOutOfRange", "EntropyUnavailable", "EntropyFailure", "ClockUnavailable", "ClockFailure", "ProviderMisconfigured", "ResourceLimit", "OutOfMemory"]
+  },
+  "performance": {
+    "scalar_oracle": true,
+    "fixed_width_state_machine": true,
+    "simd_allowed_after_equivalence": true,
+    "parse_allocation": "bounded-by-input-and-result",
+    "compare_allocation": "none",
+    "generation_state": "no-global-lock-counter-or-registry",
+    "claims_before_perf_gate": "forbidden"
+  },
+  "test_matrix": [
+    {"id": "representation", "required": true, "observables": ["128-bits", "copy", "send", "share", "eq", "hash"]},
+    {"id": "parse-format", "required": true, "observables": ["dashed", "urn", "case", "lowercase-output", "invalid-text"]},
+    {"id": "bytes-boundary", "required": true, "observables": ["network-order", "exact-16", "copy", "native-endian-negative"]},
+    {"id": "version-variant", "required": true, "observables": ["all-nibbles", "rfc", "ncs", "microsoft", "future", "generated-bits"]},
+    {"id": "nil-max", "required": true, "observables": ["zero-sentinel", "one-sentinel", "format", "parse", "predicates"]},
+    {"id": "v4-entropy", "required": true, "observables": ["122-bits", "provider-quality", "provider-failure", "no-fallback"]},
+    {"id": "v5-vectors", "required": true, "observables": ["rfc-vectors", "namespace", "name-bytes", "determinism", "name-limit"]},
+    {"id": "v7-clock-entropy", "required": true, "observables": ["epoch-ms", "74-bits", "range", "provider-failure", "no-strict-monotonicity"]},
+    {"id": "capability-and-provider", "required": true, "observables": ["E1008", "sealed-provider", "deterministic-provider", "normalized-error"]},
+    {"id": "ordering-and-limits", "required": true, "observables": ["unsigned-order", "map-key", "set-key", "fixed-budgets", "atomic-failure", "vm-native-parity"]}
+  ],
+  "corpora": [
+    {"id": "rfc-9562-vectors", "source": "https://www.rfc-editor.org/rfc/rfc9562.html", "required": true, "focus": ["v4", "v5", "v7", "nil", "max", "variant"]},
+    {"id": "canonical-text", "source": "owner-generated", "required": true, "focus": ["dashed", "urn", "case", "lowercase-output"]},
+    {"id": "malformed-text", "source": "owner-generated", "required": true, "focus": ["length", "hex", "separators", "prefix", "whitespace", "compact", "braces"]},
+    {"id": "name-based-v5", "source": "owner-generated", "required": true, "focus": ["namespace", "empty-name", "utf8-bytes", "large-name", "determinism"]},
+    {"id": "v7-timestamp", "source": "owner-generated", "required": true, "focus": ["epoch", "negative", "48-bit-boundary", "same-millisecond", "no-monotonic-claim"]},
+    {"id": "provider-failures", "source": "owner-generated", "required": true, "focus": ["entropy-unavailable", "entropy-failure", "clock-unavailable", "clock-failure", "no-retry"]},
+    {"id": "ordering-and-hash", "source": "owner-generated", "required": true, "focus": ["lexicographic-bytes", "map", "set", "sentinels", "external-variants"]},
+    {"id": "vm-native-parity", "source": "owner-generated", "required": true, "focus": ["bytes", "text", "version", "variant", "errors", "providers"]}
+  ],
+  "exclusions": [
+    "uuid-v1-generation",
+    "uuid-v2-generation",
+    "uuid-v3-generation",
+    "uuid-v6-generation",
+    "uuid-v8-generation",
+    "mac-or-node-identity",
+    "uuid-as-secret-or-authenticator",
+    "strict-v7-monotonicity",
+    "compact-or-braced-text",
+    "timezone-lookup",
+    "ambient-capabilities",
+    "collision-registry",
+    "hidden-retry",
+    "async-api"
+  ],
+  "promotion": {
+    "gates": [
+      {"id": "design", "requires": ["rfc9562-model", "version-selection", "text-canonicality", "capability-boundary", "limit-identities"]},
+      {"id": "implementation", "requires": ["fixed-width-value", "network-byte-order", "atomic-errors", "sealed-provider-boundary"]},
+      {"id": "conformance", "requires": ["rfc-vectors", "v4-v5-v7-observations", "malformed-corpus", "vm-native-parity"]},
+      {"id": "performance", "requires": ["scalar-oracle", "fixed-width-allocation-report", "provider-cost-report", "target-qualified-report"]},
+      {"id": "promote", "requires": ["capability-diagnostics", "deterministic-provider-evidence", "no-secret-claim", "STD-PERF-001-report"]}
+    ],
+    "next_blocks": ["STD-LOG-001", "DIAG-RUNTIME-001"]
+  },
+  "implementation": {
+    "status": "pending-after-native-gate",
+    "public_api_promoted": false,
+    "host": "required-after-native-gate",
+    "required_follow_ups": ["STD-UUID-IMPL-001", "STD-UUID-HOST-001", "STD-UUID-TEST-001", "STD-UUID-PERF-001", "STD-UUID-CONF-001", "STD-UUID-DOC-001"]
+  }
+}
