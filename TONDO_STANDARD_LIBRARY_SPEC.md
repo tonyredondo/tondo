@@ -3709,7 +3709,56 @@ rendimiento, conformance y documentación de uso permanecen pendientes de
 `STD-CBOR-IMPL-001`, `STD-CBOR-TEST-001`, `STD-CBOR-PERF-001`,
 `STD-CBOR-CONF-001` y `STD-CBOR-DOC-001`.
 
-### 14.16 Reglas de rendimiento de codecs
+### 14.16 `std.regex`
+
+`std.regex` es el motor de expresiones regulares Unicode de Tondo, no un
+dialecto Perl, un parser de glob ni una API de matching sobre bytes arbitrarios.
+Opera sobre `String` UTF-8 y fija las tablas Unicode en 16.0.0, la misma versión
+que usa la especificación del lenguaje. No normaliza, no consulta locale y no
+trata grapheme clusters como una unidad de matching.
+
+La sintaxis es un subconjunto cerrado y regular: literales, clases/rangos,
+propiedades `\p`/`\P`, escapes, anchors, alternation, grupos capturantes y no
+capturantes, captures con nombre y quantifiers greedy/lazy acotados. `\d`,
+`\s`, `\w` y `\b` tienen definiciones Unicode explícitas. Backreferences,
+look-around, recursion, conditionals, código embebido, includes, clases
+dependientes de locale, flags embebidos y matching de bytes inválidos se
+rechazan con un error de compilación; no se reinterpretan silenciosamente.
+
+`Regex.compile` produce un valor inmutable y reutilizable. `isMatch`,
+`isFullMatch`, `match`, `findAll`, `replace` y `replaceAll` son operaciones
+puramente síncronas y bounded; `findAll` usa el `Iterator[RegexMatch]` ordinario,
+no `AsyncIterator`. La selección es leftmost y después greedy-longest (o lazy
+cuando corresponda), con orden de alternativas estable. Los matches no se
+solapan y un match de longitud cero avanza un scalar Unicode para garantizar
+progreso. Captures y spans exponen offsets UTF-8 half-open en límites de scalar;
+un capture opcional no participante es `none` y `capture(0)` es el match entero.
+
+El replacement solo admite `$0`, `$N`, `${name}` y `$$`. `replace` modifica la
+primera coincidencia y `replaceAll` todas las no solapadas. No existen callbacks
+de replacement en 0.1: evitar código ejecutable por match mantiene visibles
+coste, ownership y errores.
+
+El engine debe usar Thompson NFA, lazy DFA, tagged automata o una técnica
+equivalente con prueba de complejidad lineal; el backtracking y la recursión de
+la pila del host están prohibidos. Parser, captures, estados y worklists son
+explícitos y acotados. `RegexLimits` controla patrón, profundidad sintáctica,
+captures, rangos, programa, input, pasos, número de matches, replacement,
+output y heap. Si se alcanza un límite no se publica un valor parcial. SIMD o
+fast paths solo se habilitan después de probar equivalencia con un oracle
+scalar.
+
+El contrato machine-readable, la documentación normativa y los negativos son
+[`testing/stdlib-regex.json`](./testing/stdlib-regex.json),
+[`docs/contracts/stdlib-regex.md`](./docs/contracts/stdlib-regex.md),
+[`scripts/stdlib-regex-check.sh`](./scripts/stdlib-regex-check.sh) y
+[`scripts/stdlib-regex-test.sh`](./scripts/stdlib-regex-test.sh). El diseño B0
+queda cerrado por `STD-REGEX-001`; implementación, tests/fuzzing, rendimiento,
+conformance y documentación de uso siguen pendientes de
+`STD-REGEX-IMPL-001`, `STD-REGEX-TEST-001`, `STD-REGEX-PERF-001`,
+`STD-REGEX-CONF-001` y `STD-REGEX-DOC-001`.
+
+### 14.17 Reglas de rendimiento de codecs
 
 Los codecs de datos:
 
@@ -3727,6 +3776,9 @@ Los codecs de datos:
 - mantienen frames/worklists explícitos para CBOR, validando breaks,
   longitudes indefinidas, tags y mapas arbitrarios sin consumir la pila
   recursiva del host;
+- mantienen el parser y las máquinas de estados explícitos de `std.regex`, sin
+  backtracking exponencial, con tablas Unicode versionadas y límites de pasos,
+  programa, input, matches y output comprobados antes de publicar resultados;
 - pueden usar SIMD o kernels nativos bajo las reglas de 11.6; y
 - demuestran equivalencia mediante vectores oficiales, fuzzing diferencial,
   round trips, corpus adversario, implementaciones externas y comparación

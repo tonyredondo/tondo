@@ -115,6 +115,10 @@ run_step stdlib-cbor-contract \
     scripts/stdlib-cbor-check.sh
 run_step stdlib-cbor-contract-tests \
     scripts/stdlib-cbor-test.sh
+run_step stdlib-regex-contract \
+    scripts/stdlib-regex-check.sh
+run_step stdlib-regex-contract-tests \
+    scripts/stdlib-regex-test.sh
 run_step stdlib-performance-contract \
     scripts/stdlib-performance-check.sh
 run_step native-target-descriptor-contract \

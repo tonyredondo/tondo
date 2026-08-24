@@ -85,7 +85,7 @@ jq -e '
   and .performance.scalar_oracle == true
   and .performance.alias_expansion == "iterative-and-budgeted"
   and .implementation.public_api_promoted == false
-  and .promotion.next_blocks == ["STD-REGEX-001", "STD-ID-001", "STD-LOG-001", "DIAG-RUNTIME-001"]
+  and .promotion.next_blocks == ["STD-ID-001", "STD-LOG-001", "DIAG-RUNTIME-001"]
 ' testing/stdlib-yaml.json >/dev/null
 
 echo "std.yaml tests: OK (schema boundary; tags; aliases; limits; streaming; security; promotion)"

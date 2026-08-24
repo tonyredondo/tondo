@@ -1,0 +1,237 @@
+{
+  "format": "tondo-stdlib-owner-contract/1",
+  "owner": "std.regex",
+  "parent_owner": "std",
+  "edition": "0.1",
+  "phase": "STD-0.1B",
+  "task": "STD-REGEX-001",
+  "status": "contract-locked",
+  "contract": "docs/contracts/stdlib-regex.md",
+  "spec": "TONDO_STANDARD_LIBRARY_SPEC.md",
+  "language_spec": "TONDO_LANGUAGE_SPEC.md",
+  "layer": "B7",
+  "kind": "runtime-facing",
+  "target": "tondo-vm-hosted-and-native",
+  "dependencies": ["std.text"],
+  "capabilities": {
+    "required": [],
+    "optional": [],
+    "import_effect": "none",
+    "ambient_lookup": false,
+    "forbidden": [
+      "environment",
+      "locale",
+      "timezone-lookup",
+      "runtime-reflection",
+      "dynamic-engine-registry",
+      "includes",
+      "callbacks-from-pattern"
+    ]
+  },
+  "unicode": {
+    "version": "16.0.0",
+    "unit": "unicode-scalar",
+    "encoding": "utf-8",
+    "properties": ["General_Category", "Script", "Script_Extensions", "Binary"],
+    "case_folding": "simple-unicode-case-fold-no-multi-scalar-expansion",
+    "normalization": "none",
+    "grapheme_clusters": "not-supported",
+    "locale": "forbidden",
+    "property_unknown": "reject"
+  },
+  "syntax": {
+    "dialect": "regular-only-linear",
+    "grammar": "closed",
+    "atoms": ["literal", "dot", "class", "capture-group", "noncapture-group", "named-capture-group", "anchor"],
+    "classes": ["literal", "range", "negated", "shorthand", "unicode-property"],
+    "shorthands": {
+      "digit": "Decimal_Number",
+      "space": "White_Space",
+      "word": "Alphabetic-Mark-Decimal_Number-Connector_Punctuation",
+      "boundary": "word-to-nonword"
+    },
+    "anchors": ["start", "end", "absolute-start", "absolute-end", "word-boundary"],
+    "quantifiers": ["zero-or-more", "one-or-more", "zero-or-one", "exact", "bounded", "open-upper"],
+    "lazy_quantifiers": true,
+    "greedy_default": true,
+    "capture_names": "ascii-identifier-unique",
+    "hex_scalar_escape": "x-braced-one-to-six-hex",
+    "unsupported": [
+      "backreference",
+      "lookahead",
+      "lookbehind",
+      "recursion",
+      "subroutine-call",
+      "conditional",
+      "atomic-group",
+      "possessive-quantifier",
+      "embedded-code",
+      "callout",
+      "include",
+      "locale-class",
+      "invalid-byte-match",
+      "embedded-flags"
+    ]
+  },
+  "engine": {
+    "class": "finite-automata-or-equivalent-linear-proof",
+    "allowed": ["thompson-nfa", "lazy-dfa", "tagged-linear-engine"],
+    "backtracking": "forbidden",
+    "host_recursion": "forbidden",
+    "worklists": "explicit-bounded",
+    "matching_complexity": "linear-in-input-within-max-steps",
+    "compile_fingerprint": "pattern-options-limits-unicode-version",
+    "deterministic": true,
+    "adaptive_dispatch": "target-and-program-size",
+    "simd": "allowed-after-scalar-equivalence"
+  },
+  "semantics": {
+    "search": "leftmost",
+    "tie_break": "greedy-longest-then-alternative-order",
+    "ungreedy": "reverses-greedy-and-lazy-preference",
+    "full_match": "span-equals-whole-input",
+    "find_all": "non-overlapping",
+    "zero_width_progress": "one-unicode-scalar",
+    "capture_zero": "whole-match",
+    "unmatched_capture": "none",
+    "offsets": "utf8-byte-half-open-scalar-boundaries",
+    "input_normalization": "none",
+    "invalid_utf8": "impossible-string-invariant"
+  },
+  "replacement": {
+    "first_operation": "replace",
+    "all_operation": "replaceAll",
+    "tokens": ["dollar-zero", "dollar-number", "braced-name", "double-dollar"],
+    "unmatched_capture": "empty-string",
+    "unknown_capture": "reject",
+    "callback": "not-supported",
+    "atomic_output": true
+  },
+  "api": {
+    "module": "std.regex",
+    "types": ["Regex", "RegexOptions", "RegexLimits", "RegexErrorKind", "RegexError", "RegexSpan", "RegexCapture", "RegexMatch", "RegexFindIterator"],
+    "functions": ["compile", "isMatch", "isFullMatch", "match", "findAll", "replace", "replaceAll"],
+    "iterator_methods": ["next"],
+    "terminal_state": "iterator-none-is-terminal",
+    "typed_dispatch": "not-applicable-pure-text-engine",
+    "annotations": [],
+    "unicode_descriptor": "recorded-at-compile"
+  },
+  "surface": {
+    "types": ["Regex", "RegexCapture", "RegexError", "RegexErrorKind", "RegexFindIterator", "RegexLimits", "RegexMatch", "RegexOptions", "RegexSpan"],
+    "signatures": [
+      {"id": "options-defaults", "signature": "pub fn RegexOptions.defaults(): RegexOptions", "kind": "constructor", "effect": "pure"},
+      {"id": "limits-defaults", "signature": "pub fn RegexLimits.defaults(): RegexLimits", "kind": "constructor", "effect": "pure"},
+      {"id": "compile", "signature": "pub fn Regex.compile(pattern: String, options: RegexOptions, limits: RegexLimits): Regex ! RegexError", "kind": "compile", "effect": "pure"},
+      {"id": "pattern", "signature": "pub fn Regex.pattern(self): String", "kind": "accessor", "effect": "pure"},
+      {"id": "capture-count", "signature": "pub fn Regex.captureCount(self): Int", "kind": "accessor", "effect": "pure"},
+      {"id": "capture-names", "signature": "pub fn Regex.captureNames(self): Array[String]", "kind": "accessor", "effect": "pure"},
+      {"id": "is-match", "signature": "pub fn Regex.isMatch(self, input: String): Bool ! RegexError", "kind": "search", "effect": "pure"},
+      {"id": "is-full-match", "signature": "pub fn Regex.isFullMatch(self, input: String): Bool ! RegexError", "kind": "search", "effect": "pure"},
+      {"id": "match", "signature": "pub fn Regex.match(self, input: String): RegexMatch? ! RegexError", "kind": "search", "effect": "pure"},
+      {"id": "find-all", "signature": "pub fn Regex.findAll(self, input: String): RegexFindIterator ! RegexError", "kind": "iterator", "effect": "pure"},
+      {"id": "replace", "signature": "pub fn Regex.replace(self, input: String, replacement: String): String ! RegexError", "kind": "replace", "effect": "pure"},
+      {"id": "replace-all", "signature": "pub fn Regex.replaceAll(self, input: String, replacement: String): String ! RegexError", "kind": "replace", "effect": "pure"},
+      {"id": "iterator-next", "signature": "pub fn RegexFindIterator.next(var self): RegexMatch?", "kind": "iterator", "effect": "pure"},
+      {"id": "match-capture", "signature": "pub fn RegexMatch.capture(self, index: Int): RegexCapture?", "kind": "capture", "effect": "pure"},
+      {"id": "match-capture-name", "signature": "pub fn RegexMatch.captureName(self, name: String): RegexCapture?", "kind": "capture", "effect": "pure"},
+      {"id": "span-slice", "signature": "pub fn RegexSpan.slice(self, input: String): String ! RegexError", "kind": "span", "effect": "pure"}
+    ],
+    "direct_call_waits": false,
+    "explicit_await_direct_call": "forbidden",
+    "explicit_await_join": "unchanged-by-language",
+    "inference_by_name": false,
+    "bodyless_requires_effect": false,
+    "bodyful_inference": "not-applicable-pure",
+    "selectable_operations": [],
+    "no_async_duplicate_api": true
+  },
+  "ownership": {
+    "regex_immutable_shareable": true,
+    "iterator_borrows_input": true,
+    "iterator_outlives_input": false,
+    "captures_are_spans": true,
+    "span_slice_copies": true,
+    "pattern_input_retained_by_iterator": "borrowed-only",
+    "send": "Regex-and-immutable-results",
+    "callback_storage": false
+  },
+  "limits": [
+    {"id": "max_pattern_bytes", "unit": "bytes", "scope": "pattern", "default": 65536, "check": "before-parse"},
+    {"id": "max_syntax_depth", "unit": "frames", "scope": "parser", "default": 256, "check": "before-open"},
+    {"id": "max_capture_groups", "unit": "groups", "scope": "program", "default": 256, "check": "before-register"},
+    {"id": "max_class_ranges", "unit": "ranges", "scope": "program", "default": 262144, "check": "before-insert"},
+    {"id": "max_repeat", "unit": "repetitions", "scope": "program", "default": 1000000, "check": "before-expand"},
+    {"id": "max_program_states", "unit": "states", "scope": "program", "default": 1000000, "check": "before-publish"},
+    {"id": "max_input_bytes", "unit": "bytes", "scope": "input", "default": 16777216, "check": "before-search"},
+    {"id": "max_steps", "unit": "transitions", "scope": "match", "default": 100000000, "check": "before-batch"},
+    {"id": "max_matches", "unit": "matches", "scope": "findAll-and-replaceAll", "default": 1000000, "check": "before-emit"},
+    {"id": "max_output_bytes", "unit": "bytes", "scope": "replacement", "default": 67108864, "check": "before-append"},
+    {"id": "max_replacement_bytes", "unit": "bytes", "scope": "replacement", "default": 65536, "check": "before-parse"},
+    {"id": "vm_heap", "unit": "runtime-defined", "scope": "host", "default": "target", "check": "before-publish"}
+  ],
+  "errors": {
+    "type": "RegexError",
+    "location": "phase-and-pattern-or-input-byte-offset",
+    "partial_success": false,
+    "kinds": ["InvalidSyntax", "UnexpectedEnd", "InvalidEscape", "InvalidUnicodeScalar", "InvalidUnicodeProperty", "InvalidClass", "InvalidRange", "InvalidQuantifier", "InvalidCaptureName", "DuplicateCaptureName", "UnsupportedFeature", "PatternLimitExceeded", "ProgramLimitExceeded", "InputLimitExceeded", "StepLimitExceeded", "MatchLimitExceeded", "ReplacementLimitExceeded", "InvalidReplacement", "OutputLimitExceeded", "InvalidBoundary", "OutOfMemory", "NoProgress"]
+  },
+  "test_matrix": [
+    {"id": "syntax-and-escapes", "required": true, "observables": ["grammar", "literal", "escape", "invalid-syntax", "unsupported-feature"]},
+    {"id": "unicode-properties", "required": true, "observables": ["unicode-16", "general-category", "script", "binary", "shorthands", "unknown-property"]},
+    {"id": "classes-and-anchors", "required": true, "observables": ["ranges", "negation", "word-boundary", "absolute-boundary", "multiline", "crlf"]},
+    {"id": "quantifiers-and-alternation", "required": true, "observables": ["greedy", "lazy", "ungreedy", "bounded", "empty", "leftmost"]},
+    {"id": "captures-and-spans", "required": true, "observables": ["numbered", "named", "optional", "zero-length", "byte-boundary", "capture-zero"]},
+    {"id": "find-iterator", "required": true, "observables": ["non-overlap", "zero-width-progress", "order", "terminal-none", "borrowed-input"]},
+    {"id": "replacement", "required": true, "observables": ["first", "all", "numeric", "named", "escaped-dollar", "invalid-template"]},
+    {"id": "limits-and-atomicity", "required": true, "observables": ["pattern", "program", "input", "steps", "matches", "output", "no-partial"]},
+    {"id": "linear-safety", "required": true, "observables": ["hostile-pattern", "hostile-input", "no-backtracking", "explicit-worklist", "determinism"]},
+    {"id": "vm-native-parity", "required": true, "observables": ["compile", "match", "captures", "replace", "errors", "unicode-descriptor"]}
+  ],
+  "corpora": [
+    {"id": "syntax-valid", "source": "owner-generated", "required": true, "focus": ["atoms", "groups", "classes", "quantifiers", "anchors"]},
+    {"id": "syntax-invalid", "source": "owner-generated", "required": true, "focus": ["truncation", "escapes", "ranges", "quantifiers", "unsupported"]},
+    {"id": "unicode-16-properties", "source": "owner-generated", "required": true, "focus": ["general-category", "script", "binary", "case-fold", "shorthand"]},
+    {"id": "captures-and-zero-width", "source": "owner-generated", "required": true, "focus": ["named", "optional", "empty", "boundary", "iterator-progress"]},
+    {"id": "replacement-templates", "source": "owner-generated", "required": true, "focus": ["numeric", "named", "dollar", "invalid", "output-limit"]},
+    {"id": "hostile-complexity", "source": "owner-generated", "required": true, "focus": ["nested-alternation", "large-classes", "long-input", "step-limit", "program-limit"]},
+    {"id": "unicode-boundaries", "source": "owner-generated", "required": true, "focus": ["utf8-offsets", "scalar-slicing", "combining-sequences", "crlf"]},
+    {"id": "parity-vectors", "source": "owner-generated", "required": true, "focus": ["vm-native", "errors", "captures", "replace", "determinism"]}
+  ],
+  "exclusions": [
+    "backreferences",
+    "lookaround",
+    "recursion-and-subroutines",
+    "locale-sensitive-matching",
+    "normalization-and-grapheme-matching",
+    "byte-patterns-over-invalid-utf8",
+    "replacement-callbacks",
+    "jit-and-external-abi",
+    "glob-and-shell-syntax"
+  ],
+  "performance": {
+    "scalar_oracle": true,
+    "simd_allowed_after_equivalence": true,
+    "dispatch": "target-declared-and-program-size-based",
+    "matching": "linear-with-explicit-step-budget",
+    "parser_stack": "explicit-worklist",
+    "allocation": "bounded-by-program-input-and-output-limits",
+    "claims_before_perf_gate": "forbidden"
+  },
+  "promotion": {
+    "gates": [
+      {"id": "design", "requires": ["closed-syntax", "unicode-version", "unsupported-feature-list", "complexity-law", "limit-identities"]},
+      {"id": "implementation", "requires": ["finite-automata-engine", "explicit-parser-worklist", "bounded-captures", "atomic-errors"]},
+      {"id": "conformance", "requires": ["unicode-corpus", "replacement-vectors", "vm-native-parity", "rejection-vectors"]},
+      {"id": "performance", "requires": ["scalar-oracle", "adversarial-input", "target-qualified-report", "allocation-report"]},
+      {"id": "promote", "requires": ["linear-safety-proof", "deterministic-errors", "unicode-descriptor-parity", "STD-PERF-001-report"]}
+    ],
+    "next_blocks": ["STD-ID-001", "STD-LOG-001", "DIAG-RUNTIME-001"]
+  },
+  "implementation": {
+    "status": "pending-after-native-gate",
+    "public_api_promoted": false,
+    "host": "not-applicable-pure-core",
+    "required_follow_ups": ["STD-REGEX-IMPL-001", "STD-REGEX-TEST-001", "STD-REGEX-PERF-001", "STD-REGEX-CONF-001", "STD-REGEX-DOC-001"]
+  }
+}

@@ -148,7 +148,7 @@ jq -e '
   and .implementation.public_api_promoted == false
   and .implementation.host == "required-after-native-gate"
   and .implementation.required_follow_ups == ["STD-YAML-IMPL-001", "STD-YAML-TEST-001", "STD-YAML-PERF-001", "STD-YAML-CONF-001", "STD-YAML-DOC-001"]
-  and .promotion.next_blocks == ["STD-REGEX-001", "STD-ID-001", "STD-LOG-001", "DIAG-RUNTIME-001"]
+  and .promotion.next_blocks == ["STD-ID-001", "STD-LOG-001", "DIAG-RUNTIME-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable std.yaml contract"
 
 for path in \
