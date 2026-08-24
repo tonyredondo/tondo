@@ -20,13 +20,20 @@ use crate::bytecode::{
 };
 use crate::literal;
 
+#[cfg(test)]
+use super::diagnostics::DiagnosticEvent;
+use super::diagnostics::{
+    DiagnosticConfig, DiagnosticHeapOperation, DiagnosticMemoryAccess, DiagnosticRange,
+    DiagnosticResourceState, DiagnosticSchedulerOperation, DiagnosticSession, DiagnosticSource,
+    DiagnosticSynchronization, DiagnosticTaskState, DiagnosticThreadState,
+};
 use super::heap::{Heap, HeapHandle, HeapObject, IteratorAdapter};
 use super::value::{
     AggregatePayload, RuntimeJoin, RuntimeLoan, TRANSFERRED_JOIN_SCOPE, Value, snapshot_value,
 };
 use super::{
-    PanicCode, RuntimeHostValueKind, RuntimeValue, ValueCopyStrategy, VmError, VmLimits, VmPanic,
-    VmStackFrame, VmStatistics,
+    DiagnosticTrace, PanicCode, RuntimeHostValueKind, RuntimeValue, ValueCopyStrategy, VmError,
+    VmLimits, VmPanic, VmStackFrame, VmStatistics,
 };
 
 type HeapMapEntry = (Option<Value>, Option<Value>);
@@ -147,6 +154,8 @@ pub enum VmOutcome {
 pub struct VmExecution {
     pub outcome: VmOutcome,
     pub statistics: VmStatistics,
+    /// Present only when the opt-in runtime collector was requested.
+    pub diagnostics: Option<DiagnosticTrace>,
 }
 
 pub fn execute(
@@ -183,7 +192,48 @@ pub fn execute_with_limits_and_copy_strategy(
     limits: VmLimits,
     copy_strategy: ValueCopyStrategy,
 ) -> Result<VmExecution, VmError> {
+    execute_with_limits_and_copy_strategy_and_diagnostics(
+        program,
+        entry,
+        host,
+        limits,
+        copy_strategy,
+        None,
+    )
+}
+
+/// Executes verified bytecode with bounded runtime observations enabled.
+///
+/// Diagnostics are deliberately separate from the ordinary entry points so a
+/// normal execution does not pay for event allocation or source-map metadata.
+pub fn execute_with_diagnostics(
+    program: &BytecodeProgram,
+    entry: BytecodeFunctionId,
+    host: &mut dyn VmHost,
+    config: DiagnosticConfig,
+) -> Result<VmExecution, VmError> {
+    execute_with_limits_and_copy_strategy_and_diagnostics(
+        program,
+        entry,
+        host,
+        VmLimits::default(),
+        ValueCopyStrategy::default(),
+        Some(config),
+    )
+}
+
+/// Low-level diagnostic entry point used by the hosted runner and detector
+/// tests. `None` is exactly the normal, uninstrumented VM path.
+pub fn execute_with_limits_and_copy_strategy_and_diagnostics(
+    program: &BytecodeProgram,
+    entry: BytecodeFunctionId,
+    host: &mut dyn VmHost,
+    limits: VmLimits,
+    copy_strategy: ValueCopyStrategy,
+    diagnostics: Option<DiagnosticConfig>,
+) -> Result<VmExecution, VmError> {
     validate_limits(limits)?;
+    let diagnostics = diagnostics.map(DiagnosticSession::new).transpose()?;
     let trace = verify_bytecode_with_trace_metadata(
         program,
         BytecodeVerificationLimits {
@@ -191,7 +241,12 @@ pub fn execute_with_limits_and_copy_strategy(
         },
     )?;
     validate_entry_contract(program, entry)?;
-    Engine::new(program, host, limits, copy_strategy, trace).run(entry)
+    if diagnostics.is_none() {
+        Engine::new(program, host, limits, copy_strategy, trace).run(entry)
+    } else {
+        Engine::new_with_diagnostics(program, host, limits, copy_strategy, trace, diagnostics)
+            .run(entry)
+    }
 }
 
 fn validate_entry_contract(
@@ -581,6 +636,7 @@ struct Engine<'program, 'host> {
     host: &'host mut dyn VmHost,
     limits: VmLimits,
     copy_strategy: ValueCopyStrategy,
+    diagnostics: Option<DiagnosticSession>,
     heap: Heap,
     frames: Vec<Frame>,
     frame_traces: Vec<crate::bytecode::BytecodeFrameTraceDescriptor>,
@@ -606,11 +662,23 @@ impl<'program, 'host> Engine<'program, 'host> {
         copy_strategy: ValueCopyStrategy,
         trace: BytecodeTraceMetadata,
     ) -> Self {
+        Self::new_with_diagnostics(program, host, limits, copy_strategy, trace, None)
+    }
+
+    fn new_with_diagnostics(
+        program: &'program BytecodeProgram,
+        host: &'host mut dyn VmHost,
+        limits: VmLimits,
+        copy_strategy: ValueCopyStrategy,
+        trace: BytecodeTraceMetadata,
+        diagnostics: Option<DiagnosticSession>,
+    ) -> Self {
         Self {
             program,
             host,
             limits,
             copy_strategy,
+            diagnostics,
             heap: Heap::new(limits, trace.types),
             frames: Vec::new(),
             frame_traces: trace.frames,
@@ -637,6 +705,222 @@ impl<'program, 'host> Engine<'program, 'host> {
         }
     }
 
+    fn task_id(task: usize) -> u64 {
+        u64::try_from(task)
+            .unwrap_or(u64::MAX.saturating_sub(1))
+            .saturating_add(1)
+    }
+
+    fn record_thread(&mut self, state: DiagnosticThreadState) -> Result<(), VmError> {
+        if let Some(diagnostics) = &mut self.diagnostics {
+            diagnostics.thread(0, state)?;
+        }
+        Ok(())
+    }
+
+    fn record_task(
+        &mut self,
+        task: usize,
+        parent: Option<usize>,
+        state: DiagnosticTaskState,
+    ) -> Result<(), VmError> {
+        if let Some(diagnostics) = &mut self.diagnostics {
+            diagnostics.task(Self::task_id(task), parent.map(Self::task_id), state)?;
+        }
+        Ok(())
+    }
+
+    fn diagnostic_parent(&self, task: usize) -> Option<usize> {
+        let scope = self.tasks.get(task)?.parent_scope?;
+        self.task_scopes
+            .get(scope)
+            .and_then(Option::as_ref)
+            .map(|scope| scope.owner)
+    }
+
+    fn record_new_task(
+        &mut self,
+        task: usize,
+        scope: Option<usize>,
+        state: DiagnosticTaskState,
+    ) -> Result<(), VmError> {
+        let parent = scope.and_then(|scope| {
+            self.task_scopes
+                .get(scope)
+                .and_then(Option::as_ref)
+                .map(|scope| scope.owner)
+        });
+        self.record_task(task, parent, DiagnosticTaskState::Created)?;
+        if state != DiagnosticTaskState::Created {
+            self.record_task(task, parent, state)?;
+        }
+        self.record_sync(
+            task,
+            DiagnosticSynchronization::Spawn,
+            Some(self.current_task),
+            None,
+        )
+    }
+
+    fn record_scheduler(
+        &mut self,
+        task: usize,
+        operation: DiagnosticSchedulerOperation,
+    ) -> Result<(), VmError> {
+        if let Some(diagnostics) = &mut self.diagnostics {
+            diagnostics.scheduler(Self::task_id(task), operation, self.runnable.len())?;
+        }
+        Ok(())
+    }
+
+    fn record_sync(
+        &mut self,
+        task: usize,
+        operation: DiagnosticSynchronization,
+        peer: Option<usize>,
+        frame: Option<usize>,
+    ) -> Result<(), VmError> {
+        let source = frame.and_then(|frame| self.diagnostic_source(frame));
+        if let Some(diagnostics) = &mut self.diagnostics {
+            diagnostics.synchronization(
+                Self::task_id(task),
+                operation,
+                peer.map(Self::task_id),
+                source,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn record_quiescence(
+        &mut self,
+        phase: super::diagnostics::DiagnosticQuiescencePhase,
+    ) -> Result<(), VmError> {
+        if let Some(diagnostics) = &mut self.diagnostics {
+            diagnostics.quiescence(Self::task_id(self.current_task), phase)?;
+        }
+        Ok(())
+    }
+
+    fn record_memory(
+        &mut self,
+        frame: usize,
+        place: &BytecodePlace,
+        access: DiagnosticMemoryAccess,
+    ) -> Result<(), VmError> {
+        let Some(source) = self.diagnostic_source(frame) else {
+            return Ok(());
+        };
+        if let Some(diagnostics) = &mut self.diagnostics {
+            diagnostics.memory(
+                access,
+                DiagnosticRange {
+                    task_id: Self::task_id(self.current_task),
+                    frame: u32::try_from(frame).unwrap_or(u32::MAX),
+                    slot: place.slot.index(),
+                    projections: u32::try_from(place.projections.len()).unwrap_or(u32::MAX),
+                },
+                source,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn record_heap(
+        &mut self,
+        handle: HeapHandle,
+        operation: DiagnosticHeapOperation,
+        bytes: u64,
+    ) -> Result<(), VmError> {
+        if let Some(diagnostics) = &mut self.diagnostics {
+            diagnostics.heap(
+                handle.diagnostic_id(),
+                operation,
+                bytes,
+                Self::task_id(self.current_task),
+            )?;
+        }
+        Ok(())
+    }
+
+    fn record_roots(&mut self, roots: &[Value]) -> Result<(), VmError> {
+        let Some(diagnostics) = &mut self.diagnostics else {
+            return Ok(());
+        };
+        let owner = format!("task:{}", Self::task_id(self.current_task));
+        let objects = roots.iter().filter_map(|value| {
+            let handle = value.heap_handle()?;
+            Some((handle.diagnostic_id(), owner.clone()))
+        });
+        diagnostics.roots(Self::task_id(self.current_task), objects)
+    }
+
+    fn record_resource(
+        &mut self,
+        value: &RuntimeValue,
+        state: DiagnosticResourceState,
+    ) -> Result<(), VmError> {
+        let RuntimeValue::Host { kind, id } = value else {
+            return Ok(());
+        };
+        if let Some(diagnostics) = &mut self.diagnostics {
+            diagnostics.resource(
+                *id,
+                format!("{kind:?}"),
+                state,
+                Self::task_id(self.current_task),
+            )?;
+        }
+        Ok(())
+    }
+
+    fn diagnostic_source(&self, frame: usize) -> Option<DiagnosticSource> {
+        let runtime_frame = self.frames.get(frame)?;
+        let function = self.program.function(runtime_frame.function)?;
+        let name = self
+            .callable_names
+            .get(function.callable.index() as usize)
+            .cloned()
+            .unwrap_or_else(|| format!("function#{}", function.callable.index()));
+        let block = function.block(runtime_frame.block)?;
+        let span_id = block
+            .instructions
+            .get(runtime_frame.instruction.saturating_sub(1))
+            .map(|instruction| instruction.span)
+            .or(Some(block.terminator.span));
+        let span = span_id
+            .and_then(|span| function.span(span))
+            .unwrap_or(function.source);
+        Some(DiagnosticSource {
+            function: name,
+            span,
+        })
+    }
+
+    fn cleanup_host_value(&mut self, value: &RuntimeValue) -> Result<(), VmError> {
+        let result = self.host.cleanup(value);
+        if result.is_ok() {
+            self.record_resource(value, DiagnosticResourceState::Released)?;
+        }
+        result
+    }
+
+    fn start_host_async(
+        &mut self,
+        name: &str,
+        arguments: &[RuntimeValue],
+        frame: Option<usize>,
+    ) -> Result<u64, VmError> {
+        let call = self.host.start_async(name, arguments)?;
+        self.record_sync(
+            self.current_task,
+            DiagnosticSynchronization::HostStart,
+            None,
+            frame,
+        )?;
+        Ok(call)
+    }
+
     fn run(mut self, entry: BytecodeFunctionId) -> Result<VmExecution, VmError> {
         let entry_function = self
             .program
@@ -661,6 +945,9 @@ impl<'program, 'host> Engine<'program, 'host> {
             panic_observed: false,
             discard_completion: false,
         });
+        self.record_thread(DiagnosticThreadState::Started)?;
+        self.record_task(0, None, DiagnosticTaskState::Created)?;
+        self.record_task(0, None, DiagnosticTaskState::Running)?;
         self.push_frame(entry, Vec::new(), None)?;
 
         loop {
@@ -846,7 +1133,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                 if self.tasks[self.current_task].cancel_requested
                     || self.current_scope_has_unobserved_panic(frame)?
                 {
-                    self.host.cleanup(&completion)?;
+                    self.cleanup_host_value(&completion)?;
                     self.begin_cancel(frame, unwind)?;
                     return Ok(true);
                 }
@@ -964,6 +1251,9 @@ impl<'program, 'host> Engine<'program, 'host> {
                 self.current_task = next;
                 self.frames = std::mem::take(&mut task.frames);
                 self.pending_unwind = task.pending_unwind.take();
+                let parent = self.diagnostic_parent(next);
+                self.record_task(next, parent, DiagnosticTaskState::Running)?;
+                self.record_scheduler(next, DiagnosticSchedulerOperation::Switch)?;
                 return Ok(None);
             }
 
@@ -975,6 +1265,7 @@ impl<'program, 'host> Engine<'program, 'host> {
             }
             let calls = self.pending_host_calls();
             if calls.is_empty() {
+                self.record_quiescence(super::diagnostics::DiagnosticQuiescencePhase::Begin)?;
                 return Err(VmError::invariant(
                     "the cooperative executor has no runnable task before root completion",
                 ));
@@ -987,6 +1278,7 @@ impl<'program, 'host> Engine<'program, 'host> {
             }
             self.complete_host_call(call, value)?;
             self.poll_host_calls()?;
+            self.record_quiescence(super::diagnostics::DiagnosticQuiescencePhase::End)?;
         }
     }
 
@@ -1057,13 +1349,14 @@ impl<'program, 'host> Engine<'program, 'host> {
         };
         if let Some(outcome) = host_task {
             if self.tasks[task].cancel_requested {
-                self.host.cleanup(&value)?;
+                self.cleanup_host_value(&value)?;
                 self.complete_task(task, TaskCompletion::Cancelled)
             } else {
                 let value = self.materialize_host_value(outcome, value)?;
                 self.complete_task(task, TaskCompletion::Returned(value))
             }
         } else {
+            self.record_sync(task, DiagnosticSynchronization::HostComplete, None, None)?;
             match &mut self.tasks[task].status {
                 TaskStatus::Waiting(TaskWait::HostCall { completion, .. })
                 | TaskStatus::Waiting(TaskWait::DeferredHostCall { completion, .. }) => {
@@ -1076,18 +1369,23 @@ impl<'program, 'host> Engine<'program, 'host> {
     }
 
     fn enqueue_task(&mut self, task: usize) -> Result<(), VmError> {
-        let record = self
-            .tasks
-            .get_mut(task)
-            .ok_or_else(|| VmError::invariant("cannot enqueue an invalid task"))?;
-        if record.queued {
-            return Ok(());
+        {
+            let record = self
+                .tasks
+                .get_mut(task)
+                .ok_or_else(|| VmError::invariant("cannot enqueue an invalid task"))?;
+            if record.queued {
+                return Ok(());
+            }
+            if !matches!(record.status, TaskStatus::Runnable) {
+                return Ok(());
+            }
+            record.queued = true;
         }
-        if !matches!(record.status, TaskStatus::Runnable) {
-            return Ok(());
-        }
-        record.queued = true;
         self.runnable.push_back(task);
+        let parent = self.diagnostic_parent(task);
+        self.record_task(task, parent, DiagnosticTaskState::Runnable)?;
+        self.record_scheduler(task, DiagnosticSchedulerOperation::Enqueue)?;
         Ok(())
     }
 
@@ -1103,6 +1401,15 @@ impl<'program, 'host> Engine<'program, 'host> {
             }
         }
         self.tasks[self.current_task].status = TaskStatus::Waiting(wait);
+        let parent = self.diagnostic_parent(self.current_task);
+        self.record_task(self.current_task, parent, DiagnosticTaskState::Waiting)?;
+        self.record_scheduler(self.current_task, DiagnosticSchedulerOperation::Park)?;
+        self.record_sync(
+            self.current_task,
+            DiagnosticSynchronization::Park,
+            dependencies.first().copied(),
+            self.frames.len().checked_sub(1),
+        )?;
         Ok(())
     }
 
@@ -1123,22 +1430,30 @@ impl<'program, 'host> Engine<'program, 'host> {
     }
 
     fn wake_task(&mut self, task: usize) -> Result<(), VmError> {
-        let record = self
-            .tasks
-            .get_mut(task)
-            .ok_or_else(|| VmError::invariant("cannot wake an invalid task"))?;
-        if !matches!(record.status, TaskStatus::Waiting(_)) {
-            return Ok(());
-        }
-        let was_select = matches!(record.status, TaskStatus::Waiting(TaskWait::Select { .. }));
-        let TaskStatus::Waiting(wait) = std::mem::replace(&mut record.status, TaskStatus::Runnable)
-        else {
-            unreachable!("status was checked as waiting");
+        let was_select = {
+            let record = self
+                .tasks
+                .get_mut(task)
+                .ok_or_else(|| VmError::invariant("cannot wake an invalid task"))?;
+            if !matches!(record.status, TaskStatus::Waiting(_)) {
+                return Ok(());
+            }
+            let was_select = matches!(record.status, TaskStatus::Waiting(TaskWait::Select { .. }));
+            let TaskStatus::Waiting(wait) =
+                std::mem::replace(&mut record.status, TaskStatus::Runnable)
+            else {
+                unreachable!("status was checked as waiting");
+            };
+            record.resume = Some(wait);
+            was_select
         };
-        record.resume = Some(wait);
+        let parent = self.diagnostic_parent(task);
         if was_select {
             self.statistics.select_wakeups = self.statistics.select_wakeups.saturating_add(1);
         }
+        self.record_task(task, parent, DiagnosticTaskState::Runnable)?;
+        self.record_scheduler(task, DiagnosticSchedulerOperation::Wake)?;
+        self.record_sync(task, DiagnosticSynchronization::Wake, None, None)?;
         self.enqueue_task(task)
     }
 
@@ -1159,6 +1474,15 @@ impl<'program, 'host> Engine<'program, 'host> {
         } else {
             TaskStatus::Complete(Some(completion))
         };
+        let state = if discard {
+            DiagnosticTaskState::Consumed
+        } else {
+            DiagnosticTaskState::Complete
+        };
+        let owner = self.diagnostic_parent(task);
+        self.record_task(task, owner, state)?;
+        self.record_scheduler(task, DiagnosticSchedulerOperation::Complete)?;
+        self.record_sync(task, DiagnosticSynchronization::Join, None, None)?;
         if let Some(scope) = parent_scope {
             let (owner, siblings) = {
                 let scope = self
@@ -1196,30 +1520,37 @@ impl<'program, 'host> Engine<'program, 'host> {
             .take()
             .ok_or_else(|| VmError::invariant("task completion was consumed twice"))?;
         record.status = TaskStatus::Consumed;
+        let parent = self.diagnostic_parent(task);
+        self.record_task(task, parent, DiagnosticTaskState::Consumed)?;
         Ok(Some(completion))
     }
 
     fn request_cancel(&mut self, task: usize) -> Result<(), VmError> {
-        let record = self
-            .tasks
-            .get_mut(task)
-            .ok_or_else(|| VmError::invariant("cannot cancel an invalid task"))?;
-        if matches!(
-            record.status,
-            TaskStatus::Complete(_) | TaskStatus::Consumed
-        ) {
-            return Ok(());
-        }
-        record.cancel_requested = true;
-        let host_call = match &record.status {
-            TaskStatus::Waiting(TaskWait::HostCall { call, .. })
-            | TaskStatus::Waiting(TaskWait::HostTask { call, .. }) => Some(*call),
-            // A cleanup that is already in flight is not cooperatively
-            // cancelled by the unwind which initiated it.
-            TaskStatus::Waiting(TaskWait::DeferredHostCall { .. }) => return Ok(()),
-            _ => None,
+        let host_call = {
+            let record = self
+                .tasks
+                .get_mut(task)
+                .ok_or_else(|| VmError::invariant("cannot cancel an invalid task"))?;
+            if matches!(
+                record.status,
+                TaskStatus::Complete(_) | TaskStatus::Consumed
+            ) {
+                return Ok(());
+            }
+            record.cancel_requested = true;
+            match &record.status {
+                TaskStatus::Waiting(TaskWait::HostCall { call, .. })
+                | TaskStatus::Waiting(TaskWait::HostTask { call, .. }) => Some(*call),
+                // A cleanup that is already in flight is not cooperatively
+                // cancelled by the unwind which initiated it.
+                TaskStatus::Waiting(TaskWait::DeferredHostCall { .. }) => return Ok(()),
+                _ => None,
+            }
         };
+        let parent = self.diagnostic_parent(task);
+        self.record_task(task, parent, DiagnosticTaskState::CancelRequested)?;
         if let Some(call) = host_call {
+            self.record_sync(task, DiagnosticSynchronization::HostCancel, None, None)?;
             return self.host.cancel_async(call);
         }
         self.wake_task(task)
@@ -1270,10 +1601,17 @@ impl<'program, 'host> Engine<'program, 'host> {
                 ));
             }
         };
+        let roots = self.roots(&[])?;
+        self.record_quiescence(super::diagnostics::DiagnosticQuiescencePhase::Begin)?;
+        self.record_roots(&roots)?;
         self.heap.collect(&[], &mut self.statistics)?;
+        self.record_quiescence(super::diagnostics::DiagnosticQuiescencePhase::End)?;
+        self.record_thread(DiagnosticThreadState::Stopped)?;
+        let diagnostics = self.diagnostics.take().map(DiagnosticSession::finish);
         Ok(VmExecution {
             outcome,
             statistics: self.statistics,
+            diagnostics,
         })
     }
 
@@ -1321,6 +1659,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                 .children
                 .push(task);
         }
+        self.record_new_task(task, scope, DiagnosticTaskState::Runnable)?;
         self.enqueue_task(task)?;
         Ok(task)
     }
@@ -1381,6 +1720,7 @@ impl<'program, 'host> Engine<'program, 'host> {
             };
             scope_state.children.push(task);
         }
+        self.record_new_task(task, scope, DiagnosticTaskState::Runnable)?;
         self.enqueue_task(task)?;
         Ok(task)
     }
@@ -1634,6 +1974,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                 .children
                 .push(task);
         }
+        self.record_new_task(task, scope, DiagnosticTaskState::Waiting)?;
         Ok(task)
     }
 
@@ -1659,6 +2000,7 @@ impl<'program, 'host> Engine<'program, 'host> {
             .ok_or_else(|| VmError::invariant("completed task targets a missing task scope"))?
             .children
             .push(task);
+        self.record_new_task(task, Some(scope), DiagnosticTaskState::Complete)?;
         Ok(task)
     }
 
@@ -1681,6 +2023,7 @@ impl<'program, 'host> Engine<'program, 'host> {
             panic_observed: false,
             discard_completion: false,
         });
+        self.record_new_task(task, None, DiagnosticTaskState::Complete)?;
         Ok(task)
     }
 
@@ -1742,6 +2085,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                 .children
                 .push(task);
         }
+        self.record_new_task(task, scope, DiagnosticTaskState::Waiting)?;
         Ok(task)
     }
 
@@ -1769,6 +2113,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                 .children
                 .push(task);
         }
+        self.record_new_task(task, scope, DiagnosticTaskState::Complete)?;
         Ok(task)
     }
 
@@ -2465,7 +2810,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                         outcome,
                     } => {
                         let scope = self.select_task_scope(frame)?;
-                        let call = self.host.start_async(&name, &arguments)?;
+                        let call = self.start_host_async(&name, &arguments, Some(frame))?;
                         self.spawn_host_task_with_scope(call, outcome, scope)?
                     }
                     OperationResult::AsyncIteratorCollect {
@@ -2539,6 +2884,12 @@ impl<'program, 'host> Engine<'program, 'host> {
         region.registered += 1;
         self.statistics.select_registrations =
             self.statistics.select_registrations.saturating_add(1);
+        self.record_sync(
+            self.current_task,
+            DiagnosticSynchronization::SelectRegister,
+            Some(task),
+            Some(frame),
+        )?;
         Ok(())
     }
 
@@ -3107,7 +3458,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                                 "ProcessHandle fallback found a non-host value",
                             ));
                         };
-                        self.host.cleanup(&value)?;
+                        self.cleanup_host_value(&value)?;
                     }
                     BytecodeIntrinsicType::Timer => {
                         let Value::Host(value) = value else {
@@ -3115,7 +3466,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                                 "Timer fallback found a non-host value",
                             ));
                         };
-                        self.host.cleanup(&value)?;
+                        self.cleanup_host_value(&value)?;
                     }
                 },
                 BytecodeTypeKind::Nominal {
@@ -3558,6 +3909,12 @@ impl<'program, 'host> Engine<'program, 'host> {
             mode: loan.mode,
             path,
         });
+        self.record_sync(
+            self.current_task,
+            DiagnosticSynchronization::LoanReserve,
+            None,
+            Some(frame),
+        )?;
         Ok(())
     }
 
@@ -3625,6 +3982,12 @@ impl<'program, 'host> Engine<'program, 'host> {
                 "ReleaseLoan references an inactive reservation",
             ));
         }
+        self.record_sync(
+            self.current_task,
+            DiagnosticSynchronization::LoanRelease,
+            None,
+            Some(frame),
+        )?;
         Ok(())
     }
 
@@ -3636,6 +3999,12 @@ impl<'program, 'host> Engine<'program, 'host> {
         unwind: BytecodeBlockId,
     ) -> Result<(), VmError> {
         self.statistics.select_commits = self.statistics.select_commits.saturating_add(1);
+        self.record_sync(
+            self.current_task,
+            DiagnosticSynchronization::SelectCommit,
+            None,
+            Some(frame),
+        )?;
         if self.tasks[self.current_task].cancel_requested
             || self.current_scope_has_unobserved_panic(frame)?
         {
@@ -3918,7 +4287,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                                 arguments,
                                 outcome,
                             } => {
-                                let call = self.host.start_async(&name, &arguments)?;
+                                let call = self.start_host_async(&name, &arguments, Some(frame))?;
                                 self.park_current(
                                     TaskWait::HostCall {
                                         call,
@@ -4092,7 +4461,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                         outcome,
                     } => {
                         let scope = self.active_task_scope(frame, *scope)?;
-                        let call = self.host.start_async(&name, &arguments)?;
+                        let call = self.start_host_async(&name, &arguments, Some(frame))?;
                         let child = self.spawn_host_task(call, outcome, scope)?;
                         self.write_place(
                             frame,
@@ -4314,7 +4683,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                                         "a synchronous defer attempted an async host call",
                                     ));
                                 }
-                                let call = self.host.start_async(&name, &arguments)?;
+                                let call = self.start_host_async(&name, &arguments, Some(frame))?;
                                 self.park_current(
                                     TaskWait::DeferredHostCall {
                                         call,
@@ -4557,7 +4926,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                             "a synchronous defer attempted an async host call",
                         ));
                     }
-                    let call = self.host.start_async(&name, &arguments)?;
+                    let call = self.start_host_async(&name, &arguments, Some(frame))?;
                     self.park_current(
                         TaskWait::DeferredHostCall {
                             call,
@@ -4907,9 +5276,15 @@ impl<'program, 'host> Engine<'program, 'host> {
         extra: &[Value],
     ) -> Result<Value, VmError> {
         let roots = self.roots(extra)?;
-        self.heap
+        let bytes = object.estimated_bytes();
+        let value = self
+            .heap
             .allocate(descriptor, object, &roots, &mut self.statistics)
-            .map(Value::Heap)
+            .map(Value::Heap)?;
+        if let Value::Heap(handle) = &value {
+            self.record_heap(*handle, DiagnosticHeapOperation::Allocate, bytes)?;
+        }
+        Ok(value)
     }
 
     fn allocate_like(
@@ -4929,8 +5304,10 @@ impl<'program, 'host> Engine<'program, 'host> {
         extra: &[Value],
     ) -> Result<(), VmError> {
         let roots = self.roots(extra)?;
+        let bytes = object.estimated_bytes();
         self.heap
-            .replace(handle, object, &roots, &mut self.statistics)
+            .replace(handle, object, &roots, &mut self.statistics)?;
+        self.record_heap(handle, DiagnosticHeapOperation::Replace, bytes)
     }
 
     // Value evaluation, places, operators, iterators, and calls continue below.
@@ -6395,6 +6772,7 @@ impl Engine<'_, '_> {
 
     fn read_place(&mut self, frame: usize, place: &BytecodePlace) -> Result<Value, VmError> {
         self.validate_source_regions(frame, place, true)?;
+        self.record_memory(frame, place, DiagnosticMemoryAccess::Read)?;
         let mut value = self.read_slot(frame, place.slot)?.clone();
         if let Value::Loan(loan) = value {
             value = self.read_task_place(loan.task, loan.frame, &loan.place)?;
@@ -6407,6 +6785,7 @@ impl Engine<'_, '_> {
 
     fn take_place(&mut self, frame: usize, place: &BytecodePlace) -> Result<Value, VmError> {
         self.validate_source_regions(frame, place, false)?;
+        self.record_memory(frame, place, DiagnosticMemoryAccess::Move)?;
         if self.root_loan(frame, place.slot)?.is_some() {
             return Err(VmError::invariant(
                 "a move attempted to transfer borrowed content",
@@ -6429,6 +6808,7 @@ impl Engine<'_, '_> {
         value: Value,
     ) -> Result<(), VmError> {
         let source_mode = self.validate_source_regions(frame, place, false)?;
+        self.record_memory(frame, place, DiagnosticMemoryAccess::Write)?;
         if source_mode == Some(BytecodeParameterMode::Mut) && self.array_element(place.ty).is_some()
         {
             self.ensure_mut_array_extent(frame, place, &value)?;
@@ -10014,7 +10394,18 @@ impl Engine<'_, '_> {
         ty: BytecodeTypeId,
         value: RuntimeValue,
     ) -> Result<Value, VmError> {
-        self.materialize_host_value_as(ty, ty, value)
+        let resource = match &value {
+            RuntimeValue::Host { kind, id } => Some((*kind, *id)),
+            _ => None,
+        };
+        let materialized = self.materialize_host_value_as(ty, ty, value)?;
+        if let Some((kind, id)) = resource {
+            self.record_resource(
+                &RuntimeValue::Host { kind, id },
+                DiagnosticResourceState::Acquired,
+            )?;
+        }
+        Ok(materialized)
     }
 
     fn materialize_host_value_as(
@@ -11591,35 +11982,39 @@ mod tests {
     use std::time::Instant;
 
     use crate::bytecode::{
-        BytecodeAggregateKind, BytecodeBinaryOperator, BytecodeBlockId, BytecodeCallArgumentTarget,
-        BytecodeCallable, BytecodeCallableId, BytecodeCapabilitySet, BytecodeClosure,
-        BytecodeClosureProtocols, BytecodeConstant, BytecodeConstantValue,
-        BytecodeConstantValueKind, BytecodeConstantVariantValue, BytecodeContainmentKind,
-        BytecodeCursorMode, BytecodeField, BytecodeFrameTraceDescriptor, BytecodeFunction,
-        BytecodeFunctionId, BytecodeFunctionParameter, BytecodeFunctionType, BytecodeIndexAccess,
-        BytecodeInstruction, BytecodeInstructionKind, BytecodeIntrinsicType, BytecodeLoanId,
-        BytecodeNominal, BytecodeNominalId, BytecodeNominalShape, BytecodeNumericConversionError,
-        BytecodeOperand, BytecodeOperandKind, BytecodeOperation, BytecodeOperationKind,
-        BytecodeParameter, BytecodeParameterMode, BytecodePlace, BytecodePrefixOperator,
-        BytecodeProgram, BytecodeRangeKind, BytecodeScalarType, BytecodeScopeId, BytecodeSelectArm,
+        BytecodeAggregateKind, BytecodeBinaryOperator, BytecodeBlock, BytecodeBlockId,
+        BytecodeBlockKind, BytecodeCallArgumentTarget, BytecodeCallable, BytecodeCallableId,
+        BytecodeCapabilitySet, BytecodeClosure, BytecodeClosureProtocols, BytecodeConstant,
+        BytecodeConstantValue, BytecodeConstantValueKind, BytecodeConstantVariantValue,
+        BytecodeContainmentKind, BytecodeCursorMode, BytecodeField, BytecodeFrameTraceDescriptor,
+        BytecodeFunction, BytecodeFunctionId, BytecodeFunctionParameter, BytecodeFunctionType,
+        BytecodeIndexAccess, BytecodeInstruction, BytecodeInstructionKind, BytecodeIntrinsicType,
+        BytecodeLoanId, BytecodeNominal, BytecodeNominalId, BytecodeNominalShape,
+        BytecodeNumericConversionError, BytecodeOperand, BytecodeOperandKind, BytecodeOperation,
+        BytecodeOperationKind, BytecodeParameter, BytecodeParameterMode, BytecodePlace,
+        BytecodePrefixOperator, BytecodeProgram, BytecodeRangeKind, BytecodeRvalue,
+        BytecodeRvalueKind, BytecodeScalarType, BytecodeScopeId, BytecodeSelectArm,
         BytecodeSelectRegistration, BytecodeSliceBounds, BytecodeSlot, BytecodeSlotId,
-        BytecodeSlotKind, BytecodeSpan, BytecodeTraceDescriptor, BytecodeType, BytecodeTypeId,
-        BytecodeTypeKind, BytecodeVariant, BytecodeVariantPayload, derive_trace_metadata,
+        BytecodeSlotKind, BytecodeSpan, BytecodeTerminator, BytecodeTerminatorKind,
+        BytecodeTraceDescriptor, BytecodeType, BytecodeTypeId, BytecodeTypeKind, BytecodeVariant,
+        BytecodeVariantPayload, derive_trace_metadata,
     };
 
     use super::{
-        AggregatePayload, DeferredOperation, DeferredValue, Engine, Frame, HeapObject,
+        AggregatePayload, DeferredOperation, DeferredValue, DiagnosticConfig, DiagnosticEvent,
+        DiagnosticMemoryAccess, DiagnosticSource, DiagnosticThreadState, Engine, Frame, HeapObject,
         IteratorAdapter, OneShotCompletion, OneShotState, OperationResult, PanicCode,
         PlaceComponent, PlaceFailure, RejectingHost, ResolvedPlacePath, RuntimeCleanup,
         RuntimeDefer, RuntimeFallback, RuntimeHostValueKind, RuntimeJoin, RuntimeLoan,
         RuntimeSelectArm, RuntimeSelectRegion, RuntimeTaskScope, RuntimeType, RuntimeUnwind,
         RuntimeValue, SlotState, TaskCompletion, TaskRecord, TaskStatus, TaskWait, Value,
-        ValueCopyStrategy, VmError, VmHost, VmLimits, VmPanic, VmStackFrame, VmStatistics,
-        VmTestNodeKind, VmTestNodeOutcome, clone_field, clone_index, clone_present,
-        collection_length_fits_int, convert_numeric, integer_bounds, integer_shape,
-        next_unicode_scalar, operand_materialized_slot, operation_access_place, paths_overlap,
-        present, queue_object_equality, queue_payload_equality, runtime_host_kind, set_field,
-        set_index, slice_indices, snapshot_value, take_field, take_index, take_option,
+        ValueCopyStrategy, VmError, VmHost, VmLimits, VmOutcome, VmPanic, VmStackFrame,
+        VmStatistics, VmTestNodeKind, VmTestNodeOutcome, clone_field, clone_index, clone_present,
+        collection_length_fits_int, convert_numeric, execute, execute_with_diagnostics,
+        integer_bounds, integer_shape, next_unicode_scalar, operand_materialized_slot,
+        operation_access_place, paths_overlap, present, queue_object_equality,
+        queue_payload_equality, runtime_host_kind, set_field, set_index, slice_indices,
+        snapshot_value, take_field, take_index, take_option,
     };
 
     fn root_pressure_program() -> BytecodeProgram {
@@ -17197,6 +17592,191 @@ mod tests {
         assert!(matches!(
             engine.iterator_next(0, &state, Some(&borrowed_place), int, span),
             Ok(Ok(Some(super::IteratorStep::Position(0))))
+        ));
+    }
+
+    #[test]
+    fn diagnostic_execution_is_opt_in_and_captures_runtime_boundaries() {
+        let string = BytecodeTypeId::new(0);
+        let function_type = BytecodeTypeId::new(1);
+        let span = BytecodeSpan {
+            file: 7,
+            start: 10,
+            end: 20,
+        };
+        let destination = BytecodePlace {
+            slot: BytecodeSlotId::new(0),
+            ty: string,
+            projections: Vec::new(),
+            source_loan: None,
+        };
+        let program = BytecodeProgram {
+            types: vec![
+                BytecodeType {
+                    name: "String".into(),
+                    kind: BytecodeTypeKind::Scalar(BytecodeScalarType::String),
+                },
+                BytecodeType {
+                    name: "fn main(): String".into(),
+                    kind: BytecodeTypeKind::Function(BytecodeFunctionType {
+                        is_async: false,
+                        is_selectable: false,
+                        is_unsafe: false,
+                        parameters: Vec::new(),
+                        variadic: None,
+                        outcome: string,
+                    }),
+                },
+            ],
+            nominals: Vec::new(),
+            callables: vec![BytecodeCallable {
+                name: "main".into(),
+                generic_arity: 0,
+                parameters: Vec::new(),
+                outcome: string,
+                function_type,
+                implementation: Some(BytecodeFunctionId::new(0)),
+                closure: None,
+            }],
+            constants: Vec::new(),
+            functions: vec![BytecodeFunction {
+                callable: BytecodeCallableId::new(0),
+                source: span,
+                types: vec![string],
+                spans: vec![span],
+                slots: vec![BytecodeSlot {
+                    ty: string,
+                    span: crate::bytecode::BytecodeSpanId::new(0),
+                    kind: BytecodeSlotKind::Return,
+                }],
+                loans: Vec::new(),
+                parameters: Vec::new(),
+                return_slot: BytecodeSlotId::new(0),
+                entry: BytecodeBlockId::new(0),
+                unwind: BytecodeBlockId::new(1),
+                blocks: vec![
+                    BytecodeBlock {
+                        kind: BytecodeBlockKind::Normal,
+                        instructions: vec![BytecodeInstruction {
+                            span: crate::bytecode::BytecodeSpanId::new(0),
+                            kind: BytecodeInstructionKind::Store {
+                                destination,
+                                value: BytecodeRvalue {
+                                    ty: string,
+                                    kind: BytecodeRvalueKind::Use(BytecodeOperand {
+                                        ty: string,
+                                        kind: BytecodeOperandKind::Constant(
+                                            BytecodeConstant::String("\"diagnostic\"".into()),
+                                        ),
+                                    }),
+                                },
+                            },
+                        }],
+                        terminator: BytecodeTerminator {
+                            span: crate::bytecode::BytecodeSpanId::new(0),
+                            kind: BytecodeTerminatorKind::Return,
+                        },
+                    },
+                    BytecodeBlock {
+                        kind: BytecodeBlockKind::Cleanup,
+                        instructions: Vec::new(),
+                        terminator: BytecodeTerminator {
+                            span: crate::bytecode::BytecodeSpanId::new(0),
+                            kind: BytecodeTerminatorKind::ResumePanic,
+                        },
+                    },
+                ],
+            }],
+        };
+
+        let mut normal_host = RejectingHost;
+        let normal = execute(&program, BytecodeFunctionId::new(0), &mut normal_host).unwrap();
+        assert!(normal.diagnostics.is_none());
+
+        let mut diagnostic_host = RejectingHost;
+        let observed = execute_with_diagnostics(
+            &program,
+            BytecodeFunctionId::new(0),
+            &mut diagnostic_host,
+            DiagnosticConfig {
+                max_events: 64,
+                ..DiagnosticConfig::default()
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            observed.outcome,
+            VmOutcome::Returned(RuntimeValue::String(value)) if value == "diagnostic"
+        ));
+        let trace = observed.diagnostics.expect("diagnostics were requested");
+        assert_eq!(trace.format, super::super::diagnostics::DIAGNOSTIC_SCHEMA);
+        assert_eq!(trace.task_ids(), [1]);
+        assert!(trace.events.iter().any(|event| matches!(
+            event,
+            DiagnosticEvent::Memory {
+                access: DiagnosticMemoryAccess::Write,
+                source: DiagnosticSource {
+                    function,
+                    span: observed_span,
+                },
+                ..
+            } if function == "main" && *observed_span == span
+        )));
+        assert!(trace.events.iter().any(|event| matches!(
+            event,
+            DiagnosticEvent::Heap {
+                operation: super::super::diagnostics::DiagnosticHeapOperation::Allocate,
+                ..
+            }
+        )));
+        assert!(trace.events.iter().any(|event| matches!(
+            event,
+            DiagnosticEvent::Thread {
+                state: DiagnosticThreadState::Started,
+                ..
+            }
+        )));
+        assert!(
+            trace
+                .events
+                .iter()
+                .any(|event| matches!(event, DiagnosticEvent::Roots { .. }))
+        );
+        assert!(!trace.is_truncated());
+
+        let mut repeat_host = RejectingHost;
+        let repeat = execute_with_diagnostics(
+            &program,
+            BytecodeFunctionId::new(0),
+            &mut repeat_host,
+            DiagnosticConfig {
+                max_events: 64,
+                ..DiagnosticConfig::default()
+            },
+        )
+        .unwrap()
+        .diagnostics
+        .unwrap();
+        assert_eq!(trace.events, repeat.events);
+        assert_eq!(trace.source_maps, repeat.source_maps);
+
+        let mut limited_host = RejectingHost;
+        let limited = execute_with_diagnostics(
+            &program,
+            BytecodeFunctionId::new(0),
+            &mut limited_host,
+            DiagnosticConfig {
+                max_events: 1,
+                ..DiagnosticConfig::default()
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(
+            limited,
+            VmError::ResourceLimit {
+                resource: "diagnostic events",
+                limit: 1
+            }
         ));
     }
 }

@@ -20,6 +20,7 @@
     "TONDO_TESTING_SPEC.md",
     "TONDO_TOOLCHAIN_SPEC.md",
     "docs/",
+    "docs/contracts/diagnostic-runtime.md",
     "conformance/0.1/cases/documentation/",
     "conformance/0.1/manifest.json",
     "conformance/draft/manifest.json",
@@ -68,10 +69,18 @@
     "crates/tondo-compiler/src/bytecode/",
     "crates/tondo-vm/src/bytecode/",
     "crates/tondo-vm/src/runtime/execute.rs",
+    "crates/tondo-vm/src/runtime/diagnostics.rs",
+    "crates/tondo-vm/src/runtime/heap.rs",
     "scripts/performance-check.sh",
     "scripts/performance-test.sh",
     "scripts/test-gate.sh",
-    "scripts/quality-gate.sh"
+    "scripts/quality-gate.sh",
+    "testing/diagnostic-tooling.json",
+    "testing/diagnostic-runtime.json",
+    "scripts/diagnostic-contract-check.sh",
+    "scripts/diagnostic-contract-test.sh",
+    "scripts/diagnostic-runtime-check.sh",
+    "scripts/diagnostic-runtime-test.sh"
   ],
   "packages": [
     { "prefix": "crates/tondo-cli/", "package": "tondo-cli" },

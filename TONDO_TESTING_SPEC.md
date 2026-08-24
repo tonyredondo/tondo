@@ -2866,6 +2866,14 @@ publica como unsupported y no se convierte en éxito. Estos perfiles son
 instrumentación del runtime/toolchain, no nuevos keywords, hooks públicos ni un
 segundo harness.
 
+La primera capa ejecutable de esa instrumentación está cerrada por
+`DIAG-RUNTIME-001`: la VM hosted produce, de forma opt-in y acotada, la traza
+`tondo-diagnostic-runtime/1` descrita en
+[`docs/contracts/diagnostic-runtime.md`](./docs/contracts/diagnostic-runtime.md).
+La ruta normal devuelve `diagnostics = None` y no genera eventos; superar el
+presupuesto de eventos falla cerrado y cualquier truncación queda marcada para
+los detectores posteriores.
+
 ## 15. Formato machine-readable
 
 ### 15.1 Forma canónica

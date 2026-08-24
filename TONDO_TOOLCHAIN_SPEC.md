@@ -1576,8 +1576,14 @@ no añade keywords ni APIs paralelas a la stdlib. La evaluación de `NATIVE-001`
 incorpora la paridad de esos perfiles, source maps, identidad de
 task/thread, hooks de memoria/GC, unwind y redacción. Un target sin una de esas
 capacidades la declara como `unsupported-diagnostic-profile` y no la omite. El
-contrato D0 está cerrado; la instrumentación runtime y la paridad nativa siguen
+contrato D0 está cerrado y `DIAG-RUNTIME-001` implementa la instrumentación
+acotada de la VM hosted (task/thread, memoria/sync, roots, recursos, source
+maps, scheduler y quiescencia); los detectores y la paridad nativa siguen
 pendientes de sus milestones.
+
+La traza interna y sus límites están fijados en
+[`docs/contracts/diagnostic-runtime.md`](./docs/contracts/diagnostic-runtime.md)
+y se activa solo desde la frontera Rust del runtime, nunca desde código Tondo.
 
 ### 10.2 Doc-tests
 

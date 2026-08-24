@@ -5,8 +5,10 @@
 `std.async.Group`, `std.channel`, `std.sync`, `std.executor`, `std.net` y el
 calendario civil de `std.time` ya están cerrados por
 `STD-ASYNC-GROUP-SPEC-001`, `STD-CONC-001`, `STD-SYNC-001`, `STD-EXEC-001`,
-`STD-NET-001` y `STD-CIVIL-TIME-001`. La implementación runtime queda
-pendiente de las leaves de esos owners y de los bloques `DIAG-*` posteriores.
+`STD-NET-001` y `STD-CIVIL-TIME-001`. La primera implementación runtime de la
+VM hosted está cerrada por `DIAG-RUNTIME-001`; las leaves de detectores,
+runner, dumps y paridad native permanecen pendientes en los bloques `DIAG-*`
+posteriores.
 
 Este documento define la frontera entre el lenguaje, el runtime y las
 herramientas que ayudan a encontrar fallos de concurrencia, retención de
@@ -180,7 +182,7 @@ La ejecución se divide en bloques del tracker:
 | `STD-CONC-001` | Contrato de canales, ownership, backpressure, cierre, selección cancelable, fairness y eventos privados; sin implementación pública | `DIAG-SPEC-001`, `ASYNC-SELECT-VM-CONF-001`, S1A |
 | `STD-SYNC-001` | Contrato de locks, atomics, colecciones compartidas y eventos observables, sin implementación pública | `DIAG-SPEC-001`, foundations STD-0.1A |
 | `STD-EXEC-001` / `STD-NET-001` | Contratos runtime-facing y eventos observables, sin implementación pública | `DIAG-SPEC-001`, foundations STD-0.1A |
-| `DIAG-RUNTIME-001` | Registro de task/thread, eventos de memoria, roots, recursos y source maps en VM | `DIAG-SPEC-001`, contratos runtime-facing B0, VM hosted |
+| `DIAG-RUNTIME-001` | Registro de task/thread, eventos de memoria, roots, recursos, source maps, scheduler y quiescencia en VM hosted | `DIAG-SPEC-001`, contratos runtime-facing B0, VM hosted |
 | `RACE-001` | Detector VM sobre tasks, memoria, unsafe y primitivas internas; corpus positivo/negativo | `DIAG-RUNTIME-001` |
 | `LEAK-001` | Retención GC y recursos hosted con snapshots reproducibles | `DIAG-RUNTIME-001` |
 | `DUMP-001` | Captura `.tdump`, redacción y analizador | `DIAG-SPEC-001`, source maps/unwind VM |
@@ -206,8 +208,9 @@ ledger hosted; `DIAG-NATIVE-001` prueba después ARC/ciclos/FFI nativos.
 `DEC-018` acepta una única superficie de diagnóstico opt-in, mantiene intacto
 `tondo-diagnostics-json/1`, prohíbe keywords y APIs paralelas en `std`, exige
 estado `unsupported-diagnostic-profile` explícito y fija redacción/payloads
-fuera del envelope por defecto. Estas son decisiones de diseño, no una
-afirmación de que el runtime ya instrumenta la VM.
+fuera del envelope por defecto. La instrumentación VM hosted ejecutable está
+documentada por [`diagnostic-runtime.md`](diagnostic-runtime.md), mientras que
+los detectores consumidores aún no están implementados.
 
 ## 9. No objetivos de esta revisión
 
@@ -215,5 +218,5 @@ afirmación de que el runtime ya instrumenta la VM.
 - No se añade un profiler general, un heap snapshot público ni un uploader.
 - No se trata un reporte limpio como prueba estática de ausencia de races o
   fugas.
-- No se marca ningún bloque `DIAG-RUNTIME-*`, `NATIVE-*` o S1A como
+- No se marca ningún bloque `RACE-*`, `LEAK-*`, `DUMP-*`, `NATIVE-*` o S1A como
   implementado por la mera existencia de este contrato.

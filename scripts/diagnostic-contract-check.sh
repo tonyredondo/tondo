@@ -25,7 +25,8 @@ jq -e '
   and .rfc == "docs/rfc/019-diagnostic-tooling.md"
   and .compilation_diagnostics_contract == "docs/contracts/diagnostics-json.md"
   and .public_stdlib_api == false
-  and .runtime_implementation == "pending-diagnostic-runtime"
+  and .runtime_implementation == "implemented-vm-hosted"
+  and .runtime_contract == "docs/contracts/diagnostic-runtime.md"
   and ([.profiles[].id] == ["race", "leaks", "crash"])
   and all(.profiles[]; (.finding_kind | type == "string" and length > 0)
       and (.event_sources | type == "array" and length > 0 and (unique | length == length))
@@ -118,11 +119,12 @@ jq -e '
   }
   and ((.negative_cases | unique | length) == (.negative_cases | length))
   and (.negative_cases | length) == 18
-  and .next_blocks == ["DIAG-RUNTIME-001"]
+  and .next_blocks == ["RACE-001", "LEAK-001", "DUMP-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable contract"
 
 for path in \
     docs/contracts/diagnostic-tooling.md \
+    docs/contracts/diagnostic-runtime.md \
     docs/rfc/019-diagnostic-tooling.md \
     docs/contracts/diagnostics-json.md; do
     [[ -f "$root/$path" ]] || die "missing linked contract: $path"

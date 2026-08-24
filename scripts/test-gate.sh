@@ -75,6 +75,10 @@ run_step diagnostic-contract \
     scripts/diagnostic-contract-check.sh
 run_step diagnostic-contract-tests \
     scripts/diagnostic-contract-test.sh
+run_step diagnostic-runtime-contract \
+    scripts/diagnostic-runtime-check.sh
+run_step diagnostic-runtime-contract-tests \
+    scripts/diagnostic-runtime-test.sh
 run_step stdlib-async-group-contract \
     scripts/stdlib-async-group-check.sh
 run_step stdlib-async-group-contract-tests \

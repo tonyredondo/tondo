@@ -8,7 +8,8 @@
   "rfc": "docs/rfc/019-diagnostic-tooling.md",
   "compilation_diagnostics_contract": "docs/contracts/diagnostics-json.md",
   "public_stdlib_api": false,
-  "runtime_implementation": "pending-diagnostic-runtime",
+  "runtime_implementation": "implemented-vm-hosted",
+  "runtime_contract": "docs/contracts/diagnostic-runtime.md",
   "profiles": [
     {
       "id": "race",
@@ -216,5 +217,5 @@
     "stdlib-parallel-api",
     "keyword-addition"
   ],
-  "next_blocks": ["DIAG-RUNTIME-001"]
+  "next_blocks": ["RACE-001", "LEAK-001", "DUMP-001"]
 }

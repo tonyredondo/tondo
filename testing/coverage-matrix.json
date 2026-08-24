@@ -8,14 +8,14 @@
     },
     {
       "path": "TONDO_TESTING_SPEC.md",
-      "sha256": "6ec8f12894eedf5d882bfcddf293bf137256e1f7070f00c08a422fec79f1cc85"
+      "sha256": "fb5128f4af8585d854ce843e388cc100b71bd5c19d44a48f95093e7a8910bc40"
     },
     {
       "path": "TONDO_TOOLCHAIN_SPEC.md",
-      "sha256": "e704a2aebc315331a8ea5de79bd3483c18dce42ce7411bab8e0d17bd78c68f10"
+      "sha256": "a277cfe3165f8c13ec9fd74ea1d5488fbc7764c45732bad0919067ba977692fa"
     }
   ],
-  "inventory_sha256": "281a4b2088e41939b6ba81af3061e5335b0289fb343d1228b84d5bbc472e5809",
+  "inventory_sha256": "4b296b878456d54614af91fdfc834163c26cfe745a626af913c80b016ad168c4",
   "target": "tondo-vm-hosted",
   "summary": {
     "total": 436,
@@ -42,7 +42,7 @@
     {
       "id": "TC01-10-1-2-R001",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@e704a2aebc315331",
+      "revision": "0.1@a277cfe3165f8c13",
       "heading": "10.1.2 Clausura de artefactos nativos",
       "heading_anchor": "10-1-2-clausura-de-artefactos-nativos",
       "line_start": 1392,
@@ -86,7 +86,7 @@
     {
       "id": "TC01-10-1-3-R001",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@e704a2aebc315331",
+      "revision": "0.1@a277cfe3165f8c13",
       "heading": "10.1.3 Plan de enlace nativo",
       "heading_anchor": "10-1-3-plan-de-enlace-nativo",
       "line_start": 1465,
@@ -130,7 +130,7 @@
     {
       "id": "TC01-10-1-4-R001",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@e704a2aebc315331",
+      "revision": "0.1@a277cfe3165f8c13",
       "heading": "10.1.4 Publicación y consumo nativos",
       "heading_anchor": "10-1-4-publicación-y-consumo-nativos",
       "line_start": 1517,
@@ -174,7 +174,7 @@
     {
       "id": "TC01-10-1-5-R001",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@e704a2aebc315331",
+      "revision": "0.1@a277cfe3165f8c13",
       "heading": "10.1.5 Baseline de rendimiento antes del backend",
       "heading_anchor": "10-1-5-baseline-de-rendimiento-antes-del-backend",
       "line_start": 1564,
@@ -218,11 +218,11 @@
     {
       "id": "TC01-10-2-R001",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@e704a2aebc315331",
+      "revision": "0.1@a277cfe3165f8c13",
       "heading": "10.2 Doc-tests",
       "heading_anchor": "10-2-doc-tests",
-      "line_start": 1597,
-      "line_end": 1599,
+      "line_start": 1603,
+      "line_end": 1605,
       "text": "La forma, opciones, selección, ejecución y reportes de `tondo test` se rigen por `TONDO_TESTING_SPEC.md`; antes de invocar al compilador debe materializar el plan cerrado descrito arriba.",
       "text_sha256": "7e440ad7e1ad2e8f5b2e44b7f748ac6d675960b458fffb8217933c6c1493c4bb",
       "phase": "cli",
@@ -279,11 +279,11 @@
     {
       "id": "TC01-10-3-R001",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@e704a2aebc315331",
+      "revision": "0.1@a277cfe3165f8c13",
       "heading": "10.3 Referencia informativa a TLF",
       "heading_anchor": "10-3-referencia-informativa-a-tlf",
-      "line_start": 1620,
-      "line_end": 1622,
+      "line_start": 1626,
+      "line_end": 1628,
       "text": "Un producto no puede declarar el mismo path que una fuente suelta, archivo de configuración del proyecto, source activo o generado, interfaz de dependencia, unidad privilegiada u otro producto de esa invocación.",
       "text_sha256": "f135c41d1b95cfd5fd0689fc3ec073fe5846e2807ed6e968bf5de448f785d320",
       "phase": "cli",
@@ -339,11 +339,11 @@
     {
       "id": "TC01-13-R001",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@e704a2aebc315331",
+      "revision": "0.1@a277cfe3165f8c13",
       "heading": "13. Límites deliberados de 0.1",
       "heading_anchor": "13-límites-deliberados-de-0-1",
-      "line_start": 1684,
-      "line_end": 1685,
+      "line_start": 1690,
+      "line_end": 1691,
       "text": "Añadir cualquiera de esas piezas no puede relajar la entrada cerrada del compilador ni convertir estado ambiental no declarado en semántica fuente.",
       "text_sha256": "bd29d8de2cc236e879d63ac8b53c01aee6b9098de774c8aad8428f60ddc4ec7d",
       "phase": "toolchain-contract",
@@ -400,7 +400,7 @@
     {
       "id": "TC01-2-2-R001",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@e704a2aebc315331",
+      "revision": "0.1@a277cfe3165f8c13",
       "heading": "2.2 Paths",
       "heading_anchor": "2-2-paths",
       "line_start": 102,
@@ -463,7 +463,7 @@
     {
       "id": "TC01-2-3-R001",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@e704a2aebc315331",
+      "revision": "0.1@a277cfe3165f8c13",
       "heading": "2.3 PackageId y aliases",
       "heading_anchor": "2-3-packageid-y-aliases",
       "line_start": 120,
@@ -526,7 +526,7 @@
     {
       "id": "TC01-2-3-R002",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@e704a2aebc315331",
+      "revision": "0.1@a277cfe3165f8c13",
       "heading": "2.3 PackageId y aliases",
       "heading_anchor": "2-3-packageid-y-aliases",
       "line_start": 125,
@@ -589,7 +589,7 @@
     {
       "id": "TC01-3-1-R001",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@e704a2aebc315331",
+      "revision": "0.1@a277cfe3165f8c13",
       "heading": "3.1 Manifiesto interno: forma completa",
       "heading_anchor": "3-1-manifiesto-interno-forma-completa",
       "line_start": 298,
@@ -649,7 +649,7 @@
     {
       "id": "TC01-3-1-R002",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@e704a2aebc315331",
+      "revision": "0.1@a277cfe3165f8c13",
       "heading": "3.1 Manifiesto interno: forma completa",
       "heading_anchor": "3-1-manifiesto-interno-forma-completa",
       "line_start": 302,
@@ -709,7 +709,7 @@
     {
       "id": "TC01-3-1-R003",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@e704a2aebc315331",
+      "revision": "0.1@a277cfe3165f8c13",
       "heading": "3.1 Manifiesto interno: forma completa",
       "heading_anchor": "3-1-manifiesto-interno-forma-completa",
       "line_start": 308,
@@ -769,7 +769,7 @@
     {
       "id": "TC01-3-1-R004",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@e704a2aebc315331",
+      "revision": "0.1@a277cfe3165f8c13",
       "heading": "3.1 Manifiesto interno: forma completa",
       "heading_anchor": "3-1-manifiesto-interno-forma-completa",
       "line_start": 345,
@@ -829,7 +829,7 @@
     {
       "id": "TC01-3-3-R001",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@e704a2aebc315331",
+      "revision": "0.1@a277cfe3165f8c13",
       "heading": "3.3 Raíz",
       "heading_anchor": "3-3-raíz",
       "line_start": 391,
@@ -890,7 +890,7 @@
     {
       "id": "TC01-3-3-R002",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@e704a2aebc315331",
+      "revision": "0.1@a277cfe3165f8c13",
       "heading": "3.3 Raíz",
       "heading_anchor": "3-3-raíz",
       "line_start": 401,
@@ -951,7 +951,7 @@
     {
       "id": "TC01-3-4-R001",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@e704a2aebc315331",
+      "revision": "0.1@a277cfe3165f8c13",
       "heading": "3.4 Paquetes",
       "heading_anchor": "3-4-paquetes",
       "line_start": 425,
@@ -1012,7 +1012,7 @@
     {
       "id": "TC01-3-5-R001",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@e704a2aebc315331",
+      "revision": "0.1@a277cfe3165f8c13",
       "heading": "3.5 Grafo meta",
       "heading_anchor": "3-5-grafo-meta",
       "line_start": 481,
@@ -1072,7 +1072,7 @@
     {
       "id": "TC01-3-R001",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@e704a2aebc315331",
+      "revision": "0.1@a277cfe3165f8c13",
       "heading": "3. Proyectos convencionales y configuración humana",
       "heading_anchor": "3-proyectos-convencionales-y-configuración-humana",
       "line_start": 152,
@@ -1133,7 +1133,7 @@
     {
       "id": "TC01-3-R002",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@e704a2aebc315331",
+      "revision": "0.1@a277cfe3165f8c13",
       "heading": "3. Proyectos convencionales y configuración humana",
       "heading_anchor": "3-proyectos-convencionales-y-configuración-humana",
       "line_start": 159,
@@ -1194,7 +1194,7 @@
     {
       "id": "TC01-3-R003",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@e704a2aebc315331",
+      "revision": "0.1@a277cfe3165f8c13",
       "heading": "3. Proyectos convencionales y configuración humana",
       "heading_anchor": "3-proyectos-convencionales-y-configuración-humana",
       "line_start": 198,
@@ -1255,7 +1255,7 @@
     {
       "id": "TC01-4-1-R001",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@e704a2aebc315331",
+      "revision": "0.1@a277cfe3165f8c13",
       "heading": "4.1 Condición",
       "heading_anchor": "4-1-condición",
       "line_start": 511,
@@ -1316,7 +1316,7 @@
     {
       "id": "TC01-4-2-R001",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@e704a2aebc315331",
+      "revision": "0.1@a277cfe3165f8c13",
       "heading": "4.2 Selección preléxica",
       "heading_anchor": "4-2-selección-preléxica",
       "line_start": 535,
@@ -1377,7 +1377,7 @@
     {
       "id": "TC01-4-3-R001",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@e704a2aebc315331",
+      "revision": "0.1@a277cfe3165f8c13",
       "heading": "4.3 Plan cerrado de testing",
       "heading_anchor": "4-3-plan-cerrado-de-testing",
       "line_start": 607,
@@ -1442,7 +1442,7 @@
     {
       "id": "TC01-4-3-R002",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@e704a2aebc315331",
+      "revision": "0.1@a277cfe3165f8c13",
       "heading": "4.3 Plan cerrado de testing",
       "heading_anchor": "4-3-plan-cerrado-de-testing",
       "line_start": 619,
@@ -1507,7 +1507,7 @@
     {
       "id": "TC01-4-3-R003",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@e704a2aebc315331",
+      "revision": "0.1@a277cfe3165f8c13",
       "heading": "4.3 Plan cerrado de testing",
       "heading_anchor": "4-3-plan-cerrado-de-testing",
       "line_start": 633,
@@ -1572,7 +1572,7 @@
     {
       "id": "TC01-4-4-R001",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@e704a2aebc315331",
+      "revision": "0.1@a277cfe3165f8c13",
       "heading": "4.4 Plan de inputs sin materialización",
       "heading_anchor": "4-4-plan-de-inputs-sin-materialización",
       "line_start": 696,
@@ -1633,7 +1633,7 @@
     {
       "id": "TC01-4-4-R002",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@e704a2aebc315331",
+      "revision": "0.1@a277cfe3165f8c13",
       "heading": "4.4 Plan de inputs sin materialización",
       "heading_anchor": "4-4-plan-de-inputs-sin-materialización",
       "line_start": 702,
@@ -1694,7 +1694,7 @@
     {
       "id": "TC01-4-4-R003",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@e704a2aebc315331",
+      "revision": "0.1@a277cfe3165f8c13",
       "heading": "4.4 Plan de inputs sin materialización",
       "heading_anchor": "4-4-plan-de-inputs-sin-materialización",
       "line_start": 714,
@@ -1755,7 +1755,7 @@
     {
       "id": "TC01-4-4-R004",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@e704a2aebc315331",
+      "revision": "0.1@a277cfe3165f8c13",
       "heading": "4.4 Plan de inputs sin materialización",
       "heading_anchor": "4-4-plan-de-inputs-sin-materialización",
       "line_start": 721,
@@ -1816,7 +1816,7 @@
     {
       "id": "TC01-5-2-R001",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@e704a2aebc315331",
+      "revision": "0.1@a277cfe3165f8c13",
       "heading": "5.2 Correspondencia exacta",
       "heading_anchor": "5-2-correspondencia-exacta",
       "line_start": 841,
@@ -1879,7 +1879,7 @@
     {
       "id": "TC01-5-2-R002",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@e704a2aebc315331",
+      "revision": "0.1@a277cfe3165f8c13",
       "heading": "5.2 Correspondencia exacta",
       "heading_anchor": "5-2-correspondencia-exacta",
       "line_start": 854,
@@ -1942,7 +1942,7 @@
     {
       "id": "TC01-5-2-R003",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@e704a2aebc315331",
+      "revision": "0.1@a277cfe3165f8c13",
       "heading": "5.2 Correspondencia exacta",
       "heading_anchor": "5-2-correspondencia-exacta",
       "line_start": 860,
@@ -2005,7 +2005,7 @@
     {
       "id": "TC01-6-3-R001",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@e704a2aebc315331",
+      "revision": "0.1@a277cfe3165f8c13",
       "heading": "6.3 Target `tondo-meta`",
       "heading_anchor": "6-3-target-tondo-meta",
       "line_start": 957,
@@ -2066,7 +2066,7 @@
     {
       "id": "TC01-6-5-R001",
       "document": "TONDO_TOOLCHAIN_SPEC.md",
-      "revision": "0.1@e704a2aebc315331",
+      "revision": "0.1@a277cfe3165f8c13",
       "heading": "6.5 Una sola ronda",
       "heading_anchor": "6-5-una-sola-ronda",
       "line_start": 1012,
@@ -23837,7 +23837,7 @@
     {
       "id": "TT01-1-R001",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "1. Propósito y principios",
       "heading_anchor": "1-propósito-y-principios",
       "line_start": 118,
@@ -23897,7 +23897,7 @@
     {
       "id": "TT01-10-1-R001",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "10.1 Defaults, sidecar opcional y aislamiento de hojas",
       "heading_anchor": "10-1-defaults-sidecar-opcional-y-aislamiento-de-hojas",
       "line_start": 2139,
@@ -23957,7 +23957,7 @@
     {
       "id": "TT01-10-1-R002",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "10.1 Defaults, sidecar opcional y aislamiento de hojas",
       "heading_anchor": "10-1-defaults-sidecar-opcional-y-aislamiento-de-hojas",
       "line_start": 2232,
@@ -24017,7 +24017,7 @@
     {
       "id": "TT01-10-1-R003",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "10.1 Defaults, sidecar opcional y aislamiento de hojas",
       "heading_anchor": "10-1-defaults-sidecar-opcional-y-aislamiento-de-hojas",
       "line_start": 2253,
@@ -24077,7 +24077,7 @@
     {
       "id": "TT01-10-1-R004",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "10.1 Defaults, sidecar opcional y aislamiento de hojas",
       "heading_anchor": "10-1-defaults-sidecar-opcional-y-aislamiento-de-hojas",
       "line_start": 2260,
@@ -24137,7 +24137,7 @@
     {
       "id": "TT01-10-1-R005",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "10.1 Defaults, sidecar opcional y aislamiento de hojas",
       "heading_anchor": "10-1-defaults-sidecar-opcional-y-aislamiento-de-hojas",
       "line_start": 2265,
@@ -24197,7 +24197,7 @@
     {
       "id": "TT01-11-2-R001",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "11.2 Núcleo sellado y responsabilidad de `std.testing`",
       "heading_anchor": "11-2-núcleo-sellado-y-responsabilidad-de-std-testing",
       "line_start": 2380,
@@ -24257,7 +24257,7 @@
     {
       "id": "TT01-11-2-R002",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "11.2 Núcleo sellado y responsabilidad de `std.testing`",
       "heading_anchor": "11-2-núcleo-sellado-y-responsabilidad-de-std-testing",
       "line_start": 2393,
@@ -24317,7 +24317,7 @@
     {
       "id": "TT01-11-3-R001",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "11.3 Setup y teardown",
       "heading_anchor": "11-3-setup-y-teardown",
       "line_start": 2429,
@@ -24377,7 +24377,7 @@
     {
       "id": "TT01-11-4-R001",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "11.4 Tests parametrizados",
       "heading_anchor": "11-4-tests-parametrizados",
       "line_start": 2479,
@@ -24437,7 +24437,7 @@
     {
       "id": "TT01-12-7-R001",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "12.7 Metadata operacional",
       "heading_anchor": "12-7-metadata-operacional",
       "line_start": 2643,
@@ -24497,7 +24497,7 @@
     {
       "id": "TT01-13-1-R001",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "13.1 Identidad de quality evidence",
       "heading_anchor": "13-1-identidad-de-quality-evidence",
       "line_start": 2779,
@@ -24557,7 +24557,7 @@
     {
       "id": "TT01-13-1-R002",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "13.1 Identidad de quality evidence",
       "heading_anchor": "13-1-identidad-de-quality-evidence",
       "line_start": 2801,
@@ -24617,7 +24617,7 @@
     {
       "id": "TT01-13-R001",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "13. Características deliberadamente ausentes",
       "heading_anchor": "13-características-deliberadamente-ausentes",
       "line_start": 2767,
@@ -24661,11 +24661,11 @@
     {
       "id": "TT01-15-1-R001",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "15.1 Forma canónica",
       "heading_anchor": "15-1-forma-canónica",
-      "line_start": 3141,
-      "line_end": 3145,
+      "line_start": 3149,
+      "line_end": 3153,
       "text": "`repeat.count` contiene el valor efectivo de `--repeat`, incluido el default `1`; `isolation` es siempre `fresh-worker-per-iteration-v1`. Count `1` no activa la policy de campaña. Retry y repeat no pueden estar activos simultáneamente: `repeat.count > 1` implica `retry.max_additional_rounds == 0` y `retry.rounds == []`.",
       "text_sha256": "dc3200048ae486e0bce3234deba3d9fb98a3af747b008c090ca6976f4df66c86",
       "phase": "testing",
@@ -24721,11 +24721,11 @@
     {
       "id": "TT01-15-1-R002",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "15.1 Forma canónica",
       "heading_anchor": "15-1-forma-canónica",
-      "line_start": 3147,
-      "line_end": 3155,
+      "line_start": 3155,
+      "line_end": 3163,
       "text": "`artifact_store` identifica el store aunque ningún intento adjunte bytes; no contiene el path físico seleccionado. `snapshot_policy.mode` es `check` o `update`. `before_sha256` identifica los stores canónicos materializados antes de ejecutar; `after_sha256` coincide en check mode y contiene el árbol publicado en update mode. `published` es `null` en check mode; en update mode es `true` cuando todos los stores se publicaron y `false` cuando otros resultados impidieron aplicar los cambios, en cuyo caso `after_sha256 == before_sha256`. Si una publicación iniciada no puede terminar de forma fiable, no existe reporte `/7` válido que afirme un `after_sha256` completo.",
       "text_sha256": "c5d1e9b8a78d57cc7475bfa5cfb1b73b6e5d25f4f4563562845fec1d2fd1b658",
       "phase": "testing",
@@ -24781,11 +24781,11 @@
     {
       "id": "TT01-15-5-R001",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "15.5 Perfil JUnit XML",
       "heading_anchor": "15-5-perfil-junit-xml",
-      "line_start": 3522,
-      "line_end": 3529,
+      "line_start": 3530,
+      "line_end": 3537,
       "text": "Bajo repeat con count mayor que uno, una hoja que tuvo cualquier intento distinto de `passed` debe mantener JUnit rojo. Si su agregado ya proyecta `failure` o `error`, conserva esa proyección. Si acabaría sin outcome rojo —por ejemplo `skipped`, `blocked-skip` o una combinación que termina en pass— usa un hijo `failure` de type `tondo.repeat-instability`, mensaje `repeat observed a non-passing attempt` y body con `tondo.attempts`. No existe policy que lo suprima.",
       "text_sha256": "a2b9cb18db82f83afcaf9ed4cc54ce45bd735303e846487b9ef64583d3466f61",
       "phase": "testing",
@@ -24841,11 +24841,11 @@
     {
       "id": "TT01-15-5-R002",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "15.5 Perfil JUnit XML",
       "heading_anchor": "15-5-perfil-junit-xml",
-      "line_start": 3636,
-      "line_end": 3638,
+      "line_start": 3644,
+      "line_end": 3646,
       "text": "El perfil no promete que cada consumidor muestre properties o jerarquía de la misma forma. Para preservar todos los campos y bytes, una invocación CI debe solicitar ambos formatos en la misma ejecución:",
       "text_sha256": "b549befbb81745a96d441daff089ea46e40cfc6dd904b8ed46c6fd90bbb7f20b",
       "phase": "testing",
@@ -24901,11 +24901,11 @@
     {
       "id": "TT01-15-6-R001",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "15.6 Fallo de compilación o materialización de inputs",
       "heading_anchor": "15-6-fallo-de-compilación-o-materialización-de-inputs",
-      "line_start": 3663,
-      "line_end": 3669,
+      "line_start": 3671,
+      "line_end": 3677,
       "text": "Si el plan no puede cerrar un input público o un worker no puede materializar un secreto, el toolchain emite un diagnóstico de input y exit `1`, pero no un reporte de test: no existe una clasificación íntegra de todas las hojas. No produce JUnit ni manifest, no publica snapshot updates y conserva los outputs finales anteriores. Intentos u objects content-addressed ya observados son información parcial no referenciada, igual que tras una interrupción. `--list` no materializa valores secretos y por ello no activa este caso.",
       "text_sha256": "c9a651248ffe53ef06880718bba0ffff8f4ee6f91aebeaf8c99e564a1178d11d",
       "phase": "testing",
@@ -24961,11 +24961,11 @@
     {
       "id": "TT01-15-7-R001",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "15.7 Snapshot store canónico",
       "heading_anchor": "15-7-snapshot-store-canónico",
-      "line_start": 3720,
-      "line_end": 3724,
+      "line_start": 3728,
+      "line_end": 3732,
       "text": "El store es input/output test-only: entra en el plan y reportes de test, nunca en la interfaz o artefacto de producción. Un merge conflict es texto JSON ordinario y debe resolverse antes de que el parser canónico acepte el archivo. El path se resuelve bajo la raíz lógica del paquete; el runner rechaza el store o cualquier parent que sea symlink o escape esa raíz.",
       "text_sha256": "88aa7ca5a3eea28637d1f45c8bd2eaaee64da878db2f2b0bcd297deef3a5653e",
       "phase": "testing",
@@ -25021,11 +25021,11 @@
     {
       "id": "TT01-16-R001",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "16. Conformidad",
       "heading_anchor": "16-conformidad",
-      "line_start": 3898,
-      "line_end": 3900,
+      "line_start": 3906,
+      "line_end": 3908,
       "text": "La VM de referencia y cada backend nativo deben ejecutar las mismas fuentes y producir el mismo estado, código de pánico, output y reporte canónico. Duración no participa en la comparación.",
       "text_sha256": "ae86ab09fd7e81e358f69cd699bdb86d198177a7ddf6041bdbf9ed7ba2dba61a",
       "phase": "testing",
@@ -25081,7 +25081,7 @@
     {
       "id": "TT01-2-2-R001",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "2.2 `test` y `suite` son keywords en Tondo 0.1",
       "heading_anchor": "2-2-test-y-suite-son-keywords-en-tondo-0-1",
       "line_start": 151,
@@ -25141,7 +25141,7 @@
     {
       "id": "TT01-2-4-R001",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "2.4 Dependencia del contrato temporal de producción",
       "heading_anchor": "2-4-dependencia-del-contrato-temporal-de-producción",
       "line_start": 209,
@@ -25201,7 +25201,7 @@
     {
       "id": "TT01-2-5-R001",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "2.5 Dependencia de cleanup suspendible general",
       "heading_anchor": "2-5-dependencia-de-cleanup-suspendible-general",
       "line_start": 232,
@@ -25261,7 +25261,7 @@
     {
       "id": "TT01-2-5-R002",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "2.5 Dependencia de cleanup suspendible general",
       "heading_anchor": "2-5-dependencia-de-cleanup-suspendible-general",
       "line_start": 247,
@@ -25321,7 +25321,7 @@
     {
       "id": "TT01-2-5-R003",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "2.5 Dependencia de cleanup suspendible general",
       "heading_anchor": "2-5-dependencia-de-cleanup-suspendible-general",
       "line_start": 257,
@@ -25381,7 +25381,7 @@
     {
       "id": "TT01-2-5-R004",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "2.5 Dependencia de cleanup suspendible general",
       "heading_anchor": "2-5-dependencia-de-cleanup-suspendible-general",
       "line_start": 273,
@@ -25441,7 +25441,7 @@
     {
       "id": "TT01-3-2-R001",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "3.2 Árbol estático",
       "heading_anchor": "3-2-árbol-estático",
       "line_start": 342,
@@ -25501,7 +25501,7 @@
     {
       "id": "TT01-3-3-R001",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "3.3 Nombre e identidad",
       "heading_anchor": "3-3-nombre-e-identidad",
       "line_start": 359,
@@ -25561,7 +25561,7 @@
     {
       "id": "TT01-3-3-R002",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "3.3 Nombre e identidad",
       "heading_anchor": "3-3-nombre-e-identidad",
       "line_start": 387,
@@ -25621,7 +25621,7 @@
     {
       "id": "TT01-3-3-R003",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "3.3 Nombre e identidad",
       "heading_anchor": "3-3-nombre-e-identidad",
       "line_start": 407,
@@ -25681,7 +25681,7 @@
     {
       "id": "TT01-4-1-R001",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "4.1 Entradas ocultas",
       "heading_anchor": "4-1-entradas-ocultas",
       "line_start": 445,
@@ -25741,7 +25741,7 @@
     {
       "id": "TT01-4-1-R002",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "4.1 Entradas ocultas",
       "heading_anchor": "4-1-entradas-ocultas",
       "line_start": 456,
@@ -25801,7 +25801,7 @@
     {
       "id": "TT01-4-1-R003",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "4.1 Entradas ocultas",
       "heading_anchor": "4-1-entradas-ocultas",
       "line_start": 463,
@@ -25861,7 +25861,7 @@
     {
       "id": "TT01-4-1-R004",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "4.1 Entradas ocultas",
       "heading_anchor": "4-1-entradas-ocultas",
       "line_start": 470,
@@ -25921,7 +25921,7 @@
     {
       "id": "TT01-4-3-R001",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "4.3 Ownership, préstamos y `defer`",
       "heading_anchor": "4-3-ownership-préstamos-y-defer",
       "line_start": 522,
@@ -25981,7 +25981,7 @@
     {
       "id": "TT01-4-3-R002",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "4.3 Ownership, préstamos y `defer`",
       "heading_anchor": "4-3-ownership-préstamos-y-defer",
       "line_start": 552,
@@ -26041,7 +26041,7 @@
     {
       "id": "TT01-5-2-R001",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "5.2 Descubrimiento convencional de `tondo test`",
       "heading_anchor": "5-2-descubrimiento-convencional-de-tondo-test",
       "line_start": 686,
@@ -26101,7 +26101,7 @@
     {
       "id": "TT01-5-4-R001",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "5.4 Integration test roots",
       "heading_anchor": "5-4-integration-test-roots",
       "line_start": 753,
@@ -26161,7 +26161,7 @@
     {
       "id": "TT01-5-5-R001",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "5.5 Dev-dependencies y generación",
       "heading_anchor": "5-5-dev-dependencies-y-generación",
       "line_start": 776,
@@ -26221,7 +26221,7 @@
     {
       "id": "TT01-5-7-R001",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "5.7 Ownership mediante CODEOWNERS",
       "heading_anchor": "5-7-ownership-mediante-codeowners",
       "line_start": 805,
@@ -26281,7 +26281,7 @@
     {
       "id": "TT01-5-7-R002",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "5.7 Ownership mediante CODEOWNERS",
       "heading_anchor": "5-7-ownership-mediante-codeowners",
       "line_start": 814,
@@ -26341,7 +26341,7 @@
     {
       "id": "TT01-6-1-R001",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "6.1 Compilación completa antes de ejecutar",
       "heading_anchor": "6-1-compilación-completa-antes-de-ejecutar",
       "line_start": 872,
@@ -26401,7 +26401,7 @@
     {
       "id": "TT01-6-3-R001",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "6.3 Relación con `main`",
       "heading_anchor": "6-3-relación-con-main",
       "line_start": 918,
@@ -26461,7 +26461,7 @@
     {
       "id": "TT01-7-1-R001",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "7.1 Árbol de ejecución y aislamiento",
       "heading_anchor": "7-1-árbol-de-ejecución-y-aislamiento",
       "line_start": 954,
@@ -26521,7 +26521,7 @@
     {
       "id": "TT01-7-10-R001",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "7.10 Interrupción externa de la invocación",
       "heading_anchor": "7-10-interrupción-externa-de-la-invocación",
       "line_start": 1392,
@@ -26581,7 +26581,7 @@
     {
       "id": "TT01-7-10-R002",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "7.10 Interrupción externa de la invocación",
       "heading_anchor": "7-10-interrupción-externa-de-la-invocación",
       "line_start": 1406,
@@ -26641,7 +26641,7 @@
     {
       "id": "TT01-7-2-R001",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "7.2 Contexto estructurado del runner",
       "heading_anchor": "7-2-contexto-estructurado-del-runner",
       "line_start": 984,
@@ -26701,7 +26701,7 @@
     {
       "id": "TT01-7-2-R002",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "7.2 Contexto estructurado del runner",
       "heading_anchor": "7-2-contexto-estructurado-del-runner",
       "line_start": 994,
@@ -26761,7 +26761,7 @@
     {
       "id": "TT01-7-3-R001",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "7.3 Lifecycle de suite",
       "heading_anchor": "7-3-lifecycle-de-suite",
       "line_start": 1044,
@@ -26821,7 +26821,7 @@
     {
       "id": "TT01-7-4-R001",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "7.4 Inicio y terminación de entradas",
       "heading_anchor": "7-4-inicio-y-terminación-de-entradas",
       "line_start": 1125,
@@ -26881,7 +26881,7 @@
     {
       "id": "TT01-7-5-R001",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "7.5 Pánico y continuidad",
       "heading_anchor": "7-5-pánico-y-continuidad",
       "line_start": 1140,
@@ -26941,7 +26941,7 @@
     {
       "id": "TT01-7-7-R001",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "7.7 Inputs de host",
       "heading_anchor": "7-7-inputs-de-host",
       "line_start": 1188,
@@ -27001,7 +27001,7 @@
     {
       "id": "TT01-7-7-R002",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "7.7 Inputs de host",
       "heading_anchor": "7-7-inputs-de-host",
       "line_start": 1192,
@@ -27061,7 +27061,7 @@
     {
       "id": "TT01-7-7-R003",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "7.7 Inputs de host",
       "heading_anchor": "7-7-inputs-de-host",
       "line_start": 1200,
@@ -27121,7 +27121,7 @@
     {
       "id": "TT01-7-7-R004",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "7.7 Inputs de host",
       "heading_anchor": "7-7-inputs-de-host",
       "line_start": 1212,
@@ -27181,7 +27181,7 @@
     {
       "id": "TT01-7-8-R001",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "7.8 Límites y timeouts",
       "heading_anchor": "7-8-límites-y-timeouts",
       "line_start": 1221,
@@ -27241,7 +27241,7 @@
     {
       "id": "TT01-7-8-R002",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "7.8 Límites y timeouts",
       "heading_anchor": "7-8-límites-y-timeouts",
       "line_start": 1240,
@@ -27301,7 +27301,7 @@
     {
       "id": "TT01-7-8-R003",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "7.8 Límites y timeouts",
       "heading_anchor": "7-8-límites-y-timeouts",
       "line_start": 1254,
@@ -27361,7 +27361,7 @@
     {
       "id": "TT01-7-9-R001",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "7.9 Dominio de tiempo virtual determinista",
       "heading_anchor": "7-9-dominio-de-tiempo-virtual-determinista",
       "line_start": 1292,
@@ -27421,7 +27421,7 @@
     {
       "id": "TT01-7-9-R002",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "7.9 Dominio de tiempo virtual determinista",
       "heading_anchor": "7-9-dominio-de-tiempo-virtual-determinista",
       "line_start": 1308,
@@ -27481,7 +27481,7 @@
     {
       "id": "TT01-7-9-R003",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "7.9 Dominio de tiempo virtual determinista",
       "heading_anchor": "7-9-dominio-de-tiempo-virtual-determinista",
       "line_start": 1319,
@@ -27541,7 +27541,7 @@
     {
       "id": "TT01-7-9-R004",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "7.9 Dominio de tiempo virtual determinista",
       "heading_anchor": "7-9-dominio-de-tiempo-virtual-determinista",
       "line_start": 1374,
@@ -27601,7 +27601,7 @@
     {
       "id": "TT01-8-2-R001",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "8.2 Selección",
       "heading_anchor": "8-2-selección",
       "line_start": 1451,
@@ -27661,7 +27661,7 @@
     {
       "id": "TT01-8-2-R002",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "8.2 Selección",
       "heading_anchor": "8-2-selección",
       "line_start": 1477,
@@ -27721,7 +27721,7 @@
     {
       "id": "TT01-8-4-R001",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "8.4 Orden de ejecución y randomización reproducible",
       "heading_anchor": "8-4-orden-de-ejecución-y-randomización-reproducible",
       "line_start": 1531,
@@ -27781,7 +27781,7 @@
     {
       "id": "TT01-8-6-R001",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "8.6 Sin dependencias entre tests",
       "heading_anchor": "8-6-sin-dependencias-entre-tests",
       "line_start": 1605,
@@ -27841,7 +27841,7 @@
     {
       "id": "TT01-8-7-R001",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "8.7 Retries explícitos, acotados y aislados",
       "heading_anchor": "8-7-retries-explícitos-acotados-y-aislados",
       "line_start": 1619,
@@ -27901,7 +27901,7 @@
     {
       "id": "TT01-8-7-R002",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "8.7 Retries explícitos, acotados y aislados",
       "heading_anchor": "8-7-retries-explícitos-acotados-y-aislados",
       "line_start": 1626,
@@ -27961,7 +27961,7 @@
     {
       "id": "TT01-8-7-R003",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "8.7 Retries explícitos, acotados y aislados",
       "heading_anchor": "8-7-retries-explícitos-acotados-y-aislados",
       "line_start": 1661,
@@ -28021,7 +28021,7 @@
     {
       "id": "TT01-8-7-R004",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "8.7 Retries explícitos, acotados y aislados",
       "heading_anchor": "8-7-retries-explícitos-acotados-y-aislados",
       "line_start": 1683,
@@ -28081,7 +28081,7 @@
     {
       "id": "TT01-9-1-R001",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "9.1 Estados de test y suite",
       "heading_anchor": "9-1-estados-de-test-y-suite",
       "line_start": 1802,
@@ -28141,7 +28141,7 @@
     {
       "id": "TT01-9-4-R001",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "9.4 Tags de ejecución",
       "heading_anchor": "9-4-tags-de-ejecución",
       "line_start": 1915,
@@ -28201,7 +28201,7 @@
     {
       "id": "TT01-9-4-R002",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "9.4 Tags de ejecución",
       "heading_anchor": "9-4-tags-de-ejecución",
       "line_start": 1927,
@@ -28261,7 +28261,7 @@
     {
       "id": "TT01-9-6-R001",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "9.6 Exit status",
       "heading_anchor": "9-6-exit-status",
       "line_start": 1957,
@@ -28321,7 +28321,7 @@
     {
       "id": "TT01-9-6-R002",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "9.6 Exit status",
       "heading_anchor": "9-6-exit-status",
       "line_start": 1965,
@@ -28381,7 +28381,7 @@
     {
       "id": "TT01-9-7-R001",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "9.7 Artifacts y snapshots por intento",
       "heading_anchor": "9-7-artifacts-y-snapshots-por-intento",
       "line_start": 2037,
@@ -28441,7 +28441,7 @@
     {
       "id": "TT01-9-8-R001",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "9.8 Modelo interno y protocolo coordinator/worker",
       "heading_anchor": "9-8-modelo-interno-y-protocolo-coordinator-worker",
       "line_start": 2052,
@@ -28501,7 +28501,7 @@
     {
       "id": "TT01-TONDO-ESPECIFICACIN-DEL-LENGUAJE-Y-TOOLCHAIN-DE-TESTING-R001",
       "document": "TONDO_TESTING_SPEC.md",
-      "revision": "0.1@6ec8f12894eedf5d",
+      "revision": "0.1@fb5128f4af8585d8",
       "heading": "Tondo: especificación del lenguaje y toolchain de testing",
       "heading_anchor": "tondo-especificación-del-lenguaje-y-toolchain-de-testing",
       "line_start": 10,

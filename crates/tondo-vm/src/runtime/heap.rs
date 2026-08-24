@@ -92,6 +92,10 @@ pub(super) struct HeapHandle {
 }
 
 impl HeapHandle {
+    pub(super) const fn diagnostic_id(self) -> u64 {
+        ((self.index as u64) << 32) | (self.generation as u64)
+    }
+
     #[cfg(test)]
     pub(super) const fn index(self) -> u32 {
         self.index
@@ -735,6 +739,16 @@ mod tests {
 
         assert_eq!(handle.index, 0);
         assert_eq!(handle.generation, 1);
+    }
+
+    #[test]
+    fn diagnostic_id_is_stable_for_a_heap_handle() {
+        let handle = HeapHandle {
+            index: 0x1234_5678,
+            generation: 0x9abc_def0,
+        };
+
+        assert_eq!(handle.diagnostic_id(), 0x1234_5678_9abc_def0);
     }
 
     #[test]

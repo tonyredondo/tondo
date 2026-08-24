@@ -9,6 +9,7 @@ use std::fmt;
 
 use crate::bytecode::{BytecodeSpan, BytecodeVerificationError};
 
+mod diagnostics;
 mod execute;
 mod heap;
 mod value;
@@ -16,9 +17,17 @@ mod value;
 #[cfg(feature = "conformance")]
 pub mod conformance;
 
+pub use diagnostics::{
+    DIAGNOSTIC_SCHEMA, DiagnosticConfig, DiagnosticEvent, DiagnosticHeapOperation,
+    DiagnosticMemoryAccess, DiagnosticQuiescencePhase, DiagnosticRange, DiagnosticResource,
+    DiagnosticResourceState, DiagnosticRootSnapshot, DiagnosticSchedulerOperation,
+    DiagnosticSource, DiagnosticSynchronization, DiagnosticTaskState, DiagnosticThreadState,
+    DiagnosticTrace,
+};
 pub use execute::{
     RejectingHost, VmExecution, VmHost, VmOutcome, VmTestNodeKind, VmTestNodeOutcome, execute,
-    execute_with_limits, execute_with_limits_and_copy_strategy,
+    execute_with_diagnostics, execute_with_limits, execute_with_limits_and_copy_strategy,
+    execute_with_limits_and_copy_strategy_and_diagnostics,
 };
 
 /// Physical strategy used to realize source-level logical value copies.

@@ -1,0 +1,60 @@
+{
+  "format": "tondo-diagnostic-runtime/1",
+  "owner": "toolchain.diagnostics",
+  "edition": "0.1",
+  "phase": "DIAG-RUNTIME-001",
+  "status": "implemented",
+  "contract": "docs/contracts/diagnostic-runtime.md",
+  "implementation": [
+    "crates/tondo-vm/src/runtime/diagnostics.rs",
+    "crates/tondo-vm/src/runtime/execute.rs",
+    "crates/tondo-vm/src/runtime/heap.rs",
+    "crates/tondo-vm/src/runtime.rs"
+  ],
+  "tests": [
+    "crates/tondo-vm/src/runtime/diagnostics.rs",
+    "crates/tondo-vm/src/runtime/execute.rs",
+    "scripts/diagnostic-runtime-check.sh",
+    "scripts/diagnostic-runtime-test.sh"
+  ],
+  "schema": "tondo-diagnostic-runtime/1",
+  "event_kinds": [
+    "thread",
+    "task",
+    "memory",
+    "synchronization",
+    "heap",
+    "roots",
+    "resource",
+    "scheduler",
+    "quiescence"
+  ],
+  "required_context": [
+    "task-thread-ids",
+    "memory-accesses",
+    "synchronization",
+    "roots-retainers",
+    "resource-ledger",
+    "source-maps",
+    "scheduler-events",
+    "quiescence-barriers"
+  ],
+  "limits": {
+    "max_events": 1000000,
+    "max_stack_depth": 256,
+    "max_retainers_per_object": 256,
+    "max_scheduler_tail_events": 4096,
+    "events_fail_closed": true,
+    "truncation_reported": true
+  },
+  "privacy": {
+    "payloads": "omitted-by-default",
+    "logical_spans_only": true,
+    "network_upload": false
+  },
+  "hooks_private": true,
+  "normal_path": "no-collector-and-no-events",
+  "semantic_equivalence": true,
+  "native_parity": "DIAG-NATIVE-001",
+  "next_blocks": ["RACE-001", "LEAK-001", "DUMP-001"]
+}

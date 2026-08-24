@@ -4084,6 +4084,11 @@ y CLI. `std.testing` solo conserva el contexto de test, logs, tags y artifacts
 que el runner ya define; el catálogo STD-0.1 no añade `std.race`, `std.leaks` ni
 `std.crash`, ni duplica APIs sync/async para instrumentarlas. Los hooks internos
 que necesite la VM o el backend nativo no forman parte de la superficie pública.
+La VM hosted ya implementa la capa interna de observabilidad de
+`DIAG-RUNTIME-001`, documentada en
+[`docs/contracts/diagnostic-runtime.md`](./docs/contracts/diagnostic-runtime.md);
+los adapters de los owners B se incorporan posteriormente en
+`DIAG-STDLIB-001`.
 
 ---
 
