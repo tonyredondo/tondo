@@ -34,11 +34,11 @@
       "layer": "A1",
       "status": "verified",
       "public_signatures": [
-        "signature:std.async:35",
         "signature:std.async:36",
         "signature:std.async:37",
         "signature:std.async:38",
-        "signature:std.async:39"
+        "signature:std.async:39",
+        "signature:std.async:40"
       ],
       "requirements": [
         "requirement:std.async:async-iterator",
@@ -281,13 +281,13 @@
       "layer": "A0",
       "status": "verified",
       "public_signatures": [
-        "signature:std.env:28",
         "signature:std.env:29",
         "signature:std.env:30",
         "signature:std.env:31",
         "signature:std.env:32",
         "signature:std.env:33",
-        "signature:std.env:34"
+        "signature:std.env:34",
+        "signature:std.env:35"
       ],
       "requirements": [
         "requirement:std.env:arguments-and-order",
@@ -1107,14 +1107,14 @@
       "layer": "A0",
       "status": "verified",
       "public_signatures": [
-        "signature:std.time:42",
-        "signature:std.time:43",
         "signature:std.time:44",
         "signature:std.time:45",
+        "signature:std.time:46",
         "signature:std.time:47",
-        "signature:std.time:48",
         "signature:std.time:49",
-        "signature:std.time:50"
+        "signature:std.time:50",
+        "signature:std.time:51",
+        "signature:std.time:52"
       ],
       "requirements": [
         "requirement:std.time:capability-and-conformance",

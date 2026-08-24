@@ -4480,14 +4480,14 @@
       "status": "verified",
       "reason": null,
       "public_signatures": [
-        "std.time:42",
-        "std.time:43",
         "std.time:44",
         "std.time:45",
+        "std.time:46",
         "std.time:47",
-        "std.time:48",
         "std.time:49",
-        "std.time:50"
+        "std.time:50",
+        "std.time:51",
+        "std.time:52"
       ],
       "requirements": [
         "requirement:std.time:capability-and-conformance",
@@ -4553,24 +4553,6 @@
           ]
         },
         {
-          "id": "signature:std.time:42",
-          "kind": "signature",
-          "status": "verified",
-          "reason": null,
-          "refs": [
-            "testing/stdlib-conformance.json#owners/std.time"
-          ]
-        },
-        {
-          "id": "signature:std.time:43",
-          "kind": "signature",
-          "status": "verified",
-          "reason": null,
-          "refs": [
-            "testing/stdlib-conformance.json#owners/std.time"
-          ]
-        },
-        {
           "id": "signature:std.time:44",
           "kind": "signature",
           "status": "verified",
@@ -4589,7 +4571,7 @@
           ]
         },
         {
-          "id": "signature:std.time:47",
+          "id": "signature:std.time:46",
           "kind": "signature",
           "status": "verified",
           "reason": null,
@@ -4598,7 +4580,7 @@
           ]
         },
         {
-          "id": "signature:std.time:48",
+          "id": "signature:std.time:47",
           "kind": "signature",
           "status": "verified",
           "reason": null,
@@ -4617,6 +4599,24 @@
         },
         {
           "id": "signature:std.time:50",
+          "kind": "signature",
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "testing/stdlib-conformance.json#owners/std.time"
+          ]
+        },
+        {
+          "id": "signature:std.time:51",
+          "kind": "signature",
+          "status": "verified",
+          "reason": null,
+          "refs": [
+            "testing/stdlib-conformance.json#owners/std.time"
+          ]
+        },
+        {
+          "id": "signature:std.time:52",
           "kind": "signature",
           "status": "verified",
           "reason": null,

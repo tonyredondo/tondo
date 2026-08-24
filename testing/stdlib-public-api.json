@@ -10908,10 +10908,10 @@
       "status": "verified"
     },
     {
-      "id": "std.time:42",
+      "id": "std.time:44",
       "owner": "std.time",
       "contract": "docs/contracts/stdlib-time.md",
-      "line": 42,
+      "line": 44,
       "signature": "pub fn now(): Instant ! ClockError",
       "symbol": "std.time.now",
       "operation": "now",
@@ -10956,10 +10956,10 @@
       "status": "verified"
     },
     {
-      "id": "std.time:43",
+      "id": "std.time:45",
       "owner": "std.time",
       "contract": "docs/contracts/stdlib-time.md",
-      "line": 43,
+      "line": 45,
       "signature": "pub fn resolution(): Duration ! ClockError",
       "symbol": "std.time.resolution",
       "operation": "resolution",
@@ -11004,10 +11004,10 @@
       "status": "verified"
     },
     {
-      "id": "std.time:44",
+      "id": "std.time:46",
       "owner": "std.time",
       "contract": "docs/contracts/stdlib-time.md",
-      "line": 44,
+      "line": 46,
       "signature": "pub fn deadline(after: Duration): Instant ! ClockError",
       "symbol": "std.time.deadline",
       "operation": "deadline",
@@ -11052,10 +11052,10 @@
       "status": "verified"
     },
     {
-      "id": "std.time:45",
+      "id": "std.time:47",
       "owner": "std.time",
       "contract": "docs/contracts/stdlib-time.md",
-      "line": 45,
+      "line": 47,
       "signature": "pub fn sleep(delay: Duration): Unit ! ClockError selectable",
       "symbol": "std.time.sleep",
       "operation": "sleep",
@@ -11100,10 +11100,10 @@
       "status": "verified"
     },
     {
-      "id": "std.time:47",
+      "id": "std.time:49",
       "owner": "std.time",
       "contract": "docs/contracts/stdlib-time.md",
-      "line": 47,
+      "line": 49,
       "signature": "pub fn Timer.after(delay: Duration): Timer ! ClockError",
       "symbol": "std.time.Timer.after",
       "operation": "after",
@@ -11148,10 +11148,10 @@
       "status": "verified"
     },
     {
-      "id": "std.time:48",
+      "id": "std.time:50",
       "owner": "std.time",
       "contract": "docs/contracts/stdlib-time.md",
-      "line": 48,
+      "line": 50,
       "signature": "pub fn Timer.at(deadline: Instant): Timer ! ClockError",
       "symbol": "std.time.Timer.at",
       "operation": "at",
@@ -11196,10 +11196,10 @@
       "status": "verified"
     },
     {
-      "id": "std.time:49",
+      "id": "std.time:51",
       "owner": "std.time",
       "contract": "docs/contracts/stdlib-time.md",
-      "line": 49,
+      "line": 51,
       "signature": "pub fn Timer.wait(self): Unit ! ClockError selectable",
       "symbol": "std.time.Timer.wait",
       "operation": "wait",
@@ -11244,10 +11244,10 @@
       "status": "verified"
     },
     {
-      "id": "std.time:50",
+      "id": "std.time:52",
       "owner": "std.time",
       "contract": "docs/contracts/stdlib-time.md",
-      "line": 50,
+      "line": 52,
       "signature": "pub fn Timer.cancel(self): Unit",
       "symbol": "std.time.Timer.cancel",
       "operation": "cancel",

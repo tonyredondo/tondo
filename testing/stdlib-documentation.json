@@ -1964,24 +1964,24 @@
           "status": "complete",
           "reason": null,
           "signatures": [
-            "std.time:42",
-            "std.time:43",
             "std.time:44",
             "std.time:45",
+            "std.time:46",
             "std.time:47",
-            "std.time:48",
             "std.time:49",
-            "std.time:50"
+            "std.time:50",
+            "std.time:51",
+            "std.time:52"
           ],
           "verified_signatures": [
-            "std.time:42",
-            "std.time:43",
             "std.time:44",
             "std.time:45",
+            "std.time:46",
             "std.time:47",
-            "std.time:48",
             "std.time:49",
-            "std.time:50"
+            "std.time:50",
+            "std.time:51",
+            "std.time:52"
           ],
           "refs": [
             "testing/stdlib-public-api.json"

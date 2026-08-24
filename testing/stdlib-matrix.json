@@ -2725,14 +2725,14 @@
         "requirement:std.time:virtual-provider"
       ],
       "signature_rows": [
-        "signature:std.time:42",
-        "signature:std.time:43",
         "signature:std.time:44",
         "signature:std.time:45",
+        "signature:std.time:46",
         "signature:std.time:47",
-        "signature:std.time:48",
         "signature:std.time:49",
-        "signature:std.time:50"
+        "signature:std.time:50",
+        "signature:std.time:51",
+        "signature:std.time:52"
       ],
       "source_set": "stdlib-time",
       "stage_order": [
@@ -12629,60 +12629,12 @@
     },
     {
       "dimensions_ref": "owner:std.time",
-      "id": "signature:std.time:42",
-      "kind": "signature",
-      "layer": "A0",
-      "owner": "std.time",
-      "scope": "STD-0.1A",
-      "signature": "pub fn now(): Instant ! ClockError",
-      "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.time:42",
-        "contract": "docs/contracts/stdlib-time.md",
-        "line": 42
-      },
-      "stage_refs": {
-        "CONF": "owner:std.time:CONF",
-        "DOC": "owner:std.time:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.time:42:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.time:42:MODEL/TEST/FUZZ",
-        "PERF": "owner:std.time:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.time:42:SPEC"
-      },
-      "status": "verified",
-      "symbol": "std.time.now"
-    },
-    {
-      "dimensions_ref": "owner:std.time",
-      "id": "signature:std.time:43",
-      "kind": "signature",
-      "layer": "A0",
-      "owner": "std.time",
-      "scope": "STD-0.1A",
-      "signature": "pub fn resolution(): Duration ! ClockError",
-      "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.time:43",
-        "contract": "docs/contracts/stdlib-time.md",
-        "line": 43
-      },
-      "stage_refs": {
-        "CONF": "owner:std.time:CONF",
-        "DOC": "owner:std.time:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.time:43:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.time:43:MODEL/TEST/FUZZ",
-        "PERF": "owner:std.time:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.time:43:SPEC"
-      },
-      "status": "verified",
-      "symbol": "std.time.resolution"
-    },
-    {
-      "dimensions_ref": "owner:std.time",
       "id": "signature:std.time:44",
       "kind": "signature",
       "layer": "A0",
       "owner": "std.time",
       "scope": "STD-0.1A",
-      "signature": "pub fn deadline(after: Duration): Instant ! ClockError",
+      "signature": "pub fn now(): Instant ! ClockError",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.time:44",
         "contract": "docs/contracts/stdlib-time.md",
@@ -12697,7 +12649,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.time:44:SPEC"
       },
       "status": "verified",
-      "symbol": "std.time.deadline"
+      "symbol": "std.time.now"
     },
     {
       "dimensions_ref": "owner:std.time",
@@ -12706,7 +12658,7 @@
       "layer": "A0",
       "owner": "std.time",
       "scope": "STD-0.1A",
-      "signature": "pub fn sleep(delay: Duration): Unit ! ClockError selectable",
+      "signature": "pub fn resolution(): Duration ! ClockError",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.time:45",
         "contract": "docs/contracts/stdlib-time.md",
@@ -12721,7 +12673,31 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.time:45:SPEC"
       },
       "status": "verified",
-      "symbol": "std.time.sleep"
+      "symbol": "std.time.resolution"
+    },
+    {
+      "dimensions_ref": "owner:std.time",
+      "id": "signature:std.time:46",
+      "kind": "signature",
+      "layer": "A0",
+      "owner": "std.time",
+      "scope": "STD-0.1A",
+      "signature": "pub fn deadline(after: Duration): Instant ! ClockError",
+      "source": {
+        "audit": "testing/stdlib-public-api.json#rows/std.time:46",
+        "contract": "docs/contracts/stdlib-time.md",
+        "line": 46
+      },
+      "stage_refs": {
+        "CONF": "owner:std.time:CONF",
+        "DOC": "owner:std.time:DOC",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.time:46:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.time:46:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.time:PERF",
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.time:46:SPEC"
+      },
+      "status": "verified",
+      "symbol": "std.time.deadline"
     },
     {
       "dimensions_ref": "owner:std.time",
@@ -12730,7 +12706,7 @@
       "layer": "A0",
       "owner": "std.time",
       "scope": "STD-0.1A",
-      "signature": "pub fn Timer.after(delay: Duration): Timer ! ClockError",
+      "signature": "pub fn sleep(delay: Duration): Unit ! ClockError selectable",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.time:47",
         "contract": "docs/contracts/stdlib-time.md",
@@ -12745,31 +12721,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.time:47:SPEC"
       },
       "status": "verified",
-      "symbol": "std.time.Timer.after"
-    },
-    {
-      "dimensions_ref": "owner:std.time",
-      "id": "signature:std.time:48",
-      "kind": "signature",
-      "layer": "A0",
-      "owner": "std.time",
-      "scope": "STD-0.1A",
-      "signature": "pub fn Timer.at(deadline: Instant): Timer ! ClockError",
-      "source": {
-        "audit": "testing/stdlib-public-api.json#rows/std.time:48",
-        "contract": "docs/contracts/stdlib-time.md",
-        "line": 48
-      },
-      "stage_refs": {
-        "CONF": "owner:std.time:CONF",
-        "DOC": "owner:std.time:DOC",
-        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.time:48:IMPL/HOST",
-        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.time:48:MODEL/TEST/FUZZ",
-        "PERF": "owner:std.time:PERF",
-        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.time:48:SPEC"
-      },
-      "status": "verified",
-      "symbol": "std.time.Timer.at"
+      "symbol": "std.time.sleep"
     },
     {
       "dimensions_ref": "owner:std.time",
@@ -12778,7 +12730,7 @@
       "layer": "A0",
       "owner": "std.time",
       "scope": "STD-0.1A",
-      "signature": "pub fn Timer.wait(self): Unit ! ClockError selectable",
+      "signature": "pub fn Timer.after(delay: Duration): Timer ! ClockError",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.time:49",
         "contract": "docs/contracts/stdlib-time.md",
@@ -12793,7 +12745,7 @@
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.time:49:SPEC"
       },
       "status": "verified",
-      "symbol": "std.time.Timer.wait"
+      "symbol": "std.time.Timer.after"
     },
     {
       "dimensions_ref": "owner:std.time",
@@ -12802,7 +12754,7 @@
       "layer": "A0",
       "owner": "std.time",
       "scope": "STD-0.1A",
-      "signature": "pub fn Timer.cancel(self): Unit",
+      "signature": "pub fn Timer.at(deadline: Instant): Timer ! ClockError",
       "source": {
         "audit": "testing/stdlib-public-api.json#rows/std.time:50",
         "contract": "docs/contracts/stdlib-time.md",
@@ -12815,6 +12767,54 @@
         "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.time:50:MODEL/TEST/FUZZ",
         "PERF": "owner:std.time:PERF",
         "SPEC": "audit:testing/stdlib-public-api.json#rows/std.time:50:SPEC"
+      },
+      "status": "verified",
+      "symbol": "std.time.Timer.at"
+    },
+    {
+      "dimensions_ref": "owner:std.time",
+      "id": "signature:std.time:51",
+      "kind": "signature",
+      "layer": "A0",
+      "owner": "std.time",
+      "scope": "STD-0.1A",
+      "signature": "pub fn Timer.wait(self): Unit ! ClockError selectable",
+      "source": {
+        "audit": "testing/stdlib-public-api.json#rows/std.time:51",
+        "contract": "docs/contracts/stdlib-time.md",
+        "line": 51
+      },
+      "stage_refs": {
+        "CONF": "owner:std.time:CONF",
+        "DOC": "owner:std.time:DOC",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.time:51:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.time:51:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.time:PERF",
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.time:51:SPEC"
+      },
+      "status": "verified",
+      "symbol": "std.time.Timer.wait"
+    },
+    {
+      "dimensions_ref": "owner:std.time",
+      "id": "signature:std.time:52",
+      "kind": "signature",
+      "layer": "A0",
+      "owner": "std.time",
+      "scope": "STD-0.1A",
+      "signature": "pub fn Timer.cancel(self): Unit",
+      "source": {
+        "audit": "testing/stdlib-public-api.json#rows/std.time:52",
+        "contract": "docs/contracts/stdlib-time.md",
+        "line": 52
+      },
+      "stage_refs": {
+        "CONF": "owner:std.time:CONF",
+        "DOC": "owner:std.time:DOC",
+        "IMPL/HOST": "audit:testing/stdlib-public-api.json#rows/std.time:52:IMPL/HOST",
+        "MODEL/TEST/FUZZ": "audit:testing/stdlib-public-api.json#rows/std.time:52:MODEL/TEST/FUZZ",
+        "PERF": "owner:std.time:PERF",
+        "SPEC": "audit:testing/stdlib-public-api.json#rows/std.time:52:SPEC"
       },
       "status": "verified",
       "symbol": "std.time.Timer.cancel"

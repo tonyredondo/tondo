@@ -2371,42 +2371,42 @@
       "contract": "testing/stdlib-time.json",
       "public_api": [
         {
-          "id": "std.time:42",
+          "id": "std.time:44",
           "symbol": "std.time.now",
           "signature": "pub fn now(): Instant ! ClockError"
         },
         {
-          "id": "std.time:43",
+          "id": "std.time:45",
           "symbol": "std.time.resolution",
           "signature": "pub fn resolution(): Duration ! ClockError"
         },
         {
-          "id": "std.time:44",
+          "id": "std.time:46",
           "symbol": "std.time.deadline",
           "signature": "pub fn deadline(after: Duration): Instant ! ClockError"
         },
         {
-          "id": "std.time:45",
+          "id": "std.time:47",
           "symbol": "std.time.sleep",
           "signature": "pub fn sleep(delay: Duration): Unit ! ClockError selectable"
         },
         {
-          "id": "std.time:47",
+          "id": "std.time:49",
           "symbol": "std.time.Timer.after",
           "signature": "pub fn Timer.after(delay: Duration): Timer ! ClockError"
         },
         {
-          "id": "std.time:48",
+          "id": "std.time:50",
           "symbol": "std.time.Timer.at",
           "signature": "pub fn Timer.at(deadline: Instant): Timer ! ClockError"
         },
         {
-          "id": "std.time:49",
+          "id": "std.time:51",
           "symbol": "std.time.Timer.wait",
           "signature": "pub fn Timer.wait(self): Unit ! ClockError selectable"
         },
         {
-          "id": "std.time:50",
+          "id": "std.time:52",
           "symbol": "std.time.Timer.cancel",
           "signature": "pub fn Timer.cancel(self): Unit"
         }
