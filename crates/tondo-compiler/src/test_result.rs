@@ -22,6 +22,7 @@ use crate::artifact::validate_sha256;
 
 pub const TEST_REPORT_FORMAT: &str = "tondo-test-report-0.1/7";
 pub const TEST_WORKER_PROTOCOL_FORMAT: &str = "tondo-test-worker-0.1/1";
+pub const DIAGNOSTIC_REPORT_FORMAT: &str = "tondo-diagnostic-report/1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -156,6 +157,45 @@ pub struct ArtifactRecord {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DiagnosticStatus {
+    Clean,
+    Finding,
+    Unsupported,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DiagnosticPrivacy {
+    pub payloads: String,
+    pub secrets: String,
+    pub paths: String,
+    pub network_upload: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DiagnosticRecord {
+    pub format: String,
+    pub run_id: String,
+    pub attempt_id: String,
+    pub shard: String,
+    pub profile: String,
+    pub status: DiagnosticStatus,
+    pub target: String,
+    pub backend: String,
+    pub toolchain: String,
+    pub source_revision: String,
+    pub observations: u64,
+    pub limitations: Vec<String>,
+    pub artifacts: Vec<ArtifactRecord>,
+    pub privacy: DiagnosticPrivacy,
+    pub program_exit_status: Option<i32>,
+    pub command_exit_status: Option<i32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SnapshotStatus {
     Matched,
@@ -210,6 +250,8 @@ pub struct TestAttempt {
     pub logs: Vec<String>,
     pub stdout: String,
     pub stderr: String,
+    #[serde(default)]
+    pub diagnostics: Vec<DiagnosticRecord>,
 }
 
 impl TestAttempt {
@@ -237,6 +279,7 @@ impl TestAttempt {
             logs: Vec::new(),
             stdout: String::new(),
             stderr: String::new(),
+            diagnostics: Vec::new(),
         }
     }
 }
@@ -1236,6 +1279,64 @@ fn validate_attempt(
                 field: "artifacts",
                 message: "names must be unique per attempt".into(),
             });
+        }
+    }
+    let mut diagnostic_profiles = BTreeSet::new();
+    for diagnostic in &attempt.diagnostics {
+        if diagnostic.format != DIAGNOSTIC_REPORT_FORMAT {
+            return Err(ResultModelError::InvalidField {
+                field: "diagnostics.format",
+                message: "unsupported diagnostic report format".into(),
+            });
+        }
+        validate_text("diagnostics.run_id", &diagnostic.run_id)?;
+        validate_text("diagnostics.attempt_id", &diagnostic.attempt_id)?;
+        validate_text("diagnostics.shard", &diagnostic.shard)?;
+        validate_text("diagnostics.profile", &diagnostic.profile)?;
+        validate_text("diagnostics.target", &diagnostic.target)?;
+        validate_text("diagnostics.backend", &diagnostic.backend)?;
+        validate_text("diagnostics.toolchain", &diagnostic.toolchain)?;
+        validate_text("diagnostics.source_revision", &diagnostic.source_revision)?;
+        if !["race", "leaks", "crash"].contains(&diagnostic.profile.as_str()) {
+            return Err(ResultModelError::InvalidField {
+                field: "diagnostics.profile",
+                message: "unknown profile".into(),
+            });
+        }
+        if !diagnostic_profiles.insert(&diagnostic.profile) {
+            return Err(ResultModelError::InvalidField {
+                field: "diagnostics",
+                message: "profiles must be unique per attempt".into(),
+            });
+        }
+        if diagnostic.limitations.iter().any(|value| value.is_empty())
+            || diagnostic
+                .limitations
+                .windows(2)
+                .any(|window| window[0] >= window[1])
+        {
+            return Err(ResultModelError::InvalidField {
+                field: "diagnostics.limitations",
+                message: "limitations must be sorted, unique and non-empty".into(),
+            });
+        }
+        if diagnostic.privacy.payloads != "omitted-by-default"
+            || diagnostic.privacy.secrets != "never-emitted-by-default"
+            || diagnostic.privacy.paths != "logical-only"
+            || diagnostic.privacy.network_upload
+        {
+            return Err(ResultModelError::InvalidField {
+                field: "diagnostics.privacy",
+                message: "diagnostic privacy policy is fixed".into(),
+            });
+        }
+        for artifact in &diagnostic.artifacts {
+            if !artifact_names.contains(&artifact.name) {
+                return Err(ResultModelError::InvalidField {
+                    field: "diagnostics.artifacts",
+                    message: "diagnostic artifacts must also be attempt artifacts".into(),
+                });
+            }
         }
     }
     let mut snapshot_names = BTreeSet::new();

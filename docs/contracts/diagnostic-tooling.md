@@ -7,9 +7,10 @@ calendario civil de `std.time` ya están cerrados por
 `STD-ASYNC-GROUP-SPEC-001`, `STD-CONC-001`, `STD-SYNC-001`, `STD-EXEC-001`,
 `STD-NET-001` y `STD-CIVIL-TIME-001`. La primera implementación runtime de la
 VM hosted está cerrada por `DIAG-RUNTIME-001`; los detectores hosted de races,
-retención y dumps lógicos están cerrados por `RACE-001`, `LEAK-001` y
-`DUMP-001`, mientras que runner, captura de señales y paridad native
-permanecen pendientes en los bloques `DIAG-*` posteriores.
+retención, dumps lógicos y su integración en `tondo test` están cerrados por
+`RACE-001`, `LEAK-001`, `DUMP-001` y `DIAG-TEST-001`, mientras que las lanes
+CI, captura de señales y paridad native permanecen pendientes en los bloques
+`DIAG-*` posteriores.
 
 Este documento define la frontera entre el lenguaje, el runtime y las
 herramientas que ayudan a encontrar fallos de concurrencia, retención de
@@ -29,7 +30,7 @@ tondo dump analyze <file.tdump> [--format human|json]
 La grafía y el envelope finales están congelados en el contrato machine-readable
 [`testing/diagnostic-tooling.json`](../../testing/diagnostic-tooling.json).
 El compilador/runtime instrumenta la ejecución y el CLI materializa reportes y
-artefactos cuando los bloques de implementación estén cerrados. `tondo check`
+artefactos por intento. `tondo check`
 conserva su función estática y no arranca un runtime dinámico. Los perfiles no
 requieren un `tondo.json`, una variable de entorno ni un cambio de edición; son
 overrides explícitos de una invocación.
@@ -139,7 +140,8 @@ solo describe caminos observados y nunca es una prueba estática de ausencia.
 `tondo test` enlaza el reporte y los `.tdump` al intento concreto en el artifact
 store ya definido; JSON y JUnit proyectan la misma referencia sin duplicar
 payloads. Retries, repeat y shards conservan la identidad del test y crean un
-proceso limpio por intento.
+proceso limpio por intento. Esta integración está cerrada en
+`docs/contracts/diagnostic-test.md`; `DIAG-CI-001` añade las lanes y budgets.
 
 Las campañas de `race` y `leaks` son lanes explícitas de CI por su coste. Una
 campaña instrumentada no sustituye la suite normal ni rebaja el baseline de
@@ -207,8 +209,8 @@ implementación de STD-0.1B no publica APIs paralelas para satisfacerlos.
 `LEAK-001` no depende del modelo de memoria nativo: primero prueba la VM y el
 ledger hosted; `DIAG-NATIVE-001` prueba después ARC/ciclos/FFI nativos. La
 implementación hosted está cerrada por `crates/tondo-vm/src/runtime/leak.rs`,
-su contrato y su registro machine-readable; no implica soporte nativo ni del
-runner de tests.
+su contrato y su registro machine-readable; la integración del runner está
+cerrada por `docs/contracts/diagnostic-test.md`, sin implicar soporte nativo.
 
 ## 8. Fronteras normativas de `DEC-018`
 
@@ -218,8 +220,8 @@ estado `unsupported-diagnostic-profile` explícito y fija redacción/payloads
 fuera del envelope por defecto. La instrumentación VM hosted ejecutable está
 documentada por [`diagnostic-runtime.md`](diagnostic-runtime.md), el detector
 de races por [`diagnostic-race.md`](diagnostic-race.md) y el detector de
-retención por [`diagnostic-leak.md`](diagnostic-leak.md). Crash dumps, runner y
-paridad native siguen pendientes.
+retención por [`diagnostic-leak.md`](diagnostic-leak.md). Crash dumps y runner
+hosted están cerrados; las lanes CI y la paridad native siguen pendientes.
 
 ## 9. No objetivos de esta revisión
 

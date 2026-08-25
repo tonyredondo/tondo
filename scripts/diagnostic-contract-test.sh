@@ -40,4 +40,8 @@ jq '.privacy.network_upload = true' \
     testing/diagnostic-tooling.json > "$tmp/network-upload.json"
 expect_failure network-upload "$tmp/network-upload.json"
 
+jq '.next_blocks = ["DIAG-TEST-001", "DIAG-CI-001"]' \
+    testing/diagnostic-tooling.json > "$tmp/stale-next.json"
+expect_failure stale-next "$tmp/stale-next.json"
+
 echo "diagnostic contract tests: OK (profile, identity, limits, boundaries and privacy negatives rejected)"

@@ -31,7 +31,7 @@ expect_failure payloads "$tmp/payloads.json"
 jq '.limits.max_dump_bytes = 0' testing/diagnostic-dump.json > "$tmp/invalid-limit.json"
 expect_failure invalid-limit "$tmp/invalid-limit.json"
 
-jq '.next_blocks = ["DUMP-001", "DIAG-TEST-001"]' \
+jq '.next_blocks = ["DIAG-TEST-001", "DIAG-CI-001"]' \
     testing/diagnostic-dump.json > "$tmp/stale-next.json"
 expect_failure stale-next "$tmp/stale-next.json"
 

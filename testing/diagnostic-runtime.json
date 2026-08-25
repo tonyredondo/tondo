@@ -56,5 +56,5 @@
   "normal_path": "no-collector-and-no-events",
   "semantic_equivalence": true,
   "native_parity": "DIAG-NATIVE-001",
-  "next_blocks": ["DIAG-TEST-001", "DIAG-CI-001"]
+  "next_blocks": ["DIAG-CI-001"]
 }

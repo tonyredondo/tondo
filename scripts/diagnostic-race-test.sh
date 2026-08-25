@@ -32,7 +32,7 @@ expect_failure missing-context "$tmp/missing-context.json"
 jq '.public_stdlib_api = true' testing/diagnostic-race.json > "$tmp/public-api.json"
 expect_failure public-api "$tmp/public-api.json"
 
-jq '.next_blocks = ["RACE-001", "LEAK-001", "DUMP-001"]' \
+jq '.next_blocks = ["DIAG-TEST-001", "DIAG-CI-001"]' \
     testing/diagnostic-race.json > "$tmp/stale-next.json"
 expect_failure stale-next "$tmp/stale-next.json"
 

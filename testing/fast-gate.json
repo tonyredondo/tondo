@@ -22,6 +22,7 @@
     "docs/",
     "docs/contracts/diagnostic-runtime.md",
     "docs/contracts/diagnostic-dump.md",
+    "docs/contracts/diagnostic-test.md",
     "conformance/0.1/cases/documentation/",
     "conformance/0.1/manifest.json",
     "conformance/draft/manifest.json",
@@ -79,6 +80,7 @@
     "scripts/quality-gate.sh",
     "testing/diagnostic-tooling.json",
     "testing/diagnostic-runtime.json",
+    "testing/diagnostic-test.json",
     "testing/diagnostic-leak.json",
     "testing/diagnostic-dump.json",
     "scripts/diagnostic-contract-check.sh",
@@ -88,7 +90,9 @@
     "scripts/diagnostic-leak-check.sh",
     "scripts/diagnostic-leak-test.sh",
     "scripts/diagnostic-dump-check.sh",
-    "scripts/diagnostic-dump-test.sh"
+    "scripts/diagnostic-dump-test.sh",
+    "scripts/diagnostic-test-check.sh",
+    "scripts/diagnostic-test-test.sh"
   ],
   "packages": [
     { "prefix": "crates/tondo-cli/", "package": "tondo-cli" },

@@ -35,7 +35,7 @@ expect_failure shared-attempt-state "$tmp/shared-attempt-state.json"
 jq '.public_stdlib_api = true' testing/diagnostic-leak.json > "$tmp/public-api.json"
 expect_failure public-api "$tmp/public-api.json"
 
-jq '.next_blocks = ["LEAK-001", "DUMP-001"]' \
+jq '.next_blocks = ["DIAG-TEST-001", "DIAG-CI-001"]' \
     testing/diagnostic-leak.json > "$tmp/stale-next.json"
 expect_failure stale-next "$tmp/stale-next.json"
 

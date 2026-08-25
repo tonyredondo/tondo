@@ -98,8 +98,8 @@ ya consume esos contratos de observabilidad en la VM hosted; `RACE-001` y
 `LEAK-001` y `DUMP-001` ya cerraron sus detectores/writer hosted y la siguiente
 frontera es `DIAG-TEST-001`. El grafo
 activo se valida con `TRACKER-LINT-001`; con el contrato D0, Wave 6 y la
-instrumentación D1 y DUMP cerrados, avanzan `DIAG-TEST-001`
-y `DIAG-CI-001` antes de la evaluación
+instrumentación D1, DUMP y el runner de tests cerrados, avanza
+`DIAG-CI-001` antes de la evaluación
 coordinada de `NATIVE-001`. El cierre coordinado de
 `STD-CODEC-PUBLIC-001` ya verificó su superficie, pero el conteo global
 214/214 ya incluye los tres adapters `selectable` de DEC-020;
@@ -565,7 +565,7 @@ necesaria; la fragmentación del workspace no.
 | **M10.5c — Infraestructura de conformidad** | Un único draft vivo y su ratchet | Completado; T0 verificable sobre el árbol actual |
 | **M10.7 — Metaprogramación estática** | `derive`, generators, meta VM y contribución a G5 | Completado |
 | **M10.6 — Testing de usuario Tondo 0.1** | Implementación de `tondo test` y contribución a G5 | Completado; incluido en el gate T0 vivo |
-| **DIAG — Tooling dinámico** | Race detector, leak/retention detector, crash dumps y runner integrado | DUMP hosted cerrado; runner y native pendientes |
+| **DIAG — Tooling dinámico** | Race detector, leak/retention detector, crash dumps y runner integrado | DUMP y runner hosted cerrados; CI y native pendientes |
 | **STD-0.1A — Foundation + Hosted** | Base estándar necesaria para meta, testing y backend | S1A sellado como draft técnico; bundle reproducible, auditoría 214/214, matriz sin gaps aplicables y claims de publicación/backend/TLF desactivados |
 | **M11 — Backend nativo y optimización** | Implementación de producción | Futuro |
 | **STD-0.1B — Concurrency + Application** | Contratos runtime antes de M11; implementación tras N1 | Arquitectura base cerrada; contratos y código pendientes |
@@ -743,7 +743,7 @@ no una promesa de implementación ya cerrada:
 | `RACE-001` | P0 | Race detector dinámico con happens-before, stacks y corpus positivo/negativo | Implementado en VM hosted; adapters públicos/native pendientes |
 | `LEAK-001` | P0 | Retención GC, recursos afines, FFI y snapshots de crecimiento | Implementado en VM hosted; paridad native/stdlib pendiente |
 | `DUMP-001` | P0 | Captura lógica `.tdump`, redacción y analizador human/JSON | Implementado VM hosted; captura nativa pendiente |
-| `DIAG-TEST-001` | P0 | Intentos aislados, retries, shards, artifacts JSON/JUnit | Pendiente |
+| `DIAG-TEST-001` | P0 | Intentos aislados, retries, shards, artifacts JSON/JUnit | Implementado VM hosted |
 | `DIAG-CI-001` | P0 | Lanes, fuzzing, budgets y promotion gate | Pendiente |
 
 `DIAG-SPEC-001` y `DIAG-RUNTIME-001` bloquean `NATIVE-001`. `RACE-001` y
@@ -5519,10 +5519,19 @@ pueden retrasar el primer backend correcto.
   Registros físicos, unwind de plataforma y la ruta async-signal-safe quedan
   explícitamente en `DIAG-NATIVE-001`.
 
-- [ ] **DIAG-TEST-001 — Integrar perfiles en `tondo test`.** Asociar reportes y
-  dumps a cada intento, retry y shard; conservar artifacts content-addressed,
-  JUnit/JSON y límites de setup/teardown; iniciar un worker limpio por retry y
-  publicar unsupported como estado explícito.
+- [x] **DIAG-TEST-001 — Integrar perfiles en `tondo test`.** `--diagnostics`
+  acepta únicamente `race`, `leaks`, `crash` o `all`; cada retry, repeat,
+  shard y suite se ejecuta en un worker limpio y recibe un `run_id`/
+  `attempt_id` determinista. Los `DiagnosticRecord` por intento preservan
+  identidad, estado `clean`/`finding`/`unsupported`/`failed`, limitaciones,
+  exit statuses y política de privacidad; los dumps `.tdump` se incorporan al
+  artifact store SHA-256 con descriptor compartido por JSON/JUnit. Los límites
+  de 16 MiB por reporte y 256 MiB por dump son fail-closed, un worker `/1`
+  antiguo se rechaza como infraestructura y setup/teardown bloqueados no
+  pierden su evidencia. La evidencia ejecutable vive en
+  `testing/diagnostic-test.json`, `docs/contracts/diagnostic-test.md` y
+  `scripts/diagnostic-test-{check,test}.sh`; el siguiente bloque es
+  `DIAG-CI-001`.
 
 - [ ] **DIAG-CI-001 — Cerrar las lanes y gates de diagnóstico.** Añadir lanes
   opt-in para race/leaks/crash, corpus positivo/negativo persistente, fuzzing
@@ -6900,8 +6909,8 @@ Esta tabla es la fuente de reconciliación del estado actual.
     los detectores de M11. Mini-gate: DEC-013/014 reciben requisitos completos sin
     implementar todavía STD-0.1B.
 28. [ ] **Wave 7 — M11 correcto antes que optimizado.** Con Wave 6 cerrada y
-    `DUMP-001` cerrado en VM hosted, continuar `DIAG-TEST-001 →
-    DIAG-CI-001 → NATIVE-001 → NATIVE-MEM-ADR-001 →
+    `DUMP-001` y `DIAG-TEST-001` cerrados en VM hosted, continuar
+    `DIAG-CI-001 → NATIVE-001 → NATIVE-MEM-ADR-001 →
     NATIVE-ABI-001 → leaves NATIVE-LOWER-* → NATIVE-THREAD-001 →
     NATIVE-SELECT-001 → NATIVE-002 → ARC-001 → ARC-002 →
     NATIVE-STD-CORE/HOSTED → NATIVE-STD-001 →
@@ -6989,8 +6998,9 @@ instrumentación VM hosted; `STD-ASYNC-GROUP-SPEC-001`, `STD-CONC-001`,
 `STD-SYNC-001`, `STD-EXEC-001`, `STD-NET-001`, `STD-CIVIL-TIME-001`,
 `STD-ENCODING-001`, `STD-YAML-001`, `STD-TOML-001`, `STD-CBOR-001`,
 `STD-REGEX-001`, `STD-ID-001` y `STD-LOG-001` cerraron trece fronteras B0;
-`RACE-001`, `LEAK-001` y el writer lógico de `DUMP-001` ya están cerrados en
-hosted y la siguiente frontera es `DIAG-TEST-001`. `NATIVE-001` sigue
+`RACE-001`, `LEAK-001`, el writer lógico de `DUMP-001` y la integración de
+`DIAG-TEST-001` ya están cerrados en hosted y la siguiente frontera es
+`DIAG-CI-001`. `NATIVE-001` sigue
 esperando `DIAG-CI-001`.
 
 ---

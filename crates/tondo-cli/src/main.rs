@@ -11,8 +11,9 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 
 use tondo_compiler::driver::{
-    BuildTarget, CompilationRequest, CompilationStatus, DiagnosticFormat, Edition, HostProfile,
-    Operation, ResourceLimits, SourceForm, WarningProfile, discover_tests, execute,
+    BuildTarget, CompilationRequest, CompilationStatus, DiagnosticFormat, DiagnosticProfile,
+    Edition, HostProfile, Operation, ResourceLimits, SourceForm, WarningProfile, discover_tests,
+    execute,
 };
 use tondo_compiler::package::PackageGraph;
 use tondo_compiler::project::ProjectPlan;
@@ -31,9 +32,9 @@ use tondo_compiler::test_report::{
     SelectionKind, SnapshotMode, SnapshotStoreIdentity, TestList, TestReport,
 };
 use tondo_compiler::test_result::{
-    AggregateStatus, ArtifactRecord, AttemptPhase, AttemptStatus, BlockedBy, FailureRecord,
-    ResultNodeKind, RetryUnit, RetryUnitKind, SkipRecord, SnapshotRecord, SnapshotStatus,
-    TestAttempt, TestNode, VirtualTimeRecord,
+    AggregateStatus, ArtifactRecord, AttemptPhase, AttemptStatus, BlockedBy, DiagnosticPrivacy,
+    DiagnosticRecord, DiagnosticStatus, FailureRecord, ResultNodeKind, RetryUnit, RetryUnitKind,
+    SkipRecord, SnapshotRecord, SnapshotStatus, TestAttempt, TestNode, VirtualTimeRecord,
 };
 use tondo_compiler::test_retry::{RetryCampaign, RetryContext, RetryPolicy};
 use tondo_compiler::test_runtime::{
@@ -42,6 +43,10 @@ use tondo_compiler::test_runtime::{
 use tondo_compiler::test_schedule::{OrderMode, ScheduleNode, SchedulePlan, Seed};
 use tondo_compiler::test_shard::ShardSpec;
 use tondo_compiler::test_snapshots::{SnapshotPolicy, SnapshotStore, SnapshotUpdateStage};
+use tondo_vm::runtime::{
+    DiagnosticTrace, DumpIdentity, DumpTermination, MAX_DUMP_BYTES, capture_dump, detect_leaks,
+    detect_races,
+};
 
 mod doc_test;
 mod project_discovery;
@@ -61,7 +66,7 @@ Usage:
   tondo <command> [--diagnostic-format <human|json>] [--warnings core] <source.to>
   tondo <check|run> [--diagnostic-format <human|json>] [--warnings core] [--project <dir>]
   tondo run [--diagnostic-format <human|json>] [--warnings core] <source.to> -- [argument ...]
-  tondo test [--project <dir>] [--test-plan <tondo.test.toml>] [options]
+  tondo test [--project <dir>] [--test-plan <tondo.test.toml>] [--diagnostics <profiles>] [options]
   tondo dump analyze <file.tdump> [--format human|json]
 
 Commands:
@@ -78,6 +83,7 @@ Options:
   --check                           Verify formatting without writing output (fmt only)
   --project <dir>                   Project directory (default: current directory)
   --test-plan <path>                Optional advanced TOML test-plan sidecar
+  --diagnostics <profiles>          Dynamic profiles: race,leaks,crash or all
   --emit-interface <path>           Write the canonical compiled interface on success
   --emit-artifact <path>            Write canonical build metadata on success
   -- [argument ...]                 Pass UTF-8 arguments to a run script
@@ -160,6 +166,7 @@ fn run(arguments: Vec<OsString>) -> Result<ExitCode, String> {
     };
     let request = request
         .with_warning_profiles(invocation.warning_profiles.iter().copied())
+        .with_diagnostic_profiles(invocation.diagnostic_profiles.iter().copied())
         .with_program_arguments(invocation.program_arguments.clone());
     let output = execute(request).map_err(|error| error.to_string())?;
 
@@ -937,6 +944,9 @@ fn execute_test_plan_at(
     let worker_test_plan = test_plan_path.clone();
     let worker_timeout = execution_plan.timeout_ms;
     let worker_update_snapshots = execution_plan.update_snapshots;
+    let diagnostic_run_id = diagnostic_run_id(&request, &execution_plan, &ordered);
+    let diagnostic_source_revision = diagnostic_source_revision(&request);
+    let diagnostic_shard = shard_identity(&execution_plan);
     let mut grouped_entries = BTreeMap::<(u32, String), Vec<String>>::new();
     for entry in &ordered {
         let root = entry
@@ -962,6 +972,10 @@ fn execute_test_plan_at(
                     update_snapshots: worker_update_snapshots,
                     test_plan: worker_test_plan.clone(),
                     has_suites,
+                    diagnostics: execution_plan.diagnostics.clone(),
+                    run_id: diagnostic_run_id.clone(),
+                    source_revision: diagnostic_source_revision.clone(),
+                    shard: diagnostic_shard.clone(),
                     invocations: Mutex::new(BTreeMap::new()),
                 }),
             )
@@ -1021,7 +1035,8 @@ fn execute_test_plan_at(
         .map_err(|error| TestCommandError::Internal(error.to_string()))?,
     )
     .map_err(|error| TestCommandError::Internal(error.to_string()))?;
-    let attempts = execute_campaign(&request, &execution_plan, &ordered, programs, runtime)?;
+    let mut attempts = execute_campaign(&request, &execution_plan, &ordered, programs, runtime)?;
+    attach_worker_diagnostics(&worker_groups, &mut attempts)?;
     let suite_attempts = collect_suite_attempts(&worker_groups, &execution_plan)?;
     let mut node_attempts = attempts.clone();
     node_attempts.extend(suite_attempts.iter().map(|attempt| CliAttempt {
@@ -1029,10 +1044,13 @@ fn execute_test_plan_at(
         iteration: attempt.iteration,
         round: attempt.round,
         unit: (attempt.round > 0).then_some(1),
+        invocation: attempt.invocation,
         status: attempt.status,
         report: attempt.report.clone(),
         error: attempt.error.clone(),
         snapshot_updates: attempt.snapshot_updates.clone(),
+        diagnostics: attempt.diagnostics.clone(),
+        diagnostic_artifacts: attempt.diagnostic_artifacts.clone(),
     }));
     publish_attempt_artifacts(
         base,
@@ -1078,9 +1096,42 @@ fn execute_test_plan_at(
             }
         }
     }
+    if let Some(exit) = diagnostic_exit_status(&report) {
+        return Ok(exit);
+    }
     let failed = report.summary().failed > 0
         || (plan.deny_skips && report.summary().skipped + report.summary().blocked_skip > 0);
     Ok(u8::from(failed))
+}
+
+fn diagnostic_exit_status(report: &TestReport) -> Option<u8> {
+    let statuses = report
+        .tests()
+        .iter()
+        .chain(report.suites())
+        .flat_map(|node| node.attempts.iter())
+        .flat_map(|attempt| attempt.diagnostics.iter())
+        .map(|diagnostic| diagnostic.status);
+    let mut unsupported = false;
+    let mut finding = false;
+    let mut failed = false;
+    for status in statuses {
+        match status {
+            DiagnosticStatus::Unsupported => unsupported = true,
+            DiagnosticStatus::Finding => finding = true,
+            DiagnosticStatus::Failed => failed = true,
+            DiagnosticStatus::Clean => {}
+        }
+    }
+    if failed {
+        Some(3)
+    } else if unsupported {
+        Some(2)
+    } else if finding {
+        Some(1)
+    } else {
+        None
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1100,12 +1151,49 @@ struct WorkerError {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct WorkerDiagnosticArtifact {
+    name: String,
+    media_type: String,
+    bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkerDiagnostic {
+    record: DiagnosticRecord,
+    artifacts: Vec<WorkerDiagnosticArtifact>,
+}
+
+struct DiagnosticWorkerContext<'a> {
+    profiles: &'a BTreeSet<DiagnosticProfile>,
+    run_id: &'a str,
+    source_revision: &'a str,
+    shard: &'a str,
+    invocation: u64,
+}
+
+struct DiagnosticReportContext<'a> {
+    profiles: &'a BTreeSet<DiagnosticProfile>,
+    trace: Option<&'a DiagnosticTrace>,
+    run_id: &'a str,
+    attempt_id: &'a str,
+    shard: &'a str,
+    target: &'a str,
+    source_revision: &'a str,
+    program_exit_status: i32,
+    command_exit_status: i32,
+    crashed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct WorkerResponse {
     format: String,
     status: String,
     report: Vec<u8>,
     updates: Vec<WorkerSnapshotUpdate>,
     error: Option<WorkerError>,
+    diagnostics: Vec<WorkerDiagnostic>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1125,6 +1213,7 @@ struct WorkerSuiteResponse {
     report: Vec<u8>,
     updates: Vec<WorkerSnapshotUpdate>,
     error: Option<WorkerError>,
+    diagnostics: Vec<WorkerDiagnostic>,
 }
 
 #[derive(Debug, Clone)]
@@ -1135,8 +1224,10 @@ struct WorkerGroupResult {
 
 type WorkerInvocation = Arc<std::sync::OnceLock<Result<WorkerGroupResult, RunError>>>;
 
-const WORKER_RESPONSE_FORMAT: &str = "tondo-test-worker-process/1";
-const WORKER_BATCH_RESPONSE_FORMAT: &str = "tondo-test-worker-batch/1";
+// Diagnostic payloads extend the child-process wire shape; keep the protocol
+// version explicit so a stale worker cannot be mistaken for a complete one.
+const WORKER_RESPONSE_FORMAT: &str = "tondo-test-worker-process/2";
+const WORKER_BATCH_RESPONSE_FORMAT: &str = "tondo-test-worker-batch/2";
 
 struct SharedWorkerGroup {
     project: PathBuf,
@@ -1145,6 +1236,10 @@ struct SharedWorkerGroup {
     update_snapshots: bool,
     test_plan: Option<PathBuf>,
     has_suites: bool,
+    diagnostics: BTreeSet<DiagnosticProfile>,
+    run_id: String,
+    source_revision: String,
+    shard: String,
     invocations: Mutex<BTreeMap<u64, WorkerInvocation>>,
 }
 
@@ -1160,12 +1255,20 @@ impl SharedWorkerGroup {
             .or_default()
             .clone();
         let responses = slot.get_or_init(|| {
+            let diagnostic_context = DiagnosticWorkerContext {
+                profiles: &self.diagnostics,
+                run_id: &self.run_id,
+                source_revision: &self.source_revision,
+                shard: &self.shard,
+                invocation,
+            };
             spawn_test_worker(
                 &self.project,
                 &self.entries,
                 self.timeout_ms,
                 self.update_snapshots,
                 self.test_plan.as_deref(),
+                &diagnostic_context,
             )
         });
         responses
@@ -1282,6 +1385,7 @@ fn infrastructure_worker_response(error: impl Into<String>) -> WorkerResponse {
             code: None,
             message: error.into(),
         }),
+        diagnostics: Vec::new(),
     }
 }
 
@@ -1291,6 +1395,7 @@ fn spawn_test_worker(
     timeout_ms: Option<u64>,
     update_snapshots: bool,
     test_plan: Option<&Path>,
+    diagnostic_context: &DiagnosticWorkerContext<'_>,
 ) -> Result<WorkerGroupResult, RunError> {
     let mut command =
         Command::new(
@@ -1307,6 +1412,24 @@ fn spawn_test_worker(
     }
     if update_snapshots {
         command.arg("--update-snapshots");
+    }
+    if !diagnostic_context.profiles.is_empty() {
+        command.arg("--diagnostics").arg(
+            diagnostic_context
+                .profiles
+                .iter()
+                .map(|profile| profile.as_str())
+                .collect::<Vec<_>>()
+                .join(","),
+        );
+        command.arg("--run-id").arg(diagnostic_context.run_id);
+        command
+            .arg("--source-revision")
+            .arg(diagnostic_context.source_revision);
+        command.arg("--shard").arg(diagnostic_context.shard);
+        command
+            .arg("--invocation")
+            .arg(diagnostic_context.invocation.to_string());
     }
     let child = command
         .stdin(Stdio::null())
@@ -1472,6 +1595,11 @@ fn run_test_worker(arguments: &[OsString]) -> Result<ExitCode, String> {
     let mut test_plan = None;
     let mut entries = Vec::new();
     let mut update_snapshots = false;
+    let mut diagnostic_profiles = BTreeSet::new();
+    let mut run_id = String::new();
+    let mut source_revision = String::new();
+    let mut shard = "all".to_owned();
+    let mut invocation = 0_u64;
     let mut index = 0;
     while index < arguments.len() {
         let value = arguments[index]
@@ -1507,6 +1635,47 @@ fn run_test_worker(arguments: &[OsString]) -> Result<ExitCode, String> {
                 ));
             }
             "--update-snapshots" => update_snapshots = true,
+            "--diagnostics" => {
+                index += 1;
+                let value = arguments
+                    .get(index)
+                    .and_then(|value| value.to_str())
+                    .ok_or_else(|| "worker `--diagnostics` requires profiles".to_owned())?;
+                diagnostic_profiles = test_cli::parse_diagnostics(value)?;
+            }
+            "--run-id" => {
+                index += 1;
+                run_id = arguments
+                    .get(index)
+                    .and_then(|value| value.to_str())
+                    .ok_or_else(|| "worker `--run-id` requires a value".to_owned())?
+                    .to_owned();
+            }
+            "--source-revision" => {
+                index += 1;
+                source_revision = arguments
+                    .get(index)
+                    .and_then(|value| value.to_str())
+                    .ok_or_else(|| "worker `--source-revision` requires a value".to_owned())?
+                    .to_owned();
+            }
+            "--shard" => {
+                index += 1;
+                shard = arguments
+                    .get(index)
+                    .and_then(|value| value.to_str())
+                    .ok_or_else(|| "worker `--shard` requires a value".to_owned())?
+                    .to_owned();
+            }
+            "--invocation" => {
+                index += 1;
+                invocation = arguments
+                    .get(index)
+                    .and_then(|value| value.to_str())
+                    .ok_or_else(|| "worker `--invocation` requires a value".to_owned())?
+                    .parse()
+                    .map_err(|_| "worker `--invocation` must be a u64".to_owned())?;
+            }
             other => return Err(format!("unknown hidden worker option `{other}`")),
         }
         index += 1;
@@ -1515,17 +1684,28 @@ fn run_test_worker(arguments: &[OsString]) -> Result<ExitCode, String> {
     if entries.is_empty() {
         return Err("at least one worker entry is required".to_owned());
     }
-    let result =
-        match execute_test_worker(&project, test_plan.as_deref(), &entries, update_snapshots) {
-            Ok(responses) => responses,
-            Err(error) => WorkerGroupResult {
-                leaves: entries
-                    .iter()
-                    .map(|entry| (entry.clone(), infrastructure_worker_response(error.clone())))
-                    .collect(),
-                suites: Vec::new(),
-            },
-        };
+    let result = match execute_test_worker(
+        &project,
+        test_plan.as_deref(),
+        &entries,
+        update_snapshots,
+        &DiagnosticWorkerContext {
+            profiles: &diagnostic_profiles,
+            run_id: &run_id,
+            source_revision: &source_revision,
+            shard: &shard,
+            invocation,
+        },
+    ) {
+        Ok(responses) => responses,
+        Err(error) => WorkerGroupResult {
+            leaves: entries
+                .iter()
+                .map(|entry| (entry.clone(), infrastructure_worker_response(error.clone())))
+                .collect(),
+            suites: Vec::new(),
+        },
+    };
     let response = WorkerBatchResponse {
         format: WORKER_BATCH_RESPONSE_FORMAT.into(),
         responses: entries
@@ -1556,6 +1736,7 @@ fn execute_test_worker(
     test_plan_path: Option<&Path>,
     entry_ids: &[String],
     update_snapshots: bool,
+    diagnostic_context: &DiagnosticWorkerContext<'_>,
 ) -> Result<WorkerGroupResult, String> {
     let location = ProjectLocation::Directory(project_path.to_owned());
     let loaded = location.load().map_err(format_test_command_error)?;
@@ -1580,7 +1761,8 @@ fn execute_test_worker(
             ResourceLimits::default(),
         )
         .map_err(|error| error.to_string())?;
-    let request = Arc::new(request);
+    let request =
+        Arc::new(request.with_diagnostic_profiles(diagnostic_context.profiles.iter().copied()));
     let snapshot_inputs = load_snapshot_inputs(base, &request, &test_plan, update_snapshots)
         .map_err(format_test_command_error)?;
     let entries = discover_tests(&request).map_err(|error| error.to_string())?;
@@ -1632,6 +1814,7 @@ fn execute_test_worker(
         .for_test_participation(&selected, participation.clone())
         .map_err(|error| error.to_string())?;
     let output = execute(test_request).map_err(|error| error.to_string())?;
+    let trace = output.diagnostic_trace().cloned();
     if output.status() != CompilationStatus::Success {
         let diagnostics = output.diagnostics().human();
         return Err(if diagnostics.is_empty() {
@@ -1668,6 +1851,20 @@ fn execute_test_worker(
             } else {
                 "passed"
             };
+            let crashed = error.is_some();
+            let attempt_id = format!("{}#{}", entry.id(), diagnostic_context.invocation);
+            let diagnostics = diagnostic_reports_for(&DiagnosticReportContext {
+                profiles: diagnostic_context.profiles,
+                trace: trace.as_ref(),
+                run_id: diagnostic_context.run_id,
+                attempt_id: &attempt_id,
+                shard: diagnostic_context.shard,
+                target: request.target().name(),
+                source_revision: diagnostic_context.source_revision,
+                program_exit_status: if crashed { 101 } else { 0 },
+                command_exit_status: 0,
+                crashed,
+            });
             WorkerResponse {
                 format: WORKER_RESPONSE_FORMAT.into(),
                 status: status.into(),
@@ -1684,6 +1881,7 @@ fn execute_test_worker(
                     })
                     .collect(),
                 error,
+                diagnostics,
             }
         } else if let Some(suite) = executions
             .iter()
@@ -1715,6 +1913,18 @@ fn execute_test_worker(
                     },
                     code: None,
                     message: suite.id.clone(),
+                }),
+                diagnostics: diagnostic_reports_for(&DiagnosticReportContext {
+                    profiles: diagnostic_context.profiles,
+                    trace: trace.as_ref(),
+                    run_id: diagnostic_context.run_id,
+                    attempt_id: &format!("{}#{}", entry.id(), diagnostic_context.invocation),
+                    shard: diagnostic_context.shard,
+                    target: request.target().name(),
+                    source_revision: diagnostic_context.source_revision,
+                    program_exit_status: 1,
+                    command_exit_status: 0,
+                    crashed: false,
                 }),
             }
         } else {
@@ -1757,6 +1967,19 @@ fn execute_test_worker(
                 tondo_compiler::test_control::ExecutionPhase::Cleanup
                 | tondo_compiler::test_control::ExecutionPhase::Closed => "teardown".to_owned(),
             });
+            let crashed = status == "failed-panic";
+            let diagnostics = diagnostic_reports_for(&DiagnosticReportContext {
+                profiles: diagnostic_context.profiles,
+                trace: trace.as_ref(),
+                run_id: diagnostic_context.run_id,
+                attempt_id: &format!("{}#{}", execution.id, diagnostic_context.invocation),
+                shard: diagnostic_context.shard,
+                target: request.target().name(),
+                source_revision: diagnostic_context.source_revision,
+                program_exit_status: if crashed { 101 } else { 0 },
+                command_exit_status: 0,
+                crashed,
+            });
             Ok(WorkerSuiteResponse {
                 id: execution.id.clone(),
                 status: status.into(),
@@ -1774,6 +1997,7 @@ fn execute_test_worker(
                     })
                     .collect(),
                 error,
+                diagnostics,
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
@@ -1806,7 +2030,7 @@ fn execute_test_worker(
         };
         let skipped = matches!(blocker.report.terminal(), Some(Terminal::Skipped { .. }));
         suites.push(WorkerSuiteResponse {
-            id,
+            id: id.clone(),
             status: if skipped {
                 "blocked-skip".into()
             } else {
@@ -1824,6 +2048,18 @@ fn execute_test_worker(
                 code: None,
                 message: blocker.id.clone(),
             }),
+            diagnostics: diagnostic_reports_for(&DiagnosticReportContext {
+                profiles: diagnostic_context.profiles,
+                trace: trace.as_ref(),
+                run_id: diagnostic_context.run_id,
+                attempt_id: &format!("{}#{}", id, diagnostic_context.invocation),
+                shard: diagnostic_context.shard,
+                target: request.target().name(),
+                source_revision: diagnostic_context.source_revision,
+                program_exit_status: 1,
+                command_exit_status: 0,
+                crashed: false,
+            }),
         });
     }
     suites.sort_by(|left, right| left.id.as_bytes().cmp(right.id.as_bytes()));
@@ -1839,6 +2075,137 @@ fn format_test_command_error(error: TestCommandError) -> String {
         | TestCommandError::Internal(message)
         | TestCommandError::Diagnostic(message) => message,
     }
+}
+
+fn diagnostic_reports_for(context: &DiagnosticReportContext<'_>) -> Vec<WorkerDiagnostic> {
+    context
+        .profiles
+        .iter()
+        .map(|profile| {
+            let mut status = DiagnosticStatus::Clean;
+            let mut observations = 0_u64;
+            let mut limitations = Vec::new();
+            let mut artifacts = Vec::new();
+            let mut payloads = Vec::new();
+            match (profile, context.trace) {
+                (DiagnosticProfile::Race, Some(trace)) => {
+                    let report = detect_races(trace);
+                    observations = report.observations;
+                    status = match report.status {
+                        tondo_vm::runtime::RaceStatus::Clean => DiagnosticStatus::Clean,
+                        tondo_vm::runtime::RaceStatus::Finding => DiagnosticStatus::Finding,
+                        tondo_vm::runtime::RaceStatus::Unsupported => DiagnosticStatus::Unsupported,
+                    };
+                    limitations = report
+                        .limitations
+                        .iter()
+                        .map(|limitation| format!("{limitation:?}"))
+                        .collect();
+                }
+                (DiagnosticProfile::Leaks, Some(trace)) => {
+                    let report = detect_leaks(trace);
+                    observations = report.observations;
+                    status = match report.status {
+                        tondo_vm::runtime::LeakStatus::Clean => DiagnosticStatus::Clean,
+                        tondo_vm::runtime::LeakStatus::Finding => DiagnosticStatus::Finding,
+                        tondo_vm::runtime::LeakStatus::Unsupported => DiagnosticStatus::Unsupported,
+                    };
+                    limitations = report
+                        .limitations
+                        .iter()
+                        .map(|limitation| format!("{limitation:?}"))
+                        .collect();
+                }
+                (DiagnosticProfile::Crash, Some(trace)) => {
+                    if context.crashed {
+                        status = DiagnosticStatus::Finding;
+                        let termination = DumpTermination {
+                            reason: "panic".into(),
+                            program_exit_status: Some(context.program_exit_status),
+                            command_exit_status: Some(context.command_exit_status),
+                        };
+                        let identity = DumpIdentity {
+                            run_id: context.run_id.into(),
+                            attempt_id: context.attempt_id.into(),
+                            shard: context.shard.into(),
+                            profile: profile.as_str().into(),
+                            target: context.target.into(),
+                            backend: "vm-hosted".into(),
+                            toolchain: env!("CARGO_PKG_VERSION").into(),
+                            source_revision: context.source_revision.into(),
+                        };
+                        match capture_dump(trace, identity, termination) {
+                            Ok(bytes) if bytes.len() <= MAX_DUMP_BYTES => {
+                                let sha256 = tondo_compiler::artifact::sha256(&bytes)
+                                    .strip_prefix("sha256:")
+                                    .unwrap_or_default()
+                                    .to_owned();
+                                let name = "diagnostic-crash.tdump".to_owned();
+                                artifacts.push(ArtifactRecord {
+                                    name: name.clone(),
+                                    media_type: "application/x-tondo-dump".into(),
+                                    size: bytes.len() as u64,
+                                    sha256,
+                                    object: format!(
+                                        "objects/{}",
+                                        tondo_compiler::artifact::sha256(&bytes)
+                                            .strip_prefix("sha256:")
+                                            .unwrap_or_default()
+                                    ),
+                                });
+                                payloads.push(WorkerDiagnosticArtifact {
+                                    name,
+                                    media_type: "application/x-tondo-dump".into(),
+                                    bytes,
+                                });
+                            }
+                            Ok(_) => {
+                                status = DiagnosticStatus::Unsupported;
+                                limitations.push("report-byte-limit".into());
+                            }
+                            Err(_) => {
+                                status = DiagnosticStatus::Failed;
+                                limitations.push("dump-capture-failed".into());
+                            }
+                        }
+                    }
+                }
+                (_, None) => {
+                    status = DiagnosticStatus::Unsupported;
+                    limitations.push("diagnostic-trace-unavailable".into());
+                }
+            }
+            limitations.sort();
+            limitations.dedup();
+            let record = DiagnosticRecord {
+                format: tondo_compiler::test_result::DIAGNOSTIC_REPORT_FORMAT.into(),
+                run_id: context.run_id.into(),
+                attempt_id: context.attempt_id.into(),
+                shard: context.shard.into(),
+                profile: profile.as_str().into(),
+                status,
+                target: context.target.into(),
+                backend: "vm-hosted".into(),
+                toolchain: env!("CARGO_PKG_VERSION").into(),
+                source_revision: context.source_revision.into(),
+                observations,
+                limitations,
+                artifacts,
+                privacy: DiagnosticPrivacy {
+                    payloads: "omitted-by-default".into(),
+                    secrets: "never-emitted-by-default".into(),
+                    paths: "logical-only".into(),
+                    network_upload: false,
+                },
+                program_exit_status: Some(context.program_exit_status),
+                command_exit_status: Some(context.command_exit_status),
+            };
+            WorkerDiagnostic {
+                record,
+                artifacts: payloads,
+            }
+        })
+        .collect()
 }
 
 fn select_test_entries(
@@ -1934,10 +2301,13 @@ struct CliAttempt {
     iteration: u32,
     round: u32,
     unit: Option<u32>,
+    invocation: u64,
     status: RuntimeStatus,
     report: EnvelopeReport,
     error: Option<RunError>,
     snapshot_updates: Vec<(String, String)>,
+    diagnostics: Vec<WorkerDiagnostic>,
+    diagnostic_artifacts: Vec<WorkerDiagnosticArtifact>,
 }
 
 #[derive(Debug, Clone)]
@@ -1945,11 +2315,14 @@ struct CliSuiteAttempt {
     id: String,
     iteration: u32,
     round: u32,
+    invocation: u64,
     status: RuntimeStatus,
     phase: Option<AttemptPhase>,
     report: EnvelopeReport,
     error: Option<RunError>,
     snapshot_updates: Vec<(String, String)>,
+    diagnostics: Vec<WorkerDiagnostic>,
+    diagnostic_artifacts: Vec<WorkerDiagnosticArtifact>,
 }
 
 fn collect_suite_attempts(
@@ -1991,6 +2364,11 @@ fn collect_suite_attempts(
                 }
             };
             let error = suite.error.map(|error| error.into_run_error().unwrap_err());
+            let diagnostics = suite.diagnostics.clone();
+            let diagnostic_artifacts = diagnostics
+                .iter()
+                .flat_map(|diagnostic| diagnostic.artifacts.clone())
+                .collect();
             attempts.push(CliSuiteAttempt {
                 id: suite.id,
                 iteration: if plan.repeat > 1 {
@@ -2007,6 +2385,7 @@ fn collect_suite_attempts(
                 } else {
                     0
                 },
+                invocation,
                 status,
                 phase,
                 report,
@@ -2016,6 +2395,8 @@ fn collect_suite_attempts(
                     .into_iter()
                     .map(|update| (update.name, update.value))
                     .collect(),
+                diagnostics,
+                diagnostic_artifacts,
             });
         }
     }
@@ -2061,10 +2442,13 @@ fn execute_campaign(
                 iteration: attempt.iteration(),
                 round: attempt.round(),
                 unit: attempt.unit(),
+                invocation: attempt.worker().invocation_id(),
                 status: attempt.status(),
                 report: attempt.report().clone(),
                 error: None,
                 snapshot_updates: Vec::new(),
+                diagnostics: Vec::new(),
+                diagnostic_artifacts: Vec::new(),
             })
             .collect());
     }
@@ -2099,10 +2483,13 @@ fn execute_campaign(
                 iteration: 1,
                 round: attempt.round(),
                 unit: attempt.unit(),
+                invocation: attempt.worker().invocation_id(),
                 status: attempt.status(),
                 report: attempt.report().clone(),
                 error: None,
                 snapshot_updates: Vec::new(),
+                diagnostics: Vec::new(),
+                diagnostic_artifacts: Vec::new(),
             })
             .collect());
     }
@@ -2117,12 +2504,74 @@ fn execute_campaign(
             iteration: 1,
             round: 0,
             unit: None,
+            invocation: leaf.worker().invocation_id(),
             status: leaf.status(),
             report: leaf.report().clone(),
             error: leaf.error().cloned(),
             snapshot_updates: leaf.snapshot_updates().to_vec(),
+            diagnostics: Vec::new(),
+            diagnostic_artifacts: Vec::new(),
         })
         .collect())
+}
+
+fn attach_worker_diagnostics(
+    groups: &BTreeMap<(u32, String), Arc<SharedWorkerGroup>>,
+    attempts: &mut [CliAttempt],
+) -> Result<(), TestCommandError> {
+    for attempt in attempts {
+        let Some(group) = groups
+            .values()
+            .find(|group| group.entries.contains(&attempt.id))
+        else {
+            continue;
+        };
+        if group.diagnostics.is_empty() {
+            continue;
+        }
+        match group.response(attempt.invocation, &attempt.id) {
+            Ok(response) => {
+                if response.diagnostics.is_empty() {
+                    let attempt_id = format!("{}#{}", attempt.id, attempt.invocation);
+                    attempt.diagnostics = failed_worker_diagnostics(group, &attempt_id);
+                    attempt.diagnostic_artifacts = Vec::new();
+                } else {
+                    attempt.diagnostics = response.diagnostics.clone();
+                    attempt.diagnostic_artifacts = response
+                        .diagnostics
+                        .iter()
+                        .flat_map(|diagnostic| diagnostic.artifacts.clone())
+                        .collect();
+                }
+            }
+            Err(_) => {
+                let attempt_id = format!("{}#{}", attempt.id, attempt.invocation);
+                attempt.diagnostics = failed_worker_diagnostics(group, &attempt_id);
+                attempt.diagnostic_artifacts = Vec::new();
+            }
+        }
+    }
+    Ok(())
+}
+
+fn failed_worker_diagnostics(group: &SharedWorkerGroup, attempt_id: &str) -> Vec<WorkerDiagnostic> {
+    let mut diagnostics = diagnostic_reports_for(&DiagnosticReportContext {
+        profiles: &group.diagnostics,
+        trace: None,
+        run_id: &group.run_id,
+        attempt_id,
+        shard: &group.shard,
+        target: "tondo-vm-hosted",
+        source_revision: &group.source_revision,
+        program_exit_status: 3,
+        command_exit_status: 3,
+        crashed: false,
+    });
+    for diagnostic in &mut diagnostics {
+        diagnostic.record.status = DiagnosticStatus::Failed;
+        diagnostic.record.limitations = vec!["worker-failed".into()];
+    }
+    diagnostics
 }
 
 fn campaign_limits(plan: &test_cli::TestCliPlan) -> BTreeMap<String, u64> {
@@ -2130,6 +2579,61 @@ fn campaign_limits(plan: &test_cli::TestCliPlan) -> BTreeMap<String, u64> {
         ("timeout_ms".to_owned(), plan.timeout_ms.unwrap_or_default()),
         ("jobs".to_owned(), u64::from(plan.jobs)),
     ])
+}
+
+fn diagnostic_source_revision(request: &CompilationRequest) -> String {
+    let mut bytes = Vec::new();
+    for (_, source) in request.sources().iter() {
+        bytes.extend_from_slice(source.path().as_str().as_bytes());
+        bytes.push(0);
+        bytes.extend_from_slice(source.bytes());
+        bytes.push(0);
+    }
+    tondo_compiler::artifact::sha256(&bytes)
+        .strip_prefix("sha256:")
+        .unwrap_or_default()
+        .to_owned()
+}
+
+fn diagnostic_run_id(
+    request: &CompilationRequest,
+    plan: &test_cli::TestCliPlan,
+    ordered: &[tondo_compiler::test_backend::TestEntry],
+) -> String {
+    let mut bytes = diagnostic_source_revision(request).into_bytes();
+    bytes.push(0);
+    bytes.extend_from_slice(shard_identity(plan).as_bytes());
+    bytes.push(0);
+    bytes.extend_from_slice(order_seed(plan).to_string().as_bytes());
+    bytes.push(0);
+    bytes.extend_from_slice(plan.retry.to_string().as_bytes());
+    bytes.push(0);
+    bytes.extend_from_slice(plan.repeat.to_string().as_bytes());
+    bytes.push(0);
+    bytes.extend_from_slice(plan.jobs.to_string().as_bytes());
+    bytes.push(0);
+    for profile in &plan.diagnostics {
+        bytes.extend_from_slice(profile.as_str().as_bytes());
+        bytes.push(0);
+    }
+    bytes.push(0);
+    bytes.extend_from_slice(selector_identity(&plan.selector).as_bytes());
+    bytes.push(0);
+    for entry in ordered {
+        bytes.extend_from_slice(entry.id().as_bytes());
+        bytes.push(0);
+    }
+    let hash = tondo_compiler::artifact::sha256(&bytes);
+    format!("run-{}", hash.strip_prefix("sha256:").unwrap_or_default())
+}
+
+fn selector_identity(selector: &test_cli::TestSelector) -> String {
+    match selector {
+        test_cli::TestSelector::All => "all".to_owned(),
+        test_cli::TestSelector::Filter(value) => format!("filter:{value}"),
+        test_cli::TestSelector::Glob(value) => format!("glob:{value}"),
+        test_cli::TestSelector::Exact(value) => format!("exact:{value}"),
+    }
 }
 
 fn shard_identity(plan: &test_cli::TestCliPlan) -> String {
@@ -2361,10 +2865,13 @@ fn build_test_report(
                         iteration: source.iteration,
                         round: source.round,
                         unit: (source.round > 0).then_some(1),
+                        invocation: source.invocation,
                         status: source.status,
                         report: source.report.clone(),
                         error: source.error.clone(),
                         snapshot_updates: source.snapshot_updates.clone(),
+                        diagnostics: source.diagnostics.clone(),
+                        diagnostic_artifacts: source.diagnostic_artifacts.clone(),
                     };
                     let mut attempt = make_test_attempt(index as u32 + 1, &source_attempt)?;
                     attempt.phase = source.phase;
@@ -2521,6 +3028,22 @@ fn make_test_attempt(index: u32, source: &CliAttempt) -> Result<TestAttempt, Tes
                 object: format!("objects/{sha256}"),
             }
         })
+        .collect();
+    for diagnostic in &source.diagnostics {
+        for artifact in &diagnostic.record.artifacts {
+            if !attempt
+                .artifacts
+                .iter()
+                .any(|existing| existing.name == artifact.name)
+            {
+                attempt.artifacts.push(artifact.clone());
+            }
+        }
+    }
+    attempt.diagnostics = source
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.record.clone())
         .collect();
     attempt.snapshots = source
         .report
@@ -2696,7 +3219,10 @@ fn publish_attempt_artifacts(
     );
     let max_bytes = artifact_store.map_or(64 * 1024 * 1024, |store| store.max_bytes());
     for (index, attempt) in attempts.iter().enumerate() {
-        if attempt.report.artifacts().is_empty() && plan.artifacts.is_none() {
+        if attempt.report.artifacts().is_empty()
+            && attempt.diagnostic_artifacts.is_empty()
+            && plan.artifacts.is_none()
+        {
             continue;
         }
         let identity = format!(
@@ -2718,6 +3244,18 @@ fn publish_attempt_artifacts(
                 return Err(TestCommandError::Internal(format!(
                     "artifact digest changed while publishing `{}`",
                     evidence.name()
+                )));
+            }
+        }
+        for evidence in &attempt.diagnostic_artifacts {
+            let descriptor = store
+                .attach(&evidence.name, &evidence.media_type, &evidence.bytes)
+                .map_err(|error| TestCommandError::Internal(error.to_string()))?;
+            let expected = tondo_compiler::artifact::sha256(&evidence.bytes);
+            if descriptor.sha256 != expected {
+                return Err(TestCommandError::Internal(format!(
+                    "diagnostic artifact digest changed while publishing `{}`",
+                    evidence.name
                 )));
             }
         }
@@ -2790,6 +3328,7 @@ struct Invocation {
     operation: Operation,
     source_form: SourceForm,
     diagnostic_format: DiagnosticFormat,
+    diagnostic_profiles: BTreeSet<DiagnosticProfile>,
     warning_profiles: BTreeSet<WarningProfile>,
     format_check: bool,
     source: Option<PathBuf>,
@@ -2811,6 +3350,8 @@ fn parse_invocation(arguments: &[OsString]) -> Result<Invocation, String> {
     };
 
     let mut diagnostic_format = DiagnosticFormat::Human;
+    let mut diagnostic_profiles = BTreeSet::new();
+    let mut diagnostics_seen = false;
     let mut warning_profiles = BTreeSet::new();
     let mut format_check = false;
     let mut source: Option<PathBuf> = None;
@@ -2844,6 +3385,16 @@ fn parse_invocation(arguments: &[OsString]) -> Result<Invocation, String> {
                 return Err("`--diagnostic-format` requires `human` or `json`".into());
             };
             diagnostic_format = parse_diagnostic_format(value)?;
+        } else if argument == "--diagnostics" {
+            if diagnostics_seen {
+                return Err("`--diagnostics` may appear only once".into());
+            }
+            diagnostics_seen = true;
+            index += 1;
+            let Some(value) = arguments.get(index).and_then(|value| value.to_str()) else {
+                return Err("`--diagnostics` requires one or more profiles".into());
+            };
+            diagnostic_profiles = test_cli::parse_diagnostics(value)?;
         } else if argument == "--check" {
             if operation != Operation::Format {
                 return Err("`--check` is only valid with `tondo fmt`".into());
@@ -2882,6 +3433,12 @@ fn parse_invocation(arguments: &[OsString]) -> Result<Invocation, String> {
         } else if let Some(argument) = argument.to_str() {
             if let Some(value) = argument.strip_prefix("--diagnostic-format=") {
                 diagnostic_format = parse_diagnostic_format(value)?;
+            } else if let Some(value) = argument.strip_prefix("--diagnostics=") {
+                if diagnostics_seen {
+                    return Err("`--diagnostics` may appear only once".into());
+                }
+                diagnostics_seen = true;
+                diagnostic_profiles = test_cli::parse_diagnostics(value)?;
             } else if let Some(value) = argument.strip_prefix("--warnings=") {
                 warning_profiles.insert(parse_warning_profile(value)?);
             } else if argument.starts_with('-') {
@@ -2913,6 +3470,9 @@ fn parse_invocation(arguments: &[OsString]) -> Result<Invocation, String> {
     if operation == Operation::Format && !warning_profiles.is_empty() {
         return Err("warning profiles are only available from `check` or `run`".into());
     }
+    if !diagnostic_profiles.is_empty() && operation != Operation::Run {
+        return Err("`--diagnostics` is only valid with `tondo run` or `tondo test`".into());
+    }
     if let Some(source) = &source {
         validate_source_extension(source)?;
         if source.file_name().and_then(OsStr::to_str).is_none() {
@@ -2935,6 +3495,7 @@ fn parse_invocation(arguments: &[OsString]) -> Result<Invocation, String> {
         operation,
         source_form,
         diagnostic_format,
+        diagnostic_profiles,
         warning_profiles,
         format_check,
         source,
@@ -2969,7 +3530,10 @@ fn compilation_request(invocation: &Invocation) -> Result<PreparedCompilation, S
                 ResourceLimits::default(),
             )
             .map_err(|error| error.to_string())?;
-        return Ok((request, None));
+        return Ok((
+            request.with_diagnostic_profiles(invocation.diagnostic_profiles.iter().copied()),
+            None,
+        ));
     }
 
     let source = invocation
@@ -3005,7 +3569,10 @@ fn compilation_request(invocation: &Invocation) -> Result<PreparedCompilation, S
         root,
     )
     .map_err(|error| error.to_string())?;
-    Ok((request, Some(bytes)))
+    Ok((
+        request.with_diagnostic_profiles(invocation.diagnostic_profiles.iter().copied()),
+        Some(bytes),
+    ))
 }
 
 fn discover_cli_project(project_path: &Path) -> Result<(PathBuf, Vec<u8>, Vec<u8>), String> {
@@ -3525,6 +4092,17 @@ mod tests {
                 "distinct paths",
             ),
             (
+                &[
+                    "run",
+                    "--diagnostics",
+                    "race",
+                    "--diagnostics",
+                    "leaks",
+                    "main.to",
+                ],
+                "`--diagnostics` may appear only once",
+            ),
+            (
                 &["check", "main.to", "--emit-artifact", "main.to"],
                 "must not overwrite the source file",
             ),
@@ -3654,6 +4232,7 @@ mod tests {
             iteration: 1,
             round: 0,
             unit: None,
+            invocation: 0,
             status: RuntimeStatus::FailedError,
             report: report.clone(),
             error: Some(RunError::Error {
@@ -3661,6 +4240,8 @@ mod tests {
                 message: "bad\nvalue".into(),
             }),
             snapshot_updates: Vec::new(),
+            diagnostics: Vec::new(),
+            diagnostic_artifacts: Vec::new(),
         };
         let failure = failure_record(&failed).unwrap();
         assert_eq!(failure.kind, "error");
@@ -3674,12 +4255,15 @@ mod tests {
             iteration: 1,
             round: 0,
             unit: None,
+            invocation: 0,
             status: RuntimeStatus::Skipped,
             report: report.clone(),
             error: Some(RunError::Skip {
                 reason: "not applicable".into(),
             }),
             snapshot_updates: Vec::new(),
+            diagnostics: Vec::new(),
+            diagnostic_artifacts: Vec::new(),
         };
         assert_eq!(skip_reason(&skipped), "not applicable");
         assert!(make_test_attempt(2, &skipped).unwrap().skip.is_some());
@@ -3748,6 +4332,31 @@ mod tests {
         )
         .unwrap();
         assert_eq!(execute_test_plan(&run_plan, &project).unwrap(), 0);
+        let diagnostic_path = project.join("target/diagnostic-report.json");
+        let diagnostic_plan = test_cli::parse(
+            [
+                OsString::from("test"),
+                OsString::from("--project"),
+                OsString::from(project.to_str().unwrap()),
+                OsString::from("--diagnostics"),
+                OsString::from("all"),
+                OsString::from("--test-format"),
+                OsString::from("json"),
+                OsString::from("--report"),
+                OsString::from(format!("json={}", diagnostic_path.display())),
+            ]
+            .as_slice(),
+        )
+        .unwrap();
+        assert_eq!(execute_test_plan(&diagnostic_plan, &project).unwrap(), 0);
+        let diagnostic_report = TestReport::parse(&fs::read(&diagnostic_path).unwrap()).unwrap();
+        assert!(
+            diagnostic_report
+                .tests()
+                .iter()
+                .flat_map(|node| node.attempts.iter())
+                .all(|attempt| attempt.diagnostics.len() == 3)
+        );
         let list_plan = test_cli::parse(
             &[
                 "test",
@@ -4031,10 +4640,13 @@ mod tests {
             iteration: 1,
             round: 0,
             unit: None,
+            invocation: 0,
             status: RuntimeStatus::Passed,
             report: report.clone(),
             error: None,
             snapshot_updates: vec![("new-value".into(), "value".into())],
+            diagnostics: Vec::new(),
+            diagnostic_artifacts: Vec::new(),
         };
         let base = temp_root().join(format!(
             "tondo-cli-snapshot-boundary-{}-{}",
@@ -4072,10 +4684,13 @@ mod tests {
                 iteration: 1,
                 round: 0,
                 unit: None,
+                invocation: 0,
                 status: RuntimeStatus::Passed,
                 report: report.clone(),
                 error: None,
                 snapshot_updates: Vec::new(),
+                diagnostics: Vec::new(),
+                diagnostic_artifacts: Vec::new(),
             }
         };
         let not_published = inputs.stage_and_publish(&base, &plan, &[failed]).unwrap();
@@ -4140,10 +4755,13 @@ mod tests {
             iteration: 1,
             round: 0,
             unit: None,
+            invocation: 0,
             status: RuntimeStatus::Passed,
             report: report.clone(),
             error: None,
             snapshot_updates: vec![("known".into(), "new".into())],
+            diagnostics: Vec::new(),
+            diagnostic_artifacts: Vec::new(),
         };
         assert!(
             duplicate_inputs

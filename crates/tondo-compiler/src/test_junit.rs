@@ -480,6 +480,7 @@ fn node_properties(node: &TestNode, decisive: &TestAttempt) -> Result<Vec<Proper
     )?;
     push_json(&mut properties, "tondo.attempts", &node.attempts)?;
     push_json(&mut properties, "tondo.artifacts", &decisive.artifacts)?;
+    push_json(&mut properties, "tondo.diagnostics", &decisive.diagnostics)?;
     push_json(&mut properties, "tondo.snapshots", &decisive.snapshots)?;
     push_json(
         &mut properties,

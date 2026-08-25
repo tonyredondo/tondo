@@ -23,8 +23,8 @@ La ejecución normal (`execute`, `execute_with_limits` y
 `execute_with_limits_and_copy_strategy`) devuelve `diagnostics = None`.
 `VmExecution.diagnostics` solo contiene una traza cuando se pidió el perfil.
 El collector pertenece a una ejecución y nunca se comparte entre procesos,
-intentos, shards o suites; el runner futuro debe conservar además el proceso
-nuevo exigido por D0 para cada intento.
+intentos, shards o suites; `DIAG-TEST-001` conserva además el proceso nuevo
+exigido por D0 para cada intento.
 
 El módulo `runtime::diagnostics` exporta únicamente tipos de datos para que el
 runner pueda consumir la traza. `DiagnosticSession`, los hooks de emisión y las
@@ -85,8 +85,9 @@ Esta capa no serializa reportes ni dumps: el límite de 16 MiB se aplica en el
 writer de `DIAG-TEST-001` y el de 256 MiB en el writer de `DUMP-001`. El collector no inventa
 una conclusión de race: entrega memoria, lifecycle, synchronization, identidad
 y stacks para que `RACE-001` calcule vector clocks sobre caminos ejecutados.
-`RACE-001`, `LEAK-001` y el writer lógico de `DUMP-001` están implementados
-para la VM hosted; runner y captura física de señales siguen pendientes.
+`RACE-001`, `LEAK-001`, el writer lógico de `DUMP-001` y el runner de
+`DIAG-TEST-001` están implementados para la VM hosted; la captura física de
+señales sigue pendiente.
 
 ## 5. Verificación
 

@@ -32,7 +32,30 @@ use crate::test_backend;
 use crate::types::TypeError;
 use crate::types::{ScalarType, TypeKind};
 use tondo_vm::bytecode::BytecodeSpan;
-use tondo_vm::runtime::{RuntimeValue, VmError, VmLimits, VmOutcome, VmPanic, execute_with_limits};
+use tondo_vm::runtime::{
+    DiagnosticConfig, DiagnosticTrace, RuntimeValue, ValueCopyStrategy, VmError, VmLimits,
+    VmOutcome, VmPanic, execute_with_limits, execute_with_limits_and_copy_strategy_and_diagnostics,
+};
+
+/// Dynamic diagnostic profiles requested by a tool invocation.  They are
+/// deliberately a compiler/CLI concern: no source keyword or stdlib API is
+/// introduced by opting into runtime observations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum DiagnosticProfile {
+    Race,
+    Leaks,
+    Crash,
+}
+
+impl DiagnosticProfile {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Race => "race",
+            Self::Leaks => "leaks",
+            Self::Crash => "crash",
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Operation {
@@ -297,6 +320,7 @@ pub struct CompilationRequest {
     build_inputs: DeclaredBuildInputs,
     documentation_fixture: bool,
     warning_profiles: BTreeSet<WarningProfile>,
+    diagnostic_profiles: BTreeSet<DiagnosticProfile>,
     test_entry: Option<String>,
     test_envelope: Option<crate::test_control::EnvelopeHandle>,
     test_participation_entries: Vec<String>,
@@ -356,6 +380,7 @@ impl CompilationRequest {
             build_inputs: DeclaredBuildInputs::default(),
             documentation_fixture: false,
             warning_profiles: BTreeSet::new(),
+            diagnostic_profiles: BTreeSet::new(),
             test_entry: None,
             test_envelope: None,
             test_participation_entries: Vec::new(),
@@ -387,6 +412,17 @@ impl CompilationRequest {
         profiles: impl IntoIterator<Item = WarningProfile>,
     ) -> Self {
         self.warning_profiles = profiles.into_iter().collect();
+        self
+    }
+
+    /// Enables bounded hosted runtime observations for the selected profiles.
+    /// The VM creates one collector per execution; an empty set keeps the
+    /// zero-overhead execution path.
+    pub fn with_diagnostic_profiles(
+        mut self,
+        profiles: impl IntoIterator<Item = DiagnosticProfile>,
+    ) -> Self {
+        self.diagnostic_profiles = profiles.into_iter().collect();
         self
     }
 
@@ -470,6 +506,10 @@ impl CompilationRequest {
         &self.warning_profiles
     }
 
+    pub fn diagnostic_profiles(&self) -> &BTreeSet<DiagnosticProfile> {
+        &self.diagnostic_profiles
+    }
+
     pub fn test_entry(&self) -> Option<&str> {
         self.test_entry.as_deref()
     }
@@ -499,6 +539,7 @@ impl CompilationRequest {
         .with_program_arguments(self.program_arguments.clone())
         .with_declared_build_inputs(self.build_inputs.clone())
         .with_warning_profiles(self.warning_profiles.clone())
+        .with_diagnostic_profiles(self.diagnostic_profiles.clone())
         .with_test_entry(entry.id().to_owned());
         Ok(request)
     }
@@ -541,6 +582,7 @@ impl CompilationRequest {
                 .with_program_arguments(self.program_arguments.clone())
                 .with_declared_build_inputs(self.build_inputs.clone())
                 .with_warning_profiles(self.warning_profiles.clone())
+                .with_diagnostic_profiles(self.diagnostic_profiles.clone())
                 .with_test_participation(
                     entries.iter().map(|entry| entry.id().to_owned()),
                     participation,
@@ -561,6 +603,7 @@ pub struct CompilationOutput {
     exit_code: u8,
     diagnostics: DiagnosticReport,
     stdout: Vec<u8>,
+    diagnostic_trace: Option<DiagnosticTrace>,
     semantic_model: Option<SemanticModel>,
     products: Option<BuildProducts>,
 }
@@ -580,6 +623,12 @@ impl CompilationOutput {
 
     pub fn stdout(&self) -> &[u8] {
         &self.stdout
+    }
+
+    /// Returns the bounded runtime trace produced by an opted-in diagnostic
+    /// execution.  Normal checks/runs leave this absent.
+    pub fn diagnostic_trace(&self) -> Option<&DiagnosticTrace> {
+        self.diagnostic_trace.as_ref()
     }
 
     pub fn semantic_model(&self) -> Option<&SemanticModel> {
@@ -781,6 +830,7 @@ fn execute_with_derives(
             exit_code: 1,
             diagnostics: bag.resolve(request.edition.as_str(), &request.sources)?,
             stdout: Vec::new(),
+            diagnostic_trace: None,
             semantic_model: None,
             products: None,
         });
@@ -793,6 +843,7 @@ fn execute_with_derives(
             exit_code: 1,
             diagnostics: bag.resolve(request.edition.as_str(), &request.sources)?,
             stdout: Vec::new(),
+            diagnostic_trace: None,
             semantic_model: None,
             products: None,
         });
@@ -843,6 +894,7 @@ fn execute_with_derives(
             exit_code: 1,
             diagnostics: lexical_diagnostics.resolve(request.edition.as_str(), &request.sources)?,
             stdout: Vec::new(),
+            diagnostic_trace: None,
             semantic_model: None,
             products: None,
         });
@@ -882,6 +934,7 @@ fn execute_with_derives(
             exit_code: 1,
             diagnostics: syntax_diagnostics.resolve(request.edition.as_str(), &request.sources)?,
             stdout: Vec::new(),
+            diagnostic_trace: None,
             semantic_model: None,
             products: None,
         });
@@ -899,6 +952,7 @@ fn execute_with_derives(
             diagnostics: DiagnosticBag::new()
                 .resolve(request.edition.as_str(), &request.sources)?,
             stdout,
+            diagnostic_trace: None,
             semantic_model: None,
             products: None,
         });
@@ -927,6 +981,7 @@ fn execute_with_derives(
             exit_code: 1,
             diagnostics,
             stdout: Vec::new(),
+            diagnostic_trace: None,
             semantic_model: Some(SemanticModel::after_resolution(
                 request.sources,
                 resolved_program,
@@ -969,6 +1024,7 @@ fn execute_with_derives(
             exit_code: 1,
             diagnostics,
             stdout: Vec::new(),
+            diagnostic_trace: None,
             semantic_model: Some(SemanticModel::with_hir(
                 request.sources,
                 resolved_program,
@@ -1005,6 +1061,7 @@ fn execute_with_derives(
                     exit_code: 1,
                     diagnostics,
                     stdout: Vec::new(),
+                    diagnostic_trace: None,
                     semantic_model: Some(SemanticModel::with_hir(
                         request.sources,
                         resolved_program,
@@ -1102,6 +1159,7 @@ fn execute_with_derives(
             exit_code: 1,
             diagnostics,
             stdout: Vec::new(),
+            diagnostic_trace: None,
             semantic_model: Some(SemanticModel::with_hir(
                 request.sources,
                 resolved_program,
@@ -1268,12 +1326,18 @@ fn execute_with_derives(
                 if let Some(participation) = request.test_participation.clone() {
                     host.install_testing_participation(participation);
                 }
-                let execution = match execute_with_limits(
-                    &bytecode,
-                    function,
-                    &mut host,
-                    vm_limits(request.limits),
-                ) {
+                let execution = match if request.diagnostic_profiles.is_empty() {
+                    execute_with_limits(&bytecode, function, &mut host, vm_limits(request.limits))
+                } else {
+                    execute_with_limits_and_copy_strategy_and_diagnostics(
+                        &bytecode,
+                        function,
+                        &mut host,
+                        vm_limits(request.limits),
+                        ValueCopyStrategy::default(),
+                        Some(DiagnosticConfig::default()),
+                    )
+                } {
                     Ok(execution) => execution,
                     Err(VmError::InvalidLimits(resource)) => {
                         return syntax_resource_output(
@@ -1294,6 +1358,7 @@ fn execute_with_derives(
                     Err(error) => return Err(error.into()),
                 };
 
+                let runtime_trace = execution.diagnostics.clone();
                 let (diagnostic, exit_code) = match execution.outcome {
                     VmOutcome::Returned(RuntimeValue::Unit) => (None, 0),
                     VmOutcome::Returned(RuntimeValue::ResultOk(value))
@@ -1315,7 +1380,7 @@ fn execute_with_derives(
                     }
                 };
                 drop(parsed_sources);
-                return semantic_output(
+                let mut output = semantic_output(
                     request,
                     resolved_program,
                     hir_program,
@@ -1323,7 +1388,9 @@ fn execute_with_derives(
                     diagnostic,
                     exit_code,
                     host.take_stdout(),
-                );
+                )?;
+                output.diagnostic_trace = runtime_trace;
+                return Ok(output);
             }
         }
     }
@@ -1349,6 +1416,7 @@ fn execute_with_derives(
         exit_code: 1,
         diagnostics: report,
         stdout: Vec::new(),
+        diagnostic_trace: None,
         semantic_model: Some(SemanticModel::with_hir(
             request.sources,
             resolved_program,
@@ -1569,6 +1637,7 @@ fn execute_test(request: CompilationRequest) -> Result<CompilationOutput, Driver
             exit_code: 1,
             diagnostics: bag.resolve(request.edition.as_str(), &request.sources)?,
             stdout: Vec::new(),
+            diagnostic_trace: None,
             semantic_model: None,
             products: None,
         });
@@ -1598,6 +1667,7 @@ fn execute_test(request: CompilationRequest) -> Result<CompilationOutput, Driver
             exit_code: 1,
             diagnostics: bag.resolve(request.edition.as_str(), &request.sources)?,
             stdout: Vec::new(),
+            diagnostic_trace: None,
             semantic_model: None,
             products: None,
         });
@@ -1673,7 +1743,8 @@ fn execute_test(request: CompilationRequest) -> Result<CompilationOutput, Driver
     )?
     .with_program_arguments(request.program_arguments.clone())
     .with_declared_build_inputs(request.build_inputs.clone())
-    .with_warning_profiles(request.warning_profiles.clone());
+    .with_warning_profiles(request.warning_profiles.clone())
+    .with_diagnostic_profiles(request.diagnostic_profiles.clone());
     if let Some(envelope) = test_envelope {
         nested = nested.with_test_envelope(envelope);
     }
@@ -1735,6 +1806,7 @@ fn backend_diagnostic_output(
         exit_code: 1,
         diagnostics: bag.resolve(request.edition.as_str(), &request.sources)?,
         stdout: Vec::new(),
+        diagnostic_trace: None,
         semantic_model: None,
         products: None,
     })
@@ -1975,6 +2047,7 @@ fn semantic_output(
         exit_code,
         diagnostics,
         stdout,
+        diagnostic_trace: None,
         semantic_model: Some(SemanticModel::with_hir(request.sources, resolved, hir)),
         products: Some(products),
     })
@@ -2067,6 +2140,7 @@ fn syntax_resource_output(
         exit_code: 1,
         diagnostics: bag.resolve(request.edition.as_str(), &request.sources)?,
         stdout: Vec::new(),
+        diagnostic_trace: None,
         semantic_model: None,
         products: None,
     })

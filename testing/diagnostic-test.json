@@ -1,0 +1,76 @@
+{
+  "format": "tondo-diagnostic-test/1",
+  "owner": "toolchain.diagnostics",
+  "edition": "0.1",
+  "phase": "DIAG-TEST-001",
+  "status": "implemented",
+  "contract": "docs/contracts/diagnostic-test.md",
+  "implementation": [
+    "crates/tondo-cli/src/main.rs",
+    "crates/tondo-cli/src/test_cli.rs",
+    "crates/tondo-compiler/src/driver.rs",
+    "crates/tondo-compiler/src/test_result.rs",
+    "crates/tondo-compiler/src/test_junit.rs"
+  ],
+  "tests": [
+    "crates/tondo-cli/src/main.rs",
+    "crates/tondo-cli/src/test_cli.rs",
+    "crates/tondo-cli/tests/cli.rs",
+    "scripts/diagnostic-test-check.sh",
+    "scripts/diagnostic-test-test.sh"
+  ],
+  "profiles": ["race", "leaks", "crash"],
+  "report": {
+    "format": "tondo-diagnostic-report/1",
+    "json_field": "diagnostics",
+    "junit_property": "tondo.diagnostics",
+    "identity": [
+      "run_id", "attempt_id", "shard", "profile", "target", "backend",
+      "toolchain", "source_revision"
+    ],
+    "statuses": ["clean", "finding", "unsupported", "failed"],
+    "limitations_required": true,
+    "artifacts_content_addressed": true,
+    "payloads_omitted_by_default": true
+  },
+  "worker": {
+    "process_format": "tondo-test-worker-process/2",
+    "batch_format": "tondo-test-worker-batch/2",
+    "fresh_process_per_attempt": true,
+    "retry_state_isolated": true,
+    "repeat_state_isolated": true,
+    "shard_identity_preserved": true,
+    "suite_setup_teardown_included": true
+  },
+  "limits": {
+    "max_profiles": 3,
+    "max_report_bytes": 16777216,
+    "max_dump_bytes": 268435456,
+    "fail_closed": true
+  },
+  "exit_status": {
+    "success": 0,
+    "finding": 1,
+    "unsupported": 2,
+    "toolchain_failure": 3,
+    "precedence": ["toolchain_failure", "unsupported", "finding", "test_status"]
+  },
+  "negative_cases": [
+    "unknown-profile",
+    "duplicate-profile",
+    "empty-profile",
+    "profiles-with-all",
+    "list-with-diagnostics",
+    "stale-worker-protocol",
+    "missing-attempt-identity",
+    "duplicate-attempt-profile",
+    "missing-limitations",
+    "diagnostic-artifact-not-in-attempt",
+    "retry-state-reuse",
+    "stale-shard-identity",
+    "unsupported-silently-omitted",
+    "report-over-limit",
+    "stale-frontier"
+  ],
+  "next_blocks": ["DIAG-CI-001"]
+}

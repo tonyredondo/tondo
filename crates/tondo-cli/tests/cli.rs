@@ -834,7 +834,7 @@ fn hidden_worker_reports_infrastructure_without_leaking_process_errors() {
         .unwrap();
     assert!(output.status.success());
     let response: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(response["format"], "tondo-test-worker-batch/1");
+    assert_eq!(response["format"], "tondo-test-worker-batch/2");
     assert_eq!(response["responses"][0][1]["status"], "infrastructure");
     assert!(
         response["responses"][0][1]["error"]["message"]
@@ -888,6 +888,95 @@ fn test_command_executes_retry_rounds_and_preserves_each_attempt() {
     assert_eq!(report.tests()[0].attempts[0].round, 0);
     assert_eq!(report.tests()[0].attempts[1].round, 1);
     assert_eq!(report.metadata().retry.rounds.len(), 1);
+}
+
+#[test]
+fn diagnostics_are_attached_to_each_retry_and_projected_to_junit() {
+    let directory = test_project(b"test smoke { assert(false) }\n");
+    let junit = directory.join("target/diagnostics.xml");
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .current_dir(&directory)
+        .args([
+            "test",
+            "--diagnostics",
+            "all",
+            "--retry",
+            "1",
+            "--test-format",
+            "json",
+            "--report",
+        ])
+        .arg(format!("junit={}", junit.display()))
+        .output()
+        .unwrap();
+    let report = TestReport::parse(&output.stdout).unwrap();
+    let junit_bytes = fs::read(&junit).unwrap();
+    fs::remove_dir_all(directory).unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let attempts = &report.tests()[0].attempts;
+    assert_eq!(attempts.len(), 2);
+    assert!(
+        attempts
+            .iter()
+            .all(|attempt| attempt.diagnostics.len() == 3)
+    );
+    assert_ne!(
+        attempts[0].diagnostics[0].attempt_id,
+        attempts[1].diagnostics[0].attempt_id
+    );
+    assert_eq!(
+        attempts[0].diagnostics[0].run_id,
+        attempts[1].diagnostics[0].run_id
+    );
+    assert!(String::from_utf8_lossy(&junit_bytes).contains("tondo.diagnostics"));
+}
+
+#[test]
+fn crash_diagnostics_publish_a_content_addressed_dump_descriptor() {
+    let directory = test_project(b"test smoke { panic(\"boom\") }\n");
+    let artifacts = directory.join("diagnostic-artifacts");
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .current_dir(&directory)
+        .args([
+            "test",
+            "--diagnostics",
+            "crash",
+            "--artifacts",
+            "diagnostic-artifacts",
+            "--test-format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    let report = TestReport::parse(&output.stdout).unwrap_or_else(|error| {
+        panic!(
+            "{error}; status={:?}; stdout={:?}; stderr={:?}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+    });
+    let attempt = &report.tests()[0].attempts[0];
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(attempt.diagnostics.len(), 1);
+    assert_eq!(attempt.diagnostics[0].profile, "crash");
+    assert_eq!(
+        attempt.diagnostics[0].status,
+        tondo_compiler::test_result::DiagnosticStatus::Finding
+    );
+    assert_eq!(
+        attempt.diagnostics[0].artifacts[0].name,
+        "diagnostic-crash.tdump"
+    );
+    assert!(
+        attempt
+            .artifacts
+            .iter()
+            .any(|artifact| artifact.name == "diagnostic-crash.tdump")
+    );
+    assert!(artifacts.exists());
+    fs::remove_dir_all(directory).unwrap();
 }
 
 #[test]

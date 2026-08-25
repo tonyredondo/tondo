@@ -58,7 +58,7 @@ honestidad en sus reportes y gates:
 | D1 Instrumentación VM | `DIAG-RUNTIME-001` | Registro de task/thread, eventos de memoria/sync, roots, recursos, source maps y quiescencia |
 | D2 Detectores | `RACE-001`, `LEAK-001` | `RACE-001` y `LEAK-001` implementados en VM hosted con corpus positivo/negativo y límites |
 | D3 Dumps | `DUMP-001` | Captura lógica hosted, redacción, fixtures `.tdump`, analizador human/JSON y corrupción rechazada; cerrado |
-| D4 Runner | `DIAG-TEST-001` | Artifacts por intento, retries aislados, sharding, JUnit/JSON y clasificación unsupported |
+| D4 Runner | `DIAG-TEST-001` | Artifacts por intento, retries aislados, sharding, JUnit/JSON y clasificación unsupported (cerrado hosted) |
 | D5 CI | `DIAG-CI-001` | Lanes opt-in, fuzzing, regression corpus, budgets y promotion gate sin alterar baseline normal |
 | D6 Native | `NATIVE-001`, `NATIVE-MEM-ADR-001`, `NATIVE-ABI-001`, `DIAG-NATIVE-001` | Paridad VM/native de eventos, unwind, source maps, roots, cleanup y dumps |
 | D7 Owners B | `DIAG-STDLIB-001` | Adapters y corpus de channel/sync/executor/net sobre VM y nativo antes de S1 |
@@ -98,7 +98,8 @@ versiones, hashes o secciones corruptas.
   propio coste y presupuesto.
 - La spec de testing conserva logs, tags, artifacts, JUnit, retries y shards;
   el diagnóstico se añade como descriptor por intento, no como un segundo
-  runner.
+  runner; `DIAG-TEST-001` cierra la integración hosted y conserva la frontera
+  pendiente de lanes CI en `DIAG-CI-001`.
 - `NATIVE-001` compara debugging y diagnóstico junto a corrección,
   rendimiento, memoria, distribución y mantenimiento.
 - `NATIVE-MEM-ADR-001` incluye roots, retain/release, recursos, ciclos,

@@ -69,5 +69,5 @@
   },
   "public_stdlib_api": false,
   "source_keywords_added": false,
-  "next_blocks": ["DIAG-TEST-001", "DIAG-CI-001"]
+  "next_blocks": ["DIAG-CI-001"]
 }

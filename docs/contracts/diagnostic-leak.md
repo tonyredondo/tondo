@@ -62,7 +62,7 @@ Los estados son:
   límite/configuración inválida.
 
 Cada intento se ejecuta en un proceso nuevo. Esta propiedad, garantizada por
-el runner futuro y ya fijada en `DIAG-SPEC-001`, evita que retries, shards o
+`DIAG-TEST-001` y ya fijada en `DIAG-SPEC-001`, evita que retries, shards o
 suites hermanas hereden el heap o el ledger de recursos de otro intento.
 
 ## 4. API Rust y privacidad

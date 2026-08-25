@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 
-use tondo_compiler::driver::DiagnosticFormat;
+use tondo_compiler::driver::{DiagnosticFormat, DiagnosticProfile};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TestFormat {
@@ -76,6 +76,7 @@ pub struct TestCliPlan {
     pub artifacts: Option<PathBuf>,
     pub update_snapshots: bool,
     pub diagnostic_format: DiagnosticFormat,
+    pub diagnostics: BTreeSet<DiagnosticProfile>,
     pub test_format: TestFormat,
     pub reports: Vec<TestReportOutput>,
     pub show_output: bool,
@@ -111,6 +112,7 @@ pub fn parse(arguments: &[OsString]) -> Result<TestCliPlan, String> {
         artifacts: None,
         update_snapshots: false,
         diagnostic_format: DiagnosticFormat::Human,
+        diagnostics: BTreeSet::new(),
         test_format: TestFormat::Human,
         reports: Vec::new(),
         show_output: false,
@@ -164,6 +166,7 @@ pub fn parse(arguments: &[OsString]) -> Result<TestCliPlan, String> {
                     | "--repeat"
                     | "--artifacts"
                     | "--diagnostic-format"
+                    | "--diagnostics"
                     | "--test-format"
                     | "--report"
             ) {
@@ -188,6 +191,7 @@ pub fn parse(arguments: &[OsString]) -> Result<TestCliPlan, String> {
                     | "--repeat"
                     | "--artifacts"
                     | "--diagnostic-format"
+                    | "--diagnostics"
                     | "--test-format"
                     | "--report"
             ) {
@@ -332,6 +336,11 @@ fn parse_value(
             };
             Ok(())
         }
+        "--diagnostics" => {
+            once_value(seen, "--diagnostics")?;
+            plan.diagnostics = parse_diagnostics(value)?;
+            Ok(())
+        }
         "--test-format" => {
             once_value(seen, "--test-format")?;
             plan.test_format = match value {
@@ -385,6 +394,7 @@ pub(crate) fn validate_combinations(plan: &TestCliPlan) -> Result<TestCliPlan, S
             || plan.repeat_explicit
             || plan.update_snapshots
             || plan.artifacts.is_some()
+            || !plan.diagnostics.is_empty()
         {
             return Err("`--list` cannot be combined with execution-only options".into());
         }
@@ -409,6 +419,40 @@ pub(crate) fn validate_combinations(plan: &TestCliPlan) -> Result<TestCliPlan, S
         return Err("`--update-snapshots` requires canonical order, one job, and no shard/retry/repeat/flaky policy".into());
     }
     Ok(plan.clone())
+}
+
+pub(crate) fn parse_diagnostics(value: &str) -> Result<BTreeSet<DiagnosticProfile>, String> {
+    if value.is_empty() {
+        return Err("`--diagnostics` requires one or more profiles".into());
+    }
+    let mut profiles = BTreeSet::new();
+    for part in value.split(',') {
+        let profile = match part {
+            "race" => DiagnosticProfile::Race,
+            "leaks" => DiagnosticProfile::Leaks,
+            "crash" => DiagnosticProfile::Crash,
+            "all" if profiles.is_empty() && !value.contains(",") => {
+                profiles.extend([
+                    DiagnosticProfile::Race,
+                    DiagnosticProfile::Leaks,
+                    DiagnosticProfile::Crash,
+                ]);
+                continue;
+            }
+            "all" => return Err("`all` cannot be combined with another profile".into()),
+            "" => return Err("`--diagnostics` does not allow an empty profile".into()),
+            other => return Err(format!("unknown diagnostic profile `{other}`")),
+        };
+        if !profiles.insert(profile) {
+            return Err(format!(
+                "diagnostic profile `{part}` appears more than once"
+            ));
+        }
+    }
+    if profiles.len() > 3 {
+        return Err("`--diagnostics` accepts at most three profiles".into());
+    }
+    Ok(profiles)
 }
 
 fn set_selector(plan: &mut TestCliPlan, selector: TestSelector) -> Result<(), String> {
@@ -597,6 +641,7 @@ mod tests {
             "2",
             "--test-format=json",
             "--diagnostic-format=json",
+            "--diagnostics=all",
             "--report",
             "json=target/tests.json",
             "--report=junit=target/tests.xml",
@@ -619,6 +664,7 @@ mod tests {
         assert_eq!(plan.retry, 2);
         assert_eq!(plan.reports.len(), 2);
         assert_eq!(plan.diagnostic_format, DiagnosticFormat::Json);
+        assert_eq!(plan.diagnostics.len(), 3);
         assert_eq!(plan.test_format, TestFormat::Json);
     }
 
@@ -682,6 +728,20 @@ mod tests {
             let error = parse(&args(values)).unwrap_err();
             assert!(error.contains(expected), "{values:?}: {error}");
         }
+    }
+
+    #[test]
+    fn diagnostics_profiles_are_closed_and_list_mode_rejects_them() {
+        let plan = parse(&args(&["test", "--diagnostics", "race,crash"])).unwrap();
+        assert!(plan.diagnostics.contains(&DiagnosticProfile::Race));
+        assert!(plan.diagnostics.contains(&DiagnosticProfile::Crash));
+        for value in ["", "race,", "all,race", "race,race", "unknown"] {
+            assert!(
+                parse(&args(&["test", "--diagnostics", value])).is_err(),
+                "{value}"
+            );
+        }
+        assert!(parse(&args(&["test", "--list", "--diagnostics", "race"])).is_err());
     }
 
     #[test]

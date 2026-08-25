@@ -49,9 +49,9 @@ formato inválido termina con status de uso `2`.
 ## Alcance y siguiente frontera
 
 La ruta de señal async-signal-safe y el helper que materializa un dump tras un
-SIGSEGV/abort son trabajo de `DIAG-NATIVE-001`. `DIAG-TEST-001` asociará estos
-bytes con cada intento, retry y shard; este bloque no inventa integración del
-runner ni del backend nativo.
+SIGSEGV/abort son trabajo de `DIAG-NATIVE-001`. `DIAG-TEST-001` asocia estos
+bytes con cada intento, retry y shard mediante el artifact store; no inventa
+integración del backend nativo.
 
 La evidencia machine-readable vive en
 [`testing/diagnostic-dump.json`](../../testing/diagnostic-dump.json), y los
