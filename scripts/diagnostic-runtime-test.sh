@@ -25,7 +25,7 @@ expect_failure public-hooks "$tmp/public-hooks.json"
 jq '.limits.max_events = 0' testing/diagnostic-runtime.json > "$tmp/invalid-budget.json"
 expect_failure invalid-budget "$tmp/invalid-budget.json"
 
-jq '.next_blocks = ["DIAG-RUNTIME-001"]' testing/diagnostic-runtime.json > "$tmp/stale-next.json"
+jq '.next_blocks = ["RACE-001", "LEAK-001", "DUMP-001"]' testing/diagnostic-runtime.json > "$tmp/stale-next.json"
 expect_failure stale-next "$tmp/stale-next.json"
 
 jq '.required_context |= map(select(. != "roots-retainers"))' \

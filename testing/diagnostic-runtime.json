@@ -56,5 +56,5 @@
   "normal_path": "no-collector-and-no-events",
   "semantic_equivalence": true,
   "native_parity": "DIAG-NATIVE-001",
-  "next_blocks": ["RACE-001", "LEAK-001", "DUMP-001"]
+  "next_blocks": ["LEAK-001", "DUMP-001"]
 }

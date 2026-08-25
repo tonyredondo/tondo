@@ -79,6 +79,10 @@ run_step diagnostic-runtime-contract \
     scripts/diagnostic-runtime-check.sh
 run_step diagnostic-runtime-contract-tests \
     scripts/diagnostic-runtime-test.sh
+run_step diagnostic-race-contract \
+    scripts/diagnostic-race-check.sh
+run_step diagnostic-race-contract-tests \
+    scripts/diagnostic-race-test.sh
 run_step stdlib-async-group-contract \
     scripts/stdlib-async-group-check.sh
 run_step stdlib-async-group-contract-tests \

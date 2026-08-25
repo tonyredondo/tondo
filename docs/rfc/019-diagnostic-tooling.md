@@ -14,8 +14,9 @@ propuesta añade perfiles dinámicos opt-in al CLI y un analizador de dumps, con
 una semántica común entre la VM y el futuro backend nativo. No añade keywords,
 no duplica APIs sync/async y no convierte la stdlib en un framework de
 instrumentación. `DEC-018` acepta esta frontera y `DIAG-SPEC-001` congela ahora
-sus envelopes, límites, privacidad, identidad y exit status; los detectores
-siguen sin implementación runtime.
+sus envelopes, límites, privacidad, identidad y exit status; `RACE-001` ya
+implementa el detector hosted sobre la traza runtime y los detectores restantes
+siguen separados.
 
 La motivación toma como referencia los límites conocidos de los detectores
 dinámicos: Go documenta que su race detector observa únicamente rutas
@@ -55,7 +56,7 @@ honestidad en sus reportes y gates:
 | D0 Contrato | `DIAG-SPEC-001` | Schema de reporte/dump, perfiles, identidad, privacidad, exit status y negativos; cerrado |
 | D0.5 Fronteras runtime | `STD-CONC-001`, `STD-SYNC-001`, `STD-EXEC-001`, `STD-NET-001` | Contratos de eventos que consumirá la instrumentación, sin implementar todavía los owners |
 | D1 Instrumentación VM | `DIAG-RUNTIME-001` | Registro de task/thread, eventos de memoria/sync, roots, recursos, source maps y quiescencia |
-| D2 Detectores | `RACE-001`, `LEAK-001` | Corpus positivo/negativo, reducción de reportes, límites y coste medido |
+| D2 Detectores | `RACE-001`, `LEAK-001` | `RACE-001` implementado en VM hosted con corpus positivo/negativo y límites; `LEAK-001` sigue pendiente |
 | D3 Dumps | `DUMP-001` | Captura segura, redacción, fixtures `.tdump`, analizador human/JSON y corrupción rechazada |
 | D4 Runner | `DIAG-TEST-001` | Artifacts por intento, retries aislados, sharding, JUnit/JSON y clasificación unsupported |
 | D5 CI | `DIAG-CI-001` | Lanes opt-in, fuzzing, regression corpus, budgets y promotion gate sin alterar baseline normal |
@@ -71,7 +72,8 @@ producir un reporte sin una observación positiva/negativa real.
 ### Race
 
 El runtime registra accesos, task/thread IDs, stacks de creación y edges de
-happens-before. `Ref[T]`, `Pointer[T]`, `unsafe`, FFI, locks, channels,
+happens-before; `RACE-001` los analiza con vector clocks e identidad de
+almacenamiento/ruta. `Ref[T]`, `Pointer[T]`, `unsafe`, FFI, locks, channels,
 atomics, `spawn`, `Join` y suspensión son fronteras explícitas del modelo. La
 campaña reporta conflictos observados y no intenta demostrar ausencia global.
 

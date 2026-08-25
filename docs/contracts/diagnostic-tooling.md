@@ -6,8 +6,9 @@
 calendario civil de `std.time` ya están cerrados por
 `STD-ASYNC-GROUP-SPEC-001`, `STD-CONC-001`, `STD-SYNC-001`, `STD-EXEC-001`,
 `STD-NET-001` y `STD-CIVIL-TIME-001`. La primera implementación runtime de la
-VM hosted está cerrada por `DIAG-RUNTIME-001`; las leaves de detectores,
-runner, dumps y paridad native permanecen pendientes en los bloques `DIAG-*`
+VM hosted está cerrada por `DIAG-RUNTIME-001`; el detector de races hosted está
+cerrado por `RACE-001`, mientras que las leaves de retención, crash, runner,
+dumps y paridad native permanecen pendientes en los bloques `DIAG-*`
 posteriores.
 
 Este documento define la frontera entre el lenguaje, el runtime y las
@@ -48,7 +49,8 @@ en un resultado verde.
 
 ## 2. Race detector
 
-`race` es un análisis dinámico. Instrumenta los accesos a memoria compartida y
+`race` es un análisis dinámico implementado en la VM hosted por `RACE-001`.
+Instrumenta los accesos a memoria compartida y
 las operaciones que crean o establecen orden entre unidades de ejecución:
 
 - `Ref[T]`, `Pointer[T]`, regiones mutables, `unsafe` y llamadas FFI;
@@ -56,7 +58,8 @@ las operaciones que crean o establecen orden entre unidades de ejecución:
 - channels, `std.sync`, locks, atomics y wakeups del executor; y
 - creación, transferencia y terminación de tasks/threads.
 
-El runtime conserva un reloj lógico/happens-before y metadatos de origen. Un
+El runtime conserva un reloj lógico/vector-clock, identidad generacional de
+almacenamiento y metadatos de origen. Un
 reporte identifica como mínimo el acceso de cada participante, lectura o
 escritura, rango lógico, fuente y source map, task/thread, stack de acceso,
 stack de creación y la arista de sincronización que faltaba. La detección se
@@ -209,8 +212,9 @@ ledger hosted; `DIAG-NATIVE-001` prueba después ARC/ciclos/FFI nativos.
 `tondo-diagnostics-json/1`, prohíbe keywords y APIs paralelas en `std`, exige
 estado `unsupported-diagnostic-profile` explícito y fija redacción/payloads
 fuera del envelope por defecto. La instrumentación VM hosted ejecutable está
-documentada por [`diagnostic-runtime.md`](diagnostic-runtime.md), mientras que
-los detectores consumidores aún no están implementados.
+documentada por [`diagnostic-runtime.md`](diagnostic-runtime.md) y el detector
+de races por [`diagnostic-race.md`](diagnostic-race.md). Los detectores de
+retención/crash, runner y paridad native siguen pendientes.
 
 ## 9. No objetivos de esta revisión
 
@@ -218,5 +222,6 @@ los detectores consumidores aún no están implementados.
 - No se añade un profiler general, un heap snapshot público ni un uploader.
 - No se trata un reporte limpio como prueba estática de ausencia de races o
   fugas.
-- No se marca ningún bloque `RACE-*`, `LEAK-*`, `DUMP-*`, `NATIVE-*` o S1A como
-  implementado por la mera existencia de este contrato.
+- No se marca ningún bloque `LEAK-*`, `DUMP-*`, `NATIVE-*` o S1A como
+  implementado por la mera existencia de este contrato; `RACE-001` solo está
+  cerrado por la evidencia ejecutable de su propio contrato.

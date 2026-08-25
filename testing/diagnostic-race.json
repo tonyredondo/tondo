@@ -1,0 +1,63 @@
+{
+  "format": "tondo-diagnostic-race/1",
+  "owner": "toolchain.diagnostics",
+  "edition": "0.1",
+  "phase": "RACE-001",
+  "status": "implemented",
+  "contract": "docs/contracts/diagnostic-race.md",
+  "implementation": [
+    "crates/tondo-vm/src/runtime/race.rs",
+    "crates/tondo-vm/src/runtime/diagnostics.rs",
+    "crates/tondo-vm/src/runtime/execute.rs",
+    "crates/tondo-vm/src/runtime.rs"
+  ],
+  "tests": [
+    "crates/tondo-vm/src/runtime/race.rs",
+    "crates/tondo-vm/src/runtime/execute.rs",
+    "scripts/diagnostic-race-check.sh",
+    "scripts/diagnostic-race-test.sh"
+  ],
+  "algorithm": {
+    "clock": "vector-clock",
+    "ordering": "happens-before",
+    "conflict": "same-storage-one-write-different-task-without-hb",
+    "observed_only": true
+  },
+  "accesses": ["Read", "Write", "Move"],
+  "location_identity": {
+    "shared": "storage_id+path_hash",
+    "local": "task_id+frame+slot+path_hash"
+  },
+  "required_context": [
+    "memory-accesses",
+    "task-lifecycle",
+    "synchronization",
+    "source-map",
+    "access-stack",
+    "creation-stack"
+  ],
+  "status_values": ["clean", "finding", "unsupported"],
+  "limits": {
+    "max_observations": 100000,
+    "max_findings": 100000,
+    "max_events": 1000000,
+    "max_stack_depth": 256,
+    "fail_closed": true
+  },
+  "privacy": {
+    "payloads": "omitted-by-default",
+    "network_upload": false
+  },
+  "public_stdlib_api": false,
+  "native_parity": "DIAG-NATIVE-001",
+  "unsupported_reasons": [
+    "truncated-trace",
+    "missing-task-lifecycle",
+    "missing-source-map",
+    "missing-synchronization-context",
+    "observation-limit",
+    "finding-limit",
+    "invalid-configuration"
+  ],
+  "next_blocks": ["LEAK-001", "DUMP-001"]
+}

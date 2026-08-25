@@ -724,8 +724,9 @@ impl<'program, 'host> Engine<'program, 'host> {
         parent: Option<usize>,
         state: DiagnosticTaskState,
     ) -> Result<(), VmError> {
+        let stack = self.diagnostic_stack(self.frames.len().saturating_sub(1));
         if let Some(diagnostics) = &mut self.diagnostics {
-            diagnostics.task(Self::task_id(task), parent.map(Self::task_id), state)?;
+            diagnostics.task(Self::task_id(task), parent.map(Self::task_id), state, stack)?;
         }
         Ok(())
     }
@@ -808,9 +809,31 @@ impl<'program, 'host> Engine<'program, 'host> {
         place: &BytecodePlace,
         access: DiagnosticMemoryAccess,
     ) -> Result<(), VmError> {
+        if self.diagnostics.is_none() {
+            return Ok(());
+        }
         let Some(source) = self.diagnostic_source(frame) else {
             return Ok(());
         };
+        let path = self
+            .validate_place(
+                frame,
+                place,
+                matches!(
+                    access,
+                    DiagnosticMemoryAccess::Write | DiagnosticMemoryAccess::Move
+                ),
+            )
+            .map_err(|failure| match failure {
+                PlaceFailure::Vm(error) => error,
+                PlaceFailure::Panic(_, message) => VmError::invariant(message),
+            })?;
+        let storage_id = self
+            .diagnostic_root_value(path.root)
+            .and_then(Value::heap_handle)
+            .map(HeapHandle::diagnostic_id);
+        let path_hash = diagnostic_path_hash(&path.components);
+        let stack = self.diagnostic_stack(frame);
         if let Some(diagnostics) = &mut self.diagnostics {
             diagnostics.memory(
                 access,
@@ -819,8 +842,11 @@ impl<'program, 'host> Engine<'program, 'host> {
                     frame: u32::try_from(frame).unwrap_or(u32::MAX),
                     slot: place.slot.index(),
                     projections: u32::try_from(place.projections.len()).unwrap_or(u32::MAX),
+                    storage_id,
+                    path_hash,
                 },
                 source,
+                stack,
             )?;
         }
         Ok(())
@@ -895,6 +921,43 @@ impl<'program, 'host> Engine<'program, 'host> {
             function: name,
             span,
         })
+    }
+
+    fn diagnostic_stack(&self, frame: usize) -> Vec<DiagnosticSource> {
+        let limit = self
+            .diagnostics
+            .as_ref()
+            .map_or(0, DiagnosticSession::max_stack_depth);
+        if limit == 0 {
+            return Vec::new();
+        }
+        (0..=frame.min(self.frames.len().saturating_sub(1)))
+            .rev()
+            .filter_map(|index| self.diagnostic_source(index))
+            .take(limit)
+            .collect()
+    }
+
+    fn diagnostic_root_value(&self, root: (usize, usize, u32)) -> Option<&Value> {
+        let (task, frame, slot) = root;
+        if task == self.current_task {
+            return self
+                .frames
+                .get(frame)
+                .and_then(|frame| frame.slots.get(slot as usize))
+                .and_then(|slot| match slot {
+                    SlotState::Value(value) => Some(value),
+                    SlotState::Dead | SlotState::Uninitialized => None,
+                });
+        }
+        self.tasks
+            .get(task)
+            .and_then(|task| task.frames.get(frame))
+            .and_then(|frame| frame.slots.get(slot as usize))
+            .and_then(|slot| match slot {
+                SlotState::Value(value) => Some(value),
+                SlotState::Dead | SlotState::Uninitialized => None,
+            })
     }
 
     fn cleanup_host_value(&mut self, value: &RuntimeValue) -> Result<(), VmError> {
@@ -1453,7 +1516,8 @@ impl<'program, 'host> Engine<'program, 'host> {
         }
         self.record_task(task, parent, DiagnosticTaskState::Runnable)?;
         self.record_scheduler(task, DiagnosticSchedulerOperation::Wake)?;
-        self.record_sync(task, DiagnosticSynchronization::Wake, None, None)?;
+        let peer = (self.current_task != task).then_some(self.current_task);
+        self.record_sync(task, DiagnosticSynchronization::Wake, peer, None)?;
         self.enqueue_task(task)
     }
 
@@ -1522,6 +1586,12 @@ impl<'program, 'host> Engine<'program, 'host> {
         record.status = TaskStatus::Consumed;
         let parent = self.diagnostic_parent(task);
         self.record_task(task, parent, DiagnosticTaskState::Consumed)?;
+        self.record_sync(
+            self.current_task,
+            DiagnosticSynchronization::Join,
+            Some(task),
+            self.frames.len().checked_sub(1),
+        )?;
         Ok(Some(completion))
     }
 
@@ -11482,6 +11552,63 @@ enum PlaceComponent {
     Slice(Vec<usize>),
 }
 
+/// Hashes a resolved place without retaining user payloads in the diagnostic
+/// trace. FNV-1a is intentionally used here instead of the process-randomized
+/// default hasher so repeated runs produce the same location identity.
+fn diagnostic_path_hash(components: &[PlaceComponent]) -> u64 {
+    const OFFSET: u64 = 0xcbf29ce484222325;
+    const PRIME: u64 = 0x100000001b3;
+    let mut hash = OFFSET;
+    fn feed(hash: &mut u64, byte: u8) {
+        *hash ^= u64::from(byte);
+        *hash = hash.wrapping_mul(PRIME);
+    }
+    fn feed_u64(hash: &mut u64, value: u64) {
+        for byte in value.to_le_bytes() {
+            feed(hash, byte);
+        }
+    }
+    fn feed_i128(hash: &mut u64, value: i128) {
+        for byte in value.to_le_bytes() {
+            feed(hash, byte);
+        }
+    }
+    for component in components {
+        match component {
+            PlaceComponent::Field(field) => {
+                feed(&mut hash, 1);
+                feed_u64(&mut hash, u64::from(*field));
+            }
+            PlaceComponent::Variant(variant) => {
+                feed(&mut hash, 2);
+                feed_u64(&mut hash, u64::from(*variant));
+            }
+            PlaceComponent::Index(index) => {
+                feed(&mut hash, 3);
+                feed_i128(&mut hash, *index);
+            }
+            PlaceComponent::MapKey(key) => {
+                feed(&mut hash, 4);
+                // RuntimeValue deliberately does not implement Hash because
+                // it contains f64. Debug formatting is deterministic and is
+                // hashed only; it is never emitted as trace payload.
+                for byte in format!("{key:?}").bytes() {
+                    feed(&mut hash, byte);
+                }
+                feed(&mut hash, 0);
+            }
+            PlaceComponent::Slice(indices) => {
+                feed(&mut hash, 5);
+                feed_u64(&mut hash, indices.len() as u64);
+                for index in indices {
+                    feed_u64(&mut hash, *index as u64);
+                }
+            }
+        }
+    }
+    if components.is_empty() { 0 } else { hash }
+}
+
 fn operation_access_place(operation: &BytecodeOperation) -> Result<Option<BytecodePlace>, VmError> {
     let (base, projection) = match &operation.kind {
         BytecodeOperationKind::Index {
@@ -17711,6 +17838,11 @@ mod tests {
         let trace = observed.diagnostics.expect("diagnostics were requested");
         assert_eq!(trace.format, super::super::diagnostics::DIAGNOSTIC_SCHEMA);
         assert_eq!(trace.task_ids(), [1]);
+        let race = super::super::race::detect_races(&trace);
+        assert!(
+            race.is_clean(),
+            "single-task trace must be race-clean: {race:?}"
+        );
         assert!(trace.events.iter().any(|event| matches!(
             event,
             DiagnosticEvent::Memory {

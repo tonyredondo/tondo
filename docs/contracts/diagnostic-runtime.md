@@ -4,8 +4,8 @@
 **Superficie:** interna del crate `tondo-vm`; no es una API de Tondo ni de la
 stdlib.
 
-Este contrato implementa la primera capa observable que necesitan los futuros
-detectores `RACE-001`, `LEAK-001` y `DUMP-001`. La VM conserva la misma
+Este contrato implementa la capa observable que necesitan los detectores
+`RACE-001`, `LEAK-001` y `DUMP-001`. La VM conserva la misma
 semántica de valores, errores, orden, cleanup, cancelación y exit status con y
 sin instrumentación. El collector solo se crea cuando el runner solicita el
 entry point de diagnóstico; la ruta normal no reserva buffers ni genera
@@ -42,7 +42,7 @@ usuario:
 | --- | --- |
 | `Thread` | id estable del thread lógico y `Started`/`Stopped` |
 | `Task` | id estable, owner/padre y estado `Created`, `Runnable`, `Running`, `Waiting`, `CancelRequested`, `Complete` o `Consumed` |
-| `Memory` | `Read`/`Write`/`Move`, task/frame/slot/profundidad de proyección y `DiagnosticSource` |
+| `Memory` | `Read`/`Write`/`Move`, task/frame/slot/profundidad de proyección, identidad de almacenamiento/ruta y `DiagnosticSource`/stack |
 | `Synchronization` | spawn, park/wake, join, host start/complete/cancel, loans y select, con peer y source cuando existe |
 | `Heap` | identidad generacional del objeto, allocate/replace, bytes estimados y task owner |
 | `Roots` | identidades de heap alcanzables en la barrera y retainers lógicos acotados |
@@ -58,7 +58,9 @@ contenido fuente ni payload.
 ## 3. Roots, retainers y recursos
 
 Los accesos a `BytecodePlace` se registran después de pasar la validación de
-ownership/loans. Las operaciones de scheduler y las fronteras de host se
+ownership/loans. Cada acceso conserva una identidad de almacenamiento
+compartido, un hash estable de la ruta proyectada y un stack acotado; los
+eventos `Task` conservan el stack de creación. Las operaciones de scheduler y las fronteras de host se
 registran en sus helpers centrales, por lo que una nueva instrucción no puede
 olvidar una rama equivalente sin que falle su test de cobertura.
 
@@ -80,9 +82,11 @@ traza como truncada; no se descarta silenciosamente el exceso. El tail y los
 retainers descartan lo más antiguo/excedente solo dejando `truncated = true`.
 
 Esta capa no serializa reportes ni dumps: los límites de 16 MiB y 256 MiB se
-aplican en los writers de `DIAG-TEST-001`/`DUMP-001`. Tampoco inventa un
-happens-before oracle: entrega los eventos necesarios para que `RACE-001` lo
-calcule sobre caminos ejecutados.
+aplican en los writers de `DIAG-TEST-001`/`DUMP-001`. El collector no inventa
+una conclusión de race: entrega memoria, lifecycle, synchronization, identidad
+y stacks para que `RACE-001` calcule vector clocks sobre caminos ejecutados.
+`RACE-001` está implementado para la VM hosted; `LEAK-001` y `DUMP-001` siguen
+siendo consumidores pendientes.
 
 ## 5. Verificación
 

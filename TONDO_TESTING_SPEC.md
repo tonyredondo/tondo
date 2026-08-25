@@ -2872,7 +2872,10 @@ La primera capa ejecutable de esa instrumentación está cerrada por
 [`docs/contracts/diagnostic-runtime.md`](./docs/contracts/diagnostic-runtime.md).
 La ruta normal devuelve `diagnostics = None` y no genera eventos; superar el
 presupuesto de eventos falla cerrado y cualquier truncación queda marcada para
-los detectores posteriores.
+los detectores posteriores. `RACE-001` consume esta traza en la VM hosted con
+vector clocks y estados `clean`/`finding`/`unsupported`; la integración del
+runner, los adapters públicos y la paridad nativa siguen siendo bloques
+posteriores.
 
 ## 15. Formato machine-readable
 

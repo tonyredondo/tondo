@@ -139,6 +139,12 @@ pub struct DiagnosticRange {
     pub frame: u32,
     pub slot: u32,
     pub projections: u32,
+    /// Stable identity of the managed root when the access is shared.
+    /// Locals deliberately have no storage identity so that two task-local
+    /// slots with the same source coordinates cannot be conflated.
+    pub storage_id: Option<u64>,
+    /// Payload-free identity of the projection path below `storage_id`.
+    pub path_hash: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -157,11 +163,13 @@ pub enum DiagnosticEvent {
         id: u64,
         parent: Option<u64>,
         state: DiagnosticTaskState,
+        stack: Vec<DiagnosticSource>,
     },
     Memory {
         access: DiagnosticMemoryAccess,
         range: DiagnosticRange,
         source: DiagnosticSource,
+        stack: Vec<DiagnosticSource>,
     },
     Synchronization {
         task_id: u64,
@@ -307,8 +315,14 @@ impl DiagnosticSession {
         id: u64,
         parent: Option<u64>,
         state: DiagnosticTaskState,
+        stack: Vec<DiagnosticSource>,
     ) -> Result<(), VmError> {
-        self.emit(DiagnosticEvent::Task { id, parent, state })
+        self.emit(DiagnosticEvent::Task {
+            id,
+            parent,
+            state,
+            stack,
+        })
     }
 
     pub(super) fn memory(
@@ -316,6 +330,7 @@ impl DiagnosticSession {
         access: DiagnosticMemoryAccess,
         range: DiagnosticRange,
         source: DiagnosticSource,
+        stack: Vec<DiagnosticSource>,
     ) -> Result<(), VmError> {
         if self
             .source_keys
@@ -327,7 +342,12 @@ impl DiagnosticSession {
             access,
             range,
             source,
+            stack,
         })
+    }
+
+    pub(super) fn max_stack_depth(&self) -> usize {
+        self.config.max_stack_depth as usize
     }
 
     pub(super) fn synchronization(
@@ -586,12 +606,24 @@ mod tests {
             frame: 0,
             slot: 2,
             projections: 1,
+            storage_id: Some(7),
+            path_hash: 11,
         };
         session
-            .memory(DiagnosticMemoryAccess::Read, range.clone(), source.clone())
+            .memory(
+                DiagnosticMemoryAccess::Read,
+                range.clone(),
+                source.clone(),
+                vec![source.clone()],
+            )
             .unwrap();
         session
-            .memory(DiagnosticMemoryAccess::Write, range, source)
+            .memory(
+                DiagnosticMemoryAccess::Write,
+                range,
+                source.clone(),
+                vec![source.clone()],
+            )
             .unwrap();
         session
             .resource(7, "File", DiagnosticResourceState::Acquired, 1)

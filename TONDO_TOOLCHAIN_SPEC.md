@@ -1578,8 +1578,9 @@ task/thread, hooks de memoria/GC, unwind y redacción. Un target sin una de esas
 capacidades la declara como `unsupported-diagnostic-profile` y no la omite. El
 contrato D0 está cerrado y `DIAG-RUNTIME-001` implementa la instrumentación
 acotada de la VM hosted (task/thread, memoria/sync, roots, recursos, source
-maps, scheduler y quiescencia); los detectores y la paridad nativa siguen
-pendientes de sus milestones.
+maps, scheduler y quiescencia); `RACE-001` implementa el análisis hosted con
+vector clocks sobre esa traza, mientras que los detectores restantes y la
+paridad nativa siguen pendientes de sus milestones.
 
 La traza interna y sus límites están fijados en
 [`docs/contracts/diagnostic-runtime.md`](./docs/contracts/diagnostic-runtime.md)

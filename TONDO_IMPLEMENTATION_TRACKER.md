@@ -19,8 +19,9 @@ El tooling dinámico de diagnóstico también queda dentro del plan 0.1: race
 detection, detección de retención/leaks y crash dumps conservan una única
 frontera compilador/runtime/CLI, con evidencia por intento y paridad VM/native.
 `DIAG-SPEC-001` es el prerrequisito explícito de la evaluación nativa y
-`DIAG-RUNTIME-001` ya cerró la instrumentación interna de la VM hosted; los
-detectores consumidores y la paridad native siguen siendo bloques separados.
+`DIAG-RUNTIME-001` ya cerró la instrumentación interna de la VM hosted;
+`RACE-001` ya cerró el detector hosted sobre esa traza, mientras que los
+detectores restantes y la paridad native siguen siendo bloques separados.
 
 **Última actualización:** 2026-08-24
 
@@ -36,6 +37,7 @@ detectores consumidores y la paridad native siguen siendo bloques separados.
 - [Contrato global de baseline de rendimiento previo al backend](./docs/contracts/performance.md)
 - [Contrato de tooling dinámico de diagnóstico](./docs/contracts/diagnostic-tooling.md)
 - [Contrato de instrumentación runtime de diagnóstico](./docs/contracts/diagnostic-runtime.md)
+- [Contrato del detector dinámico de races](./docs/contracts/diagnostic-race.md)
 - [Contrato operativo de rendimiento de Standard Library 0.1](./docs/contracts/stdlib-performance.md)
 - [Contrato de owner de `std.json`](./docs/contracts/stdlib-json.md)
 - [Contrato de owner de `std.messagepack`](./docs/contracts/stdlib-messagepack.md)
@@ -90,11 +92,12 @@ abiertas; `DIAG-SPEC-001` ya cerró su contrato D0 y los contratos de
 calendario civil de `std.time` ya están cerrados como contratos runtime-facing.
 `std.encoding`, `std.yaml`, `std.toml`, `std.cbor`, `std.regex`, `std.uuid` y
 `std.log` ya han cerrado sus fronteras contractuales B0. `DIAG-RUNTIME-001`
-ya consume esos contratos de observabilidad en la VM hosted; las siguientes
-fronteras son `RACE-001`, `LEAK-001` y `DUMP-001`. El grafo
+ya consume esos contratos de observabilidad en la VM hosted; `RACE-001` ya
+cerró su detector hosted y las siguientes fronteras son `LEAK-001` y
+`DUMP-001`. El grafo
 activo se valida con `TRACKER-LINT-001`; con el contrato D0, Wave 6 y la
-instrumentación D1 cerrados, avanzan `RACE-001`, `LEAK-001`, `DUMP-001`,
-`DIAG-TEST-001` y `DIAG-CI-001` antes de la evaluación
+instrumentación D1 cerrados, avanzan `LEAK-001`, `DUMP-001`, `DIAG-TEST-001`
+y `DIAG-CI-001` antes de la evaluación
 coordinada de `NATIVE-001`. El cierre coordinado de
 `STD-CODEC-PUBLIC-001` ya verificó su superficie, pero el conteo global
 214/214 ya incluye los tres adapters `selectable` de DEC-020;
@@ -735,14 +738,15 @@ no una promesa de implementación ya cerrada:
 |---|---:|---|---|
 | `DIAG-SPEC-001` | P0 | Profiles, envelope, dumps, identidad, privacidad, límites y CLI | Contrato cerrado; runtime D1 separado |
 | `DIAG-RUNTIME-001` | P0 | Eventos de memoria/sync, task/thread registry, roots/retainers, recursos, source maps, scheduler y quiescencia en VM hosted | Implementado; registro y contrato D1 cerrados |
-| `RACE-001` | P0 | Race detector dinámico con happens-before, stacks y corpus positivo/negativo | Pendiente |
+| `RACE-001` | P0 | Race detector dinámico con happens-before, stacks y corpus positivo/negativo | Implementado en VM hosted; adapters públicos/native pendientes |
 | `LEAK-001` | P0 | Retención GC, recursos afines, FFI y snapshots de crecimiento | Pendiente |
 | `DUMP-001` | P0 | Captura segura `.tdump`, redacción y analizador human/JSON | Pendiente |
 | `DIAG-TEST-001` | P0 | Intentos aislados, retries, shards, artifacts JSON/JUnit | Pendiente |
 | `DIAG-CI-001` | P0 | Lanes, fuzzing, budgets y promotion gate | Pendiente |
 
-`DIAG-SPEC-001` y `DIAG-RUNTIME-001` bloquean `NATIVE-001`. `RACE-001`,
-`LEAK-001` y `DUMP-001` pueden avanzar junto a Wave 5 después de que el
+`DIAG-SPEC-001` y `DIAG-RUNTIME-001` bloquean `NATIVE-001`. `RACE-001` está
+cerrado en VM hosted; `LEAK-001` y `DUMP-001` pueden avanzar junto a Wave 5
+después de que el
 runtime hosted exponga los eventos necesarios, pero sus resultados no cuentan
 como conformidad hasta `DIAG-CI-001`. El backend nativo tiene que demostrar
 paridad de esos observables o declarar un target limitado antes de entrar en
@@ -5457,8 +5461,9 @@ pueden retrasar el primer backend correcto.
   en `std`. El registro `testing/diagnostic-tooling.json`, los checks
   `scripts/diagnostic-contract-check.sh`/`diagnostic-contract-test.sh`, el
   contrato y RFC congelan la superficie y sus negativos; la instrumentación
-  VM hosted queda implementada en `DIAG-RUNTIME-001` y sus detectores siguen
-  siendo bloques posteriores.
+  VM hosted queda implementada en `DIAG-RUNTIME-001`; el detector hosted de
+  races está cerrado en `RACE-001` y los detectores restantes siguen siendo
+  bloques posteriores.
 
 - [x] **DIAG-RUNTIME-001 — Exponer instrumentación interna verificable.**
   Después de los contratos runtime-facing B0, la VM hosted registra task/thread
@@ -5475,12 +5480,19 @@ pueden retrasar el primer backend correcto.
   `docs/contracts/diagnostic-runtime.md` y los checks en
   `scripts/diagnostic-runtime-check.sh`/`diagnostic-runtime-test.sh`.
 
-- [ ] **RACE-001 — Implementar el detector dinámico de races.** Instrumentar
-  `Ref[T]`, `Pointer[T]`, `unsafe`/FFI, memoria mutable compartida, spawn,
-  Join, scheduler y primitivas internas de sincronización. Emitir conflicto, stacks de
-  acceso/creación y happens-before; solo se consideran observaciones de caminos
-  ejecutados y los perfiles no silencian unsupported. Los adapters de las APIs
-  públicas channel/sync/executor/net se prueban más tarde en `DIAG-STDLIB-001`.
+- [x] **RACE-001 — Implementar el detector dinámico de races hosted.** La VM
+  registra identidad generacional de almacenamiento, hash estable de rutas,
+  stacks de acceso/creación, lifecycle de tasks, spawn/wake/join/select y las
+  fronteras internas de scheduler; `crates/tondo-vm/src/runtime/race.rs`
+  analiza la traza con vector clocks y relaciones happens-before. Emite
+  `clean`/`finding`/`unsupported`, conserva ambos accesos y la creation stack,
+  y falla cerrado ante truncado, contexto ausente o límites de 100.000
+  observaciones/findings. Tests positivos/negativos cubren conflicto, Join/Wake,
+  locales, determinismo y límites; la evidencia está en
+  `testing/diagnostic-race.json`, `docs/contracts/diagnostic-race.md` y
+  `scripts/diagnostic-race-{check,test}.sh`. El alcance es la VM hosted y las
+  primitivas internas; adapters públicos channel/sync/executor/net y paridad
+  native siguen en `DIAG-STDLIB-001`/`DIAG-NATIVE-001`.
 
 - [ ] **LEAK-001 — Implementar el detector de retención y recursos.** Separar
   en la VM objetos gestionados todavía alcanzables, recursos afines sin terminal
@@ -6876,7 +6888,7 @@ Esta tabla es la fuente de reconciliación del estado actual.
     los detectores de M11. Mini-gate: DEC-013/014 reciben requisitos completos sin
     implementar todavía STD-0.1B.
 28. [ ] **Wave 7 — M11 correcto antes que optimizado.** Con Wave 6 cerrada,
-    ejecutar `(RACE-001 + LEAK-001 + DUMP-001) →
+    continuar `(LEAK-001 + DUMP-001) →
     DIAG-TEST-001 → DIAG-CI-001 → NATIVE-001 → NATIVE-MEM-ADR-001 →
     NATIVE-ABI-001 → leaves NATIVE-LOWER-* → NATIVE-THREAD-001 →
     NATIVE-SELECT-001 → NATIVE-002 → ARC-001 → ARC-002 →
@@ -6964,8 +6976,9 @@ desinstalación). `STD-S1A-SEAL-001` cerró el bundle técnico del draft y
 instrumentación VM hosted; `STD-ASYNC-GROUP-SPEC-001`, `STD-CONC-001`,
 `STD-SYNC-001`, `STD-EXEC-001`, `STD-NET-001`, `STD-CIVIL-TIME-001`,
 `STD-ENCODING-001`, `STD-YAML-001`, `STD-TOML-001`, `STD-CBOR-001`,
-`STD-REGEX-001`, `STD-ID-001` y `STD-LOG-001` cerraron trece fronteras B0; las
-siguientes son `RACE-001`, `LEAK-001` y `DUMP-001`. `NATIVE-001` sigue
+`STD-REGEX-001`, `STD-ID-001` y `STD-LOG-001` cerraron trece fronteras B0;
+`RACE-001` ya cerró su implementación hosted y las siguientes fronteras son
+`LEAK-001` y `DUMP-001`. `NATIVE-001` sigue
 esperando `DIAG-CI-001`.
 
 ---

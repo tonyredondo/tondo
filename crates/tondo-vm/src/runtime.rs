@@ -12,6 +12,7 @@ use crate::bytecode::{BytecodeSpan, BytecodeVerificationError};
 mod diagnostics;
 mod execute;
 mod heap;
+mod race;
 mod value;
 
 #[cfg(feature = "conformance")]
@@ -28,6 +29,10 @@ pub use execute::{
     RejectingHost, VmExecution, VmHost, VmOutcome, VmTestNodeKind, VmTestNodeOutcome, execute,
     execute_with_diagnostics, execute_with_limits, execute_with_limits_and_copy_strategy,
     execute_with_limits_and_copy_strategy_and_diagnostics,
+};
+pub use race::{
+    RACE_SCHEMA, RaceAccess, RaceConfig, RaceFinding, RaceLimitation, RaceLocation, RaceReport,
+    RaceStatus, detect_races, detect_races_with_config,
 };
 
 /// Physical strategy used to realize source-level logical value copies.
