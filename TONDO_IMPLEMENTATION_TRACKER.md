@@ -98,8 +98,8 @@ ya consume esos contratos de observabilidad en la VM hosted; `RACE-001` y
 `LEAK-001` y `DUMP-001` ya cerraron sus detectores/writer hosted y la siguiente
 frontera es `DIAG-TEST-001`. El grafo
 activo se valida con `TRACKER-LINT-001`; con el contrato D0, Wave 6 y la
-instrumentación D1, DUMP y el runner de tests cerrados, avanza
-`DIAG-CI-001` antes de la evaluación
+instrumentación D1, DUMP y el runner de tests cerrados, `DIAG-CI-001` ya está
+cerrado antes de la evaluación
 coordinada de `NATIVE-001`. El cierre coordinado de
 `STD-CODEC-PUBLIC-001` ya verificó su superficie, pero el conteo global
 214/214 ya incluye los tres adapters `selectable` de DEC-020;
@@ -744,11 +744,11 @@ no una promesa de implementación ya cerrada:
 | `LEAK-001` | P0 | Retención GC, recursos afines, FFI y snapshots de crecimiento | Implementado en VM hosted; paridad native/stdlib pendiente |
 | `DUMP-001` | P0 | Captura lógica `.tdump`, redacción y analizador human/JSON | Implementado VM hosted; captura nativa pendiente |
 | `DIAG-TEST-001` | P0 | Intentos aislados, retries, shards, artifacts JSON/JUnit | Implementado VM hosted |
-| `DIAG-CI-001` | P0 | Lanes, fuzzing, budgets y promotion gate | Pendiente |
+| `DIAG-CI-001` | P0 | Lanes, fuzzing, budgets y promotion gate | Implementado hosted; workflow opt-in promovida |
 
 `DIAG-SPEC-001` y `DIAG-RUNTIME-001` bloquean `NATIVE-001`. `RACE-001` y
-`LEAK-001` y `DUMP-001` están cerrados en VM hosted; sus resultados no cuentan
-como conformidad hasta `DIAG-CI-001`. El backend nativo tiene que demostrar
+`LEAK-001` y `DUMP-001` están cerrados en VM hosted; sus resultados cuentan con
+evidencia de lane en `DIAG-CI-001`. El backend nativo tiene que demostrar
 paridad de esos observables o declarar un target limitado antes de entrar en
 Gate N1.
 
@@ -5530,14 +5530,18 @@ pueden retrasar el primer backend correcto.
   antiguo se rechaza como infraestructura y setup/teardown bloqueados no
   pierden su evidencia. La evidencia ejecutable vive en
   `testing/diagnostic-test.json`, `docs/contracts/diagnostic-test.md` y
-  `scripts/diagnostic-test-{check,test}.sh`; el siguiente bloque es
-  `DIAG-CI-001`.
+  `scripts/diagnostic-test-{check,test}.sh`; la siguiente frontera es
+  `NATIVE-001`.
 
-- [ ] **DIAG-CI-001 — Cerrar las lanes y gates de diagnóstico.** Añadir lanes
-  opt-in para race/leaks/crash, corpus positivo/negativo persistente, fuzzing
-  acotado, budgets de overhead y promotion gate. La campaña no modifica el
-  baseline de coverage/mutation/performance normal y CI no acepta un resultado
-  verde cuando el perfil requerido está unsupported.
+- [x] **DIAG-CI-001 — Cerrar las lanes y gates de diagnóstico.** La workflow
+  opt-in ejecuta `race`, `leaks`, `crash` o `all` con procesos frescos, corpus
+  positivo/negativo persistente, fuzzing acotado con toolchain fijado, budgets
+  fail-closed y promotion gate. La campaña no modifica el baseline de
+  coverage/mutation/performance normal y nunca acepta verde cuando el perfil
+  requerido está `unsupported`. La evidencia ejecutable vive en
+  `testing/diagnostic-ci.json`, `docs/contracts/diagnostic-ci.md`,
+  `scripts/diagnostic-ci-{check,test}.sh`, `scripts/diagnostic-ci.sh`,
+  `scripts/diagnostic-fuzz.sh` y `.github/workflows/diagnostics.yml`.
 
 - [ ] **NATIVE-001 — Elegir backend nativo con una evaluación separada.**
   Comparar Cranelift, LLVM y generación propia usando el MIR real, el corpus de
@@ -6910,7 +6914,7 @@ Esta tabla es la fuente de reconciliación del estado actual.
     implementar todavía STD-0.1B.
 28. [ ] **Wave 7 — M11 correcto antes que optimizado.** Con Wave 6 cerrada y
     `DUMP-001` y `DIAG-TEST-001` cerrados en VM hosted, continuar
-    `DIAG-CI-001 → NATIVE-001 → NATIVE-MEM-ADR-001 →
+    `NATIVE-001 → NATIVE-MEM-ADR-001 →
     NATIVE-ABI-001 → leaves NATIVE-LOWER-* → NATIVE-THREAD-001 →
     NATIVE-SELECT-001 → NATIVE-002 → ARC-001 → ARC-002 →
     NATIVE-STD-CORE/HOSTED → NATIVE-STD-001 →
@@ -6999,8 +7003,7 @@ instrumentación VM hosted; `STD-ASYNC-GROUP-SPEC-001`, `STD-CONC-001`,
 `STD-ENCODING-001`, `STD-YAML-001`, `STD-TOML-001`, `STD-CBOR-001`,
 `STD-REGEX-001`, `STD-ID-001` y `STD-LOG-001` cerraron trece fronteras B0;
 `RACE-001`, `LEAK-001`, el writer lógico de `DUMP-001` y la integración de
-`DIAG-TEST-001` ya están cerrados en hosted y la siguiente frontera es
-`DIAG-CI-001`. `NATIVE-001` sigue
-esperando `DIAG-CI-001`.
+`DIAG-TEST-001` y `DIAG-CI-001` ya están cerrados en hosted. `NATIVE-001` queda
+como siguiente frontera y conserva la dependencia de esta evidencia.
 
 ---

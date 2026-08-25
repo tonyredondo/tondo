@@ -1,0 +1,185 @@
+{
+  "format": "tondo-diagnostic-ci/1",
+  "owner": "toolchain.diagnostics",
+  "edition": "0.1",
+  "phase": "DIAG-CI-001",
+  "status": "implemented",
+  "contract": "docs/contracts/diagnostic-ci.md",
+  "runner_contract": "testing/diagnostic-test.json",
+  "profiles": ["race", "leaks", "crash"],
+  "all": {
+    "expands_to": ["race", "leaks", "crash"],
+    "order": ["race", "leaks", "crash"]
+  },
+  "lanes": [
+    {
+      "id": "race",
+      "profile": "race",
+      "package": "tondo-vm",
+      "positive_tests": [
+        "different_tasks_conflicting_shared_accesses_report_stacks"
+      ],
+      "negative_tests": [
+        "read_read_and_same_task_accesses_are_clean",
+        "join_and_wake_supply_happens_before_edges",
+        "task_local_storage_does_not_alias_across_tasks"
+      ],
+      "budget": {
+        "max_events": 1000000,
+        "max_report_bytes": 16777216,
+        "max_wall_time_seconds": 120,
+        "max_overhead_basis_points": 100000
+      }
+    },
+    {
+      "id": "leaks",
+      "profile": "leaks",
+      "package": "tondo-vm",
+      "positive_tests": [
+        "sustained_growth_reports_retention_and_growth_with_stacks",
+        "resources_distinguish_affine_and_native_and_ignore_released"
+      ],
+      "negative_tests": [
+        "unreachable_objects_and_cycles_are_not_leaks"
+      ],
+      "budget": {
+        "max_events": 1000000,
+        "max_report_bytes": 16777216,
+        "max_wall_time_seconds": 120,
+        "max_overhead_basis_points": 50000
+      }
+    },
+    {
+      "id": "crash",
+      "profile": "crash",
+      "package": "tondo-vm",
+      "positive_tests": [
+        "capture_round_trips_with_a_content_address_and_optional_sections",
+        "analyzer_produces_stable_human_and_json_views"
+      ],
+      "negative_tests": [
+        "wrong_format_missing_duplicate_and_unknown_sections_are_rejected",
+        "tampering_and_noncanonical_encoding_are_rejected",
+        "payloads_are_not_present_and_limits_fail_closed",
+        "invalid_identity_and_termination_are_rejected"
+      ],
+      "budget": {
+        "max_events": 1000000,
+        "max_report_bytes": 16777216,
+        "max_wall_time_seconds": 120,
+        "max_overhead_basis_points": 20000
+      }
+    }
+  ],
+  "corpus": {
+    "root": "fuzz/corpus/diagnostics",
+    "positive_root": "fuzz/corpus/diagnostics/positive",
+    "negative_root": "fuzz/corpus/diagnostics/negative",
+    "regression_root": "fuzz/corpus/diagnostics/regressions",
+    "required_profiles": ["race", "leaks", "crash"],
+    "cases": {
+      "race": {
+        "positive": ["race-conflict"],
+        "negative": ["race-clean"]
+      },
+      "leaks": {
+        "positive": ["leak-growth"],
+        "negative": ["leak-clean"]
+      },
+      "crash": {
+        "positive": ["crash-dump"],
+        "negative": ["crash-clean"]
+      }
+    },
+    "persistent_minimized_inputs": true,
+    "replay_command": "cargo +nightly-2026-07-28 fuzz run diagnostics fuzz/corpus/diagnostics -- -runs=0"
+  },
+  "fuzz": {
+    "target": "diagnostics",
+    "script": "scripts/diagnostic-fuzz.sh",
+    "toolchain": "nightly-2026-07-28",
+    "cargo_fuzz": "0.13.2",
+    "max_input_bytes": 65536,
+    "timeout_seconds": 10,
+    "rss_limit_mb": 4096,
+    "smoke": {
+      "runs": 128,
+      "seed": 4001
+    },
+    "campaign": {
+      "max_total_time_seconds": 180,
+      "seed": 5001
+    },
+    "failure_policy": "persist-minimized-input-and-replay-in-diagnostic-lane"
+  },
+  "budgets": {
+    "comparison": "same-fixture-uninstrumented-vs-profiled-process",
+    "time_unit": "milliseconds",
+    "memory_unit": "bytes",
+    "measurement": "median-of-three-fresh-processes",
+    "max_report_bytes": 16777216,
+    "max_dump_bytes": 268435456,
+    "max_attempts": 512,
+    "overhead_is_separate_from_normal_baseline": true,
+    "budget_failure_is_fatal": true
+  },
+  "promotion": {
+    "status": "promoted",
+    "workflow": ".github/workflows/diagnostics.yml",
+    "gates": [
+      {
+        "id": "contract",
+        "requires": ["machine-readable-contract", "negative-contract-suite", "runner-contract"]
+      },
+      {
+        "id": "corpus",
+        "requires": ["positive-and-negative-cases", "persistent-regressions", "deterministic-replay"]
+      },
+      {
+        "id": "profiles",
+        "requires": ["race-positive-and-negative", "leaks-positive-and-negative", "crash-positive-and-negative", "unsupported-is-failure"]
+      },
+      {
+        "id": "fuzz",
+        "requires": ["pinned-toolchain", "bounded-smoke", "minimized-failure-persistence"]
+      },
+      {
+        "id": "budgets",
+        "requires": ["fresh-process-measurement", "profile-overhead-budget", "report-and-dump-limits", "normal-baseline-untouched"]
+      },
+      {
+        "id": "ci",
+        "requires": ["opt-in-workflow", "artifact-retention", "green-required-profiles", "no-secret-upload"]
+      }
+    ],
+    "normal_baseline_unchanged": true,
+    "unsupported_is_failure": true
+  },
+  "privacy": {
+    "payloads": "redacted-by-default",
+    "network_upload": false,
+    "physical_paths": "omitted",
+    "secrets": "never-emitted"
+  },
+  "negative_cases": [
+    "unknown-profile",
+    "duplicate-profile",
+    "all-with-explicit-profile",
+    "missing-positive-corpus",
+    "missing-negative-corpus",
+    "missing-regression-corpus",
+    "empty-corpus-file",
+    "missing-positive-test",
+    "missing-negative-test",
+    "unsupported-profile-green",
+    "fuzz-toolchain-drift",
+    "fuzz-run-limit-zero",
+    "fuzz-input-over-limit",
+    "budget-zero",
+    "budget-regression-unreported",
+    "normal-baseline-mutated",
+    "workflow-not-opt-in",
+    "workflow-uploads-secrets"
+  ],
+  "next_blocks": ["NATIVE-001"]
+}

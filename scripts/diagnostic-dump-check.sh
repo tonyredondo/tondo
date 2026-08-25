@@ -56,7 +56,7 @@ jq -e '
   }
   and .public_stdlib_api == false
   and .source_keywords_added == false
-  and .next_blocks == ["DIAG-CI-001"]
+  and .next_blocks == ["NATIVE-001"]
 ' "$contract" >/dev/null || die "invalid dump registry"
 
 for path in \

@@ -72,5 +72,5 @@
     "finding-limit",
     "invalid-configuration"
   ],
-  "next_blocks": ["DIAG-CI-001"]
+  "next_blocks": ["NATIVE-001"]
 }

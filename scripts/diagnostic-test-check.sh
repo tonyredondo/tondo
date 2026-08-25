@@ -57,7 +57,7 @@ jq -e '
   }
   and ((.negative_cases | unique | length) == (.negative_cases | length))
   and (.negative_cases | length) == 15
-  and .next_blocks == ["DIAG-CI-001"]
+  and .next_blocks == ["NATIVE-001"]
 ' "$contract" >/dev/null || die "invalid diagnostic test contract"
 
 for path in \

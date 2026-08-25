@@ -105,6 +105,7 @@ La implementación ejecutable se encuentra en:
 
 Los gates `scripts/diagnostic-test-check.sh` y
 `scripts/diagnostic-test-test.sh` comprueban el contrato, sus negativos y la
-frontera `DIAG-CI-001`. El siguiente bloque añade lanes opt-in, corpus
-persistent, fuzzing y presupuestos de overhead; no cambia esta superficie ni
-la baseline normal.
+frontera `DIAG-CI-001`. Las lanes opt-in, el corpus persistente, el fuzzing y
+los presupuestos de overhead están cerrados en
+[`diagnostic-ci.md`](diagnostic-ci.md); no cambian esta superficie ni la
+baseline normal.

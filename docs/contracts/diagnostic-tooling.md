@@ -141,11 +141,13 @@ solo describe caminos observados y nunca es una prueba estática de ausencia.
 store ya definido; JSON y JUnit proyectan la misma referencia sin duplicar
 payloads. Retries, repeat y shards conservan la identidad del test y crean un
 proceso limpio por intento. Esta integración está cerrada en
-`docs/contracts/diagnostic-test.md`; `DIAG-CI-001` añade las lanes y budgets.
+`docs/contracts/diagnostic-test.md`; `DIAG-CI-001` cierra sus lanes y budgets en
+[`diagnostic-ci.md`](diagnostic-ci.md).
 
 Las campañas de `race` y `leaks` son lanes explícitas de CI por su coste. Una
 campaña instrumentada no sustituye la suite normal ni rebaja el baseline de
 cobertura, mutation o rendimiento; añade evidencia adicional y un gate propio.
+La workflow opt-in y su promotion gate están cerrados por `DIAG-CI-001`.
 
 ### 5.1 Exit status y límites
 
@@ -193,7 +195,7 @@ La ejecución se divide en bloques del tracker:
 | `LEAK-001` | Retención GC y recursos hosted con snapshots reproducibles | `DIAG-RUNTIME-001` |
 | `DUMP-001` | Captura lógica `.tdump`, redacción y analizador | `DIAG-SPEC-001`, source maps VM |
 | `DIAG-TEST-001` | Integración por intento, retry, shard, JSON/JUnit y artifacts | `RACE-001`, `LEAK-001`, `DUMP-001` |
-| `DIAG-CI-001` | Lanes, budgets, fuzzing, regression corpus y promotion gate | `DIAG-TEST-001`, `PERF-001` |
+| `DIAG-CI-001` | Lanes, budgets, fuzzing, regression corpus y promotion gate | `DIAG-TEST-001`, `PERF-001`; implementado hosted |
 | `DIAG-NATIVE-001` | Paridad nativa de race/leaks/dumps, roots/retainers, threads, unwind y source maps | backend elegido, memoria/ABI/lowering nativos, `NATIVE-THREAD-001`, detectores VM |
 | `DIAG-STDLIB-001` | Adapters de detector para channel/sync/executor/net y corpus VM/native | implementaciones STD-0.1B aplicables, `DIAG-NATIVE-001` |
 
@@ -221,7 +223,8 @@ fuera del envelope por defecto. La instrumentación VM hosted ejecutable está
 documentada por [`diagnostic-runtime.md`](diagnostic-runtime.md), el detector
 de races por [`diagnostic-race.md`](diagnostic-race.md) y el detector de
 retención por [`diagnostic-leak.md`](diagnostic-leak.md). Crash dumps y runner
-hosted están cerrados; las lanes CI y la paridad native siguen pendientes.
+hosted están cerrados; las lanes CI hosted están cerradas por `DIAG-CI-001` y la
+paridad native sigue pendiente.
 
 ## 9. No objetivos de esta revisión
 

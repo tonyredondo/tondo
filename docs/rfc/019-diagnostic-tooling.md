@@ -95,11 +95,12 @@ versiones, hashes o secciones corruptas.
 ## Integración con planes existentes
 
 - `PERF-001` conserva la baseline sin instrumentación; cada perfil publica su
-  propio coste y presupuesto.
+  propio coste y presupuesto. `DIAG-CI-001` ejecuta esas lanes de forma opt-in,
+  con corpus persistente y promotion gate separado.
 - La spec de testing conserva logs, tags, artifacts, JUnit, retries y shards;
   el diagnóstico se añade como descriptor por intento, no como un segundo
-  runner; `DIAG-TEST-001` cierra la integración hosted y conserva la frontera
-  pendiente de lanes CI en `DIAG-CI-001`.
+  runner; `DIAG-TEST-001` cierra la integración hosted y `DIAG-CI-001` cierra
+  la ejecución opt-in de CI.
 - `NATIVE-001` compara debugging y diagnóstico junto a corrección,
   rendimiento, memoria, distribución y mantenimiento.
 - `NATIVE-MEM-ADR-001` incluye roots, retain/release, recursos, ciclos,

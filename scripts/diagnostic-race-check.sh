@@ -50,7 +50,7 @@ jq -e '
   and .privacy == {payloads: "omitted-by-default", network_upload: false}
   and .public_stdlib_api == false
   and .native_parity == "DIAG-NATIVE-001"
-  and .next_blocks == ["DIAG-CI-001"]
+  and .next_blocks == ["NATIVE-001"]
   and ((.unsupported_reasons | length) == 7)
 ' "$contract" >/dev/null || die "invalid race registry"
 

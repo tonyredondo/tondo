@@ -34,21 +34,21 @@
     }
   ],
   "summary": {
-    "logical_tests": 2565,
-    "repetitions": 2877,
-    "physical_sources": 539,
-    "unique_source_hashes": 891,
+    "logical_tests": 2566,
+    "repetitions": 2878,
+    "physical_sources": 540,
+    "unique_source_hashes": 892,
     "by_kind": {
       "conformance-case": 206,
       "conformance-layer": 69,
       "draft-contract": 38,
       "fixture": 170,
-      "fuzz-target": 5,
+      "fuzz-target": 6,
       "rust-test": 1758,
       "spec-fence": 319
     },
     "by_status": {
-      "campaign": 5,
+      "campaign": 6,
       "draft-pending": 38,
       "executable": 2500,
       "non-executable": 22
@@ -72,7 +72,7 @@
       "reliability": 103,
       "resolution": 27,
       "runtime": 257,
-      "semantic": 859,
+      "semantic": 860,
       "testing": 38,
       "tooling": 4
     }
@@ -16625,6 +16625,24 @@
       "oracle": "panic+resource-limit+invariant",
       "repetitions": 1,
       "source_sha256": "1a9c5a32b074e169057e8126d606c2aff4ebeccb178c636a04b5aafa4be0f23b",
+      "target": "host-rust",
+      "document": null,
+      "edition": "host",
+      "status": "campaign",
+      "sidecars": []
+    },
+    {
+      "id": "fuzz:diagnostics",
+      "kind": "fuzz-target",
+      "crate_name": null,
+      "phase": "semantic",
+      "source": "fuzz/fuzz_targets/diagnostics.rs",
+      "fixture": "diagnostics",
+      "group": "fuzz",
+      "requirements": [],
+      "oracle": "panic+resource-limit+invariant",
+      "repetitions": 1,
+      "source_sha256": "d17152094b2538ddfe7b3d36dd0437427ae11009a0910620b48379a07b91a9ec",
       "target": "host-rust",
       "document": null,
       "edition": "host",

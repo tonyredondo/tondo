@@ -95,6 +95,10 @@ run_step diagnostic-test-contract \
     scripts/diagnostic-test-check.sh
 run_step diagnostic-test-contract-tests \
     scripts/diagnostic-test-test.sh
+run_step diagnostic-ci-contract \
+    scripts/diagnostic-ci-check.sh
+run_step diagnostic-ci-contract-tests \
+    scripts/diagnostic-ci-test.sh
 run_step stdlib-async-group-contract \
     scripts/stdlib-async-group-check.sh
 run_step stdlib-async-group-contract-tests \

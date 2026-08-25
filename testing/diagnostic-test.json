@@ -72,5 +72,5 @@
     "report-over-limit",
     "stale-frontier"
   ],
-  "next_blocks": ["DIAG-CI-001"]
+  "next_blocks": ["NATIVE-001"]
 }
