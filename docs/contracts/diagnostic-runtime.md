@@ -81,12 +81,12 @@ valores deben ser positivos. Superar `max_events` devuelve
 traza como truncada; no se descarta silenciosamente el exceso. El tail y los
 retainers descartan lo más antiguo/excedente solo dejando `truncated = true`.
 
-Esta capa no serializa reportes ni dumps: los límites de 16 MiB y 256 MiB se
-aplican en los writers de `DIAG-TEST-001`/`DUMP-001`. El collector no inventa
+Esta capa no serializa reportes ni dumps: el límite de 16 MiB se aplica en el
+writer de `DIAG-TEST-001` y el de 256 MiB en el writer de `DUMP-001`. El collector no inventa
 una conclusión de race: entrega memoria, lifecycle, synchronization, identidad
 y stacks para que `RACE-001` calcule vector clocks sobre caminos ejecutados.
-`RACE-001` y `LEAK-001` están implementados para la VM hosted; `DUMP-001` sigue
-siendo consumidor pendiente.
+`RACE-001`, `LEAK-001` y el writer lógico de `DUMP-001` están implementados
+para la VM hosted; runner y captura física de señales siguen pendientes.
 
 ## 5. Verificación
 

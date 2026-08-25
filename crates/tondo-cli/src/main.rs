@@ -62,6 +62,7 @@ Usage:
   tondo <check|run> [--diagnostic-format <human|json>] [--warnings core] [--project <dir>]
   tondo run [--diagnostic-format <human|json>] [--warnings core] <source.to> -- [argument ...]
   tondo test [--project <dir>] [--test-plan <tondo.test.toml>] [options]
+  tondo dump analyze <file.tdump> [--format human|json]
 
 Commands:
   fmt      Format one Tondo source file
@@ -69,6 +70,7 @@ Commands:
   run      Compile and run one Tondo script
   doc-test Validate Tondo examples embedded in Markdown
   test     Discover, compile and run project tests
+  dump     Analyze an offline diagnostic dump
 
 Options:
   --diagnostic-format <human|json>  Select diagnostic output
@@ -138,6 +140,9 @@ fn run(arguments: Vec<OsString>) -> Result<ExitCode, String> {
     if arguments.first().and_then(|argument| argument.to_str()) == Some("doc-test") {
         return run_doc_test_command(&arguments);
     }
+    if arguments.first().and_then(|argument| argument.to_str()) == Some("dump") {
+        return run_dump_command(&arguments);
+    }
 
     let invocation = match parse_invocation(&arguments) {
         Ok(invocation) => invocation,
@@ -204,6 +209,105 @@ fn run_doc_test_command(arguments: &[OsString]) -> Result<ExitCode, String> {
         }
         Err(doc_test::DocTestError::Internal(message)) => Err(message),
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DumpOutputFormat {
+    Human,
+    Json,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DumpInvocation {
+    path: PathBuf,
+    format: DumpOutputFormat,
+}
+
+fn parse_dump_invocation(arguments: &[OsString]) -> Result<DumpInvocation, String> {
+    if arguments.first().and_then(|argument| argument.to_str()) != Some("dump")
+        || arguments.get(1).and_then(|argument| argument.to_str()) != Some("analyze")
+    {
+        return Err("usage: tondo dump analyze <file.tdump> [--format human|json]".into());
+    }
+    let path = arguments
+        .get(2)
+        .cloned()
+        .map(PathBuf::from)
+        .ok_or_else(|| "`tondo dump analyze` requires a `.tdump` path".to_owned())?;
+    if path.extension() != Some(OsStr::new("tdump")) {
+        return Err("dump input must use the `.tdump` extension".into());
+    }
+    let mut format = DumpOutputFormat::Human;
+    let mut format_seen = false;
+    let mut index = 3;
+    while index < arguments.len() {
+        let argument = arguments[index]
+            .to_str()
+            .ok_or_else(|| "dump options must be valid UTF-8".to_owned())?;
+        let value = if argument == "--format" {
+            index += 1;
+            arguments
+                .get(index)
+                .and_then(|argument| argument.to_str())
+                .ok_or_else(|| "`--format` requires `human` or `json`".to_owned())?
+        } else if let Some(value) = argument.strip_prefix("--format=") {
+            value
+        } else {
+            return Err(format!("unknown dump option `{argument}`"));
+        };
+        if format_seen {
+            return Err("`--format` may appear only once".into());
+        }
+        format_seen = true;
+        format = match value {
+            "human" => DumpOutputFormat::Human,
+            "json" => DumpOutputFormat::Json,
+            _ => {
+                return Err(format!(
+                    "unknown dump format `{value}`; expected `human` or `json`"
+                ));
+            }
+        };
+        index += 1;
+    }
+    Ok(DumpInvocation { path, format })
+}
+
+fn run_dump_command(arguments: &[OsString]) -> Result<ExitCode, String> {
+    let invocation = match parse_dump_invocation(arguments) {
+        Ok(invocation) => invocation,
+        Err(message) => {
+            eprintln!("tondo: {message}\n\n{USAGE}");
+            return Ok(ExitCode::from(EXIT_USAGE));
+        }
+    };
+    let bytes = match fs::read(&invocation.path) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            eprintln!(
+                "tondo dump analyze: cannot read `{}`: {error}",
+                invocation.path.display()
+            );
+            return Ok(ExitCode::from(EXIT_USAGE));
+        }
+    };
+    let analysis = match tondo_vm::runtime::analyze_dump(&bytes) {
+        Ok(analysis) => analysis,
+        Err(error) => {
+            eprintln!("tondo dump analyze: {error}");
+            return Ok(ExitCode::from(EXIT_USAGE));
+        }
+    };
+    match invocation.format {
+        DumpOutputFormat::Human => print!("{}", analysis.render_human()),
+        DumpOutputFormat::Json => println!(
+            "{}",
+            analysis
+                .to_json()
+                .map_err(|error| format!("cannot render dump analysis: {error}"))?
+        ),
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 fn run_test_command(arguments: &[OsString]) -> Result<ExitCode, String> {
@@ -3127,6 +3231,135 @@ mod tests {
             let invocation = parse_invocation(&arguments).unwrap();
             assert_eq!(invocation.diagnostic_format, DiagnosticFormat::Json);
         }
+    }
+
+    #[test]
+    fn parses_dump_analyzer_formats_and_requires_a_tdump_path() {
+        let human = parse_dump_invocation(&arguments(&["dump", "analyze", "panic.tdump"])).unwrap();
+        assert_eq!(human.format, DumpOutputFormat::Human);
+        assert_eq!(human.path, PathBuf::from("panic.tdump"));
+
+        let json = parse_dump_invocation(&arguments(&[
+            "dump",
+            "analyze",
+            "panic.tdump",
+            "--format=json",
+        ]))
+        .unwrap();
+        assert_eq!(json.format, DumpOutputFormat::Json);
+
+        assert!(
+            parse_dump_invocation(&arguments(&["dump", "analyze", "panic.json"]))
+                .unwrap_err()
+                .contains("`.tdump`")
+        );
+        assert!(
+            parse_dump_invocation(&arguments(&[
+                "dump",
+                "analyze",
+                "panic.tdump",
+                "--format",
+                "xml",
+            ]))
+            .unwrap_err()
+            .contains("unknown dump format")
+        );
+    }
+
+    #[test]
+    fn dump_analyzer_reads_a_valid_artifact_and_rejects_corruption() {
+        let sections = vec![
+            (
+                "header",
+                serde_json::json!({
+                    "format": "tondo-dump/1",
+                    "version": 1,
+                    "content_address": "sha256",
+                    "user_payloads": "omitted-by-default"
+                }),
+            ),
+            (
+                "termination",
+                serde_json::json!({
+                    "reason": "panic",
+                    "program_exit_status": 101,
+                    "command_exit_status": 101
+                }),
+            ),
+            (
+                "identity",
+                serde_json::json!({
+                    "run_id": "cli-test",
+                    "attempt_id": "attempt-1",
+                    "shard": "0/1",
+                    "profile": "crash",
+                    "target": "linux-x86_64",
+                    "backend": "bytecode-vm",
+                    "toolchain": "test",
+                    "source_revision": "revision"
+                }),
+            ),
+            ("stacks", serde_json::json!([])),
+            (
+                "heap_summary",
+                serde_json::json!({
+                    "object_count": 0,
+                    "allocation_count": 0,
+                    "replacement_count": 0,
+                    "allocated_bytes": 0,
+                    "objects": []
+                }),
+            ),
+            ("resource_ledger", serde_json::json!([])),
+            ("scheduler_tail", serde_json::json!([])),
+            (
+                "redaction",
+                serde_json::json!({
+                    "payloads": "omitted-by-default",
+                    "secrets": "never-emitted-by-default",
+                    "paths": "logical-only",
+                    "network_upload": false,
+                    "executes_dump_code": false
+                }),
+            ),
+            (
+                "limitations",
+                serde_json::json!({
+                    "truncated": false,
+                    "unavailable": ["registers", "native-unwind", "physical-paths"],
+                    "events_seen": 0
+                }),
+            ),
+        ];
+        let artifact = tondo_vm::runtime::DumpArtifact {
+            format: tondo_vm::runtime::DUMP_SCHEMA.into(),
+            version: 1,
+            content_sha256: String::new(),
+            sections: sections
+                .into_iter()
+                .map(|(name, value)| tondo_vm::runtime::DumpSection {
+                    name: name.into(),
+                    value,
+                })
+                .collect(),
+        };
+        let path = temp_root().join(format!("tondo-cli-dump-{}.tdump", std::process::id()));
+        fs::write(&path, artifact.encode().unwrap()).unwrap();
+        let valid = run_dump_command(&arguments(&[
+            "dump",
+            "analyze",
+            path.to_str().unwrap(),
+            "--format",
+            "json",
+        ]))
+        .unwrap();
+        assert_eq!(valid, ExitCode::SUCCESS);
+
+        fs::write(&path, b"{}").unwrap();
+        let invalid =
+            run_dump_command(&arguments(&["dump", "analyze", path.to_str().unwrap()])).unwrap();
+        assert_eq!(invalid, ExitCode::from(EXIT_USAGE));
+        fs::remove_file(path).unwrap();
     }
 
     #[test]

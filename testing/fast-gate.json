@@ -21,6 +21,7 @@
     "TONDO_TOOLCHAIN_SPEC.md",
     "docs/",
     "docs/contracts/diagnostic-runtime.md",
+    "docs/contracts/diagnostic-dump.md",
     "conformance/0.1/cases/documentation/",
     "conformance/0.1/manifest.json",
     "conformance/draft/manifest.json",
@@ -71,6 +72,7 @@
     "crates/tondo-vm/src/runtime/execute.rs",
     "crates/tondo-vm/src/runtime/diagnostics.rs",
     "crates/tondo-vm/src/runtime/heap.rs",
+    "crates/tondo-vm/src/runtime/dump.rs",
     "scripts/performance-check.sh",
     "scripts/performance-test.sh",
     "scripts/test-gate.sh",
@@ -78,12 +80,15 @@
     "testing/diagnostic-tooling.json",
     "testing/diagnostic-runtime.json",
     "testing/diagnostic-leak.json",
+    "testing/diagnostic-dump.json",
     "scripts/diagnostic-contract-check.sh",
     "scripts/diagnostic-contract-test.sh",
     "scripts/diagnostic-runtime-check.sh",
     "scripts/diagnostic-runtime-test.sh",
     "scripts/diagnostic-leak-check.sh",
-    "scripts/diagnostic-leak-test.sh"
+    "scripts/diagnostic-leak-test.sh",
+    "scripts/diagnostic-dump-check.sh",
+    "scripts/diagnostic-dump-test.sh"
   ],
   "packages": [
     { "prefix": "crates/tondo-cli/", "package": "tondo-cli" },

@@ -6,10 +6,10 @@
 calendario civil de `std.time` ya están cerrados por
 `STD-ASYNC-GROUP-SPEC-001`, `STD-CONC-001`, `STD-SYNC-001`, `STD-EXEC-001`,
 `STD-NET-001` y `STD-CIVIL-TIME-001`. La primera implementación runtime de la
-VM hosted está cerrada por `DIAG-RUNTIME-001`; los detectores hosted de races y
-retención están cerrados por `RACE-001` y `LEAK-001`, mientras que crash dumps,
-runner y paridad native permanecen pendientes en los bloques `DIAG-*`
-posteriores.
+VM hosted está cerrada por `DIAG-RUNTIME-001`; los detectores hosted de races,
+retención y dumps lógicos están cerrados por `RACE-001`, `LEAK-001` y
+`DUMP-001`, mientras que runner, captura de señales y paridad native
+permanecen pendientes en los bloques `DIAG-*` posteriores.
 
 Este documento define la frontera entre el lenguaje, el runtime y las
 herramientas que ayudan a encontrar fallos de concurrencia, retención de
@@ -110,12 +110,13 @@ que conserva:
 - últimos eventos de scheduler, suspensión, locks, I/O y panic; y
 - redacción aplicada, límites, truncados y capacidad que no estuvo disponible.
 
-La captura en una señal o terminación fatal hace únicamente trabajo async-signal-safe
-y delega la serialización a un helper cuando el host lo permite. El analizador
-`tondo dump analyze` produce una vista humana y un JSON estable sin consultar
-red ni ejecutar código del dump. No hay subida automática, y los campos que
-puedan contener secretos quedan fuera salvo una opción explícita de la futura
-revisión de privacidad.
+La VM hosted captura la traza lógica en el envelope canónico `tondo-dump/1` y
+el analizador `tondo dump analyze` produce una vista humana y un JSON estable
+sin consultar red ni ejecutar código del dump. No hay subida automática, y los
+campos que puedan contener secretos quedan fuera. La captura en una señal o
+terminación fatal hace únicamente trabajo async-signal-safe y delega la
+serialización a un helper cuando el host lo permite; esa parte física sigue en
+`DIAG-NATIVE-001`.
 
 La VM ofrece primero un dump lógico. El backend nativo añade adaptadores de
 unwind, símbolos y registros sin cambiar el envelope; si una plataforma no
@@ -188,7 +189,7 @@ La ejecución se divide en bloques del tracker:
 | `DIAG-RUNTIME-001` | Registro de task/thread, eventos de memoria, roots, recursos, source maps, scheduler y quiescencia en VM hosted | `DIAG-SPEC-001`, contratos runtime-facing B0, VM hosted |
 | `RACE-001` | Detector VM sobre tasks, memoria, unsafe y primitivas internas; corpus positivo/negativo | `DIAG-RUNTIME-001` |
 | `LEAK-001` | Retención GC y recursos hosted con snapshots reproducibles | `DIAG-RUNTIME-001` |
-| `DUMP-001` | Captura `.tdump`, redacción y analizador | `DIAG-SPEC-001`, source maps/unwind VM |
+| `DUMP-001` | Captura lógica `.tdump`, redacción y analizador | `DIAG-SPEC-001`, source maps VM |
 | `DIAG-TEST-001` | Integración por intento, retry, shard, JSON/JUnit y artifacts | `RACE-001`, `LEAK-001`, `DUMP-001` |
 | `DIAG-CI-001` | Lanes, budgets, fuzzing, regression corpus y promotion gate | `DIAG-TEST-001`, `PERF-001` |
 | `DIAG-NATIVE-001` | Paridad nativa de race/leaks/dumps, roots/retainers, threads, unwind y source maps | backend elegido, memoria/ABI/lowering nativos, `NATIVE-THREAD-001`, detectores VM |
@@ -226,6 +227,6 @@ paridad native siguen pendientes.
 - No se añade un profiler general, un heap snapshot público ni un uploader.
 - No se trata un reporte limpio como prueba estática de ausencia de races o
   fugas.
-- No se marca ningún bloque `LEAK-*`, `DUMP-*`, `NATIVE-*` o S1A como
-  implementado por la mera existencia de este contrato; `RACE-001` solo está
-  cerrado por la evidencia ejecutable de su propio contrato.
+- No se marca ningún bloque `NATIVE-*` o S1A como implementado por la mera
+  existencia de este contrato. `DUMP-001`, al igual que `RACE-001` y
+  `LEAK-001`, solo está cerrado por evidencia ejecutable de su propio contrato.

@@ -17893,6 +17893,29 @@ mod tests {
                 .any(|event| matches!(event, DiagnosticEvent::Roots { .. }))
         );
         assert!(!trace.is_truncated());
+        let dump = super::super::dump::capture_dump(
+            &trace,
+            super::super::dump::DumpIdentity {
+                run_id: "runtime-test".into(),
+                attempt_id: "attempt-1".into(),
+                shard: "0/1".into(),
+                profile: "crash".into(),
+                target: "linux-x86_64".into(),
+                backend: "bytecode-vm".into(),
+                toolchain: "test".into(),
+                source_revision: "test-revision".into(),
+            },
+            super::super::dump::DumpTermination {
+                reason: "returned".into(),
+                program_exit_status: Some(0),
+                command_exit_status: Some(0),
+            },
+        )
+        .unwrap();
+        let dump_analysis = super::super::dump::analyze_dump(&dump).unwrap();
+        assert_eq!(dump_analysis.task_count, 1);
+        assert_eq!(dump_analysis.thread_count, 1);
+        assert!(!dump_analysis.truncated);
 
         let mut repeat_host = RejectingHost;
         let repeat = execute_with_diagnostics(

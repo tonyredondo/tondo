@@ -72,5 +72,5 @@
     "finding-limit",
     "invalid-configuration"
   ],
-  "next_blocks": ["DUMP-001", "DIAG-TEST-001"]
+  "next_blocks": ["DIAG-TEST-001", "DIAG-CI-001"]
 }

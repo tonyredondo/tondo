@@ -10,6 +10,7 @@ use std::fmt;
 use crate::bytecode::{BytecodeSpan, BytecodeVerificationError};
 
 mod diagnostics;
+mod dump;
 mod execute;
 mod heap;
 mod leak;
@@ -25,6 +26,10 @@ pub use diagnostics::{
     DiagnosticResourceState, DiagnosticRootSnapshot, DiagnosticSchedulerOperation,
     DiagnosticSource, DiagnosticSynchronization, DiagnosticTaskState, DiagnosticThreadState,
     DiagnosticTrace,
+};
+pub use dump::{
+    DUMP_EXTENSION, DUMP_SCHEMA, DumpAnalysis, DumpArtifact, DumpError, DumpIdentity, DumpOptions,
+    DumpSection, DumpTermination, MAX_DUMP_BYTES, analyze_dump, capture_dump,
 };
 pub use execute::{
     RejectingHost, VmExecution, VmHost, VmOutcome, VmTestNodeKind, VmTestNodeOutcome, execute,

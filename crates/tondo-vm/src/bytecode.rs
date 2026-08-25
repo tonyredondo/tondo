@@ -1577,7 +1577,7 @@ mod tests {
         assert_eq!(indices(Some(-100), Some(100), None, 5), [0, 1, 2, 3, 4]);
         assert_eq!(indices(None, None, Some(2), 5), [0, 2, 4]);
         assert_eq!(indices(None, None, Some(-1), 5), [4, 3, 2, 1, 0]);
-        assert_eq!(indices(None, Some(-1), Some(-1), 5), []);
+        assert_eq!(indices(None, Some(-1), Some(-1), 5), Vec::<usize>::new());
         assert_eq!(indices(Some(4), Some(0), Some(-2), 5), [4, 2]);
         assert_eq!(indices(Some(-1), Some(-6), Some(-2), 5), [4, 2, 0]);
         assert_eq!(
@@ -1589,8 +1589,8 @@ mod tests {
             [4, 3, 2, 1, 0]
         );
         assert_eq!(indices(None, None, Some(i64::MIN as i128), 5), [4]);
-        assert_eq!(indices(None, None, None, 0), []);
-        assert_eq!(indices(None, None, Some(-1), 0), []);
+        assert_eq!(indices(None, None, None, 0), Vec::<usize>::new());
+        assert_eq!(indices(None, None, Some(-1), 0), Vec::<usize>::new());
         assert_eq!(
             normalize_array_slice_indices(None, None, Some(0), 5),
             Err(ArraySliceError::ZeroStep)

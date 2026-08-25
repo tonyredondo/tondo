@@ -87,6 +87,10 @@ run_step diagnostic-leak-contract \
     scripts/diagnostic-leak-check.sh
 run_step diagnostic-leak-contract-tests \
     scripts/diagnostic-leak-test.sh
+run_step diagnostic-dump-contract \
+    scripts/diagnostic-dump-check.sh
+run_step diagnostic-dump-contract-tests \
+    scripts/diagnostic-dump-test.sh
 run_step stdlib-async-group-contract \
     scripts/stdlib-async-group-check.sh
 run_step stdlib-async-group-contract-tests \

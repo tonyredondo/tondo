@@ -8,4 +8,4 @@ historial.
 
 | RFC | Tema | Estado |
 |---|---|---|
-| [019](019-diagnostic-tooling.md) | Race detector, leak detector y crash dumps | Propuesta de planificación |
+| [019](019-diagnostic-tooling.md) | Race detector, leak detector y crash dumps | D0–D3 hosted cerrados; runner/native pendientes |

@@ -1,0 +1,73 @@
+{
+  "format": "tondo-diagnostic-dump/1",
+  "owner": "toolchain.diagnostics",
+  "edition": "0.1",
+  "phase": "DUMP-001",
+  "status": "implemented",
+  "contract": "docs/contracts/diagnostic-dump.md",
+  "implementation": [
+    "crates/tondo-vm/src/runtime/dump.rs",
+    "crates/tondo-vm/src/runtime.rs",
+    "crates/tondo-cli/src/main.rs"
+  ],
+  "tests": [
+    "crates/tondo-vm/src/runtime/dump.rs",
+    "crates/tondo-vm/src/runtime/execute.rs",
+    "crates/tondo-cli/src/main.rs",
+    "scripts/diagnostic-dump-check.sh",
+    "scripts/diagnostic-dump-test.sh"
+  ],
+  "schema": "tondo-dump/1",
+  "extension": ".tdump",
+  "encoding": "canonical-json-utf8",
+  "content_address": "sha256",
+  "termination_reasons": [
+    "panic",
+    "fatal-signal",
+    "abort",
+    "returned",
+    "cancelled",
+    "timeout",
+    "resource-limit"
+  ],
+  "required_sections": [
+    "header",
+    "termination",
+    "identity",
+    "stacks",
+    "heap_summary",
+    "resource_ledger",
+    "scheduler_tail",
+    "redaction",
+    "limitations"
+  ],
+  "optional_sections": ["registers", "source_maps", "retainers"],
+  "user_payloads": "omitted-by-default",
+  "analyzer": {
+    "command": "tondo dump analyze <file.tdump>",
+    "formats": ["human", "json"],
+    "network": false,
+    "executes_dump_code": false,
+    "invalid_input_exit_status": 2
+  },
+  "limits": {
+    "max_dump_bytes": 268435456,
+    "fail_closed": true,
+    "canonical_bytes_required": true
+  },
+  "privacy": {
+    "payloads": "redacted-by-default",
+    "secrets": "never-emitted-by-default",
+    "logical_paths_only": true,
+    "network_upload": false
+  },
+  "hosted_scope": {
+    "logical_trace_capture": true,
+    "physical_registers": false,
+    "native_unwind": false,
+    "signal_safe_capture": "DIAG-NATIVE-001"
+  },
+  "public_stdlib_api": false,
+  "source_keywords_added": false,
+  "next_blocks": ["DIAG-TEST-001", "DIAG-CI-001"]
+}
