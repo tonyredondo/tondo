@@ -182,6 +182,8 @@ pub enum DiagnosticEvent {
         operation: DiagnosticHeapOperation,
         bytes: u64,
         owner_task: u64,
+        source: Option<DiagnosticSource>,
+        stack: Vec<DiagnosticSource>,
     },
     Roots {
         task_id: u64,
@@ -193,6 +195,8 @@ pub enum DiagnosticEvent {
         kind: String,
         state: DiagnosticResourceState,
         owner_task: u64,
+        source: Option<DiagnosticSource>,
+        stack: Vec<DiagnosticSource>,
     },
     Scheduler {
         task_id: u64,
@@ -378,12 +382,16 @@ impl DiagnosticSession {
         operation: DiagnosticHeapOperation,
         bytes: u64,
         owner_task: u64,
+        source: Option<DiagnosticSource>,
+        stack: Vec<DiagnosticSource>,
     ) -> Result<(), VmError> {
         self.emit(DiagnosticEvent::Heap {
             object_id,
             operation,
             bytes,
             owner_task,
+            source,
+            stack,
         })
     }
 
@@ -423,6 +431,8 @@ impl DiagnosticSession {
         kind: impl Into<String>,
         state: DiagnosticResourceState,
         owner_task: u64,
+        source: Option<DiagnosticSource>,
+        stack: Vec<DiagnosticSource>,
     ) -> Result<(), VmError> {
         let kind = kind.into();
         self.emit(DiagnosticEvent::Resource {
@@ -430,6 +440,8 @@ impl DiagnosticSession {
             kind: kind.clone(),
             state,
             owner_task,
+            source,
+            stack,
         })?;
         let event = self.events_seen;
         let entry =
@@ -626,10 +638,24 @@ mod tests {
             )
             .unwrap();
         session
-            .resource(7, "File", DiagnosticResourceState::Acquired, 1)
+            .resource(
+                7,
+                "File",
+                DiagnosticResourceState::Acquired,
+                1,
+                None,
+                Vec::new(),
+            )
             .unwrap();
         session
-            .resource(7, "File", DiagnosticResourceState::Released, 1)
+            .resource(
+                7,
+                "File",
+                DiagnosticResourceState::Released,
+                1,
+                None,
+                Vec::new(),
+            )
             .unwrap();
         let trace = session.finish();
         assert_eq!(trace.source_maps.len(), 1);

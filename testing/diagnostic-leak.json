@@ -1,0 +1,76 @@
+{
+  "format": "tondo-diagnostic-leak/1",
+  "owner": "toolchain.diagnostics",
+  "edition": "0.1",
+  "phase": "LEAK-001",
+  "status": "implemented",
+  "contract": "docs/contracts/diagnostic-leak.md",
+  "implementation": [
+    "crates/tondo-vm/src/runtime/leak.rs",
+    "crates/tondo-vm/src/runtime/diagnostics.rs",
+    "crates/tondo-vm/src/runtime/execute.rs",
+    "crates/tondo-vm/src/runtime.rs"
+  ],
+  "tests": [
+    "crates/tondo-vm/src/runtime/leak.rs",
+    "crates/tondo-vm/src/runtime/execute.rs",
+    "scripts/diagnostic-leak-check.sh",
+    "scripts/diagnostic-leak-test.sh"
+  ],
+  "algorithm": {
+    "heap": "generational-tracing-gc",
+    "snapshots": "quiescence-end-with-roots",
+    "retention": "object-visible-in-two-snapshots-and-sustained-growth",
+    "resources": "final-acquired-without-release",
+    "observed_only": true
+  },
+  "finding_kinds": [
+    "managed-retention",
+    "affine-resource",
+    "native-allocation",
+    "sustained-growth"
+  ],
+  "required_context": [
+    "allocation-stack",
+    "owner",
+    "retainers",
+    "cleanup-state",
+    "size",
+    "first-view",
+    "last-view",
+    "quiescence"
+  ],
+  "status_values": ["clean", "finding", "unsupported"],
+  "limits": {
+    "max_observations": 100000,
+    "max_findings": 100000,
+    "max_events": 1000000,
+    "max_stack_depth": 256,
+    "max_retainers_per_object": 256,
+    "min_growth_snapshots": 3,
+    "fail_closed": true
+  },
+  "privacy": {
+    "payloads": "omitted-by-default",
+    "physical_paths": "omitted-by-default",
+    "network_upload": false
+  },
+  "lifecycle": {
+    "fresh_process_per_attempt": true,
+    "retry_state_isolated": true,
+    "shard_state_isolated": true,
+    "suite_state_isolated": true
+  },
+  "public_stdlib_api": false,
+  "native_parity": "DIAG-NATIVE-001",
+  "unsupported_reasons": [
+    "truncated-trace",
+    "missing-quiescence",
+    "missing-root-snapshot",
+    "missing-allocation",
+    "observation-limit",
+    "finding-limit",
+    "invalid-configuration"
+  ],
+  "next_blocks": ["DUMP-001", "DIAG-TEST-001"]
+}

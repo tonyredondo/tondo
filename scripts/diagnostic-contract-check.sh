@@ -119,7 +119,7 @@ jq -e '
   }
   and ((.negative_cases | unique | length) == (.negative_cases | length))
   and (.negative_cases | length) == 18
-  and .next_blocks == ["LEAK-001", "DUMP-001"]
+  and .next_blocks == ["DUMP-001", "DIAG-TEST-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable contract"
 
 for path in \

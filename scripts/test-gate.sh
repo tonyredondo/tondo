@@ -83,6 +83,10 @@ run_step diagnostic-race-contract \
     scripts/diagnostic-race-check.sh
 run_step diagnostic-race-contract-tests \
     scripts/diagnostic-race-test.sh
+run_step diagnostic-leak-contract \
+    scripts/diagnostic-leak-check.sh
+run_step diagnostic-leak-contract-tests \
+    scripts/diagnostic-leak-test.sh
 run_step stdlib-async-group-contract \
     scripts/stdlib-async-group-check.sh
 run_step stdlib-async-group-contract-tests \

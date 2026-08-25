@@ -56,7 +56,7 @@ honestidad en sus reportes y gates:
 | D0 Contrato | `DIAG-SPEC-001` | Schema de reporte/dump, perfiles, identidad, privacidad, exit status y negativos; cerrado |
 | D0.5 Fronteras runtime | `STD-CONC-001`, `STD-SYNC-001`, `STD-EXEC-001`, `STD-NET-001` | Contratos de eventos que consumirá la instrumentación, sin implementar todavía los owners |
 | D1 Instrumentación VM | `DIAG-RUNTIME-001` | Registro de task/thread, eventos de memoria/sync, roots, recursos, source maps y quiescencia |
-| D2 Detectores | `RACE-001`, `LEAK-001` | `RACE-001` implementado en VM hosted con corpus positivo/negativo y límites; `LEAK-001` sigue pendiente |
+| D2 Detectores | `RACE-001`, `LEAK-001` | `RACE-001` y `LEAK-001` implementados en VM hosted con corpus positivo/negativo y límites |
 | D3 Dumps | `DUMP-001` | Captura segura, redacción, fixtures `.tdump`, analizador human/JSON y corrupción rechazada |
 | D4 Runner | `DIAG-TEST-001` | Artifacts por intento, retries aislados, sharding, JUnit/JSON y clasificación unsupported |
 | D5 CI | `DIAG-CI-001` | Lanes opt-in, fuzzing, regression corpus, budgets y promotion gate sin alterar baseline normal |

@@ -85,8 +85,8 @@ Esta capa no serializa reportes ni dumps: los límites de 16 MiB y 256 MiB se
 aplican en los writers de `DIAG-TEST-001`/`DUMP-001`. El collector no inventa
 una conclusión de race: entrega memoria, lifecycle, synchronization, identidad
 y stacks para que `RACE-001` calcule vector clocks sobre caminos ejecutados.
-`RACE-001` está implementado para la VM hosted; `LEAK-001` y `DUMP-001` siguen
-siendo consumidores pendientes.
+`RACE-001` y `LEAK-001` están implementados para la VM hosted; `DUMP-001` sigue
+siendo consumidor pendiente.
 
 ## 5. Verificación
 

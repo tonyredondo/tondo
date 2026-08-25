@@ -858,12 +858,17 @@ impl<'program, 'host> Engine<'program, 'host> {
         operation: DiagnosticHeapOperation,
         bytes: u64,
     ) -> Result<(), VmError> {
+        let frame = self.frames.len().saturating_sub(1);
+        let source = self.diagnostic_source(frame);
+        let stack = self.diagnostic_stack(frame);
         if let Some(diagnostics) = &mut self.diagnostics {
             diagnostics.heap(
                 handle.diagnostic_id(),
                 operation,
                 bytes,
                 Self::task_id(self.current_task),
+                source,
+                stack,
             )?;
         }
         Ok(())
@@ -889,12 +894,17 @@ impl<'program, 'host> Engine<'program, 'host> {
         let RuntimeValue::Host { kind, id } = value else {
             return Ok(());
         };
+        let frame = self.frames.len().saturating_sub(1);
+        let source = self.diagnostic_source(frame);
+        let stack = self.diagnostic_stack(frame);
         if let Some(diagnostics) = &mut self.diagnostics {
             diagnostics.resource(
                 *id,
                 format!("{kind:?}"),
                 state,
                 Self::task_id(self.current_task),
+                source,
+                stack,
             )?;
         }
         Ok(())
@@ -1333,6 +1343,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                     "the cooperative executor has no runnable task before root completion",
                 ));
             }
+            self.record_quiescence(super::diagnostics::DiagnosticQuiescencePhase::Begin)?;
             let (call, value) = self.host.wait_async(&calls)?;
             if !calls.contains(&call) {
                 return Err(VmError::Host(format!(
@@ -1341,6 +1352,8 @@ impl<'program, 'host> Engine<'program, 'host> {
             }
             self.complete_host_call(call, value)?;
             self.poll_host_calls()?;
+            let roots = self.roots(&[])?;
+            self.record_roots(&roots)?;
             self.record_quiescence(super::diagnostics::DiagnosticQuiescencePhase::End)?;
         }
     }
@@ -17842,6 +17855,11 @@ mod tests {
         assert!(
             race.is_clean(),
             "single-task trace must be race-clean: {race:?}"
+        );
+        let leaks = super::super::leak::detect_leaks(&trace);
+        assert!(
+            leaks.is_clean(),
+            "a single returned value is not a retention finding: {leaks:?}"
         );
         assert!(trace.events.iter().any(|event| matches!(
             event,

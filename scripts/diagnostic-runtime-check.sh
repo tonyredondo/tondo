@@ -40,7 +40,7 @@ jq -e '
   and .normal_path == "no-collector-and-no-events"
   and .semantic_equivalence == true
   and .native_parity == "DIAG-NATIVE-001"
-  and .next_blocks == ["LEAK-001", "DUMP-001"]
+  and .next_blocks == ["DUMP-001", "DIAG-TEST-001"]
 ' "$contract" >/dev/null || die "invalid runtime registry"
 
 for path in \

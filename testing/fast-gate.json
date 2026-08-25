@@ -77,10 +77,13 @@
     "scripts/quality-gate.sh",
     "testing/diagnostic-tooling.json",
     "testing/diagnostic-runtime.json",
+    "testing/diagnostic-leak.json",
     "scripts/diagnostic-contract-check.sh",
     "scripts/diagnostic-contract-test.sh",
     "scripts/diagnostic-runtime-check.sh",
-    "scripts/diagnostic-runtime-test.sh"
+    "scripts/diagnostic-runtime-test.sh",
+    "scripts/diagnostic-leak-check.sh",
+    "scripts/diagnostic-leak-test.sh"
   ],
   "packages": [
     { "prefix": "crates/tondo-cli/", "package": "tondo-cli" },

@@ -6,9 +6,9 @@
 calendario civil de `std.time` ya están cerrados por
 `STD-ASYNC-GROUP-SPEC-001`, `STD-CONC-001`, `STD-SYNC-001`, `STD-EXEC-001`,
 `STD-NET-001` y `STD-CIVIL-TIME-001`. La primera implementación runtime de la
-VM hosted está cerrada por `DIAG-RUNTIME-001`; el detector de races hosted está
-cerrado por `RACE-001`, mientras que las leaves de retención, crash, runner,
-dumps y paridad native permanecen pendientes en los bloques `DIAG-*`
+VM hosted está cerrada por `DIAG-RUNTIME-001`; los detectores hosted de races y
+retención están cerrados por `RACE-001` y `LEAK-001`, mientras que crash dumps,
+runner y paridad native permanecen pendientes en los bloques `DIAG-*`
 posteriores.
 
 Este documento define la frontera entre el lenguaje, el runtime y las
@@ -204,7 +204,10 @@ registro de tasks/threads, hooks de memoria/GC, source maps, unwind y crash
 dumps. `NATIVE-MEM-ADR-001` y `NATIVE-ABI-001` incorporan estos requisitos; la
 implementación de STD-0.1B no publica APIs paralelas para satisfacerlos.
 `LEAK-001` no depende del modelo de memoria nativo: primero prueba la VM y el
-ledger hosted; `DIAG-NATIVE-001` prueba después ARC/ciclos/FFI nativos.
+ledger hosted; `DIAG-NATIVE-001` prueba después ARC/ciclos/FFI nativos. La
+implementación hosted está cerrada por `crates/tondo-vm/src/runtime/leak.rs`,
+su contrato y su registro machine-readable; no implica soporte nativo ni del
+runner de tests.
 
 ## 8. Fronteras normativas de `DEC-018`
 
@@ -212,9 +215,10 @@ ledger hosted; `DIAG-NATIVE-001` prueba después ARC/ciclos/FFI nativos.
 `tondo-diagnostics-json/1`, prohíbe keywords y APIs paralelas en `std`, exige
 estado `unsupported-diagnostic-profile` explícito y fija redacción/payloads
 fuera del envelope por defecto. La instrumentación VM hosted ejecutable está
-documentada por [`diagnostic-runtime.md`](diagnostic-runtime.md) y el detector
-de races por [`diagnostic-race.md`](diagnostic-race.md). Los detectores de
-retención/crash, runner y paridad native siguen pendientes.
+documentada por [`diagnostic-runtime.md`](diagnostic-runtime.md), el detector
+de races por [`diagnostic-race.md`](diagnostic-race.md) y el detector de
+retención por [`diagnostic-leak.md`](diagnostic-leak.md). Crash dumps, runner y
+paridad native siguen pendientes.
 
 ## 9. No objetivos de esta revisión
 

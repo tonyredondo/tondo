@@ -217,5 +217,5 @@
     "stdlib-parallel-api",
     "keyword-addition"
   ],
-  "next_blocks": ["LEAK-001", "DUMP-001"]
+  "next_blocks": ["DUMP-001", "DIAG-TEST-001"]
 }
