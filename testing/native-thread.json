@@ -1,0 +1,73 @@
+{
+  "format": "tondo-native-thread/1",
+  "owner": "toolchain.native_runtime",
+  "edition": "0.1",
+  "task": "NATIVE-THREAD-001",
+  "status": "closed",
+  "implementation": {
+    "runtime": "crates/tondo-native-runtime/src/lib.rs",
+    "native_adapter": "tools/native-evaluation/src/main.rs",
+    "evidence": "target/reliability/evidence/native-evaluation-runner.json",
+    "report_field": "native_thread_runs"
+  },
+  "lane": {
+    "source": "spawn thread call()",
+    "join": "same-opaque-Join-state-machine",
+    "vm": "single-cooperative-queue-with-deterministic-state",
+    "native": "one-os-worker-lane-per-thread-spawn",
+    "adapter_body_boundary": "lowered-value-is-evaluated-before-current-adapter-handoff",
+    "deferred_body_lowering": "reserved-for-NATIVE-002"
+  },
+  "worker": {
+    "states": ["starting", "running", "completed", "cancelled"],
+    "identity": "logical-handle-sequence; physical-thread-id-never-exposed",
+    "distinct_thread": "worker-thread-id-differs-from-spawner",
+    "completion": "worker-completes-before-Join-or-await-observes-value",
+    "ownership": "worker-signal-is-retained-until-logical-handle-release",
+    "cancellation": "cancel-before-worker-entry-prevents-run; cancelled-Join-never-publishes-value",
+    "cleanup": "worker-signal-terminal-transition-is-idempotent-and-detached-without-leak"
+  },
+  "abi": {
+    "status": "tondo_rt_thread_worker_status(task)",
+    "runs": "tondo_rt_thread_worker_runs(task)",
+    "distinct": "tondo_rt_thread_worker_distinct(task)",
+    "wait": "tondo_rt_thread_worker_wait(task)",
+    "invalid_handle": "u64-max",
+    "status_codes": {
+      "starting": 0,
+      "running": 1,
+      "completed": 2,
+      "cancelled": 3
+    }
+  },
+  "corpus": {
+    "native_cases": [
+      "thread-worker-status",
+      "thread-worker-runs",
+      "thread-worker-distinct",
+      "thread-worker-join",
+      "thread-worker-cancel",
+      "select-thread-join"
+    ],
+    "oracle": "same-Join-value-cancellation-and-terminal-state-observables"
+  },
+  "invariants": [
+    "thread-spawn-retains-the-task-state-machine-and-does-not-create-a-second-Join-type",
+    "worker-start-and-completion-are-signalled-without-holding-the-global-runtime-lock",
+    "Join-await-and-select-take-cross-the-worker-completion-barrier-before-consuming",
+    "cancelled-or-joined-handles-never-return-a-worker-value-twice",
+    "worker-observability-is-logical-and-path-free",
+    "the-C-shim-uses-pthread-create-and-pthread-join-only-as-a-differential-harness"
+  ],
+  "negative_cases": [
+    "missing-worker-status",
+    "worker-run-count-not-one",
+    "worker-not-distinct",
+    "join-before-worker-completion",
+    "cancelled-task-becomes-ready",
+    "worker-handle-released-before-terminal-cleanup",
+    "physical-thread-id-leaked",
+    "deferred-body-claimed-by-eager-adapter"
+  ],
+  "next_blocks": ["NATIVE-002", "DIAG-NATIVE-001"]
+}

@@ -196,7 +196,7 @@ La ejecución se divide en bloques del tracker:
 | `DUMP-001` | Captura lógica `.tdump`, redacción y analizador | `DIAG-SPEC-001`, source maps VM |
 | `DIAG-TEST-001` | Integración por intento, retry, shard, JSON/JUnit y artifacts | `RACE-001`, `LEAK-001`, `DUMP-001` |
 | `DIAG-CI-001` | Lanes, budgets, fuzzing, regression corpus y promotion gate | `DIAG-TEST-001`, `PERF-001`; implementado hosted |
-| `DIAG-NATIVE-001` | Paridad nativa de race/leaks/dumps, roots/retainers, threads, unwind y source maps | backend elegido, memoria/ABI/lowering nativos, `NATIVE-THREAD-001`, detectores VM |
+| `DIAG-NATIVE-001` | Paridad nativa de race/leaks/dumps, roots/retainers, threads, unwind y source maps | backend elegido, `NATIVE-002`, memoria/ABI/lowering nativos y detectores VM; `NATIVE-THREAD-001` ya está cerrado |
 | `DIAG-STDLIB-001` | Adapters de detector para channel/sync/executor/net y corpus VM/native | implementaciones STD-0.1B aplicables, `DIAG-NATIVE-001` |
 
 `RACE-001` anterior al backend cubre tasks, memoria, unsafe y primitivas

@@ -165,6 +165,22 @@ implement selection. Static and negative checks are in
 the machine-readable boundary in
 [`testing/native-select.json`](../../testing/native-select.json).
 
+The native thread lane extends the same differential runner with a physical
+worker check. `thread-spawn` is linked to a real `pthread_create`/`pthread_join`
+worker in the C harness, and the private worker-status, run-count, distinct
+thread and wait symbols are lowered through both adapters. Five cases prove
+that a worker ran exactly once on a distinct OS thread, that `Join` observes the
+value only after worker completion, and that cancellation leaves the logical
+task cancelled. The Rust runtime implements the corresponding safe
+`std::thread` signal and barrier; no operating-system thread ID or pointer is
+serialized. The current MIR adapter still evaluates a lowered scalar operation
+before handoff, so this evidence closes the physical lane without claiming
+deferred callable-body lowering; that coordination remains in `NATIVE-002`.
+The contract and focused checks are in
+[`testing/native-thread.json`](../../testing/native-thread.json),
+[`scripts/native-thread-check.sh`](../../scripts/native-thread-check.sh) and
+[`scripts/native-thread-test.sh`](../../scripts/native-thread-test.sh).
+
 ## Evaluation matrix
 
 The selection records the dimensions that must be evidenced before promotion:
@@ -198,8 +214,8 @@ failure.
 
 `NATIVE-BACKEND-ADAPTER-001` is closed by the common normalized lowering and
 its executable differential evidence. The report covers 118 scalar cases, 3
-managed-result cases, 16 runtime-contract cases and 8 selection cases in fresh
-Cranelift/LLVM subprocesses. Functions that still require projected storage
+managed-result cases, 21 runtime-contract cases, 8 selection cases and 5
+thread-worker cases in fresh Cranelift/LLVM subprocesses. Functions that still require projected storage
 (`core`/`bytes`) or collection `IteratorNext` are reported as unsupported,
 fail-closed, and are not counted as native semantic evidence. Checked
 arithmetic overflow, logical operators, conversions, comparison branches,

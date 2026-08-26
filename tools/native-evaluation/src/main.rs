@@ -329,6 +329,7 @@ struct EvaluationReport {
     native_managed_runs: Vec<NativeManagedRunReport>,
     native_runtime_runs: Vec<NativeRuntimeRunReport>,
     native_select_runs: Vec<NativeSelectRunReport>,
+    native_thread_runs: Vec<NativeThreadRunReport>,
 }
 
 #[derive(Debug, Serialize)]
@@ -456,6 +457,15 @@ struct NativeRuntimeRunReport {
 #[derive(Debug, Serialize)]
 #[serde(deny_unknown_fields)]
 struct NativeSelectRunReport {
+    case: String,
+    expected_result: i64,
+    cranelift: &'static str,
+    llvm: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct NativeThreadRunReport {
     case: String,
     expected_result: i64,
     cranelift: &'static str,
@@ -637,6 +647,19 @@ fn run() -> Result<(), String> {
                 })
         })
         .collect::<Vec<_>>();
+    let native_thread_runs = native_runtime_runs
+        .iter()
+        .filter_map(|run| {
+            run.case
+                .starts_with("thread-")
+                .then_some(NativeThreadRunReport {
+                    case: run.case.clone(),
+                    expected_result: run.expected_result?,
+                    cranelift: run.cranelift,
+                    llvm: run.llvm,
+                })
+        })
+        .collect::<Vec<_>>();
 
     let report = EvaluationReport {
         format: "tondo-native-evaluation-candidates/1",
@@ -692,7 +715,7 @@ fn run() -> Result<(), String> {
             } else if native_runtime_runs.is_empty() {
                 "scalar-and-managed-native-executable-vs-vm-and-normalized-oracle"
             } else {
-                "scalar-managed-runtime-and-select-native-executable-vs-vm-and-contract"
+                "scalar-managed-runtime-thread-and-select-native-executable-vs-vm-and-contract"
             },
         },
         debug_metadata,
@@ -700,6 +723,7 @@ fn run() -> Result<(), String> {
         native_managed_runs,
         native_runtime_runs,
         native_select_runs,
+        native_thread_runs,
     };
 
     let encoded = serde_json::to_vec_pretty(&report)
@@ -1356,6 +1380,10 @@ struct RuntimeRefs {
     scope_spawn: FuncRef,
     task_spawn: FuncRef,
     thread_spawn: FuncRef,
+    thread_worker_status: FuncRef,
+    thread_worker_runs: FuncRef,
+    thread_worker_distinct: FuncRef,
+    thread_worker_wait: FuncRef,
     task_poll: FuncRef,
     task_wake: FuncRef,
     task_cancel: FuncRef,
@@ -1430,6 +1458,10 @@ fn declare_cranelift_runtime(
         ("tondo_rt_scope_spawn", 3),
         ("tondo_rt_task_spawn", 2),
         ("tondo_rt_thread_spawn", 2),
+        ("tondo_rt_thread_worker_status", 1),
+        ("tondo_rt_thread_worker_runs", 1),
+        ("tondo_rt_thread_worker_distinct", 1),
+        ("tondo_rt_thread_worker_wait", 1),
         ("tondo_rt_task_poll", 1),
         ("tondo_rt_task_wake", 1),
         ("tondo_rt_task_cancel", 1),
@@ -1484,6 +1516,10 @@ fn declare_cranelift_runtime(
         scope_spawn: get("tondo_rt_scope_spawn")?,
         task_spawn: get("tondo_rt_task_spawn")?,
         thread_spawn: get("tondo_rt_thread_spawn")?,
+        thread_worker_status: get("tondo_rt_thread_worker_status")?,
+        thread_worker_runs: get("tondo_rt_thread_worker_runs")?,
+        thread_worker_distinct: get("tondo_rt_thread_worker_distinct")?,
+        thread_worker_wait: get("tondo_rt_thread_worker_wait")?,
         task_poll: get("tondo_rt_task_poll")?,
         task_wake: get("tondo_rt_task_wake")?,
         task_cancel: get("tondo_rt_task_cancel")?,
@@ -1627,6 +1663,22 @@ fn runtime_helper(runtime: &RuntimeRefs, kind: &str) -> Result<RuntimeCall, Stri
         "thread-spawn" => Ok(RuntimeCall {
             function: runtime.thread_spawn,
             arity: 2,
+        }),
+        "thread-worker-status" => Ok(RuntimeCall {
+            function: runtime.thread_worker_status,
+            arity: 1,
+        }),
+        "thread-worker-runs" => Ok(RuntimeCall {
+            function: runtime.thread_worker_runs,
+            arity: 1,
+        }),
+        "thread-worker-distinct" => Ok(RuntimeCall {
+            function: runtime.thread_worker_distinct,
+            arity: 1,
+        }),
+        "thread-worker-wait" => Ok(RuntimeCall {
+            function: runtime.thread_worker_wait,
+            arity: 1,
         }),
         "task-poll" => Ok(RuntimeCall {
             function: runtime.task_poll,
@@ -3937,6 +3989,42 @@ fn native_cleanup_program() -> (MirBackendProgram, Vec<RuntimeContractCase>) {
             ("select-commit", vec![runtime_operand(1), constant("1")]),
         ],
     );
+    let thread_worker_status_function = runtime_sequence(
+        116,
+        vec![
+            ("thread-spawn", vec![constant("91"), constant("0")]),
+            ("thread-worker-status", vec![runtime_operand(1)]),
+        ],
+    );
+    let thread_worker_runs_function = runtime_sequence(
+        117,
+        vec![
+            ("thread-spawn", vec![constant("92"), constant("0")]),
+            ("thread-worker-runs", vec![runtime_operand(1)]),
+        ],
+    );
+    let thread_worker_distinct_function = runtime_sequence(
+        118,
+        vec![
+            ("thread-spawn", vec![constant("93"), constant("0")]),
+            ("thread-worker-distinct", vec![runtime_operand(1)]),
+        ],
+    );
+    let thread_worker_join_function = runtime_sequence(
+        119,
+        vec![
+            ("thread-spawn", vec![constant("94"), constant("0")]),
+            ("await", vec![runtime_operand(1)]),
+        ],
+    );
+    let thread_worker_cancel_function = runtime_sequence(
+        120,
+        vec![
+            ("thread-spawn", vec![constant("95"), constant("1")]),
+            ("task-cancel", vec![runtime_operand(1)]),
+            ("task-poll", vec![runtime_operand(1)]),
+        ],
+    );
     let functions = vec![
         cleanup_function,
         abort_function,
@@ -3954,6 +4042,11 @@ fn native_cleanup_program() -> (MirBackendProgram, Vec<RuntimeContractCase>) {
         select_time_function,
         select_thread_join_function,
         select_else_function,
+        thread_worker_status_function,
+        thread_worker_runs_function,
+        thread_worker_distinct_function,
+        thread_worker_join_function,
+        thread_worker_cancel_function,
     ];
     (
         MirBackendProgram {
@@ -4044,6 +4137,31 @@ fn native_cleanup_program() -> (MirBackendProgram, Vec<RuntimeContractCase>) {
                 name: "select-else",
                 function_ordinal: 115,
                 expectation: RuntimeExpectation::Scalar(8),
+            },
+            RuntimeContractCase {
+                name: "thread-worker-status",
+                function_ordinal: 116,
+                expectation: RuntimeExpectation::Scalar(2),
+            },
+            RuntimeContractCase {
+                name: "thread-worker-runs",
+                function_ordinal: 117,
+                expectation: RuntimeExpectation::Scalar(1),
+            },
+            RuntimeContractCase {
+                name: "thread-worker-distinct",
+                function_ordinal: 118,
+                expectation: RuntimeExpectation::Scalar(1),
+            },
+            RuntimeContractCase {
+                name: "thread-worker-join",
+                function_ordinal: 119,
+                expectation: RuntimeExpectation::Scalar(94),
+            },
+            RuntimeContractCase {
+                name: "thread-worker-cancel",
+                function_ordinal: 120,
+                expectation: RuntimeExpectation::Scalar(2),
             },
         ],
     )
@@ -4620,13 +4738,14 @@ fn native_runtime_c_source() -> String {
 #include <stdint.h>
 #include <stddef.h>
 #include <limits.h>
+#include <pthread.h>
 #define T_MAX 4096u
 #define F_MAX 256u
 #define D_MAX 64u
 #define S_MAX 64u
 #define SELECT_MAX_ARMS 64u
 #define HBIT (UINT64_C(1) << 63)
-typedef struct { uint64_t tag, payload, has_payload, strong, kind, state, value; } t_entry;
+typedef struct { uint64_t tag, payload, has_payload, strong, kind, state, value; uint64_t is_thread, worker_runs, worker_distinct; } t_entry;
 typedef struct { uint64_t terminal, root_count, defer_count; uint64_t roots[D_MAX]; uint64_t defers[D_MAX]; } t_frame;
 typedef struct { uint64_t handle, state, value, scope; } t_task;
 typedef struct { uint64_t source, kind, owned; } t_select_arm;
@@ -4637,11 +4756,21 @@ static t_task t_tasks[S_MAX];
 static t_select t_selects[T_MAX];
 static uint64_t t_next = 1, t_next_frame = 1, t_last = 0;
 static uint64_t t_select_rotation = 0;
+typedef struct { uint64_t id; } t_worker_arg;
+static void *t_thread_worker(void *raw) {
+    t_worker_arg *arg = (t_worker_arg *)raw;
+    if (arg->id < T_MAX) {
+        t_objects[arg->id].worker_runs = 1;
+        t_objects[arg->id].worker_distinct = 1;
+    }
+    return NULL;
+}
 static uint64_t t_alloc(uint64_t kind, uint64_t tag, uint64_t payload, uint64_t has_payload) {
     if (t_next >= T_MAX) { t_last = 8; return 0; }
     uint64_t id = t_next++;
     t_objects[id].kind = kind; t_objects[id].tag = tag; t_objects[id].payload = payload;
     t_objects[id].has_payload = has_payload; t_objects[id].strong = 1; t_objects[id].state = 0;
+    t_objects[id].is_thread = 0; t_objects[id].worker_runs = 0; t_objects[id].worker_distinct = 0;
     return HBIT | id;
 }
 static uint64_t t_index(uint64_t handle) {
@@ -4770,8 +4899,17 @@ uint64_t tondo_rt_task_spawn(uint64_t value, uint64_t pending) {
     t_objects[id].state = pending ? 0 : 1; t_objects[id].value = value; return task;
 }
 uint64_t tondo_rt_thread_spawn(uint64_t value, uint64_t pending) {
-    return tondo_rt_task_spawn(value, pending);
+    uint64_t task = t_alloc(3, 0, 0, 0); uint64_t id = t_index(task); if (id == 0) return 0;
+    t_objects[id].state = pending ? 0 : 1; t_objects[id].value = value; t_objects[id].is_thread = 1;
+    t_worker_arg arg = { id }; pthread_t worker;
+    if (pthread_create(&worker, NULL, t_thread_worker, &arg) != 0) { t_objects[id].state = 2; t_last = 3; return task; }
+    if (pthread_join(worker, NULL) != 0) { t_objects[id].state = 2; t_last = 3; }
+    return task;
 }
+uint64_t tondo_rt_thread_worker_status(uint64_t task) { uint64_t id = t_index(task); if (id == 0 || t_objects[id].kind != 3 || !t_objects[id].is_thread) return UINT64_MAX; return t_objects[id].worker_runs != 0 ? 2 : 0; }
+uint64_t tondo_rt_thread_worker_runs(uint64_t task) { uint64_t id = t_index(task); if (id == 0 || t_objects[id].kind != 3 || !t_objects[id].is_thread) return UINT64_MAX; return t_objects[id].worker_runs; }
+uint64_t tondo_rt_thread_worker_distinct(uint64_t task) { uint64_t id = t_index(task); if (id == 0 || t_objects[id].kind != 3 || !t_objects[id].is_thread) return UINT64_MAX; return t_objects[id].worker_distinct; }
+uint64_t tondo_rt_thread_worker_wait(uint64_t task) { uint64_t id = t_index(task); if (id == 0 || t_objects[id].kind != 3 || !t_objects[id].is_thread) return 1; return t_objects[id].worker_runs != 0 ? 0 : 7; }
 uint64_t tondo_rt_task_poll(uint64_t task) { uint64_t id = t_index(task); return id != 0 && t_objects[id].kind == 3 ? t_objects[id].state : UINT64_MAX; }
 uint64_t tondo_rt_task_wake(uint64_t task) { uint64_t id = t_index(task); if (id == 0 || t_objects[id].kind != 3 || t_objects[id].state >= 2) return 3; t_objects[id].state = 1; t_notify_selects(task); return 0; }
 uint64_t tondo_rt_task_cancel(uint64_t task) { uint64_t id = t_index(task); if (id == 0 || t_objects[id].kind != 3 || t_objects[id].state >= 2) return 3; t_objects[id].state = 2; t_notify_selects(task); return 0; }
@@ -4932,6 +5070,7 @@ fn link_native_runner(
     let result = Command::new(cc)
         .arg("-std=c11")
         .arg("-O2")
+        .arg("-pthread")
         .arg(source)
         .arg(object)
         .arg("-o")
@@ -5335,6 +5474,10 @@ fn llvm_checked_helpers(module: &mut String) {
         "declare i64 @tondo_rt_scope_spawn(i64, i64, i64)",
         "declare i64 @tondo_rt_task_spawn(i64, i64)",
         "declare i64 @tondo_rt_thread_spawn(i64, i64)",
+        "declare i64 @tondo_rt_thread_worker_status(i64)",
+        "declare i64 @tondo_rt_thread_worker_runs(i64)",
+        "declare i64 @tondo_rt_thread_worker_distinct(i64)",
+        "declare i64 @tondo_rt_thread_worker_wait(i64)",
         "declare i64 @tondo_rt_task_poll(i64)",
         "declare i64 @tondo_rt_task_wake(i64)",
         "declare i64 @tondo_rt_task_cancel(i64)",
@@ -5961,6 +6104,10 @@ fn llvm_runtime_operation(
         "scope-spawn" => ("tondo_rt_scope_spawn", 3),
         "task-spawn" => ("tondo_rt_task_spawn", 2),
         "thread-spawn" => ("tondo_rt_thread_spawn", 2),
+        "thread-worker-status" => ("tondo_rt_thread_worker_status", 1),
+        "thread-worker-runs" => ("tondo_rt_thread_worker_runs", 1),
+        "thread-worker-distinct" => ("tondo_rt_thread_worker_distinct", 1),
+        "thread-worker-wait" => ("tondo_rt_thread_worker_wait", 1),
         "task-poll" => ("tondo_rt_task_poll", 1),
         "task-wake" => ("tondo_rt_task_wake", 1),
         "task-cancel" => ("tondo_rt_task_cancel", 1),
@@ -6917,7 +7064,7 @@ mod tests {
     #[test]
     fn cleanup_ownership_and_async_runtime_contracts_lower_in_both_backends() {
         let (program, cases) = native_cleanup_program();
-        assert_eq!(cases.len(), 16);
+        assert_eq!(cases.len(), 21);
         let isa = cranelift_isa().expect("native Cranelift ISA should be available");
         compile_cranelift(isa.as_ref(), &program)
             .expect("cleanup, ownership and async runtime calls should lower in Cranelift");
@@ -6934,6 +7081,10 @@ mod tests {
         assert!(module.contains("@tondo_rt_scope_join"));
         assert!(module.contains("@tondo_rt_scope_cancel"));
         assert!(module.contains("@tondo_rt_thread_spawn"));
+        assert!(module.contains("@tondo_rt_thread_worker_status"));
+        assert!(module.contains("@tondo_rt_thread_worker_runs"));
+        assert!(module.contains("@tondo_rt_thread_worker_distinct"));
+        assert!(module.contains("@tondo_rt_thread_worker_wait"));
         assert!(module.contains("@tondo_rt_select_begin"));
         assert!(module.contains("@tondo_rt_select_register_task"));
         assert!(module.contains("@tondo_rt_select_register_join"));

@@ -53,12 +53,19 @@ when they lose. `select-rollback` is valid only before a commit and releases
 owned sources without touching borrowed ones. Invalid capacity, duplicate arms,
 phase transitions and source kinds fail closed.
 
-Threads use the same join state machine as tasks, with the worker retaining its
-own handle. One-shots have exactly one completion and timers are scheduler
-fire transitions; neither adapter introduces a second async API. The Rust
-runtime's mutex is the atomic linearization boundary. The native evaluator's C
-shim mirrors the state machine only as a deterministic differential harness; it
-is not a public ABI or a production scheduler.
+Threads use the same join state machine as tasks, with a private worker signal
+retaining the logical handle until its terminal release. `Join`, `await` and a
+winning `select-take` cross that worker-completion barrier before consuming the
+value. The verification-only worker symbols expose lifecycle status, run count,
+distinct-thread identity and a non-consuming wait; they never expose an OS
+thread ID or pointer. One-shots have exactly one completion and timers are
+scheduler fire transitions; neither adapter introduces a second async API. The
+Rust runtime's mutex is the atomic linearization boundary and its worker uses a
+safe `std::thread` entry. The native evaluator's C shim uses
+`pthread_create`/`pthread_join` only as a deterministic differential harness;
+it is not a public ABI or a production scheduler. The current adapter hands an
+already-lowered value to the worker lane; deferred callable-body lowering is
+reserved for `NATIVE-002`.
 
 Host handles are opaque capability-indexed values. The ABI does not expose a
 pointer, object layout, allocator, symbol name, or FFI entry point to Tondo

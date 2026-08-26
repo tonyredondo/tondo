@@ -24,6 +24,7 @@ jq -e '
   and .adapter_format == "tondo-mir-backend/1"
   and .debug_format == "tondo-mir-debug/1"
   and .debug_report_field == "debug_metadata"
+  and .thread_report_field == "native_thread_runs"
   and .oracle == "bytecode-vm-scalar-and-managed-result-oracle"
   and .candidates == ["cranelift", "llvm"]
   and .toolchain_policy == {
@@ -32,7 +33,7 @@ jq -e '
       ambient_path_lookup: "forbidden",
       physical_paths_in_report: "forbidden"
   }
-  and .native_semantics == "scalar-and-managed-result-checked-arithmetic-logical-conversions-control-flow-host-calls-cleanup-ownership-async-select-and-traps"
+  and .native_semantics == "scalar-and-managed-result-checked-arithmetic-logical-conversions-control-flow-host-calls-cleanup-ownership-async-thread-select-and-traps"
   and (.negative_cases | length == 10)
 ' "$contract" >/dev/null || die "invalid runner contract"
 
@@ -57,7 +58,13 @@ grep -Fq 'native_runtime_runs' tools/native-evaluation/src/main.rs \
     || die "adapter does not report runtime contract results"
 grep -Fq 'native_select_runs' tools/native-evaluation/src/main.rs \
     || die "adapter does not report native selection results"
-grep -Fq 'scalar-managed-runtime-and-select-native-executable-vs-vm-and-contract' \
+grep -Fq 'native_thread_runs' tools/native-evaluation/src/main.rs \
+    || die "adapter does not report native thread results"
+grep -Fq 'std::thread::Builder' crates/tondo-native-runtime/src/lib.rs \
+    || die "runtime does not launch an OS worker"
+grep -Fq 'pthread_create' tools/native-evaluation/src/main.rs \
+    || die "native runner does not launch an OS worker"
+grep -Fq 'scalar-managed-runtime-thread-and-select-native-executable-vs-vm-and-contract' \
     tools/native-evaluation/src/main.rs \
     || die "adapter has no executable scalar evidence state"
 

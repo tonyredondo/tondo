@@ -3,7 +3,7 @@
 - Status: Proposed — selection pending measured evidence
 - Date: 2026-08-25
 - Supersedes: none
-- Next decisions: `NATIVE-THREAD-001`, then `NATIVE-002`
+- Next decisions: `NATIVE-002` (the physical thread lane is now closed)
 
 ## Context
 
@@ -74,6 +74,14 @@ be reconsidered only with a real adapter and identical evidence.
 The fast lane is a feedback mechanism, not a promotion gate. Final selection
 requires full MIR lowering, VM/native semantic equivalence, full performance
 capture and the normal quality gate.
+
+The physical `Thread` lane is now an explicit prerequisite rather than an
+assumption: the safe runtime launches a worker with a completion barrier and
+the native differential runner proves the equivalent `pthread` lifecycle in
+both candidates. This closes `NATIVE-THREAD-001` without selecting a backend.
+The current adapter still evaluates an eager lowered value before handoff;
+deferred callable-body lowering and scheduler coordination remain in
+`NATIVE-002`.
 
 ## Required evidence before N1
 

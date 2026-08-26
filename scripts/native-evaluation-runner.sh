@@ -15,6 +15,8 @@ scripts/native-evaluation-check.sh
 scripts/native-evaluation-fast-check.sh
 scripts/native-select-check.sh
 scripts/native-select-test.sh
+scripts/native-thread-check.sh
+scripts/native-thread-test.sh
 
 llvm_tool="${TONDO_LLVM_LLC:-/usr/bin/llc}"
 cc_tool="${TONDO_NATIVE_CC:-/usr/bin/cc}"
@@ -64,7 +66,7 @@ jq -e '
   and .status == "passed"
   and .adapter.format == "tondo-mir-backend/1"
   and ([.debug_metadata[] | select(.format == "tondo-mir-debug/1" and .sources >= 1 and .symbols >= 1 and .source_maps >= 1)] | length == 4)
-  and .correctness.native_semantics == "scalar-managed-runtime-and-select-native-executable-vs-vm-and-contract"
+  and .correctness.native_semantics == "scalar-managed-runtime-thread-and-select-native-executable-vs-vm-and-contract"
   and ([.native_runs[] | select(.cranelift == "passed" and .llvm == "passed")] | length >= 1)
   and ([.native_runs[] | select(.oracle_status == "trapped")] | length >= 1)
   and all(.native_runs[];
@@ -109,6 +111,11 @@ jq -e '
   and ([.native_select_runs[] | select(.case == "select-time" and .expected_result == 63 and .cranelift == "passed" and .llvm == "passed")] | length == 1)
   and ([.native_select_runs[] | select(.case == "select-thread-join" and .expected_result == 74 and .cranelift == "passed" and .llvm == "passed")] | length == 1)
   and ([.native_select_runs[] | select(.case == "select-else" and .expected_result == 8 and .cranelift == "passed" and .llvm == "passed")] | length == 1)
+  and ([.native_thread_runs[] | select(.case == "thread-worker-status" and .expected_result == 2 and .cranelift == "passed" and .llvm == "passed")] | length == 1)
+  and ([.native_thread_runs[] | select(.case == "thread-worker-runs" and .expected_result == 1 and .cranelift == "passed" and .llvm == "passed")] | length == 1)
+  and ([.native_thread_runs[] | select(.case == "thread-worker-distinct" and .expected_result == 1 and .cranelift == "passed" and .llvm == "passed")] | length == 1)
+  and ([.native_thread_runs[] | select(.case == "thread-worker-join" and .expected_result == 94 and .cranelift == "passed" and .llvm == "passed")] | length == 1)
+  and ([.native_thread_runs[] | select(.case == "thread-worker-cancel" and .expected_result == 2 and .cranelift == "passed" and .llvm == "passed")] | length == 1)
 ' "$report" >/dev/null || die "runner report did not prove native execution"
 
 ! grep -Fq "$root" "$report" || die "runner report leaked a physical workspace path"

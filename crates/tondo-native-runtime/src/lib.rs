@@ -9,7 +9,8 @@
 #![forbid(unsafe_code)]
 
 use std::collections::BTreeMap;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::thread::ThreadId;
 
 const HANDLE_BIT: u64 = 1 << 63;
 const RESULT_NONE: u64 = 0;
@@ -28,6 +29,11 @@ const STATUS_CANCELLED: u64 = 7;
 /// A selection with an `else` arm completed without a ready source.
 const STATUS_SELECT_ELSE: u64 = 8;
 const MAX_SELECT_ARMS: u32 = 64;
+
+const WORKER_STARTING: u64 = 0;
+const WORKER_RUNNING: u64 = 1;
+const WORKER_COMPLETED: u64 = 2;
+const WORKER_CANCELLED: u64 = 3;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Object {
@@ -67,6 +73,115 @@ enum TaskState {
 enum TaskKind {
     Task,
     Thread,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WorkerState {
+    Starting,
+    Running,
+    Completed,
+    Cancelled,
+}
+
+impl WorkerState {
+    fn code(self) -> u64 {
+        match self {
+            Self::Starting => WORKER_STARTING,
+            Self::Running => WORKER_RUNNING,
+            Self::Completed => WORKER_COMPLETED,
+            Self::Cancelled => WORKER_CANCELLED,
+        }
+    }
+
+    fn terminal(self) -> bool {
+        matches!(self, Self::Completed | Self::Cancelled)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct WorkerSnapshot {
+    state: WorkerState,
+    runs: u64,
+    distinct_thread: bool,
+}
+
+#[derive(Debug)]
+struct WorkerSignal {
+    parent: ThreadId,
+    snapshot: Mutex<WorkerSnapshot>,
+    wake: Condvar,
+}
+
+impl WorkerSignal {
+    fn new(parent: ThreadId) -> Self {
+        Self {
+            parent,
+            snapshot: Mutex::new(WorkerSnapshot {
+                state: WorkerState::Starting,
+                runs: 0,
+                distinct_thread: false,
+            }),
+            wake: Condvar::new(),
+        }
+    }
+
+    fn run(&self) {
+        {
+            let mut snapshot = self
+                .snapshot
+                .lock()
+                .expect("native worker signal is not poisoned");
+            if snapshot.state == WorkerState::Cancelled {
+                self.wake.notify_all();
+                return;
+            }
+            snapshot.state = WorkerState::Running;
+            snapshot.runs = snapshot.runs.saturating_add(1);
+            snapshot.distinct_thread = std::thread::current().id() != self.parent;
+            self.wake.notify_all();
+        }
+        std::thread::yield_now();
+        let mut snapshot = self
+            .snapshot
+            .lock()
+            .expect("native worker signal is not poisoned");
+        if snapshot.state == WorkerState::Running {
+            snapshot.state = WorkerState::Completed;
+            self.wake.notify_all();
+        }
+    }
+
+    fn cancel(&self) {
+        let mut snapshot = self
+            .snapshot
+            .lock()
+            .expect("native worker signal is not poisoned");
+        if !snapshot.state.terminal() {
+            snapshot.state = WorkerState::Cancelled;
+            self.wake.notify_all();
+        }
+    }
+
+    fn wait(&self) -> WorkerSnapshot {
+        let mut snapshot = self
+            .snapshot
+            .lock()
+            .expect("native worker signal is not poisoned");
+        while !snapshot.state.terminal() {
+            snapshot = self
+                .wake
+                .wait(snapshot)
+                .expect("native worker signal is not poisoned");
+        }
+        *snapshot
+    }
+
+    fn snapshot(&self) -> WorkerSnapshot {
+        *self
+            .snapshot
+            .lock()
+            .expect("native worker signal is not poisoned")
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -158,6 +273,7 @@ struct State {
     next_frame: u64,
     last_status: u64,
     select_rotation: u64,
+    thread_workers: BTreeMap<u64, Arc<WorkerSignal>>,
 }
 
 impl State {
@@ -223,8 +339,10 @@ impl State {
             return STATUS_DOUBLE_RELEASE;
         }
         entry.strong -= 1;
-        if entry.strong == 0 && entry.root_count == 0 && entry.weak == 0 {
+        let remove = entry.strong == 0 && entry.root_count == 0 && entry.weak == 0;
+        if remove {
             self.objects.remove(&handle);
+            self.thread_workers.remove(&handle);
         }
         STATUS_OK
     }
@@ -383,7 +501,55 @@ impl State {
     }
 
     fn thread_spawn(&mut self, value: u64, pending: bool) -> u64 {
-        self.task_spawn_with_kind(None, value, pending, TaskKind::Thread)
+        let task = self.task_spawn_with_kind(None, value, pending, TaskKind::Thread);
+        if task == 0 {
+            return 0;
+        }
+        let signal = Arc::new(WorkerSignal::new(std::thread::current().id()));
+        self.thread_workers.insert(task, Arc::clone(&signal));
+        let worker_signal = Arc::clone(&signal);
+        if std::thread::Builder::new()
+            .name(format!("tondo-thread-{}", task & !HANDLE_BIT))
+            .spawn(move || worker_signal.run())
+            .is_err()
+        {
+            signal.cancel();
+            if let Some(Object::Task { state, .. }) = self.object_mut(task) {
+                *state = TaskState::Cancelled;
+            }
+            self.last_status = STATUS_INVALID_TRANSITION;
+        }
+        task
+    }
+
+    fn thread_worker_signal(&self, task: u64) -> Option<Arc<WorkerSignal>> {
+        match self.object(task) {
+            Some(Object::Task {
+                kind: TaskKind::Thread,
+                ..
+            }) => self.thread_workers.get(&task).cloned(),
+            _ => None,
+        }
+    }
+
+    fn thread_worker_snapshot(&self, task: u64) -> Option<WorkerSnapshot> {
+        self.thread_worker_signal(task)
+            .map(|signal| signal.snapshot())
+    }
+
+    fn thread_worker_status(&self, task: u64) -> u64 {
+        self.thread_worker_snapshot(task)
+            .map_or(u64::MAX, |snapshot| snapshot.state.code())
+    }
+
+    fn thread_worker_runs(&self, task: u64) -> u64 {
+        self.thread_worker_snapshot(task)
+            .map_or(u64::MAX, |snapshot| snapshot.runs)
+    }
+
+    fn thread_worker_distinct(&self, task: u64) -> u64 {
+        self.thread_worker_snapshot(task)
+            .map_or(u64::MAX, |snapshot| u64::from(snapshot.distinct_thread))
     }
 
     fn task_wake(&mut self, task: u64) -> u64 {
@@ -438,13 +604,18 @@ impl State {
     }
 
     fn task_cancel(&mut self, task: u64) -> u64 {
-        let Some(Object::Task { state, .. }) = self.object_mut(task) else {
+        let Some(Object::Task { state, kind, .. }) = self.object_mut(task) else {
             return STATUS_INVALID_HANDLE;
         };
         if matches!(*state, TaskState::Cancelled | TaskState::Joined) {
             return STATUS_INVALID_TRANSITION;
         }
         *state = TaskState::Cancelled;
+        if *kind == TaskKind::Thread
+            && let Some(signal) = self.thread_workers.get(&task)
+        {
+            signal.cancel();
+        }
         self.notify_selects(task);
         STATUS_OK
     }
@@ -496,23 +667,44 @@ impl State {
     }
 
     fn discard_select_source(&mut self, arm: SelectArm) {
-        match (arm.kind, self.object_mut(arm.source)) {
-            (SelectSourceKind::Task, Some(Object::Task { state, .. })) => match state {
-                TaskState::Pending => *state = TaskState::Cancelled,
-                TaskState::Ready => *state = TaskState::Joined,
-                TaskState::Cancelled | TaskState::Joined => {}
+        let cancel_thread = match (arm.kind, self.object_mut(arm.source)) {
+            (SelectSourceKind::Task, Some(Object::Task { state, kind, .. })) => match state {
+                TaskState::Pending => {
+                    *state = TaskState::Cancelled;
+                    *kind == TaskKind::Thread
+                }
+                TaskState::Ready => {
+                    *state = TaskState::Joined;
+                    false
+                }
+                TaskState::Cancelled | TaskState::Joined => false,
             },
             (SelectSourceKind::OneShot, Some(Object::OneShot { state, .. })) => match state {
-                OneShotState::Pending => *state = OneShotState::Cancelled,
-                OneShotState::Ready => *state = OneShotState::Consumed,
-                OneShotState::Cancelled | OneShotState::Consumed => {}
+                OneShotState::Pending => {
+                    *state = OneShotState::Cancelled;
+                    false
+                }
+                OneShotState::Ready => {
+                    *state = OneShotState::Consumed;
+                    false
+                }
+                OneShotState::Cancelled | OneShotState::Consumed => false,
             },
             (SelectSourceKind::Timer, Some(Object::Timer { state, .. })) => match state {
-                TimerState::Pending => *state = TimerState::Cancelled,
-                TimerState::Ready => *state = TimerState::Consumed,
-                TimerState::Cancelled | TimerState::Consumed => {}
+                TimerState::Pending => {
+                    *state = TimerState::Cancelled;
+                    false
+                }
+                TimerState::Ready => {
+                    *state = TimerState::Consumed;
+                    false
+                }
+                TimerState::Cancelled | TimerState::Consumed => false,
             },
-            _ => {}
+            _ => false,
+        };
+        if cancel_thread && let Some(signal) = self.thread_workers.get(&arm.source) {
+            signal.cancel();
         }
     }
 
@@ -702,6 +894,28 @@ impl State {
             state.phase = SelectPhase::Consumed;
         }
         self.take_select_source(arm.source, arm.kind)
+    }
+
+    fn select_thread_source(&self, selection: u64) -> Option<u64> {
+        let Some(Object::Select(state)) = self.object(selection) else {
+            return None;
+        };
+        if state.phase != SelectPhase::Committed || state.winner_taken {
+            return None;
+        }
+        let winner = state.winner?;
+        let arm = state.arms.get(winner)?;
+        (arm.kind == SelectSourceKind::Task)
+            .then_some(arm.source)
+            .filter(|source| {
+                matches!(
+                    self.object(*source),
+                    Some(Object::Task {
+                        kind: TaskKind::Thread,
+                        ..
+                    })
+                )
+            })
     }
 
     fn select_rollback(&mut self, selection: u64) -> u64 {
@@ -954,6 +1168,42 @@ pub extern "C" fn tondo_rt_thread_spawn(value: u64, pending: u64) -> u64 {
     with_state(|state| state.thread_spawn(value, pending != 0))
 }
 
+/// Returns the private worker lifecycle state for a native `Thread` handle.
+/// The numeric values are intentionally ABI-local: starting=0, running=1,
+/// completed=2 and cancelled=3.  Invalid or non-thread handles return `u64::MAX`.
+pub extern "C" fn tondo_rt_thread_worker_status(task: u64) -> u64 {
+    with_state(|state| state.thread_worker_status(task))
+}
+
+/// Returns the number of worker entries executed for a `Thread` handle.
+pub extern "C" fn tondo_rt_thread_worker_runs(task: u64) -> u64 {
+    with_state(|state| state.thread_worker_runs(task))
+}
+
+/// Reports whether the worker ran on a thread distinct from its spawner.
+pub extern "C" fn tondo_rt_thread_worker_distinct(task: u64) -> u64 {
+    with_state(|state| state.thread_worker_distinct(task))
+}
+
+/// Waits for the physical worker without consuming the logical `Join` value.
+/// `Join`/`await` use the same barrier internally; this entry is only for
+/// diagnostics and native-runtime verification.
+pub extern "C" fn tondo_rt_thread_worker_wait(task: u64) -> u64 {
+    let Some(snapshot) = wait_for_thread_worker(task) else {
+        return STATUS_INVALID_HANDLE;
+    };
+    if snapshot.state == WorkerState::Cancelled {
+        STATUS_CANCELLED
+    } else {
+        STATUS_OK
+    }
+}
+
+fn wait_for_thread_worker(task: u64) -> Option<WorkerSnapshot> {
+    let signal = with_state(|state| state.thread_worker_signal(task));
+    signal.map(|signal| signal.wait())
+}
+
 pub extern "C" fn tondo_rt_task_poll(task: u64) -> u64 {
     with_state(|state| state.task_poll(task))
 }
@@ -967,6 +1217,12 @@ pub extern "C" fn tondo_rt_task_cancel(task: u64) -> u64 {
 }
 
 pub extern "C" fn tondo_rt_task_take(task: u64) -> u64 {
+    if let Some(snapshot) = wait_for_thread_worker(task)
+        && snapshot.state == WorkerState::Cancelled
+    {
+        with_state(|state| state.last_status = STATUS_CANCELLED);
+        return 0;
+    }
     with_state(|state| state.task_take(task))
 }
 
@@ -989,6 +1245,7 @@ pub extern "C" fn tondo_rt_scope_cancel(scope: u64) -> u64 {
 }
 
 pub extern "C" fn tondo_rt_scope_join(scope: u64, task: u64) -> u64 {
+    let _ = wait_for_thread_worker(task);
     with_state(|state| {
         let Some(Object::Scope { tasks, cancelled }) = state.object(scope).cloned() else {
             return STATUS_INVALID_HANDLE;
@@ -1057,6 +1314,14 @@ pub extern "C" fn tondo_rt_select_winner(selection: u64) -> u64 {
 }
 
 pub extern "C" fn tondo_rt_select_take(selection: u64) -> u64 {
+    let thread = with_state(|state| state.select_thread_source(selection));
+    if let Some(thread) = thread
+        && let Some(snapshot) = wait_for_thread_worker(thread)
+        && snapshot.state == WorkerState::Cancelled
+    {
+        with_state(|state| state.last_status = STATUS_CANCELLED);
+        return 0;
+    }
     with_state(|state| state.select_take(selection))
 }
 
@@ -1162,6 +1427,36 @@ mod tests {
     }
 
     #[test]
+    fn native_thread_uses_a_distinct_worker_and_join_waits_for_completion() {
+        let _guard = test_guard();
+        tondo_rt_reset();
+        let task = tondo_rt_thread_spawn(123, 0);
+        assert_ne!(task, 0);
+        assert_eq!(tondo_rt_thread_worker_wait(task), STATUS_OK);
+        assert_eq!(tondo_rt_thread_worker_status(task), WORKER_COMPLETED);
+        assert_eq!(tondo_rt_thread_worker_runs(task), 1);
+        assert_eq!(tondo_rt_thread_worker_distinct(task), 1);
+        assert_eq!(tondo_rt_task_take(task), 123);
+        assert_eq!(tondo_rt_task_poll(task), 3);
+
+        let pending = tondo_rt_thread_spawn(456, 1);
+        assert_eq!(tondo_rt_thread_worker_wait(pending), STATUS_OK);
+        assert_eq!(tondo_rt_task_poll(pending), 0);
+        assert_eq!(tondo_rt_task_cancel(pending), STATUS_OK);
+        assert_eq!(tondo_rt_task_poll(pending), 2);
+        assert_eq!(tondo_rt_task_take(pending), 0);
+        assert_eq!(tondo_rt_last_status(), STATUS_CANCELLED);
+        assert_eq!(tondo_rt_thread_worker_status(0), u64::MAX);
+
+        let cancelled_before_start = WorkerSignal::new(std::thread::current().id());
+        cancelled_before_start.cancel();
+        cancelled_before_start.run();
+        let snapshot = cancelled_before_start.snapshot();
+        assert_eq!(snapshot.state, WorkerState::Cancelled);
+        assert_eq!(snapshot.runs, 0);
+    }
+
+    #[test]
     fn await_and_cancellation_reject_invalid_task_transitions() {
         let _guard = test_guard();
         tondo_rt_reset();
@@ -1213,6 +1508,16 @@ mod tests {
         assert_eq!(tondo_rt_select_commit(next, 0), STATUS_OK);
         assert_eq!(tondo_rt_select_winner(next), 1);
         assert_eq!(tondo_rt_select_take(next), 32);
+
+        let thread_selection = tondo_rt_select_begin(1);
+        let thread = tondo_rt_thread_spawn(43, 0);
+        assert_eq!(
+            tondo_rt_select_register_join(thread_selection, thread),
+            STATUS_OK
+        );
+        assert_eq!(tondo_rt_select_commit(thread_selection, 0), STATUS_OK);
+        assert_eq!(tondo_rt_select_take(thread_selection), 43);
+        assert_eq!(tondo_rt_thread_worker_status(thread), WORKER_COMPLETED);
     }
 
     #[test]

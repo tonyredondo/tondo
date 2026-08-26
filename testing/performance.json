@@ -481,5 +481,5 @@
       "requires": ["reviewed-baseline", "reproducible-report", "no-unexplained-regression", "ci-evidence"]
     }
   ],
-  "next_blocks": ["NATIVE-THREAD-001"]
+  "next_blocks": ["NATIVE-002"]
 }

@@ -20,7 +20,7 @@
     "selection_status": "pending-measured-evidence",
     "n1_claim": false,
     "native_performance_baseline": "pending-candidate-capture",
-    "next_implementation": "NATIVE-THREAD-001",
+    "next_implementation": "NATIVE-002",
     "reasons": [
       "rust-native-integration",
       "deterministic-in-process-toolchain",
@@ -182,5 +182,5 @@
     "missing-diagnostic-dimension",
     "stale-next-block"
   ],
-  "next_blocks": ["NATIVE-THREAD-001"]
+  "next_blocks": ["NATIVE-002"]
 }
