@@ -144,7 +144,7 @@ fn observe_fixture(path: &Path) -> Result<FixtureObservation, String> {
             backend
                 .functions
                 .iter()
-                .filter(|function| function.supported)
+                .filter(|function| function.supported && function.return_type == "Int")
                 .flat_map(|function| {
                     scalar_case_arguments_for_function(function)
                         .into_iter()

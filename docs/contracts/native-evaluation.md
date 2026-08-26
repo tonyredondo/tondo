@@ -45,16 +45,19 @@ It does not expose source paths,
 addresses, pointers, layouts, process IDs, timestamps or ambient environment.
 
 The four fixtures cover the core/host boundary (including a pure scalar
-arithmetic matrix), collections and iteration, structured async (`await`,
+operator matrix), collections and iteration, structured async (`await`,
 `spawn`, task scopes and fallback paths), and the bytes slice. Their bytes are
-checked before a report can be accepted. The VM is
-the semantic oracle: native lowering must preserve values, errors, ordering,
-ownership, overflow, cancellation and exit status before performance is
-compared. The first adapter slice lowers `Int` scalar assignments,
-comparisons, checked arithmetic, verified direct scalar calls and scalar normal
-control flow, including loop-carried locals, Option/Result tag dispatch,
-checked assertions, overflow, invalid-shift and explicit-panic traps, through
-the same normalized input in Cranelift and LLVM.
+checked before a report can be accepted. The VM is the semantic oracle: native
+lowering must preserve values, errors, ordering, ownership, overflow,
+cancellation and exit status before performance is compared. The common
+adapter now lowers scalar assignments, comparisons, checked arithmetic and
+logical operators, numeric conversions, verified direct calls, host/prelude
+calls, opaque aggregate carriers, normal control flow (including loop-carried
+locals), Option/Result tag dispatch, checked assertions, overflow,
+invalid-shift and explicit-panic traps through the same normalized input in
+Cranelift and LLVM. Awaited calls, eager `spawn`/`join`, cleanup metadata and
+selection edges use the same operation/ABI boundary rather than a second
+backend-specific representation.
 The normalized boundary also exposes a checked zero-based bounds operation;
 negative and past-the-end indices trap before a value is returned, with the
 same policy in both backends and the oracle.
@@ -68,13 +71,16 @@ making a user-visible layout promise. Compiler-owned host operations use the
 same runtime boundary; host state and handles never cross as addresses. The
 probe's `load` fixture exercises both success and error result records and the
 native runner compares their tags and payloads with the VM.
-Source-level cleanup graphs and non-scalar calls remain outside the scalar
-slice. Their runtime edges have dedicated cleanup, ownership and structured
-async contracts below; functions outside the supported MIR/runtime slices are
-lowered to an explicit trap and reported as `unsupported`, never silently
-approximated. This is a real adapter boundary and backend-verifier check. The
-opt-in runner below extends it with executable evidence without widening the
-source-level scalar MIR subset.
+The adapter deliberately keeps storage/layout and scheduler details opaque.
+Collection storage and `IteratorNext` are therefore retained as an explicit
+fail-closed capability boundary: they are present in the normalized input but
+not claimed as executable native semantics until their owning stdlib/native
+ABI is selected. Source-level cleanup graphs and non-scalar calls have the
+dedicated cleanup, ownership and structured-async contracts below; functions
+outside the supported MIR/runtime slices are lowered to an explicit trap and
+reported as `unsupported`, never silently approximated. This is a real adapter
+boundary and backend-verifier check. The opt-in runner below extends it with
+executable evidence without widening the source-level scalar MIR subset.
 
 ## Fast feedback lane
 
@@ -184,13 +190,19 @@ Missing fixtures, changed hashes, unknown features, an early selected
 candidate, a premature N1/performance claim or a stale frontier is a hard
 failure.
 
-`NATIVE-BACKEND-ADAPTER-001` remains open until the adapter extends this
-scalar/managed-CFG VM differential to the remaining MIR families, with explicit
-diagnostics for unsupported paths. Checked arithmetic overflow, comparison
-branches, loop-carried locals, managed result records, host calls and boundary
-trap parity for the exercised paths are covered by the executable runner; the
-other helper families are compile- and oracle-tested. Only after that evidence
-may memory/ABI work consume a backend selection.
+`NATIVE-BACKEND-ADAPTER-001` is closed by the common normalized lowering and
+its executable differential evidence. The report covers 118 scalar cases, 3
+managed-result cases, 16 runtime-contract cases and 8 selection cases in fresh
+Cranelift/LLVM subprocesses. Functions that still require projected storage
+(`core`/`bytes`) or collection `IteratorNext` are reported as unsupported,
+fail-closed, and are not counted as native semantic evidence. Checked
+arithmetic overflow, logical operators, conversions, comparison branches,
+loop-carried locals, managed result records, host calls, structured async edges
+and boundary trap parity for the exercised paths are covered by the executable
+runner. Collection iteration, projected field/index storage and concrete
+aggregate storage remain explicit follow-ups of the native stdlib/ABI
+boundaries, not hidden approximations. Memory/ABI work may now consume the
+adapter contract, while backend selection and Gate N1 remain pending.
 
 The static contract and negative cases run in the normal test gate. The
 evaluation runner is opt-in/manual because it compiles the real fixture corpus;

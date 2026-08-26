@@ -240,12 +240,13 @@ impl MirSummary {
 /// Version-independent, path-free MIR shape for native backend adapters.
 ///
 /// This is intentionally not a public ABI or object-layout description. It is
-/// the smallest lossless-enough boundary for the first adapter slice: scalar
-/// assignments, comparisons, checked arithmetic, verified direct scalar calls,
-/// private managed result carriers, explicit traps, normal control flow and
-/// runtime cleanup/ownership/async edges can be lowered. Source-level
-/// aggregates and operations outside those closed runtime contracts are
-/// rejected explicitly.
+/// the smallest lossless-enough boundary for the native adapter: scalar
+/// assignments, conversions, comparisons, checked arithmetic, direct calls,
+/// opaque managed carriers, explicit traps, normal control flow and runtime-
+/// owned cleanup/ownership/async edges can be represented. Source-level
+/// operations whose storage or scheduler contract is not closed are
+/// represented explicitly and rejected by the adapter rather than
+/// approximated silently.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MirBackendProgram {
@@ -308,8 +309,9 @@ pub enum MirBackendRvalue {
     Tag {
         value: u32,
     },
-    /// A private managed aggregate.  The first native implementation keeps
-    /// the payload in the runtime table and passes only its opaque handle.
+    /// An aggregate carrier. Core `Option`/`Result` values use the runtime
+    /// result table; other shapes retain their stable kind and operands until
+    /// the owning runtime/stdlib ABI is selected.
     Aggregate {
         kind: String,
         values: Vec<MirBackendOperand>,
@@ -322,6 +324,32 @@ pub enum MirBackendRvalue {
         operator: String,
         left: MirBackendOperand,
         right: MirBackendOperand,
+    },
+    /// A checked or total scalar conversion.  The adapter keeps the target
+    /// and conversion mode explicit so native candidates cannot silently
+    /// reinterpret a value when lowering a coercion.
+    NumericConversion {
+        /// Canonical source scalar spelling. Keeping both sides explicit
+        /// prevents a backend from treating a float envelope as an integer
+        /// merely because the target is integral.
+        source: String,
+        target: String,
+        conversion: String,
+        operand: MirBackendOperand,
+    },
+    /// A representation-preserving coercion (for example an effect
+    /// weakening).  Non-representational coercions remain unsupported at the
+    /// MIR boundary rather than being approximated by a backend.
+    Coerce {
+        kind: String,
+        operand: MirBackendOperand,
+    },
+    /// A compiler-owned opaque operation whose representation is supplied by
+    /// the native runtime.  It is used for aggregate/collection primitives
+    /// until their concrete storage ABI is selected.
+    HostCall {
+        kind: String,
+        arguments: Vec<MirBackendOperand>,
     },
     Unsupported {
         kind: String,
@@ -339,6 +367,16 @@ pub enum MirBackendOperand {
     /// lowers this as a value read and never materializes its address.
     Borrow {
         index: u32,
+    },
+    /// A function value or place projection carried opaquely through the
+    /// evaluation adapter.  Native storage/layout is deliberately not part of
+    /// the normalized MIR contract.
+    Function {
+        kind: String,
+    },
+    Projection {
+        index: u32,
+        depth: u32,
     },
     Unsupported {
         kind: String,
@@ -410,6 +448,19 @@ pub enum MirBackendOperation {
         function: u32,
         arguments: Vec<MirBackendOperand>,
     },
+    /// A spawn whose body operation is lowered first and then published as an
+    /// affine handle.  The executable adapter uses an eager task primitive;
+    /// the full scheduler remains a runtime ABI concern.
+    Spawn {
+        operation: Box<MirBackendOperation>,
+        kind: String,
+    },
+    /// A join over an eagerly lowered spawn.  It is identity at this
+    /// boundary, preserving source ordering without inventing a second
+    /// synchronous API.
+    JoinValue {
+        operand: MirBackendOperand,
+    },
     /// A compiler-owned host operation.  The kind is a stable logical
     /// operation name; host state remains behind the runtime handle table.
     HostCall {
@@ -443,7 +494,13 @@ fn backend_function(
     let blocks = function
         .blocks_with_ids()
         .map(|(block_id, block)| {
-            backend_block(block_id.index(), block, &mut unsupported, callable_ordinals)
+            backend_block(
+                block_id.index(),
+                block,
+                interner,
+                &mut unsupported,
+                callable_ordinals,
+            )
         })
         .collect::<Vec<_>>();
     validate_backend_control_flow(&blocks, &mut unsupported);
@@ -524,6 +581,7 @@ fn validate_backend_call_targets(functions: &mut [MirBackendFunction]) {
 fn backend_block(
     ordinal: u32,
     block: &MirBasicBlock,
+    interner: &TypeInterner,
     unsupported: &mut Vec<String>,
     callable_ordinals: &BTreeMap<HirCallableId, u32>,
 ) -> MirBackendBlock {
@@ -553,22 +611,29 @@ fn backend_block(
             }
             MirStatementKind::Assign { destination, value } => MirBackendStatement::Assign {
                 destination: backend_place(destination, unsupported),
-                value: backend_rvalue(value, unsupported),
+                value: backend_rvalue(value, interner, unsupported),
             },
             MirStatementKind::StorageLive(_) | MirStatementKind::StorageDead(_) => {
                 MirBackendStatement::Marker {
                     kind: statement_kind_name(statement.kind()).to_owned(),
                 }
             }
-            MirStatementKind::ReserveLoan(loan) => MirBackendStatement::Runtime {
-                kind: format!("reserve-loan:{}", loan.index()),
-                arguments: Vec::new(),
-            },
-            MirStatementKind::ReleaseLoan(loan) => MirBackendStatement::Runtime {
-                kind: format!("release-loan:{}", loan.index()),
-                arguments: Vec::new(),
-            },
+            MirStatementKind::ReserveLoan(loan) => {
+                unsupported.push("statement:reserve-loan".to_owned());
+                MirBackendStatement::Runtime {
+                    kind: format!("reserve-loan:{}", loan.index()),
+                    arguments: Vec::new(),
+                }
+            }
+            MirStatementKind::ReleaseLoan(loan) => {
+                unsupported.push("statement:release-loan".to_owned());
+                MirBackendStatement::Runtime {
+                    kind: format!("release-loan:{}", loan.index()),
+                    arguments: Vec::new(),
+                }
+            }
             MirStatementKind::RegisterDefer { scope, guard, .. } => {
+                unsupported.push("statement:register-defer".to_owned());
                 let mut arguments = Vec::new();
                 if let Some(guard) = guard {
                     arguments.push(backend_operand(
@@ -585,6 +650,7 @@ fn backend_block(
                 }
             }
             MirStatementKind::RegisterFallback { scope, owner } => {
+                unsupported.push("statement:register-fallback".to_owned());
                 let arguments = vec![backend_operand(
                     &MirOperand {
                         ty: owner.ty(),
@@ -597,32 +663,49 @@ fn backend_block(
                     arguments,
                 }
             }
-            MirStatementKind::EnterTaskScope { scope } => MirBackendStatement::Runtime {
-                kind: format!("enter-task-scope:{}", scope.index()),
-                arguments: Vec::new(),
-            },
-            MirStatementKind::RetargetCleanup { from, to } => MirBackendStatement::Runtime {
-                kind: format!(
-                    "retarget-cleanup:{}:{}",
-                    from.local().index(),
-                    to.local().index()
-                ),
-                arguments: Vec::new(),
-            },
+            MirStatementKind::EnterTaskScope { scope } => {
+                unsupported.push("statement:enter-task-scope".to_owned());
+                MirBackendStatement::Runtime {
+                    kind: format!("enter-task-scope:{}", scope.index()),
+                    arguments: Vec::new(),
+                }
+            }
+            MirStatementKind::RetargetCleanup { from, to } => {
+                unsupported.push("statement:retarget-cleanup".to_owned());
+                MirBackendStatement::Runtime {
+                    kind: format!(
+                        "retarget-cleanup:{}:{}",
+                        from.local().index(),
+                        to.local().index()
+                    ),
+                    arguments: Vec::new(),
+                }
+            }
             MirStatementKind::DisarmCleanup(place) if kind == "cleanup" => {
+                unsupported.push("statement:disarm-cleanup".to_owned());
                 MirBackendStatement::Runtime {
                     kind: format!("disarm-cleanup:{}", place.local().index()),
                     arguments: Vec::new(),
                 }
             }
-            MirStatementKind::BeginSelect { capacity } => MirBackendStatement::Runtime {
-                kind: format!("begin-select:{capacity}"),
-                arguments: Vec::new(),
-            },
-            MirStatementKind::RegisterSelectArm { index, .. } => MirBackendStatement::Runtime {
-                kind: format!("register-select-arm:{index}"),
-                arguments: Vec::new(),
-            },
+            MirStatementKind::BeginSelect { capacity } => {
+                unsupported.push("statement:begin-select".to_owned());
+                MirBackendStatement::Runtime {
+                    kind: format!("begin-select:{capacity}"),
+                    arguments: Vec::new(),
+                }
+            }
+            MirStatementKind::RegisterSelectArm { index, .. } => {
+                unsupported.push("statement:register-select-arm".to_owned());
+                MirBackendStatement::Runtime {
+                    kind: format!("register-select-arm:{index}"),
+                    arguments: Vec::new(),
+                }
+            }
+            // A normal-path disarm only prevents an unreachable cleanup block
+            // from running. The adapter never routes into cleanup blocks; with
+            // resource actions already rejected above, erasing this marker is
+            // semantics-preserving for the executable normal path.
             MirStatementKind::DisarmCleanup(_) if kind == "normal" => MirBackendStatement::Marker {
                 kind: "disarm-cleanup".to_owned(),
             },
@@ -708,6 +791,68 @@ fn backend_block(
                 .map(|place| backend_place(place, unsupported)),
             target: target.map(MirBlockId::index),
         },
+        // The common adapter is eager: an awaited call is lowered through the
+        // same operation path as a normal invoke.  This keeps one callable
+        // ABI while the runtime scheduler remains free to suspend it later.
+        MirTerminatorKind::Await {
+            awaitable: MirAwaitable::Call(operation),
+            destination,
+            target,
+            ..
+        } => MirBackendTerminator::Invoke {
+            operation: backend_operation(operation, unsupported, callable_ordinals),
+            destination: Some(backend_place(destination, unsupported)),
+            target: Some(target.index()),
+        },
+        // A joined value produced by an eager adapter is already materialized;
+        // preserve the source-level join edge without introducing a second
+        // synchronous API or exposing a task layout.
+        MirTerminatorKind::Await {
+            awaitable: MirAwaitable::Join(operand),
+            destination,
+            target,
+            ..
+        } => MirBackendTerminator::Invoke {
+            operation: MirBackendOperation::JoinValue {
+                operand: backend_operand(operand, unsupported),
+            },
+            destination: Some(backend_place(destination, unsupported)),
+            target: Some(target.index()),
+        },
+        MirTerminatorKind::Spawn {
+            operation,
+            kind,
+            destination,
+            target,
+            ..
+        } => MirBackendTerminator::Invoke {
+            operation: MirBackendOperation::Spawn {
+                operation: Box::new(backend_operation(operation, unsupported, callable_ordinals)),
+                kind: match kind {
+                    HirSpawnKind::Task => "task",
+                    HirSpawnKind::Thread => "thread",
+                }
+                .to_owned(),
+            },
+            destination: Some(backend_place(destination, unsupported)),
+            target: Some(target.index()),
+        },
+        // A source-level drain has observable defer/task cancellation
+        // semantics. Until the native frame/scheduler ABI carries those
+        // actions, preserve the edge as an explicit unsupported marker rather
+        // than silently turning it into a plain goto.
+        MirTerminatorKind::DrainDefers { .. } if kind == "normal" => {
+            unsupported.push("terminator:drain-defers".to_owned());
+            MirBackendTerminator::Marker {
+                kind: "drain-defers".to_owned(),
+            }
+        }
+        MirTerminatorKind::DrainScopes { .. } if kind == "normal" => {
+            unsupported.push("terminator:drain-scopes".to_owned());
+            MirBackendTerminator::Marker {
+                kind: "drain-scopes".to_owned(),
+            }
+        }
         MirTerminatorKind::ResumePanic | MirTerminatorKind::DrainUnwind { .. }
             if kind == "cleanup" =>
         {
@@ -854,7 +999,7 @@ fn backend_operation(
             unsafe_call,
             ..
         } => {
-            if *protocol != HirCallProtocol::Call {
+            if !matches!(protocol, HirCallProtocol::Call | HirCallProtocol::CallOnce) {
                 unsupported.push(format!("call-protocol:{protocol:?}"));
                 return MirBackendOperation::Marker {
                     kind: "call".to_owned(),
@@ -866,12 +1011,41 @@ fn backend_operation(
                     kind: "call".to_owned(),
                 };
             }
+            let host_kind = match callee.kind() {
+                MirOperandKind::Function {
+                    callable: HirCallableId::Host(function),
+                    ..
+                } => Some(format!("host:{}", function.name())),
+                MirOperandKind::PreludeTraitFunction { method, .. } => Some(format!(
+                    "prelude:{}.{}",
+                    method.trait_name(),
+                    method.method_name()
+                )),
+                _ => None,
+            };
+            if let Some(kind) = host_kind {
+                let Some(arguments) = backend_call_arguments(arguments, unsupported, true) else {
+                    return MirBackendOperation::Marker {
+                        kind: "call".to_owned(),
+                    };
+                };
+                return MirBackendOperation::HostCall { kind, arguments };
+            }
             let callable = match callee.kind() {
                 MirOperandKind::Function { callable, .. } => callable,
                 _ => {
                     unsupported.push("call:indirect".to_owned());
-                    return MirBackendOperation::Marker {
-                        kind: "call".to_owned(),
+                    let Some(call_arguments) = backend_call_arguments(arguments, unsupported, true)
+                    else {
+                        return MirBackendOperation::Marker {
+                            kind: "call".to_owned(),
+                        };
+                    };
+                    let mut arguments = vec![backend_operand(callee, unsupported)];
+                    arguments.extend(call_arguments);
+                    return MirBackendOperation::HostCall {
+                        kind: "indirect-call".to_owned(),
+                        arguments,
                     };
                 }
             };
@@ -881,48 +1055,11 @@ fn backend_operation(
                     kind: "call".to_owned(),
                 };
             };
-            let mut positional = BTreeMap::<u32, MirBackendOperand>::new();
-            for argument in arguments {
-                if argument.mode() != ParameterMode::Value {
-                    unsupported.push(format!("call-argument-mode:{:?}", argument.mode()));
-                    return MirBackendOperation::Marker {
-                        kind: "call".to_owned(),
-                    };
-                }
-                let HirCallArgumentTarget::Fixed(index) = argument.target() else {
-                    unsupported.push(format!("call-argument-target:{:?}", argument.target()));
-                    return MirBackendOperation::Marker {
-                        kind: "call".to_owned(),
-                    };
-                };
-                if positional
-                    .insert(index, backend_operand(argument.value(), unsupported))
-                    .is_some()
-                {
-                    unsupported.push(format!("call-argument-duplicate:{index}"));
-                    return MirBackendOperation::Marker {
-                        kind: "call".to_owned(),
-                    };
-                }
-            }
-            let arguments = positional
-                .into_iter()
-                .enumerate()
-                .map(|(expected, (index, operand))| {
-                    if expected as u32 != index {
-                        unsupported.push("call-argument-noncontiguous".to_owned());
-                    }
-                    operand
-                })
-                .collect::<Vec<_>>();
-            if unsupported
-                .last()
-                .is_some_and(|reason| reason == "call-argument-noncontiguous")
-            {
+            let Some(arguments) = backend_call_arguments(arguments, unsupported, false) else {
                 return MirBackendOperation::Marker {
                     kind: "call".to_owned(),
                 };
-            }
+            };
             MirBackendOperation::Call {
                 function,
                 arguments,
@@ -953,11 +1090,74 @@ fn backend_operation(
     }
 }
 
+fn backend_call_arguments(
+    arguments: &[MirCallArgument],
+    unsupported: &mut Vec<String>,
+    allow_implicit_targets: bool,
+) -> Option<Vec<MirBackendOperand>> {
+    let mut positional = BTreeMap::<u32, MirBackendOperand>::new();
+    for argument in arguments {
+        if argument.mode() != ParameterMode::Value
+            && !(allow_implicit_targets && argument.mode() == ParameterMode::Var)
+        {
+            unsupported.push(format!("call-argument-mode:{:?}", argument.mode()));
+            return None;
+        }
+        let index = match argument.target() {
+            HirCallArgumentTarget::Fixed(index) => index,
+            HirCallArgumentTarget::Receiver
+            | HirCallArgumentTarget::VariadicElement
+            | HirCallArgumentTarget::VariadicSpread
+                if allow_implicit_targets =>
+            {
+                positional.len() as u32
+            }
+            target => {
+                unsupported.push(format!("call-argument-target:{target:?}"));
+                return None;
+            }
+        };
+        if positional
+            .insert(index, backend_operand(argument.value(), unsupported))
+            .is_some()
+        {
+            unsupported.push(format!("call-argument-duplicate:{index}"));
+            return None;
+        }
+    }
+    let mut normalized = Vec::with_capacity(positional.len());
+    for (expected, (index, operand)) in positional.into_iter().enumerate() {
+        if expected as u32 != index {
+            unsupported.push("call-argument-noncontiguous".to_owned());
+            return None;
+        }
+        normalized.push(operand);
+    }
+    Some(normalized)
+}
+
 fn backend_place(place: &MirPlace, unsupported: &mut Vec<String>) -> u32 {
+    // A projection write cannot be represented by a scalar slot. Keep the
+    // owning local for structural validation, but fail closed so a backend
+    // never overwrites the whole aggregate in place of a field/index write.
     if !place.projections().is_empty() {
         unsupported.push("place:projection".to_owned());
     }
     place.local().index()
+}
+
+fn backend_place_operand(place: &MirPlace, unsupported: &mut Vec<String>) -> MirBackendOperand {
+    if place.projections().is_empty() {
+        MirBackendOperand::Local {
+            index: place.local().index(),
+        }
+    } else {
+        unsupported.push("operand:projection".to_owned());
+        MirBackendOperand::Projection {
+            index: place.local().index(),
+            depth: place.projections().len() as u32,
+        }
+    }
 }
 
 fn backend_operand(operand: &MirOperand, unsupported: &mut Vec<String>) -> MirBackendOperand {
@@ -969,54 +1169,74 @@ fn backend_operand(operand: &MirOperand, unsupported: &mut Vec<String>) -> MirBa
             MirConstant::Float(value) => MirBackendConstant::Float(value.clone()),
             MirConstant::Char(value) => MirBackendConstant::Char(value.clone()),
             MirConstant::String(value) => MirBackendConstant::String(value.clone()),
-            MirConstant::Named(_) => MirBackendConstant::Named,
+            MirConstant::Named(_) => {
+                unsupported.push("operand:named-constant".to_owned());
+                MirBackendConstant::Named
+            }
         }),
         MirOperandKind::Copy(place) | MirOperandKind::Move(place) => {
-            if !place.projections().is_empty() {
-                unsupported.push("operand:projection".to_owned());
-            }
-            MirBackendOperand::Local {
-                index: place.local().index(),
-            }
+            backend_place_operand(place, unsupported)
         }
         MirOperandKind::Borrow(place) => {
-            if !place.projections().is_empty() {
-                unsupported.push("operand:borrow-projection".to_owned());
-                MirBackendOperand::Unsupported {
-                    kind: "borrow-projection".to_owned(),
-                }
-            } else {
+            if place.projections().is_empty() {
                 MirBackendOperand::Borrow {
                     index: place.local().index(),
                 }
+            } else {
+                unsupported.push("operand:borrow-projection".to_owned());
+                backend_place_operand(place, unsupported)
             }
         }
-        other => {
-            let kind = operand_kind_name(other).to_owned();
-            unsupported.push(format!("operand:{kind}"));
-            MirBackendOperand::Unsupported { kind }
+        MirOperandKind::Function { callable, .. } => MirBackendOperand::Function {
+            kind: match callable {
+                HirCallableId::Host(function) => function.name().to_owned(),
+                HirCallableId::Symbol(_) => "symbol".to_owned(),
+                HirCallableId::Member(_) => "member".to_owned(),
+                HirCallableId::Implementation(_) => "implementation".to_owned(),
+            },
+        },
+        MirOperandKind::PreludeTraitFunction { method, .. } => MirBackendOperand::Function {
+            kind: format!("prelude:{}.{}", method.trait_name(), method.method_name()),
+        },
+        MirOperandKind::Loan(_) => {
+            unsupported.push("operand:loan".to_owned());
+            MirBackendOperand::Unsupported {
+                kind: "loan".to_owned(),
+            }
         }
     }
 }
 
-fn backend_rvalue(value: &MirRvalue, unsupported: &mut Vec<String>) -> MirBackendRvalue {
+fn backend_rvalue(
+    value: &MirRvalue,
+    interner: &TypeInterner,
+    unsupported: &mut Vec<String>,
+) -> MirBackendRvalue {
     match value.kind() {
         MirRvalueKind::Use(operand) => MirBackendRvalue::Use(backend_operand(operand, unsupported)),
         MirRvalueKind::Aggregate { shape, values } => {
-            if backend_aggregate_discriminant(shape).is_some() {
-                let values = values
-                    .iter()
-                    .map(|value| backend_operand(value, unsupported))
-                    .collect::<Vec<_>>();
-                MirBackendRvalue::Aggregate {
-                    kind: backend_aggregate_name(shape).to_owned(),
-                    values,
-                }
-            } else {
-                unsupported.push("rvalue:aggregate".to_owned());
-                MirBackendRvalue::Unsupported {
-                    kind: "aggregate".to_owned(),
-                }
+            if backend_aggregate_discriminant(shape).is_none() {
+                unsupported.push("rvalue:aggregate-unknown-shape".to_owned());
+            }
+            if !matches!(
+                shape,
+                MirAggregateKind::OptionNone
+                    | MirAggregateKind::OptionSome
+                    | MirAggregateKind::ResultOk
+                    | MirAggregateKind::ResultErr
+            ) {
+                unsupported.push(format!(
+                    "rvalue:aggregate-storage:{}",
+                    backend_aggregate_name(shape)
+                ));
+            }
+            let values = values
+                .iter()
+                .map(|value| backend_operand(value, unsupported))
+                .collect::<Vec<_>>();
+            MirBackendRvalue::Aggregate {
+                kind: backend_aggregate_name(shape).to_owned(),
+                values,
             }
         }
         MirRvalueKind::Prefix { operator, operand } => {
@@ -1042,10 +1262,109 @@ fn backend_rvalue(value: &MirRvalue, unsupported: &mut Vec<String>) -> MirBacken
                 right: backend_operand(right, unsupported),
             }
         }
-        other => {
-            let kind = rvalue_kind_name(other).to_owned();
-            unsupported.push(format!("rvalue:{kind}"));
-            MirBackendRvalue::Unsupported { kind }
+        MirRvalueKind::NumericConversion {
+            target,
+            conversion,
+            value,
+        } => {
+            let source = backend_type_name(interner, value.ty());
+            let target = scalar_type_name(*target).to_owned();
+            let conversion_kind = *conversion;
+            let conversion = numeric_conversion_name(conversion_kind).to_owned();
+            if !matches!(conversion_kind, NumericConversion::Identity)
+                && (!is_native_integer_scalar(&source) || !is_native_integer_scalar(&target))
+            {
+                unsupported.push(format!(
+                    "numeric-conversion:unsupported-representation:{source}->{target}"
+                ));
+            }
+            MirBackendRvalue::NumericConversion {
+                source,
+                target,
+                conversion,
+                operand: backend_operand(value, unsupported),
+            }
+        }
+        MirRvalueKind::Coerce { kind, value } => {
+            let kind_name = format!("{kind:?}");
+            if !matches!(kind, Assignability::EffectWeakening) {
+                unsupported.push(format!("coerce:{kind_name}"));
+            }
+            MirBackendRvalue::Coerce {
+                kind: kind_name,
+                operand: backend_operand(value, unsupported),
+            }
+        }
+        MirRvalueKind::Range { kind, start, end } => {
+            unsupported.push("rvalue:range-storage".to_owned());
+            MirBackendRvalue::HostCall {
+                kind: format!("range:{kind:?}"),
+                arguments: vec![
+                    backend_operand(start, unsupported),
+                    backend_operand(end, unsupported),
+                ],
+            }
+        }
+        MirRvalueKind::Contains {
+            kind,
+            item,
+            container,
+        } => {
+            unsupported.push("rvalue:contains-storage".to_owned());
+            MirBackendRvalue::HostCall {
+                kind: format!("contains:{kind:?}"),
+                arguments: vec![
+                    backend_operand(item, unsupported),
+                    backend_operand(container, unsupported),
+                ],
+            }
+        }
+        MirRvalueKind::MapRemove { map, key } => {
+            unsupported.push("rvalue:map-remove-storage".to_owned());
+            MirBackendRvalue::HostCall {
+                kind: "map-remove".to_owned(),
+                arguments: vec![
+                    backend_place_operand(map, unsupported),
+                    backend_operand(key, unsupported),
+                ],
+            }
+        }
+        MirRvalueKind::Interpolate { values, .. } => {
+            unsupported.push("rvalue:interpolate-storage".to_owned());
+            MirBackendRvalue::HostCall {
+                kind: "interpolate".to_owned(),
+                arguments: values
+                    .iter()
+                    .map(|value| backend_operand(value, unsupported))
+                    .collect(),
+            }
+        }
+        MirRvalueKind::Length(value) => {
+            unsupported.push("rvalue:length-storage".to_owned());
+            MirBackendRvalue::HostCall {
+                kind: "length".to_owned(),
+                arguments: vec![backend_operand(value, unsupported)],
+            }
+        }
+        MirRvalueKind::IteratorState { source } => {
+            unsupported.push("rvalue:iterator-state-storage".to_owned());
+            MirBackendRvalue::HostCall {
+                kind: "iterator-state".to_owned(),
+                arguments: vec![backend_operand(source, unsupported)],
+            }
+        }
+        MirRvalueKind::RecordUpdate { base, fields } => {
+            unsupported.push("rvalue:record-update-storage".to_owned());
+            MirBackendRvalue::HostCall {
+                kind: "record-update".to_owned(),
+                arguments: std::iter::once(backend_operand(base, unsupported))
+                    .chain(
+                        fields
+                            .iter()
+                            .map(|(_, value)| backend_operand(value, unsupported)),
+                    )
+                    .collect(),
+            }
         }
     }
 }
@@ -1057,20 +1376,53 @@ fn backend_type_name(interner: &TypeInterner, ty: TypeId) -> String {
 }
 
 fn is_native_carrier_type(name: &str) -> bool {
-    matches!(name, "Int" | "Bool" | "Unit")
+    if name.contains("Float") || name.contains("UInt64") {
+        return false;
+    }
+    matches!(name, "Int" | "Bool" | "Unit" | "String" | "Bytes")
+        || is_native_integer_scalar(name)
         || name.starts_with("Option[")
         || name.starts_with("Result[")
         || name.starts_with("Int?")
         || name.contains(" ! ")
+        || name.starts_with("!(")
+        || name.starts_with("Array[")
+        || name.starts_with("Span[")
+        || name.starts_with("Map[")
+        || name.starts_with("Set[")
+        || name.starts_with("Range[")
+        || name.starts_with("SArray[")
+        || name.starts_with("SMap[")
+        || name.starts_with("SSet[")
+        || name.starts_with("Stack[")
+        || name.starts_with("Queue[")
+}
+
+/// The first native adapter represents scalar values in one signed 64-bit
+/// carrier.  These integer widths can therefore be range-checked without
+/// pretending to implement an IEEE or full `UInt64` representation.
+fn is_native_integer_scalar(name: &str) -> bool {
+    matches!(
+        name,
+        "Byte" | "Int8" | "Int16" | "Int32" | "Int" | "UInt8" | "UInt16" | "UInt32"
+    )
 }
 
 fn backend_aggregate_name(shape: &MirAggregateKind) -> &'static str {
     match shape {
+        MirAggregateKind::Tuple => "tuple",
+        MirAggregateKind::Array => "array",
+        MirAggregateKind::Set => "set",
+        MirAggregateKind::Closure { .. } => "closure",
+        MirAggregateKind::Newtype { .. } => "newtype",
+        MirAggregateKind::Ref => "ref",
+        MirAggregateKind::Record { .. } => "record",
+        MirAggregateKind::Variant { .. } => "variant",
+        MirAggregateKind::NumericConversionError(_) => "numeric-conversion-error",
         MirAggregateKind::OptionNone => "option-none",
         MirAggregateKind::OptionSome => "option-some",
         MirAggregateKind::ResultOk => "result-ok",
         MirAggregateKind::ResultErr => "result-err",
-        _ => "aggregate",
     }
 }
 
@@ -1111,7 +1463,15 @@ fn backend_aggregate_discriminant(shape: &MirAggregateKind) -> Option<u32> {
         MirAggregateKind::OptionSome => Some(1),
         MirAggregateKind::ResultOk => Some(2),
         MirAggregateKind::ResultErr => Some(3),
-        _ => None,
+        MirAggregateKind::Tuple => Some(4),
+        MirAggregateKind::Array => Some(5),
+        MirAggregateKind::Set => Some(6),
+        MirAggregateKind::Closure { .. } => Some(7),
+        MirAggregateKind::Newtype { .. } => Some(8),
+        MirAggregateKind::Ref => Some(9),
+        MirAggregateKind::Record { .. } => Some(10),
+        MirAggregateKind::Variant { .. } => Some(11),
+        MirAggregateKind::NumericConversionError(_) => Some(12),
     }
 }
 
@@ -1136,7 +1496,7 @@ fn prefix_operator_name(operator: HirPrefixOperator) -> &'static str {
 fn is_supported_prefix_operator(operator: HirPrefixOperator) -> bool {
     matches!(
         operator,
-        HirPrefixOperator::Negate | HirPrefixOperator::BitwiseNot
+        HirPrefixOperator::Negate | HirPrefixOperator::LogicalNot | HirPrefixOperator::BitwiseNot
     )
 }
 
@@ -1159,7 +1519,38 @@ fn is_supported_binary_operator(operator: HirBinaryOperator) -> bool {
             | HirBinaryOperator::GreaterEqual
             | HirBinaryOperator::Equal
             | HirBinaryOperator::NotEqual
+            | HirBinaryOperator::LogicalAnd
+            | HirBinaryOperator::LogicalOr
     )
+}
+
+fn scalar_type_name(scalar: ScalarType) -> &'static str {
+    match scalar {
+        ScalarType::Bool => "Bool",
+        ScalarType::Int => "Int",
+        ScalarType::Float => "Float",
+        ScalarType::Byte => "Byte",
+        ScalarType::Char => "Char",
+        ScalarType::String => "String",
+        ScalarType::Unit => "Unit",
+        ScalarType::Never => "Never",
+        ScalarType::Int8 => "Int8",
+        ScalarType::Int16 => "Int16",
+        ScalarType::Int32 => "Int32",
+        ScalarType::UInt8 => "UInt8",
+        ScalarType::UInt16 => "UInt16",
+        ScalarType::UInt32 => "UInt32",
+        ScalarType::UInt64 => "UInt64",
+        ScalarType::Float32 => "Float32",
+    }
+}
+
+fn numeric_conversion_name(conversion: NumericConversion) -> &'static str {
+    match conversion {
+        NumericConversion::Identity => "identity",
+        NumericConversion::Total => "total",
+        NumericConversion::Checked => "checked",
+    }
 }
 
 fn binary_operator_name(operator: HirBinaryOperator) -> &'static str {
@@ -1199,36 +1590,6 @@ fn statement_kind_name(statement: &MirStatementKind) -> &'static str {
         MirStatementKind::DisarmCleanup(_) => "disarm-cleanup",
         MirStatementKind::BeginSelect { .. } => "begin-select",
         MirStatementKind::RegisterSelectArm { .. } => "register-select-arm",
-    }
-}
-
-fn operand_kind_name(operand: &MirOperandKind) -> &'static str {
-    match operand {
-        MirOperandKind::Constant(_) => "constant",
-        MirOperandKind::Copy(_) => "copy",
-        MirOperandKind::Move(_) => "move",
-        MirOperandKind::Borrow(_) => "borrow",
-        MirOperandKind::Loan(_) => "loan",
-        MirOperandKind::Function { .. } => "function",
-        MirOperandKind::PreludeTraitFunction { .. } => "prelude-trait-function",
-    }
-}
-
-fn rvalue_kind_name(value: &MirRvalueKind) -> &'static str {
-    match value {
-        MirRvalueKind::Use(_) => "use",
-        MirRvalueKind::Prefix { .. } => "prefix",
-        MirRvalueKind::Binary { .. } => "binary",
-        MirRvalueKind::Aggregate { .. } => "aggregate",
-        MirRvalueKind::RecordUpdate { .. } => "record-update",
-        MirRvalueKind::Coerce { .. } => "coerce",
-        MirRvalueKind::NumericConversion { .. } => "numeric-conversion",
-        MirRvalueKind::Range { .. } => "range",
-        MirRvalueKind::Contains { .. } => "contains",
-        MirRvalueKind::MapRemove { .. } => "map-remove",
-        MirRvalueKind::Interpolate { .. } => "interpolate",
-        MirRvalueKind::Length(_) => "length",
-        MirRvalueKind::IteratorState { .. } => "iterator-state",
     }
 }
 
@@ -2308,10 +2669,16 @@ mod tests {
             let mut block = backend_statement_block(span, statement);
             block.kind = block_kind;
             let mut unsupported = Vec::new();
-            let lowered = backend_block(0, &block, &mut unsupported, &BTreeMap::new());
+            let lowered = backend_block(
+                0,
+                &block,
+                &TypeInterner::default(),
+                &mut unsupported,
+                &BTreeMap::new(),
+            );
             assert!(
-                unsupported.is_empty(),
-                "unexpected unsupported: {unsupported:?}"
+                !unsupported.is_empty(),
+                "unclosed runtime edge must fail closed"
             );
             assert_eq!(lowered.statements, vec![expected]);
         }
@@ -2338,7 +2705,7 @@ mod tests {
         let mut unsupported = Vec::new();
         #[rustfmt::skip] let lowered = backend_operation(&MirOperation { ty, kind: binary.clone() }, &mut unsupported, &BTreeMap::new());
         assert!(matches!(lowered, MirBackendOperation::CheckedBinary { .. }));
-        assert_eq!(unsupported, vec!["operator:logical-and"]);
+        assert!(unsupported.is_empty());
         assert_eq!(operation_kind_name(&binary), "checked-binary");
 
         #[rustfmt::skip] let operation_names = [(MirOperationKind::CheckedPrefix { operator: HirPrefixOperator::Negate, operand: operand.clone() }, "checked-prefix"), (binary, "checked-binary"), (MirOperationKind::Call { callee: operand.clone(), arguments: Vec::new(), signature: ty, protocol: HirCallProtocol::Call, unsafe_call: false }, "call"), (MirOperationKind::ExplicitPanic { message: operand.clone() }, "explicit-panic"), (MirOperationKind::Assert { condition: operand.clone(), condition_repr: "true".to_owned(), message_parts: Vec::new() }, "assert"), (MirOperationKind::BootstrapHostCall { function: MirBootstrapHostFunction::ConsolePrint, arguments: Vec::new() }, "bootstrap-host-call")];
@@ -2350,8 +2717,71 @@ mod tests {
         for (function, expected) in host_names {
             assert_eq!(backend_host_function_name(function), expected);
         }
-        assert!(backend_aggregate_name(&MirAggregateKind::Tuple) == "aggregate");
+        assert_eq!(backend_aggregate_name(&MirAggregateKind::Tuple), "tuple");
+        assert_eq!(
+            backend_aggregate_discriminant(&MirAggregateKind::Array),
+            Some(5)
+        );
+        assert_eq!(
+            backend_aggregate_discriminant(&MirAggregateKind::Set),
+            Some(6)
+        );
+        assert_eq!(
+            backend_aggregate_discriminant(&MirAggregateKind::Ref),
+            Some(9)
+        );
         backend_terminator_names_cover_simple_edges();
+    }
+
+    #[test]
+    fn backend_lowers_numeric_and_opaque_rvalues_without_dropping_their_kind() {
+        let interner = TypeInterner::default();
+        let ty = interner.scalar(ScalarType::Int);
+        let operand = backend_int_operand(ty);
+        let mut unsupported = Vec::new();
+        let conversion = MirRvalue {
+            ty,
+            kind: MirRvalueKind::NumericConversion {
+                target: ScalarType::Byte,
+                conversion: NumericConversion::Checked,
+                value: operand.clone(),
+            },
+        };
+        assert!(matches!(
+            backend_rvalue(&conversion, &interner, &mut unsupported),
+            MirBackendRvalue::NumericConversion {
+                source,
+                target,
+                conversion,
+                ..
+            } if source == "Int" && target == "Byte" && conversion == "checked"
+        ));
+        let aggregate = MirRvalue {
+            ty,
+            kind: MirRvalueKind::Aggregate {
+                shape: MirAggregateKind::Tuple,
+                values: vec![operand.clone()],
+            },
+        };
+        assert!(matches!(
+            backend_rvalue(&aggregate, &interner, &mut unsupported),
+            MirBackendRvalue::Aggregate { kind, values }
+                if kind == "tuple" && values.len() == 1
+        ));
+        let opaque = MirRvalue {
+            ty,
+            kind: MirRvalueKind::Length(operand),
+        };
+        assert!(matches!(
+            backend_rvalue(&opaque, &interner, &mut unsupported),
+            MirBackendRvalue::HostCall { kind, arguments }
+                if kind == "length" && arguments.len() == 1
+        ));
+        assert!(
+            unsupported.contains(&"rvalue:aggregate-storage:tuple".to_owned())
+                && unsupported.contains(&"rvalue:length-storage".to_owned()),
+            "storage-dependent rvalues must fail closed: {unsupported:?}"
+        );
     }
     fn backend_terminator_names_cover_simple_edges() {
         let ty = TypeInterner::default().scalar(ScalarType::Int);
@@ -2391,7 +2821,13 @@ mod tests {
         for kind in terminators {
             #[rustfmt::skip] let block = MirBasicBlock { kind: MirBlockKind::Normal, statements: Vec::new(), terminator: MirTerminator { span, kind } };
             let mut unsupported = Vec::new();
-            backend_block(0, &block, &mut unsupported, &BTreeMap::new());
+            backend_block(
+                0,
+                &block,
+                &TypeInterner::default(),
+                &mut unsupported,
+                &BTreeMap::new(),
+            );
             assert!(!unsupported.is_empty());
         }
         #[rustfmt::skip] let mut functions = vec![MirBackendFunction { ordinal: 0, parameters: Vec::new(), parameter_types: Vec::new(), return_local: 0, return_type: "Int".to_owned(), blocks: vec![MirBackendBlock { ordinal: 0, kind: "normal".to_owned(), statements: Vec::new(), terminator: MirBackendTerminator::Invoke { operation: MirBackendOperation::Call { function: 99, arguments: Vec::new() }, destination: None, target: Some(0) } }], supported: true, unsupported: Vec::new() }];

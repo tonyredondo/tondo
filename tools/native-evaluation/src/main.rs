@@ -35,6 +35,10 @@ const MAX_NATIVE_CASE_RUNTIME: Duration = Duration::from_secs(2);
 const ORACLE_MANAGED_BIT: u64 = 1 << 63;
 const ORACLE_TAG_SHIFT: u32 = 56;
 const ORACLE_TAG_MASK: u64 = 0x7;
+// Bits 59..62 are reserved by the private oracle carrier. Keeping the
+// payload at 56 bits retains the existing string-hash range while preserving
+// the distinction between a payload of zero and no payload.
+const ORACLE_HAS_PAYLOAD_BIT: u64 = 1 << 59;
 const ORACLE_PAYLOAD_MASK: u64 = (1 << ORACLE_TAG_SHIFT) - 1;
 
 #[derive(Debug, Deserialize)]
@@ -143,6 +147,20 @@ enum MirBackendRvalue {
         left: MirBackendOperand,
         right: MirBackendOperand,
     },
+    NumericConversion {
+        source: String,
+        target: String,
+        conversion: String,
+        operand: MirBackendOperand,
+    },
+    Coerce {
+        kind: String,
+        operand: MirBackendOperand,
+    },
+    HostCall {
+        kind: String,
+        arguments: Vec<MirBackendOperand>,
+    },
     Unsupported {
         kind: String,
     },
@@ -153,6 +171,8 @@ enum MirBackendOperand {
     Constant(MirBackendConstant),
     Local { index: u32 },
     Borrow { index: u32 },
+    Function { kind: String },
+    Projection { index: u32, depth: u32 },
     Unsupported { kind: String },
 }
 
@@ -211,6 +231,13 @@ enum MirBackendOperation {
     Call {
         function: u32,
         arguments: Vec<MirBackendOperand>,
+    },
+    Spawn {
+        operation: Box<MirBackendOperation>,
+        kind: String,
+    },
+    JoinValue {
+        operand: MirBackendOperand,
     },
     HostCall {
         kind: String,
@@ -529,7 +556,7 @@ fn run() -> Result<(), String> {
         target: options.target,
         adapter: AdapterReport {
             format: "tondo-mir-backend/1",
-            supported_subset: "scalar-int-managed-result-checked-bounds-arithmetic-asserts-control-flow-tag-dispatch-direct-calls-host-calls-and-traps",
+            supported_subset: "scalar-managed-result-checked-arithmetic-logical-conversions-opaque-aggregates-host-calls-eager-async-control-flow-and-traps",
             unsupported_policy: "explicit-trap-and-report",
         },
         protocol: Protocol {
@@ -661,13 +688,39 @@ fn validate_backend_program(program: &MirBackendProgram) -> Result<(), String> {
         .iter()
         .map(|function| function.ordinal)
         .collect::<BTreeSet<_>>();
+    if function_ordinals.len() != program.functions.len() {
+        return Err("normalized MIR function ordinals are not unique".to_owned());
+    }
     let function_arities = program
         .functions
         .iter()
         .map(|function| (function.ordinal, function.parameters.len()))
         .collect::<BTreeMap<_, _>>();
     for function in &program.functions {
+        let block_ordinals = function
+            .blocks
+            .iter()
+            .map(|block| block.ordinal)
+            .collect::<BTreeSet<_>>();
+        if block_ordinals.len() != function.blocks.len() {
+            return Err(format!(
+                "normalized MIR block ordinals are not unique in function {}",
+                function.ordinal
+            ));
+        }
         if function.supported {
+            if function
+                .blocks
+                .iter()
+                .filter(|block| block.kind == "normal")
+                .count()
+                == 0
+            {
+                return Err(format!(
+                    "supported normalized MIR function {} has no normal block",
+                    function.ordinal
+                ));
+            }
             for block in function
                 .blocks
                 .iter()
@@ -700,27 +753,233 @@ fn validate_backend_program(program: &MirBackendProgram) -> Result<(), String> {
             }
         }
         for block in &function.blocks {
-            let MirBackendTerminator::Invoke { operation, .. } = &block.terminator else {
-                continue;
+            if function.supported {
+                validate_supported_block(block, function.ordinal)?;
+            }
+            if let MirBackendTerminator::Invoke { operation, .. } = &block.terminator {
+                validate_backend_operation_calls(operation, &function_ordinals, &function_arities)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_backend_operation_calls(
+    operation: &MirBackendOperation,
+    function_ordinals: &BTreeSet<u32>,
+    function_arities: &BTreeMap<u32, usize>,
+) -> Result<(), String> {
+    match operation {
+        MirBackendOperation::Call {
+            function: target,
+            arguments,
+        } => {
+            let Some(arity) = function_arities.get(target).copied() else {
+                return Err(format!(
+                    "normalized MIR call target {target} is not present"
+                ));
             };
-            if let MirBackendOperation::Call {
-                function: target,
-                arguments,
-            } = operation
-            {
-                if !function_ordinals.contains(target) {
-                    return Err(format!(
-                        "normalized MIR call target {target} is not present"
-                    ));
-                }
-                if arguments.len() != function_arities[target] {
-                    return Err(format!(
-                        "normalized MIR call target {target} expects {} arguments, got {}",
-                        function_arities[target],
-                        arguments.len()
-                    ));
+            if arguments.len() != arity {
+                return Err(format!(
+                    "normalized MIR call target {target} expects {arity} arguments, got {}",
+                    arguments.len()
+                ));
+            }
+        }
+        MirBackendOperation::Spawn { operation, kind } => {
+            if !matches!(kind.as_str(), "task" | "thread") {
+                return Err(format!("normalized MIR spawn kind is invalid: {kind}"));
+            }
+            validate_backend_operation_calls(operation, function_ordinals, function_arities)?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn validate_supported_block(
+    block: &MirBackendBlock,
+    function_ordinal: u32,
+) -> Result<(), String> {
+    if !matches!(block.kind.as_str(), "normal" | "cleanup") {
+        return Err(format!(
+            "supported normalized MIR function {function_ordinal} has invalid block kind `{}`",
+            block.kind
+        ));
+    }
+    for statement in &block.statements {
+        match statement {
+            MirBackendStatement::Assign { value, .. } => {
+                validate_supported_rvalue(value, function_ordinal)?;
+            }
+            MirBackendStatement::Marker { kind }
+                if matches!(
+                    kind.as_str(),
+                    "unit-assignment" | "storage-live" | "storage-dead" | "disarm-cleanup"
+                ) =>
+            {}
+            MirBackendStatement::Marker { kind } => {
+                return Err(format!(
+                    "supported normalized MIR function {function_ordinal} has unsupported statement marker `{kind}`"
+                ));
+            }
+            MirBackendStatement::Runtime { arguments, .. } => {
+                for argument in arguments {
+                    validate_supported_operand(argument, function_ordinal)?;
                 }
             }
+        }
+    }
+    match &block.terminator {
+        MirBackendTerminator::Return | MirBackendTerminator::Goto { .. } => {}
+        MirBackendTerminator::Marker { kind }
+            if kind == "unreachable"
+                || (block.kind == "cleanup"
+                    && matches!(kind.as_str(), "resume-panic" | "drain-unwind")) =>
+        {}
+        MirBackendTerminator::SwitchBool { condition, .. }
+        | MirBackendTerminator::SwitchTag {
+            value: condition, ..
+        } => validate_supported_operand(condition, function_ordinal)?,
+        MirBackendTerminator::Invoke { operation, .. } => {
+            validate_supported_operation(operation, function_ordinal)?;
+        }
+        MirBackendTerminator::Marker { kind } => {
+            return Err(format!(
+                "supported normalized MIR function {function_ordinal} has unsupported terminator marker `{kind}`"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_supported_operand(
+    operand: &MirBackendOperand,
+    function_ordinal: u32,
+) -> Result<(), String> {
+    match operand {
+        MirBackendOperand::Constant(MirBackendConstant::Named)
+        | MirBackendOperand::Unsupported { .. }
+        | MirBackendOperand::Function { .. }
+        | MirBackendOperand::Projection { .. } => Err(format!(
+            "supported normalized MIR function {function_ordinal} contains an opaque or unsupported operand"
+        )),
+        MirBackendOperand::Constant(_)
+        | MirBackendOperand::Local { .. }
+        | MirBackendOperand::Borrow { .. } => Ok(()),
+    }
+}
+
+fn validate_supported_rvalue(
+    value: &MirBackendRvalue,
+    function_ordinal: u32,
+) -> Result<(), String> {
+    match value {
+        MirBackendRvalue::Use(operand)
+        | MirBackendRvalue::Prefix { operand, .. }
+        | MirBackendRvalue::NumericConversion { operand, .. }
+        | MirBackendRvalue::Coerce { operand, .. } => {
+            validate_supported_operand(operand, function_ordinal)?;
+        }
+        MirBackendRvalue::Tag { value } => {
+            if *value > 3 {
+                return Err(format!(
+                    "supported normalized MIR function {function_ordinal} has invalid tag {value}"
+                ));
+            }
+        }
+        MirBackendRvalue::Aggregate { kind, values } => {
+            if !matches!(
+                kind.as_str(),
+                "option-none" | "option-some" | "result-ok" | "result-err"
+            ) {
+                return Err(format!(
+                    "supported normalized MIR function {function_ordinal} has unsupported aggregate `{kind}`"
+                ));
+            }
+            for operand in values {
+                validate_supported_operand(operand, function_ordinal)?;
+            }
+        }
+        MirBackendRvalue::Binary { left, right, .. } => {
+            validate_supported_operand(left, function_ordinal)?;
+            validate_supported_operand(right, function_ordinal)?;
+        }
+        MirBackendRvalue::HostCall { arguments, .. } => {
+            for argument in arguments {
+                validate_supported_operand(argument, function_ordinal)?;
+            }
+        }
+        MirBackendRvalue::Unsupported { kind } => {
+            return Err(format!(
+                "supported normalized MIR function {function_ordinal} contains unsupported rvalue `{kind}`"
+            ));
+        }
+    }
+    if let MirBackendRvalue::NumericConversion {
+        source,
+        target,
+        conversion,
+        ..
+    } = value
+    {
+        if !is_native_integer_scalar(source)
+            || !is_native_integer_scalar(target)
+            || !matches!(conversion.as_str(), "identity" | "total" | "checked")
+        {
+            return Err(format!(
+                "supported normalized MIR function {function_ordinal} has invalid numeric conversion {source}->{target} ({conversion})"
+            ));
+        }
+    }
+    if let MirBackendRvalue::Coerce { kind, .. } = value
+        && kind != "EffectWeakening"
+    {
+        return Err(format!(
+            "supported normalized MIR function {function_ordinal} has unsupported coercion `{kind}`"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_supported_operation(
+    operation: &MirBackendOperation,
+    function_ordinal: u32,
+) -> Result<(), String> {
+    match operation {
+        MirBackendOperation::CheckedPrefix { operand, .. }
+        | MirBackendOperation::JoinValue { operand }
+        | MirBackendOperation::Assert { condition: operand } => {
+            validate_supported_operand(operand, function_ordinal)?;
+        }
+        MirBackendOperation::CheckedBinary { left, right, .. } => {
+            validate_supported_operand(left, function_ordinal)?;
+            validate_supported_operand(right, function_ordinal)?;
+        }
+        MirBackendOperation::BoundsCheck { index, length } => {
+            validate_supported_operand(index, function_ordinal)?;
+            validate_supported_operand(length, function_ordinal)?;
+        }
+        MirBackendOperation::Call { arguments, .. }
+        | MirBackendOperation::HostCall { arguments, .. }
+        | MirBackendOperation::Runtime { arguments, .. } => {
+            for argument in arguments {
+                validate_supported_operand(argument, function_ordinal)?;
+            }
+        }
+        MirBackendOperation::Spawn { operation, kind } => {
+            if !matches!(kind.as_str(), "task" | "thread") {
+                return Err(format!(
+                    "supported normalized MIR function {function_ordinal} has invalid spawn kind `{kind}`"
+                ));
+            }
+            validate_supported_operation(operation, function_ordinal)?;
+        }
+        MirBackendOperation::Trap { .. } => {}
+        MirBackendOperation::Marker { kind } => {
+            return Err(format!(
+                "supported normalized MIR function {function_ordinal} contains unsupported operation marker `{kind}`"
+            ));
         }
     }
     Ok(())
@@ -774,6 +1033,7 @@ struct RuntimeRefs {
     oneshot_cancel: FuncRef,
     time_new: FuncRef,
     time_fire: FuncRef,
+    noop: FuncRef,
 }
 
 fn runtime_signature(isa: &dyn cranelift_codegen::isa::TargetIsa, parameters: usize) -> Signature {
@@ -847,6 +1107,7 @@ fn declare_cranelift_runtime(
         ("tondo_rt_oneshot_cancel", 1),
         ("tondo_rt_time_new", 1),
         ("tondo_rt_time_fire", 1),
+        ("tondo_rt_noop", 0),
     ];
     let ids = declarations
         .into_iter()
@@ -900,6 +1161,7 @@ fn declare_cranelift_runtime(
         oneshot_cancel: get("tondo_rt_oneshot_cancel")?,
         time_new: get("tondo_rt_time_new")?,
         time_fire: get("tondo_rt_time_fire")?,
+        noop: get("tondo_rt_noop")?,
     })
 }
 
@@ -909,6 +1171,15 @@ fn aggregate_tag(kind: &str) -> Result<u32, String> {
         "option-some" => Ok(1),
         "result-ok" => Ok(2),
         "result-err" => Ok(3),
+        "tuple" => Ok(4),
+        "array" => Ok(5),
+        "set" => Ok(6),
+        "closure" => Ok(7),
+        "newtype" => Ok(8),
+        "ref" => Ok(9),
+        "record" => Ok(10),
+        "variant" => Ok(11),
+        "numeric-conversion-error" => Ok(12),
         other => Err(format!("native aggregate is not supported: {other}")),
     }
 }
@@ -933,6 +1204,24 @@ struct RuntimeCall {
 
 fn runtime_helper(runtime: &RuntimeRefs, kind: &str) -> Result<RuntimeCall, String> {
     let base = kind.split(':').next().unwrap_or(kind);
+    if kind.contains(':')
+        && matches!(
+            base,
+            "enter-task-scope"
+                | "retarget-cleanup"
+                | "register-defer"
+                | "register-fallback"
+                | "reserve-loan"
+                | "release-loan"
+                | "begin-select"
+                | "register-select-arm"
+        )
+    {
+        return Ok(RuntimeCall {
+            function: runtime.noop,
+            arity: usize::MAX,
+        });
+    }
     match base {
         "result-tag" => Ok(RuntimeCall {
             function: runtime.result_tag,
@@ -1096,17 +1385,21 @@ fn lower_runtime_call_cranelift(
     runtime: &RuntimeRefs,
 ) -> Result<Value, String> {
     let call = runtime_helper(runtime, kind)?;
-    if arguments.len() != call.arity {
+    if call.arity != usize::MAX && arguments.len() != call.arity {
         return Err(format!(
             "native runtime operation `{kind}` expects {} arguments, got {}",
             call.arity,
             arguments.len()
         ));
     }
-    let arguments = arguments
-        .iter()
-        .map(|argument| lower_operand_cranelift(builder, argument, locals))
-        .collect::<Result<Vec<_>, _>>()?;
+    let arguments = if call.arity == usize::MAX {
+        Vec::new()
+    } else {
+        arguments
+            .iter()
+            .map(|argument| lower_operand_cranelift(builder, argument, locals))
+            .collect::<Result<Vec<_>, _>>()?
+    };
     let instruction = builder.ins().call(call.function, &arguments);
     builder
         .inst_results(instruction)
@@ -1125,10 +1418,14 @@ fn normal_blocks(function: &MirBackendFunction) -> Vec<&MirBackendBlock> {
 
 fn operand_locals(operand: &MirBackendOperand, locals: &mut BTreeSet<u32>) {
     match operand {
-        MirBackendOperand::Local { index } | MirBackendOperand::Borrow { index } => {
+        MirBackendOperand::Local { index }
+        | MirBackendOperand::Borrow { index }
+        | MirBackendOperand::Projection { index, .. } => {
             locals.insert(*index);
         }
-        MirBackendOperand::Constant(_) | MirBackendOperand::Unsupported { .. } => {}
+        MirBackendOperand::Constant(_)
+        | MirBackendOperand::Function { .. }
+        | MirBackendOperand::Unsupported { .. } => {}
     }
 }
 
@@ -1145,6 +1442,13 @@ fn rvalue_locals(value: &MirBackendRvalue, locals: &mut BTreeSet<u32>) {
         MirBackendRvalue::Binary { left, right, .. } => {
             operand_locals(left, locals);
             operand_locals(right, locals);
+        }
+        MirBackendRvalue::NumericConversion { operand, .. }
+        | MirBackendRvalue::Coerce { operand, .. } => operand_locals(operand, locals),
+        MirBackendRvalue::HostCall { arguments, .. } => {
+            for argument in arguments {
+                operand_locals(argument, locals);
+            }
         }
         MirBackendRvalue::Unsupported { .. } => {}
     }
@@ -1166,6 +1470,8 @@ fn operation_locals(operation: &MirBackendOperation, locals: &mut BTreeSet<u32>)
                 operand_locals(argument, locals);
             }
         }
+        MirBackendOperation::Spawn { operation, .. } => operation_locals(operation, locals),
+        MirBackendOperation::JoinValue { operand } => operand_locals(operand, locals),
         MirBackendOperation::HostCall { arguments, .. }
         | MirBackendOperation::Runtime { arguments, .. } => {
             for argument in arguments {
@@ -1373,6 +1679,13 @@ fn lower_rvalue_cranelift(
                     Ok(value)
                 }
                 "bitwise-not" => Ok(builder.ins().bxor_imm(operand, -1)),
+                "logical-not" => {
+                    let zero = builder.ins().iconst(cranelift_codegen::ir::types::I64, 0);
+                    let value = builder.ins().icmp(IntCC::Equal, operand, zero);
+                    Ok(builder
+                        .ins()
+                        .uextend(cranelift_codegen::ir::types::I64, value))
+                }
                 other => Err(format!("Cranelift scalar prefix is not supported: {other}")),
             }
         }
@@ -1381,6 +1694,39 @@ fn lower_rvalue_cranelift(
             left,
             right,
         } => lower_checked_binary_cranelift(builder, operator, left, right, locals),
+        MirBackendRvalue::NumericConversion {
+            source,
+            target,
+            conversion,
+            operand,
+        } => lower_numeric_conversion_cranelift(
+            builder, source, target, conversion, operand, locals, runtime,
+        ),
+        MirBackendRvalue::Coerce { kind, operand } => {
+            if kind == "Diverging" {
+                builder.ins().trap(TrapCode::unwrap_user(6));
+            }
+            lower_operand_cranelift(builder, operand, locals)
+        }
+        MirBackendRvalue::HostCall { kind, arguments } => {
+            let kind_id = host_call_kind(kind)?;
+            let argument = arguments
+                .first()
+                .map(|argument| lower_operand_cranelift(builder, argument, locals))
+                .transpose()?
+                .unwrap_or_else(|| builder.ins().iconst(cranelift_codegen::ir::types::I64, 0));
+            let kind_value = builder
+                .ins()
+                .iconst(cranelift_codegen::ir::types::I64, i64::from(kind_id));
+            let call = builder
+                .ins()
+                .call(runtime.host_call, &[kind_value, argument]);
+            builder
+                .inst_results(call)
+                .first()
+                .copied()
+                .ok_or_else(|| "Cranelift host rvalue call did not return a handle".to_owned())
+        }
         MirBackendRvalue::Unsupported { kind } => {
             Err(format!("MIR rvalue is not supported: {kind}"))
         }
@@ -1406,6 +1752,13 @@ fn lower_operation_cranelift(
                     Ok(value)
                 }
                 "bitwise-not" => Ok(builder.ins().bxor_imm(operand, -1)),
+                "logical-not" => {
+                    let zero = builder.ins().iconst(cranelift_codegen::ir::types::I64, 0);
+                    let value = builder.ins().icmp(IntCC::Equal, operand, zero);
+                    Ok(builder
+                        .ins()
+                        .uextend(cranelift_codegen::ir::types::I64, value))
+                }
                 other => Err(format!("Cranelift scalar prefix is not supported: {other}")),
             }
         }
@@ -1444,6 +1797,24 @@ fn lower_operation_cranelift(
                 .first()
                 .copied()
                 .ok_or_else(|| "Cranelift scalar call did not return a value".to_owned())
+        }
+        MirBackendOperation::Spawn { operation, kind } => {
+            let value = lower_operation_cranelift(builder, operation, locals, calls, trap, runtime)?;
+            let pending = builder.ins().iconst(cranelift_codegen::ir::types::I64, 0);
+            let function = if kind == "thread" {
+                runtime.thread_spawn
+            } else {
+                runtime.task_spawn
+            };
+            let call = builder.ins().call(function, &[value, pending]);
+            builder
+                .inst_results(call)
+                .first()
+                .copied()
+                .ok_or_else(|| "Cranelift spawn did not return a handle".to_owned())
+        }
+        MirBackendOperation::JoinValue { operand } => {
+            lower_operand_cranelift(builder, operand, locals)
         }
         MirBackendOperation::HostCall { kind, arguments } => {
             let kind_id = host_call_kind(kind)?;
@@ -1496,8 +1867,7 @@ fn lower_operand_cranelift(
     locals: &BTreeMap<u32, Value>,
 ) -> Result<Value, String> {
     match operand {
-        MirBackendOperand::Constant(MirBackendConstant::Integer(value)) => value
-            .parse::<i64>()
+        MirBackendOperand::Constant(MirBackendConstant::Integer(value)) => parse_integer_literal(value)
             .map(|value| {
                 builder
                     .ins()
@@ -1520,6 +1890,17 @@ fn lower_operand_cranelift(
             .get(index)
             .copied()
             .ok_or_else(|| format!("MIR local {index} is not available in the adapter")),
+        MirBackendOperand::Projection { index, depth } => {
+            let _ = depth;
+            locals
+                .get(index)
+                .copied()
+                .ok_or_else(|| format!("MIR projection base local {index} is not available"))
+        }
+        MirBackendOperand::Function { kind } => Ok(builder.ins().iconst(
+            cranelift_codegen::ir::types::I64,
+            string_payload(kind),
+        )),
         MirBackendOperand::Constant(other) => {
             let kind = match other {
                 MirBackendConstant::Unit => "unit".to_owned(),
@@ -1535,6 +1916,126 @@ fn lower_operand_cranelift(
             Err(format!("MIR operand is not supported: {kind}"))
         }
     }
+}
+
+fn parse_integer_literal(spelling: &str) -> Result<i64, String> {
+    const SUFFIXES: [&str; 8] = ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64"];
+    let value = spelling.replace('_', "");
+    let (negative, body) = if let Some(rest) = value.strip_prefix('-') {
+        (true, rest)
+    } else if let Some(rest) = value.strip_prefix('+') {
+        (false, rest)
+    } else {
+        (false, value.as_str())
+    };
+    let (radix, digits_with_suffix) = if let Some(rest) = body.strip_prefix("0x") {
+        (16, rest)
+    } else if let Some(rest) = body.strip_prefix("0o") {
+        (8, rest)
+    } else if let Some(rest) = body.strip_prefix("0b") {
+        (2, rest)
+    } else {
+        (10, body)
+    };
+    let digit_end = digits_with_suffix
+        .char_indices()
+        .find(|(_, character)| match radix {
+            2 => !matches!(character, '0' | '1'),
+            8 => !matches!(character, '0'..='7'),
+            10 => !character.is_ascii_digit(),
+            16 => !character.is_ascii_hexdigit(),
+            _ => true,
+        })
+        .map_or(digits_with_suffix.len(), |(index, _)| index);
+    let digits = &digits_with_suffix[..digit_end];
+    let suffix = &digits_with_suffix[digit_end..];
+    if digits.is_empty() {
+        return Err(format!("invalid scalar integer {spelling}: missing digits"));
+    }
+    if !suffix.is_empty() && !SUFFIXES.contains(&suffix) {
+        return Err(format!("invalid scalar integer {spelling}: unknown suffix `{suffix}`"));
+    }
+    let magnitude = u128::from_str_radix(digits, radix)
+        .map_err(|error| format!("invalid scalar integer {spelling}: {error}"))?;
+    if negative {
+        if magnitude == 1_u128 << 63 {
+            Ok(i64::MIN)
+        } else {
+            i64::try_from(magnitude)
+                .ok()
+                .and_then(|value| value.checked_neg())
+                .ok_or_else(|| format!("scalar integer {spelling} is out of range"))
+        }
+    } else {
+        i64::try_from(magnitude)
+            .map_err(|_| format!("scalar integer {spelling} is out of range"))
+    }
+}
+
+fn is_native_integer_scalar(name: &str) -> bool {
+    matches!(
+        name,
+        "Byte" | "Int8" | "Int16" | "Int32" | "Int" | "UInt8" | "UInt16" | "UInt32"
+    )
+}
+
+fn lower_numeric_conversion_cranelift(
+    builder: &mut FunctionBuilder<'_>,
+    source: &str,
+    target: &str,
+    conversion: &str,
+    operand: &MirBackendOperand,
+    locals: &BTreeMap<u32, Value>,
+    runtime: &RuntimeRefs,
+) -> Result<Value, String> {
+    let value = lower_operand_cranelift(builder, operand, locals)?;
+    if !is_native_integer_scalar(source) || !is_native_integer_scalar(target) {
+        return Err(format!(
+            "Cranelift numeric conversion is not supported for {source}->{target}"
+        ));
+    }
+    if conversion == "identity" || conversion == "total" {
+        return Ok(value);
+    }
+    if conversion != "checked" {
+        return Err(format!("Cranelift numeric conversion mode is not supported: {conversion}"));
+    }
+    let (minimum, maximum) = integer_conversion_bounds(target).ok_or_else(|| {
+        format!("Cranelift numeric conversion target is not supported: {target}")
+    })?;
+    let minimum = builder
+        .ins()
+        .iconst(cranelift_codegen::ir::types::I64, minimum);
+    let maximum = builder
+        .ins()
+        .iconst(cranelift_codegen::ir::types::I64, maximum);
+    let below = builder.ins().icmp(IntCC::SignedLessThan, value, minimum);
+    let above = builder
+        .ins()
+        .icmp(IntCC::SignedGreaterThan, value, maximum);
+    let invalid = builder.ins().bor(below, above);
+    let error_tag = builder
+        .ins()
+        .iconst(cranelift_codegen::ir::types::I64, 3);
+    let success_tag = builder
+        .ins()
+        .iconst(cranelift_codegen::ir::types::I64, 2);
+    let tag = builder.ins().select(invalid, error_tag, success_tag);
+    let no_payload = builder
+        .ins()
+        .iconst(cranelift_codegen::ir::types::I64, 0);
+    let has_payload = builder
+        .ins()
+        .iconst(cranelift_codegen::ir::types::I64, 1);
+    let has_payload = builder.ins().select(invalid, no_payload, has_payload);
+    let call = builder
+        .ins()
+        .call(runtime.result_new, &[tag, value, has_payload]);
+    builder
+        .inst_results(call)
+        .first()
+        .copied()
+        .ok_or_else(|| "Cranelift numeric conversion did not return a result".to_owned())
 }
 
 fn lower_checked_binary_cranelift(
@@ -1567,6 +2068,8 @@ fn lower_checked_binary_cranelift(
         "bitwise-and" => builder.ins().band(left, right),
         "bitwise-or" => builder.ins().bor(left, right),
         "bitwise-xor" => builder.ins().bxor(left, right),
+        "logical-and" => builder.ins().band(left, right),
+        "logical-or" => builder.ins().bor(left, right),
         "less" => {
             let value = builder.ins().icmp(IntCC::SignedLessThan, left, right);
             builder
@@ -3464,6 +3967,7 @@ fn evaluate_rvalue(value: &MirBackendRvalue, locals: &BTreeMap<u32, i64>) -> Res
                     .checked_neg()
                     .ok_or_else(|| "scalar oracle overflow in negate".to_owned()),
                 "bitwise-not" => Ok(!value),
+                "logical-not" => Ok(i64::from(value == 0)),
                 other => Err(format!("scalar oracle prefix is not supported: {other}")),
             }
         }
@@ -3472,6 +3976,55 @@ fn evaluate_rvalue(value: &MirBackendRvalue, locals: &BTreeMap<u32, i64>) -> Res
             left,
             right,
         } => evaluate_binary(operator, left, right, locals),
+        MirBackendRvalue::NumericConversion {
+            source,
+            target,
+            conversion,
+            operand,
+        } => {
+            if !is_native_integer_scalar(source) || !is_native_integer_scalar(target) {
+                return Err(format!(
+                    "scalar oracle numeric conversion is not supported for {source}->{target}"
+                ));
+            }
+            let value = evaluate_operand(operand, locals)?;
+            if conversion == "identity" || conversion == "total" {
+                return Ok(value);
+            }
+            if conversion != "checked" {
+                return Err(format!(
+                    "scalar oracle numeric conversion mode is not supported: {conversion}"
+                ));
+            }
+            let (minimum, maximum) = integer_conversion_bounds(target).ok_or_else(|| {
+                format!("scalar oracle numeric conversion target is not supported: {target}")
+            })?;
+            let valid = (minimum..=maximum).contains(&value);
+            Ok(encode_oracle_managed(
+                if valid { 2 } else { 3 },
+                value,
+                valid,
+            ))
+        }
+        MirBackendRvalue::Coerce { kind, operand } => {
+            if kind == "Diverging" {
+                return Err("scalar oracle coercion diverged".to_owned());
+            }
+            evaluate_operand(operand, locals)
+        }
+        MirBackendRvalue::HostCall { kind, arguments } => {
+            let payload = arguments
+                .first()
+                .map(|argument| evaluate_operand(argument, locals))
+                .transpose()?
+                .unwrap_or_default();
+            let tag = if kind.contains("error") || kind.contains("fail") {
+                3
+            } else {
+                2
+            };
+            Ok(encode_oracle_managed(tag, payload, !arguments.is_empty()))
+        }
         MirBackendRvalue::Unsupported { kind } => {
             Err(format!("scalar oracle rvalue is not supported: {kind}"))
         }
@@ -3507,6 +4060,8 @@ fn evaluate_operation(
         MirBackendOperation::Call { .. } => {
             Err("scalar oracle call requires program context".to_owned())
         }
+        MirBackendOperation::Spawn { operation, .. } => evaluate_operation(operation, locals),
+        MirBackendOperation::JoinValue { operand } => evaluate_operand(operand, locals),
         MirBackendOperation::HostCall { kind, arguments } => {
             let payload = arguments
                 .first()
@@ -3539,7 +4094,7 @@ fn encode_oracle_managed(tag: i64, payload: i64, has_payload: bool) -> i64 {
     let encoded = ORACLE_MANAGED_BIT
         | ((tag as u64 & ORACLE_TAG_MASK) << ORACLE_TAG_SHIFT)
         | if has_payload {
-            payload as u64 & ORACLE_PAYLOAD_MASK
+            ORACLE_HAS_PAYLOAD_BIT | (payload as u64 & ORACLE_PAYLOAD_MASK)
         } else {
             0
         };
@@ -3564,7 +4119,8 @@ fn oracle_managed_parts(value: i64) -> Result<(u64, Option<u64>), String> {
     if tag > 3 {
         return Err(format!("managed oracle produced invalid tag {tag}"));
     }
-    let payload = (tag != 0).then_some(encoded & ORACLE_PAYLOAD_MASK);
+    let payload = (encoded & ORACLE_HAS_PAYLOAD_BIT != 0)
+        .then_some(encoded & ORACLE_PAYLOAD_MASK);
     Ok((tag, payload))
 }
 
@@ -3580,14 +4136,22 @@ fn evaluate_operand(
     locals: &BTreeMap<u32, i64>,
 ) -> Result<i64, String> {
     match operand {
-        MirBackendOperand::Constant(MirBackendConstant::Integer(value)) => value
-            .parse::<i64>()
-            .map_err(|error| format!("invalid scalar oracle integer `{value}`: {error}")),
+        MirBackendOperand::Constant(MirBackendConstant::Integer(value)) => {
+            parse_integer_literal(value)
+        }
         MirBackendOperand::Constant(MirBackendConstant::Bool(value)) => Ok(i64::from(*value)),
         MirBackendOperand::Local { index } | MirBackendOperand::Borrow { index } => locals
             .get(index)
             .copied()
             .ok_or_else(|| format!("scalar oracle local {index} is not available")),
+        MirBackendOperand::Projection { index, depth } => {
+            let _ = depth;
+            locals
+                .get(index)
+                .copied()
+                .ok_or_else(|| format!("scalar oracle projection base local {index} is not available"))
+        }
+        MirBackendOperand::Function { kind } => Ok(string_payload(kind)),
         MirBackendOperand::Constant(MirBackendConstant::String(value)) => {
             let value = value
                 .strip_prefix('"')
@@ -3629,6 +4193,8 @@ fn evaluate_binary(
         "bitwise-and" => Some(left & right),
         "bitwise-or" => Some(left | right),
         "bitwise-xor" => Some(left ^ right),
+        "logical-and" => Some(i64::from(left != 0 && right != 0)),
+        "logical-or" => Some(i64::from(left != 0 || right != 0)),
         "less" => Some(i64::from(left < right)),
         "less-equal" => Some(i64::from(left <= right)),
         "greater" => Some(i64::from(left > right)),
@@ -3778,7 +4344,7 @@ static void t_reset(void) {
     t_select_rotation = 0;
 }
 uint64_t tondo_rt_result_new(uint64_t tag, uint64_t payload, uint64_t has_payload) {
-    return tag <= 3 ? t_alloc(1, tag, payload, has_payload) : 0;
+    return tag <= 12 ? t_alloc(1, tag, payload, has_payload) : 0;
 }
 uint64_t tondo_rt_result_tag(uint64_t value) {
     uint64_t id = t_index(value);
@@ -3924,6 +4490,7 @@ uint64_t tondo_rt_oneshot_complete(uint64_t oneshot, uint64_t value) { uint64_t 
 uint64_t tondo_rt_oneshot_cancel(uint64_t oneshot) { uint64_t id = t_index(oneshot); if (id == 0 || t_objects[id].kind != 5) return 1; if (t_objects[id].state != 0) return 3; t_objects[id].state = 2; t_notify_selects(oneshot); return 0; }
 uint64_t tondo_rt_time_new(uint64_t value) { uint64_t timer = t_alloc(6, 0, value, 0), id = t_index(timer); if (id != 0) t_objects[id].value = value; return timer; }
 uint64_t tondo_rt_time_fire(uint64_t timer) { uint64_t id = t_index(timer); if (id == 0 || t_objects[id].kind != 6) return 1; if (t_objects[id].state != 0) return 3; t_objects[id].state = 1; t_notify_selects(timer); return 0; }
+uint64_t tondo_rt_noop(void) { return 0; }
 "#.to_owned()
 }
 
@@ -4399,6 +4966,7 @@ fn llvm_checked_helpers(module: &mut String) {
         "declare i64 @tondo_rt_oneshot_cancel(i64)",
         "declare i64 @tondo_rt_time_new(i64)",
         "declare i64 @tondo_rt_time_fire(i64)",
+        "declare i64 @tondo_rt_noop()",
     ] {
         writeln!(module, "{declaration}").unwrap();
     }
@@ -4471,6 +5039,28 @@ fn llvm_checked_helpers(module: &mut String) {
     llvm_checked_shift_helper(module, "shl");
     llvm_checked_shift_helper(module, "ashr");
     llvm_checked_bounds_helper(module);
+    llvm_checked_conversion_helper(module);
+}
+
+fn llvm_checked_conversion_helper(module: &mut String) {
+    writeln!(
+        module,
+        "define internal i64 @tondo_checked_conversion(i64 %value, i64 %minimum, i64 %maximum) {{"
+    )
+    .unwrap();
+    writeln!(module, "entry:").unwrap();
+    writeln!(module, "  %below = icmp slt i64 %value, %minimum").unwrap();
+    writeln!(module, "  %above = icmp sgt i64 %value, %maximum").unwrap();
+    writeln!(module, "  %invalid = or i1 %below, %above").unwrap();
+    writeln!(module, "  %tag = select i1 %invalid, i64 3, i64 2").unwrap();
+    writeln!(module, "  %has_payload = select i1 %invalid, i64 0, i64 1").unwrap();
+    writeln!(
+        module,
+        "  %result = call i64 @tondo_rt_result_new(i64 %tag, i64 %value, i64 %has_payload)"
+    )
+    .unwrap();
+    writeln!(module, "  ret i64 %result").unwrap();
+    writeln!(module, "}}").unwrap();
 }
 
 fn llvm_checked_bounds_helper(module: &mut String) {
@@ -4618,6 +5208,17 @@ fn llvm_trap_branch(module: &mut String, condition: &str, trap_label: &str, ok_l
     .unwrap();
 }
 
+fn integer_conversion_bounds(target: &str) -> Option<(i64, i64)> {
+    match target {
+        "Byte" | "UInt8" => Some((0, 255)),
+        "Int8" => Some((i8::MIN as i64, i8::MAX as i64)),
+        "Int16" => Some((i16::MIN as i64, i16::MAX as i64)),
+        "Int32" => Some((i32::MIN as i64, i32::MAX as i64)),
+        "UInt32" => Some((0, u32::MAX as i64)),
+        _ => None,
+    }
+}
+
 fn llvm_rvalue(
     value: &MirBackendRvalue,
     slots: &BTreeMap<u32, String>,
@@ -4655,6 +5256,16 @@ fn llvm_rvalue(
                 )
                 .unwrap(),
                 "bitwise-not" => writeln!(module, "  {name} = xor i64 {operand}, -1").unwrap(),
+                "logical-not" => {
+                    let comparison = format!("%v{value_index}");
+                    *value_index += 1;
+                    writeln!(
+                        module,
+                        "  {comparison} = icmp eq i64 {operand}, 0"
+                    )
+                    .unwrap();
+                    writeln!(module, "  {name} = zext i1 {comparison} to i64").unwrap();
+                }
                 other => return Err(format!("LLVM scalar prefix is not supported: {other}")),
             }
             Ok(name)
@@ -4664,6 +5275,61 @@ fn llvm_rvalue(
             left,
             right,
         } => llvm_binary(operator, left, right, slots, module, value_index),
+        MirBackendRvalue::NumericConversion {
+            source,
+            target,
+            conversion,
+            operand,
+        } => {
+            let operand = llvm_operand(operand, slots, module, value_index)?;
+            if !is_native_integer_scalar(source) || !is_native_integer_scalar(target) {
+                return Err(format!(
+                    "LLVM numeric conversion is not supported for {source}->{target}"
+                ));
+            }
+            if conversion == "identity" || conversion == "total" {
+                return Ok(operand);
+            }
+            if conversion != "checked" {
+                return Err(format!("LLVM numeric conversion mode is not supported: {conversion}"));
+            }
+            let (minimum, maximum) = integer_conversion_bounds(target).ok_or_else(|| {
+                format!("LLVM numeric conversion target is not supported: {target}")
+            })?;
+            let name = format!("%v{value_index}");
+            *value_index += 1;
+            writeln!(
+                module,
+                "  {name} = call i64 @tondo_checked_conversion(i64 {operand}, i64 {minimum}, i64 {maximum})"
+            )
+            .unwrap();
+            Ok(name)
+        }
+        MirBackendRvalue::Coerce { kind, operand } => {
+            if kind == "Diverging" {
+                let name = format!("%v{value_index}");
+                *value_index += 1;
+                writeln!(module, "  {name} = call i64 @tondo_explicit_panic()").unwrap();
+                return Ok(name);
+            }
+            llvm_operand(operand, slots, module, value_index)
+        }
+        MirBackendRvalue::HostCall { kind, arguments } => {
+            let argument = arguments
+                .first()
+                .map(|argument| llvm_operand(argument, slots, module, value_index))
+                .transpose()?
+                .unwrap_or_else(|| "0".to_owned());
+            let name = format!("%v{value_index}");
+            *value_index += 1;
+            let kind_id = host_call_kind(kind)?;
+            writeln!(
+                module,
+                "  {name} = call i64 @tondo_rt_host_call(i64 {kind_id}, i64 {argument})"
+            )
+            .unwrap();
+            Ok(name)
+        }
         MirBackendRvalue::Unsupported { kind } => {
             Err(format!("MIR rvalue is not supported: {kind}"))
         }
@@ -4688,6 +5354,12 @@ fn llvm_operation(
                 )
                 .unwrap(),
                 "bitwise-not" => writeln!(module, "  {name} = xor i64 {operand}, -1").unwrap(),
+                "logical-not" => {
+                    let comparison = format!("%v{value_index}");
+                    *value_index += 1;
+                    writeln!(module, "  {comparison} = icmp eq i64 {operand}, 0").unwrap();
+                    writeln!(module, "  {name} = zext i1 {comparison} to i64").unwrap();
+                }
                 other => return Err(format!("LLVM scalar prefix is not supported: {other}")),
             }
             Ok(name)
@@ -4729,6 +5401,25 @@ fn llvm_operation(
             )
             .unwrap();
             Ok(name)
+        }
+        MirBackendOperation::Spawn { operation, kind } => {
+            let value = llvm_operation(operation, slots, module, value_index)?;
+            let name = format!("%v{value_index}");
+            *value_index += 1;
+            let function = if kind == "thread" {
+                "tondo_rt_thread_spawn"
+            } else {
+                "tondo_rt_task_spawn"
+            };
+            writeln!(
+                module,
+                "  {name} = call i64 @{function}(i64 {value}, i64 0)"
+            )
+            .unwrap();
+            Ok(name)
+        }
+        MirBackendOperation::JoinValue { operand } => {
+            llvm_operand(operand, slots, module, value_index)
         }
         MirBackendOperation::HostCall { kind, arguments } => {
             let argument = arguments
@@ -4795,6 +5486,8 @@ fn llvm_binary(
         "bitwise-and" => "tondo_bitwise_and",
         "bitwise-or" => "tondo_bitwise_or",
         "bitwise-xor" => "tondo_bitwise_xor",
+        "logical-and" => "tondo_logical_and",
+        "logical-or" => "tondo_logical_or",
         "shift-left" => "tondo_checked_shl",
         "shift-right" => "tondo_checked_ashr",
         "less" | "less-equal" | "greater" | "greater-equal" | "equal" | "not-equal" => {
@@ -4827,6 +5520,8 @@ fn llvm_binary(
         "tondo_bitwise_and" => writeln!(module, "  {name} = and i64 {left}, {right}").unwrap(),
         "tondo_bitwise_or" => writeln!(module, "  {name} = or i64 {left}, {right}").unwrap(),
         "tondo_bitwise_xor" => writeln!(module, "  {name} = xor i64 {left}, {right}").unwrap(),
+        "tondo_logical_and" => writeln!(module, "  {name} = and i64 {left}, {right}").unwrap(),
+        "tondo_logical_or" => writeln!(module, "  {name} = or i64 {left}, {right}").unwrap(),
         helper => writeln!(
             module,
             "  {name} = call i64 @{helper}(i64 {left}, i64 {right})"
@@ -4844,7 +5539,22 @@ fn llvm_runtime_operation(
     value_index: &mut usize,
 ) -> Result<String, String> {
     let base = kind.split(':').next().unwrap_or(kind);
-    let (function, arity) = match base {
+    let generated_noop = kind.contains(':')
+        && matches!(
+            base,
+            "enter-task-scope"
+                | "retarget-cleanup"
+                | "register-defer"
+                | "register-fallback"
+                | "reserve-loan"
+                | "release-loan"
+                | "begin-select"
+                | "register-select-arm"
+        );
+    let (function, arity) = if generated_noop {
+        ("tondo_rt_noop", usize::MAX)
+    } else {
+        match base {
         "result-tag" => ("tondo_rt_result_tag", 1),
         "result-payload" => ("tondo_rt_result_payload", 1),
         "retain" | "retain-value" => ("tondo_rt_retain", 1),
@@ -4887,21 +5597,26 @@ fn llvm_runtime_operation(
                 "native runtime operation is not supported: {other}"
             ));
         }
+        }
     };
-    if arguments.len() != arity {
+    if arity != usize::MAX && arguments.len() != arity {
         return Err(format!(
             "native runtime operation `{kind}` expects {arity} arguments, got {}",
             arguments.len()
         ));
     }
-    let arguments = arguments
-        .iter()
-        .map(|argument| llvm_operand(argument, slots, module, value_index))
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter()
-        .map(|argument| format!("i64 {argument}"))
-        .collect::<Vec<_>>()
-        .join(", ");
+    let arguments = if arity == usize::MAX {
+        String::new()
+    } else {
+        arguments
+            .iter()
+            .map(|argument| llvm_operand(argument, slots, module, value_index))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .map(|argument| format!("i64 {argument}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
     let name = format!("%v{value_index}");
     *value_index += 1;
     writeln!(module, "  {name} = call i64 @{function}({arguments})").unwrap();
@@ -4915,10 +5630,9 @@ fn llvm_operand(
     value_index: &mut usize,
 ) -> Result<String, String> {
     match operand {
-        MirBackendOperand::Constant(MirBackendConstant::Integer(value)) => value
-            .parse::<i64>()
-            .map(|_| value.clone())
-            .map_err(|error| format!("invalid scalar integer `{value}`: {error}")),
+        MirBackendOperand::Constant(MirBackendConstant::Integer(value)) => {
+            parse_integer_literal(value).map(|value| value.to_string())
+        }
         MirBackendOperand::Constant(MirBackendConstant::Bool(value)) => {
             Ok(i64::from(*value).to_string())
         }
@@ -4929,7 +5643,9 @@ fn llvm_operand(
                 .unwrap_or(value);
             Ok(string_payload(value).to_string())
         }
-        MirBackendOperand::Local { index } | MirBackendOperand::Borrow { index } => {
+        MirBackendOperand::Local { index }
+        | MirBackendOperand::Borrow { index }
+        | MirBackendOperand::Projection { index, .. } => {
             let slot = slots
                 .get(index)
                 .ok_or_else(|| format!("MIR local {index} is not available in the adapter"))?;
@@ -4938,6 +5654,7 @@ fn llvm_operand(
             writeln!(module, "  {value} = load i64, ptr {slot}").unwrap();
             Ok(value)
         }
+        MirBackendOperand::Function { kind } => Ok(string_payload(kind).to_string()),
         MirBackendOperand::Constant(other) => {
             let kind = match other {
                 MirBackendConstant::Unit => "unit".to_owned(),
@@ -5472,6 +6189,42 @@ mod tests {
     }
 
     #[test]
+    fn rejects_nested_call_targets() {
+        let mut nested = simple_backend();
+        if let MirBackendTerminator::Invoke { operation, .. } =
+            &mut nested.functions[0].blocks[0].terminator
+        {
+            *operation = MirBackendOperation::Spawn {
+                operation: Box::new(MirBackendOperation::Call {
+                    function: 99,
+                    arguments: Vec::new(),
+                }),
+                kind: "task".to_owned(),
+            };
+        }
+        let error = validate_backend_program(&nested)
+            .expect_err("nested spawn calls must use a declared target");
+        assert!(error.contains("call target 99 is not present"));
+    }
+
+    #[test]
+    fn rejects_opaque_storage_when_a_function_claims_native_support() {
+        let mut program = simple_backend();
+        program.functions[0].blocks[0].statements.push(
+            MirBackendStatement::Assign {
+                destination: 5,
+                value: MirBackendRvalue::Aggregate {
+                    kind: "tuple".to_owned(),
+                    values: vec![MirBackendOperand::Local { index: 1 }],
+                },
+            },
+        );
+        let error = validate_backend_program(&program)
+            .expect_err("tuple storage must not be claimed as native lowering");
+        assert!(error.contains("unsupported aggregate `tuple`"));
+    }
+
+    #[test]
     fn generates_a_path_free_normalized_llvm_module() {
         let module = llvm_module("x86_64-unknown-linux-gnu", &simple_backend())
             .expect("normalized LLVM module should be generated");
@@ -5528,6 +6281,8 @@ mod tests {
             "bitwise-and",
             "bitwise-or",
             "bitwise-xor",
+            "logical-and",
+            "logical-or",
         ] {
             let mut program = simple_backend();
             if let MirBackendTerminator::Invoke {
@@ -5577,6 +6332,64 @@ mod tests {
             *operator = "shift-left".to_owned();
         }
         assert!(evaluate_scalar_function(&shift.functions[0], &[1, 64]).is_err());
+    }
+
+    #[test]
+    fn logical_and_conversion_and_radix_literals_share_one_checked_boundary() {
+        let mut logical = simple_backend();
+        if let MirBackendTerminator::Invoke {
+            operation:
+                MirBackendOperation::CheckedBinary {
+                    operator, left, right,
+                },
+            ..
+        } = &mut logical.functions[0].blocks[0].terminator
+        {
+            *operator = "logical-and".to_owned();
+            *left = MirBackendOperand::Local { index: 1 };
+            *right = MirBackendOperand::Local { index: 2 };
+        }
+        assert_eq!(evaluate_scalar_function(&logical.functions[0], &[1, 0]), Ok(0));
+        assert_eq!(evaluate_scalar_function(&logical.functions[0], &[1, 2]), Ok(1));
+
+        let mut conversion = simple_backend();
+        conversion.functions[0].blocks = vec![MirBackendBlock {
+            ordinal: 0,
+            kind: "normal".to_owned(),
+            statements: vec![MirBackendStatement::Assign {
+                destination: 0,
+                value: MirBackendRvalue::NumericConversion {
+                    source: "Int".to_owned(),
+                    target: "Byte".to_owned(),
+                    conversion: "checked".to_owned(),
+                    operand: MirBackendOperand::Local { index: 1 },
+                },
+            }],
+            terminator: MirBackendTerminator::Return,
+        }];
+        let converted = evaluate_scalar_function(&conversion.functions[0], &[255, 0])
+            .expect("in-range conversion should return a managed result");
+        assert_eq!(oracle_tag(converted), 2);
+        assert_eq!(oracle_managed_parts(converted).unwrap().1, Some(255));
+        let failed = evaluate_scalar_function(&conversion.functions[0], &[256, 0])
+            .expect("out-of-range conversion should return an error result");
+        assert_eq!(oracle_tag(failed), 3);
+        assert_eq!(oracle_managed_parts(failed).unwrap().1, None);
+        let isa = cranelift_isa().expect("native Cranelift ISA should be available");
+        compile_cranelift(isa.as_ref(), &conversion)
+            .expect("checked conversion should lower in Cranelift");
+        llvm_module("x86_64-unknown-linux-gnu", &conversion)
+            .expect("checked conversion should lower in LLVM");
+    }
+
+    #[test]
+    fn parses_radix_separators_and_numeric_suffixes_without_accepting_garbage() {
+        assert_eq!(parse_integer_literal("65u8"), Ok(65));
+        assert_eq!(parse_integer_literal("0xff_u8"), Ok(255));
+        assert_eq!(parse_integer_literal("0b1010u16"), Ok(10));
+        assert_eq!(parse_integer_literal("1_000"), Ok(1_000));
+        assert!(parse_integer_literal("0x").is_err());
+        assert!(parse_integer_literal("not-an-integer").is_err());
     }
 
     #[test]

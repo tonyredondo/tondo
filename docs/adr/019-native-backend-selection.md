@@ -3,7 +3,7 @@
 - Status: Proposed — selection pending measured evidence
 - Date: 2026-08-25
 - Supersedes: none
-- Next decisions: `NATIVE-BACKEND-ADAPTER-001`, then `NATIVE-MEM-ADR-001`
+- Next decisions: `NATIVE-LOWER-DEBUG-001`, then `NATIVE-THREAD-001`
 
 ## Context
 
@@ -25,14 +25,15 @@ The evidence boundary is the real MIR, not a hand-written toy IR. The probe
 [`native_mir_probe.rs`](../../crates/tondo-compiler/examples/native_mir_probe.rs)
 compiles four hash-pinned fixtures through `Operation::Run`, and records a
 stable summary plus the VM observables without leaking machine-specific
-identity. The probe also carries a `tondo-mir-backend/1` normalized boundary;
-the current adapter slice lowers `Int` comparisons, checked arithmetic,
-verified direct scalar calls and scalar normal control flow, including
-loop-carried locals, and traps explicitly
-for the remaining MIR families. The core fixture includes a pure scalar
-operator/branch/loop matrix so
-each supported lowering is exercised by the opt-in runner without changing
-program output.
+identity. The probe also carries a `tondo-mir-backend/1` normalized boundary.
+The adapter lowers scalar comparisons and checked arithmetic, logical
+operators, numeric conversions, verified direct calls, opaque host/aggregate
+carriers, normal control flow (including loop-carried locals), and the
+structured async/cleanup/select edges. The core fixture includes a pure scalar
+operator/branch/loop matrix so each executable lowering is exercised by the
+opt-in runner without changing program output; collection `IteratorNext`
+remains an explicit fail-closed capability until the native stdlib storage ABI
+is selected.
 
 ## Decision boundary
 
@@ -92,17 +93,17 @@ The following are acceptance conditions, not optional future observations:
 
 ## Consequences
 
-The adapter's first bounded slice now replaces the old count-driven smoke body
-with real normalized MIR intake and scalar lowering in both measured candidates.
-The opt-in runner compares native scalar values and traps with both the
-normalized interpreter and a direct bytecode-VM invocation, including nominal,
-branch, loop, direct-call and boundary cases. Checked-overflow behavior,
-explicit-panic traps, loop-carried locals and branch joins for the exercised
-scalar path are covered; the block remains open until the remaining MIR
-families have explicit lowering or fail-closed boundaries. The native
-target/artifact/link/publish schemas remain useful contracts but do not imply
-their implementation. A future ADR revision can select Cranelift or LLVM per
-target if measured evidence justifies it.
+The adapter now replaces the old count-driven smoke body with real normalized
+MIR intake and common lowering in both measured candidates. The opt-in runner
+compares native scalar values and traps with both the normalized interpreter and
+a direct bytecode-VM invocation, and separately exercises managed results,
+cleanup/ownership, structured async and selection. Checked-overflow and
+logical-operator behavior, conversions, explicit-panic traps, loop-carried
+locals and branch joins are covered for the executable slice. Collection
+iteration and concrete aggregate storage remain explicit fail-closed leaves,
+not approximations. The native target/artifact/link/publish schemas remain
+useful contracts but do not imply their implementation. A future ADR revision
+can select Cranelift or LLVM per target if measured evidence justifies it.
 
 ## Evidence
 

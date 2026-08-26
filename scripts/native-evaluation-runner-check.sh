@@ -30,7 +30,7 @@ jq -e '
       ambient_path_lookup: "forbidden",
       physical_paths_in_report: "forbidden"
   }
-  and .native_semantics == "scalar-and-managed-result-checked-arithmetic-control-flow-host-calls-cleanup-ownership-async-select-and-traps"
+  and .native_semantics == "scalar-and-managed-result-checked-arithmetic-logical-conversions-control-flow-host-calls-cleanup-ownership-async-select-and-traps"
   and (.negative_cases | length == 10)
 ' "$contract" >/dev/null || die "invalid runner contract"
 

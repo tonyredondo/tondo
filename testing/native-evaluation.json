@@ -11,8 +11,8 @@
   "adapter": {
     "format": "tondo-mir-backend/1",
     "runner": "testing/native-evaluation-runner.json",
-      "status": "scalar-and-managed-result-cfg-vm-differential",
-      "vm_equivalence": "scalar-and-managed-result-cfg-only"
+    "status": "scalar-and-managed-result-cfg-vm-differential",
+    "vm_equivalence": "scalar-and-managed-result-cfg-only"
   },
   "decision": {
     "selected_backend": null,
@@ -20,7 +20,7 @@
     "selection_status": "pending-measured-evidence",
     "n1_claim": false,
     "native_performance_baseline": "pending-candidate-capture",
-    "next_implementation": "NATIVE-BACKEND-ADAPTER-001",
+    "next_implementation": "NATIVE-LOWER-DEBUG-001",
     "reasons": [
       "rust-native-integration",
       "deterministic-in-process-toolchain",
@@ -87,8 +87,8 @@
       "host_calls",
       "unsafe_calls",
       "source_spans",
-    "features",
-    "backend"
+      "features",
+      "backend"
     ],
     "identity_fields": [
       "fixture",
@@ -182,5 +182,5 @@
     "missing-diagnostic-dimension",
     "stale-next-block"
   ],
-  "next_blocks": ["NATIVE-BACKEND-ADAPTER-001"]
+  "next_blocks": ["NATIVE-LOWER-DEBUG-001"]
 }
