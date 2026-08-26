@@ -245,6 +245,7 @@ struct EvaluationReport {
     correctness: CorrectnessStatus,
     native_runs: Vec<NativeRunReport>,
     native_managed_runs: Vec<NativeManagedRunReport>,
+    native_runtime_runs: Vec<NativeRuntimeRunReport>,
 }
 
 #[derive(Debug, Serialize)]
@@ -345,6 +346,23 @@ struct NativeManagedRunReport {
     llvm: &'static str,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct NativeRuntimeRunReport {
+    case: String,
+    function_ordinal: u32,
+    expected_result: i64,
+    cranelift: &'static str,
+    llvm: &'static str,
+}
+
+#[derive(Debug, Clone)]
+struct RuntimeContractCase {
+    name: &'static str,
+    function_ordinal: u32,
+    expected_result: i64,
+}
+
 #[derive(Debug)]
 struct Options {
     probe: PathBuf,
@@ -399,6 +417,7 @@ fn run() -> Result<(), String> {
     let mut llvm_samples = Vec::new();
     let mut native_runs = Vec::new();
     let mut native_managed_runs = Vec::new();
+    let mut native_runtime_runs = Vec::new();
 
     for fixture in &probe.fixtures {
         let summary = fixture
@@ -467,6 +486,14 @@ fn run() -> Result<(), String> {
             });
         }
     }
+    if let Some(cc) = &options.cc {
+        native_runtime_runs = run_native_runtime_probe(
+            &options.llvm,
+            cc,
+            &options.target,
+            &options.temp_dir,
+        )?;
+    }
 
     let report = EvaluationReport {
         format: "tondo-native-evaluation-candidates/1",
@@ -512,16 +539,22 @@ fn run() -> Result<(), String> {
             mir_probe: "passed-vm-oracle",
             cranelift: "backend-verifier-passed",
             llvm: "llc-verifier-passed",
-            native_semantics: if native_runs.is_empty() && native_managed_runs.is_empty() {
+            native_semantics: if native_runs.is_empty()
+                && native_managed_runs.is_empty()
+                && native_runtime_runs.is_empty()
+            {
                 "pending-native-lowering"
-            } else if native_managed_runs.is_empty() {
+            } else if native_runtime_runs.is_empty() && native_managed_runs.is_empty() {
                 "scalar-native-executable-vs-vm-and-normalized-oracle-with-traps"
-            } else {
+            } else if native_runtime_runs.is_empty() {
                 "scalar-and-managed-native-executable-vs-vm-and-normalized-oracle"
+            } else {
+                "scalar-managed-and-runtime-native-executable-vs-vm-and-contract"
             },
         },
         native_runs,
         native_managed_runs,
+        native_runtime_runs,
     };
 
     let encoded = serde_json::to_vec_pretty(&report)
@@ -2024,6 +2057,233 @@ fn managed_case_arguments_for_function(function: &MirBackendFunction) -> Vec<Vec
         cases.extend([vec![0], vec![1]]);
     }
     cases
+}
+
+fn run_native_runtime_probe(
+    llvm: &Path,
+    cc: &Path,
+    target: &str,
+    temp_dir: &Path,
+) -> Result<Vec<NativeRuntimeRunReport>, String> {
+    let (program, cases) = native_cleanup_program();
+    let object = temp_dir.join("native_runtime_contract.cranelift.o");
+    emit_cranelift_object(cranelift_isa()?, &program, &object)?;
+    let mut reports = Vec::with_capacity(cases.len());
+    for case in cases {
+        let stem = format!("native_runtime_{}", case.name);
+        let cranelift_source = temp_dir.join(format!("{stem}.cranelift.c"));
+        fs::write(
+            &cranelift_source,
+            runtime_contract_c_runner_source(case.function_ordinal, case.expected_result),
+        )
+        .map_err(|error| format!("cannot write runtime Cranelift runner: {error}"))?;
+        let cranelift_binary = temp_dir.join(format!("{stem}.cranelift.bin"));
+        link_native_runner(cc, &cranelift_source, &object, &cranelift_binary)?;
+        run_native_binary(&cranelift_binary, "Cranelift runtime", false)?;
+
+        let llvm_ir = temp_dir.join(format!("{stem}.llvm.ll"));
+        let llvm_object = temp_dir.join(format!("{stem}.llvm.o"));
+        fs::write(
+            &llvm_ir,
+            llvm_module_with_runner(
+                target,
+                &program,
+                program
+                    .functions
+                    .iter()
+                    .find(|function| function.ordinal == case.function_ordinal)
+                    .ok_or_else(|| format!("runtime function {} is missing", case.function_ordinal))?,
+                &[],
+                Some(case.expected_result),
+            )?,
+        )
+        .map_err(|error| format!("cannot write runtime LLVM runner: {error}"))?;
+        let result = Command::new(llvm)
+            .arg("-O2")
+            .arg("-filetype=obj")
+            .arg(format!("-mtriple={target}"))
+            .arg("-o")
+            .arg(&llvm_object)
+            .arg(&llvm_ir)
+            .output()
+            .map_err(|error| format!("cannot execute LLVM llc for runtime runner: {error}"))?;
+        if !result.status.success() {
+            return Err(format!(
+                "LLVM runtime runner llc failed: {}",
+                String::from_utf8_lossy(&result.stderr).trim()
+            ));
+        }
+        let llvm_source = temp_dir.join(format!("{stem}.llvm.c"));
+        fs::write(&llvm_source, native_runtime_c_source())
+            .map_err(|error| format!("cannot write runtime LLVM anchor: {error}"))?;
+        let llvm_binary = temp_dir.join(format!("{stem}.llvm.bin"));
+        link_native_runner(cc, &llvm_source, &llvm_object, &llvm_binary)?;
+        run_native_binary(&llvm_binary, "LLVM runtime", false)?;
+
+        reports.push(NativeRuntimeRunReport {
+            case: case.name.to_owned(),
+            function_ordinal: case.function_ordinal,
+            expected_result: case.expected_result,
+            cranelift: "passed",
+            llvm: "passed",
+        });
+    }
+    Ok(reports)
+}
+
+fn native_cleanup_program() -> (MirBackendProgram, Vec<RuntimeContractCase>) {
+    let runtime_operand = |index| MirBackendOperand::Local { index };
+    let constant = |value: &str| {
+        MirBackendOperand::Constant(MirBackendConstant::Integer(value.to_owned()))
+    };
+    let cleanup_function = MirBackendFunction {
+        ordinal: 100,
+        parameters: Vec::new(),
+        parameter_types: Vec::new(),
+        return_local: 0,
+        return_type: "Int".to_owned(),
+        supported: true,
+        blocks: vec![
+            MirBackendBlock {
+                ordinal: 0,
+                kind: "normal".to_owned(),
+                statements: Vec::new(),
+                terminator: MirBackendTerminator::Invoke {
+                    operation: MirBackendOperation::Runtime {
+                        kind: "frame-enter".to_owned(),
+                        arguments: Vec::new(),
+                    },
+                    destination: Some(1),
+                    target: Some(1),
+                },
+            },
+            MirBackendBlock {
+                ordinal: 1,
+                kind: "normal".to_owned(),
+                statements: Vec::new(),
+                terminator: MirBackendTerminator::Invoke {
+                    operation: MirBackendOperation::Runtime {
+                        kind: "register-defer".to_owned(),
+                        arguments: vec![runtime_operand(1), constant("7")],
+                    },
+                    destination: Some(2),
+                    target: Some(2),
+                },
+            },
+            MirBackendBlock {
+                ordinal: 2,
+                kind: "normal".to_owned(),
+                statements: Vec::new(),
+                terminator: MirBackendTerminator::Invoke {
+                    operation: MirBackendOperation::Runtime {
+                        kind: "frame-cleanup".to_owned(),
+                        arguments: vec![runtime_operand(1), constant("0")],
+                    },
+                    destination: Some(3),
+                    target: Some(3),
+                },
+            },
+            MirBackendBlock {
+                ordinal: 3,
+                kind: "normal".to_owned(),
+                statements: Vec::new(),
+                terminator: MirBackendTerminator::Invoke {
+                    operation: MirBackendOperation::Runtime {
+                        kind: "frame-cleanup".to_owned(),
+                        arguments: vec![runtime_operand(1), constant("0")],
+                    },
+                    destination: Some(0),
+                    target: Some(4),
+                },
+            },
+            MirBackendBlock {
+                ordinal: 4,
+                kind: "normal".to_owned(),
+                statements: Vec::new(),
+                terminator: MirBackendTerminator::Return,
+            },
+        ],
+    };
+    let abort_function = MirBackendFunction {
+        ordinal: 101,
+        parameters: Vec::new(),
+        parameter_types: Vec::new(),
+        return_local: 0,
+        return_type: "Int".to_owned(),
+        supported: true,
+        blocks: vec![
+            MirBackendBlock {
+                ordinal: 0,
+                kind: "normal".to_owned(),
+                statements: Vec::new(),
+                terminator: MirBackendTerminator::Invoke {
+                    operation: MirBackendOperation::Runtime {
+                        kind: "frame-enter".to_owned(),
+                        arguments: Vec::new(),
+                    },
+                    destination: Some(1),
+                    target: Some(1),
+                },
+            },
+            MirBackendBlock {
+                ordinal: 1,
+                kind: "normal".to_owned(),
+                statements: Vec::new(),
+                terminator: MirBackendTerminator::Invoke {
+                    operation: MirBackendOperation::Runtime {
+                        kind: "register-defer".to_owned(),
+                        arguments: vec![runtime_operand(1), constant("9")],
+                    },
+                    destination: Some(2),
+                    target: Some(2),
+                },
+            },
+            MirBackendBlock {
+                ordinal: 2,
+                kind: "normal".to_owned(),
+                statements: Vec::new(),
+                terminator: MirBackendTerminator::Invoke {
+                    operation: MirBackendOperation::Runtime {
+                        kind: "frame-leave".to_owned(),
+                        arguments: vec![runtime_operand(1), constant("1")],
+                    },
+                    destination: Some(0),
+                    target: Some(3),
+                },
+            },
+            MirBackendBlock {
+                ordinal: 3,
+                kind: "normal".to_owned(),
+                statements: Vec::new(),
+                terminator: MirBackendTerminator::Return,
+            },
+        ],
+    };
+    (
+        MirBackendProgram {
+            format: "tondo-mir-backend/1".to_owned(),
+            functions: vec![cleanup_function, abort_function],
+        },
+        vec![
+            RuntimeContractCase {
+                name: "cleanup-exactly-once",
+                function_ordinal: 100,
+                expected_result: 5,
+            },
+            RuntimeContractCase {
+                name: "cleanup-abort",
+                function_ordinal: 101,
+                expected_result: 0,
+            },
+        ],
+    )
+}
+
+fn runtime_contract_c_runner_source(function_ordinal: u32, expected: i64) -> String {
+    format!(
+        "{}\nextern int64_t tondo_probe_{function_ordinal}(void);\nint main(void) {{ return tondo_probe_{function_ordinal}() == {expected} ? 0 : 91; }}\n",
+        native_runtime_c_source()
+    )
 }
 
 #[cfg(test)]

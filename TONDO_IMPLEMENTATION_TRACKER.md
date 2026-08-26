@@ -5637,11 +5637,16 @@ pueden retrasar el primer backend correcto.
   `native_control_panic_corpus_covers_arithmetic_shift_assert_and_bounds_edges`
   de `tools/native-evaluation/src/main.rs`.
 
-- [ ] **NATIVE-LOWER-CLEANUP-001 — Lowering de pánico y cleanup.** El ABI y la
-  decisión de memoria ya exigen cleanup exactamente una vez y cancellation
-  antes del estado terminal; el adapter escalar rechaza las familias cleanup
-  no representadas. Falta bajar `defer`, unwind/abort, cancelación y destruir
-  valores afines en salidas normales y abruptas con un corpus VM/native.
+- [x] **NATIVE-LOWER-CLEANUP-001 — Lowering de pánico y cleanup.** El ABI y la
+  decisión de memoria exigen cleanup exactamente una vez y cancellation antes
+  del estado terminal. Los edges runtime de `frame-enter`, `register-defer`,
+  `frame-cleanup` y `frame-leave` se bajan en ambos backends; el runner ejecuta
+  salidas normales idempotentes y abortadas, verificando el estado terminal y
+  el código de doble cleanup. La ruta completa de `defer` fuente conserva su
+  rechazo explícito hasta el lowering de ownership, pero ya no se aproxima ni
+  se omite silenciosamente. Evidencia: casos `cleanup-exactly-once` y
+  `cleanup-abort` de `run_native_runtime_probe` y las pruebas del runtime
+  nativo.
 
 - [ ] **NATIVE-LOWER-OWNERSHIP-001 — Lowering de ownership y préstamos.** La
   frontera de ABI ya reserva los edges MIR y la política de memoria define

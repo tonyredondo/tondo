@@ -114,6 +114,12 @@ small deterministic inputs, and each native subprocess has a finite runtime
 budget so an accidental infinite loop fails closed instead of hanging the
 evaluation lane.
 
+The runner also executes the private cleanup contract independently of source
+fixture support: normal frame cleanup is idempotent (the second edge returns a
+double-cleanup status) and an aborting frame leaves through the same terminal
+transition. This keeps unwind/abort behavior observable while the full
+source-level defer graph is lowered.
+
 ## Evaluation matrix
 
 The selection records the dimensions that must be evidenced before promotion:

@@ -30,8 +30,8 @@ jq -e '
       ambient_path_lookup: "forbidden",
       physical_paths_in_report: "forbidden"
   }
-  and .native_semantics == "scalar-and-managed-result-checked-arithmetic-control-flow-host-calls-and-traps"
-  and (.negative_cases | length == 6)
+  and .native_semantics == "scalar-and-managed-result-checked-arithmetic-control-flow-host-calls-cleanup-and-traps"
+  and (.negative_cases | length == 7)
 ' "$contract" >/dev/null || die "invalid runner contract"
 
 for path in \
@@ -51,7 +51,9 @@ grep -Fq 'vm_managed' crates/tondo-compiler/examples/native_mir_probe.rs \
     || die "probe has no VM managed observations"
 grep -Fq 'native_managed_runs' tools/native-evaluation/src/main.rs \
     || die "adapter does not report managed native results"
-grep -Fq 'scalar-and-managed-native-executable-vs-vm-and-normalized-oracle' \
+grep -Fq 'native_runtime_runs' tools/native-evaluation/src/main.rs \
+    || die "adapter does not report runtime contract results"
+grep -Fq 'scalar-managed-and-runtime-native-executable-vs-vm-and-contract' \
     tools/native-evaluation/src/main.rs \
     || die "adapter has no executable scalar evidence state"
 

@@ -61,7 +61,7 @@ jq -e '
   and .phase == "NATIVE-001"
   and .status == "passed"
   and .adapter.format == "tondo-mir-backend/1"
-  and .correctness.native_semantics == "scalar-and-managed-native-executable-vs-vm-and-normalized-oracle"
+  and .correctness.native_semantics == "scalar-managed-and-runtime-native-executable-vs-vm-and-contract"
   and ([.native_runs[] | select(.cranelift == "passed" and .llvm == "passed")] | length >= 1)
   and ([.native_runs[] | select(.oracle_status == "trapped")] | length >= 1)
   and all(.native_runs[];
@@ -90,6 +90,8 @@ jq -e '
       and (.oracle_payload == null or (.oracle_payload | type == "number"))
       and (.vm_payload == null or (.vm_payload | type == "number"))
   )
+  and ([.native_runtime_runs[] | select(.case == "cleanup-exactly-once" and .cranelift == "passed" and .llvm == "passed")] | length == 1)
+  and ([.native_runtime_runs[] | select(.case == "cleanup-abort" and .cranelift == "passed" and .llvm == "passed")] | length == 1)
 ' "$report" >/dev/null || die "runner report did not prove native execution"
 
 ! grep -Fq "$root" "$report" || die "runner report leaked a physical workspace path"
