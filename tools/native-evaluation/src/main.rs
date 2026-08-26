@@ -204,6 +204,10 @@ enum MirBackendOperation {
         left: MirBackendOperand,
         right: MirBackendOperand,
     },
+    BoundsCheck {
+        index: MirBackendOperand,
+        length: MirBackendOperand,
+    },
     Call {
         function: u32,
         arguments: Vec<MirBackendOperand>,
@@ -471,7 +475,7 @@ fn run() -> Result<(), String> {
         target: options.target,
         adapter: AdapterReport {
             format: "tondo-mir-backend/1",
-            supported_subset: "scalar-int-managed-result-checked-arithmetic-asserts-control-flow-tag-dispatch-direct-calls-host-calls-and-traps",
+            supported_subset: "scalar-int-managed-result-checked-bounds-arithmetic-asserts-control-flow-tag-dispatch-direct-calls-host-calls-and-traps",
             unsupported_policy: "explicit-trap-and-report",
         },
         protocol: Protocol {
@@ -909,6 +913,10 @@ fn operation_locals(operation: &MirBackendOperation, locals: &mut BTreeSet<u32>)
             operand_locals(left, locals);
             operand_locals(right, locals);
         }
+        MirBackendOperation::BoundsCheck { index, length } => {
+            operand_locals(index, locals);
+            operand_locals(length, locals);
+        }
         MirBackendOperation::Call { arguments, .. } => {
             for argument in arguments {
                 operand_locals(argument, locals);
@@ -1157,6 +1165,18 @@ fn lower_operation_cranelift(
             left,
             right,
         } => lower_checked_binary_cranelift(builder, operator, left, right, locals),
+        MirBackendOperation::BoundsCheck { index, length } => {
+            let index = lower_operand_cranelift(builder, index, locals)?;
+            let length = lower_operand_cranelift(builder, length, locals)?;
+            let zero = builder.ins().iconst(cranelift_codegen::ir::types::I64, 0);
+            let below_zero = builder.ins().icmp(IntCC::SignedLessThan, index, zero);
+            let past_end = builder
+                .ins()
+                .icmp(IntCC::UnsignedGreaterThanOrEqual, index, length);
+            let invalid = builder.ins().bor(below_zero, past_end);
+            builder.ins().trapnz(invalid, TrapCode::unwrap_user(5));
+            Ok(index)
+        }
         MirBackendOperation::Call {
             function,
             arguments,
@@ -2295,6 +2315,15 @@ fn evaluate_operation(
             left,
             right,
         } => evaluate_binary(operator, left, right, locals),
+        MirBackendOperation::BoundsCheck { index, length } => {
+            let index = evaluate_operand(index, locals)?;
+            let length = evaluate_operand(length, locals)?;
+            if index < 0 || index >= length {
+                Err("scalar oracle trap: bounds".to_owned())
+            } else {
+                Ok(index)
+            }
+        }
         MirBackendOperation::Call { .. } => {
             Err("scalar oracle call requires program context".to_owned())
         }
@@ -3137,6 +3166,23 @@ fn llvm_checked_helpers(module: &mut String) {
     llvm_checked_remainder_helper(module);
     llvm_checked_shift_helper(module, "shl");
     llvm_checked_shift_helper(module, "ashr");
+    llvm_checked_bounds_helper(module);
+}
+
+fn llvm_checked_bounds_helper(module: &mut String) {
+    writeln!(module, "define internal i64 @tondo_checked_bounds(i64 %index, i64 %length) {{")
+        .unwrap();
+    writeln!(module, "entry:").unwrap();
+    writeln!(module, "  %below_zero = icmp slt i64 %index, 0").unwrap();
+    writeln!(module, "  %past_end = icmp sge i64 %index, %length").unwrap();
+    writeln!(module, "  %invalid = or i1 %below_zero, %past_end").unwrap();
+    llvm_trap_branch(module, "%invalid", "bounds_trap", "bounds_ok");
+    writeln!(module, "bounds_trap:").unwrap();
+    writeln!(module, "  call void @llvm.trap()").unwrap();
+    writeln!(module, "  unreachable").unwrap();
+    writeln!(module, "bounds_ok:").unwrap();
+    writeln!(module, "  ret i64 %index").unwrap();
+    writeln!(module, "}}").unwrap();
 }
 
 fn llvm_checked_overflow_helper(module: &mut String, name: &str, intrinsic: &str) {
@@ -3344,6 +3390,18 @@ fn llvm_operation(
             left,
             right,
         } => llvm_binary(operator, left, right, slots, module, value_index),
+        MirBackendOperation::BoundsCheck { index, length } => {
+            let index = llvm_operand(index, slots, module, value_index)?;
+            let length = llvm_operand(length, slots, module, value_index)?;
+            let name = format!("%v{value_index}");
+            *value_index += 1;
+            writeln!(
+                module,
+                "  {name} = call i64 @tondo_checked_bounds(i64 {index}, i64 {length})"
+            )
+            .unwrap();
+            Ok(name)
+        }
         MirBackendOperation::Call {
             function,
             arguments,
@@ -4188,6 +4246,85 @@ mod tests {
             *operator = "shift-left".to_owned();
         }
         assert!(evaluate_scalar_function(&shift.functions[0], &[1, 64]).is_err());
+    }
+
+    #[test]
+    fn checked_bounds_share_trap_policy_across_oracle_cranelift_and_llvm() {
+        let mut program = simple_backend();
+        if let MirBackendTerminator::Invoke { operation, .. } =
+            &mut program.functions[0].blocks[0].terminator
+        {
+            *operation = MirBackendOperation::BoundsCheck {
+                index: MirBackendOperand::Local { index: 1 },
+                length: MirBackendOperand::Constant(MirBackendConstant::Integer("3".to_owned())),
+            };
+        }
+        let function = &program.functions[0];
+        for (index, expected) in [(0, Ok(0)), (1, Ok(1)), (2, Ok(2))] {
+            assert_eq!(evaluate_scalar_function(function, &[index, 0]), expected);
+        }
+        for index in [-1, 3, i64::MAX] {
+            assert!(evaluate_scalar_function(function, &[index, 0]).is_err());
+        }
+        let isa = cranelift_isa().expect("native Cranelift ISA should be available");
+        compile_cranelift(isa.as_ref(), &program)
+            .expect("checked bounds should lower in Cranelift");
+        let module = llvm_module("x86_64-unknown-linux-gnu", &program)
+            .expect("checked bounds should lower in LLVM");
+        assert!(module.contains("@tondo_checked_bounds"));
+        assert!(module.contains("icmp slt i64 %index, 0"));
+    }
+
+    #[test]
+    fn native_control_panic_corpus_covers_arithmetic_shift_assert_and_bounds_edges() {
+        let isa = cranelift_isa().expect("native Cranelift ISA should be available");
+        for (operator, arguments) in [
+            ("add", [i64::MAX, 1]),
+            ("subtract", [i64::MIN, 1]),
+            ("multiply", [i64::MAX, 2]),
+            ("divide", [1, 0]),
+            ("divide", [i64::MIN, -1]),
+            ("remainder", [1, 0]),
+            ("shift-left", [1, 64]),
+            ("shift-right", [1, -1]),
+        ] {
+            let mut program = simple_backend();
+            if let MirBackendTerminator::Invoke {
+                operation: MirBackendOperation::CheckedBinary {
+                    operator: current, ..
+                },
+                ..
+            } = &mut program.functions[0].blocks[0].terminator
+            {
+                *current = operator.to_owned();
+            }
+            assert!(
+                evaluate_scalar_function(&program.functions[0], &arguments).is_err(),
+                "{operator} must trap for {:?}",
+                arguments
+            );
+            compile_cranelift(isa.as_ref(), &program)
+                .unwrap_or_else(|error| panic!("{operator} should compile: {error}"));
+            llvm_module("x86_64-unknown-linux-gnu", &program)
+                .unwrap_or_else(|error| panic!("{operator} should lower to LLVM: {error}"));
+        }
+        let failed_assert = assert_backend(false);
+        assert!(evaluate_scalar_program(&failed_assert, 0, &[]).is_err());
+        let bounds = {
+            let mut program = simple_backend();
+            if let MirBackendTerminator::Invoke { operation, .. } =
+                &mut program.functions[0].blocks[0].terminator
+            {
+                *operation = MirBackendOperation::BoundsCheck {
+                    index: MirBackendOperand::Local { index: 1 },
+                    length: MirBackendOperand::Constant(MirBackendConstant::Integer(
+                        "2".to_owned(),
+                    )),
+                };
+            }
+            program
+        };
+        assert!(evaluate_scalar_function(&bounds.functions[0], &[2, 0]).is_err());
     }
 
     #[test]

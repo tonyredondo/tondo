@@ -392,6 +392,13 @@ pub enum MirBackendOperation {
         left: MirBackendOperand,
         right: MirBackendOperand,
     },
+    /// Checked zero-based span access. The native adapter receives the
+    /// already-normalized length so bounds policy is identical across
+    /// backends and never depends on a user-visible array layout.
+    BoundsCheck {
+        index: MirBackendOperand,
+        length: MirBackendOperand,
+    },
     Call {
         function: u32,
         arguments: Vec<MirBackendOperand>,

@@ -36,8 +36,6 @@
     "cleanup-without-terminal-edge"
   ],
   "next_blocks": [
-    "NATIVE-LOWER-CALLS-001",
-    "NATIVE-LOWER-CONTROL-001",
     "NATIVE-LOWER-CLEANUP-001",
     "NATIVE-LOWER-OWNERSHIP-001",
     "NATIVE-LOWER-ASYNC-001"

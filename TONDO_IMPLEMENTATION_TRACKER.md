@@ -5626,13 +5626,16 @@ pueden retrasar el primer backend correcto.
   fail-closed. Evidencia: `scripts/native-evaluation-runner.sh` y
   `target/reliability/evidence/native-evaluation-runner.json`.
 
-- [ ] **NATIVE-LOWER-CONTROL-001 — Lowering de control y operaciones checked.**
-  Branches, loops, joins, overflow e invalid shifts de la slice escalar ya se
-  bajan y se comparan con la VM; la dispatch de tags para `Option`/`Result` y
-  los explicit-panic traps y `assert` checked ya tienen lowering y pruebas
-  propias en Cranelift, LLVM y el oráculo. Bounds/indexación y el corpus
-  completo de pánicos aún requieren lowering y observación propia antes de
-  cerrar el bloque.
+- [x] **NATIVE-LOWER-CONTROL-001 — Lowering de control y operaciones checked.**
+  Branches, loops, joins, overflow e invalid shifts de la slice escalar se
+  bajan y se comparan con la VM; la dispatch de tags para `Option`/`Result`,
+  los explicit-panic traps, `assert` checked y bounds checked tienen lowering
+  y pruebas propias en Cranelift, LLVM y el oráculo. El corpus de pánicos cubre
+  overflow signed, división/remainder inválidos, shifts fuera de rango,
+  asserts y límites negativos/pasados del final. Evidencia: los tests
+  `checked_bounds_share_trap_policy_across_oracle_cranelift_and_llvm` y
+  `native_control_panic_corpus_covers_arithmetic_shift_assert_and_bounds_edges`
+  de `tools/native-evaluation/src/main.rs`.
 
 - [ ] **NATIVE-LOWER-CLEANUP-001 — Lowering de pánico y cleanup.** El ABI y la
   decisión de memoria ya exigen cleanup exactamente una vez y cancellation

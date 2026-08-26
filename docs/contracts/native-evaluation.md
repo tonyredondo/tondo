@@ -55,6 +55,9 @@ comparisons, checked arithmetic, verified direct scalar calls and scalar normal
 control flow, including loop-carried locals, Option/Result tag dispatch,
 checked assertions, overflow, invalid-shift and explicit-panic traps, through
 the same normalized input in Cranelift and LLVM.
+The normalized boundary also exposes a checked zero-based bounds operation;
+negative and past-the-end indices trap before a value is returned, with the
+same policy in both backends and the oracle.
 Read-only borrows of direct scalar locals are represented explicitly in the
 adapter and lowered as value reads; projected borrows and any borrow that
 would escape the scalar call boundary remain rejected rather than becoming a
