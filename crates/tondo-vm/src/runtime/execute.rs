@@ -12219,10 +12219,10 @@ mod tests {
         ValueCopyStrategy, VmError, VmHost, VmLimits, VmOutcome, VmPanic, VmStackFrame,
         VmStatistics, VmTestNodeKind, VmTestNodeOutcome, clone_field, clone_index, clone_present,
         collection_length_fits_int, convert_numeric, execute, execute_with_diagnostics,
-        integer_bounds, integer_shape, next_unicode_scalar, operand_materialized_slot,
-        operation_access_place, paths_overlap, present, queue_object_equality,
-        queue_payload_equality, runtime_host_kind, set_field, set_index, slice_indices,
-        snapshot_value, take_field, take_index, take_option,
+        initial_value, integer_bounds, integer_shape, next_unicode_scalar,
+        operand_materialized_slot, operation_access_place, paths_overlap, present,
+        queue_object_equality, queue_payload_equality, runtime_host_kind, set_field, set_index,
+        slice_indices, snapshot_value, take_field, take_index, take_option,
     };
 
     fn root_pressure_program() -> BytecodeProgram {
@@ -14518,6 +14518,26 @@ mod tests {
         assert!(matches!(
             failure,
             PlaceFailure::Vm(VmError::Invariant(message)) if message == "closed"
+        ));
+    }
+
+    #[test]
+    fn detached_scalar_entry_values_cover_the_closed_conversion_boundary() {
+        for (input, expected) in [
+            (RuntimeValue::Unit, Value::Unit),
+            (RuntimeValue::Bool(true), Value::Bool(true)),
+            (RuntimeValue::Integer(-7), Value::Integer(-7)),
+            (RuntimeValue::Float(2.5), Value::Float(2.5)),
+            (RuntimeValue::Byte(0xfe), Value::Byte(0xfe)),
+            (RuntimeValue::Char('λ'), Value::Char('λ')),
+        ] {
+            assert_eq!(initial_value(input).unwrap(), expected);
+        }
+
+        let error = initial_value(RuntimeValue::String("managed".into())).unwrap_err();
+        assert!(matches!(
+            error,
+            VmError::InvalidEntry(message) if message.contains("detached scalar")
         ));
     }
 
@@ -18019,5 +18039,165 @@ mod tests {
                 limit: 1
             }
         ));
+    }
+
+    #[test]
+    fn diagnostic_engine_records_internal_scheduler_and_resource_boundaries() {
+        struct AsyncHost;
+
+        impl VmHost for AsyncHost {
+            fn invoke(
+                &mut self,
+                name: &str,
+                _arguments: &[RuntimeValue],
+            ) -> Result<RuntimeValue, VmError> {
+                Err(VmError::UnsupportedHostCall(name.to_owned()))
+            }
+
+            fn start_async(
+                &mut self,
+                _name: &str,
+                _arguments: &[RuntimeValue],
+            ) -> Result<u64, VmError> {
+                Ok(41)
+            }
+        }
+
+        let program = root_pressure_program();
+        let trace = derive_trace_metadata(&program).unwrap();
+        let session =
+            super::super::diagnostics::DiagnosticSession::new(DiagnosticConfig::default()).unwrap();
+        let mut host = AsyncHost;
+        let mut engine = Engine::new_with_diagnostics(
+            &program,
+            &mut host,
+            VmLimits::default(),
+            ValueCopyStrategy::default(),
+            trace,
+            Some(session),
+        );
+        engine.tasks.push(scheduler_task(TaskStatus::Running));
+
+        engine
+            .record_thread(DiagnosticThreadState::Stopped)
+            .unwrap();
+        engine
+            .record_task(
+                0,
+                None,
+                super::super::diagnostics::DiagnosticTaskState::Created,
+            )
+            .unwrap();
+        engine
+            .record_new_task(
+                0,
+                None,
+                super::super::diagnostics::DiagnosticTaskState::Running,
+            )
+            .unwrap();
+        engine
+            .record_scheduler(
+                0,
+                super::super::diagnostics::DiagnosticSchedulerOperation::Switch,
+            )
+            .unwrap();
+        engine
+            .record_sync(
+                0,
+                super::super::diagnostics::DiagnosticSynchronization::HostStart,
+                Some(1),
+                None,
+            )
+            .unwrap();
+        engine
+            .record_quiescence(super::super::diagnostics::DiagnosticQuiescencePhase::Begin)
+            .unwrap();
+
+        let place = BytecodePlace {
+            slot: BytecodeSlotId::new(0),
+            ty: BytecodeTypeId::new(0),
+            projections: Vec::new(),
+            source_loan: None,
+        };
+        engine
+            .record_memory(0, &place, DiagnosticMemoryAccess::Read)
+            .unwrap();
+        let value = engine
+            .allocate(
+                BytecodeTypeId::new(0),
+                HeapObject::String("diagnostic".into()),
+                &[],
+            )
+            .unwrap();
+        let handle = value.heap_handle().unwrap();
+        engine
+            .record_heap(
+                handle,
+                super::super::diagnostics::DiagnosticHeapOperation::Replace,
+                1,
+            )
+            .unwrap();
+        engine.record_roots(std::slice::from_ref(&value)).unwrap();
+        let host_value = RuntimeValue::Host {
+            kind: RuntimeHostValueKind::File,
+            id: 9,
+        };
+        engine
+            .record_resource(
+                &host_value,
+                super::super::diagnostics::DiagnosticResourceState::Acquired,
+            )
+            .unwrap();
+        engine.cleanup_host_value(&host_value).unwrap();
+        assert_eq!(engine.start_host_async("read", &[], None).unwrap(), 41);
+
+        engine.frames.push(Frame {
+            function: BytecodeFunctionId::new(0),
+            block: BytecodeBlockId::new(0),
+            instruction: 0,
+            slots: vec![
+                SlotState::Value(value.clone()),
+                SlotState::Dead,
+                SlotState::Uninitialized,
+            ],
+            loans: Vec::new(),
+            cleanups: Vec::new(),
+            task_scopes: Vec::new(),
+            continuation: None,
+            select: None,
+        });
+        assert!(matches!(
+            engine.diagnostic_root_value((0, 0, 0)),
+            Some(Value::Heap(found)) if found == &handle
+        ));
+        assert!(engine.diagnostic_root_value((0, 0, 1)).is_none());
+        assert!(engine.diagnostic_root_value((0, 0, 2)).is_none());
+        assert!(engine.diagnostic_root_value((0, 99, 0)).is_none());
+
+        engine.tasks.push(scheduler_task(TaskStatus::Running));
+        engine.tasks[1].frames.push(Frame {
+            function: BytecodeFunctionId::new(0),
+            block: BytecodeBlockId::new(0),
+            instruction: 0,
+            slots: vec![SlotState::Value(Value::Integer(7))],
+            loans: Vec::new(),
+            cleanups: Vec::new(),
+            task_scopes: Vec::new(),
+            continuation: None,
+            select: None,
+        });
+        assert!(matches!(
+            engine.diagnostic_root_value((1, 0, 0)),
+            Some(Value::Integer(7))
+        ));
+
+        let diagnostics = engine.diagnostics.take().unwrap().finish();
+        assert!(diagnostics.events.iter().any(|event| matches!(
+            event,
+            DiagnosticEvent::Resource {
+                state: super::super::diagnostics::DiagnosticResourceState::Released,
+                ..
+            }
+        )));
     }
 }
