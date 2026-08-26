@@ -246,6 +246,7 @@ struct EvaluationReport {
     native_runs: Vec<NativeRunReport>,
     native_managed_runs: Vec<NativeManagedRunReport>,
     native_runtime_runs: Vec<NativeRuntimeRunReport>,
+    native_select_runs: Vec<NativeSelectRunReport>,
 }
 
 #[derive(Debug, Serialize)]
@@ -358,6 +359,15 @@ struct NativeRuntimeRunReport {
     llvm: &'static str,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct NativeSelectRunReport {
+    case: String,
+    expected_result: i64,
+    cranelift: &'static str,
+    llvm: &'static str,
+}
+
 #[derive(Debug, Clone)]
 struct RuntimeContractCase {
     name: &'static str,
@@ -368,10 +378,7 @@ struct RuntimeContractCase {
 #[derive(Debug, Clone, Copy)]
 enum RuntimeExpectation {
     Scalar(i64),
-    Managed {
-        tag: u64,
-        payload: Option<u64>,
-    },
+    Managed { tag: u64, payload: Option<u64> },
 }
 
 #[derive(Debug)]
@@ -498,13 +505,22 @@ fn run() -> Result<(), String> {
         }
     }
     if let Some(cc) = &options.cc {
-        native_runtime_runs = run_native_runtime_probe(
-            &options.llvm,
-            cc,
-            &options.target,
-            &options.temp_dir,
-        )?;
+        native_runtime_runs =
+            run_native_runtime_probe(&options.llvm, cc, &options.target, &options.temp_dir)?;
     }
+    let native_select_runs = native_runtime_runs
+        .iter()
+        .filter_map(|run| {
+            run.case
+                .starts_with("select-")
+                .then_some(NativeSelectRunReport {
+                    case: run.case.clone(),
+                    expected_result: run.expected_result?,
+                    cranelift: run.cranelift,
+                    llvm: run.llvm,
+                })
+        })
+        .collect::<Vec<_>>();
 
     let report = EvaluationReport {
         format: "tondo-native-evaluation-candidates/1",
@@ -560,12 +576,13 @@ fn run() -> Result<(), String> {
             } else if native_runtime_runs.is_empty() {
                 "scalar-and-managed-native-executable-vs-vm-and-normalized-oracle"
             } else {
-                "scalar-managed-and-runtime-native-executable-vs-vm-and-contract"
+                "scalar-managed-runtime-and-select-native-executable-vs-vm-and-contract"
             },
         },
         native_runs,
         native_managed_runs,
         native_runtime_runs,
+        native_select_runs,
     };
 
     let encoded = serde_json::to_vec_pretty(&report)
@@ -651,7 +668,11 @@ fn validate_backend_program(program: &MirBackendProgram) -> Result<(), String> {
         .collect::<BTreeMap<_, _>>();
     for function in &program.functions {
         if function.supported {
-            for block in function.blocks.iter().filter(|block| block.kind == "cleanup") {
+            for block in function
+                .blocks
+                .iter()
+                .filter(|block| block.kind == "cleanup")
+            {
                 for statement in &block.statements {
                     let MirBackendStatement::Marker { kind } = statement else {
                         return Err(format!(
@@ -730,6 +751,7 @@ struct RuntimeRefs {
     scope_enter: FuncRef,
     scope_spawn: FuncRef,
     task_spawn: FuncRef,
+    thread_spawn: FuncRef,
     task_poll: FuncRef,
     task_wake: FuncRef,
     task_cancel: FuncRef,
@@ -737,6 +759,21 @@ struct RuntimeRefs {
     scope_cancel: FuncRef,
     scope_join: FuncRef,
     await_task: FuncRef,
+    select_begin: FuncRef,
+    select_register_task: FuncRef,
+    select_register_join: FuncRef,
+    select_register_oneshot: FuncRef,
+    select_register_time: FuncRef,
+    select_commit: FuncRef,
+    select_winner: FuncRef,
+    select_take: FuncRef,
+    select_rollback: FuncRef,
+    select_wakeups: FuncRef,
+    oneshot_new: FuncRef,
+    oneshot_complete: FuncRef,
+    oneshot_cancel: FuncRef,
+    time_new: FuncRef,
+    time_fire: FuncRef,
 }
 
 fn runtime_signature(isa: &dyn cranelift_codegen::isa::TargetIsa, parameters: usize) -> Signature {
@@ -787,6 +824,7 @@ fn declare_cranelift_runtime(
         ("tondo_rt_scope_enter", 0),
         ("tondo_rt_scope_spawn", 3),
         ("tondo_rt_task_spawn", 2),
+        ("tondo_rt_thread_spawn", 2),
         ("tondo_rt_task_poll", 1),
         ("tondo_rt_task_wake", 1),
         ("tondo_rt_task_cancel", 1),
@@ -794,6 +832,21 @@ fn declare_cranelift_runtime(
         ("tondo_rt_scope_cancel", 1),
         ("tondo_rt_scope_join", 2),
         ("tondo_rt_await", 1),
+        ("tondo_rt_select_begin", 1),
+        ("tondo_rt_select_register_task", 3),
+        ("tondo_rt_select_register_join", 2),
+        ("tondo_rt_select_register_oneshot", 3),
+        ("tondo_rt_select_register_time", 3),
+        ("tondo_rt_select_commit", 2),
+        ("tondo_rt_select_winner", 1),
+        ("tondo_rt_select_take", 1),
+        ("tondo_rt_select_rollback", 1),
+        ("tondo_rt_select_wakeups", 1),
+        ("tondo_rt_oneshot_new", 0),
+        ("tondo_rt_oneshot_complete", 2),
+        ("tondo_rt_oneshot_cancel", 1),
+        ("tondo_rt_time_new", 1),
+        ("tondo_rt_time_fire", 1),
     ];
     let ids = declarations
         .into_iter()
@@ -824,6 +877,7 @@ fn declare_cranelift_runtime(
         scope_enter: get("tondo_rt_scope_enter")?,
         scope_spawn: get("tondo_rt_scope_spawn")?,
         task_spawn: get("tondo_rt_task_spawn")?,
+        thread_spawn: get("tondo_rt_thread_spawn")?,
         task_poll: get("tondo_rt_task_poll")?,
         task_wake: get("tondo_rt_task_wake")?,
         task_cancel: get("tondo_rt_task_cancel")?,
@@ -831,6 +885,21 @@ fn declare_cranelift_runtime(
         scope_cancel: get("tondo_rt_scope_cancel")?,
         scope_join: get("tondo_rt_scope_join")?,
         await_task: get("tondo_rt_await")?,
+        select_begin: get("tondo_rt_select_begin")?,
+        select_register_task: get("tondo_rt_select_register_task")?,
+        select_register_join: get("tondo_rt_select_register_join")?,
+        select_register_oneshot: get("tondo_rt_select_register_oneshot")?,
+        select_register_time: get("tondo_rt_select_register_time")?,
+        select_commit: get("tondo_rt_select_commit")?,
+        select_winner: get("tondo_rt_select_winner")?,
+        select_take: get("tondo_rt_select_take")?,
+        select_rollback: get("tondo_rt_select_rollback")?,
+        select_wakeups: get("tondo_rt_select_wakeups")?,
+        oneshot_new: get("tondo_rt_oneshot_new")?,
+        oneshot_complete: get("tondo_rt_oneshot_complete")?,
+        oneshot_cancel: get("tondo_rt_oneshot_cancel")?,
+        time_new: get("tondo_rt_time_new")?,
+        time_fire: get("tondo_rt_time_fire")?,
     })
 }
 
@@ -865,28 +934,157 @@ struct RuntimeCall {
 fn runtime_helper(runtime: &RuntimeRefs, kind: &str) -> Result<RuntimeCall, String> {
     let base = kind.split(':').next().unwrap_or(kind);
     match base {
-        "result-tag" => Ok(RuntimeCall { function: runtime.result_tag, arity: 1 }),
-        "result-payload" => Ok(RuntimeCall { function: runtime.result_payload, arity: 1 }),
-        "retain" | "retain-value" => Ok(RuntimeCall { function: runtime.retain, arity: 1 }),
-        "release" | "release-value" => Ok(RuntimeCall { function: runtime.release, arity: 1 }),
-        "cow-clone" => Ok(RuntimeCall { function: runtime.cow_clone, arity: 1 }),
-        "frame-enter" => Ok(RuntimeCall { function: runtime.frame_enter, arity: 0 }),
-        "frame-publish-root" => Ok(RuntimeCall { function: runtime.frame_publish_root, arity: 2 }),
-        "register-defer" => Ok(RuntimeCall { function: runtime.frame_register_defer, arity: 2 }),
-        "disarm-defer" => Ok(RuntimeCall { function: runtime.frame_disarm_defer, arity: 2 }),
-        "frame-cleanup" => Ok(RuntimeCall { function: runtime.frame_cleanup, arity: 2 }),
-        "frame-leave" => Ok(RuntimeCall { function: runtime.frame_leave, arity: 2 }),
-        "scope-enter" => Ok(RuntimeCall { function: runtime.scope_enter, arity: 0 }),
-        "scope-spawn" => Ok(RuntimeCall { function: runtime.scope_spawn, arity: 3 }),
-        "task-spawn" => Ok(RuntimeCall { function: runtime.task_spawn, arity: 2 }),
-        "task-poll" => Ok(RuntimeCall { function: runtime.task_poll, arity: 1 }),
-        "task-wake" => Ok(RuntimeCall { function: runtime.task_wake, arity: 1 }),
-        "task-cancel" => Ok(RuntimeCall { function: runtime.task_cancel, arity: 1 }),
-        "task-take" => Ok(RuntimeCall { function: runtime.task_take, arity: 1 }),
-        "scope-cancel" => Ok(RuntimeCall { function: runtime.scope_cancel, arity: 1 }),
-        "scope-join" => Ok(RuntimeCall { function: runtime.scope_join, arity: 2 }),
-        "await" => Ok(RuntimeCall { function: runtime.await_task, arity: 1 }),
-        other => Err(format!("native runtime operation is not supported: {other}")),
+        "result-tag" => Ok(RuntimeCall {
+            function: runtime.result_tag,
+            arity: 1,
+        }),
+        "result-payload" => Ok(RuntimeCall {
+            function: runtime.result_payload,
+            arity: 1,
+        }),
+        "retain" | "retain-value" => Ok(RuntimeCall {
+            function: runtime.retain,
+            arity: 1,
+        }),
+        "release" | "release-value" => Ok(RuntimeCall {
+            function: runtime.release,
+            arity: 1,
+        }),
+        "cow-clone" => Ok(RuntimeCall {
+            function: runtime.cow_clone,
+            arity: 1,
+        }),
+        "frame-enter" => Ok(RuntimeCall {
+            function: runtime.frame_enter,
+            arity: 0,
+        }),
+        "frame-publish-root" => Ok(RuntimeCall {
+            function: runtime.frame_publish_root,
+            arity: 2,
+        }),
+        "register-defer" => Ok(RuntimeCall {
+            function: runtime.frame_register_defer,
+            arity: 2,
+        }),
+        "disarm-defer" => Ok(RuntimeCall {
+            function: runtime.frame_disarm_defer,
+            arity: 2,
+        }),
+        "frame-cleanup" => Ok(RuntimeCall {
+            function: runtime.frame_cleanup,
+            arity: 2,
+        }),
+        "frame-leave" => Ok(RuntimeCall {
+            function: runtime.frame_leave,
+            arity: 2,
+        }),
+        "scope-enter" => Ok(RuntimeCall {
+            function: runtime.scope_enter,
+            arity: 0,
+        }),
+        "scope-spawn" => Ok(RuntimeCall {
+            function: runtime.scope_spawn,
+            arity: 3,
+        }),
+        "task-spawn" => Ok(RuntimeCall {
+            function: runtime.task_spawn,
+            arity: 2,
+        }),
+        "thread-spawn" => Ok(RuntimeCall {
+            function: runtime.thread_spawn,
+            arity: 2,
+        }),
+        "task-poll" => Ok(RuntimeCall {
+            function: runtime.task_poll,
+            arity: 1,
+        }),
+        "task-wake" => Ok(RuntimeCall {
+            function: runtime.task_wake,
+            arity: 1,
+        }),
+        "task-cancel" => Ok(RuntimeCall {
+            function: runtime.task_cancel,
+            arity: 1,
+        }),
+        "task-take" => Ok(RuntimeCall {
+            function: runtime.task_take,
+            arity: 1,
+        }),
+        "scope-cancel" => Ok(RuntimeCall {
+            function: runtime.scope_cancel,
+            arity: 1,
+        }),
+        "scope-join" => Ok(RuntimeCall {
+            function: runtime.scope_join,
+            arity: 2,
+        }),
+        "await" => Ok(RuntimeCall {
+            function: runtime.await_task,
+            arity: 1,
+        }),
+        "select-begin" => Ok(RuntimeCall {
+            function: runtime.select_begin,
+            arity: 1,
+        }),
+        "select-register-task" => Ok(RuntimeCall {
+            function: runtime.select_register_task,
+            arity: 3,
+        }),
+        "select-register-join" => Ok(RuntimeCall {
+            function: runtime.select_register_join,
+            arity: 2,
+        }),
+        "select-register-oneshot" => Ok(RuntimeCall {
+            function: runtime.select_register_oneshot,
+            arity: 3,
+        }),
+        "select-register-time" => Ok(RuntimeCall {
+            function: runtime.select_register_time,
+            arity: 3,
+        }),
+        "select-commit" => Ok(RuntimeCall {
+            function: runtime.select_commit,
+            arity: 2,
+        }),
+        "select-winner" => Ok(RuntimeCall {
+            function: runtime.select_winner,
+            arity: 1,
+        }),
+        "select-take" => Ok(RuntimeCall {
+            function: runtime.select_take,
+            arity: 1,
+        }),
+        "select-rollback" => Ok(RuntimeCall {
+            function: runtime.select_rollback,
+            arity: 1,
+        }),
+        "select-wakeups" => Ok(RuntimeCall {
+            function: runtime.select_wakeups,
+            arity: 1,
+        }),
+        "oneshot-new" => Ok(RuntimeCall {
+            function: runtime.oneshot_new,
+            arity: 0,
+        }),
+        "oneshot-complete" => Ok(RuntimeCall {
+            function: runtime.oneshot_complete,
+            arity: 2,
+        }),
+        "oneshot-cancel" => Ok(RuntimeCall {
+            function: runtime.oneshot_cancel,
+            arity: 1,
+        }),
+        "time-new" => Ok(RuntimeCall {
+            function: runtime.time_new,
+            arity: 1,
+        }),
+        "time-fire" => Ok(RuntimeCall {
+            function: runtime.time_fire,
+            arity: 1,
+        }),
+        other => Err(format!(
+            "native runtime operation is not supported: {other}"
+        )),
     }
 }
 
@@ -1094,7 +1292,11 @@ fn block_live_in(function: &MirBackendFunction) -> BTreeMap<u32, BTreeSet<u32>> 
                 }
             }
             let mut next = uses;
-            next.extend(outgoing.into_iter().filter(|local| !definitions.contains(local)));
+            next.extend(
+                outgoing
+                    .into_iter()
+                    .filter(|local| !definitions.contains(local)),
+            );
             let entry = live_in
                 .get_mut(&block.ordinal)
                 .expect("normal block has a liveness entry");
@@ -1120,10 +1322,9 @@ fn cranelift_edge_args(
         .into_iter()
         .flat_map(|required| required.iter())
         .map(|local| {
-            locals
-                .get(local)
-                .copied()
-                .ok_or_else(|| format!("MIR local {local} is not available on edge to block {target}"))
+            locals.get(local).copied().ok_or_else(|| {
+                format!("MIR local {local} is not available on edge to block {target}")
+            })
         })
         .collect()
 }
@@ -1153,7 +1354,9 @@ fn lower_rvalue_cranelift(
             let tag = builder
                 .ins()
                 .iconst(cranelift_codegen::ir::types::I64, i64::from(tag));
-            let call = builder.ins().call(runtime.result_new, &[tag, payload, has_payload]);
+            let call = builder
+                .ins()
+                .call(runtime.result_new, &[tag, payload, has_payload]);
             builder
                 .inst_results(call)
                 .first()
@@ -1252,7 +1455,9 @@ fn lower_operation_cranelift(
             let kind_value = builder
                 .ins()
                 .iconst(cranelift_codegen::ir::types::I64, i64::from(kind_id));
-            let call = builder.ins().call(runtime.host_call, &[kind_value, argument]);
+            let call = builder
+                .ins()
+                .call(runtime.host_call, &[kind_value, argument]);
             builder
                 .inst_results(call)
                 .first()
@@ -1318,8 +1523,7 @@ fn lower_operand_cranelift(
         MirBackendOperand::Constant(other) => {
             let kind = match other {
                 MirBackendConstant::Unit => "unit".to_owned(),
-                MirBackendConstant::Float(value)
-                | MirBackendConstant::Char(value) => value.clone(),
+                MirBackendConstant::Float(value) | MirBackendConstant::Char(value) => value.clone(),
                 MirBackendConstant::Named => "named".to_owned(),
                 MirBackendConstant::Integer(_)
                 | MirBackendConstant::Bool(_)
@@ -1365,33 +1569,43 @@ fn lower_checked_binary_cranelift(
         "bitwise-xor" => builder.ins().bxor(left, right),
         "less" => {
             let value = builder.ins().icmp(IntCC::SignedLessThan, left, right);
-            builder.ins().uextend(cranelift_codegen::ir::types::I64, value)
+            builder
+                .ins()
+                .uextend(cranelift_codegen::ir::types::I64, value)
         }
         "less-equal" => {
             let value = builder
                 .ins()
                 .icmp(IntCC::SignedLessThanOrEqual, left, right);
-            builder.ins().uextend(cranelift_codegen::ir::types::I64, value)
+            builder
+                .ins()
+                .uextend(cranelift_codegen::ir::types::I64, value)
         }
         "greater" => {
-            let value = builder
+            let value = builder.ins().icmp(IntCC::SignedGreaterThan, left, right);
+            builder
                 .ins()
-                .icmp(IntCC::SignedGreaterThan, left, right);
-            builder.ins().uextend(cranelift_codegen::ir::types::I64, value)
+                .uextend(cranelift_codegen::ir::types::I64, value)
         }
         "greater-equal" => {
             let value = builder
                 .ins()
                 .icmp(IntCC::SignedGreaterThanOrEqual, left, right);
-            builder.ins().uextend(cranelift_codegen::ir::types::I64, value)
+            builder
+                .ins()
+                .uextend(cranelift_codegen::ir::types::I64, value)
         }
         "equal" => {
             let value = builder.ins().icmp(IntCC::Equal, left, right);
-            builder.ins().uextend(cranelift_codegen::ir::types::I64, value)
+            builder
+                .ins()
+                .uextend(cranelift_codegen::ir::types::I64, value)
         }
         "not-equal" => {
             let value = builder.ins().icmp(IntCC::NotEqual, left, right);
-            builder.ins().uextend(cranelift_codegen::ir::types::I64, value)
+            builder
+                .ins()
+                .uextend(cranelift_codegen::ir::types::I64, value)
         }
         "shift-left" | "shift-right" => {
             let width = builder.ins().iconst(cranelift_codegen::ir::types::I64, 64);
@@ -1598,9 +1812,13 @@ fn lower_cranelift_function(
                 }
                 match &block.terminator {
                     MirBackendTerminator::Return => {
-                        let value = locals.get(&function.return_local).copied().unwrap_or_else(|| {
-                            builder.ins().iconst(cranelift_codegen::ir::types::I64, 0)
-                        });
+                        let value =
+                            locals
+                                .get(&function.return_local)
+                                .copied()
+                                .unwrap_or_else(|| {
+                                    builder.ins().iconst(cranelift_codegen::ir::types::I64, 0)
+                                });
                         builder.ins().return_(&[value]);
                     }
                     MirBackendTerminator::Goto { target } => {
@@ -1650,11 +1868,14 @@ fn lower_cranelift_function(
                     } => {
                         let value = lower_operand_cranelift(&mut builder, value, &locals)?;
                         let tag_call = builder.ins().call(runtime.result_tag, &[value]);
-                        let value = builder
-                            .inst_results(tag_call)
-                            .first()
-                            .copied()
-                            .ok_or_else(|| "Cranelift tag helper did not return a value".to_owned())?;
+                        let value =
+                            builder
+                                .inst_results(tag_call)
+                                .first()
+                                .copied()
+                                .ok_or_else(|| {
+                                    "Cranelift tag helper did not return a value".to_owned()
+                                })?;
                         let otherwise_block = *ir_blocks.get(otherwise).ok_or_else(|| {
                             format!("MIR switch otherwise target block {otherwise} is missing")
                         })?;
@@ -1691,11 +1912,8 @@ fn lower_cranelift_function(
                                 } else {
                                     Vec::new()
                                 };
-                                let matches = builder.ins().icmp_imm(
-                                    IntCC::Equal,
-                                    value,
-                                    i64::from(*tag),
-                                );
+                                let matches =
+                                    builder.ins().icmp_imm(IntCC::Equal, value, i64::from(*tag));
                                 builder.ins().brif(
                                     matches,
                                     target_block,
@@ -1717,15 +1935,14 @@ fn lower_cranelift_function(
                         destination,
                         target: Some(target),
                     } => {
-                        let value =
-                            lower_operation_cranelift(
-                                &mut builder,
-                                operation,
-                                &locals,
-                                &calls,
-                                trap,
-                                &runtime,
-                            )?;
+                        let value = lower_operation_cranelift(
+                            &mut builder,
+                            operation,
+                            &locals,
+                            &calls,
+                            trap,
+                            &runtime,
+                        )?;
                         if let Some(destination) = destination {
                             locals.insert(*destination, value);
                         }
@@ -1948,8 +2165,10 @@ fn run_native_managed_probe(
         return Ok(Vec::new());
     }
     let mut reports = Vec::new();
-    let cranelift_object =
-        temp_dir.join(format!("{}_managed.cranelift.o", safe_stem(&fixture.fixture)));
+    let cranelift_object = temp_dir.join(format!(
+        "{}_managed.cranelift.o",
+        safe_stem(&fixture.fixture)
+    ));
     emit_cranelift_object(cranelift_isa()?, program, &cranelift_object)?;
     for function in functions {
         for (case_index, arguments) in managed_case_arguments_for_function(function)
@@ -2099,7 +2318,7 @@ fn run_native_runtime_probe(
             }
         };
         fs::write(&cranelift_source, cranelift_runner)
-        .map_err(|error| format!("cannot write runtime Cranelift runner: {error}"))?;
+            .map_err(|error| format!("cannot write runtime Cranelift runner: {error}"))?;
         let cranelift_binary = temp_dir.join(format!("{stem}.cranelift.bin"));
         link_native_runner(cc, &cranelift_source, &object, &cranelift_binary)?;
         run_native_binary(&cranelift_binary, "Cranelift runtime", false)?;
@@ -2115,7 +2334,7 @@ fn run_native_runtime_probe(
             }
         };
         fs::write(&llvm_ir, llvm_runner)
-        .map_err(|error| format!("cannot write runtime LLVM runner: {error}"))?;
+            .map_err(|error| format!("cannot write runtime LLVM runner: {error}"))?;
         let result = Command::new(llvm)
             .arg("-O2")
             .arg("-filetype=obj")
@@ -2162,9 +2381,48 @@ fn run_native_runtime_probe(
 
 fn native_cleanup_program() -> (MirBackendProgram, Vec<RuntimeContractCase>) {
     let runtime_operand = |index| MirBackendOperand::Local { index };
-    let constant = |value: &str| {
-        MirBackendOperand::Constant(MirBackendConstant::Integer(value.to_owned()))
-    };
+    let constant =
+        |value: &str| MirBackendOperand::Constant(MirBackendConstant::Integer(value.to_owned()));
+    let runtime_sequence =
+        |ordinal: u32, operations: Vec<(&str, Vec<MirBackendOperand>)>| -> MirBackendFunction {
+            let count = operations.len();
+            let mut blocks = Vec::with_capacity(count + 1);
+            for (index, (kind, arguments)) in operations.into_iter().enumerate() {
+                blocks.push(MirBackendBlock {
+                    ordinal: index as u32,
+                    kind: "normal".to_owned(),
+                    statements: Vec::new(),
+                    terminator: MirBackendTerminator::Invoke {
+                        operation: MirBackendOperation::Runtime {
+                            kind: kind.to_owned(),
+                            arguments,
+                        },
+                        destination: Some(index as u32 + 1),
+                        target: Some(index as u32 + 1),
+                    },
+                });
+            }
+            let last = count as u32;
+            let last_local = last;
+            blocks.push(MirBackendBlock {
+                ordinal: last,
+                kind: "normal".to_owned(),
+                statements: vec![MirBackendStatement::Assign {
+                    destination: 0,
+                    value: MirBackendRvalue::Use(MirBackendOperand::Local { index: last_local }),
+                }],
+                terminator: MirBackendTerminator::Return,
+            });
+            MirBackendFunction {
+                ordinal,
+                parameters: Vec::new(),
+                parameter_types: Vec::new(),
+                return_local: 0,
+                return_type: "Int".to_owned(),
+                supported: true,
+                blocks,
+            }
+        };
     let cleanup_function = MirBackendFunction {
         ordinal: 100,
         parameters: Vec::new(),
@@ -2698,6 +2956,139 @@ fn native_cleanup_program() -> (MirBackendProgram, Vec<RuntimeContractCase>) {
             },
         ],
     };
+    let select_ready_function = runtime_sequence(
+        108,
+        vec![
+            ("select-begin", vec![constant("1")]),
+            ("task-spawn", vec![constant("11"), constant("0")]),
+            (
+                "select-register-join",
+                vec![runtime_operand(1), runtime_operand(2)],
+            ),
+            ("select-commit", vec![runtime_operand(1), constant("0")]),
+            ("select-take", vec![runtime_operand(1)]),
+        ],
+    );
+    let select_pending_wake_function = runtime_sequence(
+        109,
+        vec![
+            ("select-begin", vec![constant("1")]),
+            ("task-spawn", vec![constant("22"), constant("1")]),
+            (
+                "select-register-join",
+                vec![runtime_operand(1), runtime_operand(2)],
+            ),
+            ("select-commit", vec![runtime_operand(1), constant("0")]),
+            ("task-wake", vec![runtime_operand(2)]),
+            ("select-wakeups", vec![runtime_operand(1)]),
+            ("select-commit", vec![runtime_operand(1), constant("0")]),
+            ("select-take", vec![runtime_operand(1)]),
+        ],
+    );
+    let select_fairness_function = runtime_sequence(
+        110,
+        vec![
+            ("select-begin", vec![constant("2")]),
+            ("task-spawn", vec![constant("31"), constant("0")]),
+            ("task-spawn", vec![constant("32"), constant("0")]),
+            (
+                "select-register-join",
+                vec![runtime_operand(1), runtime_operand(2)],
+            ),
+            (
+                "select-register-join",
+                vec![runtime_operand(1), runtime_operand(3)],
+            ),
+            ("select-commit", vec![runtime_operand(1), constant("0")]),
+            ("select-take", vec![runtime_operand(1)]),
+            ("select-begin", vec![constant("2")]),
+            ("task-spawn", vec![constant("41"), constant("0")]),
+            ("task-spawn", vec![constant("42"), constant("0")]),
+            (
+                "select-register-join",
+                vec![runtime_operand(8), runtime_operand(9)],
+            ),
+            (
+                "select-register-join",
+                vec![runtime_operand(8), runtime_operand(10)],
+            ),
+            ("select-commit", vec![runtime_operand(8), constant("0")]),
+            ("select-winner", vec![runtime_operand(8)]),
+        ],
+    );
+    let select_rollback_function = runtime_sequence(
+        111,
+        vec![
+            ("select-begin", vec![constant("2")]),
+            ("task-spawn", vec![constant("51"), constant("1")]),
+            ("task-spawn", vec![constant("52"), constant("1")]),
+            (
+                "select-register-task",
+                vec![runtime_operand(1), runtime_operand(2), constant("1")],
+            ),
+            (
+                "select-register-join",
+                vec![runtime_operand(1), runtime_operand(3)],
+            ),
+            ("select-rollback", vec![runtime_operand(1)]),
+            ("task-poll", vec![runtime_operand(2)]),
+        ],
+    );
+    let select_oneshot_function = runtime_sequence(
+        112,
+        vec![
+            ("oneshot-new", Vec::new()),
+            ("select-begin", vec![constant("1")]),
+            (
+                "select-register-oneshot",
+                vec![runtime_operand(2), runtime_operand(1), constant("0")],
+            ),
+            ("select-commit", vec![runtime_operand(2), constant("0")]),
+            ("oneshot-complete", vec![runtime_operand(1), constant("61")]),
+            ("select-commit", vec![runtime_operand(2), constant("0")]),
+            ("select-take", vec![runtime_operand(2)]),
+        ],
+    );
+    let select_time_function = runtime_sequence(
+        113,
+        vec![
+            ("time-new", vec![constant("63")]),
+            ("select-begin", vec![constant("1")]),
+            (
+                "select-register-time",
+                vec![runtime_operand(2), runtime_operand(1), constant("0")],
+            ),
+            ("select-commit", vec![runtime_operand(2), constant("0")]),
+            ("time-fire", vec![runtime_operand(1)]),
+            ("select-commit", vec![runtime_operand(2), constant("0")]),
+            ("select-take", vec![runtime_operand(2)]),
+        ],
+    );
+    let select_thread_join_function = runtime_sequence(
+        114,
+        vec![
+            ("thread-spawn", vec![constant("74"), constant("0")]),
+            ("select-begin", vec![constant("1")]),
+            (
+                "select-register-join",
+                vec![runtime_operand(2), runtime_operand(1)],
+            ),
+            ("select-commit", vec![runtime_operand(2), constant("0")]),
+            ("select-take", vec![runtime_operand(2)]),
+        ],
+    );
+    let select_else_function = runtime_sequence(
+        115,
+        vec![
+            ("select-begin", vec![constant("1")]),
+            ("task-spawn", vec![constant("81"), constant("1")]),
+            (
+                "select-register-task",
+                vec![runtime_operand(1), runtime_operand(2), constant("1")],
+            ),
+            ("select-commit", vec![runtime_operand(1), constant("1")]),
+        ],
+    );
     (
         MirBackendProgram {
             format: "tondo-mir-backend/1".to_owned(),
@@ -2710,6 +3101,14 @@ fn native_cleanup_program() -> (MirBackendProgram, Vec<RuntimeContractCase>) {
                 async_cancel_function,
                 task_progress_function,
                 async_cancel_wake_function,
+                select_ready_function,
+                select_pending_wake_function,
+                select_fairness_function,
+                select_rollback_function,
+                select_oneshot_function,
+                select_time_function,
+                select_thread_join_function,
+                select_else_function,
             ],
         },
         vec![
@@ -2726,7 +3125,10 @@ fn native_cleanup_program() -> (MirBackendProgram, Vec<RuntimeContractCase>) {
             RuntimeContractCase {
                 name: "ownership-cow",
                 function_ordinal: 102,
-                expectation: RuntimeExpectation::Managed { tag: 2, payload: Some(42) },
+                expectation: RuntimeExpectation::Managed {
+                    tag: 2,
+                    payload: Some(42),
+                },
             },
             RuntimeContractCase {
                 name: "async-await",
@@ -2752,6 +3154,46 @@ fn native_cleanup_program() -> (MirBackendProgram, Vec<RuntimeContractCase>) {
                 name: "async-cancel-wake-rejected",
                 function_ordinal: 107,
                 expectation: RuntimeExpectation::Scalar(3),
+            },
+            RuntimeContractCase {
+                name: "select-ready-join",
+                function_ordinal: 108,
+                expectation: RuntimeExpectation::Scalar(11),
+            },
+            RuntimeContractCase {
+                name: "select-pending-wakeup",
+                function_ordinal: 109,
+                expectation: RuntimeExpectation::Scalar(22),
+            },
+            RuntimeContractCase {
+                name: "select-round-robin",
+                function_ordinal: 110,
+                expectation: RuntimeExpectation::Scalar(1),
+            },
+            RuntimeContractCase {
+                name: "select-rollback-ownership",
+                function_ordinal: 111,
+                expectation: RuntimeExpectation::Scalar(2),
+            },
+            RuntimeContractCase {
+                name: "select-oneshot",
+                function_ordinal: 112,
+                expectation: RuntimeExpectation::Scalar(61),
+            },
+            RuntimeContractCase {
+                name: "select-time",
+                function_ordinal: 113,
+                expectation: RuntimeExpectation::Scalar(63),
+            },
+            RuntimeContractCase {
+                name: "select-thread-join",
+                function_ordinal: 114,
+                expectation: RuntimeExpectation::Scalar(74),
+            },
+            RuntimeContractCase {
+                name: "select-else",
+                function_ordinal: 115,
+                expectation: RuntimeExpectation::Scalar(8),
             },
         ],
     )
@@ -3086,9 +3528,7 @@ fn evaluate_operation(
                 Ok(0)
             }
         }
-        MirBackendOperation::Trap { kind } => {
-            Err(format!("scalar oracle trap: {kind}"))
-        }
+        MirBackendOperation::Trap { kind } => Err(format!("scalar oracle trap: {kind}")),
         MirBackendOperation::Marker { kind } => {
             Err(format!("scalar oracle operation is not supported: {kind}"))
         }
@@ -3130,7 +3570,8 @@ fn oracle_managed_parts(value: i64) -> Result<(u64, Option<u64>), String> {
 
 fn string_payload(value: &str) -> i64 {
     (value.bytes().fold(0xcbf29ce484222325_u64, |hash, byte| {
-        hash.wrapping_mul(0x100000001b3).wrapping_add(u64::from(byte))
+        hash.wrapping_mul(0x100000001b3)
+            .wrapping_add(u64::from(byte))
     }) & ((1_u64 << 56) - 1)) as i64
 }
 
@@ -3270,14 +3711,19 @@ fn native_runtime_c_source() -> String {
 #define F_MAX 256u
 #define D_MAX 64u
 #define S_MAX 64u
+#define SELECT_MAX_ARMS 64u
 #define HBIT (UINT64_C(1) << 63)
 typedef struct { uint64_t tag, payload, has_payload, strong, kind, state, value; } t_entry;
 typedef struct { uint64_t terminal, root_count, defer_count; uint64_t roots[D_MAX]; uint64_t defers[D_MAX]; } t_frame;
 typedef struct { uint64_t handle, state, value, scope; } t_task;
+typedef struct { uint64_t source, kind, owned; } t_select_arm;
+typedef struct { uint64_t phase, capacity, count, winner, has_winner, winner_taken, wakeups; t_select_arm arms[SELECT_MAX_ARMS]; } t_select;
 static t_entry t_objects[T_MAX];
 static t_frame t_frames[F_MAX];
 static t_task t_tasks[S_MAX];
+static t_select t_selects[T_MAX];
 static uint64_t t_next = 1, t_next_frame = 1, t_last = 0;
+static uint64_t t_select_rotation = 0;
 static uint64_t t_alloc(uint64_t kind, uint64_t tag, uint64_t payload, uint64_t has_payload) {
     if (t_next >= T_MAX) { t_last = 8; return 0; }
     uint64_t id = t_next++;
@@ -3290,11 +3736,46 @@ static uint64_t t_index(uint64_t handle) {
     uint64_t id = handle & ~HBIT;
     return id < T_MAX && t_objects[id].kind != 0 ? id : 0;
 }
+static void t_notify_selects(uint64_t source) {
+    for (uint64_t id = 1; id < T_MAX; ++id) if (t_objects[id].kind == 4 && t_selects[id].phase == 1) {
+        for (uint64_t arm = 0; arm < t_selects[id].count; ++arm) if (t_selects[id].arms[arm].source == source) {
+            ++t_selects[id].wakeups; break;
+        }
+    }
+}
+static int t_source_ready(uint64_t source, uint64_t kind) {
+    uint64_t id = t_index(source);
+    if (id == 0 || t_objects[id].kind != kind) return 0;
+    return t_objects[id].state == 1 || t_objects[id].state == 2;
+}
+static void t_discard_source(uint64_t source, uint64_t kind) {
+    uint64_t id = t_index(source);
+    if (id == 0 || t_objects[id].kind != kind) return;
+    if (kind == 3) {
+        if (t_objects[id].state == 0) t_objects[id].state = 2;
+        else if (t_objects[id].state == 1) t_objects[id].state = 3;
+    } else if (kind == 5) {
+        if (t_objects[id].state == 0) t_objects[id].state = 2;
+        else if (t_objects[id].state == 1) t_objects[id].state = 3;
+    } else if (kind == 6) {
+        if (t_objects[id].state == 0) t_objects[id].state = 2;
+        else if (t_objects[id].state == 1) t_objects[id].state = 3;
+    }
+}
+static uint64_t t_take_source(uint64_t source, uint64_t kind) {
+    uint64_t id = t_index(source);
+    if (id == 0 || t_objects[id].kind != kind) { t_last = 1; return 0; }
+    if (t_objects[id].state != 1) { t_last = t_objects[id].state == 2 ? 7 : 6; return 0; }
+    t_objects[id].state = 3;
+    return t_objects[id].value;
+}
 static void t_reset(void) {
     for (uint64_t i = 0; i < T_MAX; ++i) t_objects[i].kind = 0;
     for (uint64_t i = 0; i < F_MAX; ++i) t_frames[i].terminal = 0;
     for (uint64_t i = 0; i < S_MAX; ++i) t_tasks[i].handle = 0;
+    for (uint64_t i = 0; i < T_MAX; ++i) { t_selects[i].phase = 0; t_selects[i].count = 0; t_selects[i].wakeups = 0; }
     t_next = 1; t_next_frame = 1; t_last = 0;
+    t_select_rotation = 0;
 }
 uint64_t tondo_rt_result_new(uint64_t tag, uint64_t payload, uint64_t has_payload) {
     return tag <= 3 ? t_alloc(1, tag, payload, has_payload) : 0;
@@ -3375,13 +3856,74 @@ uint64_t tondo_rt_task_spawn(uint64_t value, uint64_t pending) {
     uint64_t task = t_alloc(3, 0, 0, 0); uint64_t id = t_index(task); if (id == 0) return 0;
     t_objects[id].state = pending ? 0 : 1; t_objects[id].value = value; return task;
 }
+uint64_t tondo_rt_thread_spawn(uint64_t value, uint64_t pending) {
+    return tondo_rt_task_spawn(value, pending);
+}
 uint64_t tondo_rt_task_poll(uint64_t task) { uint64_t id = t_index(task); return id != 0 && t_objects[id].kind == 3 ? t_objects[id].state : UINT64_MAX; }
-uint64_t tondo_rt_task_wake(uint64_t task) { uint64_t id = t_index(task); if (id == 0 || t_objects[id].kind != 3 || t_objects[id].state >= 2) return 3; t_objects[id].state = 1; return 0; }
-uint64_t tondo_rt_task_cancel(uint64_t task) { uint64_t id = t_index(task); if (id == 0 || t_objects[id].kind != 3 || t_objects[id].state >= 2) return 3; t_objects[id].state = 2; return 0; }
+uint64_t tondo_rt_task_wake(uint64_t task) { uint64_t id = t_index(task); if (id == 0 || t_objects[id].kind != 3 || t_objects[id].state >= 2) return 3; t_objects[id].state = 1; t_notify_selects(task); return 0; }
+uint64_t tondo_rt_task_cancel(uint64_t task) { uint64_t id = t_index(task); if (id == 0 || t_objects[id].kind != 3 || t_objects[id].state >= 2) return 3; t_objects[id].state = 2; t_notify_selects(task); return 0; }
 uint64_t tondo_rt_task_take(uint64_t task) { uint64_t id = t_index(task); if (id == 0 || t_objects[id].kind != 3 || t_objects[id].state != 1) { t_last = 6; return 0; } t_objects[id].state = 3; return t_objects[id].value; }
-uint64_t tondo_rt_scope_cancel(uint64_t scope) { uint64_t id = t_index(scope); if (id == 0 || t_objects[id].kind != 2 || t_objects[id].state != 0) return 3; for (uint64_t i = 1; i < T_MAX; ++i) if (t_objects[i].kind == 3 && t_objects[i].payload == scope && t_objects[i].state < 2) t_objects[i].state = 2; t_objects[id].state = 1; return 0; }
+uint64_t tondo_rt_scope_cancel(uint64_t scope) { uint64_t id = t_index(scope); if (id == 0 || t_objects[id].kind != 2 || t_objects[id].state != 0) return 3; for (uint64_t i = 1; i < T_MAX; ++i) if (t_objects[i].kind == 3 && t_objects[i].payload == scope && t_objects[i].state < 2) { t_objects[i].state = 2; t_notify_selects(HBIT | i); } t_objects[id].state = 1; return 0; }
 uint64_t tondo_rt_scope_join(uint64_t scope, uint64_t task) { uint64_t sid = t_index(scope), tid = t_index(task); if (sid == 0 || tid == 0 || t_objects[sid].kind != 2 || t_objects[sid].state != 0 || t_objects[tid].kind != 3 || t_objects[tid].payload != scope || t_objects[tid].state != 1) return 3; (void)tondo_rt_task_take(task); return 0; }
 uint64_t tondo_rt_await(uint64_t task) { return tondo_rt_task_take(task); }
+uint64_t tondo_rt_select_begin(uint64_t capacity) {
+    if (capacity == 0 || capacity > SELECT_MAX_ARMS) { t_last = 3; return 0; }
+    uint64_t selection = t_alloc(4, 0, 0, 0), id = t_index(selection); if (id == 0) return 0;
+    t_selects[id].phase = 0; t_selects[id].capacity = capacity; t_selects[id].count = 0;
+    t_selects[id].winner = 0; t_selects[id].has_winner = 0; t_selects[id].winner_taken = 0; t_selects[id].wakeups = 0;
+    return selection;
+}
+static uint64_t tondo_rt_select_register(uint64_t selection, uint64_t source, uint64_t kind, uint64_t owned) {
+    uint64_t sid = t_index(selection), source_id = t_index(source);
+    if (sid == 0 || t_objects[sid].kind != 4) return 1;
+    if (source_id == 0 || t_objects[source_id].kind != kind) return 1;
+    if (t_selects[sid].phase != 0 || t_selects[sid].count >= t_selects[sid].capacity) return 3;
+    for (uint64_t i = 0; i < t_selects[sid].count; ++i) if (t_selects[sid].arms[i].source == source) return 3;
+    t_selects[sid].arms[t_selects[sid].count++] = (t_select_arm){source, kind, owned != 0};
+    return 0;
+}
+uint64_t tondo_rt_select_register_task(uint64_t selection, uint64_t task, uint64_t owned) { return tondo_rt_select_register(selection, task, 3, owned); }
+uint64_t tondo_rt_select_register_join(uint64_t selection, uint64_t task) { return tondo_rt_select_register(selection, task, 3, 0); }
+uint64_t tondo_rt_select_register_oneshot(uint64_t selection, uint64_t oneshot, uint64_t owned) { return tondo_rt_select_register(selection, oneshot, 5, owned); }
+uint64_t tondo_rt_select_register_time(uint64_t selection, uint64_t timer, uint64_t owned) { return tondo_rt_select_register(selection, timer, 6, owned); }
+uint64_t tondo_rt_select_commit(uint64_t selection, uint64_t else_allowed) {
+    uint64_t sid = t_index(selection); if (sid == 0 || t_objects[sid].kind != 4) return 1;
+    if ((t_selects[sid].phase != 0 && t_selects[sid].phase != 1) || t_selects[sid].count != t_selects[sid].capacity) return 3;
+    uint64_t count = t_selects[sid].count, start = t_select_rotation % count, winner = 0, found = 0;
+    for (uint64_t offset = 0; offset < count; ++offset) {
+        uint64_t index = (start + offset) % count;
+        t_select_arm arm = t_selects[sid].arms[index];
+        if (t_source_ready(arm.source, arm.kind)) { winner = index; found = 1; break; }
+    }
+    if (!found) {
+        if (else_allowed != 0) {
+            for (uint64_t i = 0; i < count; ++i) if (t_selects[sid].arms[i].owned) t_discard_source(t_selects[sid].arms[i].source, t_selects[sid].arms[i].kind);
+            t_selects[sid].phase = 4; ++t_select_rotation; return 8;
+        }
+        t_selects[sid].phase = 1; return 6;
+    }
+    for (uint64_t i = 0; i < count; ++i) if (i != winner && t_selects[sid].arms[i].owned) t_discard_source(t_selects[sid].arms[i].source, t_selects[sid].arms[i].kind);
+    t_selects[sid].phase = 2; t_selects[sid].winner = winner; t_selects[sid].has_winner = 1; ++t_select_rotation; return 0;
+}
+uint64_t tondo_rt_select_winner(uint64_t selection) { uint64_t sid = t_index(selection); if (sid == 0 || t_objects[sid].kind != 4) return UINT64_MAX; if (!t_selects[sid].has_winner || (t_selects[sid].phase != 2 && t_selects[sid].phase != 3)) { t_last = 3; return UINT64_MAX; } return t_selects[sid].winner; }
+uint64_t tondo_rt_select_take(uint64_t selection) {
+    uint64_t sid = t_index(selection); if (sid == 0 || t_objects[sid].kind != 4) { t_last = 1; return 0; }
+    if (t_selects[sid].phase != 2 || t_selects[sid].winner_taken || !t_selects[sid].has_winner) { t_last = 3; return 0; }
+    t_select_arm arm = t_selects[sid].arms[t_selects[sid].winner]; t_selects[sid].winner_taken = 1; t_selects[sid].phase = 3;
+    return t_take_source(arm.source, arm.kind);
+}
+uint64_t tondo_rt_select_rollback(uint64_t selection) {
+    uint64_t sid = t_index(selection); if (sid == 0 || t_objects[sid].kind != 4) return 1;
+    if (t_selects[sid].phase != 0 && t_selects[sid].phase != 1) return 3;
+    for (uint64_t i = 0; i < t_selects[sid].count; ++i) if (t_selects[sid].arms[i].owned) t_discard_source(t_selects[sid].arms[i].source, t_selects[sid].arms[i].kind);
+    t_selects[sid].phase = 5; return 0;
+}
+uint64_t tondo_rt_select_wakeups(uint64_t selection) { uint64_t sid = t_index(selection); if (sid == 0 || t_objects[sid].kind != 4) { t_last = 1; return UINT64_MAX; } return t_selects[sid].wakeups; }
+uint64_t tondo_rt_oneshot_new(void) { return t_alloc(5, 0, 0, 0); }
+uint64_t tondo_rt_oneshot_complete(uint64_t oneshot, uint64_t value) { uint64_t id = t_index(oneshot); if (id == 0 || t_objects[id].kind != 5) return 1; if (t_objects[id].state != 0) return 3; t_objects[id].value = value; t_objects[id].state = 1; t_notify_selects(oneshot); return 0; }
+uint64_t tondo_rt_oneshot_cancel(uint64_t oneshot) { uint64_t id = t_index(oneshot); if (id == 0 || t_objects[id].kind != 5) return 1; if (t_objects[id].state != 0) return 3; t_objects[id].state = 2; t_notify_selects(oneshot); return 0; }
+uint64_t tondo_rt_time_new(uint64_t value) { uint64_t timer = t_alloc(6, 0, value, 0), id = t_index(timer); if (id != 0) t_objects[id].value = value; return timer; }
+uint64_t tondo_rt_time_fire(uint64_t timer) { uint64_t id = t_index(timer); if (id == 0 || t_objects[id].kind != 6) return 1; if (t_objects[id].state != 0) return 3; t_objects[id].state = 1; t_notify_selects(timer); return 0; }
 "#.to_owned()
 }
 
@@ -3451,11 +3993,7 @@ fn llvm_module_with_managed_runner(
             "  %payload = call i64 @tondo_rt_result_payload(i64 %result)"
         )
         .unwrap();
-        writeln!(
-            module,
-            "  %payload_ok = icmp eq i64 %payload, {payload}"
-        )
-        .unwrap();
+        writeln!(module, "  %payload_ok = icmp eq i64 %payload, {payload}").unwrap();
         writeln!(module, "  %ok = and i1 %tag_ok, %payload_ok").unwrap();
         "%ok"
     } else {
@@ -3629,8 +4167,7 @@ fn llvm_module(target: &str, program: &MirBackendProgram) -> Result<String, Stri
             for statement in &block.statements {
                 match statement {
                     MirBackendStatement::Assign { destination, value } => {
-                        let value_name =
-                            llvm_rvalue(value, &slots, &mut module, &mut value_index)?;
+                        let value_name = llvm_rvalue(value, &slots, &mut module, &mut value_index)?;
                         let slot = slots.get(destination).ok_or_else(|| {
                             format!("missing slot for destination local {destination}")
                         })?;
@@ -3661,8 +4198,12 @@ fn llvm_module(target: &str, program: &MirBackendProgram) -> Result<String, Stri
                     writeln!(module, "  ret i64 {value}").unwrap();
                 }
                 MirBackendTerminator::Goto { target } => {
-                    writeln!(module, "  br label %{}", llvm_block_label(*target, entry_ordinal))
-                        .unwrap();
+                    writeln!(
+                        module,
+                        "  br label %{}",
+                        llvm_block_label(*target, entry_ordinal)
+                    )
+                    .unwrap();
                 }
                 MirBackendTerminator::SwitchBool {
                     condition,
@@ -3672,11 +4213,7 @@ fn llvm_module(target: &str, program: &MirBackendProgram) -> Result<String, Stri
                     let condition = llvm_operand(condition, &slots, &mut module, &mut value_index)?;
                     let condition_value = format!("%v{value_index}");
                     value_index += 1;
-                    writeln!(
-                        module,
-                        "  {condition_value} = icmp ne i64 {condition}, 0"
-                    )
-                    .unwrap();
+                    writeln!(module, "  {condition_value} = icmp ne i64 {condition}, 0").unwrap();
                     writeln!(
                         module,
                         "  br i1 {condition_value}, label %{}, label %{}",
@@ -3745,8 +4282,12 @@ fn llvm_module(target: &str, program: &MirBackendProgram) -> Result<String, Stri
                         })?;
                         writeln!(module, "  store i64 {value_name}, ptr {slot}").unwrap();
                     }
-                    writeln!(module, "  br label %{}", llvm_block_label(*target, entry_ordinal))
-                        .unwrap();
+                    writeln!(
+                        module,
+                        "  br label %{}",
+                        llvm_block_label(*target, entry_ordinal)
+                    )
+                    .unwrap();
                 }
                 MirBackendTerminator::Invoke { target: None, .. } => {
                     return Err("scalar invoke has no normal target".to_owned());
@@ -3835,6 +4376,7 @@ fn llvm_checked_helpers(module: &mut String) {
         "declare i64 @tondo_rt_scope_enter()",
         "declare i64 @tondo_rt_scope_spawn(i64, i64, i64)",
         "declare i64 @tondo_rt_task_spawn(i64, i64)",
+        "declare i64 @tondo_rt_thread_spawn(i64, i64)",
         "declare i64 @tondo_rt_task_poll(i64)",
         "declare i64 @tondo_rt_task_wake(i64)",
         "declare i64 @tondo_rt_task_cancel(i64)",
@@ -3842,6 +4384,21 @@ fn llvm_checked_helpers(module: &mut String) {
         "declare i64 @tondo_rt_scope_cancel(i64)",
         "declare i64 @tondo_rt_scope_join(i64, i64)",
         "declare i64 @tondo_rt_await(i64)",
+        "declare i64 @tondo_rt_select_begin(i64)",
+        "declare i64 @tondo_rt_select_register_task(i64, i64, i64)",
+        "declare i64 @tondo_rt_select_register_join(i64, i64)",
+        "declare i64 @tondo_rt_select_register_oneshot(i64, i64, i64)",
+        "declare i64 @tondo_rt_select_register_time(i64, i64, i64)",
+        "declare i64 @tondo_rt_select_commit(i64, i64)",
+        "declare i64 @tondo_rt_select_winner(i64)",
+        "declare i64 @tondo_rt_select_take(i64)",
+        "declare i64 @tondo_rt_select_rollback(i64)",
+        "declare i64 @tondo_rt_select_wakeups(i64)",
+        "declare i64 @tondo_rt_oneshot_new()",
+        "declare i64 @tondo_rt_oneshot_complete(i64, i64)",
+        "declare i64 @tondo_rt_oneshot_cancel(i64)",
+        "declare i64 @tondo_rt_time_new(i64)",
+        "declare i64 @tondo_rt_time_fire(i64)",
     ] {
         writeln!(module, "{declaration}").unwrap();
     }
@@ -3850,10 +4407,18 @@ fn llvm_checked_helpers(module: &mut String) {
     writeln!(module, "  call void @llvm.trap()").unwrap();
     writeln!(module, "  unreachable").unwrap();
     writeln!(module, "}}").unwrap();
-    writeln!(module, "define internal i64 @tondo_checked_assert(i64 %condition) {{").unwrap();
+    writeln!(
+        module,
+        "define internal i64 @tondo_checked_assert(i64 %condition) {{"
+    )
+    .unwrap();
     writeln!(module, "entry:").unwrap();
     writeln!(module, "  %valid = icmp ne i64 %condition, 0").unwrap();
-    writeln!(module, "  br i1 %valid, label %assert_ok, label %assert_trap").unwrap();
+    writeln!(
+        module,
+        "  br i1 %valid, label %assert_ok, label %assert_trap"
+    )
+    .unwrap();
     writeln!(module, "assert_trap:").unwrap();
     writeln!(module, "  call void @llvm.trap()").unwrap();
     writeln!(module, "  unreachable").unwrap();
@@ -3909,8 +4474,11 @@ fn llvm_checked_helpers(module: &mut String) {
 }
 
 fn llvm_checked_bounds_helper(module: &mut String) {
-    writeln!(module, "define internal i64 @tondo_checked_bounds(i64 %index, i64 %length) {{")
-        .unwrap();
+    writeln!(
+        module,
+        "define internal i64 @tondo_checked_bounds(i64 %index, i64 %length) {{"
+    )
+    .unwrap();
     writeln!(module, "entry:").unwrap();
     writeln!(module, "  %below_zero = icmp slt i64 %index, 0").unwrap();
     writeln!(module, "  %past_end = icmp sge i64 %index, %length").unwrap();
@@ -4291,6 +4859,7 @@ fn llvm_runtime_operation(
         "scope-enter" => ("tondo_rt_scope_enter", 0),
         "scope-spawn" => ("tondo_rt_scope_spawn", 3),
         "task-spawn" => ("tondo_rt_task_spawn", 2),
+        "thread-spawn" => ("tondo_rt_thread_spawn", 2),
         "task-poll" => ("tondo_rt_task_poll", 1),
         "task-wake" => ("tondo_rt_task_wake", 1),
         "task-cancel" => ("tondo_rt_task_cancel", 1),
@@ -4298,7 +4867,26 @@ fn llvm_runtime_operation(
         "scope-cancel" => ("tondo_rt_scope_cancel", 1),
         "scope-join" => ("tondo_rt_scope_join", 2),
         "await" => ("tondo_rt_await", 1),
-        other => return Err(format!("native runtime operation is not supported: {other}")),
+        "select-begin" => ("tondo_rt_select_begin", 1),
+        "select-register-task" => ("tondo_rt_select_register_task", 3),
+        "select-register-join" => ("tondo_rt_select_register_join", 2),
+        "select-register-oneshot" => ("tondo_rt_select_register_oneshot", 3),
+        "select-register-time" => ("tondo_rt_select_register_time", 3),
+        "select-commit" => ("tondo_rt_select_commit", 2),
+        "select-winner" => ("tondo_rt_select_winner", 1),
+        "select-take" => ("tondo_rt_select_take", 1),
+        "select-rollback" => ("tondo_rt_select_rollback", 1),
+        "select-wakeups" => ("tondo_rt_select_wakeups", 1),
+        "oneshot-new" => ("tondo_rt_oneshot_new", 0),
+        "oneshot-complete" => ("tondo_rt_oneshot_complete", 2),
+        "oneshot-cancel" => ("tondo_rt_oneshot_cancel", 1),
+        "time-new" => ("tondo_rt_time_new", 1),
+        "time-fire" => ("tondo_rt_time_fire", 1),
+        other => {
+            return Err(format!(
+                "native runtime operation is not supported: {other}"
+            ));
+        }
     };
     if arguments.len() != arity {
         return Err(format!(
@@ -4353,8 +4941,7 @@ fn llvm_operand(
         MirBackendOperand::Constant(other) => {
             let kind = match other {
                 MirBackendConstant::Unit => "unit".to_owned(),
-                MirBackendConstant::Float(value)
-                | MirBackendConstant::Char(value) => value.clone(),
+                MirBackendConstant::Float(value) | MirBackendConstant::Char(value) => value.clone(),
                 MirBackendConstant::Named => "named".to_owned(),
                 MirBackendConstant::Integer(_)
                 | MirBackendConstant::Bool(_)
@@ -4768,23 +5355,26 @@ mod tests {
                 return_local: 0,
                 return_type: "Int".to_owned(),
                 supported: true,
-                blocks: vec![MirBackendBlock {
-                    ordinal: 0,
-                    kind: "normal".to_owned(),
-                    statements: Vec::new(),
-                    terminator: MirBackendTerminator::Invoke {
-                        operation: MirBackendOperation::Trap {
-                            kind: "explicit-panic".to_owned(),
+                blocks: vec![
+                    MirBackendBlock {
+                        ordinal: 0,
+                        kind: "normal".to_owned(),
+                        statements: Vec::new(),
+                        terminator: MirBackendTerminator::Invoke {
+                            operation: MirBackendOperation::Trap {
+                                kind: "explicit-panic".to_owned(),
+                            },
+                            destination: Some(0),
+                            target: Some(1),
                         },
-                        destination: Some(0),
-                        target: Some(1),
                     },
-                }, MirBackendBlock {
-                    ordinal: 1,
-                    kind: "normal".to_owned(),
-                    statements: Vec::new(),
-                    terminator: MirBackendTerminator::Return,
-                }],
+                    MirBackendBlock {
+                        ordinal: 1,
+                        kind: "normal".to_owned(),
+                        statements: Vec::new(),
+                        terminator: MirBackendTerminator::Return,
+                    },
+                ],
             }],
         }
     }
@@ -4806,9 +5396,9 @@ mod tests {
                         statements: Vec::new(),
                         terminator: MirBackendTerminator::Invoke {
                             operation: MirBackendOperation::Assert {
-                                condition: MirBackendOperand::Constant(
-                                    MirBackendConstant::Bool(condition),
-                                ),
+                                condition: MirBackendOperand::Constant(MirBackendConstant::Bool(
+                                    condition,
+                                )),
                             },
                             destination: Some(0),
                             target: Some(1),
@@ -5031,9 +5621,10 @@ mod tests {
         ] {
             let mut program = simple_backend();
             if let MirBackendTerminator::Invoke {
-                operation: MirBackendOperation::CheckedBinary {
-                    operator: current, ..
-                },
+                operation:
+                    MirBackendOperation::CheckedBinary {
+                        operator: current, ..
+                    },
                 ..
             } = &mut program.functions[0].blocks[0].terminator
             {
@@ -5071,7 +5662,7 @@ mod tests {
     #[test]
     fn cleanup_ownership_and_async_runtime_contracts_lower_in_both_backends() {
         let (program, cases) = native_cleanup_program();
-        assert_eq!(cases.len(), 8);
+        assert_eq!(cases.len(), 16);
         let isa = cranelift_isa().expect("native Cranelift ISA should be available");
         compile_cranelift(isa.as_ref(), &program)
             .expect("cleanup, ownership and async runtime calls should lower in Cranelift");
@@ -5087,6 +5678,21 @@ mod tests {
         assert!(module.contains("@tondo_rt_await"));
         assert!(module.contains("@tondo_rt_scope_join"));
         assert!(module.contains("@tondo_rt_scope_cancel"));
+        assert!(module.contains("@tondo_rt_thread_spawn"));
+        assert!(module.contains("@tondo_rt_select_begin"));
+        assert!(module.contains("@tondo_rt_select_register_task"));
+        assert!(module.contains("@tondo_rt_select_register_join"));
+        assert!(module.contains("@tondo_rt_select_register_oneshot"));
+        assert!(module.contains("@tondo_rt_select_register_time"));
+        assert!(module.contains("@tondo_rt_select_commit"));
+        assert!(module.contains("@tondo_rt_select_winner"));
+        assert!(module.contains("@tondo_rt_select_take"));
+        assert!(module.contains("@tondo_rt_select_rollback"));
+        assert!(module.contains("@tondo_rt_select_wakeups"));
+        assert!(module.contains("@tondo_rt_oneshot_new"));
+        assert!(module.contains("@tondo_rt_oneshot_complete"));
+        assert!(module.contains("@tondo_rt_time_new"));
+        assert!(module.contains("@tondo_rt_time_fire"));
     }
 
     #[test]

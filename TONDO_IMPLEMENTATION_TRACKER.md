@@ -111,7 +111,8 @@ baseline previo al backend. Con la conformance pública, la distribución, el
 seal S1A y el contrato D0 promovidos como evidencia técnica del draft,
 comienzan los contratos runtime-facing B0.
 `NATIVE-001` queda después de la compuerta de diagnóstico y mantiene la
-selección pendiente hasta medir candidatos reales; su siguiente frontera es
+selección pendiente hasta medir candidatos reales; la slice de selección
+runtime se cerró en `NATIVE-SELECT-001`, y la siguiente frontera de lowering es
 `NATIVE-BACKEND-ADAPTER-001`.
 FUZZ está promovido para los 22 owners; la distribución está promovida y el
 seal S1A está cerrado como bundle técnico del draft, sin sobreafirmar G5, N1,
@@ -2504,8 +2505,8 @@ adapters de streams y el worker OS nativo permanecen como leaves independientes.
   casos públicos de selección y 32 observaciones exactas idénticas por caso.
   El informe reproducible vive en
   `target/reliability/evidence/async-select-conformance.json`. Esto cierra la
-  conformidad hosted de la VM; los requisitos nativos permanecen explícitamente
-  pendientes en `NATIVE-SELECT-001`.
+  conformidad hosted de la VM; la paridad nativa de selección runtime queda
+  cerrada por `NATIVE-SELECT-001`.
 
 - [ ] **NATIVE-THREAD-001 — Mapear la lane `Thread` a workers OS en el backend
   nativo.** La VM bootstrap conserva semántica cooperativa determinista; el
@@ -2533,8 +2534,9 @@ adapters de streams y el worker OS nativo permanecen como leaves independientes.
   conserva la espera implícita sin duplicar API.
 - [x] `select` compromete exactamente un brazo y conserva owners perdedores;
   modelo/tests, adapters, presupuesto de rendimiento y conformidad VM
-  promocionada están cerrados para el target hosted. La paridad nativa sigue
-  siendo responsabilidad de `NATIVE-SELECT-001`.
+  promocionada están cerrados para el target hosted. La slice nativa de
+  selección runtime está cerrada por `NATIVE-SELECT-001`; la ampliación del
+  lowering a familias MIR restantes sigue en `NATIVE-BACKEND-ADAPTER-001`.
 
 ---
 
@@ -5670,11 +5672,23 @@ pueden retrasar el primer backend correcto.
   `async-cancel-wake-rejected` y las pruebas unitarias de transiciones inválidas
   del runtime seguro.
 
-- [ ] **NATIVE-SELECT-001 — Implementar selección atómica nativa.** Bajar la
-  misma máquina prepare/register/commit/rollback de la VM, integrar wakeups de
-  task/thread y adapters de time/one-shot/Join, preservar fairness y ownership
-  por rama y ejecutar el corpus `ASYNC-SELECT-VM-CONF-001` sin sustituirlo por
-  polling, carreras de tasks o bloqueo de workers.
+- [x] **NATIVE-SELECT-001 — Implementar selección atómica nativa.** La misma
+  máquina prepare/register/commit/rollback de la VM está bajada a la ABI nativa
+  con un límite de 64 brazos y una linearización de un solo lock. Integra
+  wakeups de task/thread y adapters de time/one-shot/Join, conserva fairness
+  round-robin y ownership por rama, y rechaza fases, fuentes, capacidades y
+  registros duplicados inválidos. El commit pendiente no hace polling ni
+  bloquea workers; `else`, rollback y `take` mantienen las reglas de ownership
+  de la VM. Ocho casos ejecutables (`select-ready-join`, `select-pending-wakeup`,
+  `select-round-robin`, `select-rollback-ownership`, `select-oneshot`,
+  `select-time`, `select-thread-join`, `select-else`) pasan en Cranelift y LLVM
+  y se comparan con el corpus VM `ASYNC-SELECT-VM-CONF-001`. Evidencia:
+  `testing/native-select.json`, `docs/contracts/native-abi.md`,
+  `docs/contracts/native-evaluation.md`, `scripts/native-select-{check,test}.sh`
+  y el campo `native_select_runs` de
+  `target/reliability/evidence/native-evaluation-runner.json`. El shim C es
+  solo un arnés diferencial determinista; no sustituye al runtime ni decide el
+  backend final.
 
 - [ ] **NATIVE-LOWER-DEBUG-001 — Preservar identidad y source maps.** Relacionar
   MIR, código nativo, pánicos, diagnostics y dumps con símbolos, unwind y
@@ -7054,8 +7068,9 @@ hasta el primer candidato real. Wave 5/S1A queda cerrada como draft técnico
 por `STD-S1A-SEAL-001`;
 la superficie ejecutable está verificada en 214/214 firmas y FUZZ está promovido
 22/22; la auditoría ya incluye los efectos `selectable`, la conformidad hosted
-del selector está ratcheteada y la paridad nativa sigue reservada a
-`NATIVE-SELECT-001`.
+del selector está ratcheteada y la slice de selección runtime nativa está
+cerrada por `NATIVE-SELECT-001`; la selección del backend y el resto de familias
+MIR siguen reservados a `NATIVE-001`/`NATIVE-BACKEND-ADAPTER-001`.
 `CONF-GAP-IMPL-001` y `CONF-LAYER-RESULT-001` producen la trazabilidad y el
 resultado compuesto vivos. `CONF-SEAL-FINAL-001` permanece pendiente para el
 primer release. `STD-IMPL-001`, `STD-IMPL-002` y `STD-CODEC-PUBLIC-001` están cerrados;

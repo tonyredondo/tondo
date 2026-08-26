@@ -318,6 +318,10 @@ else
                 bash scripts/native-evaluation-runner-check.sh
             run native-evaluation-runner-tests \
                 bash scripts/native-evaluation-runner-test.sh
+            run native-select-contract \
+                bash scripts/native-select-check.sh
+            run native-select-tests \
+                bash scripts/native-select-test.sh
             run native-evaluation-adapter-check \
                 cargo check --manifest-path tools/native-evaluation/Cargo.toml --locked
         fi

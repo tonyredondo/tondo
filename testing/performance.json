@@ -242,7 +242,7 @@
       "suite": "stdlib-0.1a",
       "class": "small",
       "fixture_path": "tests/runtime/m11-std-core-002.to",
-      "fixture_sha256": "732b8845e7d451420b2ee0c287fa7001028b986c6c7f5f4e4bc483ab41c58949",
+      "fixture_sha256": "e15e13d91f22516f3a5fa986e34fd25f96b4da3ad5579204769f740def51de7f",
       "backend_scope": ["vm-hosted"],
       "std_0_1a": true,
       "dimensions": ["code_size", "startup", "throughput", "latency", "allocation_count", "allocated_bytes", "peak_memory", "retain_operations", "release_operations", "pause_time"],

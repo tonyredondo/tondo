@@ -30,8 +30,8 @@ jq -e '
       ambient_path_lookup: "forbidden",
       physical_paths_in_report: "forbidden"
   }
-  and .native_semantics == "scalar-and-managed-result-checked-arithmetic-control-flow-host-calls-cleanup-ownership-async-and-traps"
-  and (.negative_cases | length == 9)
+  and .native_semantics == "scalar-and-managed-result-checked-arithmetic-control-flow-host-calls-cleanup-ownership-async-select-and-traps"
+  and (.negative_cases | length == 10)
 ' "$contract" >/dev/null || die "invalid runner contract"
 
 for path in \
@@ -53,7 +53,9 @@ grep -Fq 'native_managed_runs' tools/native-evaluation/src/main.rs \
     || die "adapter does not report managed native results"
 grep -Fq 'native_runtime_runs' tools/native-evaluation/src/main.rs \
     || die "adapter does not report runtime contract results"
-grep -Fq 'scalar-managed-and-runtime-native-executable-vs-vm-and-contract' \
+grep -Fq 'native_select_runs' tools/native-evaluation/src/main.rs \
+    || die "adapter does not report native selection results"
+grep -Fq 'scalar-managed-runtime-and-select-native-executable-vs-vm-and-contract' \
     tools/native-evaluation/src/main.rs \
     || die "adapter has no executable scalar evidence state"
 

@@ -22,7 +22,18 @@ line_records() {
             next
         }
         /^[+]/ && !/^\+\+\+/ {
-            if (remaining > 0) { print file "\t" line; line++; remaining-- }
+            if (remaining > 0) {
+                added = substr($0, 2)
+                # LLVM can attach zero-count regions to structural-only lines
+                # (closing braces and similar formatting). They have no
+                # executable statement to cover, so do not turn them into a
+                # false changed-line failure.
+                if (added !~ /^[[:space:]]*[{}][[:space:]]*$/) {
+                    print file "\t" line
+                }
+                line++
+                remaining--
+            }
             next
         }
         /^ / { if (remaining > 0) { line++; remaining-- } }
@@ -41,6 +52,7 @@ jq -r '
     .data[0].files[]
     | .filename as $file
     | .segments[]?
+    | select(.[3] == true)
     | [$file, .[0], .[2]]
     | @tsv
 ' "$coverage_file" > "$coverage_map"

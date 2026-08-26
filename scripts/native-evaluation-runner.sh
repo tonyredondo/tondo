@@ -13,6 +13,8 @@ die() {
 scripts/native-evaluation-runner-check.sh
 scripts/native-evaluation-check.sh
 scripts/native-evaluation-fast-check.sh
+scripts/native-select-check.sh
+scripts/native-select-test.sh
 
 llvm_tool="${TONDO_LLVM_LLC:-/usr/bin/llc}"
 cc_tool="${TONDO_NATIVE_CC:-/usr/bin/cc}"
@@ -61,7 +63,7 @@ jq -e '
   and .phase == "NATIVE-001"
   and .status == "passed"
   and .adapter.format == "tondo-mir-backend/1"
-  and .correctness.native_semantics == "scalar-managed-and-runtime-native-executable-vs-vm-and-contract"
+  and .correctness.native_semantics == "scalar-managed-runtime-and-select-native-executable-vs-vm-and-contract"
   and ([.native_runs[] | select(.cranelift == "passed" and .llvm == "passed")] | length >= 1)
   and ([.native_runs[] | select(.oracle_status == "trapped")] | length >= 1)
   and all(.native_runs[];
@@ -98,6 +100,14 @@ jq -e '
   and ([.native_runtime_runs[] | select(.case == "async-scope-cancel" and .expected_result == 2 and .cranelift == "passed" and .llvm == "passed")] | length == 1)
   and ([.native_runtime_runs[] | select(.case == "async-task-progress" and .expected_result == 1 and .cranelift == "passed" and .llvm == "passed")] | length == 1)
   and ([.native_runtime_runs[] | select(.case == "async-cancel-wake-rejected" and .expected_result == 3 and .cranelift == "passed" and .llvm == "passed")] | length == 1)
+  and ([.native_select_runs[] | select(.case == "select-ready-join" and .expected_result == 11 and .cranelift == "passed" and .llvm == "passed")] | length == 1)
+  and ([.native_select_runs[] | select(.case == "select-pending-wakeup" and .expected_result == 22 and .cranelift == "passed" and .llvm == "passed")] | length == 1)
+  and ([.native_select_runs[] | select(.case == "select-round-robin" and .expected_result == 1 and .cranelift == "passed" and .llvm == "passed")] | length == 1)
+  and ([.native_select_runs[] | select(.case == "select-rollback-ownership" and .expected_result == 2 and .cranelift == "passed" and .llvm == "passed")] | length == 1)
+  and ([.native_select_runs[] | select(.case == "select-oneshot" and .expected_result == 61 and .cranelift == "passed" and .llvm == "passed")] | length == 1)
+  and ([.native_select_runs[] | select(.case == "select-time" and .expected_result == 63 and .cranelift == "passed" and .llvm == "passed")] | length == 1)
+  and ([.native_select_runs[] | select(.case == "select-thread-join" and .expected_result == 74 and .cranelift == "passed" and .llvm == "passed")] | length == 1)
+  and ([.native_select_runs[] | select(.case == "select-else" and .expected_result == 8 and .cranelift == "passed" and .llvm == "passed")] | length == 1)
 ' "$report" >/dev/null || die "runner report did not prove native execution"
 
 ! grep -Fq "$root" "$report" || die "runner report leaked a physical workspace path"

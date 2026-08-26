@@ -1,0 +1,86 @@
+{
+  "format": "tondo-native-select/1",
+  "owner": "toolchain.native_runtime",
+  "edition": "0.1",
+  "task": "NATIVE-SELECT-001",
+  "status": "closed",
+  "implementation": {
+    "runtime": "crates/tondo-native-runtime/src/lib.rs",
+    "native_adapter": "tools/native-evaluation/src/main.rs",
+    "evidence": "target/reliability/evidence/native-evaluation-runner.json",
+    "report_field": "native_select_runs"
+  },
+  "machine": {
+    "phases": ["preparing", "waiting", "committed", "consumed", "else", "rolled-back"],
+    "prepare": "select-begin",
+    "register": [
+      "select-register-task",
+      "select-register-join",
+      "select-register-oneshot",
+      "select-register-time"
+    ],
+    "commit": "select-commit",
+    "rollback": "select-rollback",
+    "max_arms": 64,
+    "commit_linearization": "one-lock-round-robin-scan",
+    "pending": "returns-not-ready-and-keeps-registration-live",
+    "else": "returns-select-else-and-discards-owned-arms",
+    "duplicate_registration": "rejected-before-commit"
+  },
+  "sources": {
+    "task": "pending-ready-cancelled-joined",
+    "thread": "same-join-state-machine-with-worker-owned-handle",
+    "join": "borrowed-task-owner-consumed-only-by-winning-take",
+    "oneshot": "exactly-one-completion-with-wakeup",
+    "time": "scheduler-fire-transition-with-wakeup"
+  },
+  "ownership": {
+    "winning_arm": "select-take-consumes-the-source-once",
+    "losing_owned_arm": "ready-source-is-discarded-and-pending-source-is-cancelled",
+    "losing_join_arm": "remains-owned-by-the-caller",
+    "rollback": "discards-owned-sources-and-preserves-borrowed-sources"
+  },
+  "fairness": {
+    "policy": "process-local-round-robin",
+    "rotation": "advances-after-commit-or-else",
+    "same_ready_set": "successive-commits-start-at-the-next-arm"
+  },
+  "wakeup": {
+    "task": "task-wake-notifies-waiting-selections",
+    "oneshot": "oneshot-complete-or-cancel-notifies-waiting-selections",
+    "time": "time-fire-notifies-waiting-selections",
+    "blocking": false,
+    "polling_substitute": false
+  },
+  "corpus": {
+    "vm_contract": "testing/async-select-conformance.json",
+    "required_cases": [
+      "concurrency/select-runtime",
+      "concurrency/select-join-runtime",
+      "concurrency/select-join-loser-runtime"
+    ],
+    "native_cases": [
+      "select-ready-join",
+      "select-pending-wakeup",
+      "select-round-robin",
+      "select-rollback-ownership",
+      "select-oneshot",
+      "select-time",
+      "select-thread-join",
+      "select-else"
+    ],
+    "oracle": "same-VM-selection-observables-and-ownership-rules"
+  },
+  "negative_cases": [
+    "zero-or-over-capacity",
+    "wrong-source-kind",
+    "duplicate-arm",
+    "registration-after-wait",
+    "commit-before-all-arms",
+    "take-before-commit",
+    "double-take",
+    "rollback-after-commit",
+    "wake-after-cancel"
+  ],
+  "next_blocks": ["NATIVE-LOWER-DEBUG-001", "NATIVE-002"]
+}

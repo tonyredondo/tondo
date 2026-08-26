@@ -137,6 +137,22 @@ unfinished children, and polling observes the pending-to-ready transition.
 An attempted wake after cancellation is rejected. Each case starts with a new
 runtime table, so no task, scope or cancellation state can leak between cases.
 
+The native selection slice is exercised in the same fresh-process runtime lane.
+`select-begin`/register/commit/rollback are called through the private ABI and
+compared with the VM selection observables: a ready borrowed `Join`, pending
+wakeup, round-robin rotation, ownership-safe rollback, one-shot completion,
+timer firing, thread join and `else`. The report exposes these eight cases in
+`native_select_runs`; every case must pass in both Cranelift and LLVM and carry
+the expected result. The contract also checks the three VM corpus cases in
+`testing/async-select-conformance.json`, the 64-arm bound, one-lock
+linearization, wakeup edges and the distinction between owned and borrowed
+losers. The adapter never races tasks, polls a source or blocks a worker to
+implement selection. Static and negative checks are in
+[`scripts/native-select-check.sh`](../../scripts/native-select-check.sh) and
+[`scripts/native-select-test.sh`](../../scripts/native-select-test.sh), with
+the machine-readable boundary in
+[`testing/native-select.json`](../../testing/native-select.json).
+
 ## Evaluation matrix
 
 The selection records the dimensions that must be evidenced before promotion:

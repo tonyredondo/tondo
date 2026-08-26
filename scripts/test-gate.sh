@@ -187,6 +187,10 @@ run_step native-evaluation-runner-contract \
     scripts/native-evaluation-runner-check.sh
 run_step native-evaluation-runner-contract-tests \
     scripts/native-evaluation-runner-test.sh
+run_step native-select-contract \
+    scripts/native-select-check.sh
+run_step native-select-contract-tests \
+    scripts/native-select-test.sh
 run_step stdlib-json-contract \
     scripts/stdlib-json-check.sh
 run_step stdlib-messagepack-contract \
