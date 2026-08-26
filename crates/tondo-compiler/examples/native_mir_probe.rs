@@ -314,7 +314,13 @@ fn managed_case_arguments_for_function(
         .parameter_types
         .iter()
         .enumerate()
-        .map(|(index, ty)| if ty == "Bool" { i64::from(index % 2 == 0) } else { 20 + index as i64 })
+        .map(|(index, ty)| {
+            if ty == "Bool" {
+                i64::from(index % 2 == 0)
+            } else {
+                20 + index as i64
+            }
+        })
         .collect::<Vec<_>>();
     let mut cases = vec![nominal];
     if function.parameter_types.len() == 1 && function.parameter_types[0] == "Bool" {
@@ -327,11 +333,17 @@ fn managed_value_summary(value: &RuntimeValue) -> (Option<u64>, Option<i64>, Opt
     match value {
         RuntimeValue::OptionNone => (Some(0), None, None),
         RuntimeValue::OptionSome(value) => scalar_payload(value)
-            .map_or((Some(1), None, None), |(payload, text)| (Some(1), payload, text)),
+            .map_or((Some(1), None, None), |(payload, text)| {
+                (Some(1), payload, text)
+            }),
         RuntimeValue::ResultOk(value) => scalar_payload(value)
-            .map_or((Some(2), None, None), |(payload, text)| (Some(2), payload, text)),
+            .map_or((Some(2), None, None), |(payload, text)| {
+                (Some(2), payload, text)
+            }),
         RuntimeValue::ResultErr(value) => scalar_payload(value)
-            .map_or((Some(3), None, None), |(payload, text)| (Some(3), payload, text)),
+            .map_or((Some(3), None, None), |(payload, text)| {
+                (Some(3), payload, text)
+            }),
         _ => (None, None, None),
     }
 }
@@ -347,7 +359,8 @@ fn scalar_payload(value: &RuntimeValue) -> Option<(Option<i64>, Option<String>)>
 
 fn string_payload(value: &str) -> i64 {
     (value.bytes().fold(0xcbf29ce484222325_u64, |hash, byte| {
-        hash.wrapping_mul(0x100000001b3).wrapping_add(u64::from(byte))
+        hash.wrapping_mul(0x100000001b3)
+            .wrapping_add(u64::from(byte))
     }) & ((1_u64 << 56) - 1)) as i64
 }
 

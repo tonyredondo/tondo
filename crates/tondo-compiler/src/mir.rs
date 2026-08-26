@@ -331,11 +331,17 @@ pub enum MirBackendRvalue {
 #[serde(deny_unknown_fields)]
 pub enum MirBackendOperand {
     Constant(MirBackendConstant),
-    Local { index: u32 },
+    Local {
+        index: u32,
+    },
     /// A verified read-only borrow of a direct scalar local. The adapter
     /// lowers this as a value read and never materializes its address.
-    Borrow { index: u32 },
-    Unsupported { kind: String },
+    Borrow {
+        index: u32,
+    },
+    Unsupported {
+        kind: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -595,23 +601,27 @@ fn backend_block(
                 arguments: Vec::new(),
             },
             MirStatementKind::RetargetCleanup { from, to } => MirBackendStatement::Runtime {
-                kind: format!("retarget-cleanup:{}:{}", from.local().index(), to.local().index()),
+                kind: format!(
+                    "retarget-cleanup:{}:{}",
+                    from.local().index(),
+                    to.local().index()
+                ),
                 arguments: Vec::new(),
             },
-            MirStatementKind::DisarmCleanup(place) if kind == "cleanup" => MirBackendStatement::Runtime {
-                kind: format!("disarm-cleanup:{}", place.local().index()),
-                arguments: Vec::new(),
-            },
+            MirStatementKind::DisarmCleanup(place) if kind == "cleanup" => {
+                MirBackendStatement::Runtime {
+                    kind: format!("disarm-cleanup:{}", place.local().index()),
+                    arguments: Vec::new(),
+                }
+            }
             MirStatementKind::BeginSelect { capacity } => MirBackendStatement::Runtime {
                 kind: format!("begin-select:{capacity}"),
                 arguments: Vec::new(),
             },
-            MirStatementKind::RegisterSelectArm { index, .. } => {
-                MirBackendStatement::Runtime {
-                    kind: format!("register-select-arm:{index}"),
-                    arguments: Vec::new(),
-                }
-            }
+            MirStatementKind::RegisterSelectArm { index, .. } => MirBackendStatement::Runtime {
+                kind: format!("register-select-arm:{index}"),
+                arguments: Vec::new(),
+            },
             MirStatementKind::DisarmCleanup(_) if kind == "normal" => MirBackendStatement::Marker {
                 kind: "disarm-cleanup".to_owned(),
             },
@@ -1040,7 +1050,9 @@ fn backend_rvalue(value: &MirRvalue, unsupported: &mut Vec<String>) -> MirBacken
 }
 
 fn backend_type_name(interner: &TypeInterner, ty: TypeId) -> String {
-    interner.canonical(ty).unwrap_or_else(|_| "unknown".to_owned())
+    interner
+        .canonical(ty)
+        .unwrap_or_else(|_| "unknown".to_owned())
 }
 
 fn is_native_carrier_type(name: &str) -> bool {

@@ -199,7 +199,11 @@ impl State {
         let Some(frame_state) = self.frames.get_mut(&frame) else {
             return STATUS_INVALID_HANDLE;
         };
-        if frame_state.defers.iter().any(|defer| defer.id == id && defer.active) {
+        if frame_state
+            .defers
+            .iter()
+            .any(|defer| defer.id == id && defer.active)
+        {
             return STATUS_INVALID_TRANSITION;
         }
         frame_state.defers.push(DeferSlot { id, active: true });
@@ -210,7 +214,11 @@ impl State {
         let Some(frame_state) = self.frames.get_mut(&frame) else {
             return STATUS_INVALID_HANDLE;
         };
-        let Some(defer) = frame_state.defers.iter_mut().rev().find(|defer| defer.id == id && defer.active)
+        let Some(defer) = frame_state
+            .defers
+            .iter_mut()
+            .rev()
+            .find(|defer| defer.id == id && defer.active)
         else {
             return STATUS_DOUBLE_CLEANUP;
         };
@@ -293,10 +301,22 @@ impl State {
 
     fn task_poll(&self, task: u64) -> u64 {
         match self.object(task) {
-            Some(Object::Task { state: TaskState::Pending, .. }) => 0,
-            Some(Object::Task { state: TaskState::Ready, .. }) => 1,
-            Some(Object::Task { state: TaskState::Cancelled, .. }) => 2,
-            Some(Object::Task { state: TaskState::Joined, .. }) => 3,
+            Some(Object::Task {
+                state: TaskState::Pending,
+                ..
+            }) => 0,
+            Some(Object::Task {
+                state: TaskState::Ready,
+                ..
+            }) => 1,
+            Some(Object::Task {
+                state: TaskState::Cancelled,
+                ..
+            }) => 2,
+            Some(Object::Task {
+                state: TaskState::Joined,
+                ..
+            }) => 3,
             None => STATUS_INVALID_HANDLE,
             _ => STATUS_INVALID_HANDLE,
         }
@@ -336,7 +356,9 @@ fn state() -> &'static Mutex<State> {
 }
 
 fn with_state<T>(function: impl FnOnce(&mut State) -> T) -> T {
-    let mut state = state().lock().expect("native runtime state is not poisoned");
+    let mut state = state()
+        .lock()
+        .expect("native runtime state is not poisoned");
     function(&mut state)
 }
 
