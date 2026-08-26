@@ -16,7 +16,7 @@
     "ambient_path_lookup": "forbidden",
     "physical_paths_in_report": "forbidden"
   },
-  "native_semantics": "scalar-and-managed-result-checked-arithmetic-control-flow-host-calls-cleanup-and-traps",
+  "native_semantics": "scalar-and-managed-result-checked-arithmetic-control-flow-host-calls-cleanup-ownership-async-and-traps",
   "negative_cases": [
     "missing-normalized-mir",
     "unsupported-function-without-trap",
@@ -25,6 +25,7 @@
     "physical-path-in-report",
     "managed-result-tag-or-payload-mismatch",
     "cleanup-not-exactly-once-or-abort-not-cleaned",
-    "ownership-cow-or-release-mismatch"
+    "ownership-cow-or-release-mismatch",
+    "async-scope-cancellation-or-wake-mismatch"
   ]
 }

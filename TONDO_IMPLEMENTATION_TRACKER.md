@@ -5658,11 +5658,17 @@ pueden retrasar el primer backend correcto.
   proyecciones/escapes se rechazan. Evidencia: `run_native_runtime_probe`,
   `tondo-native-runtime` y el contrato de memoria.
 
-- [ ] **NATIVE-LOWER-ASYNC-001 — Lowering de async estructurado.** El contrato
-  ya fija publicación de roots antes de suspender y el registro frame/task/waker;
-  `await`, `spawn`, scopes y cleanup siguen siendo explícitamente unsupported en
-  el adapter escalar. Falta conservar frames, suspensión, wakeups, scopes,
-  cancelación y cleanup bajo una ABI ejecutable y con paridad VM/native.
+- [x] **NATIVE-LOWER-ASYNC-001 — Lowering de async estructurado.** El contrato
+  fija publicación de roots antes de suspender y el registro frame/task/waker.
+  Las operaciones runtime de `scope-enter`, `scope-spawn`, `task-spawn`,
+  `task-poll`, `task-wake`, `await`, `scope-join` y `scope-cancel` se bajan en
+  Cranelift y LLVM. El runner ejecuta await de una tarea despertada, join
+  estructurado, cancelación de scope antes del estado terminal y transición
+  pending→ready, con cancelación propagada a las tareas del scope. Evidencia:
+  casos `async-await`, `async-structured-join`, `async-scope-cancel` y
+  `async-task-progress` de `run_native_runtime_probe`, además del negativo
+  `async-cancel-wake-rejected` y las pruebas unitarias de transiciones inválidas
+  del runtime seguro.
 
 - [ ] **NATIVE-SELECT-001 — Implementar selección atómica nativa.** Bajar la
   misma máquina prepare/register/commit/rollback de la VM, integrar wakeups de

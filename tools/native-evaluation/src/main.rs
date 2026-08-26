@@ -2371,10 +2371,346 @@ fn native_cleanup_program() -> (MirBackendProgram, Vec<RuntimeContractCase>) {
             },
         ],
     };
+    let async_await_function = MirBackendFunction {
+        ordinal: 103,
+        parameters: Vec::new(),
+        parameter_types: Vec::new(),
+        return_local: 0,
+        return_type: "Int".to_owned(),
+        supported: true,
+        blocks: vec![
+            MirBackendBlock {
+                ordinal: 0,
+                kind: "normal".to_owned(),
+                statements: Vec::new(),
+                terminator: MirBackendTerminator::Invoke {
+                    operation: MirBackendOperation::Runtime {
+                        kind: "task-spawn".to_owned(),
+                        arguments: vec![constant("77"), constant("1")],
+                    },
+                    destination: Some(1),
+                    target: Some(1),
+                },
+            },
+            MirBackendBlock {
+                ordinal: 1,
+                kind: "normal".to_owned(),
+                statements: Vec::new(),
+                terminator: MirBackendTerminator::Invoke {
+                    operation: MirBackendOperation::Runtime {
+                        kind: "task-wake".to_owned(),
+                        arguments: vec![runtime_operand(1)],
+                    },
+                    destination: Some(2),
+                    target: Some(2),
+                },
+            },
+            MirBackendBlock {
+                ordinal: 2,
+                kind: "normal".to_owned(),
+                statements: Vec::new(),
+                terminator: MirBackendTerminator::Invoke {
+                    operation: MirBackendOperation::Runtime {
+                        kind: "await".to_owned(),
+                        arguments: vec![runtime_operand(1)],
+                    },
+                    destination: Some(0),
+                    target: Some(3),
+                },
+            },
+            MirBackendBlock {
+                ordinal: 3,
+                kind: "normal".to_owned(),
+                statements: Vec::new(),
+                terminator: MirBackendTerminator::Return,
+            },
+        ],
+    };
+    let structured_join_function = MirBackendFunction {
+        ordinal: 104,
+        parameters: Vec::new(),
+        parameter_types: Vec::new(),
+        return_local: 0,
+        return_type: "Int".to_owned(),
+        supported: true,
+        blocks: vec![
+            MirBackendBlock {
+                ordinal: 0,
+                kind: "normal".to_owned(),
+                statements: Vec::new(),
+                terminator: MirBackendTerminator::Invoke {
+                    operation: MirBackendOperation::Runtime {
+                        kind: "scope-enter".to_owned(),
+                        arguments: Vec::new(),
+                    },
+                    destination: Some(1),
+                    target: Some(1),
+                },
+            },
+            MirBackendBlock {
+                ordinal: 1,
+                kind: "normal".to_owned(),
+                statements: Vec::new(),
+                terminator: MirBackendTerminator::Invoke {
+                    operation: MirBackendOperation::Runtime {
+                        kind: "scope-spawn".to_owned(),
+                        arguments: vec![runtime_operand(1), constant("88"), constant("1")],
+                    },
+                    destination: Some(2),
+                    target: Some(2),
+                },
+            },
+            MirBackendBlock {
+                ordinal: 2,
+                kind: "normal".to_owned(),
+                statements: Vec::new(),
+                terminator: MirBackendTerminator::Invoke {
+                    operation: MirBackendOperation::Runtime {
+                        kind: "task-wake".to_owned(),
+                        arguments: vec![runtime_operand(2)],
+                    },
+                    destination: Some(3),
+                    target: Some(3),
+                },
+            },
+            MirBackendBlock {
+                ordinal: 3,
+                kind: "normal".to_owned(),
+                statements: Vec::new(),
+                terminator: MirBackendTerminator::Invoke {
+                    operation: MirBackendOperation::Runtime {
+                        kind: "scope-join".to_owned(),
+                        arguments: vec![runtime_operand(1), runtime_operand(2)],
+                    },
+                    destination: Some(0),
+                    target: Some(4),
+                },
+            },
+            MirBackendBlock {
+                ordinal: 4,
+                kind: "normal".to_owned(),
+                statements: Vec::new(),
+                terminator: MirBackendTerminator::Return,
+            },
+        ],
+    };
+    let async_cancel_function = MirBackendFunction {
+        ordinal: 105,
+        parameters: Vec::new(),
+        parameter_types: Vec::new(),
+        return_local: 0,
+        return_type: "Int".to_owned(),
+        supported: true,
+        blocks: vec![
+            MirBackendBlock {
+                ordinal: 0,
+                kind: "normal".to_owned(),
+                statements: Vec::new(),
+                terminator: MirBackendTerminator::Invoke {
+                    operation: MirBackendOperation::Runtime {
+                        kind: "scope-enter".to_owned(),
+                        arguments: Vec::new(),
+                    },
+                    destination: Some(1),
+                    target: Some(1),
+                },
+            },
+            MirBackendBlock {
+                ordinal: 1,
+                kind: "normal".to_owned(),
+                statements: Vec::new(),
+                terminator: MirBackendTerminator::Invoke {
+                    operation: MirBackendOperation::Runtime {
+                        kind: "scope-spawn".to_owned(),
+                        arguments: vec![runtime_operand(1), constant("99"), constant("1")],
+                    },
+                    destination: Some(2),
+                    target: Some(2),
+                },
+            },
+            MirBackendBlock {
+                ordinal: 2,
+                kind: "normal".to_owned(),
+                statements: Vec::new(),
+                terminator: MirBackendTerminator::Invoke {
+                    operation: MirBackendOperation::Runtime {
+                        kind: "scope-cancel".to_owned(),
+                        arguments: vec![runtime_operand(1)],
+                    },
+                    destination: Some(3),
+                    target: Some(3),
+                },
+            },
+            MirBackendBlock {
+                ordinal: 3,
+                kind: "normal".to_owned(),
+                statements: Vec::new(),
+                terminator: MirBackendTerminator::Invoke {
+                    operation: MirBackendOperation::Runtime {
+                        kind: "task-poll".to_owned(),
+                        arguments: vec![runtime_operand(2)],
+                    },
+                    destination: Some(0),
+                    target: Some(4),
+                },
+            },
+            MirBackendBlock {
+                ordinal: 4,
+                kind: "normal".to_owned(),
+                statements: Vec::new(),
+                terminator: MirBackendTerminator::Return,
+            },
+        ],
+    };
+    let task_progress_function = MirBackendFunction {
+        ordinal: 106,
+        parameters: Vec::new(),
+        parameter_types: Vec::new(),
+        return_local: 0,
+        return_type: "Int".to_owned(),
+        supported: true,
+        blocks: vec![
+            MirBackendBlock {
+                ordinal: 0,
+                kind: "normal".to_owned(),
+                statements: Vec::new(),
+                terminator: MirBackendTerminator::Invoke {
+                    operation: MirBackendOperation::Runtime {
+                        kind: "task-spawn".to_owned(),
+                        arguments: vec![constant("1"), constant("1")],
+                    },
+                    destination: Some(1),
+                    target: Some(1),
+                },
+            },
+            MirBackendBlock {
+                ordinal: 1,
+                kind: "normal".to_owned(),
+                statements: Vec::new(),
+                terminator: MirBackendTerminator::Invoke {
+                    operation: MirBackendOperation::Runtime {
+                        kind: "task-poll".to_owned(),
+                        arguments: vec![runtime_operand(1)],
+                    },
+                    destination: Some(2),
+                    target: Some(2),
+                },
+            },
+            MirBackendBlock {
+                ordinal: 2,
+                kind: "normal".to_owned(),
+                statements: Vec::new(),
+                terminator: MirBackendTerminator::Invoke {
+                    operation: MirBackendOperation::Runtime {
+                        kind: "task-wake".to_owned(),
+                        arguments: vec![runtime_operand(1)],
+                    },
+                    destination: Some(3),
+                    target: Some(3),
+                },
+            },
+            MirBackendBlock {
+                ordinal: 3,
+                kind: "normal".to_owned(),
+                statements: Vec::new(),
+                terminator: MirBackendTerminator::Invoke {
+                    operation: MirBackendOperation::Runtime {
+                        kind: "task-poll".to_owned(),
+                        arguments: vec![runtime_operand(1)],
+                    },
+                    destination: Some(0),
+                    target: Some(4),
+                },
+            },
+            MirBackendBlock {
+                ordinal: 4,
+                kind: "normal".to_owned(),
+                statements: Vec::new(),
+                terminator: MirBackendTerminator::Return,
+            },
+        ],
+    };
+    let async_cancel_wake_function = MirBackendFunction {
+        ordinal: 107,
+        parameters: Vec::new(),
+        parameter_types: Vec::new(),
+        return_local: 0,
+        return_type: "Int".to_owned(),
+        supported: true,
+        blocks: vec![
+            MirBackendBlock {
+                ordinal: 0,
+                kind: "normal".to_owned(),
+                statements: Vec::new(),
+                terminator: MirBackendTerminator::Invoke {
+                    operation: MirBackendOperation::Runtime {
+                        kind: "scope-enter".to_owned(),
+                        arguments: Vec::new(),
+                    },
+                    destination: Some(1),
+                    target: Some(1),
+                },
+            },
+            MirBackendBlock {
+                ordinal: 1,
+                kind: "normal".to_owned(),
+                statements: Vec::new(),
+                terminator: MirBackendTerminator::Invoke {
+                    operation: MirBackendOperation::Runtime {
+                        kind: "scope-spawn".to_owned(),
+                        arguments: vec![runtime_operand(1), constant("123"), constant("1")],
+                    },
+                    destination: Some(2),
+                    target: Some(2),
+                },
+            },
+            MirBackendBlock {
+                ordinal: 2,
+                kind: "normal".to_owned(),
+                statements: Vec::new(),
+                terminator: MirBackendTerminator::Invoke {
+                    operation: MirBackendOperation::Runtime {
+                        kind: "scope-cancel".to_owned(),
+                        arguments: vec![runtime_operand(1)],
+                    },
+                    destination: Some(3),
+                    target: Some(3),
+                },
+            },
+            MirBackendBlock {
+                ordinal: 3,
+                kind: "normal".to_owned(),
+                statements: Vec::new(),
+                terminator: MirBackendTerminator::Invoke {
+                    operation: MirBackendOperation::Runtime {
+                        kind: "task-wake".to_owned(),
+                        arguments: vec![runtime_operand(2)],
+                    },
+                    destination: Some(0),
+                    target: Some(4),
+                },
+            },
+            MirBackendBlock {
+                ordinal: 4,
+                kind: "normal".to_owned(),
+                statements: Vec::new(),
+                terminator: MirBackendTerminator::Return,
+            },
+        ],
+    };
     (
         MirBackendProgram {
             format: "tondo-mir-backend/1".to_owned(),
-            functions: vec![cleanup_function, abort_function, ownership_function],
+            functions: vec![
+                cleanup_function,
+                abort_function,
+                ownership_function,
+                async_await_function,
+                structured_join_function,
+                async_cancel_function,
+                task_progress_function,
+                async_cancel_wake_function,
+            ],
         },
         vec![
             RuntimeContractCase {
@@ -2391,6 +2727,31 @@ fn native_cleanup_program() -> (MirBackendProgram, Vec<RuntimeContractCase>) {
                 name: "ownership-cow",
                 function_ordinal: 102,
                 expectation: RuntimeExpectation::Managed { tag: 2, payload: Some(42) },
+            },
+            RuntimeContractCase {
+                name: "async-await",
+                function_ordinal: 103,
+                expectation: RuntimeExpectation::Scalar(77),
+            },
+            RuntimeContractCase {
+                name: "async-structured-join",
+                function_ordinal: 104,
+                expectation: RuntimeExpectation::Scalar(0),
+            },
+            RuntimeContractCase {
+                name: "async-scope-cancel",
+                function_ordinal: 105,
+                expectation: RuntimeExpectation::Scalar(2),
+            },
+            RuntimeContractCase {
+                name: "async-task-progress",
+                function_ordinal: 106,
+                expectation: RuntimeExpectation::Scalar(1),
+            },
+            RuntimeContractCase {
+                name: "async-cancel-wake-rejected",
+                function_ordinal: 107,
+                expectation: RuntimeExpectation::Scalar(3),
             },
         ],
     )
@@ -3005,6 +3366,7 @@ uint64_t tondo_rt_host_call(uint64_t kind, uint64_t argument) {
 uint64_t tondo_rt_scope_enter(void) { return t_alloc(2, 0, 0, 0); }
 uint64_t tondo_rt_scope_spawn(uint64_t scope, uint64_t value, uint64_t pending) {
     uint64_t scope_id = t_index(scope); if (scope_id == 0 || t_objects[scope_id].kind != 2) return 0;
+    if (t_objects[scope_id].state != 0) return 0;
     uint64_t task = t_alloc(3, 0, 0, 0); uint64_t id = t_index(task); if (id == 0) return 0;
     t_objects[id].state = pending ? 0 : 1; t_objects[id].value = value; t_objects[id].payload = scope;
     return task;
@@ -3013,12 +3375,12 @@ uint64_t tondo_rt_task_spawn(uint64_t value, uint64_t pending) {
     uint64_t task = t_alloc(3, 0, 0, 0); uint64_t id = t_index(task); if (id == 0) return 0;
     t_objects[id].state = pending ? 0 : 1; t_objects[id].value = value; return task;
 }
-uint64_t tondo_rt_task_poll(uint64_t task) { uint64_t id = t_index(task); return id != 0 && t_objects[id].kind == 3 ? t_objects[id].state + 0 : 1; }
+uint64_t tondo_rt_task_poll(uint64_t task) { uint64_t id = t_index(task); return id != 0 && t_objects[id].kind == 3 ? t_objects[id].state : UINT64_MAX; }
 uint64_t tondo_rt_task_wake(uint64_t task) { uint64_t id = t_index(task); if (id == 0 || t_objects[id].kind != 3 || t_objects[id].state >= 2) return 3; t_objects[id].state = 1; return 0; }
-uint64_t tondo_rt_task_cancel(uint64_t task) { uint64_t id = t_index(task); if (id == 0 || t_objects[id].kind != 3 || t_objects[id].state == 3) return 3; t_objects[id].state = 2; return 0; }
+uint64_t tondo_rt_task_cancel(uint64_t task) { uint64_t id = t_index(task); if (id == 0 || t_objects[id].kind != 3 || t_objects[id].state >= 2) return 3; t_objects[id].state = 2; return 0; }
 uint64_t tondo_rt_task_take(uint64_t task) { uint64_t id = t_index(task); if (id == 0 || t_objects[id].kind != 3 || t_objects[id].state != 1) { t_last = 6; return 0; } t_objects[id].state = 3; return t_objects[id].value; }
-uint64_t tondo_rt_scope_cancel(uint64_t scope) { uint64_t id = t_index(scope); if (id == 0 || t_objects[id].kind != 2) return 1; t_objects[id].state = 1; return 0; }
-uint64_t tondo_rt_scope_join(uint64_t scope, uint64_t task) { uint64_t sid = t_index(scope), tid = t_index(task); if (sid == 0 || tid == 0 || t_objects[sid].kind != 2 || t_objects[tid].kind != 3 || t_objects[tid].payload != scope) return 3; (void)tondo_rt_task_take(task); return 0; }
+uint64_t tondo_rt_scope_cancel(uint64_t scope) { uint64_t id = t_index(scope); if (id == 0 || t_objects[id].kind != 2 || t_objects[id].state != 0) return 3; for (uint64_t i = 1; i < T_MAX; ++i) if (t_objects[i].kind == 3 && t_objects[i].payload == scope && t_objects[i].state < 2) t_objects[i].state = 2; t_objects[id].state = 1; return 0; }
+uint64_t tondo_rt_scope_join(uint64_t scope, uint64_t task) { uint64_t sid = t_index(scope), tid = t_index(task); if (sid == 0 || tid == 0 || t_objects[sid].kind != 2 || t_objects[sid].state != 0 || t_objects[tid].kind != 3 || t_objects[tid].payload != scope || t_objects[tid].state != 1) return 3; (void)tondo_rt_task_take(task); return 0; }
 uint64_t tondo_rt_await(uint64_t task) { return tondo_rt_task_take(task); }
 "#.to_owned()
 }
@@ -4707,17 +5069,24 @@ mod tests {
     }
 
     #[test]
-    fn cleanup_and_ownership_runtime_contracts_lower_in_both_backends() {
+    fn cleanup_ownership_and_async_runtime_contracts_lower_in_both_backends() {
         let (program, cases) = native_cleanup_program();
-        assert_eq!(cases.len(), 3);
+        assert_eq!(cases.len(), 8);
         let isa = cranelift_isa().expect("native Cranelift ISA should be available");
         compile_cranelift(isa.as_ref(), &program)
-            .expect("cleanup and ownership runtime calls should lower in Cranelift");
+            .expect("cleanup, ownership and async runtime calls should lower in Cranelift");
         let module = llvm_module("x86_64-unknown-linux-gnu", &program)
-            .expect("cleanup and ownership runtime calls should lower in LLVM");
+            .expect("cleanup, ownership and async runtime calls should lower in LLVM");
         assert!(module.contains("@tondo_rt_frame_cleanup"));
         assert!(module.contains("@tondo_rt_cow_clone"));
         assert!(module.contains("@tondo_rt_release"));
+        assert!(module.contains("@tondo_rt_scope_enter"));
+        assert!(module.contains("@tondo_rt_scope_spawn"));
+        assert!(module.contains("@tondo_rt_task_poll"));
+        assert!(module.contains("@tondo_rt_task_wake"));
+        assert!(module.contains("@tondo_rt_await"));
+        assert!(module.contains("@tondo_rt_scope_join"));
+        assert!(module.contains("@tondo_rt_scope_cancel"));
     }
 
     #[test]

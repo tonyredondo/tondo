@@ -243,9 +243,28 @@ impl State {
     }
 
     fn task_spawn(&mut self, scope: Option<u64>, value: u64, pending: bool) -> u64 {
+        if let Some(scope) = scope {
+            match self.object(scope) {
+                Some(Object::Scope {
+                    cancelled: false, ..
+                }) => {}
+                Some(Object::Scope { .. }) => {
+                    self.last_status = STATUS_INVALID_TRANSITION;
+                    return 0;
+                }
+                _ => {
+                    self.last_status = STATUS_INVALID_HANDLE;
+                    return 0;
+                }
+            }
+        }
         let task = self.alloc(
             Object::Task {
-                state: if pending { TaskState::Pending } else { TaskState::Ready },
+                state: if pending {
+                    TaskState::Pending
+                } else {
+                    TaskState::Ready
+                },
                 value,
             },
             ObjectKind::Task,
@@ -303,7 +322,7 @@ impl State {
         let Some(Object::Task { state, .. }) = self.object_mut(task) else {
             return STATUS_INVALID_HANDLE;
         };
-        if *state == TaskState::Joined {
+        if matches!(*state, TaskState::Cancelled | TaskState::Joined) {
             return STATUS_INVALID_TRANSITION;
         }
         *state = TaskState::Cancelled;
@@ -503,7 +522,16 @@ pub extern "C" fn tondo_rt_scope_join(scope: u64, task: u64) -> u64 {
         if cancelled || !tasks.contains(&task) {
             return STATUS_INVALID_TRANSITION;
         }
-        state.task_take(task);
+        if !matches!(
+            state.object(task),
+            Some(Object::Task {
+                state: TaskState::Ready,
+                ..
+            })
+        ) {
+            return STATUS_INVALID_TRANSITION;
+        }
+        let _ = state.task_take(task);
         STATUS_OK
     })
 }
@@ -522,8 +550,16 @@ pub extern "C" fn tondo_rt_await(task: u64) -> u64 {
 mod tests {
     use super::*;
 
+    fn test_guard() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .expect("native runtime test lock is not poisoned")
+    }
+
     #[test]
     fn result_records_are_opaque_and_round_trip_payloads() {
+        let _guard = test_guard();
         tondo_rt_reset();
         let result = tondo_rt_result_new(RESULT_OK, 42, 1);
         assert!(result & HANDLE_BIT != 0);
@@ -538,6 +574,7 @@ mod tests {
 
     #[test]
     fn roots_and_cleanup_are_exactly_once() {
+        let _guard = test_guard();
         tondo_rt_reset();
         let frame = tondo_rt_frame_enter();
         let value = tondo_rt_result_new(RESULT_SOME, 9, 1);
@@ -551,6 +588,7 @@ mod tests {
 
     #[test]
     fn cow_clones_shared_values_but_reuses_unique_values() {
+        let _guard = test_guard();
         tondo_rt_reset();
         let value = tondo_rt_result_new(RESULT_OK, 1, 1);
         assert_eq!(tondo_rt_cow_clone(value), value);
@@ -564,18 +602,47 @@ mod tests {
 
     #[test]
     fn tasks_publish_wake_join_and_cancel_without_leaking_scope_state() {
+        let _guard = test_guard();
         tondo_rt_reset();
         let scope = tondo_rt_scope_enter();
         let task = tondo_rt_scope_spawn(scope, 77, 1);
         assert_eq!(tondo_rt_task_poll(task), 0);
         assert_eq!(tondo_rt_task_wake(task), STATUS_OK);
         assert_eq!(tondo_rt_task_poll(task), 1);
-        assert_eq!(tondo_rt_await(task), 77);
         assert_eq!(tondo_rt_scope_join(scope, task), STATUS_OK);
+        assert_eq!(tondo_rt_task_poll(task), 3);
 
         let cancelled = tondo_rt_scope_spawn(scope, 88, 1);
         assert_eq!(tondo_rt_scope_cancel(scope), STATUS_OK);
         assert_eq!(tondo_rt_task_poll(cancelled), 2);
         assert_eq!(tondo_rt_scope_cancel(scope), STATUS_INVALID_TRANSITION);
+        assert_eq!(tondo_rt_scope_spawn(scope, 99, 1), 0);
+    }
+
+    #[test]
+    fn await_and_cancellation_reject_invalid_task_transitions() {
+        let _guard = test_guard();
+        tondo_rt_reset();
+        let task = tondo_rt_task_spawn(41, 1);
+        assert_eq!(tondo_rt_await(task), 0);
+        assert_eq!(tondo_rt_last_status(), STATUS_NOT_READY);
+        assert_eq!(tondo_rt_task_wake(task), STATUS_OK);
+        assert_eq!(tondo_rt_await(task), 41);
+        assert_eq!(tondo_rt_await(task), 0);
+        assert_eq!(tondo_rt_last_status(), STATUS_NOT_READY);
+
+        let scope = tondo_rt_scope_enter();
+        let pending = tondo_rt_scope_spawn(scope, 52, 1);
+        assert_eq!(
+            tondo_rt_scope_join(scope, pending),
+            STATUS_INVALID_TRANSITION
+        );
+        assert_eq!(tondo_rt_scope_cancel(scope), STATUS_OK);
+        assert_eq!(tondo_rt_task_wake(pending), STATUS_INVALID_TRANSITION);
+        assert_eq!(tondo_rt_task_cancel(pending), STATUS_INVALID_TRANSITION);
+        assert_eq!(
+            tondo_rt_scope_join(scope, pending),
+            STATUS_INVALID_TRANSITION
+        );
     }
 }

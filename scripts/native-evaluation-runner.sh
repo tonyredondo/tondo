@@ -93,6 +93,11 @@ jq -e '
   and ([.native_runtime_runs[] | select(.case == "cleanup-exactly-once" and .cranelift == "passed" and .llvm == "passed")] | length == 1)
   and ([.native_runtime_runs[] | select(.case == "cleanup-abort" and .cranelift == "passed" and .llvm == "passed")] | length == 1)
   and ([.native_runtime_runs[] | select(.case == "ownership-cow" and .cranelift == "passed" and .llvm == "passed" and .expected_tag == 2 and .expected_payload == 42)] | length == 1)
+  and ([.native_runtime_runs[] | select(.case == "async-await" and .expected_result == 77 and .cranelift == "passed" and .llvm == "passed")] | length == 1)
+  and ([.native_runtime_runs[] | select(.case == "async-structured-join" and .expected_result == 0 and .cranelift == "passed" and .llvm == "passed")] | length == 1)
+  and ([.native_runtime_runs[] | select(.case == "async-scope-cancel" and .expected_result == 2 and .cranelift == "passed" and .llvm == "passed")] | length == 1)
+  and ([.native_runtime_runs[] | select(.case == "async-task-progress" and .expected_result == 1 and .cranelift == "passed" and .llvm == "passed")] | length == 1)
+  and ([.native_runtime_runs[] | select(.case == "async-cancel-wake-rejected" and .expected_result == 3 and .cranelift == "passed" and .llvm == "passed")] | length == 1)
 ' "$report" >/dev/null || die "runner report did not prove native execution"
 
 ! grep -Fq "$root" "$report" || die "runner report leaked a physical workspace path"

@@ -68,11 +68,13 @@ making a user-visible layout promise. Compiler-owned host operations use the
 same runtime boundary; host state and handles never cross as addresses. The
 probe's `load` fixture exercises both success and error result records and the
 native runner compares their tags and payloads with the VM.
-Cleanup edges and non-scalar calls remain outside the contract. Functions
-outside that slice are lowered to an explicit trap and reported as
-`unsupported`; they are never silently approximated. This is a real adapter
-boundary and backend-verifier check. The opt-in scalar runner below extends it
-with executable evidence without widening the supported MIR subset.
+Source-level cleanup graphs and non-scalar calls remain outside the scalar
+slice. Their runtime edges have dedicated cleanup, ownership and structured
+async contracts below; functions outside the supported MIR/runtime slices are
+lowered to an explicit trap and reported as `unsupported`, never silently
+approximated. This is a real adapter boundary and backend-verifier check. The
+opt-in runner below extends it with executable evidence without widening the
+source-level scalar MIR subset.
 
 ## Fast feedback lane
 
@@ -107,8 +109,10 @@ temporary paths. This proves scalar value, direct-call ABI, branch joins,
 tag-dispatch edges, loop-carried locals and exercised
 checked-overflow/explicit-panic trap parity for the scalar slice. It also calls
 supported managed-result functions and compares result discriminants and
-payload carriers. Host-call lowering uses the same result-record path. Cleanup
-and async MIR families remain open for their dedicated runtime contracts.
+payload carriers. Host-call lowering uses the same result-record path. The
+dedicated runtime contracts below extend executable evidence to cleanup,
+ownership and structured async state transitions without pretending that the
+full source-level lowering is complete.
 The normalized oracle has a fixed step budget, cyclic functions use deliberately
 small deterministic inputs, and each native subprocess has a finite runtime
 budget so an accidental infinite loop fails closed instead of hanging the
@@ -118,13 +122,20 @@ The runner also executes the private cleanup contract independently of source
 fixture support: normal frame cleanup is idempotent (the second edge returns a
 double-cleanup status) and an aborting frame leaves through the same terminal
 transition. This keeps unwind/abort behavior observable while the full
-source-level defer graph is lowered.
+source-level defer graph remains outside this scalar adapter slice.
 
 The same runtime lane exercises ownership edges: a managed result is retained,
 copy-on-written while shared, released to remove the original entry, and then
 checked through the opaque result tag/payload API. The wrapper releases the
 returned clone before exiting, so the case also checks the terminal ownership
 path rather than only comparing a value.
+
+It also executes the structured async runtime contract in fresh subprocesses:
+pending tasks transition to ready through an explicit wake, `await` takes the
+ready value, a scope joins its child task, scope cancellation propagates to
+unfinished children, and polling observes the pending-to-ready transition.
+An attempted wake after cancellation is rejected. Each case starts with a new
+runtime table, so no task, scope or cancellation state can leak between cases.
 
 ## Evaluation matrix
 

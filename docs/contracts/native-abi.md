@@ -19,6 +19,16 @@ abort; cancellation is a cleanup edge, not a hidden destructor. Async frames
 register with the task/waker registry before suspension and carry source-span,
 task/thread and crash-envelope identities for diagnostics.
 
+The structured async lowering uses opaque runtime handles and one status
+machine in both native adapters. `scope-enter` creates a scope;
+`scope-spawn` attaches a pending or ready child; `task-spawn` creates an
+unscoped child; `task-poll` observes pending, ready, cancelled or joined;
+`task-wake` performs the pending-to-ready transition; `await`/`task-take`
+consume a ready value; `scope-join` consumes a ready child belonging to an
+open scope; and `scope-cancel` closes the scope while propagating cancellation
+to unfinished children. Invalid transitions fail closed and cannot be
+silently treated as a ready value.
+
 Host handles are opaque capability-indexed values. The ABI does not expose a
 pointer, object layout, allocator, symbol name, or FFI entry point to Tondo
 source. A future public FFI would require a separate decision and versioned

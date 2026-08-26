@@ -29,13 +29,7 @@ jq -e '
   and (.invariants | length >= 8)
   and (.invariants == (.invariants | sort | unique))
   and (.negative_cases | length == 7)
-  and .next_blocks == [
-    "NATIVE-LOWER-CALLS-001",
-    "NATIVE-LOWER-CONTROL-001",
-    "NATIVE-LOWER-CLEANUP-001",
-    "NATIVE-LOWER-OWNERSHIP-001",
-    "NATIVE-LOWER-ASYNC-001"
-  ]
+  and .next_blocks == []
 ' "$contract" >/dev/null || { echo "invalid native ABI contract" >&2; exit 1; }
 
 source="$root/crates/tondo-compiler/src/toolchain.rs"

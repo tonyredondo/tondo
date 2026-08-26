@@ -28,8 +28,8 @@ jq -e '
   and .adapter == {
       format: "tondo-mir-backend/1",
       runner: "testing/native-evaluation-runner.json",
-      status: "scalar-cfg-vm-differential",
-      vm_equivalence: "scalar-cfg-only"
+      status: "scalar-and-managed-result-cfg-vm-differential",
+      vm_equivalence: "scalar-and-managed-result-cfg-only"
   }
   and .decision.selected_backend == null
   and .decision.selection_scope == "first-native-backend"
