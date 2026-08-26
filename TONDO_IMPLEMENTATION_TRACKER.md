@@ -5648,13 +5648,15 @@ pueden retrasar el primer backend correcto.
   `cleanup-abort` de `run_native_runtime_probe` y las pruebas del runtime
   nativo.
 
-- [ ] **NATIVE-LOWER-OWNERSHIP-001 — Lowering de ownership y préstamos.** La
-  frontera de ABI ya reserva los edges MIR y la política de memoria define
-  retains/releases, weak edges y COW; la slice scalar no inventa layouts ni
-  aproxima valores administrados. La slice escalar ya admite borrows directos
-  como lecturas verificadas y rechaza proyecciones/escapes; falta materializar
-  movimientos, retains/releases y COW y compararlos contra la VM sin aliasing
-  accidental.
+- [x] **NATIVE-LOWER-OWNERSHIP-001 — Lowering de ownership y préstamos.** La
+  frontera de ABI reserva los edges MIR y la política de memoria define
+  retains/releases, weak edges y COW; la slice nativa materializa los retains,
+  releases y `cow-clone` como llamadas runtime sobre handles opacos. La prueba
+  `ownership-cow` comparte un valor, clona solo al detectar aliasing, libera el
+  original exactamente dos veces y valida tag/payload del clon en Cranelift y
+  LLVM; los borrows directos siguen siendo lecturas verificadas y las
+  proyecciones/escapes se rechazan. Evidencia: `run_native_runtime_probe`,
+  `tondo-native-runtime` y el contrato de memoria.
 
 - [ ] **NATIVE-LOWER-ASYNC-001 — Lowering de async estructurado.** El contrato
   ya fija publicación de roots antes de suspender y el registro frame/task/waker;

@@ -351,7 +351,9 @@ struct NativeManagedRunReport {
 struct NativeRuntimeRunReport {
     case: String,
     function_ordinal: u32,
-    expected_result: i64,
+    expected_result: Option<i64>,
+    expected_tag: Option<u64>,
+    expected_payload: Option<u64>,
     cranelift: &'static str,
     llvm: &'static str,
 }
@@ -360,7 +362,16 @@ struct NativeRuntimeRunReport {
 struct RuntimeContractCase {
     name: &'static str,
     function_ordinal: u32,
-    expected_result: i64,
+    expectation: RuntimeExpectation,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum RuntimeExpectation {
+    Scalar(i64),
+    Managed {
+        tag: u64,
+        payload: Option<u64>,
+    },
 }
 
 #[derive(Debug)]
@@ -854,6 +865,8 @@ struct RuntimeCall {
 fn runtime_helper(runtime: &RuntimeRefs, kind: &str) -> Result<RuntimeCall, String> {
     let base = kind.split(':').next().unwrap_or(kind);
     match base {
+        "result-tag" => Ok(RuntimeCall { function: runtime.result_tag, arity: 1 }),
+        "result-payload" => Ok(RuntimeCall { function: runtime.result_payload, arity: 1 }),
         "retain" | "retain-value" => Ok(RuntimeCall { function: runtime.retain, arity: 1 }),
         "release" | "release-value" => Ok(RuntimeCall { function: runtime.release, arity: 1 }),
         "cow-clone" => Ok(RuntimeCall { function: runtime.cow_clone, arity: 1 }),
@@ -2070,12 +2083,22 @@ fn run_native_runtime_probe(
     emit_cranelift_object(cranelift_isa()?, &program, &object)?;
     let mut reports = Vec::with_capacity(cases.len());
     for case in cases {
+        let function = program
+            .functions
+            .iter()
+            .find(|function| function.ordinal == case.function_ordinal)
+            .ok_or_else(|| format!("runtime function {} is missing", case.function_ordinal))?;
         let stem = format!("native_runtime_{}", case.name);
         let cranelift_source = temp_dir.join(format!("{stem}.cranelift.c"));
-        fs::write(
-            &cranelift_source,
-            runtime_contract_c_runner_source(case.function_ordinal, case.expected_result),
-        )
+        let cranelift_runner = match case.expectation {
+            RuntimeExpectation::Scalar(expected) => {
+                runtime_contract_c_runner_source(case.function_ordinal, expected)
+            }
+            RuntimeExpectation::Managed { tag, payload } => {
+                c_managed_runner_source(function, &[], tag, payload)
+            }
+        };
+        fs::write(&cranelift_source, cranelift_runner)
         .map_err(|error| format!("cannot write runtime Cranelift runner: {error}"))?;
         let cranelift_binary = temp_dir.join(format!("{stem}.cranelift.bin"));
         link_native_runner(cc, &cranelift_source, &object, &cranelift_binary)?;
@@ -2083,20 +2106,15 @@ fn run_native_runtime_probe(
 
         let llvm_ir = temp_dir.join(format!("{stem}.llvm.ll"));
         let llvm_object = temp_dir.join(format!("{stem}.llvm.o"));
-        fs::write(
-            &llvm_ir,
-            llvm_module_with_runner(
-                target,
-                &program,
-                program
-                    .functions
-                    .iter()
-                    .find(|function| function.ordinal == case.function_ordinal)
-                    .ok_or_else(|| format!("runtime function {} is missing", case.function_ordinal))?,
-                &[],
-                Some(case.expected_result),
-            )?,
-        )
+        let llvm_runner = match case.expectation {
+            RuntimeExpectation::Scalar(expected) => {
+                llvm_module_with_runner(target, &program, function, &[], Some(expected))?
+            }
+            RuntimeExpectation::Managed { tag, payload } => {
+                llvm_module_with_managed_runner(target, &program, function, &[], tag, payload)?
+            }
+        };
+        fs::write(&llvm_ir, llvm_runner)
         .map_err(|error| format!("cannot write runtime LLVM runner: {error}"))?;
         let result = Command::new(llvm)
             .arg("-O2")
@@ -2123,7 +2141,18 @@ fn run_native_runtime_probe(
         reports.push(NativeRuntimeRunReport {
             case: case.name.to_owned(),
             function_ordinal: case.function_ordinal,
-            expected_result: case.expected_result,
+            expected_result: match case.expectation {
+                RuntimeExpectation::Scalar(expected) => Some(expected),
+                RuntimeExpectation::Managed { .. } => None,
+            },
+            expected_tag: match case.expectation {
+                RuntimeExpectation::Managed { tag, .. } => Some(tag),
+                RuntimeExpectation::Scalar(_) => None,
+            },
+            expected_payload: match case.expectation {
+                RuntimeExpectation::Managed { payload, .. } => payload,
+                RuntimeExpectation::Scalar(_) => None,
+            },
             cranelift: "passed",
             llvm: "passed",
         });
@@ -2259,21 +2288,109 @@ fn native_cleanup_program() -> (MirBackendProgram, Vec<RuntimeContractCase>) {
             },
         ],
     };
+    let ownership_function = MirBackendFunction {
+        ordinal: 102,
+        parameters: Vec::new(),
+        parameter_types: Vec::new(),
+        return_local: 0,
+        return_type: "Int ! String".to_owned(),
+        supported: true,
+        blocks: vec![
+            MirBackendBlock {
+                ordinal: 0,
+                kind: "normal".to_owned(),
+                statements: vec![MirBackendStatement::Assign {
+                    destination: 1,
+                    value: MirBackendRvalue::Aggregate {
+                        kind: "result-ok".to_owned(),
+                        values: vec![constant("42")],
+                    },
+                }],
+                terminator: MirBackendTerminator::Invoke {
+                    operation: MirBackendOperation::Runtime {
+                        kind: "retain".to_owned(),
+                        arguments: vec![runtime_operand(1)],
+                    },
+                    destination: Some(2),
+                    target: Some(1),
+                },
+            },
+            MirBackendBlock {
+                ordinal: 1,
+                kind: "normal".to_owned(),
+                statements: Vec::new(),
+                terminator: MirBackendTerminator::Invoke {
+                    operation: MirBackendOperation::Runtime {
+                        kind: "cow-clone".to_owned(),
+                        arguments: vec![runtime_operand(1)],
+                    },
+                    destination: Some(3),
+                    target: Some(2),
+                },
+            },
+            MirBackendBlock {
+                ordinal: 2,
+                kind: "normal".to_owned(),
+                statements: Vec::new(),
+                terminator: MirBackendTerminator::Invoke {
+                    operation: MirBackendOperation::Runtime {
+                        kind: "release".to_owned(),
+                        arguments: vec![runtime_operand(1)],
+                    },
+                    destination: Some(4),
+                    target: Some(3),
+                },
+            },
+            MirBackendBlock {
+                ordinal: 3,
+                kind: "normal".to_owned(),
+                statements: Vec::new(),
+                terminator: MirBackendTerminator::Invoke {
+                    operation: MirBackendOperation::Runtime {
+                        kind: "release".to_owned(),
+                        arguments: vec![runtime_operand(1)],
+                    },
+                    destination: Some(5),
+                    target: Some(4),
+                },
+            },
+            MirBackendBlock {
+                ordinal: 4,
+                kind: "normal".to_owned(),
+                statements: vec![MirBackendStatement::Assign {
+                    destination: 0,
+                    value: MirBackendRvalue::Use(runtime_operand(3)),
+                }],
+                terminator: MirBackendTerminator::Goto { target: 5 },
+            },
+            MirBackendBlock {
+                ordinal: 5,
+                kind: "normal".to_owned(),
+                statements: Vec::new(),
+                terminator: MirBackendTerminator::Return,
+            },
+        ],
+    };
     (
         MirBackendProgram {
             format: "tondo-mir-backend/1".to_owned(),
-            functions: vec![cleanup_function, abort_function],
+            functions: vec![cleanup_function, abort_function, ownership_function],
         },
         vec![
             RuntimeContractCase {
                 name: "cleanup-exactly-once",
                 function_ordinal: 100,
-                expected_result: 5,
+                expectation: RuntimeExpectation::Scalar(5),
             },
             RuntimeContractCase {
                 name: "cleanup-abort",
                 function_ordinal: 101,
-                expected_result: 0,
+                expectation: RuntimeExpectation::Scalar(0),
+            },
+            RuntimeContractCase {
+                name: "ownership-cow",
+                function_ordinal: 102,
+                expectation: RuntimeExpectation::Managed { tag: 2, payload: Some(42) },
             },
         ],
     )
@@ -2771,7 +2888,7 @@ fn c_managed_runner_source(
         |payload| format!("tondo_rt_result_payload(result) == UINT64_C({payload})"),
     );
     format!(
-        "{}\nextern uint64_t tondo_probe_{}({params});\nint main(void) {{ uint64_t result = tondo_probe_{}({args}); return tondo_rt_result_tag(result) == UINT64_C({expected_tag}) && ({payload_check}) ? 0 : 91; }}\n",
+        "{}\nextern uint64_t tondo_probe_{}({params});\nint main(void) {{ uint64_t result = tondo_probe_{}({args}); int ok = tondo_rt_result_tag(result) == UINT64_C({expected_tag}) && ({payload_check}); uint64_t release_status = tondo_rt_release(result); return ok && release_status == 0 ? 0 : 91; }}\n",
         native_runtime_c_source(),
         function.ordinal,
         function.ordinal,
@@ -3798,6 +3915,8 @@ fn llvm_runtime_operation(
 ) -> Result<String, String> {
     let base = kind.split(':').next().unwrap_or(kind);
     let (function, arity) = match base {
+        "result-tag" => ("tondo_rt_result_tag", 1),
+        "result-payload" => ("tondo_rt_result_payload", 1),
         "retain" | "retain-value" => ("tondo_rt_retain", 1),
         "release" | "release-value" => ("tondo_rt_release", 1),
         "cow-clone" => ("tondo_rt_cow_clone", 1),
@@ -4585,6 +4704,20 @@ mod tests {
             program
         };
         assert!(evaluate_scalar_function(&bounds.functions[0], &[2, 0]).is_err());
+    }
+
+    #[test]
+    fn cleanup_and_ownership_runtime_contracts_lower_in_both_backends() {
+        let (program, cases) = native_cleanup_program();
+        assert_eq!(cases.len(), 3);
+        let isa = cranelift_isa().expect("native Cranelift ISA should be available");
+        compile_cranelift(isa.as_ref(), &program)
+            .expect("cleanup and ownership runtime calls should lower in Cranelift");
+        let module = llvm_module("x86_64-unknown-linux-gnu", &program)
+            .expect("cleanup and ownership runtime calls should lower in LLVM");
+        assert!(module.contains("@tondo_rt_frame_cleanup"));
+        assert!(module.contains("@tondo_rt_cow_clone"));
+        assert!(module.contains("@tondo_rt_release"));
     }
 
     #[test]

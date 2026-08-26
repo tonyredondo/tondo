@@ -24,6 +24,7 @@
     "nonzero-native-result",
     "physical-path-in-report",
     "managed-result-tag-or-payload-mismatch",
-    "cleanup-not-exactly-once-or-abort-not-cleaned"
+    "cleanup-not-exactly-once-or-abort-not-cleaned",
+    "ownership-cow-or-release-mismatch"
   ]
 }

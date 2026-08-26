@@ -92,6 +92,7 @@ jq -e '
   )
   and ([.native_runtime_runs[] | select(.case == "cleanup-exactly-once" and .cranelift == "passed" and .llvm == "passed")] | length == 1)
   and ([.native_runtime_runs[] | select(.case == "cleanup-abort" and .cranelift == "passed" and .llvm == "passed")] | length == 1)
+  and ([.native_runtime_runs[] | select(.case == "ownership-cow" and .cranelift == "passed" and .llvm == "passed" and .expected_tag == 2 and .expected_payload == 42)] | length == 1)
 ' "$report" >/dev/null || die "runner report did not prove native execution"
 
 ! grep -Fq "$root" "$report" || die "runner report leaked a physical workspace path"

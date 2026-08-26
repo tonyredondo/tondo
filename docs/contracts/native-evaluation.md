@@ -120,6 +120,12 @@ double-cleanup status) and an aborting frame leaves through the same terminal
 transition. This keeps unwind/abort behavior observable while the full
 source-level defer graph is lowered.
 
+The same runtime lane exercises ownership edges: a managed result is retained,
+copy-on-written while shared, released to remove the original entry, and then
+checked through the opaque result tag/payload API. The wrapper releases the
+returned clone before exiting, so the case also checks the terminal ownership
+path rather than only comparing a value.
+
 ## Evaluation matrix
 
 The selection records the dimensions that must be evidenced before promotion:
