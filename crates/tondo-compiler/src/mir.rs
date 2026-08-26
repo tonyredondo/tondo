@@ -2334,94 +2334,19 @@ mod tests {
 
         let ty = TypeInterner::default().scalar(ScalarType::Int);
         let operand = backend_int_operand(ty);
-        #[rustfmt::skip]
-        let binary = MirOperationKind::CheckedBinary {
-            operator: HirBinaryOperator::LogicalAnd,
-            left: operand.clone(),
-            right: operand.clone(), };
+        #[rustfmt::skip] let binary = MirOperationKind::CheckedBinary { operator: HirBinaryOperator::LogicalAnd, left: operand.clone(), right: operand.clone() };
         let mut unsupported = Vec::new();
-        #[rustfmt::skip]
-        let lowered = backend_operation(
-            &MirOperation {
-                ty,
-                kind: binary.clone(), },
-            &mut unsupported,
-            &BTreeMap::new(),
-        );
+        #[rustfmt::skip] let lowered = backend_operation(&MirOperation { ty, kind: binary.clone() }, &mut unsupported, &BTreeMap::new());
         assert!(matches!(lowered, MirBackendOperation::CheckedBinary { .. }));
         assert_eq!(unsupported, vec!["operator:logical-and"]);
         assert_eq!(operation_kind_name(&binary), "checked-binary");
 
-        #[rustfmt::skip]
-        let operation_names = [
-            (
-                MirOperationKind::CheckedPrefix {
-                    operator: HirPrefixOperator::Negate,
-                    operand: operand.clone(),
-                },
-                "checked-prefix",
-            ),
-            (binary, "checked-binary"),
-            (
-                MirOperationKind::Call {
-                    callee: operand.clone(),
-                    arguments: Vec::new(),
-                    signature: ty,
-                    protocol: HirCallProtocol::Call,
-                    unsafe_call: false,
-                },
-                "call",
-            ),
-            (
-                MirOperationKind::ExplicitPanic {
-                    message: operand.clone(),
-                },
-                "explicit-panic",
-            ),
-            (
-                MirOperationKind::Assert {
-                    condition: operand.clone(),
-                    condition_repr: "true".to_owned(),
-                    message_parts: Vec::new(),
-                },
-                "assert",
-            ),
-            (
-                MirOperationKind::BootstrapHostCall {
-                    function: MirBootstrapHostFunction::ConsolePrint,
-                    arguments: Vec::new(),
-                },
-                "bootstrap-host-call", ), ];
+        #[rustfmt::skip] let operation_names = [(MirOperationKind::CheckedPrefix { operator: HirPrefixOperator::Negate, operand: operand.clone() }, "checked-prefix"), (binary, "checked-binary"), (MirOperationKind::Call { callee: operand.clone(), arguments: Vec::new(), signature: ty, protocol: HirCallProtocol::Call, unsafe_call: false }, "call"), (MirOperationKind::ExplicitPanic { message: operand.clone() }, "explicit-panic"), (MirOperationKind::Assert { condition: operand.clone(), condition_repr: "true".to_owned(), message_parts: Vec::new() }, "assert"), (MirOperationKind::BootstrapHostCall { function: MirBootstrapHostFunction::ConsolePrint, arguments: Vec::new() }, "bootstrap-host-call")];
         for (operation, expected) in operation_names {
             assert_eq!(operation_kind_name(&operation), expected);
         }
 
-        #[rustfmt::skip] let host_names = [
-            (
-                MirBootstrapHostFunction::CommandMergeStderr,
-                "command-merge-stderr",
-            ),
-            (
-                MirBootstrapHostFunction::PipelineMergeStderr,
-                "pipeline-merge-stderr",
-            ),
-            (MirBootstrapHostFunction::TestingLog, "testing-log"),
-            (MirBootstrapHostFunction::TestingTags, "testing-tags"),
-            (MirBootstrapHostFunction::TestingFailNow, "testing-fail-now"),
-            (MirBootstrapHostFunction::TestingSkip, "testing-skip"),
-            (MirBootstrapHostFunction::TestingAttach, "testing-attach"),
-            (
-                MirBootstrapHostFunction::TestingSnapshot,
-                "testing-snapshot",
-            ),
-            (MirBootstrapHostFunction::TestingRunLeaf, "testing-run-leaf"),
-            (
-                MirBootstrapHostFunction::TestingRunSuite,
-                "testing-run-suite",
-            ),
-            (
-                MirBootstrapHostFunction::TestingBeginSuiteCleanup,
-                "testing-begin-suite-cleanup", ), ];
+        #[rustfmt::skip] let host_names = [(MirBootstrapHostFunction::CommandMergeStderr, "command-merge-stderr"), (MirBootstrapHostFunction::PipelineMergeStderr, "pipeline-merge-stderr"), (MirBootstrapHostFunction::TestingLog, "testing-log"), (MirBootstrapHostFunction::TestingTags, "testing-tags"), (MirBootstrapHostFunction::TestingFailNow, "testing-fail-now"), (MirBootstrapHostFunction::TestingSkip, "testing-skip"), (MirBootstrapHostFunction::TestingAttach, "testing-attach"), (MirBootstrapHostFunction::TestingSnapshot, "testing-snapshot"), (MirBootstrapHostFunction::TestingRunLeaf, "testing-run-leaf"), (MirBootstrapHostFunction::TestingRunSuite, "testing-run-suite"), (MirBootstrapHostFunction::TestingBeginSuiteCleanup, "testing-begin-suite-cleanup")];
         for (function, expected) in host_names {
             assert_eq!(backend_host_function_name(function), expected);
         }
@@ -2432,40 +2357,7 @@ mod tests {
         let ty = TypeInterner::default().scalar(ScalarType::Int);
         let operand = backend_int_operand(ty);
         #[rustfmt::skip] let operation = MirOperation { ty, kind: MirOperationKind::ExplicitPanic { message: operand.clone() } };
-        #[rustfmt::skip] let terminators = [
-            (
-                MirTerminatorKind::Goto {
-                    target: MirBlockId(0),
-                },
-                "goto",
-            ),
-            (
-                MirTerminatorKind::SwitchBool {
-                    condition: operand.clone(),
-                    if_true: MirBlockId(1),
-                    if_false: MirBlockId(2),
-                },
-                "switch-bool",
-            ),
-            (
-                MirTerminatorKind::SwitchTag {
-                    value: operand,
-                    cases: Vec::new(),
-                    otherwise: MirBlockId(0),
-                },
-                "switch-tag",
-            ),
-            (
-                MirTerminatorKind::Invoke {
-                    operation,
-                    destination: None,
-                    target: None,
-                    unwind: MirBlockId(0),
-                },
-                "invoke",
-            ),
-            (MirTerminatorKind::Return, "return"),
-            (MirTerminatorKind::Unreachable, "unreachable"), ];
+        #[rustfmt::skip] let terminators = [(MirTerminatorKind::Goto { target: MirBlockId(0) }, "goto"), (MirTerminatorKind::SwitchBool { condition: operand.clone(), if_true: MirBlockId(1), if_false: MirBlockId(2) }, "switch-bool"), (MirTerminatorKind::SwitchTag { value: operand, cases: Vec::new(), otherwise: MirBlockId(0) }, "switch-tag"), (MirTerminatorKind::Invoke { operation, destination: None, target: None, unwind: MirBlockId(0) }, "invoke"), (MirTerminatorKind::Return, "return"), (MirTerminatorKind::Unreachable, "unreachable")];
         for (terminator, expected) in terminators {
             assert_eq!(terminator_kind_name(&terminator), expected);
         }
@@ -2478,7 +2370,6 @@ mod tests {
         assert_eq!(unsupported, vec!["control-flow:no-normal-block"]);
 
         let mut unsupported = Vec::new();
-        #[rustfmt::skip]
         #[rustfmt::skip] let malformed_cleanup = MirBackendBlock { ordinal: 0, kind: "cleanup".to_owned(), statements: vec![MirBackendStatement::Runtime { kind: "release-loan:0".to_owned(), arguments: Vec::new() }], terminator: MirBackendTerminator::Marker { kind: "resume-panic".to_owned() } };
         validate_backend_control_flow(&[malformed_cleanup], &mut unsupported);
         assert!(unsupported.iter().any(|reason| {
@@ -2486,10 +2377,7 @@ mod tests {
         }));
 
         let mut unsupported = Vec::new();
-        #[rustfmt::skip] let missing_target = MirBackendBlock {
-            ordinal: 0,
-            kind: "normal".to_owned(),
-            statements: Vec::new(), terminator: MirBackendTerminator::Goto { target: 9 }, };
+        #[rustfmt::skip] let missing_target = MirBackendBlock { ordinal: 0, kind: "normal".to_owned(), statements: Vec::new(), terminator: MirBackendTerminator::Goto { target: 9 } };
         validate_backend_control_flow(&[missing_target], &mut unsupported);
         assert!(unsupported.contains(&"control-flow:target:9".to_owned()));
         assert!(unsupported.contains(&"control-flow:non-normal-target:9".to_owned()));
@@ -2498,60 +2386,15 @@ mod tests {
     fn backend_control_flow_covers_validation_and_duplicate_tag_edges() {
         let span = backend_test_span();
         let ty = TypeInterner::default().scalar(ScalarType::Int);
-        #[rustfmt::skip]
-        let place = MirPlace {
-            local: MirLocalId(0),
-            ty,
-            projections: Vec::new(),
-            source_loan: None, };
-        #[rustfmt::skip]
-        let terminators = [
-            MirTerminatorKind::ValidatePlaces {
-                places: vec![place.clone()],
-                replacements: Vec::new(),
-                against: vec![vec![MirLoanId(0)]],
-                for_write: false,
-                target: MirBlockId(0),
-                unwind: MirBlockId(0),
-            },
-            MirTerminatorKind::SwitchTag {
-                value: backend_int_operand(ty),
-                cases: vec![
-                    (MirTag::OptionNone, MirBlockId(0)),
-                    (MirTag::OptionNone, MirBlockId(0)),
-                ],
-                otherwise: MirBlockId(0), }, ];
+        #[rustfmt::skip] let place = MirPlace { local: MirLocalId(0), ty, projections: Vec::new(), source_loan: None };
+        #[rustfmt::skip] let terminators = [MirTerminatorKind::ValidatePlaces { places: vec![place.clone()], replacements: Vec::new(), against: vec![vec![MirLoanId(0)]], for_write: false, target: MirBlockId(0), unwind: MirBlockId(0) }, MirTerminatorKind::SwitchTag { value: backend_int_operand(ty), cases: vec![(MirTag::OptionNone, MirBlockId(0)), (MirTag::OptionNone, MirBlockId(0))], otherwise: MirBlockId(0) }];
         for kind in terminators {
-            #[rustfmt::skip]
-            let block = MirBasicBlock {
-                kind: MirBlockKind::Normal,
-                statements: Vec::new(),
-                terminator: MirTerminator { span, kind }, };
+            #[rustfmt::skip] let block = MirBasicBlock { kind: MirBlockKind::Normal, statements: Vec::new(), terminator: MirTerminator { span, kind } };
             let mut unsupported = Vec::new();
             backend_block(0, &block, &mut unsupported, &BTreeMap::new());
             assert!(!unsupported.is_empty());
         }
-        #[rustfmt::skip]
-        let mut functions = vec![MirBackendFunction {
-            ordinal: 0,
-            parameters: Vec::new(),
-            parameter_types: Vec::new(),
-            return_local: 0,
-            return_type: "Int".to_owned(),
-            blocks: vec![MirBackendBlock {
-                ordinal: 0,
-                kind: "normal".to_owned(),
-                statements: Vec::new(),
-                terminator: MirBackendTerminator::Invoke {
-                    operation: MirBackendOperation::Call {
-                        function: 99,
-                        arguments: Vec::new(),
-                    },
-                    destination: None,
-                    target: Some(0),
-                },
-            }],
-            supported: true, unsupported: Vec::new(), }];
+        #[rustfmt::skip] let mut functions = vec![MirBackendFunction { ordinal: 0, parameters: Vec::new(), parameter_types: Vec::new(), return_local: 0, return_type: "Int".to_owned(), blocks: vec![MirBackendBlock { ordinal: 0, kind: "normal".to_owned(), statements: Vec::new(), terminator: MirBackendTerminator::Invoke { operation: MirBackendOperation::Call { function: 99, arguments: Vec::new() }, destination: None, target: Some(0) } }], supported: true, unsupported: Vec::new() }];
         validate_backend_call_targets(&mut functions);
         #[rustfmt::skip]
         assert_eq!(functions[0].unsupported, vec!["call-target-missing:99".to_owned()]);
@@ -2561,10 +2404,7 @@ mod tests {
     #[test]
     fn mir_error_display_is_contextual_for_construction_limits() {
         let span = backend_test_span();
-        #[rustfmt::skip]
-        let node = MirError::NodeLimit {
-            span,
-            resource: "blocks", };
+        #[rustfmt::skip] let node = MirError::NodeLimit { span, resource: "blocks" };
         assert!(format!("{node}").contains("MIR blocks limit exceeded"));
         let verification = MirError::VerificationLimit { resource: "steps" };
         assert_eq!(format!("{verification}"), "MIR steps limit exceeded");
