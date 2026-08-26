@@ -27,7 +27,7 @@ jq -e '
   and .adapter_manifest == "tools/native-evaluation/Cargo.toml"
   and .adapter == {
       format: "tondo-mir-backend/1",
-      supported_subset: "scalar-int-checked-arithmetic-asserts-control-flow-tag-dispatch-direct-calls-and-traps",
+      supported_subset: "scalar-int-managed-result-checked-arithmetic-asserts-control-flow-tag-dispatch-direct-calls-host-calls-and-traps",
       unsupported_policy: "explicit-trap-and-report",
       native_semantics: "pending-executable-runner"
   }

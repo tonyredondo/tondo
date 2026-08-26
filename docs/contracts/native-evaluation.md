@@ -10,7 +10,7 @@ the decision is recorded in
 The short feedback loop is defined by
 [`testing/native-evaluation-fast.json`](../../testing/native-evaluation-fast.json)
 and [`scripts/native-evaluation-fast.sh`](../../scripts/native-evaluation-fast.sh).
-The executable scalar differential lane is defined by
+The executable native differential lane is defined by
 [`testing/native-evaluation-runner.json`](../../testing/native-evaluation-runner.json)
 and [`scripts/native-evaluation-runner.sh`](../../scripts/native-evaluation-runner.sh).
 
@@ -59,6 +59,12 @@ Read-only borrows of direct scalar locals are represented explicitly in the
 adapter and lowered as value reads; projected borrows and any borrow that
 would escape the scalar call boundary remain rejected rather than becoming a
 native pointer by accident.
+Managed `Option`/`Result` values use an opaque runtime result record. The
+adapter lowers result construction, tag extraction and payload reads without
+making a user-visible layout promise. Compiler-owned host operations use the
+same runtime boundary; host state and handles never cross as addresses. The
+probe's `load` fixture exercises both success and error result records and the
+native runner compares their tags and payloads with the VM.
 Cleanup edges and non-scalar calls remain outside the contract. Functions
 outside that slice are lowered to an explicit trap and reported as
 `unsupported`; they are never silently approximated. This is a real adapter
@@ -81,7 +87,7 @@ identities and tool versions, never physical tool paths. Every sample records
 how many MIR functions were lowered by the scalar slice and how many were
 rejected at the trap boundary.
 
-## Executable scalar differential lane
+## Executable native differential lane
 
 The runner is an explicit, opt-in extension of the fast lane. It uses only
 absolute `llc` and `cc` paths, emits a Cranelift object through
@@ -96,9 +102,10 @@ same function. The report records the function ordinal, arguments, expected
 status, normalized result, VM status/result and diagnostics without retaining
 temporary paths. This proves scalar value, direct-call ABI, branch joins,
 tag-dispatch edges, loop-carried locals and exercised
-checked-overflow/explicit-panic trap parity
-for the closed slice; payload-bearing aggregates, cleanup and async MIR
-families remain open.
+checked-overflow/explicit-panic trap parity for the scalar slice. It also calls
+supported managed-result functions and compares result discriminants and
+payload carriers. Host-call lowering uses the same result-record path. Cleanup
+and async MIR families remain open for their dedicated runtime contracts.
 The normalized oracle has a fixed step budget, cyclic functions use deliberately
 small deterministic inputs, and each native subprocess has a finite runtime
 budget so an accidental infinite loop fails closed instead of hanging the
@@ -136,12 +143,12 @@ candidate, a premature N1/performance claim or a stale frontier is a hard
 failure.
 
 `NATIVE-BACKEND-ADAPTER-001` remains open until the adapter extends this
-scalar-CFG VM differential to the remaining MIR families, with explicit
+scalar/managed-CFG VM differential to the remaining MIR families, with explicit
 diagnostics for unsupported paths. Checked arithmetic overflow, comparison
-branches, loop-carried locals and boundary trap parity for the exercised scalar
-path are now covered by the executable runner; the other scalar helper paths
-are compile- and oracle-tested. Only after that evidence may memory/ABI work
-consume a backend selection.
+branches, loop-carried locals, managed result records, host calls and boundary
+trap parity for the exercised paths are covered by the executable runner; the
+other helper families are compile- and oracle-tested. Only after that evidence
+may memory/ABI work consume a backend selection.
 
 The static contract and negative cases run in the normal test gate. The
 evaluation runner is opt-in/manual because it compiles the real fixture corpus;

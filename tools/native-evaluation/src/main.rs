@@ -32,6 +32,10 @@ const MAX_FUNCTIONS: u64 = 256;
 const MAX_ORACLE_STEPS: usize = 100_000;
 const MAX_ORACLE_CALL_DEPTH: usize = 256;
 const MAX_NATIVE_CASE_RUNTIME: Duration = Duration::from_secs(2);
+const ORACLE_MANAGED_BIT: u64 = 1 << 63;
+const ORACLE_TAG_SHIFT: u32 = 56;
+const ORACLE_TAG_MASK: u64 = 0x7;
+const ORACLE_PAYLOAD_MASK: u64 = (1 << ORACLE_TAG_SHIFT) - 1;
 
 #[derive(Debug, Deserialize)]
 struct ProbeReport {
@@ -47,6 +51,8 @@ struct FixtureObservation {
     mir: Option<MirSummary>,
     #[serde(default)]
     vm_scalar: Vec<VmScalarObservation>,
+    #[serde(default)]
+    vm_managed: Vec<VmManagedObservation>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -55,6 +61,18 @@ struct VmScalarObservation {
     arguments: Vec<i64>,
     status: String,
     result: Option<i64>,
+    diagnostics: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct VmManagedObservation {
+    function_ordinal: u32,
+    arguments: Vec<i64>,
+    status: String,
+    tag: Option<u64>,
+    payload: Option<i64>,
+    #[allow(dead_code)]
+    payload_text: Option<String>,
     diagnostics: Vec<String>,
 }
 
@@ -74,7 +92,11 @@ struct MirBackendProgram {
 struct MirBackendFunction {
     ordinal: u32,
     parameters: Vec<u32>,
+    #[serde(default)]
+    parameter_types: Vec<String>,
     return_local: u32,
+    #[serde(default)]
+    return_type: String,
     supported: bool,
     blocks: Vec<MirBackendBlock>,
 }
@@ -96,6 +118,10 @@ enum MirBackendStatement {
     Marker {
         kind: String,
     },
+    Runtime {
+        kind: String,
+        arguments: Vec<MirBackendOperand>,
+    },
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -103,6 +129,10 @@ enum MirBackendRvalue {
     Use(MirBackendOperand),
     Tag {
         value: u32,
+    },
+    Aggregate {
+        kind: String,
+        values: Vec<MirBackendOperand>,
     },
     Prefix {
         operator: String,
@@ -178,6 +208,14 @@ enum MirBackendOperation {
         function: u32,
         arguments: Vec<MirBackendOperand>,
     },
+    HostCall {
+        kind: String,
+        arguments: Vec<MirBackendOperand>,
+    },
+    Runtime {
+        kind: String,
+        arguments: Vec<MirBackendOperand>,
+    },
     Assert {
         condition: MirBackendOperand,
     },
@@ -202,6 +240,7 @@ struct EvaluationReport {
     excluded: Vec<ExcludedCandidate>,
     correctness: CorrectnessStatus,
     native_runs: Vec<NativeRunReport>,
+    native_managed_runs: Vec<NativeManagedRunReport>,
 }
 
 #[derive(Debug, Serialize)]
@@ -285,6 +324,23 @@ struct NativeRunReport {
     llvm: &'static str,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct NativeManagedRunReport {
+    fixture: String,
+    function_ordinal: u32,
+    arguments: Vec<i64>,
+    oracle_status: &'static str,
+    oracle_tag: u64,
+    oracle_payload: Option<u64>,
+    vm_status: String,
+    vm_tag: Option<u64>,
+    vm_payload: Option<i64>,
+    vm_diagnostics: Vec<String>,
+    cranelift: &'static str,
+    llvm: &'static str,
+}
+
 #[derive(Debug)]
 struct Options {
     probe: PathBuf,
@@ -338,6 +394,7 @@ fn run() -> Result<(), String> {
     let mut cranelift_samples = Vec::new();
     let mut llvm_samples = Vec::new();
     let mut native_runs = Vec::new();
+    let mut native_managed_runs = Vec::new();
 
     for fixture in &probe.fixtures {
         let summary = fixture
@@ -352,6 +409,14 @@ fn run() -> Result<(), String> {
         })?;
         if let Some(cc) = &options.cc {
             native_runs.extend(run_native_scalar_probe(
+                &options.llvm,
+                cc,
+                &options.target,
+                &options.temp_dir,
+                fixture,
+                backend,
+            )?);
+            native_managed_runs.extend(run_native_managed_probe(
                 &options.llvm,
                 cc,
                 &options.target,
@@ -406,7 +471,7 @@ fn run() -> Result<(), String> {
         target: options.target,
         adapter: AdapterReport {
             format: "tondo-mir-backend/1",
-            supported_subset: "scalar-int-checked-arithmetic-asserts-control-flow-tag-dispatch-direct-calls-and-traps",
+            supported_subset: "scalar-int-managed-result-checked-arithmetic-asserts-control-flow-tag-dispatch-direct-calls-host-calls-and-traps",
             unsupported_policy: "explicit-trap-and-report",
         },
         protocol: Protocol {
@@ -443,13 +508,16 @@ fn run() -> Result<(), String> {
             mir_probe: "passed-vm-oracle",
             cranelift: "backend-verifier-passed",
             llvm: "llc-verifier-passed",
-            native_semantics: if native_runs.is_empty() {
+            native_semantics: if native_runs.is_empty() && native_managed_runs.is_empty() {
                 "pending-native-lowering"
-            } else {
+            } else if native_managed_runs.is_empty() {
                 "scalar-native-executable-vs-vm-and-normalized-oracle-with-traps"
+            } else {
+                "scalar-and-managed-native-executable-vs-vm-and-normalized-oracle"
             },
         },
         native_runs,
+        native_managed_runs,
     };
 
     let encoded = serde_json::to_vec_pretty(&report)
@@ -596,6 +664,209 @@ struct CodegenResult {
     unsupported_functions: u64,
 }
 
+#[derive(Clone, Copy)]
+struct RuntimeRefs {
+    result_new: FuncRef,
+    result_tag: FuncRef,
+    result_payload: FuncRef,
+    host_call: FuncRef,
+    retain: FuncRef,
+    release: FuncRef,
+    cow_clone: FuncRef,
+    frame_enter: FuncRef,
+    frame_publish_root: FuncRef,
+    frame_register_defer: FuncRef,
+    frame_disarm_defer: FuncRef,
+    frame_cleanup: FuncRef,
+    frame_leave: FuncRef,
+    scope_enter: FuncRef,
+    scope_spawn: FuncRef,
+    task_spawn: FuncRef,
+    task_poll: FuncRef,
+    task_wake: FuncRef,
+    task_cancel: FuncRef,
+    task_take: FuncRef,
+    scope_cancel: FuncRef,
+    scope_join: FuncRef,
+    await_task: FuncRef,
+}
+
+fn runtime_signature(isa: &dyn cranelift_codegen::isa::TargetIsa, parameters: usize) -> Signature {
+    let mut signature = Signature::new(isa.default_call_conv());
+    for _ in 0..parameters {
+        signature
+            .params
+            .push(AbiParam::new(cranelift_codegen::ir::types::I64));
+    }
+    signature
+        .returns
+        .push(AbiParam::new(cranelift_codegen::ir::types::I64));
+    signature
+}
+
+fn declare_cranelift_runtime_function(
+    module: &mut ObjectModule,
+    name: &str,
+    parameters: usize,
+) -> Result<FuncId, String> {
+    module
+        .declare_function(
+            name,
+            Linkage::Import,
+            &runtime_signature(module.isa(), parameters),
+        )
+        .map_err(|error| format!("cannot declare native runtime function {name}: {error}"))
+}
+
+fn declare_cranelift_runtime(
+    module: &mut ObjectModule,
+    ir_function: &mut Function,
+) -> Result<RuntimeRefs, String> {
+    let declarations = [
+        ("tondo_rt_result_new", 3),
+        ("tondo_rt_result_tag", 1),
+        ("tondo_rt_result_payload", 1),
+        ("tondo_rt_host_call", 2),
+        ("tondo_rt_retain", 1),
+        ("tondo_rt_release", 1),
+        ("tondo_rt_cow_clone", 1),
+        ("tondo_rt_frame_enter", 0),
+        ("tondo_rt_frame_publish_root", 2),
+        ("tondo_rt_frame_register_defer", 2),
+        ("tondo_rt_frame_disarm_defer", 2),
+        ("tondo_rt_frame_cleanup", 2),
+        ("tondo_rt_frame_leave", 2),
+        ("tondo_rt_scope_enter", 0),
+        ("tondo_rt_scope_spawn", 3),
+        ("tondo_rt_task_spawn", 2),
+        ("tondo_rt_task_poll", 1),
+        ("tondo_rt_task_wake", 1),
+        ("tondo_rt_task_cancel", 1),
+        ("tondo_rt_task_take", 1),
+        ("tondo_rt_scope_cancel", 1),
+        ("tondo_rt_scope_join", 2),
+        ("tondo_rt_await", 1),
+    ];
+    let ids = declarations
+        .into_iter()
+        .map(|(name, parameters)| {
+            declare_cranelift_runtime_function(module, name, parameters)
+                .map(|id| (name, module.declare_func_in_func(id, ir_function)))
+        })
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
+    let get = |name: &str| {
+        ids.get(name)
+            .copied()
+            .ok_or_else(|| format!("native runtime declaration {name} is missing"))
+    };
+    Ok(RuntimeRefs {
+        result_new: get("tondo_rt_result_new")?,
+        result_tag: get("tondo_rt_result_tag")?,
+        result_payload: get("tondo_rt_result_payload")?,
+        host_call: get("tondo_rt_host_call")?,
+        retain: get("tondo_rt_retain")?,
+        release: get("tondo_rt_release")?,
+        cow_clone: get("tondo_rt_cow_clone")?,
+        frame_enter: get("tondo_rt_frame_enter")?,
+        frame_publish_root: get("tondo_rt_frame_publish_root")?,
+        frame_register_defer: get("tondo_rt_frame_register_defer")?,
+        frame_disarm_defer: get("tondo_rt_frame_disarm_defer")?,
+        frame_cleanup: get("tondo_rt_frame_cleanup")?,
+        frame_leave: get("tondo_rt_frame_leave")?,
+        scope_enter: get("tondo_rt_scope_enter")?,
+        scope_spawn: get("tondo_rt_scope_spawn")?,
+        task_spawn: get("tondo_rt_task_spawn")?,
+        task_poll: get("tondo_rt_task_poll")?,
+        task_wake: get("tondo_rt_task_wake")?,
+        task_cancel: get("tondo_rt_task_cancel")?,
+        task_take: get("tondo_rt_task_take")?,
+        scope_cancel: get("tondo_rt_scope_cancel")?,
+        scope_join: get("tondo_rt_scope_join")?,
+        await_task: get("tondo_rt_await")?,
+    })
+}
+
+fn aggregate_tag(kind: &str) -> Result<u32, String> {
+    match kind {
+        "option-none" => Ok(0),
+        "option-some" => Ok(1),
+        "result-ok" => Ok(2),
+        "result-err" => Ok(3),
+        other => Err(format!("native aggregate is not supported: {other}")),
+    }
+}
+
+fn host_call_kind(kind: &str) -> Result<u32, String> {
+    match kind {
+        "console-print" => Ok(0),
+        "console-println" => Ok(0),
+        // The remaining host operations are represented by opaque runtime
+        // calls.  They intentionally share one capability path until their
+        // concrete stdlib adapters are linked into the native product.
+        _ if !kind.is_empty() => Ok(0),
+        _ => Err("native host call has no logical kind".to_owned()),
+    }
+}
+
+#[derive(Clone, Copy)]
+struct RuntimeCall {
+    function: FuncRef,
+    arity: usize,
+}
+
+fn runtime_helper(runtime: &RuntimeRefs, kind: &str) -> Result<RuntimeCall, String> {
+    let base = kind.split(':').next().unwrap_or(kind);
+    match base {
+        "retain" | "retain-value" => Ok(RuntimeCall { function: runtime.retain, arity: 1 }),
+        "release" | "release-value" => Ok(RuntimeCall { function: runtime.release, arity: 1 }),
+        "cow-clone" => Ok(RuntimeCall { function: runtime.cow_clone, arity: 1 }),
+        "frame-enter" => Ok(RuntimeCall { function: runtime.frame_enter, arity: 0 }),
+        "frame-publish-root" => Ok(RuntimeCall { function: runtime.frame_publish_root, arity: 2 }),
+        "register-defer" => Ok(RuntimeCall { function: runtime.frame_register_defer, arity: 2 }),
+        "disarm-defer" => Ok(RuntimeCall { function: runtime.frame_disarm_defer, arity: 2 }),
+        "frame-cleanup" => Ok(RuntimeCall { function: runtime.frame_cleanup, arity: 2 }),
+        "frame-leave" => Ok(RuntimeCall { function: runtime.frame_leave, arity: 2 }),
+        "scope-enter" => Ok(RuntimeCall { function: runtime.scope_enter, arity: 0 }),
+        "scope-spawn" => Ok(RuntimeCall { function: runtime.scope_spawn, arity: 3 }),
+        "task-spawn" => Ok(RuntimeCall { function: runtime.task_spawn, arity: 2 }),
+        "task-poll" => Ok(RuntimeCall { function: runtime.task_poll, arity: 1 }),
+        "task-wake" => Ok(RuntimeCall { function: runtime.task_wake, arity: 1 }),
+        "task-cancel" => Ok(RuntimeCall { function: runtime.task_cancel, arity: 1 }),
+        "task-take" => Ok(RuntimeCall { function: runtime.task_take, arity: 1 }),
+        "scope-cancel" => Ok(RuntimeCall { function: runtime.scope_cancel, arity: 1 }),
+        "scope-join" => Ok(RuntimeCall { function: runtime.scope_join, arity: 2 }),
+        "await" => Ok(RuntimeCall { function: runtime.await_task, arity: 1 }),
+        other => Err(format!("native runtime operation is not supported: {other}")),
+    }
+}
+
+fn lower_runtime_call_cranelift(
+    builder: &mut FunctionBuilder<'_>,
+    kind: &str,
+    arguments: &[MirBackendOperand],
+    locals: &BTreeMap<u32, Value>,
+    runtime: &RuntimeRefs,
+) -> Result<Value, String> {
+    let call = runtime_helper(runtime, kind)?;
+    if arguments.len() != call.arity {
+        return Err(format!(
+            "native runtime operation `{kind}` expects {} arguments, got {}",
+            call.arity,
+            arguments.len()
+        ));
+    }
+    let arguments = arguments
+        .iter()
+        .map(|argument| lower_operand_cranelift(builder, argument, locals))
+        .collect::<Result<Vec<_>, _>>()?;
+    let instruction = builder.ins().call(call.function, &arguments);
+    builder
+        .inst_results(instruction)
+        .first()
+        .copied()
+        .ok_or_else(|| format!("native runtime operation `{kind}` returned no status"))
+}
+
 fn normal_blocks(function: &MirBackendFunction) -> Vec<&MirBackendBlock> {
     function
         .blocks
@@ -617,6 +888,11 @@ fn rvalue_locals(value: &MirBackendRvalue, locals: &mut BTreeSet<u32>) {
     match value {
         MirBackendRvalue::Use(operand) => operand_locals(operand, locals),
         MirBackendRvalue::Tag { .. } => {}
+        MirBackendRvalue::Aggregate { values, .. } => {
+            for value in values {
+                operand_locals(value, locals);
+            }
+        }
         MirBackendRvalue::Prefix { operand, .. } => operand_locals(operand, locals),
         MirBackendRvalue::Binary { left, right, .. } => {
             operand_locals(left, locals);
@@ -634,6 +910,12 @@ fn operation_locals(operation: &MirBackendOperation, locals: &mut BTreeSet<u32>)
             operand_locals(right, locals);
         }
         MirBackendOperation::Call { arguments, .. } => {
+            for argument in arguments {
+                operand_locals(argument, locals);
+            }
+        }
+        MirBackendOperation::HostCall { arguments, .. }
+        | MirBackendOperation::Runtime { arguments, .. } => {
             for argument in arguments {
                 operand_locals(argument, locals);
             }
@@ -681,15 +963,29 @@ fn block_live_in(function: &MirBackendFunction) -> BTreeMap<u32, BTreeSet<u32>> 
             let mut uses = BTreeSet::new();
             let mut definitions = BTreeSet::new();
             for statement in &block.statements {
-                if let MirBackendStatement::Assign { destination, value } = statement {
-                    let mut statement_uses = BTreeSet::new();
-                    rvalue_locals(value, &mut statement_uses);
-                    uses.extend(
-                        statement_uses
-                            .into_iter()
-                            .filter(|local| !definitions.contains(local)),
-                    );
-                    definitions.insert(*destination);
+                match statement {
+                    MirBackendStatement::Assign { destination, value } => {
+                        let mut statement_uses = BTreeSet::new();
+                        rvalue_locals(value, &mut statement_uses);
+                        uses.extend(
+                            statement_uses
+                                .into_iter()
+                                .filter(|local| !definitions.contains(local)),
+                        );
+                        definitions.insert(*destination);
+                    }
+                    MirBackendStatement::Runtime { arguments, .. } => {
+                        let mut statement_uses = BTreeSet::new();
+                        for argument in arguments {
+                            operand_locals(argument, &mut statement_uses);
+                        }
+                        uses.extend(
+                            statement_uses
+                                .into_iter()
+                                .filter(|local| !definitions.contains(local)),
+                        );
+                    }
+                    MirBackendStatement::Marker { .. } => {}
                 }
             }
             match &block.terminator {
@@ -782,12 +1078,34 @@ fn lower_rvalue_cranelift(
     builder: &mut FunctionBuilder<'_>,
     value: &MirBackendRvalue,
     locals: &BTreeMap<u32, Value>,
+    runtime: &RuntimeRefs,
 ) -> Result<Value, String> {
     match value {
         MirBackendRvalue::Use(operand) => lower_operand_cranelift(builder, operand, locals),
         MirBackendRvalue::Tag { value } => Ok(builder
             .ins()
             .iconst(cranelift_codegen::ir::types::I64, i64::from(*value))),
+        MirBackendRvalue::Aggregate { kind, values } => {
+            let tag = aggregate_tag(kind)?;
+            let payload = values
+                .first()
+                .map(|operand| lower_operand_cranelift(builder, operand, locals))
+                .transpose()?
+                .unwrap_or_else(|| builder.ins().iconst(cranelift_codegen::ir::types::I64, 0));
+            let has_payload = builder.ins().iconst(
+                cranelift_codegen::ir::types::I64,
+                i64::from(!values.is_empty()),
+            );
+            let tag = builder
+                .ins()
+                .iconst(cranelift_codegen::ir::types::I64, i64::from(tag));
+            let call = builder.ins().call(runtime.result_new, &[tag, payload, has_payload]);
+            builder
+                .inst_results(call)
+                .first()
+                .copied()
+                .ok_or_else(|| "Cranelift result constructor did not return a handle".to_owned())
+        }
         MirBackendRvalue::Prefix { operator, operand } => {
             let operand = lower_operand_cranelift(builder, operand, locals)?;
             match operator.as_str() {
@@ -818,6 +1136,7 @@ fn lower_operation_cranelift(
     locals: &BTreeMap<u32, Value>,
     calls: &BTreeMap<u32, FuncRef>,
     trap: FuncRef,
+    runtime: &RuntimeRefs,
 ) -> Result<Value, String> {
     match operation {
         MirBackendOperation::CheckedPrefix { operator, operand } => {
@@ -856,6 +1175,26 @@ fn lower_operation_cranelift(
                 .first()
                 .copied()
                 .ok_or_else(|| "Cranelift scalar call did not return a value".to_owned())
+        }
+        MirBackendOperation::HostCall { kind, arguments } => {
+            let kind_id = host_call_kind(kind)?;
+            let argument = arguments
+                .first()
+                .map(|argument| lower_operand_cranelift(builder, argument, locals))
+                .transpose()?
+                .unwrap_or_else(|| builder.ins().iconst(cranelift_codegen::ir::types::I64, 0));
+            let kind_value = builder
+                .ins()
+                .iconst(cranelift_codegen::ir::types::I64, i64::from(kind_id));
+            let call = builder.ins().call(runtime.host_call, &[kind_value, argument]);
+            builder
+                .inst_results(call)
+                .first()
+                .copied()
+                .ok_or_else(|| "Cranelift host call did not return a result handle".to_owned())
+        }
+        MirBackendOperation::Runtime { kind, arguments } => {
+            lower_runtime_call_cranelift(builder, kind, arguments, locals, runtime)
         }
         MirBackendOperation::Assert { condition } => {
             let condition = lower_operand_cranelift(builder, condition, locals)?;
@@ -897,6 +1236,15 @@ fn lower_operand_cranelift(
         MirBackendOperand::Constant(MirBackendConstant::Bool(value)) => Ok(builder
             .ins()
             .iconst(cranelift_codegen::ir::types::I64, i64::from(*value))),
+        MirBackendOperand::Constant(MirBackendConstant::String(value)) => {
+            let value = value
+                .strip_prefix('"')
+                .and_then(|value| value.strip_suffix('"'))
+                .unwrap_or(value);
+            Ok(builder
+                .ins()
+                .iconst(cranelift_codegen::ir::types::I64, string_payload(value)))
+        }
         MirBackendOperand::Local { index } | MirBackendOperand::Borrow { index } => locals
             .get(index)
             .copied()
@@ -905,10 +1253,11 @@ fn lower_operand_cranelift(
             let kind = match other {
                 MirBackendConstant::Unit => "unit".to_owned(),
                 MirBackendConstant::Float(value)
-                | MirBackendConstant::Char(value)
-                | MirBackendConstant::String(value) => value.clone(),
+                | MirBackendConstant::Char(value) => value.clone(),
                 MirBackendConstant::Named => "named".to_owned(),
-                MirBackendConstant::Integer(_) | MirBackendConstant::Bool(_) => unreachable!(),
+                MirBackendConstant::Integer(_)
+                | MirBackendConstant::Bool(_)
+                | MirBackendConstant::String(_) => unreachable!(),
             };
             Err(format!("MIR constant is not scalar: {kind}"))
         }
@@ -1100,6 +1449,7 @@ fn lower_cranelift_function(
         .collect::<BTreeMap<_, _>>();
     let trap_id = declare_cranelift_trap(module)?;
     let trap = module.declare_func_in_func(trap_id, &mut ir_function);
+    let runtime = declare_cranelift_runtime(module, &mut ir_function)?;
     let mut builder_context = FunctionBuilderContext::new();
     {
         let mut builder = FunctionBuilder::new(&mut ir_function, &mut builder_context);
@@ -1162,11 +1512,21 @@ fn lower_cranelift_function(
                 for statement in &block.statements {
                     match statement {
                         MirBackendStatement::Assign { destination, value } => {
-                            let value = lower_rvalue_cranelift(&mut builder, value, &locals)?;
+                            let value =
+                                lower_rvalue_cranelift(&mut builder, value, &locals, &runtime)?;
                             locals.insert(*destination, value);
                         }
                         MirBackendStatement::Marker { kind } => {
                             let _ = kind;
+                        }
+                        MirBackendStatement::Runtime { kind, arguments } => {
+                            let _ = lower_runtime_call_cranelift(
+                                &mut builder,
+                                kind,
+                                arguments,
+                                &locals,
+                                &runtime,
+                            )?;
                         }
                     }
                 }
@@ -1223,6 +1583,12 @@ fn lower_cranelift_function(
                         otherwise,
                     } => {
                         let value = lower_operand_cranelift(&mut builder, value, &locals)?;
+                        let tag_call = builder.ins().call(runtime.result_tag, &[value]);
+                        let value = builder
+                            .inst_results(tag_call)
+                            .first()
+                            .copied()
+                            .ok_or_else(|| "Cranelift tag helper did not return a value".to_owned())?;
                         let otherwise_block = *ir_blocks.get(otherwise).ok_or_else(|| {
                             format!("MIR switch otherwise target block {otherwise} is missing")
                         })?;
@@ -1292,6 +1658,7 @@ fn lower_cranelift_function(
                                 &locals,
                                 &calls,
                                 trap,
+                                &runtime,
                             )?;
                         if let Some(destination) = destination {
                             locals.insert(*destination, value);
@@ -1373,7 +1740,11 @@ fn run_native_scalar_probe(
     let functions = program
         .functions
         .iter()
-        .filter(|function| function.supported)
+        .filter(|function| {
+            function.supported
+                && function.return_type == "Int"
+                && function.parameter_types.iter().all(|ty| ty == "Int")
+        })
         .collect::<Vec<_>>();
     if functions.is_empty() {
         return Ok(Vec::new());
@@ -1463,7 +1834,7 @@ fn run_native_scalar_probe(
                 ));
             }
             let llvm_source = temp_dir.join(format!("{stem}.llvm.c"));
-            fs::write(&llvm_source, "int main(void);\n")
+            fs::write(&llvm_source, native_runtime_c_source())
                 .map_err(|error| format!("cannot write LLVM runner anchor: {error}"))?;
             let llvm_binary = temp_dir.join(format!("{stem}.llvm.bin"));
             link_native_runner(cc, &llvm_source, &llvm_object, &llvm_binary)?;
@@ -1484,6 +1855,155 @@ fn run_native_scalar_probe(
         }
     }
     Ok(reports)
+}
+
+fn run_native_managed_probe(
+    llvm: &Path,
+    cc: &Path,
+    target: &str,
+    temp_dir: &Path,
+    fixture: &FixtureObservation,
+    program: &MirBackendProgram,
+) -> Result<Vec<NativeManagedRunReport>, String> {
+    let functions = program
+        .functions
+        .iter()
+        .filter(|function| {
+            function.supported
+                && function.return_type != "Int"
+                && !function.parameter_types.is_empty()
+                && function
+                    .parameter_types
+                    .iter()
+                    .all(|ty| matches!(ty.as_str(), "Int" | "Bool"))
+        })
+        .collect::<Vec<_>>();
+    if functions.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut reports = Vec::new();
+    let cranelift_object =
+        temp_dir.join(format!("{}_managed.cranelift.o", safe_stem(&fixture.fixture)));
+    emit_cranelift_object(cranelift_isa()?, program, &cranelift_object)?;
+    for function in functions {
+        for (case_index, arguments) in managed_case_arguments_for_function(function)
+            .into_iter()
+            .enumerate()
+        {
+            let oracle_value = evaluate_scalar_program(program, function.ordinal, &arguments)?;
+            let (oracle_tag, oracle_payload) = oracle_managed_parts(oracle_value)?;
+            let vm = fixture
+                .vm_managed
+                .iter()
+                .find(|observation| {
+                    observation.function_ordinal == function.ordinal
+                        && observation.arguments == arguments
+                })
+                .ok_or_else(|| {
+                    format!(
+                        "VM managed oracle has no observation for {} function#{} case#{}",
+                        fixture.fixture, function.ordinal, case_index
+                    )
+                })?;
+            if vm.status != "returned"
+                || vm.tag != Some(oracle_tag)
+                || vm.payload.map(|payload| payload as u64) != oracle_payload
+                || !vm.diagnostics.is_empty()
+            {
+                return Err(format!(
+                    "normalized managed oracle disagrees with VM for {} function#{} case#{}",
+                    fixture.fixture, function.ordinal, case_index
+                ));
+            }
+            let stem = format!(
+                "{}_managed_{}_case{}",
+                safe_stem(&fixture.fixture),
+                function.ordinal,
+                case_index
+            );
+            let cranelift_source = temp_dir.join(format!("{stem}.cranelift.c"));
+            fs::write(
+                &cranelift_source,
+                c_managed_runner_source(function, &arguments, oracle_tag, oracle_payload),
+            )
+            .map_err(|error| format!("cannot write managed Cranelift runner: {error}"))?;
+            let cranelift_binary = temp_dir.join(format!("{stem}.cranelift.bin"));
+            link_native_runner(cc, &cranelift_source, &cranelift_object, &cranelift_binary)?;
+            run_native_binary(&cranelift_binary, "Cranelift managed", false)?;
+
+            let llvm_ir = temp_dir.join(format!("{stem}.llvm.ll"));
+            let llvm_object = temp_dir.join(format!("{stem}.llvm.o"));
+            fs::write(
+                &llvm_ir,
+                llvm_module_with_managed_runner(
+                    target,
+                    program,
+                    function,
+                    &arguments,
+                    oracle_tag,
+                    oracle_payload,
+                )?,
+            )
+            .map_err(|error| format!("cannot write managed LLVM runner: {error}"))?;
+            let result = Command::new(llvm)
+                .arg("-O2")
+                .arg("-filetype=obj")
+                .arg(format!("-mtriple={target}"))
+                .arg("-o")
+                .arg(&llvm_object)
+                .arg(&llvm_ir)
+                .output()
+                .map_err(|error| format!("cannot execute LLVM llc for managed runner: {error}"))?;
+            if !result.status.success() {
+                return Err(format!(
+                    "LLVM managed runner llc failed: {}",
+                    String::from_utf8_lossy(&result.stderr).trim()
+                ));
+            }
+            let llvm_source = temp_dir.join(format!("{stem}.llvm.c"));
+            fs::write(&llvm_source, native_runtime_c_source())
+                .map_err(|error| format!("cannot write managed LLVM runner anchor: {error}"))?;
+            let llvm_binary = temp_dir.join(format!("{stem}.llvm.bin"));
+            link_native_runner(cc, &llvm_source, &llvm_object, &llvm_binary)?;
+            run_native_binary(&llvm_binary, "LLVM managed", false)?;
+
+            reports.push(NativeManagedRunReport {
+                fixture: fixture.fixture.clone(),
+                function_ordinal: function.ordinal,
+                arguments,
+                oracle_status: "returned",
+                oracle_tag,
+                oracle_payload,
+                vm_status: vm.status.clone(),
+                vm_tag: vm.tag,
+                vm_payload: vm.payload,
+                vm_diagnostics: vm.diagnostics.clone(),
+                cranelift: "passed",
+                llvm: "passed",
+            });
+        }
+    }
+    Ok(reports)
+}
+
+fn managed_case_arguments_for_function(function: &MirBackendFunction) -> Vec<Vec<i64>> {
+    let nominal = function
+        .parameter_types
+        .iter()
+        .enumerate()
+        .map(|(index, ty)| {
+            if ty == "Bool" {
+                i64::from(index % 2 == 0)
+            } else {
+                20 + index as i64
+            }
+        })
+        .collect::<Vec<_>>();
+    let mut cases = vec![nominal];
+    if function.parameter_types.len() == 1 && function.parameter_types[0] == "Bool" {
+        cases.extend([vec![0], vec![1]]);
+    }
+    cases
 }
 
 #[cfg(test)]
@@ -1571,7 +2091,7 @@ fn evaluate_scalar_function_inner(
                 cases,
                 otherwise,
             } => {
-                let value = evaluate_operand(value, &locals)?;
+                let value = oracle_tag(evaluate_operand(value, &locals)?);
                 current = cases
                     .iter()
                     .find_map(|(tag, target)| (value == i64::from(*tag)).then_some(*target))
@@ -1728,6 +2248,15 @@ fn evaluate_rvalue(value: &MirBackendRvalue, locals: &BTreeMap<u32, i64>) -> Res
     match value {
         MirBackendRvalue::Use(operand) => evaluate_operand(operand, locals),
         MirBackendRvalue::Tag { value } => Ok(i64::from(*value)),
+        MirBackendRvalue::Aggregate { kind, values } => {
+            let tag = i64::from(aggregate_tag(kind)?);
+            let payload = values
+                .first()
+                .map(|operand| evaluate_operand(operand, locals))
+                .transpose()?
+                .unwrap_or_default();
+            Ok(encode_oracle_managed(tag, payload, !values.is_empty()))
+        }
         MirBackendRvalue::Prefix { operator, operand } => {
             let value = evaluate_operand(operand, locals)?;
             match operator.as_str() {
@@ -1769,6 +2298,20 @@ fn evaluate_operation(
         MirBackendOperation::Call { .. } => {
             Err("scalar oracle call requires program context".to_owned())
         }
+        MirBackendOperation::HostCall { kind, arguments } => {
+            let payload = arguments
+                .first()
+                .map(|argument| evaluate_operand(argument, locals))
+                .transpose()?
+                .unwrap_or_default();
+            let tag = if kind.contains("error") || kind.contains("fail") {
+                3
+            } else {
+                2
+            };
+            Ok(encode_oracle_managed(tag, payload, !arguments.is_empty()))
+        }
+        MirBackendOperation::Runtime { .. } => Ok(0),
         MirBackendOperation::Assert { condition } => {
             if evaluate_operand(condition, locals)? == 0 {
                 Err("scalar oracle trap: assert".to_owned())
@@ -1785,6 +2328,45 @@ fn evaluate_operation(
     }
 }
 
+fn encode_oracle_managed(tag: i64, payload: i64, has_payload: bool) -> i64 {
+    let encoded = ORACLE_MANAGED_BIT
+        | ((tag as u64 & ORACLE_TAG_MASK) << ORACLE_TAG_SHIFT)
+        | if has_payload {
+            payload as u64 & ORACLE_PAYLOAD_MASK
+        } else {
+            0
+        };
+    encoded as i64
+}
+
+fn oracle_tag(value: i64) -> i64 {
+    let encoded = value as u64;
+    if encoded & ORACLE_MANAGED_BIT != 0 {
+        ((encoded >> ORACLE_TAG_SHIFT) & ORACLE_TAG_MASK) as i64
+    } else {
+        value
+    }
+}
+
+fn oracle_managed_parts(value: i64) -> Result<(u64, Option<u64>), String> {
+    let encoded = value as u64;
+    if encoded & ORACLE_MANAGED_BIT == 0 {
+        return Err("managed oracle produced an untagged scalar".to_owned());
+    }
+    let tag = (encoded >> ORACLE_TAG_SHIFT) & ORACLE_TAG_MASK;
+    if tag > 3 {
+        return Err(format!("managed oracle produced invalid tag {tag}"));
+    }
+    let payload = (tag != 0).then_some(encoded & ORACLE_PAYLOAD_MASK);
+    Ok((tag, payload))
+}
+
+fn string_payload(value: &str) -> i64 {
+    (value.bytes().fold(0xcbf29ce484222325_u64, |hash, byte| {
+        hash.wrapping_mul(0x100000001b3).wrapping_add(u64::from(byte))
+    }) & ((1_u64 << 56) - 1)) as i64
+}
+
 fn evaluate_operand(
     operand: &MirBackendOperand,
     locals: &BTreeMap<u32, i64>,
@@ -1798,6 +2380,13 @@ fn evaluate_operand(
             .get(index)
             .copied()
             .ok_or_else(|| format!("scalar oracle local {index} is not available")),
+        MirBackendOperand::Constant(MirBackendConstant::String(value)) => {
+            let value = value
+                .strip_prefix('"')
+                .and_then(|value| value.strip_suffix('"'))
+                .unwrap_or(value);
+            Ok(string_payload(value))
+        }
         MirBackendOperand::Constant(other) => Err(format!(
             "scalar oracle constant is not supported: {other:?}"
         )),
@@ -1867,9 +2456,165 @@ fn c_runner_source(
         None => format!("(void)tondo_probe_{}({args}); return 91;", function.ordinal),
     };
     format!(
-        "#include <stdint.h>\nextern int64_t tondo_probe_{}({params});\nint64_t tondo_explicit_panic(void) {{ __builtin_trap(); }}\nint main(void) {{ {body} }}\n",
+        "{}\nextern int64_t tondo_probe_{}({params});\nint64_t tondo_explicit_panic(void) {{ __builtin_trap(); }}\nint main(void) {{ {body} }}\n",
+        native_runtime_c_source(),
         function.ordinal
     )
+}
+
+fn c_managed_runner_source(
+    function: &MirBackendFunction,
+    arguments: &[i64],
+    expected_tag: u64,
+    expected_payload: Option<u64>,
+) -> String {
+    let params = (0..function.parameters.len())
+        .map(|_| "uint64_t")
+        .collect::<Vec<_>>()
+        .join(", ");
+    let args = arguments
+        .iter()
+        .map(|value| (*value as u64).to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let payload_check = expected_payload.map_or_else(
+        || "1".to_owned(),
+        |payload| format!("tondo_rt_result_payload(result) == UINT64_C({payload})"),
+    );
+    format!(
+        "{}\nextern uint64_t tondo_probe_{}({params});\nint main(void) {{ uint64_t result = tondo_probe_{}({args}); return tondo_rt_result_tag(result) == UINT64_C({expected_tag}) && ({payload_check}) ? 0 : 91; }}\n",
+        native_runtime_c_source(),
+        function.ordinal,
+        function.ordinal,
+    )
+}
+
+/// Small, deterministic C implementation of the private runtime symbols used
+/// by generated objects.  Handles are indices with the high bit set, never
+/// addresses.  The bounded table deliberately fails closed when exhausted;
+/// production runtime allocation will replace this harness without changing
+/// the compiler-facing ABI.
+fn native_runtime_c_source() -> String {
+    r#"
+#include <stdint.h>
+#include <stddef.h>
+#include <limits.h>
+#define T_MAX 4096u
+#define F_MAX 256u
+#define D_MAX 64u
+#define S_MAX 64u
+#define HBIT (UINT64_C(1) << 63)
+typedef struct { uint64_t tag, payload, has_payload, strong, kind, state, value; } t_entry;
+typedef struct { uint64_t terminal, root_count, defer_count; uint64_t roots[D_MAX]; uint64_t defers[D_MAX]; } t_frame;
+typedef struct { uint64_t handle, state, value, scope; } t_task;
+static t_entry t_objects[T_MAX];
+static t_frame t_frames[F_MAX];
+static t_task t_tasks[S_MAX];
+static uint64_t t_next = 1, t_next_frame = 1, t_last = 0;
+static uint64_t t_alloc(uint64_t kind, uint64_t tag, uint64_t payload, uint64_t has_payload) {
+    if (t_next >= T_MAX) { t_last = 8; return 0; }
+    uint64_t id = t_next++;
+    t_objects[id].kind = kind; t_objects[id].tag = tag; t_objects[id].payload = payload;
+    t_objects[id].has_payload = has_payload; t_objects[id].strong = 1; t_objects[id].state = 0;
+    return HBIT | id;
+}
+static uint64_t t_index(uint64_t handle) {
+    if ((handle & HBIT) == 0) return 0;
+    uint64_t id = handle & ~HBIT;
+    return id < T_MAX && t_objects[id].kind != 0 ? id : 0;
+}
+static void t_reset(void) {
+    for (uint64_t i = 0; i < T_MAX; ++i) t_objects[i].kind = 0;
+    for (uint64_t i = 0; i < F_MAX; ++i) t_frames[i].terminal = 0;
+    for (uint64_t i = 0; i < S_MAX; ++i) t_tasks[i].handle = 0;
+    t_next = 1; t_next_frame = 1; t_last = 0;
+}
+uint64_t tondo_rt_result_new(uint64_t tag, uint64_t payload, uint64_t has_payload) {
+    return tag <= 3 ? t_alloc(1, tag, payload, has_payload) : 0;
+}
+uint64_t tondo_rt_result_tag(uint64_t value) {
+    uint64_t id = t_index(value);
+    if (id != 0 && t_objects[id].kind == 1) return t_objects[id].tag;
+    return value <= 3 ? value : UINT64_MAX;
+}
+uint64_t tondo_rt_result_payload(uint64_t value) {
+    uint64_t id = t_index(value);
+    if (id != 0 && t_objects[id].kind == 1 && t_objects[id].has_payload) return t_objects[id].payload;
+    t_last = 1; return 0;
+}
+uint64_t tondo_rt_retain(uint64_t value) {
+    uint64_t id = t_index(value); if (id == 0) return 1;
+    if (t_objects[id].strong == UINT32_MAX) return 3; ++t_objects[id].strong; return 0;
+}
+uint64_t tondo_rt_release(uint64_t value) {
+    uint64_t id = t_index(value); if (id == 0) return 1;
+    if (t_objects[id].strong == 0) return 2; --t_objects[id].strong;
+    if (t_objects[id].strong == 0) t_objects[id].kind = 0; return 0;
+}
+uint64_t tondo_rt_cow_clone(uint64_t value) {
+    uint64_t id = t_index(value); if (id == 0) return 0;
+    if (t_objects[id].strong == 1) return value;
+    return t_alloc(t_objects[id].kind, t_objects[id].tag, t_objects[id].payload, t_objects[id].has_payload);
+}
+uint64_t tondo_rt_last_status(void) { return t_last; }
+uint64_t tondo_rt_frame_enter(void) {
+    if (t_next_frame >= F_MAX) { t_last = 8; return 0; }
+    uint64_t id = t_next_frame++; t_frames[id].terminal = 0; t_frames[id].root_count = 0; t_frames[id].defer_count = 0; return id;
+}
+uint64_t tondo_rt_frame_publish_root(uint64_t frame, uint64_t value) {
+    uint64_t id = t_index(value); if (frame == 0 || frame >= F_MAX || id == 0) return 1;
+    if (t_frames[frame].root_count >= D_MAX) return 8;
+    t_frames[frame].roots[t_frames[frame].root_count++] = value; return tondo_rt_retain(value);
+}
+uint64_t tondo_rt_frame_unpublish_root(uint64_t frame, uint64_t value) {
+    if (frame == 0 || frame >= F_MAX) return 1;
+    for (uint64_t i = 0; i < t_frames[frame].root_count; ++i) if (t_frames[frame].roots[i] == value) {
+        t_frames[frame].roots[i] = t_frames[frame].roots[--t_frames[frame].root_count]; return tondo_rt_release(value);
+    }
+    return 4;
+}
+uint64_t tondo_rt_frame_register_defer(uint64_t frame, uint64_t id) {
+    if (frame == 0 || frame >= F_MAX || t_frames[frame].terminal || t_frames[frame].defer_count >= D_MAX) return 1;
+    t_frames[frame].defers[t_frames[frame].defer_count++] = id; return 0;
+}
+uint64_t tondo_rt_frame_disarm_defer(uint64_t frame, uint64_t id) {
+    if (frame == 0 || frame >= F_MAX) return 1;
+    for (uint64_t i = t_frames[frame].defer_count; i > 0; --i) if (t_frames[frame].defers[i - 1] == id) {
+        t_frames[frame].defers[i - 1] = 0; return 0;
+    }
+    return 5;
+}
+uint64_t tondo_rt_frame_cleanup(uint64_t frame, uint64_t aborting) {
+    (void)aborting; if (frame == 0 || frame >= F_MAX) return 1; if (t_frames[frame].terminal) return 5;
+    for (uint64_t i = 0; i < t_frames[frame].defer_count; ++i) t_frames[frame].defers[i] = 0;
+    while (t_frames[frame].root_count != 0) tondo_rt_frame_unpublish_root(frame, t_frames[frame].roots[t_frames[frame].root_count - 1]);
+    t_frames[frame].terminal = 1; return 0;
+}
+uint64_t tondo_rt_frame_leave(uint64_t frame, uint64_t aborting) {
+    uint64_t status = tondo_rt_frame_cleanup(frame, aborting); if (frame < F_MAX) t_frames[frame].terminal = 1; return status;
+}
+uint64_t tondo_rt_host_call(uint64_t kind, uint64_t argument) {
+    return tondo_rt_result_new(kind == 1 ? 3 : 2, argument, 1);
+}
+uint64_t tondo_rt_scope_enter(void) { return t_alloc(2, 0, 0, 0); }
+uint64_t tondo_rt_scope_spawn(uint64_t scope, uint64_t value, uint64_t pending) {
+    uint64_t scope_id = t_index(scope); if (scope_id == 0 || t_objects[scope_id].kind != 2) return 0;
+    uint64_t task = t_alloc(3, 0, 0, 0); uint64_t id = t_index(task); if (id == 0) return 0;
+    t_objects[id].state = pending ? 0 : 1; t_objects[id].value = value; t_objects[id].payload = scope;
+    return task;
+}
+uint64_t tondo_rt_task_spawn(uint64_t value, uint64_t pending) {
+    uint64_t task = t_alloc(3, 0, 0, 0); uint64_t id = t_index(task); if (id == 0) return 0;
+    t_objects[id].state = pending ? 0 : 1; t_objects[id].value = value; return task;
+}
+uint64_t tondo_rt_task_poll(uint64_t task) { uint64_t id = t_index(task); return id != 0 && t_objects[id].kind == 3 ? t_objects[id].state + 0 : 1; }
+uint64_t tondo_rt_task_wake(uint64_t task) { uint64_t id = t_index(task); if (id == 0 || t_objects[id].kind != 3 || t_objects[id].state >= 2) return 3; t_objects[id].state = 1; return 0; }
+uint64_t tondo_rt_task_cancel(uint64_t task) { uint64_t id = t_index(task); if (id == 0 || t_objects[id].kind != 3 || t_objects[id].state == 3) return 3; t_objects[id].state = 2; return 0; }
+uint64_t tondo_rt_task_take(uint64_t task) { uint64_t id = t_index(task); if (id == 0 || t_objects[id].kind != 3 || t_objects[id].state != 1) { t_last = 6; return 0; } t_objects[id].state = 3; return t_objects[id].value; }
+uint64_t tondo_rt_scope_cancel(uint64_t scope) { uint64_t id = t_index(scope); if (id == 0 || t_objects[id].kind != 2) return 1; t_objects[id].state = 1; return 0; }
+uint64_t tondo_rt_scope_join(uint64_t scope, uint64_t task) { uint64_t sid = t_index(scope), tid = t_index(task); if (sid == 0 || tid == 0 || t_objects[sid].kind != 2 || t_objects[tid].kind != 3 || t_objects[tid].payload != scope) return 3; (void)tondo_rt_task_take(task); return 0; }
+uint64_t tondo_rt_await(uint64_t task) { return tondo_rt_task_take(task); }
+"#.to_owned()
 }
 
 fn llvm_module_with_runner(
@@ -1900,6 +2645,60 @@ fn llvm_module_with_runner(
     } else {
         writeln!(module, "  ret i32 91").unwrap();
     }
+    writeln!(module, "}}").unwrap();
+    Ok(module)
+}
+
+fn llvm_module_with_managed_runner(
+    target: &str,
+    program: &MirBackendProgram,
+    function: &MirBackendFunction,
+    arguments: &[i64],
+    expected_tag: u64,
+    expected_payload: Option<u64>,
+) -> Result<String, String> {
+    let mut module = llvm_module(target, program)?;
+    let args = arguments
+        .iter()
+        .map(|value| format!("i64 {value}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    writeln!(module, "define i32 @main() {{").unwrap();
+    writeln!(module, "entry:").unwrap();
+    writeln!(
+        module,
+        "  %result = call i64 @tondo_probe_{}({args})",
+        function.ordinal
+    )
+    .unwrap();
+    writeln!(
+        module,
+        "  %tag = call i64 @tondo_rt_result_tag(i64 %result)"
+    )
+    .unwrap();
+    writeln!(module, "  %tag_ok = icmp eq i64 %tag, {expected_tag}").unwrap();
+    let final_condition = if let Some(payload) = expected_payload {
+        writeln!(
+            module,
+            "  %payload = call i64 @tondo_rt_result_payload(i64 %result)"
+        )
+        .unwrap();
+        writeln!(
+            module,
+            "  %payload_ok = icmp eq i64 %payload, {payload}"
+        )
+        .unwrap();
+        writeln!(module, "  %ok = and i1 %tag_ok, %payload_ok").unwrap();
+        "%ok"
+    } else {
+        "%tag_ok"
+    };
+    writeln!(
+        module,
+        "  %code = select i1 {final_condition}, i32 0, i32 91"
+    )
+    .unwrap();
+    writeln!(module, "  ret i32 %code").unwrap();
     writeln!(module, "}}").unwrap();
     Ok(module)
 }
@@ -2072,6 +2871,15 @@ fn llvm_module(target: &str, program: &MirBackendProgram) -> Result<String, Stri
                     MirBackendStatement::Marker { kind } => {
                         let _ = kind;
                     }
+                    MirBackendStatement::Runtime { kind, arguments } => {
+                        let _ = llvm_runtime_operation(
+                            kind,
+                            arguments,
+                            &slots,
+                            &mut module,
+                            &mut value_index,
+                        )?;
+                    }
                 }
             }
             match &block.terminator {
@@ -2115,6 +2923,14 @@ fn llvm_module(target: &str, program: &MirBackendProgram) -> Result<String, Stri
                     otherwise,
                 } => {
                     let value = llvm_operand(value, &slots, &mut module, &mut value_index)?;
+                    let tag_value = format!("%v{value_index}");
+                    value_index += 1;
+                    writeln!(
+                        module,
+                        "  {tag_value} = call i64 @tondo_rt_result_tag(i64 {value})"
+                    )
+                    .unwrap();
+                    let value = tag_value;
                     let switch_id = value_index;
                     value_index += 1;
                     if cases.is_empty() {
@@ -2194,9 +3010,17 @@ fn scalar_local_ordinals(function: &MirBackendFunction) -> BTreeSet<u32> {
     locals.extend(function.parameters.iter().copied());
     for block in normal_blocks(function) {
         for statement in &block.statements {
-            if let MirBackendStatement::Assign { destination, value } = statement {
-                locals.insert(*destination);
-                rvalue_locals(value, &mut locals);
+            match statement {
+                MirBackendStatement::Assign { destination, value } => {
+                    locals.insert(*destination);
+                    rvalue_locals(value, &mut locals);
+                }
+                MirBackendStatement::Runtime { arguments, .. } => {
+                    for argument in arguments {
+                        operand_locals(argument, &mut locals);
+                    }
+                }
+                MirBackendStatement::Marker { .. } => {}
             }
         }
         match &block.terminator {
@@ -2226,6 +3050,33 @@ fn scalar_local_ordinals(function: &MirBackendFunction) -> BTreeSet<u32> {
 
 fn llvm_checked_helpers(module: &mut String) {
     writeln!(module, "declare void @llvm.trap()").unwrap();
+    for declaration in [
+        "declare i64 @tondo_rt_result_new(i64, i64, i64)",
+        "declare i64 @tondo_rt_result_tag(i64)",
+        "declare i64 @tondo_rt_result_payload(i64)",
+        "declare i64 @tondo_rt_host_call(i64, i64)",
+        "declare i64 @tondo_rt_retain(i64)",
+        "declare i64 @tondo_rt_release(i64)",
+        "declare i64 @tondo_rt_cow_clone(i64)",
+        "declare i64 @tondo_rt_frame_enter()",
+        "declare i64 @tondo_rt_frame_publish_root(i64, i64)",
+        "declare i64 @tondo_rt_frame_register_defer(i64, i64)",
+        "declare i64 @tondo_rt_frame_disarm_defer(i64, i64)",
+        "declare i64 @tondo_rt_frame_cleanup(i64, i64)",
+        "declare i64 @tondo_rt_frame_leave(i64, i64)",
+        "declare i64 @tondo_rt_scope_enter()",
+        "declare i64 @tondo_rt_scope_spawn(i64, i64, i64)",
+        "declare i64 @tondo_rt_task_spawn(i64, i64)",
+        "declare i64 @tondo_rt_task_poll(i64)",
+        "declare i64 @tondo_rt_task_wake(i64)",
+        "declare i64 @tondo_rt_task_cancel(i64)",
+        "declare i64 @tondo_rt_task_take(i64)",
+        "declare i64 @tondo_rt_scope_cancel(i64)",
+        "declare i64 @tondo_rt_scope_join(i64, i64)",
+        "declare i64 @tondo_rt_await(i64)",
+    ] {
+        writeln!(module, "{declaration}").unwrap();
+    }
     writeln!(module, "define internal i64 @tondo_explicit_panic() {{").unwrap();
     writeln!(module, "entry:").unwrap();
     writeln!(module, "  call void @llvm.trap()").unwrap();
@@ -2423,6 +3274,23 @@ fn llvm_rvalue(
     match value {
         MirBackendRvalue::Use(operand) => llvm_operand(operand, slots, module, value_index),
         MirBackendRvalue::Tag { value } => Ok(value.to_string()),
+        MirBackendRvalue::Aggregate { kind, values } => {
+            let tag = aggregate_tag(kind)?;
+            let payload = values
+                .first()
+                .map(|operand| llvm_operand(operand, slots, module, value_index))
+                .transpose()?
+                .unwrap_or_else(|| "0".to_owned());
+            let has_payload = i64::from(!values.is_empty());
+            let name = format!("%v{value_index}");
+            *value_index += 1;
+            writeln!(
+                module,
+                "  {name} = call i64 @tondo_rt_result_new(i64 {tag}, i64 {payload}, i64 {has_payload})"
+            )
+            .unwrap();
+            Ok(name)
+        }
         MirBackendRvalue::Prefix { operator, operand } => {
             let operand = llvm_operand(operand, slots, module, value_index)?;
             let name = format!("%v{value_index}");
@@ -2496,6 +3364,25 @@ fn llvm_operation(
             )
             .unwrap();
             Ok(name)
+        }
+        MirBackendOperation::HostCall { kind, arguments } => {
+            let argument = arguments
+                .first()
+                .map(|argument| llvm_operand(argument, slots, module, value_index))
+                .transpose()?
+                .unwrap_or_else(|| "0".to_owned());
+            let name = format!("%v{value_index}");
+            *value_index += 1;
+            let kind_id = host_call_kind(kind)?;
+            writeln!(
+                module,
+                "  {name} = call i64 @tondo_rt_host_call(i64 {kind_id}, i64 {argument})"
+            )
+            .unwrap();
+            Ok(name)
+        }
+        MirBackendOperation::Runtime { kind, arguments } => {
+            llvm_runtime_operation(kind, arguments, slots, module, value_index)
         }
         MirBackendOperation::Assert { condition } => {
             let condition = llvm_operand(condition, slots, module, value_index)?;
@@ -2584,6 +3471,56 @@ fn llvm_binary(
     Ok(name)
 }
 
+fn llvm_runtime_operation(
+    kind: &str,
+    arguments: &[MirBackendOperand],
+    slots: &BTreeMap<u32, String>,
+    module: &mut String,
+    value_index: &mut usize,
+) -> Result<String, String> {
+    let base = kind.split(':').next().unwrap_or(kind);
+    let (function, arity) = match base {
+        "retain" | "retain-value" => ("tondo_rt_retain", 1),
+        "release" | "release-value" => ("tondo_rt_release", 1),
+        "cow-clone" => ("tondo_rt_cow_clone", 1),
+        "frame-enter" => ("tondo_rt_frame_enter", 0),
+        "frame-publish-root" => ("tondo_rt_frame_publish_root", 2),
+        "register-defer" => ("tondo_rt_frame_register_defer", 2),
+        "disarm-defer" => ("tondo_rt_frame_disarm_defer", 2),
+        "frame-cleanup" => ("tondo_rt_frame_cleanup", 2),
+        "frame-leave" => ("tondo_rt_frame_leave", 2),
+        "scope-enter" => ("tondo_rt_scope_enter", 0),
+        "scope-spawn" => ("tondo_rt_scope_spawn", 3),
+        "task-spawn" => ("tondo_rt_task_spawn", 2),
+        "task-poll" => ("tondo_rt_task_poll", 1),
+        "task-wake" => ("tondo_rt_task_wake", 1),
+        "task-cancel" => ("tondo_rt_task_cancel", 1),
+        "task-take" => ("tondo_rt_task_take", 1),
+        "scope-cancel" => ("tondo_rt_scope_cancel", 1),
+        "scope-join" => ("tondo_rt_scope_join", 2),
+        "await" => ("tondo_rt_await", 1),
+        other => return Err(format!("native runtime operation is not supported: {other}")),
+    };
+    if arguments.len() != arity {
+        return Err(format!(
+            "native runtime operation `{kind}` expects {arity} arguments, got {}",
+            arguments.len()
+        ));
+    }
+    let arguments = arguments
+        .iter()
+        .map(|argument| llvm_operand(argument, slots, module, value_index))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .map(|argument| format!("i64 {argument}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let name = format!("%v{value_index}");
+    *value_index += 1;
+    writeln!(module, "  {name} = call i64 @{function}({arguments})").unwrap();
+    Ok(name)
+}
+
 fn llvm_operand(
     operand: &MirBackendOperand,
     slots: &BTreeMap<u32, String>,
@@ -2598,6 +3535,13 @@ fn llvm_operand(
         MirBackendOperand::Constant(MirBackendConstant::Bool(value)) => {
             Ok(i64::from(*value).to_string())
         }
+        MirBackendOperand::Constant(MirBackendConstant::String(value)) => {
+            let value = value
+                .strip_prefix('"')
+                .and_then(|value| value.strip_suffix('"'))
+                .unwrap_or(value);
+            Ok(string_payload(value).to_string())
+        }
         MirBackendOperand::Local { index } | MirBackendOperand::Borrow { index } => {
             let slot = slots
                 .get(index)
@@ -2611,10 +3555,11 @@ fn llvm_operand(
             let kind = match other {
                 MirBackendConstant::Unit => "unit".to_owned(),
                 MirBackendConstant::Float(value)
-                | MirBackendConstant::Char(value)
-                | MirBackendConstant::String(value) => value.clone(),
+                | MirBackendConstant::Char(value) => value.clone(),
                 MirBackendConstant::Named => "named".to_owned(),
-                MirBackendConstant::Integer(_) | MirBackendConstant::Bool(_) => unreachable!(),
+                MirBackendConstant::Integer(_)
+                | MirBackendConstant::Bool(_)
+                | MirBackendConstant::String(_) => unreachable!(),
             };
             Err(format!("MIR constant is not scalar: {kind}"))
         }
@@ -2712,7 +3657,9 @@ mod tests {
             functions: vec![MirBackendFunction {
                 ordinal: 0,
                 parameters: vec![1, 2],
+                parameter_types: Vec::new(),
                 return_local: 0,
+                return_type: "Int".to_owned(),
                 supported: true,
                 blocks: vec![
                     MirBackendBlock {
@@ -2755,7 +3702,9 @@ mod tests {
             functions: vec![MirBackendFunction {
                 ordinal: 0,
                 parameters: vec![1],
+                parameter_types: Vec::new(),
                 return_local: 0,
+                return_type: "Int".to_owned(),
                 supported: true,
                 blocks: vec![
                     MirBackendBlock {
@@ -2824,7 +3773,9 @@ mod tests {
             functions: vec![MirBackendFunction {
                 ordinal: 0,
                 parameters: vec![],
+                parameter_types: Vec::new(),
                 return_local: 0,
+                return_type: "Int".to_owned(),
                 supported: true,
                 blocks: vec![
                     MirBackendBlock {
@@ -2884,7 +3835,9 @@ mod tests {
             functions: vec![MirBackendFunction {
                 ordinal: 0,
                 parameters: vec![1],
+                parameter_types: Vec::new(),
                 return_local: 0,
+                return_type: "Int".to_owned(),
                 supported: true,
                 blocks: vec![
                     MirBackendBlock {
@@ -2951,7 +3904,9 @@ mod tests {
         let callee = MirBackendFunction {
             ordinal: 0,
             parameters: vec![1],
+            parameter_types: Vec::new(),
             return_local: 0,
+            return_type: "Int".to_owned(),
             supported: true,
             blocks: vec![MirBackendBlock {
                 ordinal: 0,
@@ -2972,7 +3927,9 @@ mod tests {
         let caller = MirBackendFunction {
             ordinal: 1,
             parameters: vec![1],
+            parameter_types: Vec::new(),
             return_local: 0,
+            return_type: "Int".to_owned(),
             supported: true,
             blocks: vec![
                 MirBackendBlock {
@@ -3008,7 +3965,9 @@ mod tests {
             functions: vec![MirBackendFunction {
                 ordinal: 0,
                 parameters: vec![],
+                parameter_types: Vec::new(),
                 return_local: 0,
+                return_type: "Int".to_owned(),
                 supported: true,
                 blocks: vec![MirBackendBlock {
                     ordinal: 0,
@@ -3037,7 +3996,9 @@ mod tests {
             functions: vec![MirBackendFunction {
                 ordinal: 0,
                 parameters: vec![],
+                parameter_types: Vec::new(),
                 return_local: 0,
+                return_type: "Int".to_owned(),
                 supported: true,
                 blocks: vec![
                     MirBackendBlock {
@@ -3074,6 +4035,7 @@ mod tests {
                 backend: Some(simple_backend()),
             }),
             vm_scalar: Vec::new(),
+            vm_managed: Vec::new(),
         }
     }
 

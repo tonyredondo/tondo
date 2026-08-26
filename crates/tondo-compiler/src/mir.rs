@@ -19,7 +19,7 @@ use crate::resolve::{LocalId, MemberId, SymbolId};
 use crate::source::Span;
 use crate::types::{
     Assignability, NumericConversion, NumericConversionErrorVariant, ParameterMode, ScalarType,
-    TypeId, TypeInterner, TypeKind,
+    TypeId, TypeInterner,
 };
 
 mod lower;
@@ -257,6 +257,11 @@ pub struct MirBackendProgram {
 pub struct MirBackendFunction {
     pub ordinal: u32,
     pub parameters: Vec<u32>,
+    /// Canonical source types for parameters.  Native lowering uses these
+    /// only to select the private ABI carrier; they are not a public layout
+    /// promise.
+    #[serde(default)]
+    pub parameter_types: Vec<String>,
     pub return_local: u32,
     pub return_type: String,
     pub blocks: Vec<MirBackendBlock>,
@@ -283,6 +288,14 @@ pub enum MirBackendStatement {
     Marker {
         kind: String,
     },
+    /// A side-effecting runtime edge emitted by MIR (retain/release,
+    /// defer/loan registration or task-scope entry).  Arguments are still
+    /// normalized operands so adapters cannot smuggle source pointers across
+    /// the boundary.
+    Runtime {
+        kind: String,
+        arguments: Vec<MirBackendOperand>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -293,6 +306,12 @@ pub enum MirBackendRvalue {
     /// intentionally not represented by the scalar adapter.
     Tag {
         value: u32,
+    },
+    /// A private managed aggregate.  The first native implementation keeps
+    /// the payload in the runtime table and passes only its opaque handle.
+    Aggregate {
+        kind: String,
+        values: Vec<MirBackendOperand>,
     },
     Prefix {
         operator: String,
@@ -377,6 +396,18 @@ pub enum MirBackendOperation {
         function: u32,
         arguments: Vec<MirBackendOperand>,
     },
+    /// A compiler-owned host operation.  The kind is a stable logical
+    /// operation name; host state remains behind the runtime handle table.
+    HostCall {
+        kind: String,
+        arguments: Vec<MirBackendOperand>,
+    },
+    /// Runtime operation used by cleanup, ownership and structured async
+    /// lowering.  Its arguments are opaque ABI carriers, never addresses.
+    Runtime {
+        kind: String,
+        arguments: Vec<MirBackendOperand>,
+    },
     Assert {
         condition: MirBackendOperand,
     },
@@ -403,15 +434,21 @@ fn backend_function(
         .collect::<Vec<_>>();
     validate_backend_control_flow(&blocks, &mut unsupported);
     let return_type = backend_type_name(interner, function.outcome());
-    if return_type != "Int" {
+    if !is_native_carrier_type(&return_type) {
         unsupported.push(format!("return-type:{return_type}"));
     }
-    for parameter in function.parameters() {
-        let parameter_type = function
-            .local(*parameter)
-            .map(|local| backend_type_name(interner, local.ty()))
-            .unwrap_or_else(|| "missing".to_owned());
-        if parameter_type != "Int" {
+    let parameter_types = function
+        .parameters()
+        .iter()
+        .map(|parameter| {
+            function
+                .local(*parameter)
+                .map(|local| backend_type_name(interner, local.ty()))
+                .unwrap_or_else(|| "missing".to_owned())
+        })
+        .collect::<Vec<_>>();
+    for parameter_type in &parameter_types {
+        if !is_native_carrier_type(parameter_type) {
             unsupported.push(format!("parameter-type:{parameter_type}"));
         }
     }
@@ -420,6 +457,7 @@ fn backend_function(
     MirBackendFunction {
         ordinal,
         parameters: function.parameters().iter().map(|id| id.index()).collect(),
+        parameter_types,
         return_local: function.return_local().index(),
         return_type,
         blocks,
@@ -506,6 +544,65 @@ fn backend_block(
             MirStatementKind::StorageLive(_) | MirStatementKind::StorageDead(_) => {
                 MirBackendStatement::Marker {
                     kind: statement_kind_name(statement.kind()).to_owned(),
+                }
+            }
+            MirStatementKind::ReserveLoan(loan) => MirBackendStatement::Runtime {
+                kind: format!("reserve-loan:{}", loan.index()),
+                arguments: Vec::new(),
+            },
+            MirStatementKind::ReleaseLoan(loan) => MirBackendStatement::Runtime {
+                kind: format!("release-loan:{}", loan.index()),
+                arguments: Vec::new(),
+            },
+            MirStatementKind::RegisterDefer { scope, guard, .. } => {
+                let mut arguments = Vec::new();
+                if let Some(guard) = guard {
+                    arguments.push(backend_operand(
+                        &MirOperand {
+                            ty: guard.ty(),
+                            kind: MirOperandKind::Copy(guard.clone()),
+                        },
+                        unsupported,
+                    ));
+                }
+                MirBackendStatement::Runtime {
+                    kind: format!("register-defer:{}", scope.index()),
+                    arguments,
+                }
+            }
+            MirStatementKind::RegisterFallback { scope, owner } => {
+                let arguments = vec![backend_operand(
+                    &MirOperand {
+                        ty: owner.ty(),
+                        kind: MirOperandKind::Move(owner.clone()),
+                    },
+                    unsupported,
+                )];
+                MirBackendStatement::Runtime {
+                    kind: format!("register-fallback:{}", scope.index()),
+                    arguments,
+                }
+            }
+            MirStatementKind::EnterTaskScope { scope } => MirBackendStatement::Runtime {
+                kind: format!("enter-task-scope:{}", scope.index()),
+                arguments: Vec::new(),
+            },
+            MirStatementKind::RetargetCleanup { from, to } => MirBackendStatement::Runtime {
+                kind: format!("retarget-cleanup:{}:{}", from.local().index(), to.local().index()),
+                arguments: Vec::new(),
+            },
+            MirStatementKind::DisarmCleanup(place) if kind == "cleanup" => MirBackendStatement::Runtime {
+                kind: format!("disarm-cleanup:{}", place.local().index()),
+                arguments: Vec::new(),
+            },
+            MirStatementKind::BeginSelect { capacity } => MirBackendStatement::Runtime {
+                kind: format!("begin-select:{capacity}"),
+                arguments: Vec::new(),
+            },
+            MirStatementKind::RegisterSelectArm { index, .. } => {
+                MirBackendStatement::Runtime {
+                    kind: format!("register-select-arm:{index}"),
+                    arguments: Vec::new(),
                 }
             }
             MirStatementKind::DisarmCleanup(_) if kind == "normal" => MirBackendStatement::Marker {
@@ -813,6 +910,17 @@ fn backend_operation(
                 arguments,
             }
         }
+        MirOperationKind::BootstrapHostCall {
+            function,
+            arguments,
+        } => {
+            let kind = backend_host_function_name(*function).to_owned();
+            let arguments = arguments
+                .iter()
+                .map(|argument| backend_operand(argument, unsupported))
+                .collect::<Vec<_>>();
+            MirBackendOperation::HostCall { kind, arguments }
+        }
         MirOperationKind::ExplicitPanic { .. } => MirBackendOperation::Trap {
             kind: "explicit-panic".to_owned(),
         },
@@ -876,9 +984,16 @@ fn backend_operand(operand: &MirOperand, unsupported: &mut Vec<String>) -> MirBa
 fn backend_rvalue(value: &MirRvalue, unsupported: &mut Vec<String>) -> MirBackendRvalue {
     match value.kind() {
         MirRvalueKind::Use(operand) => MirBackendRvalue::Use(backend_operand(operand, unsupported)),
-        MirRvalueKind::Aggregate { shape, .. } => {
-            if let Some(value) = backend_aggregate_discriminant(shape) {
-                MirBackendRvalue::Tag { value }
+        MirRvalueKind::Aggregate { shape, values } => {
+            if backend_aggregate_discriminant(shape).is_some() {
+                let values = values
+                    .iter()
+                    .map(|value| backend_operand(value, unsupported))
+                    .collect::<Vec<_>>();
+                MirBackendRvalue::Aggregate {
+                    kind: backend_aggregate_name(shape).to_owned(),
+                    values,
+                }
             } else {
                 unsupported.push("rvalue:aggregate".to_owned());
                 MirBackendRvalue::Unsupported {
@@ -918,10 +1033,55 @@ fn backend_rvalue(value: &MirRvalue, unsupported: &mut Vec<String>) -> MirBacken
 }
 
 fn backend_type_name(interner: &TypeInterner, ty: TypeId) -> String {
-    match interner.kind(ty) {
-        Ok(TypeKind::Scalar(scalar)) => scalar.as_str().to_owned(),
-        Ok(kind) => format!("{kind:?}"),
-        Err(_) => "unknown".to_owned(),
+    interner.canonical(ty).unwrap_or_else(|_| "unknown".to_owned())
+}
+
+fn is_native_carrier_type(name: &str) -> bool {
+    matches!(name, "Int" | "Bool" | "Unit")
+        || name.starts_with("Option[")
+        || name.starts_with("Result[")
+        || name.starts_with("Int?")
+        || name.contains(" ! ")
+}
+
+fn backend_aggregate_name(shape: &MirAggregateKind) -> &'static str {
+    match shape {
+        MirAggregateKind::OptionNone => "option-none",
+        MirAggregateKind::OptionSome => "option-some",
+        MirAggregateKind::ResultOk => "result-ok",
+        MirAggregateKind::ResultErr => "result-err",
+        _ => "aggregate",
+    }
+}
+
+fn backend_host_function_name(function: MirBootstrapHostFunction) -> &'static str {
+    match function {
+        MirBootstrapHostFunction::ConsolePrint => "console-print",
+        MirBootstrapHostFunction::ConsolePrintln => "console-println",
+        MirBootstrapHostFunction::ProcessPipe => "process-pipe",
+        MirBootstrapHostFunction::CommandMergeStderr => "command-merge-stderr",
+        MirBootstrapHostFunction::PipelineMergeStderr => "pipeline-merge-stderr",
+        MirBootstrapHostFunction::ProcessOutputStdout => "process-output-stdout",
+        MirBootstrapHostFunction::ProcessOutputStderr => "process-output-stderr",
+        MirBootstrapHostFunction::ProcessOutputCombined => "process-output-combined",
+        MirBootstrapHostFunction::ProcessOutputStatuses => "process-output-statuses",
+        MirBootstrapHostFunction::ExitStatusCode => "exit-status-code",
+        MirBootstrapHostFunction::ExitStatusSuccess => "exit-status-success",
+        MirBootstrapHostFunction::PointerRead => "pointer-read",
+        MirBootstrapHostFunction::PointerWrite => "pointer-write",
+        MirBootstrapHostFunction::PointerOffset => "pointer-offset",
+        MirBootstrapHostFunction::PointerCast => "pointer-cast",
+        MirBootstrapHostFunction::PointerAddress => "pointer-address",
+        MirBootstrapHostFunction::PointerFromAddress => "pointer-from-address",
+        MirBootstrapHostFunction::TestingLog => "testing-log",
+        MirBootstrapHostFunction::TestingTags => "testing-tags",
+        MirBootstrapHostFunction::TestingFailNow => "testing-fail-now",
+        MirBootstrapHostFunction::TestingSkip => "testing-skip",
+        MirBootstrapHostFunction::TestingAttach => "testing-attach",
+        MirBootstrapHostFunction::TestingSnapshot => "testing-snapshot",
+        MirBootstrapHostFunction::TestingRunLeaf => "testing-run-leaf",
+        MirBootstrapHostFunction::TestingRunSuite => "testing-run-suite",
+        MirBootstrapHostFunction::TestingBeginSuiteCleanup => "testing-begin-suite-cleanup",
     }
 }
 

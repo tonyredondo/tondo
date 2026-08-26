@@ -37,6 +37,7 @@ struct FixtureObservation {
     stdout_sha256: String,
     mir: Option<tondo_compiler::mir::MirSummary>,
     vm_scalar: Vec<VmScalarObservation>,
+    vm_managed: Vec<VmManagedObservation>,
 }
 
 #[derive(Debug, Serialize)]
@@ -46,6 +47,18 @@ struct VmScalarObservation {
     arguments: Vec<i64>,
     status: &'static str,
     result: Option<i64>,
+    diagnostics: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct VmManagedObservation {
+    function_ordinal: u32,
+    arguments: Vec<i64>,
+    status: &'static str,
+    tag: Option<u64>,
+    payload: Option<i64>,
+    payload_text: Option<String>,
     diagnostics: Vec<String>,
 }
 
@@ -188,6 +201,93 @@ fn observe_fixture(path: &Path) -> Result<FixtureObservation, String> {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
+    let vm_managed = output
+        .mir_summary()
+        .and_then(|summary| summary.backend.as_ref())
+        .zip(output.bytecode())
+        .map(|(backend, bytecode)| {
+            backend
+                .functions
+                .iter()
+                .filter(|function| {
+                    function.supported
+                        && function.return_type != "Int"
+                        && function
+                            .parameter_types
+                            .iter()
+                            .all(|ty| matches!(ty.as_str(), "Int" | "Bool"))
+                })
+                .flat_map(|function| {
+                    managed_case_arguments_for_function(function)
+                        .into_iter()
+                        .map(|arguments| {
+                            let runtime_arguments = arguments
+                                .iter()
+                                .zip(&function.parameter_types)
+                                .map(|(value, ty)| {
+                                    if ty == "Bool" {
+                                        RuntimeValue::Bool(*value != 0)
+                                    } else {
+                                        RuntimeValue::Integer(i128::from(*value))
+                                    }
+                                })
+                                .collect::<Vec<_>>();
+                            let mut host = RejectingHost;
+                            let execution = execute_with_arguments(
+                                bytecode,
+                                BytecodeFunctionId::new(function.ordinal),
+                                runtime_arguments,
+                                &mut host,
+                            );
+                            match execution {
+                                Ok(execution) => match execution.outcome {
+                                    VmOutcome::Returned(value) => {
+                                        let (tag, payload, payload_text) =
+                                            managed_value_summary(&value);
+                                        VmManagedObservation {
+                                            function_ordinal: function.ordinal,
+                                            arguments,
+                                            status: if tag.is_some() {
+                                                "returned"
+                                            } else {
+                                                "returned-non-managed"
+                                            },
+                                            tag,
+                                            payload,
+                                            payload_text,
+                                            diagnostics: if tag.is_some() {
+                                                Vec::new()
+                                            } else {
+                                                vec!["vm-non-managed-result".to_owned()]
+                                            },
+                                        }
+                                    }
+                                    VmOutcome::Panicked(_) => VmManagedObservation {
+                                        function_ordinal: function.ordinal,
+                                        arguments,
+                                        status: "panicked",
+                                        tag: None,
+                                        payload: None,
+                                        payload_text: None,
+                                        diagnostics: vec!["vm-panic".to_owned()],
+                                    },
+                                },
+                                Err(error) => VmManagedObservation {
+                                    function_ordinal: function.ordinal,
+                                    arguments,
+                                    status: "error",
+                                    tag: None,
+                                    payload: None,
+                                    payload_text: None,
+                                    diagnostics: vec![format!("vm-error:{error}")],
+                                },
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
     Ok(FixtureObservation {
         fixture: path_text.to_owned(),
         fixture_sha256: source_hash,
@@ -200,7 +300,55 @@ fn observe_fixture(path: &Path) -> Result<FixtureObservation, String> {
         stdout_sha256: sha256(output.stdout()),
         mir: output.mir_summary().cloned(),
         vm_scalar,
+        vm_managed,
     })
+}
+
+fn managed_case_arguments_for_function(
+    function: &tondo_compiler::mir::MirBackendFunction,
+) -> Vec<Vec<i64>> {
+    if function.parameter_types.is_empty() {
+        return vec![Vec::new()];
+    }
+    let nominal = function
+        .parameter_types
+        .iter()
+        .enumerate()
+        .map(|(index, ty)| if ty == "Bool" { i64::from(index % 2 == 0) } else { 20 + index as i64 })
+        .collect::<Vec<_>>();
+    let mut cases = vec![nominal];
+    if function.parameter_types.len() == 1 && function.parameter_types[0] == "Bool" {
+        cases.extend([vec![0], vec![1]]);
+    }
+    cases
+}
+
+fn managed_value_summary(value: &RuntimeValue) -> (Option<u64>, Option<i64>, Option<String>) {
+    match value {
+        RuntimeValue::OptionNone => (Some(0), None, None),
+        RuntimeValue::OptionSome(value) => scalar_payload(value)
+            .map_or((Some(1), None, None), |(payload, text)| (Some(1), payload, text)),
+        RuntimeValue::ResultOk(value) => scalar_payload(value)
+            .map_or((Some(2), None, None), |(payload, text)| (Some(2), payload, text)),
+        RuntimeValue::ResultErr(value) => scalar_payload(value)
+            .map_or((Some(3), None, None), |(payload, text)| (Some(3), payload, text)),
+        _ => (None, None, None),
+    }
+}
+
+fn scalar_payload(value: &RuntimeValue) -> Option<(Option<i64>, Option<String>)> {
+    match value {
+        RuntimeValue::Integer(value) => i64::try_from(*value).ok().map(|value| (Some(value), None)),
+        RuntimeValue::Bool(value) => Some((Some(i64::from(*value)), None)),
+        RuntimeValue::String(value) => Some((Some(string_payload(value)), Some(value.clone()))),
+        _ => None,
+    }
+}
+
+fn string_payload(value: &str) -> i64 {
+    (value.bytes().fold(0xcbf29ce484222325_u64, |hash, byte| {
+        hash.wrapping_mul(0x100000001b3).wrapping_add(u64::from(byte))
+    }) & ((1_u64 << 56) - 1)) as i64
 }
 
 fn scalar_case_arguments(parameters: &[u32]) -> Vec<Vec<i64>> {

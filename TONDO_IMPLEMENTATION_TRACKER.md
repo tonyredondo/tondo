@@ -5614,13 +5614,17 @@ pueden retrasar el primer backend correcto.
   `testing/native-abi.json`, `crates/tondo-compiler/src/toolchain.rs` y
   `scripts/native-abi-{check,test}.sh`.
 
-- [ ] **NATIVE-LOWER-CALLS-001 — Lowering de ABI y llamadas.** La primera
-  slice ya ejecuta funciones escalares reales con parámetros, retornos y
-  direct calls ordinal-resueltos en Cranelift y LLVM, comparados contra VM y
-  oráculo; los argumentos que son borrows directos de escalares se leen sin
-  exponer punteros. Sigue abierto hasta cubrir el result record administrado
-  y las llamadas host; los objetivos indirectos, protocolos no soportados y
-  targets desconocidos producen trap fail-closed.
+- [x] **NATIVE-LOWER-CALLS-001 — Lowering de ABI y llamadas.** La slice
+  ejecuta funciones escalares reales con parámetros, retornos y direct calls
+  ordinal-resueltos en Cranelift y LLVM, comparados contra VM y oráculo; los
+  argumentos que son borrows directos de escalares se leen sin exponer
+  punteros. El result record administrado (con tags y payloads `Option`/`Result`)
+  y la ruta de llamadas host comparten el mismo carrier opaco y tienen casos
+  ejecutables en `tools/native-evaluation/src/main.rs`, con observaciones VM en
+  `crates/tondo-compiler/examples/native_mir_probe.rs`. Los objetivos
+  indirectos, protocolos no soportados y targets desconocidos producen trap
+  fail-closed. Evidencia: `scripts/native-evaluation-runner.sh` y
+  `target/reliability/evidence/native-evaluation-runner.json`.
 
 - [ ] **NATIVE-LOWER-CONTROL-001 — Lowering de control y operaciones checked.**
   Branches, loops, joins, overflow e invalid shifts de la slice escalar ya se

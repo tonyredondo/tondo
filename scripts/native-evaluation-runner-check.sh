@@ -22,7 +22,7 @@ jq -e '
   and .report == "target/reliability/evidence/native-evaluation-runner.json"
   and .parent_contract == "testing/native-evaluation-fast.json"
   and .adapter_format == "tondo-mir-backend/1"
-  and .oracle == "bytecode-vm-scalar-oracle"
+  and .oracle == "bytecode-vm-scalar-and-managed-result-oracle"
   and .candidates == ["cranelift", "llvm"]
   and .toolchain_policy == {
       llvm: "explicit-absolute-llc-18",
@@ -30,8 +30,8 @@ jq -e '
       ambient_path_lookup: "forbidden",
       physical_paths_in_report: "forbidden"
   }
-  and .native_semantics == "scalar-int-checked-arithmetic-control-flow-and-traps"
-  and (.negative_cases | length == 5)
+  and .native_semantics == "scalar-and-managed-result-checked-arithmetic-control-flow-host-calls-and-traps"
+  and (.negative_cases | length == 6)
 ' "$contract" >/dev/null || die "invalid runner contract"
 
 for path in \
@@ -47,7 +47,11 @@ grep -Fq 'vm_scalar' crates/tondo-compiler/examples/native_mir_probe.rs \
     || die "probe has no VM scalar observations"
 grep -Fq 'vm_result' tools/native-evaluation/src/main.rs \
     || die "adapter does not report VM scalar results"
-grep -Fq 'scalar-native-executable-vs-vm-and-normalized-oracle-with-traps' \
+grep -Fq 'vm_managed' crates/tondo-compiler/examples/native_mir_probe.rs \
+    || die "probe has no VM managed observations"
+grep -Fq 'native_managed_runs' tools/native-evaluation/src/main.rs \
+    || die "adapter does not report managed native results"
+grep -Fq 'scalar-and-managed-native-executable-vs-vm-and-normalized-oracle' \
     tools/native-evaluation/src/main.rs \
     || die "adapter has no executable scalar evidence state"
 

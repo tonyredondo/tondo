@@ -5,6 +5,7 @@ members = [
     "crates/tondo-conformance",
     "crates/tondo-reliability",
     "crates/tondo-reference-adapter",
+    "crates/tondo-native-runtime",
     "crates/tondo-stdlib",
     "crates/tondo-vm",
 ]

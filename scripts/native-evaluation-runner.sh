@@ -61,7 +61,7 @@ jq -e '
   and .phase == "NATIVE-001"
   and .status == "passed"
   and .adapter.format == "tondo-mir-backend/1"
-  and .correctness.native_semantics == "scalar-native-executable-vs-vm-and-normalized-oracle-with-traps"
+  and .correctness.native_semantics == "scalar-and-managed-native-executable-vs-vm-and-normalized-oracle"
   and ([.native_runs[] | select(.cranelift == "passed" and .llvm == "passed")] | length >= 1)
   and ([.native_runs[] | select(.oracle_status == "trapped")] | length >= 1)
   and all(.native_runs[];
@@ -80,7 +80,17 @@ jq -e '
                and (.vm_diagnostics | length >= 1)
                and all(.vm_diagnostics[]; startswith("vm-"))))
   )
-' "$report" >/dev/null || die "runner report did not prove scalar execution"
+  and ([.native_managed_runs[] | select(.cranelift == "passed" and .llvm == "passed")] | length >= 1)
+  and all(.native_managed_runs[];
+      .oracle_status == "returned"
+      and .vm_status == "returned"
+      and (.oracle_tag | type == "number")
+      and (.vm_tag | type == "number")
+      and (.oracle_tag == .vm_tag)
+      and (.oracle_payload == null or (.oracle_payload | type == "number"))
+      and (.vm_payload == null or (.vm_payload | type == "number"))
+  )
+' "$report" >/dev/null || die "runner report did not prove native execution"
 
 ! grep -Fq "$root" "$report" || die "runner report leaked a physical workspace path"
 echo "native evaluation runner: PASS (Cranelift/LLVM scalar executables; report: ${report#"$root"/})"
