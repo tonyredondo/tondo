@@ -1,0 +1,34 @@
+{
+  "format": "tondo-native-memory-contract/1",
+  "owner": "toolchain.native_memory",
+  "edition": "0.1",
+  "phase": "M11",
+  "status": "closed-contract",
+  "strategy": "hybrid-arc-cycle-collector",
+  "strong_counts": "non-atomic-unshared-atomic-shared",
+  "cycle_collection": "trial-deletion-on-pressure-and-quiescence",
+  "weak_refs": "runtime-managed-weak-edges",
+  "roots": ["async-frame", "host-handle", "stack", "task", "thread"],
+  "resources": "deterministic-mir-cleanup",
+  "async_frames": "publish-roots-before-suspend",
+  "copy_on_write": "uniqueness-guarded-value-storage",
+  "cancellation": "cleanup-before-task-terminal",
+  "public_layout": "private-versioned-no-ffi-promise",
+  "invariants": [
+    "affine-resources-never-finalize-in-collector",
+    "cancellation-drains-cleanup-before-terminal-state",
+    "cycles-are-reclaimed-under-pressure",
+    "roots-are-published-before-suspension",
+    "shared-counts-are-atomic",
+    "unshared-counts-are-non-atomic",
+    "user-layout-never-crosses-the-private-boundary"
+  ],
+  "negative_cases": [
+    "wrong-format",
+    "missing-root-owner",
+    "unsorted-invariants",
+    "collector-finalizer-resource",
+    "public-layout-promise"
+  ],
+  "next_blocks": ["NATIVE-ABI-001"]
+}

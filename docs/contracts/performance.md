@@ -104,11 +104,13 @@ is exact Tondo language observables; allocation, retain/release and pause
 counters are instrumented harness observations and never become language
 semantics.
 
-`native` is deliberately present as a deferred backend entry. `NATIVE-001` must
-select and evaluate Cranelift, LLVM or a generation strategy using this exact
-suite. It may compare performance only after every native workload matches the
-VM oracle for values, errors, ordering, ownership, overflow, cancellation and
-exit behavior. A faster but semantically different backend fails the gate.
+`native` is present as a candidate backend scope, but no native backend is
+selected yet. The fast `NATIVE-001` lane measures candidate code-generation
+engines on a reduced normalized MIR shape; it does not consume this full
+baseline. A candidate may use this exact suite only after native lowering
+exists and every workload matches the VM oracle for values, errors, ordering,
+ownership, overflow, cancellation and exit behavior. A faster but semantically
+different backend fails the gate.
 
 SIMD, word-at-a-time kernels, lookup tables, specialization, automatic
 vectorization and target multiversioning are permitted. They must retain the
@@ -131,8 +133,10 @@ The contract has four gates:
 
 `PERF-001` closes only the first gate and the machine-checkable design needed to
 run the remaining gates. It intentionally does not invent timing numbers or
-claim that a native backend exists. The baseline capture is required before
-`NATIVE-001`, `NATIVE-ABI-001` or promotion of an optimization.
+claim that a native executable exists. The fast candidate samples do not
+replace this baseline. Capture is required before `NATIVE-ABI-001` or
+promotion of an optimization; backend selection alone does not consume a full
+native performance baseline.
 
 ## Failure policy
 

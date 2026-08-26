@@ -11,6 +11,7 @@ jq -e '
     and (.documentation_paths | length > 0)
     and (.gate_policy_paths | length > 0)
     and (.inline_test_tail_paths | type == "array")
+    and (.evaluation_paths | type == "array" and length > 0)
     and .coverage.new_executable_line_min_basis_points == 10000
     and .mutation.required_for_production_rust_changes == true
     and (.shared_paths | length > 0)
@@ -131,6 +132,7 @@ rust_changed=0
 production_rust_changed=0
 inline_test_tail_changed=0
 external_test_changed=0
+evaluation_changed=0
 full_required="$force_full"
 declare -A packages=()
 
@@ -151,6 +153,20 @@ is_documentation() {
 is_gate_policy() {
     local path="$1"
     jq -e --arg path "$path" '.gate_policy_paths | index($path) != null' "$config" >/dev/null
+}
+
+is_evaluation_path() {
+    local path="$1"
+    local prefix
+    while IFS= read -r prefix; do
+        [[ -n "$prefix" ]] || continue
+        if [[ "$prefix" == */ ]]; then
+            [[ "$path" == "$prefix"* ]] && return 0
+        elif [[ "$path" == "$prefix" ]]; then
+            return 0
+        fi
+    done < <(jq -r '.evaluation_paths[]' "$config")
+    return 1
 }
 
 is_test_path() {
@@ -216,6 +232,10 @@ package_for() {
 }
 
 for path in "${changed_files[@]}"; do
+    if is_evaluation_path "$path"; then
+        evaluation_changed=1
+        continue
+    fi
     if [[ "$path" == *.rs ]]; then
         rust_changed=1
         if is_test_path "$path"; then
@@ -250,6 +270,8 @@ non_docs_changed="${non_docs_changed:-0}"
 gate_policy_changed="${gate_policy_changed:-0}"
 if (( full_required )); then
     scope="shared-frontier"
+elif (( evaluation_changed && ! non_docs_changed )); then
+    scope="evaluation"
 elif (( docs_changed && ! non_docs_changed )); then
     scope="documentation"
 fi
@@ -286,6 +308,18 @@ else
         fi
         if (( gate_policy_changed )); then
             run fast-gate-tests bash scripts/fast-gate-test.sh
+        fi
+        if (( evaluation_changed )); then
+            run native-evaluation-fast-contract \
+                bash scripts/native-evaluation-fast-check.sh
+            run native-evaluation-fast-tests \
+                bash scripts/native-evaluation-fast-test.sh
+            run native-evaluation-runner-contract \
+                bash scripts/native-evaluation-runner-check.sh
+            run native-evaluation-runner-tests \
+                bash scripts/native-evaluation-runner-test.sh
+            run native-evaluation-adapter-check \
+                cargo check --manifest-path tools/native-evaluation/Cargo.toml --locked
         fi
         for package in "${!packages[@]}"; do
             run "check-$package" cargo check -p "$package" --all-targets --locked
@@ -339,10 +373,11 @@ jq -n \
     --argjson production_rust_changed "$production_rust_changed" \
     --argjson inline_test_tail_changed "$inline_test_tail_changed" \
     --argjson external_test_changed "$external_test_changed" \
+    --argjson evaluation_changed "$evaluation_changed" \
     --argjson full_required "$full_required" \
     --argjson documentation_changed "$docs_changed" \
     --argjson gate_policy_changed "$gate_policy_changed" \
     --argjson files "$(jq -Rsc 'split("\n") | map(select(length > 0))' "$changed_file_list")" \
-    '{format:$format,scope:$scope,head:$head,base:$base,rust_changed:$rust_changed,production_rust_changed:$production_rust_changed,inline_test_tail_changed:$inline_test_tail_changed,external_test_changed:$external_test_changed,documentation_changed:$documentation_changed,gate_policy_changed:$gate_policy_changed,full_required:$full_required,changed_files:$files}' \
+    '{format:$format,scope:$scope,head:$head,base:$base,rust_changed:$rust_changed,production_rust_changed:$production_rust_changed,inline_test_tail_changed:$inline_test_tail_changed,external_test_changed:$external_test_changed,evaluation_changed:$evaluation_changed,documentation_changed:$documentation_changed,gate_policy_changed:$gate_policy_changed,full_required:$full_required,changed_files:$files}' \
     > "$summary"
 echo "fast gate: OK scope=$scope files=${#changed_files[@]} evidence=$summary"

@@ -15,7 +15,7 @@ use crate::hir::{
     ExpressionCheckLimits, HirCallableId, HirDiscardStatus, HirError, HirProgram,
     TypeLoweringLimits, check_expressions_configured, lower_types,
 };
-use crate::mir::{MirError, MirLoweringLimits, lower_to_mir};
+use crate::mir::{MirError, MirLoweringLimits, MirSummary, lower_to_mir};
 pub use crate::package::Edition;
 use crate::package::{PackageGraph, PackageGraphError};
 use crate::process_host::BootstrapHost;
@@ -321,6 +321,7 @@ pub struct CompilationRequest {
     documentation_fixture: bool,
     warning_profiles: BTreeSet<WarningProfile>,
     diagnostic_profiles: BTreeSet<DiagnosticProfile>,
+    retain_bytecode: bool,
     test_entry: Option<String>,
     test_envelope: Option<crate::test_control::EnvelopeHandle>,
     test_participation_entries: Vec<String>,
@@ -381,6 +382,7 @@ impl CompilationRequest {
             documentation_fixture: false,
             warning_profiles: BTreeSet::new(),
             diagnostic_profiles: BTreeSet::new(),
+            retain_bytecode: false,
             test_entry: None,
             test_envelope: None,
             test_participation_entries: Vec::new(),
@@ -423,6 +425,13 @@ impl CompilationRequest {
         profiles: impl IntoIterator<Item = DiagnosticProfile>,
     ) -> Self {
         self.diagnostic_profiles = profiles.into_iter().collect();
+        self
+    }
+
+    /// Retains verified bytecode in a successful run output for compiler-owned
+    /// differential tooling. Ordinary callers keep the zero-copy release path.
+    pub fn with_bytecode_observation(mut self) -> Self {
+        self.retain_bytecode = true;
         self
     }
 
@@ -604,6 +613,8 @@ pub struct CompilationOutput {
     diagnostics: DiagnosticReport,
     stdout: Vec<u8>,
     diagnostic_trace: Option<DiagnosticTrace>,
+    mir_summary: Option<MirSummary>,
+    bytecode: Option<tondo_vm::bytecode::BytecodeProgram>,
     semantic_model: Option<SemanticModel>,
     products: Option<BuildProducts>,
 }
@@ -629,6 +640,21 @@ impl CompilationOutput {
     /// execution.  Normal checks/runs leave this absent.
     pub fn diagnostic_trace(&self) -> Option<&DiagnosticTrace> {
         self.diagnostic_trace.as_ref()
+    }
+
+    /// Returns the backend-neutral inventory of the verified MIR when the
+    /// request reached the executable lowering boundary.  It contains no
+    /// request-local IDs, addresses, layouts or source paths.
+    pub fn mir_summary(&self) -> Option<&MirSummary> {
+        self.mir_summary.as_ref()
+    }
+
+    /// Returns the verified VM bytecode when this output reached execution.
+    ///
+    /// This is an internal toolchain observation surface used by backend
+    /// differential probes; it is not a serialized artifact or a public ABI.
+    pub fn bytecode(&self) -> Option<&tondo_vm::bytecode::BytecodeProgram> {
+        self.bytecode.as_ref()
     }
 
     pub fn semantic_model(&self) -> Option<&SemanticModel> {
@@ -831,6 +857,8 @@ fn execute_with_derives(
             diagnostics: bag.resolve(request.edition.as_str(), &request.sources)?,
             stdout: Vec::new(),
             diagnostic_trace: None,
+            mir_summary: None,
+            bytecode: None,
             semantic_model: None,
             products: None,
         });
@@ -844,6 +872,8 @@ fn execute_with_derives(
             diagnostics: bag.resolve(request.edition.as_str(), &request.sources)?,
             stdout: Vec::new(),
             diagnostic_trace: None,
+            mir_summary: None,
+            bytecode: None,
             semantic_model: None,
             products: None,
         });
@@ -895,6 +925,8 @@ fn execute_with_derives(
             diagnostics: lexical_diagnostics.resolve(request.edition.as_str(), &request.sources)?,
             stdout: Vec::new(),
             diagnostic_trace: None,
+            mir_summary: None,
+            bytecode: None,
             semantic_model: None,
             products: None,
         });
@@ -935,6 +967,8 @@ fn execute_with_derives(
             diagnostics: syntax_diagnostics.resolve(request.edition.as_str(), &request.sources)?,
             stdout: Vec::new(),
             diagnostic_trace: None,
+            mir_summary: None,
+            bytecode: None,
             semantic_model: None,
             products: None,
         });
@@ -953,6 +987,8 @@ fn execute_with_derives(
                 .resolve(request.edition.as_str(), &request.sources)?,
             stdout,
             diagnostic_trace: None,
+            mir_summary: None,
+            bytecode: None,
             semantic_model: None,
             products: None,
         });
@@ -982,6 +1018,8 @@ fn execute_with_derives(
             diagnostics,
             stdout: Vec::new(),
             diagnostic_trace: None,
+            mir_summary: None,
+            bytecode: None,
             semantic_model: Some(SemanticModel::after_resolution(
                 request.sources,
                 resolved_program,
@@ -1025,6 +1063,8 @@ fn execute_with_derives(
             diagnostics,
             stdout: Vec::new(),
             diagnostic_trace: None,
+            mir_summary: None,
+            bytecode: None,
             semantic_model: Some(SemanticModel::with_hir(
                 request.sources,
                 resolved_program,
@@ -1062,6 +1102,8 @@ fn execute_with_derives(
                     diagnostics,
                     stdout: Vec::new(),
                     diagnostic_trace: None,
+                    mir_summary: None,
+                    bytecode: None,
                     semantic_model: Some(SemanticModel::with_hir(
                         request.sources,
                         resolved_program,
@@ -1160,6 +1202,8 @@ fn execute_with_derives(
             diagnostics,
             stdout: Vec::new(),
             diagnostic_trace: None,
+            mir_summary: None,
+            bytecode: None,
             semantic_model: Some(SemanticModel::with_hir(
                 request.sources,
                 resolved_program,
@@ -1264,6 +1308,8 @@ fn execute_with_derives(
                     }
                     Err(error) => return Err(error.into()),
                 };
+                let mut mir_summary = mir.summary();
+                mir_summary.backend = Some(mir.backend_program(hir_program.interner()));
                 let bytecode = match lower_to_bytecode(
                     &resolved_program,
                     &hir_program,
@@ -1380,6 +1426,7 @@ fn execute_with_derives(
                     }
                 };
                 drop(parsed_sources);
+                let retain_bytecode = request.retain_bytecode;
                 let mut output = semantic_output(
                     request,
                     resolved_program,
@@ -1390,6 +1437,10 @@ fn execute_with_derives(
                     host.take_stdout(),
                 )?;
                 output.diagnostic_trace = runtime_trace;
+                output.mir_summary = Some(mir_summary);
+                if retain_bytecode {
+                    output.bytecode = Some(bytecode);
+                }
                 return Ok(output);
             }
         }
@@ -1417,6 +1468,8 @@ fn execute_with_derives(
         diagnostics: report,
         stdout: Vec::new(),
         diagnostic_trace: None,
+        mir_summary: None,
+        bytecode: None,
         semantic_model: Some(SemanticModel::with_hir(
             request.sources,
             resolved_program,
@@ -1638,6 +1691,8 @@ fn execute_test(request: CompilationRequest) -> Result<CompilationOutput, Driver
             diagnostics: bag.resolve(request.edition.as_str(), &request.sources)?,
             stdout: Vec::new(),
             diagnostic_trace: None,
+            mir_summary: None,
+            bytecode: None,
             semantic_model: None,
             products: None,
         });
@@ -1668,6 +1723,8 @@ fn execute_test(request: CompilationRequest) -> Result<CompilationOutput, Driver
             diagnostics: bag.resolve(request.edition.as_str(), &request.sources)?,
             stdout: Vec::new(),
             diagnostic_trace: None,
+            mir_summary: None,
+            bytecode: None,
             semantic_model: None,
             products: None,
         });
@@ -1807,6 +1864,8 @@ fn backend_diagnostic_output(
         diagnostics: bag.resolve(request.edition.as_str(), &request.sources)?,
         stdout: Vec::new(),
         diagnostic_trace: None,
+        mir_summary: None,
+        bytecode: None,
         semantic_model: None,
         products: None,
     })
@@ -2048,6 +2107,8 @@ fn semantic_output(
         diagnostics,
         stdout,
         diagnostic_trace: None,
+        mir_summary: None,
+        bytecode: None,
         semantic_model: Some(SemanticModel::with_hir(request.sources, resolved, hir)),
         products: Some(products),
     })
@@ -2141,6 +2202,8 @@ fn syntax_resource_output(
         diagnostics: bag.resolve(request.edition.as_str(), &request.sources)?,
         stdout: Vec::new(),
         diagnostic_trace: None,
+        mir_summary: None,
+        bytecode: None,
         semantic_model: None,
         products: None,
     })
@@ -2188,6 +2251,7 @@ mod tests {
     use super::*;
     use crate::package::{PackageAlias, PackageId, PackageNode};
     use crate::source::{LogicalPath, ModulePath, SourceInput};
+    use tondo_vm::runtime::{RejectingHost, execute_with_arguments};
 
     fn request(format: DiagnosticFormat) -> CompilationRequest {
         let mut sources = SourceDatabase::new();
@@ -3833,6 +3897,69 @@ fn main(): !env.EnvError {
             let message = output.diagnostics().diagnostics()[0].message();
             assert!(message.contains("MIR") || message.contains("bytecode"));
         }
+    }
+
+    #[test]
+    fn native_probe_can_invoke_a_verified_scalar_function_in_the_vm() {
+        let output = execute(
+            operation_request(
+                Operation::Run,
+                b"fn add(left: Int, right: Int): Int { left + right }\n\
+                  fn main() {}\n",
+                SourceForm::Script,
+                ResourceLimits::default(),
+            )
+            .with_bytecode_observation(),
+        )
+        .unwrap();
+        assert_eq!(output.status(), CompilationStatus::Success);
+        let bytecode = output
+            .bytecode()
+            .expect("run output retains verified bytecode");
+        let callable = bytecode
+            .callables
+            .iter()
+            .find(|callable| callable.name.ends_with("::value::add"))
+            .expect("add callable is present");
+        let function = callable
+            .implementation
+            .expect("add callable has a bytecode function");
+        let mut host = RejectingHost;
+        let execution = execute_with_arguments(
+            bytecode,
+            function,
+            vec![RuntimeValue::Integer(20), RuntimeValue::Integer(22)],
+            &mut host,
+        )
+        .expect("scalar function should execute in the VM");
+        assert!(matches!(
+            execution.outcome,
+            VmOutcome::Returned(RuntimeValue::Integer(42))
+        ));
+
+        let mut host = RejectingHost;
+        assert!(
+            execute_with_arguments(
+                bytecode,
+                function,
+                vec![RuntimeValue::Integer(20)],
+                &mut host,
+            )
+            .is_err()
+        );
+        let mut host = RejectingHost;
+        assert!(
+            execute_with_arguments(
+                bytecode,
+                function,
+                vec![
+                    RuntimeValue::String("not-scalar".to_owned()),
+                    RuntimeValue::Integer(22),
+                ],
+                &mut host,
+            )
+            .is_err()
+        );
     }
 
     #[test]

@@ -110,8 +110,9 @@ cerrados como contratos puros, y `PERF-001` ya fija el contrato de benchmark y
 baseline previo al backend. Con la conformance pública, la distribución, el
 seal S1A y el contrato D0 promovidos como evidencia técnica del draft,
 comienzan los contratos runtime-facing B0.
-`NATIVE-001` queda después de la compuerta de
-diagnóstico.
+`NATIVE-001` queda después de la compuerta de diagnóstico y mantiene la
+selección pendiente hasta medir candidatos reales; su siguiente frontera es
+`NATIVE-BACKEND-ADAPTER-001`.
 FUZZ está promovido para los 22 owners; la distribución está promovida y el
 seal S1A está cerrado como bundle técnico del draft, sin sobreafirmar G5, N1,
 TLF ni una publicación.
@@ -420,12 +421,15 @@ cantidad de infraestructura necesaria antes del primer programa ejecutable.
   1.0, PackageId y hashes exactos, prelude mínimo, catálogo cerrado,
   capabilities y actualización explícita; no es una versión ni un release.
 
-- [ ] **DEC-013 — Backend nativo y ABI runtime interna.** `NATIVE-001` elige
-  backend y registra targets, debug info, toolchain, portabilidad y la
-  capacidad de conservar los perfiles `DIAG-*`;
-  `NATIVE-ABI-001`, después del ADR de memoria, cierra calling convention,
-  unwind, source maps, identidad task/thread y fronteras runtime. Ninguna de
-  ambas promete ABI FFI pública.
+- [ ] **DEC-013 — Backend nativo y ABI runtime interna.** `NATIVE-001` mantiene
+  Cranelift y LLVM como candidatos, registra targets, debug info, toolchain,
+  portabilidad y la capacidad de conservar los perfiles `DIAG-*` en
+  [`docs/adr/019-native-backend-selection.md`](docs/adr/019-native-backend-selection.md)
+  y [`testing/native-evaluation.json`](testing/native-evaluation.json). El
+  carril rápido mide compile-time/code-size sin seleccionar backend; después
+  de `NATIVE-BACKEND-ADAPTER-001` y del ADR de memoria,
+  `NATIVE-ABI-001` cierra calling convention, unwind, source maps, identidad
+  task/thread y fronteras runtime. Ninguna decisión promete ABI FFI pública.
 
 - [ ] **DEC-014 — Gestión de memoria nativa.** `NATIVE-MEM-ADR-001` debe
   cerrarla antes de ABI y lowering nativos, fijando ownership runtime,
@@ -711,7 +715,7 @@ el trabajo.
 | `DIAG-TEST-001` | Detectores `RACE-001`, `LEAK-001`, `DUMP-001` y runner de retries/shards | CI específico |
 | `DIAG-CI-001` | `DIAG-TEST-001`, `PERF-001`, fuzzing y corpus persistente | Selección de backend |
 | `NATIVE-001` | `NATIVE-PRODUCT-SPEC-001`, target/artifact/link/publish specs, Gates G5/S1A, `select` VM conforme, contratos runtime-facing B0 y `DIAG-CI-001` | Implementación de STD-0.1B |
-| `NATIVE-ABI-001` | `NATIVE-001`, `NATIVE-MEM-ADR-001`, contratos de sync/executor y hooks `RACE`/`LEAK`/`DUMP` | ABI FFI pública |
+| `NATIVE-ABI-001` | `NATIVE-BACKEND-ADAPTER-001`, `NATIVE-001`, `NATIVE-MEM-ADR-001`, contratos de sync/executor y hooks `RACE`/`LEAK`/`DUMP` | ABI FFI pública |
 | `DIAG-NATIVE-001` | memoria/ABI/lowering nativos, `NATIVE-THREAD-001` y detectores VM | Conformidad N1 |
 | ARC/runtime nativo | `NATIVE-ABI-001` y DEC-014 | Eliminación de retains, COW o escape analysis |
 | `NATIVE-LINK-001`/`NATIVE-CLI-001` | target/artifact/link schemas, lowering, ARC/ciclos y `NATIVE-STD-001` | Optimizaciones post-N1 |
@@ -5443,14 +5447,18 @@ pueden retrasar el primer backend correcto.
   cubren compile time, code size, startup, throughput, latencia, allocations,
   bytes asignados, memoria pico, retain/release y pausas, comparando únicamente
   la misma identidad y sin agregación entre targets/backends. La VM hosted es
-  la baseline requerida; `native` queda diferido a `NATIVE-001` y no se inventan
-  cifras en el contrato. El registro, documentación, negativos y gates viven
+  la baseline requerida; `native` sigue siendo un conjunto de candidatos, y el
+  carril rápido de `NATIVE-001` solo captura compile-time/code-size hasta que
+  exista lowering. La captura completa continúa diferida hasta memoria/ABI y
+  no se inventan cifras
+  en el contrato. El registro, documentación, negativos y gates viven
   en `testing/performance.json`, `docs/contracts/performance.md`,
   `scripts/performance-check.sh` y `scripts/performance-test.sh`, integrados en
   `scripts/test-gate.sh`. Este contrato y el seal S1A desbloquearon
   `DIAG-SPEC-001`; su contrato D0 está ahora cerrado y los siguientes bloques
-  son las fronteras runtime-facing B0, con `NATIVE-001` después de la
-  compuerta de diagnóstico.
+  son las fronteras runtime-facing B0; `NATIVE-001` sigue en evaluación después
+  de la compuerta de diagnóstico y el siguiente bloque es
+  `NATIVE-BACKEND-ADAPTER-001`.
 
 - [x] **DIAG-SPEC-001 — Cerrar el contrato unificado de diagnóstico dinámico.**
   Fijar profiles `race`, `leaks` y `crash`, el envelope
@@ -5543,50 +5551,104 @@ pueden retrasar el primer backend correcto.
   `scripts/diagnostic-ci-{check,test}.sh`, `scripts/diagnostic-ci.sh`,
   `scripts/diagnostic-fuzz.sh` y `.github/workflows/diagnostics.yml`.
 
-- [ ] **NATIVE-001 — Elegir backend nativo con una evaluación separada.**
-  Comparar Cranelift, LLVM y generación propia usando el MIR real, el corpus de
-  conformidad y los programas STD-0.1A. Medir soporte de targets, corrección,
-  latencia de compilación, rendimiento, memoria, tamaño, debugging,
-  distribución, mantenimiento y licencias, además de la paridad de los
-  perfiles `DIAG-*`, source maps, task/thread registry, hooks de memoria/GC,
-  unwind, redacción y crash dumps; registrar la elección en un ADR. Un backend
-  que no conserve estas observaciones queda limitado explícitamente y no puede
-  entrar en Gate N1 por silencio. Depende de `DIAG-CI-001` y de los contratos
-  runtime-facing B0, no de una implementación todavía inexistente de owners B.
+- [ ] **NATIVE-001 — Evaluar candidatos nativos con una evaluación separada.**
+  Cranelift y LLVM permanecen como candidatos medibles; un generador propio
+  queda fuera del ranking hasta tener un adaptador real. El probe
+  `tondo-native-mir-probe/1` compila cuatro fixtures hash-pinned de core,
+  collections, async estructurado y bytes por la ruta real `Operation::Run`,
+  conserva un `MirSummary` estable y verifica salida/diagnostics del VM oracle.
+  El probe incluye además `tondo-mir-backend/1`, con ordinales, operandos y
+  terminadores del MIR real. El carril rápido `tondo-native-evaluation-fast/1`
+  conecta esa forma común a Cranelift y `llc`, captura tres muestras por
+  fixture de compile-time y code-size y deja runtime/memoria/semántica como
+  pendientes. No selecciona backend, no actualiza baselines y no afirma Gate
+  N1. La
+  evidencia vive en `docs/contracts/native-evaluation.md`,
+  `testing/native-evaluation.json`, `testing/native-evaluation-fast.json`,
+  `scripts/native-evaluation-{check,test}.sh`,
+  `scripts/native-evaluation-fast-{check,test}.sh`,
+  `scripts/native-evaluation-fast.sh`, `tools/native-evaluation/`,
+  `scripts/native-evaluation.sh`, `docs/adr/019-native-backend-selection.md`
+  y los informes bajo `target/reliability/evidence/`. El siguiente bloque es
+  `NATIVE-BACKEND-ADAPTER-001`.
 
-- [ ] **NATIVE-MEM-ADR-001 — Cerrar DEC-014 antes de la ABI.** Fijar ownership
-  runtime, contadores atómicos/no atómicos, `Send`/`Share`, weak refs,
-  recolección de ciclos, interacción con async, COW y threads, estrategia de
-  pánico/cancelación, roots/retainers, recursos y oracles de verificación.
-  Prototipar las rutas de riesgo necesarias para demostrar que el modelo
-  soporta `DIAG-NATIVE-001`, los contratos runtime-facing de STD-0.1B y la paridad VM;
-  no prometer layout público.
+- [ ] **NATIVE-BACKEND-ADAPTER-001 — Sustituir el smoke adapter por lowering
+  real común.** La primera slice ya consume `tondo-mir-backend/1` desde el MIR
+  verificado y conecta Cranelift y LLVM al mismo subconjunto `Int`/comparaciones,
+  aritmética checked y control-flow normal, incluyendo locales acarreados por
+  loops; los elementos fuera de la slice producen trap y estado
+  `unsupported`, nunca una aproximación silenciosa. El runner opt-in
+  `native-evaluation-runner/1` ya genera y ejecuta objetos Cranelift/LLVM con
+  `cc` explícito y compara casos nominales y de frontera (incluyendo traps de
+  overflow checked y joins de branches) con el intérprete escalar normalizado y
+  una invocación directa de la VM sobre el mismo bytecode verificado. La paridad
+  de overflow checked de la ruta escalar ejercida, los locals acarreados por un
+  loop finito y el presupuesto fail-closed del oráculo ya están cubiertos; los
+  helpers restantes tienen cobertura de compilación y oráculo. El bloque sigue abierto hasta
+  ampliar el lowering al resto de familias MIR. Cada candidato debe producir
+  artefactos verificables y observaciones de equivalencia frente a la VM; el
+  carril rápido mide solo
+  slices cerrados y la selección permanece bloqueada hasta que ambos
+  candidatos tengan evidencia comparable. El siguiente bloque será
+  `NATIVE-MEM-ADR-001` solo al cerrar esas condiciones.
 
-- [ ] **NATIVE-ABI-001 — Definir una ABI runtime interna y versionada.** Fijar
-  después de `NATIVE-MEM-ADR-001` la frontera compilador/runtime necesaria para
-  el backend elegido: calls, unwind, frames async, retain/release, roots,
-  atomics, wakeups, task/thread IDs, source maps, crash capture y handles host
-  internos. Esta tarea cierra DEC-013; no promete ABI FFI, layout de usuario ni
-  name mangling estables.
+- [x] **NATIVE-MEM-ADR-001 — Cerrar DEC-014 antes de la ABI.** La decisión
+  queda cerrada como `hybrid-arc-cycle-collector`: contadores no atómicos para
+  valores no compartidos, atómicos al cruzar `Send`/`Share`, trial deletion bajo
+  presión/quiescencia, weak edges gestionados por runtime, roots explícitos de
+  stack/task/thread/async-frame/host-handle, cleanup determinista de recursos,
+  cancelación antes del estado terminal y COW solo tras comprobar unicidad. El
+  contrato no expone layout. La decisión typed, su identidad canónica y sus
+  negativos están en `docs/contracts/native-memory.md`,
+  `testing/native-memory.json`, `crates/tondo-compiler/src/toolchain.rs` y
+  `scripts/native-memory-{check,test}.sh`; la instrumentación del runtime y la
+  paridad native/VM siguen siendo gates de `DIAG-NATIVE-001` y de los leaves.
 
-- [ ] **NATIVE-LOWER-CALLS-001 — Lowering de ABI y llamadas.** Ejecutar un
-  programa real con funciones, parámetros, retornos y llamadas host según la
-  ABI interna elegida.
+- [x] **NATIVE-ABI-001 — Definir una ABI runtime interna y versionada.**
+  `tondo-native-runtime-abi/1` fija la calling convention de direct calls
+  verificados, el result record scalar/runtime, edges MIR de retain/release y
+  terminales de recursos, unwind normal/abort, frames y wakers async, IDs de
+  source/task/thread/crash, handles host opacos y visibilidad solo
+  compiler/runtime. La ABI no promete FFI, layout de usuario ni name mangling.
+  El contrato typed y sus negativos están en `docs/contracts/native-abi.md`,
+  `testing/native-abi.json`, `crates/tondo-compiler/src/toolchain.rs` y
+  `scripts/native-abi-{check,test}.sh`.
+
+- [ ] **NATIVE-LOWER-CALLS-001 — Lowering de ABI y llamadas.** La primera
+  slice ya ejecuta funciones escalares reales con parámetros, retornos y
+  direct calls ordinal-resueltos en Cranelift y LLVM, comparados contra VM y
+  oráculo; los argumentos que son borrows directos de escalares se leen sin
+  exponer punteros. Sigue abierto hasta cubrir el result record administrado
+  y las llamadas host; los objetivos indirectos, protocolos no soportados y
+  targets desconocidos producen trap fail-closed.
 
 - [ ] **NATIVE-LOWER-CONTROL-001 — Lowering de control y operaciones checked.**
-  Cubrir branches, loops, match, overflow, bounds y pánicos con observaciones
-  equivalentes a la VM.
+  Branches, loops, joins, overflow e invalid shifts de la slice escalar ya se
+  bajan y se comparan con la VM; la dispatch de tags para `Option`/`Result` y
+  los explicit-panic traps y `assert` checked ya tienen lowering y pruebas
+  propias en Cranelift, LLVM y el oráculo. Bounds/indexación y el corpus
+  completo de pánicos aún requieren lowering y observación propia antes de
+  cerrar el bloque.
 
-- [ ] **NATIVE-LOWER-CLEANUP-001 — Lowering de pánico y cleanup.** Preservar
-  `defer`, unwind/abort elegido, cancelación y destrucción exactamente una vez
-  en salidas normales y abruptas.
+- [ ] **NATIVE-LOWER-CLEANUP-001 — Lowering de pánico y cleanup.** El ABI y la
+  decisión de memoria ya exigen cleanup exactamente una vez y cancellation
+  antes del estado terminal; el adapter escalar rechaza las familias cleanup
+  no representadas. Falta bajar `defer`, unwind/abort, cancelación y destruir
+  valores afines en salidas normales y abruptas con un corpus VM/native.
 
-- [ ] **NATIVE-LOWER-OWNERSHIP-001 — Lowering de ownership y préstamos.**
-  Materializar movimientos, borrows, retains/releases y COW sin introducir
-  aliasing o layouts públicos accidentales.
+- [ ] **NATIVE-LOWER-OWNERSHIP-001 — Lowering de ownership y préstamos.** La
+  frontera de ABI ya reserva los edges MIR y la política de memoria define
+  retains/releases, weak edges y COW; la slice scalar no inventa layouts ni
+  aproxima valores administrados. La slice escalar ya admite borrows directos
+  como lecturas verificadas y rechaza proyecciones/escapes; falta materializar
+  movimientos, retains/releases y COW y compararlos contra la VM sin aliasing
+  accidental.
 
-- [ ] **NATIVE-LOWER-ASYNC-001 — Lowering de async estructurado.** Conservar
-  frames, suspensión, wakeups, scopes, cancelación y cleanup bajo la ABI runtime.
+- [ ] **NATIVE-LOWER-ASYNC-001 — Lowering de async estructurado.** El contrato
+  ya fija publicación de roots antes de suspender y el registro frame/task/waker;
+  `await`, `spawn`, scopes y cleanup siguen siendo explícitamente unsupported en
+  el adapter escalar. Falta conservar frames, suspensión, wakeups, scopes,
+  cancelación y cleanup bajo una ABI ejecutable y con paridad VM/native.
 
 - [ ] **NATIVE-SELECT-001 — Implementar selección atómica nativa.** Bajar la
   misma máquina prepare/register/commit/rollback de la VM, integrar wakeups de
@@ -6914,7 +6976,7 @@ Esta tabla es la fuente de reconciliación del estado actual.
     implementar todavía STD-0.1B.
 28. [ ] **Wave 7 — M11 correcto antes que optimizado.** Con Wave 6 cerrada y
     `DUMP-001` y `DIAG-TEST-001` cerrados en VM hosted, continuar
-    `NATIVE-001 → NATIVE-MEM-ADR-001 →
+    `NATIVE-BACKEND-ADAPTER-001 → NATIVE-MEM-ADR-001 →
     NATIVE-ABI-001 → leaves NATIVE-LOWER-* → NATIVE-THREAD-001 →
     NATIVE-SELECT-001 → NATIVE-002 → ARC-001 → ARC-002 →
     NATIVE-STD-CORE/HOSTED → NATIVE-STD-001 →
@@ -7003,7 +7065,9 @@ instrumentación VM hosted; `STD-ASYNC-GROUP-SPEC-001`, `STD-CONC-001`,
 `STD-ENCODING-001`, `STD-YAML-001`, `STD-TOML-001`, `STD-CBOR-001`,
 `STD-REGEX-001`, `STD-ID-001` y `STD-LOG-001` cerraron trece fronteras B0;
 `RACE-001`, `LEAK-001`, el writer lógico de `DUMP-001` y la integración de
-`DIAG-TEST-001` y `DIAG-CI-001` ya están cerrados en hosted. `NATIVE-001` queda
-como siguiente frontera y conserva la dependencia de esta evidencia.
+`DIAG-TEST-001` y `DIAG-CI-001` ya están cerrados en hosted. `NATIVE-001`
+mantiene la selección reproducible pendiente y ya tiene mediciones rápidas
+reales de Cranelift/LLVM; `NATIVE-BACKEND-ADAPTER-001` es la siguiente
+frontera antes de `NATIVE-MEM-ADR-001`.
 
 ---

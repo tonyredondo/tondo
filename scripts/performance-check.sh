@@ -25,7 +25,7 @@ jq -e '
     and .edition == "0.1"
     and .phase == "PERF-001"
     and .status == "design-locked"
-    and .purpose == "baseline-before-native"
+    and .purpose == "baseline-before-native-lowering"
     and .contract == "docs/contracts/performance.md"
     and .stdlib_contract == "testing/stdlib-performance.json"
     and .measurement.clock == "monotonic"
@@ -100,18 +100,18 @@ jq -e '
     and ($backends | map(.id)) == ["vm-hosted", "native"]
     and $backends[0].status == "baseline-required"
     and $backends[0].oracle == "language-observables-and-instrumented-counters"
-    and $backends[1].status == "deferred-to-NATIVE-001"
+    and $backends[1].status == "candidates-by-NATIVE-001-fast-lane-capture-deferred"
     and $backends[1].oracle == "must-match-vm-hosted-before-comparison"
     and .oracle_policy.compile == "canonical-interface-artifact-and-diagnostic-observations"
     and .oracle_policy.runtime == "exact-language-observables-before-performance"
     and .oracle_policy.instrumented_counters == "harness-only-not-language-semantics"
     and .oracle_policy.native_comparison == "semantic-equivalence-first"
     and .oracle_policy.mismatch == "fail-the-performance-gate"
-    and .baseline.status == "capture-required-before-native"
+    and .baseline.status == "capture-required-before-native-lowering"
     and .baseline.report == "target/reliability/evidence/performance-baseline.json"
     and .baseline.numbers == "not-present-in-design-contract"
     and .baseline.identity_must_match == true
-    and .baseline.capture_before == ["NATIVE-001", "NATIVE-ABI-001", "optimization-promotion"]
+    and .baseline.capture_before == ["NATIVE-ABI-001", "optimization-promotion"]
     and .regression_policy.same_identity_only == true
     and .regression_policy.same_workload_hash == true
     and .regression_policy.same_target_backend_profile == true
@@ -125,7 +125,7 @@ jq -e '
     and .gate_sequence[1].requires == ["clean-workspace", "pinned-toolchain", "recorded-environment", "repeated-samples"]
     and .gate_sequence[2].requires == ["exact-oracle-equivalence", "same-identity", "applicable-budgets", "no-overflow-of-bounds"]
     and .gate_sequence[3].requires == ["reviewed-baseline", "reproducible-report", "no-unexplained-regression", "ci-evidence"]
-    and .next_blocks == ["NATIVE-001"]
+    and .next_blocks == ["NATIVE-BACKEND-ADAPTER-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable contract"
 
 while IFS=$'\t' read -r fixture_path expected_sha; do
@@ -136,4 +136,4 @@ while IFS=$'\t' read -r fixture_path expected_sha; do
     [[ "$actual_sha" == "$expected_sha" ]] || die "fixture hash mismatch: $fixture_path"
 done < <(jq -r '.workloads[] | [.fixture_path, .fixture_sha256] | @tsv' "$contract")
 
-echo "performance contract: OK (14 hash-pinned workloads; native capture deferred)"
+echo "performance contract: OK (14 hash-pinned workloads; candidate fast lane, full native capture deferred)"

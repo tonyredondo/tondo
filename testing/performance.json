@@ -3,7 +3,7 @@
   "edition": "0.1",
   "phase": "PERF-001",
   "status": "design-locked",
-  "purpose": "baseline-before-native",
+  "purpose": "baseline-before-native-lowering",
   "contract": "docs/contracts/performance.md",
   "stdlib_contract": "testing/stdlib-performance.json",
   "measurement": {
@@ -435,7 +435,7 @@
     },
     {
       "id": "native",
-      "status": "deferred-to-NATIVE-001",
+      "status": "candidates-by-NATIVE-001-fast-lane-capture-deferred",
       "oracle": "must-match-vm-hosted-before-comparison"
     }
   ],
@@ -447,11 +447,11 @@
     "mismatch": "fail-the-performance-gate"
   },
   "baseline": {
-    "status": "capture-required-before-native",
+    "status": "capture-required-before-native-lowering",
     "report": "target/reliability/evidence/performance-baseline.json",
     "numbers": "not-present-in-design-contract",
     "identity_must_match": true,
-    "capture_before": ["NATIVE-001", "NATIVE-ABI-001", "optimization-promotion"]
+    "capture_before": ["NATIVE-ABI-001", "optimization-promotion"]
   },
   "regression_policy": {
     "same_identity_only": true,
@@ -481,5 +481,5 @@
       "requires": ["reviewed-baseline", "reproducible-report", "no-unexplained-regression", "ci-evidence"]
     }
   ],
-  "next_blocks": ["NATIVE-001"]
+  "next_blocks": ["NATIVE-BACKEND-ADAPTER-001"]
 }

@@ -157,6 +157,14 @@ run_step native-target-descriptor-contract \
     scripts/native-target-descriptor-check.sh
 run_step native-target-descriptor-tests \
     scripts/native-target-descriptor-test.sh
+run_step native-memory-contract \
+    scripts/native-memory-check.sh
+run_step native-memory-contract-tests \
+    scripts/native-memory-test.sh
+run_step native-abi-contract \
+    scripts/native-abi-check.sh
+run_step native-abi-contract-tests \
+    scripts/native-abi-test.sh
 run_step native-artifact-contract \
     scripts/native-artifact-check.sh
 run_step native-artifact-tests \
@@ -169,6 +177,16 @@ run_step native-publish-contract \
     scripts/native-publish-check.sh
 run_step native-publish-tests \
     scripts/native-publish-test.sh
+run_step native-evaluation-contract \
+    scripts/native-evaluation-check.sh
+run_step native-evaluation-tests \
+    scripts/native-evaluation-test.sh
+run_step native-evaluation-fast-contract-tests \
+    scripts/native-evaluation-fast-test.sh
+run_step native-evaluation-runner-contract \
+    scripts/native-evaluation-runner-check.sh
+run_step native-evaluation-runner-contract-tests \
+    scripts/native-evaluation-runner-test.sh
 run_step stdlib-json-contract \
     scripts/stdlib-json-check.sh
 run_step stdlib-messagepack-contract \

@@ -1,0 +1,45 @@
+{
+  "format": "tondo-native-abi-contract/1",
+  "owner": "toolchain.native_abi",
+  "edition": "0.1",
+  "phase": "M11",
+  "status": "closed-contract",
+  "version": "tondo-native-runtime-abi/1",
+  "calling_convention": "verified-direct-and-runtime-call-lowering",
+  "value_representation": "private-descriptor-backed-managed-values",
+  "result_representation": "scalar-or-runtime-result-record",
+  "ownership": "mir-edge-retain-release-and-resource-terminal",
+  "unwind": "explicit-normal-unwind-abort",
+  "async_frames": "frame-task-waker-registry",
+  "diagnostics": "source-span-task-thread-crash-envelope",
+  "host_handles": "opaque-capability-indexed",
+  "direct_calls": "verified-ordinal-resolved-private-symbols",
+  "visibility": "compiler-runtime-only",
+  "public_ffi": "forbidden",
+  "invariants": [
+    "async-frame-publishes-roots-before-suspend",
+    "calls-target-only-verified-private-functions",
+    "cleanup-is-exactly-once-on-normal-and-abrupt-exit",
+    "diagnostics-carry-source-and-task-identities",
+    "host-handles-are-opaque-capabilities",
+    "native-and-vm-results-share-the-same-error-boundary",
+    "no-user-layout-or-ffi-name-is-stable",
+    "retain-release-edges-are-emitted-by-mir"
+  ],
+  "negative_cases": [
+    "wrong-format",
+    "unknown-call-target",
+    "indirect-call",
+    "unsupported-call-protocol",
+    "public-ffi",
+    "unpublished-root",
+    "cleanup-without-terminal-edge"
+  ],
+  "next_blocks": [
+    "NATIVE-LOWER-CALLS-001",
+    "NATIVE-LOWER-CONTROL-001",
+    "NATIVE-LOWER-CLEANUP-001",
+    "NATIVE-LOWER-OWNERSHIP-001",
+    "NATIVE-LOWER-ASYNC-001"
+  ]
+}

@@ -166,6 +166,34 @@ pub fn execute(
     execute_with_limits(program, entry, host, VmLimits::default())
 }
 
+/// Executes a verified function with detached scalar arguments.
+///
+/// The ordinary entry point remains zero-argument because a Tondo program
+/// starts at `main`.  Native-backend differential tooling also needs to invoke
+/// a pure, lowered function directly; this boundary accepts only values that
+/// can be transferred without borrowing the VM heap and rejects managed or
+/// host-owned values rather than inventing a calling convention for them.
+pub fn execute_with_arguments(
+    program: &BytecodeProgram,
+    entry: BytecodeFunctionId,
+    arguments: Vec<RuntimeValue>,
+    host: &mut dyn VmHost,
+) -> Result<VmExecution, VmError> {
+    let arguments = arguments
+        .into_iter()
+        .map(initial_value)
+        .collect::<Result<Vec<_>, _>>()?;
+    execute_with_initial_values(
+        program,
+        entry,
+        arguments,
+        host,
+        VmLimits::default(),
+        ValueCopyStrategy::default(),
+        None,
+    )
+}
+
 pub fn execute_with_limits(
     program: &BytecodeProgram,
     entry: BytecodeFunctionId,
@@ -232,6 +260,26 @@ pub fn execute_with_limits_and_copy_strategy_and_diagnostics(
     copy_strategy: ValueCopyStrategy,
     diagnostics: Option<DiagnosticConfig>,
 ) -> Result<VmExecution, VmError> {
+    execute_with_initial_values(
+        program,
+        entry,
+        Vec::new(),
+        host,
+        limits,
+        copy_strategy,
+        diagnostics,
+    )
+}
+
+fn execute_with_initial_values(
+    program: &BytecodeProgram,
+    entry: BytecodeFunctionId,
+    arguments: Vec<Value>,
+    host: &mut dyn VmHost,
+    limits: VmLimits,
+    copy_strategy: ValueCopyStrategy,
+    diagnostics: Option<DiagnosticConfig>,
+) -> Result<VmExecution, VmError> {
     validate_limits(limits)?;
     let diagnostics = diagnostics.map(DiagnosticSession::new).transpose()?;
     let trace = verify_bytecode_with_trace_metadata(
@@ -242,10 +290,24 @@ pub fn execute_with_limits_and_copy_strategy_and_diagnostics(
     )?;
     validate_entry_contract(program, entry)?;
     if diagnostics.is_none() {
-        Engine::new(program, host, limits, copy_strategy, trace).run(entry)
+        Engine::new(program, host, limits, copy_strategy, trace).run(entry, arguments)
     } else {
         Engine::new_with_diagnostics(program, host, limits, copy_strategy, trace, diagnostics)
-            .run(entry)
+            .run(entry, arguments)
+    }
+}
+
+fn initial_value(value: RuntimeValue) -> Result<Value, VmError> {
+    match value {
+        RuntimeValue::Unit => Ok(Value::Unit),
+        RuntimeValue::Bool(value) => Ok(Value::Bool(value)),
+        RuntimeValue::Integer(value) => Ok(Value::Integer(value)),
+        RuntimeValue::Float(value) => Ok(Value::Float(value)),
+        RuntimeValue::Byte(value) => Ok(Value::Byte(value)),
+        RuntimeValue::Char(value) => Ok(Value::Char(value)),
+        other => Err(VmError::InvalidEntry(format!(
+            "initial argument is not a detached scalar: {other:?}"
+        ))),
     }
 }
 
@@ -994,15 +1056,21 @@ impl<'program, 'host> Engine<'program, 'host> {
         Ok(call)
     }
 
-    fn run(mut self, entry: BytecodeFunctionId) -> Result<VmExecution, VmError> {
+    fn run(
+        mut self,
+        entry: BytecodeFunctionId,
+        arguments: Vec<Value>,
+    ) -> Result<VmExecution, VmError> {
         let entry_function = self
             .program
             .function(entry)
             .ok_or_else(|| VmError::InvalidEntry(format!("unknown function {}", entry.index())))?;
-        if !entry_function.parameters.is_empty() {
-            return Err(VmError::InvalidEntry(
-                "the selected function requires parameters".into(),
-            ));
+        if entry_function.parameters.len() != arguments.len() {
+            return Err(VmError::InvalidEntry(format!(
+                "the selected function requires {} arguments, got {}",
+                entry_function.parameters.len(),
+                arguments.len()
+            )));
         }
         self.tasks.push(TaskRecord {
             frames: Vec::new(),
@@ -1021,7 +1089,7 @@ impl<'program, 'host> Engine<'program, 'host> {
         self.record_thread(DiagnosticThreadState::Started)?;
         self.record_task(0, None, DiagnosticTaskState::Created)?;
         self.record_task(0, None, DiagnosticTaskState::Running)?;
-        self.push_frame(entry, Vec::new(), None)?;
+        self.push_frame(entry, arguments, None)?;
 
         loop {
             if !self.resume_current_task()? {

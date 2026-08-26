@@ -1,0 +1,186 @@
+{
+  "format": "tondo-native-evaluation/1",
+  "owner": "toolchain.native_evaluation",
+  "edition": "0.1",
+  "phase": "NATIVE-001",
+  "status": "evaluation-pending",
+  "contract": "docs/contracts/native-evaluation.md",
+  "workflow": ".github/workflows/native-evaluation.yml",
+  "adr": "docs/adr/019-native-backend-selection.md",
+  "fast_lane": "testing/native-evaluation-fast.json",
+  "adapter": {
+    "format": "tondo-mir-backend/1",
+    "runner": "testing/native-evaluation-runner.json",
+      "status": "scalar-cfg-vm-differential",
+      "vm_equivalence": "scalar-cfg-only"
+  },
+  "decision": {
+    "selected_backend": null,
+    "selection_scope": "first-native-backend",
+    "selection_status": "pending-measured-evidence",
+    "n1_claim": false,
+    "native_performance_baseline": "pending-candidate-capture",
+    "next_implementation": "NATIVE-BACKEND-ADAPTER-001",
+    "reasons": [
+      "rust-native-integration",
+      "deterministic-in-process-toolchain",
+      "fast-iteration-for-mir-lowering",
+      "portable-target-expansion",
+      "explicit-runtime-boundary"
+    ],
+    "selection_requires": [
+      "both-candidate-adapters-measured",
+      "full-mir-lowering",
+      "vm-native-semantic-equivalence",
+      "full-performance-capture",
+      "full-quality-gate"
+    ]
+  },
+  "candidates": [
+    {
+      "id": "cranelift",
+      "role": "candidate",
+      "status": "fast-lane-measured",
+      "integration": "pinned-rust-library",
+      "debugging": "source-map-and-unwind-contract-required",
+      "distribution": "compiler-owned-no-ambient-tool-discovery"
+    },
+    {
+      "id": "llvm",
+      "role": "candidate",
+      "status": "fast-lane-measured",
+      "integration": "external-toolchain-or-llvm-rust-api",
+      "debugging": "strong-debug-info-ecosystem",
+      "distribution": "larger-toolchain-and-license-review"
+    },
+    {
+      "id": "custom",
+      "role": "excluded",
+      "status": "not-comparable-without-generator",
+      "integration": "compiler-owned-generator",
+      "debugging": "not-acceptable-without-independent-debug-info-stack",
+      "distribution": "lowest-dependency-but-highest-maintenance-risk"
+    }
+  ],
+  "mir_probe": {
+    "format": "tondo-native-mir-probe/1",
+    "source": "crates/tondo-compiler/examples/native_mir_probe.rs",
+    "oracle_backend": "bytecode-vm-oracle",
+    "adapter_format": "tondo-mir-backend/1",
+    "required_summary_fields": [
+      "functions",
+      "blocks",
+      "cleanup_blocks",
+      "statements",
+      "terminators",
+      "locals",
+      "loans",
+      "operations",
+      "defers",
+      "fallbacks",
+      "task_scopes",
+      "select_regions",
+      "select_arms",
+      "awaits",
+      "spawns",
+      "invokes",
+      "host_calls",
+      "unsafe_calls",
+      "source_spans",
+    "features",
+    "backend"
+    ],
+    "identity_fields": [
+      "fixture",
+      "fixture_sha256",
+      "status",
+      "exit_code",
+      "diagnostic_codes",
+      "stdout_sha256"
+    ],
+    "forbidden_fields": [
+      "physical_path",
+      "address",
+      "pointer",
+      "layout",
+      "timestamp",
+      "pid",
+      "ambient_environment"
+    ],
+    "fixtures": [
+      {
+        "path": "tests/runtime/m11-std-core-002.to",
+        "sha256": "e15e13d91f22516f3a5fa986e34fd25f96b4da3ad5579204769f740def51de7f",
+        "required_features": ["invoke", "return", "host-call"]
+      },
+      {
+        "path": "tests/runtime/m11-std-collections-001.to",
+        "sha256": "8807694cb2bf67ee1dd2796ce9cf85eee6ac351e64db4d37692321894a3b961f",
+        "required_features": ["invoke", "iterator-next", "validate-places"]
+      },
+      {
+        "path": "tests/runtime/m7-async-structured.to",
+        "sha256": "e65d5ff52c1975d3072235035ded41ca4887d941af6b8ef8579cdbc006fd5e61",
+        "required_features": ["await", "spawn", "task-scope", "fallback"]
+      },
+      {
+        "path": "tests/runtime/m10-std-bytes-001.to",
+        "sha256": "9b6544f8db5adee3113df2fc51d5412d1834ba974a94118b2b4e89687d93dc31",
+        "required_features": ["invoke", "return", "host-call"]
+      }
+    ]
+  },
+  "oracle": {
+    "compile": "same-MIR-inventory-and-diagnostics",
+    "runtime": "exact-VM-language-observables",
+    "required_before_native_performance": [
+      "values",
+      "errors",
+      "ordering",
+      "ownership",
+      "overflow",
+      "cancellation",
+      "exit-status"
+    ],
+    "mismatch": "fail-closed"
+  },
+  "evaluation_dimensions": [
+    {"id": "target-support", "status": "required-before-N1"},
+    {"id": "correctness", "status": "required-before-N1"},
+    {"id": "compile-latency", "status": "fast-lane-measured"},
+    {"id": "runtime", "status": "deferred-until-native-lowering"},
+    {"id": "memory", "status": "deferred-until-native-lowering"},
+    {"id": "code-size", "status": "fast-lane-measured"},
+    {"id": "debugging", "status": "required-before-N1"},
+    {"id": "distribution", "status": "required-before-N1"},
+    {"id": "maintenance", "status": "decision-recorded"},
+    {"id": "licensing", "status": "decision-recorded"},
+    {"id": "diagnostic-parity", "status": "required-before-N1"},
+    {"id": "source-maps", "status": "required-before-N1"},
+    {"id": "task-thread-registry", "status": "required-before-N1"},
+    {"id": "memory-gc-hooks", "status": "required-before-N1"},
+    {"id": "unwind", "status": "required-before-N1"},
+    {"id": "redaction", "status": "required-before-N1"},
+    {"id": "crash-dumps", "status": "required-before-N1"}
+  ],
+  "toolchain_policy": {
+    "versions": "pinned-before-lowering",
+    "path_lookup": "forbidden",
+    "environment_lookup": "forbidden",
+    "shell_expansion": "forbidden",
+    "unhashed_inputs": "forbidden",
+    "physical_paths_in_identity": "forbidden"
+  },
+  "negative_cases": [
+    "unknown-candidate",
+    "multiple-selected-backends",
+    "missing-mir-feature",
+    "fixture-hash-mismatch",
+    "physical-path-in-probe",
+    "n1-claim-before-lowering",
+    "native-performance-before-oracle",
+    "missing-diagnostic-dimension",
+    "stale-next-block"
+  ],
+  "next_blocks": ["NATIVE-BACKEND-ADAPTER-001"]
+}

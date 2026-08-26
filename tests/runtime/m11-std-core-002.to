@@ -4,6 +4,81 @@ fn increment(value: Int): Int {
     value + 1
 }
 
+fn native_eval_subtract(left: Int, right: Int): Int {
+    left - right
+}
+
+fn native_eval_multiply(left: Int, right: Int): Int {
+    left * right
+}
+
+fn native_eval_divide(left: Int, right: Int): Int {
+    left / right
+}
+
+fn native_eval_remainder(left: Int, right: Int): Int {
+    left % right
+}
+
+fn native_eval_shift_left(left: Int, right: Int): Int {
+    left << right
+}
+
+fn native_eval_shift_right(left: Int, right: Int): Int {
+    left >> right
+}
+
+fn native_eval_bitwise_and(left: Int, right: Int): Int {
+    left & right
+}
+
+fn native_eval_bitwise_or(left: Int, right: Int): Int {
+    left | right
+}
+
+fn native_eval_bitwise_xor(left: Int, right: Int): Int {
+    left ^ right
+}
+
+fn native_eval_negate(value: Int): Int {
+    -value
+}
+
+fn native_eval_branch(value: Int): Int {
+    if value > 0 {
+        value + 1
+    } else {
+        value - 1
+    }
+}
+
+fn native_eval_loop(): Int {
+    var index = 0
+    var total = 0
+    for index < 4 {
+        total = total + index
+        index += 1
+    }
+    total
+}
+
+fn native_eval_call(value: Int): Int {
+    native_eval_subtract(value, 1)
+}
+
+fn native_eval_assert(value: Int): Int {
+    assert(value != 0)
+    value
+}
+
+fn native_eval_option_tag(): Int {
+    let value: Int? = some(1)
+    match value {
+        some(_) => 1
+        none => 0
+    }
+}
+
 fn errorCode(message: String): Int {
     message.length()
 }

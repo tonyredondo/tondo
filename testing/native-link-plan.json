@@ -75,5 +75,5 @@
     "unsupported-object-format",
     "zero-or-insufficient-limit"
   ],
-  "next_blocks": ["NATIVE-001"]
+  "next_blocks": ["NATIVE-ABI-001"]
 }

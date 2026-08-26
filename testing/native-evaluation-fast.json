@@ -1,0 +1,103 @@
+{
+  "format": "tondo-native-evaluation-fast/1",
+  "owner": "toolchain.native_evaluation",
+  "edition": "0.1",
+  "phase": "NATIVE-001",
+  "status": "evaluation-ready",
+  "parent_contract": "testing/native-evaluation.json",
+  "runner": "scripts/native-evaluation-fast.sh",
+  "report": "target/reliability/evidence/native-evaluation-fast.json",
+  "adapter_manifest": "tools/native-evaluation/Cargo.toml",
+  "adapter": {
+    "format": "tondo-mir-backend/1",
+    "supported_subset": "scalar-int-checked-arithmetic-asserts-control-flow-tag-dispatch-direct-calls-and-traps",
+    "unsupported_policy": "explicit-trap-and-report",
+    "native_semantics": "pending-executable-runner"
+  },
+  "protocol": {
+    "warmup_iterations": 1,
+    "measurement_repetitions": 3,
+    "independent_processes": 1,
+    "minimum_sample_count": 3,
+    "seed": "tondo-native-evaluation-fast-0.1",
+    "clean_workspace": false,
+    "full_quality_gate": "promotion-only"
+  },
+  "corpus": [
+    {
+      "path": "tests/runtime/m11-std-core-002.to",
+      "sha256": "e15e13d91f22516f3a5fa986e34fd25f96b4da3ad5579204769f740def51de7f"
+    },
+    {
+      "path": "tests/runtime/m11-std-collections-001.to",
+      "sha256": "8807694cb2bf67ee1dd2796ce9cf85eee6ac351e64db4d37692321894a3b961f"
+    },
+    {
+      "path": "tests/runtime/m7-async-structured.to",
+      "sha256": "e65d5ff52c1975d3072235035ded41ca4887d941af6b8ef8579cdbc006fd5e61"
+    },
+    {
+      "path": "tests/runtime/m10-std-bytes-001.to",
+      "sha256": "9b6544f8db5adee3113df2fc51d5412d1834ba974a94118b2b4e89687d93dc31"
+    }
+  ],
+  "candidates": [
+    {
+      "id": "cranelift",
+      "role": "candidate",
+      "status": "measured",
+      "adapter": "cranelift-codegen",
+      "version": "0.132.3",
+      "dimensions": ["compile-time", "code-size"]
+    },
+    {
+      "id": "llvm",
+      "role": "candidate",
+      "status": "measured",
+      "adapter": "llc",
+      "version": "18.x",
+      "dimensions": ["compile-time", "code-size"]
+    },
+    {
+      "id": "custom",
+      "role": "excluded",
+      "status": "not-comparable",
+      "adapter": null,
+      "version": null,
+      "dimensions": []
+    }
+  ],
+  "dimensions": [
+    {"id": "compile-time", "status": "measured", "unit": "nanoseconds"},
+    {"id": "code-size", "status": "measured", "unit": "bytes"},
+    {"id": "peak-memory", "status": "deferred", "unit": "bytes"},
+    {"id": "runtime", "status": "deferred", "unit": "language-observables"}
+  ],
+  "oracle": {
+    "input": "hash-pinned-real-mir-probe",
+    "mir": "same-normalized-module-shape",
+    "backend-verifier": "required",
+    "runtime-equivalence": "required-before-selection",
+    "mismatch": "fail-closed"
+  },
+  "selection": {
+    "selected_backend": null,
+    "selection_status": "pending-measured-evidence",
+    "minimum_candidates": 2,
+    "required_before_selection": [
+      "both-candidate-adapters-measured",
+      "full-mir-lowering",
+      "vm-native-semantic-equivalence",
+      "full-performance-capture",
+      "full-quality-gate"
+    ]
+  },
+  "negative_cases": [
+    "unknown-candidate",
+    "selected-backend-before-data",
+    "missing-corpus-hash",
+    "wrong-sample-count",
+    "native-semantics-before-lowering",
+    "physical-tool-path-in-report"
+  ]
+}

@@ -1,0 +1,20 @@
+[package]
+name = "tondo-native-evaluation"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.93"
+publish = false
+
+[dependencies]
+cranelift-codegen = { version = "=0.132.3", default-features = true }
+cranelift-frontend = { version = "=0.132.3", default-features = true }
+cranelift-module = { version = "=0.132.3", default-features = true }
+cranelift-native = { version = "=0.132.3", default-features = true }
+cranelift-object = { version = "=0.132.3", default-features = true }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.151", features = ["preserve_order"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[workspace]

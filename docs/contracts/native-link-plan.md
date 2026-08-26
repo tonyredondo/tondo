@@ -82,7 +82,8 @@ The driver is a logical, hash-pinned identity. Its arguments are ordered
 tokens; physical paths, shell expansion, environment expansion, `PATH` lookup
 and shell execution are forbidden. Output is also logical: `product_id`, object
 format and expected hash are recorded. Publication is now closed by
-`NATIVE-PUBLISH-SPEC-001`; the next implementation block is `NATIVE-001`.
+`NATIVE-PUBLISH-SPEC-001`; the next implementation block is
+`NATIVE-ABI-001` after the memory policy is closed.
 
 The implementation, machine-readable contract and negative tests are in
 `crates/tondo-compiler/src/toolchain.rs`,

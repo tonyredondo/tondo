@@ -44,6 +44,17 @@
   "inline_test_tail_paths": [
     "crates/tondo-reliability/src/matrix.rs"
   ],
+  "evaluation_paths": [
+    "tools/native-evaluation/",
+    "scripts/native-evaluation-fast.sh",
+    "scripts/native-evaluation-fast-check.sh",
+    "scripts/native-evaluation-fast-test.sh",
+    "scripts/native-evaluation-runner.sh",
+    "scripts/native-evaluation-runner-check.sh",
+    "scripts/native-evaluation-runner-test.sh",
+    "testing/native-evaluation-fast.json",
+    "testing/native-evaluation-runner.json"
+  ],
   "shared_paths": [
     "Cargo.toml",
     "Cargo.lock",
@@ -76,6 +87,9 @@
     "crates/tondo-vm/src/runtime/dump.rs",
     "scripts/performance-check.sh",
     "scripts/performance-test.sh",
+    "scripts/native-evaluation-check.sh",
+    "scripts/native-evaluation-test.sh",
+    "testing/native-evaluation.json",
     "scripts/test-gate.sh",
     "scripts/quality-gate.sh",
     "testing/diagnostic-tooling.json",

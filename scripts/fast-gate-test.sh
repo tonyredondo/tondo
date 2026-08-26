@@ -62,6 +62,18 @@ shared="$(TONDO_FAST_CHANGED_FILES='crates/tondo-compiler/src/hir/check.rs' \
 assert_contains "$shared" "scope=shared-frontier"
 assert_contains "$shared" "full-test-gate"
 
+evaluation="$(TONDO_FAST_CHANGED_FILES=$'tools/native-evaluation/src/main.rs\ntesting/native-evaluation-runner.json' \
+    TONDO_FAST_GATE_DIR="$tmp_dir/evaluation" \
+    bash scripts/fast-gate.sh --dry-run)"
+assert_contains "$evaluation" "scope=evaluation"
+assert_contains "$evaluation" "native-evaluation-fast-contract"
+assert_contains "$evaluation" "native-evaluation-runner-contract"
+assert_contains "$evaluation" "native-evaluation-runner-tests"
+assert_contains "$evaluation" "native-evaluation-adapter-check"
+assert_not_contains "$evaluation" "full-test-gate"
+assert_not_contains "$evaluation" "changed-line-coverage"
+assert_not_contains "$evaluation" "diff-mutation"
+
 diff_fixture="$tmp_dir/fixture.diff"
 coverage_fixture="$tmp_dir/coverage.json"
 printf '%s\n' \

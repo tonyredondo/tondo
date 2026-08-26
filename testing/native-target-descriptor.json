@@ -60,5 +60,5 @@
     "environment-expansion",
     "path-bearing-tool-identity"
   ],
-  "next_blocks": ["NATIVE-001"]
+  "next_blocks": ["NATIVE-ABI-001"]
 }

@@ -23,6 +23,8 @@ does not edit history silently: it adds a new ADR that supersedes the old one.
 | [016](016-verified-hir-mir-contract.md) | Verified HIR and explicit MIR effects | Accepted |
 | [017](017-hosted-process-workers.md) | Blocking process work outside the cooperative executor | Accepted |
 | [018](018-tlf-is-a-transport-format.md) | TLF is a transport format, not a second language | Accepted |
+| [019](019-native-backend-selection.md) | Measure Cranelift and LLVM before selecting the first native backend | Proposed |
+| [020](020-native-memory-and-runtime-abi.md) | Hybrid ARC/cycle collection and private versioned native ABI | Accepted |
 
 The detailed implemented object and tracing model selected collectively by
 ADR-006 through ADR-011 is recorded in

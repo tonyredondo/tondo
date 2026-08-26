@@ -118,5 +118,5 @@
     "stale-plan-hash",
     "unknown-fields"
   ],
-  "next_blocks": ["NATIVE-001"]
+  "next_blocks": ["NATIVE-ABI-001"]
 }

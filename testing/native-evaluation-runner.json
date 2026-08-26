@@ -1,0 +1,27 @@
+{
+  "format": "tondo-native-evaluation-runner/1",
+  "owner": "toolchain.native_evaluation",
+  "edition": "0.1",
+  "phase": "NATIVE-BACKEND-ADAPTER-001",
+  "status": "evaluation-ready",
+  "runner": "scripts/native-evaluation-runner.sh",
+  "report": "target/reliability/evidence/native-evaluation-runner.json",
+  "parent_contract": "testing/native-evaluation-fast.json",
+  "adapter_format": "tondo-mir-backend/1",
+  "oracle": "bytecode-vm-scalar-oracle",
+  "candidates": ["cranelift", "llvm"],
+  "toolchain_policy": {
+    "llvm": "explicit-absolute-llc-18",
+    "linker": "explicit-absolute-cc",
+    "ambient_path_lookup": "forbidden",
+    "physical_paths_in_report": "forbidden"
+  },
+  "native_semantics": "scalar-int-checked-arithmetic-control-flow-and-traps",
+  "negative_cases": [
+    "missing-normalized-mir",
+    "unsupported-function-without-trap",
+    "missing-native-run",
+    "nonzero-native-result",
+    "physical-path-in-report"
+  ]
+}

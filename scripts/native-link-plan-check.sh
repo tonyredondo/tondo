@@ -62,7 +62,7 @@ jq -e '
     "pretty-or-unsorted-record", "stale-plan-hash", "unknown-fields",
     "unsupported-object-format", "zero-or-insufficient-limit"
   ]
-  and .next_blocks == ["NATIVE-001"]
+  and .next_blocks == ["NATIVE-ABI-001"]
 ' "$contract" >/dev/null
 
 source="$root/crates/tondo-compiler/src/toolchain.rs"

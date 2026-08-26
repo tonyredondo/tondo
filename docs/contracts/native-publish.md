@@ -103,5 +103,5 @@ The pure implementation and executable negative coverage are in
 `crates/tondo-compiler/src/toolchain.rs`,
 `testing/native-publish.json`, `scripts/native-publish-check.sh` and
 `scripts/native-publish-test.sh`. The physical orchestrator is deliberately a
-later `NATIVE-001` implementation concern; this contract is the invariant it
+later native lowering implementation concern; this contract is the invariant it
 must satisfy.

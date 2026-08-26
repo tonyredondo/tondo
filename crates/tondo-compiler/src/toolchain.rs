@@ -23,6 +23,8 @@ pub const INTERFACE_FORMAT: &str = "tondo-interface-draft";
 pub const ARTIFACT_FORMAT: &str = "tondo-artifact-draft";
 pub const STANDARD_DESCRIPTOR_FORMAT: &str = "tondo-standard-descriptor-draft";
 pub const NATIVE_TARGET_DESCRIPTOR_FORMAT: &str = "tondo-native-target-descriptor-draft";
+pub const NATIVE_MEMORY_CONTRACT_FORMAT: &str = "tondo-native-memory-contract/1";
+pub const NATIVE_ABI_CONTRACT_FORMAT: &str = "tondo-native-abi-contract/1";
 pub const NATIVE_ARTIFACT_FORMAT: &str = "tondo-native-artifact-draft";
 pub const NATIVE_LINK_PLAN_FORMAT: &str = "tondo-native-link-plan-draft";
 pub const NATIVE_PUBLISH_PLAN_FORMAT: &str = "tondo-native-publish-plan-draft";
@@ -2288,6 +2290,245 @@ impl NativeTargetDescriptor {
     }
 }
 
+/// Closed decision record for the private native memory runtime.
+///
+/// This is deliberately a policy contract rather than a public object layout.
+/// It makes the choices that the native ABI must preserve executable and
+/// content-addressable without freezing FFI representation details.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeMemoryContract {
+    pub format: String,
+    pub edition: String,
+    pub strategy: String,
+    pub strong_counts: String,
+    pub cycle_collection: String,
+    pub weak_refs: String,
+    pub roots: Vec<String>,
+    pub resources: String,
+    pub async_frames: String,
+    pub copy_on_write: String,
+    pub cancellation: String,
+    pub public_layout: String,
+    pub invariants: Vec<String>,
+}
+
+impl NativeMemoryContract {
+    pub fn decode(bytes: &[u8]) -> Result<Self, FormatError> {
+        let value: Self = decode_canonical(bytes, "native memory contract")?;
+        value.validate()?;
+        Ok(value)
+    }
+
+    pub fn encode(&self) -> Result<Vec<u8>, FormatError> {
+        self.validate()?;
+        encode(self)
+    }
+
+    pub fn content_hash(&self) -> Result<String, FormatError> {
+        Ok(sha256(&self.encode()?))
+    }
+
+    fn validate(&self) -> Result<(), FormatError> {
+        if self.format != NATIVE_MEMORY_CONTRACT_FORMAT {
+            return Err(FormatError::UnsupportedFormat {
+                expected: NATIVE_MEMORY_CONTRACT_FORMAT,
+                actual: self.format.clone(),
+            });
+        }
+        if self.edition != "0.1" {
+            return Err(FormatError::Invalid(
+                "native memory contract edition must be 0.1".into(),
+            ));
+        }
+        require_exact(
+            "native memory strategy",
+            &self.strategy,
+            "hybrid-arc-cycle-collector",
+        )?;
+        require_exact(
+            "native memory strong_counts",
+            &self.strong_counts,
+            "non-atomic-unshared-atomic-shared",
+        )?;
+        require_exact(
+            "native memory cycle_collection",
+            &self.cycle_collection,
+            "trial-deletion-on-pressure-and-quiescence",
+        )?;
+        require_exact(
+            "native memory weak_refs",
+            &self.weak_refs,
+            "runtime-managed-weak-edges",
+        )?;
+        require_sorted_unique("native memory roots", &self.roots)?;
+        if self.roots != ["async-frame", "host-handle", "stack", "task", "thread"] {
+            return Err(FormatError::Invalid(
+                "native memory roots must enumerate every runtime root owner".into(),
+            ));
+        }
+        require_exact(
+            "native memory resources",
+            &self.resources,
+            "deterministic-mir-cleanup",
+        )?;
+        require_exact(
+            "native memory async_frames",
+            &self.async_frames,
+            "publish-roots-before-suspend",
+        )?;
+        require_exact(
+            "native memory copy_on_write",
+            &self.copy_on_write,
+            "uniqueness-guarded-value-storage",
+        )?;
+        require_exact(
+            "native memory cancellation",
+            &self.cancellation,
+            "cleanup-before-task-terminal",
+        )?;
+        require_exact(
+            "native memory public_layout",
+            &self.public_layout,
+            "private-versioned-no-ffi-promise",
+        )?;
+        require_sorted_unique("native memory invariants", &self.invariants)?;
+        if self.invariants.len() < 7 {
+            return Err(FormatError::Invalid(
+                "native memory contract must state its safety invariants".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Versioned private compiler/runtime boundary consumed by native lowering.
+///
+/// The contract names the representations and lifecycle hand-offs required by
+/// the runtime, but explicitly does not expose a C/FFI ABI or user type layout.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeAbiContract {
+    pub format: String,
+    pub edition: String,
+    pub version: String,
+    pub calling_convention: String,
+    pub value_representation: String,
+    pub result_representation: String,
+    pub ownership: String,
+    pub unwind: String,
+    pub async_frames: String,
+    pub diagnostics: String,
+    pub host_handles: String,
+    pub direct_calls: String,
+    pub visibility: String,
+    pub public_ffi: String,
+    pub invariants: Vec<String>,
+}
+
+impl NativeAbiContract {
+    pub fn decode(bytes: &[u8]) -> Result<Self, FormatError> {
+        let value: Self = decode_canonical(bytes, "native ABI contract")?;
+        value.validate()?;
+        Ok(value)
+    }
+
+    pub fn encode(&self) -> Result<Vec<u8>, FormatError> {
+        self.validate()?;
+        encode(self)
+    }
+
+    pub fn content_hash(&self) -> Result<String, FormatError> {
+        Ok(sha256(&self.encode()?))
+    }
+
+    fn validate(&self) -> Result<(), FormatError> {
+        if self.format != NATIVE_ABI_CONTRACT_FORMAT {
+            return Err(FormatError::UnsupportedFormat {
+                expected: NATIVE_ABI_CONTRACT_FORMAT,
+                actual: self.format.clone(),
+            });
+        }
+        if self.edition != "0.1" {
+            return Err(FormatError::Invalid(
+                "native ABI contract edition must be 0.1".into(),
+            ));
+        }
+        require_exact(
+            "native ABI version",
+            &self.version,
+            "tondo-native-runtime-abi/1",
+        )?;
+        require_exact(
+            "native ABI calling_convention",
+            &self.calling_convention,
+            "verified-direct-and-runtime-call-lowering",
+        )?;
+        require_exact(
+            "native ABI value_representation",
+            &self.value_representation,
+            "private-descriptor-backed-managed-values",
+        )?;
+        require_exact(
+            "native ABI result_representation",
+            &self.result_representation,
+            "scalar-or-runtime-result-record",
+        )?;
+        require_exact(
+            "native ABI ownership",
+            &self.ownership,
+            "mir-edge-retain-release-and-resource-terminal",
+        )?;
+        require_exact(
+            "native ABI unwind",
+            &self.unwind,
+            "explicit-normal-unwind-abort",
+        )?;
+        require_exact(
+            "native ABI async_frames",
+            &self.async_frames,
+            "frame-task-waker-registry",
+        )?;
+        require_exact(
+            "native ABI diagnostics",
+            &self.diagnostics,
+            "source-span-task-thread-crash-envelope",
+        )?;
+        require_exact(
+            "native ABI host_handles",
+            &self.host_handles,
+            "opaque-capability-indexed",
+        )?;
+        require_exact(
+            "native ABI direct_calls",
+            &self.direct_calls,
+            "verified-ordinal-resolved-private-symbols",
+        )?;
+        require_exact(
+            "native ABI visibility",
+            &self.visibility,
+            "compiler-runtime-only",
+        )?;
+        require_exact("native ABI public_ffi", &self.public_ffi, "forbidden")?;
+        require_sorted_unique("native ABI invariants", &self.invariants)?;
+        if self.invariants.len() < 8 {
+            return Err(FormatError::Invalid(
+                "native ABI contract must state its boundary invariants".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn require_exact(field: &str, actual: &str, expected: &str) -> Result<(), FormatError> {
+    if actual != expected {
+        return Err(FormatError::Invalid(format!(
+            "{field} must be `{expected}`, found `{actual}`"
+        )));
+    }
+    Ok(())
+}
+
 /// A logical node in the closed native artifact graph.
 ///
 /// Nodes carry identities and hashes only. They intentionally do not carry a
@@ -4523,6 +4764,67 @@ mod tests {
         }
     }
 
+    fn native_memory_contract() -> NativeMemoryContract {
+        NativeMemoryContract {
+            format: NATIVE_MEMORY_CONTRACT_FORMAT.into(),
+            edition: "0.1".into(),
+            strategy: "hybrid-arc-cycle-collector".into(),
+            strong_counts: "non-atomic-unshared-atomic-shared".into(),
+            cycle_collection: "trial-deletion-on-pressure-and-quiescence".into(),
+            weak_refs: "runtime-managed-weak-edges".into(),
+            roots: vec![
+                "async-frame".into(),
+                "host-handle".into(),
+                "stack".into(),
+                "task".into(),
+                "thread".into(),
+            ],
+            resources: "deterministic-mir-cleanup".into(),
+            async_frames: "publish-roots-before-suspend".into(),
+            copy_on_write: "uniqueness-guarded-value-storage".into(),
+            cancellation: "cleanup-before-task-terminal".into(),
+            public_layout: "private-versioned-no-ffi-promise".into(),
+            invariants: vec![
+                "affine-resources-never-finalize-in-collector".into(),
+                "cancellation-drains-cleanup-before-terminal-state".into(),
+                "cycles-are-reclaimed-under-pressure".into(),
+                "roots-are-published-before-suspension".into(),
+                "shared-counts-are-atomic".into(),
+                "unshared-counts-are-non-atomic".into(),
+                "user-layout-never-crosses-the-private-boundary".into(),
+            ],
+        }
+    }
+
+    fn native_abi_contract() -> NativeAbiContract {
+        NativeAbiContract {
+            format: NATIVE_ABI_CONTRACT_FORMAT.into(),
+            edition: "0.1".into(),
+            version: "tondo-native-runtime-abi/1".into(),
+            calling_convention: "verified-direct-and-runtime-call-lowering".into(),
+            value_representation: "private-descriptor-backed-managed-values".into(),
+            result_representation: "scalar-or-runtime-result-record".into(),
+            ownership: "mir-edge-retain-release-and-resource-terminal".into(),
+            unwind: "explicit-normal-unwind-abort".into(),
+            async_frames: "frame-task-waker-registry".into(),
+            diagnostics: "source-span-task-thread-crash-envelope".into(),
+            host_handles: "opaque-capability-indexed".into(),
+            direct_calls: "verified-ordinal-resolved-private-symbols".into(),
+            visibility: "compiler-runtime-only".into(),
+            public_ffi: "forbidden".into(),
+            invariants: vec![
+                "async-frame-publishes-roots-before-suspend".into(),
+                "calls-target-only-verified-private-functions".into(),
+                "cleanup-is-exactly-once-on-normal-and-abrupt-exit".into(),
+                "diagnostics-carry-source-and-task-identities".into(),
+                "host-handles-are-opaque-capabilities".into(),
+                "native-and-vm-results-share-the-same-error-boundary".into(),
+                "no-user-layout-or-ffi-name-is-stable".into(),
+                "retain-release-edges-are-emitted-by-mir".into(),
+            ],
+        }
+    }
+
     fn native_artifact() -> NativeArtifact {
         let hash = sha256(b"native-artifact-input");
         let nodes = vec![
@@ -4829,6 +5131,32 @@ mod tests {
             descriptor.content_hash().unwrap(),
             changed.content_hash().unwrap()
         );
+    }
+
+    #[test]
+    fn native_memory_and_abi_contracts_round_trip_with_content_identity() {
+        let memory = native_memory_contract();
+        let memory_bytes = memory.encode().unwrap();
+        assert_eq!(NativeMemoryContract::decode(&memory_bytes).unwrap(), memory);
+        assert_eq!(memory.content_hash().unwrap(), sha256(&memory_bytes));
+
+        let abi = native_abi_contract();
+        let abi_bytes = abi.encode().unwrap();
+        assert_eq!(NativeAbiContract::decode(&abi_bytes).unwrap(), abi);
+        assert_eq!(abi.content_hash().unwrap(), sha256(&abi_bytes));
+    }
+
+    #[test]
+    fn native_memory_and_abi_contracts_reject_weakened_invariants() {
+        let mut memory = native_memory_contract();
+        memory.roots.pop();
+        assert!(memory.encode().is_err());
+        let mut abi = native_abi_contract();
+        abi.public_ffi = "stable".into();
+        assert!(abi.encode().is_err());
+        abi.public_ffi = "forbidden".into();
+        abi.invariants.reverse();
+        assert!(abi.encode().is_err());
     }
 
     #[test]
