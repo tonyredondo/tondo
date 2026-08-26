@@ -22,6 +22,8 @@ jq -e '
   and .report == "target/reliability/evidence/native-evaluation-runner.json"
   and .parent_contract == "testing/native-evaluation-fast.json"
   and .adapter_format == "tondo-mir-backend/1"
+  and .debug_format == "tondo-mir-debug/1"
+  and .debug_report_field == "debug_metadata"
   and .oracle == "bytecode-vm-scalar-and-managed-result-oracle"
   and .candidates == ["cranelift", "llvm"]
   and .toolchain_policy == {

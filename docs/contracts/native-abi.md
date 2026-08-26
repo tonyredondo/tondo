@@ -19,6 +19,12 @@ abort; cancellation is a cleanup edge, not a hidden destructor. Async frames
 register with the task/waker registry before suspension and carry source-span,
 task/thread and crash-envelope identities for diagnostics.
 
+The concrete MIR-to-native identity transport is `tondo-mir-debug/1`, closed by
+`NATIVE-LOWER-DEBUG-001`: logical source ordinals and hashes, source-map region
+IDs, canonical native symbols, unwind successors and task/thread execution IDs.
+It is validated before code generation and does not expose physical paths or
+object addresses.
+
 The structured async lowering uses opaque runtime handles and one status
 machine in both native adapters. `scope-enter` creates a scope;
 `scope-spawn` attaches a pending or ready child; `task-spawn` creates an

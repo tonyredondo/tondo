@@ -114,7 +114,7 @@ comienzan los contratos runtime-facing B0.
 selección pendiente hasta medir candidatos reales; la slice de selección
 runtime se cerró en `NATIVE-SELECT-001`, el adaptador común ya está cerrado en
 `NATIVE-BACKEND-ADAPTER-001` y la siguiente frontera de lowering es
-`NATIVE-LOWER-DEBUG-001`.
+`NATIVE-THREAD-001`.
 FUZZ está promovido para los 22 owners; la distribución está promovida y el
 seal S1A está cerrado como bundle técnico del draft, sin sobreafirmar G5, N1,
 TLF ni una publicación.
@@ -2538,7 +2538,7 @@ adapters de streams y el worker OS nativo permanecen como leaves independientes.
   promocionada están cerrados para el target hosted. La slice nativa de
   selección runtime está cerrada por `NATIVE-SELECT-001`; el adaptador común
   de MIR está cerrado por `NATIVE-BACKEND-ADAPTER-001` y las capacidades de
-  identidad/source maps siguen en `NATIVE-LOWER-DEBUG-001`.
+  identidad/source maps están cerradas en `NATIVE-LOWER-DEBUG-001`.
 
 ---
 
@@ -5462,7 +5462,7 @@ pueden retrasar el primer backend correcto.
   `DIAG-SPEC-001`; su contrato D0 está ahora cerrado y los siguientes bloques
   son las fronteras runtime-facing B0; `NATIVE-001` sigue en evaluación después
   de la compuerta de diagnóstico y el adaptador común ya está cerrado;
-  el siguiente bloque es `NATIVE-LOWER-DEBUG-001`.
+  el siguiente bloque es `NATIVE-THREAD-001`.
 
 - [x] **DIAG-SPEC-001 — Cerrar el contrato unificado de diagnóstico dinámico.**
   Fijar profiles `race`, `leaks` y `crash`, el envelope
@@ -5575,7 +5575,7 @@ pueden retrasar el primer backend correcto.
   `scripts/native-evaluation.sh`, `docs/adr/019-native-backend-selection.md`
   y los informes bajo `target/reliability/evidence/`. El adaptador común está
   cerrado en `NATIVE-BACKEND-ADAPTER-001`; el siguiente bloque es
-  `NATIVE-LOWER-DEBUG-001`.
+  `NATIVE-THREAD-001`.
 
 - [x] **NATIVE-BACKEND-ADAPTER-001 — Sustituir el smoke adapter por lowering
   real común.** La primera slice ya consume `tondo-mir-backend/1` desde el MIR
@@ -5595,7 +5595,7 @@ pueden retrasar el primer backend correcto.
   está fijada por tests unitarios y por el informe hash-bound; el carril rápido
   sigue midiendo solo compile-time/code-size y la selección de backend continúa
   bloqueada hasta completar sus dimensiones N1. El siguiente bloque de
-  implementación es `NATIVE-LOWER-DEBUG-001`.
+  implementación es `NATIVE-THREAD-001`.
 
 - [x] **NATIVE-MEM-ADR-001 — Cerrar DEC-014 antes de la ABI.** La decisión
   queda cerrada como `hybrid-arc-cycle-collector`: contadores no atómicos para
@@ -5693,10 +5693,18 @@ pueden retrasar el primer backend correcto.
   solo un arnés diferencial determinista; no sustituye al runtime ni decide el
   backend final.
 
-- [ ] **NATIVE-LOWER-DEBUG-001 — Preservar identidad y source maps.** Relacionar
-  MIR, código nativo, pánicos, diagnostics y dumps con símbolos, unwind y
-  rangos lógicos reproducibles sin paths físicos ambientales; cada task/thread
-  conserva una identidad útil para `RACE-001` y `DUMP-001`.
+- [x] **NATIVE-LOWER-DEBUG-001 — Preservar identidad y source maps.** El
+  lowering normalizado emite `tondo-mir-debug/1` con inventario de fuentes
+  lógicas path-free y hash de contenido, símbolos MIR→native, regiones de
+  función/bloque/statement/terminator, sucesores de unwind e identidades
+  deterministas de task/thread. El driver resuelve nombres sin serializar
+  `SourceId` ni paths físicos; Cranelift/LLVM validan la metadata antes de
+  generar código y LLVM conserva registros debug path-free junto a cada
+  símbolo. Faltas, duplicados, rangos fuera de límites, unwind desconocido y
+  tipos de ejecución inválidos fallan cerrado. Evidencia: `docs/contracts/native-lowering-debug.md`,
+  `testing/native-lowering-debug.json`, los tests unitarios de `mir.rs` y
+  `tools/native-evaluation/src/main.rs`, más los informes generados por
+  `native-evaluation`/`native-evaluation-runner`.
 
 - [ ] **NATIVE-002 — Coordinar el lowering mínimo desde MIR.** Cierra solo tras
   `NATIVE-LOWER-CALLS-001`, `NATIVE-LOWER-CONTROL-001`,
@@ -7074,7 +7082,7 @@ la superficie ejecutable está verificada en 214/214 firmas y FUZZ está promovi
 del selector está ratcheteada y la slice de selección runtime nativa está
 cerrada por `NATIVE-SELECT-001`; la selección del backend y las dimensiones N1
 siguen reservadas a `NATIVE-001`; las capacidades de identidad/source maps
-pasan a `NATIVE-LOWER-DEBUG-001`.
+quedan demostradas por `NATIVE-LOWER-DEBUG-001`.
 `CONF-GAP-IMPL-001` y `CONF-LAYER-RESULT-001` producen la trazabilidad y el
 resultado compuesto vivos. `CONF-SEAL-FINAL-001` permanece pendiente para el
 primer release. `STD-IMPL-001`, `STD-IMPL-002` y `STD-CODEC-PUBLIC-001` están cerrados;
@@ -7106,7 +7114,7 @@ instrumentación VM hosted; `STD-ASYNC-GROUP-SPEC-001`, `STD-CONC-001`,
 `RACE-001`, `LEAK-001`, el writer lógico de `DUMP-001` y la integración de
 `DIAG-TEST-001` y `DIAG-CI-001` ya están cerrados en hosted. `NATIVE-001`
 mantiene la selección reproducible pendiente y ya tiene mediciones rápidas y
-diferenciales reales de Cranelift/LLVM; el adaptador común está cerrado y la
-siguiente frontera es `NATIVE-LOWER-DEBUG-001`.
+diferenciales reales de Cranelift/LLVM; el adaptador común y su metadata de
+identidad están cerrados y la siguiente frontera es `NATIVE-THREAD-001`.
 
 ---

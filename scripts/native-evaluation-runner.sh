@@ -63,6 +63,7 @@ jq -e '
   and .phase == "NATIVE-001"
   and .status == "passed"
   and .adapter.format == "tondo-mir-backend/1"
+  and ([.debug_metadata[] | select(.format == "tondo-mir-debug/1" and .sources >= 1 and .symbols >= 1 and .source_maps >= 1)] | length == 4)
   and .correctness.native_semantics == "scalar-managed-runtime-and-select-native-executable-vs-vm-and-contract"
   and ([.native_runs[] | select(.cranelift == "passed" and .llvm == "passed")] | length >= 1)
   and ([.native_runs[] | select(.oracle_status == "trapped")] | length >= 1)

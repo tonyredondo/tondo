@@ -1,0 +1,49 @@
+{
+  "format": "tondo-native-lowering-debug/1",
+  "owner": "toolchain.native_evaluation",
+  "edition": "0.1",
+  "phase": "NATIVE-LOWER-DEBUG-001",
+  "status": "closed",
+  "contract": "docs/contracts/native-lowering-debug.md",
+  "implementation": [
+    "crates/tondo-compiler/src/mir.rs",
+    "crates/tondo-compiler/src/driver.rs",
+    "tools/native-evaluation/src/main.rs"
+  ],
+  "adapter_format": "tondo-mir-backend/1",
+  "debug_format": "tondo-mir-debug/1",
+  "source_fields": ["ordinal", "module", "logical_path", "content_sha256", "length"],
+  "symbol_fields": ["function", "name", "native", "span"],
+  "source_map_fields": ["id", "kind", "function", "block", "span", "unwind"],
+  "execution_fields": ["id", "kind", "function", "block", "span"],
+  "invariants": {
+    "logical_paths_only": true,
+    "content_identity": "sha256-of-source-bytes",
+    "source_ordinals": "deterministic-module-path-content-hash-order",
+    "symbols_cover_every_function": true,
+    "native_symbol": "tondo_probe_<function-ordinal>",
+    "regions": ["function", "block", "statement", "terminator"],
+    "unwind_targets": "declared-block-in-same-function",
+    "execution_kinds": ["task", "thread"],
+    "missing_metadata": "reject-before-code-generation"
+  },
+  "native_consumers": [
+    "panic-traps",
+    "diagnostic-source-maps",
+    "diagnostic-dumps",
+    "race-task-thread-identities",
+    "llvm-debug-comments",
+    "cranelift-exported-symbols"
+  ],
+  "tests": [
+    "crates/tondo-compiler/src/mir.rs",
+    "tools/native-evaluation/src/main.rs",
+    "scripts/native-lowering-debug-check.sh",
+    "scripts/native-lowering-debug-test.sh"
+  ],
+  "evidence": [
+    "target/reliability/evidence/native-evaluation.json",
+    "target/reliability/evidence/native-evaluation-runner.json"
+  ],
+  "next_blocks": ["NATIVE-THREAD-001"]
+}

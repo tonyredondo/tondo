@@ -22,6 +22,10 @@ jq '.adapter_format = "legacy-summary-only"' \
     testing/native-evaluation-runner.json > "$tmp/legacy-adapter.json"
 expect_failure legacy-adapter "$tmp/legacy-adapter.json"
 
+jq '.debug_format = "legacy"' \
+    testing/native-evaluation-runner.json > "$tmp/legacy-debug.json"
+expect_failure legacy-debug "$tmp/legacy-debug.json"
+
 jq '.toolchain_policy.linker = "PATH"' \
     testing/native-evaluation-runner.json > "$tmp/ambient-linker.json"
 expect_failure ambient-linker "$tmp/ambient-linker.json"

@@ -82,5 +82,5 @@
     "rollback-after-commit",
     "wake-after-cancel"
   ],
-  "next_blocks": ["NATIVE-LOWER-DEBUG-001", "NATIVE-002"]
+  "next_blocks": ["NATIVE-THREAD-001", "NATIVE-002"]
 }

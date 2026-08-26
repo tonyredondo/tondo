@@ -8,6 +8,8 @@
   "report": "target/reliability/evidence/native-evaluation-runner.json",
   "parent_contract": "testing/native-evaluation-fast.json",
   "adapter_format": "tondo-mir-backend/1",
+  "debug_format": "tondo-mir-debug/1",
+  "debug_report_field": "debug_metadata",
   "oracle": "bytecode-vm-scalar-and-managed-result-oracle",
   "candidates": ["cranelift", "llvm"],
   "toolchain_policy": {

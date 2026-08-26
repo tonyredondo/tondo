@@ -3,7 +3,7 @@
 - Status: Proposed — selection pending measured evidence
 - Date: 2026-08-25
 - Supersedes: none
-- Next decisions: `NATIVE-LOWER-DEBUG-001`, then `NATIVE-THREAD-001`
+- Next decisions: `NATIVE-THREAD-001`, then `NATIVE-002`
 
 ## Context
 

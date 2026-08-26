@@ -9,14 +9,15 @@ use std::error::Error;
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::hir::{
     HirBinaryOperator, HirCallArgumentTarget, HirCallProtocol, HirCallableId, HirClosureId,
     HirContainmentKind, HirPrefixOperator, HirPreludeTraitMethod, HirRangeKind, HirScopeId,
     HirSpawnKind,
 };
-use crate::resolve::{LocalId, MemberId, SymbolId};
-use crate::source::Span;
+use crate::resolve::{LocalId, MemberId, MemberOwner, ResolvedProgram, SymbolId};
+use crate::source::{FileId, SourceDatabase, Span};
 use crate::types::{
     Assignability, NumericConversion, NumericConversionErrorVariant, ParameterMode, ScalarType,
     TypeId, TypeInterner,
@@ -172,6 +173,27 @@ impl MirProgram {
     /// and every unsupported construct is named explicitly instead of being
     /// silently approximated.
     pub fn backend_program(&self, interner: &TypeInterner) -> MirBackendProgram {
+        self.backend_program_inner(interner, None, None)
+    }
+
+    /// Extracts the backend input with the source database and resolved names
+    /// attached.  Native diagnostics consume this variant so symbols and
+    /// source ranges remain reproducible without exposing physical paths.
+    pub fn backend_program_with_debug(
+        &self,
+        resolved: &ResolvedProgram,
+        sources: &SourceDatabase,
+        interner: &TypeInterner,
+    ) -> MirBackendProgram {
+        self.backend_program_inner(interner, Some(resolved), Some(sources))
+    }
+
+    fn backend_program_inner(
+        &self,
+        interner: &TypeInterner,
+        resolved: Option<&ResolvedProgram>,
+        sources: Option<&SourceDatabase>,
+    ) -> MirBackendProgram {
         let callable_ordinals = self
             .functions
             .keys()
@@ -191,8 +213,280 @@ impl MirProgram {
         validate_backend_call_targets(&mut functions);
         MirBackendProgram {
             format: "tondo-mir-backend/1".to_owned(),
+            debug: Some(backend_debug_info(self, resolved, sources)),
             functions,
         }
+    }
+}
+
+fn backend_debug_info(
+    program: &MirProgram,
+    resolved: Option<&ResolvedProgram>,
+    sources: Option<&SourceDatabase>,
+) -> MirBackendDebugInfo {
+    let (source_files, file_ordinals) = backend_source_inventory(program, sources);
+    let mut symbols = Vec::new();
+    let mut source_maps = Vec::new();
+    let mut executions = Vec::new();
+
+    for (function_ordinal, function) in program.functions().enumerate() {
+        let function_ordinal = function_ordinal as u32;
+        let symbol = debug_symbol_name(resolved, function.id());
+        let function_span = backend_span(function.span(), sources, &file_ordinals);
+        symbols.push(MirBackendDebugSymbol {
+            function: function_ordinal,
+            name: symbol,
+            native: format!("tondo_probe_{function_ordinal}"),
+            span: function_span.clone(),
+        });
+        source_maps.push(MirBackendSourceMap {
+            id: format!("f{function_ordinal}"),
+            kind: "function".to_owned(),
+            function: function_ordinal,
+            block: None,
+            span: function_span,
+            unwind: None,
+        });
+
+        for (block_id, block) in function.blocks_with_ids() {
+            let block_ordinal = block_id.index();
+            let block_span = block
+                .statements()
+                .first()
+                .map(MirStatement::span)
+                .unwrap_or_else(|| block.terminator().span());
+            source_maps.push(MirBackendSourceMap {
+                id: format!("f{function_ordinal}.b{block_ordinal}"),
+                kind: "block".to_owned(),
+                function: function_ordinal,
+                block: Some(block_ordinal),
+                span: backend_span(block_span, sources, &file_ordinals),
+                unwind: None,
+            });
+
+            for (statement_ordinal, statement) in block.statements().iter().enumerate() {
+                source_maps.push(MirBackendSourceMap {
+                    id: format!("f{function_ordinal}.b{block_ordinal}.s{statement_ordinal}"),
+                    kind: "statement".to_owned(),
+                    function: function_ordinal,
+                    block: Some(block_ordinal),
+                    span: backend_span(statement.span(), sources, &file_ordinals),
+                    unwind: None,
+                });
+            }
+
+            let terminator = block.terminator();
+            source_maps.push(MirBackendSourceMap {
+                id: format!("f{function_ordinal}.b{block_ordinal}.t"),
+                kind: "terminator".to_owned(),
+                function: function_ordinal,
+                block: Some(block_ordinal),
+                span: backend_span(terminator.span(), sources, &file_ordinals),
+                unwind: terminator_unwind(terminator.kind()).map(MirBlockId::index),
+            });
+
+            if let MirTerminatorKind::Spawn { kind, .. } = terminator.kind() {
+                let kind = match kind {
+                    HirSpawnKind::Task => "task",
+                    HirSpawnKind::Thread => "thread",
+                };
+                executions.push(MirBackendExecutionIdentity {
+                    id: format!("f{function_ordinal}.b{block_ordinal}.{kind}"),
+                    kind: kind.to_owned(),
+                    function: function_ordinal,
+                    block: block_ordinal,
+                    span: backend_span(terminator.span(), sources, &file_ordinals),
+                });
+            }
+        }
+    }
+
+    MirBackendDebugInfo {
+        format: "tondo-mir-debug/1".to_owned(),
+        sources: source_files,
+        symbols,
+        source_maps,
+        executions,
+    }
+}
+
+fn backend_source_inventory(
+    program: &MirProgram,
+    sources: Option<&SourceDatabase>,
+) -> (Vec<MirBackendSource>, BTreeMap<FileId, u32>) {
+    let mut entries = sources
+        .map(|sources| {
+            sources
+                .iter()
+                .map(|(file_id, source)| {
+                    let content_sha256 = content_sha256(source.bytes());
+                    (
+                        file_id,
+                        source.module().as_str().to_owned(),
+                        source.path().as_str().to_owned(),
+                        content_sha256,
+                        source.length(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    if entries.is_empty() {
+        let mut file_ids = BTreeSet::new();
+        for function in program.functions() {
+            file_ids.insert(function.span().file());
+            for local in function.locals() {
+                file_ids.insert(local.span().file());
+            }
+            for block in function.blocks() {
+                for statement in block.statements() {
+                    file_ids.insert(statement.span().file());
+                }
+                file_ids.insert(block.terminator().span().file());
+            }
+        }
+        entries = file_ids
+            .into_iter()
+            .map(|file_id| {
+                (
+                    file_id,
+                    "unknown".to_owned(),
+                    format!("file/{}", file_id.index()),
+                    content_sha256(file_id.index().to_string().as_bytes()),
+                    0,
+                )
+            })
+            .collect();
+    }
+
+    entries.sort_by(|left, right| {
+        left.1
+            .cmp(&right.1)
+            .then_with(|| left.2.cmp(&right.2))
+            .then_with(|| left.3.cmp(&right.3))
+            .then_with(|| left.0.cmp(&right.0))
+    });
+
+    let mut file_ordinals = BTreeMap::new();
+    let mut source_files = Vec::new();
+    let mut logical_ordinals = BTreeMap::<(String, String, String, u32), u32>::new();
+    for (file_id, module, logical_path, content_sha256, length) in entries {
+        let key = (
+            module.clone(),
+            logical_path.clone(),
+            content_sha256.clone(),
+            length,
+        );
+        let ordinal = if let Some(ordinal) = logical_ordinals.get(&key).copied() {
+            ordinal
+        } else {
+            let ordinal = source_files.len() as u32;
+            logical_ordinals.insert(key, ordinal);
+            source_files.push(MirBackendSource {
+                ordinal,
+                module,
+                logical_path,
+                content_sha256,
+                length,
+            });
+            ordinal
+        };
+        file_ordinals.insert(file_id, ordinal);
+    }
+    (source_files, file_ordinals)
+}
+
+fn content_sha256(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let hex = digest
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    format!("sha256:{hex}")
+}
+
+fn backend_span(
+    span: Span,
+    sources: Option<&SourceDatabase>,
+    file_ordinals: &BTreeMap<FileId, u32>,
+) -> MirBackendSpan {
+    let span = sources
+        .and_then(|sources| sources.diagnostic_span(span).ok())
+        .unwrap_or(span);
+    MirBackendSpan {
+        source: file_ordinals
+            .get(&span.file())
+            .copied()
+            .unwrap_or_else(|| span.file().index()),
+        start: span.range().start(),
+        end: span.range().end(),
+    }
+}
+
+fn debug_symbol_name(resolved: Option<&ResolvedProgram>, id: MirFunctionId) -> String {
+    let Some(resolved) = resolved else {
+        return match id {
+            MirFunctionId::Callable(_) => "callable".to_owned(),
+            MirFunctionId::Closure(closure) => format!("closure#{}", closure.index()),
+        };
+    };
+
+    match id {
+        MirFunctionId::Callable(HirCallableId::Symbol(symbol)) => resolved
+            .symbol(symbol)
+            .map(|symbol| logical_symbol_name(symbol.identity()))
+            .unwrap_or_else(|| format!("symbol#{}", symbol.index())),
+        MirFunctionId::Callable(HirCallableId::Member(member)) => resolved
+            .member(member)
+            .map(|member| {
+                let owner = match member.owner() {
+                    MemberOwner::Type(symbol) => resolved
+                        .symbol(symbol)
+                        .map(|symbol| logical_symbol_name(symbol.identity()))
+                        .unwrap_or_else(|| format!("type#{}", symbol.index())),
+                    MemberOwner::Variant(variant) => format!("variant#{}", variant.index()),
+                };
+                format!("{owner}.{}", member.name())
+            })
+            .unwrap_or_else(|| format!("member#{}", member.index())),
+        MirFunctionId::Callable(HirCallableId::Implementation(method)) => format!(
+            "implementation#{}.method#{}",
+            method.implementation().index(),
+            method.index()
+        ),
+        MirFunctionId::Callable(HirCallableId::Host(function)) => function.name().to_owned(),
+        MirFunctionId::Closure(closure) => format!("closure#{}", closure.index()),
+    }
+}
+
+fn logical_symbol_name(identity: &crate::package::SymbolIdentity) -> String {
+    format!(
+        "{}::{}::{}",
+        identity.module(),
+        identity.namespace(),
+        identity.declaration()
+    )
+}
+
+fn terminator_unwind(kind: &MirTerminatorKind) -> Option<MirBlockId> {
+    match kind {
+        MirTerminatorKind::Invoke { unwind, .. }
+        | MirTerminatorKind::Await { unwind, .. }
+        | MirTerminatorKind::Spawn { unwind, .. }
+        | MirTerminatorKind::IteratorNext { unwind, .. }
+        | MirTerminatorKind::ValidatePlaces { unwind, .. }
+        | MirTerminatorKind::ValidateLoan { unwind, .. }
+        | MirTerminatorKind::DrainDefers { unwind, .. }
+        | MirTerminatorKind::DrainScopes { unwind, .. }
+        | MirTerminatorKind::CommitSelect { unwind, .. } => Some(*unwind),
+        MirTerminatorKind::Goto { .. }
+        | MirTerminatorKind::SwitchBool { .. }
+        | MirTerminatorKind::SwitchTag { .. }
+        | MirTerminatorKind::DrainUnwind { .. }
+        | MirTerminatorKind::Return
+        | MirTerminatorKind::ResumePanic
+        | MirTerminatorKind::Unreachable => None,
     }
 }
 
@@ -251,7 +545,75 @@ impl MirSummary {
 #[serde(deny_unknown_fields)]
 pub struct MirBackendProgram {
     pub format: String,
+    /// Canonical debug identity carried alongside the executable shape.  The
+    /// field is optional only for decoding old exploratory reports; native
+    /// adapters reject an absent value before code generation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub debug: Option<MirBackendDebugInfo>,
     pub functions: Vec<MirBackendFunction>,
+}
+
+/// Path-free source and execution metadata for one normalized MIR program.
+///
+/// `tondo-mir-debug/1` deliberately contains logical paths and content hashes,
+/// never physical paths, process IDs or addresses.  The same IDs are used by
+/// native symbols, panic/source-map regions and task/thread diagnostics.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MirBackendDebugInfo {
+    pub format: String,
+    pub sources: Vec<MirBackendSource>,
+    pub symbols: Vec<MirBackendDebugSymbol>,
+    pub source_maps: Vec<MirBackendSourceMap>,
+    pub executions: Vec<MirBackendExecutionIdentity>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MirBackendSource {
+    pub ordinal: u32,
+    pub module: String,
+    pub logical_path: String,
+    pub content_sha256: String,
+    pub length: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MirBackendSpan {
+    pub source: u32,
+    pub start: u32,
+    pub end: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MirBackendDebugSymbol {
+    pub function: u32,
+    pub name: String,
+    pub native: String,
+    pub span: MirBackendSpan,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MirBackendSourceMap {
+    pub id: String,
+    pub kind: String,
+    pub function: u32,
+    pub block: Option<u32>,
+    pub span: MirBackendSpan,
+    pub unwind: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MirBackendExecutionIdentity {
+    pub id: String,
+    pub kind: String,
+    pub function: u32,
+    pub block: u32,
+    pub span: MirBackendSpan,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2560,6 +2922,90 @@ mod tests {
             serde_json::from_slice::<MirSummary>(&bytes).unwrap(),
             summary
         );
+    }
+
+    #[test]
+    fn backend_debug_metadata_is_path_free_and_reproducible() {
+        let span = backend_test_span();
+        let interner = TypeInterner::default();
+        let int = interner.scalar(ScalarType::Int);
+        let function = MirFunction {
+            id: MirFunctionId::Callable(HirCallableId::Host(
+                crate::hir::HirBootstrapHostFunction::ConsolePrint,
+            )),
+            span,
+            outcome: int,
+            locals: Vec::new(),
+            loans: Vec::new(),
+            parameters: Vec::new(),
+            return_local: MirLocalId(0),
+            entry: MirBlockId(0),
+            unwind: MirBlockId(0),
+            blocks: vec![MirBasicBlock {
+                kind: MirBlockKind::Normal,
+                statements: Vec::new(),
+                terminator: MirTerminator {
+                    span,
+                    kind: MirTerminatorKind::Return,
+                },
+            }],
+        };
+        let program = MirProgram {
+            functions: BTreeMap::from([(function.id, function)]),
+        };
+        let backend = program.backend_program(&interner);
+        let debug = backend
+            .debug
+            .expect("backend always carries debug metadata");
+        assert_eq!(debug.format, "tondo-mir-debug/1");
+        assert_eq!(debug.sources[0].logical_path, "file/0");
+        assert_eq!(debug.sources[0].length, 0);
+        assert!(!debug.sources[0].logical_path.contains("/mnt/"));
+        assert_eq!(debug.symbols[0].name, "callable");
+        assert_eq!(debug.symbols[0].native, "tondo_probe_0");
+        assert!(debug.source_maps.iter().any(|region| {
+            region.id == "f0.b0.t" && region.kind == "terminator" && region.span.start == 0
+        }));
+    }
+
+    #[test]
+    fn backend_source_inventory_uses_logical_identity_and_content_hash() {
+        let mut sources = SourceDatabase::new();
+        let first = sources
+            .add(SourceInput::virtual_file(
+                SourceId::new("first").unwrap(),
+                ModulePath::new("zeta").unwrap(),
+                LogicalPath::new("z.to").unwrap(),
+                Arc::<[u8]>::from(b"z".to_vec()),
+            ))
+            .unwrap();
+        let second = sources
+            .add(SourceInput::virtual_file(
+                SourceId::new("second").unwrap(),
+                ModulePath::new("alpha").unwrap(),
+                LogicalPath::new("a.to").unwrap(),
+                Arc::<[u8]>::from(b"ab".to_vec()),
+            ))
+            .unwrap();
+        let duplicate = sources
+            .add(SourceInput::virtual_file(
+                SourceId::new("duplicate").unwrap(),
+                ModulePath::new("alpha").unwrap(),
+                LogicalPath::new("a.to").unwrap(),
+                Arc::<[u8]>::from(b"ab".to_vec()),
+            ))
+            .unwrap();
+        let program = MirProgram {
+            functions: BTreeMap::new(),
+        };
+        let (inventory, ordinals) = backend_source_inventory(&program, Some(&sources));
+        assert_eq!(inventory[0].module, "alpha");
+        assert_eq!(inventory[0].logical_path, "a.to");
+        assert_eq!(inventory[0].length, 2);
+        assert!(inventory[0].content_sha256.starts_with("sha256:"));
+        assert_ne!(ordinals[&first], ordinals[&second]);
+        assert_eq!(ordinals[&second], ordinals[&duplicate]);
+        assert_eq!(inventory.len(), 2);
     }
 
     #[test]

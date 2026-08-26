@@ -57,7 +57,7 @@ jq -e '
   and (.corpus.native_cases | length == 8 and unique_values)
   and .corpus.oracle == "same-VM-selection-observables-and-ownership-rules"
   and (.negative_cases | length == 9 and unique_values)
-  and .next_blocks == ["NATIVE-LOWER-DEBUG-001", "NATIVE-002"]
+  and .next_blocks == ["NATIVE-THREAD-001", "NATIVE-002"]
 ' "$contract" >/dev/null || die "invalid machine-readable contract"
 
 for path in \

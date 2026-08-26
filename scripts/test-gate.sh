@@ -191,6 +191,10 @@ run_step native-select-contract \
     scripts/native-select-check.sh
 run_step native-select-contract-tests \
     scripts/native-select-test.sh
+run_step native-lowering-debug-contract \
+    scripts/native-lowering-debug-check.sh
+run_step native-lowering-debug-contract-tests \
+    scripts/native-lowering-debug-test.sh
 run_step stdlib-json-contract \
     scripts/stdlib-json-check.sh
 run_step stdlib-messagepack-contract \

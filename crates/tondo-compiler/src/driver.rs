@@ -1309,7 +1309,11 @@ fn execute_with_derives(
                     Err(error) => return Err(error.into()),
                 };
                 let mut mir_summary = mir.summary();
-                mir_summary.backend = Some(mir.backend_program(hir_program.interner()));
+                mir_summary.backend = Some(mir.backend_program_with_debug(
+                    &resolved_program,
+                    &request.sources,
+                    hir_program.interner(),
+                ));
                 let bytecode = match lower_to_bytecode(
                     &resolved_program,
                     &hir_program,

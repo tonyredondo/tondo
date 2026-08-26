@@ -89,7 +89,61 @@ struct MirSummary {
 #[derive(Debug, Deserialize, Clone)]
 struct MirBackendProgram {
     format: String,
+    #[serde(default)]
+    debug: Option<MirBackendDebugInfo>,
     functions: Vec<MirBackendFunction>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct MirBackendDebugInfo {
+    format: String,
+    sources: Vec<MirBackendSource>,
+    symbols: Vec<MirBackendDebugSymbol>,
+    source_maps: Vec<MirBackendSourceMap>,
+    executions: Vec<MirBackendExecutionIdentity>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct MirBackendSource {
+    ordinal: u32,
+    module: String,
+    logical_path: String,
+    content_sha256: String,
+    length: u32,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct MirBackendSpan {
+    source: u32,
+    start: u32,
+    end: u32,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct MirBackendDebugSymbol {
+    function: u32,
+    name: String,
+    native: String,
+    span: MirBackendSpan,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct MirBackendSourceMap {
+    id: String,
+    kind: String,
+    function: u32,
+    block: Option<u32>,
+    span: MirBackendSpan,
+    unwind: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct MirBackendExecutionIdentity {
+    id: String,
+    kind: String,
+    function: u32,
+    block: u32,
+    span: MirBackendSpan,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -270,10 +324,23 @@ struct EvaluationReport {
     candidates: Vec<CandidateReport>,
     excluded: Vec<ExcludedCandidate>,
     correctness: CorrectnessStatus,
+    debug_metadata: Vec<DebugMetadataReport>,
     native_runs: Vec<NativeRunReport>,
     native_managed_runs: Vec<NativeManagedRunReport>,
     native_runtime_runs: Vec<NativeRuntimeRunReport>,
     native_select_runs: Vec<NativeSelectRunReport>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct DebugMetadataReport {
+    fixture: String,
+    format: String,
+    sources: usize,
+    symbols: usize,
+    source_maps: usize,
+    task_identities: usize,
+    thread_identities: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -463,6 +530,7 @@ fn run() -> Result<(), String> {
     let mut native_runs = Vec::new();
     let mut native_managed_runs = Vec::new();
     let mut native_runtime_runs = Vec::new();
+    let mut debug_metadata = Vec::new();
 
     for fixture in &probe.fixtures {
         let summary = fixture
@@ -475,6 +543,27 @@ fn run() -> Result<(), String> {
                 fixture.fixture
             )
         })?;
+        let debug = backend
+            .debug
+            .as_ref()
+            .ok_or_else(|| format!("fixture has no debug metadata: {}", fixture.fixture))?;
+        debug_metadata.push(DebugMetadataReport {
+            fixture: fixture.fixture.clone(),
+            format: debug.format.clone(),
+            sources: debug.sources.len(),
+            symbols: debug.symbols.len(),
+            source_maps: debug.source_maps.len(),
+            task_identities: debug
+                .executions
+                .iter()
+                .filter(|execution| execution.kind == "task")
+                .count(),
+            thread_identities: debug
+                .executions
+                .iter()
+                .filter(|execution| execution.kind == "thread")
+                .count(),
+        });
         if let Some(cc) = &options.cc {
             native_runs.extend(run_native_scalar_probe(
                 &options.llvm,
@@ -606,6 +695,7 @@ fn run() -> Result<(), String> {
                 "scalar-managed-runtime-and-select-native-executable-vs-vm-and-contract"
             },
         },
+        debug_metadata,
         native_runs,
         native_managed_runs,
         native_runtime_runs,
@@ -666,6 +756,69 @@ fn validate_probe(probe: &ProbeReport) -> Result<(), String> {
     Ok(())
 }
 
+/// Builds metadata for adapter-owned runtime probes.  These functions do not
+/// originate in a source file, but they still use the same canonical symbol
+/// and region shape as real MIR so the LLVM/Cranelift paths cannot bypass the
+/// debug-metadata boundary.
+fn synthetic_debug_info(functions: &[MirBackendFunction]) -> MirBackendDebugInfo {
+    let span = || MirBackendSpan {
+        source: 0,
+        start: 0,
+        end: 0,
+    };
+    let mut source_maps = Vec::new();
+    for function in functions {
+        source_maps.push(MirBackendSourceMap {
+            id: format!("f{}", function.ordinal),
+            kind: "function".to_owned(),
+            function: function.ordinal,
+            block: None,
+            span: span(),
+            unwind: None,
+        });
+        for block in &function.blocks {
+            source_maps.push(MirBackendSourceMap {
+                id: format!("f{}.b{}", function.ordinal, block.ordinal),
+                kind: "block".to_owned(),
+                function: function.ordinal,
+                block: Some(block.ordinal),
+                span: span(),
+                unwind: None,
+            });
+            source_maps.push(MirBackendSourceMap {
+                id: format!("f{}.b{}.t", function.ordinal, block.ordinal),
+                kind: "terminator".to_owned(),
+                function: function.ordinal,
+                block: Some(block.ordinal),
+                span: span(),
+                unwind: None,
+            });
+        }
+    }
+    let symbols = functions
+        .iter()
+        .map(|function| MirBackendDebugSymbol {
+            function: function.ordinal,
+            name: format!("adapter_function_{}", function.ordinal),
+            native: format!("tondo_probe_{}", function.ordinal),
+            span: span(),
+        })
+        .collect();
+    MirBackendDebugInfo {
+        format: "tondo-mir-debug/1".to_owned(),
+        sources: vec![MirBackendSource {
+            ordinal: 0,
+            module: "adapter".to_owned(),
+            logical_path: "adapter.to".to_owned(),
+            content_sha256: format!("sha256:{}", "0".repeat(64)),
+            length: 0,
+        }],
+        symbols,
+        source_maps,
+        executions: Vec::new(),
+    }
+}
+
 fn validate_backend_program(program: &MirBackendProgram) -> Result<(), String> {
     if program.format != "tondo-mir-backend/1" {
         return Err(format!(
@@ -676,6 +829,11 @@ fn validate_backend_program(program: &MirBackendProgram) -> Result<(), String> {
     if program.functions.is_empty() {
         return Err("normalized MIR adapter input has no functions".to_owned());
     }
+    let debug = program
+        .debug
+        .as_ref()
+        .ok_or_else(|| "normalized MIR adapter input has no debug metadata".to_owned())?;
+    validate_backend_debug(program, debug)?;
     if program
         .functions
         .iter()
@@ -762,6 +920,193 @@ fn validate_backend_program(program: &MirBackendProgram) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn validate_backend_debug(
+    program: &MirBackendProgram,
+    debug: &MirBackendDebugInfo,
+) -> Result<(), String> {
+    if debug.format != "tondo-mir-debug/1" {
+        return Err(format!(
+            "unsupported normalized MIR debug format `{}`",
+            debug.format
+        ));
+    }
+    if debug.sources.is_empty() {
+        return Err("normalized MIR debug metadata has no logical sources".to_owned());
+    }
+    let source_ordinals = debug
+        .sources
+        .iter()
+        .map(|source| source.ordinal)
+        .collect::<BTreeSet<_>>();
+    if source_ordinals.len() != debug.sources.len() {
+        return Err("normalized MIR debug source ordinals are not unique".to_owned());
+    }
+    for source in &debug.sources {
+        if source.module.is_empty()
+            || source.module.contains(['/', '\\'])
+            || source.module.split('.').any(|part| part.is_empty() || part == "." || part == "..")
+            || source.logical_path.is_empty()
+            || source.logical_path.starts_with('/')
+            || source.logical_path.contains('\\')
+            || source.logical_path.split('/').any(|part| part == "." || part == "..")
+            || source.logical_path.contains('\0')
+        {
+            return Err(format!(
+                "normalized MIR debug source has an invalid logical path `{}`",
+                source.logical_path
+            ));
+        }
+        if !valid_sha256(&source.content_sha256) {
+            return Err(format!(
+                "normalized MIR debug source has an invalid content hash `{}`",
+                source.content_sha256
+            ));
+        }
+    }
+
+    let function_ordinals = program
+        .functions
+        .iter()
+        .map(|function| function.ordinal)
+        .collect::<BTreeSet<_>>();
+    if debug.symbols.len() != program.functions.len() {
+        return Err("normalized MIR debug symbols do not cover every function".to_owned());
+    }
+    let mut symbol_functions = BTreeSet::new();
+    for symbol in &debug.symbols {
+        if !function_ordinals.contains(&symbol.function) {
+            return Err(format!(
+                "normalized MIR debug symbol references missing function {}",
+                symbol.function
+            ));
+        }
+        if !symbol_functions.insert(symbol.function) {
+            return Err(format!(
+                "normalized MIR debug symbols duplicate function {}",
+                symbol.function
+            ));
+        }
+        if symbol.name.is_empty() || symbol.native != format!("tondo_probe_{}", symbol.function) {
+            return Err(format!(
+                "normalized MIR debug symbol for function {} is not canonical",
+                symbol.function
+            ));
+        }
+        validate_backend_span(&symbol.span, debug.sources.as_slice())?;
+    }
+
+    let mut region_ids = BTreeSet::new();
+    for region in &debug.source_maps {
+        if region.id.is_empty() || !region_ids.insert(region.id.clone()) {
+            return Err(format!(
+                "normalized MIR debug source-map id is empty or duplicated: `{}`",
+                region.id
+            ));
+        }
+        let Some(function) = program
+            .functions
+            .iter()
+            .find(|function| function.ordinal == region.function)
+        else {
+            return Err(format!(
+                "normalized MIR debug region `{}` references missing function {}",
+                region.id, region.function
+            ));
+        };
+        if let Some(block) = region.block {
+            if !function.blocks.iter().any(|candidate| candidate.ordinal == block) {
+                return Err(format!(
+                    "normalized MIR debug region `{}` references missing block {}",
+                    region.id, block
+                ));
+            }
+        }
+        if !matches!(region.kind.as_str(), "function" | "block" | "statement" | "terminator")
+        {
+            return Err(format!(
+                "normalized MIR debug region `{}` has unknown kind `{}`",
+                region.id, region.kind
+            ));
+        }
+        validate_backend_span(&region.span, debug.sources.as_slice())?;
+        if let Some(unwind) = region.unwind
+            && !function
+                .blocks
+                .iter()
+                .any(|candidate| candidate.ordinal == unwind)
+        {
+            return Err(format!(
+                "normalized MIR debug region `{}` has missing unwind target {}",
+                region.id, unwind
+            ));
+        }
+    }
+
+    let mut execution_ids = BTreeSet::new();
+    for execution in &debug.executions {
+        if execution.id.is_empty() || !execution_ids.insert(execution.id.clone()) {
+            return Err(format!(
+                "normalized MIR debug execution id is empty or duplicated: `{}`",
+                execution.id
+            ));
+        }
+        if !matches!(execution.kind.as_str(), "task" | "thread") {
+            return Err(format!(
+                "normalized MIR debug execution `{}` has unknown kind `{}`",
+                execution.id, execution.kind
+            ));
+        }
+        let Some(function) = program
+            .functions
+            .iter()
+            .find(|function| function.ordinal == execution.function)
+        else {
+            return Err(format!(
+                "normalized MIR debug execution `{}` references missing function {}",
+                execution.id, execution.function
+            ));
+        };
+        if !function
+            .blocks
+            .iter()
+            .any(|block| block.ordinal == execution.block)
+        {
+            return Err(format!(
+                "normalized MIR debug execution `{}` references missing block {}",
+                execution.id, execution.block
+            ));
+        }
+        validate_backend_span(&execution.span, debug.sources.as_slice())?;
+    }
+    Ok(())
+}
+
+fn validate_backend_span(
+    span: &MirBackendSpan,
+    sources: &[MirBackendSource],
+) -> Result<(), String> {
+    let Some(source) = sources.iter().find(|source| source.ordinal == span.source) else {
+        return Err(format!(
+            "normalized MIR debug span references missing source {}",
+            span.source
+        ));
+    };
+    if span.start > span.end || span.end > source.length {
+        return Err(format!(
+            "normalized MIR debug span {}..{} exceeds source {} length {}",
+            span.start, span.end, span.source, source.length
+        ));
+    }
+    Ok(())
+}
+
+fn valid_sha256(value: &str) -> bool {
+    let Some(hex) = value.strip_prefix("sha256:") else {
+        return false;
+    };
+    hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 fn validate_backend_operation_calls(
@@ -3592,27 +3937,29 @@ fn native_cleanup_program() -> (MirBackendProgram, Vec<RuntimeContractCase>) {
             ("select-commit", vec![runtime_operand(1), constant("1")]),
         ],
     );
+    let functions = vec![
+        cleanup_function,
+        abort_function,
+        ownership_function,
+        async_await_function,
+        structured_join_function,
+        async_cancel_function,
+        task_progress_function,
+        async_cancel_wake_function,
+        select_ready_function,
+        select_pending_wake_function,
+        select_fairness_function,
+        select_rollback_function,
+        select_oneshot_function,
+        select_time_function,
+        select_thread_join_function,
+        select_else_function,
+    ];
     (
         MirBackendProgram {
             format: "tondo-mir-backend/1".to_owned(),
-            functions: vec![
-                cleanup_function,
-                abort_function,
-                ownership_function,
-                async_await_function,
-                structured_join_function,
-                async_cancel_function,
-                task_progress_function,
-                async_cancel_wake_function,
-                select_ready_function,
-                select_pending_wake_function,
-                select_fairness_function,
-                select_rollback_function,
-                select_oneshot_function,
-                select_time_function,
-                select_thread_join_function,
-                select_else_function,
-            ],
+            debug: Some(synthetic_debug_info(&functions)),
+            functions,
         },
         vec![
             RuntimeContractCase {
@@ -4687,6 +5034,50 @@ fn llvm_module(target: &str, program: &MirBackendProgram) -> Result<String, Stri
     let mut module = String::new();
     writeln!(module, "; tondo native evaluation normalized module").unwrap();
     writeln!(module, "target triple = \"{target}\"").unwrap();
+    let debug = program
+        .debug
+        .as_ref()
+        .ok_or_else(|| "normalized MIR program has no debug metadata".to_owned())?;
+    writeln!(module, "; tondo.debug format={}", debug.format).unwrap();
+    for symbol in &debug.symbols {
+        writeln!(
+            module,
+            "; tondo.debug symbol function={} name={} native={}",
+            symbol.function,
+            symbol.name,
+            symbol.native
+        )
+        .unwrap();
+    }
+    for region in &debug.source_maps {
+        writeln!(
+            module,
+            "; tondo.debug map id={} kind={} function={} block={:?} source={} range={}..{} unwind={:?}",
+            region.id,
+            region.kind,
+            region.function,
+            region.block,
+            region.span.source,
+            region.span.start,
+            region.span.end,
+            region.unwind
+        )
+        .unwrap();
+    }
+    for execution in &debug.executions {
+        writeln!(
+            module,
+            "; tondo.debug execution id={} kind={} function={} block={} source={} range={}..{}",
+            execution.id,
+            execution.kind,
+            execution.function,
+            execution.block,
+            execution.span.source,
+            execution.span.start,
+            execution.span.end
+        )
+        .unwrap();
+    }
     llvm_checked_helpers(&mut module);
     for function in &program.functions {
         let parameters = (0..function.parameters.len())
@@ -5754,10 +6145,24 @@ impl Options {
 mod tests {
     use super::*;
 
-    fn simple_backend() -> MirBackendProgram {
+    fn test_span() -> MirBackendSpan {
+        MirBackendSpan {
+            source: 0,
+            start: 0,
+            end: 0,
+        }
+    }
+
+    fn test_program(functions: Vec<MirBackendFunction>) -> MirBackendProgram {
         MirBackendProgram {
             format: "tondo-mir-backend/1".to_owned(),
-            functions: vec![MirBackendFunction {
+            debug: Some(synthetic_debug_info(&functions)),
+            functions,
+        }
+    }
+
+    fn simple_backend() -> MirBackendProgram {
+        test_program(vec![MirBackendFunction {
                 ordinal: 0,
                 parameters: vec![1, 2],
                 parameter_types: Vec::new(),
@@ -5795,14 +6200,11 @@ mod tests {
                         terminator: MirBackendTerminator::Return,
                     },
                 ],
-            }],
-        }
+            }])
     }
 
     fn branch_backend() -> MirBackendProgram {
-        MirBackendProgram {
-            format: "tondo-mir-backend/1".to_owned(),
-            functions: vec![MirBackendFunction {
+        test_program(vec![MirBackendFunction {
                 ordinal: 0,
                 parameters: vec![1],
                 parameter_types: Vec::new(),
@@ -5866,14 +6268,11 @@ mod tests {
                         terminator: MirBackendTerminator::Return,
                     },
                 ],
-            }],
-        }
+            }])
     }
 
     fn tag_backend() -> MirBackendProgram {
-        MirBackendProgram {
-            format: "tondo-mir-backend/1".to_owned(),
-            functions: vec![MirBackendFunction {
+        test_program(vec![MirBackendFunction {
                 ordinal: 0,
                 parameters: vec![],
                 parameter_types: Vec::new(),
@@ -5928,14 +6327,11 @@ mod tests {
                         terminator: MirBackendTerminator::Return,
                     },
                 ],
-            }],
-        }
+            }])
     }
 
     fn loop_backend() -> MirBackendProgram {
-        MirBackendProgram {
-            format: "tondo-mir-backend/1".to_owned(),
-            functions: vec![MirBackendFunction {
+        test_program(vec![MirBackendFunction {
                 ordinal: 0,
                 parameters: vec![1],
                 parameter_types: Vec::new(),
@@ -5999,8 +6395,7 @@ mod tests {
                         terminator: MirBackendTerminator::Return,
                     },
                 ],
-            }],
-        }
+            }])
     }
 
     fn call_backend() -> MirBackendProgram {
@@ -6056,16 +6451,11 @@ mod tests {
                 },
             ],
         };
-        MirBackendProgram {
-            format: "tondo-mir-backend/1".to_owned(),
-            functions: vec![callee, caller],
-        }
+        test_program(vec![callee, caller])
     }
 
     fn trap_backend() -> MirBackendProgram {
-        MirBackendProgram {
-            format: "tondo-mir-backend/1".to_owned(),
-            functions: vec![MirBackendFunction {
+        test_program(vec![MirBackendFunction {
                 ordinal: 0,
                 parameters: vec![],
                 parameter_types: Vec::new(),
@@ -6092,14 +6482,11 @@ mod tests {
                         terminator: MirBackendTerminator::Return,
                     },
                 ],
-            }],
-        }
+            }])
     }
 
     fn assert_backend(condition: bool) -> MirBackendProgram {
-        MirBackendProgram {
-            format: "tondo-mir-backend/1".to_owned(),
-            functions: vec![MirBackendFunction {
+        test_program(vec![MirBackendFunction {
                 ordinal: 0,
                 parameters: vec![],
                 parameter_types: Vec::new(),
@@ -6128,8 +6515,7 @@ mod tests {
                         terminator: MirBackendTerminator::Return,
                     },
                 ],
-            }],
-        }
+            }])
     }
 
     fn fixture(index: usize) -> FixtureObservation {
@@ -6168,6 +6554,62 @@ mod tests {
         let mut program = simple_backend();
         program.format = "tondo-native-mir-probe/legacy".to_owned();
         assert!(validate_backend_program(&program).is_err());
+    }
+
+    #[test]
+    fn rejects_normalized_mir_without_debug_metadata() {
+        let mut program = simple_backend();
+        program.debug = None;
+        let error = validate_backend_program(&program)
+            .expect_err("native lowering must not run without source maps");
+        assert!(error.contains("no debug metadata"));
+    }
+
+    #[test]
+    fn rejects_debug_regions_with_unknown_unwind_targets() {
+        let mut program = simple_backend();
+        program
+            .debug
+            .as_mut()
+            .expect("test backend carries debug metadata")
+            .source_maps
+            .push(MirBackendSourceMap {
+                id: "f0.b0.unwind".to_owned(),
+                kind: "terminator".to_owned(),
+                function: 0,
+                block: Some(0),
+                span: test_span(),
+                unwind: Some(99),
+            });
+        let error = validate_backend_program(&program)
+            .expect_err("unwind must reference a declared MIR block");
+        assert!(error.contains("missing unwind target 99"));
+    }
+
+    #[test]
+    fn debug_metadata_accepts_distinct_task_and_thread_identities() {
+        let mut program = simple_backend();
+        let debug = program
+            .debug
+            .as_mut()
+            .expect("test backend carries debug metadata");
+        debug.executions = vec![
+            MirBackendExecutionIdentity {
+                id: "f0.b0.task".to_owned(),
+                kind: "task".to_owned(),
+                function: 0,
+                block: 0,
+                span: test_span(),
+            },
+            MirBackendExecutionIdentity {
+                id: "f0.b1.thread".to_owned(),
+                kind: "thread".to_owned(),
+                function: 0,
+                block: 1,
+                span: test_span(),
+            },
+        ];
+        validate_backend_program(&program).expect("task/thread identities should be valid");
     }
 
     #[test]

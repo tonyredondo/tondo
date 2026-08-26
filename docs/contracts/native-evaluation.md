@@ -44,6 +44,12 @@ unsupported-feature names.
 It does not expose source paths,
 addresses, pointers, layouts, process IDs, timestamps or ambient environment.
 
+Each normalized program also carries the closed `tondo-mir-debug/1` metadata
+from `NATIVE-LOWER-DEBUG-001`: logical source inventory, native symbol mapping,
+function/block/statement/terminator source maps, unwind successors and stable
+task/thread spawn identities. The adapter validates this metadata before either
+candidate generates code; see [`native-lowering-debug.md`](native-lowering-debug.md).
+
 The four fixtures cover the core/host boundary (including a pure scalar
 operator matrix), collections and iteration, structured async (`await`,
 `spawn`, task scopes and fallback paths), and the bytes slice. Their bytes are
