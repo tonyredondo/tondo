@@ -6013,13 +6013,22 @@ pueden retrasar el primer backend correcto.
   N1 ni se selecciona backend. El siguiente bloque es
   `NATIVE-AOT-BINARY-001`.
 
-- [ ] **NATIVE-AOT-BINARY-001 — Medir el producto enlazado de forma comparable.**
+- [x] **NATIVE-AOT-BINARY-001 — Medir el producto enlazado de forma comparable.**
   Generar para cada candidato el ejecutable AOT completo con el mismo target,
   runtime, stdlib, linker y perfil. Capturar por separado bytes del producto
   stripped, bytes con debug, secciones relevantes, startup y reproducibilidad,
   y ligar cada medida al receipt y a los hashes de inputs. Eliminar la actual
   asimetría de `NATIVE-001` (buffer de código Cranelift frente a objeto LLVM),
-  rechazar productos parciales y conservar una comparación path-free.
+  rechazar productos parciales y conservar una comparación path-free. Cerrado
+  con `testing/native-aot-binary.json`: cada candidato construye dos veces el
+  mismo ejecutable con 29 funciones en su inventario (28 casos admitidos: 7 de
+  storage/ABI y 21 de runtime, más un trap explícito para la capacidad no
+  admitida), ejecuta el producto stripped en tres procesos frescos, captura
+  bytes debug/stripped y secciones ELF, y publica receipts ligados a MIR,
+  runtime, stdlib, target, linker, strip, readelf, flags y toolchain. Los
+  hashes y secciones coinciden entre builds y ninguna ruta física entra en la
+  evidencia; el siguiente trabajo bloqueante es `NATIVE-AOT-MEM-001` y
+  `NATIVE-AOT-QUALITY-001`.
 
 - [ ] **NATIVE-AOT-MEM-001 — Capturar memoria y ARC en AOT.** Medir en ambos
   candidatos allocations, bytes asignados, memoria pico/live, retain/release

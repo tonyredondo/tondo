@@ -30,6 +30,9 @@ jq -e '
   and .std_core_probe == "tests/native/native-std-core-001.to"
   and .std_core_case_count == 14
   and .lowering_report_field == "native_lowering_runs"
+  and .aot_binary_report_field == "native_aot_binary"
+  and .aot_binary_contract == "testing/native-aot-binary.json"
+  and .aot_binary_phase == "NATIVE-AOT-BINARY-001"
   and .diagnostic_report_field == "native_diagnostics"
   and .diagnostic_phase == "DIAG-NATIVE-001"
   and .lowering_case == "deferred-task-call"
@@ -42,7 +45,7 @@ jq -e '
       physical_paths_in_report: "forbidden"
   }
   and .native_semantics == "scalar-and-managed-result-checked-arithmetic-logical-conversions-control-flow-host-calls-cleanup-ownership-async-thread-select-std-core-and-traps"
-  and (.negative_cases | length == 10)
+  and (.negative_cases | length == 11)
 ' "$contract" >/dev/null || die "invalid runner contract"
 
 for path in \
@@ -52,10 +55,17 @@ for path in \
     testing/native-std-core.json; do
     [[ -f "$root/$path" ]] || die "missing runner input: $path"
 done
+[[ -f "$root/testing/native-aot-binary.json" ]] || die "missing linked-product contract"
+[[ -x "$root/scripts/native-aot-binary-check.sh" ]] || die "missing linked-product check"
+[[ -x "$root/scripts/native-aot-binary-test.sh" ]] || die "missing linked-product tests"
 [[ -f "$root/tests/native/native-std-core-001.to" ]] || die "missing std.core native fixture"
 
 grep -Fq -- '--cc' tools/native-evaluation/src/main.rs \
     || die "adapter has no explicit linker argument"
+grep -Fq -- '--strip' tools/native-evaluation/src/main.rs \
+    || die "adapter has no explicit strip argument"
+grep -Fq -- '--readelf' tools/native-evaluation/src/main.rs \
+    || die "adapter has no explicit section-reader argument"
 grep -Fq 'vm_scalar' crates/tondo-compiler/examples/native_mir_probe.rs \
     || die "probe has no VM scalar observations"
 grep -Fq 'vm_result' tools/native-evaluation/src/main.rs \
@@ -76,6 +86,10 @@ grep -Fq 'native_thread_runs' tools/native-evaluation/src/main.rs \
     || die "adapter does not report native thread results"
 grep -Fq 'native_lowering_runs' tools/native-evaluation/src/main.rs \
     || die "adapter does not report coordinated lowering results"
+grep -Fq 'native_aot_binary' tools/native-evaluation/src/main.rs \
+    || die "adapter does not report linked AOT products"
+grep -Fq 'run_native_aot_binary_probe' tools/native-evaluation/src/main.rs \
+    || die "adapter has no linked AOT product probe"
 grep -Fq 'native_diagnostics' tools/native-evaluation/src/main.rs \
     || die "adapter does not report native diagnostics"
 grep -Fq 'run_native_diagnostics_probe' tools/native-evaluation/src/main.rs \

@@ -13,6 +13,7 @@ cranelift-native = { version = "=0.132.3", default-features = true }
 cranelift-object = { version = "=0.132.3", default-features = true }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["preserve_order"] }
+sha2 = "0.11.0"
 
 [lints.rust]
 unsafe_code = "forbid"

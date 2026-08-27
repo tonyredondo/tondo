@@ -81,16 +81,17 @@ making a user-visible layout promise. Compiler-owned host operations use the
 same runtime boundary; host state and handles never cross as addresses. The
 probe's `load` fixture exercises both success and error result records and the
 native runner compares their tags and payloads with the VM.
-The adapter deliberately keeps storage/layout and scheduler details opaque.
-Collection storage and `IteratorNext` are therefore retained as an explicit
-fail-closed capability boundary: they are present in the normalized input but
-not claimed as executable native semantics until their owning stdlib/native
-ABI is selected. Source-level cleanup graphs and non-scalar calls have the
-dedicated cleanup, ownership and structured-async contracts below; functions
-outside the supported MIR/runtime slices are lowered to an explicit trap and
-reported as `unsupported`, never silently approximated. This is a real adapter
-boundary and backend-verifier check. The opt-in runner below extends it with
-executable evidence without widening the source-level scalar MIR subset.
+The adapter deliberately keeps production storage/layout and scheduler details
+opaque.  Source-level collection iteration and projected storage therefore
+remain an explicit fail-closed capability boundary until their owning
+stdlib/native ABI is selected.  The separate AOT lowering lane proves a
+bounded, runtime-managed aggregate corpus and links it into a complete product;
+it does not pretend that this synthetic harness is the final stdlib ABI.
+Source-level cleanup graphs and non-scalar calls have the dedicated cleanup,
+ownership and structured-async contracts below; functions outside the
+supported MIR/runtime slices are lowered to an explicit trap and reported as
+`unsupported`, never silently approximated. This is a real adapter boundary
+and backend-verifier check.
 
 ## Fast feedback lane
 
@@ -145,6 +146,20 @@ copy-on-written while shared, released to remove the original entry, and then
 checked through the opaque result tag/payload API. The wrapper releases the
 returned clone before exiting, so the case also checks the terminal ownership
 path rather than only comparing a value.
+
+The `NATIVE-AOT-BINARY-001` lane then builds one complete linked executable for
+each candidate from the same admitted AOT corpus.  It uses the same target,
+release profile, runtime harness, hosted stdlib identity, explicit linker and
+prefix-map policy, and resets the runtime between every corpus case.  A
+missing symbol, failed case or zero-byte/partial product fails the lane.  The
+report captures debug and `strip --strip-debug` byte counts independently,
+wide ELF section sizes, three fresh-process startup samples, and two fresh
+builds per candidate.  Every receipt binds the normalized MIR, runtime,
+stdlib, target, linker/strip/readelf and candidate toolchain hashes plus the
+logical flags; physical paths, timestamps and process IDs never enter the
+identity.  This removes the old object-vs-code-buffer asymmetry without
+selecting a backend.  Memory, quality and repeated performance capture remain
+separate AOT blocks.
 
 The `NATIVE-STD-CORE-001` extension runs the source fixture
 `tests/native/native-std-core-001.to` through the same compiler and VM probe,
@@ -207,6 +222,7 @@ The selection records the dimensions that must be evidenced before promotion:
 | MIR intake and correctness | Real-MIR probe passes on four fixtures | Full conformance corpus and exact VM oracle |
 | Target support | Matrix remains a contract input | Pinned target descriptors and artifact identities |
 | Compile latency and code size | Three samples per candidate | Full repeated capture with `PERF-001` |
+| Linked product, sections and startup | Two reproducible products and three fresh startup samples | AOT binary receipt and path-free identity |
 | Runtime and peak memory | Deferred | Native executable plus repeated capture |
 | Debugging, source maps, unwind | Required constraints recorded | Native frames and maps match diagnostic contracts |
 | task/thread registry and memory/GC hooks | Required constraints recorded | Runtime ABI preserves observations |
@@ -248,10 +264,11 @@ fail-closed, and are not counted as native semantic evidence. Checked
 arithmetic overflow, logical operators, conversions, comparison branches,
 loop-carried locals, managed result records, host calls, structured async edges
 and boundary trap parity for the exercised paths are covered by the executable
-runner. Collection iteration, projected field/index storage and concrete
-aggregate storage remain explicit follow-ups of the native stdlib/ABI
-boundaries, not hidden approximations. ARC/diagnostic work may now consume the
-coordinator contract, while backend selection and Gate N1 remain pending.
+runner. Production collection iteration and stdlib-owned field/index storage
+remain explicit follow-ups of the native stdlib/ABI boundaries; the bounded
+aggregate cases are counted only in `NATIVE-AOT-LOWER-001` and its linked
+product evidence. ARC/diagnostic work may now consume the coordinator
+contract, while backend selection and Gate N1 remain pending.
 
 The static contract and negative cases run in the normal test gate. The
 evaluation runner is opt-in/manual because it compiles the real fixture corpus;

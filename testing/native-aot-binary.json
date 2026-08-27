@@ -1,0 +1,91 @@
+{
+  "format": "tondo-native-aot-binary/1",
+  "owner": "toolchain.native_evaluation",
+  "edition": "0.1",
+  "task": "NATIVE-AOT-BINARY-001",
+  "status": "closed",
+  "implementation": {
+    "adapter": "tools/native-evaluation/src/main.rs",
+    "runtime": "tools/native-evaluation/src/main.rs:native_runtime_c_source",
+    "runner": "scripts/native-evaluation-runner.sh",
+    "evidence": "target/reliability/evidence/native-evaluation-runner.json",
+    "report_field": "native_aot_binary",
+    "receipt": "tondo-native-aot-binary-receipt/1"
+  },
+  "input": {
+    "mir_format": "tondo-mir-backend/1",
+    "target": "x86_64-unknown-linux-gnu",
+    "profile": "release",
+    "runtime_abi": "tondo-runtime-draft/1",
+    "stdlib": "STD-0.1A",
+    "candidates": ["cranelift", "llvm"],
+    "same_target_runtime_stdlib_linker_profile": true,
+    "fresh_builds_per_candidate": 2,
+    "same_mir": true,
+    "linker": "explicit-absolute-cc",
+    "strip": "explicit-absolute-strip",
+    "section_reader": "explicit-absolute-readelf"
+  },
+  "product": {
+    "kind": "complete-linked-aot-executable",
+    "debug_bytes": "linked-product-before-strip-debug",
+    "stripped_bytes": "same-product-after-strip-debug",
+    "sections": "readelf-wide-section-sizes",
+    "startup": {
+      "fresh_processes": 3,
+      "unit": "nanoseconds",
+      "product": "stripped",
+      "quantiles": ["median", "p95", "p99"]
+    },
+    "required_nonempty_section": ".text"
+  },
+  "identity": {
+    "hash": "sha256",
+    "inputs": [
+      "normalized-mir",
+      "runtime",
+      "stdlib",
+      "target-descriptor",
+      "linker",
+      "strip",
+      "readelf",
+      "candidate-toolchain",
+      "link-flags"
+    ],
+    "physical_paths": "forbidden",
+    "timestamps": "forbidden",
+    "process_ids": "forbidden",
+    "addresses": "forbidden",
+    "workspace_prefix": "mapped-to-dot-before-debug-build"
+  },
+  "invariants": [
+    "one-complete-product-per-candidate",
+    "same-mir-target-runtime-stdlib-linker-and-profile",
+    "explicit-tools-no-shell-or-path-lookup",
+    "all-admitted-cases-run-before-product-pass",
+    "debug-and-stripped-products-are-separate-measures",
+    "debug-product-is-not-smaller-than-stripped-product",
+    "both-products-have-nonempty-text-section",
+    "two-fresh-builds-have-identical-product-hashes",
+    "two-fresh-builds-have-identical-section-hashes",
+    "receipts-bind-inputs-and-output-identities",
+    "startup-uses-fresh-processes-and-positive-samples",
+    "reports-and-receipts-contain-no-physical-paths"
+  ],
+  "negative_cases": [
+    "missing-candidate",
+    "partial-product",
+    "zero-byte-product",
+    "missing-text-section",
+    "debug-or-stripped-hash-mismatch",
+    "reproducibility-drift",
+    "receipt-input-drift",
+    "wrong-target-or-profile",
+    "linker-or-strip-path-lookup",
+    "unexpected-product-output",
+    "startup-sample-count-drift",
+    "physical-path-in-report",
+    "object-only-size-used-as-product-size"
+  ],
+  "next_blocks": ["NATIVE-AOT-MEM-001", "NATIVE-AOT-QUALITY-001"]
+}

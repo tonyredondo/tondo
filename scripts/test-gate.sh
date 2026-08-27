@@ -257,6 +257,10 @@ run_step native-aot-lowering-contract \
     scripts/native-aot-lowering-check.sh
 run_step native-aot-lowering-contract-tests \
     scripts/native-aot-lowering-test.sh
+run_step native-aot-binary-contract \
+    scripts/native-aot-binary-check.sh
+run_step native-aot-binary-contract-tests \
+    scripts/native-aot-binary-test.sh
 run_step native-select-contract \
     scripts/native-select-check.sh
 run_step native-select-contract-tests \

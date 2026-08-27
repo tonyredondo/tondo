@@ -16,6 +16,9 @@
   "std_core_probe": "tests/native/native-std-core-001.to",
   "std_core_case_count": 14,
   "lowering_report_field": "native_lowering_runs",
+  "aot_binary_report_field": "native_aot_binary",
+  "aot_binary_contract": "testing/native-aot-binary.json",
+  "aot_binary_phase": "NATIVE-AOT-BINARY-001",
   "diagnostic_report_field": "native_diagnostics",
   "diagnostic_phase": "DIAG-NATIVE-001",
   "lowering_case": "deferred-task-call",
@@ -38,6 +41,7 @@
     "cleanup-not-exactly-once-or-abort-not-cleaned",
     "ownership-cow-or-release-mismatch",
     "async-scope-cancellation-or-wake-mismatch",
-    "select-prepare-commit-rollback-or-adapter-mismatch"
+    "select-prepare-commit-rollback-or-adapter-mismatch",
+    "linked-aot-product-size-or-reproducibility-mismatch"
   ]
 }

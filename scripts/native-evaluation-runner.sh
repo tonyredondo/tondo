@@ -21,13 +21,21 @@ scripts/native-std-core-check.sh
 scripts/native-std-core-test.sh
 scripts/native-aot-lowering-check.sh
 scripts/native-aot-lowering-test.sh
+scripts/native-aot-binary-check.sh
+scripts/native-aot-binary-test.sh
 
 llvm_tool="${TONDO_LLVM_LLC:-/usr/bin/llc}"
 cc_tool="${TONDO_NATIVE_CC:-/usr/bin/cc}"
+strip_tool="${TONDO_NATIVE_STRIP:-/usr/bin/strip}"
+readelf_tool="${TONDO_NATIVE_READELF:-/usr/bin/readelf}"
 [[ "$llvm_tool" = /* && -x "$llvm_tool" ]] \
     || die "TONDO_LLVM_LLC must be an absolute executable"
 [[ "$cc_tool" = /* && -x "$cc_tool" ]] \
     || die "TONDO_NATIVE_CC must be an absolute executable"
+[[ "$strip_tool" = /* && -x "$strip_tool" ]] \
+    || die "TONDO_NATIVE_STRIP must be an absolute executable"
+[[ "$readelf_tool" = /* && -x "$readelf_tool" ]] \
+    || die "TONDO_NATIVE_READELF must be an absolute executable"
 llvm_version="$($llvm_tool --version 2>&1 | sed -n '1p')"
 grep -Eq 'LLVM version 18\.' <<< "$llvm_version" \
     || die "LLVM llc must be version 18.x"
@@ -66,6 +74,8 @@ report="$evidence_dir/native-evaluation-runner.json"
     --temp-dir "$tmp/backend" \
     --std-core-probe "$std_core_probe" \
     --cc "$cc_tool" \
+    --strip "$strip_tool" \
+    --readelf "$readelf_tool" \
     || die "native scalar runner failed"
 
 jq -e '
@@ -182,5 +192,45 @@ jq -e '
   and ([.native_aot_lowering.traps[] | select(.candidate == "llvm" and (.reason | contains("unreachable")))] | length == 1)
 ' "$report" >/dev/null || die "runner report did not prove complete AOT lowering inventory"
 
+jq -e '
+  .native_aot_binary.format == "tondo-native-aot-binary/1"
+  and .native_aot_binary.phase == "NATIVE-AOT-BINARY-001"
+  and .native_aot_binary.status == "passed"
+  and .native_aot_binary.profile == "release"
+  and .native_aot_binary.same_target_runtime_stdlib_linker_profile == true
+  and (.native_aot_binary.shared_inputs.runtime_abi == "tondo-runtime-draft/1")
+  and (.native_aot_binary.shared_inputs.stdlib == "STD-0.1A")
+  and (.native_aot_binary.shared_inputs.linker_flags | index("-Wl,--build-id=none")) != null
+  and all([.native_aot_binary.shared_inputs.mir_sha256,
+           .native_aot_binary.shared_inputs.runtime_sha256,
+           .native_aot_binary.shared_inputs.stdlib_sha256,
+           .native_aot_binary.shared_inputs.target_descriptor_sha256,
+           .native_aot_binary.shared_inputs.linker_sha256,
+           .native_aot_binary.shared_inputs.strip_sha256,
+           .native_aot_binary.shared_inputs.readelf_sha256][];
+      test("^sha256:[0-9a-f]{64}$"))
+  and ([.native_aot_binary.candidates[] | select(.status == "passed" and .reproducible == true and (.builds | length == 2))] | length == 2)
+  and all(.native_aot_binary.candidates[];
+      (.toolchain_sha256 | test("^sha256:[0-9a-f]{64}$"))
+      and (.startup.product == "stripped")
+      and (.startup.process_count == 3)
+      and (.startup.samples_ns | length == 3)
+      and all(.startup.samples_ns[]; . > 0)
+      and (.startup.median_ns > 0)
+      and (.startup.p95_ns >= .startup.median_ns)
+      and (.startup.p99_ns >= .startup.p95_ns)
+      and all(.builds[];
+          .debug_bytes > 0
+          and .stripped_bytes > 0
+          and .debug_bytes >= .stripped_bytes
+          and (.object_sha256 | test("^sha256:[0-9a-f]{64}$"))
+          and (.debug_sha256 | test("^sha256:[0-9a-f]{64}$"))
+          and (.stripped_sha256 | test("^sha256:[0-9a-f]{64}$"))
+          and (.receipt_sha256 | test("^sha256:[0-9a-f]{64}$"))
+          and ([.debug_sections[], .stripped_sections[]] | map(select(.name == ".text" and .bytes > 0)) | length >= 2)
+      )
+  )
+' "$report" >/dev/null || die "runner report did not prove comparable linked AOT products"
+
 ! grep -Fq "$root" "$report" || die "runner report leaked a physical workspace path"
-echo "native evaluation runner: PASS (Cranelift/LLVM scalar, runtime and AOT-lowering executables; report: ${report#"$root"/})"
+echo "native evaluation runner: PASS (Cranelift/LLVM scalar, runtime, AOT-lowering and linked-product executables; report: ${report#"$root"/})"

@@ -26,6 +26,7 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_module::{FuncId, Linkage, Module, default_libcall_names};
 use cranelift_object::{ObjectBuilder, ObjectModule};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 const CRANELIFT_VERSION: &str = "0.132.3";
 const REPETITIONS: usize = 3;
@@ -339,6 +340,7 @@ struct EvaluationReport {
     native_thread_runs: Vec<NativeThreadRunReport>,
     native_lowering_runs: Vec<NativeLoweringRunReport>,
     native_aot_lowering: NativeAotLoweringReport,
+    native_aot_binary: NativeAotBinaryReport,
     native_diagnostics: NativeDiagnosticsReport,
 }
 
@@ -559,6 +561,105 @@ struct NativeAotTrapReport {
 
 #[derive(Debug, Serialize)]
 #[serde(deny_unknown_fields)]
+struct NativeAotBinaryReport {
+    format: &'static str,
+    phase: &'static str,
+    status: &'static str,
+    target: String,
+    profile: &'static str,
+    shared_inputs: NativeAotBinarySharedInputs,
+    candidates: Vec<NativeAotBinaryCandidateReport>,
+    same_target_runtime_stdlib_linker_profile: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct NativeAotBinarySharedInputs {
+    mir_sha256: String,
+    runtime_sha256: String,
+    stdlib_sha256: String,
+    target_descriptor_sha256: String,
+    linker_sha256: String,
+    strip_sha256: String,
+    readelf_sha256: String,
+    linker_version: String,
+    linker_flags: Vec<String>,
+    runtime_abi: &'static str,
+    stdlib: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct NativeAotBinaryCandidateReport {
+    id: &'static str,
+    status: &'static str,
+    toolchain: String,
+    toolchain_sha256: String,
+    builds: Vec<NativeAotBinaryBuildReport>,
+    reproducible: bool,
+    startup: NativeAotStartupReport,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct NativeAotBinaryBuildReport {
+    ordinal: u32,
+    compile_time_ns: u64,
+    link_time_ns: u64,
+    object_sha256: String,
+    debug_sha256: String,
+    debug_bytes: u64,
+    debug_sections: Vec<NativeAotSectionReport>,
+    stripped_sha256: String,
+    stripped_bytes: u64,
+    stripped_sections: Vec<NativeAotSectionReport>,
+    receipt_sha256: String,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct NativeAotSectionReport {
+    name: String,
+    bytes: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct NativeAotStartupReport {
+    product: &'static str,
+    samples_ns: Vec<u64>,
+    median_ns: u64,
+    p95_ns: u64,
+    p99_ns: u64,
+    process_count: u32,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct NativeAotBinaryReceipt {
+    format: &'static str,
+    phase: &'static str,
+    candidate: &'static str,
+    target: String,
+    profile: &'static str,
+    mir_sha256: String,
+    runtime_sha256: String,
+    stdlib_sha256: String,
+    target_descriptor_sha256: String,
+    linker_sha256: String,
+    strip_sha256: String,
+    readelf_sha256: String,
+    toolchain_sha256: String,
+    linker_flags: Vec<String>,
+    object_sha256: String,
+    debug_sha256: String,
+    debug_bytes: u64,
+    stripped_sha256: String,
+    stripped_bytes: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(deny_unknown_fields)]
 struct NativeDiagnosticsReport {
     format: &'static str,
     phase: &'static str,
@@ -637,6 +738,8 @@ struct Options {
     target: String,
     temp_dir: PathBuf,
     cc: Option<PathBuf>,
+    strip: PathBuf,
+    readelf: PathBuf,
 }
 
 fn main() {
@@ -656,6 +759,14 @@ fn run() -> Result<(), String> {
             "LLVM executable does not exist: {}",
             options.llvm.display()
         ));
+    }
+    for (name, tool) in [("--strip", &options.strip), ("--readelf", &options.readelf)] {
+        if !tool.is_absolute() {
+            return Err(format!("{name} must be an absolute, explicitly selected executable"));
+        }
+        if !tool.is_file() {
+            return Err(format!("{name} executable does not exist: {}", tool.display()));
+        }
     }
     if let Some(cc) = &options.cc {
         if !cc.is_absolute() {
@@ -688,6 +799,7 @@ fn run() -> Result<(), String> {
     let mut debug_metadata = Vec::new();
     let mut native_lowering_runs = Vec::new();
     let mut native_aot_lowering = pending_native_aot_lowering_report();
+    let mut native_aot_binary = pending_native_aot_binary_report();
     let mut native_diagnostics = NativeDiagnosticsReport {
         format: "tondo-native-diagnostics/1",
         phase: "DIAG-NATIVE-001",
@@ -812,6 +924,14 @@ fn run() -> Result<(), String> {
             &options.temp_dir,
             &native_runtime_runs,
         )?;
+        native_aot_binary = run_native_aot_binary_probe(
+            &options.llvm,
+            cc,
+            &options.strip,
+            &options.readelf,
+            &options.target,
+            &options.temp_dir,
+        )?;
         native_diagnostics = run_native_diagnostics_probe(
             &options.llvm,
             cc,
@@ -912,6 +1032,7 @@ fn run() -> Result<(), String> {
         native_thread_runs,
         native_lowering_runs,
         native_aot_lowering,
+        native_aot_binary,
         native_diagnostics,
     };
 
@@ -4225,12 +4346,57 @@ fn pending_native_aot_lowering_report() -> NativeAotLoweringReport {
     }
 }
 
+fn pending_native_aot_binary_report() -> NativeAotBinaryReport {
+    NativeAotBinaryReport {
+        format: "tondo-native-aot-binary/1",
+        phase: "NATIVE-AOT-BINARY-001",
+        status: "pending-native-link",
+        target: "pending".to_owned(),
+        profile: "release",
+        shared_inputs: NativeAotBinarySharedInputs {
+            mir_sha256: "sha256:pending".to_owned(),
+            runtime_sha256: "sha256:pending".to_owned(),
+            stdlib_sha256: "sha256:pending".to_owned(),
+            target_descriptor_sha256: "sha256:pending".to_owned(),
+            linker_sha256: "sha256:pending".to_owned(),
+            strip_sha256: "sha256:pending".to_owned(),
+            readelf_sha256: "sha256:pending".to_owned(),
+            linker_version: "pending".to_owned(),
+            linker_flags: Vec::new(),
+            runtime_abi: "tondo-runtime-draft/1",
+            stdlib: "STD-0.1A",
+        },
+        candidates: Vec::new(),
+        same_target_runtime_stdlib_linker_profile: true,
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct NativeAotCase {
     id: &'static str,
     feature: &'static str,
     function_ordinal: u32,
     expected: i64,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum NativeAotBinaryExpectation {
+    Scalar(i64),
+    Managed { tag: u64, payload: Option<u64> },
+}
+
+#[derive(Debug, Clone, Copy)]
+struct NativeAotBinaryCase {
+    id: &'static str,
+    function_ordinal: u32,
+    expectation: NativeAotBinaryExpectation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NativeAotBinaryBuild {
+    report: NativeAotBinaryBuildReport,
+    debug_path: PathBuf,
+    stripped_path: PathBuf,
 }
 
 /// Executes the complete admitted AOT corpus from one immutable normalized MIR
@@ -4428,6 +4594,523 @@ fn run_native_aot_lowering_probe(
             },
         ],
     })
+}
+
+/// Builds one complete, executable AOT product per candidate.  The product
+/// contains the admitted storage corpus and the runtime-contract corpus in a
+/// single object and is linked against the same C runtime harness.  Two fresh
+/// builds are intentionally required: a product that only links one case, or
+/// whose bytes depend on its staging directory, must fail closed before its
+/// measurements can be consumed by backend selection.
+fn run_native_aot_binary_probe(
+    llvm: &Path,
+    cc: &Path,
+    strip: &Path,
+    readelf: &Path,
+    target: &str,
+    temp_dir: &Path,
+) -> Result<NativeAotBinaryReport, String> {
+    let (program, cases) = native_aot_product_program();
+    validate_backend_program(&program)?;
+    let mir_sha256 = sha256_bytes(format!("{program:?}").as_bytes());
+    let runtime_source = native_runtime_c_source();
+    let runtime_sha256 = sha256_bytes(runtime_source.as_bytes());
+    let stdlib_sha256 = sha256_bytes(b"STD-0.1A");
+    let target_descriptor_sha256 = sha256_bytes(
+        format!("tondo-native-linux-x86-64-release|{target}|elf|release").as_bytes(),
+    );
+    let linker_version = command_version(cc)?;
+    let linker_sha256 = sha256_file(cc)?;
+    let strip_sha256 = sha256_file(strip)?;
+    let readelf_sha256 = sha256_file(readelf)?;
+    let linker_flags = vec![
+        "-std=c11".to_owned(),
+        "-O2".to_owned(),
+        "-pthread".to_owned(),
+        "-Wl,--build-id=none".to_owned(),
+        "-ffile-prefix-map=<build-root>=.".to_owned(),
+        "-fdebug-prefix-map=<build-root>=.".to_owned(),
+    ];
+    let wrapper = native_aot_product_c_source(&cases);
+    let wrapper_sha256 = sha256_bytes(wrapper.as_bytes());
+    let shared_inputs = NativeAotBinarySharedInputs {
+        mir_sha256: mir_sha256.clone(),
+        runtime_sha256: runtime_sha256.clone(),
+        stdlib_sha256: stdlib_sha256.clone(),
+        target_descriptor_sha256: target_descriptor_sha256.clone(),
+        linker_sha256: linker_sha256.clone(),
+        strip_sha256: strip_sha256.clone(),
+        readelf_sha256: readelf_sha256.clone(),
+        linker_version: linker_version.clone(),
+        linker_flags: linker_flags.clone(),
+        runtime_abi: "tondo-runtime-draft/1",
+        stdlib: "STD-0.1A",
+    };
+
+    let candidates = [
+        (
+            "cranelift",
+            format!("cranelift-codegen/{CRANELIFT_VERSION}"),
+            sha256_bytes(format!("cranelift-codegen/{CRANELIFT_VERSION}").as_bytes()),
+        ),
+        (
+            "llvm",
+            command_version(llvm)?,
+            sha256_file(llvm)?,
+        ),
+    ];
+    let mut reports = Vec::with_capacity(candidates.len());
+    for (candidate, toolchain, toolchain_sha256) in candidates {
+        let mut builds = Vec::with_capacity(2);
+        for ordinal in 0..2_u32 {
+            let build_root = temp_dir.join(format!("native_aot_binary_{candidate}_{ordinal}"));
+            fs::create_dir_all(&build_root)
+                .map_err(|error| format!("cannot create AOT build directory: {error}"))?;
+            let object = build_root.join("product.o");
+            let compile_started = Instant::now();
+            if candidate == "cranelift" {
+                emit_cranelift_object(cranelift_isa()?, &program, &object)?;
+            } else {
+                let input = build_root.join("product.ll");
+                fs::write(&input, llvm_module(target, &program)?)
+                    .map_err(|error| format!("cannot write LLVM AOT product: {error}"))?;
+                let result = Command::new(llvm)
+                    .arg("-O2")
+                    .arg("-filetype=obj")
+                    .arg(format!("-mtriple={target}"))
+                    .arg("-o")
+                    .arg(&object)
+                    .arg(&input)
+                    .output()
+                    .map_err(|error| format!("cannot execute LLVM AOT product: {error}"))?;
+                if !result.status.success() {
+                    return Err(format!(
+                        "LLVM AOT product lowering failed: {}",
+                        String::from_utf8_lossy(&result.stderr).trim()
+                    ));
+                }
+            }
+            let compile_time_ns = elapsed_ns(compile_started.elapsed())?;
+            let object_sha256 = sha256_file(&object)?;
+            let debug = build_root.join("product.debug");
+            let link_started = Instant::now();
+            link_native_product(cc, &wrapper, &object, &debug, &build_root)?;
+            let link_time_ns = elapsed_ns(link_started.elapsed())?;
+            let stripped = build_root.join("product.stripped");
+            fs::copy(&debug, &stripped)
+                .map_err(|error| format!("cannot copy AOT debug product: {error}"))?;
+            strip_binary(strip, &stripped)?;
+            let debug_bytes = regular_file_size(&debug)?;
+            let stripped_bytes = regular_file_size(&stripped)?;
+            let debug_sha256 = sha256_file(&debug)?;
+            let stripped_sha256 = sha256_file(&stripped)?;
+            let debug_sections = readelf_sections(readelf, &debug)?;
+            let stripped_sections = readelf_sections(readelf, &stripped)?;
+            validate_product_artifacts(
+                candidate,
+                &debug_sections,
+                &stripped_sections,
+                debug_bytes,
+                stripped_bytes,
+                &debug_sha256,
+                &stripped_sha256,
+            )?;
+            let receipt = NativeAotBinaryReceipt {
+                format: "tondo-native-aot-binary-receipt/1",
+                phase: "NATIVE-AOT-BINARY-001",
+                candidate,
+                target: target.to_owned(),
+                profile: "release",
+                mir_sha256: mir_sha256.clone(),
+                runtime_sha256: runtime_sha256.clone(),
+                stdlib_sha256: stdlib_sha256.clone(),
+                target_descriptor_sha256: target_descriptor_sha256.clone(),
+                linker_sha256: linker_sha256.clone(),
+                strip_sha256: strip_sha256.clone(),
+                readelf_sha256: readelf_sha256.clone(),
+                toolchain_sha256: toolchain_sha256.clone(),
+                linker_flags: linker_flags.clone(),
+                object_sha256: object_sha256.clone(),
+                debug_sha256: debug_sha256.clone(),
+                debug_bytes,
+                stripped_sha256: stripped_sha256.clone(),
+                stripped_bytes,
+            };
+            let receipt_bytes = serde_json::to_vec(&receipt)
+                .map_err(|error| format!("cannot encode AOT product receipt: {error}"))?;
+            let receipt_sha256 = sha256_bytes(&receipt_bytes);
+            builds.push(NativeAotBinaryBuild {
+                report: NativeAotBinaryBuildReport {
+                    ordinal,
+                    compile_time_ns,
+                    link_time_ns,
+                    object_sha256,
+                    debug_sha256,
+                    debug_bytes,
+                    debug_sections,
+                    stripped_sha256,
+                    stripped_bytes,
+                    stripped_sections,
+                    receipt_sha256,
+                },
+                debug_path: debug,
+                stripped_path: stripped,
+            });
+        }
+        let reproducible = builds.len() == 2 && reproducible_builds(&builds);
+        if !reproducible {
+            return Err(format!(
+                "{candidate} AOT product is not reproducible across fresh builds"
+            ));
+        }
+        let startup_samples_ns = builds
+            .first()
+            .ok_or_else(|| format!("{candidate} produced no AOT build"))
+            .and_then(|build| measure_startup(&build.stripped_path, candidate))?;
+        let (median_ns, p95_ns, p99_ns) = quantiles(&startup_samples_ns)?;
+        reports.push(NativeAotBinaryCandidateReport {
+            id: candidate,
+            status: "passed",
+            toolchain,
+            toolchain_sha256,
+            builds: builds.into_iter().map(|build| build.report).collect(),
+            reproducible,
+            startup: NativeAotStartupReport {
+                product: "stripped",
+                samples_ns: startup_samples_ns,
+                median_ns,
+                p95_ns,
+                p99_ns,
+                process_count: 3,
+            },
+        });
+    }
+    if reports.len() != 2 || reports.iter().any(|candidate| candidate.status != "passed") {
+        return Err("AOT binary campaign did not produce two complete candidates".to_owned());
+    }
+    let _ = wrapper_sha256;
+    Ok(NativeAotBinaryReport {
+        format: "tondo-native-aot-binary/1",
+        phase: "NATIVE-AOT-BINARY-001",
+        status: "passed",
+        target: target.to_owned(),
+        profile: "release",
+        shared_inputs,
+        candidates: reports,
+        same_target_runtime_stdlib_linker_profile: true,
+    })
+}
+
+fn native_aot_product_program() -> (MirBackendProgram, Vec<NativeAotBinaryCase>) {
+    let (mut program, storage_cases) = native_aot_program();
+    let (runtime, runtime_cases) = native_cleanup_program();
+    program.functions.extend(runtime.functions);
+    program.functions.push(unsupported_native_aot_function());
+    program.debug = Some(synthetic_debug_info(&program.functions));
+    let mut cases = storage_cases
+        .into_iter()
+        .map(|case| NativeAotBinaryCase {
+            id: case.id,
+            function_ordinal: case.function_ordinal,
+            expectation: NativeAotBinaryExpectation::Scalar(case.expected),
+        })
+        .collect::<Vec<_>>();
+    cases.extend(runtime_cases.into_iter().map(|case| NativeAotBinaryCase {
+        id: case.name,
+        function_ordinal: case.function_ordinal,
+        expectation: match case.expectation {
+            RuntimeExpectation::Scalar(value) => NativeAotBinaryExpectation::Scalar(value),
+            RuntimeExpectation::Managed { tag, payload } => {
+                NativeAotBinaryExpectation::Managed { tag, payload }
+            }
+        },
+    }));
+    (program, cases)
+}
+
+fn unsupported_native_aot_function() -> MirBackendFunction {
+    MirBackendFunction {
+        ordinal: 900,
+        parameters: Vec::new(),
+        parameter_types: Vec::new(),
+        return_local: 0,
+        return_type: "Int".to_owned(),
+        supported: false,
+        blocks: vec![MirBackendBlock {
+            ordinal: 0,
+            kind: "normal".to_owned(),
+            statements: vec![MirBackendStatement::Marker {
+                kind: "opaque-storage".to_owned(),
+            }],
+            terminator: MirBackendTerminator::Marker {
+                kind: "unsupported".to_owned(),
+            },
+        }],
+    }
+}
+
+fn native_aot_product_c_source(cases: &[NativeAotBinaryCase]) -> String {
+    let mut source = native_runtime_c_source();
+    source.push_str("\n#include <stdint.h>\n");
+    for case in cases {
+        source.push_str(&format!(
+            "extern uint64_t tondo_probe_{}(void);\n",
+            case.function_ordinal
+        ));
+    }
+    source.push_str("int64_t tondo_explicit_panic(void) { __builtin_trap(); }\n");
+    source.push_str("int main(void) { uint64_t result;\n");
+    for case in cases {
+        source.push_str(&format!("  /* case: {} */\n", case.id));
+        source.push_str("  tondo_rt_reset();\n");
+        match case.expectation {
+            NativeAotBinaryExpectation::Scalar(expected) => source.push_str(&format!(
+                "  if (tondo_probe_{}() != UINT64_C({expected})) return 91;\n",
+                case.function_ordinal
+            )),
+            NativeAotBinaryExpectation::Managed { tag, payload } => {
+                source.push_str(&format!(
+                    "  result = tondo_probe_{}();\n  if (tondo_rt_result_tag(result) != UINT64_C({tag})",
+                    case.function_ordinal
+                ));
+                if let Some(payload) = payload {
+                    source.push_str(&format!(
+                        " || tondo_rt_result_payload(result) != UINT64_C({payload})"
+                    ));
+                }
+                source.push_str(" || tondo_rt_release(result) != 0) return 91;\n");
+            }
+        }
+    }
+    source.push_str("  return 0;\n}\n");
+    source
+}
+
+fn link_native_product(
+    cc: &Path,
+    source: &str,
+    object: &Path,
+    binary: &Path,
+    build_root: &Path,
+) -> Result<(), String> {
+    let source_path = build_root.join("product-main.c");
+    fs::write(&source_path, source)
+        .map_err(|error| format!("cannot write native AOT product driver: {error}"))?;
+    let prefix_map = format!("{}=.", build_root.display());
+    let result = Command::new(cc)
+        .arg("-std=c11")
+        .arg("-O2")
+        .arg("-g")
+        .arg("-pthread")
+        .arg(format!("-ffile-prefix-map={prefix_map}"))
+        .arg(format!("-fdebug-prefix-map={prefix_map}"))
+        .arg("-Wl,--build-id=none")
+        .arg(&source_path)
+        .arg(object)
+        .arg("-o")
+        .arg(binary)
+        .output()
+        .map_err(|error| format!("cannot execute native AOT linker: {error}"))?;
+    if !result.status.success() {
+        return Err(format!(
+            "native AOT linker failed: {}",
+            String::from_utf8_lossy(&result.stderr).trim()
+        ));
+    }
+    Ok(())
+}
+
+fn strip_binary(strip: &Path, binary: &Path) -> Result<(), String> {
+    let result = Command::new(strip)
+        .arg("--strip-debug")
+        .arg(binary)
+        .output()
+        .map_err(|error| format!("cannot execute native strip tool: {error}"))?;
+    if !result.status.success() {
+        return Err(format!(
+            "native strip failed: {}",
+            String::from_utf8_lossy(&result.stderr).trim()
+        ));
+    }
+    Ok(())
+}
+
+fn regular_file_size(path: &Path) -> Result<u64, String> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| format!("cannot stat native AOT product: {error}"))?;
+    if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
+        return Err(format!("native AOT product is not a regular file: {}", path.display()));
+    }
+    if metadata.len() == 0 {
+        return Err(format!("native AOT product is empty: {}", path.display()));
+    }
+    Ok(metadata.len())
+}
+
+fn readelf_sections(readelf: &Path, binary: &Path) -> Result<Vec<NativeAotSectionReport>, String> {
+    let output = Command::new(readelf)
+        .arg("-W")
+        .arg("-S")
+        .arg(binary)
+        .output()
+        .map_err(|error| format!("cannot execute readelf: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "readelf failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut sections = Vec::new();
+    for line in text.lines() {
+        let line = line.trim_start();
+        let Some(index_and_rest) = line.strip_prefix('[') else { continue };
+        let Some(end) = index_and_rest.find(']') else { continue };
+        let index = &index_and_rest[..end];
+        if index.trim().parse::<usize>().is_err() { continue }
+        let end = end + 1;
+        let mut fields = index_and_rest[end..].split_whitespace();
+        let Some(name) = fields.next() else { continue };
+        let Some(_kind) = fields.next() else { continue };
+        let Some(_address) = fields.next() else { continue };
+        let Some(_offset) = fields.next() else { continue };
+        let Some(size) = fields.next() else { continue };
+        let bytes = u64::from_str_radix(size, 16)
+            .map_err(|error| format!("readelf returned invalid section size `{size}`: {error}"))?;
+        sections.push(NativeAotSectionReport {
+            name: name.to_owned(),
+            bytes,
+        });
+    }
+    if sections.is_empty() {
+        return Err("readelf returned no section records for native AOT product".to_owned());
+    }
+    Ok(sections)
+}
+
+fn validate_product_artifacts(
+    candidate: &str,
+    debug_sections: &[NativeAotSectionReport],
+    stripped_sections: &[NativeAotSectionReport],
+    debug_bytes: u64,
+    stripped_bytes: u64,
+    debug_sha256: &str,
+    stripped_sha256: &str,
+) -> Result<(), String> {
+    if !matches!(candidate, "cranelift" | "llvm") {
+        return Err(format!("unknown native AOT candidate `{candidate}`"));
+    }
+    if stripped_bytes == 0 || debug_bytes < stripped_bytes {
+        return Err("native AOT product size invariant failed".to_owned());
+    }
+    if !valid_sha256(debug_sha256) || !valid_sha256(stripped_sha256) {
+        return Err("native AOT product hash invariant failed".to_owned());
+    }
+    for sections in [debug_sections, stripped_sections] {
+        if sections.iter().all(|section| section.name != ".text" || section.bytes == 0) {
+            return Err("native AOT product has no executable .text section".to_owned());
+        }
+    }
+    Ok(())
+}
+
+fn reproducible_builds(builds: &[NativeAotBinaryBuild]) -> bool {
+    let [first, second] = builds else { return false };
+    let left = &first.report;
+    let right = &second.report;
+    left.object_sha256 == right.object_sha256
+        && left.debug_sha256 == right.debug_sha256
+        && left.debug_bytes == right.debug_bytes
+        && left.debug_sections == right.debug_sections
+        && left.stripped_sha256 == right.stripped_sha256
+        && left.stripped_bytes == right.stripped_bytes
+        && left.stripped_sections == right.stripped_sections
+        && left.receipt_sha256 == right.receipt_sha256
+}
+
+fn measure_startup(binary: &Path, candidate: &str) -> Result<Vec<u64>, String> {
+    let mut samples = Vec::with_capacity(3);
+    for _ in 0..3 {
+        samples.push(run_native_binary_timed(binary, candidate)?);
+    }
+    Ok(samples)
+}
+
+fn run_native_binary_timed(binary: &Path, candidate: &str) -> Result<u64, String> {
+    let started = Instant::now();
+    let mut child = Command::new(binary)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("cannot execute {candidate} AOT product: {error}"))?;
+    let status = loop {
+        match child
+            .try_wait()
+            .map_err(|error| format!("cannot poll {candidate} AOT product: {error}"))?
+        {
+            Some(status) => break status,
+            None if started.elapsed() >= MAX_NATIVE_CASE_RUNTIME => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("{candidate} AOT product exceeded runtime budget"));
+            }
+            None => thread::sleep(Duration::from_millis(1)),
+        }
+    };
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    child
+        .stdout
+        .take()
+        .ok_or_else(|| format!("{candidate} AOT product has no stdout pipe"))?
+        .read_to_end(&mut stdout)
+        .map_err(|error| format!("cannot read {candidate} AOT stdout: {error}"))?;
+    child
+        .stderr
+        .take()
+        .ok_or_else(|| format!("{candidate} AOT product has no stderr pipe"))?
+        .read_to_end(&mut stderr)
+        .map_err(|error| format!("cannot read {candidate} AOT stderr: {error}"))?;
+    if !status.success() {
+        return Err(format!(
+            "{candidate} AOT product exited unsuccessfully ({}): {}",
+            status,
+            String::from_utf8_lossy(&stderr).trim()
+        ));
+    }
+    if !stdout.is_empty() || !stderr.is_empty() {
+        return Err(format!("{candidate} AOT product emitted unexpected output"));
+    }
+    elapsed_ns(started.elapsed())
+}
+
+fn quantiles(samples: &[u64]) -> Result<(u64, u64, u64), String> {
+    if samples.len() != 3 || samples.iter().any(|sample| *sample == 0) {
+        return Err("startup measurement requires three positive samples".to_owned());
+    }
+    let mut sorted = samples.to_vec();
+    sorted.sort_unstable();
+    Ok((sorted[1], sorted[2], sorted[2]))
+}
+
+fn elapsed_ns(duration: Duration) -> Result<u64, String> {
+    u64::try_from(duration.as_nanos()).map_err(|_| "timing value does not fit u64".to_owned())
+}
+
+fn sha256_bytes(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let mut output = String::with_capacity(71);
+    output.push_str("sha256:");
+    for byte in digest {
+        write!(&mut output, "{byte:02x}").expect("writing hash cannot fail");
+    }
+    output
+}
+
+fn sha256_file(path: &Path) -> Result<String, String> {
+    let bytes = fs::read(path)
+        .map_err(|error| format!("cannot read input for hash `{}`: {error}", path.display()))?;
+    Ok(sha256_bytes(&bytes))
 }
 
 #[derive(Debug, Clone)]
@@ -7384,6 +8067,7 @@ static void t_reset(void) {
     t_select_rotation = 0;
     t_diag_state = (t_diag){0};
 }
+uint64_t tondo_rt_reset(void) { t_reset(); return 0; }
 uint64_t tondo_rt_result_new(uint64_t tag, uint64_t payload, uint64_t has_payload) {
     return tag <= 12 ? t_alloc(1, tag, payload, has_payload) : 0;
 }
@@ -9119,6 +9803,8 @@ impl Options {
         let mut target = None;
         let mut temp_dir = None;
         let mut cc = None;
+        let mut strip = None;
+        let mut readelf = None;
         while let Some(argument) = args.next() {
             let mut value = || {
                 args.next()
@@ -9132,9 +9818,11 @@ impl Options {
                 "--target" => target = Some(value()?),
                 "--temp-dir" => temp_dir = Some(PathBuf::from(value()?)),
                 "--cc" => cc = Some(PathBuf::from(value()?)),
+                "--strip" => strip = Some(PathBuf::from(value()?)),
+                "--readelf" => readelf = Some(PathBuf::from(value()?)),
                 "--help" | "-h" => {
                     println!(
-                        "usage: tondo-native-evaluation --probe FILE --output FILE --llvm ABSOLUTE --target TRIPLE --temp-dir DIR [--cc ABSOLUTE] [--std-core-probe FILE]"
+                        "usage: tondo-native-evaluation --probe FILE --output FILE --llvm ABSOLUTE --target TRIPLE --temp-dir DIR [--cc ABSOLUTE] [--strip ABSOLUTE] [--readelf ABSOLUTE] [--std-core-probe FILE]"
                     );
                     std::process::exit(0);
                 }
@@ -9149,6 +9837,8 @@ impl Options {
             target: target.ok_or("--target is required")?,
             temp_dir: temp_dir.ok_or("--temp-dir is required")?,
             cc,
+            strip: strip.unwrap_or_else(|| PathBuf::from("/usr/bin/strip")),
+            readelf: readelf.unwrap_or_else(|| PathBuf::from("/usr/bin/readelf")),
         })
     }
 }

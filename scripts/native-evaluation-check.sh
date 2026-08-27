@@ -98,9 +98,13 @@ for path in \
     testing/native-evaluation-runner.json \
     testing/native-std-core.json \
     testing/native-aot-lowering.json \
+    testing/native-aot-binary.json \
     docs/contracts/native-aot-lowering.md \
+    docs/contracts/native-aot-binary.md \
     scripts/native-aot-lowering-check.sh \
     scripts/native-aot-lowering-test.sh \
+    scripts/native-aot-binary-check.sh \
+    scripts/native-aot-binary-test.sh \
     scripts/native-evaluation-runner.sh \
     scripts/native-evaluation-runner-check.sh \
     scripts/native-evaluation-runner-test.sh; do

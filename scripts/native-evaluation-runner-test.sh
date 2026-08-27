@@ -46,4 +46,12 @@ jq '.std_core_report_field = "legacy-core"' \
     testing/native-evaluation-runner.json > "$tmp/missing-std-core.json"
 expect_failure missing-std-core "$tmp/missing-std-core.json"
 
+jq '.aot_binary_report_field = "legacy-binary"' \
+    testing/native-evaluation-runner.json > "$tmp/missing-aot-binary.json"
+expect_failure missing-aot-binary "$tmp/missing-aot-binary.json"
+
+jq '.aot_binary_phase = "NATIVE-001"' \
+    testing/native-evaluation-runner.json > "$tmp/stale-aot-binary-phase.json"
+expect_failure stale-aot-binary-phase "$tmp/stale-aot-binary-phase.json"
+
 echo "native evaluation runner tests: OK (adapter, toolchain and equivalence boundaries rejected)"

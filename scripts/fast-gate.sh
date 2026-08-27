@@ -322,6 +322,10 @@ else
                 bash scripts/native-aot-lowering-check.sh
             run native-aot-lowering-tests \
                 bash scripts/native-aot-lowering-test.sh
+            run native-aot-binary-contract \
+                bash scripts/native-aot-binary-check.sh
+            run native-aot-binary-tests \
+                bash scripts/native-aot-binary-test.sh
             run native-diagnostics-contract \
                 bash scripts/native-diagnostics-check.sh
             run native-diagnostics-contract-tests \
