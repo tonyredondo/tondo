@@ -161,6 +161,20 @@ identity.  This removes the old object-vs-code-buffer asymmetry without
 selecting a backend.  Memory, quality and repeated performance capture remain
 separate AOT blocks.
 
+The `NATIVE-AOT-MEM-001` lane now consumes the same linked product recipe and
+adds a process-local runtime-counter driver. It checks every admitted result
+and trap before recording allocation count/bytes, live and peak bytes, local
+and shared ARC retain/release operations, cycle reclamation, weak upgrades,
+cycle-collection pause time, worker pressure and `ru_maxrss`. Each candidate
+is run in three fresh processes with three warmups and nine measured
+iterations per process (27 samples), and summaries are median/p95/p99. VM
+values/errors/ownership/cancellation remain the oracle; counters and RSS are
+native-only observations and cannot be used to waive a semantic mismatch.
+The contract and negative gate are in
+[`testing/native-aot-memory.json`](../../testing/native-aot-memory.json),
+[`scripts/native-aot-memory-check.sh`](../../scripts/native-aot-memory-check.sh)
+and [`scripts/native-aot-memory-test.sh`](../../scripts/native-aot-memory-test.sh).
+
 The `NATIVE-STD-CORE-001` extension runs the source fixture
 `tests/native/native-std-core-001.to` through the same compiler and VM probe,
 then executes fourteen fresh Cranelift/LLVM subprocess pairs. It covers

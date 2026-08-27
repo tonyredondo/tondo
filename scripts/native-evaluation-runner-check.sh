@@ -33,6 +33,9 @@ jq -e '
   and .aot_binary_report_field == "native_aot_binary"
   and .aot_binary_contract == "testing/native-aot-binary.json"
   and .aot_binary_phase == "NATIVE-AOT-BINARY-001"
+  and .aot_memory_report_field == "native_aot_memory"
+  and .aot_memory_contract == "testing/native-aot-memory.json"
+  and .aot_memory_phase == "NATIVE-AOT-MEM-001"
   and .diagnostic_report_field == "native_diagnostics"
   and .diagnostic_phase == "DIAG-NATIVE-001"
   and .lowering_case == "deferred-task-call"
@@ -58,6 +61,9 @@ done
 [[ -f "$root/testing/native-aot-binary.json" ]] || die "missing linked-product contract"
 [[ -x "$root/scripts/native-aot-binary-check.sh" ]] || die "missing linked-product check"
 [[ -x "$root/scripts/native-aot-binary-test.sh" ]] || die "missing linked-product tests"
+[[ -f "$root/testing/native-aot-memory.json" ]] || die "missing AOT memory contract"
+[[ -x "$root/scripts/native-aot-memory-check.sh" ]] || die "missing AOT memory check"
+[[ -x "$root/scripts/native-aot-memory-test.sh" ]] || die "missing AOT memory tests"
 [[ -f "$root/tests/native/native-std-core-001.to" ]] || die "missing std.core native fixture"
 
 grep -Fq -- '--cc' tools/native-evaluation/src/main.rs \
@@ -90,6 +96,10 @@ grep -Fq 'native_aot_binary' tools/native-evaluation/src/main.rs \
     || die "adapter does not report linked AOT products"
 grep -Fq 'run_native_aot_binary_probe' tools/native-evaluation/src/main.rs \
     || die "adapter has no linked AOT product probe"
+grep -Fq 'run_native_aot_memory_probe' tools/native-evaluation/src/main.rs \
+    || die "adapter has no AOT memory probe"
+grep -Fq 'native_aot_memory' tools/native-evaluation/src/main.rs \
+    || die "adapter has no AOT memory report field"
 grep -Fq 'native_diagnostics' tools/native-evaluation/src/main.rs \
     || die "adapter does not report native diagnostics"
 grep -Fq 'run_native_diagnostics_probe' tools/native-evaluation/src/main.rs \

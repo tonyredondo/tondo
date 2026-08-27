@@ -1,0 +1,90 @@
+{
+  "format": "tondo-native-aot-memory/1",
+  "owner": "toolchain.native_evaluation",
+  "edition": "0.1",
+  "task": "NATIVE-AOT-MEM-001",
+  "status": "closed",
+  "implementation": {
+    "adapter": "tools/native-evaluation/src/main.rs",
+    "runtime": "tools/native-evaluation/src/main.rs:native_runtime_c_source",
+    "runner": "scripts/native-evaluation-runner.sh",
+    "evidence": "target/reliability/evidence/native-evaluation-runner.json",
+    "report_field": "native_aot_memory",
+    "sample_format": "tondo-native-aot-memory-sample/1"
+  },
+  "input": {
+    "mir_format": "tondo-mir-backend/1",
+    "target": "host-native-target-from-runner",
+    "profile": "release",
+    "runtime_abi": "tondo-runtime-draft/1",
+    "stdlib": "STD-0.1A",
+    "candidates": ["cranelift", "llvm"],
+    "product": "complete-linked-aot-executable",
+    "same_inputs": true,
+    "instrumentation": "process-local-runtime-counters-only"
+  },
+  "protocol": {
+    "warmup_iterations": 3,
+    "measurement_repetitions": 9,
+    "independent_processes": 3,
+    "minimum_sample_count": 27,
+    "fresh_processes": true,
+    "summary": ["median", "p95", "p99"],
+    "seed": "tondo-native-aot-memory-0.1"
+  },
+  "dimensions": [
+    "allocation_count",
+    "allocated_bytes",
+    "peak_live_bytes",
+    "live_bytes",
+    "retain_local",
+    "retain_atomic",
+    "release_local",
+    "release_atomic",
+    "cycles_reclaimed",
+    "weak_upgrades",
+    "pause_ns",
+    "concurrency_operations",
+    "rss_peak_bytes"
+  ],
+  "oracle": {
+    "vm": "exact-values-errors-ownership-cancellation-and-exit-status",
+    "native": "instrumented-linked-product-must-match-vm-observables",
+    "counters": "native-only-not-language-semantics",
+    "mismatch": "fail-closed"
+  },
+  "invariants": [
+    "same-mir-target-runtime-stdlib-and-profile",
+    "all-admitted-cases-run-before-each-sample",
+    "three-warmups-then-nine-samples-in-three-processes",
+    "samples-carry-process-and-repetition-identity",
+    "allocation-and-byte-counters-are-positive",
+    "live-bytes-return-to-zero-after-cleanup",
+    "local-and-atomic-retain-release-are-observed",
+    "cycles-are-reclaimed-at-quiescence",
+    "weak-upgrade-is-observed-and-cannot-resurrect",
+    "pause-time-is-measured-around-cycle-collection",
+    "worker-pressure-is-observed-on-an-os-thread",
+    "rss-is-captured-per-fresh-process",
+    "instrumentation-preserves-case-results-and-traps",
+    "summaries-have-median-p95-and-p99",
+    "physical-paths-and-process-ids-never-enter-report"
+  ],
+  "negative_cases": [
+    "missing-memory-report",
+    "wrong-phase-or-format",
+    "missing-candidate",
+    "sample-count-drift",
+    "process-or-repetition-identity-drift",
+    "zero-required-counter",
+    "live-bytes-leak",
+    "weak-upgrade-resurrection",
+    "cycle-collector-omission",
+    "semantic-result-drift",
+    "instrumented-product-failure",
+    "physical-path-in-report",
+    "non-monotonic-quantiles",
+    "ambient-rss-substitution"
+  ],
+  "next_blocks": ["NATIVE-AOT-QUALITY-001"]
+}

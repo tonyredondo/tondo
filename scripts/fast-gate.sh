@@ -326,6 +326,10 @@ else
                 bash scripts/native-aot-binary-check.sh
             run native-aot-binary-tests \
                 bash scripts/native-aot-binary-test.sh
+            run native-aot-memory-contract \
+                bash scripts/native-aot-memory-check.sh
+            run native-aot-memory-tests \
+                bash scripts/native-aot-memory-test.sh
             run native-diagnostics-contract \
                 bash scripts/native-diagnostics-check.sh
             run native-diagnostics-contract-tests \

@@ -47,5 +47,7 @@ backend.
 The full campaign uses the existing `PERF-001` protocol: three warmups, nine
 samples in each of three fresh processes (at least 27 samples), monotonic
 clocks, hash-bound fixtures and deterministic toolchain inputs. The next block
-is `NATIVE-AOT-LOWER-001`; `DEC-013` stays pending until every required block
-in the contract and the quality gate has passed.
+is `NATIVE-AOT-LOWER-001`; after lowering, `NATIVE-AOT-MEM-001` captures
+process-local ARC/allocation/cycle/weak/pause/RSS observations from the linked
+products, while the VM remains the semantic oracle. `DEC-013` stays pending
+until every required block in the contract and the quality gate has passed.

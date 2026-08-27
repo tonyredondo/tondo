@@ -23,6 +23,8 @@ scripts/native-aot-lowering-check.sh
 scripts/native-aot-lowering-test.sh
 scripts/native-aot-binary-check.sh
 scripts/native-aot-binary-test.sh
+scripts/native-aot-memory-check.sh
+scripts/native-aot-memory-test.sh
 
 llvm_tool="${TONDO_LLVM_LLC:-/usr/bin/llc}"
 cc_tool="${TONDO_NATIVE_CC:-/usr/bin/cc}"
@@ -189,7 +191,7 @@ jq -e '
   and ([.native_aot_lowering.cases[].id] | index("closure-mutable-capture")) != null
   and ([.native_aot_lowering.cases[].id] | index("ownership-cow")) != null
   and ([.native_aot_lowering.traps[] | select(.candidate == "cranelift" and (.reason | contains("explicit-trap")))] | length == 1)
-  and ([.native_aot_lowering.traps[] | select(.candidate == "llvm" and (.reason | contains("unreachable")))] | length == 1)
+  and ([.native_aot_lowering.traps[] | select(.candidate == "llvm" and (.reason | contains("explicit-trap")))] | length == 1)
 ' "$report" >/dev/null || die "runner report did not prove complete AOT lowering inventory"
 
 jq -e '
@@ -231,6 +233,39 @@ jq -e '
       )
   )
 ' "$report" >/dev/null || die "runner report did not prove comparable linked AOT products"
+
+jq -e '
+  .native_aot_memory.format == "tondo-native-aot-memory/1"
+  and .native_aot_memory.phase == "NATIVE-AOT-MEM-001"
+  and .native_aot_memory.status == "passed"
+  and .native_aot_memory.oracle == "vm-semantics-native-instrumented-counters"
+  and .native_aot_memory.protocol == {
+      warmup_iterations: 3,
+      measurement_repetitions: 9,
+      independent_processes: 3,
+      minimum_sample_count: 27,
+      fresh_processes: true,
+      summary: ["median", "p95", "p99"],
+      seed: "tondo-native-aot-memory-0.1"
+  }
+  and .native_aot_memory.vm.status == "semantics-only-oracle"
+  and .native_aot_memory.vm.counters == "not-comparable-implementation-observation"
+  and ([.native_aot_memory.candidates[] | select(.status == "passed" and .instrumented == true and .semantic_equivalence == "all-admitted-cases-and-traps-checked-before-counters" and (.samples | length == 27))] | length == 2)
+  and all(.native_aot_memory.candidates[];
+      (.product_sha256 | test("^sha256:[0-9a-f]{64}$"))
+      and ([.samples[] | select(.duration_ns > 0 and .allocation_count > 0 and .allocated_bytes > 0 and .peak_live_bytes > 0 and .live_bytes == 0 and .retain_local > 0 and .retain_atomic > 0 and .release_local > 0 and .release_atomic > 0 and .cycles_reclaimed > 0 and .weak_upgrades > 0 and .pause_ns > 0 and .concurrency_operations > 0 and .rss_peak_bytes > 0 and .allocated_bytes >= .peak_live_bytes)] | length == 27)
+      and ([.samples[].process] | unique | sort) == [0, 1, 2]
+      and ((.samples | group_by(.process) | map(length)) == [9, 9, 9])
+      and (.summary | keys_unsorted) == [
+        "allocation_count", "allocated_bytes", "peak_live_bytes", "live_bytes",
+        "retain_local", "retain_atomic", "release_local", "release_atomic",
+        "cycles_reclaimed", "weak_upgrades", "pause_ns",
+        "concurrency_operations", "rss_peak_bytes"
+      ]
+      and all(.summary[]; .median >= 0 and .p95 >= .median and .p99 >= .p95)
+      and (.summary.live_bytes == {median: 0, p95: 0, p99: 0})
+  )
+' "$report" >/dev/null || die "runner report did not prove native AOT memory evidence"
 
 ! grep -Fq "$root" "$report" || die "runner report leaked a physical workspace path"
 echo "native evaluation runner: PASS (Cranelift/LLVM scalar, runtime, AOT-lowering and linked-product executables; report: ${report#"$root"/})"

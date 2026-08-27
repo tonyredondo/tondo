@@ -60,6 +60,8 @@
     "scripts/native-aot-lowering-test.sh",
     "scripts/native-aot-binary-check.sh",
     "scripts/native-aot-binary-test.sh",
+    "scripts/native-aot-memory-check.sh",
+    "scripts/native-aot-memory-test.sh",
     "scripts/native-diagnostics.sh",
     "scripts/native-diagnostics-check.sh",
     "scripts/native-diagnostics-test.sh",
@@ -69,6 +71,7 @@
     "testing/native-evaluation-runner.json",
     "testing/native-aot-lowering.json",
     "testing/native-aot-binary.json",
+    "testing/native-aot-memory.json",
     "testing/native-select.json"
   ],
   "shared_paths": [

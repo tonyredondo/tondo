@@ -54,4 +54,12 @@ jq '.aot_binary_phase = "NATIVE-001"' \
     testing/native-evaluation-runner.json > "$tmp/stale-aot-binary-phase.json"
 expect_failure stale-aot-binary-phase "$tmp/stale-aot-binary-phase.json"
 
+jq '.aot_memory_report_field = "legacy-memory"' \
+    testing/native-evaluation-runner.json > "$tmp/missing-aot-memory.json"
+expect_failure missing-aot-memory "$tmp/missing-aot-memory.json"
+
+jq '.aot_memory_phase = "NATIVE-001"' \
+    testing/native-evaluation-runner.json > "$tmp/stale-aot-memory-phase.json"
+expect_failure stale-aot-memory-phase "$tmp/stale-aot-memory-phase.json"
+
 echo "native evaluation runner tests: OK (adapter, toolchain and equivalence boundaries rejected)"

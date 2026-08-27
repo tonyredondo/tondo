@@ -65,6 +65,7 @@ siendo una capacidad declarada por target.
 - [Contrato de campañas de generación del runner](./docs/contracts/test-generation.md)
 - [Contrato de fast gate y tiers de evidencia](./docs/contracts/fast-gate.md)
 - [Contrato de alcance de evaluación native AOT](./docs/contracts/native-aot-scope.md)
+- [Contrato de memoria de productos native AOT](./docs/contracts/native-aot-memory.md)
 - [Contrato de coordinación de implementación STD-0.1A](./docs/contracts/stdlib-implementation-coordination.md)
 - [Contrato de coordinación Hosted STD-0.1A](./docs/contracts/stdlib-hosted-implementation-coordination.md)
 - [Contrato de owners Core STD-0.1A](./docs/contracts/stdlib-core.md)
@@ -137,6 +138,13 @@ Cranelift y LLVM. La campaña AOT completa, la normalización de artefactos
 enlazados, memoria, calidad y rendimiento siguen siendo necesarias antes de
 `DEC-013`; las cifras rápidas actuales no son una comparación final de tamaño
 porque usan buffers de código Cranelift frente al objeto completo de LLVM.
+La campaña `NATIVE-AOT-MEM-001` ya está cerrada: ambos productos enlazados
+ejecutan el corpus completo y un workload instrumentado en tres procesos
+frescos, con tres warmups y nueve muestras por proceso; la evidencia registra
+allocations, bytes asignados/live/pico, ARC local/atómico, ciclos, weak
+upgrades, pausas, presión de worker y RSS, manteniendo la semántica de la VM
+como oráculo. El siguiente bloque bloqueante es
+`NATIVE-AOT-QUALITY-001`.
 FUZZ está promovido para los 22 owners; la distribución está promovida y el
 seal S1A está cerrado como bundle técnico del draft, sin sobreafirmar G5, N1,
 TLF ni una publicación.
@@ -6027,16 +6035,19 @@ pueden retrasar el primer backend correcto.
   bytes debug/stripped y secciones ELF, y publica receipts ligados a MIR,
   runtime, stdlib, target, linker, strip, readelf, flags y toolchain. Los
   hashes y secciones coinciden entre builds y ninguna ruta física entra en la
-  evidencia; el siguiente trabajo bloqueante es `NATIVE-AOT-MEM-001` y
-  `NATIVE-AOT-QUALITY-001`.
+  evidencia; el siguiente trabajo bloqueante es `NATIVE-AOT-QUALITY-001`.
 
-- [ ] **NATIVE-AOT-MEM-001 — Capturar memoria y ARC en AOT.** Medir en ambos
-  candidatos allocations, bytes asignados, memoria pico/live, retain/release
-  local y atómico, ciclos recuperados, weak upgrades, pausas y presión bajo
-  concurrencia async/thread. Ejecutar procesos frescos con el protocolo de
-  `PERF-001`, separar observaciones de VM y native, y verificar que la
-  instrumentación no cambia la semántica ni oculta fugas; cualquier capacidad
-  física ausente se declara y bloquea N1.
+- [x] **NATIVE-AOT-MEM-001 — Capturar memoria y ARC en AOT.** Cerrado con
+  `testing/native-aot-memory.json`: cada candidato construye y ejecuta un
+  producto AOT enlazado con el mismo MIR/target/runtime/stdlib/perfil, valida
+  el corpus completo antes de publicar contadores y ejecuta tres warmups y
+  nueve muestras en cada uno de tres procesos frescos (27 por candidato).
+  La evidencia separa la semántica de la VM de las observaciones native y
+  captura allocations, bytes asignados/live/pico, retain/release local y
+  atómico, ciclos recuperados, weak upgrades, pausas de colección, presión de
+  worker OS y RSS. La instrumentación es process-local y fail-closed: un
+  resultado, trap, cleanup o byte vivo divergente invalida la muestra; no se
+  declara todavía N1. El siguiente bloque es `NATIVE-AOT-QUALITY-001`.
 
 - [ ] **NATIVE-AOT-QUALITY-001 — Ejecutar la compuerta completa de calidad AOT.**
   Pasar el corpus completo de lenguaje, testing, stdlib y diagnósticos, además

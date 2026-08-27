@@ -341,6 +341,7 @@ struct EvaluationReport {
     native_lowering_runs: Vec<NativeLoweringRunReport>,
     native_aot_lowering: NativeAotLoweringReport,
     native_aot_binary: NativeAotBinaryReport,
+    native_aot_memory: NativeAotMemoryReport,
     native_diagnostics: NativeDiagnosticsReport,
 }
 
@@ -636,6 +637,99 @@ struct NativeAotStartupReport {
 
 #[derive(Debug, Serialize)]
 #[serde(deny_unknown_fields)]
+struct NativeAotMemoryReport {
+    format: &'static str,
+    phase: &'static str,
+    status: &'static str,
+    target: String,
+    oracle: &'static str,
+    protocol: NativeAotMemoryProtocol,
+    vm: NativeAotMemoryVmReport,
+    candidates: Vec<NativeAotMemoryCandidateReport>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct NativeAotMemoryProtocol {
+    warmup_iterations: u32,
+    measurement_repetitions: u32,
+    independent_processes: u32,
+    minimum_sample_count: u32,
+    fresh_processes: bool,
+    summary: [&'static str; 3],
+    seed: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct NativeAotMemoryVmReport {
+    status: &'static str,
+    semantics: &'static str,
+    counters: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct NativeAotMemoryCandidateReport {
+    id: &'static str,
+    status: &'static str,
+    product: &'static str,
+    product_sha256: String,
+    instrumented: bool,
+    semantic_equivalence: &'static str,
+    samples: Vec<NativeAotMemorySample>,
+    summary: NativeAotMemorySummary,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct NativeAotMemorySample {
+    process: u32,
+    repetition: u32,
+    duration_ns: u64,
+    allocation_count: u64,
+    allocated_bytes: u64,
+    peak_live_bytes: u64,
+    live_bytes: u64,
+    retain_local: u64,
+    retain_atomic: u64,
+    release_local: u64,
+    release_atomic: u64,
+    cycles_reclaimed: u64,
+    weak_upgrades: u64,
+    pause_ns: u64,
+    concurrency_operations: u64,
+    rss_peak_bytes: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct NativeAotMemorySummary {
+    allocation_count: NativeAotMemoryQuantiles,
+    allocated_bytes: NativeAotMemoryQuantiles,
+    peak_live_bytes: NativeAotMemoryQuantiles,
+    live_bytes: NativeAotMemoryQuantiles,
+    retain_local: NativeAotMemoryQuantiles,
+    retain_atomic: NativeAotMemoryQuantiles,
+    release_local: NativeAotMemoryQuantiles,
+    release_atomic: NativeAotMemoryQuantiles,
+    cycles_reclaimed: NativeAotMemoryQuantiles,
+    weak_upgrades: NativeAotMemoryQuantiles,
+    pause_ns: NativeAotMemoryQuantiles,
+    concurrency_operations: NativeAotMemoryQuantiles,
+    rss_peak_bytes: NativeAotMemoryQuantiles,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct NativeAotMemoryQuantiles {
+    median: u64,
+    p95: u64,
+    p99: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(deny_unknown_fields)]
 struct NativeAotBinaryReceipt {
     format: &'static str,
     phase: &'static str,
@@ -800,6 +894,7 @@ fn run() -> Result<(), String> {
     let mut native_lowering_runs = Vec::new();
     let mut native_aot_lowering = pending_native_aot_lowering_report();
     let mut native_aot_binary = pending_native_aot_binary_report();
+    let mut native_aot_memory = pending_native_aot_memory_report();
     let mut native_diagnostics = NativeDiagnosticsReport {
         format: "tondo-native-diagnostics/1",
         phase: "DIAG-NATIVE-001",
@@ -932,6 +1027,12 @@ fn run() -> Result<(), String> {
             &options.target,
             &options.temp_dir,
         )?;
+        native_aot_memory = run_native_aot_memory_probe(
+            &options.llvm,
+            cc,
+            &options.target,
+            &options.temp_dir,
+        )?;
         native_diagnostics = run_native_diagnostics_probe(
             &options.llvm,
             cc,
@@ -1033,6 +1134,7 @@ fn run() -> Result<(), String> {
         native_lowering_runs,
         native_aot_lowering,
         native_aot_binary,
+        native_aot_memory,
         native_diagnostics,
     };
 
@@ -4371,6 +4473,31 @@ fn pending_native_aot_binary_report() -> NativeAotBinaryReport {
     }
 }
 
+fn pending_native_aot_memory_report() -> NativeAotMemoryReport {
+    NativeAotMemoryReport {
+        format: "tondo-native-aot-memory/1",
+        phase: "NATIVE-AOT-MEM-001",
+        status: "pending-native-link",
+        target: "pending".to_owned(),
+        oracle: "vm-semantics-native-instrumented-counters",
+        protocol: NativeAotMemoryProtocol {
+            warmup_iterations: 3,
+            measurement_repetitions: 9,
+            independent_processes: 3,
+            minimum_sample_count: 27,
+            fresh_processes: true,
+            summary: ["median", "p95", "p99"],
+            seed: "tondo-native-aot-memory-0.1",
+        },
+        vm: NativeAotMemoryVmReport {
+            status: "semantics-only-oracle",
+            semantics: "exact-values-errors-ownership-cancellation-and-exit-status",
+            counters: "not-comparable-implementation-observation",
+        },
+        candidates: Vec::new(),
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct NativeAotCase {
     id: &'static str,
@@ -4590,7 +4717,7 @@ fn run_native_aot_lowering_probe(
             NativeAotTrapReport {
                 candidate: "llvm",
                 function_ordinal: 900,
-                reason: "opaque-storage-not-admitted:unreachable",
+                reason: "opaque-storage-not-admitted:explicit-trap",
             },
         ],
     })
@@ -4801,6 +4928,269 @@ fn run_native_aot_binary_probe(
     })
 }
 
+/// Builds and runs an instrumented linked product for each AOT candidate.  The
+/// driver resets the private runtime before every iteration and emits only
+/// logical counters, so the VM remains the semantic oracle while allocation,
+/// ARC and RSS observations stay native-only evidence.
+fn run_native_aot_memory_probe(
+    llvm: &Path,
+    cc: &Path,
+    target: &str,
+    temp_dir: &Path,
+) -> Result<NativeAotMemoryReport, String> {
+    let (program, cases) = native_aot_product_program();
+    validate_backend_program(&program)?;
+    let candidates = [
+        (
+            "cranelift",
+            format!("cranelift-codegen/{CRANELIFT_VERSION}"),
+        ),
+        ("llvm", command_version(llvm)?),
+    ];
+    let wrapper = native_aot_memory_c_source(&cases);
+    let mut reports = Vec::with_capacity(candidates.len());
+    for (candidate, _toolchain) in candidates {
+        let build_root = temp_dir.join(format!("native_aot_memory_{candidate}"));
+        fs::create_dir_all(&build_root)
+            .map_err(|error| format!("cannot create AOT memory directory: {error}"))?;
+        let object = build_root.join("memory.o");
+        if candidate == "cranelift" {
+            emit_cranelift_object(cranelift_isa()?, &program, &object)?;
+        } else {
+            let input = build_root.join("memory.ll");
+            fs::write(&input, llvm_module(target, &program)?)
+                .map_err(|error| format!("cannot write LLVM AOT memory product: {error}"))?;
+            let result = Command::new(llvm)
+                .arg("-O2")
+                .arg("-filetype=obj")
+                .arg(format!("-mtriple={target}"))
+                .arg("-o")
+                .arg(&object)
+                .arg(&input)
+                .output()
+                .map_err(|error| format!("cannot execute LLVM AOT memory product: {error}"))?;
+            if !result.status.success() {
+                return Err(format!(
+                    "LLVM AOT memory product lowering failed: {}",
+                    String::from_utf8_lossy(&result.stderr).trim()
+                ));
+            }
+        }
+        let binary = build_root.join("memory.instrumented");
+        link_native_product(cc, &wrapper, &object, &binary, &build_root)?;
+        let _ = regular_file_size(&binary)?;
+        let trap_source = build_root.join("memory.trap.c");
+        fs::write(&trap_source, native_aot_trap_runner_source(900))
+            .map_err(|error| format!("cannot write {candidate} AOT trap runner: {error}"))?;
+        let trap_binary = build_root.join("memory.trap");
+        link_native_runner(cc, &trap_source, &object, &trap_binary)?;
+        run_native_binary(&trap_binary, &format!("{candidate} AOT memory trap"), true)?;
+        let product_sha256 = sha256_file(&binary)?;
+        let samples = measure_native_memory_product(&binary, candidate)?;
+        validate_native_aot_memory_samples(candidate, &samples)?;
+        let summary = summarize_native_aot_memory(&samples);
+        reports.push(NativeAotMemoryCandidateReport {
+            id: candidate,
+            status: "passed",
+            product: "linked-aot-instrumented-runtime-harness",
+            product_sha256,
+            instrumented: true,
+            semantic_equivalence: "all-admitted-cases-and-traps-checked-before-counters",
+            samples,
+            summary,
+        });
+    }
+    if reports.len() != 2 || reports.iter().any(|candidate| candidate.status != "passed") {
+        return Err("AOT memory campaign did not produce two complete candidates".to_owned());
+    }
+    Ok(NativeAotMemoryReport {
+        format: "tondo-native-aot-memory/1",
+        phase: "NATIVE-AOT-MEM-001",
+        status: "passed",
+        target: target.to_owned(),
+        oracle: "vm-semantics-native-instrumented-counters",
+        protocol: NativeAotMemoryProtocol {
+            warmup_iterations: 3,
+            measurement_repetitions: 9,
+            independent_processes: 3,
+            minimum_sample_count: 27,
+            fresh_processes: true,
+            summary: ["median", "p95", "p99"],
+            seed: "tondo-native-aot-memory-0.1",
+        },
+        vm: NativeAotMemoryVmReport {
+            status: "semantics-only-oracle",
+            semantics: "exact-values-errors-ownership-cancellation-and-exit-status",
+            counters: "not-comparable-implementation-observation",
+        },
+        candidates: reports,
+    })
+}
+
+fn measure_native_memory_product(
+    binary: &Path,
+    candidate: &str,
+) -> Result<Vec<NativeAotMemorySample>, String> {
+    let mut samples = Vec::with_capacity(27);
+    for process in 0..3_u32 {
+        let (stdout, stderr) = run_native_memory_process(binary, candidate, process)?;
+        if !stderr.is_empty() {
+            return Err(format!(
+                "{candidate} AOT memory product emitted stderr: {}",
+                String::from_utf8_lossy(&stderr).trim()
+            ));
+        }
+        let output_text = String::from_utf8(stdout)
+            .map_err(|error| format!("{candidate} AOT memory output is not UTF-8: {error}"))?;
+        let lines = output_text
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(str::as_bytes)
+            .collect::<Vec<_>>();
+        if lines.len() != 9 {
+            return Err(format!(
+                "{candidate} AOT memory process {process} emitted {} samples, expected 9",
+                lines.len()
+            ));
+        }
+        for (repetition, line) in lines.into_iter().enumerate() {
+            let sample: NativeAotMemorySample = serde_json::from_slice(line).map_err(|error| {
+                format!("{candidate} AOT memory sample is invalid JSON: {error}")
+            })?;
+            if sample.process != process || sample.repetition != repetition as u32 {
+                return Err(format!(
+                    "{candidate} AOT memory sample identity mismatch for process {process}"
+                ));
+            }
+            samples.push(sample);
+        }
+    }
+    Ok(samples)
+}
+
+fn run_native_memory_process(
+    binary: &Path,
+    candidate: &str,
+    process: u32,
+) -> Result<(Vec<u8>, Vec<u8>), String> {
+    let started = Instant::now();
+    let mut child = Command::new(binary)
+        .arg(process.to_string())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("cannot execute {candidate} AOT memory product: {error}"))?;
+    let status = loop {
+        match child
+            .try_wait()
+            .map_err(|error| format!("cannot poll {candidate} AOT memory product: {error}"))?
+        {
+            Some(status) => break status,
+            None if started.elapsed() >= MAX_NATIVE_CASE_RUNTIME => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!(
+                    "{candidate} AOT memory process {process} exceeded runtime budget"
+                ));
+            }
+            None => thread::sleep(Duration::from_millis(1)),
+        }
+    };
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    child
+        .stdout
+        .take()
+        .ok_or_else(|| format!("{candidate} AOT memory product has no stdout pipe"))?
+        .read_to_end(&mut stdout)
+        .map_err(|error| format!("cannot read {candidate} AOT memory stdout: {error}"))?;
+    child
+        .stderr
+        .take()
+        .ok_or_else(|| format!("{candidate} AOT memory product has no stderr pipe"))?
+        .read_to_end(&mut stderr)
+        .map_err(|error| format!("cannot read {candidate} AOT memory stderr: {error}"))?;
+    if !status.success() {
+        return Err(format!(
+            "{candidate} AOT memory process exited unsuccessfully ({}): {}",
+            status,
+            String::from_utf8_lossy(&stderr).trim()
+        ));
+    }
+    Ok((stdout, stderr))
+}
+
+fn validate_native_aot_memory_samples(
+    candidate: &str,
+    samples: &[NativeAotMemorySample],
+) -> Result<(), String> {
+    if samples.len() != 27 {
+        return Err(format!(
+            "{candidate} AOT memory campaign requires 27 samples, got {}",
+            samples.len()
+        ));
+    }
+    for sample in samples {
+        if sample.duration_ns == 0
+            || sample.allocation_count == 0
+            || sample.allocated_bytes == 0
+            || sample.peak_live_bytes == 0
+            || sample.live_bytes != 0
+            || sample.retain_local == 0
+            || sample.retain_atomic == 0
+            || sample.release_local == 0
+            || sample.release_atomic == 0
+            || sample.cycles_reclaimed == 0
+            || sample.weak_upgrades == 0
+            || sample.pause_ns == 0
+            || sample.concurrency_operations == 0
+            || sample.rss_peak_bytes == 0
+            || sample.allocated_bytes < sample.peak_live_bytes
+        {
+            return Err(format!(
+                "{candidate} AOT memory sample did not prove every required dimension"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn memory_quantiles(values: &[u64]) -> NativeAotMemoryQuantiles {
+    let mut sorted = values.to_vec();
+    sorted.sort_unstable();
+    let index = |numerator: usize| {
+        ((sorted.len() * numerator).saturating_add(99) / 100)
+            .saturating_sub(1)
+            .min(sorted.len() - 1)
+    };
+    NativeAotMemoryQuantiles {
+        median: sorted[index(50)],
+        p95: sorted[index(95)],
+        p99: sorted[index(99)],
+    }
+}
+
+fn summarize_native_aot_memory(samples: &[NativeAotMemorySample]) -> NativeAotMemorySummary {
+    let values = |field: fn(&NativeAotMemorySample) -> u64| {
+        samples.iter().map(field).collect::<Vec<_>>()
+    };
+    NativeAotMemorySummary {
+        allocation_count: memory_quantiles(&values(|sample| sample.allocation_count)),
+        allocated_bytes: memory_quantiles(&values(|sample| sample.allocated_bytes)),
+        peak_live_bytes: memory_quantiles(&values(|sample| sample.peak_live_bytes)),
+        live_bytes: memory_quantiles(&values(|sample| sample.live_bytes)),
+        retain_local: memory_quantiles(&values(|sample| sample.retain_local)),
+        retain_atomic: memory_quantiles(&values(|sample| sample.retain_atomic)),
+        release_local: memory_quantiles(&values(|sample| sample.release_local)),
+        release_atomic: memory_quantiles(&values(|sample| sample.release_atomic)),
+        cycles_reclaimed: memory_quantiles(&values(|sample| sample.cycles_reclaimed)),
+        weak_upgrades: memory_quantiles(&values(|sample| sample.weak_upgrades)),
+        pause_ns: memory_quantiles(&values(|sample| sample.pause_ns)),
+        concurrency_operations: memory_quantiles(&values(|sample| sample.concurrency_operations)),
+        rss_peak_bytes: memory_quantiles(&values(|sample| sample.rss_peak_bytes)),
+    }
+}
+
 fn native_aot_product_program() -> (MirBackendProgram, Vec<NativeAotBinaryCase>) {
     let (mut program, storage_cases) = native_aot_program();
     let (runtime, runtime_cases) = native_cleanup_program();
@@ -4883,6 +5273,160 @@ fn native_aot_product_c_source(cases: &[NativeAotBinaryCase]) -> String {
         }
     }
     source.push_str("  return 0;\n}\n");
+    source
+}
+
+fn native_aot_trap_runner_source(function_ordinal: u32) -> String {
+    format!(
+        "{}\nextern int64_t tondo_probe_{function_ordinal}(void);\nint main(void) {{ (void)tondo_probe_{function_ordinal}(); return 91; }}\n",
+        native_runtime_c_source()
+    )
+}
+
+fn native_aot_memory_c_source(cases: &[NativeAotBinaryCase]) -> String {
+    let mut source = native_runtime_c_source();
+    source.push_str(
+        r#"
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/resource.h>
+#include <time.h>
+"#,
+    );
+    for case in cases {
+        source.push_str(&format!(
+            "extern uint64_t tondo_probe_{}(void);\n",
+            case.function_ordinal
+        ));
+    }
+    source.push_str("int64_t tondo_explicit_panic(void) { __builtin_trap(); }\n");
+    source.push_str(
+        r#"
+static uint64_t tondo_memory_clock_ns(void) {
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) return 0;
+    return (uint64_t)now.tv_sec * UINT64_C(1000000000) + (uint64_t)now.tv_nsec;
+}
+static uint64_t tondo_memory_rss_bytes(void) {
+    struct rusage usage;
+    if (getrusage(RUSAGE_SELF, &usage) != 0 || usage.ru_maxrss <= 0) return 0;
+    return (uint64_t)usage.ru_maxrss * UINT64_C(1024);
+}
+static int tondo_memory_corpus(void) {
+    uint64_t result;
+"#,
+    );
+    for case in cases {
+        source.push_str(&format!("  /* case: {} */\n", case.id));
+        source.push_str("  tondo_rt_reset();\n");
+        match case.expectation {
+            NativeAotBinaryExpectation::Scalar(expected) => source.push_str(&format!(
+                "  if (tondo_probe_{}() != UINT64_C({expected})) return 91;\n",
+                case.function_ordinal
+            )),
+            NativeAotBinaryExpectation::Managed { tag, payload } => {
+                source.push_str(&format!(
+                    "  result = tondo_probe_{}();\n  if (tondo_rt_result_tag(result) != UINT64_C({tag})",
+                    case.function_ordinal
+                ));
+                if let Some(payload) = payload {
+                    source.push_str(&format!(
+                        " || tondo_rt_result_payload(result) != UINT64_C({payload})"
+                    ));
+                }
+                source.push_str(" || tondo_rt_release(result) != 0) return 91;\n");
+            }
+        }
+    }
+    source.push_str(
+        r#"  tondo_rt_reset();
+  return 0;
+}
+static int tondo_memory_workload(void) {
+    uint64_t local = tondo_rt_result_new(2, 11, 1);
+    uint64_t shared = tondo_rt_result_new(2, 12, 1);
+    if (local == 0 || shared == 0) { fprintf(stderr, "stage=alloc live=%llu\n", (unsigned long long)tondo_rt_memory_metric(3)); return 92; }
+    if (tondo_rt_mark_shared(shared) != 0) { fprintf(stderr, "stage=mark live=%llu\n", (unsigned long long)tondo_rt_memory_metric(3)); return 92; }
+    for (uint64_t i = 0; i < 8; ++i) {
+        if (tondo_rt_retain(local) != 0 || tondo_rt_release(local) != 0) { fprintf(stderr, "stage=local-loop live=%llu\n", (unsigned long long)tondo_rt_memory_metric(3)); return 92; }
+        if (tondo_rt_retain(shared) != 0 || tondo_rt_release(shared) != 0) { fprintf(stderr, "stage=shared-loop live=%llu\n", (unsigned long long)tondo_rt_memory_metric(3)); return 92; }
+    }
+    uint64_t frame = tondo_rt_frame_enter();
+    if (frame == 0 || tondo_rt_frame_publish_root(frame, local) != 0) { fprintf(stderr, "stage=frame-publish live=%llu\n", (unsigned long long)tondo_rt_memory_metric(3)); return 92; }
+    if (tondo_rt_release(local) != 0 || tondo_rt_frame_leave(frame, 0) != 0) { fprintf(stderr, "stage=frame-clean live=%llu\n", (unsigned long long)tondo_rt_memory_metric(3)); return 92; }
+    uint64_t task = tondo_rt_task_spawn(shared, 1);
+    if (task == 0 || tondo_rt_release(shared) != 0) { fprintf(stderr, "stage=task-start live=%llu\n", (unsigned long long)tondo_rt_memory_metric(3)); return 92; }
+    if (tondo_rt_task_cancel(task) != 0 || tondo_rt_release(task) != 0) { fprintf(stderr, "stage=task-clean live=%llu\n", (unsigned long long)tondo_rt_memory_metric(3)); return 92; }
+
+    uint64_t weak_target = tondo_rt_result_new(2, 13, 1);
+    if (weak_target == 0) { fprintf(stderr, "stage=weak-target live=%llu\n", (unsigned long long)tondo_rt_memory_metric(3)); return 92; }
+    uint64_t weak = tondo_rt_weak_new(weak_target);
+    if (weak == 0) { fprintf(stderr, "stage=weak-new live=%llu\n", (unsigned long long)tondo_rt_memory_metric(3)); return 92; }
+    uint64_t upgraded = tondo_rt_weak_upgrade(weak);
+    if (upgraded == 0 || tondo_rt_release(upgraded) != 0) { fprintf(stderr, "stage=weak-upgrade live=%llu\n", (unsigned long long)tondo_rt_memory_metric(3)); return 92; }
+    if (tondo_rt_release(weak_target) != 0 || tondo_rt_weak_upgrade(weak) != 0) { fprintf(stderr, "stage=weak-dead live=%llu\n", (unsigned long long)tondo_rt_memory_metric(3)); return 92; }
+    if (tondo_rt_release(weak) != 0) { fprintf(stderr, "stage=weak-release live=%llu\n", (unsigned long long)tondo_rt_memory_metric(3)); return 92; }
+
+    if (tondo_rt_memory_make_cycle() == 0 || tondo_rt_collect_cycles() < 2) { fprintf(stderr, "stage=cycle live=%llu\n", (unsigned long long)tondo_rt_memory_metric(3)); return 92; }
+    uint64_t worker = tondo_rt_thread_spawn(0, 0);
+    if (worker == 0 || tondo_rt_thread_worker_wait(worker) != 0) { fprintf(stderr, "stage=worker-start live=%llu\n", (unsigned long long)tondo_rt_memory_metric(3)); return 92; }
+    if (tondo_rt_release(worker) != 0) { fprintf(stderr, "stage=worker-release live=%llu\n", (unsigned long long)tondo_rt_memory_metric(3)); return 92; }
+    if (tondo_rt_memory_metric(3) != 0) fprintf(stderr, "stage=final live=%llu\n", (unsigned long long)tondo_rt_memory_metric(3));
+    return tondo_rt_memory_metric(3) == 0 ? 0 : 92;
+}
+int main(int argc, char **argv) {
+    uint64_t process = 0;
+    if (argc > 1) {
+        char *end = NULL;
+        process = strtoull(argv[1], &end, 10);
+        if (end == argv[1] || *end != '\0' || process >= 3) return 93;
+    }
+    for (uint64_t warmup = 0; warmup < 3; ++warmup) {
+        tondo_rt_reset();
+        int corpus_status = tondo_memory_corpus();
+        int workload_status = corpus_status == 0 ? tondo_memory_workload() : 0;
+        if (corpus_status != 0 || workload_status != 0) {
+            fprintf(stderr, "warmup=%llu corpus=%d workload=%d live=%llu\n",
+                (unsigned long long)warmup, corpus_status, workload_status,
+                (unsigned long long)tondo_rt_memory_metric(3));
+            return 94;
+        }
+    }
+    for (uint64_t repetition = 0; repetition < 9; ++repetition) {
+        tondo_rt_reset();
+        uint64_t started = tondo_memory_clock_ns();
+        int corpus_status = started == 0 ? 95 : tondo_memory_corpus();
+        int workload_status = corpus_status == 0 ? tondo_memory_workload() : 0;
+        if (corpus_status != 0 || workload_status != 0) {
+            fprintf(stderr, "measurement=%llu corpus=%d workload=%d live=%llu\n",
+                (unsigned long long)repetition, corpus_status, workload_status,
+                (unsigned long long)tondo_rt_memory_metric(3));
+            return 94;
+        }
+        uint64_t elapsed = tondo_memory_clock_ns() - started;
+        if (elapsed == 0) elapsed = 1;
+        uint64_t rss = tondo_memory_rss_bytes();
+        printf("{\"process\":%llu,\"repetition\":%llu,\"duration_ns\":%llu,\"allocation_count\":%llu,\"allocated_bytes\":%llu,\"peak_live_bytes\":%llu,\"live_bytes\":%llu,\"retain_local\":%llu,\"retain_atomic\":%llu,\"release_local\":%llu,\"release_atomic\":%llu,\"cycles_reclaimed\":%llu,\"weak_upgrades\":%llu,\"pause_ns\":%llu,\"concurrency_operations\":%llu,\"rss_peak_bytes\":%llu}\n",
+            (unsigned long long)process, (unsigned long long)repetition,
+            (unsigned long long)elapsed,
+            (unsigned long long)tondo_rt_memory_metric(0),
+            (unsigned long long)tondo_rt_memory_metric(1),
+            (unsigned long long)tondo_rt_memory_metric(2),
+            (unsigned long long)tondo_rt_memory_metric(3),
+            (unsigned long long)tondo_rt_memory_metric(4),
+            (unsigned long long)tondo_rt_memory_metric(5),
+            (unsigned long long)tondo_rt_memory_metric(6),
+            (unsigned long long)tondo_rt_memory_metric(7),
+            (unsigned long long)tondo_rt_memory_metric(8),
+            (unsigned long long)tondo_rt_memory_metric(9),
+            (unsigned long long)tondo_rt_memory_metric(10),
+            (unsigned long long)tondo_rt_memory_metric(11),
+            (unsigned long long)rss);
+    }
+    return 0;
+}
+"#,
+    );
     source
 }
 
@@ -7977,6 +8521,7 @@ fn native_runtime_c_source() -> String {
 #include <stddef.h>
 #include <limits.h>
 #include <pthread.h>
+#include <time.h>
 #define T_MAX 4096u
 #define F_MAX 256u
 #define D_MAX 64u
@@ -7984,7 +8529,7 @@ fn native_runtime_c_source() -> String {
 #define SELECT_MAX_ARMS 64u
 #define A_MAX 16u
 #define HBIT (UINT64_C(1) << 63)
-typedef struct { uint64_t tag, payload, has_payload, strong, kind, state, value; uint64_t is_thread, worker_runs, worker_distinct, value_count; uint64_t values[A_MAX]; } t_entry;
+typedef struct { uint64_t tag, payload, has_payload, strong, kind, state, value; uint64_t is_thread, worker_runs, worker_distinct, value_count; uint64_t shared, bytes, weak; uint64_t values[A_MAX]; } t_entry;
 typedef struct { uint64_t terminal, root_count, defer_count; uint64_t roots[D_MAX]; uint64_t defers[D_MAX]; } t_frame;
 typedef struct { uint64_t handle, state, value, scope; } t_task;
 typedef struct { uint64_t source, kind, owned; } t_select_arm;
@@ -8002,12 +8547,40 @@ static t_select t_selects[T_MAX];
 static uint64_t t_next = 1, t_next_frame = 1, t_last = 0;
 static uint64_t t_select_rotation = 0;
 static t_diag t_diag_state;
+typedef struct {
+    uint64_t allocation_count, allocated_bytes, live_bytes, peak_live_bytes;
+    uint64_t retain_local, retain_atomic, release_local, release_atomic;
+    uint64_t cycles_reclaimed, weak_upgrades, pause_ns, concurrency_operations;
+} t_memory;
+static t_memory t_memory_state;
+static uint64_t t_kind_bytes(uint64_t kind) {
+    switch (kind) {
+        case 7: return 128;
+        case 8: return 48;
+        default: return 64;
+    }
+}
+static void t_memory_release_bytes(uint64_t id) {
+    uint64_t bytes = t_objects[id].bytes;
+    if (t_memory_state.live_bytes >= bytes) t_memory_state.live_bytes -= bytes;
+    else t_memory_state.live_bytes = 0;
+    t_objects[id].bytes = 0;
+}
+static void t_memory_cycle_pause(uint64_t started) {
+    struct timespec now;
+    uint64_t ended = 0;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) == 0)
+        ended = (uint64_t)now.tv_sec * UINT64_C(1000000000) + (uint64_t)now.tv_nsec;
+    uint64_t elapsed = ended > started ? ended - started : 1;
+    t_memory_state.pause_ns += elapsed;
+}
 typedef struct { uint64_t id; } t_worker_arg;
 static void *t_thread_worker(void *raw) {
     t_worker_arg *arg = (t_worker_arg *)raw;
     if (arg->id < T_MAX) {
         t_objects[arg->id].worker_runs = 1;
         t_objects[arg->id].worker_distinct = 1;
+        ++t_memory_state.concurrency_operations;
     }
     return NULL;
 }
@@ -8017,6 +8590,12 @@ static uint64_t t_alloc(uint64_t kind, uint64_t tag, uint64_t payload, uint64_t 
     t_objects[id].kind = kind; t_objects[id].tag = tag; t_objects[id].payload = payload;
     t_objects[id].has_payload = has_payload; t_objects[id].strong = 1; t_objects[id].state = 0;
     t_objects[id].is_thread = 0; t_objects[id].worker_runs = 0; t_objects[id].worker_distinct = 0; t_objects[id].value_count = 0;
+    t_objects[id].shared = 0; t_objects[id].weak = 0; t_objects[id].bytes = t_kind_bytes(kind);
+    ++t_memory_state.allocation_count;
+    t_memory_state.allocated_bytes += t_objects[id].bytes;
+    t_memory_state.live_bytes += t_objects[id].bytes;
+    if (t_memory_state.live_bytes > t_memory_state.peak_live_bytes)
+        t_memory_state.peak_live_bytes = t_memory_state.live_bytes;
     for (uint64_t i = 0; i < A_MAX; ++i) t_objects[id].values[i] = 0;
     return HBIT | id;
 }
@@ -8066,6 +8645,7 @@ static void t_reset(void) {
     t_next = 1; t_next_frame = 1; t_last = 0;
     t_select_rotation = 0;
     t_diag_state = (t_diag){0};
+    t_memory_state = (t_memory){0};
 }
 uint64_t tondo_rt_reset(void) { t_reset(); return 0; }
 uint64_t tondo_rt_result_new(uint64_t tag, uint64_t payload, uint64_t has_payload) {
@@ -8122,12 +8702,90 @@ uint64_t tondo_rt_indirect_call(uint64_t function, uint64_t capture, uint64_t ar
 }
 uint64_t tondo_rt_retain(uint64_t value) {
     uint64_t id = t_index(value); if (id == 0) return 1;
-    if (t_objects[id].strong == UINT32_MAX) return 3; ++t_objects[id].strong; return 0;
+    if (t_objects[id].kind == 8) return 11;
+    if (t_objects[id].strong == UINT32_MAX) return 3;
+    if (t_objects[id].shared) ++t_memory_state.retain_atomic;
+    else ++t_memory_state.retain_local;
+    ++t_objects[id].strong; return 0;
 }
 uint64_t tondo_rt_release(uint64_t value) {
     uint64_t id = t_index(value); if (id == 0) return 1;
-    if (t_objects[id].strong == 0) return 2; --t_objects[id].strong;
-    if (t_objects[id].strong == 0) t_objects[id].kind = 0; return 0;
+    if (t_objects[id].strong == 0) return 2;
+    if (t_objects[id].shared) ++t_memory_state.release_atomic;
+    else ++t_memory_state.release_local;
+    --t_objects[id].strong;
+    if (t_objects[id].strong == 0) {
+        if (t_objects[id].kind == 8) {
+            uint64_t target = t_index(t_objects[id].payload);
+            if (target != 0 && t_objects[target].weak != 0) --t_objects[target].weak;
+        }
+        t_memory_release_bytes(id);
+        t_objects[id].kind = 0;
+    }
+    return 0;
+}
+uint64_t tondo_rt_mark_shared(uint64_t value) {
+    uint64_t id = t_index(value); if (id == 0 || t_objects[id].kind == 8) return 1;
+    t_objects[id].shared = 1; return 0;
+}
+uint64_t tondo_rt_weak_new(uint64_t value) {
+    uint64_t target = t_index(value); if (target == 0 || t_objects[target].kind == 8) return 1;
+    if (t_objects[target].weak == UINT32_MAX) return 3;
+    ++t_objects[target].weak;
+    uint64_t weak = t_alloc(8, 0, value, 0);
+    if (weak == 0) --t_objects[target].weak;
+    return weak;
+}
+uint64_t tondo_rt_weak_upgrade(uint64_t value) {
+    uint64_t weak = t_index(value); if (weak == 0 || t_objects[weak].kind != 8) { t_last = 11; return 0; }
+    ++t_memory_state.weak_upgrades;
+    uint64_t target = t_index(t_objects[weak].payload);
+    if (target == 0 || t_objects[target].kind == 8) { t_last = 9; return 0; }
+    return tondo_rt_retain(t_objects[weak].payload) == 0 ? t_objects[weak].payload : 0;
+}
+uint64_t tondo_rt_memory_make_cycle(void) {
+    uint64_t left = t_alloc(3, 0, 0, 0), right = t_alloc(3, 0, 0, 0);
+    uint64_t left_id = t_index(left), right_id = t_index(right);
+    if (left_id == 0 || right_id == 0) return 0;
+    t_objects[left_id].value = right; t_objects[right_id].value = left;
+    return left;
+}
+uint64_t tondo_rt_collect_cycles(void) {
+    struct timespec now;
+    uint64_t started = 0;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) == 0)
+        started = (uint64_t)now.tv_sec * UINT64_C(1000000000) + (uint64_t)now.tv_nsec;
+    uint64_t reclaimed = 0;
+    for (uint64_t left = 1; left < T_MAX; ++left) {
+        if (t_objects[left].kind != 3 || t_objects[left].strong == 0) continue;
+        uint64_t right = t_index(t_objects[left].value);
+        if (right == 0 || right == left || t_objects[right].kind != 3 || t_objects[right].strong == 0 || t_objects[right].value != (HBIT | left)) continue;
+        t_memory_release_bytes(left); t_memory_release_bytes(right);
+        t_objects[left].kind = 0; t_objects[right].kind = 0;
+        t_objects[left].strong = 0; t_objects[right].strong = 0;
+        reclaimed += 2;
+    }
+    t_memory_state.cycles_reclaimed += reclaimed;
+    t_memory_cycle_pause(started);
+    return reclaimed;
+}
+uint64_t tondo_rt_quiesce(void) { return tondo_rt_collect_cycles(); }
+uint64_t tondo_rt_memory_metric(uint64_t field) {
+    switch (field) {
+        case 0: return t_memory_state.allocation_count;
+        case 1: return t_memory_state.allocated_bytes;
+        case 2: return t_memory_state.peak_live_bytes;
+        case 3: return t_memory_state.live_bytes;
+        case 4: return t_memory_state.retain_local;
+        case 5: return t_memory_state.retain_atomic;
+        case 6: return t_memory_state.release_local;
+        case 7: return t_memory_state.release_atomic;
+        case 8: return t_memory_state.cycles_reclaimed;
+        case 9: return t_memory_state.weak_upgrades;
+        case 10: return t_memory_state.pause_ns;
+        case 11: return t_memory_state.concurrency_operations;
+        default: return UINT64_MAX;
+    }
 }
 uint64_t tondo_rt_cow_clone(uint64_t value) {
     uint64_t id = t_index(value); if (id == 0) return 0;
@@ -8662,6 +9320,7 @@ fn llvm_module(target: &str, program: &MirBackendProgram) -> Result<String, Stri
         .unwrap();
         if !function.supported {
             writeln!(module, "entry:").unwrap();
+            writeln!(module, "  call void @llvm.trap()").unwrap();
             writeln!(module, "  unreachable").unwrap();
             writeln!(module, "}}").unwrap();
             continue;
@@ -10486,6 +11145,72 @@ mod tests {
         let error = aot_vm_oracle(&program, &drifted)
             .expect_err("oracle drift must fail closed");
         assert!(error.contains("AOT VM oracle disagrees for `array-storage`"));
+    }
+
+    fn memory_test_sample(process: u32, repetition: u32) -> NativeAotMemorySample {
+        NativeAotMemorySample {
+            process,
+            repetition,
+            duration_ns: 100,
+            allocation_count: 8,
+            allocated_bytes: 496,
+            peak_live_bytes: 128,
+            live_bytes: 0,
+            retain_local: 10,
+            retain_atomic: 8,
+            release_local: 15,
+            release_atomic: 9,
+            cycles_reclaimed: 2,
+            weak_upgrades: 2,
+            pause_ns: 20,
+            concurrency_operations: 1,
+            rss_peak_bytes: 16_000,
+        }
+    }
+
+    #[test]
+    fn native_aot_memory_quantiles_use_all_twenty_seven_samples() {
+        let mut samples = (0..3)
+            .flat_map(|process| {
+                (0..9).map(move |repetition| memory_test_sample(process, repetition))
+            })
+            .collect::<Vec<_>>();
+        for (index, sample) in samples.iter_mut().enumerate() {
+            sample.pause_ns = (index + 1) as u64;
+        }
+        let summary = summarize_native_aot_memory(&samples);
+        assert_eq!(summary.pause_ns.median, 14);
+        assert_eq!(summary.pause_ns.p95, 26);
+        assert_eq!(summary.pause_ns.p99, 27);
+        validate_native_aot_memory_samples("test", &samples)
+            .expect("complete memory sample matrix should validate");
+    }
+
+    #[test]
+    fn native_aot_memory_validation_rejects_live_residue_and_missing_dimensions() {
+        let mut samples = (0..3)
+            .flat_map(|process| {
+                (0..9).map(move |repetition| memory_test_sample(process, repetition))
+            })
+            .collect::<Vec<_>>();
+        samples[0].live_bytes = 1;
+        assert!(validate_native_aot_memory_samples("test", &samples).is_err());
+        samples[0].live_bytes = 0;
+        samples[0].cycles_reclaimed = 0;
+        assert!(validate_native_aot_memory_samples("test", &samples).is_err());
+    }
+
+    #[test]
+    fn native_aot_memory_driver_checks_corpus_before_publishing_counters() {
+        let (_, cases) = native_aot_product_program();
+        let source = native_aot_memory_c_source(&cases);
+        assert!(source.contains("tondo_memory_corpus"));
+        assert!(source.contains("tondo_rt_memory_metric(11)"));
+        assert!(source.contains("tondo_rt_collect_cycles"));
+        assert!(source.contains("int64_t tondo_explicit_panic"));
+        assert!(source.contains("for (uint64_t warmup = 0; warmup < 3; ++warmup)"));
+        assert!(source.contains("for (uint64_t repetition = 0; repetition < 9; ++repetition)"));
+        assert!(native_aot_trap_runner_source(900).contains("tondo_probe_900"));
     }
 
     #[test]
