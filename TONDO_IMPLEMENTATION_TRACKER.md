@@ -5892,8 +5892,16 @@ pueden retrasar el primer backend correcto.
   `scripts/native-conf-testing-{check,test}.sh` y
   `target/reliability/evidence/native-conf-testing.json`.
 
-- [ ] **NATIVE-CONF-STDLIB-001 — Ejecutar STD-0.1A nativa.** Correr cada owner
-  Core/Hosted y capability aplicable con los mismos oracles y límites.
+- [x] **NATIVE-CONF-STDLIB-001 — Ejecutar STD-0.1A nativa.** Cerrado con los
+  owners `std.core` y `std.hosted`, las capabilities `console`, `filesystem`,
+  `process` y `clock`, y los casos de core, hosted y cleanup en Cranelift y
+  LLVM. Cada observación conserva el oráculo VM, bytes parciales, tags de
+  error y release exactamente una vez; los informes no contienen paths físicos.
+  Evidencia en `testing/native-conf-stdlib.json`,
+  `docs/contracts/native-conf-stdlib.md`,
+  `scripts/native-conf-stdlib-{check,test}.sh` y
+  `target/reliability/evidence/native-conf-stdlib.json`; sigue
+  `NATIVE-CONF-001`.
 
 - [ ] **NATIVE-CONF-001 — Coordinar conformidad nativa.** Cierra solo tras
   adaptador, lenguaje, testing y stdlib independientes; compara observaciones

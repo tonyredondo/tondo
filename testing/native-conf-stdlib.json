@@ -1,0 +1,21 @@
+{
+  "format": "tondo-native-conf-stdlib/1",
+  "task": "NATIVE-CONF-STDLIB-001",
+  "owner": "toolchain.native_conf_stdlib",
+  "edition": "0.1",
+  "phase": "M20",
+  "status": "closed",
+  "contract": "docs/contracts/native-conf-stdlib.md",
+  "runner": "scripts/native-conf-stdlib-test.sh",
+  "adapter": "scripts/native-conformance-adapter.sh",
+  "probe": "testing/native-conf-probe.json",
+  "category": "stdlib",
+  "backends": ["cranelift", "llvm"],
+  "target": "x86_64-unknown-linux-gnu",
+  "owners": ["std.core", "std.hosted"],
+  "capabilities": ["console", "filesystem", "process", "clock"],
+  "cases": ["stdlib-core", "stdlib-hosted", "stdlib-cleanup"],
+  "dimensions": ["core", "hosted", "capabilities", "bytes", "errors", "cleanup"],
+  "negative_cases": ["capability-drift", "host-error-drift", "partial-bytes", "cleanup-drift", "backend-drift", "physical-path-in-report"],
+  "next_blocks": ["NATIVE-CONF-001"]
+}
