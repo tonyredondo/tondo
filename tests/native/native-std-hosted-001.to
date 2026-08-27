@@ -1,0 +1,5 @@
+// The native hosted fixture keeps the public source shape visible while the
+// bootstrap runtime probe exercises the private capability ABI.
+fn main() {
+    assert(true)
+}

@@ -5814,9 +5814,18 @@ pueden retrasar el primer backend correcto.
   `scripts/native-std-core-{check,test}.sh`; la siguiente frontera es
   `NATIVE-STD-HOSTED-001`.
 
-- [ ] **NATIVE-STD-HOSTED-001 — Implementar la frontera Hosted de STD-0.1A.**
-  Capabilities, I/O parcial, cancelación, handles, errores y cleanup cruzan
-  unidades privilegiadas fijadas por hash y no heredan estado ambiental.
+- [x] **NATIVE-STD-HOSTED-001 — Implementar la frontera Hosted de STD-0.1A.**
+  Cerrado con una frontera runtime real y acotada: capabilities explícitas
+  (`console`, `filesystem`, `process`, `clock`), handles host afines opacos,
+  buffers inmutables sin punteros, I/O parcial, cancelación terminal, errores
+  tipados y cleanup exactamente una vez. El proveedor bootstrap usa fixtures
+  deterministas y no consulta PATH, cwd, entorno ni descriptores ambientales;
+  la ABI fail-closed valida también handles stale, índices y límites. La
+  evidencia ejecutable queda en `testing/native-std-hosted.json`,
+  `docs/contracts/native-std-hosted.md`,
+  `scripts/native-std-hosted-{check,test}.sh` y el informe generado
+  `target/reliability/evidence/native-std-hosted.json`; el siguiente bloque es
+  `NATIVE-STD-001`.
 
 - [ ] **NATIVE-STD-001 — Coordinar la frontera completa de STD-0.1A.** Core y Hosted
   observan la misma API, capabilities, errores y cleanup que en la VM; ninguna

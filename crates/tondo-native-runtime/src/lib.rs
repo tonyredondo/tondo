@@ -32,6 +32,14 @@ const STATUS_SELECT_ELSE: u64 = 8;
 const STATUS_WEAK_DEAD: u64 = 9;
 const STATUS_COUNT_OVERFLOW: u64 = 10;
 const STATUS_NOT_WEAK: u64 = 11;
+/// The host capability token is unknown or not selected by the target.
+const STATUS_HOST_UNSUPPORTED: u64 = 12;
+/// A host handle has reached a terminal cancelled/closed state.
+const STATUS_HOST_CLOSED: u64 = 13;
+/// A host operation would exceed the resource budget without a partial write.
+const STATUS_HOST_LIMIT: u64 = 14;
+/// A host handle was cancelled before an operation could make progress.
+const STATUS_HOST_CANCELLED: u64 = 15;
 const STATUS_DIAG_CLEAN: u64 = 0;
 const STATUS_DIAG_FINDING: u64 = 1;
 const STATUS_DIAG_CAPTURED: u64 = 2;
@@ -59,6 +67,11 @@ const DIAG_FIELD_PROFILE: u64 = 16;
 const DIAG_FIELD_MODE: u64 = 17;
 const MAX_SELECT_ARMS: u32 = 64;
 const COLLECTION_PRESSURE: u32 = 256;
+const HOST_CAP_CONSOLE: u64 = 0;
+const HOST_CAP_FILESYSTEM: u64 = 1;
+const HOST_CAP_PROCESS: u64 = 2;
+const HOST_CAP_CLOCK: u64 = 3;
+const HOST_MAX_BYTES: usize = 1 << 20;
 
 const WORKER_STARTING: u64 = 0;
 const WORKER_RUNNING: u64 = 1;
@@ -88,6 +101,20 @@ enum Object {
     Timer {
         state: TimerState,
         value: u64,
+    },
+    /// Capability-gated host resource.  The handle is affine at the source
+    /// level; the runtime keeps its state opaque and never exposes an OS
+    /// descriptor or address to native code.
+    Host {
+        capability: u64,
+        state: HostState,
+        input: Vec<u8>,
+        cursor: usize,
+        output: Vec<u8>,
+    },
+    /// An immutable, bounded byte carrier used by the private host ABI.
+    Buffer {
+        bytes: Vec<u8>,
     },
     /// A weak handle keeps only the target's tombstone metadata alive.  It
     /// never contributes to strong liveness and is upgraded explicitly.
@@ -238,6 +265,13 @@ enum TimerState {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HostState {
+    Open,
+    Cancelled,
+    Closed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SelectPhase {
     Preparing,
     Waiting,
@@ -356,6 +390,8 @@ enum ObjectKind {
     Select,
     OneShot,
     Timer,
+    Host,
+    Buffer,
     Weak,
 }
 
@@ -566,7 +602,11 @@ impl State {
             Object::Select(selection) => {
                 children.extend(selection.arms.iter().map(|arm| arm.source));
             }
-            Object::Weak { .. } | Object::Tombstone | Object::Result { .. } => {}
+            Object::Host { .. }
+            | Object::Buffer { .. }
+            | Object::Weak { .. }
+            | Object::Tombstone
+            | Object::Result { .. } => {}
         }
         children
     }
@@ -622,7 +662,10 @@ impl State {
             self.last_status = STATUS_INVALID_HANDLE;
             return 0;
         }
-        if matches!(object, Object::Weak { .. } | Object::Tombstone) {
+        if matches!(
+            object,
+            Object::Host { .. } | Object::Weak { .. } | Object::Tombstone
+        ) {
             self.last_status = STATUS_INVALID_TRANSITION;
             return 0;
         }
@@ -1439,6 +1482,226 @@ impl State {
         }
     }
 
+    fn host_result(&mut self, tag: u64, payload: Option<u64>) -> u64 {
+        self.alloc(Object::Result { tag, payload }, ObjectKind::Result)
+    }
+
+    fn host_error(&mut self, status: u64) -> u64 {
+        self.last_status = status;
+        self.host_result(RESULT_ERR, Some(status))
+    }
+
+    fn host_open(&mut self, capability: u64) -> u64 {
+        let input = match capability {
+            // The bootstrap host uses deterministic fixtures.  A production
+            // provider injects the bytes through the same capability boundary;
+            // no ambient filesystem, process or clock is consulted here.
+            HOST_CAP_CONSOLE => Vec::new(),
+            HOST_CAP_FILESYSTEM => b"tondo-native-filesystem\n".to_vec(),
+            HOST_CAP_PROCESS => b"tondo-native-process\n".to_vec(),
+            HOST_CAP_CLOCK => Vec::new(),
+            _ => {
+                self.last_status = STATUS_HOST_UNSUPPORTED;
+                return 0;
+            }
+        };
+        let handle = self.alloc(
+            Object::Host {
+                capability,
+                state: HostState::Open,
+                input,
+                cursor: 0,
+                output: Vec::new(),
+            },
+            ObjectKind::Host,
+        );
+        if handle != 0
+            && let Some(capture) = self.diagnostic.as_mut()
+        {
+            capture.resources_acquired = capture.resources_acquired.saturating_add(1);
+        }
+        handle
+    }
+
+    fn host_read(&mut self, handle: u64, max_bytes: u64) -> u64 {
+        let Ok(limit) = usize::try_from(max_bytes) else {
+            return self.host_error(STATUS_HOST_LIMIT);
+        };
+        if limit > HOST_MAX_BYTES {
+            return self.host_error(STATUS_HOST_LIMIT);
+        }
+        let (chunk, status) = match self.object_mut(handle) {
+            Some(Object::Host {
+                state,
+                input,
+                cursor,
+                ..
+            }) => match state {
+                HostState::Open => {
+                    let end = cursor.saturating_add(limit).min(input.len());
+                    let chunk = input[*cursor..end].to_vec();
+                    *cursor = end;
+                    (Some(chunk), STATUS_OK)
+                }
+                HostState::Cancelled => (None, STATUS_HOST_CANCELLED),
+                HostState::Closed => (None, STATUS_HOST_CLOSED),
+            },
+            Some(_) => (None, STATUS_INVALID_HANDLE),
+            None => (None, STATUS_INVALID_HANDLE),
+        };
+        if status != STATUS_OK {
+            return self.host_error(status);
+        }
+        let buffer = self.alloc(
+            Object::Buffer {
+                bytes: chunk.expect("successful host read always returns a buffer"),
+            },
+            ObjectKind::Buffer,
+        );
+        if buffer == 0 {
+            return self.host_error(STATUS_HOST_LIMIT);
+        }
+        let result = self.host_result(RESULT_OK, Some(buffer));
+        // The result carrier owns the returned buffer.  Transfer the initial
+        // allocation owner so callers can retain the payload explicitly when
+        // they outlive the carrier.
+        let _ = self.release(buffer);
+        result
+    }
+
+    fn host_write(&mut self, handle: u64, buffer: u64) -> u64 {
+        let bytes = match self.object(buffer) {
+            Some(Object::Buffer { bytes }) => bytes.clone(),
+            Some(_) => return self.host_error(STATUS_INVALID_HANDLE),
+            None => return self.host_error(STATUS_INVALID_HANDLE),
+        };
+        let status = match self.object_mut(handle) {
+            Some(Object::Host { state, output, .. }) => match state {
+                HostState::Open => {
+                    if output.len().saturating_add(bytes.len()) > HOST_MAX_BYTES {
+                        STATUS_HOST_LIMIT
+                    } else {
+                        output.extend_from_slice(&bytes);
+                        STATUS_OK
+                    }
+                }
+                HostState::Cancelled => STATUS_HOST_CANCELLED,
+                HostState::Closed => STATUS_HOST_CLOSED,
+            },
+            Some(_) | None => STATUS_INVALID_HANDLE,
+        };
+        if status != STATUS_OK {
+            return self.host_error(status);
+        }
+        self.host_result(RESULT_OK, Some(bytes.len() as u64))
+    }
+
+    fn host_output(&mut self, handle: u64) -> u64 {
+        let bytes = match self.object(handle) {
+            Some(Object::Host { output, .. }) => output.clone(),
+            Some(_) | None => return self.host_error(STATUS_INVALID_HANDLE),
+        };
+        let buffer = self.alloc(Object::Buffer { bytes }, ObjectKind::Buffer);
+        if buffer == 0 {
+            return self.host_error(STATUS_HOST_LIMIT);
+        }
+        let result = self.host_result(RESULT_OK, Some(buffer));
+        let _ = self.release(buffer);
+        result
+    }
+
+    fn host_cancel(&mut self, handle: u64) -> u64 {
+        let status = match self.object_mut(handle) {
+            Some(Object::Host { state, .. }) => match state {
+                HostState::Open => {
+                    *state = HostState::Cancelled;
+                    STATUS_OK
+                }
+                HostState::Cancelled | HostState::Closed => STATUS_INVALID_TRANSITION,
+            },
+            Some(_) | None => STATUS_INVALID_HANDLE,
+        };
+        self.status(status)
+    }
+
+    fn host_close(&mut self, handle: u64) -> u64 {
+        let status = match self.object_mut(handle) {
+            Some(Object::Host {
+                state,
+                input,
+                output,
+                ..
+            }) => match state {
+                HostState::Open | HostState::Cancelled => {
+                    *state = HostState::Closed;
+                    input.clear();
+                    output.clear();
+                    STATUS_OK
+                }
+                HostState::Closed => STATUS_INVALID_TRANSITION,
+            },
+            Some(_) | None => STATUS_INVALID_HANDLE,
+        };
+        if status == STATUS_OK
+            && let Some(capture) = self.diagnostic.as_mut()
+        {
+            capture.resources_released = capture.resources_released.saturating_add(1);
+        }
+        self.status(status)
+    }
+
+    fn host_state(&mut self, handle: u64) -> u64 {
+        match self.object(handle) {
+            Some(Object::Host { state, .. }) => match state {
+                HostState::Open => 0,
+                HostState::Cancelled => 1,
+                HostState::Closed => 2,
+            },
+            Some(_) | None => {
+                self.last_status = STATUS_INVALID_HANDLE;
+                u64::MAX
+            }
+        }
+    }
+
+    fn buffer_from_byte(&mut self, value: u64) -> u64 {
+        let Ok(value) = u8::try_from(value) else {
+            self.last_status = STATUS_HOST_LIMIT;
+            return 0;
+        };
+        self.alloc(Object::Buffer { bytes: vec![value] }, ObjectKind::Buffer)
+    }
+
+    fn buffer_len(&mut self, handle: u64) -> u64 {
+        match self.object(handle) {
+            Some(Object::Buffer { bytes }) => bytes.len() as u64,
+            Some(_) | None => {
+                self.last_status = STATUS_INVALID_HANDLE;
+                u64::MAX
+            }
+        }
+    }
+
+    fn buffer_byte(&mut self, handle: u64, index: u64) -> u64 {
+        let Ok(index) = usize::try_from(index) else {
+            self.last_status = STATUS_INVALID_TRANSITION;
+            return u64::MAX;
+        };
+        match self.object(handle) {
+            Some(Object::Buffer { bytes }) => bytes.get(index).copied().map_or_else(
+                || {
+                    self.last_status = STATUS_INVALID_TRANSITION;
+                    u64::MAX
+                },
+                u64::from,
+            ),
+            Some(_) | None => {
+                self.last_status = STATUS_INVALID_HANDLE;
+                u64::MAX
+            }
+        }
+    }
+
     fn source_ready(&self, source: u64, kind: SelectSourceKind) -> Option<bool> {
         match (kind, self.object(source)) {
             (SelectSourceKind::Task, Some(Object::Task { state, .. })) => {
@@ -2206,6 +2469,63 @@ pub extern "C" fn tondo_rt_host_call(kind: u64, argument: u64) -> u64 {
             0
         }
     })
+}
+
+/// Opens a capability-gated host resource. Capability ids are private ABI
+/// values: console=0, filesystem=1, process=2 and clock=3. Unknown or
+/// unselected capabilities fail closed and return zero.
+pub extern "C" fn tondo_rt_host_open(capability: u64) -> u64 {
+    with_state(|state| state.host_open(capability))
+}
+
+/// Reads at most `max_bytes` from a host handle. The returned opaque Result
+/// carries a Buffer on success or the private status code on error. EOF is a
+/// successful empty Buffer, allowing partial reads without exposing pointers.
+pub extern "C" fn tondo_rt_host_read(handle: u64, max_bytes: u64) -> u64 {
+    with_state(|state| state.host_read(handle, max_bytes))
+}
+
+/// Writes one immutable Buffer atomically to a host handle and returns a
+/// Result whose success payload is the number of bytes written.
+pub extern "C" fn tondo_rt_host_write(handle: u64, buffer: u64) -> u64 {
+    with_state(|state| state.host_write(handle, buffer))
+}
+
+/// Returns a snapshot of the bytes written to a host handle so far.
+pub extern "C" fn tondo_rt_host_output(handle: u64) -> u64 {
+    with_state(|state| state.host_output(handle))
+}
+
+/// Cancels an open host handle. Cancellation is terminal until the owner
+/// closes the handle; operations never silently continue after this point.
+pub extern "C" fn tondo_rt_host_cancel(handle: u64) -> u64 {
+    with_state(|state| state.host_cancel(handle))
+}
+
+/// Closes a host handle and releases its buffers exactly once.
+pub extern "C" fn tondo_rt_host_close(handle: u64) -> u64 {
+    with_state(|state| state.host_close(handle))
+}
+
+/// Returns 0=open, 1=cancelled or 2=closed for a live host handle.
+pub extern "C" fn tondo_rt_host_status(handle: u64) -> u64 {
+    with_state(|state| state.host_state(handle))
+}
+
+/// Creates a one-byte immutable Buffer without exposing a native pointer.
+pub extern "C" fn tondo_rt_buffer_from_byte(value: u64) -> u64 {
+    with_state(|state| state.buffer_from_byte(value))
+}
+
+/// Returns the byte length of an opaque Buffer.
+pub extern "C" fn tondo_rt_buffer_len(buffer: u64) -> u64 {
+    with_state(|state| state.buffer_len(buffer))
+}
+
+/// Reads one byte from an opaque Buffer, returning `u64::MAX` for an invalid
+/// handle or out-of-range index and recording the corresponding status.
+pub extern "C" fn tondo_rt_buffer_byte(buffer: u64, index: u64) -> u64 {
+    with_state(|state| state.buffer_byte(buffer, index))
 }
 
 pub extern "C" fn tondo_rt_scope_enter() -> u64 {
@@ -3539,5 +3859,105 @@ mod tests {
             tondo_rt_diag_probe(DIAG_PROFILE_RACE, 2),
             STATUS_DIAG_UNSUPPORTED
         );
+    }
+
+    #[test]
+    fn hosted_capability_handles_support_partial_io_and_opaque_buffers() {
+        let _guard = test_guard();
+        tondo_rt_reset();
+        let host = tondo_rt_host_open(HOST_CAP_FILESYSTEM);
+        assert_ne!(host, 0);
+        assert_eq!(tondo_rt_host_status(host), 0);
+
+        let first = tondo_rt_host_read(host, 5);
+        assert_eq!(tondo_rt_result_tag(first), RESULT_OK);
+        let first_buffer = tondo_rt_result_payload(first);
+        assert_eq!(tondo_rt_buffer_len(first_buffer), 5);
+        assert_eq!(tondo_rt_buffer_byte(first_buffer, 0), b't' as u64);
+        assert_eq!(tondo_rt_buffer_byte(first_buffer, 4), b'o' as u64);
+        assert_eq!(tondo_rt_retain(first_buffer), STATUS_OK);
+        assert_eq!(tondo_rt_release(first), STATUS_OK);
+        assert_eq!(tondo_rt_release(first_buffer), STATUS_OK);
+
+        let second = tondo_rt_host_read(host, 1024);
+        assert_eq!(tondo_rt_result_tag(second), RESULT_OK);
+        let second_buffer = tondo_rt_result_payload(second);
+        assert_eq!(
+            tondo_rt_buffer_len(second_buffer),
+            b"-native-filesystem\n".len() as u64
+        );
+        assert_eq!(tondo_rt_release(second), STATUS_OK);
+
+        let eof = tondo_rt_host_read(host, 1);
+        assert_eq!(tondo_rt_result_tag(eof), RESULT_OK);
+        assert_eq!(tondo_rt_buffer_len(tondo_rt_result_payload(eof)), 0);
+        assert_eq!(tondo_rt_release(eof), STATUS_OK);
+
+        assert_eq!(tondo_rt_host_close(host), STATUS_OK);
+        assert_eq!(tondo_rt_host_status(host), 2);
+        assert_eq!(tondo_rt_host_close(host), STATUS_INVALID_TRANSITION);
+        assert_eq!(tondo_rt_release(host), STATUS_OK);
+        assert_eq!(tondo_rt_live_objects(), 0);
+    }
+
+    #[test]
+    fn hosted_console_write_is_atomic_and_cancellation_is_terminal() {
+        let _guard = test_guard();
+        tondo_rt_reset();
+        let host = tondo_rt_host_open(HOST_CAP_CONSOLE);
+        let byte = tondo_rt_buffer_from_byte(b'X' as u64);
+        let write = tondo_rt_host_write(host, byte);
+        assert_eq!(tondo_rt_result_tag(write), RESULT_OK);
+        assert_eq!(tondo_rt_result_payload(write), 1);
+        assert_eq!(tondo_rt_release(write), STATUS_OK);
+
+        let output = tondo_rt_host_output(host);
+        assert_eq!(tondo_rt_result_tag(output), RESULT_OK);
+        let output_buffer = tondo_rt_result_payload(output);
+        assert_eq!(tondo_rt_buffer_len(output_buffer), 1);
+        assert_eq!(tondo_rt_buffer_byte(output_buffer, 0), b'X' as u64);
+        assert_eq!(tondo_rt_release(output), STATUS_OK);
+        assert_eq!(tondo_rt_release(byte), STATUS_OK);
+
+        assert_eq!(tondo_rt_host_cancel(host), STATUS_OK);
+        assert_eq!(tondo_rt_host_status(host), 1);
+        let cancelled = tondo_rt_host_read(host, 1);
+        assert_eq!(tondo_rt_result_tag(cancelled), RESULT_ERR);
+        assert_eq!(tondo_rt_result_payload(cancelled), STATUS_HOST_CANCELLED);
+        assert_eq!(tondo_rt_release(cancelled), STATUS_OK);
+        assert_eq!(tondo_rt_host_close(host), STATUS_OK);
+        assert_eq!(tondo_rt_release(host), STATUS_OK);
+        assert_eq!(tondo_rt_live_objects(), 0);
+    }
+
+    #[test]
+    fn hosted_boundary_rejects_unknown_capabilities_stale_handles_and_limits() {
+        let _guard = test_guard();
+        tondo_rt_reset();
+        assert_eq!(tondo_rt_host_open(99), 0);
+        assert_eq!(tondo_rt_last_status(), STATUS_HOST_UNSUPPORTED);
+        let host = tondo_rt_host_open(HOST_CAP_PROCESS);
+        let byte = tondo_rt_buffer_from_byte(1);
+        let too_large = tondo_rt_host_read(host, (HOST_MAX_BYTES + 1) as u64);
+        assert_eq!(tondo_rt_result_tag(too_large), RESULT_ERR);
+        assert_eq!(tondo_rt_result_payload(too_large), STATUS_HOST_LIMIT);
+        assert_eq!(tondo_rt_release(too_large), STATUS_OK);
+        assert_eq!(tondo_rt_buffer_byte(byte, 1), u64::MAX);
+        assert_eq!(tondo_rt_last_status(), STATUS_INVALID_TRANSITION);
+        let invalid_write = tondo_rt_host_write(0, byte);
+        assert_eq!(tondo_rt_result_tag(invalid_write), RESULT_ERR);
+        assert_eq!(
+            tondo_rt_result_payload(invalid_write),
+            STATUS_INVALID_HANDLE
+        );
+        assert_eq!(tondo_rt_release(invalid_write), STATUS_OK);
+        assert_eq!(tondo_rt_release(byte), STATUS_OK);
+        assert_eq!(tondo_rt_host_close(host), STATUS_OK);
+        let after_close = tondo_rt_host_output(host);
+        assert_eq!(tondo_rt_result_tag(after_close), RESULT_OK);
+        assert_eq!(tondo_rt_buffer_len(tondo_rt_result_payload(after_close)), 0);
+        assert_eq!(tondo_rt_release(after_close), STATUS_OK);
+        assert_eq!(tondo_rt_release(host), STATUS_OK);
+        assert_eq!(tondo_rt_live_objects(), 0);
     }
 }

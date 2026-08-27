@@ -1,0 +1,53 @@
+{
+  "format": "tondo-native-std-hosted/1",
+  "task": "NATIVE-STD-HOSTED-001",
+  "owner": "toolchain.native_std_hosted",
+  "edition": "0.1",
+  "phase": "M20",
+  "status": "closed",
+  "contract": "docs/contracts/native-std-hosted.md",
+  "fixture": "tests/native/native-std-hosted-001.to",
+  "runner": "scripts/native-std-hosted-test.sh",
+  "report": "target/reliability/evidence/native-std-hosted.json",
+  "capabilities": ["clock", "console", "filesystem", "process"],
+  "handles": "opaque-affine-u64",
+  "buffers": "bounded-immutable-byte-carriers",
+  "cases": [
+    "capability-open",
+    "partial-read",
+    "eof-empty-buffer",
+    "console-write",
+    "output-snapshot",
+    "cancel-before-read",
+    "close-after-cancel",
+    "unknown-capability",
+    "stale-handle",
+    "resource-limit"
+  ],
+  "errors": ["unsupported", "closed", "cancelled", "limit", "invalid-handle"],
+  "invariants": [
+    "capability-is-selected-explicitly",
+    "no-ambient-host-lookup",
+    "partial-io-preserves-cursor",
+    "writes-are-atomic-at-resource-limit",
+    "buffers-never-expose-pointers",
+    "cancel-precedes-terminal-close",
+    "cleanup-releases-resource-once",
+    "stale-handles-fail-closed"
+  ],
+  "native_abi": "tondo_rt_host_open/read/write/output/cancel/close/status",
+  "oracle": "same-status-and-byte-observations-as-hosted-contract",
+  "negative_cases": [
+    "unknown-capability",
+    "ambient-path-or-environment",
+    "read-after-cancel",
+    "read-after-close",
+    "double-close",
+    "forged-handle",
+    "buffer-index-out-of-range",
+    "oversized-read",
+    "partial-write-on-limit",
+    "resource-release-mismatch"
+  ],
+  "next_blocks": ["NATIVE-STD-001"]
+}
