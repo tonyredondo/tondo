@@ -1,0 +1,48 @@
+{
+  "format": "tondo-native-link/1",
+  "task": "NATIVE-LINK-001",
+  "owner": "toolchain.native_link",
+  "edition": "0.1",
+  "phase": "M20",
+  "status": "closed",
+  "contract": "docs/contracts/native-link.md",
+  "runner": "scripts/native-link-test.sh",
+  "fixture": "tests/native/native-link-001.c",
+  "inputs": [
+    "testing/native-target-descriptor.json",
+    "testing/native-artifact.json",
+    "testing/native-link-plan.json"
+  ],
+  "invocation": {
+    "driver": "absolute-executable-resolved-before-invocation",
+    "arguments": "ordered-plan-tokens-only",
+    "inputs": "ordered-hash-verified-materialized-paths",
+    "output": "validated-product-path"
+  },
+  "reproducibility": {
+    "workspaces": 2,
+    "comparison": "sha256-of-product-bytes",
+    "undeclared_inputs": "rejected"
+  },
+  "invariants": [
+    "descriptor-artifact-plan-identities-match",
+    "every-input-hash-is-verified-before-driver",
+    "driver-is-invoked-without-a-shell",
+    "ambient-path-search-is-forbidden",
+    "output-is-validated-before-publication",
+    "limits-are-checked-before-invocation",
+    "workspace-paths-never-enter-product-identity"
+  ],
+  "negative_cases": [
+    "missing-input",
+    "input-hash-mismatch",
+    "driver-hash-mismatch",
+    "unknown-driver-argument",
+    "ambient-path-lookup",
+    "shell-expansion",
+    "output-hash-mismatch",
+    "output-limit",
+    "workspace-divergence"
+  ],
+  "next_blocks": ["NATIVE-CLI-001"]
+}

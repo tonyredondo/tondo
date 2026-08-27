@@ -5838,12 +5838,16 @@ pueden retrasar el primer backend correcto.
   `target/reliability/evidence/native-std.json`; el siguiente bloque es
   `NATIVE-LINK-001`.
 
-- [ ] **NATIVE-LINK-001 — Implementar el plan de enlace cerrado.** Materializar
-  objetos, runtime, stdlib y unidades privilegiadas desde hashes declarados;
-  invocar el driver exacto sin shell ni búsqueda ambiental; validar el
-  ejecutable y publicar atómicamente. Repetir el build en workspaces distintos
-  debe producir el mismo hash o una divergencia diagnosticada por un input
-  explícito del target.
+- [x] **NATIVE-LINK-001 — Implementar el plan de enlace cerrado.** Cerrado con
+  una prueba física sobre los contratos tipados: descriptor, artifact y
+  `NativeLinkPlan` se validan antes de resolver inputs; el driver absoluto se
+  invoca directamente con argumentos ordenados, sin shell ni búsqueda de PATH,
+  y el producto se comprueba antes de publicarse. Dos workspaces limpios
+  generan el mismo ejecutable y SHA-256 con `--build-id=none`; un driver
+  relativo, hashes divergentes, límites y salidas no válidas fallan cerrado.
+  La evidencia está en `testing/native-link.json`,
+  `docs/contracts/native-link.md`, `scripts/native-link-{check,test}.sh` y
+  `target/reliability/evidence/native-link.json`; sigue `NATIVE-CLI-001`.
 
 - [ ] **NATIVE-CLI-001 — Conectar `tondo build` y `tondo run` nativo.** La CLI
   descubre el mismo proyecto TOML, entrega el plan cerrado y conserva stdout,
