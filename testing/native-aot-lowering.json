@@ -1,0 +1,88 @@
+{
+  "format": "tondo-native-aot-lowering/1",
+  "owner": "toolchain.native_evaluation",
+  "edition": "0.1",
+  "task": "NATIVE-AOT-LOWER-001",
+  "status": "closed",
+  "implementation": {
+    "mir": "crates/tondo-compiler/src/mir.rs",
+    "adapter": "tools/native-evaluation/src/main.rs",
+    "runtime": "tools/native-evaluation/src/main.rs:native_runtime_c_source",
+    "runner": "scripts/native-evaluation-runner.sh",
+    "evidence": "target/reliability/evidence/native-evaluation-runner.json",
+    "report_field": "native_aot_lowering"
+  },
+  "input": {
+    "mir_format": "tondo-mir-backend/1",
+    "debug_format": "tondo-mir-debug/1",
+    "oracle": "normalized-MIR-reference-interpreter",
+    "candidates": ["cranelift", "llvm"],
+    "same_input": true,
+    "fresh_process_per_case": true
+  },
+  "admitted": {
+    "value_storage": ["opaque-handle", "bounded-aggregate"],
+    "collections": ["array", "set", "record", "tuple"],
+    "projections": ["aggregate:index", "option-value", "result-ok-value", "result-err-value"],
+    "closures": ["function-ordinal", "mutable-capture"],
+    "calls": ["direct", "verified-indirect"],
+    "runtime": ["cleanup", "ownership", "async", "select", "thread"]
+  },
+  "corpus": {
+    "storage_cases": [
+      "array-storage",
+      "record-projection",
+      "closure-mutable-capture",
+      "direct-call",
+      "aggregate-metadata",
+      "set-storage",
+      "ownership-cow"
+    ],
+    "runtime_cases": 20,
+    "minimum_cases": 27,
+    "oracle_observable": "scalar-result-and-trap-status",
+    "same_mir_identity": true
+  },
+  "inventory": {
+    "lowered_families": [
+      "value-storage",
+      "collections",
+      "projections",
+      "closures",
+      "indirect-calls",
+      "cleanup",
+      "ownership",
+      "async",
+      "select",
+      "thread"
+    ],
+    "trap_policy": "unsupported-functions-emit-explicit-trap-and-reason",
+    "report_requires_function_inventory": true,
+    "report_requires_candidate_status": true
+  },
+  "invariants": [
+    "one-validated-MIR-input-for-both-candidates",
+    "debug-metadata-validated-before-code-generation",
+    "aggregate-storage-never-exposes-addresses",
+    "aggregate-projections-are-bounds-checked",
+    "mutable-captures-are-updated-before-indirect-invocation",
+    "indirect-call-accepts-only-verified-function-ordinals",
+    "cleanup-and-ownership-use-the-existing-runtime-state-machine",
+    "async-select-thread-transitions-share-one-runtime-ABI",
+    "unsupported-capabilities-fail-closed",
+    "reports-contain-no-physical-paths-or-addresses"
+  ],
+  "negative_cases": [
+    "wrong-task-or-status",
+    "missing-feature-family",
+    "missing-storage-case",
+    "oracle-drift",
+    "candidate-disagreement",
+    "noncanonical-function-value",
+    "indirect-call-wrong-arity",
+    "aggregate-projection-out-of-range",
+    "unsupported-storage-without-trap",
+    "physical-path-in-report"
+  ],
+  "next_blocks": ["NATIVE-AOT-BINARY-001"]
+}

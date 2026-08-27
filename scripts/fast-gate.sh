@@ -318,6 +318,10 @@ else
                 bash scripts/native-evaluation-runner-check.sh
             run native-evaluation-runner-tests \
                 bash scripts/native-evaluation-runner-test.sh
+            run native-aot-lowering-contract \
+                bash scripts/native-aot-lowering-check.sh
+            run native-aot-lowering-tests \
+                bash scripts/native-aot-lowering-test.sh
             run native-diagnostics-contract \
                 bash scripts/native-diagnostics-check.sh
             run native-diagnostics-contract-tests \

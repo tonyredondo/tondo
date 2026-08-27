@@ -253,6 +253,10 @@ run_step native-aot-scope-contract \
     scripts/native-aot-scope-check.sh
 run_step native-aot-scope-contract-tests \
     scripts/native-aot-scope-test.sh
+run_step native-aot-lowering-contract \
+    scripts/native-aot-lowering-check.sh
+run_step native-aot-lowering-contract-tests \
+    scripts/native-aot-lowering-test.sh
 run_step native-select-contract \
     scripts/native-select-check.sh
 run_step native-select-contract-tests \

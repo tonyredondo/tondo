@@ -19,6 +19,8 @@ scripts/native-thread-check.sh
 scripts/native-thread-test.sh
 scripts/native-std-core-check.sh
 scripts/native-std-core-test.sh
+scripts/native-aot-lowering-check.sh
+scripts/native-aot-lowering-test.sh
 
 llvm_tool="${TONDO_LLVM_LLC:-/usr/bin/llc}"
 cc_tool="${TONDO_NATIVE_CC:-/usr/bin/cc}"
@@ -163,5 +165,22 @@ jq -e '
   )
 ' "$report" >/dev/null || die "runner report did not prove native execution"
 
+jq -e '
+  .native_aot_lowering.format == "tondo-native-aot-lowering/1"
+  and .native_aot_lowering.phase == "NATIVE-AOT-LOWER-001"
+  and .native_aot_lowering.status == "passed"
+  and .native_aot_lowering.mir_format == "tondo-mir-backend/1"
+  and .native_aot_lowering.oracle == "normalized-MIR-reference-interpreter"
+  and .native_aot_lowering.candidates == ["cranelift", "llvm"]
+  and .native_aot_lowering.same_mir == true
+  and ([.native_aot_lowering.feature_families[] | select(.cranelift == "passed" and .llvm == "passed" and .vm == "passed" and .cases >= 1)] | length == 10)
+  and ([.native_aot_lowering.cases[] | select(.cranelift == "passed" and .llvm == "passed" and .vm_status == "returned" and .same_mir == true)] | length >= 27)
+  and ([.native_aot_lowering.cases[].id] | index("array-storage")) != null
+  and ([.native_aot_lowering.cases[].id] | index("closure-mutable-capture")) != null
+  and ([.native_aot_lowering.cases[].id] | index("ownership-cow")) != null
+  and ([.native_aot_lowering.traps[] | select(.candidate == "cranelift" and (.reason | contains("explicit-trap")))] | length == 1)
+  and ([.native_aot_lowering.traps[] | select(.candidate == "llvm" and (.reason | contains("unreachable")))] | length == 1)
+' "$report" >/dev/null || die "runner report did not prove complete AOT lowering inventory"
+
 ! grep -Fq "$root" "$report" || die "runner report leaked a physical workspace path"
-echo "native evaluation runner: PASS (Cranelift/LLVM scalar, runtime and deferred-lowering executables; report: ${report#"$root"/})"
+echo "native evaluation runner: PASS (Cranelift/LLVM scalar, runtime and AOT-lowering executables; report: ${report#"$root"/})"

@@ -56,6 +56,8 @@
     "scripts/native-evaluation-runner.sh",
     "scripts/native-evaluation-runner-check.sh",
     "scripts/native-evaluation-runner-test.sh",
+    "scripts/native-aot-lowering-check.sh",
+    "scripts/native-aot-lowering-test.sh",
     "scripts/native-diagnostics.sh",
     "scripts/native-diagnostics-check.sh",
     "scripts/native-diagnostics-test.sh",
@@ -63,6 +65,7 @@
     "scripts/native-select-test.sh",
     "testing/native-evaluation-fast.json",
     "testing/native-evaluation-runner.json",
+    "testing/native-aot-lowering.json",
     "testing/native-select.json"
   ],
   "shared_paths": [

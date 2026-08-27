@@ -5993,15 +5993,25 @@ pueden retrasar el primer backend correcto.
   en `scripts/native-aot-scope-{check,test}.sh`; no se selecciona todavía un
   backend. El siguiente bloque es `NATIVE-AOT-LOWER-001`.
 
-- [ ] **NATIVE-AOT-LOWER-001 — Completar el lowering AOT del MIR admitido.**
+- [x] **NATIVE-AOT-LOWER-001 — Completar el lowering AOT del MIR admitido.**
   Extender el lowering común más allá de la slice mínima de `NATIVE-002` hasta
   todo el corpus admitido por Tondo 0.1: storage concreto de valores y
   colecciones, proyecciones, closures y capturas mutables, calls indirectas
   verificadas, async/select/thread y cleanup/ownership completos. Cada caso
   debe ejecutar el mismo MIR en Cranelift y LLVM, comparar observables con la
   VM y fallar cerrado cuando una capacidad no esté admitida; no se acepta un
-  stub que solo cambie el contador de funciones. La evidencia debe conservar
-  el inventario de funciones admitidas, traps y motivos por candidato.
+  stub que solo cambie el contador de funciones. Cerrado con el corpus AOT
+  ejecutable de `testing/native-aot-lowering.json`: el runtime de handles ahora
+  materializa arrays, sets, records y closures; las proyecciones leen campos,
+  las capturas mutables se actualizan con `aggregate-set` y las llamadas
+  indirectas pasan por ordinales de función verificados. Los 7 casos de storage,
+  proyección, closure/captura, llamada directa/indirecta, metadata, set y
+  ownership se ejecutan junto a los 20 casos de cleanup/async/select/thread
+  existentes, siempre desde el mismo MIR en ambos candidatos y contra el
+  oráculo de referencia. La evidencia conserva el inventario por familia y dos
+  traps explícitos para storage opaco no admitido; no se modifica el alcance de
+  N1 ni se selecciona backend. El siguiente bloque es
+  `NATIVE-AOT-BINARY-001`.
 
 - [ ] **NATIVE-AOT-BINARY-001 — Medir el producto enlazado de forma comparable.**
   Generar para cada candidato el ejecutable AOT completo con el mismo target,
