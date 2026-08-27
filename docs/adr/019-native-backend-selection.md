@@ -1,10 +1,10 @@
 # ADR-019: Measure candidates before selecting the first native backend
 
-- Status: Proposed — evidence complete, backend decision pending
+- Status: Proposed — AOT scope closed, candidate evidence bounded, backend decision pending
 - Date: 2026-08-25
 - Supersedes: none
-- Next decision: `DEC-013` (the native evidence boundary is closed; the human
-  choice between Cranelift and LLVM remains pending)
+- Next decision: `DEC-013` (the AOT evidence campaign must close before the
+  human choice between Cranelift and LLVM)
 
 ## Context
 
@@ -14,6 +14,13 @@ receipts and performance measurement. The next step needs a native codegen
 backend, but selecting one is not the same as implementing lowering or an ABI.
 The choice must preserve the VM's language observables and leave room for the
 hosted diagnostic profiles (`race`, `leaks` and `crash`).
+
+The 0.1 product scope is native AOT. `tondo-vm-hosted` remains the reference
+implementation, bootstrap/hosted target and differential oracle; it is not a
+second semantic pipeline. JIT is explicitly outside 0.1 and is not a backend
+candidate or scoring dimension for `DEC-013`. The language remains
+collector-neutral: native AOT follows `hybrid-arc-cycle-collector`, while the
+hosted VM keeps its precise tracing collector.
 
 The candidates are:
 
@@ -46,7 +53,9 @@ MIR probe and measures both engines over the same normalized module shape. A
 sample is not semantic evidence when it contains trapped unsupported
 functions; the report preserves those counts. The physical runner now also
 provides a bounded executable differential report, so this evidence boundary
-is ready for the human decision recorded by `DEC-013`.
+is useful for candidate comparison but is not yet sufficient for the human
+decision recorded by `DEC-013`; the AOT campaign in
+[`native-aot-scope.md`](../contracts/native-aot-scope.md) must close first.
 
 This is intentionally bounded:
 
@@ -56,6 +65,8 @@ This is intentionally bounded:
 - it does not create a second source language or a second semantic pipeline;
 - it publishes exploratory compile-time/object-size samples and a bounded
   executable semantic slice;
+- it evaluates only the native AOT product path; JIT is not introduced as a
+  hidden third candidate;
 - it does not claim peak memory, production runtime performance or Gate N1;
 - it does not allow a native target into N1 until exact VM equivalence and
   diagnostic parity are demonstrated.
@@ -68,6 +79,11 @@ LLVM is attractive because of its mature target, debug and tooling ecosystem.
 Neither advantage is a measured decision until both candidates consume the
 same normalized MIR shape and their results are recorded under the same target
 identity.
+
+The scoring scope is AOT-only. Linked executable size, startup, runtime and
+memory observations must come from the same final product shape; raw code
+buffers and intermediate object files are diagnostic observations, not a
+selection metric.
 
 The custom generator is not a candidate for the fast ranking yet. Its smaller
 dependency surface does not compensate for the correctness, unwind,
@@ -103,6 +119,8 @@ The following are acceptance conditions, not optional future observations:
   envelope parity is now closed for the current target;
 - repeated compile/runtime/memory/size measurements use the existing identity,
   bounds and sample protocol;
+- linked binaries report stripped, debug and section bytes from the same final
+  product rather than mixing intermediate representations;
 - native artifacts and publication remain deterministic and path-free.
 
 ## Consequences
@@ -136,3 +154,7 @@ can select Cranelift or LLVM per target if measured evidence justifies it.
 - `testing/native-selection.json` and
   `scripts/native-selection-capture.sh` — bind the fast and executable
   reports and leave `selected_backend` null until `DEC-013`.
+- `testing/native-aot-scope.json` and
+  `scripts/native-aot-scope-{check,test}.sh` — close the AOT product boundary,
+  memory distinction and comparable measurement protocol without selecting a
+  backend.

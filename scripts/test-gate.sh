@@ -249,6 +249,10 @@ run_step native-release-tests \
     scripts/native-rel-test.sh
 run_step native-selection-contract \
     scripts/native-selection-check.sh
+run_step native-aot-scope-contract \
+    scripts/native-aot-scope-check.sh
+run_step native-aot-scope-contract-tests \
+    scripts/native-aot-scope-test.sh
 run_step native-select-contract \
     scripts/native-select-check.sh
 run_step native-select-contract-tests \

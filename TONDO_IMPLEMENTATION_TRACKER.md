@@ -64,6 +64,7 @@ siendo una capacidad declarada por target.
 - [Matriz normativa de owners y firmas de stdlib](./docs/contracts/stdlib-matrix.md)
 - [Contrato de campañas de generación del runner](./docs/contracts/test-generation.md)
 - [Contrato de fast gate y tiers de evidencia](./docs/contracts/fast-gate.md)
+- [Contrato de alcance de evaluación native AOT](./docs/contracts/native-aot-scope.md)
 - [Contrato de coordinación de implementación STD-0.1A](./docs/contracts/stdlib-implementation-coordination.md)
 - [Contrato de coordinación Hosted STD-0.1A](./docs/contracts/stdlib-hosted-implementation-coordination.md)
 - [Contrato de owners Core STD-0.1A](./docs/contracts/stdlib-core.md)
@@ -150,6 +151,10 @@ backend nativo. La lane TLF puede avanzar en paralelo porque solo depende del
 frontend/formatter ya cerrados; no reemplaza esas prioridades ni bloquea el
 futuro candidato base. Su bundle L0 se publicará únicamente como companion
 opcional.
+
+`NATIVE-AOT-SCOPE-001` ya está cerrado: el siguiente bloque ejecutable es
+`NATIVE-AOT-LOWER-001`. Hasta cerrar la campaña completa, ningún informe de
+Cranelift/LLVM se interpreta como selección o como Gate N1.
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -5973,18 +5978,20 @@ pueden retrasar el primer backend correcto.
 
 #### Campaña de decisión del backend AOT (antes de DEC-013 y Gate N1)
 
-- [ ] **NATIVE-AOT-SCOPE-001 — Fijar el alcance AOT y la matriz de decisión.**
-  Registrar en ADR-019, el contrato de selección y la documentación del
-  toolchain que `native-aot` es el producto primario de Tondo 0.1,
-  `tondo-vm-hosted` es la implementación de referencia/oráculo y JIT queda
-  fuera del producto y de `DEC-013`. La matriz debe separar evidencia de
-  compilación, binario enlazado, arranque, runtime, memoria, diagnóstico,
-  mantenimiento y distribución; usar la misma identidad de target, toolchain,
-  runtime y stdlib para ambos candidatos; y declarar cómo se comparan tamaños
-  stripped/debug sin mezclar buffers de código con objetos completos. Debe
-  conservar la política collector-neutral del lenguaje, el
-  `hybrid-arc-cycle-collector` de AOT y el tracing GC de la VM. La evidencia y
-  los negativos quedan hash-bound, sin seleccionar todavía un backend.
+- [x] **NATIVE-AOT-SCOPE-001 — Fijar el alcance AOT y la matriz de decisión.**
+  Cerrado en `testing/native-aot-scope.json` y
+  `docs/contracts/native-aot-scope.md`: `native-aot` es el producto primario
+  de Tondo 0.1, `tondo-vm-hosted` es la implementación de referencia/oráculo y
+  JIT queda fuera del producto y de `DEC-013`. La matriz separa compilación,
+  binario enlazado, arranque, runtime, memoria, diagnóstico, mantenimiento y
+  distribución; liga cada observación a la misma identidad de target,
+  toolchain, runtime y stdlib; y exige tamaños stripped/debug/section del
+  producto final, sin mezclar buffers de código con objetos completos. También
+  fija la política collector-neutral del lenguaje, el
+  `hybrid-arc-cycle-collector` de AOT y el tracing GC de la VM. Los negativos
+  de producto, candidatos, memoria, métricas, protocolo, selección y N1 pasan
+  en `scripts/native-aot-scope-{check,test}.sh`; no se selecciona todavía un
+  backend. El siguiente bloque es `NATIVE-AOT-LOWER-001`.
 
 - [ ] **NATIVE-AOT-LOWER-001 — Completar el lowering AOT del MIR admitido.**
   Extender el lowering común más allá de la slice mínima de `NATIVE-002` hasta

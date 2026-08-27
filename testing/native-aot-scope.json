@@ -1,0 +1,81 @@
+{
+  "format": "tondo-native-aot-scope/1",
+  "owner": "toolchain.native_evaluation",
+  "edition": "0.1",
+  "phase": "M20",
+  "status": "closed-contract",
+  "product": {
+    "primary": "native-aot",
+    "reference": "tondo-vm-hosted",
+    "jit": "out-of-scope"
+  },
+  "memory": {
+    "language": "collector-neutral",
+    "native_aot": "hybrid-arc-cycle-collector",
+    "vm": "precise-tracing-stop-the-world-mark-and-sweep"
+  },
+  "candidates": {
+    "included": ["cranelift", "llvm"],
+    "excluded": ["custom"]
+  },
+  "identity_fields": [
+    "edition",
+    "target",
+    "backend",
+    "profile",
+    "toolchain",
+    "runtime",
+    "stdlib",
+    "fixture",
+    "flags",
+    "source_revision"
+  ],
+  "dimensions": [
+    "compile-latency",
+    "linked-binary-size",
+    "startup",
+    "runtime",
+    "memory",
+    "diagnostic-parity",
+    "maintenance",
+    "distribution"
+  ],
+  "binary_size_metrics": [
+    "stripped-bytes",
+    "debug-bytes",
+    "section-bytes"
+  ],
+  "protocol": {
+    "warmups": 3,
+    "samples_per_process": 9,
+    "processes": 3,
+    "minimum_samples": 27,
+    "fresh_processes": true,
+    "same_inputs": true
+  },
+  "required_blocks": [
+    "NATIVE-AOT-LOWER-001",
+    "NATIVE-AOT-BINARY-001",
+    "NATIVE-AOT-MEM-001",
+    "NATIVE-AOT-QUALITY-001",
+    "NATIVE-AOT-PERF-001"
+  ],
+  "selection": {
+    "selected_backend": null,
+    "n1_claim": false,
+    "status": "pending-aot-evidence"
+  },
+  "negative_cases": [
+    "non-aot-primary",
+    "jit-included",
+    "vm-native-memory-conflated",
+    "candidate-set-drift",
+    "identity-field-drift",
+    "non-comparable-size-metric",
+    "sample-protocol-drift",
+    "premature-selection",
+    "premature-n1",
+    "stale-next-block"
+  ],
+  "next_blocks": ["NATIVE-AOT-LOWER-001"]
+}
