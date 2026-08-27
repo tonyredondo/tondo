@@ -211,6 +211,10 @@ run_step native-link-contract \
     scripts/native-link-check.sh
 run_step native-link-tests \
     scripts/native-link-test.sh
+run_step native-cli-contract \
+    scripts/native-cli-check.sh
+run_step native-cli-tests \
+    scripts/native-cli-test.sh
 run_step native-select-contract \
     scripts/native-select-check.sh
 run_step native-select-contract-tests \

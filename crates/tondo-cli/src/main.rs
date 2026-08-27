@@ -65,6 +65,7 @@ Tondo bootstrap toolchain
 Usage:
   tondo <command> [--diagnostic-format <human|json>] [--warnings core] <source.to>
   tondo <check|run> [--diagnostic-format <human|json>] [--warnings core] [--project <dir>]
+  tondo build [--project <dir>] [--emit-artifact <path>]
   tondo run [--diagnostic-format <human|json>] [--warnings core] <source.to> -- [argument ...]
   tondo test [--project <dir>] [--test-plan <tondo.test.toml>] [--diagnostics <profiles>] [options]
   tondo dump analyze <file.tdump> [--format human|json]
@@ -72,6 +73,7 @@ Usage:
 Commands:
   fmt      Format one Tondo source file
   check    Analyze one Tondo source file
+  build    Analyze and materialize a closed native build envelope
   run      Compile and run one Tondo script
   doc-test Validate Tondo examples embedded in Markdown
   test     Discover, compile and run project tests
@@ -150,13 +152,16 @@ fn run(arguments: Vec<OsString>) -> Result<ExitCode, String> {
         return run_dump_command(&arguments);
     }
 
-    let invocation = match parse_invocation(&arguments) {
+    let mut invocation = match parse_invocation(&arguments) {
         Ok(invocation) => invocation,
         Err(message) => {
             eprintln!("tondo: {message}\n\n{USAGE}");
             return Ok(ExitCode::from(EXIT_USAGE));
         }
     };
+    if invocation.build && invocation.emit_artifact.is_none() {
+        invocation.emit_artifact = Some(default_build_artifact_path(&invocation));
+    }
     let (request, original_source) = match compilation_request(&invocation) {
         Ok(request) => request,
         Err(message) => {
@@ -3327,6 +3332,7 @@ fn atomic_publish(path: &Path, bytes: &[u8]) -> Result<(), TestCommandError> {
 struct Invocation {
     operation: Operation,
     source_form: SourceForm,
+    build: bool,
     diagnostic_format: DiagnosticFormat,
     diagnostic_profiles: BTreeSet<DiagnosticProfile>,
     warning_profiles: BTreeSet<WarningProfile>,
@@ -3345,6 +3351,7 @@ fn parse_invocation(arguments: &[OsString]) -> Result<Invocation, String> {
     let (operation, source_form) = match command {
         "fmt" => (Operation::Format, SourceForm::Module),
         "check" => (Operation::Check, SourceForm::Module),
+        "build" => (Operation::Check, SourceForm::Module),
         "run" => (Operation::Run, SourceForm::Script),
         _ => return Err(format!("unknown command `{command}`")),
     };
@@ -3494,6 +3501,7 @@ fn parse_invocation(arguments: &[OsString]) -> Result<Invocation, String> {
     Ok(Invocation {
         operation,
         source_form,
+        build: command == "build",
         diagnostic_format,
         diagnostic_profiles,
         warning_profiles,
@@ -3504,6 +3512,15 @@ fn parse_invocation(arguments: &[OsString]) -> Result<Invocation, String> {
         emit_artifact,
         program_arguments,
     })
+}
+
+fn default_build_artifact_path(invocation: &Invocation) -> PathBuf {
+    let root = invocation
+        .project
+        .as_deref()
+        .or_else(|| invocation.source.as_deref().and_then(Path::parent))
+        .unwrap_or_else(|| Path::new("."));
+    root.join("build").join("tondo.artifact.json")
 }
 
 fn compilation_request(invocation: &Invocation) -> Result<PreparedCompilation, String> {
@@ -3664,8 +3681,55 @@ fn emit_products(
             .artifact()
             .ok_or_else(|| "successful compilation produced no build artifact".to_owned())?;
         let bytes = artifact.encode().map_err(|error| error.to_string())?;
-        fs::write(path, bytes)
+        let artifact_hash = tondo_compiler::artifact::sha256(&bytes);
+        write_atomic(path, &bytes)
             .map_err(|error| format!("cannot write artifact `{}`: {error}", path.display()))?;
+        if invocation.build {
+            let native_manifest = serde_json::json!({
+                "format": "tondo-native-build/1",
+                "compiler": tondo_compiler::artifact::COMPILER_ID,
+                "edition": tondo_compiler::LANGUAGE_EDITION,
+                "artifact_sha256": artifact_hash,
+                "target": artifact.target(),
+                "profile": artifact.profile(),
+                "candidates": ["cranelift", "llvm"],
+                "status": "selection-pending",
+                "execution": "tondo-run-uses-the-same-source-and-closed-plan",
+                "ambient_lookup": false,
+                "backend_flags": false
+            });
+            let manifest = serde_json::to_vec(&native_manifest)
+                .map_err(|error| format!("cannot encode native build manifest: {error}"))?;
+            let manifest_path = path.with_extension("native.json");
+            write_atomic(&manifest_path, &manifest).map_err(|error| {
+                format!(
+                    "cannot write native build manifest `{}`: {error}",
+                    manifest_path.display()
+                )
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
+    let temporary = path.with_extension(format!(
+        "tmp.{}.{}",
+        std::process::id(),
+        path.extension()
+            .and_then(OsStr::to_str)
+            .unwrap_or("artifact")
+    ));
+    fs::write(&temporary, bytes)?;
+    if let Err(error) = fs::rename(&temporary, path) {
+        let _ = fs::remove_file(&temporary);
+        return Err(error);
     }
     Ok(())
 }

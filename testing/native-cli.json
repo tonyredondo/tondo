@@ -1,0 +1,49 @@
+{
+  "format": "tondo-native-cli/1",
+  "task": "NATIVE-CLI-001",
+  "owner": "toolchain.native_cli",
+  "edition": "0.1",
+  "phase": "M20",
+  "status": "closed",
+  "contract": "docs/contracts/native-cli.md",
+  "runner": "scripts/native-cli-test.sh",
+  "fixture": "tests/native/native-cli-001.to",
+  "commands": ["build", "run"],
+  "project_input": "tondo.toml-and-tondo.lock.toml",
+  "build_output": ["tondo.artifact.json", "tondo.artifact.native.json"],
+  "run_contract": {
+    "source": "same-closed-project-input",
+    "stdout": "preserved",
+    "stderr": "preserved",
+    "argv": "preserved-after-separator",
+    "exit": "stable",
+    "diagnostics": "json-or-human"
+  },
+  "failure_boundaries": [
+    "output-exists",
+    "compile-rejected",
+    "invalid-project",
+    "interrupted-build",
+    "permission-denied",
+    "cleanup-after-failure"
+  ],
+  "invariants": [
+    "build-uses-the-same-project-discovery-as-check",
+    "build-publishes-atomically",
+    "run-does-not-invent-backend-flags",
+    "stdout-stderr-and-argv-remain-separate",
+    "diagnostics-keep-the-standard-envelope",
+    "failed-build-leaves-no-partial-products"
+  ],
+  "negative_cases": [
+    "native-vm-flag",
+    "unknown-build-option",
+    "output-collision-with-source",
+    "missing-lockfile",
+    "malformed-toml",
+    "existing-directory-output",
+    "partial-product",
+    "ambient-target-selection"
+  ],
+  "next_blocks": ["NATIVE-CONF-ADAPTER-001"]
+}

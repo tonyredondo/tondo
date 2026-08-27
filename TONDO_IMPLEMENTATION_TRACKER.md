@@ -5849,12 +5849,17 @@ pueden retrasar el primer backend correcto.
   `docs/contracts/native-link.md`, `scripts/native-link-{check,test}.sh` y
   `target/reliability/evidence/native-link.json`; sigue `NATIVE-CLI-001`.
 
-- [ ] **NATIVE-CLI-001 — Conectar `tondo build` y `tondo run` nativo.** La CLI
-  descubre el mismo proyecto TOML, entrega el plan cerrado y conserva stdout,
-  stderr, argv, exits y diagnostics. `build` produce el artefacto seleccionado;
-  `run` ejecuta temporalmente esos mismos bytes. Cubrir output existente,
-  fallos entre fases, interrupción, permisos y cleanup sin exponer flags
-  `--native`/`--vm` ni dos semánticas.
+- [x] **NATIVE-CLI-001 — Conectar `tondo build` y `tondo run` nativo.** Cerrado
+  con el comando `build` en la CLI compartiendo discovery TOML/lock y el
+  frontend común: publica atómicamente el artifact canónico y un envelope
+  `tondo-native-build/1` con Cranelift/LLVM aún `selection-pending`. `run`
+  conserva stdout, stderr, argv, exits y diagnostics en la ruta existente, sin
+  flags `--native`/`--vm` ni semánticas duplicadas. La integración verifica
+  repetición byte-a-byte, output existente, argumentos y rechazo de opciones
+  prohibidas; los productos parciales se limpian. Evidencia en
+  `testing/native-cli.json`, `docs/contracts/native-cli.md`,
+  `scripts/native-cli-{check,test}.sh` y el código de `crates/tondo-cli`;
+  sigue `NATIVE-CONF-ADAPTER-001`.
 
 ### 20.3 Oracle diferencial, targets y empaquetado
 
