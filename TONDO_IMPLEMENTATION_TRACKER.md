@@ -97,8 +97,8 @@ calendario civil de `std.time` ya están cerrados como contratos runtime-facing.
 `std.encoding`, `std.yaml`, `std.toml`, `std.cbor`, `std.regex`, `std.uuid` y
 `std.log` ya han cerrado sus fronteras contractuales B0. `DIAG-RUNTIME-001`
 ya consume esos contratos de observabilidad en la VM hosted; `RACE-001` y
-`LEAK-001` y `DUMP-001` ya cerraron sus detectores/writer hosted y la siguiente
-frontera es `DIAG-TEST-001`. El grafo
+`LEAK-001`, `DUMP-001` y `DIAG-TEST-001` ya cerraron sus detectores, writer,
+integración y evidencia por intento. El grafo
 activo se valida con `TRACKER-LINT-001`; con el contrato D0, Wave 6 y la
 instrumentación D1, DUMP y el runner de tests cerrados, `DIAG-CI-001` ya está
 cerrado antes de la evaluación
@@ -111,24 +111,26 @@ funciones runtime para ellos. `NATIVE-TARGET-DESC-001` y
 cerrados como contratos puros, y `PERF-001` ya fija el contrato de benchmark y
 baseline previo al backend. Con la conformance pública, la distribución, el
 seal S1A y el contrato D0 promovidos como evidencia técnica del draft,
-comienzan los contratos runtime-facing B0.
-`NATIVE-001` queda después de la compuerta de diagnóstico y mantiene la
-selección pendiente hasta medir candidatos reales; la slice de selección
-runtime se cerró en `NATIVE-SELECT-001`, el adaptador común ya está cerrado en
-`NATIVE-BACKEND-ADAPTER-001` y `NATIVE-002` ya cerró la coordinación mínima de
-lowering. `ARC-001` y `ARC-002` ya cerraron ownership, cleanup, ciclos y weak
-refs en el runtime nativo; `DIAG-NATIVE-001` ya cerró la paridad lógica de
-diagnóstico; `NATIVE-THREAD-001` ya cerró la lane física de workers OS. La
-frontera Core de STD-0.1A está cerrada y la siguiente es
-`NATIVE-STD-HOSTED-001`.
+los contratos runtime-facing B0 se han cerrado en la VM y en las dos rutas
+nativas candidatas.
+`NATIVE-001` está listo para decisión: la slice de selección runtime se cerró
+en `NATIVE-SELECT-001`, el adaptador común está cerrado en
+`NATIVE-BACKEND-ADAPTER-001` y `NATIVE-002` cerró la coordinación mínima de
+lowering. `ARC-001` y `ARC-002` cerraron ownership, cleanup, ciclos y weak
+refs en el runtime nativo; `DIAG-NATIVE-001` cerró la paridad lógica de
+diagnóstico; `NATIVE-THREAD-001` cerró la lane física de workers OS. Las
+fronteras Core y Hosted de STD-0.1A están cerradas y la evidencia de enlace,
+targets, conformance y distribución ya está disponible para comparar
+Cranelift y LLVM.
 FUZZ está promovido para los 22 owners; la distribución está promovida y el
 seal S1A está cerrado como bundle técnico del draft, sin sobreafirmar G5, N1,
 TLF ni una publicación.
 `CONF-GAP-IMPL-001` y `CONF-LAYER-RESULT-001` mantienen T0 verificable sobre el
 árbol actual. `CONF-SEAL-FINAL-001` queda reservado para el primer candidato
 real; los límites `TL01-26-*` pertenecen a S1A. Los contratos
-runtime-facing de STD-0.1B y M11 esperan G5 y S1A. Todo pertenece a la primera
-versión 0.1; los slices son orden de implementación, no versiones públicas. La
+runtime-facing de STD-0.1B esperan Gate N1; M11 solo conserva abierta la
+decisión humana `DEC-013`. Todo pertenece a la primera versión 0.1; los slices
+son orden de implementación, no versiones públicas. La
 VM permanece como implementación de referencia y oracle diferencial del
 backend nativo. La lane TLF puede avanzar en paralelo porque solo depende del
 frontend/formatter ya cerrados; no reemplaza esas prioridades ni bloquea el
