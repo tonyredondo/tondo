@@ -1,0 +1,79 @@
+{
+  "format": "tondo-native-diagnostics/1",
+  "owner": "toolchain.diagnostics",
+  "edition": "0.1",
+  "phase": "DIAG-NATIVE-001",
+  "status": "closed",
+  "contract": "docs/contracts/native-diagnostics.md",
+  "runner": "scripts/native-diagnostics.sh",
+  "checker": "scripts/native-diagnostics-check.sh",
+  "adapter": "tools/native-evaluation/src/main.rs",
+  "report": "target/reliability/evidence/native-evaluation-runner.json",
+  "report_field": "native_diagnostics",
+  "oracle": "hosted-diagnostic-contract-fixtures",
+  "backends": ["cranelift", "llvm"],
+  "envelope": {
+    "format": "tondo-diagnostic-report/1",
+    "status_values": ["clean", "finding", "captured", "unsupported"],
+    "identity_fields": ["format", "profile", "case", "mode", "status"],
+    "logical_observations": [
+      "task_ids",
+      "thread_ids",
+      "happens_before_edges",
+      "roots",
+      "retainers",
+      "cycles_reclaimed",
+      "ffi_allocations",
+      "resources_acquired",
+      "resources_released",
+      "unwind_frames",
+      "source_maps"
+    ],
+    "privacy_fields": [
+      "redacted",
+      "payloads_omitted",
+      "corruption_rejected",
+      "limit_enforced"
+    ],
+    "physical_data": "forbidden"
+  },
+  "corpus": {
+    "race": ["race-conflict", "race-clean"],
+    "leaks": ["leak-growth", "leak-clean", "arc-cycle-reclaimed"],
+    "crash": [
+      "crash-dump",
+      "crash-corruption-rejected",
+      "crash-limit-enforced"
+    ]
+  },
+  "runtime": {
+    "crate": "crates/tondo-native-runtime/src/lib.rs",
+    "probe": "tondo_rt_diag_probe",
+    "field_reader": "tondo_rt_diag_field",
+    "reset": "tondo_rt_diag_reset",
+    "profiles": {"race": 0, "leaks": 1, "crash": 2},
+    "status_codes": {"clean": 0, "finding": 1, "captured": 2, "unsupported": 3}
+  },
+  "invariants": [
+    "native-executable-is-produced-by-each-backend",
+    "both-backends-emit-the-same-path-free-envelope",
+    "task-and-thread-identities-are-logical-and-counted",
+    "happens-before-and-cleanup-evidence-is-preserved",
+    "arc-retainers-and-reclaimed-cycles-are-distinguished",
+    "ffi-and-resource-ledgers-are-visible",
+    "unwind-and-source-map-counters-are-visible",
+    "payloads-and-physical-paths-are-never-emitted",
+    "corruption-and-limits-fail-closed"
+  ],
+  "negative_cases": [
+    "missing-native-diagnostics-report",
+    "wrong-envelope-format",
+    "backend-mismatch",
+    "case-missing",
+    "physical-field-added",
+    "redaction-disabled",
+    "corruption-not-rejected",
+    "limit-not-enforced"
+  ],
+  "next_blocks": ["NATIVE-STD-CORE-001"]
+}

@@ -34,4 +34,12 @@ jq '.native_semantics = "vm-equivalent"' \
     testing/native-evaluation-runner.json > "$tmp/premature-equivalence.json"
 expect_failure premature-equivalence "$tmp/premature-equivalence.json"
 
+jq '.diagnostic_report_field = "legacy-diagnostics"' \
+    testing/native-evaluation-runner.json > "$tmp/missing-diagnostics.json"
+expect_failure missing-diagnostics "$tmp/missing-diagnostics.json"
+
+jq '.diagnostic_phase = "NATIVE-001"' \
+    testing/native-evaluation-runner.json > "$tmp/stale-diagnostics-phase.json"
+expect_failure stale-diagnostics-phase "$tmp/stale-diagnostics-phase.json"
+
 echo "native evaluation runner tests: OK (adapter, toolchain and equivalence boundaries rejected)"

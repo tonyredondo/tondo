@@ -27,7 +27,7 @@ jq -e '
   and (.invariants | length >= 7)
   and (.invariants == (.invariants | sort | unique))
   and (.negative_cases | length == 5)
-  and .next_blocks == ["DIAG-NATIVE-001"]
+  and .next_blocks == ["NATIVE-STD-CORE-001"]
 ' "$contract" >/dev/null || { echo "invalid native memory contract" >&2; exit 1; }
 
 source="$root/crates/tondo-compiler/src/toolchain.rs"

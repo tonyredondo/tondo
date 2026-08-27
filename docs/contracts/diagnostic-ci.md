@@ -104,9 +104,10 @@ hace fallar la promoción.
 
 ## 6. Límites y fronteras
 
-La lane no implementa paridad nativa, adapters públicos de `std.channel`,
-`std.sync`, `std.executor` o `std.net`, ni captura física de registros/unwind.
-Esas responsabilidades pertenecen a `DIAG-NATIVE-001` y `DIAG-STDLIB-001`.
+La lane hosted no implementa adapters públicos de `std.channel`, `std.sync`,
+`std.executor` o `std.net`, ni captura física de registros/unwind. La paridad
+lógica nativa ya está cerrada por `DIAG-NATIVE-001`; los adapters públicos y la
+capacidad física por target siguen en `DIAG-STDLIB-001` y sus gates.
 `DIAG-CI-001` únicamente demuestra que la implementación hosted existente se
 ejecuta de manera aislada, reproducible y con límites observables antes de
 seleccionar el backend nativo.

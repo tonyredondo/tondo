@@ -7,8 +7,8 @@ the VM remains the semantic oracle.
 
 Both slices are closed for the unpublished 0.1 development line. Ownership,
 terminal cleanup, cycle reclamation and weak-reference linearization are now
-executable runtime contracts; the next native boundary is
-`DIAG-NATIVE-001`.
+executable runtime contracts; native diagnostic parity is closed by
+`DIAG-NATIVE-001` and the next native boundary is `NATIVE-STD-CORE-001`.
 
 ## Ownership and terminal cleanup
 
@@ -52,7 +52,7 @@ last root/runtime pin is withdrawn. Detached cycles are reclaimed at explicit
 quiescence and at the 256-allocation pressure threshold. The test corpus checks
 both paths, concurrent live/dead upgrades, and fail-closed weak-handle misuse;
 there are no user finalizers. The contract checker accepts the closed ARC
-status, and native diagnostic parity is the next gate.
+status, and the native diagnostic parity gate is now closed.
 
 The machine-readable contract is
 [`testing/native-arc.json`](../../testing/native-arc.json); its focused checker

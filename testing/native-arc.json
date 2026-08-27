@@ -60,5 +60,5 @@
     "tombstone-resurrection",
     "untracked-payload-edge"
   ],
-  "next_blocks": ["DIAG-NATIVE-001"]
+  "next_blocks": ["NATIVE-STD-CORE-001"]
 }

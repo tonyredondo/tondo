@@ -2,8 +2,9 @@
 
 `NATIVE-001` is an evidence and selection block. It does not choose a backend
 until real candidate adapters have been measured against the same normalized
-MIR shape and the VM oracle. It does not claim that Tondo already emits a
-native executable. The machine-readable authority is
+MIR shape and the VM oracle. The opt-in runner emits native executables for its
+bounded supported slices, but this does not claim a complete Tondo product or
+a selected backend. The machine-readable authority is
 [`testing/native-evaluation.json`](../../testing/native-evaluation.json), and
 the decision is recorded in
 [`docs/adr/019-native-backend-selection.md`](../adr/019-native-backend-selection.md).
@@ -194,7 +195,7 @@ The selection records the dimensions that must be evidenced before promotion:
 | Runtime and peak memory | Deferred | Native executable plus repeated capture |
 | Debugging, source maps, unwind | Required constraints recorded | Native frames and maps match diagnostic contracts |
 | task/thread registry and memory/GC hooks | Required constraints recorded | Runtime ABI preserves observations |
-| redaction and crash dumps | Required constraints recorded | `DIAG-NATIVE-001` passes fail-closed |
+| redaction and crash dumps | Required constraints recorded | `DIAG-NATIVE-001` passes fail-closed in both executable candidates |
 | Distribution, maintenance, licensing | Decision recorded in ADR | Pinned, reviewable toolchain and supply-chain evidence |
 
 The existing performance contract stays honest: no native entry is selected and
@@ -213,6 +214,13 @@ report identity. Reports use logical fixture paths and content hashes only.
 Missing fixtures, changed hashes, unknown features, an early selected
 candidate, a premature N1/performance claim or a stale frontier is a hard
 failure.
+
+`DIAG-NATIVE-001` is closed by the native diagnostic section of the runner:
+eight bounded cases execute through Cranelift and LLVM subprocesses, and each
+backend must emit the same path-free envelope for race, leak/ARC and crash
+profiles. The hosted diagnostic contracts are the oracle; unsupported physical
+signal/register dimensions remain explicit target capabilities and are not
+silently treated as passed.
 
 `NATIVE-BACKEND-ADAPTER-001` is closed by the common normalized lowering and
 its executable differential evidence. The report covers 118 scalar cases, 3

@@ -46,7 +46,7 @@ jq -e '
   and (.corpus.native_cases | index("select-thread-join") != null)
   and (.invariants | length == 6 and unique_values)
   and (.negative_cases | length == 8 and unique_values)
-  and .next_blocks == ["DIAG-NATIVE-001"]
+  and .next_blocks == ["NATIVE-STD-CORE-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable contract"
 
 for path in \

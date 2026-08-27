@@ -30,5 +30,5 @@
     "collector-finalizer-resource",
     "public-layout-promise"
   ],
-  "next_blocks": ["DIAG-NATIVE-001"]
+  "next_blocks": ["NATIVE-STD-CORE-001"]
 }

@@ -12,6 +12,8 @@
   "debug_report_field": "debug_metadata",
   "thread_report_field": "native_thread_runs",
   "lowering_report_field": "native_lowering_runs",
+  "diagnostic_report_field": "native_diagnostics",
+  "diagnostic_phase": "DIAG-NATIVE-001",
   "lowering_case": "deferred-task-call",
   "oracle": "bytecode-vm-scalar-and-managed-result-oracle",
   "candidates": ["cranelift", "llvm"],

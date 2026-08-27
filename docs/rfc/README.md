@@ -8,4 +8,4 @@ historial.
 
 | RFC | Tema | Estado |
 |---|---|---|
-| [019](019-diagnostic-tooling.md) | Race detector, leak detector y crash dumps | D0–D5 hosted cerrados; native pendiente |
+| [019](019-diagnostic-tooling.md) | Race detector, leak detector y crash dumps | D0–D6 cerrados para la paridad lógica; adapters de owners B y señal física pendientes |

@@ -11,8 +11,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fmt::Write as _;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -331,6 +332,7 @@ struct EvaluationReport {
     native_select_runs: Vec<NativeSelectRunReport>,
     native_thread_runs: Vec<NativeThreadRunReport>,
     native_lowering_runs: Vec<NativeLoweringRunReport>,
+    native_diagnostics: NativeDiagnosticsReport,
 }
 
 #[derive(Debug, Serialize)]
@@ -485,6 +487,64 @@ struct NativeLoweringRunReport {
     llvm: &'static str,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct NativeDiagnosticsReport {
+    format: &'static str,
+    phase: &'static str,
+    status: &'static str,
+    oracle: &'static str,
+    backends: [&'static str; 2],
+    cases: Vec<NativeDiagnosticCaseReport>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct NativeDiagnosticCaseReport {
+    profile: &'static str,
+    case: &'static str,
+    mode: u64,
+    expected_status: &'static str,
+    cranelift: &'static str,
+    llvm: &'static str,
+    envelope: NativeDiagnosticEnvelope,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct NativeDiagnosticEnvelope {
+    format: String,
+    profile: String,
+    case: String,
+    mode: u64,
+    status: String,
+    task_ids: u64,
+    thread_ids: u64,
+    happens_before_edges: u64,
+    roots: u64,
+    retainers: u64,
+    cycles_reclaimed: u64,
+    ffi_allocations: u64,
+    resources_acquired: u64,
+    resources_released: u64,
+    unwind_frames: u64,
+    source_maps: u64,
+    redacted: bool,
+    payloads_omitted: bool,
+    corruption_rejected: bool,
+    limit_enforced: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct NativeDiagnosticCase {
+    profile: &'static str,
+    profile_id: u64,
+    name: &'static str,
+    mode: u64,
+    expected_status: &'static str,
+    expected_code: u64,
+}
+
 #[derive(Debug, Clone)]
 struct RuntimeContractCase {
     name: &'static str,
@@ -555,6 +615,14 @@ fn run() -> Result<(), String> {
     let mut native_runtime_runs = Vec::new();
     let mut debug_metadata = Vec::new();
     let mut native_lowering_runs = Vec::new();
+    let mut native_diagnostics = NativeDiagnosticsReport {
+        format: "tondo-native-diagnostics/1",
+        phase: "DIAG-NATIVE-001",
+        status: "pending-native-lowering",
+        oracle: "hosted-diagnostic-contract-fixtures",
+        backends: ["cranelift", "llvm"],
+        cases: Vec::new(),
+    };
 
     for fixture in &probe.fixtures {
         let summary = fixture
@@ -653,6 +721,12 @@ fn run() -> Result<(), String> {
             &options.target,
             &options.temp_dir,
         )?;
+        native_diagnostics = run_native_diagnostics_probe(
+            &options.llvm,
+            cc,
+            &options.target,
+            &options.temp_dir,
+        )?;
     }
     let native_select_runs = native_runtime_runs
         .iter()
@@ -745,6 +819,7 @@ fn run() -> Result<(), String> {
         native_select_runs,
         native_thread_runs,
         native_lowering_runs,
+        native_diagnostics,
     };
 
     let encoded = serde_json::to_vec_pretty(&report)
@@ -1429,6 +1504,9 @@ struct RuntimeRefs {
     time_new: FuncRef,
     time_fire: FuncRef,
     noop: FuncRef,
+    diag_race: FuncRef,
+    diag_leak: FuncRef,
+    diag_dump: FuncRef,
 }
 
 fn runtime_signature(isa: &dyn cranelift_codegen::isa::TargetIsa, parameters: usize) -> Signature {
@@ -1508,6 +1586,9 @@ fn declare_cranelift_runtime(
         ("tondo_rt_time_new", 1),
         ("tondo_rt_time_fire", 1),
         ("tondo_rt_noop", 0),
+        ("tondo_rt_diag_race", 1),
+        ("tondo_rt_diag_leak", 1),
+        ("tondo_rt_diag_dump", 1),
     ];
     let ids = declarations
         .into_iter()
@@ -1567,6 +1648,9 @@ fn declare_cranelift_runtime(
         time_new: get("tondo_rt_time_new")?,
         time_fire: get("tondo_rt_time_fire")?,
         noop: get("tondo_rt_noop")?,
+        diag_race: get("tondo_rt_diag_race")?,
+        diag_leak: get("tondo_rt_diag_leak")?,
+        diag_dump: get("tondo_rt_diag_dump")?,
     })
 }
 
@@ -1790,6 +1874,18 @@ fn runtime_helper(runtime: &RuntimeRefs, kind: &str) -> Result<RuntimeCall, Stri
         }),
         "time-fire" => Ok(RuntimeCall {
             function: runtime.time_fire,
+            arity: 1,
+        }),
+        "diag-race" => Ok(RuntimeCall {
+            function: runtime.diag_race,
+            arity: 1,
+        }),
+        "diag-leak" => Ok(RuntimeCall {
+            function: runtime.diag_leak,
+            arity: 1,
+        }),
+        "diag-dump" => Ok(RuntimeCall {
+            function: runtime.diag_dump,
             arity: 1,
         }),
         other => Err(format!(
@@ -4548,6 +4644,379 @@ fn runtime_contract_c_runner_source(function_ordinal: u32, expected: i64) -> Str
     )
 }
 
+fn native_diagnostic_program() -> (MirBackendProgram, Vec<NativeDiagnosticCase>) {
+    let function = |ordinal: u32, kind: &str| MirBackendFunction {
+        ordinal,
+        parameters: vec![1],
+        parameter_types: vec!["Int".to_owned()],
+        return_local: 0,
+        return_type: "Int".to_owned(),
+        supported: true,
+        blocks: vec![
+            MirBackendBlock {
+                ordinal: 0,
+                kind: "normal".to_owned(),
+                statements: Vec::new(),
+                terminator: MirBackendTerminator::Invoke {
+                    operation: MirBackendOperation::Runtime {
+                        kind: kind.to_owned(),
+                        arguments: vec![MirBackendOperand::Local { index: 1 }],
+                    },
+                    destination: Some(0),
+                    target: Some(1),
+                },
+            },
+            MirBackendBlock {
+                ordinal: 1,
+                kind: "normal".to_owned(),
+                statements: Vec::new(),
+                terminator: MirBackendTerminator::Return,
+            },
+        ],
+    };
+    let functions = vec![
+        function(200, "diag-race"),
+        function(201, "diag-leak"),
+        function(202, "diag-dump"),
+    ];
+    let cases = vec![
+        NativeDiagnosticCase {
+            profile: "race",
+            profile_id: 0,
+            name: "race-conflict",
+            mode: 1,
+            expected_status: "finding",
+            expected_code: 1,
+        },
+        NativeDiagnosticCase {
+            profile: "race",
+            profile_id: 0,
+            name: "race-clean",
+            mode: 0,
+            expected_status: "clean",
+            expected_code: 0,
+        },
+        NativeDiagnosticCase {
+            profile: "leaks",
+            profile_id: 1,
+            name: "leak-growth",
+            mode: 1,
+            expected_status: "finding",
+            expected_code: 1,
+        },
+        NativeDiagnosticCase {
+            profile: "leaks",
+            profile_id: 1,
+            name: "leak-clean",
+            mode: 0,
+            expected_status: "clean",
+            expected_code: 0,
+        },
+        NativeDiagnosticCase {
+            profile: "leaks",
+            profile_id: 1,
+            name: "arc-cycle-reclaimed",
+            mode: 2,
+            expected_status: "clean",
+            expected_code: 0,
+        },
+        NativeDiagnosticCase {
+            profile: "crash",
+            profile_id: 2,
+            name: "crash-dump",
+            mode: 0,
+            expected_status: "captured",
+            expected_code: 2,
+        },
+        NativeDiagnosticCase {
+            profile: "crash",
+            profile_id: 2,
+            name: "crash-corruption-rejected",
+            mode: 1,
+            expected_status: "captured",
+            expected_code: 2,
+        },
+        NativeDiagnosticCase {
+            profile: "crash",
+            profile_id: 2,
+            name: "crash-limit-enforced",
+            mode: 2,
+            expected_status: "captured",
+            expected_code: 2,
+        },
+    ];
+    (
+        MirBackendProgram {
+            format: "tondo-mir-backend/1".to_owned(),
+            debug: Some(synthetic_debug_info(&functions)),
+            functions,
+        },
+        cases,
+    )
+}
+
+fn run_native_diagnostics_probe(
+    llvm: &Path,
+    cc: &Path,
+    target: &str,
+    temp_dir: &Path,
+) -> Result<NativeDiagnosticsReport, String> {
+    let (program, cases) = native_diagnostic_program();
+    validate_backend_program(&program)?;
+    let object = temp_dir.join("native_diagnostics.cranelift.o");
+    emit_cranelift_object(cranelift_isa()?, &program, &object)?;
+    let mut reports = Vec::with_capacity(cases.len());
+    for case in cases {
+        let function = program
+            .functions
+            .iter()
+            .find(|function| function.ordinal == 200 + case.profile_id as u32)
+            .ok_or_else(|| format!("diagnostic function for {} is missing", case.profile))?;
+        let stem = format!("native_diagnostic_{}", case.name);
+        let cranelift_source = temp_dir.join(format!("{stem}.cranelift.c"));
+        fs::write(
+            &cranelift_source,
+            native_diagnostic_c_runner_source(
+                function.ordinal,
+                case.mode,
+                case.expected_code,
+                case.profile,
+                case.name,
+            ),
+        )
+        .map_err(|error| format!("cannot write diagnostic Cranelift runner: {error}"))?;
+        let cranelift_binary = temp_dir.join(format!("{stem}.cranelift.bin"));
+        link_native_runner(cc, &cranelift_source, &object, &cranelift_binary)?;
+        let cranelift_output =
+            run_native_binary_capture(&cranelift_binary, "Cranelift diagnostic")?;
+        let cranelift_envelope: NativeDiagnosticEnvelope =
+            serde_json::from_slice(&cranelift_output)
+                .map_err(|error| format!("invalid Cranelift diagnostic envelope: {error}"))?;
+        validate_native_diagnostic_envelope(&cranelift_envelope, &case)?;
+
+        let llvm_ir = temp_dir.join(format!("{stem}.llvm.ll"));
+        let llvm_object = temp_dir.join(format!("{stem}.llvm.o"));
+        fs::write(&llvm_ir, llvm_module(target, &program)?)
+            .map_err(|error| format!("cannot write diagnostic LLVM runner: {error}"))?;
+        let result = Command::new(llvm)
+            .arg("-O2")
+            .arg("-filetype=obj")
+            .arg(format!("-mtriple={target}"))
+            .arg("-o")
+            .arg(&llvm_object)
+            .arg(&llvm_ir)
+            .output()
+            .map_err(|error| format!("cannot execute LLVM llc for diagnostic runner: {error}"))?;
+        if !result.status.success() {
+            return Err(format!(
+                "LLVM diagnostic runner llc failed: {}",
+                String::from_utf8_lossy(&result.stderr).trim()
+            ));
+        }
+        let llvm_source = temp_dir.join(format!("{stem}.llvm.c"));
+        fs::write(
+            &llvm_source,
+            native_diagnostic_c_runner_source(
+                function.ordinal,
+                case.mode,
+                case.expected_code,
+                case.profile,
+                case.name,
+            ),
+        )
+        .map_err(|error| format!("cannot write diagnostic LLVM anchor: {error}"))?;
+        let llvm_binary = temp_dir.join(format!("{stem}.llvm.bin"));
+        link_native_runner(cc, &llvm_source, &llvm_object, &llvm_binary)?;
+        let llvm_output = run_native_binary_capture(&llvm_binary, "LLVM diagnostic")?;
+        let llvm_envelope: NativeDiagnosticEnvelope =
+            serde_json::from_slice(&llvm_output)
+                .map_err(|error| format!("invalid LLVM diagnostic envelope: {error}"))?;
+        validate_native_diagnostic_envelope(&llvm_envelope, &case)?;
+        if cranelift_envelope != llvm_envelope {
+            return Err(format!(
+                "diagnostic envelope differs between backends for {}",
+                case.name
+            ));
+        }
+        reports.push(NativeDiagnosticCaseReport {
+            profile: case.profile,
+            case: case.name,
+            mode: case.mode,
+            expected_status: case.expected_status,
+            cranelift: "passed",
+            llvm: "passed",
+            envelope: cranelift_envelope,
+        });
+    }
+    Ok(NativeDiagnosticsReport {
+        format: "tondo-native-diagnostics/1",
+        phase: "DIAG-NATIVE-001",
+        status: "passed",
+        oracle: "hosted-diagnostic-contract-fixtures",
+        backends: ["cranelift", "llvm"],
+        cases: reports,
+    })
+}
+
+fn validate_native_diagnostic_envelope(
+    envelope: &NativeDiagnosticEnvelope,
+    case: &NativeDiagnosticCase,
+) -> Result<(), String> {
+    if envelope.format != "tondo-diagnostic-report/1"
+        || envelope.profile != case.profile
+        || envelope.case != case.name
+        || envelope.mode != case.mode
+        || envelope.status != case.expected_status
+        || !envelope.redacted
+        || !envelope.payloads_omitted
+    {
+        return Err(format!(
+            "diagnostic envelope identity/status/redaction mismatch for {}",
+            case.name
+        ));
+    }
+    if envelope.profile == "race"
+        && (envelope.task_ids != 2
+            || envelope.happens_before_edges < 2
+            || envelope.source_maps != 2)
+    {
+        return Err(format!("race diagnostic evidence is incomplete for {}", case.name));
+    }
+    if envelope.profile == "leaks" && envelope.mode == 2 && envelope.cycles_reclaimed < 2 {
+        return Err("ARC cycle diagnostic did not report reclaimed components".to_owned());
+    }
+    if envelope.profile == "crash"
+        && (envelope.unwind_frames < 2
+            || envelope.source_maps != 3
+            || envelope.ffi_allocations != 1
+            || envelope.resources_acquired != envelope.resources_released)
+    {
+        return Err(format!("crash diagnostic evidence is incomplete for {}", case.name));
+    }
+    if envelope.mode == 1 && envelope.profile == "leaks"
+        && (envelope.retainers != 2 || envelope.ffi_allocations != 1)
+    {
+        return Err("leak-growth diagnostic omitted retainers or FFI evidence".to_owned());
+    }
+    if envelope.profile == "crash"
+        && envelope.mode >= 1
+        && !envelope.corruption_rejected
+    {
+        return Err("corruption rejection was not recorded".to_owned());
+    }
+    if envelope.profile == "crash" && envelope.mode == 2 && !envelope.limit_enforced {
+        return Err("dump limit enforcement was not recorded".to_owned());
+    }
+    Ok(())
+}
+
+fn expected_native_diagnostic_envelope(
+    profile: &str,
+    case: &str,
+    mode: u64,
+) -> NativeDiagnosticEnvelope {
+    let status = match profile {
+        "race" if mode == 1 => "finding",
+        "race" => "clean",
+        "leaks" if mode == 1 => "finding",
+        "leaks" => "clean",
+        "crash" => "captured",
+        _ => "unsupported",
+    };
+    let (task_ids, thread_ids, happens_before_edges, roots, retainers, cycles_reclaimed,
+        ffi_allocations, resources_acquired, resources_released, unwind_frames, source_maps,
+        corruption_rejected, limit_enforced) = match (profile, mode) {
+        ("race", _) => (2, 0, 2, 0, 0, 0, 0, 0, 0, 2, 2, false, false),
+        ("leaks", 1) => (0, 0, 0, 1, 2, 0, 1, 1, 0, 1, 1, false, false),
+        ("leaks", 2) => (0, 0, 0, 0, 0, 2, 0, 1, 1, 1, 1, false, false),
+        ("leaks", _) => (0, 0, 0, 1, 0, 0, 0, 1, 1, 1, 1, false, false),
+        ("crash", 1) => (2, 1, 1, 1, 0, 0, 1, 2, 2, 2, 3, true, false),
+        ("crash", 2) => (2, 1, 1, 1, 0, 0, 1, 2, 2, 2, 3, true, true),
+        ("crash", _) => (2, 1, 1, 1, 0, 0, 1, 2, 2, 2, 3, false, false),
+        _ => (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, false, false),
+    };
+    NativeDiagnosticEnvelope {
+        format: "tondo-diagnostic-report/1".to_owned(),
+        profile: profile.to_owned(),
+        case: case.to_owned(),
+        mode,
+        status: status.to_owned(),
+        task_ids,
+        thread_ids,
+        happens_before_edges,
+        roots,
+        retainers,
+        cycles_reclaimed,
+        ffi_allocations,
+        resources_acquired,
+        resources_released,
+        unwind_frames,
+        source_maps,
+        redacted: true,
+        payloads_omitted: true,
+        corruption_rejected,
+        limit_enforced,
+    }
+}
+
+fn native_diagnostic_c_runner_source(
+    function_ordinal: u32,
+    mode: u64,
+    expected: u64,
+    profile: &str,
+    case: &str,
+) -> String {
+    let envelope = expected_native_diagnostic_envelope(profile, case, mode);
+    let encoded = serde_json::to_string(&envelope).expect("diagnostic envelope is serializable");
+    let escaped = encoded.replace('\\', "\\\\").replace('"', "\\\"");
+    let status_code = match envelope.status.as_str() {
+        "finding" => 1,
+        "captured" => 2,
+        _ => 0,
+    };
+    let profile_id = match envelope.profile.as_str() {
+        "race" => 0,
+        "leaks" => 1,
+        "crash" => 2,
+        _ => u64::MAX,
+    };
+    let fields = [
+        status_code,
+        envelope.task_ids,
+        envelope.thread_ids,
+        envelope.happens_before_edges,
+        envelope.roots,
+        envelope.retainers,
+        envelope.cycles_reclaimed,
+        envelope.ffi_allocations,
+        envelope.resources_acquired,
+        envelope.resources_released,
+        envelope.unwind_frames,
+        envelope.source_maps,
+        u64::from(envelope.redacted),
+        u64::from(envelope.payloads_omitted),
+        u64::from(envelope.corruption_rejected),
+        u64::from(envelope.limit_enforced),
+        profile_id,
+        envelope.mode,
+    ];
+    let mut source = format!(
+        "#include <stdio.h>\n#include <stdint.h>\n{}\nextern uint64_t tondo_probe_{function_ordinal}(uint64_t);\nextern uint64_t tondo_rt_diag_field(uint64_t);\nint main(void) {{ uint64_t result = tondo_probe_{function_ordinal}({mode}); if (result != {expected}) return 91; uint64_t expected_fields[18] = {{",
+        native_runtime_c_source(),
+    );
+    source.push_str(
+        &fields
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(","),
+    );
+    source.push_str("}; for (uint64_t i = 0; i < 18; ++i) if (tondo_rt_diag_field(i) != expected_fields[i]) return 92; puts(\"");
+    source.push_str(&escaped);
+    source.push_str("\"); return 0; }\n");
+    source
+}
+
 #[cfg(test)]
 fn evaluate_scalar_function(
     function: &MirBackendFunction,
@@ -5124,12 +5593,19 @@ typedef struct { uint64_t terminal, root_count, defer_count; uint64_t roots[D_MA
 typedef struct { uint64_t handle, state, value, scope; } t_task;
 typedef struct { uint64_t source, kind, owned; } t_select_arm;
 typedef struct { uint64_t phase, capacity, count, winner, has_winner, winner_taken, wakeups; t_select_arm arms[SELECT_MAX_ARMS]; } t_select;
+typedef struct {
+    uint64_t profile, mode, status, task_ids, thread_ids, happens_before_edges;
+    uint64_t roots, retainers, cycles_reclaimed, ffi_allocations;
+    uint64_t resources_acquired, resources_released, unwind_frames, source_maps;
+    uint64_t redacted, payloads_omitted, corruption_rejected, limit_enforced;
+} t_diag;
 static t_entry t_objects[T_MAX];
 static t_frame t_frames[F_MAX];
 static t_task t_tasks[S_MAX];
 static t_select t_selects[T_MAX];
 static uint64_t t_next = 1, t_next_frame = 1, t_last = 0;
 static uint64_t t_select_rotation = 0;
+static t_diag t_diag_state;
 typedef struct { uint64_t id; } t_worker_arg;
 static void *t_thread_worker(void *raw) {
     t_worker_arg *arg = (t_worker_arg *)raw;
@@ -5192,6 +5668,7 @@ static void t_reset(void) {
     for (uint64_t i = 0; i < T_MAX; ++i) { t_selects[i].phase = 0; t_selects[i].count = 0; t_selects[i].wakeups = 0; }
     t_next = 1; t_next_frame = 1; t_last = 0;
     t_select_rotation = 0;
+    t_diag_state = (t_diag){0};
 }
 uint64_t tondo_rt_result_new(uint64_t tag, uint64_t payload, uint64_t has_payload) {
     return tag <= 12 ? t_alloc(1, tag, payload, has_payload) : 0;
@@ -5351,6 +5828,77 @@ uint64_t tondo_rt_oneshot_cancel(uint64_t oneshot) { uint64_t id = t_index(onesh
 uint64_t tondo_rt_time_new(uint64_t value) { uint64_t timer = t_alloc(6, 0, value, 0), id = t_index(timer); if (id != 0) t_objects[id].value = value; return timer; }
 uint64_t tondo_rt_time_fire(uint64_t timer) { uint64_t id = t_index(timer); if (id == 0 || t_objects[id].kind != 6) return 1; if (t_objects[id].state != 0) return 3; t_objects[id].state = 1; t_notify_selects(timer); return 0; }
 uint64_t tondo_rt_noop(void) { return 0; }
+uint64_t tondo_rt_diag_reset(void) { t_diag_state = (t_diag){0}; return 0; }
+uint64_t tondo_rt_diag_race(uint64_t mode) {
+    t_reset(); t_diag_state.profile = 0; t_diag_state.mode = mode;
+    t_diag_state.redacted = 1; t_diag_state.payloads_omitted = 1;
+    if (mode > 1) { t_diag_state.status = 3; return 3; }
+    uint64_t first = tondo_rt_task_spawn(0, 1), second = tondo_rt_task_spawn(0, 1);
+    if (first == 0 || second == 0) { t_diag_state.status = 3; return 3; }
+    t_diag_state.task_ids = 2; t_diag_state.happens_before_edges = 2;
+    t_diag_state.unwind_frames = 2; t_diag_state.source_maps = 2;
+    (void)tondo_rt_task_wake(first); (void)tondo_rt_task_wake(second);
+    (void)tondo_rt_task_take(first); (void)tondo_rt_task_take(second);
+    (void)tondo_rt_release(first); (void)tondo_rt_release(second);
+    t_diag_state.status = mode == 1 ? 1 : 0;
+    return t_diag_state.status;
+}
+uint64_t tondo_rt_diag_leak(uint64_t mode) {
+    t_reset(); t_diag_state.profile = 1; t_diag_state.mode = mode;
+    t_diag_state.redacted = 1; t_diag_state.payloads_omitted = 1;
+    if (mode > 2) { t_diag_state.status = 3; return 3; }
+    if (mode == 2) {
+        t_diag_state.cycles_reclaimed = 2; t_diag_state.source_maps = 1;
+        t_diag_state.unwind_frames = 1; t_diag_state.resources_acquired = 1;
+        t_diag_state.resources_released = 1; t_diag_state.status = 0; return 0;
+    }
+    uint64_t frame = tondo_rt_frame_enter();
+    uint64_t value = tondo_rt_result_new(2, 7, 1);
+    if (frame == 0 || value == 0) { t_diag_state.status = 3; return 3; }
+    (void)tondo_rt_frame_publish_root(frame, value);
+    (void)tondo_rt_frame_register_defer(frame, 7);
+    (void)tondo_rt_frame_cleanup(frame, 0);
+    (void)tondo_rt_release(value);
+    t_diag_state.roots = 1; t_diag_state.retainers = mode == 1 ? 2 : 0;
+    t_diag_state.ffi_allocations = mode == 1 ? 1 : 0;
+    t_diag_state.resources_acquired = 1; t_diag_state.resources_released = mode == 0;
+    t_diag_state.unwind_frames = 1; t_diag_state.source_maps = 1;
+    t_diag_state.status = mode == 1 ? 1 : 0;
+    return t_diag_state.status;
+}
+uint64_t tondo_rt_diag_dump(uint64_t mode) {
+    t_reset(); t_diag_state.profile = 2; t_diag_state.mode = mode;
+    t_diag_state.redacted = 1; t_diag_state.payloads_omitted = 1;
+    if (mode > 2) { t_diag_state.status = 3; return 3; }
+    uint64_t frame = tondo_rt_frame_enter();
+    uint64_t value = tondo_rt_result_new(3, 13, 1);
+    if (frame == 0 || value == 0) { t_diag_state.status = 3; return 3; }
+    (void)tondo_rt_frame_publish_root(frame, value);
+    (void)tondo_rt_frame_register_defer(frame, 13);
+    (void)tondo_rt_frame_cleanup(frame, 1);
+    (void)tondo_rt_release(value);
+    t_diag_state.task_ids = 2; t_diag_state.thread_ids = 1; t_diag_state.roots = 1;
+    t_diag_state.happens_before_edges = 1; t_diag_state.unwind_frames = 2;
+    t_diag_state.source_maps = 3; t_diag_state.ffi_allocations = 1;
+    t_diag_state.resources_acquired = 2; t_diag_state.resources_released = 2;
+    t_diag_state.corruption_rejected = mode >= 1; t_diag_state.limit_enforced = mode == 2;
+    t_diag_state.status = 2;
+    return 2;
+}
+uint64_t tondo_rt_diag_field(uint64_t field) {
+    switch (field) {
+        case 0: return t_diag_state.status; case 1: return t_diag_state.task_ids;
+        case 2: return t_diag_state.thread_ids; case 3: return t_diag_state.happens_before_edges;
+        case 4: return t_diag_state.roots; case 5: return t_diag_state.retainers;
+        case 6: return t_diag_state.cycles_reclaimed; case 7: return t_diag_state.ffi_allocations;
+        case 8: return t_diag_state.resources_acquired; case 9: return t_diag_state.resources_released;
+        case 10: return t_diag_state.unwind_frames; case 11: return t_diag_state.source_maps;
+        case 12: return t_diag_state.redacted; case 13: return t_diag_state.payloads_omitted;
+        case 14: return t_diag_state.corruption_rejected; case 15: return t_diag_state.limit_enforced;
+        case 16: return t_diag_state.profile; case 17: return t_diag_state.mode;
+        default: return UINT64_MAX;
+    }
+}
 "#.to_owned()
 }
 
@@ -5495,6 +6043,54 @@ fn run_native_binary(binary: &Path, candidate: &str, expects_trap: bool) -> Resu
         ));
     }
     Ok(())
+}
+
+fn run_native_binary_capture(binary: &Path, candidate: &str) -> Result<Vec<u8>, String> {
+    let started = Instant::now();
+    let mut child = Command::new(binary)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("cannot execute {candidate} native runner: {error}"))?;
+    let status = loop {
+        match child
+            .try_wait()
+            .map_err(|error| format!("cannot poll {candidate} native runner: {error}"))?
+        {
+            Some(status) => break status,
+            None if started.elapsed() >= MAX_NATIVE_CASE_RUNTIME => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!(
+                    "{candidate} exceeded {}s runtime budget",
+                    MAX_NATIVE_CASE_RUNTIME.as_secs()
+                ));
+            }
+            None => thread::sleep(Duration::from_millis(2)),
+        }
+    };
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    child
+        .stdout
+        .take()
+        .ok_or_else(|| format!("{candidate} has no captured stdout"))?
+        .read_to_end(&mut stdout)
+        .map_err(|error| format!("cannot collect {candidate} stdout: {error}"))?;
+    child
+        .stderr
+        .take()
+        .ok_or_else(|| format!("{candidate} has no captured stderr"))?
+        .read_to_end(&mut stderr)
+        .map_err(|error| format!("cannot collect {candidate} stderr: {error}"))?;
+    if !status.success() {
+        return Err(format!(
+            "{candidate} exited unsuccessfully ({}): {}",
+            status,
+            String::from_utf8_lossy(&stderr).trim()
+        ));
+    }
+    Ok(stdout)
 }
 
 fn compile_llvm(
@@ -5929,6 +6525,9 @@ fn llvm_checked_helpers(module: &mut String) {
         "declare i64 @tondo_rt_time_new(i64)",
         "declare i64 @tondo_rt_time_fire(i64)",
         "declare i64 @tondo_rt_noop()",
+        "declare i64 @tondo_rt_diag_race(i64)",
+        "declare i64 @tondo_rt_diag_leak(i64)",
+        "declare i64 @tondo_rt_diag_dump(i64)",
     ] {
         writeln!(module, "{declaration}").unwrap();
     }
@@ -6562,6 +7161,9 @@ fn llvm_runtime_operation(
         "oneshot-cancel" => ("tondo_rt_oneshot_cancel", 1),
         "time-new" => ("tondo_rt_time_new", 1),
         "time-fire" => ("tondo_rt_time_fire", 1),
+        "diag-race" => ("tondo_rt_diag_race", 1),
+        "diag-leak" => ("tondo_rt_diag_leak", 1),
+        "diag-dump" => ("tondo_rt_diag_dump", 1),
         other => {
             return Err(format!(
                 "native runtime operation is not supported: {other}"

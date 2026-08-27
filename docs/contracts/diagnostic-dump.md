@@ -1,8 +1,8 @@
 # Contrato del dump lógico `DUMP-001`
 
-**Estado:** `implemented` para la VM hosted de Tondo 0.1. La captura nativa de
-señales, registros físicos y unwind de plataforma pertenece a
-`DIAG-NATIVE-001`; no se sobreafirma aquí.
+**Estado:** `implemented` para la VM hosted de Tondo 0.1. La paridad lógica del
+envelope nativo está cerrada por `DIAG-NATIVE-001`; la captura de señales,
+registros físicos y unwind de plataforma solo se declara por target.
 
 Este contrato fija el writer y el analizador offline del envelope
 `tondo-dump/1`. El writer recibe una `DiagnosticTrace` ya acotada por el
@@ -49,9 +49,10 @@ formato inválido termina con status de uso `2`.
 ## Alcance y siguiente frontera
 
 La ruta de señal async-signal-safe y el helper que materializa un dump tras un
-SIGSEGV/abort son trabajo de `DIAG-NATIVE-001`. `DIAG-TEST-001` asocia estos
-bytes con cada intento, retry y shard mediante el artifact store; no inventa
-integración del backend nativo.
+SIGSEGV/abort se declaran `unsupported` hasta que el target los aporte;
+`DIAG-NATIVE-001` verifica mientras tanto el envelope mediante ejecutables
+reales de ambos backends. `DIAG-TEST-001` asocia estos bytes con cada intento,
+retry y shard mediante el artifact store.
 
 La evidencia machine-readable vive en
 [`testing/diagnostic-dump.json`](../../testing/diagnostic-dump.json), y los

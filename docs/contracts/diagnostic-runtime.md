@@ -103,4 +103,6 @@ La evidencia ejecutable está en:
   módulo y contrato.
 
 Los detectores posteriores deben consumir esta traza sin volver a instrumentar
-la VM. La paridad nativa queda explícitamente pendiente de `DIAG-NATIVE-001`.
+la VM. La paridad lógica nativa del envelope está cerrada por
+`DIAG-NATIVE-001`; los adapters de APIs públicas siguen siendo una frontera
+separada.

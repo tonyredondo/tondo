@@ -60,7 +60,7 @@ honestidad en sus reportes y gates:
 | D3 Dumps | `DUMP-001` | Captura lógica hosted, redacción, fixtures `.tdump`, analizador human/JSON y corrupción rechazada; cerrado |
 | D4 Runner | `DIAG-TEST-001` | Artifacts por intento, retries aislados, sharding, JUnit/JSON y clasificación unsupported (cerrado hosted) |
 | D5 CI | `DIAG-CI-001` | Lanes opt-in, fuzzing, regression corpus, budgets y promotion gate sin alterar baseline normal |
-| D6 Native | `NATIVE-001`, `NATIVE-MEM-ADR-001`, `NATIVE-ABI-001`, `DIAG-NATIVE-001` | Paridad VM/native de eventos, unwind, source maps, roots, cleanup y dumps |
+| D6 Native | `NATIVE-001`, `NATIVE-MEM-ADR-001`, `NATIVE-ABI-001`, `DIAG-NATIVE-001` | Paridad VM/native de eventos, unwind, source maps, roots, cleanup y dumps; envelope lógico cerrado en Cranelift/LLVM |
 | D7 Owners B | `DIAG-STDLIB-001` | Adapters y corpus de channel/sync/executor/net sobre VM y nativo antes de S1 |
 
 Cada fase mantiene tests ejecutables y evidencia separada. Una fase no puede

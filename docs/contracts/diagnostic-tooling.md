@@ -8,9 +8,10 @@ calendario civil de `std.time` ya están cerrados por
 `STD-NET-001` y `STD-CIVIL-TIME-001`. La primera implementación runtime de la
 VM hosted está cerrada por `DIAG-RUNTIME-001`; los detectores hosted de races,
 retención, dumps lógicos y su integración en `tondo test` están cerrados por
-`RACE-001`, `LEAK-001`, `DUMP-001` y `DIAG-TEST-001`, mientras que las lanes
-CI, captura de señales y paridad native permanecen pendientes en los bloques
-`DIAG-*` posteriores.
+`RACE-001`, `LEAK-001`, `DUMP-001` y `DIAG-TEST-001`. Las lanes CI hosted están
+cerradas por `DIAG-CI-001` y la paridad lógica nativa de Cranelift/LLVM está
+cerrada por `DIAG-NATIVE-001`; la captura de señales físicas sigue siendo una
+capacidad declarada por target.
 
 Este documento define la frontera entre el lenguaje, el runtime y las
 herramientas que ayudan a encontrar fallos de concurrencia, retención de
@@ -114,10 +115,11 @@ que conserva:
 La VM hosted captura la traza lógica en el envelope canónico `tondo-dump/1` y
 el analizador `tondo dump analyze` produce una vista humana y un JSON estable
 sin consultar red ni ejecutar código del dump. No hay subida automática, y los
-campos que puedan contener secretos quedan fuera. La captura en una señal o
-terminación fatal hace únicamente trabajo async-signal-safe y delega la
-serialización a un helper cuando el host lo permite; esa parte física sigue en
-`DIAG-NATIVE-001`.
+campos que puedan contener secretos quedan fuera. La paridad nativa cerrada por
+`DIAG-NATIVE-001` verifica este envelope mediante ejecutables reales de ambos
+backends, incluidos redacción, corrupción, límites y resumen de unwind/source
+maps; una captura de señal física solo se declara soportada cuando el target
+aporta una ruta async-signal-safe.
 
 La VM ofrece primero un dump lógico. El backend nativo añade adaptadores de
 unwind, símbolos y registros sin cambiar el envelope; si una plataforma no
@@ -196,7 +198,7 @@ La ejecución se divide en bloques del tracker:
 | `DUMP-001` | Captura lógica `.tdump`, redacción y analizador | `DIAG-SPEC-001`, source maps VM |
 | `DIAG-TEST-001` | Integración por intento, retry, shard, JSON/JUnit y artifacts | `RACE-001`, `LEAK-001`, `DUMP-001` |
 | `DIAG-CI-001` | Lanes, budgets, fuzzing, regression corpus y promotion gate | `DIAG-TEST-001`, `PERF-001`; implementado hosted |
-| `DIAG-NATIVE-001` | Paridad nativa de race/leaks/dumps, roots/retainers, threads, unwind y source maps | backend elegido, `NATIVE-002`, memoria/ABI/lowering nativos y detectores VM; `NATIVE-THREAD-001` ya está cerrado |
+| `DIAG-NATIVE-001` | Paridad nativa de race/leaks/dumps, roots/retainers, threads, unwind y source maps | `NATIVE-002`, ARC/memoria/ABI/lowering nativos y detectores VM; cerrado con el envelope `tondo-diagnostic-report/1` |
 | `DIAG-STDLIB-001` | Adapters de detector para channel/sync/executor/net y corpus VM/native | implementaciones STD-0.1B aplicables, `DIAG-NATIVE-001` |
 
 `RACE-001` anterior al backend cubre tasks, memoria, unsafe y primitivas
@@ -209,10 +211,14 @@ registro de tasks/threads, hooks de memoria/GC, source maps, unwind y crash
 dumps. `NATIVE-MEM-ADR-001` y `NATIVE-ABI-001` incorporan estos requisitos; la
 implementación de STD-0.1B no publica APIs paralelas para satisfacerlos.
 `LEAK-001` no depende del modelo de memoria nativo: primero prueba la VM y el
-ledger hosted; `DIAG-NATIVE-001` prueba después ARC/ciclos/FFI nativos. La
-implementación hosted está cerrada por `crates/tondo-vm/src/runtime/leak.rs`,
+ledger hosted; `DIAG-NATIVE-001` prueba ARC/ciclos/FFI nativos mediante su
+envelope lógico. La implementación hosted está cerrada por
+`crates/tondo-vm/src/runtime/leak.rs`,
 su contrato y su registro machine-readable; la integración del runner está
-cerrada por `docs/contracts/diagnostic-test.md`, sin implicar soporte nativo.
+cerrada por `docs/contracts/diagnostic-test.md`. La paridad lógica nativa y sus
+casos ejecutables están cerrados por
+[`native-diagnostics.md`](native-diagnostics.md); los adapters públicos de la
+stdlib siguen en `DIAG-STDLIB-001`.
 
 ## 8. Fronteras normativas de `DEC-018`
 
@@ -224,7 +230,8 @@ documentada por [`diagnostic-runtime.md`](diagnostic-runtime.md), el detector
 de races por [`diagnostic-race.md`](diagnostic-race.md) y el detector de
 retención por [`diagnostic-leak.md`](diagnostic-leak.md). Crash dumps y runner
 hosted están cerrados; las lanes CI hosted están cerradas por `DIAG-CI-001` y la
-paridad native sigue pendiente.
+paridad nativa lógica está cerrada por `DIAG-NATIVE-001`. La ruta de señal
+física sigue sujeta a la capacidad de cada target y no se finge disponible.
 
 ## 9. No objetivos de esta revisión
 

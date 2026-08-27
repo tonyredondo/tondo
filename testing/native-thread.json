@@ -69,5 +69,5 @@
     "physical-thread-id-leaked",
     "deferred-body-claimed-by-eager-adapter"
   ],
-  "next_blocks": ["DIAG-NATIVE-001"]
+  "next_blocks": ["NATIVE-STD-CORE-001"]
 }

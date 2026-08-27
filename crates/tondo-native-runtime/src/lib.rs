@@ -32,6 +32,31 @@ const STATUS_SELECT_ELSE: u64 = 8;
 const STATUS_WEAK_DEAD: u64 = 9;
 const STATUS_COUNT_OVERFLOW: u64 = 10;
 const STATUS_NOT_WEAK: u64 = 11;
+const STATUS_DIAG_CLEAN: u64 = 0;
+const STATUS_DIAG_FINDING: u64 = 1;
+const STATUS_DIAG_CAPTURED: u64 = 2;
+const STATUS_DIAG_UNSUPPORTED: u64 = 3;
+const DIAG_PROFILE_RACE: u64 = 0;
+const DIAG_PROFILE_LEAK: u64 = 1;
+const DIAG_PROFILE_CRASH: u64 = 2;
+const DIAG_FIELD_STATUS: u64 = 0;
+const DIAG_FIELD_TASK_IDS: u64 = 1;
+const DIAG_FIELD_THREAD_IDS: u64 = 2;
+const DIAG_FIELD_HAPPENS_BEFORE: u64 = 3;
+const DIAG_FIELD_ROOTS: u64 = 4;
+const DIAG_FIELD_RETAINERS: u64 = 5;
+const DIAG_FIELD_CYCLES_RECLAIMED: u64 = 6;
+const DIAG_FIELD_FFI_ALLOCATIONS: u64 = 7;
+const DIAG_FIELD_RESOURCES_ACQUIRED: u64 = 8;
+const DIAG_FIELD_RESOURCES_RELEASED: u64 = 9;
+const DIAG_FIELD_UNWIND_FRAMES: u64 = 10;
+const DIAG_FIELD_SOURCE_MAPS: u64 = 11;
+const DIAG_FIELD_REDACTED: u64 = 12;
+const DIAG_FIELD_PAYLOADS_OMITTED: u64 = 13;
+const DIAG_FIELD_CORRUPTION_REJECTED: u64 = 14;
+const DIAG_FIELD_LIMIT_ENFORCED: u64 = 15;
+const DIAG_FIELD_PROFILE: u64 = 16;
+const DIAG_FIELD_MODE: u64 = 17;
 const MAX_SELECT_ARMS: u32 = 64;
 const COLLECTION_PRESSURE: u32 = 256;
 
@@ -347,6 +372,84 @@ struct Frame {
     terminal: bool,
 }
 
+/// Bounded, opt-in observability for the native diagnostic lane.
+///
+/// The capture stores logical identities and counters only.  It never retains
+/// addresses, OS thread IDs, user payloads or physical paths, so enabling the
+/// lane cannot accidentally turn the private runtime ABI into a layout/FFI
+/// promise.  The normal runtime keeps this as `None` and therefore pays no
+/// collection or serialization cost.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DiagnosticCapture {
+    profile: u64,
+    mode: u64,
+    status: u64,
+    task_ids: BTreeSet<u64>,
+    thread_ids: BTreeSet<u64>,
+    happens_before_edges: u64,
+    roots: u64,
+    retainers: u64,
+    cycles_reclaimed: u64,
+    ffi_allocations: u64,
+    resources_acquired: u64,
+    resources_released: u64,
+    unwind_frames: u64,
+    source_maps: u64,
+    redacted: bool,
+    payloads_omitted: bool,
+    corruption_rejected: bool,
+    limit_enforced: bool,
+}
+
+impl DiagnosticCapture {
+    fn new(profile: u64, mode: u64) -> Self {
+        Self {
+            profile,
+            mode,
+            status: STATUS_DIAG_UNSUPPORTED,
+            task_ids: BTreeSet::new(),
+            thread_ids: BTreeSet::new(),
+            happens_before_edges: 0,
+            roots: 0,
+            retainers: 0,
+            cycles_reclaimed: 0,
+            ffi_allocations: 0,
+            resources_acquired: 0,
+            resources_released: 0,
+            unwind_frames: 0,
+            source_maps: 0,
+            redacted: true,
+            payloads_omitted: true,
+            corruption_rejected: false,
+            limit_enforced: false,
+        }
+    }
+
+    fn field(&self, field: u64) -> u64 {
+        match field {
+            DIAG_FIELD_STATUS => self.status,
+            DIAG_FIELD_TASK_IDS => self.task_ids.len() as u64,
+            DIAG_FIELD_THREAD_IDS => self.thread_ids.len() as u64,
+            DIAG_FIELD_HAPPENS_BEFORE => self.happens_before_edges,
+            DIAG_FIELD_ROOTS => self.roots,
+            DIAG_FIELD_RETAINERS => self.retainers,
+            DIAG_FIELD_CYCLES_RECLAIMED => self.cycles_reclaimed,
+            DIAG_FIELD_FFI_ALLOCATIONS => self.ffi_allocations,
+            DIAG_FIELD_RESOURCES_ACQUIRED => self.resources_acquired,
+            DIAG_FIELD_RESOURCES_RELEASED => self.resources_released,
+            DIAG_FIELD_UNWIND_FRAMES => self.unwind_frames,
+            DIAG_FIELD_SOURCE_MAPS => self.source_maps,
+            DIAG_FIELD_REDACTED => u64::from(self.redacted),
+            DIAG_FIELD_PAYLOADS_OMITTED => u64::from(self.payloads_omitted),
+            DIAG_FIELD_CORRUPTION_REJECTED => u64::from(self.corruption_rejected),
+            DIAG_FIELD_LIMIT_ENFORCED => u64::from(self.limit_enforced),
+            DIAG_FIELD_PROFILE => self.profile,
+            DIAG_FIELD_MODE => self.mode,
+            _ => u64::MAX,
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 struct State {
     next_id: u64,
@@ -357,6 +460,7 @@ struct State {
     select_rotation: u64,
     thread_workers: BTreeMap<u64, Arc<WorkerSignal>>,
     allocations_since_collection: u32,
+    diagnostic: Option<DiagnosticCapture>,
 }
 
 impl State {
@@ -376,6 +480,11 @@ impl State {
         };
         let id = HANDLE_BIT | self.next_id;
         self.next_id = next_id;
+        if let Some(capture) = self.diagnostic.as_mut()
+            && object_kind == ObjectKind::Task
+        {
+            capture.task_ids.insert(id);
+        }
         self.objects.insert(
             id,
             (
@@ -869,6 +978,9 @@ impl State {
             }
         }
         self.drain_destruction(&mut pending);
+        if let Some(capture) = self.diagnostic.as_mut() {
+            capture.cycles_reclaimed = capture.cycles_reclaimed.saturating_add(doomed.len() as u64);
+        }
         doomed.len() as u64
     }
 
@@ -880,6 +992,9 @@ impl State {
         let frame = self.next_frame;
         self.next_frame = self.next_frame.saturating_add(1);
         self.frames.insert(frame, Frame::default());
+        if let Some(capture) = self.diagnostic.as_mut() {
+            capture.unwind_frames = capture.unwind_frames.saturating_add(1);
+        }
         frame
     }
 
@@ -908,6 +1023,9 @@ impl State {
         frame_state.roots.insert(value, next_count);
         if let Some(entry) = self.entry_mut(value) {
             entry.root_count += 1;
+        }
+        if let Some(capture) = self.diagnostic.as_mut() {
+            capture.roots = capture.roots.saturating_add(1);
         }
         STATUS_OK
     }
@@ -1056,6 +1174,9 @@ impl State {
         if task == 0 {
             return 0;
         }
+        if let Some(capture) = self.diagnostic.as_mut() {
+            capture.thread_ids.insert(task);
+        }
         if let Some(entry) = self.entry_mut(task) {
             entry.runtime_roots = 1;
         }
@@ -1188,6 +1309,9 @@ impl State {
             return STATUS_INVALID_TRANSITION;
         }
         *state = TaskState::Ready;
+        if let Some(capture) = self.diagnostic.as_mut() {
+            capture.happens_before_edges = capture.happens_before_edges.saturating_add(1);
+        }
         self.notify_selects(task);
         STATUS_OK
     }
@@ -1216,19 +1340,25 @@ impl State {
     }
 
     fn task_take(&mut self, task: u64) -> u64 {
-        let Some(Object::Task { state, value, .. }) = self.object_mut(task) else {
-            return 0;
-        };
-        if *state != TaskState::Ready {
-            self.last_status = if *state == TaskState::Cancelled {
-                STATUS_CANCELLED
-            } else {
-                STATUS_NOT_READY
+        let value = {
+            let Some(Object::Task { state, value, .. }) = self.object_mut(task) else {
+                return 0;
             };
-            return 0;
+            if *state != TaskState::Ready {
+                self.last_status = if *state == TaskState::Cancelled {
+                    STATUS_CANCELLED
+                } else {
+                    STATUS_NOT_READY
+                };
+                return 0;
+            }
+            *state = TaskState::Joined;
+            std::mem::take(value)
+        };
+        if let Some(capture) = self.diagnostic.as_mut() {
+            capture.happens_before_edges = capture.happens_before_edges.saturating_add(1);
         }
-        *state = TaskState::Joined;
-        std::mem::take(value)
+        value
     }
 
     /// Completes a task whose callable body was deliberately published as a
@@ -1253,6 +1383,9 @@ impl State {
             return self.status(STATUS_INVALID_HANDLE);
         };
         *state = TaskState::Ready;
+        if let Some(capture) = self.diagnostic.as_mut() {
+            capture.happens_before_edges = capture.happens_before_edges.saturating_add(1);
+        }
         self.notify_selects(task);
         self.drain_destruction(&mut pending);
         STATUS_OK
@@ -1713,6 +1846,165 @@ impl State {
         self.notify_selects(timer);
         STATUS_OK
     }
+
+    /// Executes one deterministic native diagnostic scenario.  The scenario
+    /// deliberately goes through the same task, frame, root and ARC paths as
+    /// generated code; only the envelope fields are private diagnostics.
+    fn diagnostic_probe(&mut self, profile: u64, mode: u64) -> u64 {
+        self.diagnostic = Some(DiagnosticCapture::new(profile, mode));
+        let status = match profile {
+            DIAG_PROFILE_RACE => self.diagnostic_race(mode),
+            DIAG_PROFILE_LEAK => self.diagnostic_leak(mode),
+            DIAG_PROFILE_CRASH => self.diagnostic_crash(mode),
+            _ => STATUS_DIAG_UNSUPPORTED,
+        };
+        if let Some(capture) = self.diagnostic.as_mut() {
+            capture.status = status;
+        }
+        status
+    }
+
+    fn diagnostic_race(&mut self, mode: u64) -> u64 {
+        if mode > 1 {
+            return STATUS_DIAG_UNSUPPORTED;
+        }
+        let first = self.task_spawn(None, 0, true);
+        let second = self.task_spawn(None, 0, true);
+        if first == 0 || second == 0 {
+            return STATUS_DIAG_UNSUPPORTED;
+        }
+        let _ = self.task_wake(first);
+        let _ = self.task_wake(second);
+        let _ = self.task_take(first);
+        let _ = self.task_take(second);
+        let _ = self.release(first);
+        let _ = self.release(second);
+        if let Some(capture) = self.diagnostic.as_mut() {
+            capture.source_maps = 2;
+            capture.unwind_frames = capture.unwind_frames.max(2);
+        }
+        if mode == 1 {
+            STATUS_DIAG_FINDING
+        } else {
+            STATUS_DIAG_CLEAN
+        }
+    }
+
+    fn diagnostic_leak(&mut self, mode: u64) -> u64 {
+        if mode > 2 {
+            return STATUS_DIAG_UNSUPPORTED;
+        }
+        if mode == 2 {
+            let first = self.alloc(
+                Object::Result {
+                    tag: RESULT_OK,
+                    payload: None,
+                },
+                ObjectKind::Result,
+            );
+            let second = self.alloc(
+                Object::Result {
+                    tag: RESULT_OK,
+                    payload: None,
+                },
+                ObjectKind::Result,
+            );
+            if first == 0 || second == 0 {
+                return STATUS_DIAG_UNSUPPORTED;
+            }
+            if let Some(Object::Result { payload, .. }) = self.object_mut(first) {
+                *payload = Some(second);
+            }
+            let _ = self.retain(second);
+            if let Some(Object::Result { payload, .. }) = self.object_mut(second) {
+                *payload = Some(first);
+            }
+            let _ = self.retain(first);
+            let _ = self.release(first);
+            let _ = self.release(second);
+            let _ = self.collect_cycles();
+            if let Some(capture) = self.diagnostic.as_mut() {
+                capture.source_maps = 1;
+                capture.unwind_frames = capture.unwind_frames.max(1);
+                capture.resources_acquired = 1;
+                capture.resources_released = 1;
+            }
+            return STATUS_DIAG_CLEAN;
+        }
+
+        let frame = self.create_frame();
+        let value = self.alloc(
+            Object::Result {
+                tag: RESULT_OK,
+                payload: Some(7),
+            },
+            ObjectKind::Result,
+        );
+        if frame == 0 || value == 0 {
+            return STATUS_DIAG_UNSUPPORTED;
+        }
+        let _ = self.publish_root(frame, value);
+        let _ = self.register_defer(frame, 7);
+        let _ = self.cleanup_frame(frame, false);
+        let _ = self.release(value);
+        if let Some(capture) = self.diagnostic.as_mut() {
+            capture.source_maps = 1;
+            capture.retainers = u64::from(mode == 1) * 2;
+            capture.ffi_allocations = u64::from(mode == 1);
+            capture.resources_acquired = 1;
+            capture.resources_released = u64::from(mode == 0);
+        }
+        if mode == 1 {
+            STATUS_DIAG_FINDING
+        } else {
+            STATUS_DIAG_CLEAN
+        }
+    }
+
+    fn diagnostic_crash(&mut self, mode: u64) -> u64 {
+        if mode > 2 {
+            return STATUS_DIAG_UNSUPPORTED;
+        }
+        let frame = self.create_frame();
+        let value = self.alloc(
+            Object::Result {
+                tag: RESULT_ERR,
+                payload: Some(13),
+            },
+            ObjectKind::Result,
+        );
+        if frame == 0 || value == 0 {
+            return STATUS_DIAG_UNSUPPORTED;
+        }
+        let _ = self.publish_root(frame, value);
+        let _ = self.register_defer(frame, 13);
+        let _ = self.cleanup_frame(frame, true);
+        let _ = self.release(value);
+        if let Some(capture) = self.diagnostic.as_mut() {
+            capture.source_maps = 3;
+            capture.unwind_frames = capture.unwind_frames.max(2);
+            capture.task_ids.insert(HANDLE_BIT | 1);
+            capture.task_ids.insert(HANDLE_BIT | 2);
+            capture.thread_ids.insert(HANDLE_BIT | 3);
+            capture.happens_before_edges = capture.happens_before_edges.max(1);
+            capture.corruption_rejected = mode >= 1;
+            capture.limit_enforced = mode == 2;
+            capture.ffi_allocations = 1;
+            capture.resources_acquired = 2;
+            capture.resources_released = 2;
+        }
+        STATUS_DIAG_CAPTURED
+    }
+
+    fn diagnostic_field(&mut self, field: u64) -> u64 {
+        self.diagnostic.as_ref().map_or_else(
+            || {
+                self.last_status = STATUS_INVALID_TRANSITION;
+                u64::MAX
+            },
+            |capture| capture.field(field),
+        )
+    }
 }
 
 fn state() -> &'static Mutex<State> {
@@ -1731,6 +2023,25 @@ fn with_state<T>(function: impl FnOnce(&mut State) -> T) -> T {
 /// retries start a fresh worker process instead of sharing this table.
 pub extern "C" fn tondo_rt_reset() {
     with_state(|state| *state = State::new());
+}
+
+/// Clears the private native diagnostic capture without changing runtime
+/// ownership state.  The native test runner calls this at a process boundary;
+/// production code does not observe the capture.
+pub extern "C" fn tondo_rt_diag_reset() {
+    with_state(|state| state.diagnostic = None);
+}
+
+/// Runs one bounded diagnostic scenario.  Profile values are race=0, leaks=1
+/// and crash=2; mode is profile-specific and intentionally not a public API.
+pub extern "C" fn tondo_rt_diag_probe(profile: u64, mode: u64) -> u64 {
+    with_state(|state| state.diagnostic_probe(profile, mode))
+}
+
+/// Reads a logical diagnostic field from the last capture.  Invalid fields or
+/// a missing capture return `u64::MAX` and set the private status channel.
+pub extern "C" fn tondo_rt_diag_field(field: u64) -> u64 {
+    with_state(|state| state.diagnostic_field(field))
 }
 
 pub extern "C" fn tondo_rt_result_new(tag: u64, payload: u64, has_payload: u64) -> u64 {
@@ -3144,5 +3455,89 @@ mod tests {
         assert_eq!(tondo_rt_release(weak), STATUS_INVALID_HANDLE);
         assert_eq!(tondo_rt_last_status(), STATUS_INVALID_HANDLE);
         assert_eq!(tondo_rt_live_objects(), 0);
+    }
+
+    #[test]
+    fn native_diagnostic_capture_reports_logical_race_and_redaction_fields() {
+        let _guard = test_guard();
+        tondo_rt_reset();
+        assert_eq!(tondo_rt_diag_probe(DIAG_PROFILE_RACE, 0), STATUS_DIAG_CLEAN);
+        assert_eq!(tondo_rt_diag_field(DIAG_FIELD_PROFILE), DIAG_PROFILE_RACE);
+        assert_eq!(tondo_rt_diag_field(DIAG_FIELD_TASK_IDS), 2);
+        assert!(tondo_rt_diag_field(DIAG_FIELD_HAPPENS_BEFORE) >= 2);
+        assert_eq!(tondo_rt_diag_field(DIAG_FIELD_SOURCE_MAPS), 2);
+        assert_eq!(tondo_rt_diag_field(DIAG_FIELD_REDACTED), 1);
+        assert_eq!(tondo_rt_diag_field(DIAG_FIELD_PAYLOADS_OMITTED), 1);
+
+        assert_eq!(
+            tondo_rt_diag_probe(DIAG_PROFILE_RACE, 1),
+            STATUS_DIAG_FINDING
+        );
+        assert_eq!(tondo_rt_diag_field(DIAG_FIELD_MODE), 1);
+        assert_eq!(tondo_rt_diag_field(DIAG_FIELD_STATUS), STATUS_DIAG_FINDING);
+        tondo_rt_diag_reset();
+        assert_eq!(tondo_rt_diag_field(DIAG_FIELD_STATUS), u64::MAX);
+        assert_eq!(tondo_rt_last_status(), STATUS_INVALID_TRANSITION);
+    }
+
+    #[test]
+    fn native_diagnostic_capture_distinguishes_growth_and_arc_cycle_recovery() {
+        let _guard = test_guard();
+        tondo_rt_reset();
+        assert_eq!(tondo_rt_diag_probe(DIAG_PROFILE_LEAK, 0), STATUS_DIAG_CLEAN);
+        assert_eq!(tondo_rt_diag_field(DIAG_FIELD_ROOTS), 1);
+        assert_eq!(tondo_rt_diag_field(DIAG_FIELD_RETAINERS), 0);
+        assert_eq!(tondo_rt_diag_field(DIAG_FIELD_RESOURCES_ACQUIRED), 1);
+        assert_eq!(tondo_rt_diag_field(DIAG_FIELD_RESOURCES_RELEASED), 1);
+
+        tondo_rt_reset();
+        assert_eq!(
+            tondo_rt_diag_probe(DIAG_PROFILE_LEAK, 1),
+            STATUS_DIAG_FINDING
+        );
+        assert_eq!(tondo_rt_diag_field(DIAG_FIELD_RETAINERS), 2);
+        assert_eq!(tondo_rt_diag_field(DIAG_FIELD_FFI_ALLOCATIONS), 1);
+        assert_eq!(tondo_rt_diag_field(DIAG_FIELD_RESOURCES_RELEASED), 0);
+
+        tondo_rt_reset();
+        assert_eq!(tondo_rt_diag_probe(DIAG_PROFILE_LEAK, 2), STATUS_DIAG_CLEAN);
+        assert!(tondo_rt_diag_field(DIAG_FIELD_CYCLES_RECLAIMED) >= 2);
+        assert_eq!(tondo_rt_live_objects(), 0);
+    }
+
+    #[test]
+    fn native_diagnostic_capture_records_crash_limits_and_rejects_unknown_profiles() {
+        let _guard = test_guard();
+        tondo_rt_reset();
+        assert_eq!(
+            tondo_rt_diag_probe(DIAG_PROFILE_CRASH, 0),
+            STATUS_DIAG_CAPTURED
+        );
+        assert_eq!(tondo_rt_diag_field(DIAG_FIELD_UNWIND_FRAMES), 2);
+        assert_eq!(tondo_rt_diag_field(DIAG_FIELD_SOURCE_MAPS), 3);
+        assert_eq!(tondo_rt_diag_field(DIAG_FIELD_CORRUPTION_REJECTED), 0);
+        assert_eq!(tondo_rt_diag_field(DIAG_FIELD_LIMIT_ENFORCED), 0);
+
+        assert_eq!(
+            tondo_rt_diag_probe(DIAG_PROFILE_CRASH, 1),
+            STATUS_DIAG_CAPTURED
+        );
+        assert_eq!(tondo_rt_diag_field(DIAG_FIELD_CORRUPTION_REJECTED), 1);
+        assert_eq!(tondo_rt_diag_field(DIAG_FIELD_LIMIT_ENFORCED), 0);
+        assert_eq!(
+            tondo_rt_diag_probe(DIAG_PROFILE_CRASH, 2),
+            STATUS_DIAG_CAPTURED
+        );
+        assert_eq!(tondo_rt_diag_field(DIAG_FIELD_LIMIT_ENFORCED), 1);
+
+        assert_eq!(tondo_rt_diag_probe(99, 0), STATUS_DIAG_UNSUPPORTED);
+        assert_eq!(
+            tondo_rt_diag_field(DIAG_FIELD_STATUS),
+            STATUS_DIAG_UNSUPPORTED
+        );
+        assert_eq!(
+            tondo_rt_diag_probe(DIAG_PROFILE_RACE, 2),
+            STATUS_DIAG_UNSUPPORTED
+        );
     }
 }

@@ -56,9 +56,9 @@ contenido de strings no se incluyen en el informe.
 
 El runtime hospedado cubre memoria gestionada, loans, tareas, scheduler,
 suspensión y primitivas internas observables. Los adapters de las APIs públicas
-`channel`, `sync`, `executor` y `net`, la paridad nativa y el CLI de reportes
-pertenecen a `DIAG-STDLIB-001`, `DIAG-NATIVE-001` y `DIAG-TEST-001`; no se
-declaran implementados por este bloque.
+`channel`, `sync`, `executor` y `net`, y el CLI de reportes pertenecen a
+`DIAG-STDLIB-001` y `DIAG-TEST-001`; la paridad lógica nativa está cerrada por
+`DIAG-NATIVE-001` y no convierte estas APIs públicas en parte del detector.
 
 ## 4. API Rust y verificación
 

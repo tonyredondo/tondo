@@ -3,9 +3,9 @@
 - Status: Proposed — selection pending measured evidence
 - Date: 2026-08-25
 - Supersedes: none
-- Next decisions: `DIAG-NATIVE-001` (`ARC-001` ownership/terminal cleanup and
-  `ARC-002` cycle/weak semantics are closed; minimum `NATIVE-002` lowering is
-  closed)
+- Next decisions: `NATIVE-STD-CORE-001` (`DIAG-NATIVE-001` native logical
+  diagnostic parity is closed; backend selection remains pending measured
+  evidence)
 
 ## Context
 
@@ -98,7 +98,8 @@ The following are acceptance conditions, not optional future observations:
 - source maps, unwind, task/thread identity, memory/GC hooks and redaction are
   preserved;
 - `DIAG-NATIVE-001` proves race/leak/crash behavior or marks the target
-  explicitly limited and excludes it from N1;
+  explicitly limited and excludes it from N1; its eight-case Cranelift/LLVM
+  envelope parity is now closed for the current target;
 - repeated compile/runtime/memory/size measurements use the existing identity,
   bounds and sample protocol;
 - native artifacts and publication remain deterministic and path-free.

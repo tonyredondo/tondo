@@ -33,7 +33,7 @@ expect_failure stale-next "$tmp/stale-next.json"
 jq '.corpus.arc_001_cases = .corpus.arc_001_cases[0:6]' testing/native-arc.json > "$tmp/missing-case.json"
 expect_failure missing-case "$tmp/missing-case.json"
 
-jq '.status = "closed" | .implemented_blocks = ["ARC-001", "ARC-002"] | .pending_blocks = [] | .next_blocks = ["DIAG-NATIVE-001"] | .corpus.arc_002_cases = .corpus.arc_002_cases[0:2]' testing/native-arc.json > "$tmp/missing-cycle-case.json"
+jq '.status = "closed" | .implemented_blocks = ["ARC-001", "ARC-002"] | .pending_blocks = [] | .next_blocks = ["NATIVE-STD-CORE-001"] | .corpus.arc_002_cases = .corpus.arc_002_cases[0:2]' testing/native-arc.json > "$tmp/missing-cycle-case.json"
 expect_failure missing-cycle-case "$tmp/missing-cycle-case.json"
 
 scripts/native-arc-check.sh >/dev/null

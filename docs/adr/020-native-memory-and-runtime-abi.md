@@ -35,8 +35,9 @@ stable by this decision.
 the private native runtime: checked local/shared counts, payload-edge
 transfer, root and scope cleanup, select registration ownership, worker
 terminal pins, trial-deletion cycle reclamation, and linearizable weak
-upgrades. Native diagnostic parity remains the separate `DIAG-NATIVE-001`
-frontier.
+upgrades. Native diagnostic parity is closed by the separate
+`DIAG-NATIVE-001` gate; target-specific physical capture remains capability
+gated.
 
 ## Consequences
 

@@ -45,5 +45,5 @@
     "target/reliability/evidence/native-evaluation.json",
     "target/reliability/evidence/native-evaluation-runner.json"
   ],
-  "next_blocks": ["DIAG-NATIVE-001"]
+  "next_blocks": ["NATIVE-STD-CORE-001"]
 }

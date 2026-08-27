@@ -26,6 +26,8 @@ jq -e '
   and .debug_report_field == "debug_metadata"
   and .thread_report_field == "native_thread_runs"
   and .lowering_report_field == "native_lowering_runs"
+  and .diagnostic_report_field == "native_diagnostics"
+  and .diagnostic_phase == "DIAG-NATIVE-001"
   and .lowering_case == "deferred-task-call"
   and .oracle == "bytecode-vm-scalar-and-managed-result-oracle"
   and .candidates == ["cranelift", "llvm"]
@@ -64,6 +66,12 @@ grep -Fq 'native_thread_runs' tools/native-evaluation/src/main.rs \
     || die "adapter does not report native thread results"
 grep -Fq 'native_lowering_runs' tools/native-evaluation/src/main.rs \
     || die "adapter does not report coordinated lowering results"
+grep -Fq 'native_diagnostics' tools/native-evaluation/src/main.rs \
+    || die "adapter does not report native diagnostics"
+grep -Fq 'run_native_diagnostics_probe' tools/native-evaluation/src/main.rs \
+    || die "adapter has no native diagnostics probe"
+grep -Fq 'tondo_rt_diag_field' tools/native-evaluation/src/main.rs \
+    || die "adapter does not expose diagnostic fields"
 grep -Fq 'tondo_rt_task_complete' tools/native-evaluation/src/main.rs \
     || die "adapter does not expose deferred task completion"
 grep -Fq 'std::thread::Builder' crates/tondo-native-runtime/src/lib.rs \

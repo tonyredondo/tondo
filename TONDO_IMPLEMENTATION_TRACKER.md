@@ -20,10 +20,12 @@ detection, detección de retención/leaks y crash dumps conservan una única
 frontera compilador/runtime/CLI, con evidencia por intento y paridad VM/native.
 `DIAG-SPEC-001` es el prerrequisito explícito de la evaluación nativa y
 `DIAG-RUNTIME-001` ya cerró la instrumentación interna de la VM hosted;
-`RACE-001` ya cerró el detector hosted sobre esa traza, mientras que los
-detectores restantes y la paridad native siguen siendo bloques separados.
+`RACE-001`, `LEAK-001`, `DUMP-001` y `DIAG-TEST-001` ya cerraron sus lanes
+hosted; `DIAG-CI-001` y `DIAG-NATIVE-001` también están cerrados, con paridad
+lógica ejecutable entre Cranelift y LLVM. La captura de señales físicas sigue
+siendo una capacidad declarada por target.
 
-**Última actualización:** 2026-08-25
+**Última actualización:** 2026-08-27
 
 **Especificaciones normativas:**
 
@@ -115,8 +117,9 @@ selección pendiente hasta medir candidatos reales; la slice de selección
 runtime se cerró en `NATIVE-SELECT-001`, el adaptador común ya está cerrado en
 `NATIVE-BACKEND-ADAPTER-001` y `NATIVE-002` ya cerró la coordinación mínima de
 lowering. `ARC-001` y `ARC-002` ya cerraron ownership, cleanup, ciclos y weak
-refs en el runtime nativo; la siguiente frontera es `DIAG-NATIVE-001`;
-`NATIVE-THREAD-001` ya cerró la lane física de workers OS.
+refs en el runtime nativo; `DIAG-NATIVE-001` ya cerró la paridad lógica de
+diagnóstico; `NATIVE-THREAD-001` ya cerró la lane física de workers OS. La
+siguiente frontera de implementación nativa es `NATIVE-STD-CORE-001`.
 FUZZ está promovido para los 22 owners; la distribución está promovida y el
 seal S1A está cerrado como bundle técnico del draft, sin sobreafirmar G5, N1,
 TLF ni una publicación.
@@ -748,17 +751,17 @@ no una promesa de implementación ya cerrada:
 |---|---:|---|---|
 | `DIAG-SPEC-001` | P0 | Profiles, envelope, dumps, identidad, privacidad, límites y CLI | Contrato cerrado; runtime D1 separado |
 | `DIAG-RUNTIME-001` | P0 | Eventos de memoria/sync, task/thread registry, roots/retainers, recursos, source maps, scheduler y quiescencia en VM hosted | Implementado; registro y contrato D1 cerrados |
-| `RACE-001` | P0 | Race detector dinámico con happens-before, stacks y corpus positivo/negativo | Implementado en VM hosted; adapters públicos/native pendientes |
-| `LEAK-001` | P0 | Retención GC, recursos afines, FFI y snapshots de crecimiento | Implementado en VM hosted; paridad native/stdlib pendiente |
-| `DUMP-001` | P0 | Captura lógica `.tdump`, redacción y analizador human/JSON | Implementado VM hosted; captura nativa pendiente |
+| `RACE-001` | P0 | Race detector dinámico con happens-before, stacks y corpus positivo/negativo | Implementado en VM hosted; paridad lógica nativa cerrada; adapters públicos pendientes |
+| `LEAK-001` | P0 | Retención GC, recursos afines, FFI y snapshots de crecimiento | Implementado en VM hosted; paridad lógica nativa cerrada; adapters públicos pendientes |
+| `DUMP-001` | P0 | Captura lógica `.tdump`, redacción y analizador human/JSON | Implementado VM hosted; paridad lógica nativa cerrada; señal física por target |
 | `DIAG-TEST-001` | P0 | Intentos aislados, retries, shards, artifacts JSON/JUnit | Implementado VM hosted |
 | `DIAG-CI-001` | P0 | Lanes, fuzzing, budgets y promotion gate | Implementado hosted; workflow opt-in promovida |
+| `DIAG-NATIVE-001` | P0 | Paridad ejecutable de envelopes entre Cranelift y LLVM | Cerrado; ocho casos, redacción, ARC, FFI, recursos, unwind, source maps, corrupción y límites |
 
-`DIAG-SPEC-001` y `DIAG-RUNTIME-001` bloquean `NATIVE-001`. `RACE-001` y
-`LEAK-001` y `DUMP-001` están cerrados en VM hosted; sus resultados cuentan con
-evidencia de lane en `DIAG-CI-001`. El backend nativo tiene que demostrar
-paridad de esos observables o declarar un target limitado antes de entrar en
-Gate N1.
+`DIAG-SPEC-001` y `DIAG-RUNTIME-001` bloquean `NATIVE-001`. `RACE-001`,
+`LEAK-001` y `DUMP-001` están cerrados en VM hosted; `DIAG-NATIVE-001` demuestra
+la paridad lógica ejecutable en ambos candidatos y conserva la declaración
+explícita de capacidades físicas por target antes de entrar en Gate N1.
 
 ### 4.2 Mapa de cobertura del spec
 
@@ -5475,8 +5478,8 @@ pueden retrasar el primer backend correcto.
   son las fronteras runtime-facing B0; `NATIVE-001` sigue en evaluación después
   de la compuerta de diagnóstico y el adaptador común ya está cerrado;
   la lane física de `NATIVE-THREAD-001` y `NATIVE-002` están cerradas;
-  `ARC-001` y `ARC-002` están cerrados y la siguiente frontera es
-  `DIAG-NATIVE-001`.
+  `ARC-001`, `ARC-002` y `DIAG-NATIVE-001` están cerrados y la siguiente
+  frontera es `NATIVE-STD-CORE-001`.
 
 - [x] **DIAG-SPEC-001 — Cerrar el contrato unificado de diagnóstico dinámico.**
   Fijar profiles `race`, `leaks` y `crash`, el envelope
@@ -5487,9 +5490,9 @@ pueden retrasar el primer backend correcto.
   en `std`. El registro `testing/diagnostic-tooling.json`, los checks
   `scripts/diagnostic-contract-check.sh`/`diagnostic-contract-test.sh`, el
   contrato y RFC congelan la superficie y sus negativos; la instrumentación
-  VM hosted queda implementada en `DIAG-RUNTIME-001`; el detector hosted de
-  races está cerrado en `RACE-001` y los detectores restantes siguen siendo
-  bloques posteriores.
+  VM hosted queda implementada en `DIAG-RUNTIME-001`; los detectores hosted
+  están cerrados en `RACE-001`, `LEAK-001`, `DUMP-001` y `DIAG-TEST-001`, y su
+  paridad lógica nativa queda cerrada por `DIAG-NATIVE-001`.
 
 - [x] **DIAG-RUNTIME-001 — Exponer instrumentación interna verificable.**
   Después de los contratos runtime-facing B0, la VM hosted registra task/thread
@@ -5517,8 +5520,9 @@ pueden retrasar el primer backend correcto.
   locales, determinismo y límites; la evidencia está en
   `testing/diagnostic-race.json`, `docs/contracts/diagnostic-race.md` y
   `scripts/diagnostic-race-{check,test}.sh`. El alcance es la VM hosted y las
-  primitivas internas; adapters públicos channel/sync/executor/net y paridad
-  native siguen en `DIAG-STDLIB-001`/`DIAG-NATIVE-001`.
+  primitivas internas; adapters públicos channel/sync/executor/net siguen en
+  `DIAG-STDLIB-001` y la paridad lógica nativa está cerrada en
+  `DIAG-NATIVE-001`.
 
 - [x] **LEAK-001 — Implementar el detector de retención y recursos.** La VM
   hosted consume snapshots de roots/retainers cerrados por quiescencia y separa
@@ -5532,8 +5536,8 @@ pueden retrasar el primer backend correcto.
   `crates/tondo-vm/src/runtime/leak.rs`,
   `testing/diagnostic-leak.json`,
   `docs/contracts/diagnostic-leak.md` y
-  `scripts/diagnostic-leak-{check,test}.sh`; ARC/ciclos/FFI nativos reales se
-  validan después en `DIAG-NATIVE-001`.
+  `scripts/diagnostic-leak-{check,test}.sh`; ARC/ciclos/FFI nativos reales y
+  sus envelopes comparables quedan cubiertos por `DIAG-NATIVE-001`.
 
 - [x] **DUMP-001 — Implementar crash dumps y analizador lógico hosted.** El
   writer `DumpArtifact` captura un `.tdump` versionado con razón,
@@ -5542,8 +5546,9 @@ pueden retrasar el primer backend correcto.
   source-maps/retainers opcionales. El envelope canónico está content-addressed
   con SHA-256, aplica redacción por defecto, rechaza formatos/secciones/hashes
   corruptos y el CLI `tondo dump analyze` ofrece vistas human/JSON offline.
-  Registros físicos, unwind de plataforma y la ruta async-signal-safe quedan
-  explícitamente en `DIAG-NATIVE-001`.
+  Registros físicos y la ruta async-signal-safe se declaran por target; la
+  paridad lógica de dump, unwind/source-map summary, redacción, corrupción y
+  límites queda cerrada en `DIAG-NATIVE-001`.
 
 - [x] **DIAG-TEST-001 — Integrar perfiles en `tondo test`.** `--diagnostics`
   acepta únicamente `race`, `leaks`, `crash` o `all`; cada retry, repeat,
@@ -5578,9 +5583,10 @@ pueden retrasar el primer backend correcto.
   El probe incluye además `tondo-mir-backend/1`, con ordinales, operandos y
   terminadores del MIR real. El carril rápido `tondo-native-evaluation-fast/1`
   conecta esa forma común a Cranelift y `llc`, captura tres muestras por
-  fixture de compile-time y code-size y deja runtime/memoria/semántica como
-  pendientes. No selecciona backend, no actualiza baselines y no afirma Gate
-  N1. La
+  fixture de compile-time y code-size; el runner separado añade evidencia
+  ejecutable acotada de runtime, ownership, async, threads, select y
+  diagnóstico, pero el runtime/memoria/semántica completos siguen pendientes.
+  No selecciona backend, no actualiza baselines y no afirma Gate N1. La
   evidencia vive en `docs/contracts/native-evaluation.md`,
   `testing/native-evaluation.json`, `testing/native-evaluation-fast.json`,
   `scripts/native-evaluation-{check,test}.sh`,
@@ -5588,9 +5594,10 @@ pueden retrasar el primer backend correcto.
   `scripts/native-evaluation-fast.sh`, `tools/native-evaluation/`,
   `scripts/native-evaluation.sh`, `docs/adr/019-native-backend-selection.md`
   y los informes bajo `target/reliability/evidence/`. El adaptador común está
-  cerrado en `NATIVE-BACKEND-ADAPTER-001`; `NATIVE-THREAD-001` y `NATIVE-002`
-  están cerrados; `ARC-001` y `ARC-002` están cerrados y la siguiente frontera
-  de implementación es `DIAG-NATIVE-001`.
+  cerrado en `NATIVE-BACKEND-ADAPTER-001`; `NATIVE-THREAD-001`, `NATIVE-002`,
+  `ARC-001`, `ARC-002` y `DIAG-NATIVE-001` están cerrados. La evaluación de
+  candidatos, el ranking de rendimiento y Gate N1 siguen pendientes; la
+  siguiente frontera de implementación nativa es `NATIVE-STD-CORE-001`.
 
 - [x] **NATIVE-BACKEND-ADAPTER-001 — Sustituir el smoke adapter por lowering
   real común.** La primera slice ya consume `tondo-mir-backend/1` desde el MIR
@@ -5611,8 +5618,8 @@ pueden retrasar el primer backend correcto.
   sigue midiendo solo compile-time/code-size y la selección de backend continúa
   bloqueada hasta completar sus dimensiones N1. La evidencia física de
   `NATIVE-THREAD-001` y la coordinación mínima de `NATIVE-002` están cerradas;
-  `ARC-001` y `ARC-002` están cerrados y el siguiente bloque de implementación
-  es `DIAG-NATIVE-001`.
+  `ARC-001`, `ARC-002` y `DIAG-NATIVE-001` están cerrados. El siguiente bloque
+  de implementación es `NATIVE-STD-CORE-001`.
 
 - [x] **NATIVE-MEM-ADR-001 — Cerrar DEC-014 antes de la ABI.** La decisión
   queda cerrada como `hybrid-arc-cycle-collector`: contadores no atómicos para
@@ -5624,7 +5631,8 @@ pueden retrasar el primer backend correcto.
   negativos están en `docs/contracts/native-memory.md`,
   `testing/native-memory.json`, `crates/tondo-compiler/src/toolchain.rs` y
   `scripts/native-memory-{check,test}.sh`; la instrumentación del runtime y la
-  paridad native/VM siguen siendo gates de `DIAG-NATIVE-001` y de los leaves.
+  paridad lógica native/VM están cerradas por `DIAG-NATIVE-001`; la capacidad
+  física por target y los leaves de stdlib siguen pendientes.
 
 - [x] **NATIVE-ABI-001 — Definir una ABI runtime interna y versionada.**
   `tondo-native-runtime-abi/1` fija la calling convention de direct calls
@@ -5768,13 +5776,22 @@ pueden retrasar el primer backend correcto.
   `arc-rooted-cycle-preservation`, `arc-cycle-pressure-and-quiescence` y
   `arc-weak-upgrade-linearization`.
 
-- [ ] **DIAG-NATIVE-001 — Demostrar paridad nativa de diagnóstico.** Después de
-  `NATIVE-002` y `ARC-002`, con `NATIVE-THREAD-001` ya cerrado, ejecutar el corpus de
-  race/leaks/dumps contra el backend real. Verificar IDs de task/thread,
-  happens-before, roots/retainers ARC, ciclos, allocations FFI privilegiadas,
+- [x] **DIAG-NATIVE-001 — Demostrar paridad nativa de diagnóstico.** Cerrado
+  después de `NATIVE-002` y `ARC-002`, con `NATIVE-THREAD-001` ya cerrado. El
+  runner `scripts/native-diagnostics.sh` ejecuta el corpus contra objetos y
+  procesos reales de Cranelift y LLVM, tomando los contratos hosted como oracle
+  y comparando exactamente el envelope portable `tondo-diagnostic-report/1`.
+  Los ocho casos (`race-conflict`, `race-clean`, `leak-growth`, `leak-clean`,
+  `arc-cycle-reclaimed`, `crash-dump`, `crash-corruption-rejected` y
+  `crash-limit-enforced`) verifican IDs lógicos de task/thread,
+  happens-before, roots/retainers ARC, ciclos recuperados, allocations FFI,
   ledger de recursos, unwind, source maps, redacción, corrupción y límites.
-  Comparar el envelope portable con la VM sin exigir layouts o stacks físicos
-  idénticos. Este bloque es prerrequisito de la conformidad N1.
+  `testing/native-diagnostics.json` y `docs/contracts/native-diagnostics.md`
+  fijan la ABI privada, el reporte y los negativos; `native_diagnostics` en
+  `target/reliability/evidence/native-evaluation-runner.json` conserva la
+  evidencia de ambos backends. No se exigen layouts o stacks físicos idénticos,
+  y una captura de señal física solo se declara cuando el target la soporta.
+  El siguiente bloque es `NATIVE-STD-CORE-001`.
 
 - [ ] **NATIVE-STD-CORE-001 — Implementar la frontera Core de STD-0.1A.** Los
   valores, ownership, errores y protocolos portables observan la misma API que
@@ -6981,9 +6998,9 @@ gates en una barrera artificial.
     metadatos `suspends` con hash estable, `Join` transferible, one-shot,
     inferencia en `defer` y el único `for` sobre `AsyncIterator`. `async` es un
     identificador ordinario; no hay fixtures ni adapters de compatibilidad.
-    `ASYNC-ITER-EXT-001` continúa como leaf explícita; `NATIVE-THREAD-001` y
-    `NATIVE-002`, `ARC-001` y `ARC-002` están cerradas y la siguiente frontera
-    nativa es `DIAG-NATIVE-001`.
+    `ASYNC-ITER-EXT-001` continúa como leaf explícita; `NATIVE-THREAD-001`,
+    `NATIVE-002`, `ARC-001`, `ARC-002` y `DIAG-NATIVE-001` están cerradas y la
+    siguiente frontera nativa es `NATIVE-STD-CORE-001`.
 
 #### Evidencia de Wave 4.5
 
@@ -7069,11 +7086,11 @@ Esta tabla es la fuente de reconciliación del estado actual.
     los detectores de M11. Mini-gate: DEC-013/014 reciben requisitos completos sin
     implementar todavía STD-0.1B.
 28. [ ] **Wave 7 — M11 correcto antes que optimizado.** Con Wave 6 cerrada y
-    `DUMP-001` y `DIAG-TEST-001` cerrados en VM hosted, continuar
+    `DUMP-001`, `DIAG-TEST-001` y `DIAG-NATIVE-001` cerrados, continuar
     `NATIVE-BACKEND-ADAPTER-001` (cerrado) → `NATIVE-MEM-ADR-001` →
     `NATIVE-ABI-001` → leaves `NATIVE-LOWER-*` → `NATIVE-THREAD-001` (cerrado) →
     NATIVE-SELECT-001 (cerrado) → NATIVE-002 (cerrado) → ARC-001 (cerrado) → ARC-002 (cerrado) →
-    NATIVE-STD-CORE/HOSTED → NATIVE-STD-001 →
+    DIAG-NATIVE-001 (cerrado) → NATIVE-STD-CORE/HOSTED → NATIVE-STD-001 →
     NATIVE-LINK-001 → NATIVE-CLI-001 → leaves NATIVE-CONF-* → NATIVE-CONF-001 /
     NATIVE-DIFF-001 → targets → NATIVE-REL-001`. Cerrar Gate N1.
 29. [ ] **Wave 8 — Completar STD-0.1B y candidato 0.1.** Terminar specs B,

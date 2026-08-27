@@ -37,9 +37,9 @@ kind se mantienen opacos; cada finding conserva owner, primer/último evento y
 stack de adquisición cuando el runtime lo conoce.
 
 Los recursos cuyo kind identifica explícitamente una frontera `ffi`, `native`
-o `allocation` se clasifican como `NativeAllocation`. Esta clasificación no
-afirma paridad con ARC/FFI del backend nativo: la implementación de esos hooks
-pertenece a `DIAG-NATIVE-001`. Recursos liberados no producen findings.
+o `allocation` se clasifican como `NativeAllocation`. La paridad lógica de esos
+hooks con ARC/FFI del backend nativo se verifica en `DIAG-NATIVE-001`; recursos
+liberados no producen findings.
 
 ## 3. Quiescencia, límites y fallo cerrado
 
@@ -87,6 +87,6 @@ quiescencia ausente, truncado, límites y determinismo. El registro
 machine-readable y sus negativos están en `testing/diagnostic-leak.json`,
 `scripts/diagnostic-leak-check.sh` y `scripts/diagnostic-leak-test.sh`.
 
-La paridad nativa, los adapters de `channel`/`sync`/`executor`/`net` y la
-integración por intento del CLI permanecen en `DIAG-NATIVE-001`,
+La paridad lógica nativa está cerrada en `DIAG-NATIVE-001`; los adapters de
+`channel`/`sync`/`executor`/`net` y la integración por intento del CLI siguen en
 `DIAG-STDLIB-001` y `DIAG-TEST-001` respectivamente.

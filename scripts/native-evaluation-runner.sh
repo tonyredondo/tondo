@@ -117,6 +117,24 @@ jq -e '
   and ([.native_thread_runs[] | select(.case == "thread-worker-join" and .expected_result == 94 and .cranelift == "passed" and .llvm == "passed")] | length == 1)
   and ([.native_thread_runs[] | select(.case == "thread-worker-cancel" and .expected_result == 2 and .cranelift == "passed" and .llvm == "passed")] | length == 1)
   and ([.native_lowering_runs[] | select(.case == "deferred-task-call" and .function_ordinal == 1 and .pending_before_join == 0 and .result_after_join == 42 and .joined_after_join == 3 and .cranelift == "passed" and .llvm == "passed")] | length == 1)
+  and .native_diagnostics.format == "tondo-native-diagnostics/1"
+  and .native_diagnostics.phase == "DIAG-NATIVE-001"
+  and .native_diagnostics.status == "passed"
+  and .native_diagnostics.oracle == "hosted-diagnostic-contract-fixtures"
+  and .native_diagnostics.backends == ["cranelift", "llvm"]
+  and ([.native_diagnostics.cases[].case] == [
+    "race-conflict", "race-clean", "leak-growth", "leak-clean",
+    "arc-cycle-reclaimed", "crash-dump", "crash-corruption-rejected",
+    "crash-limit-enforced"
+  ])
+  and all(.native_diagnostics.cases[];
+    .cranelift == "passed"
+    and .llvm == "passed"
+    and .envelope.format == "tondo-diagnostic-report/1"
+    and (.envelope.status | IN("clean", "finding", "captured", "unsupported"))
+    and .envelope.redacted == true
+    and .envelope.payloads_omitted == true
+  )
 ' "$report" >/dev/null || die "runner report did not prove native execution"
 
 ! grep -Fq "$root" "$report" || die "runner report leaked a physical workspace path"

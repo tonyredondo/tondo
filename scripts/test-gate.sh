@@ -99,6 +99,10 @@ run_step diagnostic-ci-contract \
     scripts/diagnostic-ci-check.sh
 run_step diagnostic-ci-contract-tests \
     scripts/diagnostic-ci-test.sh
+run_step diagnostic-native-contract \
+    scripts/native-diagnostics-check.sh
+run_step diagnostic-native-contract-tests \
+    scripts/native-diagnostics-test.sh
 run_step stdlib-async-group-contract \
     scripts/stdlib-async-group-check.sh
 run_step stdlib-async-group-contract-tests \
