@@ -18,7 +18,7 @@
       "profile": "release",
       "capabilities": ["clock", "console", "filesystem", "process"],
       "backends": ["cranelift", "llvm"],
-      "smoke_fixture": "tests/native/native-link-001.c",
+      "smoke_fixture": "testing/native/native-link-001.c",
       "artifact_kind": "executable"
     }
   ],

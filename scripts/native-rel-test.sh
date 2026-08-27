@@ -18,7 +18,7 @@ build_package() {
     mkdir -p "$stage/bin" "$stage/metadata"
     "$cc" -std=c11 -O2 -Wl,--build-id=none \
         -ffile-prefix-map="$root"=. -fdebug-prefix-map="$root"=. \
-        tests/native/native-link-001.c -o "$stage/bin/tondo"
+        testing/native/native-link-001.c -o "$stage/bin/tondo"
     local binary_hash runtime_hash stdlib_hash target_hash
     binary_hash="$(sha256sum "$stage/bin/tondo" | cut -d ' ' -f1)"
     runtime_hash="$(sha256sum crates/tondo-native-runtime/src/lib.rs | cut -d ' ' -f1)"

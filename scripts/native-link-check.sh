@@ -18,7 +18,7 @@ jq -e '
   and .status == "closed"
   and .contract == "docs/contracts/native-link.md"
   and .runner == "scripts/native-link-test.sh"
-  and .fixture == "tests/native/native-link-001.c"
+  and .fixture == "testing/native/native-link-001.c"
   and .inputs == ["testing/native-target-descriptor.json", "testing/native-artifact.json", "testing/native-link-plan.json"]
   and .invocation == {driver:"absolute-executable-resolved-before-invocation",arguments:"ordered-plan-tokens-only",inputs:"ordered-hash-verified-materialized-paths",output:"validated-product-path"}
   and .reproducibility == {workspaces:2,comparison:"sha256-of-product-bytes",undeclared_inputs:"rejected"}
@@ -27,7 +27,7 @@ jq -e '
   and .next_blocks == ["NATIVE-CLI-001"]
 ' "$contract" >/dev/null || die "invalid native link contract"
 
-for path in docs/contracts/native-link.md scripts/native-link-test.sh tests/native/native-link-001.c; do
+for path in docs/contracts/native-link.md scripts/native-link-test.sh testing/native/native-link-001.c; do
     [[ -f "$root/$path" ]] || die "missing native link input: $path"
 done
 for marker in \

@@ -7,7 +7,7 @@
   "status": "closed",
   "contract": "docs/contracts/native-link.md",
   "runner": "scripts/native-link-test.sh",
-  "fixture": "tests/native/native-link-001.c",
+  "fixture": "testing/native/native-link-001.c",
   "inputs": [
     "testing/native-target-descriptor.json",
     "testing/native-artifact.json",

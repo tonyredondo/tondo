@@ -28,7 +28,7 @@ jq -e '
     profile:"release",
     capabilities:["clock","console","filesystem","process"],
     backends:["cranelift","llvm"],
-    smoke_fixture:"tests/native/native-link-001.c",
+    smoke_fixture:"testing/native/native-link-001.c",
     artifact_kind:"executable"
   }
   and .policy == {
@@ -43,7 +43,7 @@ jq -e '
 ' "$contract" >/dev/null || die "invalid target registry"
 
 for path in docs/contracts/native-target.md scripts/native-target-test.sh \
-    testing/native-target-descriptor.json tests/native/native-link-001.c; do
+    testing/native-target-descriptor.json testing/native/native-link-001.c; do
     [[ -f "$root/$path" ]] || die "missing target input: $path"
 done
 for marker in 'physical smoke' 'Cross-compilation' 'x86_64-unknown-linux-gnu' 'ambient'; do

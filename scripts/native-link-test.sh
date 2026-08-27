@@ -21,7 +21,7 @@ for workspace in one two; do
     "$cc" -std=c11 -O2 -Wl,--build-id=none \
         -ffile-prefix-map="$root"=./ \
         -ffile-prefix-map="$dir"=./ \
-        tests/native/native-link-001.c -o "$dir/tondo-native-link"
+        testing/native/native-link-001.c -o "$dir/tondo-native-link"
     "$dir/tondo-native-link" > "$dir/stdout"
     cmp -s "$dir/stdout" <(printf 'tondo-native-link\n')
     [[ "$(stat -c '%s' "$dir/tondo-native-link")" -gt 0 ]]
