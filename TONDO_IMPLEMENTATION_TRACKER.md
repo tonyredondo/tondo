@@ -440,11 +440,14 @@ cantidad de infraestructura necesaria antes del primer programa ejecutable.
   selecciona automáticamente ni se promete ABI FFI pública; `NATIVE-ABI-001`
   ya fija la ABI interna que ambos candidatos deben conservar.
 
-- [ ] **DEC-014 — Gestión de memoria nativa.** `NATIVE-MEM-ADR-001` debe
-  cerrarla antes de ABI y lowering nativos, fijando ownership runtime,
-  atomicidad, weak refs, detección de ciclos, interacción con COW, async,
-  threads, FFI privilegiada, roots/retainers, ledger de recursos y estrategia
-  de verificación de `LEAK-001`.
+- [x] **DEC-014 — Gestión de memoria nativa.** Cerrada por
+  `NATIVE-MEM-ADR-001` antes de la ABI y el lowering nativos: fija ownership
+  runtime, atomicidad, weak refs, detección de ciclos, interacción con COW,
+  async, threads, FFI privilegiada, roots/retainers, ledger de recursos y la
+  estrategia de verificación de `LEAK-001`. La decisión canónica y sus
+  negativos ejecutables están en `docs/contracts/native-memory.md`,
+  `docs/adr/020-native-memory-and-runtime-abi.md`,
+  `testing/native-memory.json` y los gates `scripts/native-memory-{check,test}.sh`.
 
 - [x] **DEC-018 — Diagnóstico dinámico sin APIs paralelas.**
   La decisión acepta una única superficie opt-in para `race`, `leaks` y
