@@ -30,7 +30,7 @@ jq -e '
   and .lane.vm == "single-cooperative-queue-with-deterministic-state"
   and .lane.native == "one-os-worker-lane-per-thread-spawn"
   and .lane.adapter_body_boundary == "lowered-value-is-evaluated-before-current-adapter-handoff"
-  and .lane.deferred_body_lowering == "reserved-for-NATIVE-002"
+  and .lane.deferred_body_lowering == "closed-for-direct-task-calls-by-NATIVE-002"
   and .worker.states == ["starting", "running", "completed", "cancelled"]
   and .worker.identity == "logical-handle-sequence; physical-thread-id-never-exposed"
   and .worker.distinct_thread == "worker-thread-id-differs-from-spawner"
@@ -46,7 +46,7 @@ jq -e '
   and (.corpus.native_cases | index("select-thread-join") != null)
   and (.invariants | length == 6 and unique_values)
   and (.negative_cases | length == 8 and unique_values)
-  and .next_blocks == ["NATIVE-002", "DIAG-NATIVE-001"]
+  and .next_blocks == ["DIAG-NATIVE-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable contract"
 
 for path in \

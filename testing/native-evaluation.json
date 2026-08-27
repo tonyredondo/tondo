@@ -20,7 +20,7 @@
     "selection_status": "pending-measured-evidence",
     "n1_claim": false,
     "native_performance_baseline": "pending-candidate-capture",
-    "next_implementation": "NATIVE-002",
+    "next_implementation": "ARC-001",
     "reasons": [
       "rust-native-integration",
       "deterministic-in-process-toolchain",
@@ -148,8 +148,8 @@
     {"id": "target-support", "status": "required-before-N1"},
     {"id": "correctness", "status": "required-before-N1"},
     {"id": "compile-latency", "status": "fast-lane-measured"},
-    {"id": "runtime", "status": "deferred-until-native-lowering"},
-    {"id": "memory", "status": "deferred-until-native-lowering"},
+    {"id": "runtime", "status": "deferred-until-complete-lowering-and-oracle"},
+    {"id": "memory", "status": "deferred-until-arc-and-native-capture"},
     {"id": "code-size", "status": "fast-lane-measured"},
     {"id": "debugging", "status": "required-before-N1"},
     {"id": "distribution", "status": "required-before-N1"},
@@ -182,5 +182,5 @@
     "missing-diagnostic-dimension",
     "stale-next-block"
   ],
-  "next_blocks": ["NATIVE-002"]
+  "next_blocks": ["ARC-001", "DIAG-NATIVE-001"]
 }

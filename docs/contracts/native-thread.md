@@ -36,14 +36,13 @@ These are compiler/runtime evidence hooks, not source-level functions.
 
 ## Native adapter boundary
 
-The current MIR adapter lowers a `Spawn` operation eagerly: its scalar value
-is computed before the thread handoff. The native runner nevertheless links a
-real `pthread_create`/`pthread_join` worker and verifies status, run count,
-distinct-thread identity, join value and cancellation in both Cranelift and
-LLVM subprocesses. This is deliberately explicit: the block proves the
-physical worker lane and join barrier without claiming that an eager adapter
-has deferred callable-body lowering. Coordinating that deferred body and the
-full native scheduler is `NATIVE-002`.
+The current MIR adapter lowers a `Spawn` operation eagerly for the physical
+thread lane: its scalar value is computed before the thread handoff. The native
+runner nevertheless links a real `pthread_create`/`pthread_join` worker and
+verifies status, run count, distinct-thread identity, join value and
+cancellation in both Cranelift and LLVM subprocesses. `NATIVE-002` adds the
+minimum deferred-body coordinator for direct task calls only; it deliberately
+does not replace this OS-worker barrier or claim the full native scheduler.
 
 The C implementation is a deterministic differential harness used only by the
 opt-in evaluator. It is not the production scheduler and is never a public C

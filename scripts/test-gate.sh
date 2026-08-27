@@ -199,6 +199,10 @@ run_step native-thread-contract \
     scripts/native-thread-check.sh
 run_step native-thread-contract-tests \
     scripts/native-thread-test.sh
+run_step native-lowering-contract \
+    scripts/native-lowering-check.sh
+run_step native-lowering-contract-tests \
+    scripts/native-lowering-test.sh
 run_step stdlib-json-contract \
     scripts/stdlib-json-check.sh
 run_step stdlib-messagepack-contract \

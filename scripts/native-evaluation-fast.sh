@@ -118,7 +118,7 @@ jq -n \
       promotion: {
         selected_backend: null,
         selection_status: "pending-measured-evidence",
-        native_semantics: "pending-native-lowering",
+        native_semantics: "deferred-to-opt-in-runner",
         full_quality_gate: "promotion-only"
       }
     }' > "$evidence_dir/native-evaluation-fast.json"
@@ -129,7 +129,7 @@ jq -e '
     and .status == "passed"
     and .promotion.selected_backend == null
     and .promotion.selection_status == "pending-measured-evidence"
-    and .promotion.native_semantics == "pending-native-lowering"
+    and .promotion.native_semantics == "deferred-to-opt-in-runner"
     and .adapter.format == "tondo-mir-backend/1"
     and .adapter.unsupported_policy == "explicit-trap-and-report"
     and .mir_probe.format == "tondo-native-mir-probe/1"

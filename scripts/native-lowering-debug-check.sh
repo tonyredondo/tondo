@@ -40,7 +40,7 @@ jq -e '
   and ([.native_consumers[]] | length >= 5 and unique_values)
   and ([.tests[]] | length == 4 and unique_values)
   and ([.evidence[]] | length == 2 and unique_values)
-  and .next_blocks == ["NATIVE-002"]
+  and .next_blocks == ["ARC-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable contract"
 
 for path in \

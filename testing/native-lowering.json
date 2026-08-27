@@ -1,0 +1,72 @@
+{
+  "format": "tondo-native-lowering/1",
+  "owner": "toolchain.native_lowering",
+  "edition": "0.1",
+  "task": "NATIVE-002",
+  "status": "closed",
+  "implementation": {
+    "mir": "crates/tondo-compiler/src/mir.rs",
+    "adapter": "tools/native-evaluation/src/main.rs",
+    "runtime": "crates/tondo-native-runtime/src/lib.rs",
+    "runner": "scripts/native-evaluation-runner.sh",
+    "evidence": "target/reliability/evidence/native-evaluation-runner.json",
+    "report_field": "native_lowering_runs"
+  },
+  "input": {
+    "mir_format": "tondo-mir-backend/1",
+    "debug_format": "tondo-mir-debug/1",
+    "oracle": "verified-MIR-and-bytecode-VM",
+    "candidates": ["cranelift", "llvm"]
+  },
+  "slices": [
+    "NATIVE-LOWER-CALLS-001",
+    "NATIVE-LOWER-CONTROL-001",
+    "NATIVE-LOWER-CLEANUP-001",
+    "NATIVE-LOWER-OWNERSHIP-001",
+    "NATIVE-LOWER-ASYNC-001",
+    "NATIVE-LOWER-DEBUG-001",
+    "NATIVE-SELECT-001",
+    "NATIVE-THREAD-001"
+  ],
+  "deferred": {
+    "spawn": "direct-task-call-publishes-pending-before-body",
+    "captures": "immutable-scalar-constants-only",
+    "join": "evaluate-once-complete-then-await-consume",
+    "completion": "tondo_rt_task_complete(task,value)",
+    "pending_state": 0,
+    "joined_state": 3,
+    "unsupported": "explicit-trap-and-report"
+  },
+  "corpus": {
+    "native_cases": ["deferred-task-call"],
+    "required_runtime_cases": 21,
+    "required_select_cases": 8,
+    "required_thread_cases": 5,
+    "fresh_process_per_case": true,
+    "oracle": "same-runtime-state-machine-in-both-candidates"
+  },
+  "invariants": [
+    "one-validated-MIR-input-for-both-candidates",
+    "debug-metadata-validated-before-code-generation",
+    "pending-handle-published-before-deferred-body",
+    "deferred-body-evaluated-at-most-once",
+    "completion-rejects-non-pending-handles",
+    "await-is-the-only-value-consumer",
+    "thread-lane-keeps-its-worker-barrier",
+    "unsupported-storage-fails-closed",
+    "reports-contain-no-physical-paths-or-addresses"
+  ],
+  "negative_cases": [
+    "missing-slice-evidence",
+    "eager-body-before-pending",
+    "mutable-capture-claimed-as-immutable",
+    "double-completion",
+    "completion-after-cancel",
+    "join-without-deferred-handle",
+    "missing-task-complete-abi",
+    "candidate-disagreement",
+    "physical-path-in-report",
+    "premature-n1-claim"
+  ],
+  "next_blocks": ["ARC-001", "DIAG-NATIVE-001"]
+}

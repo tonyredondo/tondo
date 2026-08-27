@@ -116,7 +116,8 @@ jq -e '
   and ([.native_thread_runs[] | select(.case == "thread-worker-distinct" and .expected_result == 1 and .cranelift == "passed" and .llvm == "passed")] | length == 1)
   and ([.native_thread_runs[] | select(.case == "thread-worker-join" and .expected_result == 94 and .cranelift == "passed" and .llvm == "passed")] | length == 1)
   and ([.native_thread_runs[] | select(.case == "thread-worker-cancel" and .expected_result == 2 and .cranelift == "passed" and .llvm == "passed")] | length == 1)
+  and ([.native_lowering_runs[] | select(.case == "deferred-task-call" and .function_ordinal == 1 and .pending_before_join == 0 and .result_after_join == 42 and .joined_after_join == 3 and .cranelift == "passed" and .llvm == "passed")] | length == 1)
 ' "$report" >/dev/null || die "runner report did not prove native execution"
 
 ! grep -Fq "$root" "$report" || die "runner report leaked a physical workspace path"
-echo "native evaluation runner: PASS (Cranelift/LLVM scalar executables; report: ${report#"$root"/})"
+echo "native evaluation runner: PASS (Cranelift/LLVM scalar, runtime and deferred-lowering executables; report: ${report#"$root"/})"

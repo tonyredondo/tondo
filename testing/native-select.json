@@ -82,5 +82,5 @@
     "rollback-after-commit",
     "wake-after-cancel"
   ],
-  "next_blocks": ["NATIVE-002"]
+  "next_blocks": ["ARC-001"]
 }

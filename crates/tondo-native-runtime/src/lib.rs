@@ -603,6 +603,26 @@ impl State {
         *value
     }
 
+    /// Completes a task whose callable body was deliberately published as a
+    /// pending handle. The native lowering evaluates that body at the join
+    /// edge, then commits the value through this single transition so the
+    /// ordinary await/select ownership rules remain unchanged.
+    fn task_complete(&mut self, task: u64, value: u64) -> u64 {
+        let Some(Object::Task {
+            state, value: slot, ..
+        }) = self.object_mut(task)
+        else {
+            return STATUS_INVALID_HANDLE;
+        };
+        if *state != TaskState::Pending {
+            return STATUS_INVALID_TRANSITION;
+        }
+        *slot = value;
+        *state = TaskState::Ready;
+        self.notify_selects(task);
+        STATUS_OK
+    }
+
     fn task_cancel(&mut self, task: u64) -> u64 {
         let Some(Object::Task { state, kind, .. }) = self.object_mut(task) else {
             return STATUS_INVALID_HANDLE;
@@ -1226,6 +1246,13 @@ pub extern "C" fn tondo_rt_task_take(task: u64) -> u64 {
     with_state(|state| state.task_take(task))
 }
 
+/// Publishes the result of a deferred callable body and makes its handle
+/// ready.  This is a private compiler/runtime ABI entry; user code still sees
+/// only `Join`/`await` and never this transition or a native task layout.
+pub extern "C" fn tondo_rt_task_complete(task: u64, value: u64) -> u64 {
+    with_state(|state| state.task_complete(task, value))
+}
+
 pub extern "C" fn tondo_rt_scope_cancel(scope: u64) -> u64 {
     with_state(|state| {
         let Some(Object::Scope { tasks, cancelled }) = state.object(scope).cloned() else {
@@ -1424,6 +1451,25 @@ mod tests {
         assert_eq!(tondo_rt_task_poll(cancelled), 2);
         assert_eq!(tondo_rt_scope_cancel(scope), STATUS_INVALID_TRANSITION);
         assert_eq!(tondo_rt_scope_spawn(scope, 99, 1), 0);
+    }
+
+    #[test]
+    fn deferred_task_body_commits_once_before_the_common_await_transition() {
+        let _guard = test_guard();
+        tondo_rt_reset();
+        let task = tondo_rt_task_spawn(0, 1);
+        assert_eq!(tondo_rt_task_poll(task), 0);
+        assert_eq!(tondo_rt_task_complete(task, 42), STATUS_OK);
+        assert_eq!(tondo_rt_task_poll(task), 1);
+        assert_eq!(tondo_rt_await(task), 42);
+        assert_eq!(tondo_rt_task_poll(task), 3);
+        assert_eq!(tondo_rt_task_complete(task, 99), STATUS_INVALID_TRANSITION);
+        assert_eq!(tondo_rt_await(task), 0);
+        assert_eq!(tondo_rt_last_status(), STATUS_NOT_READY);
+
+        let ready = tondo_rt_task_spawn(7, 0);
+        assert_eq!(tondo_rt_task_complete(ready, 8), STATUS_INVALID_TRANSITION);
+        assert_eq!(tondo_rt_task_cancel(0), STATUS_INVALID_HANDLE);
     }
 
     #[test]

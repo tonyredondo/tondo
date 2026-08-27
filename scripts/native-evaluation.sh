@@ -101,7 +101,7 @@ jq -n \
       },
       oracle: $contract[0].oracle,
       n1_claim: false,
-      native_performance: "deferred-until-native-lowering",
+      native_performance: "deferred-until-complete-native-lowering",
       mir_probe: $probe[0]
     }' > "$evidence/native-evaluation.json"
 
@@ -110,7 +110,7 @@ jq -e '
     and .phase == "NATIVE-001"
     and .status == "passed"
     and .n1_claim == false
-    and .native_performance == "deferred-until-native-lowering"
+    and .native_performance == "deferred-until-complete-native-lowering"
     and .mir_probe.format == "tondo-native-mir-probe/1"
     and ([.mir_probe.fixtures[] | select(.status == "passed")] | length == 4)
 ' "$evidence/native-evaluation.json" >/dev/null || die "generated report failed validation"

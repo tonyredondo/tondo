@@ -3,7 +3,7 @@
 - Status: Proposed — selection pending measured evidence
 - Date: 2026-08-25
 - Supersedes: none
-- Next decisions: `NATIVE-002` (the physical thread lane is now closed)
+- Next decisions: `ARC-001`, `DIAG-NATIVE-001` (minimum `NATIVE-002` lowering is closed)
 
 ## Context
 
@@ -79,9 +79,11 @@ The physical `Thread` lane is now an explicit prerequisite rather than an
 assumption: the safe runtime launches a worker with a completion barrier and
 the native differential runner proves the equivalent `pthread` lifecycle in
 both candidates. This closes `NATIVE-THREAD-001` without selecting a backend.
-The current adapter still evaluates an eager lowered value before handoff;
-deferred callable-body lowering and scheduler coordination remain in
-`NATIVE-002`.
+The physical thread adapter still evaluates an eager lowered value before
+handoff. `NATIVE-002` now closes the minimum deferred direct-task body path
+(`spawn call()` publishes `Pending`, then `Join` completes and awaits it), while
+mutable captures, closures, full scheduler coordination and native storage
+remain outside this decision.
 
 ## Required evidence before N1
 

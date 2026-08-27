@@ -25,6 +25,8 @@ jq -e '
   and .debug_format == "tondo-mir-debug/1"
   and .debug_report_field == "debug_metadata"
   and .thread_report_field == "native_thread_runs"
+  and .lowering_report_field == "native_lowering_runs"
+  and .lowering_case == "deferred-task-call"
   and .oracle == "bytecode-vm-scalar-and-managed-result-oracle"
   and .candidates == ["cranelift", "llvm"]
   and .toolchain_policy == {
@@ -60,6 +62,10 @@ grep -Fq 'native_select_runs' tools/native-evaluation/src/main.rs \
     || die "adapter does not report native selection results"
 grep -Fq 'native_thread_runs' tools/native-evaluation/src/main.rs \
     || die "adapter does not report native thread results"
+grep -Fq 'native_lowering_runs' tools/native-evaluation/src/main.rs \
+    || die "adapter does not report coordinated lowering results"
+grep -Fq 'tondo_rt_task_complete' tools/native-evaluation/src/main.rs \
+    || die "adapter does not expose deferred task completion"
 grep -Fq 'std::thread::Builder' crates/tondo-native-runtime/src/lib.rs \
     || die "runtime does not launch an OS worker"
 grep -Fq 'pthread_create' tools/native-evaluation/src/main.rs \

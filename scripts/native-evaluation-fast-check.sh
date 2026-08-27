@@ -29,7 +29,7 @@ jq -e '
       format: "tondo-mir-backend/1",
       supported_subset: "scalar-managed-result-checked-arithmetic-logical-conversions-opaque-aggregates-host-calls-eager-async-control-flow-and-traps",
       unsupported_policy: "explicit-trap-and-report",
-      native_semantics: "pending-executable-runner"
+      native_semantics: "deferred-to-opt-in-runner"
   }
   and .protocol == {
       warmup_iterations: 1,

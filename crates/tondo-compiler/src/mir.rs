@@ -810,16 +810,17 @@ pub enum MirBackendOperation {
         function: u32,
         arguments: Vec<MirBackendOperand>,
     },
-    /// A spawn whose body operation is lowered first and then published as an
-    /// affine handle.  The executable adapter uses an eager task primitive;
-    /// the full scheduler remains a runtime ABI concern.
+    /// A spawn whose body operation is published as an affine handle. The
+    /// native coordinator may defer a direct task call until its join edge;
+    /// other bodies remain explicit eager/runtime operations until their
+    /// storage and scheduler contracts are closed.
     Spawn {
         operation: Box<MirBackendOperation>,
         kind: String,
     },
-    /// A join over an eagerly lowered spawn.  It is identity at this
-    /// boundary, preserving source ordering without inventing a second
-    /// synchronous API.
+    /// A join over a task or thread handle. Native adapters consume the value
+    /// through the runtime await transition; a deferred direct task call is
+    /// completed exactly once immediately before that transition.
     JoinValue {
         operand: MirBackendOperand,
     },

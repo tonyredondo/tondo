@@ -330,6 +330,7 @@ struct EvaluationReport {
     native_runtime_runs: Vec<NativeRuntimeRunReport>,
     native_select_runs: Vec<NativeSelectRunReport>,
     native_thread_runs: Vec<NativeThreadRunReport>,
+    native_lowering_runs: Vec<NativeLoweringRunReport>,
 }
 
 #[derive(Debug, Serialize)]
@@ -472,6 +473,18 @@ struct NativeThreadRunReport {
     llvm: &'static str,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct NativeLoweringRunReport {
+    case: String,
+    function_ordinal: u32,
+    pending_before_join: u64,
+    result_after_join: i64,
+    joined_after_join: u64,
+    cranelift: &'static str,
+    llvm: &'static str,
+}
+
 #[derive(Debug, Clone)]
 struct RuntimeContractCase {
     name: &'static str,
@@ -541,6 +554,7 @@ fn run() -> Result<(), String> {
     let mut native_managed_runs = Vec::new();
     let mut native_runtime_runs = Vec::new();
     let mut debug_metadata = Vec::new();
+    let mut native_lowering_runs = Vec::new();
 
     for fixture in &probe.fixtures {
         let summary = fixture
@@ -633,6 +647,12 @@ fn run() -> Result<(), String> {
     if let Some(cc) = &options.cc {
         native_runtime_runs =
             run_native_runtime_probe(&options.llvm, cc, &options.target, &options.temp_dir)?;
+        native_lowering_runs = run_native_lowering_probe(
+            &options.llvm,
+            cc,
+            &options.target,
+            &options.temp_dir,
+        )?;
     }
     let native_select_runs = native_runtime_runs
         .iter()
@@ -724,6 +744,7 @@ fn run() -> Result<(), String> {
         native_runtime_runs,
         native_select_runs,
         native_thread_runs,
+        native_lowering_runs,
     };
 
     let encoded = serde_json::to_vec_pretty(&report)
@@ -1388,6 +1409,7 @@ struct RuntimeRefs {
     task_wake: FuncRef,
     task_cancel: FuncRef,
     task_take: FuncRef,
+    task_complete: FuncRef,
     scope_cancel: FuncRef,
     scope_join: FuncRef,
     await_task: FuncRef,
@@ -1466,6 +1488,7 @@ fn declare_cranelift_runtime(
         ("tondo_rt_task_wake", 1),
         ("tondo_rt_task_cancel", 1),
         ("tondo_rt_task_take", 1),
+        ("tondo_rt_task_complete", 2),
         ("tondo_rt_scope_cancel", 1),
         ("tondo_rt_scope_join", 2),
         ("tondo_rt_await", 1),
@@ -1524,6 +1547,7 @@ fn declare_cranelift_runtime(
         task_wake: get("tondo_rt_task_wake")?,
         task_cancel: get("tondo_rt_task_cancel")?,
         task_take: get("tondo_rt_task_take")?,
+        task_complete: get("tondo_rt_task_complete")?,
         scope_cancel: get("tondo_rt_scope_cancel")?,
         scope_join: get("tondo_rt_scope_join")?,
         await_task: get("tondo_rt_await")?,
@@ -1899,6 +1923,44 @@ fn terminator_successors(terminator: &MirBackendTerminator) -> Vec<u32> {
     }
 }
 
+/// Deferred task bodies are first enabled only for a straight-line MIR
+/// function. A path-sensitive table is deliberately not approximated by a
+/// function-global map: branches, loops, and disconnected blocks fall back to
+/// ordinary eager lowering until a real data-flow proof is available.
+fn deferred_lowering_is_linear(function: &MirBackendFunction) -> bool {
+    let blocks = normal_blocks(function);
+    let ordinals = blocks
+        .iter()
+        .map(|block| block.ordinal)
+        .collect::<BTreeSet<_>>();
+    let Some(first) = blocks.first().map(|block| block.ordinal) else {
+        return false;
+    };
+    let mut visited = BTreeSet::new();
+    let mut current = first;
+    loop {
+        if !visited.insert(current) {
+            return false;
+        }
+        let Some(block) = blocks.iter().find(|block| block.ordinal == current) else {
+            return false;
+        };
+        match &block.terminator {
+            MirBackendTerminator::Return => break,
+            MirBackendTerminator::Goto { target }
+            | MirBackendTerminator::Invoke {
+                target: Some(target),
+                ..
+            } => current = *target,
+            MirBackendTerminator::SwitchBool { .. }
+            | MirBackendTerminator::SwitchTag { .. }
+            | MirBackendTerminator::Invoke { target: None, .. }
+            | MirBackendTerminator::Marker { .. } => return false,
+        }
+    }
+    visited == ordinals
+}
+
 /// Compute the scalar locals that must arrive at each normal block.  This is
 /// ordinary backward liveness, expressed over the normalized CFG so both
 /// Cranelift block parameters and future adapters can share the same rule.
@@ -2211,7 +2273,13 @@ fn lower_operation_cranelift(
                 .ok_or_else(|| "Cranelift spawn did not return a handle".to_owned())
         }
         MirBackendOperation::JoinValue { operand } => {
-            lower_operand_cranelift(builder, operand, locals)
+            let handle = lower_operand_cranelift(builder, operand, locals)?;
+            let call = builder.ins().call(runtime.await_task, &[handle]);
+            builder
+                .inst_results(call)
+                .first()
+                .copied()
+                .ok_or_else(|| "Cranelift await did not return a value".to_owned())
         }
         MirBackendOperation::HostCall { kind, arguments } => {
             let kind_id = host_call_kind(kind)?;
@@ -2649,6 +2717,8 @@ fn lower_cranelift_function(
                 .ok_or_else(|| "supported scalar function has no normal entry block".to_owned())?;
             let live_in = block_live_in(function);
             let mut ir_blocks = BTreeMap::<u32, Block>::new();
+            let mut deferred_tasks = BTreeMap::<u32, MirBackendOperation>::new();
+            let deferred_enabled = deferred_lowering_is_linear(function);
             for block in &blocks {
                 ir_blocks.insert(block.ordinal, builder.create_block());
             }
@@ -2835,13 +2905,16 @@ fn lower_cranelift_function(
                         destination,
                         target: Some(target),
                     } => {
-                        let value = lower_operation_cranelift(
+                        let value = lower_cranelift_invoke(
                             &mut builder,
                             operation,
+                            *destination,
                             &locals,
                             &calls,
                             trap,
                             &runtime,
+                            &mut deferred_tasks,
+                            deferred_enabled,
                         )?;
                         if let Some(destination) = destination {
                             locals.insert(*destination, value);
@@ -2910,6 +2983,96 @@ fn emit_cranelift_object(
             output.display()
         )
     })
+}
+
+/// Identifies the deliberately small deferred-call subset of the first native
+/// coordinator.  Captures are constants in this slice, so publishing a task
+/// never evaluates its callable body and the join edge can evaluate it later
+/// without changing a mutable local underneath it.  Mutable captures and
+/// closures remain explicit unsupported MIR until their native storage ABI is
+/// available.
+fn deferred_call_body(operation: &MirBackendOperation) -> Option<&MirBackendOperation> {
+    let MirBackendOperation::Spawn {
+        operation: body,
+        kind,
+    } = operation
+    else {
+        return None;
+    };
+    if kind != "task" {
+        return None;
+    }
+    let MirBackendOperation::Call { arguments, .. } = body.as_ref() else {
+        return None;
+    };
+    arguments.iter().all(deferred_capture_operand).then_some(body.as_ref())
+}
+
+fn deferred_capture_operand(operand: &MirBackendOperand) -> bool {
+    matches!(
+        operand,
+        MirBackendOperand::Constant(
+            MirBackendConstant::Bool(_)
+                | MirBackendConstant::Integer(_)
+                | MirBackendConstant::String(_)
+        )
+    )
+}
+
+fn lower_cranelift_invoke(
+    builder: &mut FunctionBuilder<'_>,
+    operation: &MirBackendOperation,
+    destination: Option<u32>,
+    locals: &BTreeMap<u32, Value>,
+    calls: &BTreeMap<u32, FuncRef>,
+    trap: FuncRef,
+    runtime: &RuntimeRefs,
+    deferred_tasks: &mut BTreeMap<u32, MirBackendOperation>,
+    deferred_enabled: bool,
+) -> Result<Value, String> {
+    if deferred_enabled
+        && destination.is_some()
+        && let Some(body) = deferred_call_body(operation)
+    {
+        let zero = builder.ins().iconst(cranelift_codegen::ir::types::I64, 0);
+        let pending = builder.ins().iconst(cranelift_codegen::ir::types::I64, 1);
+        let call = builder.ins().call(runtime.task_spawn, &[zero, pending]);
+        let handle = builder
+            .inst_results(call)
+            .first()
+            .copied()
+            .ok_or_else(|| "Cranelift deferred spawn did not return a handle".to_owned())?;
+        if let Some(destination) = destination {
+            deferred_tasks.insert(destination, body.clone());
+        }
+        return Ok(handle);
+    }
+
+    if let MirBackendOperation::JoinValue {
+        operand: MirBackendOperand::Local { index },
+    } = operation
+        && let Some(body) = deferred_tasks.remove(index)
+    {
+        let handle = lower_operand_cranelift(builder, operation_operand(operation), locals)?;
+        let value = lower_operation_cranelift(builder, &body, locals, calls, trap, runtime)?;
+        let completed = builder.ins().call(runtime.task_complete, &[handle, value]);
+        let _ = builder.inst_results(completed);
+        let awaited = builder.ins().call(runtime.await_task, &[handle]);
+        return builder
+            .inst_results(awaited)
+            .first()
+            .copied()
+            .ok_or_else(|| "Cranelift deferred join did not return a value".to_owned());
+    }
+
+    lower_operation_cranelift(builder, operation, locals, calls, trap, runtime)
+}
+
+fn operation_operand(operation: &MirBackendOperation) -> &MirBackendOperand {
+    match operation {
+        MirBackendOperation::JoinValue { operand } => operand,
+        _ => unreachable!("operation_operand is only used for JoinValue"),
+    }
 }
 
 fn run_native_scalar_probe(
@@ -3277,6 +3440,217 @@ fn run_native_runtime_probe(
         });
     }
     Ok(reports)
+}
+
+/// Runs the first source-shaped deferred body through both native adapters.
+/// The caller observes a pending handle before the join and a joined handle
+/// afterwards; the packed return value is `before * 1000 + after * 100 + body`.
+/// An eager spawn would return `1342`, while the coordinated lowering must
+/// return `342`.
+fn run_native_lowering_probe(
+    llvm: &Path,
+    cc: &Path,
+    target: &str,
+    temp_dir: &Path,
+) -> Result<Vec<NativeLoweringRunReport>, String> {
+    let (program, function_ordinal, expected) = native_deferred_program();
+    validate_backend_program(&program)?;
+    let object = temp_dir.join("native_lowering_deferred.cranelift.o");
+    emit_cranelift_object(cranelift_isa()?, &program, &object)?;
+    let function = program
+        .functions
+        .iter()
+        .find(|function| function.ordinal == function_ordinal)
+        .ok_or_else(|| format!("deferred function {function_ordinal} is missing"))?;
+    let stem = "native_lowering_deferred_task";
+
+    let cranelift_source = temp_dir.join(format!("{stem}.cranelift.c"));
+    fs::write(
+        &cranelift_source,
+        runtime_contract_c_runner_source(function_ordinal, expected),
+    )
+    .map_err(|error| format!("cannot write deferred Cranelift runner: {error}"))?;
+    let cranelift_binary = temp_dir.join(format!("{stem}.cranelift.bin"));
+    link_native_runner(cc, &cranelift_source, &object, &cranelift_binary)?;
+    run_native_binary(&cranelift_binary, "Cranelift deferred lowering", false)?;
+
+    let llvm_ir = temp_dir.join(format!("{stem}.llvm.ll"));
+    let llvm_object = temp_dir.join(format!("{stem}.llvm.o"));
+    fs::write(
+        &llvm_ir,
+        llvm_module_with_runner(target, &program, function, &[], Some(expected))?,
+    )
+    .map_err(|error| format!("cannot write deferred LLVM runner: {error}"))?;
+    let result = Command::new(llvm)
+        .arg("-O2")
+        .arg("-filetype=obj")
+        .arg(format!("-mtriple={target}"))
+        .arg("-o")
+        .arg(&llvm_object)
+        .arg(&llvm_ir)
+        .output()
+        .map_err(|error| format!("cannot execute LLVM llc for deferred runner: {error}"))?;
+    if !result.status.success() {
+        return Err(format!(
+            "LLVM deferred runner llc failed: {}",
+            String::from_utf8_lossy(&result.stderr).trim()
+        ));
+    }
+    let llvm_source = temp_dir.join(format!("{stem}.llvm.c"));
+    fs::write(&llvm_source, native_runtime_c_source())
+        .map_err(|error| format!("cannot write deferred LLVM runner anchor: {error}"))?;
+    let llvm_binary = temp_dir.join(format!("{stem}.llvm.bin"));
+    link_native_runner(cc, &llvm_source, &llvm_object, &llvm_binary)?;
+    run_native_binary(&llvm_binary, "LLVM deferred lowering", false)?;
+
+    Ok(vec![NativeLoweringRunReport {
+        case: "deferred-task-call".to_owned(),
+        function_ordinal,
+        pending_before_join: 0,
+        result_after_join: 42,
+        joined_after_join: 3,
+        cranelift: "passed",
+        llvm: "passed",
+    }])
+}
+
+fn native_deferred_program() -> (MirBackendProgram, u32, i64) {
+    let constant = |value: &str| {
+        MirBackendOperand::Constant(MirBackendConstant::Integer(value.to_owned()))
+    };
+    let local = |index| MirBackendOperand::Local { index };
+    let body = MirBackendFunction {
+        ordinal: 0,
+        parameters: Vec::new(),
+        parameter_types: Vec::new(),
+        return_local: 0,
+        return_type: "Int".to_owned(),
+        supported: true,
+        blocks: vec![MirBackendBlock {
+            ordinal: 0,
+            kind: "normal".to_owned(),
+            statements: vec![MirBackendStatement::Assign {
+                destination: 0,
+                value: MirBackendRvalue::Use(constant("42")),
+            }],
+            terminator: MirBackendTerminator::Return,
+        }],
+    };
+    let caller = MirBackendFunction {
+        ordinal: 1,
+        parameters: Vec::new(),
+        parameter_types: Vec::new(),
+        return_local: 0,
+        return_type: "Int".to_owned(),
+        supported: true,
+        blocks: vec![
+            MirBackendBlock {
+                ordinal: 0,
+                kind: "normal".to_owned(),
+                statements: Vec::new(),
+                terminator: MirBackendTerminator::Invoke {
+                    operation: MirBackendOperation::Spawn {
+                        operation: Box::new(MirBackendOperation::Call {
+                            function: 0,
+                            arguments: Vec::new(),
+                        }),
+                        kind: "task".to_owned(),
+                    },
+                    destination: Some(1),
+                    target: Some(1),
+                },
+            },
+            MirBackendBlock {
+                ordinal: 1,
+                kind: "normal".to_owned(),
+                statements: Vec::new(),
+                terminator: MirBackendTerminator::Invoke {
+                    operation: MirBackendOperation::Runtime {
+                        kind: "task-poll".to_owned(),
+                        arguments: vec![local(1)],
+                    },
+                    destination: Some(2),
+                    target: Some(2),
+                },
+            },
+            MirBackendBlock {
+                ordinal: 2,
+                kind: "normal".to_owned(),
+                statements: Vec::new(),
+                terminator: MirBackendTerminator::Invoke {
+                    operation: MirBackendOperation::JoinValue { operand: local(1) },
+                    destination: Some(3),
+                    target: Some(3),
+                },
+            },
+            MirBackendBlock {
+                ordinal: 3,
+                kind: "normal".to_owned(),
+                statements: Vec::new(),
+                terminator: MirBackendTerminator::Invoke {
+                    operation: MirBackendOperation::Runtime {
+                        kind: "task-poll".to_owned(),
+                        arguments: vec![local(1)],
+                    },
+                    destination: Some(4),
+                    target: Some(4),
+                },
+            },
+            MirBackendBlock {
+                ordinal: 4,
+                kind: "normal".to_owned(),
+                statements: vec![
+                    MirBackendStatement::Assign {
+                        destination: 5,
+                        value: MirBackendRvalue::Binary {
+                            operator: "multiply".to_owned(),
+                            left: local(2),
+                            right: constant("1000"),
+                        },
+                    },
+                    MirBackendStatement::Assign {
+                        destination: 6,
+                        value: MirBackendRvalue::Binary {
+                            operator: "multiply".to_owned(),
+                            left: local(4),
+                            right: constant("100"),
+                        },
+                    },
+                    MirBackendStatement::Assign {
+                        destination: 7,
+                        value: MirBackendRvalue::Binary {
+                            operator: "add".to_owned(),
+                            left: local(5),
+                            right: local(6),
+                        },
+                    },
+                    MirBackendStatement::Assign {
+                        destination: 8,
+                        value: MirBackendRvalue::Binary {
+                            operator: "add".to_owned(),
+                            left: local(7),
+                            right: local(3),
+                        },
+                    },
+                    MirBackendStatement::Assign {
+                        destination: 0,
+                        value: MirBackendRvalue::Use(local(8)),
+                    },
+                ],
+                terminator: MirBackendTerminator::Return,
+            },
+        ],
+    };
+    let functions = vec![body, caller];
+    (
+        MirBackendProgram {
+            format: "tondo-mir-backend/1".to_owned(),
+            debug: Some(synthetic_debug_info(&functions)),
+            functions,
+        },
+        1,
+        342,
+    )
 }
 
 fn native_cleanup_program() -> (MirBackendProgram, Vec<RuntimeContractCase>) {
@@ -4914,6 +5288,7 @@ uint64_t tondo_rt_task_poll(uint64_t task) { uint64_t id = t_index(task); return
 uint64_t tondo_rt_task_wake(uint64_t task) { uint64_t id = t_index(task); if (id == 0 || t_objects[id].kind != 3 || t_objects[id].state >= 2) return 3; t_objects[id].state = 1; t_notify_selects(task); return 0; }
 uint64_t tondo_rt_task_cancel(uint64_t task) { uint64_t id = t_index(task); if (id == 0 || t_objects[id].kind != 3 || t_objects[id].state >= 2) return 3; t_objects[id].state = 2; t_notify_selects(task); return 0; }
 uint64_t tondo_rt_task_take(uint64_t task) { uint64_t id = t_index(task); if (id == 0 || t_objects[id].kind != 3 || t_objects[id].state != 1) { t_last = 6; return 0; } t_objects[id].state = 3; return t_objects[id].value; }
+uint64_t tondo_rt_task_complete(uint64_t task, uint64_t value) { uint64_t id = t_index(task); if (id == 0 || t_objects[id].kind != 3) return 1; if (t_objects[id].state != 0) return 3; t_objects[id].value = value; t_objects[id].state = 1; t_notify_selects(task); return 0; }
 uint64_t tondo_rt_scope_cancel(uint64_t scope) { uint64_t id = t_index(scope); if (id == 0 || t_objects[id].kind != 2 || t_objects[id].state != 0) return 3; for (uint64_t i = 1; i < T_MAX; ++i) if (t_objects[i].kind == 3 && t_objects[i].payload == scope && t_objects[i].state < 2) { t_objects[i].state = 2; t_notify_selects(HBIT | i); } t_objects[id].state = 1; return 0; }
 uint64_t tondo_rt_scope_join(uint64_t scope, uint64_t task) { uint64_t sid = t_index(scope), tid = t_index(task); if (sid == 0 || tid == 0 || t_objects[sid].kind != 2 || t_objects[sid].state != 0 || t_objects[tid].kind != 3 || t_objects[tid].payload != scope || t_objects[tid].state != 1) return 3; (void)tondo_rt_task_take(task); return 0; }
 uint64_t tondo_rt_await(uint64_t task) { return tondo_rt_task_take(task); }
@@ -5169,6 +5544,28 @@ fn compile_llvm(
     })
 }
 
+fn llvm_deferred_join(
+    operand: &MirBackendOperand,
+    body: &MirBackendOperation,
+    slots: &BTreeMap<u32, String>,
+    module: &mut String,
+    value_index: &mut usize,
+) -> Result<String, String> {
+    let handle = llvm_operand(operand, slots, module, value_index)?;
+    let value = llvm_operation(body, slots, module, value_index)?;
+    let completed = format!("%v{value_index}");
+    *value_index += 1;
+    writeln!(
+        module,
+        "  {completed} = call i64 @tondo_rt_task_complete(i64 {handle}, i64 {value})"
+    )
+    .unwrap();
+    let awaited = format!("%v{value_index}");
+    *value_index += 1;
+    writeln!(module, "  {awaited} = call i64 @tondo_rt_await(i64 {handle})").unwrap();
+    Ok(awaited)
+}
+
 fn llvm_module(target: &str, program: &MirBackendProgram) -> Result<String, String> {
     let mut module = String::new();
     writeln!(module, "; tondo native evaluation normalized module").unwrap();
@@ -5247,6 +5644,8 @@ fn llvm_module(target: &str, program: &MirBackendProgram) -> Result<String, Stri
             .map(|local| (local, format!("%slot{local}")))
             .collect::<BTreeMap<_, _>>();
         let mut value_index = 0_usize;
+        let mut deferred_tasks = BTreeMap::<u32, MirBackendOperation>::new();
+        let deferred_enabled = deferred_lowering_is_linear(function);
         for block in blocks {
             let label = llvm_block_label(block.ordinal, entry_ordinal);
             writeln!(module, "{label}:").unwrap();
@@ -5371,8 +5770,36 @@ fn llvm_module(target: &str, program: &MirBackendProgram) -> Result<String, Stri
                     destination,
                     target: Some(target),
                 } => {
-                    let value_name =
-                        llvm_operation(operation, &slots, &mut module, &mut value_index)?;
+                    let value_name = if deferred_enabled
+                        && destination.is_some()
+                        && let Some(body) = deferred_call_body(operation)
+                    {
+                        let name = format!("%v{value_index}");
+                        value_index += 1;
+                        writeln!(
+                            module,
+                            "  {name} = call i64 @tondo_rt_task_spawn(i64 0, i64 1)"
+                        )
+                        .unwrap();
+                        if let Some(destination) = destination {
+                            deferred_tasks.insert(*destination, body.clone());
+                        }
+                        name
+                    } else if let MirBackendOperation::JoinValue {
+                        operand: MirBackendOperand::Local { index },
+                    } = operation
+                        && let Some(body) = deferred_tasks.remove(index)
+                    {
+                        llvm_deferred_join(
+                            operation_operand(operation),
+                            &body,
+                            &slots,
+                            &mut module,
+                            &mut value_index,
+                        )?
+                    } else {
+                        llvm_operation(operation, &slots, &mut module, &mut value_index)?
+                    };
                     if let Some(destination) = destination {
                         let slot = slots.get(destination).ok_or_else(|| {
                             format!("missing slot for destination local {destination}")
@@ -5482,6 +5909,7 @@ fn llvm_checked_helpers(module: &mut String) {
         "declare i64 @tondo_rt_task_wake(i64)",
         "declare i64 @tondo_rt_task_cancel(i64)",
         "declare i64 @tondo_rt_task_take(i64)",
+        "declare i64 @tondo_rt_task_complete(i64, i64)",
         "declare i64 @tondo_rt_scope_cancel(i64)",
         "declare i64 @tondo_rt_scope_join(i64, i64)",
         "declare i64 @tondo_rt_await(i64)",
@@ -5953,7 +6381,11 @@ fn llvm_operation(
             Ok(name)
         }
         MirBackendOperation::JoinValue { operand } => {
-            llvm_operand(operand, slots, module, value_index)
+            let handle = llvm_operand(operand, slots, module, value_index)?;
+            let name = format!("%v{value_index}");
+            *value_index += 1;
+            writeln!(module, "  {name} = call i64 @tondo_rt_await(i64 {handle})").unwrap();
+            Ok(name)
         }
         MirBackendOperation::HostCall { kind, arguments } => {
             let argument = arguments
@@ -7099,6 +7531,50 @@ mod tests {
         assert!(module.contains("@tondo_rt_oneshot_complete"));
         assert!(module.contains("@tondo_rt_time_new"));
         assert!(module.contains("@tondo_rt_time_fire"));
+    }
+
+    #[test]
+    fn deferred_task_body_is_published_pending_and_completed_at_join_in_both_adapters() {
+        let (program, function_ordinal, expected) = native_deferred_program();
+        let function = program
+            .functions
+            .iter()
+            .find(|function| function.ordinal == function_ordinal)
+            .expect("deferred caller should exist");
+        let MirBackendTerminator::Invoke { operation, .. } = &function.blocks[0].terminator else {
+            panic!("deferred caller must start with spawn");
+        };
+        assert!(deferred_call_body(operation).is_some());
+        assert!(deferred_lowering_is_linear(function));
+        assert_eq!(expected, 342);
+
+        let isa = cranelift_isa().expect("native Cranelift ISA should be available");
+        compile_cranelift(isa.as_ref(), &program)
+            .expect("deferred task body should lower in Cranelift");
+        let module = llvm_module("x86_64-unknown-linux-gnu", &program)
+            .expect("deferred task body should lower in LLVM");
+        assert!(module.contains("call i64 @tondo_rt_task_spawn(i64 0, i64 1)"));
+        assert!(module.contains("call i64 @tondo_rt_task_complete"));
+        assert!(module.contains("call i64 @tondo_rt_await"));
+    }
+
+    #[test]
+    fn deferred_call_subset_rejects_mutable_captures_and_threads() {
+        let call = MirBackendOperation::Call {
+            function: 0,
+            arguments: vec![MirBackendOperand::Local { index: 1 }],
+        };
+        let task = MirBackendOperation::Spawn {
+            operation: Box::new(call.clone()),
+            kind: "task".to_owned(),
+        };
+        assert!(deferred_call_body(&task).is_none());
+        let thread = MirBackendOperation::Spawn {
+            operation: Box::new(call),
+            kind: "thread".to_owned(),
+        };
+        assert!(deferred_call_body(&thread).is_none());
+        assert!(!deferred_lowering_is_linear(&branch_backend().functions[0]));
     }
 
     #[test]

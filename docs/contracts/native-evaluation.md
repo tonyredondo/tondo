@@ -173,9 +173,10 @@ that a worker ran exactly once on a distinct OS thread, that `Join` observes the
 value only after worker completion, and that cancellation leaves the logical
 task cancelled. The Rust runtime implements the corresponding safe
 `std::thread` signal and barrier; no operating-system thread ID or pointer is
-serialized. The current MIR adapter still evaluates a lowered scalar operation
-before handoff, so this evidence closes the physical lane without claiming
-deferred callable-body lowering; that coordination remains in `NATIVE-002`.
+serialized. The physical thread lane still evaluates its lowered scalar
+operation before handoff. The minimum deferred direct-task coordinator is now
+covered separately by `NATIVE-002`; mutable captures, closures, full scheduler
+coordination and native storage remain explicit follow-ups.
 The contract and focused checks are in
 [`testing/native-thread.json`](../../testing/native-thread.json),
 [`scripts/native-thread-check.sh`](../../scripts/native-thread-check.sh) and
@@ -197,9 +198,10 @@ The selection records the dimensions that must be evidenced before promotion:
 | Distribution, maintenance, licensing | Decision recorded in ADR | Pinned, reviewable toolchain and supply-chain evidence |
 
 The existing performance contract stays honest: no native entry is selected and
-the full native capture remains deferred until lowering and the VM oracle are
-available. Fast-lane samples are exploratory evidence and cannot be compared
-across targets, unpinned tools or incomplete observables.
+the full native capture remains deferred until complete lowering, the VM oracle
+and the ARC/diagnostic gates are available. Fast-lane samples are exploratory
+evidence and cannot be compared across targets, unpinned tools or incomplete
+observables.
 
 ## Reproducibility and failure policy
 
@@ -214,8 +216,9 @@ failure.
 
 `NATIVE-BACKEND-ADAPTER-001` is closed by the common normalized lowering and
 its executable differential evidence. The report covers 118 scalar cases, 3
-managed-result cases, 21 runtime-contract cases, 8 selection cases and 5
-thread-worker cases in fresh Cranelift/LLVM subprocesses. Functions that still require projected storage
+managed-result cases, 21 runtime-contract cases, 8 selection cases, 5
+thread-worker cases and one deferred-task coordinator case in fresh
+Cranelift/LLVM subprocesses. Functions that still require projected storage
 (`core`/`bytes`) or collection `IteratorNext` are reported as unsupported,
 fail-closed, and are not counted as native semantic evidence. Checked
 arithmetic overflow, logical operators, conversions, comparison branches,
@@ -223,8 +226,8 @@ loop-carried locals, managed result records, host calls, structured async edges
 and boundary trap parity for the exercised paths are covered by the executable
 runner. Collection iteration, projected field/index storage and concrete
 aggregate storage remain explicit follow-ups of the native stdlib/ABI
-boundaries, not hidden approximations. Memory/ABI work may now consume the
-adapter contract, while backend selection and Gate N1 remain pending.
+boundaries, not hidden approximations. ARC/diagnostic work may now consume the
+coordinator contract, while backend selection and Gate N1 remain pending.
 
 The static contract and negative cases run in the normal test gate. The
 evaluation runner is opt-in/manual because it compiles the real fixture corpus;

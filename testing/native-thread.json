@@ -16,7 +16,7 @@
     "vm": "single-cooperative-queue-with-deterministic-state",
     "native": "one-os-worker-lane-per-thread-spawn",
     "adapter_body_boundary": "lowered-value-is-evaluated-before-current-adapter-handoff",
-    "deferred_body_lowering": "reserved-for-NATIVE-002"
+    "deferred_body_lowering": "closed-for-direct-task-calls-by-NATIVE-002"
   },
   "worker": {
     "states": ["starting", "running", "completed", "cancelled"],
@@ -69,5 +69,5 @@
     "physical-thread-id-leaked",
     "deferred-body-claimed-by-eager-adapter"
   ],
-  "next_blocks": ["NATIVE-002", "DIAG-NATIVE-001"]
+  "next_blocks": ["DIAG-NATIVE-001"]
 }

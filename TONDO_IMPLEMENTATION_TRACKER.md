@@ -113,8 +113,9 @@ comienzan los contratos runtime-facing B0.
 `NATIVE-001` queda después de la compuerta de diagnóstico y mantiene la
 selección pendiente hasta medir candidatos reales; la slice de selección
 runtime se cerró en `NATIVE-SELECT-001`, el adaptador común ya está cerrado en
-`NATIVE-BACKEND-ADAPTER-001` y la siguiente frontera de lowering es
-`NATIVE-002`; `NATIVE-THREAD-001` ya cerró la lane física de workers OS.
+`NATIVE-BACKEND-ADAPTER-001` y `NATIVE-002` ya cerró la coordinación mínima de
+lowering. La siguiente frontera es `ARC-001`/`DIAG-NATIVE-001`;
+`NATIVE-THREAD-001` ya cerró la lane física de workers OS.
 FUZZ está promovido para los 22 owners; la distribución está promovida y el
 seal S1A está cerrado como bundle técnico del draft, sin sobreafirmar G5, N1,
 TLF ni una publicación.
@@ -2517,8 +2518,10 @@ adapters de streams y el worker OS nativo permanecen como leaves independientes.
   identidad observable es lógica y path-free, nunca un ID físico. El runner
   diferencial usa `pthread_create`/`pthread_join` en ambos candidatos y prueba
   estado, ejecución única, worker distinto, join, cancelación y selección.
-  El MIR actual sigue entregando un valor eager al handoff; el lowering de un
-  cuerpo diferido y la coordinación del scheduler quedan en `NATIVE-002`.
+  La lane física de threads sigue entregando un valor eager al handoff; el
+  coordinador `NATIVE-002` cubre por separado el cuerpo diferido mínimo de
+  llamadas directas a tasks. La coordinación completa del scheduler queda
+  pendiente.
   Evidencia: `testing/native-thread.json`,
   `docs/contracts/native-thread.md`, `scripts/native-thread-{check,test}.sh`,
   `tondo-native-runtime` y el campo `native_thread_runs` de
@@ -5470,8 +5473,8 @@ pueden retrasar el primer backend correcto.
   `DIAG-SPEC-001`; su contrato D0 está ahora cerrado y los siguientes bloques
   son las fronteras runtime-facing B0; `NATIVE-001` sigue en evaluación después
   de la compuerta de diagnóstico y el adaptador común ya está cerrado;
-  la lane física de `NATIVE-THREAD-001` está cerrada y el siguiente bloque es
-  `NATIVE-002`.
+  la lane física de `NATIVE-THREAD-001` y `NATIVE-002` están cerradas y la
+  siguiente frontera es `ARC-001`.
 
 - [x] **DIAG-SPEC-001 — Cerrar el contrato unificado de diagnóstico dinámico.**
   Fijar profiles `race`, `leaks` y `crash`, el envelope
@@ -5583,8 +5586,8 @@ pueden retrasar el primer backend correcto.
   `scripts/native-evaluation-fast.sh`, `tools/native-evaluation/`,
   `scripts/native-evaluation.sh`, `docs/adr/019-native-backend-selection.md`
   y los informes bajo `target/reliability/evidence/`. El adaptador común está
-  cerrado en `NATIVE-BACKEND-ADAPTER-001`; `NATIVE-THREAD-001` está cerrado y
-  el siguiente bloque es `NATIVE-002`.
+  cerrado en `NATIVE-BACKEND-ADAPTER-001`; `NATIVE-THREAD-001` y `NATIVE-002`
+  están cerrados y la siguiente frontera de implementación es `ARC-001`.
 
 - [x] **NATIVE-BACKEND-ADAPTER-001 — Sustituir el smoke adapter por lowering
   real común.** La primera slice ya consume `tondo-mir-backend/1` desde el MIR
@@ -5604,8 +5607,8 @@ pueden retrasar el primer backend correcto.
   está fijada por tests unitarios y por el informe hash-bound; el carril rápido
   sigue midiendo solo compile-time/code-size y la selección de backend continúa
   bloqueada hasta completar sus dimensiones N1. La evidencia física de
-  `NATIVE-THREAD-001` está cerrada; el siguiente bloque de implementación es
-  `NATIVE-002`.
+  `NATIVE-THREAD-001` y la coordinación mínima de `NATIVE-002` están cerradas;
+  el siguiente bloque de implementación es `ARC-001`.
 
 - [x] **NATIVE-MEM-ADR-001 — Cerrar DEC-014 antes de la ABI.** La decisión
   queda cerrada como `hybrid-arc-cycle-collector`: contadores no atómicos para
@@ -5716,12 +5719,23 @@ pueden retrasar el primer backend correcto.
   `tools/native-evaluation/src/main.rs`, más los informes generados por
   `native-evaluation`/`native-evaluation-runner`.
 
-- [ ] **NATIVE-002 — Coordinar el lowering mínimo desde MIR.** Cierra solo tras
+- [x] **NATIVE-002 — Coordinar el lowering mínimo desde MIR.** Cerrado tras
   `NATIVE-LOWER-CALLS-001`, `NATIVE-LOWER-CONTROL-001`,
   `NATIVE-LOWER-CLEANUP-001`, `NATIVE-LOWER-OWNERSHIP-001`,
   `NATIVE-LOWER-ASYNC-001`, `NATIVE-LOWER-DEBUG-001` y
-  `NATIVE-SELECT-001` y `NATIVE-THREAD-001`, con al menos un smoke nativo real por slice antes de
-  ampliar targets u optimizar.
+  `NATIVE-SELECT-001` y `NATIVE-THREAD-001`. El coordinador consume el MIR
+  normalizado una vez y lo baja por Cranelift y LLVM con la misma metadata;
+  `spawn call()` directo publica un handle `Pending` y el primer `Join` evalúa
+  el cuerpo una sola vez, lo completa mediante `tondo_rt_task_complete` y lo
+  consume por `await`. El alcance de esta slice queda limitado a capturas
+  escalares constantes e inmutables; capturas mutables, closures, storage
+  proyectado y la lane física de `thread` fallan cerrado o conservan su barrera
+  explícita. El runner diferencial añade el caso `deferred-task-call` a la
+  evidencia Cranelift/LLVM y mantiene las 21 runtime, 8 select y 5 thread
+  cases previas. Evidencia: `testing/native-lowering.json`,
+  `docs/contracts/native-lowering.md`, `scripts/native-lowering-{check,test}.sh`,
+  `crates/tondo-native-runtime/src/lib.rs` y el campo
+  `native_lowering_runs` de `target/reliability/evidence/native-evaluation-runner.json`.
 
 ### 20.2 Runtime correcto y frontera estándar
 
@@ -6946,8 +6960,9 @@ gates en una barrera artificial.
     metadatos `suspends` con hash estable, `Join` transferible, one-shot,
     inferencia en `defer` y el único `for` sobre `AsyncIterator`. `async` es un
     identificador ordinario; no hay fixtures ni adapters de compatibilidad.
-    `ASYNC-ITER-EXT-001` continúa como leaf explícita; `NATIVE-THREAD-001` ya
-    está cerrada y deja `NATIVE-002` como siguiente frontera nativa.
+    `ASYNC-ITER-EXT-001` continúa como leaf explícita; `NATIVE-THREAD-001` y
+    `NATIVE-002` están cerradas y dejan `ARC-001` como siguiente frontera
+    nativa.
 
 #### Evidencia de Wave 4.5
 
@@ -6965,7 +6980,8 @@ completo; los conteos se regeneran y no son contratos fijados a un commit:
 | `STD-A-ASYNC-IMPL-001` | **Cerrada** | Implementación VM completa de `std.async`: ruta directa y `spawn` de `collect`, cursor genérico, límites, cancelación cooperativa, liberación terminal y loans; rendimiento y conformance global siguen en sus leaves S1A. |
 | `STD-A-FUZZ-001` | **Cerrada** | Target owner-aware con 22 rutas, corpus y seeds reproducibles, límites de entrada/source/RSS/timeout, oráculos de no-panic e invariantes por owner, replay de minimizados y campañas smoke/nightly integradas; `FUZZ=verified` 22/22. |
 | `STD-CHANNEL-ASYNC-ITER-001` | **Pendiente real** | Requiere adaptación de Channel en S1; no forma parte del bootstrap VM. |
-| `NATIVE-THREAD-001` | **Cerrado** | Worker OS seguro, barrera de `Join`, cancelación, identidad lógica y smoke diferencial Cranelift/LLVM en `testing/native-thread.json`; el cuerpo diferido permanece en `NATIVE-002`. |
+| `NATIVE-THREAD-001` | **Cerrado** | Worker OS seguro, barrera de `Join`, cancelación, identidad lógica y smoke diferencial Cranelift/LLVM en `testing/native-thread.json`; la coordinación deferred de tasks queda cerrada por `NATIVE-002`, sin cambiar la barrera física de threads. |
+| `NATIVE-002` | **Cerrado** | Coordinador MIR común para Cranelift/LLVM y smoke `deferred-task-call`: handle pendiente antes del cuerpo, completado único en `Join` y consumo por `await`; capturas mutables/closures/storage nativo completo siguen fuera de alcance. |
 
 El gate oficial (`bash scripts/test-gate.sh`) se ejecutó después de esta
 reconciliación y selló la evidencia final de workspace, conformance, reliability,
@@ -7035,7 +7051,7 @@ Esta tabla es la fuente de reconciliación del estado actual.
     `DUMP-001` y `DIAG-TEST-001` cerrados en VM hosted, continuar
     `NATIVE-BACKEND-ADAPTER-001` (cerrado) → `NATIVE-MEM-ADR-001` →
     `NATIVE-ABI-001` → leaves `NATIVE-LOWER-*` → `NATIVE-THREAD-001` (cerrado) →
-    NATIVE-SELECT-001 (cerrado) → NATIVE-002 → ARC-001 → ARC-002 →
+    NATIVE-SELECT-001 (cerrado) → NATIVE-002 (cerrado) → ARC-001 → ARC-002 →
     NATIVE-STD-CORE/HOSTED → NATIVE-STD-001 →
     NATIVE-LINK-001 → NATIVE-CLI-001 → leaves NATIVE-CONF-* → NATIVE-CONF-001 /
     NATIVE-DIFF-001 → targets → NATIVE-REL-001`. Cerrar Gate N1.
@@ -7127,7 +7143,8 @@ instrumentación VM hosted; `STD-ASYNC-GROUP-SPEC-001`, `STD-CONC-001`,
 `DIAG-TEST-001` y `DIAG-CI-001` ya están cerrados en hosted. `NATIVE-001`
 mantiene la selección reproducible pendiente y ya tiene mediciones rápidas y
 diferenciales reales de Cranelift/LLVM; el adaptador común, su metadata de
-identidad y la lane física de `NATIVE-THREAD-001` están cerrados y la siguiente
-frontera es `NATIVE-002`.
+identidad, la lane física de `NATIVE-THREAD-001` y la coordinación mínima de
+`NATIVE-002` están cerrados. La siguiente frontera es `ARC-001`, seguida de la
+paridad diagnóstica nativa.
 
 ---

@@ -32,8 +32,10 @@ unscoped child; `task-poll` observes pending, ready, cancelled or joined;
 `task-wake` performs the pending-to-ready transition; `await`/`task-take`
 consume a ready value; `scope-join` consumes a ready child belonging to an
 open scope; and `scope-cancel` closes the scope while propagating cancellation
-to unfinished children. Invalid transitions fail closed and cannot be
-silently treated as a ready value.
+to unfinished children. `task-complete` is the private lowering edge for a
+deferred direct task call: it accepts only a pending handle, publishes the
+value and wakes registered selections. Invalid transitions fail closed and
+cannot be silently treated as a ready value.
 
 ## Atomic selection
 
@@ -63,9 +65,9 @@ scheduler fire transitions; neither adapter introduces a second async API. The
 Rust runtime's mutex is the atomic linearization boundary and its worker uses a
 safe `std::thread` entry. The native evaluator's C shim uses
 `pthread_create`/`pthread_join` only as a deterministic differential harness;
-it is not a public ABI or a production scheduler. The current adapter hands an
-already-lowered value to the worker lane; deferred callable-body lowering is
-reserved for `NATIVE-002`.
+it is not a public ABI or a production scheduler. `NATIVE-002` now coordinates
+the minimum deferred direct-task slice; thread bodies still use the physical
+worker lane and full scheduler/ownership integration remains a later gate.
 
 Host handles are opaque capability-indexed values. The ABI does not expose a
 pointer, object layout, allocator, symbol name, or FFI entry point to Tondo

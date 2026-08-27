@@ -36,7 +36,7 @@ jq -e '
   and .decision.selection_status == "pending-measured-evidence"
   and .decision.n1_claim == false
   and .decision.native_performance_baseline == "pending-candidate-capture"
-  and .decision.next_implementation == "NATIVE-002"
+  and .decision.next_implementation == "ARC-001"
   and (.decision.reasons | length >= 4 and unique_values)
   and ([.decision.selection_requires[]] | length == 5 and unique_values)
   and ([.candidates[].id] == ["cranelift", "llvm", "custom"])
@@ -87,7 +87,7 @@ jq -e '
       "physical_paths_in_identity": "forbidden"
   }
   and (.negative_cases | length == 9 and unique_values)
-  and .next_blocks == ["NATIVE-002"]
+  and .next_blocks == ["ARC-001", "DIAG-NATIVE-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable contract"
 
 for path in \
