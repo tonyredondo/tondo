@@ -239,6 +239,10 @@ run_step native-diff-contract \
     scripts/native-diff-check.sh
 run_step native-diff-tests \
     scripts/native-diff-test.sh
+run_step native-target-registry-contract \
+    scripts/native-target-check.sh
+run_step native-target-registry-tests \
+    scripts/native-target-test.sh
 run_step native-select-contract \
     scripts/native-select-check.sh
 run_step native-select-contract-tests \

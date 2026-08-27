@@ -5925,10 +5925,15 @@ pueden retrasar el primer backend correcto.
   decisión `NATIVE-001`; el siguiente trabajo contractual es
   `NATIVE-TARGET-001`.
 
-- [ ] **NATIVE-TARGET-001 — Añadir targets uno a uno.** Cada combinación de
-  arquitectura, SO, profile y capability set tiene registry, runner nativo,
-  tests de plataforma y artefacto identificable. Cross-compilar no sustituye el
-  smoke test sobre la arquitectura destino.
+- [x] **NATIVE-TARGET-001 — Añadir targets uno a uno.** Cerrado para el primer
+  target físico admitido, `x86_64-unknown-linux-gnu`/ELF `release`, con registry
+  explícito, capacidades, candidatos, fixture y artefacto identificable. El
+  runner valida el descriptor, enlaza con driver absoluto y ejecuta el fixture
+  sobre la arquitectura destino en un workspace limpio; cross-compilar no se
+  cuenta como smoke. Evidencia en `testing/native-target.json`,
+  `docs/contracts/native-target.md`, `scripts/native-target-{check,test}.sh` y
+  `target/reliability/evidence/native-target.json`; sigue
+  `NATIVE-REL-001`.
 
 - [ ] **NATIVE-REL-001 — Empaquetar builds reproducibles.** Binarios, runtime,
   STD-0.1A y metadatos declaran versiones y checksums; el paquete candidato no
