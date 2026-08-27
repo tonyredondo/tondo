@@ -20,7 +20,7 @@ jq -e '
   and .owner == "toolchain.native_evaluation"
   and .edition == "0.1"
   and .phase == "NATIVE-001"
-  and .status == "evaluation-pending"
+  and .status == "decision-ready"
   and .contract == "docs/contracts/native-evaluation.md"
   and .workflow == ".github/workflows/native-evaluation.yml"
   and .adr == "docs/adr/019-native-backend-selection.md"
@@ -33,10 +33,10 @@ jq -e '
   }
   and .decision.selected_backend == null
   and .decision.selection_scope == "first-native-backend"
-  and .decision.selection_status == "pending-measured-evidence"
+  and .decision.selection_status == "ready-for-decision"
   and .decision.n1_claim == false
-  and .decision.native_performance_baseline == "pending-candidate-capture"
-  and .decision.next_implementation == "NATIVE-STD-HOSTED-001"
+  and .decision.native_performance_baseline == "candidate-slice-captured"
+  and .decision.next_implementation == "DEC-013"
   and (.decision.reasons | length >= 4 and unique_values)
   and ([.decision.selection_requires[]] | length == 5 and unique_values)
   and ([.candidates[].id] == ["cranelift", "llvm", "custom"])
@@ -87,7 +87,7 @@ jq -e '
       "physical_paths_in_identity": "forbidden"
   }
   and (.negative_cases | length == 9 and unique_values)
-  and .next_blocks == ["NATIVE-STD-HOSTED-001"]
+  and .next_blocks == ["DEC-013"]
 ' "$contract" >/dev/null || die "invalid machine-readable contract"
 
 for path in \
@@ -140,4 +140,4 @@ while IFS=$'\t' read -r fixture_path required_features; do
     done
 done < <(jq -r '.mir_probe.fixtures[] | [.path, (.required_features | join(" "))] | @tsv' "$contract")
 
-echo "native evaluation: OK (selection pending; fast-lane candidate measurements required)"
+echo "native evaluation: OK (candidate evidence ready; DEC-013 selection pending)"

@@ -429,15 +429,16 @@ cantidad de infraestructura necesaria antes del primer programa ejecutable.
   1.0, PackageId y hashes exactos, prelude mínimo, catálogo cerrado,
   capabilities y actualización explícita; no es una versión ni un release.
 
-- [ ] **DEC-013 — Backend nativo y ABI runtime interna.** `NATIVE-001` mantiene
-  Cranelift y LLVM como candidatos, registra targets, debug info, toolchain,
-  portabilidad y la capacidad de conservar los perfiles `DIAG-*` en
+- [ ] **DEC-013 — Backend nativo y ABI runtime interna.** La evidencia de
+  `NATIVE-001` ya está lista: Cranelift y LLVM tienen probe MIR común, captura
+  rápida, runner físico, targets y paquete reproducible; ambos siguen siendo
+  candidatos y `custom` queda fuera del ranking. Esta decisión debe registrar
+  cuál se adopta por target, cómo se ponderan rendimiento/mantenimiento y qué
+  límites quedan explícitos, en
   [`docs/adr/019-native-backend-selection.md`](docs/adr/019-native-backend-selection.md)
-  y [`testing/native-evaluation.json`](testing/native-evaluation.json). El
-  carril rápido mide compile-time/code-size sin seleccionar backend; después
-  de `NATIVE-BACKEND-ADAPTER-001` y del ADR de memoria,
-  `NATIVE-ABI-001` cierra calling convention, unwind, source maps, identidad
-  task/thread y fronteras runtime. Ninguna decisión promete ABI FFI pública.
+  y [`testing/native-selection.json`](testing/native-selection.json). No se
+  selecciona automáticamente ni se promete ABI FFI pública; `NATIVE-ABI-001`
+  ya fija la ABI interna que ambos candidatos deben conservar.
 
 - [ ] **DEC-014 — Gestión de memoria nativa.** `NATIVE-MEM-ADR-001` debe
   cerrarla antes de ABI y lowering nativos, fijando ownership runtime,
@@ -5575,31 +5576,19 @@ pueden retrasar el primer backend correcto.
   `scripts/diagnostic-ci-{check,test}.sh`, `scripts/diagnostic-ci.sh`,
   `scripts/diagnostic-fuzz.sh` y `.github/workflows/diagnostics.yml`.
 
-- [ ] **NATIVE-001 — Evaluar candidatos nativos con una evaluación separada.**
-  Cranelift y LLVM permanecen como candidatos medibles; un generador propio
-  queda fuera del ranking hasta tener un adaptador real. El probe
-  `tondo-native-mir-probe/1` compila cuatro fixtures hash-pinned de core,
-  collections, async estructurado y bytes por la ruta real `Operation::Run`,
-  conserva un `MirSummary` estable y verifica salida/diagnostics del VM oracle.
-  El probe incluye además `tondo-mir-backend/1`, con ordinales, operandos y
-  terminadores del MIR real. El carril rápido `tondo-native-evaluation-fast/1`
-  conecta esa forma común a Cranelift y `llc`, captura tres muestras por
-  fixture de compile-time y code-size; el runner separado añade evidencia
-  ejecutable acotada de runtime, ownership, async, threads, select y
-  diagnóstico, pero el runtime/memoria/semántica completos siguen pendientes.
-  No selecciona backend, no actualiza baselines y no afirma Gate N1. La
-  evidencia vive en `docs/contracts/native-evaluation.md`,
-  `testing/native-evaluation.json`, `testing/native-evaluation-fast.json`,
-  `scripts/native-evaluation-{check,test}.sh`,
-  `scripts/native-evaluation-fast-{check,test}.sh`,
-  `scripts/native-evaluation-fast.sh`, `tools/native-evaluation/`,
-  `scripts/native-evaluation.sh`, `docs/adr/019-native-backend-selection.md`
-  y los informes bajo `target/reliability/evidence/`. El adaptador común está
-  cerrado en `NATIVE-BACKEND-ADAPTER-001`; `NATIVE-THREAD-001`, `NATIVE-002`,
-  `ARC-001`, `ARC-002` y `DIAG-NATIVE-001` están cerrados. La evaluación de
-  candidatos, el ranking de rendimiento y Gate N1 siguen pendientes; la
-  frontera Core de STD-0.1A está cerrada y la siguiente es
-  `NATIVE-STD-HOSTED-001`.
+- [x] **NATIVE-001 — Evaluar candidatos nativos con una evaluación separada.**
+  Cerrado como frontera de evidencia lista para decisión: Cranelift y LLVM
+  consumen el mismo probe `tondo-native-mir-probe/1`/`tondo-mir-backend/1` y el
+  target `x86_64-unknown-linux-gnu`. El carril rápido captura tres muestras de
+  compile-time/code-size por fixture; el runner físico pasa 118 casos escalares,
+  3 managed, 21 runtime, 8 select, 5 threads, 14 `std.core`, 1 lowering y 8
+  diagnósticos en ambos candidatos contra el oráculo VM. La matriz y los hashes
+  de informes quedan en `testing/native-selection.json`,
+  `docs/contracts/native-selection.md`,
+  `scripts/native-selection-{check,capture}.sh` y
+  `target/reliability/evidence/native-selection.json`. No se selecciona un
+  backend ni se afirma Gate N1: `DEC-013` debe registrar la decisión humana
+  después de revisar rendimiento repetido y el gate de calidad.
 
 - [x] **NATIVE-BACKEND-ADAPTER-001 — Sustituir el smoke adapter por lowering
   real común.** La primera slice ya consume `tondo-mir-backend/1` desde el MIR

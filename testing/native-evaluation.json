@@ -3,7 +3,7 @@
   "owner": "toolchain.native_evaluation",
   "edition": "0.1",
   "phase": "NATIVE-001",
-  "status": "evaluation-pending",
+  "status": "decision-ready",
   "contract": "docs/contracts/native-evaluation.md",
   "workflow": ".github/workflows/native-evaluation.yml",
   "adr": "docs/adr/019-native-backend-selection.md",
@@ -17,10 +17,10 @@
   "decision": {
     "selected_backend": null,
     "selection_scope": "first-native-backend",
-    "selection_status": "pending-measured-evidence",
+    "selection_status": "ready-for-decision",
     "n1_claim": false,
-    "native_performance_baseline": "pending-candidate-capture",
-    "next_implementation": "NATIVE-STD-HOSTED-001",
+    "native_performance_baseline": "candidate-slice-captured",
+    "next_implementation": "DEC-013",
     "reasons": [
       "rust-native-integration",
       "deterministic-in-process-toolchain",
@@ -182,5 +182,5 @@
     "missing-diagnostic-dimension",
     "stale-next-block"
   ],
-  "next_blocks": ["NATIVE-STD-HOSTED-001"]
+  "next_blocks": ["DEC-013"]
 }

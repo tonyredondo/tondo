@@ -1,11 +1,10 @@
 # ADR-019: Measure candidates before selecting the first native backend
 
-- Status: Proposed — selection pending measured evidence
+- Status: Proposed — evidence complete, backend decision pending
 - Date: 2026-08-25
 - Supersedes: none
-- Next decisions: `NATIVE-STD-HOSTED-001` (`NATIVE-STD-CORE-001` and
-  `DIAG-NATIVE-001` native logical diagnostic parity are closed; backend
-  selection remains pending measured evidence)
+- Next decision: `DEC-013` (the native evidence boundary is closed; the human
+  choice between Cranelift and LLVM remains pending)
 
 ## Context
 
@@ -45,17 +44,19 @@ adapter. The fast lane in
 [`tools/native-evaluation/`](../../tools/native-evaluation/) consumes the real
 MIR probe and measures both engines over the same normalized module shape. A
 sample is not semantic evidence when it contains trapped unsupported
-functions; the report preserves those counts and keeps native equivalence
-pending.
+functions; the report preserves those counts. The physical runner now also
+provides a bounded executable differential report, so this evidence boundary
+is ready for the human decision recorded by `DEC-013`.
 
 This is intentionally bounded:
 
 - it keeps the optional Cranelift/LLVM evaluation dependencies outside the
   compiler workspace package graph;
-- it does not promise a native executable, a stable object layout or public FFI;
+- it does not promise a stable object layout or public FFI;
 - it does not create a second source language or a second semantic pipeline;
-- it publishes exploratory compile-time and object-size samples only;
-- it does not claim peak memory, runtime performance or semantic equivalence;
+- it publishes exploratory compile-time/object-size samples and a bounded
+  executable semantic slice;
+- it does not claim peak memory, production runtime performance or Gate N1;
 - it does not allow a native target into N1 until exact VM equivalence and
   diagnostic parity are demonstrated.
 
@@ -73,9 +74,9 @@ dependency surface does not compensate for the correctness, unwind,
 source-map, diagnostics and maintenance stack Tondo would have to own. It may
 be reconsidered only with a real adapter and identical evidence.
 
-The fast lane is a feedback mechanism, not a promotion gate. Final selection
-requires full MIR lowering, VM/native semantic equivalence, full performance
-capture and the normal quality gate.
+The fast lane and bounded runner are evidence mechanisms, not an automatic
+promotion gate. Final selection still requires repeated performance capture,
+the normal quality gate and a human `DEC-013` record.
 
 The physical `Thread` lane is now an explicit prerequisite rather than an
 assumption: the safe runtime launches a worker with a completion barrier and
@@ -132,3 +133,6 @@ can select Cranelift or LLVM per target if measured evidence justifies it.
   record.
 - `target/reliability/evidence/native-evaluation.json` — generated opt-in
   report, containing the real-MIR probe and toolchain observations.
+- `testing/native-selection.json` and
+  `scripts/native-selection-capture.sh` — bind the fast and executable
+  reports and leave `selected_backend` null until `DEC-013`.

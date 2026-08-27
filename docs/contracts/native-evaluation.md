@@ -1,10 +1,11 @@
 # Native backend evaluation contract
 
-`NATIVE-001` is an evidence and selection block. It does not choose a backend
-until real candidate adapters have been measured against the same normalized
-MIR shape and the VM oracle. The opt-in runner emits native executables for its
-bounded supported slices, but this does not claim a complete Tondo product or
-a selected backend. The machine-readable authority is
+`NATIVE-001` is the evidence boundary for the backend decision. Its candidate
+capture is now ready for human review: real adapters have been measured against
+the same normalized MIR shape and VM oracle, but the block deliberately does
+not choose a backend or claim Gate N1. The opt-in runner emits native
+executables for its bounded supported slices, not a complete Tondo product.
+The machine-readable authority is
 [`testing/native-evaluation.json`](../../testing/native-evaluation.json), and
 the decision is recorded in
 [`docs/adr/019-native-backend-selection.md`](../adr/019-native-backend-selection.md).
@@ -17,18 +18,20 @@ and [`scripts/native-evaluation-runner.sh`](../../scripts/native-evaluation-runn
 
 ## Decision boundary
 
-Cranelift and LLVM are both candidates. The current evidence is intentionally
-selection-pending: the fast lane measures their code-generation cost on the
-same normalized module shape, but it cannot promote either one. A
+Cranelift and LLVM are both candidates. The current evidence is
+decision-ready but selection-pending: the fast lane measures their
+code-generation cost on the same normalized module shape and the physical
+runner checks the supported executable slice, but neither lane promotes either
+one. A
 compiler-owned generator is excluded from the measured ranking until it has a
 real machine-code adapter; otherwise its result would be a made-up baseline,
 not a candidate measurement.
 
-The selection is deliberately narrower than Gate N1. The fast lane measures
-compile time and object size only; it does not measure peak memory, runtime,
-ABI, object layout, FFI, native memory policy or release readiness. Those
-observations require native lowering and the VM oracle. A backend cannot enter
-N1 if it loses an observable required by the VM or by the `DIAG-*` contracts.
+The selection is deliberately narrower than Gate N1. The captured slice
+measures compile time, code size and bounded runtime semantics; it does not
+replace repeated production workloads, peak-memory capture or the final
+quality gate. A backend cannot enter N1 if it loses an observable required by
+the VM or by the `DIAG-*` contracts.
 
 ## Real-MIR probe
 

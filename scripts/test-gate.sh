@@ -247,6 +247,8 @@ run_step native-release-contract \
     scripts/native-rel-check.sh
 run_step native-release-tests \
     scripts/native-rel-test.sh
+run_step native-selection-contract \
+    scripts/native-selection-check.sh
 run_step native-select-contract \
     scripts/native-select-check.sh
 run_step native-select-contract-tests \

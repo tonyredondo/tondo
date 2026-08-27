@@ -1,0 +1,51 @@
+{
+  "format": "tondo-native-selection/1",
+  "task": "NATIVE-001",
+  "owner": "toolchain.native_evaluation",
+  "edition": "0.1",
+  "phase": "M20",
+  "status": "ready-for-decision",
+  "contract": "docs/contracts/native-selection.md",
+  "runner": "scripts/native-selection-capture.sh",
+  "fast_report": "target/reliability/evidence/native-evaluation-fast.json",
+  "executable_report": "target/reliability/evidence/native-evaluation-runner.json",
+  "evaluation_report": "target/reliability/evidence/native-evaluation.json",
+  "candidates": ["cranelift", "llvm"],
+  "excluded": ["custom"],
+  "target": "x86_64-unknown-linux-gnu",
+  "oracle": "bytecode-vm-oracle",
+  "selection": {
+    "selected_backend": null,
+    "status": "human-decision-required",
+    "n1_claim": false,
+    "required_inputs": [
+      "full-native-evidence",
+      "repeated-performance-capture",
+      "quality-gate",
+      "DEC-013-record"
+    ]
+  },
+  "required_executable_counts": {
+    "scalar": 118,
+    "managed": 3,
+    "runtime": 21,
+    "select": 8,
+    "thread": 5,
+    "std_core": 14,
+    "lowering": 1,
+    "diagnostics": 8
+  },
+  "negative_cases": [
+    "missing-fast-report",
+    "missing-executable-report",
+    "candidate-count-drift",
+    "scalar-count-drift",
+    "runtime-count-drift",
+    "backend-divergence",
+    "oracle-failure",
+    "target-drift",
+    "path-leak",
+    "premature-selection"
+  ],
+  "next_blocks": ["DEC-013"]
+}
