@@ -1,0 +1,60 @@
+{
+  "format": "tondo-native-arc/1",
+  "owner": "toolchain.native_memory",
+  "edition": "0.1",
+  "phase": "M11",
+  "status": "arc-001-closed",
+  "implemented_blocks": ["ARC-001"],
+  "pending_blocks": ["ARC-002"],
+  "implementation": {
+    "runtime": "crates/tondo-native-runtime/src/lib.rs",
+    "tests": "crates/tondo-native-runtime/src/lib.rs",
+    "contract": "docs/contracts/native-arc.md"
+  },
+  "ownership": {
+    "local": "checked-u32-strong-count",
+    "shared": "atomic-u32-compare-update-count",
+    "payload_edges": "retain-on-publish-transfer-on-consume-release-on-terminal",
+    "roots": "frame-root-counts-and-runtime-pins",
+    "frames": "normal-and-abort-cleanup-share-one-exact-once-path",
+    "scope": "child-edge-and-cancel-before-scope-release",
+    "select": "registration-retain-and-owned-arm-discard",
+    "workers": "runtime-pin-until-logical-terminal"
+  },
+  "cycle_collection": {
+    "algorithm": "trial-deletion-of-unreachable-strong-components",
+    "trigger": "explicit-quiescence-or-256-allocation-pressure",
+    "weak_refs": "tombstone-metadata-with-acquire-strong-upgrade",
+    "finalizers": "collector-never-runs-user-cleanup"
+  },
+  "corpus": {
+    "arc_001_cases": [
+      "arc-frame-normal-and-abort",
+      "arc-local-and-shared-counts",
+      "arc-payload-transfer-and-cancel",
+      "arc-scope-drop",
+      "arc-select-registration",
+      "arc-task-completion-replacement",
+      "arc-thread-terminal-pin"
+    ],
+    "arc_002_cases": []
+  },
+  "invariants": [
+    "async-frame-publishes-roots-before-suspend",
+    "cancellation-releases-payload-before-terminal",
+    "cross-thread-counts-use-atomic-compare-update",
+    "owned-select-registration-retains-source",
+    "scope-drop-cancels-and-releases-children",
+    "strong-edge-retain-release-is-checked",
+    "unwind-cleanup-is-exactly-once",
+    "weak-upgrade-cannot-resurrect-dead-target"
+  ],
+  "negative_cases": [
+    "double-release",
+    "invalid-root",
+    "non-weak-upgrade",
+    "tombstone-resurrection",
+    "untracked-payload-edge"
+  ],
+  "next_blocks": ["ARC-002"]
+}

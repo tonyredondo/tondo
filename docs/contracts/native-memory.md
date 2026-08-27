@@ -39,3 +39,9 @@ The machine-readable record is
 reader and canonical encoding live in
 `crates/tondo-compiler/src/toolchain.rs`; the shell contract is checked by
 `scripts/native-memory-check.sh` and its focused test.
+
+The native runtime ownership implementation is tracked separately in
+[`native-arc.md`](native-arc.md). `ARC-001` closes retain/release, roots,
+terminal cleanup and cross-thread count representation; `ARC-002` closes the
+cycle collector and weak-reference linearization before native diagnostics are
+run against a real backend.

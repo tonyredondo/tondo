@@ -161,6 +161,10 @@ run_step native-memory-contract \
     scripts/native-memory-check.sh
 run_step native-memory-contract-tests \
     scripts/native-memory-test.sh
+run_step native-arc-contract \
+    scripts/native-arc-check.sh
+run_step native-arc-contract-tests \
+    scripts/native-arc-test.sh
 run_step native-abi-contract \
     scripts/native-abi-check.sh
 run_step native-abi-contract-tests \

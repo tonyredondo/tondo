@@ -1,0 +1,48 @@
+# Native ARC implementation contract
+
+`ARC-001` and `ARC-002` turn the hybrid memory decision into a runtime
+implementation. The implementation is private to the native backend: handles
+are opaque `u64` capabilities, the object layout is not an FFI promise, and
+the VM remains the semantic oracle.
+
+## Ownership and terminal cleanup
+
+An unshared value starts with a checked non-atomic strong count. A value marked
+as crossing a `Send`/`Share` boundary switches to a checked `AtomicU32`; retain
+and release use a compare-update operation with acquire/release ordering and
+fail closed on overflow or underflow. Every managed payload edge is retained
+when it is published and is either transferred by a consuming operation or
+released before the owner reaches its terminal state.
+
+Frames publish roots before suspension and unpublish them on both normal and
+abort cleanup. Structured scopes retain child tasks and cancel/discard their
+payloads before releasing the scope edge. A select retains every registered
+source; only an arm marked `owned` can cancel or discard that source. Thread
+workers carry a runtime pin until their logical task is ready or cancelled, so
+the physical worker cannot race object destruction.
+
+No path invokes user finalizers. Resource cleanup remains the explicit MIR
+terminal operation described by the language specification; ARC only releases
+managed edges and drives the already-defined cancellation/unwind transitions.
+
+## Cycles and weak references
+
+At an explicit quiescence boundary or after 256 allocations, the runtime runs
+trial deletion. It computes incoming strong edges, keeps components reachable
+from strong owners, roots, or runtime pins, and atomically tombstones the
+remaining components as a unit. Internal edges of a doomed component are not
+temporarily decremented, which avoids underflow and preserves deterministic
+teardown. A thread object in a collected component receives a cancellation
+signal before its worker entry is discarded.
+
+A weak handle retains only target tombstone metadata. It never contributes to
+strong reachability. `weak_upgrade` is the single linearization point: it
+increments the target strong count only while the target is alive, otherwise it
+returns the `weak-dead` status and cannot resurrect the object. The tombstone is
+removed when the last weak handle is released.
+
+The machine-readable contract is
+[`testing/native-arc.json`](../../testing/native-arc.json); its focused checker
+and negative tests are `scripts/native-arc-{check,test}.sh`. Runtime evidence
+is covered by the ARC-specific tests in
+`crates/tondo-native-runtime/src/lib.rs`.

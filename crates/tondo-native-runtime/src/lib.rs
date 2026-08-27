@@ -8,7 +8,8 @@
 
 #![forbid(unsafe_code)]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread::ThreadId;
 
@@ -28,7 +29,11 @@ const STATUS_NOT_READY: u64 = 6;
 const STATUS_CANCELLED: u64 = 7;
 /// A selection with an `else` arm completed without a ready source.
 const STATUS_SELECT_ELSE: u64 = 8;
+const STATUS_WEAK_DEAD: u64 = 9;
+const STATUS_COUNT_OVERFLOW: u64 = 10;
+const STATUS_NOT_WEAK: u64 = 11;
 const MAX_SELECT_ARMS: u32 = 64;
+const COLLECTION_PRESSURE: u32 = 256;
 
 const WORKER_STARTING: u64 = 0;
 const WORKER_RUNNING: u64 = 1;
@@ -59,6 +64,13 @@ enum Object {
         state: TimerState,
         value: u64,
     },
+    /// A weak handle keeps only the target's tombstone metadata alive.  It
+    /// never contributes to strong liveness and is upgraded explicitly.
+    Weak {
+        target: u64,
+    },
+    /// Destroyed payload retained solely while weak handles still exist.
+    Tombstone,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -234,11 +246,80 @@ struct SelectState {
     wakeups: u64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug)]
+enum StrongCount {
+    Local(u32),
+    Shared(AtomicU32),
+}
+
+impl StrongCount {
+    fn load(&self) -> u32 {
+        match self {
+            Self::Local(value) => *value,
+            Self::Shared(value) => value.load(Ordering::Acquire),
+        }
+    }
+
+    fn is_shared(&self) -> bool {
+        matches!(self, Self::Shared(_))
+    }
+
+    fn mark_shared(&mut self) -> u64 {
+        if self.is_shared() {
+            return STATUS_OK;
+        }
+        let Self::Local(value) = self else {
+            unreachable!("shared count was checked above");
+        };
+        let value = *value;
+        *self = Self::Shared(AtomicU32::new(value));
+        STATUS_OK
+    }
+
+    fn increment(&mut self) -> u64 {
+        match self {
+            Self::Local(value) => {
+                let Some(next) = value.checked_add(1) else {
+                    return STATUS_COUNT_OVERFLOW;
+                };
+                *value = next;
+                STATUS_OK
+            }
+            Self::Shared(value) => value
+                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                    current.checked_add(1)
+                })
+                .map(|_| STATUS_OK)
+                .unwrap_or(STATUS_COUNT_OVERFLOW),
+        }
+    }
+
+    fn decrement(&mut self) -> u64 {
+        match self {
+            Self::Local(value) => {
+                if *value == 0 {
+                    return STATUS_DOUBLE_RELEASE;
+                }
+                *value -= 1;
+                STATUS_OK
+            }
+            Self::Shared(value) => value
+                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                    current.checked_sub(1)
+                })
+                .map(|_| STATUS_OK)
+                .unwrap_or(STATUS_DOUBLE_RELEASE),
+        }
+    }
+}
+
+#[derive(Debug)]
 struct Entry {
-    strong: u32,
+    strong: StrongCount,
     weak: u32,
     root_count: u32,
+    runtime_roots: u32,
+    alive: bool,
     object: ObjectKind,
 }
 
@@ -250,6 +331,7 @@ enum ObjectKind {
     Select,
     OneShot,
     Timer,
+    Weak,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -274,6 +356,7 @@ struct State {
     last_status: u64,
     select_rotation: u64,
     thread_workers: BTreeMap<u64, Arc<WorkerSignal>>,
+    allocations_since_collection: u32,
 }
 
 impl State {
@@ -287,75 +370,510 @@ impl State {
     }
 
     fn alloc(&mut self, object: Object, object_kind: ObjectKind) -> u64 {
+        let Some(next_id) = self.next_id.checked_add(1) else {
+            self.last_status = STATUS_COUNT_OVERFLOW;
+            return 0;
+        };
         let id = HANDLE_BIT | self.next_id;
-        self.next_id = self.next_id.saturating_add(1);
+        self.next_id = next_id;
         self.objects.insert(
             id,
             (
                 Entry {
-                    strong: 1,
+                    strong: StrongCount::Local(1),
                     weak: 0,
                     root_count: 0,
+                    runtime_roots: 0,
+                    alive: true,
                     object: object_kind,
                 },
                 object,
             ),
         );
+        self.retain_children(id);
+        self.allocations_since_collection = self.allocations_since_collection.saturating_add(1);
+        if self.allocations_since_collection >= COLLECTION_PRESSURE {
+            let _ = self.collect_cycles();
+        }
         id
     }
 
     fn object(&self, handle: u64) -> Option<&Object> {
-        self.objects.get(&handle).map(|(_, object)| object)
+        self.objects
+            .get(&handle)
+            .and_then(|(entry, object)| entry.alive.then_some(object))
     }
 
     fn object_mut(&mut self, handle: u64) -> Option<&mut Object> {
-        self.objects.get_mut(&handle).map(|(_, object)| object)
+        self.objects
+            .get_mut(&handle)
+            .and_then(|(entry, object)| entry.alive.then_some(object))
     }
 
     fn entry_mut(&mut self, handle: u64) -> Option<&mut Entry> {
-        self.objects.get_mut(&handle).map(|(entry, _)| entry)
+        self.objects
+            .get_mut(&handle)
+            .and_then(|(entry, _)| entry.alive.then_some(entry))
+    }
+
+    fn raw_entry(&self, handle: u64) -> Option<&Entry> {
+        self.objects.get(&handle).map(|(entry, _)| entry)
+    }
+
+    fn raw_object(&self, handle: u64) -> Option<&Object> {
+        self.objects.get(&handle).map(|(_, object)| object)
     }
 
     fn valid_handle(handle: u64) -> bool {
         handle & HANDLE_BIT != 0
     }
 
-    fn retain(&mut self, handle: u64) -> u64 {
-        let Some(entry) = self.entry_mut(handle) else {
-            return STATUS_INVALID_HANDLE;
-        };
-        if entry.strong == 0 {
-            return STATUS_INVALID_HANDLE;
+    fn live_handle(&self, handle: u64) -> bool {
+        Self::valid_handle(handle)
+            && self.raw_entry(handle).is_some_and(|entry| {
+                entry.alive
+                    && (entry.strong.load() > 0 || entry.root_count > 0 || entry.runtime_roots > 0)
+            })
+    }
+
+    fn status(&mut self, status: u64) -> u64 {
+        if status != STATUS_OK {
+            self.last_status = status;
         }
-        entry.strong = entry.strong.saturating_add(1);
-        STATUS_OK
+        status
+    }
+
+    fn strong_children_of(object: &Object) -> Vec<u64> {
+        let mut children = Vec::new();
+        match object {
+            Object::Result {
+                payload: Some(value),
+                ..
+            }
+            | Object::Task { value, .. }
+            | Object::OneShot { value, .. }
+            | Object::Timer { value, .. } => children.push(*value),
+            Object::Scope { tasks, .. } => children.extend(tasks.iter().copied()),
+            Object::Select(selection) => {
+                children.extend(selection.arms.iter().map(|arm| arm.source));
+            }
+            Object::Weak { .. } | Object::Tombstone | Object::Result { .. } => {}
+        }
+        children
+    }
+
+    fn retain_children(&mut self, owner: u64) {
+        let children = self
+            .raw_object(owner)
+            .map(Self::strong_children_of)
+            .unwrap_or_default();
+        for child in children {
+            if self.live_handle(child) {
+                let _ = self.retain(child);
+            }
+        }
+    }
+
+    fn retain(&mut self, handle: u64) -> u64 {
+        let status = {
+            let Some(entry) = self.entry_mut(handle) else {
+                return self.status(STATUS_INVALID_HANDLE);
+            };
+            if entry.strong.load() == 0 && entry.root_count == 0 && entry.runtime_roots == 0 {
+                STATUS_INVALID_HANDLE
+            } else {
+                entry.strong.increment()
+            }
+        };
+        self.status(status)
     }
 
     fn release(&mut self, handle: u64) -> u64 {
-        let Some((entry, _)) = self.objects.get_mut(&handle) else {
-            return STATUS_INVALID_HANDLE;
+        let Some(entry) = self.entry_mut(handle) else {
+            return self.status(STATUS_INVALID_HANDLE);
         };
-        if entry.strong == 0 {
-            return STATUS_DOUBLE_RELEASE;
+        let status = entry.strong.decrement();
+        if status != STATUS_OK {
+            return self.status(status);
         }
-        entry.strong -= 1;
-        let remove = entry.strong == 0 && entry.root_count == 0 && entry.weak == 0;
-        if remove {
-            self.objects.remove(&handle);
-            self.thread_workers.remove(&handle);
-        }
+        let mut pending = VecDeque::new();
+        self.queue_if_unowned(handle, &mut pending);
+        self.drain_destruction(&mut pending);
         STATUS_OK
     }
 
     fn clone_value(&mut self, handle: u64) -> u64 {
-        let Some((entry, object)) = self.objects.get(&handle).cloned() else {
+        let Some((entry, object)) = self.objects.get(&handle) else {
             self.last_status = STATUS_INVALID_HANDLE;
             return 0;
         };
-        if entry.strong == 1 {
+        if !entry.alive
+            || (entry.strong.load() == 0 && entry.root_count == 0 && entry.runtime_roots == 0)
+        {
+            self.last_status = STATUS_INVALID_HANDLE;
+            return 0;
+        }
+        if matches!(object, Object::Weak { .. } | Object::Tombstone) {
+            self.last_status = STATUS_INVALID_TRANSITION;
+            return 0;
+        }
+        if entry.strong.load() == 1 {
             return handle;
         }
-        self.alloc(object, entry.object)
+        self.alloc(object.clone(), entry.object)
+    }
+
+    fn mark_shared(&mut self, handle: u64) -> u64 {
+        let status = {
+            let Some(entry) = self.entry_mut(handle) else {
+                return self.status(STATUS_INVALID_HANDLE);
+            };
+            if entry.strong.load() == 0 {
+                STATUS_INVALID_HANDLE
+            } else {
+                entry.strong.mark_shared()
+            }
+        };
+        self.status(status)
+    }
+
+    fn arc_kind(&mut self, handle: u64) -> u64 {
+        let Some(entry) = self.raw_entry(handle) else {
+            self.last_status = STATUS_INVALID_HANDLE;
+            return u64::MAX;
+        };
+        if !entry.alive || entry.strong.load() == 0 {
+            self.last_status = STATUS_INVALID_HANDLE;
+            return u64::MAX;
+        }
+        u64::from(entry.strong.is_shared())
+    }
+
+    fn strong_count(&mut self, handle: u64) -> u64 {
+        let Some(entry) = self.raw_entry(handle) else {
+            self.last_status = STATUS_INVALID_HANDLE;
+            return u64::MAX;
+        };
+        if !entry.alive {
+            self.last_status = STATUS_INVALID_HANDLE;
+            return u64::MAX;
+        }
+        u64::from(entry.strong.load())
+    }
+
+    fn weak_count(&mut self, handle: u64) -> u64 {
+        let Some(entry) = self.raw_entry(handle) else {
+            self.last_status = STATUS_INVALID_HANDLE;
+            return u64::MAX;
+        };
+        u64::from(entry.weak)
+    }
+
+    fn live_object_count(&self) -> u64 {
+        self.objects
+            .values()
+            .filter(|(entry, _)| entry.alive)
+            .count() as u64
+    }
+
+    fn queue_if_unowned(&mut self, handle: u64, pending: &mut VecDeque<u64>) {
+        let Some(entry) = self.raw_entry(handle) else {
+            return;
+        };
+        if entry.alive
+            && entry.strong.load() == 0
+            && entry.root_count == 0
+            && entry.runtime_roots == 0
+        {
+            pending.push_back(handle);
+        }
+    }
+
+    fn mark_destroyed(&mut self, handle: u64) -> Option<Object> {
+        let (entry, object) = self.objects.get_mut(&handle)?;
+        if !entry.alive
+            || entry.strong.load() != 0
+            || entry.root_count != 0
+            || entry.runtime_roots != 0
+        {
+            return None;
+        }
+        entry.alive = false;
+        Some(std::mem::replace(object, Object::Tombstone))
+    }
+
+    fn mark_collected(&mut self, handle: u64) -> Option<Object> {
+        let (entry, object) = self.objects.get_mut(&handle)?;
+        if !entry.alive || entry.root_count != 0 || entry.runtime_roots != 0 {
+            return None;
+        }
+        entry.alive = false;
+        Some(std::mem::replace(object, Object::Tombstone))
+    }
+
+    fn decrement_weak_edge(&mut self, target: u64) {
+        let remove = if let Some((entry, _)) = self.objects.get_mut(&target) {
+            entry.weak = entry.weak.saturating_sub(1);
+            !entry.alive && entry.weak == 0
+        } else {
+            false
+        };
+        if remove {
+            self.objects.remove(&target);
+            self.thread_workers.remove(&target);
+        }
+    }
+
+    fn release_strong_edge(&mut self, child: u64, pending: &mut VecDeque<u64>) {
+        let Some(entry) = self.entry_mut(child) else {
+            return;
+        };
+        if entry.strong.decrement() == STATUS_OK {
+            self.queue_if_unowned(child, pending);
+        }
+    }
+
+    fn drain_destruction(&mut self, pending: &mut VecDeque<u64>) {
+        while let Some(handle) = pending.pop_front() {
+            let Some(object) = self.mark_destroyed(handle) else {
+                continue;
+            };
+            self.cleanup_destroyed_object(handle, &object, pending);
+            let children = Self::strong_children_of(&object);
+            if let Object::Weak { target } = object {
+                self.decrement_weak_edge(target);
+            }
+            for child in children {
+                self.release_strong_edge(child, pending);
+            }
+            let remove = self
+                .raw_entry(handle)
+                .is_some_and(|entry| !entry.alive && entry.weak == 0);
+            if remove {
+                self.objects.remove(&handle);
+                self.thread_workers.remove(&handle);
+            }
+        }
+    }
+
+    /// Drops owner-scoped state before the object's strong edges are released.
+    /// A scope owns its children and therefore cancels/discards them when the
+    /// scope itself goes away; a select owns only the arms explicitly marked
+    /// `owned`.  Task payloads are moved out before their child edge is
+    /// decremented so cancellation and destruction are both leak-free.
+    fn cleanup_destroyed_object(
+        &mut self,
+        handle: u64,
+        object: &Object,
+        pending: &mut VecDeque<u64>,
+    ) {
+        match object {
+            Object::Task {
+                kind: TaskKind::Thread,
+                ..
+            } => {
+                if let Some(signal) = self.thread_workers.get(&handle) {
+                    signal.cancel();
+                }
+            }
+            Object::Scope { tasks, .. } => {
+                for task in tasks.iter().copied() {
+                    self.discard_owned_task(task, pending);
+                }
+            }
+            Object::Select(selection) => {
+                for arm in selection.arms.iter().copied().filter(|arm| arm.owned) {
+                    self.discard_select_source_with_pending(arm, pending);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn discard_owned_task(&mut self, task: u64, pending: &mut VecDeque<u64>) {
+        let (state, kind) = match self.object(task) {
+            Some(Object::Task { state, kind, .. }) => (*state, *kind),
+            _ => return,
+        };
+        match state {
+            TaskState::Pending => {
+                self.release_task_value(task, pending);
+                if let Some(Object::Task { state, .. }) = self.object_mut(task) {
+                    *state = TaskState::Cancelled;
+                }
+                if kind == TaskKind::Thread
+                    && let Some(signal) = self.thread_workers.get(&task)
+                {
+                    signal.cancel();
+                }
+                self.clear_runtime_root_into(task, pending);
+                self.notify_selects(task);
+            }
+            TaskState::Ready => {
+                self.release_task_value(task, pending);
+                if let Some(Object::Task { state, .. }) = self.object_mut(task) {
+                    *state = TaskState::Joined;
+                }
+                self.notify_selects(task);
+            }
+            TaskState::Cancelled | TaskState::Joined => {}
+        }
+    }
+
+    fn weak_new(&mut self, target: u64) -> u64 {
+        let Some(entry) = self.raw_entry(target) else {
+            return self.status(STATUS_INVALID_HANDLE);
+        };
+        if !entry.alive {
+            return self.status(STATUS_WEAK_DEAD);
+        }
+        if entry.weak == u32::MAX {
+            return self.status(STATUS_COUNT_OVERFLOW);
+        }
+        if let Some(entry) = self.objects.get_mut(&target).map(|(entry, _)| entry) {
+            entry.weak += 1;
+        }
+        let weak = self.alloc(Object::Weak { target }, ObjectKind::Weak);
+        if weak == 0 {
+            self.decrement_weak_edge(target);
+        }
+        weak
+    }
+
+    fn weak_upgrade(&mut self, weak: u64) -> u64 {
+        let Some(Object::Weak { target }) = self.object(weak).cloned() else {
+            self.last_status = if self.raw_entry(weak).is_some() {
+                STATUS_NOT_WEAK
+            } else {
+                STATUS_INVALID_HANDLE
+            };
+            return 0;
+        };
+        let Some(entry) = self.entry_mut(target) else {
+            self.last_status = STATUS_WEAK_DEAD;
+            return 0;
+        };
+        if !entry.alive {
+            self.last_status = STATUS_WEAK_DEAD;
+            return 0;
+        }
+        if entry.strong.increment() != STATUS_OK {
+            self.last_status = STATUS_COUNT_OVERFLOW;
+            return 0;
+        }
+        target
+    }
+
+    fn collect_cycles(&mut self) -> u64 {
+        self.allocations_since_collection = 0;
+        let live = self
+            .objects
+            .iter()
+            .filter_map(|(handle, (entry, _))| entry.alive.then_some(*handle))
+            .collect::<Vec<_>>();
+        if live.is_empty() {
+            return 0;
+        }
+
+        // Trial deletion: subtract every strong edge from the observed strong
+        // count.  The remainder represents an external owner.  Roots and
+        // runtime pins are additional external owners even though they are
+        // deliberately tracked outside the user-visible strong count.
+        let mut internal_incoming = BTreeMap::<u64, u32>::new();
+        for handle in &live {
+            internal_incoming.insert(*handle, 0);
+        }
+        for handle in &live {
+            if let Some(object) = self.object(*handle) {
+                for child in Self::strong_children_of(object) {
+                    if let Some(incoming) = internal_incoming.get_mut(&child) {
+                        *incoming = incoming.saturating_add(1);
+                    }
+                }
+            }
+        }
+
+        let mut reachable = BTreeSet::new();
+        let mut queue = VecDeque::new();
+        for handle in &live {
+            let Some((entry, _)) = self.objects.get(handle) else {
+                continue;
+            };
+            let external = entry
+                .strong
+                .load()
+                .saturating_sub(internal_incoming[handle]);
+            if external > 0 || entry.root_count > 0 || entry.runtime_roots > 0 {
+                queue.push_back(*handle);
+            }
+        }
+        while let Some(handle) = queue.pop_front() {
+            if !reachable.insert(handle) {
+                continue;
+            }
+            let children = self
+                .object(handle)
+                .map(Self::strong_children_of)
+                .unwrap_or_default();
+            queue.extend(
+                children
+                    .into_iter()
+                    .filter(|child| !reachable.contains(child)),
+            );
+        }
+
+        let doomed = live
+            .into_iter()
+            .filter(|handle| !reachable.contains(handle))
+            .collect::<BTreeSet<_>>();
+        if doomed.is_empty() {
+            return 0;
+        }
+
+        // Remove a whole unreachable component as one unit.  Internal edges
+        // are not decremented individually (that would report transient
+        // underflows); only edges crossing out of the component are released.
+        let mut removed = Vec::new();
+        for handle in &doomed {
+            if let Some(object) = self.mark_collected(*handle) {
+                removed.push((*handle, object));
+            }
+        }
+        let mut pending = VecDeque::new();
+        for (handle, object) in removed {
+            if matches!(
+                &object,
+                Object::Task {
+                    kind: TaskKind::Thread,
+                    ..
+                }
+            ) && let Some(signal) = self.thread_workers.get(&handle)
+            {
+                signal.cancel();
+            }
+            let children = Self::strong_children_of(&object);
+            if let Object::Weak { target } = &object {
+                self.decrement_weak_edge(*target);
+            }
+            for child in children {
+                if !doomed.contains(&child) {
+                    self.release_strong_edge(child, &mut pending);
+                }
+            }
+            if self
+                .raw_entry(handle)
+                .is_some_and(|entry| !entry.alive && entry.weak == 0)
+            {
+                self.objects.remove(&handle);
+                self.thread_workers.remove(&handle);
+            }
+        }
+        self.drain_destruction(&mut pending);
+        doomed.len() as u64
+    }
+
+    fn quiesce(&mut self) -> u64 {
+        self.collect_cycles()
     }
 
     fn create_frame(&mut self) -> u64 {
@@ -366,20 +884,41 @@ impl State {
     }
 
     fn publish_root(&mut self, frame: u64, value: u64) -> u64 {
-        if !Self::valid_handle(value) || self.object(value).is_none() {
+        if !self.live_handle(value) {
             return STATUS_INVALID_HANDLE;
+        }
+        let Some(entry) = self.raw_entry(value) else {
+            return STATUS_INVALID_HANDLE;
+        };
+        if entry.root_count == u32::MAX {
+            return STATUS_COUNT_OVERFLOW;
         }
         let Some(frame_state) = self.frames.get_mut(&frame) else {
             return STATUS_INVALID_HANDLE;
         };
-        *frame_state.roots.entry(value).or_default() += 1;
+        let next_count = frame_state
+            .roots
+            .get(&value)
+            .copied()
+            .unwrap_or(0)
+            .checked_add(1);
+        let Some(next_count) = next_count else {
+            return STATUS_COUNT_OVERFLOW;
+        };
+        frame_state.roots.insert(value, next_count);
         if let Some(entry) = self.entry_mut(value) {
-            entry.root_count = entry.root_count.saturating_add(1);
+            entry.root_count += 1;
         }
         STATUS_OK
     }
 
     fn unpublish_root(&mut self, frame: u64, value: u64) -> u64 {
+        let Some(entry) = self.raw_entry(value) else {
+            return STATUS_INVALID_HANDLE;
+        };
+        if !entry.alive || entry.root_count == 0 {
+            return STATUS_MISSING_ROOT;
+        }
         let Some(frame_state) = self.frames.get_mut(&frame) else {
             return STATUS_INVALID_HANDLE;
         };
@@ -390,9 +929,12 @@ impl State {
         if *count == 0 {
             frame_state.roots.remove(&value);
         }
-        if let Some(entry) = self.entry_mut(value) {
-            entry.root_count = entry.root_count.saturating_sub(1);
-        }
+        self.entry_mut(value)
+            .expect("root entry was validated above")
+            .root_count -= 1;
+        let mut pending = VecDeque::new();
+        self.queue_if_unowned(value, &mut pending);
+        self.drain_destruction(&mut pending);
         STATUS_OK
     }
 
@@ -443,9 +985,15 @@ impl State {
             }
         }
         frame_state.terminal = true;
-        let roots = frame_state.roots.keys().copied().collect::<Vec<_>>();
-        for root in roots {
-            let _ = self.unpublish_root(frame, root);
+        let roots = frame_state
+            .roots
+            .iter()
+            .map(|(root, count)| (*root, *count))
+            .collect::<Vec<_>>();
+        for (root, count) in roots {
+            for _ in 0..count {
+                let _ = self.unpublish_root(frame, root);
+            }
         }
         let _ = aborting;
         STATUS_OK
@@ -485,6 +1033,9 @@ impl State {
             },
             ObjectKind::Task,
         );
+        if task == 0 {
+            return 0;
+        }
         if let Some(scope) = scope {
             if let Some(Object::Scope { tasks, .. }) = self.object_mut(scope) {
                 tasks.push(task);
@@ -505,6 +1056,9 @@ impl State {
         if task == 0 {
             return 0;
         }
+        if let Some(entry) = self.entry_mut(task) {
+            entry.runtime_roots = 1;
+        }
         let signal = Arc::new(WorkerSignal::new(std::thread::current().id()));
         self.thread_workers.insert(task, Arc::clone(&signal));
         let worker_signal = Arc::clone(&signal);
@@ -517,9 +1071,83 @@ impl State {
             if let Some(Object::Task { state, .. }) = self.object_mut(task) {
                 *state = TaskState::Cancelled;
             }
+            self.clear_runtime_root(task);
             self.last_status = STATUS_INVALID_TRANSITION;
         }
         task
+    }
+
+    fn release_task_value(&mut self, task: u64, pending: &mut VecDeque<u64>) {
+        let value = match self.object_mut(task) {
+            Some(Object::Task { value, .. }) => std::mem::take(value),
+            _ => return,
+        };
+        if self.live_handle(value) {
+            self.release_strong_edge(value, pending);
+        }
+    }
+
+    fn release_slot_value(
+        &mut self,
+        source: u64,
+        kind: SelectSourceKind,
+        pending: &mut VecDeque<u64>,
+    ) {
+        let value = match (kind, self.object_mut(source)) {
+            (SelectSourceKind::Task, Some(Object::Task { value, .. }))
+            | (SelectSourceKind::OneShot, Some(Object::OneShot { value, .. }))
+            | (SelectSourceKind::Timer, Some(Object::Timer { value, .. })) => std::mem::take(value),
+            _ => return,
+        };
+        if self.live_handle(value) {
+            self.release_strong_edge(value, pending);
+        }
+    }
+
+    fn replace_task_value(&mut self, task: u64, value: u64, pending: &mut VecDeque<u64>) -> u64 {
+        if !matches!(self.object(task), Some(Object::Task { .. })) {
+            return STATUS_INVALID_HANDLE;
+        }
+        if self.live_handle(value) {
+            let status = self.retain(value);
+            if status != STATUS_OK {
+                return status;
+            }
+        }
+        let previous = match self.object_mut(task) {
+            Some(Object::Task { value: slot, .. }) => std::mem::replace(slot, value),
+            _ => unreachable!("task was validated before retaining its value"),
+        };
+        if self.live_handle(previous) {
+            self.release_strong_edge(previous, pending);
+        }
+        STATUS_OK
+    }
+
+    fn clear_runtime_root_into(&mut self, task: u64, pending: &mut VecDeque<u64>) {
+        if let Some(entry) = self.entry_mut(task) {
+            entry.runtime_roots = 0;
+        }
+        self.queue_if_unowned(task, pending);
+    }
+
+    fn clear_runtime_root(&mut self, task: u64) {
+        let mut pending = VecDeque::new();
+        self.clear_runtime_root_into(task, &mut pending);
+        self.drain_destruction(&mut pending);
+    }
+
+    fn clear_runtime_root_if_terminal(&mut self, task: u64) {
+        let terminal = matches!(
+            self.object(task),
+            Some(Object::Task {
+                state: TaskState::Ready | TaskState::Cancelled,
+                ..
+            })
+        );
+        if terminal {
+            self.clear_runtime_root(task);
+        }
     }
 
     fn thread_worker_signal(&self, task: u64) -> Option<Arc<WorkerSignal>> {
@@ -600,7 +1228,7 @@ impl State {
             return 0;
         }
         *state = TaskState::Joined;
-        *value
+        std::mem::take(value)
     }
 
     /// Completes a task whose callable body was deliberately published as a
@@ -608,35 +1236,64 @@ impl State {
     /// edge, then commits the value through this single transition so the
     /// ordinary await/select ownership rules remain unchanged.
     fn task_complete(&mut self, task: u64, value: u64) -> u64 {
-        let Some(Object::Task {
-            state, value: slot, ..
-        }) = self.object_mut(task)
-        else {
-            return STATUS_INVALID_HANDLE;
+        let state = match self.object(task) {
+            Some(Object::Task { state, .. }) => *state,
+            _ => return STATUS_INVALID_HANDLE,
         };
-        if *state != TaskState::Pending {
+        if state != TaskState::Pending {
             return STATUS_INVALID_TRANSITION;
         }
-        *slot = value;
+        let mut pending = VecDeque::new();
+        let status = self.replace_task_value(task, value, &mut pending);
+        if status != STATUS_OK {
+            self.drain_destruction(&mut pending);
+            return self.status(status);
+        }
+        let Some(Object::Task { state, .. }) = self.object_mut(task) else {
+            return self.status(STATUS_INVALID_HANDLE);
+        };
         *state = TaskState::Ready;
         self.notify_selects(task);
+        self.drain_destruction(&mut pending);
         STATUS_OK
     }
 
     fn task_cancel(&mut self, task: u64) -> u64 {
-        let Some(Object::Task { state, kind, .. }) = self.object_mut(task) else {
-            return STATUS_INVALID_HANDLE;
+        let (state, kind) = match self.object(task) {
+            Some(Object::Task { state, kind, .. }) => (*state, *kind),
+            _ => return STATUS_INVALID_HANDLE,
         };
-        if matches!(*state, TaskState::Cancelled | TaskState::Joined) {
+        if state != TaskState::Pending {
             return STATUS_INVALID_TRANSITION;
         }
+        let mut pending = VecDeque::new();
+        self.release_task_value(task, &mut pending);
+        let Some(Object::Task { state, .. }) = self.object_mut(task) else {
+            return STATUS_INVALID_HANDLE;
+        };
         *state = TaskState::Cancelled;
-        if *kind == TaskKind::Thread
+        if kind == TaskKind::Thread
             && let Some(signal) = self.thread_workers.get(&task)
         {
             signal.cancel();
         }
         self.notify_selects(task);
+        if kind == TaskKind::Thread {
+            self.clear_runtime_root(task);
+        }
+        self.drain_destruction(&mut pending);
+        STATUS_OK
+    }
+
+    fn scope_remove_task(&mut self, scope: u64, task: u64, pending: &mut VecDeque<u64>) -> u64 {
+        let Some(Object::Scope { tasks, .. }) = self.object_mut(scope) else {
+            return STATUS_INVALID_HANDLE;
+        };
+        let Some(index) = tasks.iter().position(|candidate| *candidate == task) else {
+            return STATUS_INVALID_TRANSITION;
+        };
+        tasks.remove(index);
+        self.release_strong_edge(task, pending);
         STATUS_OK
     }
 
@@ -687,45 +1344,59 @@ impl State {
     }
 
     fn discard_select_source(&mut self, arm: SelectArm) {
-        let cancel_thread = match (arm.kind, self.object_mut(arm.source)) {
+        let mut pending = VecDeque::new();
+        self.discard_select_source_with_pending(arm, &mut pending);
+        self.drain_destruction(&mut pending);
+    }
+
+    fn discard_select_source_with_pending(&mut self, arm: SelectArm, pending: &mut VecDeque<u64>) {
+        let mut discard_value = false;
+        let mut cancel_thread = false;
+        match (arm.kind, self.object_mut(arm.source)) {
             (SelectSourceKind::Task, Some(Object::Task { state, kind, .. })) => match state {
                 TaskState::Pending => {
                     *state = TaskState::Cancelled;
-                    *kind == TaskKind::Thread
+                    discard_value = true;
+                    cancel_thread = *kind == TaskKind::Thread;
                 }
                 TaskState::Ready => {
                     *state = TaskState::Joined;
-                    false
+                    discard_value = true;
                 }
-                TaskState::Cancelled | TaskState::Joined => false,
+                TaskState::Cancelled | TaskState::Joined => {}
             },
             (SelectSourceKind::OneShot, Some(Object::OneShot { state, .. })) => match state {
                 OneShotState::Pending => {
                     *state = OneShotState::Cancelled;
-                    false
+                    discard_value = true;
                 }
                 OneShotState::Ready => {
                     *state = OneShotState::Consumed;
-                    false
+                    discard_value = true;
                 }
-                OneShotState::Cancelled | OneShotState::Consumed => false,
+                OneShotState::Cancelled | OneShotState::Consumed => {}
             },
             (SelectSourceKind::Timer, Some(Object::Timer { state, .. })) => match state {
                 TimerState::Pending => {
                     *state = TimerState::Cancelled;
-                    false
+                    discard_value = true;
                 }
                 TimerState::Ready => {
                     *state = TimerState::Consumed;
-                    false
+                    discard_value = true;
                 }
-                TimerState::Cancelled | TimerState::Consumed => false,
+                TimerState::Cancelled | TimerState::Consumed => {}
             },
-            _ => false,
-        };
+            _ => {}
+        }
+        if discard_value {
+            self.release_slot_value(arm.source, arm.kind, pending);
+        }
         if cancel_thread && let Some(signal) = self.thread_workers.get(&arm.source) {
             signal.cancel();
+            self.clear_runtime_root_into(arm.source, pending);
         }
+        self.notify_selects(arm.source);
     }
 
     fn take_select_source(&mut self, source: u64, kind: SelectSourceKind) -> u64 {
@@ -740,7 +1411,7 @@ impl State {
                     return 0;
                 }
                 *state = TaskState::Joined;
-                *value
+                std::mem::take(value)
             }
             (SelectSourceKind::OneShot, Some(Object::OneShot { state, value })) => {
                 if *state != OneShotState::Ready {
@@ -752,7 +1423,7 @@ impl State {
                     return 0;
                 }
                 *state = OneShotState::Consumed;
-                *value
+                std::mem::take(value)
             }
             (SelectSourceKind::Timer, Some(Object::Timer { state, value })) => {
                 if *state != TimerState::Ready {
@@ -764,7 +1435,7 @@ impl State {
                     return 0;
                 }
                 *state = TimerState::Consumed;
-                *value
+                std::mem::take(value)
             }
             _ => {
                 self.last_status = STATUS_INVALID_HANDLE;
@@ -801,7 +1472,7 @@ impl State {
         if self.source_kind(source) != Some(kind) {
             return STATUS_INVALID_HANDLE;
         }
-        let Some(Object::Select(state)) = self.object_mut(selection) else {
+        let Some(Object::Select(state)) = self.object(selection) else {
             return STATUS_INVALID_HANDLE;
         };
         if state.phase != SelectPhase::Preparing
@@ -810,6 +1481,13 @@ impl State {
         {
             return STATUS_INVALID_TRANSITION;
         }
+        if self.retain(source) != STATUS_OK {
+            return self.last_status;
+        }
+        let Some(Object::Select(state)) = self.object_mut(selection) else {
+            let _ = self.release(source);
+            return STATUS_INVALID_HANDLE;
+        };
         state.arms.push(SelectArm {
             source,
             kind,
@@ -980,17 +1658,25 @@ impl State {
     }
 
     fn oneshot_complete(&mut self, oneshot: u64, value: u64) -> u64 {
-        let Some(Object::OneShot { state, .. }) = self.object_mut(oneshot) else {
+        let Some(Object::OneShot { state, .. }) = self.object(oneshot) else {
             return STATUS_INVALID_HANDLE;
         };
         if *state != OneShotState::Pending {
             return STATUS_INVALID_TRANSITION;
         }
+        let mut pending = VecDeque::new();
+        if self.live_handle(value) && self.retain(value) != STATUS_OK {
+            return self.last_status;
+        }
         if let Some(Object::OneShot { state, value: slot }) = self.object_mut(oneshot) {
-            *slot = value;
+            let previous = std::mem::replace(slot, value);
             *state = OneShotState::Ready;
+            if self.live_handle(previous) {
+                self.release_strong_edge(previous, &mut pending);
+            }
         }
         self.notify_selects(oneshot);
+        self.drain_destruction(&mut pending);
         STATUS_OK
     }
 
@@ -1095,6 +1781,56 @@ pub extern "C" fn tondo_rt_retain(value: u64) -> u64 {
 
 pub extern "C" fn tondo_rt_release(value: u64) -> u64 {
     with_state(|state| state.release(value))
+}
+
+/// Marks a value as crossing a `Send`/`Share` boundary.  Subsequent retain and
+/// release operations use the shared atomic counter representation.
+pub extern "C" fn tondo_rt_mark_shared(value: u64) -> u64 {
+    with_state(|state| state.mark_shared(value))
+}
+
+/// Returns `0` for local ARC counts and `1` for shared atomic counts.  This is
+/// an internal diagnostic hook, not a user-visible layout or FFI guarantee.
+pub extern "C" fn tondo_rt_arc_kind(value: u64) -> u64 {
+    with_state(|state| state.arc_kind(value))
+}
+
+/// Returns the current strong count for an alive opaque value.
+pub extern "C" fn tondo_rt_arc_strong_count(value: u64) -> u64 {
+    with_state(|state| state.strong_count(value))
+}
+
+/// Returns the number of weak handles retaining target tombstone metadata.
+pub extern "C" fn tondo_rt_arc_weak_count(value: u64) -> u64 {
+    with_state(|state| state.weak_count(value))
+}
+
+/// Creates a runtime-managed weak handle without retaining the target.
+pub extern "C" fn tondo_rt_weak_new(value: u64) -> u64 {
+    with_state(|state| state.weak_new(value))
+}
+
+/// Attempts to turn a weak handle back into a strong handle.  A dead target
+/// returns zero and sets `STATUS_WEAK_DEAD` in the private status channel.
+pub extern "C" fn tondo_rt_weak_upgrade(value: u64) -> u64 {
+    with_state(|state| state.weak_upgrade(value))
+}
+
+/// Runs the trial-deletion collector at a quiescent point and returns the
+/// number of unreachable object components reclaimed.
+pub extern "C" fn tondo_rt_collect_cycles() -> u64 {
+    with_state(State::quiesce)
+}
+
+/// Explicit quiescence boundary used by async frames and diagnostic runs.
+pub extern "C" fn tondo_rt_quiesce() -> u64 {
+    with_state(State::quiesce)
+}
+
+/// Returns the count of alive opaque objects.  Tombstones held only by weak
+/// handles are intentionally excluded.
+pub extern "C" fn tondo_rt_live_objects() -> u64 {
+    with_state(|state| state.live_object_count())
 }
 
 pub extern "C" fn tondo_rt_cow_clone(value: u64) -> u64 {
@@ -1212,6 +1948,7 @@ pub extern "C" fn tondo_rt_thread_worker_wait(task: u64) -> u64 {
     let Some(snapshot) = wait_for_thread_worker(task) else {
         return STATUS_INVALID_HANDLE;
     };
+    with_state(|state| state.clear_runtime_root_if_terminal(task));
     if snapshot.state == WorkerState::Cancelled {
         STATUS_CANCELLED
     } else {
@@ -1237,11 +1974,12 @@ pub extern "C" fn tondo_rt_task_cancel(task: u64) -> u64 {
 }
 
 pub extern "C" fn tondo_rt_task_take(task: u64) -> u64 {
-    if let Some(snapshot) = wait_for_thread_worker(task)
-        && snapshot.state == WorkerState::Cancelled
-    {
-        with_state(|state| state.last_status = STATUS_CANCELLED);
-        return 0;
+    if let Some(snapshot) = wait_for_thread_worker(task) {
+        with_state(|state| state.clear_runtime_root_if_terminal(task));
+        if snapshot.state == WorkerState::Cancelled {
+            with_state(|state| state.last_status = STATUS_CANCELLED);
+            return 0;
+        }
     }
     with_state(|state| state.task_take(task))
 }
@@ -1272,7 +2010,9 @@ pub extern "C" fn tondo_rt_scope_cancel(scope: u64) -> u64 {
 }
 
 pub extern "C" fn tondo_rt_scope_join(scope: u64, task: u64) -> u64 {
-    let _ = wait_for_thread_worker(task);
+    if wait_for_thread_worker(task).is_some() {
+        with_state(|state| state.clear_runtime_root_if_terminal(task));
+    }
     with_state(|state| {
         let Some(Object::Scope { tasks, cancelled }) = state.object(scope).cloned() else {
             return STATUS_INVALID_HANDLE;
@@ -1289,12 +2029,28 @@ pub extern "C" fn tondo_rt_scope_join(scope: u64, task: u64) -> u64 {
         ) {
             return STATUS_INVALID_TRANSITION;
         }
-        let _ = state.task_take(task);
-        STATUS_OK
+        let mut pending = VecDeque::new();
+        // Scope join has no value return channel.  Consume the task payload
+        // and release the ownership transferred by `task_take` instead of
+        // silently dropping a managed handle on the floor.
+        let value = state.task_take(task);
+        if state.live_handle(value) {
+            state.release_strong_edge(value, &mut pending);
+        }
+        let status = state.scope_remove_task(scope, task, &mut pending);
+        state.drain_destruction(&mut pending);
+        status
     })
 }
 
 pub extern "C" fn tondo_rt_await(task: u64) -> u64 {
+    if let Some(snapshot) = wait_for_thread_worker(task) {
+        with_state(|state| state.clear_runtime_root_if_terminal(task));
+        if snapshot.state == WorkerState::Cancelled {
+            with_state(|state| state.last_status = STATUS_CANCELLED);
+            return 0;
+        }
+    }
     with_state(|state| {
         if state.task_poll(task) != 1 {
             state.last_status = STATUS_NOT_READY;
@@ -1344,10 +2100,12 @@ pub extern "C" fn tondo_rt_select_take(selection: u64) -> u64 {
     let thread = with_state(|state| state.select_thread_source(selection));
     if let Some(thread) = thread
         && let Some(snapshot) = wait_for_thread_worker(thread)
-        && snapshot.state == WorkerState::Cancelled
     {
-        with_state(|state| state.last_status = STATUS_CANCELLED);
-        return 0;
+        with_state(|state| state.clear_runtime_root_if_terminal(thread));
+        if snapshot.state == WorkerState::Cancelled {
+            with_state(|state| state.last_status = STATUS_CANCELLED);
+            return 0;
+        }
     }
     with_state(|state| state.select_take(selection))
 }
@@ -1484,6 +2242,7 @@ mod tests {
         assert_eq!(tondo_rt_thread_worker_distinct(task), 1);
         assert_eq!(tondo_rt_task_take(task), 123);
         assert_eq!(tondo_rt_task_poll(task), 3);
+        assert_eq!(tondo_rt_release(task), STATUS_OK);
 
         let pending = tondo_rt_thread_spawn(456, 1);
         assert_eq!(tondo_rt_thread_worker_wait(pending), STATUS_OK);
@@ -1493,6 +2252,13 @@ mod tests {
         assert_eq!(tondo_rt_task_take(pending), 0);
         assert_eq!(tondo_rt_last_status(), STATUS_CANCELLED);
         assert_eq!(tondo_rt_thread_worker_status(0), u64::MAX);
+        assert_eq!(tondo_rt_release(pending), STATUS_OK);
+
+        let awaited = tondo_rt_thread_spawn(789, 0);
+        assert_eq!(tondo_rt_await(awaited), 789);
+        assert_eq!(tondo_rt_task_poll(awaited), 3);
+        assert_eq!(tondo_rt_release(awaited), STATUS_OK);
+        assert_eq!(tondo_rt_live_objects(), 0);
 
         let cancelled_before_start = WorkerSignal::new(std::thread::current().id());
         cancelled_before_start.cancel();
@@ -2101,5 +2867,282 @@ mod tests {
         assert_eq!(state.release(released), STATUS_OK);
         assert_eq!(state.select_commit(missing_source, false), STATUS_NOT_READY);
         assert_eq!(state.select_rollback(missing_source), STATUS_OK);
+    }
+
+    #[test]
+    fn arc_local_and_shared_counts_are_exact_across_worker_retain_release() {
+        let _guard = test_guard();
+        tondo_rt_reset();
+        let value = tondo_rt_result_new(RESULT_OK, 1, 1);
+        assert_eq!(tondo_rt_arc_kind(value), 0);
+        assert_eq!(tondo_rt_arc_strong_count(value), 1);
+        assert_eq!(tondo_rt_mark_shared(value), STATUS_OK);
+        assert_eq!(tondo_rt_arc_kind(value), 1);
+
+        let workers = (0..6)
+            .map(|_| {
+                std::thread::spawn(move || {
+                    for _ in 0..128 {
+                        assert_eq!(tondo_rt_retain(value), STATUS_OK);
+                        assert_eq!(tondo_rt_release(value), STATUS_OK);
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        for worker in workers {
+            worker.join().expect("ARC worker must finish");
+        }
+        assert_eq!(tondo_rt_arc_strong_count(value), 1);
+        assert_eq!(tondo_rt_release(value), STATUS_OK);
+        assert_eq!(tondo_rt_live_objects(), 0);
+    }
+
+    #[test]
+    fn arc_payload_edges_transfer_on_join_and_release_on_cancel() {
+        let _guard = test_guard();
+        tondo_rt_reset();
+
+        let payload = tondo_rt_result_new(RESULT_OK, 7, 1);
+        let task = tondo_rt_task_spawn(payload, 0);
+        assert_eq!(tondo_rt_arc_strong_count(payload), 2);
+        assert_eq!(tondo_rt_release(payload), STATUS_OK);
+        assert_eq!(tondo_rt_task_take(task), payload);
+        assert_eq!(tondo_rt_release(task), STATUS_OK);
+        assert_eq!(tondo_rt_release(payload), STATUS_OK);
+        assert_eq!(tondo_rt_live_objects(), 0);
+
+        let cancelled_payload = tondo_rt_result_new(RESULT_OK, 8, 1);
+        let cancelled = tondo_rt_task_spawn(cancelled_payload, 1);
+        assert_eq!(tondo_rt_release(cancelled_payload), STATUS_OK);
+        assert_eq!(tondo_rt_task_cancel(cancelled), STATUS_OK);
+        assert_eq!(tondo_rt_result_tag(cancelled_payload), u64::MAX);
+        assert_eq!(tondo_rt_release(cancelled), STATUS_OK);
+        assert_eq!(tondo_rt_live_objects(), 0);
+    }
+
+    #[test]
+    fn arc_task_completion_replaces_payload_without_leaking_the_old_value() {
+        let _guard = test_guard();
+        tondo_rt_reset();
+        let old = tondo_rt_result_new(RESULT_OK, 11, 1);
+        let task = tondo_rt_task_spawn(old, 1);
+        assert_eq!(tondo_rt_release(old), STATUS_OK);
+        let replacement = tondo_rt_result_new(RESULT_OK, 12, 1);
+        assert_eq!(tondo_rt_task_complete(task, replacement), STATUS_OK);
+        assert_eq!(tondo_rt_result_tag(old), u64::MAX);
+        assert_eq!(tondo_rt_release(replacement), STATUS_OK);
+        assert_eq!(tondo_rt_task_take(task), replacement);
+        assert_eq!(tondo_rt_release(task), STATUS_OK);
+        assert_eq!(tondo_rt_release(replacement), STATUS_OK);
+        assert_eq!(tondo_rt_live_objects(), 0);
+    }
+
+    #[test]
+    fn arc_frames_keep_roots_alive_until_normal_or_abort_cleanup() {
+        let _guard = test_guard();
+        tondo_rt_reset();
+        for aborting in [0, 1] {
+            let frame = tondo_rt_frame_enter();
+            let value = tondo_rt_result_new(RESULT_OK, aborting, 1);
+            assert_eq!(tondo_rt_frame_publish_root(frame, value), STATUS_OK);
+            assert_eq!(tondo_rt_release(value), STATUS_OK);
+            assert_eq!(tondo_rt_result_tag(value), RESULT_OK);
+            assert_eq!(tondo_rt_frame_leave(frame, aborting), STATUS_OK);
+            assert_eq!(tondo_rt_result_tag(value), u64::MAX);
+        }
+        assert_eq!(tondo_rt_live_objects(), 0);
+    }
+
+    #[test]
+    fn arc_scope_drop_cancels_children_and_drains_their_payload_edges() {
+        let _guard = test_guard();
+        tondo_rt_reset();
+        let scope = tondo_rt_scope_enter();
+        let payload = tondo_rt_result_new(RESULT_OK, 21, 1);
+        let task = tondo_rt_scope_spawn(scope, payload, 1);
+        assert_eq!(tondo_rt_release(payload), STATUS_OK);
+        assert_eq!(tondo_rt_release(scope), STATUS_OK);
+        assert_eq!(tondo_rt_task_poll(task), 2);
+        assert_eq!(tondo_rt_result_tag(payload), u64::MAX);
+        assert_eq!(tondo_rt_release(task), STATUS_OK);
+        assert_eq!(tondo_rt_live_objects(), 0);
+    }
+
+    #[test]
+    fn arc_scope_join_releases_a_consumed_managed_payload() {
+        let _guard = test_guard();
+        tondo_rt_reset();
+        let scope = tondo_rt_scope_enter();
+        let payload = tondo_rt_result_new(RESULT_OK, 26, 1);
+        let task = tondo_rt_scope_spawn(scope, payload, 0);
+        assert_eq!(tondo_rt_release(payload), STATUS_OK);
+        assert_eq!(tondo_rt_scope_join(scope, task), STATUS_OK);
+        assert_eq!(tondo_rt_result_tag(payload), u64::MAX);
+        assert_eq!(tondo_rt_release(task), STATUS_OK);
+        assert_eq!(tondo_rt_release(scope), STATUS_OK);
+        assert_eq!(tondo_rt_live_objects(), 0);
+    }
+
+    #[test]
+    fn arc_thread_terminal_clears_runtime_pin_after_worker_barrier() {
+        let _guard = test_guard();
+        tondo_rt_reset();
+        let payload = tondo_rt_result_new(RESULT_OK, 31, 1);
+        let thread = tondo_rt_thread_spawn(payload, 0);
+        assert_eq!(tondo_rt_release(payload), STATUS_OK);
+        assert_eq!(tondo_rt_thread_worker_wait(thread), STATUS_OK);
+        assert_eq!(tondo_rt_task_take(thread), payload);
+        assert_eq!(tondo_rt_release(thread), STATUS_OK);
+        assert_eq!(tondo_rt_release(payload), STATUS_OK);
+        assert_eq!(tondo_rt_live_objects(), 0);
+    }
+
+    #[test]
+    fn arc_select_registration_owns_sources_until_selection_teardown() {
+        let _guard = test_guard();
+        tondo_rt_reset();
+        let payload = tondo_rt_result_new(RESULT_OK, 41, 1);
+        let task = tondo_rt_task_spawn(payload, 1);
+        assert_eq!(tondo_rt_release(payload), STATUS_OK);
+        let selection = tondo_rt_select_begin(1);
+        assert_eq!(tondo_rt_select_register_join(selection, task), STATUS_OK);
+        assert_eq!(tondo_rt_release(task), STATUS_OK);
+        assert_eq!(tondo_rt_task_wake(task), STATUS_OK);
+        assert_eq!(tondo_rt_select_commit(selection, 0), STATUS_OK);
+        assert_eq!(tondo_rt_select_take(selection), payload);
+        assert_eq!(tondo_rt_release(selection), STATUS_OK);
+        assert_eq!(tondo_rt_release(payload), STATUS_OK);
+        assert_eq!(tondo_rt_live_objects(), 0);
+
+        let owned_payload = tondo_rt_result_new(RESULT_OK, 42, 1);
+        let owned_task = tondo_rt_task_spawn(owned_payload, 1);
+        let owned_selection = tondo_rt_select_begin(1);
+        assert_eq!(
+            tondo_rt_select_register_task(owned_selection, owned_task, 1),
+            STATUS_OK
+        );
+        assert_eq!(tondo_rt_release(owned_payload), STATUS_OK);
+        assert_eq!(tondo_rt_select_rollback(owned_selection), STATUS_OK);
+        assert_eq!(tondo_rt_release(owned_selection), STATUS_OK);
+        assert_eq!(tondo_rt_result_tag(owned_payload), u64::MAX);
+        assert_eq!(tondo_rt_release(owned_task), STATUS_OK);
+        assert_eq!(tondo_rt_live_objects(), 0);
+    }
+
+    #[test]
+    fn arc_cycle_collection_reclaims_independent_cycles_and_keeps_weak_tombstones() {
+        let _guard = test_guard();
+        tondo_rt_reset();
+
+        let rooted_left = tondo_rt_task_spawn(0, 1);
+        let rooted_right = tondo_rt_task_spawn(rooted_left, 1);
+        assert_eq!(tondo_rt_task_complete(rooted_left, rooted_right), STATUS_OK);
+        let frame = tondo_rt_frame_enter();
+        assert_eq!(tondo_rt_frame_publish_root(frame, rooted_left), STATUS_OK);
+        assert_eq!(tondo_rt_release(rooted_left), STATUS_OK);
+        assert_eq!(tondo_rt_release(rooted_right), STATUS_OK);
+        assert_eq!(tondo_rt_collect_cycles(), 0);
+        assert_eq!(tondo_rt_live_objects(), 2);
+        assert_eq!(tondo_rt_frame_unpublish_root(frame, rooted_left), STATUS_OK);
+        assert_eq!(tondo_rt_frame_leave(frame, 0), STATUS_OK);
+        assert_eq!(tondo_rt_collect_cycles(), 2);
+        assert_eq!(tondo_rt_live_objects(), 0);
+
+        let left = tondo_rt_task_spawn(0, 1);
+        let right = tondo_rt_task_spawn(left, 1);
+        assert_eq!(tondo_rt_task_complete(left, right), STATUS_OK);
+        let weak = tondo_rt_weak_new(left);
+        assert_eq!(tondo_rt_arc_weak_count(left), 1);
+        assert_eq!(tondo_rt_release(left), STATUS_OK);
+        assert_eq!(tondo_rt_release(right), STATUS_OK);
+        assert_eq!(tondo_rt_collect_cycles(), 2);
+        assert_eq!(tondo_rt_live_objects(), 1);
+        assert_eq!(tondo_rt_weak_upgrade(weak), 0);
+        assert_eq!(tondo_rt_last_status(), STATUS_WEAK_DEAD);
+        assert_eq!(tondo_rt_weak_new(left), STATUS_WEAK_DEAD);
+        assert_eq!(tondo_rt_release(weak), STATUS_OK);
+        assert_eq!(tondo_rt_live_objects(), 0);
+
+        let first = tondo_rt_task_spawn(0, 1);
+        let second = tondo_rt_task_spawn(first, 1);
+        assert_eq!(tondo_rt_task_complete(first, second), STATUS_OK);
+        assert_eq!(tondo_rt_release(first), STATUS_OK);
+        assert_eq!(tondo_rt_release(second), STATUS_OK);
+        for index in 0..COLLECTION_PRESSURE {
+            let filler = tondo_rt_result_new(RESULT_OK, u64::from(index), 1);
+            assert_eq!(tondo_rt_release(filler), STATUS_OK);
+        }
+        assert_eq!(tondo_rt_live_objects(), 0);
+    }
+
+    #[test]
+    fn arc_weak_upgrade_is_strong_while_alive_and_never_resurrects_after_release() {
+        let _guard = test_guard();
+        tondo_rt_reset();
+        let target = tondo_rt_result_new(RESULT_OK, 55, 1);
+        let weak = tondo_rt_weak_new(target);
+        let upgraded = tondo_rt_weak_upgrade(weak);
+        assert_eq!(upgraded, target);
+        assert_eq!(tondo_rt_arc_strong_count(target), 2);
+        assert_eq!(tondo_rt_release(target), STATUS_OK);
+        assert_eq!(tondo_rt_release(upgraded), STATUS_OK);
+        assert_eq!(tondo_rt_arc_weak_count(target), 1);
+
+        let attempts = (0..4)
+            .map(|_| {
+                std::thread::spawn(move || {
+                    assert_eq!(tondo_rt_weak_upgrade(weak), 0);
+                    assert_eq!(tondo_rt_last_status(), STATUS_WEAK_DEAD);
+                })
+            })
+            .collect::<Vec<_>>();
+        for attempt in attempts {
+            attempt.join().expect("weak upgrade probe must finish");
+        }
+        assert_eq!(tondo_rt_release(weak), STATUS_OK);
+        assert_eq!(tondo_rt_live_objects(), 0);
+    }
+
+    #[test]
+    fn arc_weak_upgrade_linearizes_concurrent_alive_attempts() {
+        let _guard = test_guard();
+        tondo_rt_reset();
+        let target = tondo_rt_result_new(RESULT_OK, 57, 1);
+        assert_eq!(tondo_rt_mark_shared(target), STATUS_OK);
+        let weak = tondo_rt_weak_new(target);
+
+        let attempts = (0..8)
+            .map(|_| {
+                std::thread::spawn(move || {
+                    let upgraded = tondo_rt_weak_upgrade(weak);
+                    assert_eq!(upgraded, target);
+                    assert_eq!(tondo_rt_release(upgraded), STATUS_OK);
+                })
+            })
+            .collect::<Vec<_>>();
+        for attempt in attempts {
+            attempt.join().expect("alive weak upgrade must finish");
+        }
+        assert_eq!(tondo_rt_arc_strong_count(target), 1);
+        assert_eq!(tondo_rt_release(target), STATUS_OK);
+        assert_eq!(tondo_rt_weak_upgrade(weak), 0);
+        assert_eq!(tondo_rt_last_status(), STATUS_WEAK_DEAD);
+        assert_eq!(tondo_rt_release(weak), STATUS_OK);
+        assert_eq!(tondo_rt_live_objects(), 0);
+    }
+
+    #[test]
+    fn arc_weak_handles_are_not_cloneable_and_double_release_is_fail_closed() {
+        let _guard = test_guard();
+        tondo_rt_reset();
+        let target = tondo_rt_result_new(RESULT_OK, 61, 1);
+        let weak = tondo_rt_weak_new(target);
+        assert_eq!(tondo_rt_cow_clone(weak), 0);
+        assert_eq!(tondo_rt_last_status(), STATUS_INVALID_TRANSITION);
+        assert_eq!(tondo_rt_release(target), STATUS_OK);
+        assert_eq!(tondo_rt_release(weak), STATUS_OK);
+        assert_eq!(tondo_rt_release(weak), STATUS_INVALID_HANDLE);
+        assert_eq!(tondo_rt_last_status(), STATUS_INVALID_HANDLE);
+        assert_eq!(tondo_rt_live_objects(), 0);
     }
 }

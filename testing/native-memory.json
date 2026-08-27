@@ -30,5 +30,5 @@
     "collector-finalizer-resource",
     "public-layout-promise"
   ],
-  "next_blocks": ["NATIVE-ABI-001"]
+  "next_blocks": ["ARC-002"]
 }
