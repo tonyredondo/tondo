@@ -5863,9 +5863,17 @@ pueden retrasar el primer backend correcto.
 
 ### 20.3 Oracle diferencial, targets y empaquetado
 
-- [ ] **NATIVE-CONF-ADAPTER-001 — Crear el adaptador nativo.** Implementar el
-  protocolo completo después de `DIAG-NATIVE-001`, con identidad de backend/target y rechazo fail-closed de
-  operaciones o capabilities no soportadas.
+- [x] **NATIVE-CONF-ADAPTER-001 — Crear el adaptador nativo.** Cerrado con el
+  protocolo `tondo-native-observation/1`: recibe el probe común
+  `tondo-mir-backend/1`, backend/target/capabilities explícitos y emite
+  observaciones normalizadas de valores, errores, diagnostics, lifecycle de
+  tests y cleanup. Backend, target, capability y shapes desconocidos fallan
+  cerrado; los informes no contienen paths físicos. Cada owner se ejecuta por
+  separado para Cranelift y LLVM. Evidencia en
+  `testing/native-conf-adapter.json`, `testing/native-conf-probe.json`,
+  `docs/contracts/native-conf-adapter.md` y
+  `scripts/native-conf-adapter-{check,test}.sh`; siguen las tres hojas
+  `NATIVE-CONF-*`.
 
 - [ ] **NATIVE-CONF-LANGUAGE-001 — Ejecutar conformidad base nativa.** Correr
   lenguaje/toolchain G5 contra el adaptador nativo y comparar observaciones con

@@ -1,0 +1,35 @@
+{
+  "format": "tondo-native-conf-adapter/1",
+  "task": "NATIVE-CONF-ADAPTER-001",
+  "owner": "toolchain.native_conf_adapter",
+  "edition": "0.1",
+  "phase": "M20",
+  "status": "closed",
+  "contract": "docs/contracts/native-conf-adapter.md",
+  "runner": "scripts/native-conformance-adapter.sh",
+  "probe": "testing/native-conf-probe.json",
+  "protocol": "tondo-native-observation/1",
+  "backends": ["cranelift", "llvm"],
+  "targets": ["x86_64-unknown-linux-gnu"],
+  "capabilities": ["clock", "console", "filesystem", "process"],
+  "observations": ["status", "value", "tag", "payload", "diagnostics", "logs", "cleanup", "resources_released"],
+  "invariants": [
+    "backend-and-target-are-explicit",
+    "probe-is-common-mir",
+    "vm-oracle-is-independent",
+    "unsupported-case-fails-closed",
+    "unknown-capability-fails-closed",
+    "physical-paths-are-redacted"
+  ],
+  "negative_cases": [
+    "unknown-backend",
+    "unknown-target",
+    "unknown-capability",
+    "wrong-probe-format",
+    "missing-expected-observation",
+    "physical-path-in-report",
+    "unsupported-case-accepted",
+    "backend-identity-drift"
+  ],
+  "next_blocks": ["NATIVE-CONF-LANGUAGE-001", "NATIVE-CONF-TESTING-001", "NATIVE-CONF-STDLIB-001"]
+}

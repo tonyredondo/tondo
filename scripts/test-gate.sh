@@ -215,6 +215,10 @@ run_step native-cli-contract \
     scripts/native-cli-check.sh
 run_step native-cli-tests \
     scripts/native-cli-test.sh
+run_step native-conf-adapter-contract \
+    scripts/native-conf-adapter-check.sh
+run_step native-conf-adapter-tests \
+    scripts/native-conf-adapter-test.sh
 run_step native-select-contract \
     scripts/native-select-check.sh
 run_step native-select-contract-tests \

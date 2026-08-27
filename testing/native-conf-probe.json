@@ -1,0 +1,18 @@
+{
+  "format": "tondo-native-conformance-probe/1",
+  "edition": "0.1",
+  "target": "x86_64-unknown-linux-gnu",
+  "mir": "tondo-mir-backend/1",
+  "oracle": "bytecode-vm-oracle",
+  "cases": [
+    {"id":"language-scalar","owner":"language","expected":{"status":"returned","value":42}},
+    {"id":"language-result-error","owner":"language","expected":{"status":"returned","tag":3,"payload":7}},
+    {"id":"language-panic","owner":"language","expected":{"status":"trapped","diagnostic":"vm-panic"}},
+    {"id":"testing-pass","owner":"testing","expected":{"status":"passed","logs":1,"cleanup":1}},
+    {"id":"testing-fail","owner":"testing","expected":{"status":"failed","diagnostic":"P0007","cleanup":1}},
+    {"id":"testing-isolation","owner":"testing","expected":{"status":"passed","fresh_process":true}},
+    {"id":"stdlib-core","owner":"stdlib","expected":{"status":"returned","tag":2,"payload":5}},
+    {"id":"stdlib-hosted","owner":"stdlib","expected":{"status":"returned","bytes":"tondo-native"}},
+    {"id":"stdlib-cleanup","owner":"stdlib","expected":{"status":"passed","resources_released":1}}
+  ]
+}
