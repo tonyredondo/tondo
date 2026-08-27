@@ -113,7 +113,7 @@ assemble() {
     evidence_hash="$(sha256_file "$workspace/testing/stdlib-owner-evidence.json")"
 
     mkdir -p "$package/interfaces" "$package/units" "$package/providers" "$package/manifests" "$package/capabilities"
-    jq -S -c \
+    jq -S -c -n \
         --slurpfile api "$workspace/testing/stdlib-public-api.json" \
         --arg package_id "toolchain:std:0.1-bootstrap" \
         --arg api_hash "$api_hash" \
@@ -131,7 +131,7 @@ assemble() {
         }' > "$package/interfaces/std-0.1.json"
     copy_generated interfaces interfaces/std-0.1.json "$package" "$inventory"
 
-    jq -S -c \
+    jq -S -c -n \
         --slurpfile evidence "$workspace/testing/stdlib-owner-evidence.json" \
         --arg package_id "toolchain:std:0.1-bootstrap" \
         --arg evidence_hash "$evidence_hash" \
@@ -151,7 +151,7 @@ assemble() {
         }" > "$package/units/std-0.1.json"
     copy_generated units units/std-0.1.json "$package" "$inventory"
 
-    jq -S -c \
+    jq -S -c -n \
         --arg package_id "toolchain:std:0.1-bootstrap" \
         '{
           format: "tondo-stdlib-providers/1",
@@ -165,7 +165,7 @@ assemble() {
     copy_generated providers providers/providers.json "$package" "$inventory"
 
     local capability_matrix_hash
-    jq -S -c \
+    jq -S -c -n \
         --slurpfile matrix "$workspace/testing/stdlib-matrix.json" \
         --arg package_id "toolchain:std:0.1-bootstrap" \
         "$capabilities_jq
