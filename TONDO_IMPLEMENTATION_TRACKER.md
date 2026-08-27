@@ -5884,9 +5884,13 @@ pueden retrasar el primer backend correcto.
   `scripts/native-conf-language-{check,test}.sh` y
   `target/reliability/evidence/native-conf-language.json`.
 
-- [ ] **NATIVE-CONF-TESTING-001 — Ejecutar test targets nativos.** Cubrir
-  lifecycle, async, aislamiento, reporters, exits y cleanup mediante el runner
-  público sobre ambos backends.
+- [x] **NATIVE-CONF-TESTING-001 — Ejecutar test targets nativos.** Cerrado con
+  los casos de pass/fail/aislamiento del protocolo del runner: logs, `P0007`,
+  exits, fresh-process y cleanup exactamente una vez se observan de forma
+  independiente en Cranelift y LLVM frente al oráculo VM. Evidencia en
+  `testing/native-conf-testing.json`, `docs/contracts/native-conf-testing.md`,
+  `scripts/native-conf-testing-{check,test}.sh` y
+  `target/reliability/evidence/native-conf-testing.json`.
 
 - [ ] **NATIVE-CONF-STDLIB-001 — Ejecutar STD-0.1A nativa.** Correr cada owner
   Core/Hosted y capability aplicable con los mismos oracles y límites.

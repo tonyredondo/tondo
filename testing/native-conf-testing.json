@@ -1,0 +1,19 @@
+{
+  "format": "tondo-native-conf-testing/1",
+  "task": "NATIVE-CONF-TESTING-001",
+  "owner": "toolchain.native_conf_testing",
+  "edition": "0.1",
+  "phase": "M20",
+  "status": "closed",
+  "contract": "docs/contracts/native-conf-testing.md",
+  "runner": "scripts/native-conf-testing-test.sh",
+  "adapter": "scripts/native-conformance-adapter.sh",
+  "probe": "testing/native-conf-probe.json",
+  "category": "testing",
+  "backends": ["cranelift", "llvm"],
+  "target": "x86_64-unknown-linux-gnu",
+  "cases": ["testing-pass", "testing-fail", "testing-isolation"],
+  "dimensions": ["lifecycle", "logs", "failure-diagnostics", "cleanup", "isolation", "exit-status"],
+  "negative_cases": ["missing-log", "missing-cleanup", "wrong-failure-code", "shared-attempt-state", "backend-drift", "physical-path-in-report"],
+  "next_blocks": ["NATIVE-CONF-TESTING-001", "NATIVE-CONF-STDLIB-001"]
+}

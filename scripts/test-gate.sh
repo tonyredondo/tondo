@@ -223,6 +223,10 @@ run_step native-conf-language-contract \
     scripts/native-conf-language-check.sh
 run_step native-conf-language-tests \
     scripts/native-conf-language-test.sh
+run_step native-conf-testing-contract \
+    scripts/native-conf-testing-check.sh
+run_step native-conf-testing-tests \
+    scripts/native-conf-testing-test.sh
 run_step native-select-contract \
     scripts/native-select-check.sh
 run_step native-select-contract-tests \
