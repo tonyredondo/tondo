@@ -227,7 +227,12 @@ enum MirBackendOperand {
     Local { index: u32 },
     Borrow { index: u32 },
     Function { kind: String },
-    Projection { index: u32, depth: u32 },
+    Projection {
+        index: u32,
+        depth: u32,
+        #[serde(default)]
+        kind: String,
+    },
     Unsupported { kind: String },
 }
 
@@ -328,6 +333,7 @@ struct EvaluationReport {
     debug_metadata: Vec<DebugMetadataReport>,
     native_runs: Vec<NativeRunReport>,
     native_managed_runs: Vec<NativeManagedRunReport>,
+    native_std_core_runs: Vec<NativeStdCoreRunReport>,
     native_runtime_runs: Vec<NativeRuntimeRunReport>,
     native_select_runs: Vec<NativeSelectRunReport>,
     native_thread_runs: Vec<NativeThreadRunReport>,
@@ -441,6 +447,23 @@ struct NativeManagedRunReport {
     vm_tag: Option<u64>,
     vm_payload: Option<i64>,
     vm_diagnostics: Vec<String>,
+    cranelift: &'static str,
+    llvm: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct NativeStdCoreRunReport {
+    case: String,
+    function_ordinal: u32,
+    kind: &'static str,
+    oracle_result: Option<i64>,
+    oracle_tag: Option<u64>,
+    oracle_payload: Option<u64>,
+    vm_status: String,
+    vm_result: Option<i64>,
+    vm_tag: Option<u64>,
+    vm_payload: Option<i64>,
     cranelift: &'static str,
     llvm: &'static str,
 }
@@ -561,6 +584,7 @@ enum RuntimeExpectation {
 #[derive(Debug)]
 struct Options {
     probe: PathBuf,
+    std_core_probe: Option<PathBuf>,
     output: PathBuf,
     llvm: PathBuf,
     target: String,
@@ -612,6 +636,7 @@ fn run() -> Result<(), String> {
     let mut llvm_samples = Vec::new();
     let mut native_runs = Vec::new();
     let mut native_managed_runs = Vec::new();
+    let mut native_std_core_runs = Vec::new();
     let mut native_runtime_runs = Vec::new();
     let mut debug_metadata = Vec::new();
     let mut native_lowering_runs = Vec::new();
@@ -713,6 +738,17 @@ fn run() -> Result<(), String> {
         }
     }
     if let Some(cc) = &options.cc {
+        if let Some(std_core_probe) = &options.std_core_probe {
+            let (fixture, program) = load_std_core_probe(std_core_probe)?;
+            native_std_core_runs = run_native_std_core_probe(
+                &options.llvm,
+                cc,
+                &options.target,
+                &options.temp_dir,
+                &fixture,
+                &program,
+            )?;
+        }
         native_runtime_runs =
             run_native_runtime_probe(&options.llvm, cc, &options.target, &options.temp_dir)?;
         native_lowering_runs = run_native_lowering_probe(
@@ -809,12 +845,13 @@ fn run() -> Result<(), String> {
             } else if native_runtime_runs.is_empty() {
                 "scalar-and-managed-native-executable-vs-vm-and-normalized-oracle"
             } else {
-                "scalar-managed-runtime-thread-and-select-native-executable-vs-vm-and-contract"
+                "scalar-and-managed-result-checked-arithmetic-logical-conversions-control-flow-host-calls-cleanup-ownership-async-thread-select-std-core-and-traps"
             },
         },
         debug_metadata,
         native_runs,
         native_managed_runs,
+        native_std_core_runs,
         native_runtime_runs,
         native_select_runs,
         native_thread_runs,
@@ -1280,7 +1317,11 @@ fn validate_supported_block(
             MirBackendStatement::Marker { kind }
                 if matches!(
                     kind.as_str(),
-                    "unit-assignment" | "storage-live" | "storage-dead" | "disarm-cleanup"
+                    "unit-assignment"
+                        | "function-value"
+                        | "storage-live"
+                        | "storage-dead"
+                        | "disarm-cleanup"
                 ) =>
             {}
             MirBackendStatement::Marker { kind } => {
@@ -1325,9 +1366,20 @@ fn validate_supported_operand(
     match operand {
         MirBackendOperand::Constant(MirBackendConstant::Named)
         | MirBackendOperand::Unsupported { .. }
-        | MirBackendOperand::Function { .. }
-        | MirBackendOperand::Projection { .. } => Err(format!(
+        | MirBackendOperand::Function { .. } => Err(format!(
             "supported normalized MIR function {function_ordinal} contains an opaque or unsupported operand"
+        )),
+        MirBackendOperand::Projection { depth, kind, .. }
+            if *depth == 1
+                && matches!(
+                    kind.as_str(),
+                    "option-value" | "result-ok-value" | "result-err-value"
+                ) =>
+        {
+            Ok(())
+        }
+        MirBackendOperand::Projection { .. } => Err(format!(
+            "supported normalized MIR function {function_ordinal} contains an opaque or unsupported projection"
         )),
         MirBackendOperand::Constant(_)
         | MirBackendOperand::Local { .. }
@@ -1914,7 +1966,7 @@ fn lower_runtime_call_cranelift(
     } else {
         arguments
             .iter()
-            .map(|argument| lower_operand_cranelift(builder, argument, locals))
+            .map(|argument| lower_operand_cranelift_with_runtime(builder, argument, locals, runtime))
             .collect::<Result<Vec<_>, _>>()?
     };
     let instruction = builder.ins().call(call.function, &arguments);
@@ -2197,7 +2249,9 @@ fn lower_rvalue_cranelift(
     runtime: &RuntimeRefs,
 ) -> Result<Value, String> {
     match value {
-        MirBackendRvalue::Use(operand) => lower_operand_cranelift(builder, operand, locals),
+        MirBackendRvalue::Use(operand) => {
+            lower_operand_cranelift_with_runtime(builder, operand, locals, runtime)
+        }
         MirBackendRvalue::Tag { value } => Ok(builder
             .ins()
             .iconst(cranelift_codegen::ir::types::I64, i64::from(*value))),
@@ -2205,7 +2259,9 @@ fn lower_rvalue_cranelift(
             let tag = aggregate_tag(kind)?;
             let payload = values
                 .first()
-                .map(|operand| lower_operand_cranelift(builder, operand, locals))
+                .map(|operand| {
+                    lower_operand_cranelift_with_runtime(builder, operand, locals, runtime)
+                })
                 .transpose()?
                 .unwrap_or_else(|| builder.ins().iconst(cranelift_codegen::ir::types::I64, 0));
             let has_payload = builder.ins().iconst(
@@ -2225,7 +2281,7 @@ fn lower_rvalue_cranelift(
                 .ok_or_else(|| "Cranelift result constructor did not return a handle".to_owned())
         }
         MirBackendRvalue::Prefix { operator, operand } => {
-            let operand = lower_operand_cranelift(builder, operand, locals)?;
+            let operand = lower_operand_cranelift_with_runtime(builder, operand, locals, runtime)?;
             match operator.as_str() {
                 "negate" => {
                     let zero = builder.ins().iconst(cranelift_codegen::ir::types::I64, 0);
@@ -2261,13 +2317,15 @@ fn lower_rvalue_cranelift(
             if kind == "Diverging" {
                 builder.ins().trap(TrapCode::unwrap_user(6));
             }
-            lower_operand_cranelift(builder, operand, locals)
+            lower_operand_cranelift_with_runtime(builder, operand, locals, runtime)
         }
         MirBackendRvalue::HostCall { kind, arguments } => {
             let kind_id = host_call_kind(kind)?;
             let argument = arguments
                 .first()
-                .map(|argument| lower_operand_cranelift(builder, argument, locals))
+                .map(|argument| {
+                    lower_operand_cranelift_with_runtime(builder, argument, locals, runtime)
+                })
                 .transpose()?
                 .unwrap_or_else(|| builder.ins().iconst(cranelift_codegen::ir::types::I64, 0));
             let kind_value = builder
@@ -2298,7 +2356,7 @@ fn lower_operation_cranelift(
 ) -> Result<Value, String> {
     match operation {
         MirBackendOperation::CheckedPrefix { operator, operand } => {
-            let operand = lower_operand_cranelift(builder, operand, locals)?;
+            let operand = lower_operand_cranelift_with_runtime(builder, operand, locals, runtime)?;
             match operator.as_str() {
                 "negate" => {
                     let zero = builder.ins().iconst(cranelift_codegen::ir::types::I64, 0);
@@ -2323,8 +2381,8 @@ fn lower_operation_cranelift(
             right,
         } => lower_checked_binary_cranelift(builder, operator, left, right, locals),
         MirBackendOperation::BoundsCheck { index, length } => {
-            let index = lower_operand_cranelift(builder, index, locals)?;
-            let length = lower_operand_cranelift(builder, length, locals)?;
+            let index = lower_operand_cranelift_with_runtime(builder, index, locals, runtime)?;
+            let length = lower_operand_cranelift_with_runtime(builder, length, locals, runtime)?;
             let zero = builder.ins().iconst(cranelift_codegen::ir::types::I64, 0);
             let below_zero = builder.ins().icmp(IntCC::SignedLessThan, index, zero);
             let past_end = builder
@@ -2344,7 +2402,9 @@ fn lower_operation_cranelift(
                 .ok_or_else(|| format!("Cranelift call target {function} is not declared"))?;
             let arguments = arguments
                 .iter()
-                .map(|argument| lower_operand_cranelift(builder, argument, locals))
+                .map(|argument| {
+                    lower_operand_cranelift_with_runtime(builder, argument, locals, runtime)
+                })
                 .collect::<Result<Vec<_>, _>>()?;
             let call = builder.ins().call(function_ref, &arguments);
             builder
@@ -2369,7 +2429,7 @@ fn lower_operation_cranelift(
                 .ok_or_else(|| "Cranelift spawn did not return a handle".to_owned())
         }
         MirBackendOperation::JoinValue { operand } => {
-            let handle = lower_operand_cranelift(builder, operand, locals)?;
+            let handle = lower_operand_cranelift_with_runtime(builder, operand, locals, runtime)?;
             let call = builder.ins().call(runtime.await_task, &[handle]);
             builder
                 .inst_results(call)
@@ -2381,7 +2441,9 @@ fn lower_operation_cranelift(
             let kind_id = host_call_kind(kind)?;
             let argument = arguments
                 .first()
-                .map(|argument| lower_operand_cranelift(builder, argument, locals))
+                .map(|argument| {
+                    lower_operand_cranelift_with_runtime(builder, argument, locals, runtime)
+                })
                 .transpose()?
                 .unwrap_or_else(|| builder.ins().iconst(cranelift_codegen::ir::types::I64, 0));
             let kind_value = builder
@@ -2400,7 +2462,8 @@ fn lower_operation_cranelift(
             lower_runtime_call_cranelift(builder, kind, arguments, locals, runtime)
         }
         MirBackendOperation::Assert { condition } => {
-            let condition = lower_operand_cranelift(builder, condition, locals)?;
+            let condition =
+                lower_operand_cranelift_with_runtime(builder, condition, locals, runtime)?;
             let zero = builder.ins().iconst(cranelift_codegen::ir::types::I64, 0);
             let invalid = builder.ins().icmp(IntCC::Equal, condition, zero);
             builder.ins().trapnz(invalid, TrapCode::unwrap_user(3));
@@ -2419,6 +2482,38 @@ fn lower_operation_cranelift(
         MirBackendOperation::Marker { kind } => {
             Err(format!("MIR operation is not supported: {kind}"))
         }
+    }
+}
+
+fn lower_operand_cranelift_with_runtime(
+    builder: &mut FunctionBuilder<'_>,
+    operand: &MirBackendOperand,
+    locals: &BTreeMap<u32, Value>,
+    runtime: &RuntimeRefs,
+) -> Result<Value, String> {
+    match operand {
+        MirBackendOperand::Projection { index, depth, kind } => {
+            if *depth != 1
+                || !matches!(
+                    kind.as_str(),
+                    "option-value" | "result-ok-value" | "result-err-value"
+                )
+            {
+                return Err(format!(
+                    "native core projection is not supported: {kind} at depth {depth}"
+                ));
+            }
+            let base = locals.get(index).copied().ok_or_else(|| {
+                format!("MIR projection base local {index} is not available")
+            })?;
+            let call = builder.ins().call(runtime.result_payload, &[base]);
+            builder
+                .inst_results(call)
+                .first()
+                .copied()
+                .ok_or_else(|| "Cranelift result payload helper did not return a value".to_owned())
+        }
+        _ => lower_operand_cranelift(builder, operand, locals),
     }
 }
 
@@ -2451,13 +2546,9 @@ fn lower_operand_cranelift(
             .get(index)
             .copied()
             .ok_or_else(|| format!("MIR local {index} is not available in the adapter")),
-        MirBackendOperand::Projection { index, depth } => {
-            let _ = depth;
-            locals
-                .get(index)
-                .copied()
-                .ok_or_else(|| format!("MIR projection base local {index} is not available"))
-        }
+        MirBackendOperand::Projection { kind, depth, .. } => Err(format!(
+            "MIR core projection `{kind}` at depth {depth} requires runtime-aware lowering"
+        )),
         MirBackendOperand::Function { kind } => Ok(builder.ins().iconst(
             cranelift_codegen::ir::types::I64,
             string_payload(kind),
@@ -2549,7 +2640,7 @@ fn lower_numeric_conversion_cranelift(
     locals: &BTreeMap<u32, Value>,
     runtime: &RuntimeRefs,
 ) -> Result<Value, String> {
-    let value = lower_operand_cranelift(builder, operand, locals)?;
+    let value = lower_operand_cranelift_with_runtime(builder, operand, locals, runtime)?;
     if !is_native_integer_scalar(source) || !is_native_integer_scalar(target) {
         return Err(format!(
             "Cranelift numeric conversion is not supported for {source}->{target}"
@@ -2902,7 +2993,12 @@ fn lower_cranelift_function(
                         if_true,
                         if_false,
                     } => {
-                        let condition = lower_operand_cranelift(&mut builder, condition, &locals)?;
+                        let condition = lower_operand_cranelift_with_runtime(
+                            &mut builder,
+                            condition,
+                            &locals,
+                            &runtime,
+                        )?;
                         let zero = builder.ins().iconst(cranelift_codegen::ir::types::I64, 0);
                         let condition = builder.ins().icmp(IntCC::NotEqual, condition, zero);
                         let true_block = *ir_blocks.get(if_true).ok_or_else(|| {
@@ -2932,7 +3028,12 @@ fn lower_cranelift_function(
                         cases,
                         otherwise,
                     } => {
-                        let value = lower_operand_cranelift(&mut builder, value, &locals)?;
+                        let value = lower_operand_cranelift_with_runtime(
+                            &mut builder,
+                            value,
+                            &locals,
+                            &runtime,
+                        )?;
                         let tag_call = builder.ins().call(runtime.result_tag, &[value]);
                         let value =
                             builder
@@ -3149,7 +3250,12 @@ fn lower_cranelift_invoke(
     } = operation
         && let Some(body) = deferred_tasks.remove(index)
     {
-        let handle = lower_operand_cranelift(builder, operation_operand(operation), locals)?;
+        let handle = lower_operand_cranelift_with_runtime(
+            builder,
+            operation_operand(operation),
+            locals,
+            runtime,
+        )?;
         let value = lower_operation_cranelift(builder, &body, locals, calls, trap, runtime)?;
         let completed = builder.ins().call(runtime.task_complete, &[handle, value]);
         let _ = builder.inst_results(completed);
@@ -3426,6 +3532,205 @@ fn run_native_managed_probe(
                 llvm: "passed",
             });
         }
+    }
+    Ok(reports)
+}
+
+fn load_std_core_probe(path: &Path) -> Result<(FixtureObservation, MirBackendProgram), String> {
+    let bytes = fs::read(path)
+        .map_err(|error| format!("cannot read std.core probe `{}`: {error}", path.display()))?;
+    let probe: ProbeReport = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("invalid std.core MIR probe: {error}"))?;
+    if probe.format != "tondo-native-mir-probe/1" || probe.fixtures.len() != 1 {
+        return Err("std.core probe must contain exactly one passed MIR fixture".to_owned());
+    }
+    let fixture = probe
+        .fixtures
+        .into_iter()
+        .next()
+        .expect("length checked above");
+    if fixture.status != "passed" {
+        return Err(format!("std.core probe fixture did not pass: {}", fixture.fixture));
+    }
+    let program = fixture
+        .mir
+        .as_ref()
+        .and_then(|mir| mir.backend.clone())
+        .ok_or_else(|| format!("std.core fixture has no normalized MIR: {}", fixture.fixture))?;
+    validate_backend_program(&program)?;
+    Ok((fixture, program))
+}
+
+fn run_native_std_core_probe(
+    llvm: &Path,
+    cc: &Path,
+    target: &str,
+    temp_dir: &Path,
+    fixture: &FixtureObservation,
+    program: &MirBackendProgram,
+) -> Result<Vec<NativeStdCoreRunReport>, String> {
+    const CASES: [(&str, &str); 14] = [
+        ("option-some", "option_some"),
+        ("option-none", "option_none"),
+        ("option-unwrap-some", "option_unwrap_some"),
+        ("option-unwrap-none", "option_unwrap_none"),
+        ("option-map-some", "option_map_some"),
+        ("option-map-none", "option_map_none"),
+        ("result-ok", "result_ok"),
+        ("result-err", "result_err"),
+        ("result-unwrap-ok", "result_unwrap_ok"),
+        ("result-unwrap-err", "result_unwrap_err"),
+        ("result-map-ok", "result_map_ok"),
+        ("result-map-err", "result_map_err"),
+        ("result-map-err-ok", "result_map_err_ok"),
+        ("result-map-err-error", "result_map_err_error"),
+    ];
+    let symbols = program
+        .debug
+        .as_ref()
+        .ok_or_else(|| "std.core program has no debug metadata".to_owned())?
+        .symbols
+        .iter()
+        .map(|symbol| {
+            (
+                symbol
+                    .name
+                    .rsplit("::")
+                    .next()
+                    .unwrap_or(symbol.name.as_str())
+                    .to_owned(),
+                symbol.function,
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let object = temp_dir.join("native_std_core.cranelift.o");
+    emit_cranelift_object(cranelift_isa()?, program, &object)?;
+    let mut reports = Vec::with_capacity(CASES.len());
+    for (case, symbol) in CASES {
+        let ordinal = *symbols
+            .get(symbol)
+            .ok_or_else(|| format!("std.core probe is missing function `{symbol}`"))?;
+        let function = program
+            .functions
+            .iter()
+            .find(|function| function.ordinal == ordinal)
+            .ok_or_else(|| format!("std.core function {ordinal} is missing"))?;
+        if !function.supported || !function.parameters.is_empty() {
+            return Err(format!(
+                "std.core function `{symbol}` is not a supported zero-argument function"
+            ));
+        }
+        let oracle_value = evaluate_scalar_program(program, ordinal, &[])?;
+        let is_managed = function.return_type.contains('?') || function.return_type.contains(" ! ");
+        let (oracle_result, oracle_tag, oracle_payload) = if is_managed {
+            let (tag, payload) = oracle_managed_parts(oracle_value)?;
+            (None, Some(tag), payload)
+        } else {
+            (Some(oracle_value), None, None)
+        };
+        let vm_scalar = fixture.vm_scalar.iter().find(|observation| {
+            observation.function_ordinal == ordinal && observation.arguments.is_empty()
+        });
+        let vm_managed = fixture.vm_managed.iter().find(|observation| {
+            observation.function_ordinal == ordinal && observation.arguments.is_empty()
+        });
+        if is_managed {
+            let vm = vm_managed.ok_or_else(|| {
+                format!("VM std.core managed observation is missing for `{symbol}`")
+            })?;
+            if vm.status != "returned"
+                || vm.tag != oracle_tag
+                || vm.payload.map(|payload| payload as u64) != oracle_payload
+                || !vm.diagnostics.is_empty()
+            {
+                return Err(format!("std.core managed oracle disagrees with VM for `{symbol}`"));
+            }
+        } else {
+            let vm = vm_scalar.ok_or_else(|| {
+                format!("VM std.core scalar observation is missing for `{symbol}`")
+            })?;
+            if vm.status != "returned"
+                || vm.result != oracle_result
+                || !vm.diagnostics.is_empty()
+            {
+                return Err(format!("std.core scalar oracle disagrees with VM for `{symbol}`"));
+            }
+        }
+
+        let stem = format!("native_std_core_{case}");
+        let cranelift_source = temp_dir.join(format!("{stem}.cranelift.c"));
+        let cranelift_runner = if let Some(expected) = oracle_result {
+            c_runner_source(function, &[], Some(expected))
+        } else {
+            c_managed_runner_source(
+                function,
+                &[],
+                oracle_tag.expect("managed result has a tag"),
+                oracle_payload,
+            )
+        };
+        fs::write(&cranelift_source, cranelift_runner)
+            .map_err(|error| format!("cannot write std.core Cranelift runner: {error}"))?;
+        let cranelift_binary = temp_dir.join(format!("{stem}.cranelift.bin"));
+        link_native_runner(cc, &cranelift_source, &object, &cranelift_binary)?;
+        run_native_binary(&cranelift_binary, "Cranelift std.core", false)?;
+
+        let llvm_ir = temp_dir.join(format!("{stem}.llvm.ll"));
+        let llvm_object = temp_dir.join(format!("{stem}.llvm.o"));
+        let llvm_runner = if let Some(expected) = oracle_result {
+            llvm_module_with_runner(target, program, function, &[], Some(expected))?
+        } else {
+            llvm_module_with_managed_runner(
+                target,
+                program,
+                function,
+                &[],
+                oracle_tag.expect("managed result has a tag"),
+                oracle_payload,
+            )?
+        };
+        fs::write(&llvm_ir, llvm_runner)
+            .map_err(|error| format!("cannot write std.core LLVM runner: {error}"))?;
+        let result = Command::new(llvm)
+            .arg("-O2")
+            .arg("-filetype=obj")
+            .arg(format!("-mtriple={target}"))
+            .arg("-o")
+            .arg(&llvm_object)
+            .arg(&llvm_ir)
+            .output()
+            .map_err(|error| format!("cannot execute LLVM llc for std.core runner: {error}"))?;
+        if !result.status.success() {
+            return Err(format!(
+                "LLVM std.core runner llc failed: {}",
+                String::from_utf8_lossy(&result.stderr).trim()
+            ));
+        }
+        let llvm_source = temp_dir.join(format!("{stem}.llvm.c"));
+        fs::write(&llvm_source, native_runtime_c_source())
+            .map_err(|error| format!("cannot write std.core LLVM anchor: {error}"))?;
+        let llvm_binary = temp_dir.join(format!("{stem}.llvm.bin"));
+        link_native_runner(cc, &llvm_source, &llvm_object, &llvm_binary)?;
+        run_native_binary(&llvm_binary, "LLVM std.core", false)?;
+
+        reports.push(NativeStdCoreRunReport {
+            case: case.to_owned(),
+            function_ordinal: ordinal,
+            kind: if is_managed { "managed" } else { "scalar" },
+            oracle_result,
+            oracle_tag,
+            oracle_payload,
+            vm_status: if is_managed {
+                vm_managed.expect("managed VM observation was checked").status.clone()
+            } else {
+                vm_scalar.expect("scalar VM observation was checked").status.clone()
+            },
+            vm_result: vm_scalar.and_then(|observation| observation.result),
+            vm_tag: vm_managed.and_then(|observation| observation.tag),
+            vm_payload: vm_managed.and_then(|observation| observation.payload),
+            cranelift: "passed",
+            llvm: "passed",
+        });
     }
     Ok(reports)
 }
@@ -5432,6 +5737,15 @@ fn oracle_managed_parts(value: i64) -> Result<(u64, Option<u64>), String> {
     Ok((tag, payload))
 }
 
+fn oracle_payload_i64(payload: u64) -> i64 {
+    const SIGN_BIT: u64 = 1 << (ORACLE_TAG_SHIFT - 1);
+    if payload & SIGN_BIT != 0 {
+        (payload | !ORACLE_PAYLOAD_MASK) as i64
+    } else {
+        payload as i64
+    }
+}
+
 fn string_payload(value: &str) -> i64 {
     (value.bytes().fold(0xcbf29ce484222325_u64, |hash, byte| {
         hash.wrapping_mul(0x100000001b3)
@@ -5452,12 +5766,36 @@ fn evaluate_operand(
             .get(index)
             .copied()
             .ok_or_else(|| format!("scalar oracle local {index} is not available")),
-        MirBackendOperand::Projection { index, depth } => {
-            let _ = depth;
-            locals
+        MirBackendOperand::Projection { index, depth, kind } => {
+            if *depth != 1
+                || !matches!(
+                    kind.as_str(),
+                    "option-value" | "result-ok-value" | "result-err-value"
+                )
+            {
+                return Err(format!(
+                    "scalar oracle native core projection is not supported: {kind} at depth {depth}"
+                ));
+            }
+            let base = locals
                 .get(index)
                 .copied()
-                .ok_or_else(|| format!("scalar oracle projection base local {index} is not available"))
+                .ok_or_else(|| format!("scalar oracle projection base local {index} is not available"))?;
+            let (tag, payload) = oracle_managed_parts(base)?;
+            let expected_tag = match kind.as_str() {
+                "option-value" => 1,
+                "result-ok-value" => 2,
+                "result-err-value" => 3,
+                _ => unreachable!(),
+            };
+            if tag != expected_tag {
+                return Err(format!(
+                    "scalar oracle projection `{kind}` read incompatible tag {tag}"
+                ));
+            }
+            payload
+                .map(oracle_payload_i64)
+                .ok_or_else(|| format!("scalar oracle projection `{kind}` has no payload"))
         }
         MirBackendOperand::Function { kind } => Ok(string_payload(kind)),
         MirBackendOperand::Constant(MirBackendConstant::String(value)) => {
@@ -7215,15 +7553,39 @@ fn llvm_operand(
                 .unwrap_or(value);
             Ok(string_payload(value).to_string())
         }
-        MirBackendOperand::Local { index }
-        | MirBackendOperand::Borrow { index }
-        | MirBackendOperand::Projection { index, .. } => {
+        MirBackendOperand::Local { index } | MirBackendOperand::Borrow { index } => {
             let slot = slots
                 .get(index)
                 .ok_or_else(|| format!("MIR local {index} is not available in the adapter"))?;
             let value = format!("%v{value_index}");
             *value_index += 1;
             writeln!(module, "  {value} = load i64, ptr {slot}").unwrap();
+            Ok(value)
+        }
+        MirBackendOperand::Projection { index, depth, kind } => {
+            if *depth != 1
+                || !matches!(
+                    kind.as_str(),
+                    "option-value" | "result-ok-value" | "result-err-value"
+                )
+            {
+                return Err(format!(
+                    "LLVM native core projection is not supported: {kind} at depth {depth}"
+                ));
+            }
+            let slot = slots
+                .get(index)
+                .ok_or_else(|| format!("MIR local {index} is not available in the adapter"))?;
+            let base = format!("%v{value_index}");
+            *value_index += 1;
+            writeln!(module, "  {base} = load i64, ptr {slot}").unwrap();
+            let value = format!("%v{value_index}");
+            *value_index += 1;
+            writeln!(
+                module,
+                "  {value} = call i64 @tondo_rt_result_payload(i64 {base})"
+            )
+            .unwrap();
             Ok(value)
         }
         MirBackendOperand::Function { kind } => Ok(string_payload(kind).to_string()),
@@ -7285,6 +7647,7 @@ fn safe_stem(path: &str) -> String {
 impl Options {
     fn parse(mut args: impl Iterator<Item = String>) -> Result<Self, String> {
         let mut probe = None;
+        let mut std_core_probe = None;
         let mut output = None;
         let mut llvm = None;
         let mut target = None;
@@ -7297,6 +7660,7 @@ impl Options {
             };
             match argument.as_str() {
                 "--probe" => probe = Some(PathBuf::from(value()?)),
+                "--std-core-probe" => std_core_probe = Some(PathBuf::from(value()?)),
                 "--output" => output = Some(PathBuf::from(value()?)),
                 "--llvm" => llvm = Some(PathBuf::from(value()?)),
                 "--target" => target = Some(value()?),
@@ -7304,7 +7668,7 @@ impl Options {
                 "--cc" => cc = Some(PathBuf::from(value()?)),
                 "--help" | "-h" => {
                     println!(
-                        "usage: tondo-native-evaluation --probe FILE --output FILE --llvm ABSOLUTE --target TRIPLE --temp-dir DIR [--cc ABSOLUTE]"
+                        "usage: tondo-native-evaluation --probe FILE --output FILE --llvm ABSOLUTE --target TRIPLE --temp-dir DIR [--cc ABSOLUTE] [--std-core-probe FILE]"
                     );
                     std::process::exit(0);
                 }
@@ -7313,6 +7677,7 @@ impl Options {
         }
         Ok(Self {
             probe: probe.ok_or("--probe is required")?,
+            std_core_probe,
             output: output.ok_or("--output is required")?,
             llvm: llvm.ok_or("--llvm is required")?,
             target: target.ok_or("--target is required")?,

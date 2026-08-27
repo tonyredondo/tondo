@@ -143,6 +143,18 @@ checked through the opaque result tag/payload API. The wrapper releases the
 returned clone before exiting, so the case also checks the terminal ownership
 path rather than only comparing a value.
 
+The `NATIVE-STD-CORE-001` extension runs the source fixture
+`tests/native/native-std-core-001.to` through the same compiler and VM probe,
+then executes fourteen fresh Cranelift/LLVM subprocess pairs. It covers
+`Option.some`/`none`/`unwrapOr`/`map` and
+`Result.ok`/`err`/`unwrapOr`/`map`/`mapErr`, including present and absent/error
+branches. The report stores these observations in `native_std_core_runs` and
+requires scalar fallbacks and opaque tag/payload values to match both the
+normalized MIR oracle and the VM. Core payload projections use the private
+`tondo_rt_result_payload` ABI; named mapper values are resolved to direct MIR
+calls, while nested/storage projections and dynamic function values remain
+fail-closed.
+
 It also executes the structured async runtime contract in fresh subprocesses:
 pending tasks transition to ready through an explicit wake, `await` takes the
 ready value, a scope joins its child task, scope cancellation propagates to
@@ -224,10 +236,11 @@ silently treated as passed.
 
 `NATIVE-BACKEND-ADAPTER-001` is closed by the common normalized lowering and
 its executable differential evidence. The report covers 118 scalar cases, 3
-managed-result cases, 21 runtime-contract cases, 8 selection cases, 5
-thread-worker cases and one deferred-task coordinator case in fresh
+managed-result cases, 14 `std.core` cases, 21 runtime-contract cases, 8
+selection cases, 5 thread-worker cases and one deferred-task coordinator case in fresh
 Cranelift/LLVM subprocesses. Functions that still require projected storage
-(`core`/`bytes`) or collection `IteratorNext` are reported as unsupported,
+outside the three core payload projections (`collections`/`bytes`) or collection
+`IteratorNext` are reported as unsupported,
 fail-closed, and are not counted as native semantic evidence. Checked
 arithmetic overflow, logical operators, conversions, comparison branches,
 loop-carried locals, managed result records, host calls, structured async edges

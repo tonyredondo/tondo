@@ -46,7 +46,7 @@ jq -e '
   and .runtime.status_codes == {clean: 0, finding: 1, captured: 2, unsupported: 3}
   and (.invariants | length == 9 and unique_values)
   and (.negative_cases | length == 8 and unique_values)
-  and .next_blocks == ["NATIVE-STD-CORE-001"]
+  and .next_blocks == ["NATIVE-STD-HOSTED-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable contract"
 
 for path in \

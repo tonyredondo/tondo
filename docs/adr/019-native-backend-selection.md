@@ -3,9 +3,9 @@
 - Status: Proposed — selection pending measured evidence
 - Date: 2026-08-25
 - Supersedes: none
-- Next decisions: `NATIVE-STD-CORE-001` (`DIAG-NATIVE-001` native logical
-  diagnostic parity is closed; backend selection remains pending measured
-  evidence)
+- Next decisions: `NATIVE-STD-HOSTED-001` (`NATIVE-STD-CORE-001` and
+  `DIAG-NATIVE-001` native logical diagnostic parity are closed; backend
+  selection remains pending measured evidence)
 
 ## Context
 

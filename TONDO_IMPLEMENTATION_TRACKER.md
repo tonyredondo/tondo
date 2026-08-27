@@ -119,7 +119,8 @@ runtime se cerró en `NATIVE-SELECT-001`, el adaptador común ya está cerrado e
 lowering. `ARC-001` y `ARC-002` ya cerraron ownership, cleanup, ciclos y weak
 refs en el runtime nativo; `DIAG-NATIVE-001` ya cerró la paridad lógica de
 diagnóstico; `NATIVE-THREAD-001` ya cerró la lane física de workers OS. La
-siguiente frontera de implementación nativa es `NATIVE-STD-CORE-001`.
+frontera Core de STD-0.1A está cerrada y la siguiente es
+`NATIVE-STD-HOSTED-001`.
 FUZZ está promovido para los 22 owners; la distribución está promovida y el
 seal S1A está cerrado como bundle técnico del draft, sin sobreafirmar G5, N1,
 TLF ni una publicación.
@@ -5478,8 +5479,8 @@ pueden retrasar el primer backend correcto.
   son las fronteras runtime-facing B0; `NATIVE-001` sigue en evaluación después
   de la compuerta de diagnóstico y el adaptador común ya está cerrado;
   la lane física de `NATIVE-THREAD-001` y `NATIVE-002` están cerradas;
-  `ARC-001`, `ARC-002` y `DIAG-NATIVE-001` están cerrados y la siguiente
-  frontera es `NATIVE-STD-CORE-001`.
+  `ARC-001`, `ARC-002` y `DIAG-NATIVE-001` están cerrados; la frontera Core
+  nativa también está cerrada y la siguiente es `NATIVE-STD-HOSTED-001`.
 
 - [x] **DIAG-SPEC-001 — Cerrar el contrato unificado de diagnóstico dinámico.**
   Fijar profiles `race`, `leaks` y `crash`, el envelope
@@ -5597,7 +5598,8 @@ pueden retrasar el primer backend correcto.
   cerrado en `NATIVE-BACKEND-ADAPTER-001`; `NATIVE-THREAD-001`, `NATIVE-002`,
   `ARC-001`, `ARC-002` y `DIAG-NATIVE-001` están cerrados. La evaluación de
   candidatos, el ranking de rendimiento y Gate N1 siguen pendientes; la
-  siguiente frontera de implementación nativa es `NATIVE-STD-CORE-001`.
+  frontera Core de STD-0.1A está cerrada y la siguiente es
+  `NATIVE-STD-HOSTED-001`.
 
 - [x] **NATIVE-BACKEND-ADAPTER-001 — Sustituir el smoke adapter por lowering
   real común.** La primera slice ya consume `tondo-mir-backend/1` desde el MIR
@@ -5618,8 +5620,9 @@ pueden retrasar el primer backend correcto.
   sigue midiendo solo compile-time/code-size y la selección de backend continúa
   bloqueada hasta completar sus dimensiones N1. La evidencia física de
   `NATIVE-THREAD-001` y la coordinación mínima de `NATIVE-002` están cerradas;
-  `ARC-001`, `ARC-002` y `DIAG-NATIVE-001` están cerrados. El siguiente bloque
-  de implementación es `NATIVE-STD-CORE-001`.
+  `ARC-001`, `ARC-002` y `DIAG-NATIVE-001` están cerrados. La evidencia de
+  `NATIVE-STD-CORE-001` añade catorce casos nativos (Option/Result) y el
+  siguiente bloque de implementación es `NATIVE-STD-HOSTED-001`.
 
 - [x] **NATIVE-MEM-ADR-001 — Cerrar DEC-014 antes de la ABI.** La decisión
   queda cerrada como `hybrid-arc-cycle-collector`: contadores no atómicos para
@@ -5791,11 +5794,25 @@ pueden retrasar el primer backend correcto.
   `target/reliability/evidence/native-evaluation-runner.json` conserva la
   evidencia de ambos backends. No se exigen layouts o stacks físicos idénticos,
   y una captura de señal física solo se declara cuando el target la soporta.
-  El siguiente bloque es `NATIVE-STD-CORE-001`.
+  `NATIVE-STD-CORE-001` queda cerrado con la evidencia descrita a continuación;
+  el siguiente bloque es `NATIVE-STD-HOSTED-001`.
 
-- [ ] **NATIVE-STD-CORE-001 — Implementar la frontera Core de STD-0.1A.** Los
-  valores, ownership, errores y protocolos portables observan la misma API que
-  la VM, sin llamadas host o rutas específicas del backend.
+- [x] **NATIVE-STD-CORE-001 — Implementar la frontera Core de STD-0.1A.** Cerrado
+  con el MIR nativo normalizado y la evidencia ejecutable de ambos candidatos.
+  `Option.some`, `Option.none`, `Option.unwrapOr`, `Option.map`, `Result.ok`,
+  `Result.err`, `Result.unwrapOr`, `Result.map` y `Result.mapErr` conservan los
+  tags, payloads, fallbacks, callbacks por rama y ownership observable de la VM.
+  Las proyecciones de payload de profundidad uno se etiquetan como
+  `option-value`, `result-ok-value` o `result-err-value` y cruzan únicamente
+  `tondo_rt_result_payload`; las proyecciones de storage siguen fail-closed.
+  Los callbacks nombrados se resuelven a llamadas directas durante la
+  normalización, sin inventar una ABI de function pointers. El fixture
+  `tests/native/native-std-core-001.to` y `native_std_core_runs` prueban los
+  catorce casos en procesos Cranelift y LLVM frescos, comparándolos con el
+  oráculo MIR y las observaciones VM. El contrato es
+  `testing/native-std-core.json`, con checks estáticos/negativos en
+  `scripts/native-std-core-{check,test}.sh`; la siguiente frontera es
+  `NATIVE-STD-HOSTED-001`.
 
 - [ ] **NATIVE-STD-HOSTED-001 — Implementar la frontera Hosted de STD-0.1A.**
   Capabilities, I/O parcial, cancelación, handles, errores y cleanup cruzan
@@ -7000,7 +7017,7 @@ gates en una barrera artificial.
     identificador ordinario; no hay fixtures ni adapters de compatibilidad.
     `ASYNC-ITER-EXT-001` continúa como leaf explícita; `NATIVE-THREAD-001`,
     `NATIVE-002`, `ARC-001`, `ARC-002` y `DIAG-NATIVE-001` están cerradas y la
-    siguiente frontera nativa es `NATIVE-STD-CORE-001`.
+    frontera Core nativa está cerrada y la siguiente es `NATIVE-STD-HOSTED-001`.
 
 #### Evidencia de Wave 4.5
 

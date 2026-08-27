@@ -1,0 +1,63 @@
+{
+  "format": "tondo-native-std-core/1",
+  "task": "NATIVE-STD-CORE-001",
+  "owner": "toolchain.native_std_core",
+  "edition": "0.1",
+  "phase": "M20",
+  "status": "closed",
+  "contract": "docs/contracts/native-std-core.md",
+  "fixture": "tests/native/native-std-core-001.to",
+  "runner": "scripts/native-evaluation-runner.sh",
+  "report": "target/reliability/evidence/native-evaluation-runner.json",
+  "report_field": "native_std_core_runs",
+  "backends": ["cranelift", "llvm"],
+  "apis": [
+    "Option.some",
+    "Option.none",
+    "Option.unwrapOr",
+    "Option.map",
+    "Result.ok",
+    "Result.err",
+    "Result.unwrapOr",
+    "Result.map",
+    "Result.mapErr"
+  ],
+  "cases": [
+    "option-some",
+    "option-none",
+    "option-unwrap-some",
+    "option-unwrap-none",
+    "option-map-some",
+    "option-map-none",
+    "result-ok",
+    "result-err",
+    "result-unwrap-ok",
+    "result-unwrap-err",
+    "result-map-ok",
+    "result-map-err",
+    "result-map-err-ok",
+    "result-map-err-error"
+  ],
+  "oracle": "same-opaque-carrier-and-VM-core-observables",
+  "invariants": [
+    "option-and-result-tags-use-private-opaque-carrier",
+    "core-projections-read-payload-through-runtime-ABI",
+    "map-only-invokes-callback-on-present-branch",
+    "mapErr-only-invokes-callback-on-error-branch",
+    "unwrapOr-is-total-and-does-not-panic",
+    "ownership-remains-in-MIR-cleanup-boundary",
+    "no-host-call-or-backend-specific-route",
+    "both-candidates-use-one-normalized-MIR"
+  ],
+  "negative_cases": [
+    "nested-or-storage-projection",
+    "missing-projection-kind",
+    "dynamic-function-value",
+    "payload-read-without-runtime-abi",
+    "missing-vm-observation",
+    "tag-or-payload-mismatch",
+    "callback-on-unselected-branch",
+    "ownership-release-mismatch"
+  ],
+  "next_blocks": ["NATIVE-STD-HOSTED-001"]
+}

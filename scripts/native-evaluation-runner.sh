@@ -17,6 +17,8 @@ scripts/native-select-check.sh
 scripts/native-select-test.sh
 scripts/native-thread-check.sh
 scripts/native-thread-test.sh
+scripts/native-std-core-check.sh
+scripts/native-std-core-test.sh
 
 llvm_tool="${TONDO_LLVM_LLC:-/usr/bin/llc}"
 cc_tool="${TONDO_NATIVE_CC:-/usr/bin/cc}"
@@ -44,6 +46,9 @@ mapfile -t fixtures < <(jq -r '.corpus[].path' testing/native-evaluation-fast.js
 probe="$tmp/mir-probe.json"
 CARGO_TARGET_DIR="$target_dir" cargo run -p tondo-compiler --example native_mir_probe \
     --locked --quiet -- "${fixtures[@]}" > "$probe"
+std_core_probe="$tmp/std-core-mir-probe.json"
+CARGO_TARGET_DIR="$target_dir" cargo run -p tondo-compiler --example native_mir_probe \
+    --locked --quiet -- tests/native/native-std-core-001.to > "$std_core_probe"
 
 CARGO_TARGET_DIR="$adapter_target" cargo build \
     --manifest-path tools/native-evaluation/Cargo.toml --locked --quiet
@@ -57,6 +62,7 @@ report="$evidence_dir/native-evaluation-runner.json"
     --llvm "$llvm_tool" \
     --target "$(rustc -vV | sed -n 's/^host: //p')" \
     --temp-dir "$tmp/backend" \
+    --std-core-probe "$std_core_probe" \
     --cc "$cc_tool" \
     || die "native scalar runner failed"
 
@@ -66,7 +72,7 @@ jq -e '
   and .status == "passed"
   and .adapter.format == "tondo-mir-backend/1"
   and ([.debug_metadata[] | select(.format == "tondo-mir-debug/1" and .sources >= 1 and .symbols >= 1 and .source_maps >= 1)] | length == 4)
-  and .correctness.native_semantics == "scalar-managed-runtime-thread-and-select-native-executable-vs-vm-and-contract"
+  and .correctness.native_semantics == "scalar-and-managed-result-checked-arithmetic-logical-conversions-control-flow-host-calls-cleanup-ownership-async-thread-select-std-core-and-traps"
   and ([.native_runs[] | select(.cranelift == "passed" and .llvm == "passed")] | length >= 1)
   and ([.native_runs[] | select(.oracle_status == "trapped")] | length >= 1)
   and all(.native_runs[];
@@ -116,6 +122,26 @@ jq -e '
   and ([.native_thread_runs[] | select(.case == "thread-worker-distinct" and .expected_result == 1 and .cranelift == "passed" and .llvm == "passed")] | length == 1)
   and ([.native_thread_runs[] | select(.case == "thread-worker-join" and .expected_result == 94 and .cranelift == "passed" and .llvm == "passed")] | length == 1)
   and ([.native_thread_runs[] | select(.case == "thread-worker-cancel" and .expected_result == 2 and .cranelift == "passed" and .llvm == "passed")] | length == 1)
+  and ([.native_std_core_runs[] | select(.cranelift == "passed" and .llvm == "passed")] | length == 14)
+  and ([.native_std_core_runs[].case] == [
+    "option-some", "option-none", "option-unwrap-some", "option-unwrap-none",
+    "option-map-some", "option-map-none", "result-ok", "result-err",
+    "result-unwrap-ok", "result-unwrap-err", "result-map-ok", "result-map-err",
+    "result-map-err-ok", "result-map-err-error"
+  ])
+  and all(.native_std_core_runs[];
+    .kind | IN("scalar", "managed")
+  )
+  and all(.native_std_core_runs[];
+    if .kind == "scalar" then
+      (.oracle_result != null and .oracle_result == .vm_result)
+    else
+      (.oracle_result == null
+       and .oracle_tag == .vm_tag
+       and ((.oracle_payload == null and .vm_payload == null)
+            or (.oracle_payload == (.vm_payload | tonumber))))
+    end
+  )
   and ([.native_lowering_runs[] | select(.case == "deferred-task-call" and .function_ordinal == 1 and .pending_before_join == 0 and .result_after_join == 42 and .joined_after_join == 3 and .cranelift == "passed" and .llvm == "passed")] | length == 1)
   and .native_diagnostics.format == "tondo-native-diagnostics/1"
   and .native_diagnostics.phase == "DIAG-NATIVE-001"

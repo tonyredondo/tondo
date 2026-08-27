@@ -25,6 +25,10 @@ jq -e '
   and .debug_format == "tondo-mir-debug/1"
   and .debug_report_field == "debug_metadata"
   and .thread_report_field == "native_thread_runs"
+  and .std_core_report_field == "native_std_core_runs"
+  and .std_core_contract == "testing/native-std-core.json"
+  and .std_core_probe == "tests/native/native-std-core-001.to"
+  and .std_core_case_count == 14
   and .lowering_report_field == "native_lowering_runs"
   and .diagnostic_report_field == "native_diagnostics"
   and .diagnostic_phase == "DIAG-NATIVE-001"
@@ -37,16 +41,18 @@ jq -e '
       ambient_path_lookup: "forbidden",
       physical_paths_in_report: "forbidden"
   }
-  and .native_semantics == "scalar-and-managed-result-checked-arithmetic-logical-conversions-control-flow-host-calls-cleanup-ownership-async-thread-select-and-traps"
+  and .native_semantics == "scalar-and-managed-result-checked-arithmetic-logical-conversions-control-flow-host-calls-cleanup-ownership-async-thread-select-std-core-and-traps"
   and (.negative_cases | length == 10)
 ' "$contract" >/dev/null || die "invalid runner contract"
 
 for path in \
     scripts/native-evaluation-runner.sh \
     tools/native-evaluation/src/main.rs \
-    testing/native-evaluation-fast.json; do
+    testing/native-evaluation-fast.json \
+    testing/native-std-core.json; do
     [[ -f "$root/$path" ]] || die "missing runner input: $path"
 done
+[[ -f "$root/tests/native/native-std-core-001.to" ]] || die "missing std.core native fixture"
 
 grep -Fq -- '--cc' tools/native-evaluation/src/main.rs \
     || die "adapter has no explicit linker argument"
@@ -58,6 +64,10 @@ grep -Fq 'vm_managed' crates/tondo-compiler/examples/native_mir_probe.rs \
     || die "probe has no VM managed observations"
 grep -Fq 'native_managed_runs' tools/native-evaluation/src/main.rs \
     || die "adapter does not report managed native results"
+grep -Fq 'native_std_core_runs' tools/native-evaluation/src/main.rs \
+    || die "adapter does not report native std.core results"
+grep -Fq 'run_native_std_core_probe' tools/native-evaluation/src/main.rs \
+    || die "adapter has no native std.core probe"
 grep -Fq 'native_runtime_runs' tools/native-evaluation/src/main.rs \
     || die "adapter does not report runtime contract results"
 grep -Fq 'native_select_runs' tools/native-evaluation/src/main.rs \
@@ -78,7 +88,7 @@ grep -Fq 'std::thread::Builder' crates/tondo-native-runtime/src/lib.rs \
     || die "runtime does not launch an OS worker"
 grep -Fq 'pthread_create' tools/native-evaluation/src/main.rs \
     || die "native runner does not launch an OS worker"
-grep -Fq 'scalar-managed-runtime-thread-and-select-native-executable-vs-vm-and-contract' \
+grep -Fq 'scalar-and-managed-result-checked-arithmetic-logical-conversions-control-flow-host-calls-cleanup-ownership-async-thread-select-std-core-and-traps' \
     tools/native-evaluation/src/main.rs \
     || die "adapter has no executable scalar evidence state"
 

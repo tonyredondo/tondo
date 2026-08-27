@@ -739,6 +739,10 @@ pub enum MirBackendOperand {
     Projection {
         index: u32,
         depth: u32,
+        /// Stable logical projection kind. Only the three core payload reads
+        /// are executable in the native scalar adapter; all other kinds stay
+        /// explicitly opaque and fail closed.
+        kind: String,
     },
     Unsupported {
         kind: String,
@@ -854,6 +858,7 @@ fn backend_function(
     callable_ordinals: &BTreeMap<HirCallableId, u32>,
 ) -> MirBackendFunction {
     let mut unsupported = Vec::new();
+    let function_values = backend_function_values(function, callable_ordinals);
     let blocks = function
         .blocks_with_ids()
         .map(|(block_id, block)| {
@@ -863,6 +868,7 @@ fn backend_function(
                 interner,
                 &mut unsupported,
                 callable_ordinals,
+                &function_values,
             )
         })
         .collect::<Vec<_>>();
@@ -947,6 +953,7 @@ fn backend_block(
     interner: &TypeInterner,
     unsupported: &mut Vec<String>,
     callable_ordinals: &BTreeMap<HirCallableId, u32>,
+    function_values: &BTreeMap<u32, u32>,
 ) -> MirBackendBlock {
     let kind = match block.kind() {
         MirBlockKind::Normal => "normal",
@@ -970,6 +977,18 @@ fn backend_block(
             {
                 MirBackendStatement::Marker {
                     kind: "unit-assignment".to_owned(),
+                }
+            }
+            MirStatementKind::Assign { destination, .. }
+                if destination.projections().is_empty()
+                    && function_values.contains_key(&destination.local().index()) =>
+            {
+                // A statically resolved callback is represented by the
+                // normalized direct call emitted by `backend_operation`.
+                // Drop the dead function-value materialization so native
+                // adapters never need to invent a function-pointer ABI.
+                MirBackendStatement::Marker {
+                    kind: "function-value".to_owned(),
                 }
             }
             MirStatementKind::Assign { destination, value } => MirBackendStatement::Assign {
@@ -1148,7 +1167,12 @@ fn backend_block(
             target,
             ..
         } => MirBackendTerminator::Invoke {
-            operation: backend_operation(operation, unsupported, callable_ordinals),
+            operation: backend_operation(
+                operation,
+                unsupported,
+                callable_ordinals,
+                function_values,
+            ),
             destination: destination
                 .as_ref()
                 .map(|place| backend_place(place, unsupported)),
@@ -1163,7 +1187,12 @@ fn backend_block(
             target,
             ..
         } => MirBackendTerminator::Invoke {
-            operation: backend_operation(operation, unsupported, callable_ordinals),
+            operation: backend_operation(
+                operation,
+                unsupported,
+                callable_ordinals,
+                function_values,
+            ),
             destination: Some(backend_place(destination, unsupported)),
             target: Some(target.index()),
         },
@@ -1190,7 +1219,12 @@ fn backend_block(
             ..
         } => MirBackendTerminator::Invoke {
             operation: MirBackendOperation::Spawn {
-                operation: Box::new(backend_operation(operation, unsupported, callable_ordinals)),
+                operation: Box::new(backend_operation(
+                    operation,
+                    unsupported,
+                    callable_ordinals,
+                    function_values,
+                )),
                 kind: match kind {
                     HirSpawnKind::Task => "task",
                     HirSpawnKind::Thread => "thread",
@@ -1330,6 +1364,7 @@ fn backend_operation(
     operation: &MirOperation,
     unsupported: &mut Vec<String>,
     callable_ordinals: &BTreeMap<HirCallableId, u32>,
+    function_values: &BTreeMap<u32, u32>,
 ) -> MirBackendOperation {
     match operation.kind() {
         MirOperationKind::CheckedPrefix { operator, operand } => {
@@ -1397,6 +1432,18 @@ fn backend_operation(
             let callable = match callee.kind() {
                 MirOperandKind::Function { callable, .. } => callable,
                 _ => {
+                    if let Some(function) = backend_function_value(callee, function_values) {
+                        let Some(arguments) = backend_call_arguments(arguments, unsupported, true)
+                        else {
+                            return MirBackendOperation::Marker {
+                                kind: "call".to_owned(),
+                            };
+                        };
+                        return MirBackendOperation::Call {
+                            function,
+                            arguments,
+                        };
+                    }
                     unsupported.push("call:indirect".to_owned());
                     let Some(call_arguments) = backend_call_arguments(arguments, unsupported, true)
                     else {
@@ -1451,6 +1498,63 @@ fn backend_operation(
             MirBackendOperation::Marker { kind }
         }
     }
+}
+
+/// Collect direct function values stored in scalar MIR locals. Core
+/// `Option.map`, `Result.map` and `Result.mapErr` lower their mapper as a
+/// function value before invoking it; resolving that value here preserves a
+/// direct normalized call without exposing a function-pointer ABI to native
+/// adapters. Copies of a known function value remain known as well.
+fn backend_function_values(
+    function: &MirFunction,
+    callable_ordinals: &BTreeMap<HirCallableId, u32>,
+) -> BTreeMap<u32, u32> {
+    let mut values = BTreeMap::new();
+    for block in function.blocks() {
+        for statement in block.statements() {
+            let MirStatementKind::Assign { destination, value } = statement.kind() else {
+                continue;
+            };
+            if !destination.projections().is_empty() {
+                continue;
+            }
+            let ordinal = match value.kind() {
+                MirRvalueKind::Use(operand) => match operand.kind() {
+                    MirOperandKind::Function { callable, .. } => {
+                        callable_ordinals.get(callable).copied()
+                    }
+                    MirOperandKind::Copy(place) | MirOperandKind::Move(place)
+                        if place.projections().is_empty() =>
+                    {
+                        values.get(&place.local().index()).copied()
+                    }
+                    _ => None,
+                },
+                _ => None,
+            };
+            if let Some(ordinal) = ordinal {
+                values.insert(destination.local().index(), ordinal);
+            } else {
+                values.remove(&destination.local().index());
+            }
+        }
+    }
+    values
+}
+
+fn backend_function_value(
+    callee: &MirOperand,
+    function_values: &BTreeMap<u32, u32>,
+) -> Option<u32> {
+    let place = match callee.kind() {
+        MirOperandKind::Copy(place) | MirOperandKind::Move(place)
+            if place.projections().is_empty() =>
+        {
+            place
+        }
+        _ => return None,
+    };
+    function_values.get(&place.local().index()).copied()
 }
 
 fn backend_call_arguments(
@@ -1515,10 +1619,25 @@ fn backend_place_operand(place: &MirPlace, unsupported: &mut Vec<String>) -> Mir
             index: place.local().index(),
         }
     } else {
-        unsupported.push("operand:projection".to_owned());
+        let projection = place
+            .projections()
+            .last()
+            .expect("non-empty place has a projection");
+        let kind = backend_projection_kind_name(projection.kind()).to_owned();
+        let supported_core = place.projections().len() == 1
+            && matches!(
+                projection.kind(),
+                MirProjectionKind::OptionValue
+                    | MirProjectionKind::ResultOkValue
+                    | MirProjectionKind::ResultErrValue
+            );
+        if !supported_core {
+            unsupported.push("operand:projection".to_owned());
+        }
         MirBackendOperand::Projection {
             index: place.local().index(),
             depth: place.projections().len() as u32,
+            kind,
         }
     }
 }
@@ -1546,7 +1665,20 @@ fn backend_operand(operand: &MirOperand, unsupported: &mut Vec<String>) -> MirBa
                     index: place.local().index(),
                 }
             } else {
-                unsupported.push("operand:borrow-projection".to_owned());
+                let projection = place
+                    .projections()
+                    .last()
+                    .expect("non-empty place has a projection");
+                let supported_core = place.projections().len() == 1
+                    && matches!(
+                        projection.kind(),
+                        MirProjectionKind::OptionValue
+                            | MirProjectionKind::ResultOkValue
+                            | MirProjectionKind::ResultErrValue
+                    );
+                if !supported_core {
+                    unsupported.push("operand:borrow-projection".to_owned());
+                }
                 backend_place_operand(place, unsupported)
             }
         }
@@ -1567,6 +1699,15 @@ fn backend_operand(operand: &MirOperand, unsupported: &mut Vec<String>) -> MirBa
                 kind: "loan".to_owned(),
             }
         }
+    }
+}
+
+fn backend_projection_kind_name(kind: &MirProjectionKind) -> &'static str {
+    match kind {
+        MirProjectionKind::OptionValue => "option-value",
+        MirProjectionKind::ResultOkValue => "result-ok-value",
+        MirProjectionKind::ResultErrValue => "result-err-value",
+        _ => "projection",
     }
 }
 
@@ -3122,6 +3263,7 @@ mod tests {
                 &TypeInterner::default(),
                 &mut unsupported,
                 &BTreeMap::new(),
+                &BTreeMap::new(),
             );
             assert!(
                 !unsupported.is_empty(),
@@ -3150,7 +3292,7 @@ mod tests {
         let operand = backend_int_operand(ty);
         #[rustfmt::skip] let binary = MirOperationKind::CheckedBinary { operator: HirBinaryOperator::LogicalAnd, left: operand.clone(), right: operand.clone() };
         let mut unsupported = Vec::new();
-        #[rustfmt::skip] let lowered = backend_operation(&MirOperation { ty, kind: binary.clone() }, &mut unsupported, &BTreeMap::new());
+        #[rustfmt::skip] let lowered = backend_operation(&MirOperation { ty, kind: binary.clone() }, &mut unsupported, &BTreeMap::new(), &BTreeMap::new());
         assert!(matches!(lowered, MirBackendOperation::CheckedBinary { .. }));
         assert!(unsupported.is_empty());
         assert_eq!(operation_kind_name(&binary), "checked-binary");
@@ -3273,6 +3415,7 @@ mod tests {
                 &block,
                 &TypeInterner::default(),
                 &mut unsupported,
+                &BTreeMap::new(),
                 &BTreeMap::new(),
             );
             assert!(!unsupported.is_empty());

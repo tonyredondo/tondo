@@ -45,4 +45,4 @@ The native runtime ownership implementation is tracked separately in
 terminal cleanup and cross-thread count representation; `ARC-002` closes the
 cycle collector and weak-reference linearization. Native diagnostic parity is
 closed by `DIAG-NATIVE-001`; the next native consumer is
-`NATIVE-STD-CORE-001`.
+`NATIVE-STD-HOSTED-001`.

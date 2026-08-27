@@ -29,7 +29,7 @@ jq -e '
         and .implemented_blocks == ["ARC-001", "ARC-002"]
         and .pending_blocks == []
         and (.corpus.arc_002_cases | length == 3 and unique_values)
-        and .next_blocks == ["NATIVE-STD-CORE-001"]))
+        and .next_blocks == ["NATIVE-STD-HOSTED-001"]))
   and .implementation.runtime == "crates/tondo-native-runtime/src/lib.rs"
   and .implementation.tests == "crates/tondo-native-runtime/src/lib.rs"
   and .implementation.contract == "docs/contracts/native-arc.md"

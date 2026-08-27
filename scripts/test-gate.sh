@@ -195,6 +195,10 @@ run_step native-evaluation-runner-contract \
     scripts/native-evaluation-runner-check.sh
 run_step native-evaluation-runner-contract-tests \
     scripts/native-evaluation-runner-test.sh
+run_step native-std-core-contract \
+    scripts/native-std-core-check.sh
+run_step native-std-core-contract-tests \
+    scripts/native-std-core-test.sh
 run_step native-select-contract \
     scripts/native-select-check.sh
 run_step native-select-contract-tests \

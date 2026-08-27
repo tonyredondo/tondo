@@ -82,5 +82,5 @@
     "rollback-after-commit",
     "wake-after-cancel"
   ],
-  "next_blocks": ["NATIVE-STD-CORE-001"]
+  "next_blocks": ["NATIVE-STD-HOSTED-001"]
 }

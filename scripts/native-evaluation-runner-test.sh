@@ -42,4 +42,8 @@ jq '.diagnostic_phase = "NATIVE-001"' \
     testing/native-evaluation-runner.json > "$tmp/stale-diagnostics-phase.json"
 expect_failure stale-diagnostics-phase "$tmp/stale-diagnostics-phase.json"
 
+jq '.std_core_report_field = "legacy-core"' \
+    testing/native-evaluation-runner.json > "$tmp/missing-std-core.json"
+expect_failure missing-std-core "$tmp/missing-std-core.json"
+
 echo "native evaluation runner tests: OK (adapter, toolchain and equivalence boundaries rejected)"

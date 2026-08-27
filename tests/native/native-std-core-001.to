@@ -1,0 +1,96 @@
+fn increment(value: Int): Int {
+    value + 1
+}
+
+fn option_some(): Int? {
+    some(7)
+}
+
+fn option_none(): Int? {
+    none
+}
+
+fn option_unwrap_some(): Int {
+    let value: Int? = some(7)
+    value.unwrapOr(99)
+}
+
+fn option_unwrap_none(): Int {
+    let value: Int? = none
+    value.unwrapOr(99)
+}
+
+fn option_map_some(): Int? {
+    let value: Int? = some(7)
+    value.map(increment)
+}
+
+fn option_map_none(): Int? {
+    let value: Int? = none
+    value.map(increment)
+}
+
+fn result_ok(): Int ! Int {
+    ok(5)
+}
+
+fn result_err(): Int ! Int {
+    err(2)
+}
+
+fn result_unwrap_ok(): Int {
+    let value: Int ! Int = ok(5)
+    value.unwrapOr(99)
+}
+
+fn result_unwrap_err(): Int {
+    let value: Int ! Int = err(2)
+    value.unwrapOr(99)
+}
+
+fn result_map_ok(): Int ! Int {
+    let value: Int ! Int = ok(5)
+    value.map(increment)
+}
+
+fn result_map_err(): Int ! Int {
+    let value: Int ! Int = err(2)
+    value.map(increment)
+}
+
+fn result_map_err_ok(): Int ! Int {
+    let value: Int ! Int = ok(5)
+    value.mapErr(increment)
+}
+
+fn result_map_err_error(): Int ! Int {
+    let value: Int ! Int = err(2)
+    value.mapErr(increment)
+}
+
+fn main() {
+    assert(option_some() == some(7))
+    assert(option_none() == none)
+    assert(option_unwrap_some() == 7)
+    assert(option_unwrap_none() == 99)
+    assert(option_map_some() == some(8))
+    assert(option_map_none() == none)
+    assert(result_unwrap_ok() == 5)
+    assert(result_unwrap_err() == 99)
+    match result_map_ok() {
+        ok(value) => assert(value == 6)
+        err(_) => assert(false)
+    }
+    match result_map_err() {
+        ok(_) => assert(false)
+        err(value) => assert(value == 2)
+    }
+    match result_map_err_ok() {
+        ok(value) => assert(value == 5)
+        err(_) => assert(false)
+    }
+    match result_map_err_error() {
+        ok(_) => assert(false)
+        err(value) => assert(value == 3)
+    }
+}

@@ -68,5 +68,5 @@
     "physical-path-in-report",
     "premature-n1-claim"
   ],
-  "next_blocks": ["NATIVE-STD-CORE-001"]
+  "next_blocks": ["NATIVE-STD-HOSTED-001"]
 }

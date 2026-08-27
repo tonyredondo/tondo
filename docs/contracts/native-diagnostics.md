@@ -89,6 +89,6 @@ sección nativa al informe existente y requiere que cada envelope de Cranelift
 sea exactamente igual al de LLVM.
 
 Con este bloque cerrado, el siguiente consumidor es
-`NATIVE-STD-CORE-001`. La conformidad de la stdlib, los adaptadores públicos y
+`NATIVE-STD-HOSTED-001`. La conformidad de la stdlib, los adaptadores públicos y
 la capacidad física por target no se dan por implementados por la existencia de
 este contrato.

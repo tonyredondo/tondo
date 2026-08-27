@@ -8,7 +8,7 @@ the VM remains the semantic oracle.
 Both slices are closed for the unpublished 0.1 development line. Ownership,
 terminal cleanup, cycle reclamation and weak-reference linearization are now
 executable runtime contracts; native diagnostic parity is closed by
-`DIAG-NATIVE-001` and the next native boundary is `NATIVE-STD-CORE-001`.
+`DIAG-NATIVE-001` and the next native boundary is `NATIVE-STD-HOSTED-001`.
 
 ## Ownership and terminal cleanup
 
