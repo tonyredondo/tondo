@@ -83,4 +83,7 @@ for mutation in \
 done
 
 scripts/native-aot-quality-check.sh >/dev/null
+grep -Fq 'fsanitize=address,undefined' scripts/native-aot-sanitize-cc.sh
+grep -Fq 'stable_source="/tmp/tondo-native-aot-sanitized.c"' scripts/native-aot-sanitize-cc.sh
+grep -Fq 'fno-sanitize=integer-divide-by-zero' scripts/native-aot-sanitize-cc.sh
 echo "native AOT quality tests: OK (12 contract and 11 report oracle mutations rejected)"

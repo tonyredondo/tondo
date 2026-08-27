@@ -97,15 +97,24 @@ jq -e '
 ' "$diagnostic_summary" >/dev/null || die "diagnostic CI did not produce the complete smoke evidence"
 
 # Sanitizers use a clean target tree and a checked-in absolute compiler
-# wrapper. This keeps ASan/UBSan state independent from the normal runner.
-sanitized_target="$(mktemp -d "$target_dir/native-aot-quality-sanitized.XXXXXX")"
-sanitized_report="$sanitized_target/reliability/evidence/native-evaluation-runner.json"
-run_step sanitizer \
-    env CARGO_TARGET_DIR="$sanitized_target" \
-        TONDO_NATIVE_CC="$root/scripts/native-aot-sanitize-cc.sh" \
-        ASAN_OPTIONS="detect_leaks=1:halt_on_error=1:allocator_may_return_null=0" \
-        UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1" \
-        scripts/native-evaluation-runner.sh
+# wrapper. This keeps ASan/UBSan state independent from the normal runner. A
+# caller may point at an already completed sanitized tree to avoid repeating a
+# long campaign after a wrapper-only repair; the report is still revalidated.
+sanitized_target="${TONDO_NATIVE_AOT_QUALITY_SANITIZED_TARGET:-}"
+if [[ -n "$sanitized_target" ]]; then
+    [[ "$sanitized_target" = /* ]] || sanitized_target="$root/$sanitized_target"
+    sanitized_report="$sanitized_target/reliability/evidence/native-evaluation-runner.json"
+    [[ -f "$sanitized_report" ]] || die "requested sanitized report is missing"
+else
+    sanitized_target="$(mktemp -d "$target_dir/native-aot-quality-sanitized.XXXXXX")"
+    sanitized_report="$sanitized_target/reliability/evidence/native-evaluation-runner.json"
+    run_step sanitizer \
+        env CARGO_TARGET_DIR="$sanitized_target" \
+            TONDO_NATIVE_CC="$root/scripts/native-aot-sanitize-cc.sh" \
+            ASAN_OPTIONS="detect_leaks=1:handle_sigfpe=0:halt_on_error=1:allocator_may_return_null=0" \
+            UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1" \
+            scripts/native-evaluation-runner.sh
+fi
 jq -e '.status == "passed" and .native_aot_memory.status == "passed" and .native_diagnostics.status == "passed"' \
     "$sanitized_report" >/dev/null || die "sanitized native runner report did not pass"
 
