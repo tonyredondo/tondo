@@ -231,6 +231,10 @@ run_step native-conf-stdlib-contract \
     scripts/native-conf-stdlib-check.sh
 run_step native-conf-stdlib-tests \
     scripts/native-conf-stdlib-test.sh
+run_step native-conf-contract \
+    scripts/native-conf-check.sh
+run_step native-conf-tests \
+    scripts/native-conf-test.sh
 run_step native-select-contract \
     scripts/native-select-check.sh
 run_step native-select-contract-tests \

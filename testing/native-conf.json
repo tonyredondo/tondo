@@ -1,0 +1,47 @@
+{
+  "format": "tondo-native-conf/1",
+  "task": "NATIVE-CONF-001",
+  "owner": "toolchain.native_conf",
+  "edition": "0.1",
+  "phase": "M20",
+  "status": "closed",
+  "contract": "docs/contracts/native-conf.md",
+  "runner": "scripts/native-conf-test.sh",
+  "adapter": "scripts/native-conformance-adapter.sh",
+  "probe": "testing/native-conf-probe.json",
+  "inputs": [
+    "testing/native-conf-adapter.json",
+    "testing/native-conf-language.json",
+    "testing/native-conf-testing.json",
+    "testing/native-conf-stdlib.json"
+  ],
+  "categories": ["language", "testing", "stdlib"],
+  "owners": ["language", "testing", "std.core", "std.hosted"],
+  "backends": ["cranelift", "llvm"],
+  "target": "x86_64-unknown-linux-gnu",
+  "oracle": "bytecode-vm-oracle",
+  "mir": "tondo-mir-backend/1",
+  "dimensions": [
+    "language",
+    "testing",
+    "stdlib",
+    "cross-backend",
+    "independent-oracle",
+    "path-redaction",
+    "cleanup",
+    "fail-closed"
+  ],
+  "cases": 9,
+  "negative_cases": [
+    "missing-leaf",
+    "leaf-failure",
+    "backend-divergence",
+    "oracle-divergence",
+    "target-divergence",
+    "mir-divergence",
+    "physical-path-in-report",
+    "duplicate-observation",
+    "unsupported-category-accepted"
+  ],
+  "next_blocks": ["NATIVE-DIFF-001"]
+}

@@ -5903,9 +5903,15 @@ pueden retrasar el primer backend correcto.
   `target/reliability/evidence/native-conf-stdlib.json`; sigue
   `NATIVE-CONF-001`.
 
-- [ ] **NATIVE-CONF-001 — Coordinar conformidad nativa.** Cierra solo tras
-  adaptador, lenguaje, testing y stdlib independientes; compara observaciones
-  completas y exige que VM y nativo superen sus manifiestos por separado.
+- [x] **NATIVE-CONF-001 — Coordinar conformidad nativa.** Cerrado con un
+  coordinador que ejecuta adaptador, lenguaje, testing y STD-0.1A de forma
+  independiente para Cranelift y LLVM, y compara las nueve observaciones con
+  el oráculo VM común. La coordinación rechaza hojas ausentes, divergencias,
+  duplicados, targets/MIR distintos y paths físicos; la evidencia path-free
+  queda en `testing/native-conf.json`, `docs/contracts/native-conf.md`,
+  `scripts/native-conf-{check,test}.sh` y
+  `target/reliability/evidence/native-conf.json`; sigue
+  `NATIVE-DIFF-001`.
 
 - [ ] **NATIVE-DIFF-001 — Ejecutar differential testing generado.** Programs
   tipados, properties, modelos y regresiones usan ambos backends; cada
