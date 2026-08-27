@@ -2,7 +2,11 @@
   "format": "tondo-tracker-graph/1",
   "tracker": "TONDO_IMPLEMENTATION_TRACKER.md",
   "task_dependencies": {
-    "DEC-013": ["DIAG-CI-001"],
+    "DEC-013": [
+      "DIAG-CI-001",
+      "NATIVE-AOT-SCOPE-001",
+      "NATIVE-AOT-PERF-001"
+    ],
     "DEC-014": ["DIAG-CI-001"],
     "DEC-018": ["PERF-001"],
     "ASYNC-DEFER-IMPL-001": ["STD-A-ASYNC-API-001"],
@@ -93,6 +97,38 @@
     ],
     "NATIVE-DIFF-001": ["NATIVE-CONF-001", "NATIVE-CLI-001"],
     "NATIVE-REL-001": ["NATIVE-DIFF-001", "NATIVE-TARGET-001"],
+    "NATIVE-AOT-SCOPE-001": [
+      "NATIVE-001",
+      "PERF-001",
+      "NATIVE-MEM-ADR-001"
+    ],
+    "NATIVE-AOT-LOWER-001": [
+      "NATIVE-AOT-SCOPE-001",
+      "NATIVE-ABI-001",
+      "NATIVE-002"
+    ],
+    "NATIVE-AOT-BINARY-001": [
+      "NATIVE-AOT-LOWER-001",
+      "NATIVE-LINK-001",
+      "NATIVE-REL-001"
+    ],
+    "NATIVE-AOT-MEM-001": [
+      "NATIVE-AOT-LOWER-001",
+      "ARC-002",
+      "DIAG-NATIVE-001"
+    ],
+    "NATIVE-AOT-QUALITY-001": [
+      "NATIVE-AOT-LOWER-001",
+      "NATIVE-CONF-001",
+      "NATIVE-DIFF-001",
+      "DIAG-NATIVE-001"
+    ],
+    "NATIVE-AOT-PERF-001": [
+      "NATIVE-AOT-BINARY-001",
+      "NATIVE-AOT-MEM-001",
+      "NATIVE-AOT-QUALITY-001",
+      "PERF-001"
+    ],
     "INCR-001": ["NATIVE-REL-001"],
     "LSP-001": ["NATIVE-REL-001"],
     "STD-ASYNC-GROUP-SPEC-001": ["ASYNC-SELECT-VM-CONF-001", "DIAG-SPEC-001", "S1A"],

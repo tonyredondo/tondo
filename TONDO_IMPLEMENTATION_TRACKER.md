@@ -15,6 +15,16 @@ La forma TLF para agentes ya tiene spec y estudio léxico, pero encoder, decoder
 source maps, CLI y evaluación de generación permanecen pendientes. Tondo 0.1
 sigue en desarrollo y no ha sido publicado.
 
+El producto primario previsto para Tondo 0.1 es un ejecutable nativo AOT
+(`native-aot`). `tondo-vm-hosted` permanece como implementación de referencia,
+oráculo diferencial y opción bootstrap/hosted; no es una segunda semántica del
+lenguaje. JIT no es un perfil de producto ni una dimensión de `DEC-013` en
+0.1. Por tanto, la selección de Cranelift o LLVM se hará únicamente sobre la
+ruta AOT, con el mismo MIR, runtime, stdlib, target y protocolo de medición.
+El contrato del lenguaje sigue siendo independiente del recolector; para la
+ruta AOT nativa `NATIVE-MEM-ADR-001` fija `hybrid-arc-cycle-collector`, mientras
+la VM conserva el tracing GC de referencia de `ADR-009`.
+
 El tooling dinámico de diagnóstico también queda dentro del plan 0.1: race
 detection, detección de retención/leaks y crash dumps conservan una única
 frontera compilador/runtime/CLI, con evidencia por intento y paridad VM/native.
@@ -113,23 +123,27 @@ baseline previo al backend. Con la conformance pública, la distribución, el
 seal S1A y el contrato D0 promovidos como evidencia técnica del draft,
 los contratos runtime-facing B0 se han cerrado en la VM y en las dos rutas
 nativas candidatas.
-`NATIVE-001` está listo para decisión: la slice de selección runtime se cerró
-en `NATIVE-SELECT-001`, el adaptador común está cerrado en
+`NATIVE-001` ha cerrado la frontera de evidencia inicial, pero todavía no está
+listo para seleccionar backend: la slice de selección runtime se cerró en
+`NATIVE-SELECT-001`, el adaptador común está cerrado en
 `NATIVE-BACKEND-ADAPTER-001` y `NATIVE-002` cerró la coordinación mínima de
 lowering. `ARC-001` y `ARC-002` cerraron ownership, cleanup, ciclos y weak
 refs en el runtime nativo; `DIAG-NATIVE-001` cerró la paridad lógica de
 diagnóstico; `NATIVE-THREAD-001` cerró la lane física de workers OS. Las
 fronteras Core y Hosted de STD-0.1A están cerradas y la evidencia de enlace,
 targets, conformance y distribución ya está disponible para comparar
-Cranelift y LLVM.
+Cranelift y LLVM. La campaña AOT completa, la normalización de artefactos
+enlazados, memoria, calidad y rendimiento siguen siendo necesarias antes de
+`DEC-013`; las cifras rápidas actuales no son una comparación final de tamaño
+porque usan buffers de código Cranelift frente al objeto completo de LLVM.
 FUZZ está promovido para los 22 owners; la distribución está promovida y el
 seal S1A está cerrado como bundle técnico del draft, sin sobreafirmar G5, N1,
 TLF ni una publicación.
 `CONF-GAP-IMPL-001` y `CONF-LAYER-RESULT-001` mantienen T0 verificable sobre el
 árbol actual. `CONF-SEAL-FINAL-001` queda reservado para el primer candidato
 real; los límites `TL01-26-*` pertenecen a S1A. Los contratos
-runtime-facing de STD-0.1B esperan Gate N1; M11 solo conserva abierta la
-decisión humana `DEC-013`. Todo pertenece a la primera versión 0.1; los slices
+runtime-facing de STD-0.1B esperan Gate N1; M11 conserva abierta la campaña AOT
+y, después de ella, la decisión humana `DEC-013`. Todo pertenece a la primera versión 0.1; los slices
 son orden de implementación, no versiones públicas. La
 VM permanece como implementación de referencia y oracle diferencial del
 backend nativo. La lane TLF puede avanzar en paralelo porque solo depende del
@@ -431,12 +445,19 @@ cantidad de infraestructura necesaria antes del primer programa ejecutable.
   1.0, PackageId y hashes exactos, prelude mínimo, catálogo cerrado,
   capabilities y actualización explícita; no es una versión ni un release.
 
-- [ ] **DEC-013 — Backend nativo y ABI runtime interna.** La evidencia de
-  `NATIVE-001` ya está lista: Cranelift y LLVM tienen probe MIR común, captura
-  rápida, runner físico, targets y paquete reproducible; ambos siguen siendo
-  candidatos y `custom` queda fuera del ranking. Esta decisión debe registrar
-  cuál se adopta por target, cómo se ponderan rendimiento/mantenimiento y qué
-  límites quedan explícitos, en
+- [ ] **DEC-013 — Backend nativo y ABI runtime interna.** `NATIVE-001` cerró
+  únicamente la frontera de evidencia inicial: Cranelift y LLVM tienen probe
+  MIR común, captura rápida, runner físico, targets y paquete reproducible;
+  ambos siguen siendo candidatos y `custom` queda fuera del ranking. La
+  captura rápida no decide el tamaño del producto: compara buffers de código
+  Cranelift con el objeto completo de LLVM y debe sustituirse por artefactos
+  enlazados normalizados. Antes de esta decisión deben cerrarse
+  `NATIVE-AOT-SCOPE-001`, `NATIVE-AOT-LOWER-001`,
+  `NATIVE-AOT-BINARY-001`, `NATIVE-AOT-MEM-001`,
+  `NATIVE-AOT-QUALITY-001` y `NATIVE-AOT-PERF-001` sobre la ruta AOT.
+  JIT queda fuera del alcance de Tondo 0.1. La decisión debe registrar cuál
+  backend se adopta por target, cómo se ponderan rendimiento/mantenimiento y
+  qué límites quedan explícitos, en
   [`docs/adr/019-native-backend-selection.md`](docs/adr/019-native-backend-selection.md)
   y [`testing/native-selection.json`](testing/native-selection.json). No se
   selecciona automáticamente ni se promete ABI FFI pública; `NATIVE-ABI-001`
@@ -640,7 +661,7 @@ M0 -> M1 -> M2 -> M3 -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10
                contratos runtime STD-0.1B
                                |
                                v
-                         M11 -> Gate N1
+                         M11 -> AOT campaign -> DEC-013 -> Gate N1
                                |
                                v
                implementación STD-0.1B -> Gate S1
@@ -728,7 +749,13 @@ el trabajo.
 | `RACE-001` / `LEAK-001` / `DUMP-001` | `DIAG-RUNTIME-001` y sus respectivos fixtures/negativos | Modelo de memoria nativo o implementación de owners B |
 | `DIAG-TEST-001` | Detectores `RACE-001`, `LEAK-001`, `DUMP-001` y runner de retries/shards | CI específico |
 | `DIAG-CI-001` | `DIAG-TEST-001`, `PERF-001`, fuzzing y corpus persistente | Selección de backend |
-| `NATIVE-001` | `NATIVE-PRODUCT-SPEC-001`, target/artifact/link/publish specs, Gates G5/S1A, `select` VM conforme, contratos runtime-facing B0 y `DIAG-CI-001` | Implementación de STD-0.1B |
+| `NATIVE-001` | `NATIVE-PRODUCT-SPEC-001`, target/artifact/link/publish specs, Gates G5/S1A, `select` VM conforme, contratos runtime-facing B0 y `DIAG-CI-001` | Campaña AOT y decisión `DEC-013` |
+| `NATIVE-AOT-SCOPE-001` | `NATIVE-001`, `PERF-001` y `NATIVE-MEM-ADR-001` | Lowering AOT completo |
+| `NATIVE-AOT-LOWER-001` | Alcance AOT, ABI y lowering mínimo común | Binarios enlazados comparables, memoria y calidad |
+| `NATIVE-AOT-BINARY-001` | Lowering AOT, plan de enlace y empaquetado reproducible | Rendimiento AOT completo |
+| `NATIVE-AOT-MEM-001` | Lowering AOT, ARC/ciclos y diagnóstico nativo | Rendimiento AOT completo |
+| `NATIVE-AOT-QUALITY-001` | Lowering AOT, conformidad/differential y diagnóstico nativo | Rendimiento AOT completo |
+| `NATIVE-AOT-PERF-001` | Binarios, memoria, calidad y `PERF-001` | `DEC-013` |
 | `NATIVE-ABI-001` | `NATIVE-BACKEND-ADAPTER-001`, `NATIVE-001`, `NATIVE-MEM-ADR-001`, contratos de sync/executor y hooks `RACE`/`LEAK`/`DUMP` | ABI FFI pública |
 | `DIAG-NATIVE-001` | `NATIVE-002`, memoria/ABI/lowering nativos, lane `NATIVE-THREAD-001` ya cerrada y detectores VM | Conformidad N1 |
 | ARC/runtime nativo | `NATIVE-ABI-001` y DEC-014 | Eliminación de retains, COW o escape analysis |
@@ -5458,8 +5485,8 @@ pueden retrasar el primer backend correcto.
   consumo queda enumerada en `testing/native-publish.json` y
   `docs/contracts/native-publish.md`; las decisiones puras están cubiertas por
   los scripts dedicados y los tests de `toolchain.rs`. La integración física
-  del orquestador sigue reservada a `NATIVE-001`. El siguiente bloque es
-  `PERF-001`.
+  del orquestador sigue reservada a `NATIVE-001`. El siguiente bloque de la
+  evaluación es `NATIVE-AOT-SCOPE-001`.
 
 - [x] **PERF-001 — Definir benchmarks y presupuestos antes de implementar.**
   El contrato global `tondo-performance/1` fija 14 workloads hash-pinned: cuatro
@@ -5473,20 +5500,20 @@ pueden retrasar el primer backend correcto.
   cubren compile time, code size, startup, throughput, latencia, allocations,
   bytes asignados, memoria pico, retain/release y pausas, comparando únicamente
   la misma identidad y sin agregación entre targets/backends. La VM hosted es
-  la baseline requerida; `native` sigue siendo un conjunto de candidatos, y el
-  carril rápido de `NATIVE-001` solo captura compile-time/code-size hasta que
-  exista lowering. La captura completa continúa diferida hasta memoria/ABI y
-  no se inventan cifras
+  la baseline requerida; `native-aot` sigue siendo un conjunto de candidatos, y
+  el carril rápido de `NATIVE-001` solo captura compile-time/code-size hasta que
+  exista lowering completo. La captura completa continúa diferida hasta la
+  campaña AOT de artefactos, memoria y calidad; no se inventan cifras
   en el contrato. El registro, documentación, negativos y gates viven
   en `testing/performance.json`, `docs/contracts/performance.md`,
   `scripts/performance-check.sh` y `scripts/performance-test.sh`, integrados en
   `scripts/test-gate.sh`. Este contrato y el seal S1A desbloquearon
   `DIAG-SPEC-001`; su contrato D0 está ahora cerrado y los siguientes bloques
-  son las fronteras runtime-facing B0; `NATIVE-001` sigue en evaluación después
-  de la compuerta de diagnóstico y el adaptador común ya está cerrado;
+  son las leaves de la campaña AOT; `NATIVE-001` mantiene la selección pendiente
+  después de la compuerta de diagnóstico y el adaptador común ya está cerrado;
   la lane física de `NATIVE-THREAD-001` y `NATIVE-002` están cerradas;
   `ARC-001`, `ARC-002` y `DIAG-NATIVE-001` están cerrados; la frontera Core
-  nativa también está cerrada y la siguiente es `NATIVE-STD-HOSTED-001`.
+  nativa también está cerrada y la siguiente es `NATIVE-AOT-SCOPE-001`.
 
 - [x] **DIAG-SPEC-001 — Cerrar el contrato unificado de diagnóstico dinámico.**
   Fijar profiles `race`, `leaks` y `crash`, el envelope
@@ -5582,7 +5609,8 @@ pueden retrasar el primer backend correcto.
   `scripts/diagnostic-fuzz.sh` y `.github/workflows/diagnostics.yml`.
 
 - [x] **NATIVE-001 — Evaluar candidatos nativos con una evaluación separada.**
-  Cerrado como frontera de evidencia lista para decisión: Cranelift y LLVM
+  Cerrado como frontera de evidencia inicial, no como selección de backend:
+  Cranelift y LLVM
   consumen el mismo probe `tondo-native-mir-probe/1`/`tondo-mir-backend/1` y el
   target `x86_64-unknown-linux-gnu`. El carril rápido captura tres muestras de
   compile-time/code-size por fixture; el runner físico pasa 118 casos escalares,
@@ -5592,8 +5620,11 @@ pueden retrasar el primer backend correcto.
   `docs/contracts/native-selection.md`,
   `scripts/native-selection-{check,capture}.sh` y
   `target/reliability/evidence/native-selection.json`. No se selecciona un
-  backend ni se afirma Gate N1: `DEC-013` debe registrar la decisión humana
-  después de revisar rendimiento repetido y el gate de calidad.
+  backend ni se afirma Gate N1. La evidencia pendiente se descompone en la
+  campaña AOT `NATIVE-AOT-SCOPE-001` → lowering completo → artefactos enlazados
+  normalizados → memoria/calidad → rendimiento completo; `DEC-013` debe
+  registrar la decisión humana únicamente después de esas leaves y del gate de
+  calidad.
 
 - [x] **NATIVE-BACKEND-ADAPTER-001 — Sustituir el smoke adapter por lowering
   real común.** La primera slice ya consume `tondo-mir-backend/1` desde el MIR
@@ -5615,8 +5646,8 @@ pueden retrasar el primer backend correcto.
   bloqueada hasta completar sus dimensiones N1. La evidencia física de
   `NATIVE-THREAD-001` y la coordinación mínima de `NATIVE-002` están cerradas;
   `ARC-001`, `ARC-002` y `DIAG-NATIVE-001` están cerrados. La evidencia de
-  `NATIVE-STD-CORE-001` añade catorce casos nativos (Option/Result) y el
-  siguiente bloque de implementación es `NATIVE-STD-HOSTED-001`.
+  `NATIVE-STD-CORE-001` añade catorce casos nativos (Option/Result); la
+  siguiente frontera para decidir backend es `NATIVE-AOT-SCOPE-001`.
 
 - [x] **NATIVE-MEM-ADR-001 — Cerrar DEC-014 antes de la ABI.** La decisión
   queda cerrada como `hybrid-arc-cycle-collector`: contadores no atómicos para
@@ -5915,9 +5946,9 @@ pueden retrasar el primer backend correcto.
   evidencia está en `testing/native-diff.json`,
   `docs/contracts/native-diff.md`, `scripts/native-diff-{check,test}.sh` y
   `target/reliability/evidence/native-diff.json`. El carril físico completo
-  de `native-evaluation-runner.sh` es opt-in y sigue siendo entrada de la
-  decisión `NATIVE-001`; el siguiente trabajo contractual es
-  `NATIVE-TARGET-001`.
+  de `native-evaluation-runner.sh` es opt-in y sigue siendo evidencia de
+  `NATIVE-001`; el siguiente trabajo contractual es la campaña
+  `NATIVE-AOT-SCOPE-001` después de targets y empaquetado.
 
 - [x] **NATIVE-TARGET-001 — Añadir targets uno a uno.** Cerrado para el primer
   target físico admitido, `x86_64-unknown-linux-gnu`/ELF `release`, con registry
@@ -5937,10 +5968,73 @@ pueden retrasar el primer backend correcto.
   paquetes parciales. Evidencia en `testing/native-rel.json`,
   `docs/contracts/native-rel.md`, `scripts/native-rel-{check,test}.sh` y
   `target/reliability/evidence/native-rel.json`; el backend continúa
-  `pending-NATIVE-001` y el paquete no se presenta como STD 0.1.0 final.
+  `pending-DEC-013` y el paquete no se presenta como STD 0.1.0 final hasta
+  cerrar la campaña AOT y Gate N1.
+
+#### Campaña de decisión del backend AOT (antes de DEC-013 y Gate N1)
+
+- [ ] **NATIVE-AOT-SCOPE-001 — Fijar el alcance AOT y la matriz de decisión.**
+  Registrar en ADR-019, el contrato de selección y la documentación del
+  toolchain que `native-aot` es el producto primario de Tondo 0.1,
+  `tondo-vm-hosted` es la implementación de referencia/oráculo y JIT queda
+  fuera del producto y de `DEC-013`. La matriz debe separar evidencia de
+  compilación, binario enlazado, arranque, runtime, memoria, diagnóstico,
+  mantenimiento y distribución; usar la misma identidad de target, toolchain,
+  runtime y stdlib para ambos candidatos; y declarar cómo se comparan tamaños
+  stripped/debug sin mezclar buffers de código con objetos completos. Debe
+  conservar la política collector-neutral del lenguaje, el
+  `hybrid-arc-cycle-collector` de AOT y el tracing GC de la VM. La evidencia y
+  los negativos quedan hash-bound, sin seleccionar todavía un backend.
+
+- [ ] **NATIVE-AOT-LOWER-001 — Completar el lowering AOT del MIR admitido.**
+  Extender el lowering común más allá de la slice mínima de `NATIVE-002` hasta
+  todo el corpus admitido por Tondo 0.1: storage concreto de valores y
+  colecciones, proyecciones, closures y capturas mutables, calls indirectas
+  verificadas, async/select/thread y cleanup/ownership completos. Cada caso
+  debe ejecutar el mismo MIR en Cranelift y LLVM, comparar observables con la
+  VM y fallar cerrado cuando una capacidad no esté admitida; no se acepta un
+  stub que solo cambie el contador de funciones. La evidencia debe conservar
+  el inventario de funciones admitidas, traps y motivos por candidato.
+
+- [ ] **NATIVE-AOT-BINARY-001 — Medir el producto enlazado de forma comparable.**
+  Generar para cada candidato el ejecutable AOT completo con el mismo target,
+  runtime, stdlib, linker y perfil. Capturar por separado bytes del producto
+  stripped, bytes con debug, secciones relevantes, startup y reproducibilidad,
+  y ligar cada medida al receipt y a los hashes de inputs. Eliminar la actual
+  asimetría de `NATIVE-001` (buffer de código Cranelift frente a objeto LLVM),
+  rechazar productos parciales y conservar una comparación path-free.
+
+- [ ] **NATIVE-AOT-MEM-001 — Capturar memoria y ARC en AOT.** Medir en ambos
+  candidatos allocations, bytes asignados, memoria pico/live, retain/release
+  local y atómico, ciclos recuperados, weak upgrades, pausas y presión bajo
+  concurrencia async/thread. Ejecutar procesos frescos con el protocolo de
+  `PERF-001`, separar observaciones de VM y native, y verificar que la
+  instrumentación no cambia la semántica ni oculta fugas; cualquier capacidad
+  física ausente se declara y bloquea N1.
+
+- [ ] **NATIVE-AOT-QUALITY-001 — Ejecutar la compuerta completa de calidad AOT.**
+  Pasar el corpus completo de lenguaje, testing, stdlib y diagnósticos, además
+  de properties, fuzzing diferencial, pánicos, cancelación, cleanup,
+  GC/ARC/ciclos y sanitizadores aplicables, en ambos candidatos y contra la
+  VM. Exigir cero divergencias, cero `unsupported` para funciones admitidas,
+  redacción y reportes reproducibles; mutar cada oracle crítico para demostrar
+  que el gate falla cerrado.
+
+- [ ] **NATIVE-AOT-PERF-001 — Capturar el rendimiento AOT completo.** Aplicar
+  el protocolo de `PERF-001` (3 warmups, 9 muestras en 3 procesos) a compile y
+  link, startup, throughput, latencia, code size comparable, allocations,
+  memoria, retain/release y pausas para todos los workloads admitidos. Publicar
+  median/p95/p99 por target y candidato, con baseline VM separada, intervalos
+  y límites; no agregar targets ni compensar una regresión de una dimensión con
+  otra. Este informe, junto con `NATIVE-AOT-QUALITY-001`, es la entrada final
+  de `DEC-013`.
 
 ### Gate N1 — Backend nativo conforme
 
+- [ ] La campaña `NATIVE-AOT-SCOPE-001`, `NATIVE-AOT-LOWER-001`,
+  `NATIVE-AOT-BINARY-001`, `NATIVE-AOT-MEM-001`,
+  `NATIVE-AOT-QUALITY-001` y `NATIVE-AOT-PERF-001` está cerrada sin
+  divergencias ni dimensiones omitidas.
 - [ ] El backend elegido tiene ADR, targets soportados y ABI runtime interna
   explícitos.
 - [ ] `tondo build` y `tondo run` atraviesan el mismo plan de enlace cerrado y
@@ -7176,7 +7270,10 @@ Esta tabla es la fuente de reconciliación del estado actual.
     NATIVE-SELECT-001 (cerrado) → NATIVE-002 (cerrado) → ARC-001 (cerrado) → ARC-002 (cerrado) →
     DIAG-NATIVE-001 (cerrado) → NATIVE-STD-CORE/HOSTED → NATIVE-STD-001 →
     NATIVE-LINK-001 → NATIVE-CLI-001 → leaves NATIVE-CONF-* → NATIVE-CONF-001 /
-    NATIVE-DIFF-001 → targets → NATIVE-REL-001`. Cerrar Gate N1.
+    NATIVE-DIFF-001 → targets → NATIVE-REL-001 →
+    `NATIVE-AOT-SCOPE-001` → `NATIVE-AOT-LOWER-001` →
+    (`NATIVE-AOT-BINARY-001` + `NATIVE-AOT-MEM-001` + `NATIVE-AOT-QUALITY-001`) →
+    `NATIVE-AOT-PERF-001` → `DEC-013`. Cerrar Gate N1.
 29. [ ] **Wave 8 — Completar STD-0.1B y candidato 0.1.** Terminar specs B,
     cerrar para cada owner las leaves `IMPL`, `HOST` aplicable, `TEST/FUZZ`,
     `PERF`, `CONF` y `DOC` de 21.3.1–21.3.13, y después los coordinadores
@@ -7266,7 +7363,9 @@ instrumentación VM hosted; `STD-ASYNC-GROUP-SPEC-001`, `STD-CONC-001`,
 mantiene la selección reproducible pendiente y ya tiene mediciones rápidas y
 diferenciales reales de Cranelift/LLVM; el adaptador común, su metadata de
 identidad, la lane física de `NATIVE-THREAD-001` y la coordinación mínima de
-`NATIVE-002` están cerrados y `ARC-001` y `ARC-002` ya están implementados.
-La siguiente frontera es la paridad diagnóstica nativa.
+`NATIVE-002` están cerrados y `ARC-001`, `ARC-002` y `DIAG-NATIVE-001` ya están
+implementados. La siguiente frontera es `NATIVE-AOT-SCOPE-001`: fijar el
+alcance AOT, completar el lowering, normalizar binarios y ejecutar la campaña
+de memoria, calidad y rendimiento antes de `DEC-013`.
 
 ---
