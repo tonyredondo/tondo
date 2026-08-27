@@ -62,6 +62,12 @@ shared="$(TONDO_FAST_CHANGED_FILES='crates/tondo-compiler/src/hir/check.rs' \
 assert_contains "$shared" "scope=shared-frontier"
 assert_contains "$shared" "full-test-gate"
 
+shared_monolithic="$(TONDO_FAST_CHANGED_FILES='crates/tondo-compiler/src/mir.rs' \
+    TONDO_FAST_GATE_DIR="$tmp_dir/shared-monolithic" \
+    bash scripts/fast-gate.sh --dry-run)"
+assert_contains "$shared_monolithic" "scope=shared-frontier"
+assert_contains "$shared_monolithic" "full-test-gate"
+
 evaluation="$(TONDO_FAST_CHANGED_FILES=$'tools/native-evaluation/src/main.rs\ntesting/native-evaluation-runner.json' \
     TONDO_FAST_GATE_DIR="$tmp_dir/evaluation" \
     bash scripts/fast-gate.sh --dry-run)"

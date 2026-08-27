@@ -34,8 +34,9 @@ list of audited inline modules lives in `testing/fast-gate.json`; an edit before
 the marker is classified as production automatically.
 
 The machine-readable policy lives in `testing/fast-gate.json`. A change to a
-workspace manifest, compiler/runtime frontier, executable conformance source or
-a full-gate script escalates automatically to `scripts/test-gate.sh`. Normative
+workspace manifest, compiler/runtime frontier (including the monolithic
+`crates/tondo-compiler/src/mir.rs` module), executable conformance source or a
+full-gate script escalates automatically to `scripts/test-gate.sh`. Normative
 sources and their generated documentary records use the documentation tier.
 Unknown files remain in the impacted set and never silently bypass the
 formatter or package checks. `--dry-run` is deterministic and is used by

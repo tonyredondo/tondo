@@ -90,6 +90,7 @@
     "crates/tondo-native-runtime/",
     "crates/tondo-compiler/src/hir/",
     "crates/tondo-compiler/src/mir/",
+    "crates/tondo-compiler/src/mir.rs",
     "crates/tondo-compiler/src/resolve/",
     "crates/tondo-compiler/src/types.rs",
     "crates/tondo-compiler/src/bytecode/",
