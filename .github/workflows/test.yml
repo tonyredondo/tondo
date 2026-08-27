@@ -45,7 +45,6 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
           key: tondo-fast-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
           restore-keys: |
             tondo-fast-${{ runner.os }}-${{ runner.arch }}-

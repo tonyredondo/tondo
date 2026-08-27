@@ -11,7 +11,10 @@ derives an impact set from the diff and selects the smallest sufficient tier:
 - `shared-frontier`: compiler/runtime boundaries whose effects cross packages.
 
 The temporary evidence is written below `target/reliability/fast-gate/` (or the
-caller-provided `CARGO_TARGET_DIR`) and is deliberately ephemeral.
+caller-provided `CARGO_TARGET_DIR`) and is deliberately ephemeral. CI caches
+only Cargo's registry and git sources; it does not archive `target/`, because
+generated build and mutation artifacts are unbounded and must never stall the
+feedback gate.
 
 The `documentation` tier executes `scripts/documentation-gate.sh`. It validates
 typed fences, documentation conformance, normative evidence, tracker topology,
