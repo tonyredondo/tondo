@@ -1,0 +1,43 @@
+{
+  "format": "tondo-native-rel/1",
+  "task": "NATIVE-REL-001",
+  "owner": "toolchain.native_release",
+  "edition": "0.1",
+  "phase": "M20",
+  "status": "closed",
+  "contract": "docs/contracts/native-rel.md",
+  "runner": "scripts/native-rel-test.sh",
+  "package_format": "tondo-native-package/1",
+  "inputs": [
+    "testing/native-target.json",
+    "testing/native-diff.json",
+    "testing/native-conf.json",
+    "testing/native-publish.json",
+    "testing/native-link.json",
+    "crates/tondo-native-runtime/src/lib.rs"
+  ],
+  "target": "tondo-native-linux-x86-64-release",
+  "triple": "x86_64-unknown-linux-gnu",
+  "profile": "release",
+  "backend_selection": "pending-NATIVE-001",
+  "contents": ["binary", "runtime", "stdlib-0.1A", "metadata", "checksums"],
+  "reproducibility": {
+    "archive": "deterministic-tar",
+    "mtime": "epoch-zero",
+    "owners": "numeric-zero",
+    "workspace_paths": "forbidden",
+    "environment": "undeclared-inputs-forbidden",
+    "comparison": "byte-identical-package-twice"
+  },
+  "negative_cases": [
+    "binary-hash-drift",
+    "runtime-hash-drift",
+    "stdlib-hash-drift",
+    "metadata-path-leak",
+    "timestamp-drift",
+    "owner-drift",
+    "target-drift",
+    "partial-package"
+  ],
+  "next_blocks": ["NATIVE-001"]
+}

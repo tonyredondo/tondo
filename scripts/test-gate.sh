@@ -243,6 +243,10 @@ run_step native-target-registry-contract \
     scripts/native-target-check.sh
 run_step native-target-registry-tests \
     scripts/native-target-test.sh
+run_step native-release-contract \
+    scripts/native-rel-check.sh
+run_step native-release-tests \
+    scripts/native-rel-test.sh
 run_step native-select-contract \
     scripts/native-select-check.sh
 run_step native-select-contract-tests \

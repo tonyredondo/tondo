@@ -5935,10 +5935,15 @@ pueden retrasar el primer backend correcto.
   `target/reliability/evidence/native-target.json`; sigue
   `NATIVE-REL-001`.
 
-- [ ] **NATIVE-REL-001 — Empaquetar builds reproducibles.** Binarios, runtime,
-  STD-0.1A y metadatos declaran versiones y checksums; el paquete candidato no
-  depende de paths, reloj ni entorno no declarado. No es todavía el paquete
-  final STD 0.1.0, que incorpora STD-0.1B en `REL-0.1-RC-001`.
+- [x] **NATIVE-REL-001 — Empaquetar builds reproducibles.** Cerrado con un
+  paquete `tondo-native-package/1` que contiene binario, runtime, STD-0.1A,
+  metadatos y checksums del target admitido. Dos builds en staging aislado,
+  con tar determinista (mtime epoch-zero, owners numéricos cero y entradas
+  ordenadas), producen bytes idénticos y rechazan drift, paths, timestamps o
+  paquetes parciales. Evidencia en `testing/native-rel.json`,
+  `docs/contracts/native-rel.md`, `scripts/native-rel-{check,test}.sh` y
+  `target/reliability/evidence/native-rel.json`; el backend continúa
+  `pending-NATIVE-001` y el paquete no se presenta como STD 0.1.0 final.
 
 ### Gate N1 — Backend nativo conforme
 
