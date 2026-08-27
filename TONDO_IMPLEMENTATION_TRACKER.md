@@ -5875,9 +5875,14 @@ pueden retrasar el primer backend correcto.
   `scripts/native-conf-adapter-{check,test}.sh`; siguen las tres hojas
   `NATIVE-CONF-*`.
 
-- [ ] **NATIVE-CONF-LANGUAGE-001 — Ejecutar conformidad base nativa.** Correr
-  lenguaje/toolchain G5 contra el adaptador nativo y comparar observaciones con
-  la VM sin reutilizar sus resultados.
+- [x] **NATIVE-CONF-LANGUAGE-001 — Ejecutar conformidad base nativa.** Cerrado
+  con tres casos del probe común (`scalar`, `Result` con error y panic) en
+  Cranelift y LLVM, comparados contra el oráculo VM de forma independiente.
+  Backend/target son explícitos, los tags/diagnostics deben coincidir y las
+  rutas físicas se redactan. Evidencia en `testing/native-conf-language.json`,
+  `docs/contracts/native-conf-language.md`,
+  `scripts/native-conf-language-{check,test}.sh` y
+  `target/reliability/evidence/native-conf-language.json`.
 
 - [ ] **NATIVE-CONF-TESTING-001 — Ejecutar test targets nativos.** Cubrir
   lifecycle, async, aislamiento, reporters, exits y cleanup mediante el runner

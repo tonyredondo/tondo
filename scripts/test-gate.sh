@@ -219,6 +219,10 @@ run_step native-conf-adapter-contract \
     scripts/native-conf-adapter-check.sh
 run_step native-conf-adapter-tests \
     scripts/native-conf-adapter-test.sh
+run_step native-conf-language-contract \
+    scripts/native-conf-language-check.sh
+run_step native-conf-language-tests \
+    scripts/native-conf-language-test.sh
 run_step native-select-contract \
     scripts/native-select-check.sh
 run_step native-select-contract-tests \

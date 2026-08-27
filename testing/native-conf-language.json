@@ -1,0 +1,19 @@
+{
+  "format": "tondo-native-conf-language/1",
+  "task": "NATIVE-CONF-LANGUAGE-001",
+  "owner": "toolchain.native_conf_language",
+  "edition": "0.1",
+  "phase": "M20",
+  "status": "closed",
+  "contract": "docs/contracts/native-conf-language.md",
+  "runner": "scripts/native-conf-language-test.sh",
+  "adapter": "scripts/native-conformance-adapter.sh",
+  "probe": "testing/native-conf-probe.json",
+  "category": "language",
+  "backends": ["cranelift", "llvm"],
+  "target": "x86_64-unknown-linux-gnu",
+  "cases": ["language-scalar", "language-result-error", "language-panic"],
+  "dimensions": ["values", "result-tags", "panic-diagnostics", "common-mir", "fail-closed"],
+  "negative_cases": ["missing-case", "wrong-result-tag", "wrong-panic-diagnostic", "backend-drift", "target-drift", "physical-path-in-observation"],
+  "next_blocks": ["NATIVE-CONF-TESTING-001", "NATIVE-CONF-STDLIB-001"]
+}
