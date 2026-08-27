@@ -3,9 +3,9 @@
   "owner": "toolchain.native_memory",
   "edition": "0.1",
   "phase": "M11",
-  "status": "arc-001-closed",
-  "implemented_blocks": ["ARC-001"],
-  "pending_blocks": ["ARC-002"],
+  "status": "closed",
+  "implemented_blocks": ["ARC-001", "ARC-002"],
+  "pending_blocks": [],
   "implementation": {
     "runtime": "crates/tondo-native-runtime/src/lib.rs",
     "tests": "crates/tondo-native-runtime/src/lib.rs",
@@ -37,7 +37,11 @@
       "arc-task-completion-replacement",
       "arc-thread-terminal-pin"
     ],
-    "arc_002_cases": []
+    "arc_002_cases": [
+      "arc-rooted-cycle-preservation",
+      "arc-cycle-pressure-and-quiescence",
+      "arc-weak-upgrade-linearization"
+    ]
   },
   "invariants": [
     "async-frame-publishes-roots-before-suspend",
@@ -56,5 +60,5 @@
     "tombstone-resurrection",
     "untracked-payload-edge"
   ],
-  "next_blocks": ["ARC-002"]
+  "next_blocks": ["DIAG-NATIVE-001"]
 }

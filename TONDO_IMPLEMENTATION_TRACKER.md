@@ -114,8 +114,8 @@ comienzan los contratos runtime-facing B0.
 selección pendiente hasta medir candidatos reales; la slice de selección
 runtime se cerró en `NATIVE-SELECT-001`, el adaptador común ya está cerrado en
 `NATIVE-BACKEND-ADAPTER-001` y `NATIVE-002` ya cerró la coordinación mínima de
-lowering. `ARC-001` ya cerró ownership y cleanup en el runtime nativo; la
-siguiente frontera es `ARC-002`/`DIAG-NATIVE-001`;
+lowering. `ARC-001` y `ARC-002` ya cerraron ownership, cleanup, ciclos y weak
+refs en el runtime nativo; la siguiente frontera es `DIAG-NATIVE-001`;
 `NATIVE-THREAD-001` ya cerró la lane física de workers OS.
 FUZZ está promovido para los 22 owners; la distribución está promovida y el
 seal S1A está cerrado como bundle técnico del draft, sin sobreafirmar G5, N1,
@@ -5475,7 +5475,8 @@ pueden retrasar el primer backend correcto.
   son las fronteras runtime-facing B0; `NATIVE-001` sigue en evaluación después
   de la compuerta de diagnóstico y el adaptador común ya está cerrado;
   la lane física de `NATIVE-THREAD-001` y `NATIVE-002` están cerradas;
-  `ARC-001` ya está implementado y la siguiente frontera es `ARC-002`.
+  `ARC-001` y `ARC-002` están cerrados y la siguiente frontera es
+  `DIAG-NATIVE-001`.
 
 - [x] **DIAG-SPEC-001 — Cerrar el contrato unificado de diagnóstico dinámico.**
   Fijar profiles `race`, `leaks` y `crash`, el envelope
@@ -5588,8 +5589,8 @@ pueden retrasar el primer backend correcto.
   `scripts/native-evaluation.sh`, `docs/adr/019-native-backend-selection.md`
   y los informes bajo `target/reliability/evidence/`. El adaptador común está
   cerrado en `NATIVE-BACKEND-ADAPTER-001`; `NATIVE-THREAD-001` y `NATIVE-002`
-  están cerrados; `ARC-001` ya está implementado y la siguiente frontera de
-  implementación es `ARC-002`.
+  están cerrados; `ARC-001` y `ARC-002` están cerrados y la siguiente frontera
+  de implementación es `DIAG-NATIVE-001`.
 
 - [x] **NATIVE-BACKEND-ADAPTER-001 — Sustituir el smoke adapter por lowering
   real común.** La primera slice ya consume `tondo-mir-backend/1` desde el MIR
@@ -5610,8 +5611,8 @@ pueden retrasar el primer backend correcto.
   sigue midiendo solo compile-time/code-size y la selección de backend continúa
   bloqueada hasta completar sus dimensiones N1. La evidencia física de
   `NATIVE-THREAD-001` y la coordinación mínima de `NATIVE-002` están cerradas;
-  `ARC-001` está implementado y el siguiente bloque de implementación es
-  `ARC-002`.
+  `ARC-001` y `ARC-002` están cerrados y el siguiente bloque de implementación
+  es `DIAG-NATIVE-001`.
 
 - [x] **NATIVE-MEM-ADR-001 — Cerrar DEC-014 antes de la ABI.** La decisión
   queda cerrada como `hybrid-arc-cycle-collector`: contadores no atómicos para
@@ -5754,11 +5755,18 @@ pueden retrasar el primer backend correcto.
   frames async, selección y terminales sin leaks; la evidencia contractual es
   `testing/native-arc.json` y `docs/contracts/native-arc.md`.
 
-- [ ] **ARC-002 — Implementar recolección diferida de ciclos y weak refs
-  linealizables.** Validar ciclos independientes, races aplicables, teardown y
-  ausencia de resurrección antes de ejecutar conformidad completa. El contrato
-  queda preparado en `testing/native-arc.json`; aún falta cerrar la ejecución
-  completa de esta segunda slice.
+- [x] **ARC-002 — Implementar recolección diferida de ciclos y weak refs
+  linealizables.** Cerrado en `crates/tondo-native-runtime/src/lib.rs`: el
+  collector de trial deletion conserva ciclos anclados por roots y recupera
+  componentes sin owners tanto en quiescencia explícita como bajo presión de
+  256 allocations; los weak handles usan metadata de tombstone y
+  `weak_upgrade` tiene una linealización acquire que impide la resurrección.
+  Las upgrades concurrentes liberan exactamente un strong por éxito, no hay
+  finalizers de usuario, y los workers cancelan antes de descartar su estado.
+  La evidencia ejecutable es `testing/native-arc.json`,
+  `scripts/native-arc-{check,test}.sh` y los casos
+  `arc-rooted-cycle-preservation`, `arc-cycle-pressure-and-quiescence` y
+  `arc-weak-upgrade-linearization`.
 
 - [ ] **DIAG-NATIVE-001 — Demostrar paridad nativa de diagnóstico.** Después de
   `NATIVE-002` y `ARC-002`, con `NATIVE-THREAD-001` ya cerrado, ejecutar el corpus de
@@ -6974,8 +6982,8 @@ gates en una barrera artificial.
     inferencia en `defer` y el único `for` sobre `AsyncIterator`. `async` es un
     identificador ordinario; no hay fixtures ni adapters de compatibilidad.
     `ASYNC-ITER-EXT-001` continúa como leaf explícita; `NATIVE-THREAD-001` y
-    `NATIVE-002` están cerradas, `ARC-001` ya está implementado y `ARC-002` es
-    la siguiente frontera nativa.
+    `NATIVE-002`, `ARC-001` y `ARC-002` están cerradas y la siguiente frontera
+    nativa es `DIAG-NATIVE-001`.
 
 #### Evidencia de Wave 4.5
 
@@ -7064,7 +7072,7 @@ Esta tabla es la fuente de reconciliación del estado actual.
     `DUMP-001` y `DIAG-TEST-001` cerrados en VM hosted, continuar
     `NATIVE-BACKEND-ADAPTER-001` (cerrado) → `NATIVE-MEM-ADR-001` →
     `NATIVE-ABI-001` → leaves `NATIVE-LOWER-*` → `NATIVE-THREAD-001` (cerrado) →
-    NATIVE-SELECT-001 (cerrado) → NATIVE-002 (cerrado) → ARC-001 (cerrado) → ARC-002 →
+    NATIVE-SELECT-001 (cerrado) → NATIVE-002 (cerrado) → ARC-001 (cerrado) → ARC-002 (cerrado) →
     NATIVE-STD-CORE/HOSTED → NATIVE-STD-001 →
     NATIVE-LINK-001 → NATIVE-CLI-001 → leaves NATIVE-CONF-* → NATIVE-CONF-001 /
     NATIVE-DIFF-001 → targets → NATIVE-REL-001`. Cerrar Gate N1.
@@ -7157,7 +7165,7 @@ instrumentación VM hosted; `STD-ASYNC-GROUP-SPEC-001`, `STD-CONC-001`,
 mantiene la selección reproducible pendiente y ya tiene mediciones rápidas y
 diferenciales reales de Cranelift/LLVM; el adaptador común, su metadata de
 identidad, la lane física de `NATIVE-THREAD-001` y la coordinación mínima de
-`NATIVE-002` están cerrados y `ARC-001` ya está implementado. La siguiente frontera es `ARC-002`, seguida de la
-paridad diagnóstica nativa.
+`NATIVE-002` están cerrados y `ARC-001` y `ARC-002` ya están implementados.
+La siguiente frontera es la paridad diagnóstica nativa.
 
 ---

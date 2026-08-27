@@ -68,5 +68,5 @@
     "physical-path-in-report",
     "premature-n1-claim"
   ],
-  "next_blocks": ["ARC-002", "DIAG-NATIVE-001"]
+  "next_blocks": ["DIAG-NATIVE-001"]
 }

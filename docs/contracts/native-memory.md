@@ -43,5 +43,5 @@ reader and canonical encoding live in
 The native runtime ownership implementation is tracked separately in
 [`native-arc.md`](native-arc.md). `ARC-001` closes retain/release, roots,
 terminal cleanup and cross-thread count representation; `ARC-002` closes the
-cycle collector and weak-reference linearization before native diagnostics are
-run against a real backend.
+cycle collector and weak-reference linearization. Native diagnostics are the
+next gate and are tracked in `DIAG-NATIVE-001`.

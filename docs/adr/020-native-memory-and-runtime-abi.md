@@ -31,11 +31,12 @@ opaque capability-indexed host handles. The compiler/runtime are the only
 consumers. No FFI ABI, user layout, allocator, pointer or mangled name is
 stable by this decision.
 
-`ARC-001` now provides the ownership side of this decision in the private
-native runtime: checked local/shared counts, payload-edge transfer, root and
-scope cleanup, select registration ownership, and worker terminal pins. The
-cycle/weak side remains the explicit `ARC-002` frontier before native
-diagnostic parity is claimed.
+`ARC-001` and `ARC-002` now provide the complete memory side of this decision in
+the private native runtime: checked local/shared counts, payload-edge
+transfer, root and scope cleanup, select registration ownership, worker
+terminal pins, trial-deletion cycle reclamation, and linearizable weak
+upgrades. Native diagnostic parity remains the separate `DIAG-NATIVE-001`
+frontier.
 
 ## Consequences
 

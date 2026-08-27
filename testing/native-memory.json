@@ -30,5 +30,5 @@
     "collector-finalizer-resource",
     "public-layout-promise"
   ],
-  "next_blocks": ["ARC-002"]
+  "next_blocks": ["DIAG-NATIVE-001"]
 }

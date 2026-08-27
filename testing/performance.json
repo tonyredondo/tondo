@@ -481,5 +481,5 @@
       "requires": ["reviewed-baseline", "reproducible-report", "no-unexplained-regression", "ci-evidence"]
     }
   ],
-  "next_blocks": ["ARC-002"]
+  "next_blocks": ["DIAG-NATIVE-001"]
 }

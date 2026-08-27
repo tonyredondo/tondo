@@ -3,8 +3,9 @@
 - Status: Proposed — selection pending measured evidence
 - Date: 2026-08-25
 - Supersedes: none
-- Next decisions: `ARC-002`, `DIAG-NATIVE-001` (`ARC-001` ownership and
-  terminal cleanup are implemented; minimum `NATIVE-002` lowering is closed)
+- Next decisions: `DIAG-NATIVE-001` (`ARC-001` ownership/terminal cleanup and
+  `ARC-002` cycle/weak semantics are closed; minimum `NATIVE-002` lowering is
+  closed)
 
 ## Context
 

@@ -20,7 +20,7 @@
     "selection_status": "pending-measured-evidence",
     "n1_claim": false,
     "native_performance_baseline": "pending-candidate-capture",
-    "next_implementation": "ARC-002",
+    "next_implementation": "DIAG-NATIVE-001",
     "reasons": [
       "rust-native-integration",
       "deterministic-in-process-toolchain",
@@ -182,5 +182,5 @@
     "missing-diagnostic-dimension",
     "stale-next-block"
   ],
-  "next_blocks": ["ARC-002", "DIAG-NATIVE-001"]
+  "next_blocks": ["DIAG-NATIVE-001"]
 }

@@ -125,7 +125,7 @@ jq -e '
     and .gate_sequence[1].requires == ["clean-workspace", "pinned-toolchain", "recorded-environment", "repeated-samples"]
     and .gate_sequence[2].requires == ["exact-oracle-equivalence", "same-identity", "applicable-budgets", "no-overflow-of-bounds"]
     and .gate_sequence[3].requires == ["reviewed-baseline", "reproducible-report", "no-unexplained-regression", "ci-evidence"]
-    and .next_blocks == ["ARC-002"]
+    and .next_blocks == ["DIAG-NATIVE-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable contract"
 
 while IFS=$'\t' read -r fixture_path expected_sha; do
