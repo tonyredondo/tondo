@@ -1,0 +1,43 @@
+{
+  "format": "tondo-native-diff/1",
+  "task": "NATIVE-DIFF-001",
+  "owner": "toolchain.native_diff",
+  "edition": "0.1",
+  "phase": "M20",
+  "status": "closed",
+  "contract": "docs/contracts/native-diff.md",
+  "runner": "scripts/native-diff-test.sh",
+  "adapter": "scripts/native-conformance-adapter.sh",
+  "probe": "testing/native-conf-probe.json",
+  "parent": "testing/native-conf.json",
+  "backends": ["cranelift", "llvm"],
+  "target": "x86_64-unknown-linux-gnu",
+  "oracle": "bytecode-vm-oracle",
+  "seed": "tondo-native-diff-0.1",
+  "generation": "probe-cases-x-backends",
+  "cases": 9,
+  "properties": [
+    "same-observation-id-set",
+    "native-equals-oracle",
+    "cross-backend-equality",
+    "stable-generation",
+    "path-redaction",
+    "fail-closed-mismatch"
+  ],
+  "executable_lane": {
+    "runner": "scripts/native-evaluation-runner.sh",
+    "status": "opt-in",
+    "toolchain": "absolute-llc-18-and-cc"
+  },
+  "negative_cases": [
+    "oracle-value-mutation",
+    "observation-id-mutation",
+    "backend-divergence",
+    "missing-case",
+    "duplicate-case",
+    "physical-path-in-report",
+    "wrong-seed",
+    "unknown-backend"
+  ],
+  "next_blocks": ["NATIVE-TARGET-001", "NATIVE-REL-001"]
+}

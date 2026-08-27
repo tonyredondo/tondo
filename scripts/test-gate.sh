@@ -235,6 +235,10 @@ run_step native-conf-contract \
     scripts/native-conf-check.sh
 run_step native-conf-tests \
     scripts/native-conf-test.sh
+run_step native-diff-contract \
+    scripts/native-diff-check.sh
+run_step native-diff-tests \
+    scripts/native-diff-test.sh
 run_step native-select-contract \
     scripts/native-select-check.sh
 run_step native-select-contract-tests \

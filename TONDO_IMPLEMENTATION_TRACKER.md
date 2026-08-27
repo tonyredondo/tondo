@@ -5913,10 +5913,17 @@ pueden retrasar el primer backend correcto.
   `target/reliability/evidence/native-conf.json`; sigue
   `NATIVE-DIFF-001`.
 
-- [ ] **NATIVE-DIFF-001 — Ejecutar differential testing generado.** Programs
-  tipados, properties, modelos y regresiones usan ambos backends; cada
-  divergencia se reduce antes de decidir cuál implementación contradice el
-  contrato.
+- [x] **NATIVE-DIFF-001 — Ejecutar differential testing generado.** Cerrado
+  con un generador determinista de las nueve observaciones del probe común:
+  cada caso se ejecuta para Cranelift y LLVM, se compara con el oráculo VM y
+  se exige igualdad de IDs, valores, tags, diagnostics, cleanup y redacción.
+  El harness prueba también que una mutación del oráculo falla cerrado. La
+  evidencia está en `testing/native-diff.json`,
+  `docs/contracts/native-diff.md`, `scripts/native-diff-{check,test}.sh` y
+  `target/reliability/evidence/native-diff.json`. El carril físico completo
+  de `native-evaluation-runner.sh` es opt-in y sigue siendo entrada de la
+  decisión `NATIVE-001`; el siguiente trabajo contractual es
+  `NATIVE-TARGET-001`.
 
 - [ ] **NATIVE-TARGET-001 — Añadir targets uno a uno.** Cada combinación de
   arquitectura, SO, profile y capability set tiene registry, runner nativo,
