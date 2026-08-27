@@ -57,5 +57,5 @@ treated as zero.
 
 This block closes native memory evidence only. It does not run the complete
 quality/conformance corpus, publish a performance winner or promote Gate N1.
-`NATIVE-AOT-QUALITY-001` remains the next block; full `PERF-001` capture is
-performed only after quality is closed.
+`NATIVE-AOT-QUALITY-001` is now the closed quality gate; full `PERF-001`
+capture remains the next block.

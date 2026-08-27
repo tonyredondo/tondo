@@ -14,7 +14,7 @@ jobs:
   evaluate:
     name: Native backend selection evidence
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 90
     steps:
       - name: Check out source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -56,6 +56,11 @@ jobs:
       - name: Run scalar native executable differential lane
         run: bash scripts/native-evaluation-runner.sh
 
+      - name: Run complete native AOT quality gate
+        env:
+          TONDO_NATIVE_AOT_QUALITY_USE_EXISTING: "1"
+        run: bash scripts/native-aot-quality.sh
+
       - name: Bind candidate evidence for decision
         run: TONDO_NATIVE_SELECTION_REUSE=1 bash scripts/native-selection-capture.sh
 
@@ -83,6 +88,15 @@ jobs:
         with:
           name: native-evaluation-runner-${{ github.run_id }}-${{ github.run_attempt }}
           path: target/reliability/evidence/native-evaluation-runner.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload native AOT quality evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-aot-quality-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/reliability/evidence/native-aot-quality.json
           if-no-files-found: error
           retention-days: 14
 

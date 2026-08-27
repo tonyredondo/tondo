@@ -135,7 +135,8 @@ diagnóstico; `NATIVE-THREAD-001` cerró la lane física de workers OS. Las
 fronteras Core y Hosted de STD-0.1A están cerradas y la evidencia de enlace,
 targets, conformance y distribución ya está disponible para comparar
 Cranelift y LLVM. La campaña AOT completa, la normalización de artefactos
-enlazados, memoria, calidad y rendimiento siguen siendo necesarias antes de
+enlazados, memoria y calidad ya tienen evidencia cerrada; el rendimiento
+sigue siendo necesario antes de
 `DEC-013`; las cifras rápidas actuales no son una comparación final de tamaño
 porque usan buffers de código Cranelift frente al objeto completo de LLVM.
 La campaña `NATIVE-AOT-MEM-001` ya está cerrada: ambos productos enlazados
@@ -143,8 +144,11 @@ ejecutan el corpus completo y un workload instrumentado en tres procesos
 frescos, con tres warmups y nueve muestras por proceso; la evidencia registra
 allocations, bytes asignados/live/pico, ARC local/atómico, ciclos, weak
 upgrades, pausas, presión de worker y RSS, manteniendo la semántica de la VM
-como oráculo. El siguiente bloque bloqueante es
-`NATIVE-AOT-QUALITY-001`.
+como oráculo. `NATIVE-AOT-QUALITY-001` ya tiene su compuerta completa
+implementada en el
+contrato `testing/native-aot-quality.json`, la campaña
+`scripts/native-aot-quality.sh` y su suite de mutaciones negativas. El
+siguiente bloque bloqueante es `NATIVE-AOT-PERF-001`.
 FUZZ está promovido para los 22 owners; la distribución está promovida y el
 seal S1A está cerrado como bundle técnico del draft, sin sobreafirmar G5, N1,
 TLF ni una publicación.
@@ -6035,7 +6039,9 @@ pueden retrasar el primer backend correcto.
   bytes debug/stripped y secciones ELF, y publica receipts ligados a MIR,
   runtime, stdlib, target, linker, strip, readelf, flags y toolchain. Los
   hashes y secciones coinciden entre builds y ninguna ruta física entra en la
-  evidencia; el siguiente trabajo bloqueante es `NATIVE-AOT-QUALITY-001`.
+  evidencia; la compuerta siguiente quedó cerrada en
+  `NATIVE-AOT-QUALITY-001` y el siguiente trabajo bloqueante es
+  `NATIVE-AOT-PERF-001`.
 
 - [x] **NATIVE-AOT-MEM-001 — Capturar memoria y ARC en AOT.** Cerrado con
   `testing/native-aot-memory.json`: cada candidato construye y ejecuta un
@@ -6047,15 +6053,23 @@ pueden retrasar el primer backend correcto.
   atómico, ciclos recuperados, weak upgrades, pausas de colección, presión de
   worker OS y RSS. La instrumentación es process-local y fail-closed: un
   resultado, trap, cleanup o byte vivo divergente invalida la muestra; no se
-  declara todavía N1. El siguiente bloque es `NATIVE-AOT-QUALITY-001`.
+  declara todavía N1. La calidad AOT ya está cerrada; el siguiente bloque es
+  `NATIVE-AOT-PERF-001`.
 
-- [ ] **NATIVE-AOT-QUALITY-001 — Ejecutar la compuerta completa de calidad AOT.**
-  Pasar el corpus completo de lenguaje, testing, stdlib y diagnósticos, además
-  de properties, fuzzing diferencial, pánicos, cancelación, cleanup,
-  GC/ARC/ciclos y sanitizadores aplicables, en ambos candidatos y contra la
-  VM. Exigir cero divergencias, cero `unsupported` para funciones admitidas,
-  redacción y reportes reproducibles; mutar cada oracle crítico para demostrar
-  que el gate falla cerrado.
+- [x] **NATIVE-AOT-QUALITY-001 — Ejecutar la compuerta completa de calidad AOT.**
+  Cerrado con `testing/native-aot-quality.json`: la campaña reutiliza la misma
+  entrada MIR/target/runtime/stdlib/perfil, ejecuta el inventario AOT completo
+  en Cranelift y LLVM contra la VM y el intérprete MIR normalizado, y exige
+  cero divergencias y cero `unsupported` admitidos. La evidencia incluye las
+  nueve hojas de conformance, differential generado con mutación fail-closed,
+  cinco targets de fuzz de owners y el target de diagnósticos (128 ejecuciones,
+  límites fijos y regresiones replayed), ASan/UBSan con wrapper absoluto, y la
+  compuerta workspace de cobertura/mutación manteniendo el baseline de 90,55%.
+  `scripts/native-aot-quality-check.sh` valida un resumen reproducible y sin
+  rutas físicas; `scripts/native-aot-quality-test.sh` muta los 12 oráculos
+  críticos y rechaza también reportes incompletos, baseline alterado o
+  divergencias. El siguiente bloque bloqueante es
+  `NATIVE-AOT-PERF-001`.
 
 - [ ] **NATIVE-AOT-PERF-001 — Capturar el rendimiento AOT completo.** Aplicar
   el protocolo de `PERF-001` (3 warmups, 9 muestras en 3 procesos) a compile y

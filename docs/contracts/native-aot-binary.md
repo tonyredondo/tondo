@@ -87,5 +87,6 @@ selection.
 This block proves that both candidates can produce the same complete linked
 product recipe and that its identity is reproducible.  It does not select a
 backend, claim N1, measure native memory/ARC, run the complete quality corpus,
-or publish a performance winner.  Those dimensions remain
-`NATIVE-AOT-MEM-001`, `NATIVE-AOT-QUALITY-001` and `NATIVE-AOT-PERF-001`.
+  or publish a performance winner.  Memory and quality are now closed by
+  `NATIVE-AOT-MEM-001` and `NATIVE-AOT-QUALITY-001`; repeated performance
+  remains `NATIVE-AOT-PERF-001`.

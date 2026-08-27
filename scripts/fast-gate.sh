@@ -330,6 +330,10 @@ else
                 bash scripts/native-aot-memory-check.sh
             run native-aot-memory-tests \
                 bash scripts/native-aot-memory-test.sh
+            run native-aot-quality-contract \
+                bash scripts/native-aot-quality-check.sh
+            run native-aot-quality-tests \
+                bash scripts/native-aot-quality-test.sh
             run native-diagnostics-contract \
                 bash scripts/native-diagnostics-check.sh
             run native-diagnostics-contract-tests \

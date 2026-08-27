@@ -63,6 +63,7 @@ the machine-readable authority. Static and mutation checks are
 `scripts/native-evaluation-runner.sh`.
 
 This block does not choose a backend, define the public ABI, or close Gate N1.
-Linked-product evidence is closed by `NATIVE-AOT-BINARY-001`; memory, quality
-and repeated performance remain the following AOT blocks:
-`NATIVE-AOT-MEM-001`, `NATIVE-AOT-QUALITY-001` and `NATIVE-AOT-PERF-001`.
+Linked-product evidence is closed by `NATIVE-AOT-BINARY-001`; memory and
+quality are closed by `NATIVE-AOT-MEM-001` and `NATIVE-AOT-QUALITY-001`.
+Repeated performance remains the following AOT block:
+`NATIVE-AOT-PERF-001`.

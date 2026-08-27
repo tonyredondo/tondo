@@ -265,6 +265,10 @@ run_step native-aot-memory-contract \
     scripts/native-aot-memory-check.sh
 run_step native-aot-memory-contract-tests \
     scripts/native-aot-memory-test.sh
+run_step native-aot-quality-contract \
+    scripts/native-aot-quality-check.sh
+run_step native-aot-quality-contract-tests \
+    scripts/native-aot-quality-test.sh
 run_step native-select-contract \
     scripts/native-select-check.sh
 run_step native-select-contract-tests \
