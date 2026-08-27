@@ -1,0 +1,45 @@
+{
+  "format": "tondo-native-std/1",
+  "task": "NATIVE-STD-001",
+  "owner": "toolchain.native_std",
+  "edition": "0.1",
+  "phase": "M20",
+  "status": "closed",
+  "contract": "docs/contracts/native-std.md",
+  "runner": "scripts/native-std-test.sh",
+  "report": "target/reliability/evidence/native-std.json",
+  "inputs": [
+    "testing/native-std-core.json",
+    "testing/native-std-hosted.json"
+  ],
+  "owners": ["std.core", "std.hosted"],
+  "backends": ["cranelift", "llvm"],
+  "shared_contract": {
+    "carrier": "tondo_rt_result_new/tag/payload",
+    "errors": "opaque-result-with-private-status",
+    "cleanup": "arc-and-host-terminal-exactly-once",
+    "mir": "tondo-mir-backend/1"
+  },
+  "parity_dimensions": [
+    "api-shape",
+    "capability-admission",
+    "error-tags",
+    "partial-io",
+    "cancellation",
+    "ownership",
+    "cleanup",
+    "diagnostic-redaction"
+  ],
+  "cases": ["core-14", "hosted-10", "shared-carrier", "shared-cleanup"],
+  "negative_cases": [
+    "backend-specific-public-api",
+    "missing-core-evidence",
+    "missing-hosted-evidence",
+    "capability-drift",
+    "error-carrier-drift",
+    "cleanup-drift",
+    "ambient-host-lookup",
+    "different-mir-inputs"
+  ],
+  "next_blocks": ["NATIVE-LINK-001"]
+}

@@ -5827,9 +5827,16 @@ pueden retrasar el primer backend correcto.
   `target/reliability/evidence/native-std-hosted.json`; el siguiente bloque es
   `NATIVE-STD-001`.
 
-- [ ] **NATIVE-STD-001 — Coordinar la frontera completa de STD-0.1A.** Core y Hosted
-  observan la misma API, capabilities, errores y cleanup que en la VM; ninguna
-  optimización puede añadir una ruta pública específica del backend.
+- [x] **NATIVE-STD-001 — Coordinar la frontera completa de STD-0.1A.** Cerrado
+  con una coordinación ejecutable de `std.core` y `std.hosted`: ambos owners
+  validan sus contratos de forma independiente y después comparan carrier
+  `tondo_rt_result_new/tag/payload`, tags de error, admission de capabilities,
+  ownership y cleanup. Cranelift y LLVM quedan registrados como rutas del
+  mismo `tondo-mir-backend/1`, sin API pública específica del backend ni lookup
+  ambiental. La evidencia queda en `testing/native-std.json`,
+  `docs/contracts/native-std.md`, `scripts/native-std-{check,test}.sh` y
+  `target/reliability/evidence/native-std.json`; el siguiente bloque es
+  `NATIVE-LINK-001`.
 
 - [ ] **NATIVE-LINK-001 — Implementar el plan de enlace cerrado.** Materializar
   objetos, runtime, stdlib y unidades privilegiadas desde hashes declarados;

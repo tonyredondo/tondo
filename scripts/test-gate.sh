@@ -203,6 +203,10 @@ run_step native-std-hosted-contract \
     scripts/native-std-hosted-check.sh
 run_step native-std-hosted-tests \
     scripts/native-std-hosted-test.sh
+run_step native-std-contract \
+    scripts/native-std-check.sh
+run_step native-std-tests \
+    scripts/native-std-test.sh
 run_step native-select-contract \
     scripts/native-select-check.sh
 run_step native-select-contract-tests \
