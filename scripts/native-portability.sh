@@ -13,6 +13,9 @@ die() {
     exit 1
 }
 
+host_triple="$(rustc -vV | sed -n 's/^host: //p')"
+[[ -n "$host_triple" ]] || die "rustc did not report a host triple"
+
 expected_triple=""
 expected_format=""
 case "$target" in
@@ -21,12 +24,18 @@ case "$target" in
     macos-x86_64) expected_triple="x86_64-apple-darwin"; expected_format="macho" ;;
     macos-aarch64) expected_triple="aarch64-apple-darwin"; expected_format="macho" ;;
     windows-x86_64) expected_triple="x86_64-pc-windows-msvc"; expected_format="coff" ;;
-    host-native) expected_triple="$(rustc -vV | sed -n 's/^host: //p')" ;;
+    host-native)
+        expected_triple="$host_triple"
+        case "$host_triple" in
+            *-linux-*) expected_format="elf" ;;
+            *-apple-darwin) expected_format="macho" ;;
+            *-windows-msvc) expected_format="coff" ;;
+            *) die "unsupported host triple for native portability: $host_triple" ;;
+        esac
+        ;;
     *) die "unknown platform id: $target" ;;
 esac
 
-host_triple="$(rustc -vV | sed -n 's/^host: //p')"
-[[ -n "$host_triple" ]] || die "rustc did not report a host triple"
 [[ "$host_triple" == "$expected_triple" ]] \
     || die "runner host is $host_triple, expected $expected_triple for $target"
 
