@@ -9,7 +9,9 @@ bin="${TONDO_BIN:-$target_dir/debug/tondo}"
 if [[ -x "$bin" ]]; then
     tondo() { "$bin" "$@"; }
 else
-    tondo() { CARGO_TARGET_DIR="$target_dir" cargo run -p tondo-cli --locked -- "$@"; }
+    # Cargo's progress/status lines use stderr.  Keep them out of the CLI's
+    # stderr contract so the fallback behaves exactly like an existing binary.
+    tondo() { CARGO_TARGET_DIR="$target_dir" cargo run -p tondo-cli --locked --quiet -- "$@"; }
 fi
 
 tmp_root="$target_dir/reliability/native-cli"
