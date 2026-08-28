@@ -45,6 +45,12 @@ jobs:
           rustup toolchain install nightly-2026-07-28 --profile minimal
           cargo install cargo-fuzz --version 0.13.2 --locked
 
+      - name: Install pinned quality tools
+        run: |
+          rustup component add llvm-tools-preview
+          cargo install cargo-llvm-cov --version 0.8.7 --locked
+          cargo install cargo-mutants --version 27.1.0 --locked
+
       - name: Show toolchain
         run: |
           rustc --version
