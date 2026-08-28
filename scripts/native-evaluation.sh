@@ -35,7 +35,7 @@ probe="$tmp/mir-probe.json"
 CARGO_TARGET_DIR="$target_dir" cargo run -p tondo-compiler --example native_mir_probe \
     --locked --quiet -- "${fixtures[@]}" > "$probe"
 
-while IFS=$'\t' read -r fixture_path fixture_sha required_features; do
+while IFS=$'\t' read -r fixture_path fixture_sha _; do
     required_json="$(jq -c --arg path "$fixture_path" \
         '.mir_probe.fixtures[] | select(.path == $path) | .required_features' "$contract")"
     jq -e \
@@ -59,6 +59,9 @@ done < <(jq -r '.mir_probe.fixtures[] | [.path, .sha256, (.required_features | j
 
 version_line() {
     local command="$1"
+    if [[ "$command" == "llc" && -n "${TONDO_LLVM_LLC:-}" ]]; then
+        command="$TONDO_LLVM_LLC"
+    fi
     if command -v "$command" >/dev/null 2>&1; then
         "$command" --version 2>&1 | sed -n '1p'
     else

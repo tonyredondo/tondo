@@ -33,6 +33,13 @@ jobs:
           restore-keys: |
             tondo-native-evaluation-${{ runner.os }}-${{ runner.arch }}-
 
+      - name: Install LLVM 18 toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y llvm-18
+          test -x /usr/bin/llc-18
+          echo "TONDO_LLVM_LLC=/usr/bin/llc-18" >> "$GITHUB_ENV"
+
       - name: Show toolchain
         run: |
           rustc --version

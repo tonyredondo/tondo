@@ -18,6 +18,14 @@ die() {
     exit 1
 }
 
+llvm_tool="${TONDO_LLVM_LLC:-/usr/bin/llc}"
+native_cc="${TONDO_NATIVE_CC:-/usr/bin/cc}"
+strip_tool="${TONDO_NATIVE_STRIP:-/usr/bin/strip}"
+readelf_tool="${TONDO_NATIVE_READELF:-/usr/bin/readelf}"
+for tool in "$llvm_tool" "$native_cc" "$strip_tool" "$readelf_tool"; do
+    [[ "$tool" = /* && -x "$tool" ]] || die "required native tool is not executable: $tool"
+done
+
 # Keep mutation worktrees outside the checkout. cargo-mutants copies the
 # source tree, so placing its TMPDIR below the repository would recursively
 # copy ignored .tmp/target artifacts into every isolated build.
@@ -44,9 +52,6 @@ run_step() {
 run_step contract-check scripts/native-aot-quality-check.sh
 run_step contract-tests scripts/native-aot-quality-test.sh
 
-for tool in /usr/bin/llc /usr/bin/cc /usr/bin/strip /usr/bin/readelf; do
-    [[ -x "$tool" ]] || die "required native tool is missing: $tool"
-done
 [[ -x "$root/scripts/native-aot-sanitize-cc.sh" ]] || die "sanitizer compiler wrapper is not executable"
 
 baseline_hash_before="$(sha256sum testing/quality-baseline.json | awk '{print $1}')"
