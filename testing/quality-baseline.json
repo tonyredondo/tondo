@@ -1,11 +1,11 @@
 {
   "format": "tondo-quality-baseline/1",
-  "revision": "STD-CIVIL-TIME-001-COV-2026-08-24",
+  "revision": "NATIVE-AOT-QUALITY-001-BASELINE-2026-08-28",
   "provenance": {
     "format": "tondo-quality-provenance/1",
-    "tree_sha256": "65f0beb5624300d2eb203ab9f3ce4ac6b7ddd8694317d599db0003a77119f92f",
-    "input_set_sha256": "a630dd68ba0cc3f0c6d37e85736d2cb93e0af0b8e22b778f9069d96dab3c8956",
-    "file_count": 794,
+    "tree_sha256": "3de57dff94d4a6621fdd39ef537807ea586512b2ea9a7926bd96754004a9742b",
+    "input_set_sha256": "7a6b2f707de4ac5ee9f35bd5736589ad28e2b9ed44b73896d84686a36453ff07",
+    "file_count": 909,
     "flags": [
       "RUSTUP_TOOLCHAIN=1.93.0-x86_64-unknown-linux-gnu"
     ],
@@ -19,19 +19,19 @@
     "command": "cargo llvm-cov --workspace --all-targets --json --output-path <coverage.json>",
     "global": {
       "lines": {
-        "count": 220585,
-        "covered": 199747,
-        "basis_points": 9055
+        "count": 229875,
+        "covered": 208299,
+        "basis_points": 9061
       },
       "functions": {
-        "count": 15562,
-        "covered": 13505,
-        "basis_points": 8678
+        "count": 16313,
+        "covered": 14195,
+        "basis_points": 8701
       },
       "regions": {
-        "count": 322383,
-        "covered": 286225,
-        "basis_points": 8878
+        "count": 336099,
+        "covered": 298842,
+        "basis_points": 8891
       }
     },
     "risk_scopes": [
@@ -101,8 +101,8 @@
         "metrics": {
           "lines": {
             "count": 33884,
-            "covered": 30258,
-            "basis_points": 8929
+            "covered": 30265,
+            "basis_points": 8931
           },
           "functions": {
             "count": 1982,
@@ -111,8 +111,8 @@
           },
           "regions": {
             "count": 46412,
-            "covered": 41688,
-            "basis_points": 8982
+            "covered": 41696,
+            "basis_points": 8983
           }
         }
       },
@@ -124,19 +124,19 @@
         ],
         "metrics": {
           "lines": {
-            "count": 1218,
-            "covered": 1198,
-            "basis_points": 9835
+            "count": 1228,
+            "covered": 1208,
+            "basis_points": 9837
           },
           "functions": {
-            "count": 93,
-            "covered": 86,
-            "basis_points": 9247
+            "count": 95,
+            "covered": 88,
+            "basis_points": 9263
           },
           "regions": {
-            "count": 1372,
-            "covered": 1311,
-            "basis_points": 9555
+            "count": 1382,
+            "covered": 1321,
+            "basis_points": 9558
           }
         }
       },
@@ -148,19 +148,19 @@
         ],
         "metrics": {
           "lines": {
-            "count": 25518,
-            "covered": 22863,
-            "basis_points": 8959
+            "count": 26375,
+            "covered": 23660,
+            "basis_points": 8970
           },
           "functions": {
-            "count": 1529,
-            "covered": 1202,
-            "basis_points": 7861
+            "count": 1578,
+            "covered": 1246,
+            "basis_points": 7896
           },
           "regions": {
-            "count": 33275,
-            "covered": 29277,
-            "basis_points": 8798
+            "count": 34558,
+            "covered": 30425,
+            "basis_points": 8804
           }
         }
       },
@@ -176,7 +176,7 @@
         "metrics": {
           "lines": {
             "count": 19059,
-            "covered": 17493,
+            "covered": 17494,
             "basis_points": 9178
           },
           "functions": {
@@ -186,7 +186,7 @@
           },
           "regions": {
             "count": 30009,
-            "covered": 26860,
+            "covered": 26861,
             "basis_points": 8950
           }
         }
@@ -196,18 +196,18 @@
   },
   "mutation": {
     "tool": "cargo-mutants 27.1.0",
-    "command": "CARGO_INCREMENTAL=0 cargo mutants --workspace --no-config --copy-vcs true --copy-target false --file <selected-path> --re <reviewed-selection> --baseline run --cargo-test-arg=--lib --jobs 4 --timeout 600 --build-timeout 900 --cargo-arg=--locked --output <directory> --no-times --colors never --annotations none",
+    "command": "CARGO_INCREMENTAL=0 cargo mutants --workspace --no-config --copy-vcs true --gitignore true --error 'panic!(\"mutated\")' --file <selected-path> --re <one-per-critical-frontier> --baseline run --cargo-test-arg=--lib --jobs 1 --timeout 600 --build-timeout 900 --cargo-arg=--locked --output <directory> --no-shuffle --no-times --colors never --annotations none",
     "selected_paths": [
       "crates/tondo-compiler/src/project.rs",
       "crates/tondo-conformance/src/document.rs",
       "crates/tondo-vm/src/bytecode.rs",
       "crates/tondo-vm/src/runtime/heap.rs"
     ],
-    "total": 30,
-    "caught": 27,
+    "total": 6,
+    "caught": 6,
     "missed": 0,
     "timeout": 0,
-    "unviable": 3,
+    "unviable": 0,
     "score_basis_points": 10000,
     "minimum_score_basis_points": 10000,
     "survivors": []

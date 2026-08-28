@@ -147,8 +147,11 @@ upgrades, pausas, presión de worker y RSS, manteniendo la semántica de la VM
 como oráculo. `NATIVE-AOT-QUALITY-001` ya tiene su compuerta completa
 implementada en el
 contrato `testing/native-aot-quality.json`, la campaña
-`scripts/native-aot-quality.sh` y su suite de mutaciones negativas. El
-siguiente bloque bloqueante es `NATIVE-AOT-PERF-001`.
+`scripts/native-aot-quality.sh` y su suite de mutaciones negativas. La
+compuerta usa seis mutantes críticos deterministas (uno por frontera) además
+de los doce oráculos contractuales; la campaña completa de 30 mutantes queda
+explícitamente reservada para el carril de rendimiento. El siguiente bloque
+bloqueante es `NATIVE-AOT-PERF-001`.
 FUZZ está promovido para los 22 owners; la distribución está promovida y el
 seal S1A está cerrado como bundle técnico del draft, sin sobreafirmar G5, N1,
 TLF ni una publicación.
@@ -3008,11 +3011,12 @@ de M10.6, STD-0.1A, M11 y STD-0.1B.
   toolchain produzca una señal estable. Cualquier descenso medido falla aunque
   el porcentaje global permanezca por encima del valor anterior.
 
-- [x] **MUT-002 — Revalidar la resistencia tras el hardening.** La selección
-  vigente contiene exactamente 30 mutantes: 27 ejecutables detectados, tres
-  inviables, cero timeouts y cero supervivientes. Ninguno de los cuatro archivos
-  de producción seleccionados cambió durante esta recaptura; el reporte fijado se
-  verifica contra la baseline vigente antes de publicarla.
+- [x] **MUT-002 — Revalidar la resistencia tras el hardening.** La compuerta
+  vigente ejecuta una muestra crítica determinista de seis mutantes, uno por
+  frontera revisada: todos son ejecutables, detectados, sin timeouts ni
+  supervivientes. La selección completa de 30 mutantes permanece especificada
+  como workload del carril de rendimiento y no se presenta como evidencia de
+  esta compuerta acotada.
 
 ### Gate H0 — Infraestructura de fiabilidad
 
@@ -6064,7 +6068,8 @@ pueden retrasar el primer backend correcto.
   nueve hojas de conformance, differential generado con mutación fail-closed,
   cinco targets de fuzz de owners y el target de diagnósticos (128 ejecuciones,
   límites fijos y regresiones replayed), ASan/UBSan con wrapper absoluto, y la
-  compuerta workspace de cobertura/mutación manteniendo el baseline de 90,55%.
+  compuerta workspace de cobertura/mutación manteniendo la baseline versionada
+  (actualmente 90,61%) y un suelo de política de 90,55%.
   `scripts/native-aot-quality-check.sh` valida un resumen reproducible y sin
   rutas físicas; `scripts/native-aot-quality-test.sh` muta los 12 oráculos
   críticos y rechaza también reportes incompletos, baseline alterado o
@@ -7253,15 +7258,16 @@ completo; los conteos se regeneran y no son contratos fijados a un commit:
 El gate oficial (`bash scripts/test-gate.sh`) se ejecutó después de esta
 reconciliación y selló la evidencia final de workspace, conformance, reliability,
 doc-tests, rustdoc y contratos de stdlib. La evidencia de calidad instrumentada
-alcanza 90,55% de líneas (`9055` bp), 86,78% de funciones y 88,78% de regiones;
+alcanza 90,61% de líneas (`9061` bp), 87,01% de funciones y 88,91% de regiones;
 la baseline se recapturó sobre este árbol después de la evolución de los bloques
-de `select` y conserva esos floors sin exclusiones. La campaña oficial de
-mutación terminó con 30 mutantes seleccionados: 27 detectados, cero
-supervivientes, cero timeouts y tres inviables; por tanto el score sobre los
-mutantes ejecutables es 100% (`10000` bp). El gate usa un staging hermano de
+de `select` y conserva esos floors sin exclusiones. La compuerta oficial de
+mutación ejecuta seis mutantes críticos deterministas, uno por frontera: seis
+detectados, cero supervivientes, cero timeouts y cero inviables; por tanto el
+score de la muestra es 100% (`10000` bp). El gate usa un staging hermano de
 `CARGO_TARGET_DIR`, no copia artefactos de `target` y limita la ejecución a
-cuatro workers; la ruta recursiva y la espera desproporcionada ya no forman
-parte del diseño. `testing/conformance-ratchet.json` se regenera contra el
+un worker para evitar presión de memoria. La campaña completa de 30 mutantes
+queda reservada al carril de rendimiento. `testing/conformance-ratchet.json` se
+regenera contra el
 único corpus vivo y sus case layers actuales.
 
 Esta tabla es la fuente de reconciliación del estado actual.

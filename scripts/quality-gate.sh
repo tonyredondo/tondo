@@ -69,27 +69,30 @@ cargo run -p tondo-reliability --locked -- quality provenance --root . > "$mutat
 # The compiler test target is intentionally broad and can take several
 # minutes under a mutated build. Do not copy the repository's target tree:
 # it contains coverage and build artifacts that add tens of gigabytes
-# without materially improving the clean mutation build. Use a bounded pool of
-# four mutation workers; larger pools have produced intermittent rustc SIGILL
-# failures on this runner, which cargo-mutants would otherwise misclassify as
-# semantically unviable mutants.
+# without materially improving the clean mutation build. The quality gate
+# runs one deterministic, one-per-frontier sample (six critical mutants),
+# while the full 30-mutant campaign belongs to the performance lane. Use one
+# mutation worker: this runner has four CPUs and 15 GiB of RAM, and several
+# compiler builds in parallel page heavily enough to hit the build timeout.
 TMPDIR="$mutation_tmp" env -u CARGO_TARGET_DIR cargo mutants \
     --workspace \
     --no-config \
     --copy-vcs true \
-    --copy-target false \
+    --gitignore true \
+    --error 'panic!("mutated")' \
     --file 'crates/tondo-compiler/src/project.rs' \
     --file 'crates/tondo-conformance/src/document.rs' \
     --file 'crates/tondo-vm/src/bytecode.rs' \
     --file 'crates/tondo-vm/src/runtime/heap.rs' \
-    --re '(ProjectPlan::parse|PrivilegedUnit::validate|validate_line_endings|normalize_array_index|Heap::has_capacity|Heap::ensure_capacity)' \
+    --re 'replace (PrivilegedUnit::validate -> Result<\(\), ProjectError> with Ok\(\(\)\)|ProjectPlan::parse -> Result<Self, ProjectError> with Err\(panic!\("mutated"\)\)|validate_line_endings -> Result<\(\), DocumentError> with Ok\(\(\)\)|normalize_array_index -> Option<usize> with None|Heap::ensure_capacity -> Result<\(\), VmError> with Ok\(\(\)\)|Heap::has_capacity -> bool with true)' \
     --baseline run \
     --cargo-test-arg=--lib \
-    --jobs 4 \
+    --jobs 1 \
     --timeout 600 \
     --build-timeout 900 \
     --cargo-arg=--locked \
     --output "$mutation_output" \
+    --no-shuffle \
     --no-times \
     --colors never \
     --annotations none

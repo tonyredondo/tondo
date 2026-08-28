@@ -5,6 +5,8 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 contract="${TONDO_NATIVE_AOT_QUALITY_CONTRACT:-$root/testing/native-aot-quality.json}"
 report="${TONDO_NATIVE_AOT_QUALITY_REPORT:-}"
+baseline_file="$root/testing/quality-baseline.json"
+minimum_baseline_basis_points=9055
 
 die() {
     echo "native AOT quality: $*" >&2
@@ -12,6 +14,13 @@ die() {
 }
 
 [[ -f "$contract" ]] || die "missing contract: ${contract#"$root"/}"
+[[ -f "$baseline_file" ]] || die "missing quality baseline: ${baseline_file#"$root"/}"
+baseline_basis_points="$(jq -er '.coverage.global.lines.basis_points' "$baseline_file")" \
+    || die "quality baseline has no global line coverage value"
+[[ "$baseline_basis_points" =~ ^[0-9]+$ ]] \
+    || die "quality baseline has an invalid line coverage value: $baseline_basis_points"
+(( baseline_basis_points >= minimum_baseline_basis_points )) \
+    || die "quality baseline is below the 90.55% policy floor (got $baseline_basis_points bp)"
 tail -c 1 "$contract" | cmp -s <(printf '\n') || die "contract must end with LF"
 ! grep -nE $'\r|[[:blank:]]$' "$contract" >/dev/null || die "contract has CR or trailing whitespace"
 
@@ -68,6 +77,12 @@ jq -e '
   and .protocol.fuzz_rss_limit_mb == 4096
   and .protocol.sanitizers == ["address", "undefined"]
   and .protocol.normal_baseline_must_be_unchanged == true
+  and .protocol.mutation_sample == {
+      total: 6,
+      selection: "one-per-critical-frontier",
+      deterministic: true,
+      full_campaign_total: 30
+  }
   and .required_evidence.native_report_fields == [
       "native_aot_lowering", "native_aot_binary", "native_aot_memory",
       "native_diagnostics"
@@ -96,6 +111,7 @@ for path in \
     testing/native-diff.json \
     testing/diagnostic-ci.json \
     testing/stdlib-fuzz.json \
+    testing/quality-baseline.json \
     tools/native-evaluation/src/main.rs; do
     [[ -f "$root/$path" ]] || die "missing quality input: $path"
 done
@@ -140,7 +156,7 @@ done
 
 if [[ -n "$report" ]]; then
     [[ -f "$report" ]] || die "quality report does not exist: $report"
-    jq -e --arg root "$root" '
+    jq -e --arg root "$root" --argjson expected_baseline "$baseline_basis_points" '
       .format == "tondo-native-aot-quality/1"
       and .task == "NATIVE-AOT-QUALITY-001"
       and .phase == "NATIVE-AOT-QUALITY-001"
@@ -214,8 +230,18 @@ if [[ -n "$report" ]]; then
       }
       and .workspace_quality.status == "passed"
       and .workspace_quality.baseline_unchanged == true
-      and .workspace_quality.baseline_basis_points == 9055
+      and .workspace_quality.baseline_basis_points == $expected_baseline
       and .workspace_quality.mutation == "passed"
+      and .workspace_quality.mutation_sample == {
+          status: "passed",
+          total: 6,
+          caught: 6,
+          missed: 0,
+          timeout: 0,
+          unviable: 0,
+          score_basis_points: 10000,
+          selection: "one-per-critical-frontier"
+      }
       and .mutation.status == "passed"
       and .mutation.oracles == 12
       and .mutation.rejected == 12
@@ -232,4 +258,4 @@ if [[ -n "$report" ]]; then
     ' "$report" >/dev/null || die "quality report does not prove the complete AOT gate"
 fi
 
-echo "native AOT quality: OK (full differential, conformance, fuzz, sanitizer and fail-closed mutation contract)"
+echo "native AOT quality: OK (full differential, conformance, fuzz, sanitizer, bounded mutation sample and fail-closed contract)"

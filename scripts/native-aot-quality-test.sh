@@ -36,6 +36,7 @@ done
 
 revision="$(printf '0%.0s' {1..40})"
 hash="$(printf '0%.0s' {1..64})"
+baseline_basis_points="$(jq -r '.coverage.global.lines.basis_points' testing/quality-baseline.json)"
 cat > "$tmp/valid-report.json" <<EOF
 {
   "format": "tondo-native-aot-quality/1",
@@ -49,7 +50,7 @@ cat > "$tmp/valid-report.json" <<EOF
   "differential": {"status":"passed","cases":9,"backends":["cranelift","llvm"],"oracle":"bytecode-vm-oracle","cross_backend_equality":true,"stable_generation":true,"fail_closed_mutation":true},
   "fuzz": {"owner":{"status":"passed","targets":5,"runs_per_target":128,"max_input_bytes":65536,"timeout_seconds":10,"rss_limit_mb":4096,"bounded":true,"deterministic":true,"regressions_replayed":true},"diagnostics":{"status":"passed","targets":1,"runs":128,"max_input_bytes":65536,"timeout_seconds":10,"rss_limit_mb":4096,"bounded":true,"deterministic":true,"regressions_replayed":true}},
   "sanitizers": {"status":"passed","compiler":"explicit-cc-sanitizer-wrapper","address":"passed","undefined":"passed","fresh_processes":true},
-  "workspace_quality": {"status":"passed","baseline_unchanged":true,"baseline_basis_points":9055,"mutation":"passed","baseline_sha256":"sha256:$hash"},
+  "workspace_quality": {"status":"passed","baseline_unchanged":true,"baseline_basis_points":$baseline_basis_points,"mutation":"passed","mutation_sample":{"status":"passed","total":6,"caught":6,"missed":0,"timeout":0,"unviable":0,"score_basis_points":10000,"selection":"one-per-critical-frontier"},"baseline_sha256":"sha256:$hash"},
   "mutation": {"status":"passed","oracles":12,"rejected":12},
   "physical_paths": [], "divergences": [], "unsupported": [],
   "source_revision": "$revision", "contract_sha256":"sha256:$hash", "native_report_sha256":"sha256:$hash", "native_aot_sanitized_report_sha256":"sha256:$hash",
@@ -73,6 +74,7 @@ for mutation in \
     '(.fuzz.diagnostics.status = "failed")' \
     '(.sanitizers.address = "failed")' \
     '(.workspace_quality.baseline_unchanged = false)' \
+    '(.workspace_quality.baseline_basis_points = 0)' \
     '(.mutation.rejected = 11)' \
     '(.physical_paths = ["/tmp/private"])' \
     '(.unsupported = ["admitted-case"])' \
@@ -86,4 +88,9 @@ scripts/native-aot-quality-check.sh >/dev/null
 grep -Fq 'fsanitize=address,undefined' scripts/native-aot-sanitize-cc.sh
 grep -Fq 'stable_source="/tmp/tondo-native-aot-sanitized.c"' scripts/native-aot-sanitize-cc.sh
 grep -Fq 'fno-sanitize=integer-divide-by-zero' scripts/native-aot-sanitize-cc.sh
+grep -Fq -- '--gitignore true' scripts/quality-gate.sh
+grep -Fq -- '--error ' scripts/quality-gate.sh
+grep -Fq -- '--jobs 1' scripts/quality-gate.sh
+grep -Fq -- 'one-per-frontier' scripts/quality-gate.sh
+grep -Fq -- '--no-shuffle' scripts/quality-gate.sh
 echo "native AOT quality tests: OK (12 contract and 11 report oracle mutations rejected)"

@@ -50,7 +50,13 @@
     "fuzz_timeout_seconds": 10,
     "fuzz_rss_limit_mb": 4096,
     "sanitizers": ["address", "undefined"],
-    "normal_baseline_must_be_unchanged": true
+    "normal_baseline_must_be_unchanged": true,
+    "mutation_sample": {
+      "total": 6,
+      "selection": "one-per-critical-frontier",
+      "deterministic": true,
+      "full_campaign_total": 30
+    }
   },
   "required_evidence": {
     "native_report_fields": [

@@ -101,8 +101,13 @@ that the checker rejects it: candidate status, VM observable, cross-backend
 equality, panic/trap, cancellation, cleanup, ARC/cycle recovery, sanitizer
 status, corpus completeness, report redaction and the next-block frontier.
 The test also rejects a non-zero unsupported count and a changed quality
-baseline. These are contract mutations only; they never weaken or delete a
-production test.
+baseline. The executable workspace lane adds a deterministic six-mutant sample:
+one function-value mutation at each of the six reviewed frontiers
+(`PrivilegedUnit::validate`, `ProjectPlan::parse`, `validate_line_endings`,
+`normalize_array_index`, `Heap::ensure_capacity` and `Heap::has_capacity`).
+All six must be caught with no timeout, survivor or unviable result. The full
+30-mutant corpus remains an explicit performance-lane workload; it is not
+silently represented by this bounded quality gate.
 
 ## Promotion boundary
 

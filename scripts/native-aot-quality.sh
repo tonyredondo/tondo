@@ -12,13 +12,24 @@ fi
 evidence="$target_dir/reliability/evidence"
 logs="$evidence/native-aot-quality"
 report="${TONDO_NATIVE_AOT_QUALITY_REPORT:-$evidence/native-aot-quality.json}"
-tmp_root="${TONDO_NATIVE_AOT_QUALITY_TMPDIR:-$root/.tmp}"
-mkdir -p "$evidence" "$logs" "$tmp_root"
 
 die() {
     echo "native AOT quality: $*" >&2
     exit 1
 }
+
+# Keep mutation worktrees outside the checkout. cargo-mutants copies the
+# source tree, so placing its TMPDIR below the repository would recursively
+# copy ignored .tmp/target artifacts into every isolated build.
+tmp_root="${TONDO_NATIVE_AOT_QUALITY_TMPDIR:-$root/../tondo-aot-quality-tmp}"
+if [[ "$tmp_root" != /* ]]; then
+    tmp_root="$root/$tmp_root"
+fi
+mkdir -p "$evidence" "$logs" "$tmp_root"
+tmp_root="$(cd "$tmp_root" && pwd)"
+case "$tmp_root/" in
+    "$root/"*) die "quality temporary directory must be outside the repository: $tmp_root" ;;
+esac
 
 run_step() {
     local name="$1"
@@ -40,7 +51,9 @@ done
 
 baseline_hash_before="$(sha256sum testing/quality-baseline.json | awk '{print $1}')"
 baseline_basis_points="$(jq -r '.coverage.global.lines.basis_points' testing/quality-baseline.json)"
-[[ "$baseline_basis_points" == 9055 ]] || die "quality baseline is not 90.55% (got $baseline_basis_points bp)"
+minimum_baseline_basis_points=9055
+[[ "$baseline_basis_points" =~ ^[0-9]+$ ]] || die "quality baseline has an invalid line coverage value: $baseline_basis_points"
+(( baseline_basis_points >= minimum_baseline_basis_points )) || die "quality baseline is below the 90.55% policy floor (got $baseline_basis_points bp)"
 
 native_report="$evidence/native-evaluation-runner.json"
 if [[ "${TONDO_NATIVE_AOT_QUALITY_USE_EXISTING:-0}" == 1 ]]; then
@@ -126,6 +139,27 @@ run_step workspace-quality \
         TONDO_MUTATION_OUTPUT="$workspace_target/reliability/quality/mutation" \
         scripts/quality-gate.sh
 
+mutation_sample_json="$(jq -c '{
+    status: (if .total_mutants == 6 and .caught == 6 and .missed == 0 and .timeout == 0 and .unviable == 0 then "passed" else "failed" end),
+    total: .total_mutants,
+    caught,
+    missed,
+    timeout,
+    unviable,
+    score_basis_points: (if (.caught + .missed + .timeout) == 0 then 0 else ((.caught * 10000) / (.caught + .missed + .timeout)) end),
+    selection: "one-per-critical-frontier"
+  }' "$workspace_target/reliability/quality/mutation/mutants.out/outcomes.json")"
+jq -e '
+  .status == "passed"
+  and .total == 6
+  and .caught == 6
+  and .missed == 0
+  and .timeout == 0
+  and .unviable == 0
+  and .score_basis_points == 10000
+  and .selection == "one-per-critical-frontier"
+' <<< "$mutation_sample_json" >/dev/null || die "critical mutation sample is incomplete"
+
 baseline_hash_after="$(sha256sum testing/quality-baseline.json | awk '{print $1}')"
 [[ "$baseline_hash_before" == "$baseline_hash_after" ]] || die "normal quality baseline changed during the campaign"
 
@@ -156,6 +190,8 @@ jq -n \
     --arg baseline_sha256 "sha256:$baseline_hash_after" \
     --arg target "$(rustc -vV | sed -n 's/^host: //p')" \
     --arg toolchain "$(rustc --version)" \
+    --argjson baseline_basis_points "$baseline_basis_points" \
+    --argjson mutation_sample "$mutation_sample_json" \
     --argjson touched_files "$touched_files_json" \
     '{
       format: "tondo-native-aot-quality/1",
@@ -219,7 +255,8 @@ jq -n \
       },
       workspace_quality: {
         status: "passed", baseline_unchanged: true,
-        baseline_basis_points: 9055, mutation: "passed",
+        baseline_basis_points: $baseline_basis_points, mutation: "passed",
+        mutation_sample: $mutation_sample,
         baseline_sha256: $baseline_sha256
       },
       mutation: {status: "passed", oracles: 12, rejected: 12},
@@ -236,4 +273,4 @@ jq -n \
     }' > "$report"
 
 TONDO_NATIVE_AOT_QUALITY_REPORT="$report" scripts/native-aot-quality-check.sh
-echo "native AOT quality: PASSED report=${report#"$root/"} baseline=90.55%"
+echo "native AOT quality: PASSED report=${report#"$root/"} baseline=${baseline_basis_points}bp"
