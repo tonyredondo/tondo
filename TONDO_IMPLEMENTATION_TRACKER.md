@@ -5985,6 +5985,20 @@ pueden retrasar el primer backend correcto.
   `target/reliability/evidence/native-target.json`; sigue
   `NATIVE-REL-001`.
 
+- [x] **NATIVE-TARGET-002 — Añadir el target físico Linux ARM64.** Cerrado como
+  una entrada de target independiente para
+  `aarch64-unknown-linux-gnu`/ELF `release`. El runner nativo
+  `ubuntu-24.04-arm` ejecuta el fixture determinista con driver absoluto,
+  verifica el producto no vacío, conserva hashes de contrato/descriptor y
+  publica un informe path-free junto a los artefactos portables. La lane
+  reutiliza el probe Cranelift de host y no cuenta cross-compilation como
+  smoke; el target sigue siendo candidato de N1 y no altera la entrada GNU
+  x86_64 ni añade soporte musl. Evidencia en
+  `testing/native-target-aarch64.json`,
+  `scripts/native-target-aarch64-{check,contract-test,test}.sh`,
+  `docs/contracts/native-target.md` y el informe `native-target.json` del
+  artefacto `portable-testing-linux-aarch64`; el siguiente bloque es `N1`.
+
 - [x] **NATIVE-REL-001 — Empaquetar builds reproducibles.** Cerrado con un
   paquete `tondo-native-package/1` que contiene binario, runtime, STD-0.1A,
   metadatos y checksums del target admitido. Dos builds en staging aislado,

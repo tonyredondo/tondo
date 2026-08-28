@@ -21,3 +21,13 @@ magic (`ELF`, `Mach-O` or `COFF`) and recording a path-free report. This probe i
 an early backend-compatibility signal: it does not promote a target into this
 registry, prove the Tondo native ABI or replace the physical product smoke.
 Those claims still require a target entry, complete lowering and Gate N1.
+
+`NATIVE-TARGET-002` adds a separate draft target record for
+`aarch64-unknown-linux-gnu`/ELF. On the native `ubuntu-24.04-arm` runner,
+`scripts/native-target-aarch64-test.sh` resolves the absolute C driver, links
+the same deterministic fixture and executes it on the ARM64 host. Its report is
+kept with the portable CI artifact and is bound to the target and descriptor
+hashes. This is a physical target smoke, not a cross-compile claim; it does not
+promote the target or close N1 (`promotion: pending-gate-n1`). The selected
+Cranelift path is recorded for the candidate, while LLVM remains outside this
+target-specific smoke until its complete native product lane is admitted.

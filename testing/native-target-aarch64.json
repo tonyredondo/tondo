@@ -1,0 +1,43 @@
+{
+  "format": "tondo-native-target-registry/1",
+  "task": "NATIVE-TARGET-002",
+  "owner": "toolchain.native_target",
+  "edition": "0.1",
+  "phase": "M20",
+  "status": "closed",
+  "contract": "docs/contracts/native-target.md",
+  "runner": "scripts/native-target-aarch64-test.sh",
+  "descriptor": "testing/native-target-descriptor.json",
+  "targets": [
+    {
+      "id": "tondo-native-linux-aarch64-release",
+      "triple": "aarch64-unknown-linux-gnu",
+      "architecture": "aarch64",
+      "os": "linux",
+      "object_format": "elf",
+      "profile": "release",
+      "capabilities": ["clock", "console", "filesystem", "process"],
+      "backends": ["cranelift"],
+      "smoke_fixture": "testing/native/native-link-001.c",
+      "artifact_kind": "executable"
+    }
+  ],
+  "policy": {
+    "registry": "closed-targets-only",
+    "cross_compile_is_smoke": false,
+    "path_lookup": "forbidden",
+    "environment_lookup": "forbidden",
+    "physical_target_smoke": "required"
+  },
+  "negative_cases": [
+    "duplicate-target-id",
+    "unsupported-triple",
+    "backend-drift",
+    "capability-drift",
+    "cross-compile-claimed-as-smoke",
+    "missing-artifact",
+    "physical-path-in-identity",
+    "ambient-tool-lookup"
+  ],
+  "next_blocks": ["N1"]
+}

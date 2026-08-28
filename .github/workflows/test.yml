@@ -137,7 +137,7 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
-      - name: Run portable tests, Cranelift probe and CLI smoke test
+      - name: Run portable tests, Cranelift probe, target smoke and CLI smoke test
         shell: bash
         env:
           TONDO_TEST_TARGET: ${{ matrix.target-id }}

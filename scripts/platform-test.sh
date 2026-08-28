@@ -24,6 +24,11 @@ mkdir -p "$reports"
 TONDO_NATIVE_PORTABILITY_REPORT="$reports/native-portability.json" \
     bash scripts/native-portability.sh
 test -s "$reports/native-portability.json"
+if [[ "$platform" == "linux-aarch64" ]]; then
+    TONDO_NATIVE_TARGET_EVIDENCE="$reports/native-target.json" \
+        bash scripts/native-target-aarch64-test.sh
+    test -s "$reports/native-target.json"
+fi
 "$binary" test \
     --project acceptance/projects/testing-acceptance \
     --order random \
