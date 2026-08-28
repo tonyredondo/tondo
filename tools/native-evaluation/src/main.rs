@@ -34,6 +34,10 @@ const MAX_FUNCTIONS: u64 = 256;
 const MAX_ORACLE_STEPS: usize = 100_000;
 const MAX_ORACLE_CALL_DEPTH: usize = 256;
 const MAX_NATIVE_CASE_RUNTIME: Duration = Duration::from_secs(2);
+const AOT_PERF_WARMUPS: u32 = 3;
+const AOT_PERF_REPETITIONS: u32 = 9;
+const AOT_PERF_PROCESSES: u32 = 3;
+const AOT_PERF_SAMPLE_COUNT: usize = AOT_PERF_REPETITIONS as usize * AOT_PERF_PROCESSES as usize;
 const ORACLE_MANAGED_BIT: u64 = 1 << 63;
 const ORACLE_TAG_SHIFT: u32 = 56;
 const ORACLE_TAG_MASK: u64 = 0x7;
@@ -720,12 +724,177 @@ struct NativeAotMemorySummary {
     rss_peak_bytes: NativeAotMemoryQuantiles,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone, Copy)]
 #[serde(deny_unknown_fields)]
 struct NativeAotMemoryQuantiles {
     median: u64,
     p95: u64,
     p99: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct NativeAotPerformanceReport {
+    format: &'static str,
+    phase: &'static str,
+    status: &'static str,
+    target: String,
+    profile: &'static str,
+    protocol: NativeAotPerformanceProtocol,
+    oracle: NativeAotPerformanceOracle,
+    vm_baseline: NativeAotPerformanceVmBaseline,
+    workloads: Vec<NativeAotPerformanceWorkload>,
+    candidates: Vec<NativeAotPerformanceCandidate>,
+    comparison: NativeAotPerformanceComparison,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct NativeAotPerformanceVmBaseline {
+    status: &'static str,
+    oracle: &'static str,
+    workload: &'static str,
+    covered_cases: u64,
+    unsupported_cases: u64,
+    sample_count: u32,
+    runtime_samples: Vec<NativeAotPerformanceRuntimeSample>,
+    dimensions: NativeAotPerformanceVmDimensions,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct NativeAotPerformanceVmDimensions {
+    runtime_ns: NativeAotMemoryQuantiles,
+    throughput_ops_per_second: NativeAotPerformanceQuantilesF64,
+    latency_us: NativeAotPerformanceQuantilesF64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct NativeAotPerformanceProtocol {
+    warmup_iterations: u32,
+    measurement_repetitions: u32,
+    independent_processes: u32,
+    minimum_sample_count: u32,
+    fresh_processes: bool,
+    isolated_builds: bool,
+    summary: [&'static str; 3],
+    seed: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct NativeAotPerformanceOracle {
+    vm: &'static str,
+    native: &'static str,
+    counters: &'static str,
+    mismatch: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct NativeAotPerformanceWorkload {
+    id: &'static str,
+    class: &'static str,
+    fixture: &'static str,
+    fixture_sha256: String,
+    execution: &'static str,
+    dimensions: Vec<&'static str>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct NativeAotPerformanceCandidate {
+    id: &'static str,
+    status: &'static str,
+    toolchain: String,
+    product: NativeAotPerformanceProduct,
+    build_samples: Vec<NativeAotPerformanceBuildSample>,
+    runtime_samples: Vec<NativeAotPerformanceRuntimeSample>,
+    memory: NativeAotPerformanceMemory,
+    dimensions: NativeAotPerformanceDimensions,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct NativeAotPerformanceProduct {
+    debug_sha256: String,
+    debug_bytes: u64,
+    stripped_sha256: String,
+    stripped_bytes: u64,
+    text_bytes: u64,
+    reproducible_builds: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct NativeAotPerformanceBuildSample {
+    process: u32,
+    repetition: u32,
+    compile_time_ns: u64,
+    link_time_ns: u64,
+    object_sha256: String,
+    debug_bytes: u64,
+    stripped_bytes: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct NativeAotPerformanceRuntimeSample {
+    workload: &'static str,
+    process: u32,
+    repetition: u32,
+    duration_ns: u64,
+    operations: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct NativeAotPerformanceMemory {
+    source: &'static str,
+    sample_count: u32,
+    allocation_count: NativeAotMemoryQuantiles,
+    allocated_bytes: NativeAotMemoryQuantiles,
+    peak_live_bytes: NativeAotMemoryQuantiles,
+    retain_operations: NativeAotMemoryQuantiles,
+    release_operations: NativeAotMemoryQuantiles,
+    pause_time_ns: NativeAotMemoryQuantiles,
+    rss_peak_bytes: NativeAotMemoryQuantiles,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct NativeAotPerformanceDimensions {
+    compile_time_ns: NativeAotMemoryQuantiles,
+    link_time_ns: NativeAotMemoryQuantiles,
+    code_size_bytes: NativeAotMemoryQuantiles,
+    startup_ns: NativeAotMemoryQuantiles,
+    throughput_ops_per_second: NativeAotPerformanceQuantilesF64,
+    latency_us: NativeAotPerformanceQuantilesF64,
+    allocation_count: NativeAotMemoryQuantiles,
+    allocated_bytes: NativeAotMemoryQuantiles,
+    peak_memory_bytes: NativeAotMemoryQuantiles,
+    retain_operations: NativeAotMemoryQuantiles,
+    release_operations: NativeAotMemoryQuantiles,
+    pause_time_ns: NativeAotMemoryQuantiles,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct NativeAotPerformanceQuantilesF64 {
+    median: f64,
+    p95: f64,
+    p99: f64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct NativeAotPerformanceComparison {
+    same_inputs: bool,
+    semantic_equivalence: &'static str,
+    vm_baseline: &'static str,
+    cross_backend_comparison: &'static str,
+    selection: &'static str,
 }
 
 #[derive(Debug, Serialize)]
@@ -827,6 +996,7 @@ enum RuntimeExpectation {
 struct Options {
     probe: PathBuf,
     std_core_probe: Option<PathBuf>,
+    aot_performance_output: Option<PathBuf>,
     output: PathBuf,
     llvm: PathBuf,
     target: String,
@@ -1027,18 +1197,29 @@ fn run() -> Result<(), String> {
             &options.target,
             &options.temp_dir,
         )?;
-        native_aot_memory = run_native_aot_memory_probe(
-            &options.llvm,
-            cc,
-            &options.target,
-            &options.temp_dir,
-        )?;
-        native_diagnostics = run_native_diagnostics_probe(
-            &options.llvm,
-            cc,
-            &options.target,
-            &options.temp_dir,
-        )?;
+        native_aot_memory =
+            run_native_aot_memory_probe(&options.llvm, cc, &options.target, &options.temp_dir)?;
+        if let Some(output) = &options.aot_performance_output {
+            let performance = run_native_aot_performance_probe(
+                &options.llvm,
+                cc,
+                &options.strip,
+                &options.readelf,
+                &options.target,
+                &options.temp_dir,
+                &native_aot_memory,
+            )?;
+            let encoded = serde_json::to_vec_pretty(&performance)
+                .map_err(|error| format!("cannot encode AOT performance report: {error}"))?;
+            fs::write(output, encoded).map_err(|error| {
+                format!(
+                    "cannot write AOT performance report `{}`: {error}",
+                    output.display()
+                )
+            })?;
+        }
+        native_diagnostics =
+            run_native_diagnostics_probe(&options.llvm, cc, &options.target, &options.temp_dir)?;
     }
     let native_select_runs = native_runtime_runs
         .iter()
@@ -1798,7 +1979,10 @@ fn validate_supported_operand(
             Ok(())
         }
         MirBackendOperand::Projection { depth, kind, .. }
-            if *depth == 1 && parse_aggregate_projection(kind).is_some() => Ok(()),
+            if *depth == 1 && parse_aggregate_projection(kind).is_some() =>
+        {
+            Ok(())
+        }
         MirBackendOperand::Projection { .. } => Err(format!(
             "supported normalized MIR function {function_ordinal} contains an opaque or unsupported projection"
         )),
@@ -2438,7 +2622,9 @@ fn lower_runtime_call_cranelift(
     } else {
         arguments
             .iter()
-            .map(|argument| lower_operand_cranelift_with_runtime(builder, argument, locals, runtime))
+            .map(|argument| {
+                lower_operand_cranelift_with_runtime(builder, argument, locals, runtime)
+            })
             .collect::<Result<Vec<_>, _>>()?
     };
     let instruction = builder.ins().call(call.function, &arguments);
@@ -2746,7 +2932,9 @@ fn lower_rvalue_cranelift(
                     .inst_results(created)
                     .first()
                     .copied()
-                    .ok_or_else(|| "Cranelift aggregate constructor did not return a handle".to_owned())?;
+                        .ok_or_else(|| {
+                            "Cranelift aggregate constructor did not return a handle".to_owned()
+                        })?;
                 for (index, operand) in values.iter().enumerate() {
                     let index_value = builder.ins().iconst(
                         cranelift_codegen::ir::types::I64,
@@ -3000,19 +3188,18 @@ fn lower_operand_cranelift_with_runtime(
                     "native core projection is not supported: {kind} at depth {depth}"
                 ));
             }
-            let base = locals.get(index).copied().ok_or_else(|| {
-                format!("MIR projection base local {index} is not available")
-            })?;
+            let base = locals
+                .get(index)
+                .copied()
+                .ok_or_else(|| format!("MIR projection base local {index} is not available"))?;
             if let Some(field) = parse_aggregate_projection(kind) {
                 let field = builder
                     .ins()
                     .iconst(cranelift_codegen::ir::types::I64, i64::from(field));
                 let call = builder.ins().call(runtime.aggregate_get, &[base, field]);
-                return builder
-                    .inst_results(call)
-                    .first()
-                    .copied()
-                    .ok_or_else(|| "Cranelift aggregate projection did not return a value".to_owned());
+                return builder.inst_results(call).first().copied().ok_or_else(|| {
+                    "Cranelift aggregate projection did not return a value".to_owned()
+                });
             }
             if !matches!(
                 kind.as_str(),
@@ -3039,13 +3226,15 @@ fn lower_operand_cranelift(
     locals: &BTreeMap<u32, Value>,
 ) -> Result<Value, String> {
     match operand {
-        MirBackendOperand::Constant(MirBackendConstant::Integer(value)) => parse_integer_literal(value)
+        MirBackendOperand::Constant(MirBackendConstant::Integer(value)) => {
+            parse_integer_literal(value)
             .map(|value| {
                 builder
                     .ins()
                     .iconst(cranelift_codegen::ir::types::I64, value)
             })
-            .map_err(|error| format!("invalid scalar integer `{value}`: {error}")),
+                .map_err(|error| format!("invalid scalar integer `{value}`: {error}"))
+        }
         MirBackendOperand::Constant(MirBackendConstant::Bool(value)) => Ok(builder
             .ins()
             .iconst(cranelift_codegen::ir::types::I64, i64::from(*value))),
@@ -3170,9 +3359,8 @@ fn lower_numeric_conversion_cranelift(
     if conversion != "checked" {
         return Err(format!("Cranelift numeric conversion mode is not supported: {conversion}"));
     }
-    let (minimum, maximum) = integer_conversion_bounds(target).ok_or_else(|| {
-        format!("Cranelift numeric conversion target is not supported: {target}")
-    })?;
+    let (minimum, maximum) = integer_conversion_bounds(target)
+        .ok_or_else(|| format!("Cranelift numeric conversion target is not supported: {target}"))?;
     let minimum = builder
         .ins()
         .iconst(cranelift_codegen::ir::types::I64, minimum);
@@ -4074,7 +4262,12 @@ fn load_std_core_probe(path: &Path) -> Result<(FixtureObservation, MirBackendPro
         .mir
         .as_ref()
         .and_then(|mir| mir.backend.clone())
-        .ok_or_else(|| format!("std.core fixture has no normalized MIR: {}", fixture.fixture))?;
+        .ok_or_else(|| {
+            format!(
+                "std.core fixture has no normalized MIR: {}",
+                fixture.fixture
+            )
+        })?;
     validate_backend_program(&program)?;
     Ok((fixture, program))
 }
@@ -4943,7 +5136,7 @@ fn run_native_aot_memory_probe(
     let candidates = [
         (
             "cranelift",
-            format!("cranelift-codegen/{CRANELIFT_VERSION}"),
+            format!("cranelift-codegen-{CRANELIFT_VERSION}"),
         ),
         ("llvm", command_version(llvm)?),
     ];
@@ -5171,9 +5364,8 @@ fn memory_quantiles(values: &[u64]) -> NativeAotMemoryQuantiles {
 }
 
 fn summarize_native_aot_memory(samples: &[NativeAotMemorySample]) -> NativeAotMemorySummary {
-    let values = |field: fn(&NativeAotMemorySample) -> u64| {
-        samples.iter().map(field).collect::<Vec<_>>()
-    };
+    let values =
+        |field: fn(&NativeAotMemorySample) -> u64| samples.iter().map(field).collect::<Vec<_>>();
     NativeAotMemorySummary {
         allocation_count: memory_quantiles(&values(|sample| sample.allocation_count)),
         allocated_bytes: memory_quantiles(&values(|sample| sample.allocated_bytes)),
@@ -5189,6 +5381,490 @@ fn summarize_native_aot_memory(samples: &[NativeAotMemorySample]) -> NativeAotMe
         concurrency_operations: memory_quantiles(&values(|sample| sample.concurrency_operations)),
         rss_peak_bytes: memory_quantiles(&values(|sample| sample.rss_peak_bytes)),
     }
+}
+
+fn run_native_aot_vm_product(
+    program: &MirBackendProgram,
+    cases: &[NativeAotBinaryCase],
+) -> Result<(), String> {
+    for case in cases {
+        let result = evaluate_aot_function(program, case.function_ordinal, &[], 0)?;
+        match case.expectation {
+            NativeAotBinaryExpectation::Scalar(expected) => {
+                let actual = aot_scalar_value(&result)?;
+                if actual != expected {
+                    return Err(format!(
+                        "AOT VM baseline disagrees for `{}`: expected {expected}, got {actual}",
+                        case.id
+                    ));
+                }
+            }
+            NativeAotBinaryExpectation::Managed { tag, payload } => {
+                let actual_tag = u64::from(aot_tag_value(&result)?);
+                if actual_tag != tag {
+                    return Err(format!(
+                        "AOT VM baseline tag disagrees for `{}`: expected {tag}, got {actual_tag}",
+                        case.id
+                    ));
+                }
+                if let Some(expected_payload) = payload {
+                    let actual_payload = match result {
+                        AotVmValue::Aggregate { fields, .. } => fields
+                            .first()
+                            .map(aot_scalar_value)
+                            .transpose()?
+                            .and_then(|value| u64::try_from(value).ok()),
+                        AotVmValue::Scalar(value) => u64::try_from(value).ok(),
+                        AotVmValue::Function(_) => None,
+                    };
+                    if actual_payload != Some(expected_payload) {
+                        return Err(format!(
+                            "AOT VM baseline payload disagrees for `{}`: expected {expected_payload}, got {actual_payload:?}",
+                            case.id
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn run_native_aot_vm_baseline(
+    program: &MirBackendProgram,
+    cases: &[NativeAotBinaryCase],
+) -> Result<NativeAotPerformanceVmBaseline, String> {
+    let vm_cases = cases
+        .iter()
+        .copied()
+        .filter(|case| evaluate_aot_function(program, case.function_ordinal, &[], 0).is_ok())
+        .collect::<Vec<_>>();
+    if vm_cases.is_empty() {
+        return Err("AOT VM baseline has no supported reference-interpreter cases".to_owned());
+    }
+    let unsupported_cases = cases.len().saturating_sub(vm_cases.len());
+    let mut samples = Vec::with_capacity(AOT_PERF_SAMPLE_COUNT);
+    for process in 0..AOT_PERF_PROCESSES {
+        for _ in 0..AOT_PERF_WARMUPS {
+            run_native_aot_vm_product(program, &vm_cases)?;
+        }
+        for repetition in 0..AOT_PERF_REPETITIONS {
+            let started = Instant::now();
+            run_native_aot_vm_product(program, &vm_cases)?;
+            samples.push(NativeAotPerformanceRuntimeSample {
+                workload: "aot-reference-interpreter-supported-subset",
+                process,
+                repetition,
+                duration_ns: elapsed_ns(started.elapsed())?,
+                operations: vm_cases.len() as u64,
+            });
+        }
+    }
+    if samples.len() != AOT_PERF_SAMPLE_COUNT {
+        return Err(format!(
+            "AOT VM baseline sample count drift: {}",
+            samples.len()
+        ));
+    }
+    let durations = samples
+        .iter()
+        .map(|sample| sample.duration_ns)
+        .collect::<Vec<_>>();
+    let throughput = samples
+        .iter()
+        .map(|sample| (sample.operations as f64 * 1_000_000_000.0) / sample.duration_ns as f64)
+        .collect::<Vec<_>>();
+    let latency = samples
+        .iter()
+        .map(|sample| sample.duration_ns as f64 / 1_000.0 / sample.operations as f64)
+        .collect::<Vec<_>>();
+    Ok(NativeAotPerformanceVmBaseline {
+        status: "captured-separately",
+        oracle: "normalized-MIR-reference-interpreter",
+        workload: "aot-reference-interpreter-supported-subset",
+        covered_cases: vm_cases.len() as u64,
+        unsupported_cases: unsupported_cases as u64,
+        sample_count: samples.len() as u32,
+        runtime_samples: samples,
+        dimensions: NativeAotPerformanceVmDimensions {
+            runtime_ns: performance_quantiles_u64(&durations)?,
+            throughput_ops_per_second: performance_quantiles_f64(&throughput)?,
+            latency_us: performance_quantiles_f64(&latency)?,
+        },
+    })
+}
+
+/// Captures the final AOT performance evidence from the same linked product
+/// recipe used by the binary and memory probes.  The product is deliberately
+/// rebuilt in isolated directories for every build observation and every
+/// runtime observation is made by a fresh child process.  This keeps timing
+/// evidence comparable without making a timing counter part of Tondo's
+/// semantics.
+fn run_native_aot_performance_probe(
+    llvm: &Path,
+    cc: &Path,
+    strip: &Path,
+    readelf: &Path,
+    target: &str,
+    temp_dir: &Path,
+    memory_report: &NativeAotMemoryReport,
+) -> Result<NativeAotPerformanceReport, String> {
+    let (program, cases) = native_aot_product_program();
+    validate_backend_program(&program)?;
+    if cases.is_empty() {
+        return Err("AOT performance product has no admitted cases".to_owned());
+    }
+    let vm_baseline = run_native_aot_vm_baseline(&program, &cases)?;
+    let product_driver = native_aot_product_c_source(&cases);
+    let product_fixture_hash = sha256_bytes(format!("tondo-aot-product/1\n{program:?}").as_bytes());
+    let memory_fixture_hash = sha256_bytes(b"tondo-aot-memory-workload/1");
+    let workloads = vec![
+        NativeAotPerformanceWorkload {
+            id: "aot-complete-product",
+            class: "representative",
+            fixture: "native-aot-product-program",
+            fixture_sha256: product_fixture_hash,
+            execution: "complete-linked-product-driver",
+            dimensions: vec![
+                "compile_time",
+                "link_time",
+                "code_size",
+                "startup",
+                "throughput",
+                "latency",
+            ],
+        },
+        NativeAotPerformanceWorkload {
+            id: "aot-memory-workload",
+            class: "large",
+            fixture: "native-aot-memory-workload",
+            fixture_sha256: memory_fixture_hash,
+            execution: "linked-instrumented-memory-driver",
+            dimensions: vec![
+                "allocation_count",
+                "allocated_bytes",
+                "peak_memory",
+                "retain_operations",
+                "release_operations",
+                "pause_time",
+            ],
+        },
+    ];
+
+    let mut candidates = Vec::with_capacity(2);
+    for (candidate, toolchain) in [
+        (
+            "cranelift",
+            format!("cranelift-codegen-{CRANELIFT_VERSION}"),
+        ),
+        ("llvm", command_version(llvm)?),
+    ] {
+        let candidate_root = temp_dir.join(format!("native_aot_performance_{candidate}"));
+        fs::create_dir_all(&candidate_root).map_err(|error| {
+            format!("cannot create AOT performance directory for {candidate}: {error}")
+        })?;
+        let mut build_samples = Vec::with_capacity(AOT_PERF_SAMPLE_COUNT);
+        let mut first_product: Option<(PathBuf, NativeAotPerformanceProduct)> = None;
+        let mut first_object_sha256: Option<String> = None;
+        for sample_index in 0..AOT_PERF_SAMPLE_COUNT {
+            let process = (sample_index as u32) / AOT_PERF_REPETITIONS;
+            let repetition = (sample_index as u32) % AOT_PERF_REPETITIONS;
+            let build_root = candidate_root.join(format!("build_{process}_{repetition}"));
+            fs::create_dir_all(&build_root).map_err(|error| {
+                format!("cannot create AOT performance build directory: {error}")
+            })?;
+            let object = build_root.join("product.o");
+            let compile_started = Instant::now();
+            if candidate == "cranelift" {
+                emit_cranelift_object(cranelift_isa()?, &program, &object)?;
+            } else {
+                let input = build_root.join("product.ll");
+                fs::write(&input, llvm_module(target, &program)?).map_err(|error| {
+                    format!("cannot write LLVM AOT performance product: {error}")
+                })?;
+                let result = Command::new(llvm)
+                    .arg("-O2")
+                    .arg("-filetype=obj")
+                    .arg(format!("-mtriple={target}"))
+                    .arg("-o")
+                    .arg(&object)
+                    .arg(&input)
+                    .output()
+                    .map_err(|error| {
+                        format!("cannot execute LLVM AOT performance product: {error}")
+                    })?;
+                if !result.status.success() {
+                    return Err(format!(
+                        "LLVM AOT performance lowering failed: {}",
+                        String::from_utf8_lossy(&result.stderr).trim()
+                    ));
+                }
+            }
+            let compile_time_ns = elapsed_ns(compile_started.elapsed())?;
+            let object_sha256 = sha256_file(&object)?;
+            let debug = build_root.join("product.debug");
+            let link_started = Instant::now();
+            link_native_product(cc, &product_driver, &object, &debug, &build_root)?;
+            let link_time_ns = elapsed_ns(link_started.elapsed())?;
+            let stripped = build_root.join("product.stripped");
+            fs::copy(&debug, &stripped)
+                .map_err(|error| format!("cannot copy AOT performance debug product: {error}"))?;
+            strip_binary(strip, &stripped)?;
+            let debug_bytes = regular_file_size(&debug)?;
+            let stripped_bytes = regular_file_size(&stripped)?;
+            let debug_sha256 = sha256_file(&debug)?;
+            let stripped_sha256 = sha256_file(&stripped)?;
+            let debug_sections = readelf_sections(readelf, &debug)?;
+            let stripped_sections = readelf_sections(readelf, &stripped)?;
+            validate_product_artifacts(
+                candidate,
+                &debug_sections,
+                &stripped_sections,
+                debug_bytes,
+                stripped_bytes,
+                &debug_sha256,
+                &stripped_sha256,
+            )?;
+            let text_bytes = stripped_sections
+                .iter()
+                .find(|section| section.name == ".text")
+                .map(|section| section.bytes)
+                .ok_or_else(|| format!("{candidate} AOT product has no .text section"))?;
+            let product = NativeAotPerformanceProduct {
+                debug_sha256: debug_sha256.clone(),
+                debug_bytes,
+                stripped_sha256: stripped_sha256.clone(),
+                stripped_bytes,
+                text_bytes,
+                reproducible_builds: true,
+            };
+            if let Some((_, first)) = &first_product {
+                if first_object_sha256.as_deref() != Some(object_sha256.as_str())
+                    || first.debug_sha256 != product.debug_sha256
+                    || first.stripped_sha256 != product.stripped_sha256
+                    || first.debug_bytes != product.debug_bytes
+                    || first.stripped_bytes != product.stripped_bytes
+                    || first.text_bytes != product.text_bytes
+                {
+                    return Err(format!(
+                        "{candidate} AOT performance product is not reproducible"
+                    ));
+                }
+            } else {
+                first_object_sha256 = Some(object_sha256.clone());
+                first_product = Some((stripped.clone(), product));
+            }
+            build_samples.push(NativeAotPerformanceBuildSample {
+                process,
+                repetition,
+                compile_time_ns,
+                link_time_ns,
+                object_sha256,
+                debug_bytes,
+                stripped_bytes,
+            });
+        }
+        let (product_path, product) = first_product
+            .ok_or_else(|| format!("{candidate} AOT performance product was not built"))?;
+        let mut runtime_samples = Vec::with_capacity(AOT_PERF_SAMPLE_COUNT);
+        for process in 0..AOT_PERF_PROCESSES {
+            for _ in 0..AOT_PERF_WARMUPS {
+                let _ = run_native_binary_timed(
+                    &product_path,
+                    &format!("{candidate} AOT performance warmup"),
+                )?;
+            }
+            for repetition in 0..AOT_PERF_REPETITIONS {
+                let duration_ns = run_native_binary_timed(
+                    &product_path,
+                    &format!("{candidate} AOT performance"),
+                )?;
+                runtime_samples.push(NativeAotPerformanceRuntimeSample {
+                    workload: "aot-complete-product",
+                    process,
+                    repetition,
+                    duration_ns,
+                    operations: cases.len() as u64,
+                });
+            }
+        }
+        if runtime_samples.len() != AOT_PERF_SAMPLE_COUNT {
+            return Err(format!(
+                "{candidate} AOT performance runtime sample count drift"
+            ));
+        }
+        let memory = memory_report
+            .candidates
+            .iter()
+            .find(|candidate_report| candidate_report.id == candidate)
+            .ok_or_else(|| format!("missing memory report for {candidate}"))?;
+        if memory.samples.len() != AOT_PERF_SAMPLE_COUNT {
+            return Err(format!(
+                "{candidate} AOT memory sample count drift: {}",
+                memory.samples.len()
+            ));
+        }
+        let memory_samples = &memory.samples;
+        let compile_values = build_samples
+            .iter()
+            .map(|sample| sample.compile_time_ns)
+            .collect::<Vec<_>>();
+        let link_values = build_samples
+            .iter()
+            .map(|sample| sample.link_time_ns)
+            .collect::<Vec<_>>();
+        let code_size_values = build_samples
+            .iter()
+            .map(|sample| sample.stripped_bytes)
+            .collect::<Vec<_>>();
+        let startup_values = runtime_samples
+            .iter()
+            .map(|sample| sample.duration_ns)
+            .collect::<Vec<_>>();
+        let throughput_values = runtime_samples
+            .iter()
+            .map(|sample| (sample.operations as f64 * 1_000_000_000.0) / sample.duration_ns as f64)
+            .collect::<Vec<_>>();
+        let latency_values = runtime_samples
+            .iter()
+            .map(|sample| sample.duration_ns as f64 / 1_000.0 / sample.operations as f64)
+            .collect::<Vec<_>>();
+        let memory_quantiles = |field: fn(&NativeAotMemorySample) -> u64| {
+            performance_quantiles_u64(&memory_samples.iter().map(field).collect::<Vec<_>>())
+        };
+        let dimensions = NativeAotPerformanceDimensions {
+            compile_time_ns: performance_quantiles_u64(&compile_values)?,
+            link_time_ns: performance_quantiles_u64(&link_values)?,
+            code_size_bytes: performance_quantiles_u64(&code_size_values)?,
+            startup_ns: performance_quantiles_u64(&startup_values)?,
+            throughput_ops_per_second: performance_quantiles_f64(&throughput_values)?,
+            latency_us: performance_quantiles_f64(&latency_values)?,
+            allocation_count: memory_quantiles(|sample| sample.allocation_count)?,
+            allocated_bytes: memory_quantiles(|sample| sample.allocated_bytes)?,
+            peak_memory_bytes: memory_quantiles(|sample| sample.peak_live_bytes)?,
+            retain_operations: performance_quantiles_u64(
+                &memory_samples
+                    .iter()
+                    .map(|sample| sample.retain_local.saturating_add(sample.retain_atomic))
+                    .collect::<Vec<_>>(),
+            )?,
+            release_operations: performance_quantiles_u64(
+                &memory_samples
+                    .iter()
+                    .map(|sample| sample.release_local.saturating_add(sample.release_atomic))
+                    .collect::<Vec<_>>(),
+            )?,
+            pause_time_ns: memory_quantiles(|sample| sample.pause_ns)?,
+        };
+        let memory_summary = NativeAotPerformanceMemory {
+            source: "NATIVE-AOT-MEM-001",
+            sample_count: memory_samples.len() as u32,
+            allocation_count: memory_quantiles(|sample| sample.allocation_count)?,
+            allocated_bytes: memory_quantiles(|sample| sample.allocated_bytes)?,
+            peak_live_bytes: memory_quantiles(|sample| sample.peak_live_bytes)?,
+            retain_operations: performance_quantiles_u64(
+                &memory_samples
+                    .iter()
+                    .map(|sample| sample.retain_local.saturating_add(sample.retain_atomic))
+                    .collect::<Vec<_>>(),
+            )?,
+            release_operations: performance_quantiles_u64(
+                &memory_samples
+                    .iter()
+                    .map(|sample| sample.release_local.saturating_add(sample.release_atomic))
+                    .collect::<Vec<_>>(),
+            )?,
+            pause_time_ns: memory_quantiles(|sample| sample.pause_ns)?,
+            rss_peak_bytes: memory_quantiles(|sample| sample.rss_peak_bytes)?,
+        };
+        candidates.push(NativeAotPerformanceCandidate {
+            id: candidate,
+            status: "passed",
+            toolchain,
+            product,
+            build_samples,
+            runtime_samples,
+            memory: memory_summary,
+            dimensions,
+        });
+    }
+    if candidates.len() != 2
+        || candidates
+            .iter()
+            .any(|candidate| candidate.status != "passed")
+    {
+        return Err("AOT performance campaign did not produce two candidates".to_owned());
+    }
+    Ok(NativeAotPerformanceReport {
+        format: "tondo-native-aot-performance/1",
+        phase: "NATIVE-AOT-PERF-001",
+        status: "passed",
+        target: target.to_owned(),
+        profile: "release",
+        protocol: NativeAotPerformanceProtocol {
+            warmup_iterations: AOT_PERF_WARMUPS,
+            measurement_repetitions: AOT_PERF_REPETITIONS,
+            independent_processes: AOT_PERF_PROCESSES,
+            minimum_sample_count: AOT_PERF_SAMPLE_COUNT as u32,
+            fresh_processes: true,
+            isolated_builds: true,
+            summary: ["median", "p95", "p99"],
+            seed: "tondo-native-aot-perf-0.1",
+        },
+        oracle: NativeAotPerformanceOracle {
+            vm: "bytecode-vm-oracle-and-normalized-MIR-reference-interpreter",
+            native: "NATIVE-AOT-QUALITY-001-equivalent-linked-product",
+            counters: "NATIVE-AOT-MEM-001-harness-only-observations",
+            mismatch: "fail-closed",
+        },
+        vm_baseline,
+        workloads,
+        candidates,
+        comparison: NativeAotPerformanceComparison {
+            same_inputs: true,
+            semantic_equivalence: "validated-before-measurement",
+            vm_baseline: "27-sample-separate-reference-interpreter-subset",
+            cross_backend_comparison: "same-target-profile-and-workload-identity-only",
+            selection: "human-decision-required",
+        },
+    })
+}
+
+fn performance_quantiles_u64(values: &[u64]) -> Result<NativeAotMemoryQuantiles, String> {
+    if values.len() != AOT_PERF_SAMPLE_COUNT || values.iter().any(|value| *value == 0) {
+        return Err(format!(
+            "AOT performance requires {} positive samples, got {}",
+            AOT_PERF_SAMPLE_COUNT,
+            values.len()
+        ));
+    }
+    Ok(memory_quantiles(values))
+}
+
+fn performance_quantiles_f64(values: &[f64]) -> Result<NativeAotPerformanceQuantilesF64, String> {
+    if values.len() != AOT_PERF_SAMPLE_COUNT
+        || values
+            .iter()
+            .any(|value| !value.is_finite() || *value <= 0.0)
+    {
+        return Err(format!(
+            "AOT performance requires {} positive finite floating samples, got {}",
+            AOT_PERF_SAMPLE_COUNT,
+            values.len()
+        ));
+    }
+    let mut sorted = values.to_vec();
+    sorted.sort_by(f64::total_cmp);
+    let index = |numerator: usize| {
+        ((sorted.len() * numerator).saturating_add(99) / 100)
+            .saturating_sub(1)
+            .min(sorted.len() - 1)
+    };
+    Ok(NativeAotPerformanceQuantilesF64 {
+        median: sorted[index(50)],
+        p95: sorted[index(95)],
+        p99: sorted[index(99)],
+    })
 }
 
 fn native_aot_product_program() -> (MirBackendProgram, Vec<NativeAotBinaryCase>) {
@@ -5508,16 +6184,26 @@ fn readelf_sections(readelf: &Path, binary: &Path) -> Result<Vec<NativeAotSectio
     let mut sections = Vec::new();
     for line in text.lines() {
         let line = line.trim_start();
-        let Some(index_and_rest) = line.strip_prefix('[') else { continue };
-        let Some(end) = index_and_rest.find(']') else { continue };
+        let Some(index_and_rest) = line.strip_prefix('[') else {
+            continue;
+        };
+        let Some(end) = index_and_rest.find(']') else {
+            continue;
+        };
         let index = &index_and_rest[..end];
-        if index.trim().parse::<usize>().is_err() { continue }
+        if index.trim().parse::<usize>().is_err() {
+            continue;
+        }
         let end = end + 1;
         let mut fields = index_and_rest[end..].split_whitespace();
         let Some(name) = fields.next() else { continue };
         let Some(_kind) = fields.next() else { continue };
-        let Some(_address) = fields.next() else { continue };
-        let Some(_offset) = fields.next() else { continue };
+        let Some(_address) = fields.next() else {
+            continue;
+        };
+        let Some(_offset) = fields.next() else {
+            continue;
+        };
         let Some(size) = fields.next() else { continue };
         let bytes = u64::from_str_radix(size, 16)
             .map_err(|error| format!("readelf returned invalid section size `{size}`: {error}"))?;
@@ -5559,7 +6245,9 @@ fn validate_product_artifacts(
 }
 
 fn reproducible_builds(builds: &[NativeAotBinaryBuild]) -> bool {
-    let [first, second] = builds else { return false };
+    let [first, second] = builds else {
+        return false;
+    };
     let left = &first.report;
     let right = &second.report;
     left.object_sha256 == right.object_sha256
@@ -5873,9 +6561,9 @@ fn evaluate_aot_operand(
                     "AOT VM oracle projection depth {depth} is not supported"
                 ));
             }
-            let base = locals
-                .get(index)
-                .ok_or_else(|| format!("AOT VM oracle projection local {index} is not available"))?;
+            let base = locals.get(index).ok_or_else(|| {
+                format!("AOT VM oracle projection local {index} is not available")
+            })?;
             match base {
                 AotVmValue::Aggregate { fields, .. }
                     if parse_aggregate_projection(kind).is_some() => {
@@ -5888,18 +6576,23 @@ fn evaluate_aot_operand(
                     if matches!(
                         kind.as_str(),
                         "option-value" | "result-ok-value" | "result-err-value"
-                    ) => fields
+                    ) =>
+                {
+                    fields
                     .first()
                     .cloned()
-                    .ok_or_else(|| "AOT VM oracle result has no payload".to_owned()),
-                _ => Err(format!("AOT VM oracle projection is not an aggregate: {kind}")),
+                        .ok_or_else(|| "AOT VM oracle result has no payload".to_owned())
+                }
+                _ => Err(format!(
+                    "AOT VM oracle projection is not an aggregate: {kind}"
+                )),
             }
         }
         MirBackendOperand::Constant(MirBackendConstant::Unit) => Ok(AotVmValue::Scalar(0)),
         MirBackendOperand::Constant(MirBackendConstant::Float(value))
-        | MirBackendOperand::Constant(MirBackendConstant::Char(value)) => {
-            Err(format!("AOT VM oracle non-integer constant is not supported: {value}"))
-        }
+        | MirBackendOperand::Constant(MirBackendConstant::Char(value)) => Err(format!(
+            "AOT VM oracle non-integer constant is not supported: {value}"
+        )),
         MirBackendOperand::Constant(MirBackendConstant::Named)
         | MirBackendOperand::Unsupported { .. } => {
             Err("AOT VM oracle operand is opaque or unsupported".to_owned())
@@ -5914,15 +6607,13 @@ fn evaluate_aot_operation(
     call_depth: usize,
 ) -> Result<AotVmValue, String> {
     match operation {
-        MirBackendOperation::CheckedPrefix { operator, operand } => {
-            evaluate_aot_rvalue(
+        MirBackendOperation::CheckedPrefix { operator, operand } => evaluate_aot_rvalue(
                 &MirBackendRvalue::Prefix {
                     operator: operator.clone(),
                     operand: operand.clone(),
                 },
                 locals,
-            )
-        }
+        ),
         MirBackendOperation::CheckedBinary {
             operator,
             left,
@@ -5964,10 +6655,9 @@ fn evaluate_aot_operation(
                 .into_iter()
                 .collect(),
         }),
-        MirBackendOperation::Runtime {
-            kind,
-            arguments,
-        } => evaluate_aot_runtime(kind, arguments, locals, program, call_depth),
+        MirBackendOperation::Runtime { kind, arguments } => {
+            evaluate_aot_runtime(kind, arguments, locals, program, call_depth)
+        }
         MirBackendOperation::Assert { condition } => {
             let condition = aot_scalar_value(&evaluate_aot_operand(condition, locals)?)?;
             if condition == 0 {
@@ -6084,9 +6774,9 @@ fn evaluate_aot_runtime(
         }
         "result-payload" => {
             let value = evaluate_aot_operand(
-                arguments
-                    .first()
-                    .ok_or_else(|| "AOT VM oracle result-payload expects one argument".to_owned())?,
+                arguments.first().ok_or_else(|| {
+                    "AOT VM oracle result-payload expects one argument".to_owned()
+                })?,
                 locals,
             )?;
             let AotVmValue::Aggregate { fields, .. } = value else {
@@ -6136,8 +6826,9 @@ fn aot_scalar_value(value: &AotVmValue) -> Result<i64, String> {
 fn aot_tag_value(value: &AotVmValue) -> Result<u32, String> {
     match value {
         AotVmValue::Aggregate { tag, .. } => Ok(*tag),
-        AotVmValue::Scalar(value) => u32::try_from(*value)
-            .map_err(|_| "AOT VM oracle tag value is out of range".to_owned()),
+        AotVmValue::Scalar(value) => {
+            u32::try_from(*value).map_err(|_| "AOT VM oracle tag value is out of range".to_owned())
+        }
         AotVmValue::Function(_) => Err("AOT VM oracle function has no tag".to_owned()),
     }
 }
@@ -6175,12 +6866,11 @@ fn evaluate_aot_binary(operator: &str, left: i64, right: i64) -> Result<i64, Str
 }
 
 fn native_aot_program() -> (MirBackendProgram, Vec<NativeAotCase>) {
-    let int = |value: &str| {
-        MirBackendOperand::Constant(MirBackendConstant::Integer(value.to_owned()))
-    };
+    let int =
+        |value: &str| MirBackendOperand::Constant(MirBackendConstant::Integer(value.to_owned()));
     let local = |index| MirBackendOperand::Local { index };
-    let function = |ordinal: u32, parameters: Vec<u32>, return_local: u32, blocks| {
-        MirBackendFunction {
+    let function =
+        |ordinal: u32, parameters: Vec<u32>, return_local: u32, blocks| MirBackendFunction {
             ordinal,
             parameters,
             parameter_types: Vec::new(),
@@ -6188,7 +6878,6 @@ fn native_aot_program() -> (MirBackendProgram, Vec<NativeAotCase>) {
             return_type: "Int".to_owned(),
             supported: true,
             blocks,
-        }
     };
     let array = function(
         0,
@@ -6517,9 +7206,8 @@ fn native_aot_program() -> (MirBackendProgram, Vec<NativeAotCase>) {
 }
 
 fn native_deferred_program() -> (MirBackendProgram, u32, i64) {
-    let constant = |value: &str| {
-        MirBackendOperand::Constant(MirBackendConstant::Integer(value.to_owned()))
-    };
+    let constant =
+        |value: &str| MirBackendOperand::Constant(MirBackendConstant::Integer(value.to_owned()));
     let local = |index| MirBackendOperand::Local { index };
     let body = MirBackendFunction {
         ordinal: 0,
@@ -8378,10 +9066,9 @@ fn evaluate_operand(
                     "scalar oracle native core projection is not supported: {kind} at depth {depth}"
                 ));
             }
-            let base = locals
-                .get(index)
-                .copied()
-                .ok_or_else(|| format!("scalar oracle projection base local {index} is not available"))?;
+            let base = locals.get(index).copied().ok_or_else(|| {
+                format!("scalar oracle projection base local {index} is not available")
+            })?;
             let (tag, payload) = oracle_managed_parts(base)?;
             let expected_tag = match kind.as_str() {
                 "option-value" => 1,
@@ -10457,6 +11144,7 @@ impl Options {
     fn parse(mut args: impl Iterator<Item = String>) -> Result<Self, String> {
         let mut probe = None;
         let mut std_core_probe = None;
+        let mut aot_performance_output = None;
         let mut output = None;
         let mut llvm = None;
         let mut target = None;
@@ -10472,6 +11160,9 @@ impl Options {
             match argument.as_str() {
                 "--probe" => probe = Some(PathBuf::from(value()?)),
                 "--std-core-probe" => std_core_probe = Some(PathBuf::from(value()?)),
+                "--aot-performance-output" => {
+                    aot_performance_output = Some(PathBuf::from(value()?))
+                }
                 "--output" => output = Some(PathBuf::from(value()?)),
                 "--llvm" => llvm = Some(PathBuf::from(value()?)),
                 "--target" => target = Some(value()?),
@@ -10481,7 +11172,7 @@ impl Options {
                 "--readelf" => readelf = Some(PathBuf::from(value()?)),
                 "--help" | "-h" => {
                     println!(
-                        "usage: tondo-native-evaluation --probe FILE --output FILE --llvm ABSOLUTE --target TRIPLE --temp-dir DIR [--cc ABSOLUTE] [--strip ABSOLUTE] [--readelf ABSOLUTE] [--std-core-probe FILE]"
+                        "usage: tondo-native-evaluation --probe FILE --output FILE --llvm ABSOLUTE --target TRIPLE --temp-dir DIR [--cc ABSOLUTE] [--strip ABSOLUTE] [--readelf ABSOLUTE] [--std-core-probe FILE] [--aot-performance-output FILE]"
                     );
                     std::process::exit(0);
                 }
@@ -10491,6 +11182,7 @@ impl Options {
         Ok(Self {
             probe: probe.ok_or("--probe is required")?,
             std_core_probe,
+            aot_performance_output,
             output: output.ok_or("--output is required")?,
             llvm: llvm.ok_or("--llvm is required")?,
             target: target.ok_or("--target is required")?,
@@ -11685,5 +12377,76 @@ mod tests {
         .expect("explicit arguments should parse");
         assert_eq!(options.llvm, PathBuf::from("/usr/bin/llc"));
         assert_eq!(options.target, "x86_64-unknown-linux-gnu");
+    }
+
+    #[test]
+    fn parses_optional_aot_performance_output_without_changing_required_inputs() {
+        let options = Options::parse(
+            [
+                "--probe",
+                "probe.json",
+                "--output",
+                "report.json",
+                "--llvm",
+                "/usr/bin/llc",
+                "--target",
+                "x86_64-unknown-linux-gnu",
+                "--temp-dir",
+                ".tmp",
+                "--aot-performance-output",
+                "performance.json",
+            ]
+            .into_iter()
+            .map(String::from),
+        )
+        .expect("optional performance output should parse");
+        assert_eq!(
+            options.aot_performance_output,
+            Some(PathBuf::from("performance.json"))
+        );
+    }
+
+    #[test]
+    fn aot_performance_quantiles_require_all_positive_protocol_samples() {
+        let values = (1..=AOT_PERF_SAMPLE_COUNT as u64).collect::<Vec<_>>();
+        let quantiles = performance_quantiles_u64(&values).expect("27 samples should summarize");
+        assert_eq!(quantiles.median, 14);
+        assert_eq!(quantiles.p95, 26);
+        assert_eq!(quantiles.p99, 27);
+
+        let mut missing = values.clone();
+        missing.pop();
+        assert!(performance_quantiles_u64(&missing).is_err());
+        let mut zero = values;
+        zero[0] = 0;
+        assert!(performance_quantiles_u64(&zero).is_err());
+    }
+
+    #[test]
+    fn aot_performance_product_workloads_are_explicit_and_nonempty() {
+        let (program, cases) = native_aot_product_program();
+        assert!(!program.functions.is_empty());
+        assert!(!cases.is_empty());
+        assert!(cases.iter().any(|case| case.id == "cleanup-exactly-once"));
+        assert!(cases.iter().any(|case| case.id == "ownership-cow"));
+    }
+
+    #[test]
+    fn aot_vm_baseline_marks_reference_interpreter_boundary_explicitly() {
+        let (program, cases) = native_aot_program();
+        let binary_cases = cases
+            .into_iter()
+            .map(|case| NativeAotBinaryCase {
+                id: case.id,
+                function_ordinal: case.function_ordinal,
+                expectation: NativeAotBinaryExpectation::Scalar(case.expected),
+            })
+            .collect::<Vec<_>>();
+        let baseline = run_native_aot_vm_baseline(&program, &binary_cases)
+            .expect("storage cases should be measurable by the reference interpreter");
+        assert_eq!(baseline.covered_cases, 7);
+        assert_eq!(baseline.unsupported_cases, 0);
+        assert_eq!(baseline.sample_count, 27);
+        assert_eq!(baseline.runtime_samples.len(), 27);
     }
 }

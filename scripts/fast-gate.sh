@@ -334,6 +334,10 @@ else
                 bash scripts/native-aot-quality-check.sh
             run native-aot-quality-tests \
                 bash scripts/native-aot-quality-test.sh
+            run native-aot-performance-contract \
+                bash scripts/native-aot-performance-check.sh
+            run native-aot-performance-tests \
+                bash scripts/native-aot-performance-test.sh
             run native-diagnostics-contract \
                 bash scripts/native-diagnostics-check.sh
             run native-diagnostics-contract-tests \

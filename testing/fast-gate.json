@@ -65,6 +65,9 @@
     "scripts/native-aot-quality.sh",
     "scripts/native-aot-quality-check.sh",
     "scripts/native-aot-quality-test.sh",
+    "scripts/native-aot-performance.sh",
+    "scripts/native-aot-performance-check.sh",
+    "scripts/native-aot-performance-test.sh",
     "scripts/native-aot-sanitize-cc.sh",
     "scripts/native-diagnostics.sh",
     "scripts/native-diagnostics-check.sh",
@@ -77,6 +80,7 @@
     "testing/native-aot-binary.json",
     "testing/native-aot-memory.json",
     "testing/native-aot-quality.json",
+    "testing/native-aot-performance.json",
     "testing/native-select.json"
   ],
   "shared_paths": [

@@ -68,6 +68,10 @@ adapter="$adapter_target/debug/tondo-native-evaluation"
 [[ -x "$adapter" ]] || die "missing native evaluation adapter binary"
 
 report="$evidence_dir/native-evaluation-runner.json"
+performance_args=()
+if [[ -n "${TONDO_NATIVE_AOT_PERF_OUTPUT:-}" ]]; then
+    performance_args+=(--aot-performance-output "$TONDO_NATIVE_AOT_PERF_OUTPUT")
+fi
 "$adapter" \
     --probe "$probe" \
     --output "$report" \
@@ -78,6 +82,7 @@ report="$evidence_dir/native-evaluation-runner.json"
     --cc "$cc_tool" \
     --strip "$strip_tool" \
     --readelf "$readelf_tool" \
+    "${performance_args[@]}" \
     || die "native scalar runner failed"
 
 jq -e '

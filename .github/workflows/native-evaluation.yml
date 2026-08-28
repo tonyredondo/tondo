@@ -61,6 +61,9 @@ jobs:
           TONDO_NATIVE_AOT_QUALITY_USE_EXISTING: "1"
         run: bash scripts/native-aot-quality.sh
 
+      - name: Capture complete native AOT performance
+        run: bash scripts/native-aot-performance.sh
+
       - name: Bind candidate evidence for decision
         run: TONDO_NATIVE_SELECTION_REUSE=1 bash scripts/native-selection-capture.sh
 
@@ -97,6 +100,15 @@ jobs:
         with:
           name: native-aot-quality-${{ github.run_id }}-${{ github.run_attempt }}
           path: target/reliability/evidence/native-aot-quality.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload native AOT performance evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-aot-performance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/reliability/evidence/native-aot-performance.json
           if-no-files-found: error
           retention-days: 14
 

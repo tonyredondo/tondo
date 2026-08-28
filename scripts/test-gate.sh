@@ -269,6 +269,10 @@ run_step native-aot-quality-contract \
     scripts/native-aot-quality-check.sh
 run_step native-aot-quality-contract-tests \
     scripts/native-aot-quality-test.sh
+run_step native-aot-performance-contract \
+    scripts/native-aot-performance-check.sh
+run_step native-aot-performance-contract-tests \
+    scripts/native-aot-performance-test.sh
 run_step native-select-contract \
     scripts/native-select-check.sh
 run_step native-select-contract-tests \
