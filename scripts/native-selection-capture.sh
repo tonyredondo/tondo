@@ -5,7 +5,11 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 scripts/native-selection-check.sh
 contract="${TONDO_NATIVE_SELECTION_CONTRACT:-$root/testing/native-selection.json}"
-target_dir="${CARGO_TARGET_DIR:-$root/target-fast}"
+# The fast and executable lanes both publish their reports under the normal
+# target by default.  Reuse mode must inspect that same directory; otherwise a
+# standalone promotion bind would look in a different, empty target and fail
+# even though the preceding lanes passed.
+target_dir="${CARGO_TARGET_DIR:-target}"
 evidence="$target_dir/reliability/evidence"
 mkdir -p "$evidence"
 
