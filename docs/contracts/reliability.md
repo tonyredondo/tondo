@@ -48,6 +48,12 @@ workspace. `QUALITY-EVIDENCE-BIND-001` verifies that sources, tests, flags,
 toolchain and raw report match before a quality result can advance the current
 baseline.
 
+The provenance input walk includes the reviewed fuzz targets, corpus and
+contracts, but excludes `fuzz/artifacts/`. That directory contains generated
+crash payloads from a local or CI fuzz run; it is diagnostic output rather than
+a source/build input and is not present in a clean checkout. Excluding it keeps
+the same quality identity reproducible before and after a fuzz campaign.
+
 ## Inventory semantics
 
 One logical test is not necessarily one source file or one execution:

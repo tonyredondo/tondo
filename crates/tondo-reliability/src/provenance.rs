@@ -28,6 +28,11 @@ const INPUT_DIRECTORIES: [&str; 7] = [
     "scripts",
     "tests",
 ];
+// Fuzzers write crash payloads here.  They are useful diagnostics, but are
+// generated state rather than a source/build input and are not present in a
+// clean checkout.  Keeping them out makes quality identities reproducible
+// between a developer workspace and CI.
+const GENERATED_INPUT_PREFIXES: [&str; 1] = ["fuzz/artifacts/"];
 const ENVIRONMENT_KEYS: [&str; 11] = [
     "CARGO_BUILD_TARGET",
     "CARGO_ENCODED_RUSTFLAGS",
@@ -90,7 +95,16 @@ impl QualityProvenance {
         for directory in INPUT_DIRECTORIES {
             let absolute = root.join(directory);
             if absolute.is_dir() {
-                files.extend(collect_files(root, &absolute)?);
+                for path in collect_files(root, &absolute)? {
+                    let logical = logical_path(root, &path)?;
+                    if GENERATED_INPUT_PREFIXES
+                        .iter()
+                        .any(|prefix| logical.starts_with(prefix))
+                    {
+                        continue;
+                    }
+                    files.push(path);
+                }
             }
         }
         files.sort();
@@ -319,6 +333,12 @@ mod tests {
         let second = QualityProvenance::current(&root).unwrap();
         assert_eq!(first, second);
         assert!(first.file_count >= 4);
+
+        fs::create_dir_all(root.join("fuzz/artifacts/frontend")).unwrap();
+        fs::write(root.join("fuzz/artifacts/frontend/crash"), b"generated").unwrap();
+        let with_generated_artifact = QualityProvenance::current(&root).unwrap();
+        assert_eq!(first, with_generated_artifact);
+
         fs::write(root.join("scripts/check.sh"), "#!/bin/sh\necho changed\n").unwrap();
         let changed = QualityProvenance::current(&root).unwrap();
         assert_ne!(first.tree_sha256, changed.tree_sha256);
