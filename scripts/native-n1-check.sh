@@ -285,12 +285,23 @@ jq -e --arg revision "$revision" '
       native_std_core:14,
       native_diagnostics:8
   }
-  and .mutation.status == "passed"
-  and .mutation.total == 6
-  and .mutation.caught == 6
-  and .mutation.missed == 0
-  and .mutation.timeout == 0
-  and .mutation.unviable == 0
+  and .workspace_quality.status == "passed"
+  and .workspace_quality.mutation == "passed"
+  and .workspace_quality.mutation_sample == {
+      status: "passed",
+      total: 6,
+      caught: 6,
+      missed: 0,
+      timeout: 0,
+      unviable: 0,
+      score_basis_points: 10000,
+      selection: "one-per-critical-frontier"
+  }
+  and .mutation == {
+      status: "passed",
+      oracles: 12,
+      rejected: 12
+  }
   and .sanitizers.address == "passed"
   and .sanitizers.undefined == "passed"
   and .workspace_quality.baseline_unchanged == true
