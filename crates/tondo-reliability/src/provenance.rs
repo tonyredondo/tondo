@@ -13,9 +13,7 @@ use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    canonical_json, collect_files, logical_path, quality::canonical_report_bytes, sha256,
-};
+use crate::{canonical_json, collect_files, logical_path, quality::canonical_report_bytes, sha256};
 
 pub const FORMAT: &str = "tondo-quality-provenance/1";
 pub const BINDING_FORMAT: &str = "tondo-quality-report-binding/1";
@@ -332,13 +330,15 @@ mod tests {
         let root = fixture();
         let before = QualityProvenance::current(&root).unwrap();
         let report_bytes = br#"{"outcome":"Caught","name":"frontier"}"#;
-        let binding =
-            ReportBinding::new("mutation", report_bytes, before.clone(), before).unwrap();
+        let binding = ReportBinding::new("mutation", report_bytes, before.clone(), before).unwrap();
         let report = root.join("coverage.json");
         fs::write(&report, report_bytes).unwrap();
         binding.verify(&root, &report, "mutation").unwrap();
-        fs::write(&report, br#"{"name":"frontier","outcome":"Killed","timing":17}"#)
-            .unwrap();
+        fs::write(
+            &report,
+            br#"{"name":"frontier","outcome":"Killed","timing":17}"#,
+        )
+        .unwrap();
         binding.verify(&root, &report, "mutation").unwrap();
         fs::write(&report, br#"{"outcome":"Missed","name":"frontier"}"#).unwrap();
         assert!(binding.verify(&root, &report, "mutation").is_err());
