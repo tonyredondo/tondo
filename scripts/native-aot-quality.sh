@@ -94,10 +94,10 @@ jq -e '
 run_step conformance env CARGO_TARGET_DIR="$target_dir" scripts/native-conf-test.sh
 run_step differential env CARGO_TARGET_DIR="$target_dir" TONDO_NATIVE_DIFF_EXECUTABLE=0 scripts/native-diff-test.sh
 
+run_step fuzz env TONDO_FUZZ_RUNS=128 TONDO_FUZZ_NIGHTLY="${TONDO_FUZZ_NIGHTLY:-nightly-2026-07-28}" scripts/fuzz-smoke.sh
 for target in frontend protocols admission stdlib_codecs stdlib_owners; do
     [[ -d "$root/target/reliability/fuzz-corpus/smoke/$target" ]] || die "missing owner fuzz output: $target"
 done
-run_step fuzz env TONDO_FUZZ_RUNS=128 TONDO_FUZZ_NIGHTLY="${TONDO_FUZZ_NIGHTLY:-nightly-2026-07-28}" scripts/fuzz-smoke.sh
 
 run_step diagnostics \
     env TONDO_DIAGNOSTIC_FUZZ_MODE=smoke \

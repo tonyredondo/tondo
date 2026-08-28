@@ -40,6 +40,11 @@ jobs:
           test -x /usr/bin/llc-18
           echo "TONDO_LLVM_LLC=/usr/bin/llc-18" >> "$GITHUB_ENV"
 
+      - name: Install bounded fuzz toolchain
+        run: |
+          rustup toolchain install nightly-2026-07-28 --profile minimal
+          cargo install cargo-fuzz --version 0.13.2 --locked
+
       - name: Show toolchain
         run: |
           rustc --version
