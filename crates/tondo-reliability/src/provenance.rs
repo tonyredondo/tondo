@@ -13,7 +13,9 @@ use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{canonical_json, collect_files, logical_path, sha256};
+use crate::{
+    canonical_json, collect_files, logical_path, quality::canonical_report_bytes, sha256,
+};
 
 pub const FORMAT: &str = "tondo-quality-provenance/1";
 pub const BINDING_FORMAT: &str = "tondo-quality-report-binding/1";
@@ -172,7 +174,7 @@ impl ReportBinding {
         Ok(Self {
             format: BINDING_FORMAT.into(),
             kind: kind.into(),
-            report_sha256: sha256(report_bytes),
+            report_sha256: sha256(&canonical_report_bytes(kind, report_bytes)?),
             before,
             after,
         })
@@ -200,7 +202,7 @@ impl ReportBinding {
         Ok(())
     }
 
-    /// Verifies both the raw report bytes and the live source identity.
+    /// Verifies the canonical parsed report and the live source identity.
     pub fn verify(
         &self,
         root: &Path,
@@ -217,7 +219,7 @@ impl ReportBinding {
         }
         let report = fs::read(report_path)
             .map_err(|error| format!("cannot read `{}`: {error}", report_path.display()))?;
-        let actual_report = sha256(&report);
+        let actual_report = sha256(&canonical_report_bytes(expected_kind, &report)?);
         if actual_report != self.report_sha256 {
             return Err(format!(
                 "{expected_kind} report changed after its binding was created"
@@ -329,12 +331,17 @@ mod tests {
     fn binding_rejects_changed_reports_and_trees() {
         let root = fixture();
         let before = QualityProvenance::current(&root).unwrap();
-        let binding = ReportBinding::new("coverage", b"report", before.clone(), before).unwrap();
+        let report_bytes = br#"{"outcome":"Caught","name":"frontier"}"#;
+        let binding =
+            ReportBinding::new("mutation", report_bytes, before.clone(), before).unwrap();
         let report = root.join("coverage.json");
-        fs::write(&report, b"report").unwrap();
-        binding.verify(&root, &report, "coverage").unwrap();
-        fs::write(&report, b"changed").unwrap();
-        assert!(binding.verify(&root, &report, "coverage").is_err());
+        fs::write(&report, report_bytes).unwrap();
+        binding.verify(&root, &report, "mutation").unwrap();
+        fs::write(&report, br#"{"name":"frontier","outcome":"Killed","timing":17}"#)
+            .unwrap();
+        binding.verify(&root, &report, "mutation").unwrap();
+        fs::write(&report, br#"{"outcome":"Missed","name":"frontier"}"#).unwrap();
+        assert!(binding.verify(&root, &report, "mutation").is_err());
         let _ = fs::remove_dir_all(root);
     }
 

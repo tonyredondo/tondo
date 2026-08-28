@@ -253,7 +253,13 @@ if [[ -n "$report" ]]; then
       and ((.native_report_sha256 | test("^sha256:[0-9a-f]{64}$")))
       and ((.workspace_quality.baseline_sha256 | test("^sha256:[0-9a-f]{64}$")))
       and ((.native_aot_sanitized_report_sha256 | test("^sha256:[0-9a-f]{64}$")))
-      and ((.touched_files | all(. | type == "string" and (contains("/") or . == "Cargo.lock"))))
+      and ((.touched_files | all(. |
+        type == "string"
+        and length > 0
+        and (startswith("/") | not)
+        and (contains("\\") | not)
+        and all(split("/"); . != "" and . != "." and . != "..")
+      )))
       and ((. | tostring | contains($root)) | not)
     ' "$report" >/dev/null || die "quality report does not prove the complete AOT gate"
 fi

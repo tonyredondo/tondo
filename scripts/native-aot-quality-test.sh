@@ -84,6 +84,15 @@ for mutation in \
     expect_report_failure "$name" "$tmp/$name.json"
 done
 
+jq '(.touched_files = ["TONDO_IMPLEMENTATION_TRACKER.md"])' \
+    "$tmp/valid-report.json" > "$tmp/root-file-report.json"
+TONDO_NATIVE_AOT_QUALITY_REPORT="$tmp/root-file-report.json" \
+    scripts/native-aot-quality-check.sh >/dev/null
+
+jq '(.touched_files = ["/tmp/private"])' \
+    "$tmp/valid-report.json" > "$tmp/absolute-file-report.json"
+expect_report_failure "absolute-touched-file" "$tmp/absolute-file-report.json"
+
 scripts/native-aot-quality-check.sh >/dev/null
 grep -Fq 'fsanitize=address,undefined' scripts/native-aot-sanitize-cc.sh
 grep -Fq 'stable_source="/tmp/tondo-native-aot-sanitized.c"' scripts/native-aot-sanitize-cc.sh

@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::provenance::QualityProvenance;
-use crate::sha256;
+use crate::{canonical_json, sha256};
 
 pub const FORMAT: &str = "tondo-quality-baseline/1";
 
@@ -461,6 +461,20 @@ pub fn parse_mutation_report(bytes: &[u8]) -> Result<MutationReport, String> {
         score_basis_points,
         missed_ids,
     })
+}
+
+/// Returns the portable identity of a quality report.
+///
+/// Tool output such as llvm-cov contains absolute build paths and cargo-mutants
+/// records timings and process details. Bindings identify the parsed
+/// observations instead, so equivalent runs produce the same digest while a
+/// changed metric, outcome or survivor identity still fails closed.
+pub fn canonical_report_bytes(kind: &str, bytes: &[u8]) -> Result<Vec<u8>, String> {
+    match kind {
+        "coverage" => canonical_json(&parse_llvm_cov(bytes)?),
+        "mutation" => canonical_json(&parse_mutation_report(bytes)?),
+        _ => Err(format!("unsupported quality report kind `{kind}`")),
+    }
 }
 
 pub fn mutation_paths() -> Vec<String> {

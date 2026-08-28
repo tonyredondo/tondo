@@ -3,10 +3,11 @@
   "revision": "NATIVE-AOT-QUALITY-001-BASELINE-2026-08-28",
   "provenance": {
     "format": "tondo-quality-provenance/1",
-    "tree_sha256": "3de57dff94d4a6621fdd39ef537807ea586512b2ea9a7926bd96754004a9742b",
+    "tree_sha256": "3167c51e207476c76cbfe3c7ed3077b7ef061bd66c91606e2bc179fb580014a1",
     "input_set_sha256": "7a6b2f707de4ac5ee9f35bd5736589ad28e2b9ed44b73896d84686a36453ff07",
     "file_count": 909,
     "flags": [
+      "CARGO_INCREMENTAL=0",
       "RUSTUP_TOOLCHAIN=1.93.0-x86_64-unknown-linux-gnu"
     ],
     "toolchain": {
@@ -19,18 +20,18 @@
     "command": "cargo llvm-cov --workspace --all-targets --json --output-path <coverage.json>",
     "global": {
       "lines": {
-        "count": 229875,
-        "covered": 208299,
+        "count": 229884,
+        "covered": 208307,
         "basis_points": 9061
       },
       "functions": {
-        "count": 16313,
-        "covered": 14195,
+        "count": 16314,
+        "covered": 14196,
         "basis_points": 8701
       },
       "regions": {
-        "count": 336099,
-        "covered": 298842,
+        "count": 336132,
+        "covered": 298870,
         "basis_points": 8891
       }
     },
@@ -175,18 +176,18 @@
         ],
         "metrics": {
           "lines": {
-            "count": 19059,
-            "covered": 17494,
+            "count": 19068,
+            "covered": 17502,
             "basis_points": 9178
           },
           "functions": {
-            "count": 1668,
-            "covered": 1276,
-            "basis_points": 7649
+            "count": 1669,
+            "covered": 1277,
+            "basis_points": 7651
           },
           "regions": {
-            "count": 30009,
-            "covered": 26861,
+            "count": 30042,
+            "covered": 26889,
             "basis_points": 8950
           }
         }
