@@ -26,6 +26,7 @@ for mutation in \
     '(.input.product = "object-only")' \
     '(.selection.selected_backend = "llvm")' \
     '(.dimensions |= map(select(.id != "pause_time")))' \
+    '(.dimensions |= map(select(.id != "build_end_to_end")))' \
     '(.next_blocks = ["N1"])' \
     '(.invariants = .invariants[1:])'; do
     name="mutation-${#mutation}"
@@ -41,7 +42,8 @@ fi
 
 scripts/native-aot-performance-check.sh >/dev/null
 grep -Fq 'complete linked AOT products' docs/contracts/native-aot-performance.md
+grep -Fq 'build_end_to_end_ns' docs/contracts/native-aot-performance.md
 grep -Fq 'human-decision-required' docs/contracts/native-aot-performance.md
 grep -Fq 'NATIVE-AOT-MEM-001' docs/contracts/native-aot-performance.md
 
-echo "native AOT performance tests: OK (11 contract mutations and missing-report rejection)"
+echo "native AOT performance tests: OK (12 contract mutations and missing-report rejection)"

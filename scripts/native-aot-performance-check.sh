@@ -62,9 +62,9 @@ jq -e '
       and (.execution | type == "string" and length > 0)
       and (.fixture | type == "string" and length > 0)
       and (.dimensions | length > 0 and unique_values)
-      and all(.dimensions[]; . as $id | ["compile_time", "link_time", "code_size", "startup", "throughput", "latency", "allocation_count", "allocated_bytes", "peak_memory", "retain_operations", "release_operations", "pause_time"] | index($id) != null)
+      and all(.dimensions[]; . as $id | ["compile_time", "link_time", "build_end_to_end", "code_size", "startup", "throughput", "latency", "allocation_count", "allocated_bytes", "peak_memory", "retain_operations", "release_operations", "pause_time"] | index($id) != null)
   )
-  and $dimension_ids == ["compile_time", "link_time", "code_size", "startup", "throughput", "latency", "allocation_count", "allocated_bytes", "peak_memory", "retain_operations", "release_operations", "pause_time"]
+  and $dimension_ids == ["compile_time", "link_time", "build_end_to_end", "code_size", "startup", "throughput", "latency", "allocation_count", "allocated_bytes", "peak_memory", "retain_operations", "release_operations", "pause_time"]
   and ($dimension_ids | unique_values)
   and all(.dimensions[]; (.unit | type == "string" and length > 0) and (.direction == "lower-is-better" or .direction == "higher-is-better") and (.source | type == "string" and length > 0))
   and .required_global_workloads == [
@@ -98,8 +98,8 @@ jq -e '
       budget_source: "PERF-001"
   }
   and .selection == {selected_backend: null, status: "human-decision-required", n1_claim: false}
-  and (.invariants | length == 15 and unique_values)
-  and (.negative_cases | length == 15 and unique_values)
+  and (.invariants | length == 16 and unique_values)
+  and (.negative_cases | length == 16 and unique_values)
   and .next_blocks == ["DEC-013"]
 ' "$contract" >/dev/null || die "invalid machine-readable contract"
 
@@ -129,6 +129,8 @@ grep -Fq 'run_native_aot_performance_probe' "$root/tools/native-evaluation/src/m
     || die "adapter has no AOT performance probe"
 grep -Fq 'tondo-native-aot-performance/1' "$root/tools/native-evaluation/src/main.rs" \
     || die "adapter has no AOT performance report"
+grep -Fq 'build_end_to_end_ns' "$root/tools/native-evaluation/src/main.rs" \
+    || die "adapter has no end-to-end build metric"
 grep -Fq -- '--aot-performance-output' "$root/tools/native-evaluation/src/main.rs" \
     || die "adapter has no performance output option"
 grep -Fq 'aot-performance-output' "$root/scripts/native-evaluation-runner.sh" \
@@ -183,7 +185,7 @@ if [[ -n "$report" ]]; then
       and all(.vm_baseline.runtime_samples[]; .duration_ns > 0 and .operations > 0)
       and all(.vm_baseline.dimensions | to_entries[]; .value | .median > 0 and .p95 >= .median and .p99 >= .p95)
       and ([.workloads[].id] == ["aot-complete-product", "aot-memory-workload"])
-      and .workloads[0].dimensions == ["compile_time", "link_time", "code_size", "startup", "throughput", "latency"]
+      and .workloads[0].dimensions == ["compile_time", "link_time", "build_end_to_end", "code_size", "startup", "throughput", "latency"]
       and .comparison == {
           same_inputs: true,
           semantic_equivalence: "validated-before-measurement",
@@ -202,7 +204,7 @@ if [[ -n "$report" ]]; then
           and ([.runtime_samples[].process] | unique | sort) == [0, 1, 2]
           and ((.build_samples | group_by(.process) | map(length)) == [9, 9, 9])
           and ((.runtime_samples | group_by(.process) | map(length)) == [9, 9, 9])
-          and all(.build_samples[]; .repetition >= 0 and .repetition < 9 and .compile_time_ns > 0 and .link_time_ns > 0 and .debug_bytes > 0 and .stripped_bytes > 0 and .debug_bytes >= .stripped_bytes and (.object_sha256 | test("^sha256:[0-9a-f]{64}$")))
+          and all(.build_samples[]; .repetition >= 0 and .repetition < 9 and .compile_time_ns > 0 and .link_time_ns > 0 and .build_end_to_end_ns > 0 and .debug_bytes > 0 and .stripped_bytes > 0 and .debug_bytes >= .stripped_bytes and (.object_sha256 | test("^sha256:[0-9a-f]{64}$")))
           and all(.runtime_samples[]; .repetition >= 0 and .repetition < 9 and .duration_ns > 0 and .operations > 0)
           and (.product.debug_sha256 | test("^sha256:[0-9a-f]{64}$"))
           and (.product.stripped_sha256 | test("^sha256:[0-9a-f]{64}$"))
@@ -211,7 +213,7 @@ if [[ -n "$report" ]]; then
           and .product.debug_bytes >= .product.stripped_bytes
           and .product.text_bytes > 0
           and .product.reproducible_builds == true
-          and ((.dimensions | keys_unsorted) == ["compile_time_ns", "link_time_ns", "code_size_bytes", "startup_ns", "throughput_ops_per_second", "latency_us", "allocation_count", "allocated_bytes", "peak_memory_bytes", "retain_operations", "release_operations", "pause_time_ns"])
+          and ((.dimensions | keys_unsorted) == ["compile_time_ns", "link_time_ns", "build_end_to_end_ns", "code_size_bytes", "startup_ns", "throughput_ops_per_second", "latency_us", "allocation_count", "allocated_bytes", "peak_memory_bytes", "retain_operations", "release_operations", "pause_time_ns"])
           and .memory.source == "NATIVE-AOT-MEM-001"
           and .memory.sample_count == 27
           and all(.memory | to_entries[]; .key == "source" or .key == "sample_count" or (.value | .median > 0 and .p95 >= .median and .p99 >= .p95))
@@ -222,4 +224,4 @@ if [[ -n "$report" ]]; then
     ! grep -Fq "$root" "$report" || die "performance report leaked a physical workspace path"
 fi
 
-echo "native AOT performance: OK (contract, 3x9x3 protocol, complete product dimensions and fail-closed frontier)"
+echo "native AOT performance: OK (contract, 3x9x3 protocol, complete product dimensions including end-to-end build time and fail-closed frontier)"

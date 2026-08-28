@@ -6090,8 +6090,12 @@ pueden retrasar el primer backend correcto.
   tres warmups, nueve repeticiones y tres procesos frescos. La baseline separada
   del intérprete MIR conserva 27 muestras sobre ocho casos soportados y marca
   explícitamente los 20 casos no temporizados por esa referencia. El informe
-  path-free conserva cada muestra y publica median/p95/p99 de compile/link,
-  tamaño debug/stripped/.text, startup, throughput y latencia; las dimensiones
+  path-free conserva cada muestra y publica median/p95/p99 de compile/link y
+  del tiempo end-to-end de build, medido por muestra desde el inicio de la
+  generación de código hasta la creación, cálculo de metadatos y validación
+  final del binario stripped; no se reconstruye sumando percentiles
+  independientes de fases. También publica tamaño debug/stripped/.text,
+  startup, throughput y latencia; las dimensiones
   de allocations, memoria, retain/release y pausas se ligan a los 27 samples
   ya validados por `NATIVE-AOT-MEM-001`. La VM y el intérprete MIR normalizado
   son el oráculo separado, no se mide JIT, no se agregan targets y no se

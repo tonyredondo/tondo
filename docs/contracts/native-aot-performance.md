@@ -31,7 +31,8 @@ operation fails closed before performance numbers are accepted.
 The current adapter exposes two explicit workload identities. The
 `aot-complete-product` workload is the admitted linked-product driver assembled
 from the verified native product program and covers compile/lower, link,
-startup, throughput and latency. The `aot-memory-workload` identity reuses the
+end-to-end build completion, startup, throughput and latency. The
+`aot-memory-workload` identity reuses the
 instrumented linked-product observations already closed by
 `NATIVE-AOT-MEM-001` for allocation, memory, ARC, cycle, weak-reference and
 pause dimensions. This is an honest adapter boundary: it does not claim that
@@ -48,9 +49,15 @@ selection are out of scope. The report always records
 For each candidate and target, the adapter performs 27 isolated build
 observations: three build cohorts (`process` 0..2), each with nine
 repetitions. Every repetition has its own build directory and records compile
-time, link time, object hash, debug size and stripped size. Debug and stripped
-products, ELF sections and object hashes must be identical across repetitions;
-the first stripped product is used only as the runtime executable.
+time, link time, end-to-end build time, object hash, debug size and stripped
+size. The end-to-end timer starts immediately before backend code generation
+and stops only after the stripped executable, its hashes and ELF metadata have
+been written and validated. It therefore includes artifact finalization and
+validation in addition to compile and link; it is measured for each paired
+sample and its quantiles are never reconstructed by adding independent phase
+quantiles. Debug and stripped products, ELF sections and object hashes must be
+identical across repetitions; the first stripped product is used only as the
+runtime executable.
 
 Runtime measurements use that complete stripped product in fresh child
 processes. Each of three process cohorts executes three warmups followed by
@@ -77,8 +84,10 @@ observations, not Tondo semantics.
 
 The report publishes these dimensions for each candidate:
 
-* `compile_time_ns`, `link_time_ns`, `code_size_bytes`, `startup_ns`,
-  `throughput_ops_per_second` and `latency_us` from the complete product;
+* `compile_time_ns`, `link_time_ns`, `build_end_to_end_ns`, `code_size_bytes`,
+  `startup_ns`, `throughput_ops_per_second` and `latency_us` from the complete
+  product; `build_end_to_end_ns` is the per-sample wall-clock interval from
+  code generation start through final stripped-artifact validation;
 * `allocation_count`, `allocated_bytes`, `peak_memory_bytes`,
   `retain_operations`, `release_operations` and `pause_time_ns` from the
   validated memory lane.
@@ -105,7 +114,8 @@ The runner records logical toolchain and target identities, fixed seed
 `tondo-native-aot-perf-0.1`, protocol counts and all retained samples. The
 campaign is reproducible only when both candidates have 27 build samples, 27
 runtime samples, 27 memory samples, equal product artifacts across builds,
-positive finite dimensions and monotonic quantiles (`median ≤ p95 ≤ p99`).
+positive finite dimensions (including the end-to-end build dimension) and
+monotonic quantiles (`median ≤ p95 ≤ p99`).
 
 `NATIVE-AOT-PERF-001` is closed only after the report, contract checker,
 negative mutation suite and CI evidence pass. Closure means that the evidence

@@ -40,7 +40,7 @@
       "class": "representative",
       "fixture": "native-aot-product-program",
       "execution": "complete-linked-product-driver",
-      "dimensions": ["compile_time", "link_time", "code_size", "startup", "throughput", "latency"],
+      "dimensions": ["compile_time", "link_time", "build_end_to_end", "code_size", "startup", "throughput", "latency"],
       "required": true
     },
     {
@@ -55,6 +55,7 @@
   "dimensions": [
     {"id": "compile_time", "unit": "nanoseconds", "direction": "lower-is-better", "source": "complete-product-build"},
     {"id": "link_time", "unit": "nanoseconds", "direction": "lower-is-better", "source": "complete-product-build"},
+    {"id": "build_end_to_end", "unit": "nanoseconds", "direction": "lower-is-better", "source": "complete-product-build"},
     {"id": "code_size", "unit": "bytes", "direction": "lower-is-better", "source": "complete-product-build"},
     {"id": "startup", "unit": "nanoseconds", "direction": "lower-is-better", "source": "complete-product-runtime"},
     {"id": "throughput", "unit": "operations_per_second", "direction": "higher-is-better", "source": "complete-product-runtime"},
@@ -120,6 +121,7 @@
     "every-runtime-sample-uses-a-fresh-process",
     "three-warmups-and-nine-measurements-per-process",
     "exactly-twenty-seven-build-and-runtime-samples",
+    "end-to-end-build-time-is-measured-per-sample-through-final-validation",
     "memory-source-has-exactly-twenty-seven-samples",
     "products-and-objects-are-reproducible",
     "positive-finite-dimensions-and-monotonic-quantiles",
@@ -138,6 +140,7 @@
     "wrong-product-recipe",
     "non-reproducible-product",
     "build-sample-count-drift",
+    "end-to-end-build-sample-missing",
     "runtime-sample-count-drift",
     "memory-sample-count-drift",
     "non-monotonic-quantiles",

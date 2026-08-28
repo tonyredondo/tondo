@@ -833,6 +833,7 @@ struct NativeAotPerformanceBuildSample {
     repetition: u32,
     compile_time_ns: u64,
     link_time_ns: u64,
+    build_end_to_end_ns: u64,
     object_sha256: String,
     debug_bytes: u64,
     stripped_bytes: u64,
@@ -867,6 +868,7 @@ struct NativeAotPerformanceMemory {
 struct NativeAotPerformanceDimensions {
     compile_time_ns: NativeAotMemoryQuantiles,
     link_time_ns: NativeAotMemoryQuantiles,
+    build_end_to_end_ns: NativeAotMemoryQuantiles,
     code_size_bytes: NativeAotMemoryQuantiles,
     startup_ns: NativeAotMemoryQuantiles,
     throughput_ops_per_second: NativeAotPerformanceQuantilesF64,
@@ -5528,6 +5530,7 @@ fn run_native_aot_performance_probe(
             dimensions: vec![
                 "compile_time",
                 "link_time",
+                "build_end_to_end",
                 "code_size",
                 "startup",
                 "throughput",
@@ -5574,6 +5577,7 @@ fn run_native_aot_performance_probe(
                 format!("cannot create AOT performance build directory: {error}")
             })?;
             let object = build_root.join("product.o");
+            let build_started = Instant::now();
             let compile_started = Instant::now();
             if candidate == "cranelift" {
                 emit_cranelift_object(cranelift_isa()?, &program, &object)?;
@@ -5625,6 +5629,11 @@ fn run_native_aot_performance_probe(
                 &debug_sha256,
                 &stripped_sha256,
             )?;
+            // This is the user-visible build cost: start before codegen and
+            // stop only after the stripped executable and its final metadata
+            // have been written and validated. It is intentionally measured
+            // per sample rather than reconstructed from independent quantiles.
+            let build_end_to_end_ns = elapsed_ns(build_started.elapsed())?;
             let text_bytes = stripped_sections
                 .iter()
                 .find(|section| section.name == ".text")
@@ -5659,6 +5668,7 @@ fn run_native_aot_performance_probe(
                 repetition,
                 compile_time_ns,
                 link_time_ns,
+                build_end_to_end_ns,
                 object_sha256,
                 debug_bytes,
                 stripped_bytes,
@@ -5713,6 +5723,10 @@ fn run_native_aot_performance_probe(
             .iter()
             .map(|sample| sample.link_time_ns)
             .collect::<Vec<_>>();
+        let build_end_to_end_values = build_samples
+            .iter()
+            .map(|sample| sample.build_end_to_end_ns)
+            .collect::<Vec<_>>();
         let code_size_values = build_samples
             .iter()
             .map(|sample| sample.stripped_bytes)
@@ -5735,6 +5749,7 @@ fn run_native_aot_performance_probe(
         let dimensions = NativeAotPerformanceDimensions {
             compile_time_ns: performance_quantiles_u64(&compile_values)?,
             link_time_ns: performance_quantiles_u64(&link_values)?,
+            build_end_to_end_ns: performance_quantiles_u64(&build_end_to_end_values)?,
             code_size_bytes: performance_quantiles_u64(&code_size_values)?,
             startup_ns: performance_quantiles_u64(&startup_values)?,
             throughput_ops_per_second: performance_quantiles_f64(&throughput_values)?,
@@ -12420,6 +12435,23 @@ mod tests {
         let mut zero = values;
         zero[0] = 0;
         assert!(performance_quantiles_u64(&zero).is_err());
+    }
+
+    #[test]
+    fn aot_performance_build_samples_record_end_to_end_time() {
+        let sample = NativeAotPerformanceBuildSample {
+            process: 0,
+            repetition: 0,
+            compile_time_ns: 11,
+            link_time_ns: 13,
+            build_end_to_end_ns: 37,
+            object_sha256: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+                .to_owned(),
+            debug_bytes: 101,
+            stripped_bytes: 79,
+        };
+        let encoded = serde_json::to_value(sample).expect("build samples should serialize");
+        assert_eq!(encoded["build_end_to_end_ns"].as_u64(), Some(37));
     }
 
     #[test]
