@@ -97,16 +97,17 @@ jq -e '
       unexplained_regression: "fail",
       budget_source: "PERF-001"
   }
-  and .selection == {selected_backend: null, status: "human-decision-required", n1_claim: false}
+  and .selection == {selected_backend: null, status: "decision-recorded-separately", selection_record: "testing/native-selection.json", n1_claim: false}
   and (.invariants | length == 16 and unique_values)
   and (.negative_cases | length == 16 and unique_values)
-  and .next_blocks == ["DEC-013"]
+  and .next_blocks == ["N1"]
 ' "$contract" >/dev/null || die "invalid machine-readable contract"
 
 for path in \
     docs/contracts/native-aot-performance.md \
     TONDO_IMPLEMENTATION_TRACKER.md \
     testing/tracker-graph.json \
+    testing/native-selection.json \
     testing/performance.json \
     testing/native-aot-binary.json \
     testing/native-aot-memory.json \

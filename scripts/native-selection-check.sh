@@ -15,7 +15,7 @@ jq -e '
   and .task == "NATIVE-001"
   and .owner == "toolchain.native_evaluation"
   and .edition == "0.1" and .phase == "M20"
-  and .status == "ready-for-decision"
+  and .status == "selected"
   and .contract == "docs/contracts/native-selection.md"
   and .runner == "scripts/native-selection-capture.sh"
   and .fast_report == "target/reliability/evidence/native-evaluation-fast.json"
@@ -25,17 +25,25 @@ jq -e '
   and .target == "x86_64-unknown-linux-gnu"
   and .oracle == "bytecode-vm-oracle"
   and .selection == {
-    selected_backend:null,
-    status:"human-decision-required",
+    selected_backend:"cranelift",
+    status:"selected",
     n1_claim:false,
-    required_inputs:["full-native-evidence","repeated-performance-capture","quality-gate","DEC-013-record"]
+    target_scope:["x86_64-unknown-linux-gnu"],
+    required_inputs:["full-native-evidence","repeated-performance-capture","quality-gate","DEC-013-record"],
+    rationale:[
+      "rust-native-embedded-integration",
+      "lower-maintenance-and-distribution-cost",
+      "runtime-within-one-percent-on-current-aot-campaign",
+      "smaller-stripped-product-on-current-aot-campaign"
+    ],
+    retained_candidates:{llvm:"experimental-comparison-only",custom:"excluded"}
   }
   and .required_executable_counts == {
     scalar:118, managed:3, runtime:21, select:8,
     thread:5, std_core:14, lowering:1, diagnostics:8
   }
   and (.negative_cases | length == 10 and unique)
-  and .next_blocks == ["DEC-013"]
+  and .next_blocks == ["N1"]
 ' "$contract" >/dev/null || die "invalid selection contract"
 
 for path in docs/contracts/native-selection.md scripts/native-selection-capture.sh \
@@ -43,7 +51,7 @@ for path in docs/contracts/native-selection.md scripts/native-selection-capture.
     testing/native-evaluation.json; do
     [[ -f "$root/$path" ]] || die "missing selection input: $path"
 done
-for marker in 'human decision' 'selected_backend' 'n1_claim' 'fail-closed' 'DEC-013'; do
+for marker in 'selected backend' 'selected_backend' 'n1_claim' 'fail-closed' 'DEC-013' 'Cranelift'; do
     grep -Fq "$marker" docs/contracts/native-selection.md \
         || die "selection contract omits $marker"
 done

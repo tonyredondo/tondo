@@ -12,6 +12,7 @@ with an absolute C driver and the link contract's no-build-id policy. It sets
 archive mtimes to `epoch-zero` and numeric owners to zero, sorts entries, and compares package
 bytes and all logical checksums. A changed binary/runtime/stdlib hash, target,
 metadata path or partial archive fails closed. A physical workspace path is never
-stored in the manifest. This is a reproducible candidate
-package, not the final STD 0.1.0 release and not a backend selection; its
-selection field remains `pending-NATIVE-001`.
+stored in the manifest. This is a reproducible package envelope for the
+selected Cranelift target, not the final STD 0.1.0 release. Its promotion field
+remains `pending-gate-n1`: the package cannot be presented as a shipped native
+product until Gate N1 passes.

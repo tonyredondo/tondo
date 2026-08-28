@@ -33,10 +33,11 @@ jq -e '
   }
   and .decision.selected_backend == null
   and .decision.selection_scope == "first-native-backend"
-  and .decision.selection_status == "ready-for-decision"
+  and .decision.selection_status == "decision-recorded-separately"
+  and .decision.selection_record == "testing/native-selection.json"
   and .decision.n1_claim == false
   and .decision.native_performance_baseline == "candidate-slice-captured"
-  and .decision.next_implementation == "DEC-013"
+  and .decision.next_implementation == "N1"
   and (.decision.reasons | length >= 4 and unique_values)
   and ([.decision.selection_requires[]] | length == 5 and unique_values)
   and ([.candidates[].id] == ["cranelift", "llvm", "custom"])
@@ -87,12 +88,14 @@ jq -e '
       "physical_paths_in_identity": "forbidden"
   }
   and (.negative_cases | length == 9 and unique_values)
-  and .next_blocks == ["DEC-013"]
+  and .next_blocks == ["N1"]
 ' "$contract" >/dev/null || die "invalid machine-readable contract"
 
 for path in \
     docs/contracts/native-evaluation.md \
     docs/adr/019-native-backend-selection.md \
+    docs/contracts/native-selection.md \
+    testing/native-selection.json \
     .github/workflows/native-evaluation.yml \
     crates/tondo-compiler/examples/native_mir_probe.rs \
     testing/native-evaluation-runner.json \
@@ -148,4 +151,4 @@ while IFS=$'\t' read -r fixture_path required_features; do
     done
 done < <(jq -r '.mir_probe.fixtures[] | [.path, (.required_features | join(" "))] | @tsv' "$contract")
 
-echo "native evaluation: OK (candidate evidence ready; DEC-013 selection pending)"
+echo "native evaluation: OK (candidate evidence lane does not auto-select; DEC-013 records Cranelift and Gate N1 remains pending)"

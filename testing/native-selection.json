@@ -4,7 +4,7 @@
   "owner": "toolchain.native_evaluation",
   "edition": "0.1",
   "phase": "M20",
-  "status": "ready-for-decision",
+  "status": "selected",
   "contract": "docs/contracts/native-selection.md",
   "runner": "scripts/native-selection-capture.sh",
   "fast_report": "target/reliability/evidence/native-evaluation-fast.json",
@@ -15,15 +15,26 @@
   "target": "x86_64-unknown-linux-gnu",
   "oracle": "bytecode-vm-oracle",
   "selection": {
-    "selected_backend": null,
-    "status": "human-decision-required",
+    "selected_backend": "cranelift",
+    "status": "selected",
     "n1_claim": false,
+    "target_scope": ["x86_64-unknown-linux-gnu"],
     "required_inputs": [
       "full-native-evidence",
       "repeated-performance-capture",
       "quality-gate",
       "DEC-013-record"
-    ]
+    ],
+    "rationale": [
+      "rust-native-embedded-integration",
+      "lower-maintenance-and-distribution-cost",
+      "runtime-within-one-percent-on-current-aot-campaign",
+      "smaller-stripped-product-on-current-aot-campaign"
+    ],
+    "retained_candidates": {
+      "llvm": "experimental-comparison-only",
+      "custom": "excluded"
+    }
   },
   "required_executable_counts": {
     "scalar": 118,
@@ -47,5 +58,5 @@
     "path-leak",
     "premature-selection"
   ],
-  "next_blocks": ["DEC-013"]
+  "next_blocks": ["N1"]
 }

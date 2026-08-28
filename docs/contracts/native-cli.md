@@ -4,15 +4,16 @@
 second language mode. `tondo build` discovers the same TOML project and lock
 file as `check`, compiles through the shared frontend/MIR, and atomically emits
 the canonical build artifact plus a small native envelope containing the
-candidate identities. Until backend selection, that envelope is explicitly
-`selection-pending`; it is not an executable product and cannot silently pick
-Cranelift or LLVM.
+candidate identities. `DEC-013` records Cranelift as the selected backend for
+the admitted 0.1 target, so the envelope is `backend-selected` and names
+`promotion: pending-gate-n1`. It is not an executable native product until
+Gate N1 passes, and it cannot silently fall back to LLVM or another backend.
 
 `tondo run` keeps the existing source/project invocation and forwards stdout,
 stderr, argv and exit classes unchanged. It does not accept `--native` or
-`--vm`, and diagnostics use the standard human/JSON envelope. Once a backend is
-selected, the same command path consumes the closed link/publish product; no
-parallel public semantics are introduced during the candidate phase.
+`--vm`, and diagnostics use the standard human/JSON envelope. The same command
+path will consume the closed link/publish product once Gate N1 promotes it; no
+parallel public semantics are introduced while promotion is pending.
 
 Build output is staged beside the destination and atomically renamed. Compile,
 manifest, permission and interruption failures remove staging files and leave

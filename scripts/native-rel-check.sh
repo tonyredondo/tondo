@@ -29,7 +29,8 @@ jq -e '
   and .target == "tondo-native-linux-x86-64-release"
   and .triple == "x86_64-unknown-linux-gnu"
   and .profile == "release"
-  and .backend_selection == "pending-NATIVE-001"
+  and .backend_selection == "cranelift"
+  and .promotion == "pending-gate-n1"
   and .contents == ["binary", "runtime", "stdlib-0.1A", "metadata", "checksums"]
   and .reproducibility == {
     archive:"deterministic-tar",
@@ -40,7 +41,7 @@ jq -e '
     comparison:"byte-identical-package-twice"
   }
   and (.negative_cases | length == 8 and unique)
-  and .next_blocks == ["NATIVE-001"]
+  and .next_blocks == ["N1"]
 ' "$contract" >/dev/null || die "invalid release contract"
 
 for path in docs/contracts/native-rel.md scripts/native-rel-test.sh \
@@ -49,7 +50,7 @@ for path in docs/contracts/native-rel.md scripts/native-rel-test.sh \
     crates/tondo-native-runtime/src/lib.rs; do
     [[ -f "$root/$path" ]] || die "missing release input: $path"
 done
-for marker in 'deterministic' 'epoch-zero' 'STD-0.1A' 'pending-NATIVE-001' 'physical workspace'; do
+for marker in 'deterministic' 'epoch-zero' 'STD-0.1A' 'Cranelift' 'pending-gate-n1' 'physical workspace'; do
     grep -Fq "$marker" docs/contracts/native-rel.md \
         || die "release contract omits $marker"
 done

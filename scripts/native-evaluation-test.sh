@@ -22,6 +22,14 @@ jq '.decision.selected_backend = "cranelift"' \
     testing/native-evaluation.json > "$tmp/wrong-selection.json"
 expect_failure wrong-selection "$tmp/wrong-selection.json"
 
+jq '.decision.selection_status = "ready-for-decision"' \
+    testing/native-evaluation.json > "$tmp/stale-selection-status.json"
+expect_failure stale-selection-status "$tmp/stale-selection-status.json"
+
+jq '.decision.selection_record = "testing/other-selection.json"' \
+    testing/native-evaluation.json > "$tmp/wrong-selection-record.json"
+expect_failure wrong-selection-record "$tmp/wrong-selection-record.json"
+
 jq '.candidates[0].role = "excluded"' \
     testing/native-evaluation.json > "$tmp/multiple-comparators.json"
 expect_failure multiple-comparators "$tmp/multiple-comparators.json"

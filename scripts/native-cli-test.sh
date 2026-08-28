@@ -27,7 +27,7 @@ cp acceptance/projects/testing-acceptance/tondo.toml "$tmp/tondo.toml"
 tondo build --project "$tmp"
 [[ -s "$tmp/build/tondo.artifact.json" ]]
 [[ -s "$tmp/build/tondo.artifact.native.json" ]]
-jq -e '.format == "tondo-native-build/1" and .status == "selection-pending" and .candidates == ["cranelift","llvm"] and .ambient_lookup == false' \
+jq -e '.format == "tondo-native-build/1" and .backend == "cranelift" and .status == "backend-selected" and .promotion == "pending-gate-n1" and .candidates == ["cranelift","llvm"] and .ambient_lookup == false' \
     "$tmp/build/tondo.artifact.native.json" >/dev/null
 cp "$tmp/build/tondo.artifact.json" "$tmp/artifact-one"
 cp "$tmp/build/tondo.artifact.native.json" "$tmp/native-one"

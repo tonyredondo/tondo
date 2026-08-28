@@ -1,14 +1,19 @@
 # Native backend evaluation contract
 
-`NATIVE-001` is the evidence boundary for the backend decision. Its candidate
-capture is now ready for human review: real adapters have been measured against
-the same normalized MIR shape and VM oracle, but the block deliberately does
-not choose a backend or claim Gate N1. The opt-in runner emits native
+`NATIVE-001` is the candidate-evidence boundary for the backend decision. Its
+real adapters were measured against the same normalized MIR shape and VM
+oracle. The candidate block deliberately does not auto-select a backend or
+claim Gate N1; the human choice is recorded separately by `DEC-013` in
+`testing/native-selection.json`, which selects Cranelift for the admitted 0.1
+AOT target. The opt-in runner emits native
 executables for its bounded supported slices, not a complete Tondo product.
 The machine-readable authority is
 [`testing/native-evaluation.json`](../../testing/native-evaluation.json), and
 the decision is recorded in
 [`docs/adr/019-native-backend-selection.md`](../adr/019-native-backend-selection.md).
+The `decision` object in the machine contract remains a non-selecting evidence
+view (`selection_record` points to the decision record); its next frontier is
+Gate N1, not another backend choice.
 The short feedback loop is defined by
 [`testing/native-evaluation-fast.json`](../../testing/native-evaluation-fast.json)
 and [`scripts/native-evaluation-fast.sh`](../../scripts/native-evaluation-fast.sh).
@@ -18,11 +23,11 @@ and [`scripts/native-evaluation-runner.sh`](../../scripts/native-evaluation-runn
 
 ## Decision boundary
 
-Cranelift and LLVM are both candidates. The current evidence is
-decision-ready but selection-pending: the fast lane measures their
-code-generation cost on the same normalized module shape and the physical
-runner checks the supported executable slice, but neither lane promotes either
-one. A
+Cranelift and LLVM were measured as candidates. The current evidence is
+target-qualified and the separate `DEC-013` record selects Cranelift for 0.1;
+the fast lane still only measures code-generation cost on the same normalized
+module shape and the physical runner checks the supported executable slice.
+Neither lane promotes a backend or closes Gate N1. A
 compiler-owned generator is excluded from the measured ranking until it has a
 real machine-code adapter; otherwise its result would be a made-up baseline,
 not a candidate measurement.
@@ -243,11 +248,11 @@ The selection records the dimensions that must be evidenced before promotion:
 | redaction and crash dumps | Required constraints recorded | `DIAG-NATIVE-001` passes fail-closed in both executable candidates |
 | Distribution, maintenance, licensing | Decision recorded in ADR | Pinned, reviewable toolchain and supply-chain evidence |
 
-The existing performance contract stays honest: no native entry is selected and
-the full native capture remains deferred until complete lowering, the VM oracle
-and the ARC/diagnostic gates are available. Fast-lane samples are exploratory
-evidence and cannot be compared across targets, unpinned tools or incomplete
-observables.
+The existing performance contract stays honest: the evaluation lane does not
+select or promote a native entry, while the separate selection record names
+Cranelift. The full native capture remains bound to complete lowering, the VM
+oracle and the ARC/diagnostic gates. Fast-lane samples are exploratory evidence
+and cannot be compared across targets, unpinned tools or incomplete observables.
 
 ## Reproducibility and failure policy
 
@@ -282,7 +287,8 @@ runner. Production collection iteration and stdlib-owned field/index storage
 remain explicit follow-ups of the native stdlib/ABI boundaries; the bounded
 aggregate cases are counted only in `NATIVE-AOT-LOWER-001` and its linked
 product evidence. ARC/diagnostic work may now consume the coordinator
-contract, while backend selection and Gate N1 remain pending.
+contract. The selected backend is recorded separately; Gate N1 remains pending
+until the selected Cranelift product passes every promotion criterion.
 
 The static contract and negative cases run in the normal test gate. The
 evaluation runner is opt-in/manual because it compiles the real fixture corpus;

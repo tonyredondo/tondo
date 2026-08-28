@@ -1,10 +1,12 @@
-# ADR-019: Measure candidates before selecting the first native backend
+# ADR-019: Select Cranelift as the first native backend
 
-- Status: Proposed — AOT scope closed, candidate evidence bounded, backend decision pending
-- Date: 2026-08-25
+- Status: Accepted — Cranelift selected for Tondo 0.1 AOT on
+  `x86_64-unknown-linux-gnu`; Gate N1 remains open
+- Date: 2026-08-28
 - Supersedes: none
-- Next decision: `DEC-013` (the AOT evidence campaign must close before the
-  human choice between Cranelift and LLVM)
+- Decision record: `DEC-013`
+- Next decision: Gate N1 (promote the selected Cranelift target only after the
+  complete conformance, diagnostics and packaging gates pass)
 
 ## Context
 
@@ -22,7 +24,7 @@ candidate or scoring dimension for `DEC-013`. The language remains
 collector-neutral: native AOT follows `hybrid-arc-cycle-collector`, while the
 hosted VM keeps its precise tracing collector.
 
-The candidates are:
+The candidates evaluated for the admitted target were:
 
 1. **Cranelift**, embedded as a pinned Rust dependency and driven directly by
    the MIR lowering pipeline.
@@ -45,17 +47,20 @@ is selected.
 
 ## Decision boundary
 
-No backend is selected yet. Cranelift and LLVM are measured candidates; the
-custom generator is excluded from the ranking until it has a real machine-code
-adapter. The fast lane in
+`DEC-013` selects **Cranelift** as the native AOT backend for
+`x86_64-unknown-linux-gnu` in Tondo 0.1. LLVM remains an experimental
+comparison backend and the custom generator remains excluded from the ranking
+until it has a real machine-code adapter. The fast lane in
 [`tools/native-evaluation/`](../../tools/native-evaluation/) consumes the real
-MIR probe and measures both engines over the same normalized module shape. A
-sample is not semantic evidence when it contains trapped unsupported
-functions; the report preserves those counts. The physical runner now also
-provides a bounded executable differential report, so this evidence boundary
-is useful for candidate comparison but is not yet sufficient for the human
-decision recorded by `DEC-013`; the AOT campaign in
-[`native-aot-scope.md`](../contracts/native-aot-scope.md) must close first.
+MIR probe and measured both engines over the same normalized module shape. The
+AOT campaign closed the required evidence boundary: samples with trapped
+unsupported functions remain non-semantic evidence, while the complete linked
+product, memory, quality and performance reports are bound to the decision.
+
+Selection is not promotion. The selected backend must still pass Gate N1, and
+no compiler path may silently fall back to LLVM or another backend. The
+selection is target-scoped; a future target requires its own evidence and
+decision record.
 
 This is intentionally bounded:
 
@@ -73,12 +78,14 @@ This is intentionally bounded:
 
 ## Selection criteria
 
-Cranelift is attractive because it is Rust-native, embeddable without a shell
-or ambient tool discovery, and designed for fast code-generation iteration.
-LLVM is attractive because of its mature target, debug and tooling ecosystem.
-Neither advantage is a measured decision until both candidates consume the
-same normalized MIR shape and their results are recorded under the same target
-identity.
+Cranelift is selected because it is Rust-native, embeds without a shell or
+ambient tool discovery, and keeps the first backend's implementation and
+distribution surface small. In the completed AOT campaign its runtime
+dimensions stayed within one percent of LLVM and its stripped product was
+slightly smaller. LLVM's build-time advantage is useful for comparison, but it
+does not offset the additional toolchain/FFI burden for the first backend.
+These observations are scoped to the current target and workload; they are not
+a claim that Cranelift wins every future target or workload.
 
 The scoring scope is AOT-only. Linked executable size, startup, runtime and
 memory observations must come from the same final product shape; raw code
@@ -90,14 +97,15 @@ dependency surface does not compensate for the correctness, unwind,
 source-map, diagnostics and maintenance stack Tondo would have to own. It may
 be reconsidered only with a real adapter and identical evidence.
 
-The fast lane and bounded runner are evidence mechanisms, not an automatic
-promotion gate. Final selection still requires repeated performance capture,
-the normal quality gate and a human `DEC-013` record.
+The fast lane and bounded runner remain evidence mechanisms, not an automatic
+promotion gate. The human `DEC-013` record is now present, and repeated
+performance capture plus the normal quality gate remain required for N1.
 
 The physical `Thread` lane is now an explicit prerequisite rather than an
 assumption: the safe runtime launches a worker with a completion barrier and
 the native differential runner proves the equivalent `pthread` lifecycle in
-both candidates. This closes `NATIVE-THREAD-001` without selecting a backend.
+both candidates. This closes `NATIVE-THREAD-001` and contributes evidence to
+the Cranelift decision.
 The physical thread adapter still evaluates an eager lowered value before
 handoff. `NATIVE-002` now closes the minimum deferred direct-task body path
 (`spawn call()` publishes `Pending`, then `Join` completes and awaits it), while
@@ -134,8 +142,11 @@ logical-operator behavior, conversions, explicit-panic traps, loop-carried
 locals and branch joins are covered for the executable slice. Collection
 iteration and concrete aggregate storage remain explicit fail-closed leaves,
 not approximations. The native target/artifact/link/publish schemas remain
-useful contracts but do not imply their implementation. A future ADR revision
-can select Cranelift or LLVM per target if measured evidence justifies it.
+useful contracts but do not imply that Gate N1 is closed. Production native
+lowering for the admitted target now proceeds through Cranelift; the LLVM
+adapter remains available for differential testing and experimental comparison.
+A future target or a materially different workload requires new evidence and
+may receive a separate ADR without changing this target's decision.
 
 ## Evidence
 
@@ -153,7 +164,7 @@ can select Cranelift or LLVM per target if measured evidence justifies it.
   report, containing the real-MIR probe and toolchain observations.
 - `testing/native-selection.json` and
   `scripts/native-selection-capture.sh` — bind the fast and executable
-  reports and leave `selected_backend` null until `DEC-013`.
+  reports to the Cranelift selection while keeping `n1_claim` false.
 - `testing/native-aot-scope.json` and
   `scripts/native-aot-scope-{check,test}.sh` — close the AOT product boundary,
   memory distinction and comparable measurement protocol without selecting a

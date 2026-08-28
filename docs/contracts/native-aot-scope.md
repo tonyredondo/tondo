@@ -17,8 +17,9 @@ not an input or scoring dimension for `DEC-013`.
 Both candidate backends consume the same verified MIR, target descriptor,
 runtime, stdlib, linker policy and workload identity. The contract includes
 Cranelift and LLVM and excludes the custom generator until it has a comparable
-machine-code adapter. This block records scope only: it does not select a
-backend, claim N1 or turn a bounded probe into a production benchmark.
+machine-code adapter. `DEC-013` now records Cranelift as the selected backend
+for the admitted target; this scope contract still does not claim N1 or turn a
+bounded probe into a production benchmark.
 
 ## Memory boundary
 
@@ -49,5 +50,6 @@ samples in each of three fresh processes (at least 27 samples), monotonic
 clocks, hash-bound fixtures and deterministic toolchain inputs. The next block
 is `NATIVE-AOT-LOWER-001`; after lowering, `NATIVE-AOT-MEM-001` captures
 process-local ARC/allocation/cycle/weak/pause/RSS observations from the linked
-products, while the VM remains the semantic oracle. `DEC-013` stays pending
-until every required block in the contract and the quality gate has passed.
+products, while the VM remains the semantic oracle. The required campaign
+blocks are closed and feed the recorded `DEC-013` decision; Gate N1 remains
+pending until the selected Cranelift product passes every promotion criterion.

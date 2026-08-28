@@ -19,7 +19,8 @@
   "target": "tondo-native-linux-x86-64-release",
   "triple": "x86_64-unknown-linux-gnu",
   "profile": "release",
-  "backend_selection": "pending-NATIVE-001",
+  "backend_selection": "cranelift",
+  "promotion": "pending-gate-n1",
   "contents": ["binary", "runtime", "stdlib-0.1A", "metadata", "checksums"],
   "reproducibility": {
     "archive": "deterministic-tar",
@@ -39,5 +40,5 @@
     "target-drift",
     "partial-package"
   ],
-  "next_blocks": ["NATIVE-001"]
+  "next_blocks": ["N1"]
 }

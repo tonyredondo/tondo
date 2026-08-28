@@ -1,9 +1,10 @@
 # Native AOT performance contract
 
 `NATIVE-AOT-PERF-001` is the repeated, target-qualified performance gate for
-the complete linked AOT products. It is the final evidence block before the
-human backend decision `DEC-013`; it does not select Cranelift or LLVM, alter
-the language semantics, or promote Gate N1 by itself.
+the complete linked AOT products. Its evidence was the final input to the
+human backend decision `DEC-013`, which selects Cranelift for the admitted 0.1
+target. This contract still does not alter language semantics or promote Gate
+N1 by itself.
 
 The machine-readable authority is
 [`testing/native-aot-performance.json`](../../testing/native-aot-performance.json).
@@ -41,8 +42,12 @@ the native frontend has already compiled every one of the fourteen VM-level
 frontend is admitted to the native product recipe.
 
 JIT measurements, synthetic cross-target aggregation and automatic backend
-selection are out of scope. The report always records
-`selection: human-decision-required`.
+selection are out of scope. The measurement report records
+`selection: human-decision-required` to make clear that this lane never
+selects a backend automatically; the separate `native-selection` record now
+binds these measurements to Cranelift. The machine contract keeps
+`selection.selected_backend` null and points `selection_record` at that
+decision record, so the next frontier is Gate N1 rather than a second choice.
 
 ## Measurement protocol
 
@@ -118,6 +123,7 @@ positive finite dimensions (including the end-to-end build dimension) and
 monotonic quantiles (`median ≤ p95 ≤ p99`).
 
 `NATIVE-AOT-PERF-001` is closed only after the report, contract checker,
-negative mutation suite and CI evidence pass. Closure means that the evidence
-is ready for the human decision; it does not pick a backend, change the public
-ABI, or claim support for an additional target.
+negative mutation suite and CI evidence pass. Closure supplies evidence to the
+human decision and does not itself pick a backend, change the public ABI, or
+claim support for an additional target. Gate N1 remains open for the selected
+Cranelift implementation.

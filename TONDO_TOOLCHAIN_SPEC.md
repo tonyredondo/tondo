@@ -1347,9 +1347,10 @@ no consulta `PATH`, variables de entorno, shell ni flags ambientales. La
 identidad de contenido del descriptor es el SHA-256 de sus bytes canónicos.
 
 Este descriptor fija inputs para `NATIVE-ARTIFACT-001` y
-`NATIVE-LINK-PLAN-001`; no selecciona todavía un backend de producción, no
-ejecuta código nativo y no promete ABI FFI, layout de objetos, dynamic linking
-ni name mangling públicos.
+`NATIVE-LINK-PLAN-001`; la selección de Cranelift se registra por separado en
+`DEC-013`/`testing/native-selection.json`. El descriptor no ejecuta código
+nativo y no promete ABI FFI, layout de objetos, dynamic linking ni name
+mangling públicos.
 
 #### 10.1.2 Clausura de artefactos nativos
 
@@ -1556,9 +1557,11 @@ La VM hosted es la primera baseline obligatoria. El oracle de compilación son
 bytes canónicos de interfaz/artefacto y diagnósticos exactos; el oracle de
 runtime son las observaciones del lenguaje. Los contadores de allocation,
 retain/release y pausas solo son observaciones del harness y no cambian la
-semántica. `native` permanece diferido a `NATIVE-001`: solo puede compararse
-después de igualar valores, errores, orden, ownership, overflow, cancelación y
-exit status con la VM. SIMD, vectorización, tablas y multiversioning siguen
+semántica. Cranelift es el backend AOT seleccionado para el target admitido de
+Tondo 0.1; su promoción sigue bloqueada por Gate N1. Solo puede usarse después
+de igualar valores, errores, orden, ownership, overflow, cancelación y exit
+status con la VM. LLVM queda como ruta experimental de comparación. SIMD,
+vectorización, tablas y multiversioning siguen
 permitidos si conservan oracle escalar y fallback portable.
 
 `PERF-001` cierra el diseño y sus validaciones negativas, no la captura de

@@ -97,7 +97,7 @@ jq -n \
         cargo: $cargo,
         llvm: $llvm,
         clang: $clang,
-        cranelift: "selected; dependency pin required before native lowering"
+        cranelift: "selected-for-0.1-aot; promotion-pending-gate-n1"
       },
       oracle: $contract[0].oracle,
       n1_claim: false,

@@ -3693,7 +3693,9 @@ fn emit_products(
                 "target": artifact.target(),
                 "profile": artifact.profile(),
                 "candidates": ["cranelift", "llvm"],
-                "status": "selection-pending",
+                "backend": "cranelift",
+                "status": "backend-selected",
+                "promotion": "pending-gate-n1",
                 "execution": "tondo-run-uses-the-same-source-and-closed-plan",
                 "ambient_lookup": false,
                 "backend_flags": false

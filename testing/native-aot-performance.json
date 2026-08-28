@@ -109,7 +109,8 @@
   },
   "selection": {
     "selected_backend": null,
-    "status": "human-decision-required",
+    "status": "decision-recorded-separately",
+    "selection_record": "testing/native-selection.json",
     "n1_claim": false
   },
   "invariants": [
@@ -148,5 +149,5 @@
     "automatic-selection-or-n1-claim",
     "stale-decision-frontier"
   ],
-  "next_blocks": ["DEC-013"]
+  "next_blocks": ["N1"]
 }

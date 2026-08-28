@@ -27,7 +27,7 @@ for mutation in \
     '(.selection.selected_backend = "llvm")' \
     '(.dimensions |= map(select(.id != "pause_time")))' \
     '(.dimensions |= map(select(.id != "build_end_to_end")))' \
-    '(.next_blocks = ["N1"])' \
+    '(.next_blocks = ["DEC-013"])' \
     '(.invariants = .invariants[1:])'; do
     name="mutation-${#mutation}"
     jq "$mutation" testing/native-aot-performance.json > "$tmp/$name.json"

@@ -17,10 +17,11 @@
   "decision": {
     "selected_backend": null,
     "selection_scope": "first-native-backend",
-    "selection_status": "ready-for-decision",
+    "selection_status": "decision-recorded-separately",
+    "selection_record": "testing/native-selection.json",
     "n1_claim": false,
     "native_performance_baseline": "candidate-slice-captured",
-    "next_implementation": "DEC-013",
+    "next_implementation": "N1",
     "reasons": [
       "rust-native-integration",
       "deterministic-in-process-toolchain",
@@ -182,5 +183,5 @@
     "missing-diagnostic-dimension",
     "stale-next-block"
   ],
-  "next_blocks": ["DEC-013"]
+  "next_blocks": ["N1"]
 }

@@ -115,7 +115,7 @@ The summary is promotable only when all parts are `passed`, both candidates
 have the same admitted case IDs, the VM and native observations match, fuzz and
 sanitizer lanes are clean, the normal baseline is unchanged and the report has
 no divergence, unsupported or physical data. This closes quality evidence for
-the current target. It does not claim a final backend, public ABI or measured
-performance winner. `NATIVE-AOT-PERF-001` remains responsible for the repeated
-compile/link/startup/throughput/latency/size/memory measurements and is the
-last input to `DEC-013`.
+the current target. It does not define a public ABI or replace the recorded
+`DEC-013` selection. `NATIVE-AOT-PERF-001` remains responsible for the repeated
+compile/link/startup/throughput/latency/size/memory measurements, and Gate N1
+remains responsible for promoting the selected Cranelift product.

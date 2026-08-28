@@ -4,6 +4,7 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 scripts/native-selection-check.sh
+contract="${TONDO_NATIVE_SELECTION_CONTRACT:-$root/testing/native-selection.json}"
 target_dir="${CARGO_TARGET_DIR:-$root/target-fast}"
 evidence="$target_dir/reliability/evidence"
 mkdir -p "$evidence"
@@ -48,13 +49,18 @@ jq -e '
 ! grep -Fq "$root" "$fast" || { echo "native selection readiness: fast report leaked path" >&2; exit 1; }
 ! grep -Fq "$root" "$runner" || { echo "native selection readiness: executable report leaked path" >&2; exit 1; }
 
+selection_status="$(jq -r '.selection.status' "$contract")"
+selected_backend="$(jq -r '.selection.selected_backend' "$contract")"
+[[ "$selection_status" == "selected" && "$selected_backend" == "cranelift" ]] \
+    || { echo "native selection readiness: decision record does not select Cranelift" >&2; exit 1; }
+
 fast_hash="$(sha256sum "$fast" | cut -d ' ' -f1)"
 runner_hash="$(sha256sum "$runner" | cut -d ' ' -f1)"
 target="$(jq -r '.target' "$runner")"
 [[ "$target" == "x86_64-unknown-linux-gnu" ]] || { echo "native selection readiness: target drift" >&2; exit 1; }
 
 jq -n --arg fast "sha256:$fast_hash" --arg runner "sha256:$runner_hash" --arg target "$target" \
-  --slurpfile f "$fast" --slurpfile r "$runner" \
-  '{format:"tondo-native-selection-evidence/1",task:"NATIVE-001",status:"ready-for-decision",target:$target,candidates:{cranelift:{status:"measured",compile_time_ns_median_sum:($f[0].candidates[]|select(.id=="cranelift")|[.summary[].compile_time_ns.median]|add),code_size_bytes_sum:($f[0].candidates[]|select(.id=="cranelift")|[.summary[].code_size_bytes]|add)},llvm:{status:"measured",compile_time_ns_median_sum:($f[0].candidates[]|select(.id=="llvm")|[.summary[].compile_time_ns.median]|add),code_size_bytes_sum:($f[0].candidates[]|select(.id=="llvm")|[.summary[].code_size_bytes]|add)}},executable_counts:{scalar:118,managed:3,runtime:21,select:8,thread:5,std_core:14,lowering:1,diagnostics:8},reports:{fast:$fast,executable:$runner},selection:{selected_backend:null,status:"human-decision-required",n1_claim:false},physical_paths:[],divergences:[]}' \
+  --slurpfile f "$fast" --slurpfile r "$runner" --slurpfile s "$contract" \
+  '{format:"tondo-native-selection-evidence/1",task:"NATIVE-001",status:$s[0].status,target:$target,candidates:{cranelift:{status:"selected",compile_time_ns_median_sum:($f[0].candidates[]|select(.id=="cranelift")|[.summary[].compile_time_ns.median]|add),code_size_bytes_sum:($f[0].candidates[]|select(.id=="cranelift")|[.summary[].code_size_bytes]|add)},llvm:{status:"experimental",compile_time_ns_median_sum:($f[0].candidates[]|select(.id=="llvm")|[.summary[].compile_time_ns.median]|add),code_size_bytes_sum:($f[0].candidates[]|select(.id=="llvm")|[.summary[].code_size_bytes]|add)}},executable_counts:{scalar:118,managed:3,runtime:21,select:8,thread:5,std_core:14,lowering:1,diagnostics:8},reports:{fast:$fast,executable:$runner},selection:$s[0].selection,physical_paths:[],divergences:[]}' \
   > "$evidence/native-selection.json"
-echo "native selection readiness: PASS (Cranelift/LLVM evidence captured; DEC-013 remains open)"
+echo "native selection readiness: PASS (Cranelift selected for 0.1 AOT; Gate N1 remains open)"

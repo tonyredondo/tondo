@@ -259,7 +259,7 @@
     "T0": ["UTEST-CLI-001"],
     "G5": ["ASYNC-SELECT-VM-CONF-001", "CONF-SEAL-FINAL-001"],
     "S1A": ["STD-S1A-SEAL-001"],
-    "N1": ["NATIVE-REL-001"],
+    "N1": ["DEC-013", "NATIVE-REL-001"],
     "S1": ["N1", "STD-S1-SEAL-001"]
   }
 }
