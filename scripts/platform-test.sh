@@ -21,6 +21,9 @@ test "$output" = "Hello, world"
 platform="${TONDO_TEST_TARGET:-host-native}"
 reports="target/platform-test/$platform"
 mkdir -p "$reports"
+TONDO_NATIVE_PORTABILITY_REPORT="$reports/native-portability.json" \
+    bash scripts/native-portability.sh
+test -s "$reports/native-portability.json"
 "$binary" test \
     --project acceptance/projects/testing-acceptance \
     --order random \

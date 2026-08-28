@@ -13,3 +13,11 @@ and target triple. Cross-compilation is never counted as a physical smoke;
 adding another architecture or capability set requires another registry entry,
 runner evidence and artifact identity. Paths and ambient tool discovery are
 forbidden in the published identity.
+
+The portable CI matrix also runs `scripts/native-portability.sh` on each native
+runner. Its pinned `cranelift-portability` probe selects the host ISA and emits
+one object through the selected Cranelift version, checking the native object
+magic (`ELF`, `Mach-O` or `COFF`) and recording a path-free report. This probe is
+an early backend-compatibility signal: it does not promote a target into this
+registry, prove the Tondo native ABI or replace the physical product smoke.
+Those claims still require a target entry, complete lowering and Gate N1.
