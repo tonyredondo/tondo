@@ -15,6 +15,14 @@ La forma TLF para agentes ya tiene spec y estudio léxico, pero encoder, decoder
 source maps, CLI y evaluación de generación permanecen pendientes. Tondo 0.1
 sigue en desarrollo y no ha sido publicado.
 
+Gate N1 ya está cerrado por el contrato composicional `testing/native-n1.json` y
+la evidencia hash-bound `target/reliability/evidence/native-n1.json`: Cranelift
+queda promovido para el producto AOT primario
+`x86_64-unknown-linux-gnu`. La entrada física Linux ARM64 queda como smoke de
+candidato hasta completar allí la campaña AOT completa; Windows y macOS siguen
+siendo probes de portabilidad. Este cierre no publica Tondo, no cierra G5/S1 ni
+promete una ABI pública.
+
 El producto primario previsto para Tondo 0.1 es un ejecutable nativo AOT
 (`native-aot`). `tondo-vm-hosted` permanece como implementación de referencia,
 oráculo diferencial y opción bootstrap/hosted; no es una segunda semántica del
@@ -22,7 +30,7 @@ lenguaje. JIT no es un perfil de producto ni una dimensión de `DEC-013` en
 0.1. `DEC-013` selecciona Cranelift para la ruta AOT de
 `x86_64-unknown-linux-gnu`; LLVM se conserva como comparativa experimental.
 La decisión se limita al mismo MIR, runtime, stdlib, target y protocolo de
-medición y no cierra por sí sola Gate N1.
+medición; la promoción efectiva queda registrada únicamente por Gate N1.
 El contrato del lenguaje sigue siendo independiente del recolector; para la
 ruta AOT nativa `NATIVE-MEM-ADR-001` fija `hybrid-arc-cycle-collector`, mientras
 la VM conserva el tracing GC de referencia de `ADR-009`.
@@ -74,6 +82,7 @@ siendo una capacidad declarada por target.
 - [Contrato de owners Hosted STD-0.1A](./docs/contracts/stdlib-hosted.md)
 - [Contrato de distribución VM STD-0.1A](./docs/contracts/stdlib-distribution.md)
 - [Contrato del seal S1A STD-0.1A](./docs/contracts/stdlib-s1a-seal.md)
+- [Contrato de promoción del backend nativo Gate N1](./docs/contracts/native-n1.md)
 
 **RFCs de planificación:**
 
@@ -91,8 +100,8 @@ un bundle companion separado. El futuro candidato del lenguaje fijará G5 y S1;
 solo fijará L0 cuando se construya además una distribución TLF, sin convertirla
 en requisito de Tondo 0.1.
 
-**Objetivo inmediato:** iniciar los contratos runtime-facing B0 de Wave 6 tras
-cerrar `DEC-018` y `DIAG-SPEC-001`: el slice
+**Objetivo inmediato:** iniciar la implementación de `STD-0.1B` de Wave 8 tras
+cerrar Gate N1, comenzando por `STD-ASYNC-GROUP-IMPL-001`: el slice
 ejecutable de `select` ya está cerrado en la VM hosted —frontend,
 semántica tipada, lowering verificable, runtime cooperativo, ownership
 branch-sensitive, adapters `Waiter`/time, modelo/tests deterministas y
@@ -138,7 +147,7 @@ fronteras Core y Hosted de STD-0.1A están cerradas y la evidencia de enlace,
 targets, conformance y distribución ya está disponible para comparar
 Cranelift y LLVM. La campaña AOT completa, la normalización de artefactos
 enlazados, memoria, calidad y rendimiento ya tienen evidencia cerrada;
-Gate N1 queda como la siguiente compuerta. Las cifras rápidas
+Gate N1 queda cerrado por su informe compositivo. Las cifras rápidas
 anteriores no se usan para la decisión final: la campaña cerrada mide el
 producto enlazado completo y no mezcla buffers de código Cranelift con el
 objeto completo de LLVM.
@@ -161,8 +170,8 @@ TLF ni una publicación.
 `CONF-GAP-IMPL-001` y `CONF-LAYER-RESULT-001` mantienen T0 verificable sobre el
 árbol actual. `CONF-SEAL-FINAL-001` queda reservado para el primer candidato
 real; los límites `TL01-26-*` pertenecen a S1A. Los contratos
-runtime-facing de STD-0.1B esperan Gate N1; M11 conserva Gate N1 como frontera
-abierta tras la decisión `DEC-013`. Todo pertenece a la primera versión 0.1; los slices
+runtime-facing de STD-0.1B quedan ahora desbloqueados por Gate N1; M11 conserva
+la evidencia nativa promovida sin convertirla en un release. Todo pertenece a la primera versión 0.1; los slices
 son orden de implementación, no versiones públicas. La
 VM permanece como implementación de referencia y oracle diferencial del
 backend nativo. La lane TLF puede avanzar en paralelo porque solo depende del
@@ -172,9 +181,9 @@ opcional.
 
 `NATIVE-AOT-SCOPE-001`, `NATIVE-AOT-LOWER-001`, `NATIVE-AOT-BINARY-001`,
 `NATIVE-AOT-MEM-001`, `NATIVE-AOT-QUALITY-001` y `NATIVE-AOT-PERF-001` ya están
-cerrados. `DEC-013` seleccionó Cranelift para el target admitido; ningún
-informe de Cranelift/LLVM se interpreta como promoción automática y Gate N1
-sigue abierto hasta completar sus gates posteriores.
+cerrados. `DEC-013` seleccionó Cranelift para el target admitido y el informe
+compositivo de Gate N1 promueve esa implementación únicamente para
+`x86_64-unknown-linux-gnu`; no existe promoción automática para otros targets.
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -481,8 +490,8 @@ cantidad de infraestructura necesaria antes del primer programa ejecutable.
   que no existe fallback silencioso ni ABI FFI pública, en
   [`docs/adr/019-native-backend-selection.md`](docs/adr/019-native-backend-selection.md)
   y [`testing/native-selection.json`](testing/native-selection.json). La
-  decisión no cierra Gate N1: `NATIVE-ABI-001` y las compuertas posteriores
-  siguen verificando la implementación seleccionada.
+  selección quedó validada por Gate N1 para el target primario; las compuertas
+  posteriores verifican STD-0.1B y la distribución, no reabren el backend.
 
 - [x] **DEC-014 — Gestión de memoria nativa.** Cerrada por
   `NATIVE-MEM-ADR-001` antes de la ABI y el lowering nativos: fija ownership
@@ -625,10 +634,10 @@ necesaria; la fragmentación del workspace no.
 | **M10.5c — Infraestructura de conformidad** | Un único draft vivo y su ratchet | Completado; T0 verificable sobre el árbol actual |
 | **M10.7 — Metaprogramación estática** | `derive`, generators, meta VM y contribución a G5 | Completado |
 | **M10.6 — Testing de usuario Tondo 0.1** | Implementación de `tondo test` y contribución a G5 | Completado; incluido en el gate T0 vivo |
-| **DIAG — Tooling dinámico** | Race detector, leak/retention detector, crash dumps y runner integrado | DUMP y runner hosted cerrados; CI y native pendientes |
+| **DIAG — Tooling dinámico** | Race detector, leak/retention detector, crash dumps y runner integrado | Hosted y paridad native cerrados; capacidades físicas por target |
 | **STD-0.1A — Foundation + Hosted** | Base estándar necesaria para meta, testing y backend | S1A sellado como draft técnico; bundle reproducible, auditoría 214/214, matriz sin gaps aplicables y claims de publicación/backend/TLF desactivados |
-| **M11 — Backend nativo y optimización** | Implementación de producción | Futuro |
-| **STD-0.1B — Concurrency + Application** | Contratos runtime antes de M11; implementación tras N1 | Arquitectura base cerrada; contratos y código pendientes |
+| **M11 — Backend nativo y optimización** | Implementación de producción | Gate N1 cerrado para Cranelift/x86_64 GNU; optimizaciones posteriores pendientes |
+| **STD-0.1B — Concurrency + Application** | Contratos runtime antes de M11; implementación tras N1 | Arquitectura base cerrada; implementación desbloqueada y pendiente |
 | **TLF — Forma para agentes** | Transporte compacto hacia Tondo canónico | Spec y estudio exploratorio completados; reproducción, implementación, evaluación y bundle L0 pendientes |
 
 Estado observado del workspace:
@@ -813,10 +822,10 @@ no una promesa de implementación ya cerrada:
 | `DIAG-CI-001` | P0 | Lanes, fuzzing, budgets y promotion gate | Implementado hosted; workflow opt-in promovida |
 | `DIAG-NATIVE-001` | P0 | Paridad ejecutable de envelopes entre Cranelift y LLVM | Cerrado; ocho casos, redacción, ARC, FFI, recursos, unwind, source maps, corrupción y límites |
 
-`DIAG-SPEC-001` y `DIAG-RUNTIME-001` bloquean `NATIVE-001`. `RACE-001`,
+`DIAG-SPEC-001` y `DIAG-RUNTIME-001` bloquearon `NATIVE-001`. `RACE-001`,
 `LEAK-001` y `DUMP-001` están cerrados en VM hosted; `DIAG-NATIVE-001` demuestra
 la paridad lógica ejecutable en ambos candidatos y conserva la declaración
-explícita de capacidades físicas por target antes de entrar en Gate N1.
+explícita de capacidades físicas por target después del cierre de Gate N1.
 
 ### 4.2 Mapa de cobertura del spec
 
@@ -5509,7 +5518,8 @@ pueden retrasar el primer backend correcto.
   `docs/contracts/native-publish.md`; las decisiones puras están cubiertas por
   los scripts dedicados y los tests de `toolchain.rs`. La integración física
   del orquestador sigue reservada a `NATIVE-001`. Las leaves de la evaluación
-  AOT ya están cerradas; la siguiente compuerta es Gate N1 para Cranelift.
+  AOT ya están cerradas; Gate N1 ya está cerrado para Cranelift en el target
+  primario.
 
 - [x] **PERF-001 — Definir benchmarks y presupuestos antes de implementar.**
   El contrato global `tondo-performance/1` fija 14 workloads hash-pinned: cuatro
@@ -5537,7 +5547,7 @@ pueden retrasar el primer backend correcto.
   Cranelift después de la compuerta de diagnóstico y el adaptador común ya está cerrado;
   la lane física de `NATIVE-THREAD-001` y `NATIVE-002` están cerradas;
   `ARC-001`, `ARC-002` y `DIAG-NATIVE-001` están cerrados; la frontera Core
-  nativa también está cerrada y la siguiente frontera es Gate N1.
+  nativa también está cerrada y Gate N1 ya compone su evidencia de promoción.
 
 - [x] **DIAG-SPEC-001 — Cerrar el contrato unificado de diagnóstico dinámico.**
   Fijar profiles `race`, `leaks` y `crash`, el envelope
@@ -5647,8 +5657,8 @@ pueden retrasar el primer backend correcto.
   Cranelift para native AOT en este target; LLVM queda como comparativa
   experimental, sin fallback silencioso. La evidencia AOT se cerró mediante
   `NATIVE-AOT-SCOPE-001` → lowering completo → artefactos enlazados
-  normalizados → memoria/calidad → rendimiento completo. Gate N1 permanece
-  abierto hasta promover la implementación seleccionada.
+  normalizados → memoria/calidad → rendimiento completo. Gate N1 ya promueve la
+  implementación seleccionada para el target primario.
 
 - [x] **NATIVE-BACKEND-ADAPTER-001 — Sustituir el smoke adapter por lowering
   real común.** La primera slice ya consume `tondo-mir-backend/1` desde el MIR
@@ -5671,7 +5681,7 @@ pueden retrasar el primer backend correcto.
   `NATIVE-THREAD-001` y la coordinación mínima de `NATIVE-002` están cerradas;
   `ARC-001`, `ARC-002` y `DIAG-NATIVE-001` están cerrados. La evidencia de
   `NATIVE-STD-CORE-001` añade catorce casos nativos (Option/Result); las
-  compuertas AOT ya están cerradas y la siguiente frontera es Gate N1.
+  compuertas AOT ya están cerradas y alimentan el Gate N1 ya promovido.
 
 - [x] **NATIVE-MEM-ADR-001 — Cerrar DEC-014 antes de la ABI.** La decisión
   queda cerrada como `hybrid-arc-cycle-collector`: contadores no atómicos para
@@ -5972,8 +5982,8 @@ pueden retrasar el primer backend correcto.
   `target/reliability/evidence/native-diff.json`. El carril físico completo
   de `native-evaluation-runner.sh` es opt-in y sigue siendo evidencia de
   `NATIVE-001`; las campañas AOT posteriores de alcance, lowering, binarios,
-  memoria, calidad y rendimiento ya están cerradas para este target y dejan
-  Gate N1 como siguiente compuerta tras la decisión `DEC-013`.
+  memoria, calidad y rendimiento ya están cerradas para este target y el
+  informe compositivo de Gate N1 promueve Cranelift para el target primario.
 
 - [x] **NATIVE-TARGET-001 — Añadir targets uno a uno.** Cerrado para el primer
   target físico admitido, `x86_64-unknown-linux-gnu`/ELF `release`, con registry
@@ -5997,7 +6007,9 @@ pueden retrasar el primer backend correcto.
   `testing/native-target-aarch64.json`,
   `scripts/native-target-aarch64-{check,contract-test,test}.sh`,
   `docs/contracts/native-target.md` y el informe `native-target.json` del
-  artefacto `portable-testing-linux-aarch64`; el siguiente bloque es `N1`.
+  artefacto `portable-testing-linux-aarch64`; Gate N1 queda cerrado por la
+  evidencia composicional y ARM64 sigue siendo únicamente un smoke físico de
+  candidato hasta completar su corpus AOT.
 
 - [x] **NATIVE-REL-001 — Empaquetar builds reproducibles.** Cerrado con un
   paquete `tondo-native-package/1` que contiene binario, runtime, STD-0.1A,
@@ -6007,10 +6019,11 @@ pueden retrasar el primer backend correcto.
   paquetes parciales. Evidencia en `testing/native-rel.json`,
   `docs/contracts/native-rel.md`, `scripts/native-rel-{check,test}.sh` y
   `target/reliability/evidence/native-rel.json`; el paquete identifica
-  Cranelift como backend seleccionado y mantiene `pending-gate-n1`, por lo que
-  no se presenta como STD 0.1.0 final hasta cerrar Gate N1.
+  Cranelift como backend seleccionado y mantiene `pending-gate-n1` como estado
+  histórico del paquete candidato. Gate N1 registra la promoción del backend,
+  pero este paquete no se presenta como STD 0.1.0 final.
 
-#### Campaña AOT y promoción del backend (DEC-013 cerrado; Gate N1 pendiente)
+#### Campaña AOT y promoción del backend (DEC-013 y Gate N1 cerrados)
 
 - [x] **NATIVE-AOT-SCOPE-001 — Fijar el alcance AOT y la matriz de decisión.**
   Cerrado en `testing/native-aot-scope.json` y
@@ -6027,7 +6040,7 @@ pueden retrasar el primer backend correcto.
   en `scripts/native-aot-scope-{check,test}.sh`; `DEC-013` selecciona
   Cranelift para el target admitido, sin convertir este contrato de alcance en
   una compuerta de promoción. Las leaves posteriores hasta
-  `NATIVE-AOT-PERF-001` ya están cerradas; Gate N1 permanece pendiente.
+  `NATIVE-AOT-PERF-001` ya están cerradas y Gate N1 compone su evidencia.
 
 - [x] **NATIVE-AOT-LOWER-001 — Completar el lowering AOT del MIR admitido.**
   Extender el lowering común más allá de la slice mínima de `NATIVE-002` hasta
@@ -6064,7 +6077,7 @@ pueden retrasar el primer backend correcto.
   runtime, stdlib, target, linker, strip, readelf, flags y toolchain. Los
   hashes y secciones coinciden entre builds y ninguna ruta física entra en la
   evidencia; las compuertas de calidad y rendimiento AOT ya están cerradas y
-  la siguiente frontera es Gate N1 para Cranelift.
+  la evidencia alimenta el informe compositivo de Gate N1 para Cranelift.
 
 - [x] **NATIVE-AOT-MEM-001 — Capturar memoria y ARC en AOT.** Cerrado con
   `testing/native-aot-memory.json`: cada candidato construye y ejecuta un
@@ -6116,34 +6129,43 @@ pueden retrasar el primer backend correcto.
   selecciona backend automáticamente. `scripts/native-aot-performance-check.sh`
   y `scripts/native-aot-performance-test.sh` cubren el contrato y sus
   mutaciones negativas. El informe fue la entrada final de `DEC-013`, que
-  seleccionó Cranelift; Gate N1 queda abierto para su promoción.
+  seleccionó Cranelift; Gate N1 ya promueve esa ruta para el target primario
+  admitido.
 
 ### Gate N1 — Backend nativo conforme
 
-- [ ] La campaña `NATIVE-AOT-SCOPE-001`, `NATIVE-AOT-LOWER-001`,
+- [x] La campaña `NATIVE-AOT-SCOPE-001`, `NATIVE-AOT-LOWER-001`,
   `NATIVE-AOT-BINARY-001`, `NATIVE-AOT-MEM-001`,
   `NATIVE-AOT-QUALITY-001` y `NATIVE-AOT-PERF-001` está cerrada sin
   divergencias ni dimensiones omitidas.
-- [ ] El backend elegido tiene ADR, targets soportados y ABI runtime interna
+- [x] El backend elegido tiene ADR, targets soportados y ABI runtime interna
   explícitos.
-- [ ] `tondo build` y `tondo run` atraviesan el mismo plan de enlace cerrado y
+- [x] `tondo build` y `tondo run` atraviesan el mismo plan de enlace cerrado y
   el producto ejecutable supera smoke tests reales sin inputs ambientales.
-- [ ] DEC-014 está cerrado y ARC/ciclos correctos satisfacen los contratos de
+- [x] DEC-014 está cerrado y ARC/ciclos correctos satisfacen los contratos de
   concurrencia ya especificados sin layout público accidental.
-- [ ] Todos los programas admitidos atraviesan el MIR verificado común; no
+- [x] Todos los programas admitidos atraviesan el MIR verificado común; no
   existe frontend, type checker ni semántica paralela.
-- [ ] El adaptador nativo supera lenguaje y STD-0.1A con observaciones
+- [x] El adaptador nativo supera lenguaje y STD-0.1A con observaciones
   compatibles con la VM, incluidos los estados y reportes de `tondo test`.
-- [ ] Properties, fuzzing diferencial, GC/ARC/ciclos, async, pánicos y cleanup
+- [x] Properties, fuzzing diferencial, GC/ARC/ciclos, async, pánicos y cleanup
   pasan bajo stress y sanitización aplicable.
-- [ ] `DIAG-NATIVE-001` demuestra race/leaks/dumps reales y nunca degrada un
+- [x] `DIAG-NATIVE-001` demuestra race/leaks/dumps reales y nunca degrada un
   perfil requerido a `unsupported` por silencio.
-- [ ] Cada target publicado compila y ejecuta un corpus real sobre hardware del
+- [x] Cada target publicado compila y ejecuta un corpus real sobre hardware del
   target.
-- [ ] Las optimizaciones aceptadas aportan una mejora medida y conservan todos
+- [x] Las optimizaciones aceptadas aportan una mejora medida y conservan todos
   los oracles.
-- [ ] Los paquetes nativos son reproducibles y no prometen una ABI pública no
+- [x] Los paquetes nativos son reproducibles y no prometen una ABI pública no
   especificada.
+
+El gate queda cerrado por `scripts/native-n1.sh`, que genera el informe
+`target/reliability/evidence/native-n1.json` y lo valida con
+`scripts/native-n1-check.sh`; `scripts/native-n1-test.sh` demuestra que las
+mutaciones de contrato, procedencia, calidad, target, privacidad y claims
+fallan cerrado. La promoción es exclusivamente para Cranelift en
+`x86_64-unknown-linux-gnu`. ARM64 conserva un smoke físico de candidato y no
+se convierte en target publicado hasta completar su campaña AOT independiente.
 
 ### 20.4 Trabajo posterior a Gate N1
 
@@ -7353,7 +7375,7 @@ Esta tabla es la fuente de reconciliación del estado actual.
     `DIAG-RUNTIME-001` ya está cerrada y la siguiente frontera contractual son
     los detectores de M11. Mini-gate: DEC-013/014 reciben requisitos completos sin
     implementar todavía STD-0.1B.
-28. [ ] **Wave 7 — M11 correcto antes que optimizado.** Con Wave 6 cerrada y
+28. [x] **Wave 7 — M11 correcto antes que optimizado.** Con Wave 6 cerrada y
     `DUMP-001`, `DIAG-TEST-001` y `DIAG-NATIVE-001` cerrados, continuar
     `NATIVE-BACKEND-ADAPTER-001` (cerrado) → `NATIVE-MEM-ADR-001` →
     `NATIVE-ABI-001` → leaves `NATIVE-LOWER-*` → `NATIVE-THREAD-001` (cerrado) →
@@ -7363,7 +7385,9 @@ Esta tabla es la fuente de reconciliación del estado actual.
     NATIVE-DIFF-001 → targets → NATIVE-REL-001 →
     `NATIVE-AOT-SCOPE-001` → `NATIVE-AOT-LOWER-001` →
     (`NATIVE-AOT-BINARY-001` + `NATIVE-AOT-MEM-001` + `NATIVE-AOT-QUALITY-001`) →
-    `NATIVE-AOT-PERF-001` (cerrado) → `DEC-013`. Cerrar Gate N1.
+    `NATIVE-AOT-PERF-001` (cerrado) → `DEC-013` → Gate N1 (cerrado por
+    `scripts/native-n1.sh`; Cranelift promovido para x86_64 GNU y ARM64
+    conservado como smoke de candidato).
 29. [ ] **Wave 8 — Completar STD-0.1B y candidato 0.1.** Terminar specs B,
     cerrar para cada owner las leaves `IMPL`, `HOST` aplicable, `TEST/FUZZ`,
     `PERF`, `CONF` y `DOC` de 21.3.1–21.3.13, y después los coordinadores
@@ -7434,7 +7458,10 @@ ejecutables; siguen las leaves de implementación y los detectores de M11.
 coordinación; `NATIVE-TARGET-DESC-001`, `NATIVE-ARTIFACT-001`,
 `NATIVE-LINK-PLAN-001`, `NATIVE-PUBLISH-SPEC-001` y `PERF-001` quedan cerrados
 como contratos puros. `NATIVE-AOT-PERF-001` queda cerrado con evidencia
-repetida y path-free; Gate N1 es la siguiente compuerta tras `DEC-013`.
+repetida y path-free; Gate N1 queda cerrado por su informe compositivo y
+promueve Cranelift únicamente para el target primario x86_64 GNU. El siguiente
+bloque crítico es `STD-ASYNC-GROUP-IMPL-001`; ARM64 conserva una clasificación
+de smoke de candidato hasta completar su corpus AOT.
 `TRACKER-LINT-001` está cerrado y su informe deriva los
 conteos directamente del tracker. `STD-A-ASYNC-API-001` ya
 cerró su contrato y auditoría, `ASYNC-DEFER-IMPL-001` cerró su hardening y
@@ -7459,6 +7486,8 @@ memoria, calidad y rendimiento también está cerrada; el adaptador común, su m
 identidad, la lane física de `NATIVE-THREAD-001` y la coordinación mínima de
 `NATIVE-002` están cerrados y `ARC-001`, `ARC-002` y `DIAG-NATIVE-001` ya están
 implementados. La frontera AOT está cerrada hasta `NATIVE-AOT-PERF-001`;
-queda Gate N1 antes de promover el backend seleccionado.
+la frontera AOT y Gate N1 están cerrados para el target primario; el backend
+seleccionado queda promovido únicamente para x86_64 GNU y el siguiente trabajo
+crítico es `STD-ASYNC-GROUP-IMPL-001`.
 
 ---

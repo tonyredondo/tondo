@@ -85,6 +85,17 @@ fi
     "${performance_args[@]}" \
     || die "native scalar runner failed"
 
+# The adapter owns the semantic observations, while this wrapper owns the
+# provenance of the source tree that produced them.  Keep the binding in the
+# report so a promotion gate cannot accidentally consume a stale runner from a
+# previous checkout.
+source_revision="$(git rev-parse HEAD)"
+annotated_report="$report.annotated"
+jq --arg source_revision "$source_revision" \
+    '. + {source_revision: $source_revision}' \
+    "$report" > "$annotated_report"
+mv -- "$annotated_report" "$report"
+
 jq -e '
   .format == "tondo-native-evaluation-candidates/1"
   and .phase == "NATIVE-001"

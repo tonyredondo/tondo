@@ -67,6 +67,28 @@ jobs:
       - name: Bind candidate evidence for decision
         run: TONDO_NATIVE_SELECTION_REUSE=1 bash scripts/native-selection-capture.sh
 
+      - name: Generate primary target and release evidence for N1
+        run: |
+          CARGO_TARGET_DIR=target bash scripts/native-target-test.sh
+          CARGO_TARGET_DIR=target bash scripts/native-rel-test.sh
+
+      - name: Upload N1 primary evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-n1-primary-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            target/reliability/evidence/native-evaluation.json
+            target/reliability/evidence/native-evaluation-runner.json
+            target/reliability/evidence/native-aot-quality.json
+            target/reliability/evidence/native-aot-performance.json
+            target/reliability/evidence/native-conf.json
+            target/reliability/evidence/native-diff.json
+            target/reliability/evidence/native-rel.json
+            target/reliability/evidence/native-target.json
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Upload native evaluation evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -120,3 +142,74 @@ jobs:
           path: target/reliability/evidence/native-selection.json
           if-no-files-found: error
           retention-days: 14
+
+  physical-arm64:
+    name: N1 physical target (Linux ARM64)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Run ARM64 physical target smoke
+        shell: bash
+        run: |
+          mkdir -p target/platform-test/linux-aarch64
+          CARGO_TARGET_DIR=target \
+            TONDO_NATIVE_TARGET_EVIDENCE=target/platform-test/linux-aarch64/native-target.json \
+            bash scripts/native-target-aarch64-test.sh
+
+      - name: Upload ARM64 N1 evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-n1-arm64-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/platform-test/linux-aarch64/native-target.json
+          if-no-files-found: error
+          retention-days: 14
+
+  promote:
+    name: Promote Gate N1
+    needs: [evaluate, physical-arm64]
+    if: needs.evaluate.result == 'success' && needs.physical-arm64.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Download primary N1 evidence
+        uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
+        with:
+          name: native-n1-primary-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/reliability/evidence
+
+      - name: Download ARM64 N1 evidence
+        uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
+        with:
+          name: native-n1-arm64-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/platform-test/linux-aarch64
+
+      - name: Check N1 contract
+        run: bash scripts/native-n1-check.sh --contract-only
+
+      - name: Promote Gate N1
+        run: bash scripts/native-n1.sh
+
+      - name: Run N1 negative tests
+        run: bash scripts/native-n1-test.sh
+
+      - name: Upload N1 promotion evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-n1-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/reliability/evidence/native-n1.json
+          if-no-files-found: error
+          retention-days: 90

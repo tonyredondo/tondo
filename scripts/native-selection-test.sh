@@ -44,6 +44,7 @@ expect_failure stale-next "$tmp/stale-next.json"
 
 scripts/native-selection-check.sh >/dev/null
 grep -Fq 'Cranelift' docs/contracts/native-selection.md
-grep -Fq 'Gate N1 remains open' docs/contracts/native-selection.md
+grep -Fq 'native-n1' docs/contracts/native-selection.md
+grep -Fq 'cannot self-promote' docs/contracts/native-selection.md
 
-echo "native selection tests: OK (decision identity, target, rationale and N1 guard rejected)"
+echo "native selection tests: OK (decision identity, target, rationale and independent N1 promotion guard rejected)"

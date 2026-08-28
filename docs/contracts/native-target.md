@@ -27,7 +27,10 @@ Those claims still require a target entry, complete lowering and Gate N1.
 `scripts/native-target-aarch64-test.sh` resolves the absolute C driver, links
 the same deterministic fixture and executes it on the ARM64 host. Its report is
 kept with the portable CI artifact and is bound to the target and descriptor
-hashes. This is a physical target smoke, not a cross-compile claim; it does not
-promote the target or close N1 (`promotion: pending-gate-n1`). The selected
-Cranelift path is recorded for the candidate, while LLVM remains outside this
-target-specific smoke until its complete native product lane is admitted.
+hashes. This is a physical target smoke, not a cross-compile claim; it remains
+candidate-only and does not promote that target in Gate N1
+(`promotion: pending-gate-n1`). The selected Cranelift path is recorded for the
+candidate, while LLVM remains outside this target-specific smoke until its
+complete native product lane is admitted. Gate N1 promotes Cranelift only for
+the primary x86_64 GNU target; ARM64 needs its own complete AOT corpus before
+publication.

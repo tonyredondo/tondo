@@ -46,6 +46,15 @@ else
             scripts/native-evaluation-runner.sh
 fi
 
+if [[ "${TONDO_NATIVE_AOT_PERF_USE_EXISTING:-0}" != 1 ]]; then
+    source_revision="$(git rev-parse HEAD)"
+    annotated_report="$report.annotated"
+    jq --arg source_revision "$source_revision" \
+        '. + {source_revision: $source_revision}' \
+        "$report" > "$annotated_report"
+    mv -- "$annotated_report" "$report"
+fi
+
 run_step report-check \
     env TONDO_NATIVE_AOT_PERF_REPORT="$report" scripts/native-aot-performance-check.sh
 

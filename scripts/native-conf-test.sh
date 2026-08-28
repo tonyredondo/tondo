@@ -45,7 +45,7 @@ for category in language testing stdlib; do
 done
 
 contract_hash="$(sha256sum testing/native-conf.json | cut -d ' ' -f1)"
-jq -n --arg contract "sha256:$contract_hash" \
-  '{format:"tondo-native-conf-evidence/1",task:"NATIVE-CONF-001",status:"passed",contract:$contract,target:"x86_64-unknown-linux-gnu",mir:"tondo-mir-backend/1",oracle:"bytecode-vm-oracle",categories:{language:{status:"passed",cases:3},testing:{status:"passed",cases:3},stdlib:{status:"passed",cases:3}},backends:{cranelift:{status:"passed",cases:9},llvm:{status:"passed",cases:9}},dimensions:{cross_backend:true,independent_oracle:true,path_redaction:true,cleanup:true,fail_closed:true},physical_paths:[],divergences:[]}' \
+jq -n --arg contract "sha256:$contract_hash" --arg source_revision "$(git rev-parse HEAD)" \
+  '{format:"tondo-native-conf-evidence/1",task:"NATIVE-CONF-001",status:"passed",contract:$contract,source_revision:$source_revision,target:"x86_64-unknown-linux-gnu",mir:"tondo-mir-backend/1",oracle:"bytecode-vm-oracle",categories:{language:{status:"passed",cases:3},testing:{status:"passed",cases:3},stdlib:{status:"passed",cases:3}},backends:{cranelift:{status:"passed",cases:9},llvm:{status:"passed",cases:9}},dimensions:{cross_backend:true,independent_oracle:true,path_redaction:true,cleanup:true,fail_closed:true},physical_paths:[],divergences:[]}' \
   > "$evidence/native-conf.json"
 echo "native conformance coordination tests: OK (9 cases x 2 candidates; evidence written to ${evidence#"$root/"}/native-conf.json)"

@@ -287,8 +287,9 @@ runner. Production collection iteration and stdlib-owned field/index storage
 remain explicit follow-ups of the native stdlib/ABI boundaries; the bounded
 aggregate cases are counted only in `NATIVE-AOT-LOWER-001` and its linked
 product evidence. ARC/diagnostic work may now consume the coordinator
-contract. The selected backend is recorded separately; Gate N1 remains pending
-until the selected Cranelift product passes every promotion criterion.
+contract. The selected backend is recorded separately; this evaluation contract
+does not self-promote. Its exact-revision report is now one input to the closed
+Gate N1 composition, which promotes Cranelift only for the primary target.
 
 The static contract and negative cases run in the normal test gate. The
 evaluation runner is opt-in/manual because it compiles the real fixture corpus;

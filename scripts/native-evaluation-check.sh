@@ -151,4 +151,4 @@ while IFS=$'\t' read -r fixture_path required_features; do
     done
 done < <(jq -r '.mir_probe.fixtures[] | [.path, (.required_features | join(" "))] | @tsv' "$contract")
 
-echo "native evaluation: OK (candidate evidence lane does not auto-select; DEC-013 records Cranelift and Gate N1 remains pending)"
+echo "native evaluation: OK (candidate evidence lane does not auto-select; DEC-013 records Cranelift and Gate N1 promotion is composed separately)"

@@ -125,5 +125,7 @@ monotonic quantiles (`median ≤ p95 ≤ p99`).
 `NATIVE-AOT-PERF-001` is closed only after the report, contract checker,
 negative mutation suite and CI evidence pass. Closure supplies evidence to the
 human decision and does not itself pick a backend, change the public ABI, or
-claim support for an additional target. Gate N1 remains open for the selected
-Cranelift implementation.
+claim support for an additional target. The independent Gate N1 report now
+consumes this exact-revision evidence and promotes Cranelift only for the
+primary x86_64 GNU target; this performance contract cannot promote a target by
+itself.

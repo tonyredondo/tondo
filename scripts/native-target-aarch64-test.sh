@@ -42,7 +42,8 @@ jq -n \
     --arg contract "sha256:$contract_hash" \
     --arg descriptor "sha256:$descriptor_hash" \
     --arg host "$host" \
-    '{format:"tondo-native-target-evidence/1",task:"NATIVE-TARGET-002",status:"passed",contract:$contract,descriptor:$descriptor,target:"tondo-native-linux-aarch64-release",triple:$host,object_format:"elf",profile:"release",physical_smoke:true,artifact_kind:"executable",backends:["cranelift"],capabilities:["clock","console","filesystem","process"],cross_compile_is_smoke:false,path_lookup:false,environment_lookup:false,product:{status:"passed",verified_by:"native-link-evidence"},physical_paths:[]}' \
+    --arg source_revision "$(git rev-parse HEAD)" \
+    '{format:"tondo-native-target-evidence/1",task:"NATIVE-TARGET-002",status:"passed",contract:$contract,descriptor:$descriptor,source_revision:$source_revision,target:"tondo-native-linux-aarch64-release",triple:$host,object_format:"elf",profile:"release",physical_smoke:true,artifact_kind:"executable",backends:["cranelift"],capabilities:["clock","console","filesystem","process"],cross_compile_is_smoke:false,path_lookup:false,environment_lookup:false,product:{status:"passed",verified_by:"native-link-evidence"},physical_paths:[]}' \
     > "$report"
 
 echo "native target ARM64 smoke tests: OK (aarch64-unknown-linux-gnu physical target; report: ${report#"$root/"})"

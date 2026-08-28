@@ -59,7 +59,8 @@ jq -e '
 contract_hash="$(sha256sum testing/native-rel.json | cut -d ' ' -f1)"
 package_hash="$(sha256sum "$tmp/one.tar" | cut -d ' ' -f1)"
 package_bytes="$(stat -c '%s' "$tmp/one.tar")"
-jq -n --arg contract "sha256:$contract_hash" --arg package "sha256:$package_hash" --argjson bytes "$package_bytes" \
-  '{format:"tondo-native-rel-evidence/1",task:"NATIVE-REL-001",status:"passed",contract:$contract,package_format:"tondo-native-package/1",target:"tondo-native-linux-x86-64-release",triple:"x86_64-unknown-linux-gnu",profile:"release",backend_selection:"cranelift",promotion:"pending-gate-n1",reproducible:true,builds:2,package_sha256:$package,package_bytes:$bytes,contents:["binary","runtime","stdlib-0.1A","metadata","checksums"],physical_paths:[],timestamps:false,divergences:[]}' \
+jq -n --arg contract "sha256:$contract_hash" --arg package "sha256:$package_hash" \
+  --argjson bytes "$package_bytes" --arg source_revision "$(git rev-parse HEAD)" \
+  '{format:"tondo-native-rel-evidence/1",task:"NATIVE-REL-001",status:"passed",contract:$contract,source_revision:$source_revision,package_format:"tondo-native-package/1",target:"tondo-native-linux-x86-64-release",triple:"x86_64-unknown-linux-gnu",profile:"release",backend_selection:"cranelift",promotion:"pending-gate-n1",reproducible:true,builds:2,package_sha256:$package,package_bytes:$bytes,contents:["binary","runtime","stdlib-0.1A","metadata","checksums"],physical_paths:[],timestamps:false,divergences:[]}' \
   > "$target_dir/reliability/evidence/native-rel.json"
 echo "native reproducible release tests: OK (byte-identical package built twice)"

@@ -1,12 +1,12 @@
 # ADR-019: Select Cranelift as the first native backend
 
-- Status: Accepted — Cranelift selected for Tondo 0.1 AOT on
-  `x86_64-unknown-linux-gnu`; Gate N1 remains open
+- Status: Accepted — Cranelift promoted by Gate N1 for Tondo 0.1 AOT on
+  `x86_64-unknown-linux-gnu`; ARM64 remains a candidate smoke target
 - Date: 2026-08-28
 - Supersedes: none
 - Decision record: `DEC-013`
-- Next decision: Gate N1 (promote the selected Cranelift target only after the
-  complete conformance, diagnostics and packaging gates pass)
+- Next decision: STD-0.1B implementation (`STD-ASYNC-GROUP-IMPL-001`); a future
+  target needs its own complete AOT evidence before promotion
 
 ## Context
 
@@ -57,10 +57,11 @@ AOT campaign closed the required evidence boundary: samples with trapped
 unsupported functions remain non-semantic evidence, while the complete linked
 product, memory, quality and performance reports are bound to the decision.
 
-Selection is not promotion. The selected backend must still pass Gate N1, and
-no compiler path may silently fall back to LLVM or another backend. The
-selection is target-scoped; a future target requires its own evidence and
-decision record.
+Selection was not promotion until the compositional Gate N1 record passed.
+`scripts/native-n1.sh` now promotes Cranelift only for
+`x86_64-unknown-linux-gnu`; no compiler path may silently fall back to LLVM or
+another backend. The selection remains target-scoped; a future target requires
+its own evidence and decision record.
 
 This is intentionally bounded:
 
@@ -72,9 +73,9 @@ This is intentionally bounded:
   executable semantic slice;
 - it evaluates only the native AOT product path; JIT is not introduced as a
   hidden third candidate;
-- it does not claim peak memory, production runtime performance or Gate N1;
-- it does not allow a native target into N1 until exact VM equivalence and
-  diagnostic parity are demonstrated.
+- it does not claim a public release, stable object layout or public ABI;
+- it does not allow an additional native target into N1 until exact VM
+  equivalence and diagnostic parity are demonstrated for that target.
 
 ## Selection criteria
 
@@ -98,8 +99,9 @@ source-map, diagnostics and maintenance stack Tondo would have to own. It may
 be reconsidered only with a real adapter and identical evidence.
 
 The fast lane and bounded runner remain evidence mechanisms, not an automatic
-promotion gate. The human `DEC-013` record is now present, and repeated
-performance capture plus the normal quality gate remain required for N1.
+promotion gate. The human `DEC-013` record and the compositional N1 report are
+now present; repeated performance capture and the normal quality gate are
+retained as the evidence that justified this promotion.
 
 The physical `Thread` lane is now an explicit prerequisite rather than an
 assumption: the safe runtime launches a worker with a completion barrier and
@@ -141,8 +143,8 @@ cleanup/ownership, structured async and selection. Checked-overflow and
 logical-operator behavior, conversions, explicit-panic traps, loop-carried
 locals and branch joins are covered for the executable slice. Collection
 iteration and concrete aggregate storage remain explicit fail-closed leaves,
-not approximations. The native target/artifact/link/publish schemas remain
-useful contracts but do not imply that Gate N1 is closed. Production native
+not approximations. The native target/artifact/link/publish schemas feed the
+closed N1 record but do not themselves promote a target. Production native
 lowering for the admitted target now proceeds through Cranelift; the LLVM
 adapter remains available for differential testing and experimental comparison.
 A future target or a materially different workload requires new evidence and

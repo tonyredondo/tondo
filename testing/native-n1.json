@@ -1,0 +1,157 @@
+{
+  "format": "tondo-native-n1-contract/1",
+  "task": "N1",
+  "owner": "toolchain.native_n1",
+  "edition": "0.1",
+  "phase": "M11",
+  "status": "closed-contract",
+  "contract": "docs/contracts/native-n1.md",
+  "runner": "scripts/native-n1.sh",
+  "checker": "scripts/native-n1-check.sh",
+  "tests": "scripts/native-n1-test.sh",
+  "report": "target/reliability/evidence/native-n1.json",
+  "scope": {
+    "product": "native-aot",
+    "reference": "tondo-vm-hosted",
+    "jit": "out-of-scope",
+    "published_targets": ["x86_64-unknown-linux-gnu"],
+    "candidate_target_smokes": ["aarch64-unknown-linux-gnu"]
+  },
+  "backend": {
+    "selected": "cranelift",
+    "selection_record": "testing/native-selection.json",
+    "fallback": "forbidden",
+    "public_abi": false
+  },
+  "oracle": {
+    "vm": "bytecode-vm-oracle",
+    "mir": "normalized-MIR-reference-interpreter",
+    "mismatch": "fail-closed"
+  },
+  "required_inputs": [
+    "testing/native-n1.json",
+    "testing/native-selection.json",
+    "testing/native-abi.json",
+    "testing/native-aot-scope.json",
+    "testing/native-aot-lowering.json",
+    "testing/native-aot-binary.json",
+    "testing/native-aot-memory.json",
+    "testing/native-aot-quality.json",
+    "testing/native-aot-performance.json",
+    "testing/native-conf.json",
+    "testing/native-diff.json",
+    "testing/native-rel.json",
+    "testing/native-target.json",
+    "testing/native-target-aarch64.json",
+    "testing/native-evaluation.json",
+    "testing/native-evaluation-runner.json",
+    "TONDO_IMPLEMENTATION_TRACKER.md",
+    "docs/contracts/native-n1.md",
+    "scripts/native-n1.sh",
+    "scripts/native-n1-check.sh",
+    "scripts/native-n1-test.sh"
+  ],
+  "required_reports": [
+    {
+      "id": "NATIVE-EVALUATION-001",
+      "path": "target/reliability/evidence/native-evaluation.json",
+      "format": "tondo-native-evaluation-report/1",
+      "status": "passed",
+      "revision_field": "git_revision"
+    },
+    {
+      "id": "NATIVE-EVALUATION-RUNNER-001",
+      "path": "target/reliability/evidence/native-evaluation-runner.json",
+      "format": "tondo-native-evaluation-candidates/1",
+      "status": "passed",
+      "revision_field": "source_revision"
+    },
+    {
+      "id": "NATIVE-AOT-QUALITY-001",
+      "path": "target/reliability/evidence/native-aot-quality.json",
+      "format": "tondo-native-aot-quality/1",
+      "status": "passed",
+      "revision_field": "source_revision"
+    },
+    {
+      "id": "NATIVE-AOT-PERF-001",
+      "path": "target/reliability/evidence/native-aot-performance.json",
+      "format": "tondo-native-aot-performance/1",
+      "status": "passed",
+      "revision_field": "source_revision"
+    },
+    {
+      "id": "NATIVE-CONF-001",
+      "path": "target/reliability/evidence/native-conf.json",
+      "format": "tondo-native-conf-evidence/1",
+      "status": "passed",
+      "revision_field": "source_revision"
+    },
+    {
+      "id": "NATIVE-DIFF-001",
+      "path": "target/reliability/evidence/native-diff.json",
+      "format": "tondo-native-diff-evidence/1",
+      "status": "passed",
+      "revision_field": "source_revision"
+    },
+    {
+      "id": "NATIVE-REL-001",
+      "path": "target/reliability/evidence/native-rel.json",
+      "format": "tondo-native-rel-evidence/1",
+      "status": "passed",
+      "revision_field": "source_revision"
+    },
+    {
+      "id": "NATIVE-TARGET-001",
+      "path": "target/reliability/evidence/native-target.json",
+      "format": "tondo-native-target-evidence/1",
+      "status": "passed",
+      "revision_field": "source_revision"
+    },
+    {
+      "id": "NATIVE-TARGET-002",
+      "path": "target/platform-test/linux-aarch64/native-target.json",
+      "format": "tondo-native-target-evidence/1",
+      "status": "passed",
+      "revision_field": "source_revision"
+    }
+  ],
+  "criteria": [
+    "aot-campaign",
+    "backend-selection",
+    "shared-abi-mir",
+    "build-run",
+    "memory-ownership",
+    "diagnostic-parity",
+    "quality-regression",
+    "published-target",
+    "reproducible-package"
+  ],
+  "policies": {
+    "source_revision": "every report must match HEAD",
+    "workspace": "clean-git-head",
+    "physical_paths": "forbidden",
+    "unsupported_admitted": 0,
+    "divergences": 0,
+    "public_release": false,
+    "arm64_promotion": "candidate-smoke-only-until-complete-aot-corpus"
+  },
+  "negative_cases": [
+    "contract-format-drift",
+    "report-missing",
+    "report-status-drift",
+    "source-revision-drift",
+    "backend-drift",
+    "aot-campaign-incomplete",
+    "divergence",
+    "quality-regression",
+    "diagnostic-unsupported",
+    "published-target-missing",
+    "candidate-target-promoted",
+    "package-not-reproducible",
+    "physical-path-leak",
+    "public-abi-claim",
+    "dirty-workspace"
+  ],
+  "next_blocks": ["STD-ASYNC-GROUP-IMPL-001"]
+}

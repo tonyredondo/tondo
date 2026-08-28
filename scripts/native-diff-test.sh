@@ -54,6 +54,7 @@ if [[ "${TONDO_NATIVE_DIFF_EXECUTABLE:-0}" == 1 ]]; then
     executable_status="passed"
 fi
 jq -n --arg contract "sha256:$contract_hash" --arg executable "$executable_status" \
-  '{format:"tondo-native-diff-evidence/1",task:"NATIVE-DIFF-001",status:"passed",contract:$contract,target:"x86_64-unknown-linux-gnu",seed:"tondo-native-diff-0.1",oracle:"bytecode-vm-oracle",cases:9,backends:{cranelift:{status:"passed",cases:9},llvm:{status:"passed",cases:9}},properties:{same_observation_id_set:true,native_equals_oracle:true,cross_backend_equality:true,stable_generation:true,path_redaction:true,fail_closed_mismatch:true},executable_lane:$executable,physical_paths:[],divergences:[]}' \
+  --arg source_revision "$(git rev-parse HEAD)" \
+  '{format:"tondo-native-diff-evidence/1",task:"NATIVE-DIFF-001",status:"passed",contract:$contract,source_revision:$source_revision,target:"x86_64-unknown-linux-gnu",seed:"tondo-native-diff-0.1",oracle:"bytecode-vm-oracle",cases:9,backends:{cranelift:{status:"passed",cases:9},llvm:{status:"passed",cases:9}},properties:{same_observation_id_set:true,native_equals_oracle:true,cross_backend_equality:true,stable_generation:true,path_redaction:true,fail_closed_mismatch:true},executable_lane:$executable,physical_paths:[],divergences:[]}' \
   > "$target_dir/reliability/evidence/native-diff.json"
 echo "native differential tests: OK (9 generated cases x 2 candidates; executable lane: $executable_status)"

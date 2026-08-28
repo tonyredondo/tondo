@@ -56,6 +56,6 @@ treated as zero.
 ## Scope
 
 This block closes native memory evidence only. It does not run the complete
-quality/conformance corpus, publish a performance winner or promote Gate N1.
-`NATIVE-AOT-QUALITY-001` is now the closed quality gate; full `PERF-001`
-capture remains the next block.
+quality/conformance corpus or publish a performance winner. The quality and
+performance reports are now consumed by the independently hash-bound Gate N1
+promotion record; this block cannot promote a target by itself.
