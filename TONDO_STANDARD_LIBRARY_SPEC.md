@@ -949,10 +949,12 @@ La superficie ejecutable cubre `Join`, `oneshot`, `AsyncIterator` y el adapter
 `selectable` de `Waiter.wait`. Los adapters de tiempo (`sleep` y `Timer.wait`)
 usan la misma entrada de selección; `Group` pertenece a la extensión STD-0.1B
 y tiene su contrato machine-readable en
-[`testing/stdlib-async-group.json`](./testing/stdlib-async-group.json). Su
-superficie está contractualmente cerrada, pero tampoco se considera
-implementada hasta cerrar sus celdas `IMPL`, `MODEL`, `TEST`, `FUZZ`, `PERF`,
-`CONF` y `DOC`.
+[`testing/stdlib-async-group.json`](./testing/stdlib-async-group.json). La
+implementación hosted de VM está verificada por
+`STD-ASYNC-GROUP-IMPL-001` mediante el fixture
+`tests/runtime/m11-std-async-group-001.to`. La ruta nativa aún requiere su
+scheduler/ABI async y no se considera conformada hasta cerrar sus celdas
+`MODEL`, `TEST`, `FUZZ`, `PERF`, `CONF` y `DOC`.
 
 ### 9.5 Scheduler y backpressure
 
@@ -2204,8 +2206,10 @@ idénticos. Los hooks privados de diagnóstico omiten payloads por defecto.
 
 Esta sección fija el shape y los invariantes que deben cerrar los contratos
 exhaustivos de `std.async`, `std.channel`, `std.sync` y `std.executor`. Es una
-superficie objetivo de STD-0.1B: no afirma que esos símbolos estén disponibles
-en el compilador actual. Ningún módulo puede promocionarse hasta que exista
+superficie objetivo de STD-0.1B: `std.async.Group` ya está disponible en la VM
+hosted como implementación de referencia, pero el resto de símbolos siguen
+siendo contratos hasta que sus leaves estén cerradas. Ningún módulo puede
+promocionarse hasta que exista
 trazabilidad por firma y se cierren sus celdas de modelo, tests, fuzzing,
 rendimiento, conformidad y documentación.
 
@@ -2222,7 +2226,9 @@ El grupo es afín, adopta cada `Join` que recibe y debe consumirse con `all`,
 `settle` o `cancel`. `next` retira una finalización, pero no elimina la
 obligación de cerrar el grupo restante. Es una utilidad de coordinación, no un
 executor: no inicia trabajo, no acepta closures y no crea un segundo scheduler.
-Su extensión contractual vive en
+La implementación hosted conserva este contrato en el scheduler cooperativo
+único; la ruta nativa se mantiene como trabajo posterior del backend. Su
+extensión contractual vive en
 [`docs/contracts/stdlib-async.md`](./docs/contracts/stdlib-async.md).
 
 #### 14.4.2 Canales y productor/consumidor

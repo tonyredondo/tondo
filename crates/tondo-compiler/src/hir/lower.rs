@@ -311,7 +311,57 @@ impl<'a> TypeLowerer<'a> {
         }
         self.lower_bootstrap_serialization_nominal_declarations()?;
         self.lower_bootstrap_messagepack_nominal_declarations()?;
-        self.lower_bootstrap_protobuf_nominal_declarations()
+        self.lower_bootstrap_protobuf_nominal_declarations()?;
+        self.lower_bootstrap_async_nominal_declarations()
+    }
+
+    fn lower_bootstrap_async_nominal_declarations(&mut self) -> Result<(), HirError> {
+        let path = ModulePath::new("async")?;
+        let Some(module) = self.packages.module(self.packages.standard(), &path) else {
+            return Ok(());
+        };
+        let name = Name::new("Completion").expect("async nominal names are valid");
+        let Some(symbol) = self.resolved.bootstrap_nominal(&module, &name) else {
+            return Ok(());
+        };
+        let declaration = self
+            .resolved
+            .symbol(symbol)
+            .expect("async nominal symbols are indexed");
+        let success = self.interner.generic_parameter(0)?;
+        let error = self.interner.generic_parameter(1)?;
+        let outcome = self.interner.result(success, error)?;
+        let self_type = self
+            .interner
+            .nominal(declaration.identity().clone(), vec![success, error])?;
+        self.declarations.insert(
+            symbol,
+            HirTypeDeclaration {
+                symbol,
+                span: declaration.span(),
+                parameters: (0..2)
+                    .map(|position| HirGenericParameter {
+                        local: LocalId::synthetic_host_generic(position),
+                        position,
+                        bounds: Vec::new(),
+                    })
+                    .collect(),
+                kind: HirTypeDeclarationKind::Nominal(HirNominalDefinition {
+                    self_type,
+                    shape: HirNominalShape::Record {
+                        fields: vec![
+                            self.bootstrap_field(
+                                symbol,
+                                "index",
+                                self.interner.scalar(ScalarType::Int),
+                            ),
+                            self.bootstrap_field(symbol, "outcome", outcome),
+                        ],
+                    },
+                }),
+            },
+        );
+        Ok(())
     }
 
     fn lower_bootstrap_messagepack_nominal_declarations(&mut self) -> Result<(), HirError> {
@@ -1093,6 +1143,92 @@ impl<'a> TypeLowerer<'a> {
                 2,
                 Vec::new(),
             )?;
+            if async_referenced {
+                let group = self
+                    .interner
+                    .intrinsic(IntrinsicType::Group, vec![waiter_value, waiter_error])?;
+                let join = self
+                    .interner
+                    .intrinsic(IntrinsicType::Join, vec![waiter_value, waiter_error])?;
+                let completion_name =
+                    Name::new("Completion").expect("async nominal names are valid");
+                let completion_symbol = async_module
+                    .as_ref()
+                    .and_then(|module| self.resolved.bootstrap_nominal(module, &completion_name))
+                    .ok_or_else(|| HirError::TextInvariant {
+                        message: "async Completion nominal is not installed".into(),
+                    })?;
+                let completion_declaration =
+                    self.resolved.symbol(completion_symbol).ok_or_else(|| {
+                        HirError::TextInvariant {
+                            message: "async Completion symbol is not indexed".into(),
+                        }
+                    })?;
+                let completion = self.interner.nominal(
+                    completion_declaration.identity().clone(),
+                    vec![waiter_value, waiter_error],
+                )?;
+                self.push_bootstrap_generic_host_callable(
+                    span,
+                    HirBootstrapHostFunction::AsyncGroup,
+                    Vec::new(),
+                    group,
+                    2,
+                    Vec::new(),
+                )?;
+                self.push_bootstrap_generic_host_callable(
+                    span,
+                    HirBootstrapHostFunction::AsyncGroupAdd,
+                    vec![
+                        (group, ParameterMode::Var, true),
+                        (join, ParameterMode::Value, false),
+                    ],
+                    unit,
+                    2,
+                    Vec::new(),
+                )?;
+                let group_all_array = self
+                    .interner
+                    .intrinsic(IntrinsicType::Array, vec![waiter_value])?;
+                let group_all = self.interner.result(group_all_array, waiter_error)?;
+                self.push_bootstrap_generic_host_callable(
+                    span,
+                    HirBootstrapHostFunction::AsyncGroupAll,
+                    vec![(group, ParameterMode::Value, true)],
+                    group_all,
+                    2,
+                    Vec::new(),
+                )?;
+                let settled_item = self.interner.result(waiter_value, waiter_error)?;
+                let settled = self
+                    .interner
+                    .intrinsic(IntrinsicType::Array, vec![settled_item])?;
+                self.push_bootstrap_generic_host_callable(
+                    span,
+                    HirBootstrapHostFunction::AsyncGroupSettle,
+                    vec![(group, ParameterMode::Value, true)],
+                    settled,
+                    2,
+                    Vec::new(),
+                )?;
+                let completion_option = self.interner.option(completion)?;
+                self.push_bootstrap_generic_host_callable(
+                    span,
+                    HirBootstrapHostFunction::AsyncGroupNext,
+                    vec![(group, ParameterMode::Var, true)],
+                    completion_option,
+                    2,
+                    Vec::new(),
+                )?;
+                self.push_bootstrap_generic_host_callable(
+                    span,
+                    HirBootstrapHostFunction::AsyncGroupCancel,
+                    vec![(group, ParameterMode::Value, true)],
+                    unit,
+                    2,
+                    Vec::new(),
+                )?;
+            }
 
             // `AsyncIterator.collect(limit:)` is a compiler-owned async
             // extension.  Its source is any type carrying the static
@@ -7562,6 +7698,7 @@ impl<'a> TypeLowerer<'a> {
                         | IntrinsicType::Range
                         | IntrinsicType::Pointer
                         | IntrinsicType::Join
+                        | IntrinsicType::Group
                         | IntrinsicType::Waiter
                         | IntrinsicType::Completer
                         | IntrinsicType::AlreadyCompleted

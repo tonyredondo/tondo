@@ -871,6 +871,7 @@ impl<'a> ExpressionChecker<'a> {
                         | IntrinsicType::Range
                         | IntrinsicType::Pointer
                         | IntrinsicType::Join
+                        | IntrinsicType::Group
                         | IntrinsicType::Waiter
                         | IntrinsicType::Completer
                         | IntrinsicType::AlreadyCompleted
@@ -15083,6 +15084,7 @@ impl<'a> ExpressionChecker<'a> {
                     HirBootstrapHostFunction::ProtobufEncodeOptionsConstruct
                 }
                 ("async", Some("oneshot")) => HirBootstrapHostFunction::AsyncOneshot,
+                ("async", Some("group")) => HirBootstrapHostFunction::AsyncGroup,
                 ("iter", Some("map")) => HirBootstrapHostFunction::IterMap,
                 ("iter", Some("filter")) => HirBootstrapHostFunction::IterFilter,
                 ("iter", Some("take")) => HirBootstrapHostFunction::IterTake,
@@ -18580,6 +18582,11 @@ impl<'a> ExpressionChecker<'a> {
                 (IntrinsicType::Timer, "wait") => HirBootstrapHostFunction::TimerWait,
                 (IntrinsicType::Timer, "cancel") => HirBootstrapHostFunction::TimerCancel,
                 (IntrinsicType::Waiter, "wait") => HirBootstrapHostFunction::AsyncWaiterWait,
+                (IntrinsicType::Group, "add") => HirBootstrapHostFunction::AsyncGroupAdd,
+                (IntrinsicType::Group, "all") => HirBootstrapHostFunction::AsyncGroupAll,
+                (IntrinsicType::Group, "settle") => HirBootstrapHostFunction::AsyncGroupSettle,
+                (IntrinsicType::Group, "next") => HirBootstrapHostFunction::AsyncGroupNext,
+                (IntrinsicType::Group, "cancel") => HirBootstrapHostFunction::AsyncGroupCancel,
                 (IntrinsicType::Completer, "complete") => {
                     HirBootstrapHostFunction::AsyncCompleterComplete
                 }
@@ -18769,6 +18776,8 @@ impl<'a> ExpressionChecker<'a> {
                 | HirBootstrapHostFunction::AsyncCompleterComplete
                 | HirBootstrapHostFunction::AsyncCompleterFail
                 | HirBootstrapHostFunction::AsyncCompleterCancel
+                | HirBootstrapHostFunction::AsyncGroupAdd
+                | HirBootstrapHostFunction::AsyncGroupNext
                 | HirBootstrapHostFunction::JsonReaderNext
                 | HirBootstrapHostFunction::JsonReaderOwn
                 | HirBootstrapHostFunction::JsonReaderFinish

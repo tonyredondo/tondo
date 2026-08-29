@@ -47,6 +47,27 @@ for marker in \
     grep -Fq "$marker" testing/stdlib-async-group.json
 done
 
+for marker in \
+    'HirBootstrapHostFunction::AsyncGroup' \
+    'HirBootstrapHostFunction::AsyncGroupAdd' \
+    'HirBootstrapHostFunction::AsyncGroupAll' \
+    'HirBootstrapHostFunction::AsyncGroupSettle' \
+    'HirBootstrapHostFunction::AsyncGroupNext' \
+    'HirBootstrapHostFunction::AsyncGroupCancel' \
+    'TaskWait::Group' \
+    'RuntimeGroupState' \
+    'poll_group_operation'; do
+    grep -Fq "$marker" \
+        crates/tondo-compiler/src/hir.rs \
+        crates/tondo-compiler/src/hir/lower.rs \
+        crates/tondo-vm/src/runtime/execute.rs \
+        || { echo "std.async.Group tests: missing implementation anchor $marker" >&2; exit 1; }
+done
+
+runtime_output="$(cargo run -q -p tondo-cli -- run tests/runtime/m11-std-async-group-001.to)"
+[[ "$runtime_output" == "group-ok" ]] \
+    || { echo "std.async.Group tests: runtime fixture produced unexpected output: $runtime_output" >&2; exit 1; }
+
 jq -e '
   .task == "STD-ASYNC-GROUP-SPEC-001"
   and .surface.selectable_operations == ["group-next"]
@@ -56,6 +77,14 @@ jq -e '
   and .next.losing_select_branch == "rollback-without-removal"
   and .cancel.drains_all_children == true
   and .implementation.public_api_promoted == false
+  and .implementation.status == "verified-hosted-vm"
+  and .implementation.native_status == "pending-native-async-runtime"
+  and .promotion.implementation_pending == [
+    "STD-ASYNC-GROUP-TEST-001",
+    "STD-ASYNC-GROUP-PERF-001",
+    "STD-ASYNC-GROUP-CONF-001",
+    "STD-ASYNC-GROUP-DOC-001"
+  ]
 ' testing/stdlib-async-group.json >/dev/null
 
-echo "std.async.Group tests: OK (negative contract cases, ownership, ordering and cancellation anchors)"
+echo "std.async.Group tests: OK (negative contract cases, hosted runtime, ownership, ordering and cancellation anchors)"

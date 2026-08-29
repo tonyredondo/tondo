@@ -95,6 +95,7 @@ pub(crate) const fn intrinsic_terminal_contract(
         | IntrinsicType::Range
         | IntrinsicType::Ref
         | IntrinsicType::Pointer
+        | IntrinsicType::Group
         | IntrinsicType::Waiter
         | IntrinsicType::Completer
         | IntrinsicType::AlreadyCompleted
@@ -488,12 +489,16 @@ fn intrinsic_node(constructor: IntrinsicType, arguments: Vec<TypeId>) -> Termina
     if intrinsic_terminal_contract(constructor).is_some() {
         return fixed(HirTerminalStatus::Present);
     }
+    if constructor == IntrinsicType::Group {
+        return fixed(HirTerminalStatus::Present);
+    }
     match constructor {
         IntrinsicType::Array | IntrinsicType::Map | IntrinsicType::Set | IntrinsicType::Range => {
             dependent(arguments)
         }
         IntrinsicType::Ref
         | IntrinsicType::Pointer
+        | IntrinsicType::Group
         | IntrinsicType::Waiter
         | IntrinsicType::Completer
         | IntrinsicType::AlreadyCompleted

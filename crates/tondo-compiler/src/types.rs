@@ -111,6 +111,7 @@ pub enum IntrinsicType {
     Ref,
     Pointer,
     Join,
+    Group,
     Waiter,
     Completer,
     AlreadyCompleted,
@@ -206,6 +207,7 @@ impl IntrinsicType {
             Self::Ref => "Ref",
             Self::Pointer => "Pointer",
             Self::Join => "Join",
+            Self::Group => "Group",
             Self::Waiter => "Waiter",
             Self::Completer => "Completer",
             Self::AlreadyCompleted => "AlreadyCompleted",
@@ -299,7 +301,7 @@ impl IntrinsicType {
 
     pub fn arity(self) -> usize {
         match self {
-            Self::Map | Self::Join | Self::Waiter | Self::Completer => 2,
+            Self::Map | Self::Join | Self::Group | Self::Waiter | Self::Completer => 2,
             Self::Array | Self::Set | Self::Range | Self::Ref | Self::Pointer => 1,
             Self::ProtoDescriptor | Self::ProtoReader | Self::ProtoWriter => 1,
             Self::Command

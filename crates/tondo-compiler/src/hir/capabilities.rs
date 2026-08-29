@@ -640,6 +640,13 @@ fn intrinsic_node(
             }
         }
         IntrinsicType::Join => fixed(HirCapabilityStatus::Unsatisfied),
+        IntrinsicType::Group => {
+            if capability == HirCapability::Send {
+                satisfied(Vec::new())
+            } else {
+                fixed(HirCapabilityStatus::Unsatisfied)
+            }
+        }
         IntrinsicType::Waiter | IntrinsicType::Completer => {
             if capability == HirCapability::Send {
                 satisfied(Vec::new())

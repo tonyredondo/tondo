@@ -1,0 +1,195 @@
+import std.async
+import std.console
+
+fn immediate(value: Int): Int ! String suspends {
+    value
+}
+
+fn return_error(message: String): Int ! String suspends {
+    err(message)
+}
+
+fn blocked(waiter: async.Waiter[Int, String]): Int ! String suspends {
+    var owned = waiter
+    owned.wait()?
+}
+
+fn settle_mixed() {
+    scope {
+        var group = async.group[Int, String]()
+        let first = spawn immediate(10)
+        let second = spawn return_error("boom")
+        group.add(first)
+        group.add(second)
+        let result = group.settle()
+        assert(result.length() == 2)
+        match result[0] {
+            ok(value) => assert(value == 10)
+            err(_) => assert(false)
+        }
+        match result[1] {
+            ok(_) => assert(false)
+            err(message) => assert(message == "boom")
+        }
+    }
+}
+
+fn empty_group_operations() {
+    scope {
+        var all_group = async.group[Int, String]()
+        match all_group.all() {
+            ok(values) => assert(values.length() == 0)
+            err(_) => assert(false)
+        }
+        var settle_group = async.group[Int, String]()
+        let settled = settle_group.settle()
+        assert(settled.length() == 0)
+        var next_group = async.group[Int, String]()
+        match next_group.next() {
+            none => ()
+            some(_) => assert(false)
+        }
+        _ = next_group.cancel()
+        var cancel_group = async.group[Int, String]()
+        _ = cancel_group.cancel()
+    }
+}
+
+fn all_cancels_pending() {
+    let pair = async.oneshot[Int, String]()
+    var (waiter, completer) = pair
+    scope {
+        var group = async.group[Int, String]()
+        let pending = spawn blocked(waiter)
+        let failed = spawn return_error("cancel-me")
+        group.add(pending)
+        group.add(failed)
+        let result = group.all()
+        match result {
+            ok(_) => assert(false)
+            err(message) => assert(message == "cancel-me")
+        }
+    }
+    _ = completer.cancel()
+}
+
+fn next_observes_completion_order() {
+    let first_pair = async.oneshot[Int, String]()
+    var (first_waiter, first_completer) = first_pair
+    let second_pair = async.oneshot[Int, String]()
+    var (second_waiter, second_completer) = second_pair
+    scope {
+        var group = async.group[Int, String]()
+        let first = spawn blocked(first_waiter)
+        let second = spawn blocked(second_waiter)
+        group.add(first)
+        group.add(second)
+        _ = second_completer.complete(22)
+        let second_result = group.next()
+        match second_result {
+            some(completion) => {
+                assert(completion.index == 1)
+                match completion.outcome {
+                    ok(value) => assert(value == 22)
+                    err(_) => assert(false)
+                }
+            }
+            none => assert(false)
+        }
+        _ = first_completer.complete(11)
+        let first_result = group.next()
+        match first_result {
+            some(completion) => {
+                assert(completion.index == 0)
+                match completion.outcome {
+                    ok(value) => assert(value == 11)
+                    err(_) => assert(false)
+                }
+            }
+            none => assert(false)
+        }
+        match group.next() {
+            none => ()
+            some(_) => assert(false)
+        }
+        _ = group.cancel()
+    }
+}
+
+fn next_select_commits_once() {
+    scope {
+        var group = async.group[Int, String]()
+        let child = spawn immediate(33)
+        group.add(child)
+        let selected = select {
+            group.next() => 1
+        }
+        assert(selected == 1)
+        _ = group.cancel()
+    }
+}
+
+fn next_select_rolls_back() {
+    let pending_pair = async.oneshot[Int, String]()
+    var (pending_waiter, pending_completer) = pending_pair
+    let ready_pair = async.oneshot[Int, String]()
+    var (ready_waiter, ready_completer) = ready_pair
+    _ = ready_completer.complete(7)
+    scope {
+        var group = async.group[Int, String]()
+        let pending = spawn blocked(pending_waiter)
+        group.add(pending)
+        let selected = select {
+            group.next() => 1
+            ready_waiter.wait() => 2
+        }
+        assert(selected == 2)
+        _ = pending_completer.complete(9)
+        match group.next() {
+            some(completion) => {
+                assert(completion.index == 0)
+                match completion.outcome {
+                    ok(value) => assert(value == 9)
+                    err(_) => assert(false)
+                }
+            }
+            none => assert(false)
+        }
+        _ = group.cancel()
+    }
+}
+
+fn cancel_drains_pending() {
+    let pair = async.oneshot[Int, String]()
+    var (waiter, completer) = pair
+    scope {
+        var group = async.group[Int, String]()
+        let pending = spawn blocked(waiter)
+        group.add(pending)
+        _ = group.cancel()
+    }
+    _ = completer.cancel()
+}
+
+fn main() {
+    scope {
+        var group = async.group[Int, String]()
+        let first = spawn immediate(1)
+        let second = spawn immediate(2)
+        group.add(first)
+        group.add(second)
+        let result = group.all()
+        match result {
+            ok(values) => assert(values == [1, 2])
+            err(_) => assert(false)
+        }
+    }
+    empty_group_operations()
+    settle_mixed()
+    all_cancels_pending()
+    next_observes_completion_order()
+    next_select_commits_once()
+    next_select_rolls_back()
+    cancel_drains_pending()
+    console.print("group-ok\n")
+}

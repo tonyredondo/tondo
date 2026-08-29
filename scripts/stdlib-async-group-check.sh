@@ -125,11 +125,20 @@ jq -e '
   and ((.exclusions | unique | length) == (.exclusions | length))
   and ((.negative_cases | unique | length) == (.negative_cases | length))
   and (.negative_cases | length) == 20
-  and .implementation.status == "pending-after-native-gate"
+  and .implementation.status == "verified-hosted-vm"
   and .implementation.public_api_promoted == false
   and .implementation.host == "not-applicable"
+  and .implementation.native_status == "pending-native-async-runtime"
+  and (.implementation.source | type == "array" and length > 0)
+  and (.implementation.tests | type == "array" and length > 0)
+  and (.implementation.proof | type == "string" and length > 0)
+  and .implementation.required_follow_ups == [
+    "STD-ASYNC-GROUP-TEST-001",
+    "STD-ASYNC-GROUP-PERF-001",
+    "STD-ASYNC-GROUP-CONF-001",
+    "STD-ASYNC-GROUP-DOC-001"
+  ]
   and .promotion.implementation_pending == [
-    "STD-ASYNC-GROUP-IMPL-001",
     "STD-ASYNC-GROUP-TEST-001",
     "STD-ASYNC-GROUP-PERF-001",
     "STD-ASYNC-GROUP-CONF-001",
@@ -151,6 +160,7 @@ for marker in \
     'Group.next(var self): Completion[T, E]? selectable' \
     'menor índice entre' \
     'drena todos los hijos' \
+    'implementación hosted de VM está' \
     'HOST = not-applicable'; do
     grep -Fq "$marker" "$root/docs/contracts/stdlib-async.md" \
         || die "contract document misses marker: $marker"
@@ -159,4 +169,15 @@ done
 grep -Fq 'testing/stdlib-async-group.json' "$root/TONDO_STANDARD_LIBRARY_SPEC.md" \
     || die "main stdlib spec does not link the Group registry"
 
-echo "std.async.Group contract: OK (affine fan-in semantics; deterministic all/settle; selectable next; no host bridge)"
+while IFS= read -r path; do
+    [[ -e "$root/$path" ]] || die "missing implementation evidence path: $path"
+done < <(jq -r '.implementation.source[], .implementation.tests[]' "$contract")
+
+[[ -f "$root/tests/runtime/m11-std-async-group-001.to" ]] \
+    || die "missing Group runtime acceptance fixture"
+[[ -f "$root/tests/runtime/m11-std-async-group-001.exit" ]] \
+    || die "missing Group runtime exit oracle"
+[[ -f "$root/tests/runtime/m11-std-async-group-001.stdout" ]] \
+    || die "missing Group runtime stdout oracle"
+
+echo "std.async.Group contract: OK (affine fan-in semantics; hosted VM implementation; native runtime pending)"

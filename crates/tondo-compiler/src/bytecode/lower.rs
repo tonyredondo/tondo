@@ -4346,6 +4346,7 @@ fn intrinsic_type(value: IntrinsicType) -> bc::BytecodeIntrinsicType {
         IntrinsicType::Ref => bc::BytecodeIntrinsicType::Ref,
         IntrinsicType::Pointer => bc::BytecodeIntrinsicType::Pointer,
         IntrinsicType::Join => bc::BytecodeIntrinsicType::Join,
+        IntrinsicType::Group => bc::BytecodeIntrinsicType::Group,
         IntrinsicType::Waiter => bc::BytecodeIntrinsicType::Waiter,
         IntrinsicType::Completer => bc::BytecodeIntrinsicType::Completer,
         IntrinsicType::AlreadyCompleted => bc::BytecodeIntrinsicType::AlreadyCompleted,

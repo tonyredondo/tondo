@@ -100,8 +100,9 @@ un bundle companion separado. El futuro candidato del lenguaje fijará G5 y S1;
 solo fijará L0 cuando se construya además una distribución TLF, sin convertirla
 en requisito de Tondo 0.1.
 
-**Objetivo inmediato:** iniciar la implementación de `STD-0.1B` de Wave 8 tras
-cerrar Gate N1, comenzando por `STD-ASYNC-GROUP-IMPL-001`: el slice
+**Objetivo inmediato:** continuar la implementación de `STD-0.1B` de Wave 8 tras
+cerrar Gate N1. `STD-ASYNC-GROUP-IMPL-001` ya está cerrado para la VM hosted; el
+siguiente paso es su modelo/tests y la evidencia nativa correspondiente. El slice
 ejecutable de `select` ya está cerrado en la VM hosted —frontend,
 semántica tipada, lowering verificable, runtime cooperativo, ownership
 branch-sensitive, adapters `Waiter`/time, modelo/tests deterministas y
@@ -6215,7 +6216,7 @@ publica hasta cerrar el gate final.
 | Orden B | Owners | Dependencias duras | Momento |
 |---|---|---|---|
 | B0 | async group, sync, channel, executor y frontera net | `select` VM conforme + async/memoria/I/O/time A + `DIAG-SPEC-001` | contratos antes de los detectores/runner de M11 |
-| B1 | `std.async.Group` | `Join` + scopes + scheduler VM/nativo | implementación tras N1 |
+| B1 | `std.async.Group` | `Join` + scopes + scheduler VM/nativo | implementación hosted tras N1; native queda en conformance |
 | B2 | `std.sync` | DEC-014 + backend/VM schedulers | tras B1 |
 | B3 | `std.channel` | sync + scheduler + ownership `Send` | tras B2 |
 | B4 | `std.executor` | group/sync/channel + bridge bloqueante | tras B3 |
@@ -6476,12 +6477,17 @@ estas leaves.
 
 #### 21.3.1 Coordinación de `std.async`
 
-- [ ] **STD-ASYNC-GROUP-IMPL-001 — Implementar `Group[T, E]`.** Adoptar
-  `Join` homogéneos sin duplicar su frame ni outcome; implementar
-  `add/all/settle/next/cancel`, entrada seleccionable de `next`, grupos vacíos,
-  prioridad determinista de errores y cancelación drenada sobre el scheduler
-  único en VM y nativo. `HOST` es
-  `not-applicable`: no existe bridge ni primitiva host propia.
+- [x] **STD-ASYNC-GROUP-IMPL-001 — Implementar `Group[T, E]` en la VM hosted.**
+  `Join` homogéneos se transfieren sin duplicar frame ni outcome; la ruta
+  tipada implementa `add/all/settle/next/cancel`, la entrada seleccionable de
+  `next`, grupos vacíos, prioridad determinista de errores y cancelación
+  drenada sobre el scheduler cooperativo único. El fixture
+  `tests/runtime/m11-std-async-group-001.to` prueba fan-in, orden real de
+  finalización, `settle`, `select` con commit/rollback y cleanup de cancelación.
+  `HOST` es `not-applicable`: no existe bridge ni primitiva host propia. La
+  implementación nativa queda explícitamente pendiente de un scheduler/ABI
+  async nativo y se verificará en la conformidad cruzada, no se oculta como
+  completada por esta evidencia hosted.
 - [ ] **STD-ASYNC-GROUP-TEST-001 — Modelar, probar y fuzzear grupos.** Mantener
   registros separados `MODEL`, `TEST` y `FUZZ` para la máquina afín: secuencias
   de add/next/terminal, éxito/error/pánico/cancelación, finalizaciones
@@ -7453,15 +7459,16 @@ contrato D0 de diagnóstico; `STD-ASYNC-GROUP-SPEC-001`, `STD-CONC-001`,
 `STD-SYNC-001`, `STD-EXEC-001`, `STD-NET-001`, `STD-CIVIL-TIME-001`,
 `STD-ENCODING-001`, `STD-YAML-001`, `STD-TOML-001`, `STD-CBOR-001`,
 `STD-REGEX-001`, `STD-ID-001` y `STD-LOG-001` ya tienen registros y negativos
-ejecutables; siguen las leaves de implementación y los detectores de M11.
+ejecutables; `STD-ASYNC-GROUP-IMPL-001` ya está cerrado para VM hosted y siguen
+sus leaves de modelo/tests/perf/conformance/docs y los detectores de M11.
 `STD-IMPL-001` y `STD-IMPL-002` quedan ahora cerrados por sus gates de
 coordinación; `NATIVE-TARGET-DESC-001`, `NATIVE-ARTIFACT-001`,
 `NATIVE-LINK-PLAN-001`, `NATIVE-PUBLISH-SPEC-001` y `PERF-001` quedan cerrados
 como contratos puros. `NATIVE-AOT-PERF-001` queda cerrado con evidencia
 repetida y path-free; Gate N1 queda cerrado por su informe compositivo y
 promueve Cranelift únicamente para el target primario x86_64 GNU. El siguiente
-bloque crítico es `STD-ASYNC-GROUP-IMPL-001`; ARM64 conserva una clasificación
-de smoke de candidato hasta completar su corpus AOT.
+bloque crítico es `STD-ASYNC-GROUP-TEST-001`; ARM64 conserva una clasificación
+de smoke de candidato hasta completar su corpus AOT y la ruta async nativa.
 `TRACKER-LINT-001` está cerrado y su informe deriva los
 conteos directamente del tracker. `STD-A-ASYNC-API-001` ya
 cerró su contrato y auditoría, `ASYNC-DEFER-IMPL-001` cerró su hardening y
@@ -7488,6 +7495,7 @@ identidad, la lane física de `NATIVE-THREAD-001` y la coordinación mínima de
 implementados. La frontera AOT está cerrada hasta `NATIVE-AOT-PERF-001`;
 la frontera AOT y Gate N1 están cerrados para el target primario; el backend
 seleccionado queda promovido únicamente para x86_64 GNU y el siguiente trabajo
-crítico es `STD-ASYNC-GROUP-IMPL-001`.
+crítico es `STD-ASYNC-GROUP-TEST-001`; la implementación hosted de Group ya
+está cerrada y la ruta nativa sigue pendiente.
 
 ---

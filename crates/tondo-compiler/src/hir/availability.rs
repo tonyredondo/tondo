@@ -6,12 +6,12 @@ use crate::types::{CursorMode, ParameterMode, TypeError, TypeId, TypeKind};
 
 use super::{
     CapabilityAnalysis, CapabilityAssumptions, HirAssignmentOperator, HirAssignmentTarget,
-    HirAssignmentTargetKind, HirBinaryOperator, HirCallProtocol, HirCapability,
-    HirCapabilityStatus, HirClosureCapture, HirExpressionId, HirExpressionKind, HirForKind,
-    HirIterationProtocol, HirLoopId, HirMatchMode, HirPatternId, HirPatternKind, HirProgram,
-    HirScopeId, HirStatement, HirTerminalStatus, HirValueCategory, HirVariantValue, HirWriteKind,
-    StaticCollectionRegion, StaticRegionRelation, TerminalAnalysis, static_collection_relation,
-    static_nonnegative_integer, static_slice,
+    HirAssignmentTargetKind, HirBinaryOperator, HirBootstrapHostFunction, HirCallProtocol,
+    HirCallableId, HirCapability, HirCapabilityStatus, HirClosureCapture, HirExpressionId,
+    HirExpressionKind, HirForKind, HirIterationProtocol, HirLoopId, HirMatchMode, HirPatternId,
+    HirPatternKind, HirProgram, HirScopeId, HirStatement, HirTerminalStatus, HirValueCategory,
+    HirVariantValue, HirWriteKind, StaticCollectionRegion, StaticRegionRelation, TerminalAnalysis,
+    static_collection_relation, static_nonnegative_integer, static_slice,
 };
 
 #[derive(Clone, Debug, Default)]
@@ -765,6 +765,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 protocol,
                 ..
             } => {
+                let host_function = self.host_function(*callee);
                 let baseline = handoff_baseline(&state);
                 let callee_demand = if *protocol == HirCallProtocol::CallOnce {
                     Demand::Transfer
@@ -829,6 +830,34 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 }
                 flow.retain_loans(&retained_loans);
                 settle_handoff(&mut flow, &baseline);
+                if let Some(function) = host_function {
+                    if function == HirBootstrapHostFunction::AsyncGroupAdd {
+                        if let Some(state) = &mut flow.normal {
+                            for argument in arguments {
+                                release_spawn_join(
+                                    state,
+                                    TerminalOwner::Temporary(argument.value()),
+                                );
+                                if let Some(local) = self.direct_local(argument.value()) {
+                                    release_spawn_join(state, TerminalOwner::Local(local));
+                                }
+                            }
+                        }
+                    } else if matches!(
+                        function,
+                        HirBootstrapHostFunction::AsyncGroupAll
+                            | HirBootstrapHostFunction::AsyncGroupSettle
+                            | HirBootstrapHostFunction::AsyncGroupCancel
+                    ) {
+                        if let Some(receiver) = arguments.first().map(|argument| argument.value()) {
+                            consume_terminal_argument(
+                                &mut flow,
+                                receiver,
+                                self.direct_local(receiver),
+                            );
+                        }
+                    }
+                }
                 flow
             }
             HirExpressionKind::Await { operation } => {
@@ -919,14 +948,30 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 );
                 self.sequence(state, values, live_after)?
             }
-            HirExpressionKind::BootstrapHostCall { arguments, .. } => self.sequence(
-                state,
-                arguments
-                    .iter()
-                    .copied()
-                    .map(|argument| (argument, Demand::Transfer)),
-                live_after,
-            )?,
+            HirExpressionKind::BootstrapHostCall {
+                function,
+                arguments,
+            } => {
+                let mut flow = self.sequence(
+                    state,
+                    arguments
+                        .iter()
+                        .copied()
+                        .map(|argument| (argument, Demand::Transfer)),
+                    live_after,
+                )?;
+                if *function == super::HirBootstrapHostFunction::AsyncGroupAdd {
+                    if let Some(state) = &mut flow.normal {
+                        for argument in arguments {
+                            release_spawn_join(state, TerminalOwner::Temporary(*argument));
+                            if let Some(local) = self.direct_local(*argument) {
+                                release_spawn_join(state, TerminalOwner::Local(local));
+                            }
+                        }
+                    }
+                }
+                flow
+            }
             HirExpressionKind::PropagateOption { value }
             | HirExpressionKind::PropagateResult { value, .. } => {
                 let baseline = handoff_baseline(&state);
@@ -3703,6 +3748,17 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         }
     }
 
+    fn host_function(&self, expression: HirExpressionId) -> Option<HirBootstrapHostFunction> {
+        match self.program.expression(expression)?.kind() {
+            HirExpressionKind::Function(HirCallableId::Host(function)) => Some(*function),
+            HirExpressionKind::SpecializedFunction {
+                callable: HirCallableId::Host(function),
+                ..
+            } => Some(*function),
+            _ => None,
+        }
+    }
+
     fn direct_pattern_local(&self, pattern: HirPatternId) -> Option<LocalId> {
         match self.program.pattern(pattern)?.kind() {
             HirPatternKind::Binding(local) => Some(*local),
@@ -4621,6 +4677,33 @@ fn remove_local(state: &mut AvailabilityState, local: LocalId) {
     state.defer_reserved.remove(&TerminalOwner::Local(local));
     release_spawn_join(state, TerminalOwner::Local(local));
     state.loans.remove(&LoanIdentity::Pattern(local));
+}
+
+/// Consumes a terminal argument whose host operation owns its lifecycle.
+///
+/// Ordinary by-value calls retain the handoff in `terminal_reserved` until
+/// their result is known to be transferred.  Group terminal operations are
+/// different: `all`, `settle`, and `cancel` consume the group itself and do
+/// not return a terminal value, so the receiver must be removed immediately
+/// on their normal completion path.
+fn consume_terminal_argument(
+    flow: &mut AvailabilityFlow,
+    expression: HirExpressionId,
+    local: Option<LocalId>,
+) {
+    let mut owners = vec![TerminalOwner::Temporary(expression)];
+    if let Some(local) = local {
+        owners.push(TerminalOwner::Local(local));
+    }
+    if let Some(state) = &mut flow.normal {
+        for owner in owners {
+            state.terminal_live.remove(&owner);
+            state.terminal_reserved.remove(&owner);
+            state.defer_guards.remove(&owner);
+            state.defer_reserved.remove(&owner);
+            release_spawn_join(state, owner);
+        }
+    }
 }
 
 fn release_spawn_join(state: &mut AvailabilityState, owner: TerminalOwner) {

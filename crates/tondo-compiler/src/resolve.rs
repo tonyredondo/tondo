@@ -670,6 +670,14 @@ fn bootstrap_serialization_nominals() -> [(&'static str, SymbolKind, BootstrapNo
     ]
 }
 
+fn bootstrap_async_nominals() -> [(&'static str, SymbolKind, BootstrapNominalShape); 1] {
+    [(
+        "Completion",
+        SymbolKind::Type,
+        BootstrapNominalShape::Record(&["index", "outcome"]),
+    )]
+}
+
 fn bootstrap_messagepack_nominals() -> [(&'static str, SymbolKind, BootstrapNominalShape); 5] {
     [
         (
@@ -931,7 +939,8 @@ impl Resolver<'_> {
             program,
             "protobuf",
             &bootstrap_protobuf_nominals(),
-        )
+        )?;
+        self.install_bootstrap_module_nominals(file, program, "async", &bootstrap_async_nominals())
     }
 
     fn install_bootstrap_module_nominals(
@@ -977,7 +986,11 @@ impl Resolver<'_> {
                 kind: *kind,
                 visibility: Visibility::Public,
                 span,
-                generic_arity: 0,
+                generic_arity: if module_name == "async" && name.as_str() == "Completion" {
+                    2
+                } else {
+                    0
+                },
                 synthetic: true,
             });
             program

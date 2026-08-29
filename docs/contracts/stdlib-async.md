@@ -83,7 +83,10 @@ La extensión B añade un único agregado homogéneo para coordinar un número
 dinámico de hijos ya iniciados. El contrato machine-readable está en
 [`testing/stdlib-async-group.json`](../../testing/stdlib-async-group.json) y
 queda cerrado por `STD-ASYNC-GROUP-SPEC-001`. Esto fija la semántica, pero no
-afirma implementación runtime:
+afirma por sí solo la conformidad completa. La implementación hosted de VM está
+verificada por `STD-ASYNC-GROUP-IMPL-001` y por el fixture ejecutable
+`tests/runtime/m11-std-async-group-001.to`; la ruta nativa permanece pendiente
+de un scheduler/ABI async nativo y de su corpus de conformidad:
 
 ```tondo
 pub type Group[T, E]
@@ -134,10 +137,12 @@ puede esperar la primera finalización mediante `select`; los perdedores siguen
 perteneciendo al caller. La stdlib no añade tuples awaitables, variadic generics
 heterogéneos ni overloads por aridad.
 
-La superficie no se promueve hasta completar `STD-ASYNC-GROUP-IMPL-001`, su
-modelo de estados afín, tests, fuzzing, presupuestos de rendimiento, conformidad
-VM/nativa y documentación ejecutable. `HOST = not-applicable`: `Group` compone
-el scheduler y `Join` existentes y no enlaza una primitiva host propia.
+La superficie no se promueve hasta completar el modelo de estados afín, tests,
+fuzzing, presupuestos de rendimiento, conformidad VM/nativa y documentación
+ejecutable. `STD-ASYNC-GROUP-IMPL-001` cierra ahora la implementación hosted de
+VM; la implementación nativa y la conformidad cruzada siguen siendo leaves
+separadas. `HOST = not-applicable`: `Group` compone el scheduler y `Join`
+existentes y no enlaza una primitiva host propia.
 
 ### Eventos observables para diagnóstico
 
@@ -156,8 +161,10 @@ expresión núcleo acepta `await join`, `Waiter.wait` y `Group.next`; `Waiter.wa
 publica ya `selectable` y usa la ABI de registro/commit/rollback de la VM. Un
 brazo perdedor no consume el `Join`, waiter o grupo, y la cancelación del scope
 desregistra todos los brazos antes del unwind. `Group.next` está contractualmente
-cerrado en STD-0.1B, pero no se considera implementado hasta cerrar sus leaves
-`IMPL`, `MODEL`, `TEST`, `FUZZ`, `PERF`, `CONF` y `DOC`.
+cerrado en STD-0.1B. Su operación hosted de VM está implementada junto con
+`all`, `settle` y `cancel`; el owner no se promueve hasta cerrar sus leaves
+`MODEL`, `TEST`, `FUZZ`, `PERF`, `CONF` y `DOC` y la evidencia nativa que
+corresponda.
 
 ## Estado de implementación de STD-0.1A
 

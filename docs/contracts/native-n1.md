@@ -61,8 +61,9 @@ or workspace state is covered by the negative suite in
 `scripts/native-n1-test.sh`.
 
 No N1 result promotes STD-0.1B, G5, S1, TLF, a release package or a public ABI.
-After N1, the critical path continues with `STD-ASYNC-GROUP-IMPL-001` and the
-remaining STD-0.1B implementation leaves. Native ARC elimination, COW,
+After N1, the hosted `STD-ASYNC-GROUP-IMPL-001` slice is implemented and the
+critical path continues with `STD-ASYNC-GROUP-TEST-001` plus the remaining
+STD-0.1B implementation/conformance leaves. Native ARC elimination, COW,
 escape analysis, incremental compilation and LSP remain post-N1 optimization
 or tooling work.
 

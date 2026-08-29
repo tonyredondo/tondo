@@ -5,8 +5,9 @@
 - Date: 2026-08-28
 - Supersedes: none
 - Decision record: `DEC-013`
-- Next decision: STD-0.1B implementation (`STD-ASYNC-GROUP-IMPL-001`); a future
-  target needs its own complete AOT evidence before promotion
+- Next decision: STD-0.1B Group model/tests (`STD-ASYNC-GROUP-TEST-001`); the
+  hosted Group implementation is closed, while a future target needs its own
+  complete AOT async evidence before promotion
 
 ## Context
 

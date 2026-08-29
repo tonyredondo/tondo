@@ -218,6 +218,7 @@ pub enum RuntimeHostValueKind {
     Waiter,
     Completer,
     AlreadyCompleted,
+    Group,
 }
 
 /// Per-run counters useful for testing limits and collector behavior.

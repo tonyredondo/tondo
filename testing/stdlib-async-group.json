@@ -207,11 +207,33 @@
     "group-publishes-waitgroup-or-task-api"
   ],
   "implementation": {
-    "status": "pending-after-native-gate",
+    "status": "verified-hosted-vm",
     "public_api_promoted": false,
     "host": "not-applicable",
+    "native_status": "pending-native-async-runtime",
+    "source": [
+      "crates/tondo-compiler/src/types.rs",
+      "crates/tondo-compiler/src/resolve.rs",
+      "crates/tondo-compiler/src/hir.rs",
+      "crates/tondo-compiler/src/hir/check.rs",
+      "crates/tondo-compiler/src/hir/lower.rs",
+      "crates/tondo-compiler/src/hir/availability.rs",
+      "crates/tondo-compiler/src/hir/capabilities.rs",
+      "crates/tondo-compiler/src/hir/terminal.rs",
+      "crates/tondo-compiler/src/hir/verify.rs",
+      "crates/tondo-compiler/src/bytecode/lower.rs",
+      "crates/tondo-vm/src/bytecode.rs",
+      "crates/tondo-vm/src/bytecode/verify.rs",
+      "crates/tondo-vm/src/runtime.rs",
+      "crates/tondo-vm/src/runtime/execute.rs"
+    ],
+    "tests": [
+      "tests/runtime/m11-std-async-group-001.to",
+      "scripts/stdlib-async-group-check.sh",
+      "scripts/stdlib-async-group-test.sh"
+    ],
+    "proof": "hosted VM executes all/settle/next/cancel, completion-order selection and select rollback through the typed compiler and structured scheduler",
     "required_follow_ups": [
-      "STD-ASYNC-GROUP-IMPL-001",
       "STD-ASYNC-GROUP-TEST-001",
       "STD-ASYNC-GROUP-PERF-001",
       "STD-ASYNC-GROUP-CONF-001",
@@ -220,7 +242,6 @@
   },
   "promotion": {
     "implementation_pending": [
-      "STD-ASYNC-GROUP-IMPL-001",
       "STD-ASYNC-GROUP-TEST-001",
       "STD-ASYNC-GROUP-PERF-001",
       "STD-ASYNC-GROUP-CONF-001",

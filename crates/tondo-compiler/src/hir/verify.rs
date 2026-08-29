@@ -3,7 +3,7 @@ use std::error::Error;
 use std::fmt;
 
 use crate::package::{ModuleId, Name, SymbolIdentity};
-use crate::resolve::{LocalKind, MemberKind, MemberOwner, ResolvedProgram, SymbolKind};
+use crate::resolve::{LocalKind, MemberKind, MemberOwner, ResolvedProgram, Symbol, SymbolKind};
 use crate::types::{
     CursorMode, FunctionParameter, FunctionType, GeneratedTypeKind, IntrinsicType, ParameterMode,
     ScalarType, TypeId, TypeInterner, TypeKind, TypeSubstitution,
@@ -510,6 +510,7 @@ impl Verifier<'_> {
                         | IntrinsicType::Range
                         | IntrinsicType::Pointer
                         | IntrinsicType::Join
+                        | IntrinsicType::Group
                         | IntrinsicType::Waiter
                         | IntrinsicType::Completer
                         | IntrinsicType::AlreadyCompleted
@@ -3450,7 +3451,20 @@ impl Verifier<'_> {
                     ),
                 ));
             }
-            let synthetic_host = context.starts_with("host callable std.")
+            let synthetic_declaration = context
+                .strip_prefix("type declaration symbol#")
+                .and_then(|index| index.parse::<u32>().ok())
+                .and_then(|index| {
+                    self.program
+                        .declarations
+                        .keys()
+                        .find(|symbol| symbol.index() == index)
+                        .copied()
+                })
+                .and_then(|symbol| self.resolved.symbol(symbol))
+                .is_some_and(Symbol::is_synthetic);
+            let synthetic_host = (context.starts_with("host callable std.")
+                || synthetic_declaration)
                 && generic.local.index() == u32::MAX - generic.position;
             let local = if synthetic_host {
                 None

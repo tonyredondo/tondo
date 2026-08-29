@@ -234,6 +234,7 @@ pub enum BytecodeIntrinsicType {
     Ref,
     Pointer,
     Join,
+    Group,
     Waiter,
     Completer,
     AlreadyCompleted,
@@ -426,7 +427,7 @@ pub struct BytecodeTerminalContract {
 impl BytecodeIntrinsicType {
     pub const fn arity(self) -> usize {
         match self {
-            Self::Map | Self::Join | Self::Waiter | Self::Completer => 2,
+            Self::Map | Self::Join | Self::Group | Self::Waiter | Self::Completer => 2,
             Self::ProtoDescriptor | Self::ProtoReader | Self::ProtoWriter => 1,
             Self::Array | Self::Set | Self::Range | Self::Ref | Self::Pointer => 1,
             Self::Command
@@ -537,6 +538,7 @@ impl BytecodeIntrinsicType {
             | Self::Range
             | Self::Ref
             | Self::Pointer
+            | Self::Group
             | Self::Waiter
             | Self::Completer
             | Self::AlreadyCompleted

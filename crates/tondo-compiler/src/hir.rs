@@ -98,6 +98,7 @@ fn bootstrap_process_intrinsic(module: &ModuleId, name: &Name) -> Option<Intrins
             _ => return None,
         }),
         "async" => Some(match name.as_str() {
+            "Group" => IntrinsicType::Group,
             "Waiter" => IntrinsicType::Waiter,
             "Completer" => IntrinsicType::Completer,
             "AlreadyCompleted" => IntrinsicType::AlreadyCompleted,
@@ -2619,6 +2620,12 @@ pub enum HirBootstrapHostFunction {
     ProcessHandleCheck,
     ProcessHandleCancel,
     AsyncOneshot,
+    AsyncGroup,
+    AsyncGroupAdd,
+    AsyncGroupAll,
+    AsyncGroupSettle,
+    AsyncGroupNext,
+    AsyncGroupCancel,
     AsyncWaiterWait,
     AsyncCompleterComplete,
     AsyncCompleterFail,
@@ -2947,6 +2954,12 @@ impl HirBootstrapHostFunction {
             Self::ProcessHandleCheck => "std.process.ProcessHandle.check",
             Self::ProcessHandleCancel => "std.process.ProcessHandle.cancel",
             Self::AsyncOneshot => "std.async.oneshot",
+            Self::AsyncGroup => "std.async.group",
+            Self::AsyncGroupAdd => "std.async.Group.add",
+            Self::AsyncGroupAll => "std.async.Group.all",
+            Self::AsyncGroupSettle => "std.async.Group.settle",
+            Self::AsyncGroupNext => "std.async.Group.next",
+            Self::AsyncGroupCancel => "std.async.Group.cancel",
             Self::AsyncWaiterWait => "std.async.Waiter.wait",
             Self::AsyncCompleterComplete => "std.async.Completer.complete",
             Self::AsyncCompleterFail => "std.async.Completer.fail",
@@ -3306,6 +3319,10 @@ impl HirBootstrapHostFunction {
                 | Self::ProcessHandleCheck
                 | Self::ProcessHandleCancel
                 | Self::AsyncWaiterWait
+                | Self::AsyncGroupAll
+                | Self::AsyncGroupSettle
+                | Self::AsyncGroupNext
+                | Self::AsyncGroupCancel
                 | Self::AsyncIteratorCollect
                 | Self::TimeSleep
                 | Self::TimerWait
@@ -3331,7 +3348,7 @@ impl HirBootstrapHostFunction {
     pub const fn is_selectable(self) -> bool {
         matches!(
             self,
-            Self::AsyncWaiterWait | Self::TimeSleep | Self::TimerWait
+            Self::AsyncWaiterWait | Self::AsyncGroupNext | Self::TimeSleep | Self::TimerWait
         )
     }
 

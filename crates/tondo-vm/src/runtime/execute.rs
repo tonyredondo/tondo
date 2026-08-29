@@ -626,6 +626,20 @@ enum TaskWait {
         id: u64,
         outcome: BytecodeTypeId,
     },
+    Group {
+        id: u64,
+        operation: RuntimeGroupOperation,
+        outcome: BytecodeTypeId,
+        destination: BytecodePlace,
+        target: BytecodeBlockId,
+        unwind: BytecodeBlockId,
+    },
+    GroupTask {
+        id: u64,
+        operation: RuntimeGroupOperation,
+        outcome: BytecodeTypeId,
+        probe: bool,
+    },
     Select {
         unwind: BytecodeBlockId,
     },
@@ -644,6 +658,28 @@ struct OneShotState {
     completion: Option<OneShotCompletion>,
     waiter_tasks: Vec<usize>,
     waiter_consumed: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RuntimeGroupChild {
+    task: usize,
+    index: usize,
+    success: BytecodeTypeId,
+    error: BytecodeTypeId,
+}
+
+#[derive(Debug, Default)]
+struct RuntimeGroupState {
+    children: Vec<RuntimeGroupChild>,
+    waiters: Vec<usize>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RuntimeGroupOperation {
+    All,
+    Settle,
+    Next,
+    Cancel,
 }
 
 #[derive(Debug)]
@@ -710,6 +746,10 @@ struct Engine<'program, 'host> {
     task_scopes: Vec<Option<RuntimeTaskScope>>,
     oneshots: BTreeMap<u64, OneShotState>,
     next_oneshot_id: u64,
+    groups: BTreeMap<u64, RuntimeGroupState>,
+    next_group_id: u64,
+    completion_order: BTreeMap<usize, u64>,
+    next_completion_sequence: u64,
     statistics: VmStatistics,
     callable_names: Vec<String>,
     nominal_names: Vec<String>,
@@ -752,6 +792,10 @@ impl<'program, 'host> Engine<'program, 'host> {
             task_scopes: Vec::new(),
             oneshots: BTreeMap::new(),
             next_oneshot_id: 1,
+            groups: BTreeMap::new(),
+            next_group_id: 1,
+            completion_order: BTreeMap::new(),
+            next_completion_sequence: 1,
             statistics: VmStatistics::default(),
             callable_names: program
                 .callables
@@ -1240,6 +1284,121 @@ impl<'program, 'host> Engine<'program, 'host> {
                     }
                 }
             }
+            TaskWait::Group {
+                id,
+                operation,
+                outcome,
+                destination,
+                target,
+                unwind,
+            } => {
+                let frame = self
+                    .frames
+                    .len()
+                    .checked_sub(1)
+                    .ok_or_else(|| VmError::invariant("a resumed Group wait has no frame"))?;
+                if self.tasks[self.current_task].cancel_requested
+                    || self.current_scope_has_unobserved_panic(frame)?
+                {
+                    self.request_group_cancellation(id)?;
+                    if !self.group_is_terminal(id)? {
+                        self.park_group(
+                            id,
+                            TaskWait::Group {
+                                id,
+                                operation,
+                                outcome,
+                                destination,
+                                target,
+                                unwind,
+                            },
+                        )?;
+                        return Ok(false);
+                    }
+                    self.remove_group_waiter(id, self.current_task)?;
+                    self.remove_group(id)?;
+                    self.begin_cancel(frame, unwind)?;
+                    return Ok(true);
+                }
+                match self.poll_group_operation(id, operation, outcome)? {
+                    GroupPoll::Pending => {
+                        self.park_group(
+                            id,
+                            TaskWait::Group {
+                                id,
+                                operation,
+                                outcome,
+                                destination,
+                                target,
+                                unwind,
+                            },
+                        )?;
+                        Ok(false)
+                    }
+                    GroupPoll::Ready(value) => {
+                        self.write_place(frame, &destination, value)?;
+                        self.jump(frame, target);
+                        Ok(true)
+                    }
+                    GroupPoll::Panic(panic) => {
+                        self.begin_propagated_panic(frame, panic, unwind)?;
+                        Ok(true)
+                    }
+                }
+            }
+            TaskWait::GroupTask {
+                id,
+                operation,
+                outcome,
+                probe,
+            } => {
+                if self.tasks[self.current_task].cancel_requested {
+                    if probe {
+                        self.remove_group_waiter(id, self.current_task)?;
+                        self.complete_current_task(TaskCompletion::Cancelled)?;
+                        return Ok(false);
+                    }
+                    self.request_group_cancellation(id)?;
+                    if !self.group_is_terminal(id)? {
+                        self.park_group(
+                            id,
+                            TaskWait::GroupTask {
+                                id,
+                                operation,
+                                outcome,
+                                probe,
+                            },
+                        )?;
+                        return Ok(false);
+                    }
+                    self.remove_group_waiter(id, self.current_task)?;
+                    self.remove_group(id)?;
+                    self.complete_current_task(TaskCompletion::Cancelled)?;
+                    return Ok(false);
+                }
+                match self.poll_group_operation(id, operation, outcome)? {
+                    GroupPoll::Pending => {
+                        self.park_group(
+                            id,
+                            TaskWait::GroupTask {
+                                id,
+                                operation,
+                                outcome,
+                                probe,
+                            },
+                        )?;
+                        Ok(false)
+                    }
+                    GroupPoll::Ready(value) => {
+                        self.complete_current_task(TaskCompletion::Returned(value))?;
+                        Ok(false)
+                    }
+                    GroupPoll::Panic(panic) => {
+                        self.complete_current_task(TaskCompletion::Panicked(panic))?;
+                        Ok(false)
+                    }
+                }
+            }
             TaskWait::Select { unwind } => {
                 let frame = self
                     .frames
@@ -1607,6 +1766,7 @@ impl<'program, 'host> Engine<'program, 'host> {
     }
 
     fn complete_task(&mut self, task: usize, completion: TaskCompletion) -> Result<(), VmError> {
+        self.assign_completion_order(task)?;
         let discard = self
             .tasks
             .get(task)
@@ -1650,6 +1810,37 @@ impl<'program, 'host> Engine<'program, 'host> {
         for waiter in waiters {
             self.wake_task(waiter)?;
         }
+        let group_waiters = self
+            .groups
+            .values_mut()
+            .filter_map(|group| {
+                group
+                    .children
+                    .iter()
+                    .any(|child| child.task == task)
+                    .then(|| std::mem::take(&mut group.waiters))
+            })
+            .flatten()
+            .collect::<Vec<_>>();
+        for waiter in group_waiters {
+            self.wake_task(waiter)?;
+        }
+        Ok(())
+    }
+
+    fn assign_completion_order(&mut self, task: usize) -> Result<(), VmError> {
+        if self.completion_order.contains_key(&task) {
+            return Ok(());
+        }
+        let sequence = self.next_completion_sequence;
+        self.next_completion_sequence =
+            self.next_completion_sequence
+                .checked_add(1)
+                .ok_or(VmError::ResourceLimit {
+                    resource: "completion order",
+                    limit: u64::MAX,
+                })?;
+        self.completion_order.insert(task, sequence);
         Ok(())
     }
 
@@ -1665,6 +1856,7 @@ impl<'program, 'host> Engine<'program, 'host> {
             .take()
             .ok_or_else(|| VmError::invariant("task completion was consumed twice"))?;
         record.status = TaskStatus::Consumed;
+        self.completion_order.remove(&task);
         let parent = self.diagnostic_parent(task);
         self.record_task(task, parent, DiagnosticTaskState::Consumed)?;
         self.record_sync(
@@ -1725,6 +1917,11 @@ impl<'program, 'host> Engine<'program, 'host> {
     }
 
     fn finish_root_task(&mut self) -> Result<VmExecution, VmError> {
+        if !self.groups.is_empty() {
+            return Err(VmError::invariant(
+                "the root task completed while Groups remained live",
+            ));
+        }
         if self
             .tasks
             .iter()
@@ -1950,6 +2147,7 @@ impl<'program, 'host> Engine<'program, 'host> {
             OperationResult::HostAsync { name, .. } => Err(VmError::UnsupportedHostCall(name)),
             OperationResult::AsyncIteratorCollect { .. }
             | OperationResult::OneShotWait { .. }
+            | OperationResult::GroupWait { .. }
             | OperationResult::TestBoundaryCall { .. }
             | OperationResult::VirtualTimeBoundaryCall { .. } => Err(VmError::invariant(
                 "AsyncIterator.next crossed an unsupported internal boundary",
@@ -2151,6 +2349,7 @@ impl<'program, 'host> Engine<'program, 'host> {
             .ok_or_else(|| VmError::invariant("completed task targets a missing task scope"))?
             .children
             .push(task);
+        self.assign_completion_order(task)?;
         self.record_new_task(task, Some(scope), DiagnosticTaskState::Complete)?;
         Ok(task)
     }
@@ -2174,6 +2373,7 @@ impl<'program, 'host> Engine<'program, 'host> {
             panic_observed: false,
             discard_completion: false,
         });
+        self.assign_completion_order(task)?;
         self.record_new_task(task, None, DiagnosticTaskState::Complete)?;
         Ok(task)
     }
@@ -2240,6 +2440,50 @@ impl<'program, 'host> Engine<'program, 'host> {
         Ok(task)
     }
 
+    fn spawn_group_task_with_scope(
+        &mut self,
+        id: u64,
+        operation: RuntimeGroupOperation,
+        outcome: BytecodeTypeId,
+        scope: Option<usize>,
+        probe: bool,
+    ) -> Result<usize, VmError> {
+        if !self.groups.contains_key(&id) {
+            return Err(VmError::invariant("Group task references an unknown group"));
+        }
+        let task = self.tasks.len();
+        self.tasks.push(TaskRecord {
+            frames: Vec::new(),
+            pending_unwind: None,
+            async_collect: None,
+            status: TaskStatus::Waiting(TaskWait::GroupTask {
+                id,
+                operation,
+                outcome,
+                probe,
+            }),
+            resume: None,
+            queued: false,
+            cancel_requested: false,
+            waiters: Vec::new(),
+            parent_scope: scope,
+            join_consumed: false,
+            panic_observed: false,
+            discard_completion: false,
+        });
+        if let Some(scope) = scope {
+            self.task_scopes
+                .get_mut(scope)
+                .and_then(Option::as_mut)
+                .ok_or_else(|| VmError::invariant("Group task targets a missing scope"))?
+                .children
+                .push(task);
+        }
+        self.record_new_task(task, scope, DiagnosticTaskState::Waiting)?;
+        self.wake_task(task)?;
+        Ok(task)
+    }
+
     fn spawn_cancelled_task_with_scope(&mut self, scope: Option<usize>) -> Result<usize, VmError> {
         let task = self.tasks.len();
         self.tasks.push(TaskRecord {
@@ -2256,6 +2500,7 @@ impl<'program, 'host> Engine<'program, 'host> {
             panic_observed: false,
             discard_completion: false,
         });
+        self.assign_completion_order(task)?;
         if let Some(scope) = scope {
             self.task_scopes
                 .get_mut(scope)
@@ -2994,6 +3239,19 @@ impl<'program, 'host> Engine<'program, 'host> {
                             self.spawn_oneshot_task_with_scope(id, outcome, scope)?
                         }
                     }
+                    OperationResult::GroupWait {
+                        id,
+                        operation,
+                        outcome,
+                    } => {
+                        if operation != RuntimeGroupOperation::Next {
+                            return Err(VmError::invariant(
+                                "only Group.next can be registered in select",
+                            ));
+                        }
+                        let scope = self.select_task_scope(frame)?;
+                        self.spawn_group_task_with_scope(id, operation, outcome, scope, true)?
+                    }
                     OperationResult::Value(value) => self.spawn_select_value_task(value)?,
                     OperationResult::Panic(code, message) => {
                         let unwind = self.current_function(frame)?.unwind;
@@ -3522,6 +3780,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                     }
                     BytecodeIntrinsicType::Ref
                     | BytecodeIntrinsicType::Pointer
+                    | BytecodeIntrinsicType::Group
                     | BytecodeIntrinsicType::Waiter
                     | BytecodeIntrinsicType::Completer
                     | BytecodeIntrinsicType::AlreadyCompleted
@@ -4381,6 +4640,11 @@ impl<'program, 'host> Engine<'program, 'host> {
                             "a one-shot wait appeared in a synchronous invocation",
                         ));
                     }
+                    OperationResult::GroupWait { .. } => {
+                        return Err(VmError::invariant(
+                            "a Group wait appeared in a synchronous invocation",
+                        ));
+                    }
                     OperationResult::VirtualTimeBoundaryCall { .. } => {
                         return Err(VmError::invariant(
                             "an async virtual-time boundary appeared in a synchronous invocation",
@@ -4478,6 +4742,32 @@ impl<'program, 'host> Engine<'program, 'host> {
                                     )?;
                                 }
                             }
+                            OperationResult::GroupWait {
+                                id,
+                                operation,
+                                outcome,
+                            } => match self.poll_group_operation(id, operation, outcome)? {
+                                GroupPoll::Pending => {
+                                    self.park_group(
+                                        id,
+                                        TaskWait::Group {
+                                            id,
+                                            operation,
+                                            outcome,
+                                            destination: destination.clone(),
+                                            target: *target,
+                                            unwind: *unwind,
+                                        },
+                                    )?;
+                                }
+                                GroupPoll::Ready(value) => {
+                                    self.write_place(frame, destination, value)?;
+                                    self.jump(frame, *target);
+                                }
+                                GroupPoll::Panic(panic) => {
+                                    self.begin_propagated_panic(frame, panic, *unwind)?;
+                                }
+                            },
                             OperationResult::Panic(code, message) => {
                                 self.begin_panic(frame, code, message, span, *unwind)?;
                             }
@@ -4640,6 +4930,26 @@ impl<'program, 'host> Engine<'program, 'host> {
                     OperationResult::OneShotWait { id, outcome } => {
                         let scope = self.active_task_scope(frame, *scope)?;
                         let child = self.spawn_oneshot_task(id, outcome, scope)?;
+                        self.write_place(
+                            frame,
+                            destination,
+                            Value::Join(RuntimeJoin { task: child, scope }),
+                        )?;
+                        self.jump(frame, *target);
+                    }
+                    OperationResult::GroupWait {
+                        id,
+                        operation,
+                        outcome,
+                    } => {
+                        let scope = self.active_task_scope(frame, *scope)?;
+                        let child = self.spawn_group_task_with_scope(
+                            id,
+                            operation,
+                            outcome,
+                            Some(scope),
+                            false,
+                        )?;
                         self.write_place(
                             frame,
                             destination,
@@ -4848,6 +5158,11 @@ impl<'program, 'host> Engine<'program, 'host> {
                             OperationResult::OneShotWait { .. } => {
                                 return Err(VmError::invariant(
                                     "a one-shot wait cannot be used as deferred cleanup",
+                                ));
+                            }
+                            OperationResult::GroupWait { .. } => {
+                                return Err(VmError::invariant(
+                                    "a Group wait cannot be used as deferred cleanup",
                                 ));
                             }
                             OperationResult::Panic(code, message) => {
@@ -5091,6 +5406,11 @@ impl<'program, 'host> Engine<'program, 'host> {
                 OperationResult::OneShotWait { .. } => {
                     return Err(VmError::invariant(
                         "a one-shot wait cannot be used as deferred cleanup",
+                    ));
+                }
+                OperationResult::GroupWait { .. } => {
+                    return Err(VmError::invariant(
+                        "a Group wait cannot be used as deferred cleanup",
                     ));
                 }
                 OperationResult::Panic(code, message) => {
@@ -5546,6 +5866,7 @@ fn runtime_host_kind(constructor: BytecodeIntrinsicType) -> Option<RuntimeHostVa
         BytecodeIntrinsicType::ProtoReader => RuntimeHostValueKind::ProtoReader,
         BytecodeIntrinsicType::ProtoWriter => RuntimeHostValueKind::ProtoWriter,
         BytecodeIntrinsicType::UnknownFields => RuntimeHostValueKind::UnknownFields,
+        BytecodeIntrinsicType::Group => RuntimeHostValueKind::Group,
         BytecodeIntrinsicType::Array
         | BytecodeIntrinsicType::Map
         | BytecodeIntrinsicType::Set
@@ -5567,6 +5888,16 @@ fn oneshot_handle(value: &Value, expected: RuntimeHostValueKind) -> Result<u64, 
     };
     if *kind != expected || *id == 0 {
         return Err(VmError::invariant("one-shot handle has the wrong kind"));
+    }
+    Ok(*id)
+}
+
+fn group_handle(value: &Value) -> Result<u64, VmError> {
+    let Value::Host(RuntimeValue::Host { kind, id }) = value else {
+        return Err(VmError::invariant("Group handle is not opaque"));
+    };
+    if *kind != RuntimeHostValueKind::Group || *id == 0 {
+        return Err(VmError::invariant("Group handle has the wrong kind"));
     }
     Ok(*id)
 }
@@ -5602,7 +5933,18 @@ enum OperationResult {
         id: u64,
         outcome: BytecodeTypeId,
     },
+    GroupWait {
+        id: u64,
+        operation: RuntimeGroupOperation,
+        outcome: BytecodeTypeId,
+    },
     Panic(PanicCode, String),
+}
+
+enum GroupPoll {
+    Pending,
+    Ready(Value),
+    Panic(VmPanic),
 }
 
 enum IteratorStep {
@@ -9687,7 +10029,20 @@ impl Engine<'_, '_> {
                     }
                     return self.new_oneshot(metadata.outcome);
                 }
+                if metadata.name == "std.async.group"
+                    || metadata.name.starts_with("std.async.group[")
+                {
+                    if !values.is_empty() {
+                        return Err(VmError::invariant(
+                            "async.group received unexpected arguments",
+                        ));
+                    }
+                    return self.new_group(metadata.outcome);
+                }
                 if let Some(result) = self.prepare_oneshot_method(&metadata, &values)? {
+                    return Ok(result);
+                }
+                if let Some(result) = self.prepare_group_method(&metadata, &values)? {
                     return Ok(result);
                 }
                 if metadata.name.starts_with("std.collections.")
@@ -9920,6 +10275,658 @@ impl Engine<'_, '_> {
                 &[error],
             ),
         }
+    }
+
+    fn new_group(&mut self, _group_ty: BytecodeTypeId) -> Result<OperationResult, VmError> {
+        let id = self.next_group_id;
+        self.next_group_id = self
+            .next_group_id
+            .checked_add(1)
+            .ok_or(VmError::ResourceLimit {
+                resource: "group handles",
+                limit: u64::MAX,
+            })?;
+        self.groups.insert(id, RuntimeGroupState::default());
+        Ok(OperationResult::Value(Value::Host(RuntimeValue::Host {
+            kind: RuntimeHostValueKind::Group,
+            id,
+        })))
+    }
+
+    fn prepare_group_method(
+        &mut self,
+        metadata: &BytecodeCallable,
+        values: &[Value],
+    ) -> Result<Option<OperationResult>, VmError> {
+        let name = metadata
+            .name
+            .split_once('[')
+            .map_or(metadata.name.as_str(), |(base, _)| base);
+        let operation = match name {
+            "std.async.Group.add" => RuntimeGroupOperation::Next,
+            "std.async.Group.all" => RuntimeGroupOperation::All,
+            "std.async.Group.settle" => RuntimeGroupOperation::Settle,
+            "std.async.Group.next" => RuntimeGroupOperation::Next,
+            "std.async.Group.cancel" => RuntimeGroupOperation::Cancel,
+            _ => return Ok(None),
+        };
+        let receiver = metadata
+            .parameters
+            .iter()
+            .position(|parameter| parameter.receiver)
+            .ok_or_else(|| VmError::invariant("Group method has no receiver"))?;
+        let receiver_value = values
+            .get(receiver)
+            .ok_or_else(|| VmError::invariant("Group receiver is missing"))?;
+        let id = group_handle(receiver_value)?;
+        if !self.groups.contains_key(&id) {
+            return Err(VmError::invariant(
+                "Group handle references an unknown group",
+            ));
+        }
+
+        if name == "std.async.Group.add" {
+            let job_index = metadata
+                .parameters
+                .iter()
+                .position(|parameter| !parameter.receiver)
+                .ok_or_else(|| VmError::invariant("Group.add has no Join parameter"))?;
+            let job = values
+                .get(job_index)
+                .ok_or_else(|| VmError::invariant("Group.add Join argument is missing"))?;
+            let (success, error) = self.join_arguments(metadata.parameters[job_index].ty)?;
+            let Value::Join(join) = job else {
+                return Err(VmError::invariant("Group.add argument is not a Join"));
+            };
+            self.validate_group_join(*join)?;
+            let index = self
+                .groups
+                .get(&id)
+                .ok_or_else(|| VmError::invariant("Group disappeared during add"))?
+                .children
+                .len();
+            self.tasks[join.task].join_consumed = true;
+            self.groups
+                .get_mut(&id)
+                .ok_or_else(|| VmError::invariant("Group disappeared during add"))?
+                .children
+                .push(RuntimeGroupChild {
+                    task: join.task,
+                    index,
+                    success,
+                    error,
+                });
+            return Ok(Some(OperationResult::Value(Value::Unit)));
+        }
+
+        // `next` is deliberately represented as a wait even when a completion
+        // is already available.  Select registration must not consume the
+        // group during prepare; the synthetic task polls and commits it later.
+        if operation == RuntimeGroupOperation::Next {
+            return Ok(Some(OperationResult::GroupWait {
+                id,
+                operation,
+                outcome: metadata.outcome,
+            }));
+        }
+        match self.poll_group_operation(id, operation, metadata.outcome)? {
+            GroupPoll::Pending => Ok(Some(OperationResult::GroupWait {
+                id,
+                operation,
+                outcome: metadata.outcome,
+            })),
+            GroupPoll::Ready(value) => Ok(Some(OperationResult::Value(value))),
+            GroupPoll::Panic(panic) => Ok(Some(OperationResult::Panic(panic.code, panic.message))),
+        }
+    }
+
+    fn join_arguments(
+        &self,
+        ty: BytecodeTypeId,
+    ) -> Result<(BytecodeTypeId, BytecodeTypeId), VmError> {
+        let BytecodeTypeKind::Intrinsic {
+            constructor: BytecodeIntrinsicType::Join,
+            arguments,
+        } = &self
+            .program
+            .ty(ty)
+            .ok_or_else(|| VmError::invariant("Group.add Join type is missing"))?
+            .kind
+        else {
+            return Err(VmError::invariant("Group.add parameter is not Join"));
+        };
+        let [success, error] = arguments.as_slice() else {
+            return Err(VmError::invariant("Group.add Join has the wrong arity"));
+        };
+        Ok((*success, *error))
+    }
+
+    fn validate_group_join(&self, join: RuntimeJoin) -> Result<(), VmError> {
+        let task = self
+            .tasks
+            .get(join.task)
+            .ok_or_else(|| VmError::invariant("Group.add Join references an invalid task"))?;
+        let transferred = join.scope == TRANSFERRED_JOIN_SCOPE;
+        let active = self
+            .frames
+            .iter()
+            .any(|frame| frame.task_scopes.contains(&join.scope));
+        if (!transferred && (task.parent_scope != Some(join.scope) || !active))
+            || (transferred && task.parent_scope.is_some())
+            || task.join_consumed
+        {
+            return Err(VmError::invariant(
+                "Group.add Join was consumed twice or belongs to the wrong task scope",
+            ));
+        }
+        Ok(())
+    }
+
+    fn group_is_terminal(&self, id: u64) -> Result<bool, VmError> {
+        let state = self
+            .groups
+            .get(&id)
+            .ok_or_else(|| VmError::invariant("Group handle references an unknown group"))?;
+        state.children.iter().try_fold(true, |terminal, child| {
+            let status = &self
+                .tasks
+                .get(child.task)
+                .ok_or_else(|| VmError::invariant("Group child references an invalid task"))?
+                .status;
+            Ok(terminal && matches!(status, TaskStatus::Complete(_) | TaskStatus::Consumed))
+        })
+    }
+
+    fn park_group(&mut self, id: u64, wait: TaskWait) -> Result<(), VmError> {
+        let state = self
+            .groups
+            .get_mut(&id)
+            .ok_or_else(|| VmError::invariant("Group wait references an unknown group"))?;
+        if !state.waiters.contains(&self.current_task) {
+            state.waiters.push(self.current_task);
+        }
+        self.park_current(wait, &[])
+    }
+
+    fn remove_group_waiter(&mut self, id: u64, task: usize) -> Result<(), VmError> {
+        let state = self
+            .groups
+            .get_mut(&id)
+            .ok_or_else(|| VmError::invariant("Group wait references an unknown group"))?;
+        state.waiters.retain(|waiter| *waiter != task);
+        Ok(())
+    }
+
+    fn remove_group(&mut self, id: u64) -> Result<(), VmError> {
+        let state = self
+            .groups
+            .remove(&id)
+            .ok_or_else(|| VmError::invariant("Group handle references an unknown group"))?;
+        if !state.waiters.is_empty() {
+            return Err(VmError::invariant(
+                "Group was removed with waiting consumers",
+            ));
+        }
+        Ok(())
+    }
+
+    fn request_group_cancellation(&mut self, id: u64) -> Result<(), VmError> {
+        let children = self
+            .groups
+            .get(&id)
+            .ok_or_else(|| VmError::invariant("Group cancellation references an unknown group"))?
+            .children
+            .iter()
+            .map(|child| child.task)
+            .collect::<Vec<_>>();
+        for task in children {
+            self.request_group_child_cancel(task)?;
+        }
+        Ok(())
+    }
+
+    /// Group cancellation preserves each child's completion record so the
+    /// group can drain it deterministically.  The ordinary scope cancellation
+    /// path marks completions discarded, which is correct for detached cleanup
+    /// but would make `all`/`settle` lose their ownership ledger.
+    fn request_group_child_cancel(&mut self, task: usize) -> Result<(), VmError> {
+        let (host_call, wake) = {
+            let record = self
+                .tasks
+                .get_mut(task)
+                .ok_or_else(|| VmError::invariant("Group child does not exist"))?;
+            if matches!(
+                record.status,
+                TaskStatus::Complete(_) | TaskStatus::Consumed
+            ) {
+                return Ok(());
+            }
+            record.cancel_requested = true;
+            match &record.status {
+                TaskStatus::Waiting(TaskWait::HostCall { call, .. })
+                | TaskStatus::Waiting(TaskWait::HostTask { call, .. }) => (Some(*call), false),
+                TaskStatus::Waiting(TaskWait::DeferredHostCall { .. }) => (None, false),
+                TaskStatus::Waiting(_) => (None, true),
+                _ => (None, false),
+            }
+        };
+        let parent = self.diagnostic_parent(task);
+        self.record_task(task, parent, DiagnosticTaskState::CancelRequested)?;
+        if let Some(call) = host_call {
+            self.record_sync(task, DiagnosticSynchronization::HostCancel, None, None)?;
+            self.host.cancel_async(call)?;
+        }
+        if wake {
+            self.wake_task(task)?;
+        }
+        Ok(())
+    }
+
+    fn split_group_value(
+        &self,
+        value: &Value,
+        error: BytecodeTypeId,
+    ) -> Result<Result<Value, Value>, VmError> {
+        if matches!(
+            self.program.ty(error).map(|ty| &ty.kind),
+            Some(BytecodeTypeKind::Scalar(BytecodeScalarType::Never))
+        ) {
+            return Ok(Ok(value.clone()));
+        }
+        let Value::Heap(handle) = value else {
+            return Err(VmError::invariant(
+                "fallible Group child completed with a non-Result value",
+            ));
+        };
+        match self.heap.get(*handle)? {
+            HeapObject::ResultOk(Some(value)) => Ok(Ok(value.clone())),
+            HeapObject::ResultErr(Some(error)) => Ok(Err(error.clone())),
+            HeapObject::ResultOk(None) | HeapObject::ResultErr(None) => Err(VmError::invariant(
+                "Group child returned a moved Result payload",
+            )),
+            _ => Err(VmError::invariant(
+                "fallible Group child completed with a different heap object",
+            )),
+        }
+    }
+
+    fn result_type_id(
+        &self,
+        success: BytecodeTypeId,
+        error: BytecodeTypeId,
+    ) -> Result<BytecodeTypeId, VmError> {
+        self.program
+            .types
+            .iter()
+            .enumerate()
+            .find_map(|(index, ty)| {
+                matches!(
+                    ty.kind,
+                    BytecodeTypeKind::Result {
+                        success: candidate_success,
+                        error: candidate_error,
+                    } if candidate_success == success && candidate_error == error
+                )
+                .then_some(BytecodeTypeId::new(index as u32))
+            })
+            .ok_or_else(|| VmError::invariant("Group result type is not present in the program"))
+    }
+
+    fn group_outcome_result(
+        &mut self,
+        outcome: BytecodeTypeId,
+    ) -> Result<(BytecodeTypeId, BytecodeTypeId, BytecodeTypeId), VmError> {
+        let BytecodeTypeKind::Result { success, error } = &self
+            .program
+            .ty(outcome)
+            .ok_or_else(|| VmError::invariant("Group outcome type is missing"))?
+            .kind
+        else {
+            return Err(VmError::invariant("Group outcome is not Result"));
+        };
+        let BytecodeTypeKind::Intrinsic {
+            constructor: BytecodeIntrinsicType::Array,
+            arguments,
+        } = &self
+            .program
+            .ty(*success)
+            .ok_or_else(|| VmError::invariant("Group outcome array type is missing"))?
+            .kind
+        else {
+            return Err(VmError::invariant("Group outcome success is not Array"));
+        };
+        let item = arguments
+            .first()
+            .copied()
+            .ok_or_else(|| VmError::invariant("Group outcome array has no element type"))?;
+        Ok((*success, *error, item))
+    }
+
+    fn group_array_element(&self, ty: BytecodeTypeId) -> Result<BytecodeTypeId, VmError> {
+        let BytecodeTypeKind::Intrinsic {
+            constructor: BytecodeIntrinsicType::Array,
+            arguments,
+        } = &self
+            .program
+            .ty(ty)
+            .ok_or_else(|| VmError::invariant("Group array type is missing"))?
+            .kind
+        else {
+            return Err(VmError::invariant("Group result is not an Array"));
+        };
+        arguments
+            .first()
+            .copied()
+            .ok_or_else(|| VmError::invariant("Group array has no element type"))
+    }
+
+    fn take_group_completions(
+        &mut self,
+        children: &[RuntimeGroupChild],
+    ) -> Result<Vec<(RuntimeGroupChild, TaskCompletion)>, VmError> {
+        let mut output = Vec::with_capacity(children.len());
+        for child in children {
+            let parent_scope = self
+                .tasks
+                .get(child.task)
+                .ok_or_else(|| VmError::invariant("Group child references an invalid task"))?
+                .parent_scope;
+            let completion = self
+                .take_task_completion(child.task)?
+                .ok_or_else(|| VmError::invariant("terminal Group child has no completion"))?;
+            output.push((*child, completion));
+            if let Some(scope) = parent_scope
+                && self.task_scopes.get(scope).is_some_and(Option::is_some)
+            {
+                self.release_task_scope_if_consumed(scope)?;
+            }
+        }
+        Ok(output)
+    }
+
+    fn completion_nominal_value(
+        &mut self,
+        completion_ty: BytecodeTypeId,
+        index: usize,
+        result: Value,
+    ) -> Result<Value, VmError> {
+        let BytecodeTypeKind::Nominal {
+            nominal: Some(nominal),
+            ..
+        } = &self
+            .program
+            .ty(completion_ty)
+            .ok_or_else(|| VmError::invariant("Group Completion type is missing"))?
+            .kind
+        else {
+            return Err(VmError::invariant("Group Completion is not nominal"));
+        };
+        let fields = match &self
+            .program
+            .nominals
+            .get(nominal.index() as usize)
+            .ok_or_else(|| VmError::invariant("Group Completion nominal is missing"))?
+            .shape
+        {
+            BytecodeNominalShape::Record { fields } if fields.len() == 2 => fields.clone(),
+            _ => {
+                return Err(VmError::invariant(
+                    "Group Completion is not a two-field record",
+                ));
+            }
+        };
+        let values = fields
+            .into_iter()
+            .enumerate()
+            .map(|(position, field)| {
+                let value = match position {
+                    0 => Value::Integer(
+                        i128::try_from(index)
+                            .map_err(|_| VmError::invariant("Group index exceeds Int"))?,
+                    ),
+                    1 => result.clone(),
+                    _ => unreachable!(),
+                };
+                Ok((field.member, Some(value)))
+            })
+            .collect::<Result<Vec<_>, VmError>>()?;
+        self.allocate(
+            completion_ty,
+            HeapObject::Record {
+                nominal: *nominal,
+                fields: values,
+            },
+            &[result],
+        )
+    }
+
+    fn poll_group_operation(
+        &mut self,
+        id: u64,
+        operation: RuntimeGroupOperation,
+        outcome: BytecodeTypeId,
+    ) -> Result<GroupPoll, VmError> {
+        {
+            let state = self
+                .groups
+                .get_mut(&id)
+                .ok_or_else(|| VmError::invariant("Group poll references an unknown group"))?;
+            state.waiters.retain(|task| *task != self.current_task);
+        }
+        let children = self
+            .groups
+            .get(&id)
+            .ok_or_else(|| VmError::invariant("Group poll references an unknown group"))?
+            .children
+            .clone();
+
+        if operation == RuntimeGroupOperation::Next {
+            let mut pending = false;
+            let mut winner: Option<(RuntimeGroupChild, u64)> = None;
+            for child in &children {
+                match self
+                    .tasks
+                    .get(child.task)
+                    .ok_or_else(|| VmError::invariant("Group child references an invalid task"))?
+                    .status
+                {
+                    TaskStatus::Complete(Some(_)) => {
+                        let sequence =
+                            self.completion_order
+                                .get(&child.task)
+                                .copied()
+                                .ok_or_else(|| {
+                                    VmError::invariant("completed Group child has no order")
+                                })?;
+                        if winner.as_ref().is_none_or(|(best_child, best_sequence)| {
+                            sequence < *best_sequence
+                                || (sequence == *best_sequence && child.index < best_child.index)
+                        }) {
+                            winner = Some((*child, sequence));
+                        }
+                    }
+                    TaskStatus::Complete(None) => {
+                        return Err(VmError::invariant("Group child completion is empty"));
+                    }
+                    TaskStatus::Consumed => {}
+                    TaskStatus::Running | TaskStatus::Runnable | TaskStatus::Waiting(_) => {
+                        pending = true;
+                    }
+                }
+            }
+            let Some((winner, _)) = winner else {
+                return if pending {
+                    Ok(GroupPoll::Pending)
+                } else {
+                    Ok(GroupPoll::Ready(self.allocate(
+                        outcome,
+                        HeapObject::OptionNone,
+                        &[],
+                    )?))
+                };
+            };
+            if let Some(state) = self.groups.get_mut(&id) {
+                let position = state
+                    .children
+                    .iter()
+                    .position(|child| child.task == winner.task)
+                    .ok_or_else(|| VmError::invariant("Group winner disappeared"))?;
+                state.children.remove(position);
+            }
+            let completion = self
+                .take_task_completion(winner.task)?
+                .ok_or_else(|| VmError::invariant("Group winner has no completion"))?;
+            let parent_scope = self.tasks[winner.task].parent_scope;
+            if let Some(scope) = parent_scope
+                && self.task_scopes.get(scope).is_some_and(Option::is_some)
+            {
+                self.release_task_scope_if_consumed(scope)?;
+            }
+            return match completion {
+                TaskCompletion::Panicked(panic) => Ok(GroupPoll::Panic(panic)),
+                TaskCompletion::Cancelled => self.poll_group_operation(id, operation, outcome),
+                TaskCompletion::Returned(value) => {
+                    let (success, error) = self
+                        .groups
+                        .get(&id)
+                        .and_then(|_| Some((winner.success, winner.error)))
+                        .ok_or_else(|| VmError::invariant("Group disappeared after next"))?;
+                    let result_ty = self.result_type_id(success, error)?;
+                    let result = self.split_group_value(&value, error)?;
+                    let result = self.oneshot_result(result_ty, result)?;
+                    let completion_ty = match &self
+                        .program
+                        .ty(outcome)
+                        .ok_or_else(|| VmError::invariant("Group next outcome is missing"))?
+                        .kind
+                    {
+                        BytecodeTypeKind::Option(item) => *item,
+                        _ => return Err(VmError::invariant("Group.next outcome is not Option")),
+                    };
+                    let completion =
+                        self.completion_nominal_value(completion_ty, winner.index, result)?;
+                    Ok(GroupPoll::Ready(self.allocate(
+                        outcome,
+                        HeapObject::OptionSome(Some(completion.clone())),
+                        &[completion],
+                    )?))
+                }
+            };
+        }
+
+        let mut pending = false;
+        let mut cancellation_required = operation == RuntimeGroupOperation::Cancel;
+        for child in &children {
+            match &self
+                .tasks
+                .get(child.task)
+                .ok_or_else(|| VmError::invariant("Group child references an invalid task"))?
+                .status
+            {
+                TaskStatus::Complete(Some(TaskCompletion::Panicked(_))) => {
+                    cancellation_required = true;
+                }
+                TaskStatus::Complete(Some(TaskCompletion::Returned(value))) => {
+                    if self.split_group_value(&value, child.error)?.is_err() {
+                        cancellation_required = true;
+                    }
+                }
+                TaskStatus::Complete(Some(TaskCompletion::Cancelled)) => {}
+                TaskStatus::Complete(None) => {
+                    return Err(VmError::invariant("Group child completion is empty"));
+                }
+                TaskStatus::Consumed => {
+                    return Err(VmError::invariant("Group child was consumed outside Group"));
+                }
+                TaskStatus::Running | TaskStatus::Runnable | TaskStatus::Waiting(_) => {
+                    pending = true;
+                }
+            }
+        }
+        if cancellation_required {
+            self.request_group_cancellation(id)?;
+        }
+        if pending || (cancellation_required && !self.group_is_terminal(id)?) {
+            return Ok(GroupPoll::Pending);
+        }
+        let completions = self.take_group_completions(&children)?;
+        let mut panic: Option<VmPanic> = None;
+        let mut first_error: Option<Value> = None;
+        let mut successful_values = Vec::new();
+        let mut settled_values = Vec::new();
+        let settled_item = (operation == RuntimeGroupOperation::Settle)
+            .then(|| self.group_array_element(outcome))
+            .transpose()?;
+        for (child, completion) in completions {
+            match completion {
+                TaskCompletion::Panicked(child_panic) => {
+                    if let Some(primary) = &mut panic {
+                        primary.suppressed.push(child_panic);
+                    } else {
+                        panic = Some(child_panic);
+                    }
+                }
+                TaskCompletion::Cancelled => {
+                    // Cancellation is not part of the public `E` channel. A
+                    // child may already be cancelled when `all` begins its
+                    // deterministic drain (for example after a sibling
+                    // panic); the group reports any real panic/error below
+                    // and never fabricates a user-visible error value.
+                }
+                TaskCompletion::Returned(value) => {
+                    let result = self.split_group_value(&value, child.error)?;
+                    if operation == RuntimeGroupOperation::Settle {
+                        let item_ty = settled_item.ok_or_else(|| {
+                            VmError::invariant("settled Group array has no element type")
+                        })?;
+                        settled_values.push(self.oneshot_result(item_ty, result)?);
+                    } else {
+                        match result {
+                            Ok(value) => successful_values.push(value),
+                            Err(error) => {
+                                if first_error.is_none() {
+                                    first_error = Some(error);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        self.remove_group(id)?;
+        if let Some(panic) = panic {
+            return Ok(GroupPoll::Panic(panic));
+        }
+        if operation == RuntimeGroupOperation::Settle {
+            let values = settled_values.into_iter().map(Some).collect::<Vec<_>>();
+            return Ok(GroupPoll::Ready(self.allocate(
+                outcome,
+                HeapObject::Array(values.into()),
+                &[],
+            )?));
+        }
+        if operation == RuntimeGroupOperation::Cancel {
+            return Ok(GroupPoll::Ready(Value::Unit));
+        }
+        if let Some(error) = first_error {
+            let (_, error_ty, _) = self.group_outcome_result(outcome)?;
+            if !matches!(
+                self.program.ty(error_ty).map(|ty| &ty.kind),
+                Some(BytecodeTypeKind::Scalar(BytecodeScalarType::Never))
+            ) {
+                return Ok(GroupPoll::Ready(self.oneshot_result(outcome, Err(error))?));
+            }
+            return Err(VmError::invariant(
+                "Group.all observed an error with an infallible outcome",
+            ));
+        }
+        let (array_ty, _, _) = self.group_outcome_result(outcome)?;
+        let array = self.allocate(
+            array_ty,
+            HeapObject::Array(successful_values.into_iter().map(Some).collect()),
+            &[],
+        )?;
+        Ok(GroupPoll::Ready(self.oneshot_result(outcome, Ok(array))?))
     }
 
     fn collection_error_result(&mut self, result_ty: BytecodeTypeId) -> Result<Value, VmError> {
@@ -11363,6 +12370,9 @@ impl Engine<'_, '_> {
                 OperationResult::OneShotWait { .. } => Err(VmError::invariant(
                     "one-shot iterator callback is not allowed",
                 )),
+                OperationResult::GroupWait { .. } => {
+                    Err(VmError::invariant("Group iterator callback is not allowed"))
+                }
                 OperationResult::TestBoundaryCall { .. }
                 | OperationResult::VirtualTimeBoundaryCall { .. } => Err(VmError::invariant(
                     "iterator callback crossed an internal async/test boundary",
@@ -12210,19 +13220,19 @@ mod tests {
 
     use super::{
         AggregatePayload, DeferredOperation, DeferredValue, DiagnosticConfig, DiagnosticEvent,
-        DiagnosticMemoryAccess, DiagnosticSource, DiagnosticThreadState, Engine, Frame, HeapObject,
-        IteratorAdapter, OneShotCompletion, OneShotState, OperationResult, PanicCode,
+        DiagnosticMemoryAccess, DiagnosticSource, DiagnosticThreadState, Engine, Frame, GroupPoll,
+        HeapObject, IteratorAdapter, OneShotCompletion, OneShotState, OperationResult, PanicCode,
         PlaceComponent, PlaceFailure, RejectingHost, ResolvedPlacePath, RuntimeCleanup,
-        RuntimeDefer, RuntimeFallback, RuntimeHostValueKind, RuntimeJoin, RuntimeLoan,
-        RuntimeSelectArm, RuntimeSelectRegion, RuntimeTaskScope, RuntimeType, RuntimeUnwind,
-        RuntimeValue, SlotState, TaskCompletion, TaskRecord, TaskStatus, TaskWait, Value,
-        ValueCopyStrategy, VmError, VmHost, VmLimits, VmOutcome, VmPanic, VmStackFrame,
-        VmStatistics, VmTestNodeKind, VmTestNodeOutcome, clone_field, clone_index, clone_present,
-        collection_length_fits_int, convert_numeric, execute, execute_with_diagnostics,
-        initial_value, integer_bounds, integer_shape, next_unicode_scalar,
-        operand_materialized_slot, operation_access_place, paths_overlap, present,
-        queue_object_equality, queue_payload_equality, runtime_host_kind, set_field, set_index,
-        slice_indices, snapshot_value, take_field, take_index, take_option,
+        RuntimeDefer, RuntimeFallback, RuntimeGroupChild, RuntimeGroupOperation,
+        RuntimeHostValueKind, RuntimeJoin, RuntimeLoan, RuntimeSelectArm, RuntimeSelectRegion,
+        RuntimeTaskScope, RuntimeType, RuntimeUnwind, RuntimeValue, SlotState, TaskCompletion,
+        TaskRecord, TaskStatus, TaskWait, Value, ValueCopyStrategy, VmError, VmHost, VmLimits,
+        VmOutcome, VmPanic, VmStackFrame, VmStatistics, VmTestNodeKind, VmTestNodeOutcome,
+        clone_field, clone_index, clone_present, collection_length_fits_int, convert_numeric,
+        execute, execute_with_diagnostics, group_handle, initial_value, integer_bounds,
+        integer_shape, next_unicode_scalar, operand_materialized_slot, operation_access_place,
+        paths_overlap, present, queue_object_equality, queue_payload_equality, runtime_host_kind,
+        set_field, set_index, slice_indices, snapshot_value, take_field, take_index, take_option,
     };
 
     fn root_pressure_program() -> BytecodeProgram {
@@ -12283,6 +13293,142 @@ mod tests {
             constants: Vec::new(),
             functions: Vec::new(),
         }
+    }
+
+    struct GroupTypes {
+        int: BytecodeTypeId,
+        never: BytecodeTypeId,
+        string: BytecodeTypeId,
+        result: BytecodeTypeId,
+        array_result: BytecodeTypeId,
+        group: BytecodeTypeId,
+        join: BytecodeTypeId,
+        completion: BytecodeTypeId,
+        malformed_completion: BytecodeTypeId,
+        next: BytecodeTypeId,
+        all: BytecodeTypeId,
+        all_never: BytecodeTypeId,
+    }
+
+    fn group_program() -> (BytecodeProgram, GroupTypes) {
+        let mut program = root_pressure_program();
+        let int = BytecodeTypeId::new(5);
+        let string = BytecodeTypeId::new(0);
+        let never = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "Never".into(),
+            kind: BytecodeTypeKind::Scalar(BytecodeScalarType::Never),
+        });
+        let result = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "Int ! String".into(),
+            kind: BytecodeTypeKind::Result {
+                success: int,
+                error: string,
+            },
+        });
+        let array_result = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "Array[Int ! String]".into(),
+            kind: BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::Array,
+                arguments: vec![result],
+            },
+        });
+        let group = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "Group[Int, String]".into(),
+            kind: BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::Group,
+                arguments: vec![int, string],
+            },
+        });
+        let join = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "Join[Int, String]".into(),
+            kind: BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::Join,
+                arguments: vec![int, string],
+            },
+        });
+        let completion = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "Completion[Int, String]".into(),
+            kind: BytecodeTypeKind::Nominal {
+                nominal: Some(BytecodeNominalId::new(0)),
+                identity: "test::Completion".into(),
+                arguments: vec![int, string],
+            },
+        });
+        let next = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "Completion[Int, String]?".into(),
+            kind: BytecodeTypeKind::Option(completion),
+        });
+        let all = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "Array[Int] ! String".into(),
+            kind: BytecodeTypeKind::Result {
+                success: BytecodeTypeId::new(6),
+                error: string,
+            },
+        });
+        let malformed_completion = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "MalformedCompletion[Int, String]".into(),
+            kind: BytecodeTypeKind::Nominal {
+                nominal: Some(BytecodeNominalId::new(1)),
+                identity: "test::MalformedCompletion".into(),
+                arguments: vec![int, string],
+            },
+        });
+        let all_never = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "Array[Int] ! Never".into(),
+            kind: BytecodeTypeKind::Result {
+                success: BytecodeTypeId::new(6),
+                error: never,
+            },
+        });
+        program.nominals.push(BytecodeNominal {
+            name: "Completion".into(),
+            identity: "test::Completion".into(),
+            generic_arity: 2,
+            shape: BytecodeNominalShape::Record {
+                fields: vec![
+                    BytecodeField { member: 0, ty: int },
+                    BytecodeField {
+                        member: 1,
+                        ty: result,
+                    },
+                ],
+            },
+        });
+        program.nominals.push(BytecodeNominal {
+            name: "MalformedCompletion".into(),
+            identity: "test::MalformedCompletion".into(),
+            generic_arity: 2,
+            shape: BytecodeNominalShape::Record {
+                fields: vec![BytecodeField { member: 0, ty: int }],
+            },
+        });
+        (
+            program,
+            GroupTypes {
+                int,
+                never,
+                string,
+                result,
+                array_result,
+                group,
+                join,
+                completion,
+                malformed_completion,
+                next,
+                all,
+                all_never,
+            },
+        )
     }
 
     fn terminal_fallback_program() -> BytecodeProgram {
@@ -18199,5 +19345,925 @@ mod tests {
                 ..
             }
         )));
+    }
+
+    #[test]
+    fn group_operations_preserve_ordered_outcomes_and_affine_drain() {
+        let (program, types) = group_program();
+        let trace = derive_trace_metadata(&program).unwrap();
+        let mut host = RejectingHost;
+        let mut engine = Engine::new(
+            &program,
+            &mut host,
+            VmLimits::default(),
+            ValueCopyStrategy::default(),
+            trace,
+        );
+        let error_value = engine
+            .allocate(types.string, HeapObject::String("boom".into()), &[])
+            .unwrap();
+        let ok_value = engine
+            .oneshot_result(types.result, Ok(Value::Integer(7)))
+            .unwrap();
+        let err_value = engine
+            .oneshot_result(types.result, Err(error_value.clone()))
+            .unwrap();
+        assert!(matches!(
+            engine.split_group_value(&ok_value, types.string).unwrap(),
+            Ok(Value::Integer(7))
+        ));
+        assert!(matches!(
+            engine.split_group_value(&err_value, types.string).unwrap(),
+            Err(Value::Heap(_))
+        ));
+        assert_eq!(
+            engine.result_type_id(types.int, types.string).unwrap(),
+            types.result
+        );
+        assert_eq!(
+            engine.group_outcome_result(types.all).unwrap(),
+            (BytecodeTypeId::new(6), types.string, types.int)
+        );
+        assert_eq!(
+            engine.group_array_element(types.array_result).unwrap(),
+            types.result
+        );
+
+        let group_value = match engine.new_group(types.group).unwrap() {
+            OperationResult::Value(Value::Host(RuntimeValue::Host {
+                kind: RuntimeHostValueKind::Group,
+                id,
+            })) => id,
+            _ => panic!("unexpected group value"),
+        };
+        let completion = engine
+            .completion_nominal_value(types.completion, 3, ok_value.clone())
+            .unwrap();
+        assert!(matches!(completion, Value::Heap(_)));
+        engine.tasks.push(scheduler_task(TaskStatus::Running));
+        engine.tasks.push(scheduler_task(TaskStatus::Complete(Some(
+            TaskCompletion::Returned(ok_value.clone()),
+        ))));
+        engine.completion_order.insert(1, 1);
+        engine
+            .groups
+            .get_mut(&group_value)
+            .unwrap()
+            .children
+            .push(RuntimeGroupChild {
+                task: 1,
+                index: 0,
+                success: types.int,
+                error: types.string,
+            });
+        let next = engine
+            .poll_group_operation(group_value, RuntimeGroupOperation::Next, types.next)
+            .unwrap();
+        assert!(matches!(next, GroupPoll::Ready(Value::Heap(_))));
+        let empty_next = engine
+            .poll_group_operation(group_value, RuntimeGroupOperation::Next, types.next)
+            .unwrap();
+        assert!(matches!(empty_next, GroupPoll::Ready(Value::Heap(_))));
+        engine.remove_group(group_value).unwrap();
+
+        let all_group = match engine.new_group(types.group).unwrap() {
+            OperationResult::Value(Value::Host(RuntimeValue::Host { id, .. })) => id,
+            _ => panic!("unexpected all group value"),
+        };
+        for (task, value) in [(2, ok_value.clone()), (3, ok_value.clone())] {
+            engine.tasks.push(scheduler_task(TaskStatus::Complete(Some(
+                TaskCompletion::Returned(value),
+            ))));
+            engine
+                .groups
+                .get_mut(&all_group)
+                .unwrap()
+                .children
+                .push(RuntimeGroupChild {
+                    task,
+                    index: task - 2,
+                    success: types.int,
+                    error: types.string,
+                });
+        }
+        let all = engine
+            .poll_group_operation(all_group, RuntimeGroupOperation::All, types.all)
+            .unwrap();
+        assert!(matches!(all, GroupPoll::Ready(Value::Heap(_))));
+
+        let settle_group = match engine.new_group(types.group).unwrap() {
+            OperationResult::Value(Value::Host(RuntimeValue::Host { id, .. })) => id,
+            _ => panic!("unexpected settle group value"),
+        };
+        for (task, value) in [(4, ok_value.clone()), (5, err_value.clone())] {
+            engine.tasks.push(scheduler_task(TaskStatus::Complete(Some(
+                TaskCompletion::Returned(value),
+            ))));
+            engine
+                .groups
+                .get_mut(&settle_group)
+                .unwrap()
+                .children
+                .push(RuntimeGroupChild {
+                    task,
+                    index: task - 4,
+                    success: types.int,
+                    error: types.string,
+                });
+        }
+        let settled = engine
+            .poll_group_operation(
+                settle_group,
+                RuntimeGroupOperation::Settle,
+                types.array_result,
+            )
+            .unwrap();
+        assert!(matches!(settled, GroupPoll::Ready(Value::Heap(_))));
+
+        let error_group = match engine.new_group(types.group).unwrap() {
+            OperationResult::Value(Value::Host(RuntimeValue::Host { id, .. })) => id,
+            _ => panic!("unexpected error group value"),
+        };
+        engine.tasks.push(scheduler_task(TaskStatus::Complete(Some(
+            TaskCompletion::Returned(err_value),
+        ))));
+        engine
+            .groups
+            .get_mut(&error_group)
+            .unwrap()
+            .children
+            .push(RuntimeGroupChild {
+                task: 6,
+                index: 0,
+                success: types.int,
+                error: types.string,
+            });
+        let error = engine
+            .poll_group_operation(error_group, RuntimeGroupOperation::All, types.all)
+            .unwrap();
+        assert!(matches!(error, GroupPoll::Ready(Value::Heap(_))));
+
+        let cancel_group = match engine.new_group(types.group).unwrap() {
+            OperationResult::Value(Value::Host(RuntimeValue::Host { id, .. })) => id,
+            _ => panic!("unexpected cancel group value"),
+        };
+        engine.tasks.push(scheduler_task(TaskStatus::Complete(Some(
+            TaskCompletion::Cancelled,
+        ))));
+        engine
+            .groups
+            .get_mut(&cancel_group)
+            .unwrap()
+            .children
+            .push(RuntimeGroupChild {
+                task: 7,
+                index: 0,
+                success: types.int,
+                error: types.string,
+            });
+        let cancelled = engine
+            .poll_group_operation(cancel_group, RuntimeGroupOperation::Cancel, types.all)
+            .unwrap();
+        assert!(matches!(cancelled, GroupPoll::Ready(Value::Unit)));
+
+        let panic_group = match engine.new_group(types.group).unwrap() {
+            OperationResult::Value(Value::Host(RuntimeValue::Host { id, .. })) => id,
+            _ => panic!("unexpected panic group value"),
+        };
+        engine.tasks.push(scheduler_task(TaskStatus::Complete(Some(
+            TaskCompletion::Panicked(VmPanic {
+                code: PanicCode::ExplicitPanic,
+                message: "child".into(),
+                span: BytecodeSpan {
+                    file: 0,
+                    start: 0,
+                    end: 0,
+                },
+                stack: Vec::new(),
+                suppressed: Vec::new(),
+            }),
+        ))));
+        engine
+            .groups
+            .get_mut(&panic_group)
+            .unwrap()
+            .children
+            .push(RuntimeGroupChild {
+                task: 8,
+                index: 0,
+                success: types.int,
+                error: types.string,
+            });
+        assert!(matches!(
+            engine
+                .poll_group_operation(panic_group, RuntimeGroupOperation::All, types.all)
+                .unwrap(),
+            GroupPoll::Panic(_)
+        ));
+    }
+
+    #[test]
+    fn group_helper_boundaries_are_atomic_and_cancellable() {
+        let (program, types) = group_program();
+        let trace = derive_trace_metadata(&program).unwrap();
+        let mut host = RejectingHost;
+        let mut engine = Engine::new(
+            &program,
+            &mut host,
+            VmLimits::default(),
+            ValueCopyStrategy::default(),
+            trace,
+        );
+        let group_error = engine
+            .allocate(types.string, HeapObject::String("group error".into()), &[])
+            .unwrap();
+        let ok_value = engine
+            .oneshot_result(types.result, Ok(Value::Integer(7)))
+            .unwrap();
+        let err_value = engine
+            .oneshot_result(types.result, Err(group_error))
+            .unwrap();
+
+        assert!(group_handle(&Value::Integer(1)).is_err());
+        assert!(
+            group_handle(&Value::Host(RuntimeValue::Host {
+                kind: RuntimeHostValueKind::File,
+                id: 1,
+            }))
+            .is_err()
+        );
+        assert!(
+            group_handle(&Value::Host(RuntimeValue::Host {
+                kind: RuntimeHostValueKind::Group,
+                id: 0,
+            }))
+            .is_err()
+        );
+        assert_eq!(
+            group_handle(&Value::Host(RuntimeValue::Host {
+                kind: RuntimeHostValueKind::Group,
+                id: 9,
+            }))
+            .unwrap(),
+            9
+        );
+
+        let first_group = match engine.new_group(types.group).unwrap() {
+            OperationResult::Value(value) => group_handle(&value).unwrap(),
+            _ => panic!("new_group did not return a handle"),
+        };
+        let receiver = BytecodeParameter {
+            mode: BytecodeParameterMode::Value,
+            ty: types.group,
+            variadic_element: None,
+            receiver: true,
+        };
+        let callable = |name: &str, outcome: BytecodeTypeId, parameters| BytecodeCallable {
+            name: name.into(),
+            generic_arity: 0,
+            parameters,
+            outcome,
+            function_type: outcome,
+            implementation: None,
+            closure: None,
+        };
+        let unknown = callable("std.async.Group.unknown", types.all, Vec::new());
+        assert!(
+            engine
+                .prepare_group_method(&unknown, &[])
+                .unwrap()
+                .is_none()
+        );
+        let no_receiver = callable("std.async.Group.all", types.all, Vec::new());
+        assert!(engine.prepare_group_method(&no_receiver, &[]).is_err());
+        let missing_receiver = callable("std.async.Group.all", types.all, vec![receiver]);
+        assert!(engine.prepare_group_method(&missing_receiver, &[]).is_err());
+        assert!(
+            engine
+                .prepare_group_method(&missing_receiver, &[Value::Integer(1)])
+                .is_err()
+        );
+        let add = callable(
+            "std.async.Group.add",
+            types.all,
+            vec![
+                receiver,
+                BytecodeParameter {
+                    mode: BytecodeParameterMode::Value,
+                    ty: types.join,
+                    variadic_element: None,
+                    receiver: false,
+                },
+            ],
+        );
+        let first_handle = Value::Host(RuntimeValue::Host {
+            kind: RuntimeHostValueKind::Group,
+            id: first_group,
+        });
+        assert!(
+            engine
+                .prepare_group_method(&add, std::slice::from_ref(&first_handle))
+                .is_err()
+        );
+        assert!(
+            engine
+                .prepare_group_method(&add, &[first_handle.clone(), Value::Unit])
+                .is_err()
+        );
+
+        let dispatch_all_group = match engine.new_group(types.group).unwrap() {
+            OperationResult::Value(value) => group_handle(&value).unwrap(),
+            _ => panic!("new_group did not return a handle"),
+        };
+        let all_callable = callable("std.async.Group.all", types.all, vec![receiver]);
+        assert!(matches!(
+            engine
+                .prepare_group_method(
+                    &all_callable,
+                    &[Value::Host(RuntimeValue::Host {
+                        kind: RuntimeHostValueKind::Group,
+                        id: dispatch_all_group,
+                    })],
+                )
+                .unwrap(),
+            Some(OperationResult::Value(_))
+        ));
+        let dispatch_settle_group = match engine.new_group(types.group).unwrap() {
+            OperationResult::Value(value) => group_handle(&value).unwrap(),
+            _ => panic!("new_group did not return a handle"),
+        };
+        let settle_callable =
+            callable("std.async.Group.settle", types.array_result, vec![receiver]);
+        assert!(matches!(
+            engine
+                .prepare_group_method(
+                    &settle_callable,
+                    &[Value::Host(RuntimeValue::Host {
+                        kind: RuntimeHostValueKind::Group,
+                        id: dispatch_settle_group,
+                    })],
+                )
+                .unwrap(),
+            Some(OperationResult::Value(_))
+        ));
+        let dispatch_cancel_group = match engine.new_group(types.group).unwrap() {
+            OperationResult::Value(value) => group_handle(&value).unwrap(),
+            _ => panic!("new_group did not return a handle"),
+        };
+        let cancel_callable = callable("std.async.Group.cancel", types.all, vec![receiver]);
+        assert!(matches!(
+            engine
+                .prepare_group_method(
+                    &cancel_callable,
+                    &[Value::Host(RuntimeValue::Host {
+                        kind: RuntimeHostValueKind::Group,
+                        id: dispatch_cancel_group,
+                    })],
+                )
+                .unwrap(),
+            Some(OperationResult::Value(Value::Unit))
+        ));
+        let dispatch_next_group = match engine.new_group(types.group).unwrap() {
+            OperationResult::Value(value) => group_handle(&value).unwrap(),
+            _ => panic!("new_group did not return a handle"),
+        };
+        let next_callable = callable("std.async.Group.next", types.next, vec![receiver]);
+        assert!(matches!(
+            engine
+                .prepare_group_method(
+                    &next_callable,
+                    &[Value::Host(RuntimeValue::Host {
+                        kind: RuntimeHostValueKind::Group,
+                        id: dispatch_next_group,
+                    })],
+                )
+                .unwrap(),
+            Some(OperationResult::GroupWait {
+                operation: RuntimeGroupOperation::Next,
+                ..
+            })
+        ));
+
+        engine.next_group_id = u64::MAX;
+        assert!(matches!(
+            engine.new_group(types.group),
+            Err(VmError::ResourceLimit {
+                resource: "group handles",
+                ..
+            })
+        ));
+        engine.next_group_id = 100;
+
+        assert!(engine.result_type_id(types.string, types.string).is_err());
+        assert!(engine.group_outcome_result(types.result).is_err());
+        assert!(engine.group_array_element(types.result).is_err());
+        assert!(engine.oneshot_result(types.int, Ok(Value::Unit)).is_err());
+        assert!(
+            engine
+                .split_group_value(&Value::Integer(1), types.string)
+                .is_err()
+        );
+        let string_value = engine
+            .allocate(types.string, HeapObject::String("not-result".into()), &[])
+            .unwrap();
+        assert!(
+            engine
+                .split_group_value(&string_value, types.string)
+                .is_err()
+        );
+        let empty_ok = engine
+            .allocate(types.result, HeapObject::ResultOk(None), &[])
+            .unwrap();
+        assert!(engine.split_group_value(&empty_ok, types.string).is_err());
+
+        assert!(engine.group_is_terminal(first_group).unwrap());
+        assert!(engine.group_is_terminal(999).is_err());
+        assert!(engine.remove_group_waiter(999, 0).is_err());
+        assert!(engine.park_group(999, TaskWait::Scope).is_err());
+        assert!(engine.request_group_cancellation(999).is_err());
+
+        let waiting_group = match engine.new_group(types.group).unwrap() {
+            OperationResult::Value(value) => group_handle(&value).unwrap(),
+            _ => panic!("new_group did not return a handle"),
+        };
+        engine.tasks.push(scheduler_task(TaskStatus::Running));
+        engine
+            .park_group(
+                waiting_group,
+                TaskWait::GroupTask {
+                    id: waiting_group,
+                    operation: RuntimeGroupOperation::Next,
+                    outcome: types.next,
+                    probe: true,
+                },
+            )
+            .unwrap();
+        assert!(matches!(engine.tasks[0].status, TaskStatus::Waiting(_)));
+        engine.remove_group_waiter(waiting_group, 0).unwrap();
+        engine
+            .groups
+            .get_mut(&waiting_group)
+            .unwrap()
+            .waiters
+            .push(0);
+        assert!(engine.remove_group(waiting_group).is_err());
+
+        engine
+            .tasks
+            .push(scheduler_task(TaskStatus::Waiting(TaskWait::Scope)));
+        engine.request_group_child_cancel(1).unwrap();
+        assert!(matches!(engine.tasks[1].status, TaskStatus::Runnable));
+        assert!(engine.tasks[1].resume.is_some());
+
+        engine.tasks.push(scheduler_task(TaskStatus::Waiting(
+            TaskWait::DeferredHostCall {
+                call: 1,
+                outcome: types.all,
+                target: BytecodeBlockId::new(0),
+                completion: None,
+            },
+        )));
+        engine.request_group_child_cancel(2).unwrap();
+        assert!(engine.tasks[2].cancel_requested);
+
+        engine.tasks.push(scheduler_task(TaskStatus::Running));
+        engine.request_group_child_cancel(3).unwrap();
+        assert!(engine.tasks[3].cancel_requested);
+        engine.tasks.push(scheduler_task(TaskStatus::Complete(Some(
+            TaskCompletion::Cancelled,
+        ))));
+        engine.request_group_child_cancel(4).unwrap();
+        assert!(engine.request_group_child_cancel(999).is_err());
+
+        engine.task_scopes.push(Some(RuntimeTaskScope {
+            source: BytecodeScopeId::new(0),
+            owner: 0,
+            children: vec![5],
+            closed: false,
+        }));
+        engine.frames.push(Frame {
+            function: BytecodeFunctionId::new(0),
+            block: BytecodeBlockId::new(0),
+            instruction: 0,
+            slots: Vec::new(),
+            loans: Vec::new(),
+            cleanups: Vec::new(),
+            task_scopes: vec![0],
+            continuation: None,
+            select: None,
+        });
+        engine.tasks.push(TaskRecord {
+            frames: Vec::new(),
+            pending_unwind: None,
+            async_collect: None,
+            status: TaskStatus::Running,
+            resume: None,
+            queued: false,
+            cancel_requested: false,
+            waiters: Vec::new(),
+            parent_scope: Some(0),
+            join_consumed: false,
+            panic_observed: false,
+            discard_completion: false,
+        });
+        assert!(
+            engine
+                .validate_group_join(RuntimeJoin { task: 5, scope: 0 })
+                .is_ok()
+        );
+        engine.tasks[5].join_consumed = true;
+        assert!(
+            engine
+                .validate_group_join(RuntimeJoin { task: 5, scope: 0 })
+                .is_err()
+        );
+        assert_eq!(
+            engine.join_arguments(types.join).unwrap(),
+            (types.int, types.string)
+        );
+        assert!(engine.join_arguments(types.int).is_err());
+
+        let add_group = match engine.new_group(types.group).unwrap() {
+            OperationResult::Value(value) => group_handle(&value).unwrap(),
+            _ => panic!("new_group did not return a handle"),
+        };
+        engine.task_scopes.push(Some(RuntimeTaskScope {
+            source: BytecodeScopeId::new(1),
+            owner: 0,
+            children: vec![6],
+            closed: false,
+        }));
+        engine.frames.last_mut().unwrap().task_scopes.push(1);
+        engine.tasks.push(TaskRecord {
+            frames: Vec::new(),
+            pending_unwind: None,
+            async_collect: None,
+            status: TaskStatus::Running,
+            resume: None,
+            queued: false,
+            cancel_requested: false,
+            waiters: Vec::new(),
+            parent_scope: Some(1),
+            join_consumed: false,
+            panic_observed: false,
+            discard_completion: false,
+        });
+        let add_group_handle = Value::Host(RuntimeValue::Host {
+            kind: RuntimeHostValueKind::Group,
+            id: add_group,
+        });
+        assert!(matches!(
+            engine
+                .prepare_group_method(
+                    &add,
+                    &[
+                        add_group_handle,
+                        Value::Join(RuntimeJoin { task: 6, scope: 1 }),
+                    ],
+                )
+                .unwrap(),
+            Some(OperationResult::Value(Value::Unit))
+        ));
+        assert!(matches!(
+            engine
+                .poll_group_operation(add_group, RuntimeGroupOperation::All, types.all)
+                .unwrap(),
+            GroupPoll::Pending
+        ));
+        engine.request_group_cancellation(add_group).unwrap();
+        engine.frames.clear();
+        engine.tasks[6].status = TaskStatus::Complete(Some(TaskCompletion::Cancelled));
+        assert!(matches!(
+            engine
+                .poll_group_operation(add_group, RuntimeGroupOperation::All, types.all)
+                .unwrap(),
+            GroupPoll::Ready(Value::Heap(_))
+        ));
+
+        let new_test_group = |engine: &mut Engine| match engine.new_group(types.group).unwrap() {
+            OperationResult::Value(value) => group_handle(&value).unwrap(),
+            _ => panic!("new_group did not return a handle"),
+        };
+        let add_child = |engine: &mut Engine,
+                         id: u64,
+                         status: TaskStatus,
+                         index: usize,
+                         sequence: Option<u64>| {
+            let task = engine.tasks.len();
+            engine.tasks.push(scheduler_task(status));
+            if let Some(sequence) = sequence {
+                engine.completion_order.insert(task, sequence);
+            }
+            engine
+                .groups
+                .get_mut(&id)
+                .unwrap()
+                .children
+                .push(RuntimeGroupChild {
+                    task,
+                    index,
+                    success: types.int,
+                    error: types.string,
+                });
+            task
+        };
+        let group_panic = |message: &str| {
+            TaskCompletion::Panicked(VmPanic {
+                code: PanicCode::ExplicitPanic,
+                message: message.into(),
+                span: BytecodeSpan {
+                    file: 0,
+                    start: 0,
+                    end: 0,
+                },
+                stack: Vec::new(),
+                suppressed: Vec::new(),
+            })
+        };
+
+        assert!(matches!(
+            engine.prepare_group_method(
+                &all_callable,
+                &[Value::Host(RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::Group,
+                    id: 999,
+                })],
+            ),
+            Err(VmError::Invariant(message)) if message.contains("unknown group")
+        ));
+        assert!(matches!(
+            engine.split_group_value(&Value::Integer(4), types.never),
+            Ok(Ok(Value::Integer(4)))
+        ));
+        assert!(engine.group_outcome_result(types.array_result).is_err());
+        assert!(
+            engine
+                .completion_nominal_value(types.result, 0, Value::Unit)
+                .is_err()
+        );
+        assert!(
+            engine
+                .completion_nominal_value(types.malformed_completion, 0, Value::Unit)
+                .is_err()
+        );
+
+        let panic_dispatch_group = new_test_group(&mut engine);
+        let panic_dispatch_task = add_child(
+            &mut engine,
+            panic_dispatch_group,
+            TaskStatus::Complete(Some(group_panic("prepare"))),
+            0,
+            None,
+        );
+        assert!(matches!(
+            engine.prepare_group_method(
+                &all_callable,
+                &[Value::Host(RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::Group,
+                    id: panic_dispatch_group,
+                })],
+            ),
+            Ok(Some(OperationResult::Panic(PanicCode::ExplicitPanic, message)))
+                if message == "prepare"
+        ));
+        assert!(matches!(
+            engine.tasks[panic_dispatch_task].status,
+            TaskStatus::Consumed
+        ));
+
+        let host_task = engine.tasks.len();
+        engine
+            .tasks
+            .push(scheduler_task(TaskStatus::Waiting(TaskWait::HostCall {
+                call: 77,
+                outcome: types.all,
+                destination: BytecodePlace {
+                    slot: BytecodeSlotId::new(0),
+                    ty: types.all,
+                    projections: Vec::new(),
+                    source_loan: None,
+                },
+                target: BytecodeBlockId::new(0),
+                unwind: BytecodeBlockId::new(0),
+                completion: None,
+            })));
+        engine.request_group_child_cancel(host_task).unwrap();
+        assert!(engine.tasks[host_task].cancel_requested);
+
+        let missing_order_group = new_test_group(&mut engine);
+        add_child(
+            &mut engine,
+            missing_order_group,
+            TaskStatus::Complete(Some(TaskCompletion::Returned(ok_value.clone()))),
+            0,
+            None,
+        );
+        assert!(matches!(
+            engine.poll_group_operation(missing_order_group, RuntimeGroupOperation::Next, types.next),
+            Err(VmError::Invariant(message)) if message.contains("no order")
+        ));
+        engine.remove_group(missing_order_group).unwrap();
+
+        let empty_completion_group = new_test_group(&mut engine);
+        add_child(
+            &mut engine,
+            empty_completion_group,
+            TaskStatus::Complete(None),
+            0,
+            None,
+        );
+        assert!(matches!(
+            engine.poll_group_operation(empty_completion_group, RuntimeGroupOperation::Next, types.next),
+            Err(VmError::Invariant(message)) if message.contains("completion is empty")
+        ));
+        engine.remove_group(empty_completion_group).unwrap();
+
+        let consumed_group = new_test_group(&mut engine);
+        add_child(&mut engine, consumed_group, TaskStatus::Consumed, 0, None);
+        assert!(matches!(
+            engine
+                .poll_group_operation(consumed_group, RuntimeGroupOperation::Next, types.next)
+                .unwrap(),
+            GroupPoll::Ready(Value::Heap(_))
+        ));
+        engine.remove_group(consumed_group).unwrap();
+
+        let sequence_group = new_test_group(&mut engine);
+        add_child(
+            &mut engine,
+            sequence_group,
+            TaskStatus::Complete(Some(TaskCompletion::Returned(ok_value.clone()))),
+            1,
+            Some(10),
+        );
+        add_child(
+            &mut engine,
+            sequence_group,
+            TaskStatus::Complete(Some(TaskCompletion::Returned(ok_value.clone()))),
+            0,
+            Some(5),
+        );
+        assert!(matches!(
+            engine
+                .poll_group_operation(sequence_group, RuntimeGroupOperation::Next, types.next)
+                .unwrap(),
+            GroupPoll::Ready(Value::Heap(_))
+        ));
+        assert!(matches!(
+            engine
+                .poll_group_operation(sequence_group, RuntimeGroupOperation::Next, types.next)
+                .unwrap(),
+            GroupPoll::Ready(Value::Heap(_))
+        ));
+        engine.remove_group(sequence_group).unwrap();
+
+        let tie_group = new_test_group(&mut engine);
+        add_child(
+            &mut engine,
+            tie_group,
+            TaskStatus::Complete(Some(TaskCompletion::Returned(ok_value.clone()))),
+            1,
+            Some(20),
+        );
+        add_child(
+            &mut engine,
+            tie_group,
+            TaskStatus::Complete(Some(TaskCompletion::Returned(ok_value.clone()))),
+            0,
+            Some(20),
+        );
+        assert!(matches!(
+            engine
+                .poll_group_operation(tie_group, RuntimeGroupOperation::Next, types.next)
+                .unwrap(),
+            GroupPoll::Ready(Value::Heap(_))
+        ));
+        assert!(matches!(
+            engine
+                .poll_group_operation(tie_group, RuntimeGroupOperation::Next, types.next)
+                .unwrap(),
+            GroupPoll::Ready(Value::Heap(_))
+        ));
+        engine.remove_group(tie_group).unwrap();
+
+        let panic_next_group = new_test_group(&mut engine);
+        add_child(
+            &mut engine,
+            panic_next_group,
+            TaskStatus::Complete(Some(group_panic("next panic"))),
+            0,
+            Some(1),
+        );
+        assert!(matches!(
+            engine
+                .poll_group_operation(panic_next_group, RuntimeGroupOperation::Next, types.next)
+                .unwrap(),
+            GroupPoll::Panic(VmPanic { message, .. }) if message == "next panic"
+        ));
+
+        let cancelled_next_group = new_test_group(&mut engine);
+        add_child(
+            &mut engine,
+            cancelled_next_group,
+            TaskStatus::Complete(Some(TaskCompletion::Cancelled)),
+            0,
+            Some(1),
+        );
+        assert!(matches!(
+            engine
+                .poll_group_operation(
+                    cancelled_next_group,
+                    RuntimeGroupOperation::Next,
+                    types.next
+                )
+                .unwrap(),
+            GroupPoll::Ready(Value::Heap(_))
+        ));
+        engine.remove_group(cancelled_next_group).unwrap();
+
+        let wrong_next_outcome_group = new_test_group(&mut engine);
+        add_child(
+            &mut engine,
+            wrong_next_outcome_group,
+            TaskStatus::Complete(Some(TaskCompletion::Returned(ok_value.clone()))),
+            0,
+            Some(1),
+        );
+        assert!(matches!(
+            engine.poll_group_operation(
+                wrong_next_outcome_group,
+                RuntimeGroupOperation::Next,
+                types.all,
+            ),
+            Err(VmError::Invariant(message)) if message.contains("not Option")
+        ));
+        engine.remove_group(wrong_next_outcome_group).unwrap();
+
+        let empty_all_group = new_test_group(&mut engine);
+        add_child(
+            &mut engine,
+            empty_all_group,
+            TaskStatus::Complete(None),
+            0,
+            None,
+        );
+        assert!(matches!(
+            engine.poll_group_operation(empty_all_group, RuntimeGroupOperation::All, types.all),
+            Err(VmError::Invariant(message)) if message.contains("completion is empty")
+        ));
+        engine.remove_group(empty_all_group).unwrap();
+
+        let consumed_all_group = new_test_group(&mut engine);
+        add_child(
+            &mut engine,
+            consumed_all_group,
+            TaskStatus::Consumed,
+            0,
+            None,
+        );
+        assert!(matches!(
+            engine.poll_group_operation(consumed_all_group, RuntimeGroupOperation::All, types.all),
+            Err(VmError::Invariant(message)) if message.contains("consumed outside")
+        ));
+        engine.remove_group(consumed_all_group).unwrap();
+
+        let panic_all_group = new_test_group(&mut engine);
+        add_child(
+            &mut engine,
+            panic_all_group,
+            TaskStatus::Complete(Some(group_panic("first panic"))),
+            0,
+            None,
+        );
+        add_child(
+            &mut engine,
+            panic_all_group,
+            TaskStatus::Complete(Some(group_panic("second panic"))),
+            1,
+            None,
+        );
+        assert!(matches!(
+            engine
+                .poll_group_operation(panic_all_group, RuntimeGroupOperation::All, types.all)
+                .unwrap(),
+            GroupPoll::Panic(VmPanic { suppressed, .. }) if suppressed.len() == 1
+        ));
+
+        let infallible_error_group = new_test_group(&mut engine);
+        add_child(
+            &mut engine,
+            infallible_error_group,
+            TaskStatus::Complete(Some(TaskCompletion::Returned(err_value.clone()))),
+            0,
+            None,
+        );
+        assert!(matches!(
+            engine.poll_group_operation(
+                infallible_error_group,
+                RuntimeGroupOperation::All,
+                types.all_never,
+            ),
+            Err(VmError::Invariant(message)) if message.contains("infallible outcome")
+        ));
     }
 }

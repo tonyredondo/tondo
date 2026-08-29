@@ -188,7 +188,7 @@ La ejecución se divide en bloques del tracker:
 | ID | Entrega | Dependencias |
 |---|---|---|
 | `DIAG-SPEC-001` | Profiles, envelope, identidad, privacidad, límites y CLI | `PERF-001`, contratos CLI/testing |
-| `STD-ASYNC-GROUP-SPEC-001` | Contrato de `Group`, ownership, orden, cancelación drenada y eventos privados; sin implementación pública | `DIAG-SPEC-001`, `ASYNC-SELECT-VM-CONF-001`, S1A |
+| `STD-ASYNC-GROUP-SPEC-001` | Contrato de `Group`, ownership, orden, cancelación drenada y eventos privados; implementación hosted verificada, sin promoción pública | `DIAG-SPEC-001`, `ASYNC-SELECT-VM-CONF-001`, S1A |
 | `STD-CONC-001` | Contrato de canales, ownership, backpressure, cierre, selección cancelable, fairness y eventos privados; sin implementación pública | `DIAG-SPEC-001`, `ASYNC-SELECT-VM-CONF-001`, S1A |
 | `STD-SYNC-001` | Contrato de locks, atomics, colecciones compartidas y eventos observables, sin implementación pública | `DIAG-SPEC-001`, foundations STD-0.1A |
 | `STD-EXEC-001` / `STD-NET-001` | Contratos runtime-facing y eventos observables, sin implementación pública | `DIAG-SPEC-001`, foundations STD-0.1A |

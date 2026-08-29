@@ -448,6 +448,7 @@ impl<'a> TraceMetadataAnalysis<'a> {
                         .collect(),
                 },
                 BytecodeIntrinsicType::Pointer
+                | BytecodeIntrinsicType::Group
                 | BytecodeIntrinsicType::Join
                 | BytecodeIntrinsicType::Waiter
                 | BytecodeIntrinsicType::Completer
@@ -1102,6 +1103,7 @@ fn intrinsic_capability(
             ClosedCapability::Copy | ClosedCapability::Discard
         )),
         BytecodeIntrinsicType::Join => fixed_capability(false),
+        BytecodeIntrinsicType::Group => fixed_capability(capability == ClosedCapability::Send),
         BytecodeIntrinsicType::Waiter | BytecodeIntrinsicType::Completer => {
             fixed_capability(capability == ClosedCapability::Send)
         }
@@ -1566,6 +1568,9 @@ fn intrinsic_terminal(
     if constructor.terminal_contract().is_some() {
         return fixed_terminal(BytecodeTerminalStatus::Present);
     }
+    if constructor == BytecodeIntrinsicType::Group {
+        return fixed_terminal(BytecodeTerminalStatus::Present);
+    }
     match constructor {
         BytecodeIntrinsicType::Array
         | BytecodeIntrinsicType::Map
@@ -1573,6 +1578,7 @@ fn intrinsic_terminal(
         | BytecodeIntrinsicType::Range => dependent_terminal(arguments.to_vec()),
         BytecodeIntrinsicType::Ref
         | BytecodeIntrinsicType::Pointer
+        | BytecodeIntrinsicType::Group
         | BytecodeIntrinsicType::Waiter
         | BytecodeIntrinsicType::Completer
         | BytecodeIntrinsicType::AlreadyCompleted
@@ -1787,6 +1793,7 @@ impl Verifier<'_> {
                 | BytecodeIntrinsicType::Range
                 | BytecodeIntrinsicType::Pointer
                 | BytecodeIntrinsicType::Join
+                | BytecodeIntrinsicType::Group
                 | BytecodeIntrinsicType::Waiter
                 | BytecodeIntrinsicType::Completer
                 | BytecodeIntrinsicType::AlreadyCompleted
@@ -2348,6 +2355,7 @@ impl Verifier<'_> {
                 && !callable.name.starts_with("std.collections.")
                 && !callable.name.starts_with("std.async.Waiter.wait")
                 && !callable.name.starts_with("std.async.Completer.")
+                && !callable.name.starts_with("std.async.Group.")
                 && !callable.name.starts_with("std.testing.shrink")
             {
                 return Err(BytecodeVerificationError::new(
@@ -15281,6 +15289,7 @@ mod tests {
             BytecodeIntrinsicType::Ref,
             BytecodeIntrinsicType::Pointer,
             BytecodeIntrinsicType::Join,
+            BytecodeIntrinsicType::Group,
             BytecodeIntrinsicType::Command,
             BytecodeIntrinsicType::Pipeline,
             BytecodeIntrinsicType::Bytes,
@@ -15390,6 +15399,7 @@ mod tests {
                 BytecodeIntrinsicType::Ref | BytecodeIntrinsicType::NumericConversionError => all,
                 BytecodeIntrinsicType::Pointer => [true, true, false, false, false, false],
                 BytecodeIntrinsicType::Join => [false; 6],
+                BytecodeIntrinsicType::Group => [false, false, false, false, true, false],
                 BytecodeIntrinsicType::Waiter | BytecodeIntrinsicType::Completer => {
                     [false, true, false, false, true, false]
                 }
