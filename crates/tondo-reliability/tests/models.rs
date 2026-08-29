@@ -1,5 +1,8 @@
 use std::collections::BTreeSet;
 
+#[path = "../src/group_model.rs"]
+mod group_model;
+
 use tondo_compiler::driver::ResourceLimits;
 use tondo_reliability::generator::Generator;
 use tondo_reliability::harness::{check, run};
@@ -7,6 +10,8 @@ use tondo_reliability::inventory;
 use tondo_reliability::workspace_root;
 use tondo_vm::bytecode::{ArraySliceError, normalize_array_index, normalize_array_slice_indices};
 use tondo_vm::runtime::conformance::{MemoryScenario, run_memory_scenario};
+
+use group_model::{MAX_FUZZ_STEPS, run_fuzz_case};
 
 #[test]
 fn map_operation_sequences_match_an_insertion_order_model() {
@@ -371,6 +376,29 @@ fn arrays_sets_ranges_strings_slices_and_copies_match_pure_models() {
             observation.diagnostic_codes
         );
     }
+}
+
+#[test]
+fn group_model_sequences_are_bounded_replayable_and_cleanup_complete() {
+    for seed in 0..4_096_u64 {
+        let mut generator = Generator::new(0x6a11_d000 + seed);
+        let input = generator.bytes(256);
+        let first = run_fuzz_case(&input).unwrap();
+        let second = run_fuzz_case(&input).unwrap();
+        assert_eq!(first, second, "group replay diverged for seed {seed}");
+        assert!(first.steps <= MAX_FUZZ_STEPS);
+        assert!(first.snapshot.consumed);
+        assert_eq!(
+            first.snapshot.cleanup_runs, first.snapshot.consumed_children,
+            "cleanup must run once per consumed child for seed {seed}"
+        );
+        assert_eq!(first.snapshot.pending_children, 0);
+    }
+
+    let empty = run_fuzz_case(&[]).unwrap();
+    assert_eq!(empty.steps, 1);
+    assert!(empty.snapshot.consumed);
+    assert_eq!(empty.snapshot.pending_children, 0);
 }
 
 fn int_array(values: &[i64]) -> String {

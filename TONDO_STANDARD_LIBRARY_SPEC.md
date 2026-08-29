@@ -953,8 +953,11 @@ y tiene su contrato machine-readable en
 implementación hosted de VM está verificada por
 `STD-ASYNC-GROUP-IMPL-001` mediante el fixture
 `tests/runtime/m11-std-async-group-001.to`. La ruta nativa aún requiere su
-scheduler/ABI async y no se considera conformada hasta cerrar sus celdas
-`MODEL`, `TEST`, `FUZZ`, `PERF`, `CONF` y `DOC`.
+scheduler/ABI async. El modelo, la batería hosted y el fuzzing están cerrados
+por `STD-ASYNC-GROUP-TEST-001` y registrados en
+[`testing/stdlib-async-group-test.json`](./testing/stdlib-async-group-test.json);
+la promoción aún requiere cerrar `PERF`, `CONF` y `DOC`, además de la evidencia
+nativa correspondiente.
 
 ### 9.5 Scheduler y backpressure
 

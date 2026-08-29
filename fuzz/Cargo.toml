@@ -52,6 +52,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "stdlib_async_group"
+path = "fuzz_targets/stdlib_async_group.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "diagnostics"
 path = "fuzz_targets/diagnostics.rs"
 test = false

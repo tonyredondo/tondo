@@ -10789,7 +10789,7 @@ impl Engine<'_, '_> {
                     let (success, error) = self
                         .groups
                         .get(&id)
-                        .and_then(|_| Some((winner.success, winner.error)))
+                        .map(|_| (winner.success, winner.error))
                         .ok_or_else(|| VmError::invariant("Group disappeared after next"))?;
                     let result_ty = self.result_type_id(success, error)?;
                     let result = self.split_group_value(&value, error)?;
@@ -10827,7 +10827,7 @@ impl Engine<'_, '_> {
                     cancellation_required = true;
                 }
                 TaskStatus::Complete(Some(TaskCompletion::Returned(value))) => {
-                    if self.split_group_value(&value, child.error)?.is_err() {
+                    if self.split_group_value(value, child.error)?.is_err() {
                         cancellation_required = true;
                     }
                 }
@@ -13308,6 +13308,9 @@ mod tests {
         next: BytecodeTypeId,
         all: BytecodeTypeId,
         all_never: BytecodeTypeId,
+        empty_array: BytecodeTypeId,
+        empty_array_result: BytecodeTypeId,
+        missing_nominal: BytecodeTypeId,
     }
 
     fn group_program() -> (BytecodeProgram, GroupTypes) {
@@ -13390,6 +13393,31 @@ mod tests {
                 error: never,
             },
         });
+        let empty_array = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "Array[]".into(),
+            kind: BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::Array,
+                arguments: vec![int],
+            },
+        });
+        let empty_array_result = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "Array[] ! String".into(),
+            kind: BytecodeTypeKind::Result {
+                success: empty_array,
+                error: string,
+            },
+        });
+        let missing_nominal = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "MissingCompletion[Int, String]".into(),
+            kind: BytecodeTypeKind::Nominal {
+                nominal: Some(BytecodeNominalId::new(0)),
+                identity: "test::MissingCompletion".into(),
+                arguments: vec![int, string],
+            },
+        });
         program.nominals.push(BytecodeNominal {
             name: "Completion".into(),
             identity: "test::Completion".into(),
@@ -13427,6 +13455,9 @@ mod tests {
                 next,
                 all,
                 all_never,
+                empty_array,
+                empty_array_result,
+                missing_nominal,
             },
         )
     }
@@ -19564,8 +19595,18 @@ mod tests {
 
     #[test]
     fn group_helper_boundaries_are_atomic_and_cancellable() {
-        let (program, types) = group_program();
+        let (mut program, types) = group_program();
         let trace = derive_trace_metadata(&program).unwrap();
+        if let BytecodeTypeKind::Intrinsic { arguments, .. } =
+            &mut program.types[types.empty_array.index() as usize].kind
+        {
+            arguments.clear();
+        }
+        if let BytecodeTypeKind::Nominal { nominal, .. } =
+            &mut program.types[types.missing_nominal.index() as usize].kind
+        {
+            *nominal = Some(BytecodeNominalId::new(99));
+        }
         let mut host = RejectingHost;
         let mut engine = Engine::new(
             &program,
@@ -19574,6 +19615,10 @@ mod tests {
             ValueCopyStrategy::default(),
             trace,
         );
+        let new_test_group = |engine: &mut Engine| match engine.new_group(types.group).unwrap() {
+            OperationResult::Value(value) => group_handle(&value).unwrap(),
+            _ => panic!("new_group did not return a handle"),
+        };
         let group_error = engine
             .allocate(types.string, HeapObject::String("group error".into()), &[])
             .unwrap();
@@ -19606,6 +19651,19 @@ mod tests {
             }))
             .unwrap(),
             9
+        );
+        assert!(
+            engine
+                .join_arguments(BytecodeTypeId::new(u32::MAX))
+                .is_err()
+        );
+        assert!(
+            engine
+                .validate_group_join(RuntimeJoin {
+                    task: usize::MAX,
+                    scope: 0,
+                })
+                .is_err()
         );
 
         let first_group = match engine.new_group(types.group).unwrap() {
@@ -19755,8 +19813,29 @@ mod tests {
         engine.next_group_id = 100;
 
         assert!(engine.result_type_id(types.string, types.string).is_err());
+        assert!(
+            engine
+                .result_type_id(BytecodeTypeId::new(u32::MAX), types.string)
+                .is_err()
+        );
         assert!(engine.group_outcome_result(types.result).is_err());
+        assert!(
+            engine
+                .group_outcome_result(BytecodeTypeId::new(u32::MAX))
+                .is_err()
+        );
+        assert!(
+            engine
+                .group_outcome_result(types.empty_array_result)
+                .is_err()
+        );
         assert!(engine.group_array_element(types.result).is_err());
+        assert!(
+            engine
+                .group_array_element(BytecodeTypeId::new(u32::MAX))
+                .is_err()
+        );
+        assert!(engine.group_array_element(types.empty_array).is_err());
         assert!(engine.oneshot_result(types.int, Ok(Value::Unit)).is_err());
         assert!(
             engine
@@ -19778,7 +19857,22 @@ mod tests {
 
         assert!(engine.group_is_terminal(first_group).unwrap());
         assert!(engine.group_is_terminal(999).is_err());
+        let invalid_child_group = new_test_group(&mut engine);
+        engine
+            .groups
+            .get_mut(&invalid_child_group)
+            .unwrap()
+            .children
+            .push(RuntimeGroupChild {
+                task: usize::MAX,
+                index: 0,
+                success: types.int,
+                error: types.string,
+            });
+        assert!(engine.group_is_terminal(invalid_child_group).is_err());
+        engine.remove_group(invalid_child_group).unwrap();
         assert!(engine.remove_group_waiter(999, 0).is_err());
+        assert!(engine.remove_group(999).is_err());
         assert!(engine.park_group(999, TaskWait::Scope).is_err());
         assert!(engine.request_group_cancellation(999).is_err());
 
@@ -19940,10 +20034,6 @@ mod tests {
             GroupPoll::Ready(Value::Heap(_))
         ));
 
-        let new_test_group = |engine: &mut Engine| match engine.new_group(types.group).unwrap() {
-            OperationResult::Value(value) => group_handle(&value).unwrap(),
-            _ => panic!("new_group did not return a handle"),
-        };
         let add_child = |engine: &mut Engine,
                          id: u64,
                          status: TaskStatus,
@@ -20006,6 +20096,16 @@ mod tests {
                 .completion_nominal_value(types.malformed_completion, 0, Value::Unit)
                 .is_err()
         );
+        assert!(
+            engine
+                .completion_nominal_value(BytecodeTypeId::new(u32::MAX), 0, Value::Unit)
+                .is_err()
+        );
+        assert!(
+            engine
+                .completion_nominal_value(types.missing_nominal, 0, Value::Unit)
+                .is_err()
+        );
 
         let panic_dispatch_group = new_test_group(&mut engine);
         let panic_dispatch_task = add_child(
@@ -20063,6 +20163,57 @@ mod tests {
             Err(VmError::Invariant(message)) if message.contains("no order")
         ));
         engine.remove_group(missing_order_group).unwrap();
+
+        let invalid_next_child_group = new_test_group(&mut engine);
+        engine
+            .groups
+            .get_mut(&invalid_next_child_group)
+            .unwrap()
+            .children
+            .push(RuntimeGroupChild {
+                task: usize::MAX,
+                index: 0,
+                success: types.int,
+                error: types.string,
+            });
+        assert!(matches!(
+            engine.poll_group_operation(
+                invalid_next_child_group,
+                RuntimeGroupOperation::Next,
+                types.next,
+            ),
+            Err(VmError::Invariant(message)) if message.contains("invalid task")
+        ));
+        engine.remove_group(invalid_next_child_group).unwrap();
+
+        let invalid_all_child_group = new_test_group(&mut engine);
+        engine
+            .groups
+            .get_mut(&invalid_all_child_group)
+            .unwrap()
+            .children
+            .push(RuntimeGroupChild {
+                task: usize::MAX,
+                index: 0,
+                success: types.int,
+                error: types.string,
+            });
+        assert!(matches!(
+            engine.poll_group_operation(
+                invalid_all_child_group,
+                RuntimeGroupOperation::All,
+                types.all,
+            ),
+            Err(VmError::Invariant(message)) if message.contains("invalid task")
+        ));
+        engine.remove_group(invalid_all_child_group).unwrap();
+
+        let invalid_poll_group = new_test_group(&mut engine);
+        assert!(matches!(
+            engine.poll_group_operation(999, RuntimeGroupOperation::Next, types.next),
+            Err(VmError::Invariant(message)) if message.contains("unknown group")
+        ));
+        engine.remove_group(invalid_poll_group).unwrap();
 
         let empty_completion_group = new_test_group(&mut engine);
         add_child(
@@ -20264,6 +20415,50 @@ mod tests {
                 types.all_never,
             ),
             Err(VmError::Invariant(message)) if message.contains("infallible outcome")
+        ));
+
+        let invalid_settle_group = new_test_group(&mut engine);
+        add_child(
+            &mut engine,
+            invalid_settle_group,
+            TaskStatus::Complete(Some(TaskCompletion::Returned(ok_value))),
+            0,
+            Some(1),
+        );
+        assert!(matches!(
+            engine.poll_group_operation(
+                invalid_settle_group,
+                RuntimeGroupOperation::Settle,
+                types.empty_array,
+            ),
+            Err(VmError::Invariant(message)) if message.contains("no element type")
+        ));
+        engine.remove_group(invalid_settle_group).unwrap();
+
+        let invalid_take_group = new_test_group(&mut engine);
+        let invalid_child = RuntimeGroupChild {
+            task: usize::MAX,
+            index: 0,
+            success: types.int,
+            error: types.string,
+        };
+        assert!(engine.take_group_completions(&[invalid_child]).is_err());
+        engine.remove_group(invalid_take_group).unwrap();
+
+        assert!(matches!(
+            engine.spawn_group_task_with_scope(
+                999,
+                RuntimeGroupOperation::Next,
+                types.next,
+                None,
+                true,
+            ),
+            Err(VmError::Invariant(message)) if message.contains("unknown group")
+        ));
+        let cancelled_task = engine.spawn_cancelled_task_with_scope(None).unwrap();
+        assert!(matches!(
+            engine.tasks[cancelled_task].status,
+            TaskStatus::Complete(Some(TaskCompletion::Cancelled))
         ));
     }
 }

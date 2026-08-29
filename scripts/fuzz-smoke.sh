@@ -6,13 +6,14 @@ cd "$root/fuzz"
 
 runs="${TONDO_FUZZ_RUNS:-128}"
 nightly="${TONDO_FUZZ_NIGHTLY:-nightly-2026-07-28}"
-for target in frontend protocols admission stdlib_codecs stdlib_owners; do
+for target in frontend protocols admission stdlib_codecs stdlib_owners stdlib_async_group; do
     case "$target" in
         frontend) seed=1001 ;;
         protocols) seed=1002 ;;
         admission) seed=1003 ;;
         stdlib_codecs) seed=1004 ;;
         stdlib_owners) seed=1022 ;;
+        stdlib_async_group) seed=1023 ;;
     esac
     output_corpus="$root/target/reliability/fuzz-corpus/smoke/$target"
     rm -rf "$output_corpus"

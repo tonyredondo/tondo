@@ -9,6 +9,8 @@ fn return_error(message: String): Int ! String suspends {
     err(message)
 }
 
+fn yield_once() suspends {}
+
 fn blocked(waiter: async.Waiter[Int, String]): Int ! String suspends {
     var owned = waiter
     owned.wait()?
@@ -159,6 +161,30 @@ fn next_select_rolls_back() {
     }
 }
 
+fn cancelled_select_child(waiter: async.Waiter[Int, String]): Int ! String {
+    var owned = waiter
+    let selected = select {
+        owned.wait() => 1
+    }
+    selected
+}
+
+fn next_select_drains_cancelled_arm() {
+    let pair = async.oneshot[Int, String]()
+    var (waiter, completer) = pair
+    _ = completer.cancel()
+    scope {
+        var group = async.group[Int, String]()
+        let child = spawn cancelled_select_child(waiter)
+        group.add(child)
+        yield_once()
+        match group.all() {
+            ok(values) => assert(values.length() == 0)
+            err(_) => assert(false)
+        }
+    }
+}
+
 fn cancel_drains_pending() {
     let pair = async.oneshot[Int, String]()
     var (waiter, completer) = pair
@@ -190,6 +216,7 @@ fn main() {
     next_observes_completion_order()
     next_select_commits_once()
     next_select_rolls_back()
+    next_select_drains_cancelled_arm()
     cancel_drains_pending()
     console.print("group-ok\n")
 }

@@ -12,10 +12,12 @@ boundaries:
 - `stdlib_codecs`: arbitrary bytes through the bounded JSON, MessagePack and
   Protobuf readers, including one-byte fragmentation. The deterministic
   external wire oracle is kept in `crates/tondo-stdlib/tests/codec_conformance.rs`.
-- `stdlib_owners`: one bounded route for every S1A standard-library owner.
-  The first byte selects the owner and the remainder is the payload; every
-  route has a fixed limit, an executable oracle and a versioned corpus under
+- `stdlib_owners`: one bounded route for every S1A standard-library owner. The
+  first byte selects the owner and the remainder is the payload; every route
+  has a fixed limit, an executable oracle and a versioned corpus under
   `corpus/stdlib_owners/`.
+- `stdlib_async_group`: an independent affine-state-machine oracle for the
+  hosted `std.async.Group[T, E]` implementation.
 
 Corpora are versioned below `corpus/<target>/`. Crashes belong in the ordinary
 regression suite after minimization; `artifacts/` is deliberately ignored.
@@ -28,6 +30,7 @@ cargo +nightly fuzz run protocols -- -runs=1000 -seed=1002
 cargo +nightly fuzz run admission -- -runs=1000 -seed=1003
 cargo +nightly fuzz run stdlib_codecs -- -runs=1000 -seed=1004
 cargo +nightly fuzz run stdlib_owners -- -runs=1000 -seed=1022
+cargo +nightly fuzz run stdlib_async_group -- -runs=1000 -seed=4101 -max_len=4096
 ~~~
 
 Nightly campaigns increase `-runs` or use a bounded `-max_total_time`; every

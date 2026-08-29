@@ -137,12 +137,29 @@ puede esperar la primera finalización mediante `select`; los perdedores siguen
 perteneciendo al caller. La stdlib no añade tuples awaitables, variadic generics
 heterogéneos ni overloads por aridad.
 
-La superficie no se promueve hasta completar el modelo de estados afín, tests,
-fuzzing, presupuestos de rendimiento, conformidad VM/nativa y documentación
-ejecutable. `STD-ASYNC-GROUP-IMPL-001` cierra ahora la implementación hosted de
-VM; la implementación nativa y la conformidad cruzada siguen siendo leaves
-separadas. `HOST = not-applicable`: `Group` compone el scheduler y `Join`
-existentes y no enlaza una primitiva host propia.
+El modelo de estados afín, los tests hosted y el fuzzing ya están verificados
+por `STD-ASYNC-GROUP-TEST-001`. El modelo independiente de
+[`crates/tondo-reliability/src/group_model.rs`](../../crates/tondo-reliability/src/group_model.rs)
+recorre 4.096 seeds con un máximo de 256 operaciones generadas, comprueba
+orden, errores, pánicos, cancelación, transferencia, límites, rollback y
+cleanup exactamente-una-vez, y se compara consigo mismo para detectar
+divergencia de replay. La prueba de integración
+[`crates/tondo-reliability/tests/models.rs`](../../crates/tondo-reliability/tests/models.rs)
+repite el corpus y exige que toda ejecución termine sin hijos pendientes. El
+target independiente
+[`fuzz/fuzz_targets/stdlib_async_group.rs`](../../fuzz/fuzz_targets/stdlib_async_group.rs)
+usa el mismo oráculo con un límite de 4 KiB/1.024 pasos, corpus persistente y
+128 ejecuciones smoke reproducibles; el runner es
+[`scripts/stdlib-async-group-fuzz.sh`](../../scripts/stdlib-async-group-fuzz.sh).
+El registro completo de estas tres celdas es
+[`testing/stdlib-async-group-test.json`](../../testing/stdlib-async-group-test.json).
+
+La superficie aún no se promueve hasta completar presupuestos de rendimiento,
+conformidad VM/nativa y documentación ejecutable. `STD-ASYNC-GROUP-IMPL-001`
+cierra la implementación hosted de VM y `STD-ASYNC-GROUP-TEST-001` cierra
+`MODEL`, `TEST` y `FUZZ`; la implementación nativa y la conformidad cruzada
+siguen siendo leaves separadas. `HOST = not-applicable`: `Group` compone el
+scheduler y `Join` existentes y no enlaza una primitiva host propia.
 
 ### Eventos observables para diagnóstico
 
@@ -163,8 +180,7 @@ brazo perdedor no consume el `Join`, waiter o grupo, y la cancelación del scope
 desregistra todos los brazos antes del unwind. `Group.next` está contractualmente
 cerrado en STD-0.1B. Su operación hosted de VM está implementada junto con
 `all`, `settle` y `cancel`; el owner no se promueve hasta cerrar sus leaves
-`MODEL`, `TEST`, `FUZZ`, `PERF`, `CONF` y `DOC` y la evidencia nativa que
-corresponda.
+`PERF`, `CONF` y `DOC` y la evidencia nativa que corresponda.
 
 ## Estado de implementación de STD-0.1A
 

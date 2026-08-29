@@ -1,0 +1,101 @@
+{
+  "format": "tondo-stdlib-group-testing/1",
+  "edition": "0.1",
+  "phase": "STD-0.1B",
+  "owner": "std.async.group",
+  "task": "STD-ASYNC-GROUP-TEST-001",
+  "status": "verified",
+  "contract": "testing/stdlib-async-group.json",
+  "limits": {
+    "max_children": 64,
+    "max_fuzz_input_bytes": 4096,
+    "max_fuzz_steps": 1024,
+    "model_seed_count": 4096,
+    "model_max_generated_bytes": 256
+  },
+  "model": {
+    "status": "verified",
+    "source": [
+      "crates/tondo-reliability/src/group_model.rs",
+      "crates/tondo-reliability/tests/models.rs"
+    ],
+    "laws": [
+      "stable zero-based insertion indexes",
+      "next orders terminal children by completion order then insertion index",
+      "select prepare and rollback are non-mutating",
+      "all selects the lowest insertion-index error and drains siblings",
+      "settle preserves one declared outcome per remaining child",
+      "cancel publishes no synthetic user error and drains every live child",
+      "affine ownership transfer and terminal consumption are explicit",
+      "each consumed child runs cleanup exactly once"
+    ],
+    "sequence_seeds": 4096,
+    "oracle": "independent bounded state machine with deterministic replay and invariant checks",
+    "command": "cargo test -p tondo-reliability --test models group_model_sequences_are_bounded_replayable_and_cleanup_complete --locked"
+  },
+  "test": {
+    "status": "verified",
+    "sources": [
+      "tests/runtime/m11-std-async-group-001.to",
+      "crates/tondo-vm/src/runtime/execute.rs",
+      "crates/tondo-reliability/src/group_model.rs",
+      "crates/tondo-reliability/tests/models.rs"
+    ],
+    "commands": [
+      "scripts/stdlib-async-group-check.sh",
+      "cargo test -p tondo-reliability --test models group_model::tests:: --locked",
+      "cargo test -p tondo-reliability --test models group_model_sequences_are_bounded_replayable_and_cleanup_complete --locked",
+      "cargo test -p tondo-vm --lib runtime::execute::tests::group_ --locked",
+      "cargo run -q -p tondo-cli -- run tests/runtime/m11-std-async-group-001.to"
+    ],
+    "cases": [
+      "empty-group",
+      "all-success-and-insertion-order",
+      "all-error-lowest-index-and-cancellation-drain",
+      "settle-success-error-and-panic",
+      "next-completion-order-and-tie-break",
+      "next-cancelled-child-skip",
+      "select-probe-commit-and-rollback",
+      "scope-transfer-and-affine-terminal-use",
+      "resource-and-malformed-boundaries",
+      "deterministic-scheduling-stress"
+    ],
+    "oracle": "runtime output, VM invariants and independent model observations must agree",
+    "runtime_output": "group-ok"
+  },
+  "fuzz": {
+    "status": "verified",
+    "target": "stdlib_async_group",
+    "source": "fuzz/fuzz_targets/stdlib_async_group.rs",
+    "corpus": "fuzz/corpus/stdlib_async_group/seed",
+    "input_limit_bytes": 4096,
+    "step_limit": 1024,
+    "smoke": {
+      "runs": 128,
+      "seed": 4101,
+      "toolchain": "nightly-2026-07-28",
+      "result": "passed"
+    },
+    "oracle": "panic-free bounded replay, no leaked group owner, no pending child, cleanup exactly once",
+    "command": "TONDO_GROUP_FUZZ_RUNS=128 scripts/stdlib-async-group-fuzz.sh",
+    "replay_command": "cargo +nightly-2026-07-28 fuzz run stdlib_async_group fuzz/corpus/stdlib_async_group -- -runs=0 -max_len=4096"
+  },
+  "invariants": {
+    "owner_is_affine": true,
+    "rollback_is_atomic": true,
+    "completion_order_is_deterministic": true,
+    "terminal_consumers_are_exhaustive": true,
+    "cleanup_is_exactly_once": true,
+    "bounded_input_and_steps": true,
+    "fuzz_replay_is_identical": true
+  },
+  "promotion": {
+    "model_test_fuzz_complete": true,
+    "remaining": [
+      "STD-ASYNC-GROUP-PERF-001",
+      "STD-ASYNC-GROUP-CONF-001",
+      "STD-ASYNC-GROUP-DOC-001"
+    ],
+    "native_async_runtime": "pending"
+  }
+}

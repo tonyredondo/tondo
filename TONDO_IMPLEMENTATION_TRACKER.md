@@ -102,7 +102,9 @@ en requisito de Tondo 0.1.
 
 **Objetivo inmediato:** continuar la implementación de `STD-0.1B` de Wave 8 tras
 cerrar Gate N1. `STD-ASYNC-GROUP-IMPL-001` ya está cerrado para la VM hosted; el
-siguiente paso es su modelo/tests y la evidencia nativa correspondiente. El slice
+siguiente paso es medirlo con `STD-ASYNC-GROUP-PERF-001` y cerrar después la
+conformidad/documentación y la evidencia nativa correspondiente. El modelo y
+tests/fuzz hosted de Group ya están cerrados por `STD-ASYNC-GROUP-TEST-001`. El slice
 ejecutable de `select` ya está cerrado en la VM hosted —frontend,
 semántica tipada, lowering verificable, runtime cooperativo, ownership
 branch-sensitive, adapters `Waiter`/time, modelo/tests deterministas y
@@ -6239,7 +6241,8 @@ publica hasta cerrar el gate final.
   `scripts/stdlib-async-group-test.sh`, ambos integrados en `test-gate.sh`.
   `HOST = not-applicable` porque compone el scheduler existente; no se añaden
   `WaitGroup`, tuples awaitables, overloads por aridad ni otro `Task`/`Future`.
-  La implementación pública sigue pendiente de las leaves B1.
+  La implementación pública sigue pendiente de las leaves de medición,
+  conformidad y documentación B1.
 
 - [x] **STD-CONC-001 — Especificar `std.channel`.** El registro
   [`testing/stdlib-channel.json`](./testing/stdlib-channel.json) y el contrato
@@ -6488,12 +6491,18 @@ estas leaves.
   implementación nativa queda explícitamente pendiente de un scheduler/ABI
   async nativo y se verificará en la conformidad cruzada, no se oculta como
   completada por esta evidencia hosted.
-- [ ] **STD-ASYNC-GROUP-TEST-001 — Modelar, probar y fuzzear grupos.** Mantener
-  registros separados `MODEL`, `TEST` y `FUZZ` para la máquina afín: secuencias
-  de add/next/terminal, éxito/error/pánico/cancelación, finalizaciones
-  simultáneas, `next` ganador/perdedor dentro de `select`, transferencia entre
-  scopes, grupo vacío, límites, cleanup único y ausencia de hijos o handles
-  perdidos bajo scheduling determinista y stress.
+- [x] **STD-ASYNC-GROUP-TEST-001 — Modelar, probar y fuzzear grupos.** El
+  registro separado
+  [`testing/stdlib-async-group-test.json`](./testing/stdlib-async-group-test.json)
+  cierra las celdas `MODEL`, `TEST` y `FUZZ`. El modelo independiente
+  `crates/tondo-reliability/src/group_model.rs` y su corpus de 4.096 seeds
+  comprueban secuencias de add/next/terminal, éxito/error/pánico/cancelación,
+  finalizaciones simultáneas con tie-break por índice, probe/commit/rollback de
+  `select`, transferencia entre scopes, grupo vacío, límites, cleanup único y
+  ausencia de hijos o handles perdidos. `tests/models.rs` repite cada secuencia
+  con replay determinista y el target `stdlib_async_group` mantiene un corpus
+  persistente, límite de 4 KiB/1.024 pasos y 128 ejecuciones smoke; los tests
+  hosted de VM y el fixture público siguen siendo los oráculos consumidores.
 - [ ] **STD-ASYNC-GROUP-PERF-001 — Medir grupos.** Fijar latencia y throughput
   de `add`, fan-in `all`, `settle`, `next` y cancelación, además de memoria,
   allocations, wakeups y tail latency por cardinalidad y target.
@@ -7459,15 +7468,16 @@ contrato D0 de diagnóstico; `STD-ASYNC-GROUP-SPEC-001`, `STD-CONC-001`,
 `STD-SYNC-001`, `STD-EXEC-001`, `STD-NET-001`, `STD-CIVIL-TIME-001`,
 `STD-ENCODING-001`, `STD-YAML-001`, `STD-TOML-001`, `STD-CBOR-001`,
 `STD-REGEX-001`, `STD-ID-001` y `STD-LOG-001` ya tienen registros y negativos
-ejecutables; `STD-ASYNC-GROUP-IMPL-001` ya está cerrado para VM hosted y siguen
-sus leaves de modelo/tests/perf/conformance/docs y los detectores de M11.
+ejecutables; `STD-ASYNC-GROUP-IMPL-001` y `STD-ASYNC-GROUP-TEST-001` ya están
+cerrados para VM hosted y siguen sus leaves de rendimiento/conformance/docs y
+los detectores de M11.
 `STD-IMPL-001` y `STD-IMPL-002` quedan ahora cerrados por sus gates de
 coordinación; `NATIVE-TARGET-DESC-001`, `NATIVE-ARTIFACT-001`,
 `NATIVE-LINK-PLAN-001`, `NATIVE-PUBLISH-SPEC-001` y `PERF-001` quedan cerrados
 como contratos puros. `NATIVE-AOT-PERF-001` queda cerrado con evidencia
 repetida y path-free; Gate N1 queda cerrado por su informe compositivo y
 promueve Cranelift únicamente para el target primario x86_64 GNU. El siguiente
-bloque crítico es `STD-ASYNC-GROUP-TEST-001`; ARM64 conserva una clasificación
+bloque crítico es `STD-ASYNC-GROUP-PERF-001`; ARM64 conserva una clasificación
 de smoke de candidato hasta completar su corpus AOT y la ruta async nativa.
 `TRACKER-LINT-001` está cerrado y su informe deriva los
 conteos directamente del tracker. `STD-A-ASYNC-API-001` ya
@@ -7495,7 +7505,7 @@ identidad, la lane física de `NATIVE-THREAD-001` y la coordinación mínima de
 implementados. La frontera AOT está cerrada hasta `NATIVE-AOT-PERF-001`;
 la frontera AOT y Gate N1 están cerrados para el target primario; el backend
 seleccionado queda promovido únicamente para x86_64 GNU y el siguiente trabajo
-crítico es `STD-ASYNC-GROUP-TEST-001`; la implementación hosted de Group ya
-está cerrada y la ruta nativa sigue pendiente.
+crítico es `STD-ASYNC-GROUP-PERF-001`; la implementación hosted y el modelo/test/
+fuzz de Group ya están cerrados y la ruta nativa sigue pendiente.
 
 ---

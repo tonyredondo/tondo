@@ -848,14 +848,10 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                         HirBootstrapHostFunction::AsyncGroupAll
                             | HirBootstrapHostFunction::AsyncGroupSettle
                             | HirBootstrapHostFunction::AsyncGroupCancel
-                    ) {
-                        if let Some(receiver) = arguments.first().map(|argument| argument.value()) {
-                            consume_terminal_argument(
-                                &mut flow,
-                                receiver,
-                                self.direct_local(receiver),
-                            );
-                        }
+                    ) && let Some(receiver) =
+                        arguments.first().map(|argument| argument.value())
+                    {
+                        consume_terminal_argument(&mut flow, receiver, self.direct_local(receiver));
                     }
                 }
                 flow
@@ -948,30 +944,14 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 );
                 self.sequence(state, values, live_after)?
             }
-            HirExpressionKind::BootstrapHostCall {
-                function,
-                arguments,
-            } => {
-                let mut flow = self.sequence(
-                    state,
-                    arguments
-                        .iter()
-                        .copied()
-                        .map(|argument| (argument, Demand::Transfer)),
-                    live_after,
-                )?;
-                if *function == super::HirBootstrapHostFunction::AsyncGroupAdd {
-                    if let Some(state) = &mut flow.normal {
-                        for argument in arguments {
-                            release_spawn_join(state, TerminalOwner::Temporary(*argument));
-                            if let Some(local) = self.direct_local(*argument) {
-                                release_spawn_join(state, TerminalOwner::Local(local));
-                            }
-                        }
-                    }
-                }
-                flow
-            }
+            HirExpressionKind::BootstrapHostCall { arguments, .. } => self.sequence(
+                state,
+                arguments
+                    .iter()
+                    .copied()
+                    .map(|argument| (argument, Demand::Transfer)),
+                live_after,
+            )?,
             HirExpressionKind::PropagateOption { value }
             | HirExpressionKind::PropagateResult { value, .. } => {
                 let baseline = handoff_baseline(&state);
