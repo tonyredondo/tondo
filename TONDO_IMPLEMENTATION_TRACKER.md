@@ -101,10 +101,11 @@ solo fijará L0 cuando se construya además una distribución TLF, sin convertir
 en requisito de Tondo 0.1.
 
 **Objetivo inmediato:** continuar la implementación de `STD-0.1B` de Wave 8 tras
-cerrar Gate N1. `STD-ASYNC-GROUP-IMPL-001` ya está cerrado para la VM hosted; el
-siguiente paso es medirlo con `STD-ASYNC-GROUP-PERF-001` y cerrar después la
-conformidad/documentación y la evidencia nativa correspondiente. El modelo y
-tests/fuzz hosted de Group ya están cerrados por `STD-ASYNC-GROUP-TEST-001`. El slice
+cerrar Gate N1. `STD-ASYNC-GROUP-IMPL-001`, `STD-ASYNC-GROUP-TEST-001` y
+`STD-ASYNC-GROUP-PERF-001` ya están cerrados para la VM hosted; el siguiente
+paso es cerrar la conformidad/documentación y la evidencia nativa
+correspondiente. El modelo y tests/fuzz hosted de Group están respaldados por
+`STD-ASYNC-GROUP-TEST-001`. El slice
 ejecutable de `select` ya está cerrado en la VM hosted —frontend,
 semántica tipada, lowering verificable, runtime cooperativo, ownership
 branch-sensitive, adapters `Waiter`/time, modelo/tests deterministas y
@@ -6503,9 +6504,17 @@ estas leaves.
   con replay determinista y el target `stdlib_async_group` mantiene un corpus
   persistente, límite de 4 KiB/1.024 pasos y 128 ejecuciones smoke; los tests
   hosted de VM y el fixture público siguen siendo los oráculos consumidores.
-- [ ] **STD-ASYNC-GROUP-PERF-001 — Medir grupos.** Fijar latencia y throughput
-  de `add`, fan-in `all`, `settle`, `next` y cancelación, además de memoria,
-  allocations, wakeups y tail latency por cardinalidad y target.
+- [x] **STD-ASYNC-GROUP-PERF-001 — Medir grupos.** El contrato
+  [`testing/stdlib-async-group-performance.json`](./testing/stdlib-async-group-performance.json)
+  y el probe hosted cubren `add`, fan-in `all`, `settle`, `next` listo/pendiente
+  y cancelación para cardinalidades 1/8/64. Cada workload conserva 27 muestras
+  (3 warmups, 9 repeticiones, 3 procesos) y reporta mediana/P95/P99,
+  throughput, allocations del heap, escaneos, wakeups, pasadas de cancelación y
+  bytes lógicos reservados. `VmStatistics` aporta los contadores explícitos y
+  el runner conserva outliers y verifica hashes/invariantes; `group_peak_state_bytes`
+  excluye headers del allocator y no se presenta como RSS. La evidencia solo
+  cierra `tondo-vm-hosted`/`bytecode-vm`; AOT y scheduler async nativo siguen
+  pendientes de sus leaves de conformidad.
 - [ ] **STD-ASYNC-GROUP-CONF-001 — Conformar grupos.** Ejecutar el mismo corpus
   observable en VM/nativo, incluidos orden, selección de error, cancelación,
   pánico, cleanup y rechazo estático de usos afines inválidos.
@@ -7468,8 +7477,9 @@ contrato D0 de diagnóstico; `STD-ASYNC-GROUP-SPEC-001`, `STD-CONC-001`,
 `STD-SYNC-001`, `STD-EXEC-001`, `STD-NET-001`, `STD-CIVIL-TIME-001`,
 `STD-ENCODING-001`, `STD-YAML-001`, `STD-TOML-001`, `STD-CBOR-001`,
 `STD-REGEX-001`, `STD-ID-001` y `STD-LOG-001` ya tienen registros y negativos
-ejecutables; `STD-ASYNC-GROUP-IMPL-001` y `STD-ASYNC-GROUP-TEST-001` ya están
-cerrados para VM hosted y siguen sus leaves de rendimiento/conformance/docs y
+ejecutables; `STD-ASYNC-GROUP-IMPL-001`, `STD-ASYNC-GROUP-TEST-001` y
+`STD-ASYNC-GROUP-PERF-001` ya están cerrados para VM hosted y siguen sus leaves
+de conformance/docs y
 los detectores de M11.
 `STD-IMPL-001` y `STD-IMPL-002` quedan ahora cerrados por sus gates de
 coordinación; `NATIVE-TARGET-DESC-001`, `NATIVE-ARTIFACT-001`,
@@ -7477,7 +7487,7 @@ coordinación; `NATIVE-TARGET-DESC-001`, `NATIVE-ARTIFACT-001`,
 como contratos puros. `NATIVE-AOT-PERF-001` queda cerrado con evidencia
 repetida y path-free; Gate N1 queda cerrado por su informe compositivo y
 promueve Cranelift únicamente para el target primario x86_64 GNU. El siguiente
-bloque crítico es `STD-ASYNC-GROUP-PERF-001`; ARM64 conserva una clasificación
+bloque crítico es `STD-ASYNC-GROUP-CONF-001`; ARM64 conserva una clasificación
 de smoke de candidato hasta completar su corpus AOT y la ruta async nativa.
 `TRACKER-LINT-001` está cerrado y su informe deriva los
 conteos directamente del tracker. `STD-A-ASYNC-API-001` ya
@@ -7505,7 +7515,8 @@ identidad, la lane física de `NATIVE-THREAD-001` y la coordinación mínima de
 implementados. La frontera AOT está cerrada hasta `NATIVE-AOT-PERF-001`;
 la frontera AOT y Gate N1 están cerrados para el target primario; el backend
 seleccionado queda promovido únicamente para x86_64 GNU y el siguiente trabajo
-crítico es `STD-ASYNC-GROUP-PERF-001`; la implementación hosted y el modelo/test/
-fuzz de Group ya están cerrados y la ruta nativa sigue pendiente.
+crítico es `STD-ASYNC-GROUP-CONF-001`; la implementación hosted, el
+modelo/test/fuzz y el presupuesto de rendimiento de Group ya están cerrados y la
+ruta nativa sigue pendiente.
 
 ---

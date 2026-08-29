@@ -107,6 +107,10 @@ run_step stdlib-async-group-contract \
     scripts/stdlib-async-group-check.sh
 run_step stdlib-async-group-contract-tests \
     scripts/stdlib-async-group-test.sh
+run_step stdlib-async-group-performance-contract-tests \
+    scripts/stdlib-async-group-performance-test.sh
+run_step stdlib-async-group-performance \
+    scripts/stdlib-async-group-performance.sh
 run_step stdlib-channel-contract \
     scripts/stdlib-channel-check.sh
 run_step stdlib-channel-contract-tests \

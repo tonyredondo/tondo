@@ -1,0 +1,88 @@
+{
+  "format": "tondo-stdlib-async-group-performance/1",
+  "edition": "0.1",
+  "phase": "STD-0.1B",
+  "task": "STD-ASYNC-GROUP-PERF-001",
+  "owner": "std.async.group",
+  "status": "verified-hosted-vm",
+  "target": "tondo-vm-hosted",
+  "backend": "bytecode-vm",
+  "profile": "test",
+  "probe": {
+    "path": "crates/tondo-vm/src/runtime/execute.rs",
+    "test": "runtime::execute::tests::group_performance_probe",
+    "sha256": "ee8e5a3db8c30c141e2251d1774cf972d854ecadc34fe76a6cfff58c5751052c"
+  },
+  "protocol": {
+    "clock": "monotonic",
+    "warmup_iterations": 3,
+    "measurement_repetitions": 9,
+    "independent_processes": 3,
+    "minimum_sample_count": 27,
+    "batch_operations": 1,
+    "deterministic_seed": "tondo-async-group-perf-0.1",
+    "outliers": "report-not-delete",
+    "fixture_setup": "excluded-from-timed-latency; included-in-allocation-and-storage-counters"
+  },
+  "identity_fields": [
+    "suite",
+    "workload_id",
+    "probe_sha256",
+    "target",
+    "backend",
+    "profile",
+    "toolchain",
+    "flags",
+    "git_revision"
+  ],
+  "forbidden_identity": [
+    "ambient_environment",
+    "cpu_frequency",
+    "pid",
+    "path",
+    "timestamp"
+  ],
+  "metrics": [
+    "latency",
+    "throughput",
+    "allocation_count",
+    "group_state_bytes",
+    "child_scans",
+    "wakeups",
+    "tail_latency"
+  ],
+  "workloads": [
+    {"id": "group-add-1", "operation": "add", "mode": "ready", "cardinality": 1},
+    {"id": "group-add-8", "operation": "add", "mode": "ready", "cardinality": 8},
+    {"id": "group-add-64", "operation": "add", "mode": "ready", "cardinality": 64},
+    {"id": "group-all-1", "operation": "all", "mode": "ready", "cardinality": 1},
+    {"id": "group-all-8", "operation": "all", "mode": "ready", "cardinality": 8},
+    {"id": "group-all-64", "operation": "all", "mode": "ready", "cardinality": 64},
+    {"id": "group-settle-1", "operation": "settle", "mode": "ready", "cardinality": 1},
+    {"id": "group-settle-8", "operation": "settle", "mode": "ready", "cardinality": 8},
+    {"id": "group-settle-64", "operation": "settle", "mode": "ready", "cardinality": 64},
+    {"id": "group-next-ready-1", "operation": "next", "mode": "ready", "cardinality": 1},
+    {"id": "group-next-ready-8", "operation": "next", "mode": "ready", "cardinality": 8},
+    {"id": "group-next-ready-64", "operation": "next", "mode": "ready", "cardinality": 64},
+    {"id": "group-next-pending-1", "operation": "next", "mode": "pending", "cardinality": 1},
+    {"id": "group-next-pending-8", "operation": "next", "mode": "pending", "cardinality": 8},
+    {"id": "group-next-pending-64", "operation": "next", "mode": "pending", "cardinality": 64},
+    {"id": "group-cancel-1", "operation": "cancel", "mode": "pending", "cardinality": 1},
+    {"id": "group-cancel-8", "operation": "cancel", "mode": "pending", "cardinality": 8},
+    {"id": "group-cancel-64", "operation": "cancel", "mode": "pending", "cardinality": 64}
+  ],
+  "invariants": {
+    "add_count": "cardinality",
+    "all_count": "one-ready-poll",
+    "settle_count": "one-ready-poll",
+    "next_ready_count": "one-poll",
+    "next_pending_count": "pending-poll-plus-ready-poll",
+    "cancel_count": "pending-poll-plus-terminal-drain-poll",
+    "child_scans": "linear-in-cardinality-per-poll",
+    "wakeup": "one-per-pending-next-round-trip",
+    "state_bytes": "logical-size-of-group-state-and-vector-capacity; allocator-overhead-excluded",
+    "managed_allocations": "reported-from-vm-heap-with-fixture-setup",
+    "cleanup": "every-measured-group-is-consumed-or-removed-before-probe-return"
+  },
+  "report": "target/reliability/evidence/stdlib-async-group-performance.json"
+}

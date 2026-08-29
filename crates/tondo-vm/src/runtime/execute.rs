@@ -1823,6 +1823,7 @@ impl<'program, 'host> Engine<'program, 'host> {
             .flatten()
             .collect::<Vec<_>>();
         for waiter in group_waiters {
+            self.statistics.group_wakeups = self.statistics.group_wakeups.saturating_add(1);
             self.wake_task(waiter)?;
         }
         Ok(())
@@ -10287,6 +10288,9 @@ impl Engine<'_, '_> {
                 limit: u64::MAX,
             })?;
         self.groups.insert(id, RuntimeGroupState::default());
+        self.statistics.group_state_allocations =
+            self.statistics.group_state_allocations.saturating_add(1);
+        self.observe_group_state(0, 0, 0);
         Ok(OperationResult::Value(Value::Host(RuntimeValue::Host {
             kind: RuntimeHostValueKind::Group,
             id,
@@ -10346,16 +10350,15 @@ impl Engine<'_, '_> {
                 .children
                 .len();
             self.tasks[join.task].join_consumed = true;
-            self.groups
-                .get_mut(&id)
-                .ok_or_else(|| VmError::invariant("Group disappeared during add"))?
-                .children
-                .push(RuntimeGroupChild {
+            self.append_group_child(
+                id,
+                RuntimeGroupChild {
                     task: join.task,
                     index,
                     success,
                     error,
-                });
+                },
+            )?;
             return Ok(Some(OperationResult::Value(Value::Unit)));
         }
 
@@ -10422,6 +10425,51 @@ impl Engine<'_, '_> {
         Ok(())
     }
 
+    fn observe_group_state(
+        &mut self,
+        children_len: usize,
+        children_capacity: usize,
+        waiters_capacity: usize,
+    ) {
+        self.statistics.group_peak_children = self
+            .statistics
+            .group_peak_children
+            .max(u32::try_from(children_len).unwrap_or(u32::MAX));
+        let bytes = (std::mem::size_of::<RuntimeGroupState>() as u64)
+            .saturating_add(
+                (children_capacity as u64)
+                    .saturating_mul(std::mem::size_of::<RuntimeGroupChild>() as u64),
+            )
+            .saturating_add(
+                (waiters_capacity as u64).saturating_mul(std::mem::size_of::<usize>() as u64),
+            );
+        self.statistics.group_peak_state_bytes = self.statistics.group_peak_state_bytes.max(bytes);
+    }
+
+    fn append_group_child(&mut self, id: u64, child: RuntimeGroupChild) -> Result<(), VmError> {
+        let (before, after, children_len, waiters_capacity) = {
+            let state = self
+                .groups
+                .get_mut(&id)
+                .ok_or_else(|| VmError::invariant("Group disappeared during add"))?;
+            let before = state.children.capacity();
+            state.children.push(child);
+            (
+                before,
+                state.children.capacity(),
+                state.children.len(),
+                state.waiters.capacity(),
+            )
+        };
+        self.statistics.group_adds = self.statistics.group_adds.saturating_add(1);
+        if after > before {
+            self.statistics.group_child_buffer_grows =
+                self.statistics.group_child_buffer_grows.saturating_add(1);
+        }
+        self.observe_group_state(children_len, after, waiters_capacity);
+        Ok(())
+    }
+
     fn group_is_terminal(&self, id: u64) -> Result<bool, VmError> {
         let state = self
             .groups
@@ -10438,13 +10486,32 @@ impl Engine<'_, '_> {
     }
 
     fn park_group(&mut self, id: u64, wait: TaskWait) -> Result<(), VmError> {
-        let state = self
-            .groups
-            .get_mut(&id)
-            .ok_or_else(|| VmError::invariant("Group wait references an unknown group"))?;
-        if !state.waiters.contains(&self.current_task) {
-            state.waiters.push(self.current_task);
+        let (added, previous_capacity, waiters_capacity, children_len, children_capacity) = {
+            let state = self
+                .groups
+                .get_mut(&id)
+                .ok_or_else(|| VmError::invariant("Group wait references an unknown group"))?;
+            let previous_capacity = state.waiters.capacity();
+            let added = !state.waiters.contains(&self.current_task);
+            if added {
+                state.waiters.push(self.current_task);
+            }
+            (
+                added,
+                previous_capacity,
+                state.waiters.capacity(),
+                state.children.len(),
+                state.children.capacity(),
+            )
+        };
+        if added {
+            self.statistics.group_waits = self.statistics.group_waits.saturating_add(1);
+            if waiters_capacity > previous_capacity {
+                self.statistics.group_waiter_buffer_grows =
+                    self.statistics.group_waiter_buffer_grows.saturating_add(1);
+            }
         }
+        self.observe_group_state(children_len, children_capacity, waiters_capacity);
         self.park_current(wait, &[])
     }
 
@@ -10471,6 +10538,10 @@ impl Engine<'_, '_> {
     }
 
     fn request_group_cancellation(&mut self, id: u64) -> Result<(), VmError> {
+        self.statistics.group_cancellation_requests = self
+            .statistics
+            .group_cancellation_requests
+            .saturating_add(1);
         let children = self
             .groups
             .get(&id)
@@ -10706,6 +10777,24 @@ impl Engine<'_, '_> {
         operation: RuntimeGroupOperation,
         outcome: BytecodeTypeId,
     ) -> Result<GroupPoll, VmError> {
+        match operation {
+            RuntimeGroupOperation::All => {
+                self.statistics.group_all_operations =
+                    self.statistics.group_all_operations.saturating_add(1);
+            }
+            RuntimeGroupOperation::Settle => {
+                self.statistics.group_settle_operations =
+                    self.statistics.group_settle_operations.saturating_add(1);
+            }
+            RuntimeGroupOperation::Next => {
+                self.statistics.group_next_operations =
+                    self.statistics.group_next_operations.saturating_add(1);
+            }
+            RuntimeGroupOperation::Cancel => {
+                self.statistics.group_cancel_operations =
+                    self.statistics.group_cancel_operations.saturating_add(1);
+            }
+        }
         {
             let state = self
                 .groups
@@ -10724,6 +10813,8 @@ impl Engine<'_, '_> {
             let mut pending = false;
             let mut winner: Option<(RuntimeGroupChild, u64)> = None;
             for child in &children {
+                self.statistics.group_child_scans =
+                    self.statistics.group_child_scans.saturating_add(1);
                 match self
                     .tasks
                     .get(child.task)
@@ -10817,6 +10908,7 @@ impl Engine<'_, '_> {
         let mut pending = false;
         let mut cancellation_required = operation == RuntimeGroupOperation::Cancel;
         for child in &children {
+            self.statistics.group_child_scans = self.statistics.group_child_scans.saturating_add(1);
             match &self
                 .tasks
                 .get(child.task)
@@ -13223,7 +13315,7 @@ mod tests {
         DiagnosticMemoryAccess, DiagnosticSource, DiagnosticThreadState, Engine, Frame, GroupPoll,
         HeapObject, IteratorAdapter, OneShotCompletion, OneShotState, OperationResult, PanicCode,
         PlaceComponent, PlaceFailure, RejectingHost, ResolvedPlacePath, RuntimeCleanup,
-        RuntimeDefer, RuntimeFallback, RuntimeGroupChild, RuntimeGroupOperation,
+        RuntimeDefer, RuntimeFallback, RuntimeGroupChild, RuntimeGroupOperation, RuntimeGroupState,
         RuntimeHostValueKind, RuntimeJoin, RuntimeLoan, RuntimeSelectArm, RuntimeSelectRegion,
         RuntimeTaskScope, RuntimeType, RuntimeUnwind, RuntimeValue, SlotState, TaskCompletion,
         TaskRecord, TaskStatus, TaskWait, Value, ValueCopyStrategy, VmError, VmHost, VmLimits,
@@ -14110,6 +14202,406 @@ mod tests {
                 "TONDO_SELECT_PERF\tdirect-ready-1\t{}\t0\t0\t0\t0\t0\t0\t0\t0",
                 sample.nanos_per_operation
             );
+        }
+    }
+
+    const GROUP_PERF_WARMUPS: usize = 3;
+    const GROUP_PERF_SAMPLES: usize = 9;
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum GroupPerfWorkload {
+        Add,
+        All,
+        Settle,
+        NextReady,
+        NextPending,
+        Cancel,
+    }
+
+    impl GroupPerfWorkload {
+        fn is_ready(self) -> bool {
+            matches!(self, Self::All | Self::Settle | Self::NextReady)
+        }
+
+        fn is_next(self) -> bool {
+            matches!(self, Self::NextReady | Self::NextPending)
+        }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct GroupPerfSample {
+        nanos_per_operation: u128,
+        statistics: VmStatistics,
+    }
+
+    fn group_perf_engine<'program, 'host>(
+        program: &'program BytecodeProgram,
+        host: &'host mut RejectingHost,
+        trace: crate::bytecode::BytecodeTraceMetadata,
+        cardinality: usize,
+        workload: GroupPerfWorkload,
+        types: &GroupTypes,
+    ) -> Result<(Engine<'program, 'host>, u64), VmError> {
+        let mut engine = Engine::new(
+            program,
+            host,
+            VmLimits::default(),
+            ValueCopyStrategy::default(),
+            trace,
+        );
+        engine.tasks.push(scheduler_task(TaskStatus::Running));
+        for index in 0..cardinality {
+            let status = if workload.is_ready() {
+                let value =
+                    engine.oneshot_result(types.result, Ok(Value::Integer(index as i128)))?;
+                TaskStatus::Complete(Some(TaskCompletion::Returned(value)))
+            } else {
+                TaskStatus::Waiting(TaskWait::Scope)
+            };
+            engine.tasks.push(scheduler_task(status));
+            if workload == GroupPerfWorkload::Add {
+                engine.tasks[index + 1].join_consumed = false;
+            }
+        }
+        let group = match engine.new_group(types.group)? {
+            OperationResult::Value(Value::Host(RuntimeValue::Host {
+                kind: RuntimeHostValueKind::Group,
+                id,
+            })) => id,
+            _ => {
+                return Err(VmError::invariant(
+                    "Group performance fixture did not create a Group",
+                ));
+            }
+        };
+        if workload != GroupPerfWorkload::Add {
+            for index in 0..cardinality {
+                let task = index + 1;
+                if workload.is_ready() && workload.is_next() {
+                    engine.assign_completion_order(task)?;
+                }
+                engine.append_group_child(
+                    group,
+                    RuntimeGroupChild {
+                        task,
+                        index,
+                        success: types.int,
+                        error: types.string,
+                    },
+                )?;
+            }
+        }
+        Ok((engine, group))
+    }
+
+    fn group_perf_cleanup(
+        engine: &mut Engine<'_, '_>,
+        group: u64,
+        workload: GroupPerfWorkload,
+        types: &GroupTypes,
+    ) -> Result<(), VmError> {
+        if workload == GroupPerfWorkload::Add {
+            for task in engine
+                .groups
+                .get(&group)
+                .ok_or_else(|| VmError::invariant("Group add fixture disappeared"))?
+                .children
+                .iter()
+                .map(|child| child.task)
+                .collect::<Vec<_>>()
+            {
+                engine.tasks[task].status = TaskStatus::Consumed;
+            }
+            return engine.remove_group(group);
+        }
+        if workload == GroupPerfWorkload::NextPending {
+            let children = engine
+                .groups
+                .get(&group)
+                .ok_or_else(|| VmError::invariant("pending Group fixture disappeared"))?
+                .children
+                .clone();
+            for child in children {
+                let terminal = matches!(
+                    engine.tasks[child.task].status,
+                    TaskStatus::Complete(_) | TaskStatus::Consumed
+                );
+                if !terminal {
+                    let value = engine
+                        .oneshot_result(types.result, Ok(Value::Integer(child.index as i128)))?;
+                    engine.tasks[child.task].status =
+                        TaskStatus::Complete(Some(TaskCompletion::Returned(value)));
+                    engine.assign_completion_order(child.task)?;
+                }
+            }
+        }
+        while engine.groups.contains_key(&group) {
+            match engine.poll_group_operation(group, RuntimeGroupOperation::Next, types.next)? {
+                GroupPoll::Ready(value) => {
+                    black_box(value);
+                }
+                GroupPoll::Panic(panic) => return Err(VmError::invariant(panic.message)),
+                GroupPoll::Pending => {
+                    return Err(VmError::invariant(
+                        "Group performance cleanup observed a pending next",
+                    ));
+                }
+            }
+            let empty = engine
+                .groups
+                .get(&group)
+                .is_some_and(|state| state.children.is_empty());
+            if empty {
+                engine.remove_group(group)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn group_perf_iteration(
+        cardinality: usize,
+        workload: GroupPerfWorkload,
+        measure: bool,
+    ) -> Result<GroupPerfSample, VmError> {
+        let (program, types) = group_program();
+        let trace = derive_trace_metadata(&program)
+            .map_err(|error| VmError::invariant(error.to_string()))?;
+        let mut host = RejectingHost;
+        let (mut engine, group) =
+            group_perf_engine(&program, &mut host, trace, cardinality, workload, &types)?;
+        let mut pending_result = if workload == GroupPerfWorkload::NextPending {
+            Some(engine.oneshot_result(types.result, Ok(Value::Integer(0)))?)
+        } else {
+            None
+        };
+        let started = Instant::now();
+        let output = match workload {
+            GroupPerfWorkload::Add => {
+                for index in 0..cardinality {
+                    engine.append_group_child(
+                        group,
+                        RuntimeGroupChild {
+                            task: index + 1,
+                            index,
+                            success: types.int,
+                            error: types.string,
+                        },
+                    )?;
+                }
+                Value::Unit
+            }
+            GroupPerfWorkload::All => {
+                match engine.poll_group_operation(group, RuntimeGroupOperation::All, types.all)? {
+                    GroupPoll::Ready(value) => value,
+                    GroupPoll::Panic(panic) => return Err(VmError::invariant(panic.message)),
+                    GroupPoll::Pending => {
+                        return Err(VmError::invariant(
+                            "ready Group.all fixture remained pending",
+                        ));
+                    }
+                }
+            }
+            GroupPerfWorkload::Settle => match engine.poll_group_operation(
+                group,
+                RuntimeGroupOperation::Settle,
+                types.array_result,
+            )? {
+                GroupPoll::Ready(value) => value,
+                GroupPoll::Panic(panic) => return Err(VmError::invariant(panic.message)),
+                GroupPoll::Pending => {
+                    return Err(VmError::invariant(
+                        "ready Group.settle fixture remained pending",
+                    ));
+                }
+            },
+            GroupPerfWorkload::NextReady => {
+                match engine.poll_group_operation(group, RuntimeGroupOperation::Next, types.next)? {
+                    GroupPoll::Ready(value) => value,
+                    GroupPoll::Panic(panic) => return Err(VmError::invariant(panic.message)),
+                    GroupPoll::Pending => {
+                        return Err(VmError::invariant(
+                            "ready Group.next fixture remained pending",
+                        ));
+                    }
+                }
+            }
+            GroupPerfWorkload::NextPending => {
+                if !matches!(
+                    engine.poll_group_operation(group, RuntimeGroupOperation::Next, types.next)?,
+                    GroupPoll::Pending
+                ) {
+                    return Err(VmError::invariant(
+                        "pending Group.next fixture was ready before completion",
+                    ));
+                }
+                engine.park_group(
+                    group,
+                    TaskWait::GroupTask {
+                        id: group,
+                        operation: RuntimeGroupOperation::Next,
+                        outcome: types.next,
+                        probe: true,
+                    },
+                )?;
+                let completion = pending_result
+                    .take()
+                    .ok_or_else(|| VmError::invariant("pending Group.next value is missing"))?;
+                engine.complete_task(1, TaskCompletion::Returned(completion))?;
+                match engine.poll_group_operation(group, RuntimeGroupOperation::Next, types.next)? {
+                    GroupPoll::Ready(value) => value,
+                    GroupPoll::Panic(panic) => return Err(VmError::invariant(panic.message)),
+                    GroupPoll::Pending => {
+                        return Err(VmError::invariant(
+                            "Group.next remained pending after child completion",
+                        ));
+                    }
+                }
+            }
+            GroupPerfWorkload::Cancel => {
+                if !matches!(
+                    engine.poll_group_operation(group, RuntimeGroupOperation::Cancel, types.all)?,
+                    GroupPoll::Pending
+                ) {
+                    return Err(VmError::invariant(
+                        "pending Group.cancel fixture completed before drain",
+                    ));
+                }
+                for task in 1..=cardinality {
+                    engine.complete_task(task, TaskCompletion::Cancelled)?;
+                }
+                match engine.poll_group_operation(
+                    group,
+                    RuntimeGroupOperation::Cancel,
+                    types.all,
+                )? {
+                    GroupPoll::Ready(value) => value,
+                    GroupPoll::Panic(panic) => return Err(VmError::invariant(panic.message)),
+                    GroupPoll::Pending => {
+                        return Err(VmError::invariant(
+                            "Group.cancel remained pending after child drain",
+                        ));
+                    }
+                }
+            }
+        };
+        let elapsed = started.elapsed().as_nanos().max(1);
+        black_box(output);
+        let statistics = engine.statistics;
+        group_perf_cleanup(&mut engine, group, workload, &types)?;
+        Ok(GroupPerfSample {
+            nanos_per_operation: if measure { elapsed } else { 1 },
+            statistics,
+        })
+    }
+
+    fn print_group_perf_workload(
+        workload_id: &str,
+        cardinality: usize,
+        workload: GroupPerfWorkload,
+    ) -> Result<(), VmError> {
+        for _ in 0..GROUP_PERF_WARMUPS {
+            group_perf_iteration(cardinality, workload, false)?;
+        }
+        for _ in 0..GROUP_PERF_SAMPLES {
+            let sample = group_perf_iteration(cardinality, workload, true)?;
+            let statistics = sample.statistics;
+            assert_eq!(
+                statistics.group_adds, cardinality as u64,
+                "{workload_id} child additions"
+            );
+            assert_eq!(
+                statistics.group_peak_children, cardinality as u32,
+                "{workload_id} peak children"
+            );
+            assert!(
+                statistics.group_peak_state_bytes
+                    >= std::mem::size_of::<RuntimeGroupState>() as u64
+            );
+            if workload != GroupPerfWorkload::Add {
+                assert!(statistics.group_child_scans >= cardinality as u64);
+            }
+            assert!(statistics.group_state_allocations >= 1);
+            match workload {
+                GroupPerfWorkload::Add => {
+                    assert_eq!(statistics.group_all_operations, 0);
+                    assert!(statistics.group_child_buffer_grows >= 1);
+                }
+                GroupPerfWorkload::All => assert_eq!(statistics.group_all_operations, 1),
+                GroupPerfWorkload::Settle => assert_eq!(statistics.group_settle_operations, 1),
+                GroupPerfWorkload::NextReady => assert_eq!(statistics.group_next_operations, 1),
+                GroupPerfWorkload::NextPending => {
+                    assert_eq!(statistics.group_next_operations, 2);
+                    assert_eq!(statistics.group_waits, 1);
+                    assert_eq!(statistics.group_wakeups, 1);
+                }
+                GroupPerfWorkload::Cancel => {
+                    assert_eq!(statistics.group_cancel_operations, 2);
+                    assert!(statistics.group_cancellation_requests >= 1);
+                }
+            }
+            println!(
+                "TONDO_GROUP_PERF\t{workload_id}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                sample.nanos_per_operation,
+                cardinality,
+                statistics.group_adds,
+                statistics.group_all_operations,
+                statistics.group_settle_operations,
+                statistics.group_next_operations,
+                statistics.group_cancel_operations,
+                statistics.group_child_scans,
+                statistics.group_waits,
+                statistics.group_wakeups,
+                statistics.group_cancellation_requests,
+                statistics.allocations,
+                statistics.group_state_allocations,
+                statistics.group_child_buffer_grows,
+                statistics.group_waiter_buffer_grows,
+                statistics.group_peak_children,
+                statistics.group_peak_state_bytes,
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn group_performance_probe() {
+        for cardinality in [1, 8, 64] {
+            print_group_perf_workload(
+                &format!("group-add-{cardinality}"),
+                cardinality,
+                GroupPerfWorkload::Add,
+            )
+            .unwrap();
+            print_group_perf_workload(
+                &format!("group-all-{cardinality}"),
+                cardinality,
+                GroupPerfWorkload::All,
+            )
+            .unwrap();
+            print_group_perf_workload(
+                &format!("group-settle-{cardinality}"),
+                cardinality,
+                GroupPerfWorkload::Settle,
+            )
+            .unwrap();
+            print_group_perf_workload(
+                &format!("group-next-ready-{cardinality}"),
+                cardinality,
+                GroupPerfWorkload::NextReady,
+            )
+            .unwrap();
+            print_group_perf_workload(
+                &format!("group-next-pending-{cardinality}"),
+                cardinality,
+                GroupPerfWorkload::NextPending,
+            )
+            .unwrap();
+            print_group_perf_workload(
+                &format!("group-cancel-{cardinality}"),
+                cardinality,
+                GroupPerfWorkload::Cancel,
+            )
+            .unwrap();
         }
     }
 

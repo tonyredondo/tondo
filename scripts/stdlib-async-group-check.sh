@@ -26,6 +26,8 @@ jq -e '
   and .contract == "docs/contracts/stdlib-async.md"
   and .spec == "TONDO_STANDARD_LIBRARY_SPEC.md"
   and .testing == "testing/stdlib-async-group-test.json"
+  and .performance.task == "STD-ASYNC-GROUP-PERF-001"
+  and .performance.contract == "testing/stdlib-async-group-performance.json"
   and .layer == "B1"
   and .kind == "intrinsic"
   and .target == "tondo-vm-hosted"
@@ -134,12 +136,10 @@ jq -e '
   and (.implementation.tests | type == "array" and length > 0)
   and (.implementation.proof | type == "string" and length > 0)
   and .implementation.required_follow_ups == [
-    "STD-ASYNC-GROUP-PERF-001",
     "STD-ASYNC-GROUP-CONF-001",
     "STD-ASYNC-GROUP-DOC-001"
   ]
   and .promotion.implementation_pending == [
-    "STD-ASYNC-GROUP-PERF-001",
     "STD-ASYNC-GROUP-CONF-001",
     "STD-ASYNC-GROUP-DOC-001"
   ]
@@ -160,6 +160,8 @@ for marker in \
     'menor índice entre' \
     'drena todos los hijos' \
     'implementación hosted de VM está' \
+    'STD-ASYNC-GROUP-PERF-001' \
+    'group_peak_state_bytes' \
     'HOST = not-applicable'; do
     grep -Fq "$marker" "$root/docs/contracts/stdlib-async.md" \
         || die "contract document misses marker: $marker"
@@ -174,6 +176,10 @@ done < <(jq -r '.implementation.source[], .implementation.tests[]' "$contract")
 
 [[ -f "$root/testing/stdlib-async-group-test.json" ]] \
     || die "missing Group MODEL/TEST/FUZZ evidence manifest"
+[[ -f "$root/testing/stdlib-async-group-performance.json" ]] \
+    || die "missing Group PERF evidence contract"
+[[ -f "$root/docs/contracts/stdlib-async-group-performance.md" ]] \
+    || die "missing Group PERF contract document"
 
 [[ -f "$root/tests/runtime/m11-std-async-group-001.to" ]] \
     || die "missing Group runtime acceptance fixture"

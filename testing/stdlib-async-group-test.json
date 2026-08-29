@@ -80,6 +80,26 @@
     "command": "TONDO_GROUP_FUZZ_RUNS=128 scripts/stdlib-async-group-fuzz.sh",
     "replay_command": "cargo +nightly-2026-07-28 fuzz run stdlib_async_group fuzz/corpus/stdlib_async_group -- -runs=0 -max_len=4096"
   },
+  "performance": {
+    "status": "verified",
+    "contract": "testing/stdlib-async-group-performance.json",
+    "document": "docs/contracts/stdlib-async-group-performance.md",
+    "target": "tondo-vm-hosted",
+    "workloads": 18,
+    "samples_per_workload": 27,
+    "cardinalities": [1, 8, 64],
+    "metrics": [
+      "latency",
+      "throughput",
+      "allocation_count",
+      "group_state_bytes",
+      "child_scans",
+      "wakeups",
+      "tail_latency"
+    ],
+    "report": "target/reliability/evidence/stdlib-async-group-performance.json",
+    "command": "scripts/stdlib-async-group-performance.sh"
+  },
   "invariants": {
     "owner_is_affine": true,
     "rollback_is_atomic": true,
@@ -91,8 +111,8 @@
   },
   "promotion": {
     "model_test_fuzz_complete": true,
+    "performance_complete": true,
     "remaining": [
-      "STD-ASYNC-GROUP-PERF-001",
       "STD-ASYNC-GROUP-CONF-001",
       "STD-ASYNC-GROUP-DOC-001"
     ],

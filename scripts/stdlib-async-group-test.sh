@@ -59,9 +59,22 @@ jq -e '
   and .fuzz.smoke.runs == 128
   and .fuzz.smoke.seed == 4101
   and .fuzz.smoke.result == "passed"
+  and .performance.status == "verified"
+  and .performance.contract == "testing/stdlib-async-group-performance.json"
+  and .performance.document == "docs/contracts/stdlib-async-group-performance.md"
+  and .performance.target == "tondo-vm-hosted"
+  and .performance.workloads == 18
+  and .performance.samples_per_workload == 27
+  and .performance.cardinalities == [1, 8, 64]
+  and (.performance.metrics | sort) == [
+    "allocation_count", "child_scans", "group_state_bytes", "latency",
+    "tail_latency", "throughput", "wakeups"
+  ]
+  and .performance.report == "target/reliability/evidence/stdlib-async-group-performance.json"
+  and .performance.command == "scripts/stdlib-async-group-performance.sh"
   and .promotion.model_test_fuzz_complete == true
+  and .promotion.performance_complete == true
   and .promotion.remaining == [
-    "STD-ASYNC-GROUP-PERF-001",
     "STD-ASYNC-GROUP-CONF-001",
     "STD-ASYNC-GROUP-DOC-001"
   ]
@@ -72,12 +85,20 @@ for path in \
     crates/tondo-reliability/tests/models.rs \
     fuzz/fuzz_targets/stdlib_async_group.rs \
     fuzz/corpus/stdlib_async_group/seed \
-    scripts/stdlib-async-group-fuzz.sh; do
+    scripts/stdlib-async-group-fuzz.sh \
+    testing/stdlib-async-group-performance.json \
+    docs/contracts/stdlib-async-group-performance.md \
+    scripts/stdlib-async-group-performance.sh \
+    scripts/stdlib-async-group-performance-test.sh; do
     [[ -e "$path" ]] || { echo "std.async.Group tests: missing evidence path $path" >&2; exit 1; }
 done
 
 [[ -x scripts/stdlib-async-group-fuzz.sh ]] \
     || { echo "std.async.Group tests: fuzz runner is not executable" >&2; exit 1; }
+[[ -x scripts/stdlib-async-group-performance.sh ]] \
+    || { echo "std.async.Group tests: performance runner is not executable" >&2; exit 1; }
+[[ -x scripts/stdlib-async-group-performance-test.sh ]] \
+    || { echo "std.async.Group tests: performance contract runner is not executable" >&2; exit 1; }
 grep -Fq 'name = "stdlib_async_group"' fuzz/Cargo.toml
 
 for marker in \
@@ -95,6 +116,8 @@ for marker in \
     'actual-terminal-completion-order' \
     'lowest-insertion-index-among-child-errors' \
     'group.select.rollback' \
+    'testing/stdlib-async-group-performance.json' \
+    'STD-ASYNC-GROUP-PERF-001' \
     'not-applicable'; do
     grep -Fq "$marker" testing/stdlib-async-group.json
 done
@@ -132,7 +155,6 @@ jq -e '
   and .implementation.status == "verified-hosted-vm"
   and .implementation.native_status == "pending-native-async-runtime"
   and .promotion.implementation_pending == [
-    "STD-ASYNC-GROUP-PERF-001",
     "STD-ASYNC-GROUP-CONF-001",
     "STD-ASYNC-GROUP-DOC-001"
   ]

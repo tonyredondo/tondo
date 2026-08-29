@@ -956,8 +956,11 @@ implementación hosted de VM está verificada por
 scheduler/ABI async. El modelo, la batería hosted y el fuzzing están cerrados
 por `STD-ASYNC-GROUP-TEST-001` y registrados en
 [`testing/stdlib-async-group-test.json`](./testing/stdlib-async-group-test.json);
-la promoción aún requiere cerrar `PERF`, `CONF` y `DOC`, además de la evidencia
-nativa correspondiente.
+el presupuesto hosted de latencia, throughput, allocations, memoria lógica,
+wakeups y tail latency está cerrado por `STD-ASYNC-GROUP-PERF-001` y registrado
+en [`testing/stdlib-async-group-performance.json`](./testing/stdlib-async-group-performance.json).
+La promoción aún requiere cerrar `CONF` y `DOC`, además de la evidencia nativa
+correspondiente.
 
 ### 9.5 Scheduler y backpressure
 
@@ -2233,6 +2236,10 @@ La implementación hosted conserva este contrato en el scheduler cooperativo
 único; la ruta nativa se mantiene como trabajo posterior del backend. Su
 extensión contractual vive en
 [`docs/contracts/stdlib-async.md`](./docs/contracts/stdlib-async.md).
+El presupuesto de rendimiento hosted se especifica en
+[`docs/contracts/stdlib-async-group-performance.md`](./docs/contracts/stdlib-async-group-performance.md):
+el probe cubre cardinalidades 1/8/64 y conserva muestras P50/P95/P99 sin
+convertir una medición de VM en una promesa sobre el backend nativo.
 
 #### 14.4.2 Canales y productor/consumidor
 

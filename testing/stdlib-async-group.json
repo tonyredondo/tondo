@@ -9,6 +9,10 @@
   "contract": "docs/contracts/stdlib-async.md",
   "spec": "TONDO_STANDARD_LIBRARY_SPEC.md",
   "testing": "testing/stdlib-async-group-test.json",
+  "performance": {
+    "task": "STD-ASYNC-GROUP-PERF-001",
+    "contract": "testing/stdlib-async-group-performance.json"
+  },
   "layer": "B1",
   "kind": "intrinsic",
   "target": "tondo-vm-hosted",
@@ -235,14 +239,12 @@
     ],
     "proof": "hosted VM executes all/settle/next/cancel, completion-order selection and select rollback through the typed compiler and structured scheduler",
     "required_follow_ups": [
-      "STD-ASYNC-GROUP-PERF-001",
       "STD-ASYNC-GROUP-CONF-001",
       "STD-ASYNC-GROUP-DOC-001"
     ]
   },
   "promotion": {
     "implementation_pending": [
-      "STD-ASYNC-GROUP-PERF-001",
       "STD-ASYNC-GROUP-CONF-001",
       "STD-ASYNC-GROUP-DOC-001"
     ],

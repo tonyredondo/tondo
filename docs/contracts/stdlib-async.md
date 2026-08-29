@@ -154,11 +154,27 @@ usa el mismo oráculo con un límite de 4 KiB/1.024 pasos, corpus persistente y
 El registro completo de estas tres celdas es
 [`testing/stdlib-async-group-test.json`](../../testing/stdlib-async-group-test.json).
 
-La superficie aún no se promueve hasta completar presupuestos de rendimiento,
-conformidad VM/nativa y documentación ejecutable. `STD-ASYNC-GROUP-IMPL-001`
+El presupuesto de rendimiento de Group queda cerrado por
+`STD-ASYNC-GROUP-PERF-001` para `tondo-vm-hosted` con el contrato
+[`testing/stdlib-async-group-performance.json`](../../testing/stdlib-async-group-performance.json)
+y el probe reproducible
+[`scripts/stdlib-async-group-performance.sh`](../../scripts/stdlib-async-group-performance.sh).
+Se miden `add`, `all`, `settle`, `next` listo/pendiente y `cancel` con 1, 8 y
+64 hijos, tres warmups, nueve repeticiones y tres procesos independientes.
+Cada informe conserva mediana, P95, P99, throughput, allocations, escaneos,
+wakeups y almacenamiento lógico reservado; el setup del fixture queda fuera
+del reloj y dentro de los contadores de coste. `group_peak_state_bytes` es una
+medida lógica de las capacidades de los vectores y no una afirmación sobre RSS
+ni sobre el allocator nativo. La evidencia se genera en
+`target/reliability/evidence/stdlib-async-group-performance.json` y el target
+async nativo queda explícitamente fuera de este cierre.
+
+La superficie aún no se promueve hasta completar conformidad VM/nativa y
+documentación ejecutable. `STD-ASYNC-GROUP-IMPL-001`
 cierra la implementación hosted de VM y `STD-ASYNC-GROUP-TEST-001` cierra
-`MODEL`, `TEST` y `FUZZ`; la implementación nativa y la conformidad cruzada
-siguen siendo leaves separadas. `HOST = not-applicable`: `Group` compone el
+`MODEL`, `TEST` y `FUZZ`; `STD-ASYNC-GROUP-PERF-001` cierra el presupuesto de
+rendimiento hosted; la implementación nativa y la conformidad cruzada siguen
+siendo leaves separadas. `HOST = not-applicable`: `Group` compone el
 scheduler y `Join` existentes y no enlaza una primitiva host propia.
 
 ### Eventos observables para diagnóstico

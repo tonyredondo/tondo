@@ -255,6 +255,34 @@ pub struct VmStatistics {
     pub select_peak_frame_bytes: u64,
     /// Largest selection arm table observed in this run.
     pub select_peak_arms: u32,
+    /// Number of Group children added to runtime state.
+    pub group_adds: u64,
+    /// Number of `Group.all` polls performed.
+    pub group_all_operations: u64,
+    /// Number of `Group.settle` polls performed.
+    pub group_settle_operations: u64,
+    /// Number of `Group.next` polls performed.
+    pub group_next_operations: u64,
+    /// Number of `Group.cancel` polls performed.
+    pub group_cancel_operations: u64,
+    /// Group child status entries inspected by an operation.
+    pub group_child_scans: u64,
+    /// Group waiters parked by the scheduler.
+    pub group_waits: u64,
+    /// Group waiters woken by child completion.
+    pub group_wakeups: u64,
+    /// Group-wide cancellation requests issued by `all` or `cancel`.
+    pub group_cancellation_requests: u64,
+    /// Runtime Group state records created.
+    pub group_state_allocations: u64,
+    /// Child-vector capacity growth events for Group state.
+    pub group_child_buffer_grows: u64,
+    /// Waiter-vector capacity growth events for Group state.
+    pub group_waiter_buffer_grows: u64,
+    /// Largest number of children retained by one Group in this run.
+    pub group_peak_children: u32,
+    /// Logical bytes reserved by one Group child/waiter state at peak.
+    pub group_peak_state_bytes: u64,
 }
 
 /// Stable language panic identity.
