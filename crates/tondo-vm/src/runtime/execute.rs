@@ -14301,15 +14301,18 @@ mod tests {
         types: &GroupTypes,
     ) -> Result<(), VmError> {
         if workload == GroupPerfWorkload::Add {
-            for task in engine
-                .groups
-                .get(&group)
-                .ok_or_else(|| VmError::invariant("Group add fixture disappeared"))?
-                .children
-                .iter()
-                .map(|child| child.task)
-                .collect::<Vec<_>>()
-            {
+            let task_ids = {
+                let state = engine
+                    .groups
+                    .get(&group)
+                    .ok_or(VmError::invariant("Group add fixture disappeared"))?;
+                let mut task_ids = Vec::with_capacity(state.children.len());
+                for child in &state.children {
+                    task_ids.push(child.task);
+                }
+                task_ids
+            };
+            for task in task_ids {
                 engine.tasks[task].status = TaskStatus::Consumed;
             }
             return engine.remove_group(group);
@@ -14318,7 +14321,7 @@ mod tests {
             let children = engine
                 .groups
                 .get(&group)
-                .ok_or_else(|| VmError::invariant("pending Group fixture disappeared"))?
+                .ok_or(VmError::invariant("pending Group fixture disappeared"))?
                 .children
                 .clone();
             for child in children {
@@ -14347,10 +14350,10 @@ mod tests {
                     ));
                 }
             }
-            let empty = engine
-                .groups
-                .get(&group)
-                .is_some_and(|state| state.children.is_empty());
+            let empty = match engine.groups.get(&group) {
+                Some(state) => state.children.is_empty(),
+                None => false,
+            };
             if empty {
                 engine.remove_group(group)?;
             }
@@ -14364,8 +14367,10 @@ mod tests {
         measure: bool,
     ) -> Result<GroupPerfSample, VmError> {
         let (program, types) = group_program();
-        let trace = derive_trace_metadata(&program)
-            .map_err(|error| VmError::invariant(error.to_string()))?;
+        let trace = match derive_trace_metadata(&program) {
+            Ok(trace) => trace,
+            Err(error) => return Err(VmError::invariant(error.to_string())),
+        };
         let mut host = RejectingHost;
         let (mut engine, group) =
             group_perf_engine(&program, &mut host, trace, cardinality, workload, &types)?;
@@ -14443,9 +14448,10 @@ mod tests {
                         probe: true,
                     },
                 )?;
-                let completion = pending_result
-                    .take()
-                    .ok_or_else(|| VmError::invariant("pending Group.next value is missing"))?;
+                let completion = match pending_result.take() {
+                    Some(completion) => completion,
+                    None => return Err(VmError::invariant("pending Group.next value is missing")),
+                };
                 engine.complete_task(1, TaskCompletion::Returned(completion))?;
                 match engine.poll_group_operation(group, RuntimeGroupOperation::Next, types.next)? {
                     GroupPoll::Ready(value) => value,
