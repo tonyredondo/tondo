@@ -35,11 +35,11 @@
       "status": "verified",
       "reason": null,
       "public_signatures": [
-        "std.async:36",
-        "std.async:37",
         "std.async:38",
         "std.async:39",
-        "std.async:40"
+        "std.async:40",
+        "std.async:41",
+        "std.async:42"
       ],
       "requirements": [
         "requirement:std.async:async-iterator",
