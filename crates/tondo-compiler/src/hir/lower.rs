@@ -1581,7 +1581,10 @@ impl<'a> TypeLowerer<'a> {
             self.push_bootstrap_generic_host_callable(
                 span,
                 HirBootstrapHostFunction::SyncConditionWait,
-                vec![(mutex_guard, ParameterMode::Var, true)],
+                vec![
+                    (condition, ParameterMode::Ref, true),
+                    (mutex_guard, ParameterMode::Var, false),
+                ],
                 mutex_guard,
                 1,
                 Vec::new(),
@@ -1600,6 +1603,21 @@ impl<'a> TypeLowerer<'a> {
                 None,
                 unit,
             )?;
+            for function in [
+                HirBootstrapHostFunction::SyncMemoryOrderRelaxed,
+                HirBootstrapHostFunction::SyncMemoryOrderAcquire,
+                HirBootstrapHostFunction::SyncMemoryOrderRelease,
+                HirBootstrapHostFunction::SyncMemoryOrderAcqRel,
+                HirBootstrapHostFunction::SyncMemoryOrderSeqCst,
+            ] {
+                self.push_bootstrap_host_callable_with_modes(
+                    span,
+                    function,
+                    Vec::new(),
+                    None,
+                    memory_order,
+                )?;
+            }
             self.push_bootstrap_host_callable_with_modes(
                 span,
                 HirBootstrapHostFunction::SyncSemaphore,

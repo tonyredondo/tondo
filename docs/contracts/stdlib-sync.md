@@ -70,7 +70,7 @@ Superficie de locks y guards:
 Superficie de condición y permits:
 
     pub fn condition(): Condition ! SyncError
-    pub fn Condition.wait[T](var guard: MutexGuard[T]): MutexGuard[T] suspends
+    pub fn Condition.wait[T](ref self, var guard: MutexGuard[T]): MutexGuard[T] suspends
     pub fn Condition.notifyOne(ref self): Unit
     pub fn Condition.notifyAll(ref self): Unit
 

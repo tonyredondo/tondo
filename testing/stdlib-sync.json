@@ -146,7 +146,7 @@
       },
       {
         "id": "condition-wait",
-        "signature": "pub fn Condition.wait[T](var guard: MutexGuard[T]): MutexGuard[T] suspends",
+        "signature": "pub fn Condition.wait[T](ref self, var guard: MutexGuard[T]): MutexGuard[T] suspends",
         "kind": "unlock-wait-reacquire",
         "effect": "suspends"
       },

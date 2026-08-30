@@ -18861,7 +18861,6 @@ impl<'a> ExpressionChecker<'a> {
                 | HirBootstrapHostFunction::AsyncGroupNext
                 | HirBootstrapHostFunction::SyncMutexGuardGetMut
                 | HirBootstrapHostFunction::SyncWriteGuardGetMut
-                | HirBootstrapHostFunction::SyncConditionWait
                 | HirBootstrapHostFunction::JsonReaderNext
                 | HirBootstrapHostFunction::JsonReaderOwn
                 | HirBootstrapHostFunction::JsonReaderFinish
@@ -32232,6 +32231,8 @@ fn build(input: Int, flag: Bool) {
             "import std.console\nfn invalid() { console.print(value: \"named\") }\n",
             "import std.console\nfn invalid(parts: Array[String]) { console.print(...parts) }\n",
             "import std.bytes\nfn invalid() { bytes.missing() }\n",
+            "import std.sync\nfn invalid() { sync.missing() }\n",
+            "import std.sync\nfn invalid() { sync.MemoryOrder.Unknown() }\n",
         ] {
             let (_, _, output) = check(source);
             assert!(

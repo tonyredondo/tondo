@@ -6777,7 +6777,7 @@ impl VmHost for BootstrapHost {
                 // A real wait atomically parks and re-acquires the mutex. The
                 // hosted preview has no scheduler hook, so it preserves the
                 // guard and returns immediately without losing ownership.
-                Ok(RuntimeValue::ResultOk(Box::new(guard.clone())))
+                Ok(guard.clone())
             }
             ("std.sync.Condition.notifyOne", [condition])
             | ("std.sync.Condition.notifyAll", [condition]) => {
@@ -8866,6 +8866,656 @@ mod tests {
             host.invoke("std.sync.Atomic.load", &[atomic, invalid_order],)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn sync_host_covers_forged_tokens_contended_paths_and_cleanup() {
+        let mut host = BootstrapHost::with_max_bytes(Vec::new(), 2);
+
+        // The small validation helpers are part of the host boundary. Exercise
+        // every closed order and the fail-closed shapes without relying on a
+        // forged safe-language value.
+        for order in 0..=4 {
+            let expected = match order {
+                0 => 0,
+                1 | 2 => 1,
+                3 => 2,
+                4 => 3,
+                _ => unreachable!(),
+            };
+            assert_eq!(BootstrapHost::sync_order_strength(order), expected);
+        }
+        assert_eq!(BootstrapHost::sync_order_strength(9), u8::MAX);
+        assert!(BootstrapHost::sync_memory_order(&RuntimeValue::Unit).is_err());
+        for value in [
+            RuntimeValue::Variant {
+                name: "Other".into(),
+                variant: 0,
+                values: Vec::new(),
+            },
+            RuntimeValue::Variant {
+                name: "MemoryOrder".into(),
+                variant: 5,
+                values: Vec::new(),
+            },
+            RuntimeValue::Variant {
+                name: "MemoryOrder".into(),
+                variant: 0,
+                values: vec![RuntimeValue::Unit],
+            },
+        ] {
+            assert!(BootstrapHost::sync_memory_order(&value).is_err());
+        }
+        assert!(BootstrapHost::sync_valid_load_order(2) == false);
+        assert!(BootstrapHost::sync_valid_store_order(1) == false);
+        assert!(BootstrapHost::sync_valid_cas_failure_order(2) == false);
+
+        let mutex = ok(host
+            .invoke("std.sync.mutex", &[RuntimeValue::Integer(7)])
+            .unwrap());
+        let guard = ok(host
+            .invoke("std.sync.Mutex.lock", std::slice::from_ref(&mutex))
+            .unwrap());
+        sync_error(
+            host.invoke("std.sync.Mutex.lock", std::slice::from_ref(&mutex))
+                .unwrap(),
+            3,
+        );
+        let pending = host
+            .start_async("std.sync.Mutex.lock", std::slice::from_ref(&mutex))
+            .unwrap();
+        sync_error(host.wait_async(&[pending]).unwrap().1, 3);
+        assert_eq!(
+            host.invoke("std.sync.MutexGuard.getMut", std::slice::from_ref(&guard))
+                .unwrap(),
+            RuntimeValue::Ref(Some(Box::new(RuntimeValue::Integer(7))))
+        );
+        assert!(
+            host.invoke(
+                "std.sync.Mutex.tryLock",
+                &[RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::Mutex,
+                    id: u64::MAX,
+                }],
+            )
+            .is_err()
+        );
+        host.cleanup(&guard).unwrap();
+        assert!(
+            host.invoke("std.sync.MutexGuard.unlock", std::slice::from_ref(&guard))
+                .is_err()
+        );
+        let guard = match host
+            .invoke("std.sync.Mutex.tryLock", std::slice::from_ref(&mutex))
+            .unwrap()
+        {
+            RuntimeValue::OptionSome(value) => *value,
+            other => panic!("mutex must be released by cleanup: {other:?}"),
+        };
+        host.invoke("std.sync.MutexGuard.unlock", &[guard]).unwrap();
+
+        let lock = ok(host
+            .invoke("std.sync.rwLock", &[RuntimeValue::String("value".into())])
+            .unwrap());
+        let reader = ok(host
+            .invoke("std.sync.RwLock.read", std::slice::from_ref(&lock))
+            .unwrap());
+        let second_reader = match host
+            .invoke("std.sync.RwLock.tryRead", std::slice::from_ref(&lock))
+            .unwrap()
+        {
+            RuntimeValue::OptionSome(value) => *value,
+            other => panic!("second reader must succeed: {other:?}"),
+        };
+        sync_error(
+            host.invoke("std.sync.RwLock.write", std::slice::from_ref(&lock))
+                .unwrap(),
+            2,
+        );
+        assert!(matches!(
+            host.invoke("std.sync.RwLock.tryWrite", std::slice::from_ref(&lock))
+                .unwrap(),
+            RuntimeValue::OptionNone
+        ));
+        assert!(matches!(
+            host.invoke("std.sync.ReadGuard.get", std::slice::from_ref(&reader))
+                .unwrap(),
+            RuntimeValue::Ref(Some(_))
+        ));
+        host.invoke("std.sync.ReadGuard.unlock", &[reader]).unwrap();
+        host.cleanup(&second_reader).unwrap();
+        let writer = ok(host
+            .invoke("std.sync.RwLock.write", std::slice::from_ref(&lock))
+            .unwrap());
+        assert!(matches!(
+            host.invoke("std.sync.RwLock.tryRead", std::slice::from_ref(&lock))
+                .unwrap(),
+            RuntimeValue::OptionNone
+        ));
+        assert!(matches!(
+            host.invoke("std.sync.WriteGuard.getMut", std::slice::from_ref(&writer))
+                .unwrap(),
+            RuntimeValue::Ref(Some(_))
+        ));
+        host.invoke("std.sync.WriteGuard.unlock", &[writer])
+            .unwrap();
+        let writer = match host
+            .invoke("std.sync.RwLock.tryWrite", std::slice::from_ref(&lock))
+            .unwrap()
+        {
+            RuntimeValue::OptionSome(value) => *value,
+            other => panic!("writer must succeed after unlock: {other:?}"),
+        };
+        host.cleanup(&writer).unwrap();
+
+        let condition = ok(host.invoke("std.sync.condition", &[]).unwrap());
+        let mutex = ok(host
+            .invoke("std.sync.mutex", &[RuntimeValue::Bool(false)])
+            .unwrap());
+        let guard = ok(host
+            .invoke("std.sync.Mutex.lock", std::slice::from_ref(&mutex))
+            .unwrap());
+        let waited = host
+            .invoke(
+                "std.sync.Condition.wait",
+                &[condition.clone(), guard.clone()],
+            )
+            .unwrap();
+        assert_eq!(waited, guard);
+        host.invoke(
+            "std.sync.Condition.notifyOne",
+            std::slice::from_ref(&condition),
+        )
+        .unwrap();
+        host.invoke(
+            "std.sync.Condition.notifyAll",
+            std::slice::from_ref(&condition),
+        )
+        .unwrap();
+        host.cleanup(&guard).unwrap();
+
+        sync_error(
+            host.invoke("std.sync.semaphore", &[RuntimeValue::Integer(-1)])
+                .unwrap(),
+            0,
+        );
+        sync_error(
+            host.invoke("std.sync.semaphore", &[RuntimeValue::Integer(3)])
+                .unwrap(),
+            2,
+        );
+        let semaphore = ok(host
+            .invoke("std.sync.semaphore", &[RuntimeValue::Integer(1)])
+            .unwrap());
+        let permit = host
+            .invoke(
+                "std.sync.Semaphore.acquire",
+                std::slice::from_ref(&semaphore),
+            )
+            .unwrap();
+        assert!(
+            host.invoke(
+                "std.sync.Semaphore.acquire",
+                std::slice::from_ref(&semaphore)
+            )
+            .is_err()
+        );
+        assert!(matches!(
+            host.invoke(
+                "std.sync.Semaphore.tryAcquire",
+                std::slice::from_ref(&semaphore)
+            )
+            .unwrap(),
+            RuntimeValue::OptionNone
+        ));
+        host.cleanup(&permit).unwrap();
+        let permit = match host
+            .invoke(
+                "std.sync.Semaphore.tryAcquire",
+                std::slice::from_ref(&semaphore),
+            )
+            .unwrap()
+        {
+            RuntimeValue::OptionSome(value) => *value,
+            other => panic!("permit must be restored by cleanup: {other:?}"),
+        };
+        host.invoke("std.sync.Permit.release", &[permit.clone()])
+            .unwrap();
+        assert!(host.invoke("std.sync.Permit.release", &[permit]).is_err());
+
+        let once = host.invoke("std.sync.once", &[]).unwrap();
+        if let RuntimeValue::Host { id, .. } = once {
+            match host.values.get_mut(&id) {
+                Some(HostValue::SyncOnce { value }) => *value = Some(RuntimeValue::Integer(11)),
+                _ => panic!("expected hosted once"),
+            }
+        } else {
+            panic!("once must be opaque");
+        }
+        assert!(matches!(
+            host.invoke("std.sync.Once.get", std::slice::from_ref(&once))
+                .unwrap(),
+            RuntimeValue::OptionSome(value)
+                if matches!(value.as_ref(), RuntimeValue::Ref(Some(value)) if **value == RuntimeValue::Integer(11))
+        ));
+        assert!(matches!(
+            ok(host
+                .invoke(
+                    "std.sync.Once.getOrInit",
+                    &[
+                        once.clone(),
+                        RuntimeValue::Function {
+                            name: "init".into(),
+                            type_arguments: Vec::new(),
+                        },
+                    ],
+                )
+                .unwrap()),
+            RuntimeValue::Ref(Some(value)) if *value == RuntimeValue::Integer(11)
+        ));
+        assert_eq!(
+            host.invoke("std.sync.Once.isReady", std::slice::from_ref(&once))
+                .unwrap(),
+            RuntimeValue::Bool(true)
+        );
+        assert!(
+            host.invoke(
+                "std.sync.Once.get",
+                &[RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::Once,
+                    id: u64::MAX,
+                }],
+            )
+            .is_err()
+        );
+
+        sync_error(
+            host.invoke("std.sync.barrier", &[RuntimeValue::Integer(-1)])
+                .unwrap(),
+            1,
+        );
+        let barrier = ok(host
+            .invoke("std.sync.barrier", &[RuntimeValue::Integer(2)])
+            .unwrap());
+        sync_error(
+            host.invoke("std.sync.Barrier.wait", std::slice::from_ref(&barrier))
+                .unwrap(),
+            2,
+        );
+        assert!(matches!(
+            ok(host
+                .invoke("std.sync.Barrier.wait", std::slice::from_ref(&barrier))
+                .unwrap()),
+            RuntimeValue::Variant { name, variant: 0, values }
+                if name == "BarrierRole" && values.is_empty()
+        ));
+
+        let atomic = host
+            .invoke("std.sync.atomic", &[RuntimeValue::Integer(1)])
+            .unwrap();
+        let relaxed = host
+            .invoke("intrinsic.sync.MemoryOrder.Relaxed", &[])
+            .unwrap();
+        let acquire = host
+            .invoke("intrinsic.sync.MemoryOrder.Acquire", &[])
+            .unwrap();
+        let release = host
+            .invoke("intrinsic.sync.MemoryOrder.Release", &[])
+            .unwrap();
+        let acq_rel = host
+            .invoke("intrinsic.sync.MemoryOrder.AcqRel", &[])
+            .unwrap();
+        let seq_cst = host
+            .invoke("intrinsic.sync.MemoryOrder.SeqCst", &[])
+            .unwrap();
+        assert_eq!(
+            host.invoke("std.sync.Atomic.load", &[atomic.clone(), acquire.clone()])
+                .unwrap(),
+            RuntimeValue::Integer(1)
+        );
+        assert!(
+            host.invoke(
+                "std.sync.Atomic.store",
+                &[atomic.clone(), RuntimeValue::Integer(2), acquire]
+            )
+            .is_err()
+        );
+        host.invoke(
+            "std.sync.Atomic.store",
+            &[atomic.clone(), RuntimeValue::Integer(2), seq_cst.clone()],
+        )
+        .unwrap();
+        assert_eq!(
+            host.invoke(
+                "std.sync.Atomic.swap",
+                &[atomic.clone(), RuntimeValue::Integer(3), acq_rel],
+            )
+            .unwrap(),
+            RuntimeValue::Integer(2)
+        );
+        assert!(
+            host.invoke(
+                "std.sync.Atomic.compareExchange",
+                &[
+                    atomic.clone(),
+                    RuntimeValue::Integer(3),
+                    RuntimeValue::Integer(4),
+                    relaxed.clone(),
+                    release.clone(),
+                ],
+            )
+            .is_err()
+        );
+        assert!(
+            host.invoke(
+                "std.sync.Atomic.compareExchange",
+                &[
+                    atomic.clone(),
+                    RuntimeValue::Integer(9),
+                    RuntimeValue::Integer(5),
+                    relaxed.clone(),
+                    relaxed,
+                ],
+            )
+            .unwrap()
+            .eq(&RuntimeValue::Variant {
+                name: "CompareExchange".into(),
+                variant: 1,
+                values: vec![RuntimeValue::Integer(3)],
+            })
+        );
+        assert!(
+            host.invoke(
+                "std.sync.Atomic.load",
+                &[
+                    RuntimeValue::Host {
+                        kind: RuntimeHostValueKind::Atomic,
+                        id: u64::MAX,
+                    },
+                    seq_cst
+                ],
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn sync_host_rejects_invalid_tokens_without_mutating_resources() {
+        let mut host = BootstrapHost::default();
+        let token_id = |value: &RuntimeValue| match value {
+            RuntimeValue::Host { id, .. } => *id,
+            other => panic!("expected host token, got {other:?}"),
+        };
+        let condition = ok(host.invoke("std.sync.condition", &[]).unwrap());
+        let condition_id = token_id(&condition);
+        let forged = |kind| RuntimeValue::Host {
+            kind,
+            id: condition_id,
+        };
+
+        assert!(
+            host.invoke("std.sync.Mutex.lock", &[RuntimeValue::Integer(1)])
+                .is_err()
+        );
+        assert!(
+            host.invoke(
+                "std.sync.Mutex.lock",
+                &[forged(RuntimeHostValueKind::Mutex)]
+            )
+            .is_err()
+        );
+        assert!(
+            host.invoke(
+                "std.sync.Mutex.tryLock",
+                &[forged(RuntimeHostValueKind::Mutex)],
+            )
+            .is_err()
+        );
+
+        let mutex = ok(host
+            .invoke("std.sync.mutex", &[RuntimeValue::Integer(1)])
+            .unwrap());
+        let mutex_id = token_id(&mutex);
+        assert!(
+            host.invoke(
+                "std.sync.MutexGuard.get",
+                &[RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::MutexGuard,
+                    id: mutex_id,
+                }],
+            )
+            .is_err()
+        );
+        let guard = ok(host
+            .invoke("std.sync.Mutex.lock", std::slice::from_ref(&mutex))
+            .unwrap());
+        host.values.remove(&mutex_id);
+        assert!(
+            host.invoke("std.sync.MutexGuard.get", std::slice::from_ref(&guard))
+                .is_err()
+        );
+        assert!(
+            host.invoke("std.sync.MutexGuard.unlock", std::slice::from_ref(&guard))
+                .is_err()
+        );
+
+        let lock = ok(host
+            .invoke("std.sync.rwLock", &[RuntimeValue::Integer(2)])
+            .unwrap());
+        let lock_id = token_id(&lock);
+        let forged_lock = forged(RuntimeHostValueKind::RwLock);
+        for name in [
+            "std.sync.RwLock.read",
+            "std.sync.RwLock.tryRead",
+            "std.sync.RwLock.write",
+            "std.sync.RwLock.tryWrite",
+        ] {
+            assert!(
+                host.invoke(name, std::slice::from_ref(&forged_lock))
+                    .is_err()
+            );
+        }
+        assert!(
+            host.invoke(
+                "std.sync.ReadGuard.get",
+                &[RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::ReadGuard,
+                    id: lock_id,
+                }],
+            )
+            .is_err()
+        );
+        assert!(
+            host.invoke("std.sync.ReadGuard.get", &[RuntimeValue::Integer(1)])
+                .is_err()
+        );
+        let reader = ok(host
+            .invoke("std.sync.RwLock.read", std::slice::from_ref(&lock))
+            .unwrap());
+        host.values.remove(&lock_id);
+        assert!(
+            host.invoke("std.sync.ReadGuard.get", std::slice::from_ref(&reader))
+                .is_err()
+        );
+        assert!(
+            host.invoke("std.sync.ReadGuard.unlock", std::slice::from_ref(&reader))
+                .is_err()
+        );
+
+        let semaphore = ok(host
+            .invoke("std.sync.semaphore", &[RuntimeValue::Integer(1)])
+            .unwrap());
+        let forged_semaphore = forged(RuntimeHostValueKind::Semaphore);
+        assert!(
+            host.invoke(
+                "std.sync.Semaphore.acquire",
+                std::slice::from_ref(&forged_semaphore),
+            )
+            .is_err()
+        );
+        assert!(
+            host.invoke(
+                "std.sync.Semaphore.tryAcquire",
+                std::slice::from_ref(&forged_semaphore),
+            )
+            .is_err()
+        );
+        let permit = host
+            .invoke(
+                "std.sync.Semaphore.acquire",
+                std::slice::from_ref(&semaphore),
+            )
+            .unwrap();
+        host.values.remove(&token_id(&semaphore));
+        assert!(
+            host.invoke("std.sync.Permit.release", std::slice::from_ref(&permit))
+                .is_err()
+        );
+        assert!(
+            host.invoke(
+                "std.sync.Permit.release",
+                &[forged(RuntimeHostValueKind::Permit)],
+            )
+            .is_err()
+        );
+
+        for name in [
+            "std.sync.Once.get",
+            "std.sync.Once.getOrInit",
+            "std.sync.Once.isReady",
+        ] {
+            let arguments = if name.ends_with("getOrInit") {
+                vec![
+                    forged(RuntimeHostValueKind::Once),
+                    RuntimeValue::Function {
+                        name: "init".into(),
+                        type_arguments: Vec::new(),
+                    },
+                ]
+            } else {
+                vec![forged(RuntimeHostValueKind::Once)]
+            };
+            assert!(host.invoke(name, &arguments).is_err());
+        }
+        assert!(
+            host.invoke(
+                "std.sync.Barrier.wait",
+                &[forged(RuntimeHostValueKind::Barrier)],
+            )
+            .is_err()
+        );
+        host.cleanup(&condition).unwrap();
+        host.cleanup(&RuntimeValue::Host {
+            kind: RuntimeHostValueKind::Atomic,
+            id: condition_id,
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn sync_suspendable_operations_use_the_common_async_host_path() {
+        let mut host = BootstrapHost::default();
+
+        let mutex = ok(host
+            .invoke("std.sync.mutex", &[RuntimeValue::Integer(1)])
+            .unwrap());
+        let lock = host
+            .start_async("std.sync.Mutex.lock", std::slice::from_ref(&mutex))
+            .unwrap();
+        let (completed, guard) = host.wait_async(&[lock]).unwrap();
+        assert_eq!(completed, lock);
+        let guard = ok(guard);
+        host.cleanup(&guard).unwrap();
+
+        let read_lock = ok(host
+            .invoke("std.sync.rwLock", &[RuntimeValue::Integer(2)])
+            .unwrap());
+        let read = host
+            .start_async("std.sync.RwLock.read", std::slice::from_ref(&read_lock))
+            .unwrap();
+        let (completed, reader) = host.wait_async(&[read]).unwrap();
+        assert_eq!(completed, read);
+        host.cleanup(&ok(reader)).unwrap();
+
+        let write_lock = ok(host
+            .invoke("std.sync.rwLock", &[RuntimeValue::Integer(3)])
+            .unwrap());
+        let write = host
+            .start_async("std.sync.RwLock.write", std::slice::from_ref(&write_lock))
+            .unwrap();
+        let (completed, writer) = host.wait_async(&[write]).unwrap();
+        assert_eq!(completed, write);
+        host.cleanup(&ok(writer)).unwrap();
+
+        let condition = ok(host.invoke("std.sync.condition", &[]).unwrap());
+        let condition_mutex = ok(host
+            .invoke("std.sync.mutex", &[RuntimeValue::Bool(true)])
+            .unwrap());
+        let condition_guard = ok(host
+            .invoke(
+                "std.sync.Mutex.lock",
+                std::slice::from_ref(&condition_mutex),
+            )
+            .unwrap());
+        let wait = host
+            .start_async(
+                "std.sync.Condition.wait",
+                &[condition, condition_guard.clone()],
+            )
+            .unwrap();
+        let (completed, waited) = host.wait_async(&[wait]).unwrap();
+        assert_eq!(completed, wait);
+        assert_eq!(waited, condition_guard);
+        host.cleanup(&condition_guard).unwrap();
+
+        let semaphore = ok(host
+            .invoke("std.sync.semaphore", &[RuntimeValue::Integer(1)])
+            .unwrap());
+        let acquire = host
+            .start_async(
+                "std.sync.Semaphore.acquire",
+                std::slice::from_ref(&semaphore),
+            )
+            .unwrap();
+        let (completed, permit) = host.wait_async(&[acquire]).unwrap();
+        assert_eq!(completed, acquire);
+        host.cleanup(&permit).unwrap();
+
+        let once = host.invoke("std.sync.once", &[]).unwrap();
+        let initialize = host
+            .start_async(
+                "std.sync.Once.getOrInit",
+                &[
+                    once,
+                    RuntimeValue::Function {
+                        name: "init".into(),
+                        type_arguments: Vec::new(),
+                    },
+                ],
+            )
+            .unwrap();
+        let (completed, value) = host.wait_async(&[initialize]).unwrap();
+        assert_eq!(completed, initialize);
+        sync_error(value, 4);
+
+        let barrier = ok(host
+            .invoke("std.sync.barrier", &[RuntimeValue::Integer(1)])
+            .unwrap());
+        let barrier_wait = host
+            .start_async("std.sync.Barrier.wait", std::slice::from_ref(&barrier))
+            .unwrap();
+        let (completed, role) = host.wait_async(&[barrier_wait]).unwrap();
+        assert_eq!(completed, barrier_wait);
+        assert!(
+            matches!(ok(role), RuntimeValue::Variant { name, variant: 0, values }
+            if name == "BarrierRole" && values.is_empty())
+        );
+
+        // Specialized names still route through the same host path; invoke
+        // reports the unsupported specialization, but dispatch must allocate a
+        // call identity instead of rejecting it before scheduling.
+        let specialized = host.start_async("std.sync.Mutex.lock[Int]", &[]).unwrap();
+        assert!(host.poll_async(specialized).is_err());
     }
 
     fn json_limits(host: &mut BootstrapHost) -> RuntimeValue {

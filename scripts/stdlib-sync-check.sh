@@ -196,7 +196,7 @@ for marker in \
     'STD-SYNC-001' \
     'pub type Mutex[T]' \
     'pub fn Mutex.lock(ref self): MutexGuard[T] ! SyncError suspends' \
-    'pub fn Condition.wait[T](var guard: MutexGuard[T]): MutexGuard[T] suspends' \
+    'pub fn Condition.wait[T](ref self, var guard: MutexGuard[T]): MutexGuard[T] suspends' \
     'pub fn Atomic.compareExchange(ref self' \
     'sync.Queue' \
     'auto-release-exactly-once' \

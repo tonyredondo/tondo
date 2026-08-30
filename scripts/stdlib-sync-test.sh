@@ -60,7 +60,7 @@ for marker in \
     'pub fn mutex[T: Send](value: T): Mutex[T] ! SyncError' \
     'pub fn Mutex.lock(ref self): MutexGuard[T] ! SyncError suspends' \
     'pub fn RwLock.read(ref self): ReadGuard[T] ! SyncError suspends' \
-    'pub fn Condition.wait[T](var guard: MutexGuard[T]): MutexGuard[T] suspends' \
+    'pub fn Condition.wait[T](ref self, var guard: MutexGuard[T]): MutexGuard[T] suspends' \
     'pub fn Semaphore.acquire(ref self): Permit suspends' \
     'pub fn Once.getOrInit(ref self, init: fn(): T ! E suspends): ref T ! E suspends' \
     'pub fn Barrier.wait(ref self): BarrierRole ! SyncError suspends' \

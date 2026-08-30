@@ -4515,6 +4515,117 @@ fn main(): !env.EnvError {
     }
 
     #[test]
+    fn sync_bootstrap_surface_is_lowered_when_the_module_is_imported() {
+        const SOURCE: &[u8] = br#"import std.sync
+fn main(): !sync.SyncError {
+    let mutex = sync.mutex(1)?
+    var guard = mutex.lock()?
+    _ = guard.get()
+    _ = guard.getMut()
+    guard.unlock()
+    let maybe_guard = mutex.tryLock()
+    match maybe_guard {
+        some(guard2) => guard2.unlock()
+        none => ()
+    }
+
+    let rw = sync.rwLock(2)?
+    let reader = rw.read()?
+    _ = reader.get()
+    let maybe_reader = rw.tryRead()
+    match maybe_reader {
+        some(reader2) => reader2.unlock()
+        none => ()
+    }
+    reader.unlock()
+    var writer = rw.write()?
+    _ = writer.get()
+    _ = writer.getMut()
+    writer.unlock()
+    let maybe_writer = rw.tryWrite()
+    match maybe_writer {
+        some(writer2) => writer2.unlock()
+        none => ()
+    }
+
+    let condition = sync.condition()?
+    let condition_mutex = sync.mutex(0)?
+    var condition_guard = condition_mutex.lock()?
+    let waited_guard = condition.wait(var condition_guard)
+    waited_guard.unlock()
+    condition.notifyOne()
+    condition.notifyAll()
+
+    let semaphore = sync.semaphore(2)?
+    let permit = semaphore.acquire()
+    permit.release()
+    let maybe_permit = semaphore.tryAcquire()
+    match maybe_permit {
+        some(permit2) => permit2.release()
+        none => ()
+    }
+
+    let once = sync.once[Int, sync.SyncError]()
+    _ = once.get()
+    _ = once.getOrInit(() { 1 })
+    _ = once.isReady()
+    let barrier = sync.barrier(1)?
+    _ = barrier.wait()?
+
+    let atomic = sync.atomic(1)
+    let relaxed = sync.MemoryOrder.Relaxed()
+    let acquire = sync.MemoryOrder.Acquire()
+    let release = sync.MemoryOrder.Release()
+    let acq_rel = sync.MemoryOrder.AcqRel()
+    let seq_cst = sync.MemoryOrder.SeqCst()
+    _ = relaxed
+    _ = acquire
+    _ = release
+    _ = acq_rel
+    _ = seq_cst
+    let order = sync.MemoryOrder.SeqCst
+    _ = atomic.load(order)
+    atomic.store(2, order)
+    _ = atomic.swap(3, order)
+    _ = atomic.compareExchange(3, 4, order, order)
+}
+"#;
+        let output = execute(operation_request(
+            Operation::Run,
+            SOURCE,
+            SourceForm::Script,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{:#?}",
+            output.diagnostics().diagnostics()
+        );
+        assert_eq!(output.exit_code(), 0);
+        assert!(output.diagnostics().diagnostics().is_empty());
+    }
+
+    #[test]
+    fn sync_bootstrap_rejects_unknown_static_and_module_operations() {
+        for source in [
+            b"import std.sync\nfn main() { _ = sync.MemoryOrder.Unknown() }\n".as_slice(),
+            b"import std.sync\nfn main() { _ = sync.unknown() }\n".as_slice(),
+        ] {
+            let output = execute(operation_request(
+                Operation::Run,
+                source,
+                SourceForm::Script,
+                ResourceLimits::default(),
+            ))
+            .unwrap();
+            assert_eq!(output.status(), CompilationStatus::Rejected);
+            assert!(!output.diagnostics().diagnostics().is_empty());
+        }
+    }
+
+    #[test]
     fn inferred_suspending_main_executes_in_the_runtime_root_scope() {
         let output = execute(operation_request(
             Operation::Run,
