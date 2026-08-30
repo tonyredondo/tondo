@@ -88,5 +88,5 @@
     "physical-path-in-evidence"
   ],
   "report": "target/reliability/evidence/stdlib-async-group-conformance.json",
-  "next_blocks": ["STD-ASYNC-GROUP-DOC-001"]
+  "next_blocks": ["STD-SYNC-IMPL-001"]
 }

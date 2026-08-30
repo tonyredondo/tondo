@@ -36,4 +36,9 @@ jq '.cases[2].native_expected.error_payload = 99' testing/stdlib-async-group-con
 expect_failure error-drift env TONDO_STDLIB_ASYNC_GROUP_CONFORMANCE_CONTRACT="$tmp_dir/error-drift.json" \
     scripts/stdlib-async-group-conformance-check.sh
 
+jq '.next_blocks = ["DIAG-RUNTIME-001"]' testing/stdlib-async-group-conformance.json \
+    >"$tmp_dir/stale-next.json"
+expect_failure stale-next env TONDO_STDLIB_ASYNC_GROUP_CONFORMANCE_CONTRACT="$tmp_dir/stale-next.json" \
+    scripts/stdlib-async-group-conformance-check.sh
+
 echo "std.async.Group conformance tests: OK (status, corpus, native boundary and oracle drift rejected)"

@@ -5,10 +5,10 @@
 - Date: 2026-08-28
 - Supersedes: none
 - Decision record: `DEC-013`
-- Next decision: STD-0.1B Group conformance (`STD-ASYNC-GROUP-CONF-001`); the
-  hosted Group implementation, model/tests/fuzz and target-qualified
-  performance budget are closed, while a future target needs its own complete
-  AOT async evidence before promotion
+- Next decision: `STD-SYNC-IMPL-001`; the hosted Group implementation,
+  model/tests/fuzz, target-qualified performance budget, runtime-ABI
+  conformance and executable documentation are closed. A future target still
+  needs its own complete AOT async evidence before promotion.
 
 ## Context
 

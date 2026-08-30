@@ -6,7 +6,9 @@ especificación canónica exige `select` núcleo y
 `Waiter.wait` publica `selectable`; la VM ya registra, compromete y desregistra
 ese adapter junto con los adapters de tiempo. El owner no crea
 una segunda familia `Task`/`Future`, no duplica APIs con sufijo `Async` y no
-usa `Channel`; el canal pertenece a STD-0.1B.
+usa `Channel`; el canal pertenece a STD-0.1B. La guía específica de grupos,
+con firmas, invariantes y ejemplos ejecutables, está en
+[`stdlib-async-group.md`](./stdlib-async-group.md).
 
 ## Efecto público
 
@@ -175,13 +177,16 @@ y se ejecuta con
 [`scripts/stdlib-async-group-conformance.sh`](../../scripts/stdlib-async-group-conformance.sh),
 sin afirmar todavía lowering AOT ni un scheduler async portable.
 
-La superficie aún no se promueve hasta completar documentación ejecutable.
-`STD-ASYNC-GROUP-IMPL-001` cierra la implementación hosted de VM,
-`STD-ASYNC-GROUP-TEST-001` cierra `MODEL`, `TEST` y `FUZZ`,
-`STD-ASYNC-GROUP-PERF-001` cierra el presupuesto de rendimiento hosted y
-`STD-ASYNC-GROUP-CONF-001` verifica la conformidad del runtime nativo sobre
-el mismo corpus; la conformidad VM/nativa queda acotada al ABI del runtime y
-no promociona lowering AOT async. `HOST = not-applicable`: `Group` compone el scheduler y
+La documentación ejecutable queda cerrada por
+`STD-ASYNC-GROUP-DOC-001` en
+[`stdlib-async-group.md`](./stdlib-async-group.md). `STD-ASYNC-GROUP-IMPL-001`
+cierra la implementación hosted de VM, `STD-ASYNC-GROUP-TEST-001` cierra
+`MODEL`, `TEST` y `FUZZ`, `STD-ASYNC-GROUP-PERF-001` cierra el presupuesto de
+rendimiento hosted y `STD-ASYNC-GROUP-CONF-001` verifica la conformidad del
+runtime nativo sobre el mismo corpus; la conformidad VM/nativa queda acotada al
+ABI del runtime y no promociona lowering AOT async. La API sigue siendo un
+borrador no publicado hasta cerrar la promoción de la stdlib y el lowering AOT
+correspondiente. `HOST = not-applicable`: `Group` compone el scheduler y
 `Join` existentes y no enlaza una primitiva host propia.
 
 ### Eventos observables para diagnóstico
@@ -202,9 +207,10 @@ publica ya `selectable` y usa la ABI de registro/commit/rollback de la VM. Un
 brazo perdedor no consume el `Join`, waiter o grupo, y la cancelación del scope
 desregistra todos los brazos antes del unwind. `Group.next` está contractualmente
 cerrado en STD-0.1B. Su operación hosted de VM está implementada junto con
-`all`, `settle` y `cancel`; el owner no se promueve hasta cerrar sus leaves
-`DOC`. `PERF` y `CONF` ya tienen evidencia, con `CONF` limitado al ABI del
-runtime nativo hasta que exista lowering AOT async portable.
+`all`, `settle` y `cancel`, y su guía de uso ejecutable está en
+[`stdlib-async-group.md`](./stdlib-async-group.md). `PERF` y `CONF` ya tienen
+evidencia, con `CONF` limitado al ABI del runtime nativo hasta que exista
+lowering AOT async portable.
 
 ## Estado de implementación de STD-0.1A
 

@@ -29,6 +29,7 @@
       "contract": "docs/contracts/stdlib-async.md",
       "docs": [
         "TONDO_STANDARD_LIBRARY_SPEC.md",
+        "docs/contracts/stdlib-async-group.md",
         "docs/contracts/stdlib-async.md",
         "docs/contracts/stdlib-core.md",
         "docs/contracts/stdlib-s1a.md"

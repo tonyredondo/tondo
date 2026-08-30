@@ -150,6 +150,30 @@
     "idempotent": false,
     "terminal": true
   },
+  "documentation": {
+    "task": "STD-ASYNC-GROUP-DOC-001",
+    "status": "verified",
+    "document": "docs/contracts/stdlib-async-group.md",
+    "fixture": "tests/runtime/m11-std-async-group-001.to",
+    "command": "scripts/stdlib-async-group-doc-check.sh",
+    "expected_stdout": "group-ok",
+    "examples": [
+      "fan-out-fan-in-all",
+      "settle-mixed-outcomes",
+      "next-completion-order",
+      "select-commit-rollback",
+      "cancel-drain"
+    ],
+    "sections": [
+      "surface",
+      "ownership",
+      "ordering",
+      "errors",
+      "cancellation",
+      "costs",
+      "executable-examples"
+    ]
+  },
   "diagnostics": {
     "event_namespace": "std.async.group",
     "events": [
@@ -243,12 +267,10 @@
       "scripts/stdlib-async-group-conformance.sh"
     ],
     "proof": "hosted VM and the native runtime ABI execute the shared Group corpus for all/settle/next/cancel, completion-order selection, error priority, panic drain, select rollback and affine cleanup",
-    "required_follow_ups": [
-      "STD-ASYNC-GROUP-DOC-001"
-    ]
+    "required_follow_ups": []
   },
   "promotion": {
-    "implementation_pending": ["STD-ASYNC-GROUP-DOC-001"],
-    "next_blocks": ["DIAG-RUNTIME-001"]
+    "implementation_pending": [],
+    "next_blocks": ["STD-SYNC-IMPL-001"]
   }
 }

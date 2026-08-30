@@ -51,7 +51,7 @@ jq -e '
   and .cases[6].native_expected == {status:"passed",all:true,settle:true,next_none:true}
   and .cases[7].native_expected == {status:"passed",invalid_handle:true,joined_rejected:true}
   and (.negative_cases | length == 10)
-  and (.next_blocks == ["STD-ASYNC-GROUP-DOC-001"])
+  and (.next_blocks == ["STD-SYNC-IMPL-001"])
 ' "$contract" >/dev/null || die "invalid machine-readable conformance contract"
 
 for path in \

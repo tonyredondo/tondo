@@ -101,10 +101,11 @@ solo fijará L0 cuando se construya además una distribución TLF, sin convertir
 en requisito de Tondo 0.1.
 
 **Objetivo inmediato:** continuar la implementación de `STD-0.1B` de Wave 8 tras
-cerrar Gate N1. `STD-ASYNC-GROUP-IMPL-001`, `STD-ASYNC-GROUP-TEST-001` y
-`STD-ASYNC-GROUP-PERF-001` ya están cerrados para la VM hosted; el siguiente
-paso es cerrar la conformidad/documentación y la evidencia nativa
-correspondiente. El modelo y tests/fuzz hosted de Group están respaldados por
+cerrar Gate N1. `STD-ASYNC-GROUP-IMPL-001`, `STD-ASYNC-GROUP-TEST-001`,
+`STD-ASYNC-GROUP-PERF-001`, `STD-ASYNC-GROUP-CONF-001` y
+`STD-ASYNC-GROUP-DOC-001` ya están cerrados para la VM hosted y el ABI del
+runtime nativo; el siguiente bloque es `STD-SYNC-IMPL-001`. El modelo y
+tests/fuzz hosted de Group están respaldados por
 `STD-ASYNC-GROUP-TEST-001`. El slice
 ejecutable de `select` ya está cerrado en la VM hosted —frontend,
 semántica tipada, lowering verificable, runtime cooperativo, ownership
@@ -6242,8 +6243,9 @@ publica hasta cerrar el gate final.
   `scripts/stdlib-async-group-test.sh`, ambos integrados en `test-gate.sh`.
   `HOST = not-applicable` porque compone el scheduler existente; no se añaden
   `WaitGroup`, tuples awaitables, overloads por aridad ni otro `Task`/`Future`.
-  La implementación pública sigue pendiente de las leaves de medición,
-  conformidad y documentación B1.
+  La implementación hosted, la evidencia de medición, la conformance ABI y la
+  documentación ejecutable quedan cerradas por sus leaves B1; el lowering AOT
+  async portable y la promoción pública permanecen pendientes.
 
 - [x] **STD-CONC-001 — Especificar `std.channel`.** El registro
   [`testing/stdlib-channel.json`](./testing/stdlib-channel.json) y el contrato
@@ -6526,11 +6528,18 @@ estas leaves.
   hash-bound queda en
   `target/reliability/evidence/stdlib-async-group-conformance.json`. Esto
   cierra la frontera del runtime nativo, no afirma aún lowering AOT async ni
-  portabilidad del scheduler; `STD-ASYNC-GROUP-DOC-001` es la única leaf
-  pendiente de esta superficie.
-- [ ] **STD-ASYNC-GROUP-DOC-001 — Documentar grupos.** Publicar firmas,
-  ownership, orden, errores, cancelación, costes y ejemplos ejecutables de
-  `all`, `settle`, `next` y fan-out/fan-in sin `WaitGroup`.
+  portabilidad del scheduler; el siguiente trabajo de la superficie es el
+  lowering AOT async portable, fuera de esta conformance.
+- [x] **STD-ASYNC-GROUP-DOC-001 — Documentar grupos.** La guía normativa
+  [`docs/contracts/stdlib-async-group.md`](./docs/contracts/stdlib-async-group.md)
+  publica firmas, ownership, orden, errores, cancelación, costes y cinco
+  familias de ejemplos ejecutables de `all`, `settle`, `next`, `select` y
+  cancelación sin `WaitGroup`. El registro
+  [`testing/stdlib-async-group.json`](./testing/stdlib-async-group.json)
+  enlaza el fixture `tests/runtime/m11-std-async-group-001.to`, sus sidecars y
+  `scripts/stdlib-async-group-doc-check.sh`; sus negativos se prueban con
+  `scripts/stdlib-async-group-doc-test.sh`, ambos integrados en `test-gate.sh`.
+  El cierre es documental y no promociona lowering AOT async ni una release.
 
 #### 21.3.2 `std.sync`
 
@@ -7488,17 +7497,17 @@ contrato D0 de diagnóstico; `STD-ASYNC-GROUP-SPEC-001`, `STD-CONC-001`,
 `STD-ENCODING-001`, `STD-YAML-001`, `STD-TOML-001`, `STD-CBOR-001`,
 `STD-REGEX-001`, `STD-ID-001` y `STD-LOG-001` ya tienen registros y negativos
 ejecutables; `STD-ASYNC-GROUP-IMPL-001`, `STD-ASYNC-GROUP-TEST-001` y
-`STD-ASYNC-GROUP-PERF-001` y `STD-ASYNC-GROUP-CONF-001` ya están cerrados para
-VM hosted y el ABI del runtime nativo; solo queda pendiente la leaf de
-documentación y
-los detectores de M11.
+`STD-ASYNC-GROUP-PERF-001`, `STD-ASYNC-GROUP-CONF-001` y
+`STD-ASYNC-GROUP-DOC-001` ya están cerrados para VM hosted y el ABI del
+runtime nativo; quedan pendientes el lowering AOT async portable y los
+detectores de M11.
 `STD-IMPL-001` y `STD-IMPL-002` quedan ahora cerrados por sus gates de
 coordinación; `NATIVE-TARGET-DESC-001`, `NATIVE-ARTIFACT-001`,
 `NATIVE-LINK-PLAN-001`, `NATIVE-PUBLISH-SPEC-001` y `PERF-001` quedan cerrados
 como contratos puros. `NATIVE-AOT-PERF-001` queda cerrado con evidencia
 repetida y path-free; Gate N1 queda cerrado por su informe compositivo y
 promueve Cranelift únicamente para el target primario x86_64 GNU. El siguiente
-bloque crítico es `STD-ASYNC-GROUP-DOC-001`; ARM64 conserva una clasificación
+bloque crítico es `STD-SYNC-IMPL-001`; ARM64 conserva una clasificación
 de smoke de candidato hasta completar su corpus AOT y la ruta async nativa.
 `TRACKER-LINT-001` está cerrado y su informe deriva los
 conteos directamente del tracker. `STD-A-ASYNC-API-001` ya
@@ -7526,7 +7535,7 @@ identidad, la lane física de `NATIVE-THREAD-001` y la coordinación mínima de
 implementados. La frontera AOT está cerrada hasta `NATIVE-AOT-PERF-001`;
 la frontera AOT y Gate N1 están cerrados para el target primario; el backend
 seleccionado queda promovido únicamente para x86_64 GNU y el siguiente trabajo
-crítico es `STD-ASYNC-GROUP-DOC-001`; la implementación hosted, el
+crítico es `STD-SYNC-IMPL-001`; la implementación hosted, el
 modelo/test/fuzz, el presupuesto de rendimiento y la conformance del ABI del
 runtime nativo de Group ya están cerrados, mientras el lowering AOT async y la
 ruta nativa portable siguen pendientes.

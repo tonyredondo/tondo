@@ -117,6 +117,10 @@ run_step stdlib-async-group-conformance-contract-tests \
     scripts/stdlib-async-group-conformance-test.sh
 run_step stdlib-async-group-conformance \
     scripts/stdlib-async-group-conformance.sh
+run_step stdlib-async-group-documentation-contract \
+    scripts/stdlib-async-group-doc-check.sh
+run_step stdlib-async-group-documentation-contract-tests \
+    scripts/stdlib-async-group-doc-test.sh
 run_step stdlib-channel-contract \
     scripts/stdlib-channel-check.sh
 run_step stdlib-channel-contract-tests \

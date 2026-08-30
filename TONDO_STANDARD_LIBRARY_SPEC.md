@@ -962,9 +962,11 @@ por `STD-ASYNC-GROUP-TEST-001` y registrados en
 el presupuesto hosted de latencia, throughput, allocations, memoria lógica,
 wakeups y tail latency está cerrado por `STD-ASYNC-GROUP-PERF-001` y registrado
 en [`testing/stdlib-async-group-performance.json`](./testing/stdlib-async-group-performance.json).
-La promoción de la superficie aún requiere cerrar `DOC`; la evidencia de
-conformance nativa queda limitada al runtime ABI hasta que exista lowering AOT
-async portable.
+La documentación ejecutable queda cerrada por `STD-ASYNC-GROUP-DOC-001` en
+[`docs/contracts/stdlib-async-group.md`](./docs/contracts/stdlib-async-group.md).
+La evidencia de conformance nativa queda limitada al runtime ABI hasta que
+exista lowering AOT async portable; la API continúa siendo un borrador no
+publicado hasta cerrar la promoción de la stdlib y ese lowering.
 
 ### 9.5 Scheduler y backpressure
 
@@ -2239,9 +2241,11 @@ executor: no inicia trabajo, no acepta closures y no crea un segundo scheduler.
 La implementación hosted conserva este contrato en el scheduler cooperativo
 único; la frontera ABI del runtime nativo ya está verificada por
 `STD-ASYNC-GROUP-CONF-001`, mientras el lowering AOT async portable se mantiene
-como trabajo posterior del backend. Su
-extensión contractual vive en
-[`docs/contracts/stdlib-async.md`](./docs/contracts/stdlib-async.md).
+como trabajo posterior del backend. Su extensión contractual general vive en
+[`docs/contracts/stdlib-async.md`](./docs/contracts/stdlib-async.md) y la guía
+normativa de uso ejecutable en
+[`docs/contracts/stdlib-async-group.md`](./docs/contracts/stdlib-async-group.md),
+cerrada por `STD-ASYNC-GROUP-DOC-001`.
 El presupuesto de rendimiento hosted se especifica en
 [`docs/contracts/stdlib-async-group-performance.md`](./docs/contracts/stdlib-async-group-performance.md):
 el probe cubre cardinalidades 1/8/64 y conserva muestras P50/P95/P99 sin

@@ -115,6 +115,28 @@ jq -e '
   and .cancel.empty == "immediate-success"
   and .cancel.idempotent == false
   and .cancel.terminal == true
+  and .documentation.task == "STD-ASYNC-GROUP-DOC-001"
+  and .documentation.status == "verified"
+  and .documentation.document == "docs/contracts/stdlib-async-group.md"
+  and .documentation.fixture == "tests/runtime/m11-std-async-group-001.to"
+  and .documentation.command == "scripts/stdlib-async-group-doc-check.sh"
+  and .documentation.expected_stdout == "group-ok"
+  and .documentation.examples == [
+    "fan-out-fan-in-all",
+    "settle-mixed-outcomes",
+    "next-completion-order",
+    "select-commit-rollback",
+    "cancel-drain"
+  ]
+  and .documentation.sections == [
+    "surface",
+    "ownership",
+    "ordering",
+    "errors",
+    "cancellation",
+    "costs",
+    "executable-examples"
+  ]
   and .diagnostics.event_namespace == "std.async.group"
   and .diagnostics.events == [
     "group.create", "group.add", "group.select.prepare", "group.select.commit",
@@ -135,13 +157,14 @@ jq -e '
   and (.implementation.source | type == "array" and length > 0)
   and (.implementation.tests | type == "array" and length > 0)
   and (.implementation.proof | type == "string" and length > 0)
-  and .implementation.required_follow_ups == ["STD-ASYNC-GROUP-DOC-001"]
-  and .promotion.implementation_pending == ["STD-ASYNC-GROUP-DOC-001"]
-  and .promotion.next_blocks == ["DIAG-RUNTIME-001"]
+  and .implementation.required_follow_ups == []
+  and .promotion.implementation_pending == []
+  and .promotion.next_blocks == ["STD-SYNC-IMPL-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable Group contract"
 
 for path in \
     docs/contracts/stdlib-async.md \
+    docs/contracts/stdlib-async-group.md \
     TONDO_STANDARD_LIBRARY_SPEC.md \
     TONDO_IMPLEMENTATION_TRACKER.md; do
     [[ -f "$root/$path" ]] || die "missing linked contract: $path"
@@ -178,8 +201,14 @@ done < <(jq -r '.implementation.source[], .implementation.tests[]' "$contract")
     || die "missing Group CONF evidence contract"
 [[ -f "$root/docs/contracts/stdlib-async-group-conformance.md" ]] \
     || die "missing Group CONF document"
+[[ -f "$root/docs/contracts/stdlib-async-group.md" ]] \
+    || die "missing Group DOC document"
 [[ -f "$root/docs/contracts/stdlib-async-group-performance.md" ]] \
     || die "missing Group PERF contract document"
+[[ -x "$root/scripts/stdlib-async-group-doc-check.sh" ]] \
+    || die "Group DOC checker is not executable"
+[[ -x "$root/scripts/stdlib-async-group-doc-test.sh" ]] \
+    || die "Group DOC contract test is not executable"
 
 [[ -f "$root/tests/runtime/m11-std-async-group-001.to" ]] \
     || die "missing Group runtime acceptance fixture"

@@ -114,9 +114,7 @@
   "promotion": {
     "model_test_fuzz_complete": true,
     "performance_complete": true,
-    "remaining": [
-      "STD-ASYNC-GROUP-DOC-001"
-    ],
+    "remaining": [],
     "native_async_runtime": "verified-native-runtime-abi"
   }
 }

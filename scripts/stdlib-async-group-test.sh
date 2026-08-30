@@ -74,7 +74,7 @@ jq -e '
   and .performance.command == "scripts/stdlib-async-group-performance.sh"
   and .promotion.model_test_fuzz_complete == true
   and .promotion.performance_complete == true
-  and .promotion.remaining == ["STD-ASYNC-GROUP-DOC-001"]
+  and .promotion.remaining == []
 ' testing/stdlib-async-group-test.json >/dev/null
 
 for path in \
@@ -88,7 +88,10 @@ for path in \
     scripts/stdlib-async-group-performance.sh \
     scripts/stdlib-async-group-performance-test.sh \
     crates/tondo-native-runtime/examples/async_group_conformance.rs \
-    scripts/stdlib-async-group-conformance.sh; do
+    scripts/stdlib-async-group-conformance.sh \
+    docs/contracts/stdlib-async-group.md \
+    scripts/stdlib-async-group-doc-check.sh \
+    scripts/stdlib-async-group-doc-test.sh; do
     [[ -e "$path" ]] || { echo "std.async.Group tests: missing evidence path $path" >&2; exit 1; }
 done
 
@@ -98,6 +101,10 @@ done
     || { echo "std.async.Group tests: performance runner is not executable" >&2; exit 1; }
 [[ -x scripts/stdlib-async-group-performance-test.sh ]] \
     || { echo "std.async.Group tests: performance contract runner is not executable" >&2; exit 1; }
+[[ -x scripts/stdlib-async-group-doc-check.sh ]] \
+    || { echo "std.async.Group tests: documentation checker is not executable" >&2; exit 1; }
+[[ -x scripts/stdlib-async-group-doc-test.sh ]] \
+    || { echo "std.async.Group tests: documentation contract runner is not executable" >&2; exit 1; }
 grep -Fq 'name = "stdlib_async_group"' fuzz/Cargo.toml
 
 for marker in \
@@ -117,6 +124,8 @@ for marker in \
     'group.select.rollback' \
     'testing/stdlib-async-group-performance.json' \
     'STD-ASYNC-GROUP-PERF-001' \
+    'STD-ASYNC-GROUP-DOC-001' \
+    'docs/contracts/stdlib-async-group.md' \
     'not-applicable'; do
     grep -Fq "$marker" testing/stdlib-async-group.json
 done
@@ -156,12 +165,16 @@ jq -e '
   and .implementation.public_api_promoted == false
   and .implementation.status == "verified-hosted-vm-and-native-runtime-abi"
   and .implementation.native_status == "verified-native-runtime-abi"
-  and .promotion.implementation_pending == ["STD-ASYNC-GROUP-DOC-001"]
+  and .documentation.status == "verified"
+  and .documentation.document == "docs/contracts/stdlib-async-group.md"
+  and .implementation.required_follow_ups == []
+  and .promotion.implementation_pending == []
 ' testing/stdlib-async-group.json >/dev/null
 
 cargo test -p tondo-reliability --test models \
     group_model_sequences_are_bounded_replayable_and_cleanup_complete --locked >/dev/null
 cargo test -p tondo-vm --lib runtime::execute::tests::group_ --locked >/dev/null
 cargo test -p tondo-native-runtime --lib native_group --locked >/dev/null
+scripts/stdlib-async-group-doc-test.sh >/dev/null
 
 echo "std.async.Group tests: OK (negative contract cases, hosted runtime, ownership, ordering and cancellation anchors)"
