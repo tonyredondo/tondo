@@ -46,7 +46,9 @@
       "cargo test -p tondo-reliability --test models group_model::tests:: --locked",
       "cargo test -p tondo-reliability --test models group_model_sequences_are_bounded_replayable_and_cleanup_complete --locked",
       "cargo test -p tondo-vm --lib runtime::execute::tests::group_ --locked",
-      "cargo run -q -p tondo-cli -- run tests/runtime/m11-std-async-group-001.to"
+      "cargo run -q -p tondo-cli -- run tests/runtime/m11-std-async-group-001.to",
+      "cargo test -p tondo-native-runtime --lib native_group --locked",
+      "scripts/stdlib-async-group-conformance.sh"
     ],
     "cases": [
       "empty-group",
@@ -113,9 +115,8 @@
     "model_test_fuzz_complete": true,
     "performance_complete": true,
     "remaining": [
-      "STD-ASYNC-GROUP-CONF-001",
       "STD-ASYNC-GROUP-DOC-001"
     ],
-    "native_async_runtime": "pending"
+    "native_async_runtime": "verified-native-runtime-abi"
   }
 }

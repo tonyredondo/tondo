@@ -1,0 +1,92 @@
+{
+  "format": "tondo-stdlib-async-group-conformance/1",
+  "edition": "0.1",
+  "phase": "STD-0.1B",
+  "owner": "std.async.group",
+  "task": "STD-ASYNC-GROUP-CONF-001",
+  "status": "verified",
+  "contract": "testing/stdlib-async-group.json",
+  "document": "docs/contracts/stdlib-async-group-conformance.md",
+  "vm": {
+    "fixture": "tests/runtime/m11-std-async-group-001.to",
+    "command": "cargo run -q -p tondo-cli -- run tests/runtime/m11-std-async-group-001.to",
+    "expected_exit": 0,
+    "expected_stdout": "group-ok",
+    "oracle": "hosted-VM-Group-observable"
+  },
+  "native": {
+    "runtime": "crates/tondo-native-runtime/src/lib.rs",
+    "probe": "crates/tondo-native-runtime/examples/async_group_conformance.rs",
+    "command": "cargo run -q -p tondo-native-runtime --example async_group_conformance --locked",
+    "status": "verified-native-runtime-abi",
+    "target_policy": "host-target-only-until-native-aot-async-lowering",
+    "oracle": "same-case-id-and-normalized-Group-observables"
+  },
+  "rules": {
+    "same_corpus": true,
+    "same_case_ids": true,
+    "fresh_process_per_probe": true,
+    "ordering": "zero-based-insertion-and-completion-order",
+    "errors": "lowest-insertion-index-error-after-drain",
+    "panic": "drain-cleanup-then-propagate",
+    "cancellation": "drain-all-live-children-before-return",
+    "cleanup": "exactly-once-and-no-live-child-after-terminal-consumer",
+    "static_rejections": "hosted-compiler-negative-contract-plus-native-invalid-handle"
+  },
+  "cases": [
+    {
+      "id": "group-all-order",
+      "vm_observable": "all-success-insertion-order",
+      "native_expected": {"status": "passed", "all": "ok", "remaining": 0, "outcomes": 2, "values": [1, 2]}
+    },
+    {
+      "id": "group-settle-mixed",
+      "vm_observable": "settle-preserves-value-and-error-outcomes",
+      "native_expected": {"status": "passed", "settle": "ok", "outcomes": 2, "values": [7, 8], "errors": [false, true]}
+    },
+    {
+      "id": "group-all-error-priority",
+      "vm_observable": "lowest-insertion-index-error-and-cancellation-drain",
+      "native_expected": {"status": "passed", "error_tag": 3, "error_payload": 12, "pending_drained": true, "outcomes": 1}
+    },
+    {
+      "id": "group-next-order",
+      "vm_observable": "completion-order-with-stable-index-and-affine-none",
+      "native_expected": {"status": "passed", "indices": [1, 0], "values": [22, 11], "none": true}
+    },
+    {
+      "id": "group-panic-drain",
+      "vm_observable": "panic-drain-cleanup-then-propagate",
+      "native_expected": {"status": "passed", "panic": true, "cleanup": "exactly-once"}
+    },
+    {
+      "id": "group-cancel-drain",
+      "vm_observable": "cancel-all-live-children-and-cleanup",
+      "native_expected": {"status": "passed", "cleanup": "exactly-once"}
+    },
+    {
+      "id": "group-empty",
+      "vm_observable": "empty-all-settle-next-cancel",
+      "native_expected": {"status": "passed", "all": true, "settle": true, "next_none": true}
+    },
+    {
+      "id": "group-invalid-add",
+      "vm_observable": "static-invalid-affine-use",
+      "native_expected": {"status": "passed", "invalid_handle": true, "joined_rejected": true}
+    }
+  ],
+  "negative_cases": [
+    "status-not-verified",
+    "missing-vm-fixture",
+    "missing-native-probe",
+    "corpus-id-drift",
+    "native-case-missing",
+    "native-case-duplicate",
+    "wrong-error-priority",
+    "panic-does-not-drain",
+    "cancel-returns-before-cleanup",
+    "physical-path-in-evidence"
+  ],
+  "report": "target/reliability/evidence/stdlib-async-group-conformance.json",
+  "next_blocks": ["STD-ASYNC-GROUP-DOC-001"]
+}

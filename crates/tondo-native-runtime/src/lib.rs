@@ -40,6 +40,8 @@ const STATUS_HOST_CLOSED: u64 = 13;
 const STATUS_HOST_LIMIT: u64 = 14;
 /// A host handle was cancelled before an operation could make progress.
 const STATUS_HOST_CANCELLED: u64 = 15;
+/// A task or group child terminated by panicking outside its declared error channel.
+const STATUS_PANICKED: u64 = 16;
 const STATUS_DIAG_CLEAN: u64 = 0;
 const STATUS_DIAG_FINDING: u64 = 1;
 const STATUS_DIAG_CAPTURED: u64 = 2;
@@ -66,6 +68,7 @@ const DIAG_FIELD_LIMIT_ENFORCED: u64 = 15;
 const DIAG_FIELD_PROFILE: u64 = 16;
 const DIAG_FIELD_MODE: u64 = 17;
 const MAX_SELECT_ARMS: u32 = 64;
+const MAX_GROUP_CHILDREN: u32 = 64;
 const COLLECTION_PRESSURE: u32 = 256;
 const HOST_CAP_CONSOLE: u64 = 0;
 const HOST_CAP_FILESYSTEM: u64 = 1;
@@ -88,11 +91,14 @@ enum Object {
         state: TaskState,
         value: u64,
         kind: TaskKind,
+        panicked: bool,
+        group_owner: Option<u64>,
     },
     Scope {
         tasks: Vec<u64>,
         cancelled: bool,
     },
+    Group(GroupData),
     Select(SelectState),
     OneShot {
         state: OneShotState,
@@ -137,6 +143,60 @@ enum TaskState {
 enum TaskKind {
     Task,
     Thread,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GroupPhase {
+    Open,
+    Waiting,
+    ReadyToConsume,
+    Consumed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct GroupChild {
+    task: u64,
+    index: u64,
+    queued: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct GroupOutcomeRecord {
+    index: u64,
+    value: u64,
+    is_error: bool,
+}
+
+/// Native state for the affine `std.async.Group` carrier.
+///
+/// The group owns one strong edge to every child after `group_add`.  A
+/// completion notification only queues the stable insertion index; consuming
+/// the queue is the one place that moves the task payload to the caller.  The
+/// implementation deliberately keeps the public ABI opaque and exposes only
+/// logical indices/statuses for conformance.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GroupData {
+    children: Vec<GroupChild>,
+    completion_queue: VecDeque<u64>,
+    outcomes: Vec<GroupOutcomeRecord>,
+    phase: GroupPhase,
+    last_index: Option<u64>,
+    last_value: u64,
+    cleanup_runs: u64,
+}
+
+impl Default for GroupData {
+    fn default() -> Self {
+        Self {
+            children: Vec::new(),
+            completion_queue: VecDeque::new(),
+            outcomes: Vec::new(),
+            phase: GroupPhase::Open,
+            last_index: None,
+            last_value: 0,
+            cleanup_runs: 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -387,6 +447,7 @@ enum ObjectKind {
     Result,
     Task,
     Scope,
+    Group,
     Select,
     OneShot,
     Timer,
@@ -599,6 +660,10 @@ impl State {
             | Object::OneShot { value, .. }
             | Object::Timer { value, .. } => children.push(*value),
             Object::Scope { tasks, .. } => children.extend(tasks.iter().copied()),
+            Object::Group(group) => {
+                children.extend(group.children.iter().map(|child| child.task));
+                children.push(group.last_value);
+            }
             Object::Select(selection) => {
                 children.extend(selection.arms.iter().map(|arm| arm.source));
             }
@@ -833,6 +898,11 @@ impl State {
                     self.discard_owned_task(task, pending);
                 }
             }
+            Object::Group(group) => {
+                for child in group.children.iter().copied() {
+                    self.discard_owned_task(child.task, pending);
+                }
+            }
             Object::Select(selection) => {
                 for arm in selection.arms.iter().copied().filter(|arm| arm.owned) {
                     self.discard_select_source_with_pending(arm, pending);
@@ -853,6 +923,7 @@ impl State {
                 if let Some(Object::Task { state, .. }) = self.object_mut(task) {
                     *state = TaskState::Cancelled;
                 }
+                self.clear_task_group_owner(task);
                 if kind == TaskKind::Thread
                     && let Some(signal) = self.thread_workers.get(&task)
                 {
@@ -860,13 +931,16 @@ impl State {
                 }
                 self.clear_runtime_root_into(task, pending);
                 self.notify_selects(task);
+                self.notify_groups(task);
             }
             TaskState::Ready => {
                 self.release_task_value(task, pending);
                 if let Some(Object::Task { state, .. }) = self.object_mut(task) {
                     *state = TaskState::Joined;
                 }
+                self.clear_task_group_owner(task);
                 self.notify_selects(task);
+                self.notify_groups(task);
             }
             TaskState::Cancelled | TaskState::Joined => {}
         }
@@ -1191,6 +1265,8 @@ impl State {
                 },
                 value,
                 kind,
+                panicked: false,
+                group_owner: None,
             },
             ObjectKind::Task,
         );
@@ -1210,6 +1286,40 @@ impl State {
 
     fn task_spawn(&mut self, scope: Option<u64>, value: u64, pending: bool) -> u64 {
         self.task_spawn_with_kind(scope, value, pending, TaskKind::Task)
+    }
+
+    fn clear_task_group_owner(&mut self, task: u64) {
+        if let Some(Object::Task { group_owner, .. }) = self.object_mut(task) {
+            *group_owner = None;
+        }
+    }
+
+    /// Removes a task from its lexical scope when its Join is transferred to
+    /// a Group.  The group retains the task before this edge is released, so
+    /// the transfer remains atomic even when the caller drops its handle.
+    fn detach_task_from_scope(&mut self, task: u64, pending: &mut VecDeque<u64>) {
+        let scope = self.objects.iter().find_map(|(handle, (_, object))| {
+            matches!(object, Object::Scope { tasks, .. } if tasks.contains(&task))
+                .then_some(*handle)
+        });
+        let Some(scope) = scope else {
+            return;
+        };
+        let removed = self
+            .object_mut(scope)
+            .and_then(|object| match object {
+                Object::Scope { tasks, .. } => tasks
+                    .iter()
+                    .position(|candidate| *candidate == task)
+                    .map(|position| {
+                        tasks.remove(position);
+                    }),
+                _ => None,
+            })
+            .is_some();
+        if removed {
+            self.release_strong_edge(task, pending);
+        }
     }
 
     fn thread_spawn(&mut self, value: u64, pending: bool) -> u64 {
@@ -1324,6 +1434,66 @@ impl State {
         }
     }
 
+    /// A native thread has a physical worker barrier in addition to its
+    /// logical task state.  Group consumers must cross that barrier before
+    /// observing a child, otherwise `next` could return a value while the
+    /// worker is still running.  The transition is idempotent for terminal
+    /// worker snapshots and keeps the ordinary task notification path.
+    fn sync_group_thread(&mut self, task: u64) {
+        let Some(signal) = self.thread_worker_signal(task) else {
+            return;
+        };
+        let snapshot = signal.wait();
+        let mut pending = VecDeque::new();
+        match snapshot.state {
+            WorkerState::Completed => {
+                let pending_task = matches!(
+                    self.object(task),
+                    Some(Object::Task {
+                        state: TaskState::Pending,
+                        ..
+                    })
+                );
+                if pending_task {
+                    if let Some(Object::Task { state, .. }) = self.object_mut(task) {
+                        *state = TaskState::Ready;
+                    }
+                    self.notify_selects(task);
+                    self.notify_groups(task);
+                }
+                self.clear_runtime_root_into(task, &mut pending);
+            }
+            WorkerState::Cancelled => {
+                let pending_task = matches!(
+                    self.object(task),
+                    Some(Object::Task {
+                        state: TaskState::Pending,
+                        ..
+                    })
+                );
+                if pending_task {
+                    self.release_task_value(task, &mut pending);
+                    if let Some(Object::Task { state, .. }) = self.object_mut(task) {
+                        *state = TaskState::Cancelled;
+                    }
+                    self.notify_selects(task);
+                    self.notify_groups(task);
+                }
+                self.clear_runtime_root_into(task, &mut pending);
+            }
+            WorkerState::Starting | WorkerState::Running => {
+                unreachable!("thread worker wait only returns terminal snapshots")
+            }
+        }
+        self.drain_destruction(&mut pending);
+    }
+
+    fn sync_group_threads(&mut self, children: &[GroupChild]) {
+        for child in children {
+            self.sync_group_thread(child.task);
+        }
+    }
+
     fn thread_worker_snapshot(&self, task: u64) -> Option<WorkerSnapshot> {
         self.thread_worker_signal(task)
             .map(|signal| signal.snapshot())
@@ -1356,6 +1526,7 @@ impl State {
             capture.happens_before_edges = capture.happens_before_edges.saturating_add(1);
         }
         self.notify_selects(task);
+        self.notify_groups(task);
         STATUS_OK
     }
 
@@ -1384,9 +1555,19 @@ impl State {
 
     fn task_take(&mut self, task: u64) -> u64 {
         let value = {
-            let Some(Object::Task { state, value, .. }) = self.object_mut(task) else {
+            let Some(Object::Task {
+                state,
+                value,
+                group_owner,
+                ..
+            }) = self.object_mut(task)
+            else {
                 return 0;
             };
+            if group_owner.is_some() {
+                self.last_status = STATUS_INVALID_TRANSITION;
+                return 0;
+            }
             if *state != TaskState::Ready {
                 self.last_status = if *state == TaskState::Cancelled {
                     STATUS_CANCELLED
@@ -1430,7 +1611,29 @@ impl State {
             capture.happens_before_edges = capture.happens_before_edges.saturating_add(1);
         }
         self.notify_selects(task);
+        self.notify_groups(task);
         self.drain_destruction(&mut pending);
+        STATUS_OK
+    }
+
+    /// Publishes a terminal panic marker without confusing it with the
+    /// declared `Result` error channel.  The marker is consumed by a group
+    /// terminal operation, which drains siblings before propagating
+    /// `STATUS_PANICKED`.
+    fn task_panic(&mut self, task: u64) -> u64 {
+        let Some(Object::Task {
+            state, panicked, ..
+        }) = self.object_mut(task)
+        else {
+            return STATUS_INVALID_HANDLE;
+        };
+        if *state != TaskState::Pending {
+            return STATUS_INVALID_TRANSITION;
+        }
+        *panicked = true;
+        *state = TaskState::Ready;
+        self.notify_selects(task);
+        self.notify_groups(task);
         STATUS_OK
     }
 
@@ -1454,9 +1657,522 @@ impl State {
             signal.cancel();
         }
         self.notify_selects(task);
+        self.notify_groups(task);
         if kind == TaskKind::Thread {
             self.clear_runtime_root(task);
         }
+        self.drain_destruction(&mut pending);
+        STATUS_OK
+    }
+
+    fn group_new(&mut self) -> u64 {
+        self.alloc(
+            Object::Group(GroupData {
+                children: Vec::new(),
+                completion_queue: VecDeque::new(),
+                outcomes: Vec::new(),
+                phase: GroupPhase::Open,
+                last_index: None,
+                last_value: 0,
+                cleanup_runs: 0,
+            }),
+            ObjectKind::Group,
+        )
+    }
+
+    fn group_add(&mut self, group: u64, task: u64) -> u64 {
+        let phase = match self.object(group) {
+            Some(Object::Group(state)) => state.phase,
+            Some(_) => {
+                self.last_status = STATUS_INVALID_HANDLE;
+                return STATUS_INVALID_HANDLE;
+            }
+            None => {
+                self.last_status = STATUS_INVALID_HANDLE;
+                return STATUS_INVALID_HANDLE;
+            }
+        };
+        if !matches!(phase, GroupPhase::Open | GroupPhase::Waiting) {
+            return self.status(STATUS_INVALID_TRANSITION);
+        }
+        let child_count = match self.object(group) {
+            Some(Object::Group(state)) => state.children.len(),
+            _ => return self.status(STATUS_INVALID_HANDLE),
+        };
+        if child_count >= usize::try_from(MAX_GROUP_CHILDREN).unwrap_or(usize::MAX) {
+            return self.status(STATUS_COUNT_OVERFLOW);
+        }
+        let already_added = match self.object(group) {
+            Some(Object::Group(state)) => state.children.iter().any(|child| child.task == task),
+            _ => return self.status(STATUS_INVALID_HANDLE),
+        };
+        if already_added {
+            return self.status(STATUS_INVALID_TRANSITION);
+        }
+        let (task_state, group_owner) = match self.object(task) {
+            Some(Object::Task {
+                state, group_owner, ..
+            }) => (*state, *group_owner),
+            _ => return self.status(STATUS_INVALID_HANDLE),
+        };
+        let registered_in_select = self.objects.values().any(|(_, object)| {
+            matches!(
+                object,
+                Object::Select(selection)
+                    if selection.arms.iter().any(|arm| arm.source == task)
+            )
+        });
+        if task_state == TaskState::Joined || group_owner.is_some() || registered_in_select {
+            return self.status(STATUS_INVALID_TRANSITION);
+        }
+        if self.retain(task) != STATUS_OK {
+            return self.last_status;
+        }
+        let mut pending = VecDeque::new();
+        self.detach_task_from_scope(task, &mut pending);
+        if let Some(Object::Task { group_owner, .. }) = self.object_mut(task) {
+            *group_owner = Some(group);
+        }
+        self.drain_destruction(&mut pending);
+        let index = child_count as u64;
+        let terminal = matches!(task_state, TaskState::Ready | TaskState::Cancelled);
+        let Some(Object::Group(state)) = self.object_mut(group) else {
+            self.clear_task_group_owner(task);
+            let _ = self.release(task);
+            return self.status(STATUS_INVALID_HANDLE);
+        };
+        state.children.push(GroupChild {
+            task,
+            index,
+            queued: terminal,
+        });
+        if terminal {
+            state.completion_queue.push_back(index);
+        }
+        STATUS_OK
+    }
+
+    fn group_task_snapshot(&self, task: u64) -> Option<(TaskState, bool, u64)> {
+        match self.object(task) {
+            Some(Object::Task {
+                state,
+                panicked,
+                value,
+                ..
+            }) => Some((*state, *panicked, *value)),
+            _ => None,
+        }
+    }
+
+    fn group_value_is_error(&self, value: u64) -> bool {
+        value == RESULT_ERR
+            || matches!(
+                self.object(value),
+                Some(Object::Result {
+                    tag: RESULT_ERR,
+                    ..
+                })
+            )
+    }
+
+    fn group_take_task(&mut self, task: u64) -> Option<(u64, bool)> {
+        let Some(Object::Task {
+            state,
+            value,
+            panicked,
+            ..
+        }) = self.object_mut(task)
+        else {
+            self.last_status = STATUS_INVALID_HANDLE;
+            return None;
+        };
+        match state {
+            TaskState::Ready => {
+                *state = TaskState::Joined;
+                Some((std::mem::take(value), *panicked))
+            }
+            TaskState::Cancelled => {
+                self.last_status = STATUS_CANCELLED;
+                None
+            }
+            _ => {
+                self.last_status = STATUS_NOT_READY;
+                None
+            }
+        }
+    }
+
+    fn group_remove_child(&mut self, group: u64, index: u64, pending: &mut VecDeque<u64>) {
+        let task = {
+            let Some(Object::Group(state)) = self.object_mut(group) else {
+                return;
+            };
+            let Some(position) = state.children.iter().position(|child| child.index == index)
+            else {
+                return;
+            };
+            let child = state.children.remove(position);
+            state.completion_queue.retain(|queued| *queued != index);
+            child.task
+        };
+        self.clear_task_group_owner(task);
+        self.release_strong_edge(task, pending);
+    }
+
+    fn group_snapshot(&self, group: u64) -> Option<GroupData> {
+        match self.object(group) {
+            Some(Object::Group(state)) => Some(state.clone()),
+            _ => None,
+        }
+    }
+
+    fn group_record_outcomes(&mut self, group: u64, children: &[GroupChild]) {
+        let outcomes = children
+            .iter()
+            .filter_map(|child| {
+                let (state, panicked, value) = self.group_task_snapshot(child.task)?;
+                if state != TaskState::Ready || panicked {
+                    return None;
+                }
+                let (is_error, value) = match self.object(value) {
+                    Some(Object::Result { tag, payload }) if *tag == RESULT_ERR => {
+                        (true, payload.as_ref().copied().unwrap_or(0))
+                    }
+                    Some(Object::Result { tag, payload }) if *tag == RESULT_OK => {
+                        (false, payload.as_ref().copied().unwrap_or(0))
+                    }
+                    _ if value == RESULT_ERR => (true, value),
+                    _ => (false, value),
+                };
+                Some(GroupOutcomeRecord {
+                    index: child.index,
+                    value,
+                    is_error,
+                })
+            })
+            .collect::<Vec<_>>();
+        if let Some(Object::Group(state)) = self.object_mut(group) {
+            state.outcomes = outcomes;
+        }
+    }
+
+    fn group_outcome_record(&mut self, group: u64, position: u64) -> Option<GroupOutcomeRecord> {
+        let Ok(position) = usize::try_from(position) else {
+            self.last_status = STATUS_INVALID_TRANSITION;
+            return None;
+        };
+        match self.object(group) {
+            Some(Object::Group(state)) => state.outcomes.get(position).copied().or_else(|| {
+                self.last_status = STATUS_INVALID_TRANSITION;
+                None
+            }),
+            _ => {
+                self.last_status = STATUS_INVALID_HANDLE;
+                None
+            }
+        }
+    }
+
+    fn group_cancel_pending(&mut self, children: &[GroupChild]) {
+        for child in children {
+            if matches!(
+                self.group_task_snapshot(child.task),
+                Some((TaskState::Pending, ..))
+            ) {
+                let _ = self.task_cancel(child.task);
+            }
+        }
+    }
+
+    fn group_has_invalid_child(&self, children: &[GroupChild]) -> bool {
+        children.iter().any(|child| {
+            !matches!(
+                self.group_task_snapshot(child.task),
+                Some((
+                    TaskState::Pending | TaskState::Ready | TaskState::Cancelled,
+                    ..
+                ))
+            )
+        })
+    }
+
+    fn group_abort_invalid_child(&mut self, group: u64) -> u64 {
+        let snapshot = self.group_snapshot(group).unwrap_or_default();
+        self.group_cancel_pending(&snapshot.children);
+        let snapshot = self.group_snapshot(group).unwrap_or_default();
+        let mut pending = VecDeque::new();
+        self.group_finish(group, &snapshot.children, None, &mut pending);
+        self.drain_destruction(&mut pending);
+        self.last_status = STATUS_INVALID_TRANSITION;
+        STATUS_INVALID_TRANSITION
+    }
+
+    fn group_finish(
+        &mut self,
+        group: u64,
+        children: &[GroupChild],
+        keep_index: Option<u64>,
+        pending: &mut VecDeque<u64>,
+    ) {
+        let previous_last_value = match self.object_mut(group) {
+            Some(Object::Group(state)) => std::mem::take(&mut state.last_value),
+            _ => 0,
+        };
+        if self.live_handle(previous_last_value) {
+            self.release_strong_edge(previous_last_value, pending);
+        }
+        let mut kept_value = 0;
+        let mut kept_index = None;
+        for child in children {
+            let taken = self.group_take_task(child.task);
+            if let Some((value, _panicked)) = taken {
+                if keep_index == Some(child.index) {
+                    kept_value = value;
+                    kept_index = Some(child.index);
+                } else if self.live_handle(value) {
+                    self.release_strong_edge(value, pending);
+                }
+            }
+            self.group_remove_child(group, child.index, pending);
+        }
+        if let Some(Object::Group(state)) = self.object_mut(group) {
+            state.completion_queue.clear();
+            state.phase = GroupPhase::Consumed;
+            state.last_index = kept_index;
+            state.last_value = kept_value;
+            state.cleanup_runs = state.cleanup_runs.saturating_add(children.len() as u64);
+        }
+    }
+
+    fn group_next(&mut self, group: u64) -> u64 {
+        let Some(snapshot) = self.group_snapshot(group) else {
+            self.last_status = STATUS_INVALID_HANDLE;
+            return 0;
+        };
+        self.sync_group_threads(&snapshot.children);
+        let Some(snapshot) = self.group_snapshot(group) else {
+            self.last_status = STATUS_INVALID_HANDLE;
+            return 0;
+        };
+        if snapshot.phase == GroupPhase::Consumed {
+            self.last_status = STATUS_INVALID_TRANSITION;
+            return 0;
+        }
+        let mut pending = VecDeque::new();
+        loop {
+            let Some(index) = self.object_mut(group).and_then(|object| match object {
+                Object::Group(state) => state.completion_queue.pop_front(),
+                _ => None,
+            }) else {
+                let has_pending = self.group_snapshot(group).is_some_and(|state| {
+                    state.children.iter().any(|child| {
+                        matches!(
+                            self.group_task_snapshot(child.task),
+                            Some((TaskState::Pending, ..))
+                        )
+                    })
+                });
+                if let Some(Object::Group(state)) = self.object_mut(group) {
+                    state.phase = if has_pending {
+                        GroupPhase::Waiting
+                    } else {
+                        GroupPhase::ReadyToConsume
+                    };
+                    state.last_index = None;
+                    state.last_value = 0;
+                }
+                self.last_status = if has_pending {
+                    STATUS_NOT_READY
+                } else {
+                    STATUS_OK
+                };
+                return 0;
+            };
+            let Some(child) = self.group_snapshot(group).and_then(|state| {
+                state
+                    .children
+                    .into_iter()
+                    .find(|child| child.index == index)
+            }) else {
+                continue;
+            };
+            let Some((task_state, panicked, _)) = self.group_task_snapshot(child.task) else {
+                let _ = self.group_abort_invalid_child(group);
+                return 0;
+            };
+            if task_state == TaskState::Joined {
+                let _ = self.group_abort_invalid_child(group);
+                return 0;
+            }
+            if task_state == TaskState::Cancelled {
+                self.group_remove_child(group, index, &mut pending);
+                continue;
+            }
+            if panicked {
+                let children = self.group_snapshot(group).unwrap_or_default().children;
+                self.group_cancel_pending(&children);
+                let children = self.group_snapshot(group).unwrap_or_default().children;
+                self.group_finish(group, &children, None, &mut pending);
+                self.drain_destruction(&mut pending);
+                self.last_status = STATUS_PANICKED;
+                return 0;
+            }
+            let Some((value, _)) = self.group_take_task(child.task) else {
+                continue;
+            };
+            self.group_remove_child(group, index, &mut pending);
+            if let Some(Object::Group(state)) = self.object_mut(group) {
+                state.phase = GroupPhase::ReadyToConsume;
+                state.last_index = Some(index);
+                // `next` transfers the task payload directly to its caller;
+                // unlike `all`, it must not leave a second Group-owned edge.
+                state.last_value = 0;
+            }
+            self.drain_destruction(&mut pending);
+            self.last_status = STATUS_OK;
+            return value;
+        }
+    }
+
+    fn group_all(&mut self, group: u64) -> u64 {
+        let Some(snapshot) = self.group_snapshot(group) else {
+            return self.status(STATUS_INVALID_HANDLE);
+        };
+        self.sync_group_threads(&snapshot.children);
+        let Some(snapshot) = self.group_snapshot(group) else {
+            return self.status(STATUS_INVALID_HANDLE);
+        };
+        if snapshot.phase == GroupPhase::Consumed {
+            return self.status(STATUS_INVALID_TRANSITION);
+        }
+        let has_failure = snapshot.children.iter().any(|child| {
+            self.group_task_snapshot(child.task)
+                .is_some_and(|(state, panicked, value)| {
+                    state == TaskState::Ready && (panicked || self.group_value_is_error(value))
+                })
+        });
+        if has_failure {
+            self.group_cancel_pending(&snapshot.children);
+        }
+        let Some(snapshot) = self.group_snapshot(group) else {
+            return self.status(STATUS_INVALID_HANDLE);
+        };
+        if self.group_has_invalid_child(&snapshot.children) {
+            return self.group_abort_invalid_child(group);
+        }
+        if snapshot.children.iter().any(|child| {
+            matches!(
+                self.group_task_snapshot(child.task),
+                Some((TaskState::Pending, ..))
+            )
+        }) {
+            if let Some(Object::Group(state)) = self.object_mut(group) {
+                state.phase = GroupPhase::Waiting;
+            }
+            return self.status(STATUS_NOT_READY);
+        }
+        self.group_record_outcomes(group, &snapshot.children);
+        let mut first_error = None;
+        let mut first_error_index = None;
+        let mut panicked = false;
+        for child in &snapshot.children {
+            let Some((state, child_panicked, value)) = self.group_task_snapshot(child.task) else {
+                continue;
+            };
+            if state == TaskState::Ready && child_panicked {
+                panicked = true;
+            } else if state == TaskState::Ready
+                && first_error.is_none()
+                && self.group_value_is_error(value)
+            {
+                first_error = Some(value);
+                first_error_index = Some(child.index);
+            }
+        }
+        let mut pending = VecDeque::new();
+        self.group_finish(
+            group,
+            &snapshot.children,
+            if panicked { None } else { first_error_index },
+            &mut pending,
+        );
+        self.drain_destruction(&mut pending);
+        if panicked {
+            self.last_status = STATUS_PANICKED;
+            STATUS_PANICKED
+        } else if first_error.is_some() {
+            self.last_status = RESULT_ERR;
+            RESULT_ERR
+        } else {
+            STATUS_OK
+        }
+    }
+
+    fn group_settle(&mut self, group: u64) -> u64 {
+        let Some(snapshot) = self.group_snapshot(group) else {
+            return self.status(STATUS_INVALID_HANDLE);
+        };
+        self.sync_group_threads(&snapshot.children);
+        let Some(snapshot) = self.group_snapshot(group) else {
+            return self.status(STATUS_INVALID_HANDLE);
+        };
+        if snapshot.phase == GroupPhase::Consumed {
+            return self.status(STATUS_INVALID_TRANSITION);
+        }
+        let has_panic = snapshot.children.iter().any(|child| {
+            self.group_task_snapshot(child.task)
+                .is_some_and(|(state, panicked, _)| state == TaskState::Ready && panicked)
+        });
+        if has_panic {
+            self.group_cancel_pending(&snapshot.children);
+        }
+        let Some(snapshot) = self.group_snapshot(group) else {
+            return self.status(STATUS_INVALID_HANDLE);
+        };
+        if self.group_has_invalid_child(&snapshot.children) {
+            return self.group_abort_invalid_child(group);
+        }
+        if snapshot.children.iter().any(|child| {
+            matches!(
+                self.group_task_snapshot(child.task),
+                Some((TaskState::Pending, ..))
+            )
+        }) {
+            if let Some(Object::Group(state)) = self.object_mut(group) {
+                state.phase = GroupPhase::Waiting;
+            }
+            return self.status(STATUS_NOT_READY);
+        }
+        self.group_record_outcomes(group, &snapshot.children);
+        let mut pending = VecDeque::new();
+        self.group_finish(group, &snapshot.children, None, &mut pending);
+        self.drain_destruction(&mut pending);
+        if has_panic {
+            self.last_status = STATUS_PANICKED;
+            STATUS_PANICKED
+        } else {
+            STATUS_OK
+        }
+    }
+
+    fn group_cancel(&mut self, group: u64) -> u64 {
+        let Some(snapshot) = self.group_snapshot(group) else {
+            return self.status(STATUS_INVALID_HANDLE);
+        };
+        self.sync_group_threads(&snapshot.children);
+        let Some(snapshot) = self.group_snapshot(group) else {
+            return self.status(STATUS_INVALID_HANDLE);
+        };
+        if snapshot.phase == GroupPhase::Consumed {
+            return self.status(STATUS_INVALID_TRANSITION);
+        }
+        if self.group_has_invalid_child(&snapshot.children) {
+            return self.group_abort_invalid_child(group);
+        }
+        self.group_cancel_pending(&snapshot.children);
+        let snapshot = self.group_snapshot(group).unwrap_or_default();
+        let mut pending = VecDeque::new();
+        self.group_finish(group, &snapshot.children, None, &mut pending);
         self.drain_destruction(&mut pending);
         STATUS_OK
     }
@@ -1739,6 +2455,46 @@ impl State {
         }
     }
 
+    /// Records a terminal child exactly once for every group that owns it.
+    /// Notifications are derived from the task transition, so a group added
+    /// after a task is already ready queues that child during `group_add`.
+    fn notify_groups(&mut self, source: u64) {
+        let terminal = matches!(
+            self.object(source),
+            Some(Object::Task {
+                state: TaskState::Ready | TaskState::Cancelled,
+                ..
+            })
+        );
+        if !terminal {
+            return;
+        }
+        let groups = self
+            .objects
+            .iter()
+            .filter_map(|(handle, (_, object))| {
+                matches!(object, Object::Group(_)).then_some(*handle)
+            })
+            .collect::<Vec<_>>();
+        for group_handle in groups {
+            let Some(Object::Group(group)) = self.object_mut(group_handle) else {
+                continue;
+            };
+            let Some(child) = group
+                .children
+                .iter_mut()
+                .find(|child| child.task == source && !child.queued)
+            else {
+                continue;
+            };
+            child.queued = true;
+            group.completion_queue.push_back(child.index);
+            if group.phase == GroupPhase::Waiting {
+                group.phase = GroupPhase::ReadyToConsume;
+            }
+        }
+    }
+
     fn discard_select_source(&mut self, arm: SelectArm) {
         let mut pending = VecDeque::new();
         self.discard_select_source_with_pending(arm, &mut pending);
@@ -1793,11 +2549,24 @@ impl State {
             self.clear_runtime_root_into(arm.source, pending);
         }
         self.notify_selects(arm.source);
+        self.notify_groups(arm.source);
     }
 
     fn take_select_source(&mut self, source: u64, kind: SelectSourceKind) -> u64 {
         match (kind, self.object_mut(source)) {
-            (SelectSourceKind::Task, Some(Object::Task { state, value, .. })) => {
+            (
+                SelectSourceKind::Task,
+                Some(Object::Task {
+                    state,
+                    value,
+                    group_owner,
+                    ..
+                }),
+            ) => {
+                if group_owner.is_some() {
+                    self.last_status = STATUS_INVALID_TRANSITION;
+                    return 0;
+                }
                 if *state != TaskState::Ready {
                     self.last_status = if *state == TaskState::Cancelled {
                         STATUS_CANCELLED
@@ -1867,6 +2636,17 @@ impl State {
     ) -> u64 {
         if self.source_kind(source) != Some(kind) {
             return STATUS_INVALID_HANDLE;
+        }
+        if kind == SelectSourceKind::Task
+            && matches!(
+                self.object(source),
+                Some(Object::Task {
+                    group_owner: Some(_),
+                    ..
+                })
+            )
+        {
+            return STATUS_INVALID_TRANSITION;
         }
         let Some(Object::Select(state)) = self.object(selection) else {
             return STATUS_INVALID_HANDLE;
@@ -2622,6 +3402,129 @@ pub extern "C" fn tondo_rt_task_complete(task: u64, value: u64) -> u64 {
     with_state(|state| state.task_complete(task, value))
 }
 
+/// Marks a pending child as an uncaught panic.  This is a private conformance
+/// hook; source-level code reports panics through the compiler's unwind edge.
+pub extern "C" fn tondo_rt_task_panic(task: u64) -> u64 {
+    with_state(|state| state.task_panic(task))
+}
+
+/// Creates an affine native Group carrier.
+pub extern "C" fn tondo_rt_group_new() -> u64 {
+    with_state(State::group_new)
+}
+
+/// Transfers one task join into a Group.  The caller retains its own handle
+/// until it explicitly releases it, matching the runtime's other ownership
+/// transfer boundaries.
+pub extern "C" fn tondo_rt_group_add(group: u64, task: u64) -> u64 {
+    with_state(|state| state.group_add(group, task))
+}
+
+/// Consumes the next completion and returns its payload.  A zero return is
+/// disambiguated by `tondo_rt_last_status` and `tondo_rt_group_next_index`.
+pub extern "C" fn tondo_rt_group_next(group: u64) -> u64 {
+    with_state(|state| state.group_next(group))
+}
+
+/// Returns the insertion index selected by the latest successful `next`.
+pub extern "C" fn tondo_rt_group_next_index(group: u64) -> u64 {
+    with_state(|state| {
+        state
+            .object(group)
+            .and_then(|object| match object {
+                Object::Group(group) => group.last_index,
+                _ => None,
+            })
+            .unwrap_or(u64::MAX)
+    })
+}
+
+/// Returns the number of children still owned by a Group.
+pub extern "C" fn tondo_rt_group_remaining(group: u64) -> u64 {
+    with_state(|state| match state.object(group) {
+        Some(Object::Group(group)) => group.children.len() as u64,
+        _ => {
+            state.last_status = STATUS_INVALID_HANDLE;
+            u64::MAX
+        }
+    })
+}
+
+/// Completes `all`, returning `0` for success or the declared error/panic tag.
+/// A first error payload is transferred to `group_last_value`.
+pub extern "C" fn tondo_rt_group_all(group: u64) -> u64 {
+    with_state(|state| state.group_all(group))
+}
+
+/// Completes `settle`, preserving one terminal outcome per child while
+/// discarding payload carriers after the caller has observed the status.
+pub extern "C" fn tondo_rt_group_settle(group: u64) -> u64 {
+    with_state(|state| state.group_settle(group))
+}
+
+/// Cancels, drains and consumes every remaining child.
+pub extern "C" fn tondo_rt_group_cancel(group: u64) -> u64 {
+    with_state(|state| state.group_cancel(group))
+}
+
+/// Returns and clears the error payload selected by the latest `all`.
+pub extern "C" fn tondo_rt_group_last_value(group: u64) -> u64 {
+    with_state(|state| match state.object_mut(group) {
+        Some(Object::Group(group)) => std::mem::take(&mut group.last_value),
+        _ => {
+            state.last_status = STATUS_INVALID_HANDLE;
+            0
+        }
+    })
+}
+
+/// Returns the number of scalar terminal outcomes retained by `all`/`settle`.
+/// The records are conformance diagnostics, not a public value container.
+pub extern "C" fn tondo_rt_group_outcome_count(group: u64) -> u64 {
+    with_state(|state| match state.object(group) {
+        Some(Object::Group(group)) => group.outcomes.len() as u64,
+        _ => {
+            state.last_status = STATUS_INVALID_HANDLE;
+            u64::MAX
+        }
+    })
+}
+
+/// Returns the stable insertion index of a retained scalar outcome.
+pub extern "C" fn tondo_rt_group_outcome_index(group: u64, position: u64) -> u64 {
+    with_state(|state| {
+        state
+            .group_outcome_record(group, position)
+            .map(|record| record.index)
+            .unwrap_or(u64::MAX)
+    })
+}
+
+/// Returns the scalar logical payload of a retained outcome. Managed payload
+/// handles are intentionally not exposed through this conformance-only view.
+pub extern "C" fn tondo_rt_group_outcome_value(group: u64, position: u64) -> u64 {
+    with_state(|state| {
+        let Some(record) = state.group_outcome_record(group, position) else {
+            return u64::MAX;
+        };
+        if State::valid_handle(record.value) && state.live_handle(record.value) {
+            state.last_status = STATUS_INVALID_TRANSITION;
+            return u64::MAX;
+        }
+        record.value
+    })
+}
+
+/// Returns whether a retained scalar outcome is an error (`1`) or success (`0`).
+pub extern "C" fn tondo_rt_group_outcome_is_error(group: u64, position: u64) -> u64 {
+    with_state(|state| {
+        state
+            .group_outcome_record(group, position)
+            .map(|record| u64::from(record.is_error))
+            .unwrap_or(u64::MAX)
+    })
+}
+
 pub extern "C" fn tondo_rt_scope_cancel(scope: u64) -> u64 {
     with_state(|state| {
         let Some(Object::Scope { tasks, cancelled }) = state.object(scope).cloned() else {
@@ -2655,6 +3558,7 @@ pub extern "C" fn tondo_rt_scope_join(scope: u64, task: u64) -> u64 {
             state.object(task),
             Some(Object::Task {
                 state: TaskState::Ready,
+                group_owner: None,
                 ..
             })
         ) {
@@ -2683,6 +3587,16 @@ pub extern "C" fn tondo_rt_await(task: u64) -> u64 {
         }
     }
     with_state(|state| {
+        if matches!(
+            state.object(task),
+            Some(Object::Task {
+                group_owner: Some(_),
+                ..
+            })
+        ) {
+            state.last_status = STATUS_INVALID_TRANSITION;
+            return 0;
+        }
         if state.task_poll(task) != 1 {
             state.last_status = STATUS_NOT_READY;
             return 0;
@@ -3958,6 +4872,255 @@ mod tests {
         assert_eq!(tondo_rt_buffer_len(tondo_rt_result_payload(after_close)), 0);
         assert_eq!(tondo_rt_release(after_close), STATUS_OK);
         assert_eq!(tondo_rt_release(host), STATUS_OK);
+        assert_eq!(tondo_rt_live_objects(), 0);
+    }
+
+    #[test]
+    fn native_group_next_preserves_completion_order_and_affine_none() {
+        let _guard = test_guard();
+        tondo_rt_reset();
+        let group = tondo_rt_group_new();
+        let first = tondo_rt_task_spawn(10, 1);
+        let second = tondo_rt_task_spawn(20, 1);
+        assert_eq!(tondo_rt_group_add(group, first), STATUS_OK);
+        assert_eq!(tondo_rt_group_add(group, second), STATUS_OK);
+        assert_eq!(tondo_rt_release(first), STATUS_OK);
+        assert_eq!(tondo_rt_release(second), STATUS_OK);
+        assert_eq!(tondo_rt_group_next(group), 0);
+        assert_eq!(tondo_rt_last_status(), STATUS_NOT_READY);
+
+        assert_eq!(tondo_rt_task_wake(second), STATUS_OK);
+        assert_eq!(tondo_rt_group_next(group), 20);
+        assert_eq!(tondo_rt_group_next_index(group), 1);
+        assert_eq!(tondo_rt_group_remaining(group), 1);
+        assert_eq!(tondo_rt_task_wake(first), STATUS_OK);
+        assert_eq!(tondo_rt_group_next(group), 10);
+        assert_eq!(tondo_rt_group_next_index(group), 0);
+        assert_eq!(tondo_rt_group_remaining(group), 0);
+        assert_eq!(tondo_rt_group_next(group), 0);
+        assert_eq!(tondo_rt_last_status(), STATUS_OK);
+        assert_eq!(tondo_rt_group_cancel(group), STATUS_OK);
+        assert_eq!(tondo_rt_release(group), STATUS_OK);
+        assert_eq!(tondo_rt_live_objects(), 0);
+    }
+
+    #[test]
+    fn native_group_all_records_scalar_outcomes_in_insertion_order() {
+        let _guard = test_guard();
+        tondo_rt_reset();
+        let group = tondo_rt_group_new();
+        let first = tondo_rt_task_spawn(1, 0);
+        let second = tondo_rt_task_spawn(2, 0);
+        assert_eq!(tondo_rt_group_add(group, first), STATUS_OK);
+        assert_eq!(tondo_rt_group_add(group, second), STATUS_OK);
+        assert_eq!(tondo_rt_release(first), STATUS_OK);
+        assert_eq!(tondo_rt_release(second), STATUS_OK);
+        assert_eq!(tondo_rt_group_all(group), STATUS_OK);
+        assert_eq!(tondo_rt_group_outcome_count(group), 2);
+        assert_eq!(tondo_rt_group_outcome_index(group, 0), 0);
+        assert_eq!(tondo_rt_group_outcome_index(group, 1), 1);
+        assert_eq!(tondo_rt_group_outcome_value(group, 0), 1);
+        assert_eq!(tondo_rt_group_outcome_value(group, 1), 2);
+        assert_eq!(tondo_rt_group_outcome_is_error(group, 0), 0);
+        assert_eq!(tondo_rt_group_outcome_is_error(group, 1), 0);
+        assert_eq!(tondo_rt_group_outcome_index(group, 2), u64::MAX);
+        assert_eq!(tondo_rt_last_status(), STATUS_INVALID_TRANSITION);
+        assert_eq!(tondo_rt_release(group), STATUS_OK);
+        assert_eq!(tondo_rt_live_objects(), 0);
+    }
+
+    #[test]
+    fn native_group_all_selects_lowest_error_and_cancels_pending_siblings() {
+        let _guard = test_guard();
+        tondo_rt_reset();
+        let group = tondo_rt_group_new();
+        let pending = tondo_rt_task_spawn(91, 1);
+        let later_error = tondo_rt_result_new(RESULT_ERR, 12, 1);
+        let error_task = tondo_rt_task_spawn(later_error, 0);
+        assert_eq!(tondo_rt_group_add(group, pending), STATUS_OK);
+        assert_eq!(tondo_rt_group_add(group, error_task), STATUS_OK);
+        assert_eq!(tondo_rt_release(pending), STATUS_OK);
+        assert_eq!(tondo_rt_release(error_task), STATUS_OK);
+
+        assert_eq!(tondo_rt_group_all(group), RESULT_ERR);
+        assert_eq!(tondo_rt_task_poll(pending), STATUS_INVALID_HANDLE);
+        assert_eq!(tondo_rt_group_outcome_count(group), 1);
+        assert_eq!(tondo_rt_group_outcome_index(group, 0), 1);
+        assert_eq!(tondo_rt_group_outcome_value(group, 0), 12);
+        assert_eq!(tondo_rt_group_outcome_is_error(group, 0), 1);
+        let error = tondo_rt_group_last_value(group);
+        assert_eq!(tondo_rt_result_tag(error), RESULT_ERR);
+        assert_eq!(tondo_rt_result_payload(error), 12);
+        assert_eq!(tondo_rt_release(error), STATUS_OK);
+        assert_eq!(tondo_rt_release(later_error), STATUS_OK);
+        assert_eq!(tondo_rt_group_remaining(group), 0);
+        assert_eq!(tondo_rt_release(group), STATUS_OK);
+        assert_eq!(tondo_rt_live_objects(), 0);
+    }
+
+    #[test]
+    fn native_group_settle_drains_mixed_results_without_fabricating_cancelled_errors() {
+        let _guard = test_guard();
+        tondo_rt_reset();
+        let group = tondo_rt_group_new();
+        let success = tondo_rt_result_new(RESULT_OK, 7, 1);
+        let failure = tondo_rt_result_new(RESULT_ERR, 8, 1);
+        let success_task = tondo_rt_task_spawn(success, 0);
+        let failure_task = tondo_rt_task_spawn(failure, 0);
+        assert_eq!(tondo_rt_group_add(group, success_task), STATUS_OK);
+        assert_eq!(tondo_rt_group_add(group, failure_task), STATUS_OK);
+        assert_eq!(tondo_rt_release(success_task), STATUS_OK);
+        assert_eq!(tondo_rt_release(failure_task), STATUS_OK);
+        assert_eq!(tondo_rt_group_settle(group), STATUS_OK);
+        assert_eq!(tondo_rt_group_remaining(group), 0);
+        assert_eq!(tondo_rt_group_last_value(group), 0);
+        assert_eq!(tondo_rt_group_outcome_count(group), 2);
+        assert_eq!(tondo_rt_group_outcome_index(group, 0), 0);
+        assert_eq!(tondo_rt_group_outcome_index(group, 1), 1);
+        assert_eq!(tondo_rt_group_outcome_value(group, 0), 7);
+        assert_eq!(tondo_rt_group_outcome_value(group, 1), 8);
+        assert_eq!(tondo_rt_group_outcome_is_error(group, 0), 0);
+        assert_eq!(tondo_rt_group_outcome_is_error(group, 1), 1);
+        assert_eq!(tondo_rt_release(success), STATUS_OK);
+        assert_eq!(tondo_rt_release(failure), STATUS_OK);
+        assert_eq!(tondo_rt_release(group), STATUS_OK);
+        assert_eq!(tondo_rt_live_objects(), 0);
+    }
+
+    #[test]
+    fn native_group_panic_drains_cleanup_and_rejects_reuse() {
+        let _guard = test_guard();
+        tondo_rt_reset();
+        let group = tondo_rt_group_new();
+        let panicking = tondo_rt_task_spawn(0, 1);
+        let sibling = tondo_rt_task_spawn(0, 1);
+        assert_eq!(tondo_rt_group_add(group, panicking), STATUS_OK);
+        assert_eq!(tondo_rt_group_add(group, sibling), STATUS_OK);
+        assert_eq!(tondo_rt_release(panicking), STATUS_OK);
+        assert_eq!(tondo_rt_release(sibling), STATUS_OK);
+        assert_eq!(tondo_rt_task_panic(panicking), STATUS_OK);
+        assert_eq!(tondo_rt_group_next(group), 0);
+        assert_eq!(tondo_rt_last_status(), STATUS_PANICKED);
+        assert_eq!(tondo_rt_task_poll(sibling), STATUS_INVALID_HANDLE);
+        assert_eq!(tondo_rt_group_remaining(group), 0);
+        assert_eq!(tondo_rt_group_next(group), 0);
+        assert_eq!(tondo_rt_last_status(), STATUS_INVALID_TRANSITION);
+        assert_eq!(tondo_rt_release(group), STATUS_OK);
+        assert_eq!(tondo_rt_live_objects(), 0);
+    }
+
+    #[test]
+    fn native_group_rejects_invalid_children_and_drops_pending_children_once() {
+        let _guard = test_guard();
+        tondo_rt_reset();
+        let group = tondo_rt_group_new();
+        assert_eq!(tondo_rt_group_add(group, 0), STATUS_INVALID_HANDLE);
+        let ready = tondo_rt_task_spawn(5, 0);
+        assert_eq!(tondo_rt_task_take(ready), 5);
+        assert_eq!(tondo_rt_group_add(group, ready), STATUS_INVALID_TRANSITION);
+        assert_eq!(tondo_rt_release(ready), STATUS_OK);
+
+        let pending = tondo_rt_task_spawn(6, 1);
+        assert_eq!(tondo_rt_group_add(group, pending), STATUS_OK);
+        assert_eq!(tondo_rt_release(pending), STATUS_OK);
+        assert_eq!(tondo_rt_release(group), STATUS_OK);
+        assert_eq!(tondo_rt_task_poll(pending), STATUS_INVALID_HANDLE);
+        assert_eq!(tondo_rt_live_objects(), 0);
+    }
+
+    #[test]
+    fn native_group_rejects_duplicate_and_external_join_without_sticking() {
+        let _guard = test_guard();
+        tondo_rt_reset();
+        let group = tondo_rt_group_new();
+        let pending = tondo_rt_task_spawn(8, 1);
+        assert_eq!(tondo_rt_group_add(group, pending), STATUS_OK);
+        assert_eq!(
+            tondo_rt_group_add(group, pending),
+            STATUS_INVALID_TRANSITION
+        );
+        assert_eq!(tondo_rt_release(pending), STATUS_OK);
+
+        assert_eq!(tondo_rt_task_wake(pending), STATUS_OK);
+        assert_eq!(tondo_rt_task_take(pending), 0);
+        assert_eq!(tondo_rt_last_status(), STATUS_INVALID_TRANSITION);
+        assert_eq!(tondo_rt_group_next(group), 8);
+        assert_eq!(tondo_rt_group_remaining(group), 0);
+        assert_eq!(tondo_rt_release(group), STATUS_OK);
+        assert_eq!(tondo_rt_live_objects(), 0);
+    }
+
+    #[test]
+    fn native_group_owns_unobserved_error_until_group_drop() {
+        let _guard = test_guard();
+        tondo_rt_reset();
+        let group = tondo_rt_group_new();
+        let error = tondo_rt_result_new(RESULT_ERR, 33, 1);
+        let task = tondo_rt_task_spawn(error, 0);
+        assert_eq!(tondo_rt_group_add(group, task), STATUS_OK);
+        assert_eq!(tondo_rt_release(task), STATUS_OK);
+        assert_eq!(tondo_rt_group_all(group), RESULT_ERR);
+        // The caller keeps only its original Result ownership.  The Group
+        // must release the selected payload even when its getter is skipped.
+        assert_eq!(tondo_rt_release(error), STATUS_OK);
+        assert_eq!(tondo_rt_release(group), STATUS_OK);
+        assert_eq!(tondo_rt_live_objects(), 0);
+    }
+
+    #[test]
+    fn native_group_transfer_detaches_a_scoped_join() {
+        let _guard = test_guard();
+        tondo_rt_reset();
+        let scope = tondo_rt_scope_enter();
+        let task = tondo_rt_scope_spawn(scope, 44, 0);
+        let group = tondo_rt_group_new();
+        assert_eq!(tondo_rt_group_add(group, task), STATUS_OK);
+        assert_eq!(tondo_rt_release(task), STATUS_OK);
+        assert_eq!(tondo_rt_scope_join(scope, task), STATUS_INVALID_TRANSITION);
+        assert_eq!(tondo_rt_group_next(group), 44);
+        assert_eq!(tondo_rt_release(group), STATUS_OK);
+        assert_eq!(tondo_rt_release(scope), STATUS_OK);
+        assert_eq!(tondo_rt_live_objects(), 0);
+    }
+
+    #[test]
+    fn native_group_rejects_cross_group_and_select_aliases() {
+        let _guard = test_guard();
+        tondo_rt_reset();
+        let first_group = tondo_rt_group_new();
+        let second_group = tondo_rt_group_new();
+        let selection = tondo_rt_select_begin(1);
+        let task = tondo_rt_task_spawn(55, 1);
+        assert_eq!(tondo_rt_group_add(first_group, task), STATUS_OK);
+        assert_eq!(
+            tondo_rt_group_add(second_group, task),
+            STATUS_INVALID_TRANSITION
+        );
+        assert_eq!(
+            tondo_rt_select_register_join(selection, task),
+            STATUS_INVALID_TRANSITION
+        );
+        assert_eq!(tondo_rt_release(task), STATUS_OK);
+        assert_eq!(tondo_rt_task_wake(task), STATUS_OK);
+        assert_eq!(tondo_rt_group_next(first_group), 55);
+        assert_eq!(tondo_rt_release(selection), STATUS_OK);
+        assert_eq!(tondo_rt_release(second_group), STATUS_OK);
+        assert_eq!(tondo_rt_release(first_group), STATUS_OK);
+        assert_eq!(tondo_rt_live_objects(), 0);
+    }
+
+    #[test]
+    fn native_group_waits_for_thread_workers_before_consuming() {
+        let _guard = test_guard();
+        tondo_rt_reset();
+        let group = tondo_rt_group_new();
+        let thread = tondo_rt_thread_spawn(66, 1);
+        assert_eq!(tondo_rt_group_add(group, thread), STATUS_OK);
+        assert_eq!(tondo_rt_group_all(group), STATUS_OK);
+        assert_eq!(tondo_rt_thread_worker_status(thread), WORKER_COMPLETED);
+        assert_eq!(tondo_rt_group_remaining(group), 0);
+        assert_eq!(tondo_rt_release(thread), STATUS_OK);
+        assert_eq!(tondo_rt_release(group), STATUS_OK);
         assert_eq!(tondo_rt_live_objects(), 0);
     }
 }

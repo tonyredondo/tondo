@@ -952,15 +952,19 @@ y tiene su contrato machine-readable en
 [`testing/stdlib-async-group.json`](./testing/stdlib-async-group.json). La
 implementación hosted de VM está verificada por
 `STD-ASYNC-GROUP-IMPL-001` mediante el fixture
-`tests/runtime/m11-std-async-group-001.to`. La ruta nativa aún requiere su
-scheduler/ABI async. El modelo, la batería hosted y el fuzzing están cerrados
+`tests/runtime/m11-std-async-group-001.to`. La frontera del runtime nativo está
+verificada sobre el mismo corpus por `STD-ASYNC-GROUP-CONF-001`, cuyo contrato
+es [`testing/stdlib-async-group-conformance.json`](./testing/stdlib-async-group-conformance.json);
+esto cubre el ABI del runtime, no inventa todavía lowering AOT ni un scheduler
+async portable. El modelo, la batería hosted y el fuzzing están cerrados
 por `STD-ASYNC-GROUP-TEST-001` y registrados en
 [`testing/stdlib-async-group-test.json`](./testing/stdlib-async-group-test.json);
 el presupuesto hosted de latencia, throughput, allocations, memoria lógica,
 wakeups y tail latency está cerrado por `STD-ASYNC-GROUP-PERF-001` y registrado
 en [`testing/stdlib-async-group-performance.json`](./testing/stdlib-async-group-performance.json).
-La promoción aún requiere cerrar `CONF` y `DOC`, además de la evidencia nativa
-correspondiente.
+La promoción de la superficie aún requiere cerrar `DOC`; la evidencia de
+conformance nativa queda limitada al runtime ABI hasta que exista lowering AOT
+async portable.
 
 ### 9.5 Scheduler y backpressure
 
@@ -2233,7 +2237,9 @@ El grupo es afín, adopta cada `Join` que recibe y debe consumirse con `all`,
 obligación de cerrar el grupo restante. Es una utilidad de coordinación, no un
 executor: no inicia trabajo, no acepta closures y no crea un segundo scheduler.
 La implementación hosted conserva este contrato en el scheduler cooperativo
-único; la ruta nativa se mantiene como trabajo posterior del backend. Su
+único; la frontera ABI del runtime nativo ya está verificada por
+`STD-ASYNC-GROUP-CONF-001`, mientras el lowering AOT async portable se mantiene
+como trabajo posterior del backend. Su
 extensión contractual vive en
 [`docs/contracts/stdlib-async.md`](./docs/contracts/stdlib-async.md).
 El presupuesto de rendimiento hosted se especifica en

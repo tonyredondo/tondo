@@ -212,10 +212,10 @@
     "group-publishes-waitgroup-or-task-api"
   ],
   "implementation": {
-    "status": "verified-hosted-vm",
+    "status": "verified-hosted-vm-and-native-runtime-abi",
     "public_api_promoted": false,
     "host": "not-applicable",
-    "native_status": "pending-native-async-runtime",
+    "native_status": "verified-native-runtime-abi",
     "source": [
       "crates/tondo-compiler/src/types.rs",
       "crates/tondo-compiler/src/resolve.rs",
@@ -230,24 +230,25 @@
       "crates/tondo-vm/src/bytecode.rs",
       "crates/tondo-vm/src/bytecode/verify.rs",
       "crates/tondo-vm/src/runtime.rs",
-      "crates/tondo-vm/src/runtime/execute.rs"
+      "crates/tondo-vm/src/runtime/execute.rs",
+      "crates/tondo-native-runtime/src/lib.rs",
+      "crates/tondo-native-runtime/examples/async_group_conformance.rs"
     ],
     "tests": [
       "tests/runtime/m11-std-async-group-001.to",
       "scripts/stdlib-async-group-check.sh",
-      "scripts/stdlib-async-group-test.sh"
+      "scripts/stdlib-async-group-test.sh",
+      "scripts/stdlib-async-group-conformance-check.sh",
+      "scripts/stdlib-async-group-conformance-test.sh",
+      "scripts/stdlib-async-group-conformance.sh"
     ],
-    "proof": "hosted VM executes all/settle/next/cancel, completion-order selection and select rollback through the typed compiler and structured scheduler",
+    "proof": "hosted VM and the native runtime ABI execute the shared Group corpus for all/settle/next/cancel, completion-order selection, error priority, panic drain, select rollback and affine cleanup",
     "required_follow_ups": [
-      "STD-ASYNC-GROUP-CONF-001",
       "STD-ASYNC-GROUP-DOC-001"
     ]
   },
   "promotion": {
-    "implementation_pending": [
-      "STD-ASYNC-GROUP-CONF-001",
-      "STD-ASYNC-GROUP-DOC-001"
-    ],
+    "implementation_pending": ["STD-ASYNC-GROUP-DOC-001"],
     "next_blocks": ["DIAG-RUNTIME-001"]
   }
 }

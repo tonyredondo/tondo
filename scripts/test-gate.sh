@@ -111,6 +111,12 @@ run_step stdlib-async-group-performance-contract-tests \
     scripts/stdlib-async-group-performance-test.sh
 run_step stdlib-async-group-performance \
     scripts/stdlib-async-group-performance.sh
+run_step stdlib-async-group-conformance-contract \
+    scripts/stdlib-async-group-conformance-check.sh
+run_step stdlib-async-group-conformance-contract-tests \
+    scripts/stdlib-async-group-conformance-test.sh
+run_step stdlib-async-group-conformance \
+    scripts/stdlib-async-group-conformance.sh
 run_step stdlib-channel-contract \
     scripts/stdlib-channel-check.sh
 run_step stdlib-channel-contract-tests \

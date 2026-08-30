@@ -128,21 +128,15 @@ jq -e '
   and ((.exclusions | unique | length) == (.exclusions | length))
   and ((.negative_cases | unique | length) == (.negative_cases | length))
   and (.negative_cases | length) == 20
-  and .implementation.status == "verified-hosted-vm"
+  and .implementation.status == "verified-hosted-vm-and-native-runtime-abi"
   and .implementation.public_api_promoted == false
   and .implementation.host == "not-applicable"
-  and .implementation.native_status == "pending-native-async-runtime"
+  and .implementation.native_status == "verified-native-runtime-abi"
   and (.implementation.source | type == "array" and length > 0)
   and (.implementation.tests | type == "array" and length > 0)
   and (.implementation.proof | type == "string" and length > 0)
-  and .implementation.required_follow_ups == [
-    "STD-ASYNC-GROUP-CONF-001",
-    "STD-ASYNC-GROUP-DOC-001"
-  ]
-  and .promotion.implementation_pending == [
-    "STD-ASYNC-GROUP-CONF-001",
-    "STD-ASYNC-GROUP-DOC-001"
-  ]
+  and .implementation.required_follow_ups == ["STD-ASYNC-GROUP-DOC-001"]
+  and .promotion.implementation_pending == ["STD-ASYNC-GROUP-DOC-001"]
   and .promotion.next_blocks == ["DIAG-RUNTIME-001"]
 ' "$contract" >/dev/null || die "invalid machine-readable Group contract"
 
@@ -160,7 +154,9 @@ for marker in \
     'menor índice entre' \
     'drena todos los hijos' \
     'implementación hosted de VM está' \
+    'conformidad VM/nativa' \
     'STD-ASYNC-GROUP-PERF-001' \
+    'STD-ASYNC-GROUP-CONF-001' \
     'group_peak_state_bytes' \
     'HOST = not-applicable'; do
     grep -Fq "$marker" "$root/docs/contracts/stdlib-async.md" \
@@ -178,6 +174,10 @@ done < <(jq -r '.implementation.source[], .implementation.tests[]' "$contract")
     || die "missing Group MODEL/TEST/FUZZ evidence manifest"
 [[ -f "$root/testing/stdlib-async-group-performance.json" ]] \
     || die "missing Group PERF evidence contract"
+[[ -f "$root/testing/stdlib-async-group-conformance.json" ]] \
+    || die "missing Group CONF evidence contract"
+[[ -f "$root/docs/contracts/stdlib-async-group-conformance.md" ]] \
+    || die "missing Group CONF document"
 [[ -f "$root/docs/contracts/stdlib-async-group-performance.md" ]] \
     || die "missing Group PERF contract document"
 
@@ -188,4 +188,4 @@ done < <(jq -r '.implementation.source[], .implementation.tests[]' "$contract")
 [[ -f "$root/tests/runtime/m11-std-async-group-001.stdout" ]] \
     || die "missing Group runtime stdout oracle"
 
-echo "std.async.Group contract: OK (affine fan-in semantics; hosted VM implementation; native runtime pending)"
+echo "std.async.Group contract: OK (affine fan-in semantics; hosted VM and native runtime ABI)"

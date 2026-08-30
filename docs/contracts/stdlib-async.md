@@ -85,8 +85,9 @@ dinámico de hijos ya iniciados. El contrato machine-readable está en
 queda cerrado por `STD-ASYNC-GROUP-SPEC-001`. Esto fija la semántica, pero no
 afirma por sí solo la conformidad completa. La implementación hosted de VM está
 verificada por `STD-ASYNC-GROUP-IMPL-001` y por el fixture ejecutable
-`tests/runtime/m11-std-async-group-001.to`; la ruta nativa permanece pendiente
-de un scheduler/ABI async nativo y de su corpus de conformidad:
+`tests/runtime/m11-std-async-group-001.to`. La frontera del runtime nativo
+también está verificada por `STD-ASYNC-GROUP-CONF-001`; el lowering AOT y la
+portabilidad del scheduler quedan fuera de este cierre:
 
 ```tondo
 pub type Group[T, E]
@@ -167,15 +168,21 @@ del reloj y dentro de los contadores de coste. `group_peak_state_bytes` es una
 medida lógica de las capacidades de los vectores y no una afirmación sobre RSS
 ni sobre el allocator nativo. La evidencia se genera en
 `target/reliability/evidence/stdlib-async-group-performance.json` y el target
-async nativo queda explícitamente fuera de este cierre.
+async nativo queda explícitamente fuera de este cierre de rendimiento. La
+conformance VM/native del límite ABI queda registrada en
+[`testing/stdlib-async-group-conformance.json`](../../testing/stdlib-async-group-conformance.json)
+y se ejecuta con
+[`scripts/stdlib-async-group-conformance.sh`](../../scripts/stdlib-async-group-conformance.sh),
+sin afirmar todavía lowering AOT ni un scheduler async portable.
 
-La superficie aún no se promueve hasta completar conformidad VM/nativa y
-documentación ejecutable. `STD-ASYNC-GROUP-IMPL-001`
-cierra la implementación hosted de VM y `STD-ASYNC-GROUP-TEST-001` cierra
-`MODEL`, `TEST` y `FUZZ`; `STD-ASYNC-GROUP-PERF-001` cierra el presupuesto de
-rendimiento hosted; la implementación nativa y la conformidad cruzada siguen
-siendo leaves separadas. `HOST = not-applicable`: `Group` compone el
-scheduler y `Join` existentes y no enlaza una primitiva host propia.
+La superficie aún no se promueve hasta completar documentación ejecutable.
+`STD-ASYNC-GROUP-IMPL-001` cierra la implementación hosted de VM,
+`STD-ASYNC-GROUP-TEST-001` cierra `MODEL`, `TEST` y `FUZZ`,
+`STD-ASYNC-GROUP-PERF-001` cierra el presupuesto de rendimiento hosted y
+`STD-ASYNC-GROUP-CONF-001` verifica la conformidad del runtime nativo sobre
+el mismo corpus; la conformidad VM/nativa queda acotada al ABI del runtime y
+no promociona lowering AOT async. `HOST = not-applicable`: `Group` compone el scheduler y
+`Join` existentes y no enlaza una primitiva host propia.
 
 ### Eventos observables para diagnóstico
 
@@ -196,7 +203,8 @@ brazo perdedor no consume el `Join`, waiter o grupo, y la cancelación del scope
 desregistra todos los brazos antes del unwind. `Group.next` está contractualmente
 cerrado en STD-0.1B. Su operación hosted de VM está implementada junto con
 `all`, `settle` y `cancel`; el owner no se promueve hasta cerrar sus leaves
-`PERF`, `CONF` y `DOC` y la evidencia nativa que corresponda.
+`DOC`. `PERF` y `CONF` ya tienen evidencia, con `CONF` limitado al ABI del
+runtime nativo hasta que exista lowering AOT async portable.
 
 ## Estado de implementación de STD-0.1A
 
