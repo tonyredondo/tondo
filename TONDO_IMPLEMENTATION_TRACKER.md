@@ -104,7 +104,9 @@ en requisito de Tondo 0.1.
 cerrar Gate N1. `STD-ASYNC-GROUP-IMPL-001`, `STD-ASYNC-GROUP-TEST-001`,
 `STD-ASYNC-GROUP-PERF-001`, `STD-ASYNC-GROUP-CONF-001` y
 `STD-ASYNC-GROUP-DOC-001` ya están cerrados para la VM hosted y el ABI del
-runtime nativo; el siguiente bloque es `STD-SYNC-IMPL-001`. El modelo y
+runtime nativo; `STD-SYNC-IMPL-001` ya está cerrado para la superficie del
+compilador y el modelo hosted determinista; el siguiente bloque es
+`STD-SYNC-HOST-001`. El modelo y
 tests/fuzz hosted de Group están respaldados por
 `STD-ASYNC-GROUP-TEST-001`. El slice
 ejecutable de `select` ya está cerrado en la VM hosted —frontend,
@@ -6543,11 +6545,16 @@ estas leaves.
 
 #### 21.3.2 `std.sync`
 
-- [ ] **STD-SYNC-IMPL-001 — Implementar la superficie portable de sync.**
-  Publicar mutex, rwlock, guards, condición, semáforo/permit, once, barrier y
-  atomics con ownership, cleanup sin poisoning implícito y memory ordering
-  fijados por `STD-SYNC-001` sobre VM y runtime nativo. No implementar un
-  contador `WaitGroup` paralelo a `Group[Unit, E]`.
+- [x] **STD-SYNC-IMPL-001 — Implementar la superficie portable de sync.**
+  El compilador registra y baja mutex, rwlock, guards, condición,
+  semáforo/permit, once, barrier y atomics con ownership, cleanup sin poisoning
+  implícito y memory ordering fijados por `STD-SYNC-001`. La VM hosted ejecuta
+  el modelo determinista de estado, errores nominales, cleanup idempotente y
+  fast paths no contendedidos; el fixture
+  `tests/runtime/m11-std-sync-impl-001.to` produce `sync-ok`. El parking/wakeup
+  cooperativo para contención y el puente ABI nativo permanecen explícitamente
+  en `STD-SYNC-HOST-001`; no se introduce un contador `WaitGroup` paralelo a
+  `Group[Unit, E]`.
 - [ ] **STD-SYNC-HOST-001 — Implementar parking y atomics del host.** Enlazar
   threads, wakeups y esperas mediante unidades fijadas, sin bloqueo del executor
   ni fallback single-thread que finja soporte cross-thread.
@@ -7507,7 +7514,8 @@ coordinación; `NATIVE-TARGET-DESC-001`, `NATIVE-ARTIFACT-001`,
 como contratos puros. `NATIVE-AOT-PERF-001` queda cerrado con evidencia
 repetida y path-free; Gate N1 queda cerrado por su informe compositivo y
 promueve Cranelift únicamente para el target primario x86_64 GNU. El siguiente
-bloque crítico es `STD-SYNC-IMPL-001`; ARM64 conserva una clasificación
+bloque crítico es `STD-SYNC-HOST-001`; `STD-SYNC-IMPL-001` ya cerró la
+superficie de compilador y el modelo hosted determinista. ARM64 conserva una clasificación
 de smoke de candidato hasta completar su corpus AOT y la ruta async nativa.
 `TRACKER-LINT-001` está cerrado y su informe deriva los
 conteos directamente del tracker. `STD-A-ASYNC-API-001` ya
@@ -7535,9 +7543,9 @@ identidad, la lane física de `NATIVE-THREAD-001` y la coordinación mínima de
 implementados. La frontera AOT está cerrada hasta `NATIVE-AOT-PERF-001`;
 la frontera AOT y Gate N1 están cerrados para el target primario; el backend
 seleccionado queda promovido únicamente para x86_64 GNU y el siguiente trabajo
-crítico es `STD-SYNC-IMPL-001`; la implementación hosted, el
+crítico es `STD-SYNC-HOST-001`; la implementación de superficie y el modelo hosted,
 modelo/test/fuzz, el presupuesto de rendimiento y la conformance del ABI del
-runtime nativo de Group ya están cerrados, mientras el lowering AOT async y la
-ruta nativa portable siguen pendientes.
+runtime nativo de Group ya están cerrados, mientras el lowering AOT async, el
+parking nativo de sync y la ruta nativa portable siguen pendientes.
 
 ---

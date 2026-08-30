@@ -112,6 +112,17 @@ pub enum IntrinsicType {
     Pointer,
     Join,
     Group,
+    Mutex,
+    MutexGuard,
+    RwLock,
+    ReadGuard,
+    WriteGuard,
+    Condition,
+    Semaphore,
+    Permit,
+    Once,
+    Barrier,
+    Atomic,
     Waiter,
     Completer,
     AlreadyCompleted,
@@ -208,6 +219,17 @@ impl IntrinsicType {
             Self::Pointer => "Pointer",
             Self::Join => "Join",
             Self::Group => "Group",
+            Self::Mutex => "Mutex",
+            Self::MutexGuard => "MutexGuard",
+            Self::RwLock => "RwLock",
+            Self::ReadGuard => "ReadGuard",
+            Self::WriteGuard => "WriteGuard",
+            Self::Condition => "Condition",
+            Self::Semaphore => "Semaphore",
+            Self::Permit => "Permit",
+            Self::Once => "Once",
+            Self::Barrier => "Barrier",
+            Self::Atomic => "Atomic",
             Self::Waiter => "Waiter",
             Self::Completer => "Completer",
             Self::AlreadyCompleted => "AlreadyCompleted",
@@ -301,8 +323,18 @@ impl IntrinsicType {
 
     pub fn arity(self) -> usize {
         match self {
-            Self::Map | Self::Join | Self::Group | Self::Waiter | Self::Completer => 2,
-            Self::Array | Self::Set | Self::Range | Self::Ref | Self::Pointer => 1,
+            Self::Map | Self::Join | Self::Group | Self::Once | Self::Waiter | Self::Completer => 2,
+            Self::Array
+            | Self::Set
+            | Self::Range
+            | Self::Ref
+            | Self::Pointer
+            | Self::Mutex
+            | Self::MutexGuard
+            | Self::RwLock
+            | Self::ReadGuard
+            | Self::WriteGuard
+            | Self::Atomic => 1,
             Self::ProtoDescriptor | Self::ProtoReader | Self::ProtoWriter => 1,
             Self::Command
             | Self::Pipeline
@@ -351,6 +383,10 @@ impl IntrinsicType {
             | Self::EnvValue
             | Self::EnvError
             | Self::AlreadyCompleted
+            | Self::Condition
+            | Self::Semaphore
+            | Self::Permit
+            | Self::Barrier
             | Self::VirtualTime
             | Self::JsonLimits
             | Self::JsonDecodeOptions

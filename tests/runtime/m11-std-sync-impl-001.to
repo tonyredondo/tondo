@@ -1,0 +1,43 @@
+import std.console
+import std.sync
+
+fn main(): !sync.SyncError {
+    let mutex = sync.mutex(7)?
+    var guard = mutex.lock()?
+    let observed = guard.get()
+    _ = observed
+    guard.unlock()
+
+    let rw = sync.rwLock("value")?
+    var reader = rw.read()?
+    let read_value = reader.get()
+    _ = read_value
+    reader.unlock()
+    var writer = rw.write()?
+    let write_value = writer.getMut()
+    _ = write_value
+    writer.unlock()
+
+    let condition = sync.condition()?
+    condition.notifyOne()
+    condition.notifyAll()
+
+    let semaphore = sync.semaphore(1)?
+    let permit = semaphore.acquire()
+    permit.release()
+
+    let atom = sync.atomic(1)
+    let order = sync.MemoryOrder.SeqCst
+    assert(atom.load(order) == 1)
+    atom.store(2, order)
+    assert(atom.swap(3, order) == 2)
+    match atom.compareExchange(3, 4, order, order) {
+        sync.CompareExchange.Exchanged(previous) => assert(previous == 3)
+        sync.CompareExchange.Mismatch(mismatch) => assert(false)
+    }
+
+    let barrier = sync.barrier(1)?
+    _ = barrier.wait()?
+
+    console.println("sync-ok")
+}

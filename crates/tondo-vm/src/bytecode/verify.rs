@@ -449,6 +449,17 @@ impl<'a> TraceMetadataAnalysis<'a> {
                 },
                 BytecodeIntrinsicType::Pointer
                 | BytecodeIntrinsicType::Group
+                | BytecodeIntrinsicType::Mutex
+                | BytecodeIntrinsicType::MutexGuard
+                | BytecodeIntrinsicType::RwLock
+                | BytecodeIntrinsicType::ReadGuard
+                | BytecodeIntrinsicType::WriteGuard
+                | BytecodeIntrinsicType::Condition
+                | BytecodeIntrinsicType::Semaphore
+                | BytecodeIntrinsicType::Permit
+                | BytecodeIntrinsicType::Once
+                | BytecodeIntrinsicType::Barrier
+                | BytecodeIntrinsicType::Atomic
                 | BytecodeIntrinsicType::Join
                 | BytecodeIntrinsicType::Waiter
                 | BytecodeIntrinsicType::Completer
@@ -1104,6 +1115,26 @@ fn intrinsic_capability(
         )),
         BytecodeIntrinsicType::Join => fixed_capability(false),
         BytecodeIntrinsicType::Group => fixed_capability(capability == ClosedCapability::Send),
+        BytecodeIntrinsicType::Mutex
+        | BytecodeIntrinsicType::RwLock
+        | BytecodeIntrinsicType::Once
+        | BytecodeIntrinsicType::Atomic => same_capability(arguments, capability),
+        BytecodeIntrinsicType::Condition
+        | BytecodeIntrinsicType::Semaphore
+        | BytecodeIntrinsicType::Barrier => fixed_capability(matches!(
+            capability,
+            ClosedCapability::Copy
+                | ClosedCapability::Discard
+                | ClosedCapability::Send
+                | ClosedCapability::Share
+        )),
+        BytecodeIntrinsicType::MutexGuard
+        | BytecodeIntrinsicType::ReadGuard
+        | BytecodeIntrinsicType::WriteGuard
+        | BytecodeIntrinsicType::Permit => fixed_capability(matches!(
+            capability,
+            ClosedCapability::Discard | ClosedCapability::Send
+        )),
         BytecodeIntrinsicType::Waiter | BytecodeIntrinsicType::Completer => {
             fixed_capability(capability == ClosedCapability::Send)
         }
@@ -1579,6 +1610,17 @@ fn intrinsic_terminal(
         BytecodeIntrinsicType::Ref
         | BytecodeIntrinsicType::Pointer
         | BytecodeIntrinsicType::Group
+        | BytecodeIntrinsicType::Mutex
+        | BytecodeIntrinsicType::MutexGuard
+        | BytecodeIntrinsicType::RwLock
+        | BytecodeIntrinsicType::ReadGuard
+        | BytecodeIntrinsicType::WriteGuard
+        | BytecodeIntrinsicType::Condition
+        | BytecodeIntrinsicType::Semaphore
+        | BytecodeIntrinsicType::Permit
+        | BytecodeIntrinsicType::Once
+        | BytecodeIntrinsicType::Barrier
+        | BytecodeIntrinsicType::Atomic
         | BytecodeIntrinsicType::Waiter
         | BytecodeIntrinsicType::Completer
         | BytecodeIntrinsicType::AlreadyCompleted
@@ -1794,6 +1836,17 @@ impl Verifier<'_> {
                 | BytecodeIntrinsicType::Pointer
                 | BytecodeIntrinsicType::Join
                 | BytecodeIntrinsicType::Group
+                | BytecodeIntrinsicType::Mutex
+                | BytecodeIntrinsicType::MutexGuard
+                | BytecodeIntrinsicType::RwLock
+                | BytecodeIntrinsicType::ReadGuard
+                | BytecodeIntrinsicType::WriteGuard
+                | BytecodeIntrinsicType::Condition
+                | BytecodeIntrinsicType::Semaphore
+                | BytecodeIntrinsicType::Permit
+                | BytecodeIntrinsicType::Once
+                | BytecodeIntrinsicType::Barrier
+                | BytecodeIntrinsicType::Atomic
                 | BytecodeIntrinsicType::Waiter
                 | BytecodeIntrinsicType::Completer
                 | BytecodeIntrinsicType::AlreadyCompleted
@@ -2356,6 +2409,17 @@ impl Verifier<'_> {
                 && !callable.name.starts_with("std.async.Waiter.wait")
                 && !callable.name.starts_with("std.async.Completer.")
                 && !callable.name.starts_with("std.async.Group.")
+                && !callable.name.starts_with("std.sync.Mutex.")
+                && !callable.name.starts_with("std.sync.MutexGuard.")
+                && !callable.name.starts_with("std.sync.RwLock.")
+                && !callable.name.starts_with("std.sync.ReadGuard.")
+                && !callable.name.starts_with("std.sync.WriteGuard.")
+                && !callable.name.starts_with("std.sync.Condition.")
+                && !callable.name.starts_with("std.sync.Semaphore.")
+                && !callable.name.starts_with("std.sync.Permit.")
+                && !callable.name.starts_with("std.sync.Once.")
+                && !callable.name.starts_with("std.sync.Barrier.")
+                && !callable.name.starts_with("std.sync.Atomic.")
                 && !callable.name.starts_with("std.testing.shrink")
             {
                 return Err(BytecodeVerificationError::new(
@@ -15400,6 +15464,17 @@ mod tests {
                 BytecodeIntrinsicType::Pointer => [true, true, false, false, false, false],
                 BytecodeIntrinsicType::Join => [false; 6],
                 BytecodeIntrinsicType::Group => [false, false, false, false, true, false],
+                BytecodeIntrinsicType::Mutex
+                | BytecodeIntrinsicType::RwLock
+                | BytecodeIntrinsicType::Once
+                | BytecodeIntrinsicType::Atomic => all,
+                BytecodeIntrinsicType::Condition
+                | BytecodeIntrinsicType::Semaphore
+                | BytecodeIntrinsicType::Barrier => [true, true, false, false, true, true],
+                BytecodeIntrinsicType::MutexGuard
+                | BytecodeIntrinsicType::ReadGuard
+                | BytecodeIntrinsicType::WriteGuard
+                | BytecodeIntrinsicType::Permit => [false, true, false, false, true, false],
                 BytecodeIntrinsicType::Waiter | BytecodeIntrinsicType::Completer => {
                     [false, true, false, false, true, false]
                 }

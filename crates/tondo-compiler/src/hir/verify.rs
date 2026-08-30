@@ -511,6 +511,17 @@ impl Verifier<'_> {
                         | IntrinsicType::Pointer
                         | IntrinsicType::Join
                         | IntrinsicType::Group
+                        | IntrinsicType::Mutex
+                        | IntrinsicType::MutexGuard
+                        | IntrinsicType::RwLock
+                        | IntrinsicType::ReadGuard
+                        | IntrinsicType::WriteGuard
+                        | IntrinsicType::Condition
+                        | IntrinsicType::Semaphore
+                        | IntrinsicType::Permit
+                        | IntrinsicType::Once
+                        | IntrinsicType::Barrier
+                        | IntrinsicType::Atomic
                         | IntrinsicType::Waiter
                         | IntrinsicType::Completer
                         | IntrinsicType::AlreadyCompleted

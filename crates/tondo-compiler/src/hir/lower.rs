@@ -312,7 +312,8 @@ impl<'a> TypeLowerer<'a> {
         self.lower_bootstrap_serialization_nominal_declarations()?;
         self.lower_bootstrap_messagepack_nominal_declarations()?;
         self.lower_bootstrap_protobuf_nominal_declarations()?;
-        self.lower_bootstrap_async_nominal_declarations()
+        self.lower_bootstrap_async_nominal_declarations()?;
+        self.lower_bootstrap_sync_nominal_declarations()
     }
 
     fn lower_bootstrap_async_nominal_declarations(&mut self) -> Result<(), HirError> {
@@ -361,6 +362,79 @@ impl<'a> TypeLowerer<'a> {
                 }),
             },
         );
+        Ok(())
+    }
+
+    fn lower_bootstrap_sync_nominal_declarations(&mut self) -> Result<(), HirError> {
+        let path = ModulePath::new("sync")?;
+        let Some(module) = self.packages.module(self.packages.standard(), &path) else {
+            return Ok(());
+        };
+        let generic = self.interner.generic_parameter(0)?;
+        for name in ["SyncError", "BarrierRole", "MemoryOrder", "CompareExchange"] {
+            let type_name = Name::new(name).expect("bootstrap sync type names are valid");
+            let Some(symbol) = self.resolved.bootstrap_nominal(&module, &type_name) else {
+                continue;
+            };
+            let declaration = self
+                .resolved
+                .symbol(symbol)
+                .expect("bootstrap sync nominal symbols are indexed");
+            let generic_args = if name == "CompareExchange" {
+                vec![generic]
+            } else {
+                Vec::new()
+            };
+            let self_type = self
+                .interner
+                .nominal(declaration.identity().clone(), generic_args)?;
+            let variants = match name {
+                "SyncError" => [
+                    "InvalidCapacity",
+                    "InvalidParties",
+                    "ResourceLimit",
+                    "ReentrantLock",
+                    "ReentrantInitialization",
+                    "Broken",
+                ]
+                .into_iter()
+                .map(|variant| self.bootstrap_variant(symbol, variant, Vec::new()))
+                .collect(),
+                "BarrierRole" => ["Leader", "Follower"]
+                    .into_iter()
+                    .map(|variant| self.bootstrap_variant(symbol, variant, Vec::new()))
+                    .collect(),
+                "MemoryOrder" => ["Relaxed", "Acquire", "Release", "AcqRel", "SeqCst"]
+                    .into_iter()
+                    .map(|variant| self.bootstrap_variant(symbol, variant, Vec::new()))
+                    .collect(),
+                "CompareExchange" => ["Exchanged", "Mismatch"]
+                    .into_iter()
+                    .map(|variant| self.bootstrap_variant(symbol, variant, vec![generic]))
+                    .collect(),
+                _ => unreachable!("bootstrap sync nominal list is closed"),
+            };
+            self.declarations.insert(
+                symbol,
+                HirTypeDeclaration {
+                    symbol,
+                    span: declaration.span(),
+                    parameters: if name == "CompareExchange" {
+                        vec![HirGenericParameter {
+                            local: LocalId::synthetic_host_generic(0),
+                            position: 0,
+                            bounds: Vec::new(),
+                        }]
+                    } else {
+                        Vec::new()
+                    },
+                    kind: HirTypeDeclarationKind::Nominal(HirNominalDefinition {
+                        self_type,
+                        shape: HirNominalShape::Enum { variants },
+                    }),
+                },
+            );
+        }
         Ok(())
     }
 
@@ -779,6 +853,7 @@ impl<'a> TypeLowerer<'a> {
         let io_module = self.packages.module(self.packages.standard(), &io);
         let process = ModulePath::new("process")?;
         let async_module = ModulePath::new("async")?;
+        let sync = ModulePath::new("sync")?;
         let bytes_module = self
             .packages
             .module(self.packages.standard(), &bytes_module);
@@ -786,6 +861,7 @@ impl<'a> TypeLowerer<'a> {
         let async_module = self
             .packages
             .module(self.packages.standard(), &async_module);
+        let sync_module = self.packages.module(self.packages.standard(), &sync);
         let time = ModulePath::new("time")?;
         let time_module = self.packages.module(self.packages.standard(), &time);
         let env = ModulePath::new("env")?;
@@ -835,6 +911,14 @@ impl<'a> TypeLowerer<'a> {
                 matches!(
                     reference.entity(),
                     ResolvedEntity::Module(module) if module == async_module
+                )
+            })
+        });
+        let sync_referenced = sync_module.as_ref().is_some_and(|sync_module| {
+            self.resolved.references().any(|reference| {
+                matches!(
+                    reference.entity(),
+                    ResolvedEntity::Module(module) if module == sync_module
                 )
             })
         });
@@ -953,6 +1037,7 @@ impl<'a> TypeLowerer<'a> {
             && !console_referenced
             && !process_referenced
             && !async_referenced
+            && !sync_referenced
             && !time_referenced
             && !env_referenced
             && !math_referenced
@@ -1257,6 +1342,397 @@ impl<'a> TypeLowerer<'a> {
                 async_result,
                 2,
                 vec![(1, vec![async_iterator_bound])],
+            )?;
+        }
+
+        if sync_referenced {
+            let sync_module = sync_module
+                .as_ref()
+                .expect("sync reference implies a bootstrap sync module");
+            let generic_value = self.interner.generic_parameter(0)?;
+            let generic_error = self.interner.generic_parameter(1)?;
+            let sync_error = self.bootstrap_nominal_type(sync_module, "SyncError")?;
+            let barrier_role = self.bootstrap_nominal_type(sync_module, "BarrierRole")?;
+            let memory_order = self.bootstrap_nominal_type(sync_module, "MemoryOrder")?;
+            let mutex = self
+                .interner
+                .intrinsic(IntrinsicType::Mutex, vec![generic_value])?;
+            let mutex_guard = self
+                .interner
+                .intrinsic(IntrinsicType::MutexGuard, vec![generic_value])?;
+            let rw_lock = self
+                .interner
+                .intrinsic(IntrinsicType::RwLock, vec![generic_value])?;
+            let read_guard = self
+                .interner
+                .intrinsic(IntrinsicType::ReadGuard, vec![generic_value])?;
+            let write_guard = self
+                .interner
+                .intrinsic(IntrinsicType::WriteGuard, vec![generic_value])?;
+            let condition = self
+                .interner
+                .intrinsic(IntrinsicType::Condition, Vec::new())?;
+            let semaphore = self
+                .interner
+                .intrinsic(IntrinsicType::Semaphore, Vec::new())?;
+            let permit = self.interner.intrinsic(IntrinsicType::Permit, Vec::new())?;
+            let once = self
+                .interner
+                .intrinsic(IntrinsicType::Once, vec![generic_value, generic_error])?;
+            let barrier = self
+                .interner
+                .intrinsic(IntrinsicType::Barrier, Vec::new())?;
+            let atomic = self
+                .interner
+                .intrinsic(IntrinsicType::Atomic, vec![generic_value])?;
+            let ref_value = self
+                .interner
+                .intrinsic(IntrinsicType::Ref, vec![generic_value])?;
+            let compare_exchange_symbol = self
+                .resolved
+                .bootstrap_nominal(
+                    sync_module,
+                    &Name::new("CompareExchange").expect("sync nominal names are valid"),
+                )
+                .ok_or_else(|| HirError::TextInvariant {
+                    message: "sync CompareExchange nominal is not installed".into(),
+                })?;
+            let compare_exchange_declaration = self
+                .resolved
+                .symbol(compare_exchange_symbol)
+                .ok_or_else(|| HirError::TextInvariant {
+                    message: "sync CompareExchange symbol is not indexed".into(),
+                })?;
+            let compare_exchange = self.interner.nominal(
+                compare_exchange_declaration.identity().clone(),
+                vec![generic_value],
+            )?;
+            let sync_result =
+                |interner: &mut TypeInterner, value| interner.result(value, sync_error);
+            let mutex_result = sync_result(&mut self.interner, mutex)?;
+            let lock_result = sync_result(&mut self.interner, mutex_guard)?;
+            let rw_result = sync_result(&mut self.interner, rw_lock)?;
+            let read_result = sync_result(&mut self.interner, read_guard)?;
+            let write_result = sync_result(&mut self.interner, write_guard)?;
+            let condition_result = sync_result(&mut self.interner, condition)?;
+            let semaphore_result = sync_result(&mut self.interner, semaphore)?;
+            let barrier_result = sync_result(&mut self.interner, barrier)?;
+            let barrier_wait_result = sync_result(&mut self.interner, barrier_role)?;
+            let initializer_result = self.interner.result(generic_value, generic_error)?;
+            let initializer = self.interner.function(FunctionType::new(
+                true,
+                false,
+                Vec::new(),
+                None,
+                initializer_result,
+            ))?;
+            let once_init_result = self.interner.result(ref_value, generic_error)?;
+            let once_value = self.interner.option(ref_value)?;
+            let try_mutex = self.interner.option(mutex_guard)?;
+            let try_read = self.interner.option(read_guard)?;
+            let try_write = self.interner.option(write_guard)?;
+            let try_permit = self.interner.option(permit)?;
+            let send_bound = vec![(0, vec![self.prelude_trait_bound("Send")])];
+            let discard_bound = vec![(0, vec![self.prelude_trait_bound("Discard")])];
+            let atomic_bounds = vec![(
+                0,
+                vec![
+                    self.prelude_trait_bound("Copy"),
+                    self.prelude_trait_bound("Equatable"),
+                    self.prelude_trait_bound("Send"),
+                    self.prelude_trait_bound("Share"),
+                ],
+            )];
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncMutex,
+                vec![(generic_value, ParameterMode::Value, false)],
+                mutex_result,
+                1,
+                send_bound.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncMutexLock,
+                vec![(mutex, ParameterMode::Ref, true)],
+                lock_result,
+                1,
+                send_bound.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncMutexTryLock,
+                vec![(mutex, ParameterMode::Ref, true)],
+                try_mutex,
+                1,
+                send_bound.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncMutexGuardGet,
+                vec![(mutex_guard, ParameterMode::Ref, true)],
+                ref_value,
+                1,
+                discard_bound.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncMutexGuardGetMut,
+                vec![(mutex_guard, ParameterMode::Var, true)],
+                ref_value,
+                1,
+                discard_bound.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncMutexGuardUnlock,
+                vec![(mutex_guard, ParameterMode::Value, true)],
+                unit,
+                1,
+                Vec::new(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncRwLock,
+                vec![(generic_value, ParameterMode::Value, false)],
+                rw_result,
+                1,
+                send_bound.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncRwLockRead,
+                vec![(rw_lock, ParameterMode::Ref, true)],
+                read_result,
+                1,
+                send_bound.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncRwLockTryRead,
+                vec![(rw_lock, ParameterMode::Ref, true)],
+                try_read,
+                1,
+                send_bound.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncReadGuardGet,
+                vec![(read_guard, ParameterMode::Ref, true)],
+                ref_value,
+                1,
+                discard_bound.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncReadGuardUnlock,
+                vec![(read_guard, ParameterMode::Value, true)],
+                unit,
+                1,
+                Vec::new(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncRwLockWrite,
+                vec![(rw_lock, ParameterMode::Ref, true)],
+                write_result,
+                1,
+                send_bound.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncRwLockTryWrite,
+                vec![(rw_lock, ParameterMode::Ref, true)],
+                try_write,
+                1,
+                send_bound.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncWriteGuardGet,
+                vec![(write_guard, ParameterMode::Ref, true)],
+                ref_value,
+                1,
+                discard_bound.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncWriteGuardGetMut,
+                vec![(write_guard, ParameterMode::Var, true)],
+                ref_value,
+                1,
+                discard_bound.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncWriteGuardUnlock,
+                vec![(write_guard, ParameterMode::Value, true)],
+                unit,
+                1,
+                Vec::new(),
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::SyncCondition,
+                Vec::new(),
+                None,
+                condition_result,
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncConditionWait,
+                vec![(mutex_guard, ParameterMode::Var, true)],
+                mutex_guard,
+                1,
+                Vec::new(),
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::SyncConditionNotifyOne,
+                vec![(condition, ParameterMode::Ref, true)],
+                None,
+                unit,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::SyncConditionNotifyAll,
+                vec![(condition, ParameterMode::Ref, true)],
+                None,
+                unit,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::SyncSemaphore,
+                vec![(int, ParameterMode::Value, false)],
+                None,
+                semaphore_result,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::SyncSemaphoreAcquire,
+                vec![(semaphore, ParameterMode::Ref, true)],
+                None,
+                permit,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::SyncSemaphoreTryAcquire,
+                vec![(semaphore, ParameterMode::Ref, true)],
+                None,
+                try_permit,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::SyncPermitRelease,
+                vec![(permit, ParameterMode::Value, true)],
+                None,
+                unit,
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncOnce,
+                Vec::new(),
+                once,
+                2,
+                Vec::new(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncOnceGet,
+                vec![(once, ParameterMode::Ref, true)],
+                once_value,
+                2,
+                discard_bound.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncOnceGetOrInit,
+                vec![
+                    (once, ParameterMode::Ref, true),
+                    (initializer, ParameterMode::Value, false),
+                ],
+                once_init_result,
+                2,
+                discard_bound,
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncOnceIsReady,
+                vec![(once, ParameterMode::Ref, true)],
+                bool_type,
+                2,
+                Vec::new(),
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::SyncBarrier,
+                vec![(int, ParameterMode::Value, false)],
+                None,
+                barrier_result,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::SyncBarrierWait,
+                vec![(barrier, ParameterMode::Ref, true)],
+                None,
+                barrier_wait_result,
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncAtomic,
+                vec![(generic_value, ParameterMode::Value, false)],
+                atomic,
+                1,
+                atomic_bounds.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncAtomicLoad,
+                vec![
+                    (atomic, ParameterMode::Ref, true),
+                    (memory_order, ParameterMode::Value, false),
+                ],
+                generic_value,
+                1,
+                atomic_bounds.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncAtomicStore,
+                vec![
+                    (atomic, ParameterMode::Ref, true),
+                    (generic_value, ParameterMode::Value, false),
+                    (memory_order, ParameterMode::Value, false),
+                ],
+                unit,
+                1,
+                atomic_bounds.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncAtomicSwap,
+                vec![
+                    (atomic, ParameterMode::Ref, true),
+                    (generic_value, ParameterMode::Value, false),
+                    (memory_order, ParameterMode::Value, false),
+                ],
+                generic_value,
+                1,
+                atomic_bounds.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncAtomicCompareExchange,
+                vec![
+                    (atomic, ParameterMode::Ref, true),
+                    (generic_value, ParameterMode::Value, false),
+                    (generic_value, ParameterMode::Value, false),
+                    (memory_order, ParameterMode::Value, false),
+                    (memory_order, ParameterMode::Value, false),
+                ],
+                compare_exchange,
+                1,
+                atomic_bounds,
             )?;
         }
 
@@ -7699,6 +8175,17 @@ impl<'a> TypeLowerer<'a> {
                         | IntrinsicType::Pointer
                         | IntrinsicType::Join
                         | IntrinsicType::Group
+                        | IntrinsicType::Mutex
+                        | IntrinsicType::MutexGuard
+                        | IntrinsicType::RwLock
+                        | IntrinsicType::ReadGuard
+                        | IntrinsicType::WriteGuard
+                        | IntrinsicType::Condition
+                        | IntrinsicType::Semaphore
+                        | IntrinsicType::Permit
+                        | IntrinsicType::Once
+                        | IntrinsicType::Barrier
+                        | IntrinsicType::Atomic
                         | IntrinsicType::Waiter
                         | IntrinsicType::Completer
                         | IntrinsicType::AlreadyCompleted

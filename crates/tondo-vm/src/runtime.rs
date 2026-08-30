@@ -219,6 +219,17 @@ pub enum RuntimeHostValueKind {
     Completer,
     AlreadyCompleted,
     Group,
+    Mutex,
+    MutexGuard,
+    RwLock,
+    ReadGuard,
+    WriteGuard,
+    Condition,
+    Semaphore,
+    Permit,
+    Once,
+    Barrier,
+    Atomic,
 }
 
 /// Per-run counters useful for testing limits and collector behavior.

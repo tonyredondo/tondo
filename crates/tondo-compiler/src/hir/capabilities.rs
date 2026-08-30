@@ -647,6 +647,33 @@ fn intrinsic_node(
                 fixed(HirCapabilityStatus::Unsatisfied)
             }
         }
+        IntrinsicType::Mutex
+        | IntrinsicType::RwLock
+        | IntrinsicType::Once
+        | IntrinsicType::Atomic => same(),
+        IntrinsicType::Condition | IntrinsicType::Semaphore | IntrinsicType::Barrier => {
+            if matches!(
+                capability,
+                HirCapability::Copy
+                    | HirCapability::Discard
+                    | HirCapability::Send
+                    | HirCapability::Share
+            ) {
+                satisfied(Vec::new())
+            } else {
+                fixed(HirCapabilityStatus::Unsatisfied)
+            }
+        }
+        IntrinsicType::MutexGuard
+        | IntrinsicType::ReadGuard
+        | IntrinsicType::WriteGuard
+        | IntrinsicType::Permit => {
+            if matches!(capability, HirCapability::Discard | HirCapability::Send) {
+                satisfied(Vec::new())
+            } else {
+                fixed(HirCapabilityStatus::Unsatisfied)
+            }
+        }
         IntrinsicType::Waiter | IntrinsicType::Completer => {
             if capability == HirCapability::Send {
                 satisfied(Vec::new())

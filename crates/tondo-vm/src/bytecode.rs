@@ -235,6 +235,17 @@ pub enum BytecodeIntrinsicType {
     Pointer,
     Join,
     Group,
+    Mutex,
+    MutexGuard,
+    RwLock,
+    ReadGuard,
+    WriteGuard,
+    Condition,
+    Semaphore,
+    Permit,
+    Once,
+    Barrier,
+    Atomic,
     Waiter,
     Completer,
     AlreadyCompleted,
@@ -427,9 +438,19 @@ pub struct BytecodeTerminalContract {
 impl BytecodeIntrinsicType {
     pub const fn arity(self) -> usize {
         match self {
-            Self::Map | Self::Join | Self::Group | Self::Waiter | Self::Completer => 2,
+            Self::Map | Self::Join | Self::Group | Self::Once | Self::Waiter | Self::Completer => 2,
             Self::ProtoDescriptor | Self::ProtoReader | Self::ProtoWriter => 1,
-            Self::Array | Self::Set | Self::Range | Self::Ref | Self::Pointer => 1,
+            Self::Array
+            | Self::Set
+            | Self::Range
+            | Self::Ref
+            | Self::Pointer
+            | Self::Mutex
+            | Self::MutexGuard
+            | Self::RwLock
+            | Self::ReadGuard
+            | Self::WriteGuard
+            | Self::Atomic => 1,
             Self::Command
             | Self::Pipeline
             | Self::Bytes
@@ -467,6 +488,10 @@ impl BytecodeIntrinsicType {
             | Self::ProcessExitError
             | Self::Utf8Error
             | Self::AlreadyCompleted
+            | Self::Condition
+            | Self::Semaphore
+            | Self::Permit
+            | Self::Barrier
             | Self::NumericConversionError
             | Self::Duration
             | Self::Instant
@@ -539,6 +564,17 @@ impl BytecodeIntrinsicType {
             | Self::Ref
             | Self::Pointer
             | Self::Group
+            | Self::Mutex
+            | Self::MutexGuard
+            | Self::RwLock
+            | Self::ReadGuard
+            | Self::WriteGuard
+            | Self::Condition
+            | Self::Semaphore
+            | Self::Permit
+            | Self::Once
+            | Self::Barrier
+            | Self::Atomic
             | Self::Waiter
             | Self::Completer
             | Self::AlreadyCompleted

@@ -3862,7 +3862,18 @@ impl<'program, 'host> Engine<'program, 'host> {
                     | BytecodeIntrinsicType::ProtoUnknownPolicy
                     | BytecodeIntrinsicType::ProtoReader
                     | BytecodeIntrinsicType::ProtoWriter
-                    | BytecodeIntrinsicType::UnknownFields => {}
+                    | BytecodeIntrinsicType::UnknownFields
+                    | BytecodeIntrinsicType::Mutex
+                    | BytecodeIntrinsicType::MutexGuard
+                    | BytecodeIntrinsicType::RwLock
+                    | BytecodeIntrinsicType::ReadGuard
+                    | BytecodeIntrinsicType::WriteGuard
+                    | BytecodeIntrinsicType::Condition
+                    | BytecodeIntrinsicType::Semaphore
+                    | BytecodeIntrinsicType::Permit
+                    | BytecodeIntrinsicType::Once
+                    | BytecodeIntrinsicType::Barrier
+                    | BytecodeIntrinsicType::Atomic => {}
                     BytecodeIntrinsicType::ProcessHandle => {
                         let Value::Host(value) = value else {
                             return Err(VmError::invariant(
@@ -5868,6 +5879,17 @@ fn runtime_host_kind(constructor: BytecodeIntrinsicType) -> Option<RuntimeHostVa
         BytecodeIntrinsicType::ProtoWriter => RuntimeHostValueKind::ProtoWriter,
         BytecodeIntrinsicType::UnknownFields => RuntimeHostValueKind::UnknownFields,
         BytecodeIntrinsicType::Group => RuntimeHostValueKind::Group,
+        BytecodeIntrinsicType::Mutex => RuntimeHostValueKind::Mutex,
+        BytecodeIntrinsicType::MutexGuard => RuntimeHostValueKind::MutexGuard,
+        BytecodeIntrinsicType::RwLock => RuntimeHostValueKind::RwLock,
+        BytecodeIntrinsicType::ReadGuard => RuntimeHostValueKind::ReadGuard,
+        BytecodeIntrinsicType::WriteGuard => RuntimeHostValueKind::WriteGuard,
+        BytecodeIntrinsicType::Condition => RuntimeHostValueKind::Condition,
+        BytecodeIntrinsicType::Semaphore => RuntimeHostValueKind::Semaphore,
+        BytecodeIntrinsicType::Permit => RuntimeHostValueKind::Permit,
+        BytecodeIntrinsicType::Once => RuntimeHostValueKind::Once,
+        BytecodeIntrinsicType::Barrier => RuntimeHostValueKind::Barrier,
+        BytecodeIntrinsicType::Atomic => RuntimeHostValueKind::Atomic,
         BytecodeIntrinsicType::Array
         | BytecodeIntrinsicType::Map
         | BytecodeIntrinsicType::Set
@@ -11803,6 +11825,22 @@ impl Engine<'_, '_> {
                     engine.allocate(descriptor, HeapObject::Set(materialized.into()), &[])
                 })
             }
+            (
+                BytecodeTypeKind::Intrinsic {
+                    constructor: BytecodeIntrinsicType::Ref,
+                    arguments,
+                },
+                RuntimeValue::Ref(value),
+            ) => {
+                let [target] = arguments.as_slice() else {
+                    return Err(VmError::invariant("verified Ref type has the wrong arity"));
+                };
+                let value = value
+                    .map(|value| self.materialize_host_value(*target, *value))
+                    .transpose()?;
+                let roots = value.iter().cloned().collect::<Vec<_>>();
+                self.allocate(descriptor, HeapObject::Ref(value), &roots)
+            }
             (BytecodeTypeKind::Intrinsic { constructor, .. }, RuntimeValue::Host { kind, id })
                 if runtime_host_kind(constructor) == Some(kind) =>
             {
@@ -11986,6 +12024,7 @@ impl Engine<'_, '_> {
         let trace = self.heap.type_descriptor(descriptor)?.clone();
         let BytecodeTraceDescriptor::Variant {
             nominal: Some(traced_nominal),
+            arguments,
             variants,
             ..
         } = trace
@@ -12006,14 +12045,18 @@ impl Engine<'_, '_> {
             BytecodeVariantPayload::Unit if values.is_empty() => AggregatePayload::Unit,
             BytecodeVariantPayload::Tuple(types) if types.len() == values.len() => {
                 AggregatePayload::Tuple(
-                    self.materialize_host_values(types, values)?
+                    self.materialize_host_values_with_nominal_arguments(types, values, &arguments)?
                         .into_iter()
                         .map(Some)
                         .collect(),
                 )
             }
             BytecodeVariantPayload::Record(fields) if fields.len() == values.len() => {
-                AggregatePayload::Record(self.materialize_host_record_values(fields, values)?)
+                AggregatePayload::Record(
+                    self.materialize_host_record_values_with_nominal_arguments(
+                        fields, values, &arguments,
+                    )?,
+                )
             }
             _ => {
                 return Err(VmError::Host(
@@ -12089,6 +12132,71 @@ impl Engine<'_, '_> {
             }
             Ok(materialized)
         })
+    }
+
+    fn materialize_host_values_with_nominal_arguments(
+        &mut self,
+        types: &[BytecodeTypeId],
+        values: Vec<RuntimeValue>,
+        arguments: &[BytecodeTypeId],
+    ) -> Result<Vec<Value>, VmError> {
+        if types.len() != values.len() {
+            return Err(VmError::Host(
+                "bootstrap host result has the wrong aggregate arity".into(),
+            ));
+        }
+        self.with_temporary_roots(|engine| {
+            let mut materialized = Vec::with_capacity(values.len());
+            for (ty, value) in types.iter().copied().zip(values) {
+                let ty = engine.specialize_nominal_argument(ty, arguments)?;
+                let value = engine.materialize_host_value(ty, value)?;
+                engine.retain_temporary(&value);
+                materialized.push(value);
+            }
+            Ok(materialized)
+        })
+    }
+
+    fn materialize_host_record_values_with_nominal_arguments(
+        &mut self,
+        schema: &[crate::bytecode::BytecodeField],
+        values: Vec<RuntimeValue>,
+        arguments: &[BytecodeTypeId],
+    ) -> Result<Vec<(u32, Option<Value>)>, VmError> {
+        if schema.len() != values.len() {
+            return Err(VmError::Host(
+                "bootstrap host record values do not match its verified descriptor".into(),
+            ));
+        }
+        self.with_temporary_roots(|engine| {
+            let mut materialized = Vec::with_capacity(schema.len());
+            for (field, value) in schema.iter().zip(values) {
+                let ty = engine.specialize_nominal_argument(field.ty, arguments)?;
+                let value = engine.materialize_host_value(ty, value)?;
+                engine.retain_temporary(&value);
+                materialized.push((field.member, Some(value)));
+            }
+            Ok(materialized)
+        })
+    }
+
+    fn specialize_nominal_argument(
+        &self,
+        ty: BytecodeTypeId,
+        arguments: &[BytecodeTypeId],
+    ) -> Result<BytecodeTypeId, VmError> {
+        let kind = &self
+            .program
+            .ty(ty)
+            .ok_or_else(|| VmError::invariant("nominal payload type is missing"))?
+            .kind;
+        let BytecodeTypeKind::GenericParameter(position) = kind else {
+            return Ok(ty);
+        };
+        arguments
+            .get(*position as usize)
+            .copied()
+            .ok_or_else(|| VmError::invariant("nominal payload generic argument is missing"))
     }
 
     fn value_tag(&self, value: &Value) -> Result<BytecodeTag, VmError> {

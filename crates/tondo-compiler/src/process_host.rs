@@ -499,6 +499,46 @@ enum HostValue {
     },
     #[allow(dead_code)]
     UnknownFields(protobuf::UnknownFields),
+    // Synchronization values are intentionally kept in the hosted registry.
+    // The first implementation models ownership and linearization without
+    // parking the cooperative executor; the scheduler-backed bridge is added
+    // by STD-SYNC-HOST-001.
+    SyncMutex {
+        value: RuntimeValue,
+        locked: bool,
+    },
+    SyncMutexGuard {
+        owner: u64,
+    },
+    SyncRwLock {
+        value: RuntimeValue,
+        readers: usize,
+        writer: bool,
+    },
+    SyncReadGuard {
+        owner: u64,
+    },
+    SyncWriteGuard {
+        owner: u64,
+    },
+    SyncCondition,
+    SyncSemaphore {
+        capacity: usize,
+        permits: usize,
+    },
+    SyncPermit {
+        owner: u64,
+    },
+    SyncOnce {
+        value: Option<RuntimeValue>,
+    },
+    SyncBarrier {
+        parties: usize,
+        arrived: usize,
+    },
+    SyncAtomic {
+        value: RuntimeValue,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -873,6 +913,70 @@ impl BootstrapHost {
             .expect("host value identity space exhausted");
         self.values.insert(id, value);
         RuntimeValue::Host { kind, id }
+    }
+
+    fn sync_error(variant: u32) -> RuntimeValue {
+        RuntimeValue::Variant {
+            name: "SyncError".to_owned(),
+            variant,
+            values: Vec::new(),
+        }
+    }
+
+    fn sync_result_error(variant: u32) -> RuntimeValue {
+        RuntimeValue::ResultErr(Box::new(Self::sync_error(variant)))
+    }
+
+    fn sync_host_id(
+        &self,
+        value: &RuntimeValue,
+        expected: RuntimeHostValueKind,
+        label: &str,
+    ) -> Result<u64, VmError> {
+        let RuntimeValue::Host { kind, id } = value else {
+            return Err(VmError::Host(format!("{label} value is invalid")));
+        };
+        if *kind != expected || !self.values.contains_key(id) {
+            return Err(VmError::Host(format!("{label} token is stale or invalid")));
+        }
+        Ok(*id)
+    }
+
+    fn sync_memory_order(value: &RuntimeValue) -> Result<u8, VmError> {
+        let RuntimeValue::Variant {
+            name,
+            variant,
+            values,
+        } = value
+        else {
+            return Err(VmError::Host("MemoryOrder value is invalid".into()));
+        };
+        if name != "MemoryOrder" || !values.is_empty() || *variant > 4 {
+            return Err(VmError::Host("MemoryOrder value is invalid".into()));
+        }
+        Ok(*variant as u8)
+    }
+
+    fn sync_order_strength(order: u8) -> u8 {
+        match order {
+            0 => 0,     // Relaxed
+            1 | 2 => 1, // Acquire / Release
+            3 => 2,     // AcqRel
+            4 => 3,     // SeqCst
+            _ => u8::MAX,
+        }
+    }
+
+    fn sync_valid_load_order(order: u8) -> bool {
+        matches!(order, 0 | 1 | 4)
+    }
+
+    fn sync_valid_store_order(order: u8) -> bool {
+        matches!(order, 0 | 2 | 4)
+    }
+
+    fn sync_valid_cas_failure_order(order: u8) -> bool {
+        matches!(order, 0 | 1 | 4)
     }
 
     fn process_error(&mut self, message: impl Into<String>) -> RuntimeValue {
@@ -6404,6 +6508,518 @@ impl VmHost for BootstrapHost {
             ("std.process.ExitStatus.success", [receiver]) => {
                 Ok(RuntimeValue::Bool(self.status(receiver)?.success))
             }
+            ("intrinsic.sync.MemoryOrder.Relaxed", [])
+            | ("intrinsic.sync.MemoryOrder.Acquire", [])
+            | ("intrinsic.sync.MemoryOrder.Release", [])
+            | ("intrinsic.sync.MemoryOrder.AcqRel", [])
+            | ("intrinsic.sync.MemoryOrder.SeqCst", []) => {
+                let variant = match name {
+                    "intrinsic.sync.MemoryOrder.Relaxed" => 0,
+                    "intrinsic.sync.MemoryOrder.Acquire" => 1,
+                    "intrinsic.sync.MemoryOrder.Release" => 2,
+                    "intrinsic.sync.MemoryOrder.AcqRel" => 3,
+                    "intrinsic.sync.MemoryOrder.SeqCst" => 4,
+                    _ => unreachable!("memory order match is exhaustive"),
+                };
+                Ok(RuntimeValue::Variant {
+                    name: "MemoryOrder".to_owned(),
+                    variant,
+                    values: Vec::new(),
+                })
+            }
+            ("std.sync.mutex", [value]) => Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                RuntimeHostValueKind::Mutex,
+                HostValue::SyncMutex {
+                    value: value.clone(),
+                    locked: false,
+                },
+            )))),
+            ("std.sync.Mutex.lock", [mutex]) => {
+                let id = self.sync_host_id(mutex, RuntimeHostValueKind::Mutex, "Mutex")?;
+                let available = match self.values.get_mut(&id) {
+                    Some(HostValue::SyncMutex { locked, .. }) if !*locked => {
+                        *locked = true;
+                        true
+                    }
+                    Some(HostValue::SyncMutex { .. }) => false,
+                    _ => return Err(VmError::Host("Mutex token is stale or invalid".into())),
+                };
+                if !available {
+                    // The hosted bootstrap has no scheduler parking hook yet;
+                    // report contention without mutating the lock.
+                    return Ok(Self::sync_result_error(3));
+                }
+                let guard = self.allocate(
+                    RuntimeHostValueKind::MutexGuard,
+                    HostValue::SyncMutexGuard { owner: id },
+                );
+                Ok(RuntimeValue::ResultOk(Box::new(guard)))
+            }
+            ("std.sync.Mutex.tryLock", [mutex]) => {
+                let id = self.sync_host_id(mutex, RuntimeHostValueKind::Mutex, "Mutex")?;
+                let available = match self.values.get_mut(&id) {
+                    Some(HostValue::SyncMutex { locked, .. }) if !*locked => {
+                        *locked = true;
+                        true
+                    }
+                    Some(HostValue::SyncMutex { .. }) => false,
+                    _ => return Err(VmError::Host("Mutex token is stale or invalid".into())),
+                };
+                if !available {
+                    return Ok(RuntimeValue::OptionNone);
+                }
+                let guard = self.allocate(
+                    RuntimeHostValueKind::MutexGuard,
+                    HostValue::SyncMutexGuard { owner: id },
+                );
+                Ok(RuntimeValue::OptionSome(Box::new(guard)))
+            }
+            ("std.sync.MutexGuard.get", [guard]) | ("std.sync.MutexGuard.getMut", [guard]) => {
+                let guard_id =
+                    self.sync_host_id(guard, RuntimeHostValueKind::MutexGuard, "MutexGuard")?;
+                let owner = match self.values.get(&guard_id) {
+                    Some(HostValue::SyncMutexGuard { owner }) => *owner,
+                    _ => return Err(VmError::Host("MutexGuard token is stale".into())),
+                };
+                let value = match self.values.get(&owner) {
+                    Some(HostValue::SyncMutex {
+                        value,
+                        locked: true,
+                    }) => value.clone(),
+                    _ => return Err(VmError::Host("Mutex owner is stale or unlocked".into())),
+                };
+                Ok(RuntimeValue::Ref(Some(Box::new(value))))
+            }
+            ("std.sync.MutexGuard.unlock", [guard]) => {
+                let guard_id =
+                    self.sync_host_id(guard, RuntimeHostValueKind::MutexGuard, "MutexGuard")?;
+                let owner = match self.values.remove(&guard_id) {
+                    Some(HostValue::SyncMutexGuard { owner }) => owner,
+                    _ => return Err(VmError::Host("MutexGuard token is stale".into())),
+                };
+                match self.values.get_mut(&owner) {
+                    Some(HostValue::SyncMutex { locked, .. }) => *locked = false,
+                    _ => return Err(VmError::Host("Mutex owner is stale".into())),
+                }
+                Ok(RuntimeValue::Unit)
+            }
+            ("std.sync.rwLock", [value]) => Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                RuntimeHostValueKind::RwLock,
+                HostValue::SyncRwLock {
+                    value: value.clone(),
+                    readers: 0,
+                    writer: false,
+                },
+            )))),
+            ("std.sync.RwLock.read", [lock]) => {
+                let id = self.sync_host_id(lock, RuntimeHostValueKind::RwLock, "RwLock")?;
+                let available = match self.values.get_mut(&id) {
+                    Some(HostValue::SyncRwLock {
+                        readers, writer, ..
+                    }) if !*writer => {
+                        *readers = readers.saturating_add(1);
+                        true
+                    }
+                    Some(HostValue::SyncRwLock { .. }) => false,
+                    _ => return Err(VmError::Host("RwLock token is stale or invalid".into())),
+                };
+                if !available {
+                    return Ok(Self::sync_result_error(2));
+                }
+                let guard = self.allocate(
+                    RuntimeHostValueKind::ReadGuard,
+                    HostValue::SyncReadGuard { owner: id },
+                );
+                Ok(RuntimeValue::ResultOk(Box::new(guard)))
+            }
+            ("std.sync.RwLock.tryRead", [lock]) => {
+                let id = self.sync_host_id(lock, RuntimeHostValueKind::RwLock, "RwLock")?;
+                let available = match self.values.get_mut(&id) {
+                    Some(HostValue::SyncRwLock {
+                        readers, writer, ..
+                    }) if !*writer => {
+                        *readers = readers.saturating_add(1);
+                        true
+                    }
+                    Some(HostValue::SyncRwLock { .. }) => false,
+                    _ => return Err(VmError::Host("RwLock token is stale or invalid".into())),
+                };
+                if !available {
+                    return Ok(RuntimeValue::OptionNone);
+                }
+                let guard = self.allocate(
+                    RuntimeHostValueKind::ReadGuard,
+                    HostValue::SyncReadGuard { owner: id },
+                );
+                Ok(RuntimeValue::OptionSome(Box::new(guard)))
+            }
+            ("std.sync.RwLock.write", [lock]) => {
+                let id = self.sync_host_id(lock, RuntimeHostValueKind::RwLock, "RwLock")?;
+                let available = match self.values.get_mut(&id) {
+                    Some(HostValue::SyncRwLock {
+                        readers, writer, ..
+                    }) if !*writer && *readers == 0 => {
+                        *writer = true;
+                        true
+                    }
+                    Some(HostValue::SyncRwLock { .. }) => false,
+                    _ => return Err(VmError::Host("RwLock token is stale or invalid".into())),
+                };
+                if !available {
+                    return Ok(Self::sync_result_error(2));
+                }
+                let guard = self.allocate(
+                    RuntimeHostValueKind::WriteGuard,
+                    HostValue::SyncWriteGuard { owner: id },
+                );
+                Ok(RuntimeValue::ResultOk(Box::new(guard)))
+            }
+            ("std.sync.RwLock.tryWrite", [lock]) => {
+                let id = self.sync_host_id(lock, RuntimeHostValueKind::RwLock, "RwLock")?;
+                let available = match self.values.get_mut(&id) {
+                    Some(HostValue::SyncRwLock {
+                        readers, writer, ..
+                    }) if !*writer && *readers == 0 => {
+                        *writer = true;
+                        true
+                    }
+                    Some(HostValue::SyncRwLock { .. }) => false,
+                    _ => return Err(VmError::Host("RwLock token is stale or invalid".into())),
+                };
+                if !available {
+                    return Ok(RuntimeValue::OptionNone);
+                }
+                let guard = self.allocate(
+                    RuntimeHostValueKind::WriteGuard,
+                    HostValue::SyncWriteGuard { owner: id },
+                );
+                Ok(RuntimeValue::OptionSome(Box::new(guard)))
+            }
+            ("std.sync.ReadGuard.get", [guard])
+            | ("std.sync.WriteGuard.get", [guard])
+            | ("std.sync.WriteGuard.getMut", [guard]) => {
+                let (owner, expected_kind) = match guard {
+                    RuntimeValue::Host {
+                        kind: RuntimeHostValueKind::ReadGuard,
+                        ..
+                    } => (
+                        self.sync_host_id(guard, RuntimeHostValueKind::ReadGuard, "ReadGuard")?,
+                        RuntimeHostValueKind::ReadGuard,
+                    ),
+                    RuntimeValue::Host {
+                        kind: RuntimeHostValueKind::WriteGuard,
+                        ..
+                    } => (
+                        self.sync_host_id(guard, RuntimeHostValueKind::WriteGuard, "WriteGuard")?,
+                        RuntimeHostValueKind::WriteGuard,
+                    ),
+                    _ => return Err(VmError::Host("read/write guard value is invalid".into())),
+                };
+                let owner = match self.values.get(&owner) {
+                    Some(HostValue::SyncReadGuard { owner })
+                        if expected_kind == RuntimeHostValueKind::ReadGuard =>
+                    {
+                        *owner
+                    }
+                    Some(HostValue::SyncWriteGuard { owner })
+                        if expected_kind == RuntimeHostValueKind::WriteGuard =>
+                    {
+                        *owner
+                    }
+                    _ => return Err(VmError::Host("read/write guard token is stale".into())),
+                };
+                let value = match self.values.get(&owner) {
+                    Some(HostValue::SyncRwLock {
+                        value,
+                        readers,
+                        writer,
+                    }) if (*writer && expected_kind == RuntimeHostValueKind::WriteGuard)
+                        || (*readers > 0 && expected_kind == RuntimeHostValueKind::ReadGuard) =>
+                    {
+                        value.clone()
+                    }
+                    _ => return Err(VmError::Host("RwLock owner is stale or unlocked".into())),
+                };
+                Ok(RuntimeValue::Ref(Some(Box::new(value))))
+            }
+            ("std.sync.ReadGuard.unlock", [guard]) => {
+                let guard_id =
+                    self.sync_host_id(guard, RuntimeHostValueKind::ReadGuard, "ReadGuard")?;
+                let owner = match self.values.remove(&guard_id) {
+                    Some(HostValue::SyncReadGuard { owner }) => owner,
+                    _ => return Err(VmError::Host("ReadGuard token is stale".into())),
+                };
+                match self.values.get_mut(&owner) {
+                    Some(HostValue::SyncRwLock { readers, .. }) if *readers > 0 => *readers -= 1,
+                    _ => return Err(VmError::Host("RwLock owner is stale".into())),
+                }
+                Ok(RuntimeValue::Unit)
+            }
+            ("std.sync.WriteGuard.unlock", [guard]) => {
+                let guard_id =
+                    self.sync_host_id(guard, RuntimeHostValueKind::WriteGuard, "WriteGuard")?;
+                let owner = match self.values.remove(&guard_id) {
+                    Some(HostValue::SyncWriteGuard { owner }) => owner,
+                    _ => return Err(VmError::Host("WriteGuard token is stale".into())),
+                };
+                match self.values.get_mut(&owner) {
+                    Some(HostValue::SyncRwLock { writer, .. }) if *writer => *writer = false,
+                    _ => return Err(VmError::Host("RwLock owner is stale".into())),
+                }
+                Ok(RuntimeValue::Unit)
+            }
+            ("std.sync.condition", []) => Ok(RuntimeValue::ResultOk(Box::new(
+                self.allocate(RuntimeHostValueKind::Condition, HostValue::SyncCondition),
+            ))),
+            ("std.sync.Condition.wait", [condition, guard]) => {
+                self.sync_host_id(condition, RuntimeHostValueKind::Condition, "Condition")?;
+                self.sync_host_id(guard, RuntimeHostValueKind::MutexGuard, "MutexGuard")?;
+                // A real wait atomically parks and re-acquires the mutex. The
+                // hosted preview has no scheduler hook, so it preserves the
+                // guard and returns immediately without losing ownership.
+                Ok(RuntimeValue::ResultOk(Box::new(guard.clone())))
+            }
+            ("std.sync.Condition.notifyOne", [condition])
+            | ("std.sync.Condition.notifyAll", [condition]) => {
+                self.sync_host_id(condition, RuntimeHostValueKind::Condition, "Condition")?;
+                Ok(RuntimeValue::Unit)
+            }
+            ("std.sync.semaphore", [RuntimeValue::Integer(capacity)]) => {
+                let Ok(capacity) = usize::try_from(*capacity) else {
+                    return Ok(Self::sync_result_error(0));
+                };
+                if capacity == 0 {
+                    return Ok(Self::sync_result_error(0));
+                }
+                if u64::try_from(capacity).is_err() || capacity as u64 > self.max_bytes {
+                    return Ok(Self::sync_result_error(2));
+                }
+                Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                    RuntimeHostValueKind::Semaphore,
+                    HostValue::SyncSemaphore {
+                        capacity,
+                        permits: capacity,
+                    },
+                ))))
+            }
+            ("std.sync.Semaphore.acquire", [semaphore]) => {
+                let id =
+                    self.sync_host_id(semaphore, RuntimeHostValueKind::Semaphore, "Semaphore")?;
+                let available = match self.values.get_mut(&id) {
+                    Some(HostValue::SyncSemaphore { permits, .. }) if *permits > 0 => {
+                        *permits -= 1;
+                        true
+                    }
+                    Some(HostValue::SyncSemaphore { .. }) => false,
+                    _ => return Err(VmError::Host("Semaphore token is stale or invalid".into())),
+                };
+                if !available {
+                    return Err(VmError::Host(
+                        "Semaphore.acquire requires scheduler parking under contention".into(),
+                    ));
+                }
+                let permit = self.allocate(
+                    RuntimeHostValueKind::Permit,
+                    HostValue::SyncPermit { owner: id },
+                );
+                Ok(permit)
+            }
+            ("std.sync.Semaphore.tryAcquire", [semaphore]) => {
+                let id =
+                    self.sync_host_id(semaphore, RuntimeHostValueKind::Semaphore, "Semaphore")?;
+                let available = match self.values.get_mut(&id) {
+                    Some(HostValue::SyncSemaphore { permits, .. }) if *permits > 0 => {
+                        *permits -= 1;
+                        true
+                    }
+                    Some(HostValue::SyncSemaphore { .. }) => false,
+                    _ => return Err(VmError::Host("Semaphore token is stale or invalid".into())),
+                };
+                if !available {
+                    return Ok(RuntimeValue::OptionNone);
+                }
+                let permit = self.allocate(
+                    RuntimeHostValueKind::Permit,
+                    HostValue::SyncPermit { owner: id },
+                );
+                Ok(RuntimeValue::OptionSome(Box::new(permit)))
+            }
+            ("std.sync.Permit.release", [permit]) => {
+                let permit_id =
+                    self.sync_host_id(permit, RuntimeHostValueKind::Permit, "Permit")?;
+                let owner = match self.values.remove(&permit_id) {
+                    Some(HostValue::SyncPermit { owner }) => owner,
+                    _ => return Err(VmError::Host("Permit token is stale".into())),
+                };
+                match self.values.get_mut(&owner) {
+                    Some(HostValue::SyncSemaphore { capacity, permits })
+                        if *permits < *capacity =>
+                    {
+                        *permits += 1
+                    }
+                    _ => return Err(VmError::Host("Semaphore owner is stale".into())),
+                }
+                Ok(RuntimeValue::Unit)
+            }
+            ("std.sync.once", []) => Ok(self.allocate(
+                RuntimeHostValueKind::Once,
+                HostValue::SyncOnce { value: None },
+            )),
+            ("std.sync.Once.get", [once]) => {
+                let id = self.sync_host_id(once, RuntimeHostValueKind::Once, "Once")?;
+                let value = match self.values.get(&id) {
+                    Some(HostValue::SyncOnce { value }) => value.clone(),
+                    _ => return Err(VmError::Host("Once token is stale or invalid".into())),
+                };
+                Ok(value.map_or(RuntimeValue::OptionNone, |value| {
+                    RuntimeValue::OptionSome(Box::new(RuntimeValue::Ref(Some(Box::new(value)))))
+                }))
+            }
+            ("std.sync.Once.getOrInit", [once, _initializer]) => {
+                let id = self.sync_host_id(once, RuntimeHostValueKind::Once, "Once")?;
+                let value = match self.values.get(&id) {
+                    Some(HostValue::SyncOnce { value }) => value.clone(),
+                    _ => return Err(VmError::Host("Once token is stale or invalid".into())),
+                };
+                if let Some(value) = value {
+                    return Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Ref(Some(
+                        Box::new(value),
+                    )))));
+                }
+                // Calling a Tondo initializer requires the VM continuation;
+                // this host entry point deliberately refuses to execute an
+                // opaque closure and leaves the scheduler bridge explicit.
+                Ok(Self::sync_result_error(4))
+            }
+            ("std.sync.Once.isReady", [once]) => {
+                let id = self.sync_host_id(once, RuntimeHostValueKind::Once, "Once")?;
+                match self.values.get(&id) {
+                    Some(HostValue::SyncOnce { value }) => Ok(RuntimeValue::Bool(value.is_some())),
+                    _ => Err(VmError::Host("Once token is stale or invalid".into())),
+                }
+            }
+            ("std.sync.barrier", [RuntimeValue::Integer(parties)]) => {
+                let Ok(parties) = usize::try_from(*parties) else {
+                    return Ok(Self::sync_result_error(1));
+                };
+                if parties == 0 {
+                    return Ok(Self::sync_result_error(1));
+                }
+                if u64::try_from(parties).is_err() || parties as u64 > self.max_bytes {
+                    return Ok(Self::sync_result_error(2));
+                }
+                Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                    RuntimeHostValueKind::Barrier,
+                    HostValue::SyncBarrier {
+                        parties,
+                        arrived: 0,
+                    },
+                ))))
+            }
+            ("std.sync.Barrier.wait", [barrier]) => {
+                let id = self.sync_host_id(barrier, RuntimeHostValueKind::Barrier, "Barrier")?;
+                let role = match self.values.get_mut(&id) {
+                    Some(HostValue::SyncBarrier { parties: 1, .. }) => 0,
+                    Some(HostValue::SyncBarrier { parties, arrived }) => {
+                        *arrived = arrived.saturating_add(1);
+                        if *arrived >= *parties {
+                            *arrived = 0;
+                            0
+                        } else {
+                            return Ok(Self::sync_result_error(2));
+                        }
+                    }
+                    _ => return Err(VmError::Host("Barrier token is stale or invalid".into())),
+                };
+                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Variant {
+                    name: "BarrierRole".to_owned(),
+                    variant: role,
+                    values: Vec::new(),
+                })))
+            }
+            ("std.sync.atomic", [value]) => Ok(self.allocate(
+                RuntimeHostValueKind::Atomic,
+                HostValue::SyncAtomic {
+                    value: value.clone(),
+                },
+            )),
+            ("std.sync.Atomic.load", [atomic, order]) => {
+                let order = Self::sync_memory_order(order)?;
+                if !Self::sync_valid_load_order(order) {
+                    return Err(VmError::Host(
+                        "Atomic.load requires Relaxed, Acquire, or SeqCst".into(),
+                    ));
+                }
+                let id = self.sync_host_id(atomic, RuntimeHostValueKind::Atomic, "Atomic")?;
+                match self.values.get(&id) {
+                    Some(HostValue::SyncAtomic { value }) => Ok(value.clone()),
+                    _ => Err(VmError::Host("Atomic token is stale or invalid".into())),
+                }
+            }
+            ("std.sync.Atomic.store", [atomic, value, order]) => {
+                let order = Self::sync_memory_order(order)?;
+                if !Self::sync_valid_store_order(order) {
+                    return Err(VmError::Host(
+                        "Atomic.store requires Relaxed, Release, or SeqCst".into(),
+                    ));
+                }
+                let id = self.sync_host_id(atomic, RuntimeHostValueKind::Atomic, "Atomic")?;
+                match self.values.get_mut(&id) {
+                    Some(HostValue::SyncAtomic { value: current }) => *current = value.clone(),
+                    _ => return Err(VmError::Host("Atomic token is stale or invalid".into())),
+                }
+                Ok(RuntimeValue::Unit)
+            }
+            ("std.sync.Atomic.swap", [atomic, value, order]) => {
+                let order = Self::sync_memory_order(order)?;
+                if order > 4 {
+                    return Err(VmError::Host(
+                        "Atomic.swap has an invalid MemoryOrder".into(),
+                    ));
+                }
+                let id = self.sync_host_id(atomic, RuntimeHostValueKind::Atomic, "Atomic")?;
+                let previous = match self.values.get_mut(&id) {
+                    Some(HostValue::SyncAtomic { value: current }) => {
+                        let previous = current.clone();
+                        *current = value.clone();
+                        previous
+                    }
+                    _ => return Err(VmError::Host("Atomic token is stale or invalid".into())),
+                };
+                Ok(previous)
+            }
+            ("std.sync.Atomic.compareExchange", [atomic, expected, desired, success, failure]) => {
+                let success = Self::sync_memory_order(success)?;
+                let failure = Self::sync_memory_order(failure)?;
+                if !Self::sync_valid_cas_failure_order(failure)
+                    || Self::sync_order_strength(failure) > Self::sync_order_strength(success)
+                {
+                    return Err(VmError::Host(
+                        "Atomic.compareExchange has incompatible memory orders".into(),
+                    ));
+                }
+                let id = self.sync_host_id(atomic, RuntimeHostValueKind::Atomic, "Atomic")?;
+                let previous = match self.values.get_mut(&id) {
+                    Some(HostValue::SyncAtomic { value: current }) => {
+                        let previous = current.clone();
+                        if current == expected {
+                            *current = desired.clone();
+                        }
+                        previous
+                    }
+                    _ => return Err(VmError::Host("Atomic token is stale or invalid".into())),
+                };
+                let (variant, value) = if previous == *expected {
+                    (0, previous)
+                } else {
+                    (1, previous)
+                };
+                Ok(RuntimeValue::Variant {
+                    name: "CompareExchange".to_owned(),
+                    variant,
+                    values: vec![value],
+                })
+            }
             ("std.console.print", _) => Err(VmError::Host(
                 "std.console.print received an invalid bootstrap argument list".into(),
             )),
@@ -6455,7 +7071,21 @@ impl VmHost for BootstrapHost {
                 | "std.protobuf.ProtoWriter.toWriter"
                 | "std.protobuf.ProtoWriter.write"
                 | "std.protobuf.ProtoWriter.finish"
-        ) {
+                | "std.sync.Mutex.lock"
+                | "std.sync.RwLock.read"
+                | "std.sync.RwLock.write"
+                | "std.sync.Condition.wait"
+                | "std.sync.Semaphore.acquire"
+                | "std.sync.Once.getOrInit"
+                | "std.sync.Barrier.wait"
+        ) || name.starts_with("std.sync.Mutex.lock")
+            || name.starts_with("std.sync.RwLock.read")
+            || name.starts_with("std.sync.RwLock.write")
+            || name.starts_with("std.sync.Condition.wait")
+            || name.starts_with("std.sync.Semaphore.acquire")
+            || name.starts_with("std.sync.Once.getOrInit")
+            || name.starts_with("std.sync.Barrier.wait")
+        {
             let call = self.next_job;
             self.next_job = self
                 .next_job
@@ -6682,23 +7312,53 @@ impl VmHost for BootstrapHost {
     }
 
     fn cleanup(&mut self, value: &RuntimeValue) -> Result<(), VmError> {
-        let RuntimeValue::Host {
-            kind:
-                kind @ (RuntimeHostValueKind::ProcessHandle
-                | RuntimeHostValueKind::Timer
-                | RuntimeHostValueKind::Reader
-                | RuntimeHostValueKind::Writer
-                | RuntimeHostValueKind::File
-                | RuntimeHostValueKind::Directory),
-            id,
-        } = value
-        else {
+        let RuntimeValue::Host { kind, id } = value else {
             return Ok(());
         };
-        if matches!(kind, RuntimeHostValueKind::Timer) && self.values.remove(id).is_some() {
-            self.release_time_resource();
-        } else {
-            self.values.remove(id);
+        match kind {
+            RuntimeHostValueKind::ProcessHandle
+            | RuntimeHostValueKind::Reader
+            | RuntimeHostValueKind::Writer
+            | RuntimeHostValueKind::File
+            | RuntimeHostValueKind::Directory => {
+                self.values.remove(id);
+            }
+            RuntimeHostValueKind::Timer => {
+                if self.values.remove(id).is_some() {
+                    self.release_time_resource();
+                }
+            }
+            RuntimeHostValueKind::MutexGuard => {
+                if let Some(HostValue::SyncMutexGuard { owner }) = self.values.remove(id)
+                    && let Some(HostValue::SyncMutex { locked, .. }) = self.values.get_mut(&owner)
+                {
+                    *locked = false;
+                }
+            }
+            RuntimeHostValueKind::ReadGuard => {
+                if let Some(HostValue::SyncReadGuard { owner }) = self.values.remove(id)
+                    && let Some(HostValue::SyncRwLock { readers, .. }) = self.values.get_mut(&owner)
+                {
+                    *readers = readers.saturating_sub(1);
+                }
+            }
+            RuntimeHostValueKind::WriteGuard => {
+                if let Some(HostValue::SyncWriteGuard { owner }) = self.values.remove(id)
+                    && let Some(HostValue::SyncRwLock { writer, .. }) = self.values.get_mut(&owner)
+                {
+                    *writer = false;
+                }
+            }
+            RuntimeHostValueKind::Permit => {
+                if let Some(HostValue::SyncPermit { owner }) = self.values.remove(id)
+                    && let Some(HostValue::SyncSemaphore { capacity, permits }) =
+                        self.values.get_mut(&owner)
+                    && *permits < *capacity
+                {
+                    *permits += 1;
+                }
+            }
+            _ => {}
         }
         Ok(())
     }
@@ -8015,6 +8675,197 @@ mod tests {
             panic!("expected successful process result");
         };
         *value
+    }
+
+    fn sync_error(value: RuntimeValue, variant: u32) {
+        assert!(matches!(
+            value,
+            RuntimeValue::ResultErr(error)
+                if matches!(
+                    error.as_ref(),
+                    RuntimeValue::Variant { name, variant: actual, values }
+                        if name == "SyncError" && *actual == variant && values.is_empty()
+                )
+        ));
+    }
+
+    #[test]
+    fn sync_mutex_guards_are_affine_and_cleanup_releases_once() {
+        let mut host = BootstrapHost::default();
+        let mutex = ok(host
+            .invoke("std.sync.mutex", &[RuntimeValue::Integer(7)])
+            .unwrap());
+        let guard = ok(host
+            .invoke("std.sync.Mutex.lock", std::slice::from_ref(&mutex))
+            .unwrap());
+        assert_eq!(
+            host.invoke("std.sync.MutexGuard.get", std::slice::from_ref(&guard))
+                .unwrap(),
+            RuntimeValue::Ref(Some(Box::new(RuntimeValue::Integer(7))))
+        );
+        assert!(matches!(
+            host.invoke("std.sync.Mutex.tryLock", std::slice::from_ref(&mutex))
+                .unwrap(),
+            RuntimeValue::OptionNone
+        ));
+        host.cleanup(&guard).unwrap();
+        let reacquired = host
+            .invoke("std.sync.Mutex.tryLock", std::slice::from_ref(&mutex))
+            .unwrap();
+        let reacquired = match reacquired {
+            RuntimeValue::OptionSome(value) => *value,
+            other => panic!("cleanup must release mutex, got {other:?}"),
+        };
+        host.invoke("std.sync.MutexGuard.unlock", &[reacquired])
+            .unwrap();
+    }
+
+    #[test]
+    fn sync_rwlock_semaphore_and_barrier_validate_state_and_limits() {
+        let mut host = BootstrapHost::default();
+        let lock = ok(host
+            .invoke("std.sync.rwLock", &[RuntimeValue::String("value".into())])
+            .unwrap());
+        let reader = ok(host
+            .invoke("std.sync.RwLock.read", std::slice::from_ref(&lock))
+            .unwrap());
+        assert!(matches!(
+            host.invoke("std.sync.RwLock.tryWrite", std::slice::from_ref(&lock))
+                .unwrap(),
+            RuntimeValue::OptionNone
+        ));
+        host.invoke("std.sync.ReadGuard.unlock", &[reader]).unwrap();
+        let writer = ok(host
+            .invoke("std.sync.RwLock.write", std::slice::from_ref(&lock))
+            .unwrap());
+        sync_error(
+            host.invoke("std.sync.RwLock.read", std::slice::from_ref(&lock))
+                .unwrap(),
+            2,
+        );
+        host.invoke("std.sync.WriteGuard.unlock", &[writer])
+            .unwrap();
+
+        sync_error(
+            host.invoke("std.sync.semaphore", &[RuntimeValue::Integer(0)])
+                .unwrap(),
+            0,
+        );
+        let semaphore = ok(host
+            .invoke("std.sync.semaphore", &[RuntimeValue::Integer(1)])
+            .unwrap());
+        let permit = host
+            .invoke(
+                "std.sync.Semaphore.acquire",
+                std::slice::from_ref(&semaphore),
+            )
+            .unwrap();
+        assert!(matches!(
+            host.invoke(
+                "std.sync.Semaphore.tryAcquire",
+                std::slice::from_ref(&semaphore)
+            )
+            .unwrap(),
+            RuntimeValue::OptionNone
+        ));
+        host.invoke("std.sync.Permit.release", &[permit]).unwrap();
+
+        sync_error(
+            host.invoke("std.sync.barrier", &[RuntimeValue::Integer(-1)])
+                .unwrap(),
+            1,
+        );
+        let barrier = ok(host
+            .invoke("std.sync.barrier", &[RuntimeValue::Integer(1)])
+            .unwrap());
+        assert!(matches!(
+            ok(host
+                .invoke("std.sync.Barrier.wait", std::slice::from_ref(&barrier))
+                .unwrap()),
+            RuntimeValue::Variant { name, variant: 0, values } if name == "BarrierRole" && values.is_empty()
+        ));
+    }
+
+    #[test]
+    fn sync_once_and_atomic_operations_are_deterministic_and_validate_orders() {
+        let mut host = BootstrapHost::default();
+        let once = host.invoke("std.sync.once", &[]).unwrap();
+        assert_eq!(
+            host.invoke("std.sync.Once.isReady", std::slice::from_ref(&once))
+                .unwrap(),
+            RuntimeValue::Bool(false)
+        );
+        assert!(matches!(
+            host.invoke("std.sync.Once.get", std::slice::from_ref(&once))
+                .unwrap(),
+            RuntimeValue::OptionNone
+        ));
+        sync_error(
+            host.invoke(
+                "std.sync.Once.getOrInit",
+                &[
+                    once.clone(),
+                    RuntimeValue::Function {
+                        name: "init".into(),
+                        type_arguments: Vec::new(),
+                    },
+                ],
+            )
+            .unwrap(),
+            4,
+        );
+
+        let relaxed = host
+            .invoke("intrinsic.sync.MemoryOrder.Relaxed", &[])
+            .unwrap();
+        let acquire = host
+            .invoke("intrinsic.sync.MemoryOrder.Acquire", &[])
+            .unwrap();
+        let release = host
+            .invoke("intrinsic.sync.MemoryOrder.Release", &[])
+            .unwrap();
+        let atomic = host
+            .invoke("std.sync.atomic", &[RuntimeValue::Integer(1)])
+            .unwrap();
+        assert_eq!(
+            host.invoke("std.sync.Atomic.load", &[atomic.clone(), relaxed.clone()])
+                .unwrap(),
+            RuntimeValue::Integer(1)
+        );
+        host.invoke(
+            "std.sync.Atomic.store",
+            &[atomic.clone(), RuntimeValue::Integer(2), release.clone()],
+        )
+        .unwrap();
+        assert_eq!(
+            host.invoke(
+                "std.sync.Atomic.swap",
+                &[atomic.clone(), RuntimeValue::Integer(3), acquire.clone()]
+            )
+            .unwrap(),
+            RuntimeValue::Integer(2)
+        );
+        assert!(matches!(
+            host.invoke(
+                "std.sync.Atomic.compareExchange",
+                &[
+                    atomic.clone(),
+                    RuntimeValue::Integer(3),
+                    RuntimeValue::Integer(4),
+                    acquire.clone(),
+                    acquire.clone(),
+                ],
+            )
+            .unwrap(),
+            RuntimeValue::Variant { name, variant: 0, values } if name == "CompareExchange" && values == vec![RuntimeValue::Integer(3)]
+        ));
+        let invalid_order = host
+            .invoke("intrinsic.sync.MemoryOrder.Release", &[])
+            .unwrap();
+        assert!(
+            host.invoke("std.sync.Atomic.load", &[atomic, invalid_order],)
+                .is_err()
+        );
     }
 
     fn json_limits(host: &mut BootstrapHost) -> RuntimeValue {

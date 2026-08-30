@@ -872,6 +872,17 @@ impl<'a> ExpressionChecker<'a> {
                         | IntrinsicType::Pointer
                         | IntrinsicType::Join
                         | IntrinsicType::Group
+                        | IntrinsicType::Mutex
+                        | IntrinsicType::MutexGuard
+                        | IntrinsicType::RwLock
+                        | IntrinsicType::ReadGuard
+                        | IntrinsicType::WriteGuard
+                        | IntrinsicType::Condition
+                        | IntrinsicType::Semaphore
+                        | IntrinsicType::Permit
+                        | IntrinsicType::Once
+                        | IntrinsicType::Barrier
+                        | IntrinsicType::Atomic
                         | IntrinsicType::Waiter
                         | IntrinsicType::Completer
                         | IntrinsicType::AlreadyCompleted
@@ -14817,6 +14828,11 @@ impl<'a> ExpressionChecker<'a> {
             {
                 (module_token, function_token, 19_u8)
             }
+            [module_token, type_token, function_token]
+                if type_token.token().normalized_identifier() == Some("MemoryOrder") =>
+            {
+                (module_token, function_token, 20_u8)
+            }
             _ => return Ok(None),
         };
         let Some(module_reference) = self.resolved.reference(file, module_token.range()) else {
@@ -14993,6 +15009,15 @@ impl<'a> ExpressionChecker<'a> {
                 ("protobuf", Some("Discard")) => HirBootstrapHostFunction::ProtobufUnknownDiscard,
                 _ => return Ok(None),
             }
+        } else if static_type == 20 {
+            match (module.path().as_str(), function_name) {
+                ("sync", Some("Relaxed")) => HirBootstrapHostFunction::SyncMemoryOrderRelaxed,
+                ("sync", Some("Acquire")) => HirBootstrapHostFunction::SyncMemoryOrderAcquire,
+                ("sync", Some("Release")) => HirBootstrapHostFunction::SyncMemoryOrderRelease,
+                ("sync", Some("AcqRel")) => HirBootstrapHostFunction::SyncMemoryOrderAcqRel,
+                ("sync", Some("SeqCst")) => HirBootstrapHostFunction::SyncMemoryOrderSeqCst,
+                _ => return Ok(None),
+            }
         } else {
             match (module.path().as_str(), function_name) {
                 ("console", Some("print")) => HirBootstrapHostFunction::ConsolePrint,
@@ -15085,6 +15110,13 @@ impl<'a> ExpressionChecker<'a> {
                 }
                 ("async", Some("oneshot")) => HirBootstrapHostFunction::AsyncOneshot,
                 ("async", Some("group")) => HirBootstrapHostFunction::AsyncGroup,
+                ("sync", Some("mutex")) => HirBootstrapHostFunction::SyncMutex,
+                ("sync", Some("rwLock")) => HirBootstrapHostFunction::SyncRwLock,
+                ("sync", Some("condition")) => HirBootstrapHostFunction::SyncCondition,
+                ("sync", Some("semaphore")) => HirBootstrapHostFunction::SyncSemaphore,
+                ("sync", Some("once")) => HirBootstrapHostFunction::SyncOnce,
+                ("sync", Some("barrier")) => HirBootstrapHostFunction::SyncBarrier,
+                ("sync", Some("atomic")) => HirBootstrapHostFunction::SyncAtomic,
                 ("iter", Some("map")) => HirBootstrapHostFunction::IterMap,
                 ("iter", Some("filter")) => HirBootstrapHostFunction::IterFilter,
                 ("iter", Some("take")) => HirBootstrapHostFunction::IterTake,
@@ -15156,6 +15188,7 @@ impl<'a> ExpressionChecker<'a> {
                 | ("messagepack", Some(name))
                 | ("protobuf", Some(name))
                 | ("iter", Some(name))
+                | ("sync", Some(name))
                 | ("path", Some(name))
                 | ("fs", Some(name))
                 | ("testing", Some(name)) => {
@@ -18600,6 +18633,54 @@ impl<'a> ExpressionChecker<'a> {
                 (IntrinsicType::VirtualTime, "advance") => {
                     HirBootstrapHostFunction::VirtualTimeAdvance
                 }
+                (IntrinsicType::Mutex, "lock") => HirBootstrapHostFunction::SyncMutexLock,
+                (IntrinsicType::Mutex, "tryLock") => HirBootstrapHostFunction::SyncMutexTryLock,
+                (IntrinsicType::MutexGuard, "get") => HirBootstrapHostFunction::SyncMutexGuardGet,
+                (IntrinsicType::MutexGuard, "getMut") => {
+                    HirBootstrapHostFunction::SyncMutexGuardGetMut
+                }
+                (IntrinsicType::MutexGuard, "unlock") => {
+                    HirBootstrapHostFunction::SyncMutexGuardUnlock
+                }
+                (IntrinsicType::RwLock, "read") => HirBootstrapHostFunction::SyncRwLockRead,
+                (IntrinsicType::RwLock, "tryRead") => HirBootstrapHostFunction::SyncRwLockTryRead,
+                (IntrinsicType::RwLock, "write") => HirBootstrapHostFunction::SyncRwLockWrite,
+                (IntrinsicType::RwLock, "tryWrite") => HirBootstrapHostFunction::SyncRwLockTryWrite,
+                (IntrinsicType::ReadGuard, "get") => HirBootstrapHostFunction::SyncReadGuardGet,
+                (IntrinsicType::ReadGuard, "unlock") => {
+                    HirBootstrapHostFunction::SyncReadGuardUnlock
+                }
+                (IntrinsicType::WriteGuard, "get") => HirBootstrapHostFunction::SyncWriteGuardGet,
+                (IntrinsicType::WriteGuard, "getMut") => {
+                    HirBootstrapHostFunction::SyncWriteGuardGetMut
+                }
+                (IntrinsicType::WriteGuard, "unlock") => {
+                    HirBootstrapHostFunction::SyncWriteGuardUnlock
+                }
+                (IntrinsicType::Condition, "wait") => HirBootstrapHostFunction::SyncConditionWait,
+                (IntrinsicType::Condition, "notifyOne") => {
+                    HirBootstrapHostFunction::SyncConditionNotifyOne
+                }
+                (IntrinsicType::Condition, "notifyAll") => {
+                    HirBootstrapHostFunction::SyncConditionNotifyAll
+                }
+                (IntrinsicType::Semaphore, "acquire") => {
+                    HirBootstrapHostFunction::SyncSemaphoreAcquire
+                }
+                (IntrinsicType::Semaphore, "tryAcquire") => {
+                    HirBootstrapHostFunction::SyncSemaphoreTryAcquire
+                }
+                (IntrinsicType::Permit, "release") => HirBootstrapHostFunction::SyncPermitRelease,
+                (IntrinsicType::Once, "get") => HirBootstrapHostFunction::SyncOnceGet,
+                (IntrinsicType::Once, "getOrInit") => HirBootstrapHostFunction::SyncOnceGetOrInit,
+                (IntrinsicType::Once, "isReady") => HirBootstrapHostFunction::SyncOnceIsReady,
+                (IntrinsicType::Barrier, "wait") => HirBootstrapHostFunction::SyncBarrierWait,
+                (IntrinsicType::Atomic, "load") => HirBootstrapHostFunction::SyncAtomicLoad,
+                (IntrinsicType::Atomic, "store") => HirBootstrapHostFunction::SyncAtomicStore,
+                (IntrinsicType::Atomic, "swap") => HirBootstrapHostFunction::SyncAtomicSwap,
+                (IntrinsicType::Atomic, "compareExchange") => {
+                    HirBootstrapHostFunction::SyncAtomicCompareExchange
+                }
                 (IntrinsicType::TextDiff, "render") => {
                     HirBootstrapHostFunction::TestingTextDiffRender
                 }
@@ -18778,6 +18859,9 @@ impl<'a> ExpressionChecker<'a> {
                 | HirBootstrapHostFunction::AsyncCompleterCancel
                 | HirBootstrapHostFunction::AsyncGroupAdd
                 | HirBootstrapHostFunction::AsyncGroupNext
+                | HirBootstrapHostFunction::SyncMutexGuardGetMut
+                | HirBootstrapHostFunction::SyncWriteGuardGetMut
+                | HirBootstrapHostFunction::SyncConditionWait
                 | HirBootstrapHostFunction::JsonReaderNext
                 | HirBootstrapHostFunction::JsonReaderOwn
                 | HirBootstrapHostFunction::JsonReaderFinish

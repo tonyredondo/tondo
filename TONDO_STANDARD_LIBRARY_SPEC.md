@@ -2404,9 +2404,10 @@ worker cooperativo. Guards y permits liberan exactamente una vez por consumo,
 El contrato machine-readable cerrado por `STD-SYNC-001` está en
 [`testing/stdlib-sync.json`](./testing/stdlib-sync.json) y su explicación
 normativa está en [`docs/contracts/stdlib-sync.md`](./docs/contracts/stdlib-sync.md).
-Estos artefactos fijan la superficie y sus negativos; la implementación pública
-queda `required-after-native-gate` y no se adelanta por tener una firma en la
-spec.
+Estos artefactos fijan la superficie y sus negativos. La superficie de
+compilador y el modelo hosted determinista ya están implementados; el parking
+cooperativo y el puente ABI nativo permanecen explícitamente en
+`STD-SYNC-HOST-001`.
 
 Tondo no utiliza poisoning implícito: un pánico ejecuta cleanup y libera el
 guard, mientras que los invariantes recuperables pertenecen al tipo protegido y

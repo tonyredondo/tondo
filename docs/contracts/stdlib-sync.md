@@ -3,8 +3,9 @@
 
 Estado: contract-locked para Tondo 0.1, cerrado por STD-SYNC-001. El registro
 machine-readable está en testing/stdlib-sync.json y la descripción integrada en
-TONDO_STANDARD_LIBRARY_SPEC.md. Este documento fija la semántica pública; no
-afirma que el runtime de sync ya esté implementado.
+TONDO_STANDARD_LIBRARY_SPEC.md. La superficie de compilador y el modelo hosted
+determinista están implementados; el parking cooperativo real y el puente ABI
+nativo siguen siendo el siguiente bloque `STD-SYNC-HOST-001`.
 
 std.sync es la superficie de memoria compartida de Tondo. Reutiliza el único
 modelo de suspensión implícita, spawn, scope, Join y defer; no crea una familia
@@ -18,6 +19,20 @@ bloquear un worker cooperativo. La capacidad threads solo es necesaria para
 cruzar una frontera de thread del sistema operativo; la ausencia de esa
 capacidad produce un diagnóstico estático y nunca una simulación silenciosa de
 ejecución cross-thread.
+
+## Estado de implementación
+
+El compilador ya registra `std.sync` como módulo bootstrap, resuelve sus
+nominales, comprueba bounds/efectos y baja llamadas a la identidad host estable.
+El host de referencia mantiene estado de mutexes, rwlocks, guards, semáforos,
+permits, once, barreras y atomics, con cleanup idempotente y errores nominales.
+Las operaciones no contendedidas y los casos de prueba deterministas son
+ejecutables hoy sobre la VM hosted. Cuando una operación necesitaría aparcar una
+task (`lock`, `read`, `write`, `acquire`, `getOrInit` o `wait` con estado
+pendiente), el modelo devuelve un error explícito de capacidad del host en vez
+de bloquear o simular progreso. `STD-SYNC-HOST-001` sustituirá ese límite por
+parking/wakeup cooperativo y por el puente nativo; no cambia la superficie
+pública ni sus contratos.
 
 ## Superficie pública
 
@@ -326,9 +341,9 @@ de atomics, scheduler público, spin loops, operaciones de colecciones
 selectable, waitPop, waitDequeue, queues ilimitadas ocultas, préstamos en for y
 aliases globales SArray/SMap/SSet.
 
-La implementación pública permanece en estado required-after-native-gate y
-pendiente de STD-SYNC-IMPL-001,
-STD-SYNC-HOST-001, modelado/tests/fuzzing, STD-SYNC-PERF-001, las leaves de
-colecciones, STD-SYNC-CONF-001 y STD-SYNC-DOC-001. La frontera host solo puede
-promoverse después de NATIVE-001; este contrato alimenta diagnóstico y elección
-de backend, pero no adelanta símbolos runtime ni una ABI nativa.
+La superficie de compilador y el modelo hosted determinista cierran
+STD-SYNC-IMPL-001. Permanecen pendientes STD-SYNC-HOST-001, el modelado/tests y
+fuzzing de STD-SYNC-TEST-001, STD-SYNC-PERF-001, las leaves de colecciones,
+STD-SYNC-CONF-001 y STD-SYNC-DOC-001. La frontera host de parking y la ABI nativa
+solo se promueven después de NATIVE-001; este contrato no convierte el modelo
+determinista en una promesa de scheduler.

@@ -96,6 +96,17 @@ pub(crate) const fn intrinsic_terminal_contract(
         | IntrinsicType::Ref
         | IntrinsicType::Pointer
         | IntrinsicType::Group
+        | IntrinsicType::Mutex
+        | IntrinsicType::MutexGuard
+        | IntrinsicType::RwLock
+        | IntrinsicType::ReadGuard
+        | IntrinsicType::WriteGuard
+        | IntrinsicType::Condition
+        | IntrinsicType::Semaphore
+        | IntrinsicType::Permit
+        | IntrinsicType::Once
+        | IntrinsicType::Barrier
+        | IntrinsicType::Atomic
         | IntrinsicType::Waiter
         | IntrinsicType::Completer
         | IntrinsicType::AlreadyCompleted
@@ -499,6 +510,17 @@ fn intrinsic_node(constructor: IntrinsicType, arguments: Vec<TypeId>) -> Termina
         IntrinsicType::Ref
         | IntrinsicType::Pointer
         | IntrinsicType::Group
+        | IntrinsicType::Mutex
+        | IntrinsicType::MutexGuard
+        | IntrinsicType::RwLock
+        | IntrinsicType::ReadGuard
+        | IntrinsicType::WriteGuard
+        | IntrinsicType::Condition
+        | IntrinsicType::Semaphore
+        | IntrinsicType::Permit
+        | IntrinsicType::Once
+        | IntrinsicType::Barrier
+        | IntrinsicType::Atomic
         | IntrinsicType::Waiter
         | IntrinsicType::Completer
         | IntrinsicType::AlreadyCompleted

@@ -709,11 +709,20 @@
     "diagnostics-publish-payloads"
   ],
   "implementation": {
-    "status": "pending-after-native-gate",
+    "status": "verified-compiler-and-hosted-model",
     "public_api_promoted": false,
-    "host": "required-after-native-gate",
+    "host": "hosted-deterministic-model",
+    "parking_and_native_bridge": "pending-STD-SYNC-HOST-001",
+    "fixture": "tests/runtime/m11-std-sync-impl-001.to",
+    "fixture_stdout": "sync-ok",
+    "artifacts": [
+      "crates/tondo-compiler/src/hir/lower.rs",
+      "crates/tondo-compiler/src/hir/check.rs",
+      "crates/tondo-compiler/src/process_host.rs",
+      "crates/tondo-vm/src/runtime/execute.rs",
+      "tests/runtime/m11-std-sync-impl-001.to"
+    ],
     "required_follow_ups": [
-      "STD-SYNC-IMPL-001",
       "STD-SYNC-HOST-001",
       "STD-SYNC-TEST-001",
       "STD-SYNC-PERF-001",
@@ -729,7 +738,6 @@
   },
   "promotion": {
     "implementation_pending": [
-      "STD-SYNC-IMPL-001",
       "STD-SYNC-HOST-001",
       "STD-SYNC-TEST-001",
       "STD-SYNC-PERF-001",

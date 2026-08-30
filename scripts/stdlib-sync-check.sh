@@ -170,9 +170,13 @@ jq -e '
   and .collections.direct_for.lock_held_in_body == false
   and .collections.direct_for.materialization == "forbidden"
   and .promotion.next_blocks == ["DIAG-RUNTIME-001"]
-  and .implementation.status == "pending-after-native-gate"
+  and .implementation.status == "verified-compiler-and-hosted-model"
   and .implementation.public_api_promoted == false
-  and .implementation.host == "required-after-native-gate"
+  and .implementation.host == "hosted-deterministic-model"
+  and .implementation.parking_and_native_bridge == "pending-STD-SYNC-HOST-001"
+  and .implementation.fixture == "tests/runtime/m11-std-sync-impl-001.to"
+  and .implementation.fixture_stdout == "sync-ok"
+  and (.implementation.artifacts | index("crates/tondo-compiler/src/process_host.rs")) != null
 ' "$contract" >/dev/null || die "invalid machine-readable sync contract"
 
 # Keep the literal assertion readable while retaining an exact check without a
@@ -197,7 +201,7 @@ for marker in \
     'sync.Queue' \
     'auto-release-exactly-once' \
     'one-linearization-coherent-value-collection' \
-    'required-after-native-gate'; do
+    'STD-SYNC-HOST-001'; do
     grep -Fq "$marker" "$root/docs/contracts/stdlib-sync.md" \
         || die "contract document misses marker: $marker"
 done

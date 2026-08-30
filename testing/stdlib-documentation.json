@@ -62,18 +62,18 @@
           "status": "complete",
           "reason": null,
           "signatures": [
-            "std.async:36",
-            "std.async:37",
             "std.async:38",
             "std.async:39",
-            "std.async:40"
+            "std.async:40",
+            "std.async:41",
+            "std.async:42"
           ],
           "verified_signatures": [
-            "std.async:36",
-            "std.async:37",
             "std.async:38",
             "std.async:39",
-            "std.async:40"
+            "std.async:40",
+            "std.async:41",
+            "std.async:42"
           ],
           "refs": [
             "testing/stdlib-public-api.json"

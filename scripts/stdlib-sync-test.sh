@@ -46,6 +46,9 @@ expect_failure borrowed-for env TONDO_STDLIB_SYNC_CONTRACT="$tmp_dir/borrowed-fo
 jq '.surface.selectable_operations = ["mutex-lock"]' testing/stdlib-sync.json > "$tmp_dir/selectable-lock.json"
 expect_failure selectable-lock env TONDO_STDLIB_SYNC_CONTRACT="$tmp_dir/selectable-lock.json" scripts/stdlib-sync-check.sh
 
+jq '.implementation.status = "pending-after-native-gate"' testing/stdlib-sync.json > "$tmp_dir/stale-implementation.json"
+expect_failure stale-implementation env TONDO_STDLIB_SYNC_CONTRACT="$tmp_dir/stale-implementation.json" scripts/stdlib-sync-check.sh
+
 for marker in \
     'pub enum SyncError' \
     'pub type Mutex[T]' \
@@ -79,6 +82,9 @@ for marker in \
     'one-linearization-coherent-value-collection' \
     'finite-structural-O1' \
     'required-after-native-gate' \
+    'verified-compiler-and-hosted-model' \
+    'hosted-deterministic-model' \
+    'pending-STD-SYNC-HOST-001' \
     'WaitGroup' \
     'implicit-poisoning'; do
     grep -Fq "$marker" testing/stdlib-sync.json
@@ -93,7 +99,27 @@ jq -e '
   and .collections.snapshot == "one-linearization-coherent-value-collection"
   and .collections.direct_for.binding == "value-only"
   and .implementation.public_api_promoted == false
+  and .implementation.status == "verified-compiler-and-hosted-model"
+  and .implementation.host == "hosted-deterministic-model"
+  and .implementation.parking_and_native_bridge == "pending-STD-SYNC-HOST-001"
+  and .implementation.fixture_stdout == "sync-ok"
   and .promotion.next_blocks == ["DIAG-RUNTIME-001"]
 ' testing/stdlib-sync.json >/dev/null
+
+for path in \
+    tests/runtime/m11-std-sync-impl-001.to \
+    tests/runtime/m11-std-sync-impl-001.stdout \
+    tests/runtime/m11-std-sync-impl-001.exit; do
+    [[ -f "$path" ]] || { echo "std.sync tests: missing implementation evidence path $path" >&2; exit 1; }
+done
+[[ "$(tr -d '\r\n' < tests/runtime/m11-std-sync-impl-001.exit)" == "0" ]] \
+    || { echo "std.sync tests: fixture exit sidecar is not zero" >&2; exit 1; }
+[[ "$(tr -d '\r\n' < tests/runtime/m11-std-sync-impl-001.stdout)" == "sync-ok" ]] \
+    || { echo "std.sync tests: fixture stdout sidecar is not sync-ok" >&2; exit 1; }
+
+cargo test -p tondo-compiler process_host::tests::sync_ --locked >/dev/null
+runtime_output="$(cargo run -q -p tondo-cli -- run tests/runtime/m11-std-sync-impl-001.to)"
+[[ "$runtime_output" == "sync-ok" ]] \
+    || { echo "std.sync tests: runtime fixture produced unexpected output: $runtime_output" >&2; exit 1; }
 
 echo "std.sync tests: OK (negative contract cases; cleanup; ordering; collections; promotion anchors)"

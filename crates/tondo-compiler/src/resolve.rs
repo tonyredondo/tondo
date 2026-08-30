@@ -678,6 +678,38 @@ fn bootstrap_async_nominals() -> [(&'static str, SymbolKind, BootstrapNominalSha
     )]
 }
 
+fn bootstrap_sync_nominals() -> [(&'static str, SymbolKind, BootstrapNominalShape); 4] {
+    [
+        (
+            "SyncError",
+            SymbolKind::Enum,
+            BootstrapNominalShape::Enum(&[
+                "InvalidCapacity",
+                "InvalidParties",
+                "ResourceLimit",
+                "ReentrantLock",
+                "ReentrantInitialization",
+                "Broken",
+            ]),
+        ),
+        (
+            "BarrierRole",
+            SymbolKind::Enum,
+            BootstrapNominalShape::Enum(&["Leader", "Follower"]),
+        ),
+        (
+            "MemoryOrder",
+            SymbolKind::Enum,
+            BootstrapNominalShape::Enum(&["Relaxed", "Acquire", "Release", "AcqRel", "SeqCst"]),
+        ),
+        (
+            "CompareExchange",
+            SymbolKind::Enum,
+            BootstrapNominalShape::Enum(&["Exchanged", "Mismatch"]),
+        ),
+    ]
+}
+
 fn bootstrap_messagepack_nominals() -> [(&'static str, SymbolKind, BootstrapNominalShape); 5] {
     [
         (
@@ -940,7 +972,13 @@ impl Resolver<'_> {
             "protobuf",
             &bootstrap_protobuf_nominals(),
         )?;
-        self.install_bootstrap_module_nominals(file, program, "async", &bootstrap_async_nominals())
+        self.install_bootstrap_module_nominals(
+            file,
+            program,
+            "async",
+            &bootstrap_async_nominals(),
+        )?;
+        self.install_bootstrap_module_nominals(file, program, "sync", &bootstrap_sync_nominals())
     }
 
     fn install_bootstrap_module_nominals(
@@ -988,6 +1026,8 @@ impl Resolver<'_> {
                 span,
                 generic_arity: if module_name == "async" && name.as_str() == "Completion" {
                     2
+                } else if module_name == "sync" && name.as_str() == "CompareExchange" {
+                    1
                 } else {
                     0
                 },
