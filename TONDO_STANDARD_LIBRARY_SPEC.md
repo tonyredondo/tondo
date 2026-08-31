@@ -2417,6 +2417,10 @@ La implementación de handles, operaciones y reclamación para hosted y el ABI
 nativo privado está registrada por separado en
 [`testing/stdlib-sync-collection.json`](./testing/stdlib-sync-collection.json) y
 [`docs/contracts/stdlib-sync-collection.md`](./docs/contracts/stdlib-sync-collection.md).
+La iteración directa por valor, su horizonte finito y las generaciones de cursor
+están cerrados en
+[`testing/stdlib-sync-collection-iter.json`](./testing/stdlib-sync-collection-iter.json) y
+[`docs/contracts/stdlib-sync-collection-iter.md`](./docs/contracts/stdlib-sync-collection-iter.md).
 Estos artefactos fijan la superficie y sus negativos. La superficie de
 compilador, el parking cooperativo hosted y el puente ABI nativo de
 atomics/señales ya están implementados y verificados por
@@ -2435,8 +2439,9 @@ diagnósticos contextuales y el formatter conserva un round-trip lossless. El
 HIR emite el marcador interno `std.sync.collectionLiteral`; el lowering MIR lo
 entrega al host y el bloque `STD-SYNC-COLLECTION-IMPL-001` verifica su ejecución
 en el modelo hosted y en el ABI nativo privado. Esto no promociona una API
-pública ni afirma lowering genérico AOT; la iteración directa queda en
-`STD-SYNC-COLLECTION-ITER-001`.
+pública ni afirma lowering genérico AOT; la iteración directa queda cerrada por
+`STD-SYNC-COLLECTION-ITER-001`, cuya ejecución hosted y ABI nativa privada ya
+está verificada en el contrato enlazado.
 
 Tondo no utiliza poisoning implícito: un pánico ejecuta cleanup y libera el
 guard, mientras que los invariantes recuperables pertenecen al tipo protegido y
@@ -2743,6 +2748,12 @@ una evidencia de runtime y reclamación, no una afirmación de que los fast path
 algorítmicos ni el lowering genérico AOT estén terminados. La siguiente lista
 describe las obligaciones de rendimiento target-qualified que se medirán en
 `STD-SYNC-COLLECTION-PERF-001`:
+
+`STD-SYNC-COLLECTION-ITER-001` consume esa frontera con
+`IteratorAdapter::Sync` en hosted y con los símbolos privados
+`tondo_rt_sync_cursor_start`/`next`/`key` en el runtime nativo. Ambas rutas
+conservan la frontera estructural y las generaciones sin materializar contenido;
+el lowering AOT genérico sigue sin declararse implementado.
 
 - `sync.Array` usa slots atómicos o nodos versionados y evita un lock global.
 - `sync.Stack` tiene un fast path CAS de estilo Treiber.

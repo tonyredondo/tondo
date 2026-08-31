@@ -3122,6 +3122,12 @@ permite y no cumple `Copy`, `Share`, `Equatable` ni `Key`. Salir por agotamiento
 `break`, error, retorno, pánico o cancelación libera inmediatamente cualquier
 protección de reclamación conservada por el cursor.
 
+La implementación verificada de esta adaptación está registrada en
+[`testing/stdlib-sync-collection-iter.json`](./testing/stdlib-sync-collection-iter.json)
+y [`docs/contracts/stdlib-sync-collection-iter.md`](./docs/contracts/stdlib-sync-collection-iter.md);
+el contrato solo cubre VM hosted y el ABI nativo privado, no lowering AOT
+genérico ni una API pública adicional.
+
 `cursor[sync,C]` implementa únicamente `AsyncIterator[T]`: cada `next` puede
 ceder o aparcar bajo contención y el `for` espera de forma implícita. Los
 patrones con bindings `ref`, `mut` o `var` se rechazan porque una colección
@@ -9426,8 +9432,10 @@ el marcador interno `std.sync.collectionLiteral` después de validar identidad,
 aridad, contexto vacío, trailing comma, orden de evaluación y duplicados. El
 verifier protege esa frontera y el lowering MIR la entrega al consumidor de
 runtime verificado por `STD-SYNC-COLLECTION-IMPL-001` para hosted y el ABI nativo
-privado. Este cierre no afirma lowering genérico AOT ni iteración directa; el
-cursor `std.sync` queda en `STD-SYNC-COLLECTION-ITER-001`.
+privado. La iteración directa por valor, finita y por generaciones queda
+verificada por `STD-SYNC-COLLECTION-ITER-001` para hosted y el ABI nativo
+privado; ninguno de estos cierres afirma lowering genérico AOT ni una API
+pública de cursor.
 
 ### 23.25 Records y variantes
 

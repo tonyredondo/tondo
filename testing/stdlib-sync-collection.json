@@ -168,7 +168,6 @@
     ],
     "proof": "hosted VM exercises all five identities and 32 methods; native ABI exercises order, strong CAS, shared handles, worker progress, limits and teardown",
     "required_follow_ups": [
-      "STD-SYNC-COLLECTION-ITER-001",
       "STD-SYNC-COLLECTION-TEST-001",
       "STD-SYNC-COLLECTION-PERF-001",
       "STD-SYNC-COLLECTION-CONF-001",
@@ -195,9 +194,8 @@
   "promotion": {
     "implementation_complete": true,
     "implementation_pending": [],
-    "next_blocks": ["STD-SYNC-COLLECTION-ITER-001"],
+    "next_blocks": ["STD-SYNC-COLLECTION-TEST-001"],
     "remaining": [
-      "STD-SYNC-COLLECTION-ITER-001",
       "STD-SYNC-COLLECTION-TEST-001",
       "STD-SYNC-COLLECTION-PERF-001",
       "STD-SYNC-COLLECTION-CONF-001",

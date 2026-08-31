@@ -10,8 +10,8 @@ and the parent owner contract is
 
 This contract verifies the hosted VM and the private native runtime ABI. It does
 not promote a public release API, expose a native layout, or claim generic
-native AOT lowering. Direct concurrent iteration is the next independent leaf:
-`STD-SYNC-COLLECTION-ITER-001`.
+native AOT lowering. Direct concurrent iteration is verified by the separate
+`STD-SYNC-COLLECTION-ITER-001` contract.
 
 ## Implemented surface
 
@@ -44,6 +44,12 @@ coherent value-collection at one linearization point. The hosted model is
 `single-worker-ready-job-linearization`: it uses one scheduler-owned worker and
 completes collection jobs through the common ready-job path; it does not
 simulate native thread contention.
+
+The direct `for` cursor is implemented by the separate
+[`STD-SYNC-COLLECTION-ITER-001`](./stdlib-sync-collection-iter.md) contract.
+That leaf verifies the value-only `AsyncIterator` adaptation, finite structural
+horizon and per-generation behavior; it does not change this collection
+method surface or promote a public API.
 
 ## Native runtime ABI
 
@@ -93,7 +99,8 @@ runtime suite. The check and negative-contract runner are
 `scripts/stdlib-sync-collection-test.sh`; both are integrated into
 `scripts/test-gate.sh`.
 
-This leaf is complete for the hosted VM and native ABI only. It does not close
-the direct `for` cursor, model/fuzz campaign, performance campaign, cross-target
-conformance, or documentation leaf. Those remain visible in the tracker and in
-the `promotion.remaining` list of the JSON record.
+This leaf remains complete for the hosted VM and native ABI only. Direct `for`
+iteration is complete in its own hosted/native-private-ABI contract, while the
+model/fuzz campaign, performance campaign, cross-target conformance and broad
+documentation leaf remain visible in the tracker and in the
+`promotion.remaining` list of the JSON record.

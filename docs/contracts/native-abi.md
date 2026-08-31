@@ -109,6 +109,18 @@ cloning, stale-handle rejection and cycle/terminal cleanup remove each backing
 cell exactly once. The private CAS result tags are ABI-local and do not change
 the public `Result`/`Option` types.
 
+The direct-iteration leaf adds three private cursor symbols:
+`tondo_rt_sync_cursor_start`, `tondo_rt_sync_cursor_next` and
+`tondo_rt_sync_cursor_key`. A cursor retains its source collection through the
+normal handle graph, captures only a finite structural horizon and selects
+monotonic insertion generations under the collection's existing lock. The
+`next` result carries one scalar value; a map key is read from the immediately
+preceding successful step through `tondo_rt_sync_cursor_key`. Cursor state has
+its own serialization, so a native worker never waits while holding the global
+handle-table mutex. These symbols are private evidence for
+`STD-SYNC-COLLECTION-ITER-001`, not a public FFI or a claim of generic AOT
+lowering.
+
 This collection lane is verified for the hosted VM and native runtime ABI only;
 generic managed-value lowering, algorithmic lock-free fast paths and native AOT
 lowering remain separate target-qualified work. The native runtime continues to

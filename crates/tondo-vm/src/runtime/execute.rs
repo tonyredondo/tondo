@@ -3167,11 +3167,13 @@ impl<'program, 'host> Engine<'program, 'host> {
                     .transpose()?
                     .unwrap_or(false);
                 let adapter_contains = match adapter {
+                    Some(IteratorAdapter::Sync { .. })
+                    | Some(IteratorAdapter::Take { .. })
+                    | None => false,
                     Some(
                         IteratorAdapter::Map { callback, .. }
                         | IteratorAdapter::Filter { callback, .. },
                     ) => self.value_contains_scope_join(callback, scope, visited)?,
-                    Some(IteratorAdapter::Take { .. }) | None => false,
                 };
                 source_contains || adapter_contains
             }
@@ -6761,6 +6763,15 @@ impl Engine<'_, '_> {
                     }
                 };
                 let adapter = match adapter {
+                    Some(IteratorAdapter::Sync {
+                        cutoff,
+                        last,
+                        descending,
+                    }) => Some(IteratorAdapter::Sync {
+                        cutoff,
+                        last,
+                        descending,
+                    }),
                     Some(IteratorAdapter::Map {
                         callback,
                         source_item,
@@ -7166,7 +7177,7 @@ impl Engine<'_, '_> {
                 Ok(Value::Integer(length))
             }
             BytecodeRvalueKind::IteratorState(value) => {
-                let BytecodeTypeKind::Cursor { mode, .. } = self
+                let BytecodeTypeKind::Cursor { mode, collection } = self
                     .program
                     .ty(rvalue.ty)
                     .ok_or_else(|| VmError::invariant("iterator state type is missing"))?
@@ -7177,13 +7188,49 @@ impl Engine<'_, '_> {
                     ));
                 };
                 let value = self.evaluate_operand(frame, value)?;
+                let adapter = if mode == BytecodeCursorMode::Own {
+                    if let Some((_, host_name, descending)) =
+                        self.sync_cursor_host_descriptor(collection)
+                    {
+                        let snapshot = snapshot_value(
+                            &value,
+                            &self.heap,
+                            &self.callable_names,
+                            &self.nominal_names,
+                        )?;
+                        let returned =
+                            self.invoke_host(&format!("{host_name}.__iterStart"), &[snapshot])?;
+                        let RuntimeValue::Tuple(values) = returned else {
+                            return Err(VmError::Host(
+                                "std.sync cursor start returned a non-tuple value".into(),
+                            ));
+                        };
+                        let [RuntimeValue::Integer(cutoff)] = values.as_slice() else {
+                            return Err(VmError::Host(
+                                "std.sync cursor start returned the wrong payload arity".into(),
+                            ));
+                        };
+                        let cutoff = u64::try_from(*cutoff).map_err(|_| {
+                            VmError::Host("std.sync cursor cutoff is outside UInt64".into())
+                        })?;
+                        Some(IteratorAdapter::Sync {
+                            cutoff,
+                            last: if descending { u64::MAX } else { 0 },
+                            descending,
+                        })
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
                 self.allocate(
                     rvalue.ty,
                     HeapObject::Iterator {
                         mode,
                         source: Some(value.clone()),
                         next: 0,
-                        adapter: None,
+                        adapter,
                     },
                     &[value],
                 )
@@ -13050,6 +13097,93 @@ impl Engine<'_, '_> {
         }
     }
 
+    fn sync_cursor_host_descriptor(
+        &self,
+        collection: BytecodeTypeId,
+    ) -> Option<(RuntimeHostValueKind, &'static str, bool)> {
+        let BytecodeTypeKind::Nominal {
+            nominal: Some(nominal),
+            identity,
+            arguments,
+        } = &self.program.ty(collection)?.kind
+        else {
+            return None;
+        };
+        if !identity.contains("toolchain:std:0.1-bootstrap") || !identity.contains("::sync::") {
+            return None;
+        }
+        let descriptor = self.program.nominals.get(nominal.index() as usize)?;
+        let (kind, name, descending, arity) = match descriptor.name.as_str() {
+            "Array" => (RuntimeHostValueKind::SyncArray, "std.sync.Array", false, 1),
+            "Map" => (RuntimeHostValueKind::SyncMap, "std.sync.Map", false, 2),
+            "Set" => (RuntimeHostValueKind::SyncSet, "std.sync.Set", false, 1),
+            "Stack" => (RuntimeHostValueKind::SyncStack, "std.sync.Stack", true, 1),
+            "Queue" => (RuntimeHostValueKind::SyncQueue, "std.sync.Queue", false, 1),
+            _ => return None,
+        };
+        (arguments.len() == arity).then_some((kind, name, descending))
+    }
+
+    fn sync_cursor_step(
+        &mut self,
+        source: &Value,
+        item_ty: BytecodeTypeId,
+        cutoff: u64,
+        last: u64,
+        host_name: &str,
+    ) -> Result<(Option<Value>, Option<u64>), VmError> {
+        let source_snapshot = snapshot_value(
+            source,
+            &self.heap,
+            &self.callable_names,
+            &self.nominal_names,
+        )?;
+        let returned = self.invoke_host(
+            &format!("{host_name}.__iterNext"),
+            &[
+                source_snapshot,
+                RuntimeValue::Integer(i128::from(cutoff)),
+                RuntimeValue::Integer(i128::from(last)),
+            ],
+        )?;
+        let RuntimeValue::OptionSome(payload) = returned else {
+            if matches!(returned, RuntimeValue::OptionNone) {
+                return Ok((None, None));
+            }
+            return Err(VmError::Host(
+                "std.sync cursor next returned a non-optional value".into(),
+            ));
+        };
+        let RuntimeValue::Tuple(values) = *payload else {
+            return Err(VmError::Host(
+                "std.sync cursor next returned a malformed payload".into(),
+            ));
+        };
+        let [RuntimeValue::Integer(generation), item] = values.as_slice() else {
+            return Err(VmError::Host(
+                "std.sync cursor next returned the wrong payload arity".into(),
+            ));
+        };
+        let generation = u64::try_from(*generation)
+            .map_err(|_| VmError::Host("std.sync cursor generation is outside UInt64".into()))?;
+        let value = self.materialize_host_value(item_ty, item.clone())?;
+        Ok((Some(value), Some(generation)))
+    }
+
+    fn sync_cursor_host_name(source: &Value) -> Option<&'static str> {
+        let Value::Host(RuntimeValue::Host { kind, .. }) = source else {
+            return None;
+        };
+        Some(match kind {
+            RuntimeHostValueKind::SyncArray => "std.sync.Array",
+            RuntimeHostValueKind::SyncMap => "std.sync.Map",
+            RuntimeHostValueKind::SyncSet => "std.sync.Set",
+            RuntimeHostValueKind::SyncStack => "std.sync.Stack",
+            RuntimeHostValueKind::SyncQueue => "std.sync.Queue",
+            _ => return None,
+        })
+    }
+
     fn iterator_next(
         &mut self,
         frame: usize,
@@ -13077,6 +13211,50 @@ impl Engine<'_, '_> {
             return Ok(Ok(None));
         }
         let source = present(&source, "iterator source")?.clone();
+        if let Some(IteratorAdapter::Sync {
+            cutoff,
+            last,
+            descending,
+        }) = adapter.clone()
+        {
+            if mode != BytecodeCursorMode::Own || borrowed_source.is_some() {
+                return Err(VmError::invariant(
+                    "std.sync cursor state is not an owning iterator",
+                ));
+            }
+            let host_name = Self::sync_cursor_host_name(&source)
+                .ok_or_else(|| VmError::invariant("std.sync cursor source is not a host value"))?;
+            let marker = self.temporary_roots.len();
+            self.retain_temporary(&source);
+            let result: Result<Option<IteratorStep>, VmError> = (|| {
+                let (item, generation) =
+                    self.sync_cursor_step(&source, item_ty, cutoff, last, host_name)?;
+                let next = if item.is_some() { 0 } else { usize::MAX };
+                let next_last = generation.unwrap_or(last);
+                let adapter = Some(IteratorAdapter::Sync {
+                    cutoff,
+                    last: next_last,
+                    descending,
+                });
+                let mut roots = vec![source.clone()];
+                if let Some(value) = &item {
+                    roots.push(value.clone());
+                }
+                self.replace_object(
+                    handle,
+                    HeapObject::Iterator {
+                        mode,
+                        source: Some(source),
+                        next,
+                        adapter,
+                    },
+                    &roots,
+                )?;
+                Ok(item.map(IteratorStep::Value))
+            })();
+            self.temporary_roots.truncate(marker);
+            return result.map(Ok);
+        }
         if let Some(adapter) = adapter {
             if mode != BytecodeCursorMode::Own || borrowed_source.is_some() {
                 return Err(VmError::invariant(
@@ -13186,6 +13364,45 @@ impl Engine<'_, '_> {
             return Ok(Ok(None));
         }
         let source = present(&source, "iterator source")?.clone();
+        if let Some(IteratorAdapter::Sync {
+            cutoff,
+            last,
+            descending,
+        }) = adapter.clone()
+        {
+            let host_name = Self::sync_cursor_host_name(&source)
+                .ok_or_else(|| VmError::invariant("std.sync cursor source is not a host value"))?;
+            let marker = self.temporary_roots.len();
+            self.retain_temporary(iterator);
+            let result: Result<Option<Value>, VmError> = (|| {
+                let (item, generation) =
+                    self.sync_cursor_step(&source, item_ty, cutoff, last, host_name)?;
+                let next = if item.is_some() { 0 } else { usize::MAX };
+                let next_last = generation.unwrap_or(last);
+                let adapter = Some(IteratorAdapter::Sync {
+                    cutoff,
+                    last: next_last,
+                    descending,
+                });
+                let mut roots = vec![source.clone()];
+                if let Some(value) = &item {
+                    roots.push(value.clone());
+                }
+                self.replace_object(
+                    *handle,
+                    HeapObject::Iterator {
+                        mode,
+                        source: Some(source),
+                        next,
+                        adapter,
+                    },
+                    &roots,
+                )?;
+                Ok(item)
+            })();
+            self.temporary_roots.truncate(marker);
+            return result.map(Ok);
+        }
         let marker = self.temporary_roots.len();
         self.retain_temporary(iterator);
         let result: Result<Option<Value>, VmError> = (|| {
@@ -13241,6 +13458,9 @@ impl Engine<'_, '_> {
         _output_ty: BytecodeTypeId,
     ) -> Result<(Option<IteratorStep>, IteratorAdapter, usize), VmError> {
         match adapter {
+            IteratorAdapter::Sync { .. } => Err(VmError::invariant(
+                "std.sync cursor state cannot be used as a lazy adapter",
+            )),
             IteratorAdapter::Map {
                 callback,
                 source_item,

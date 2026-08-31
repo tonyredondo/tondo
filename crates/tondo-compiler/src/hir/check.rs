@@ -12884,7 +12884,20 @@ impl<'a> ExpressionChecker<'a> {
             (Some(pattern_node), Some(source_node)) => {
                 let source = self.check_expression(file, source_node, None, context)?;
                 let source_type = self.expression_type(source);
-                let element = self.iteration_element_type(source_type)?;
+                let sync_collection = self.sync_collection_type(source_type)?;
+                let element = if let Some((kind, arguments)) = &sync_collection {
+                    Some(match kind {
+                        SyncCollectionLiteralKind::Map => {
+                            self.program.interner.tuple(arguments.clone())?
+                        }
+                        SyncCollectionLiteralKind::Array
+                        | SyncCollectionLiteralKind::Set
+                        | SyncCollectionLiteralKind::Stack
+                        | SyncCollectionLiteralKind::Queue => arguments[0],
+                    })
+                } else {
+                    self.iteration_element_type(source_type)?
+                };
                 let (element, protocol) = if let Some(element) = element {
                     (element, None)
                 } else {
@@ -12967,7 +12980,9 @@ impl<'a> ExpressionChecker<'a> {
                     PatternContext::For,
                 )?;
                 let loan_mode = self.pattern_loan_mode(pattern);
-                if let Some(mode) = loan_mode {
+                if let Some(mode) = loan_mode
+                    && sync_collection.is_none()
+                {
                     self.validate_loaned_iteration_source(
                         source,
                         source_type,
@@ -12976,10 +12991,58 @@ impl<'a> ExpressionChecker<'a> {
                         context,
                     )?;
                 }
+                if let Some((kind, arguments)) = &sync_collection {
+                    if loan_mode.is_some() {
+                        self.emit(
+                            self.sources.span(file, source_node.range())?,
+                            "E1402",
+                            "std.sync collection iteration is value-only; ref, mut, and var bindings are not supported",
+                            Vec::new(),
+                            None,
+                        )?;
+                    }
+                    if matches!(
+                        kind,
+                        SyncCollectionLiteralKind::Stack | SyncCollectionLiteralKind::Queue
+                    ) {
+                        let element = arguments[0];
+                        for capability in [
+                            HirCapability::Copy,
+                            HirCapability::Send,
+                            HirCapability::Share,
+                        ] {
+                            self.require_capability_with_generics(
+                                self.sources.span(file, source_node.range())?,
+                                element,
+                                capability,
+                                &context.capability_assumptions,
+                                "direct iteration over std.sync.Stack/Queue",
+                            )?;
+                        }
+                    }
+                    if loan_mode.is_none() {
+                        if context.no_suspend {
+                            self.emit(
+                                self.sources.span(file, source_node.range())?,
+                                "E1601",
+                                "suspension is not permitted in a `@sync`/`@nosuspend` context",
+                                Vec::new(),
+                                None,
+                            )?;
+                        } else if !context.is_async {
+                            context.is_async = true;
+                            self.promote_callable_to_suspendible(context)?;
+                        }
+                    }
+                }
                 let protocol = if let Some(protocol) = protocol {
                     protocol
                 } else {
-                    let mode = match loan_mode {
+                    let mode = match if sync_collection.is_some() {
+                        None
+                    } else {
+                        loan_mode
+                    } {
                         None => CursorMode::Own,
                         Some(ParameterMode::Ref) => CursorMode::Ref,
                         Some(ParameterMode::Mut | ParameterMode::Var) => CursorMode::Mut,
@@ -13082,6 +13145,47 @@ impl<'a> ExpressionChecker<'a> {
             _ => None,
         };
         Ok(element)
+    }
+
+    /// Returns the closed bootstrap `std.sync` collection identity and its
+    /// generic arguments. Ordinary user-defined nominals with the same
+    /// declaration name do not opt into the intrinsic cursor protocol.
+    fn sync_collection_type(
+        &self,
+        source: TypeId,
+    ) -> Result<Option<(SyncCollectionLiteralKind, Vec<TypeId>)>, HirError> {
+        let TypeKind::Nominal {
+            identity,
+            arguments,
+        } = self.program.interner.kind(source)?
+        else {
+            return Ok(None);
+        };
+        if identity.package().as_str() != "toolchain:std:0.1-bootstrap"
+            || identity.module().as_str() != "sync"
+        {
+            return Ok(None);
+        }
+        let Some(name) = identity.declaration().names().first() else {
+            return Ok(None);
+        };
+        let kind = match name.as_str() {
+            "Array" => SyncCollectionLiteralKind::Array,
+            "Map" => SyncCollectionLiteralKind::Map,
+            "Set" => SyncCollectionLiteralKind::Set,
+            "Stack" => SyncCollectionLiteralKind::Stack,
+            "Queue" => SyncCollectionLiteralKind::Queue,
+            _ => return Ok(None),
+        };
+        let expected = if matches!(kind, SyncCollectionLiteralKind::Map) {
+            2
+        } else {
+            1
+        };
+        if arguments.len() != expected {
+            return Ok(None);
+        }
+        Ok(Some((kind, arguments.clone())))
     }
 
     fn validate_loaned_iteration_source(
@@ -28653,6 +28757,58 @@ fn build(input: Int, flag: Bool) {
             &[HirCapability::Copy, HirCapability::Discard],
         );
         assert_matrix("cursor[mut,Array[Int]]", &[HirCapability::Discard]);
+    }
+
+    #[test]
+    fn sync_collection_direct_iteration_is_value_only_and_suspendable() {
+        let (_, _, valid) = check(
+            "import std.sync as concurrent\n\
+             fn consume() {\n\
+                 let values: concurrent.Array[Int] = concurrent.Array[1, 2]\n\
+                 for value in values {\n\
+                     _ = value\n\
+                 }\n\
+             }\n",
+        );
+        assert!(valid.diagnostics().is_empty(), "{:#?}", valid.diagnostics());
+        assert!(valid.is_complete());
+
+        let (_, _, borrowed) = check(
+            "import std.sync as concurrent\n\
+             fn invalid() {\n\
+                 let values: concurrent.Array[Int] = concurrent.Array[1, 2]\n\
+                 for ref value in values {}\n\
+             }\n",
+        );
+        assert_eq!(codes(&borrowed), ["E1402"], "{:#?}", borrowed.diagnostics());
+
+        let (_, _, no_suspend) = check(
+            "import std.sync as concurrent\n\
+             @sync\n\
+             fn invalid() {\n\
+                 let values: concurrent.Array[Int] = concurrent.Array[1, 2]\n\
+                 for value in values {}\n\
+             }\n",
+        );
+        assert_eq!(
+            codes(&no_suspend),
+            ["E1601"],
+            "{:#?}",
+            no_suspend.diagnostics()
+        );
+
+        let (_, _, missing_bounds) = check(
+            "import std.sync as concurrent\n\
+             fn invalid[T](values: concurrent.Stack[T]) {\n\
+                 for value in values {}\n\
+             }\n",
+        );
+        assert_eq!(
+            codes(&missing_bounds),
+            ["E1105", "E1105", "E1105", "E1404"],
+            "{:#?}",
+            missing_bounds.diagnostics()
+        );
     }
 
     #[test]

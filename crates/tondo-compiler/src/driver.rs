@@ -4664,6 +4664,67 @@ fn main() {
     }
 
     #[test]
+    fn sync_collection_direct_for_uses_finite_host_cursor_order() {
+        let output = execute(operation_request(
+            Operation::Run,
+            br#"import std.sync as concurrent
+fn main() {
+    let array: concurrent.Array[Int] = concurrent.Array[1, 2, 3]
+    var array_sum: Int = 0
+    for item in array {
+        array_sum += item
+    }
+    assert(array_sum == 6)
+
+    let map: concurrent.Map[String, Int] = concurrent.Map["a": 1, "b": 2]
+    var map_sum: Int = 0
+    for (key, value) in map {
+        if key == "a" {
+            ()
+        } else {
+            assert(key == "b")
+        }
+        map_sum += value
+    }
+    assert(map_sum == 3)
+
+    let set: concurrent.Set[Int] = concurrent.Set[4, 5]
+    var set_sum: Int = 0
+    for item in set {
+        set_sum += item
+    }
+    assert(set_sum == 9)
+
+    let stack: concurrent.Stack[Int] = concurrent.Stack[1, 2, 3]
+    var stack_sum: Int = 0
+    for item in stack {
+        stack_sum = stack_sum * 10 + item
+    }
+    assert(stack_sum == 321)
+
+    let queue: concurrent.Queue[Int] = concurrent.Queue[1, 2, 3]
+    var queue_sum: Int = 0
+    for item in queue {
+        queue_sum = queue_sum * 10 + item
+    }
+    assert(queue_sum == 123)
+}
+"#,
+            SourceForm::Script,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{:#?}",
+            output.diagnostics().diagnostics()
+        );
+        assert_eq!(output.exit_code(), 0);
+        assert!(output.diagnostics().diagnostics().is_empty());
+    }
+
+    #[test]
     fn sync_bootstrap_rejects_unknown_static_and_module_operations() {
         for source in [
             b"import std.sync\nfn main() { _ = sync.MemoryOrder.Unknown() }\n".as_slice(),

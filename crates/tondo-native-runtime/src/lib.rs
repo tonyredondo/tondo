@@ -146,6 +146,14 @@ enum Object {
     SyncSet,
     SyncStack,
     SyncQueue,
+    /// A private, value-only cursor retaining its source collection through
+    /// the normal strong-edge graph. Cursor position is stored separately so
+    /// concurrent `next` calls serialize without holding the handle-table
+    /// mutex while a collection lock is contended.
+    SyncCursor {
+        collection: u64,
+        kind: SyncCursorCollection,
+    },
     /// An immutable, bounded byte carrier used by the private host ABI.
     Buffer {
         bytes: Vec<u8>,
@@ -579,6 +587,7 @@ enum ObjectKind {
     SyncSet,
     SyncStack,
     SyncQueue,
+    SyncCursor,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -672,11 +681,73 @@ impl DiagnosticCapture {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SyncCursorCollection {
+    Array,
+    Map,
+    Set,
+    Stack,
+    Queue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SyncMapEntry {
+    key: u64,
+    value: u64,
+    generation: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SyncValueEntry {
+    value: u64,
+    generation: u64,
+}
+
+#[derive(Debug, Default)]
+struct SyncMapState {
+    entries: Vec<SyncMapEntry>,
+    next_generation: u64,
+}
+
+#[derive(Debug, Default)]
+struct SyncSetState {
+    entries: Vec<SyncValueEntry>,
+    next_generation: u64,
+}
+
+#[derive(Debug, Default)]
+struct SyncStackState {
+    entries: Vec<SyncValueEntry>,
+    next_generation: u64,
+}
+
+#[derive(Debug, Default)]
+struct SyncQueueState {
+    entries: VecDeque<SyncValueEntry>,
+    next_generation: u64,
+}
+
+#[derive(Debug)]
+struct SyncCursorState {
+    horizon: u64,
+    position: u64,
+    descending: bool,
+    current_key: Option<u64>,
+}
+
 type SyncArrayCell = Arc<RwLock<Vec<u64>>>;
-type SyncMapCell = Arc<RwLock<Vec<(u64, u64)>>>;
-type SyncSetCell = Arc<RwLock<Vec<u64>>>;
-type SyncStackCell = Arc<Mutex<Vec<u64>>>;
-type SyncQueueCell = Arc<Mutex<VecDeque<u64>>>;
+type SyncMapCell = Arc<RwLock<SyncMapState>>;
+type SyncSetCell = Arc<RwLock<SyncSetState>>;
+type SyncStackCell = Arc<Mutex<SyncStackState>>;
+type SyncQueueCell = Arc<Mutex<SyncQueueState>>;
+
+enum SyncCursorSource {
+    Array(SyncArrayCell, Arc<ParkingSignal>),
+    Map(SyncMapCell, Arc<ParkingSignal>),
+    Set(SyncSetCell, Arc<ParkingSignal>),
+    Stack(SyncStackCell, Arc<ParkingSignal>),
+    Queue(SyncQueueCell, Arc<ParkingSignal>),
+}
 
 #[derive(Debug, Default)]
 struct State {
@@ -695,6 +766,7 @@ struct State {
     sync_stacks: BTreeMap<u64, SyncStackCell>,
     sync_queues: BTreeMap<u64, SyncQueueCell>,
     sync_collection_parks: BTreeMap<u64, Arc<ParkingSignal>>,
+    sync_cursors: BTreeMap<u64, Arc<Mutex<SyncCursorState>>>,
     allocations_since_collection: u32,
     diagnostic: Option<DiagnosticCapture>,
 }
@@ -803,6 +875,7 @@ impl State {
                 children.extend(group.children.iter().map(|child| child.task));
                 children.push(group.last_value);
             }
+            Object::SyncCursor { collection, .. } => children.push(*collection),
             Object::Select(selection) => {
                 children.extend(selection.arms.iter().map(|arm| arm.source));
             }
@@ -875,7 +948,10 @@ impl State {
         }
         if matches!(
             object,
-            Object::Host { .. } | Object::Weak { .. } | Object::Tombstone
+            Object::Host { .. }
+                | Object::Weak { .. }
+                | Object::Tombstone
+                | Object::SyncCursor { .. }
         ) {
             self.last_status = STATUS_INVALID_TRANSITION;
             return 0;
@@ -1140,6 +1216,9 @@ impl State {
                 self.sync_queues.remove(&handle);
                 self.sync_collection_parks.remove(&handle);
             }
+            Object::SyncCursor { .. } => {
+                self.sync_cursors.remove(&handle);
+            }
             _ => {}
         }
     }
@@ -1335,6 +1414,9 @@ impl State {
                 Object::SyncQueue => {
                     self.sync_queues.remove(&handle);
                     self.sync_collection_parks.remove(&handle);
+                }
+                Object::SyncCursor { .. } => {
+                    self.sync_cursors.remove(&handle);
                 }
                 _ => {}
             }
@@ -2801,6 +2883,117 @@ impl State {
         Some(park)
     }
 
+    fn sync_cursor_source(
+        &mut self,
+        collection: u64,
+    ) -> Option<(SyncCursorCollection, SyncCursorSource)> {
+        let kind = match self.object(collection) {
+            Some(Object::SyncArray) => SyncCursorCollection::Array,
+            Some(Object::SyncMap) => SyncCursorCollection::Map,
+            Some(Object::SyncSet) => SyncCursorCollection::Set,
+            Some(Object::SyncStack) => SyncCursorCollection::Stack,
+            Some(Object::SyncQueue) => SyncCursorCollection::Queue,
+            _ => {
+                self.last_status = STATUS_INVALID_HANDLE;
+                return None;
+            }
+        };
+        let Some(park) = self.sync_collection_parks.get(&collection).cloned() else {
+            self.last_status = STATUS_INVALID_HANDLE;
+            return None;
+        };
+        let source = match kind {
+            SyncCursorCollection::Array => self
+                .sync_arrays
+                .get(&collection)
+                .cloned()
+                .map(|cell| SyncCursorSource::Array(cell, park)),
+            SyncCursorCollection::Map => self
+                .sync_maps
+                .get(&collection)
+                .cloned()
+                .map(|cell| SyncCursorSource::Map(cell, park)),
+            SyncCursorCollection::Set => self
+                .sync_sets
+                .get(&collection)
+                .cloned()
+                .map(|cell| SyncCursorSource::Set(cell, park)),
+            SyncCursorCollection::Stack => self
+                .sync_stacks
+                .get(&collection)
+                .cloned()
+                .map(|cell| SyncCursorSource::Stack(cell, park)),
+            SyncCursorCollection::Queue => self
+                .sync_queues
+                .get(&collection)
+                .cloned()
+                .map(|cell| SyncCursorSource::Queue(cell, park)),
+        };
+        let Some(source) = source else {
+            self.last_status = STATUS_INVALID_HANDLE;
+            return None;
+        };
+        Some((kind, source))
+    }
+
+    fn sync_cursor_allocate(
+        &mut self,
+        collection: u64,
+        kind: SyncCursorCollection,
+        horizon: u64,
+    ) -> u64 {
+        let cursor = self.alloc(
+            Object::SyncCursor { collection, kind },
+            ObjectKind::SyncCursor,
+        );
+        if cursor != 0 {
+            self.sync_cursors.insert(
+                cursor,
+                Arc::new(Mutex::new(SyncCursorState {
+                    horizon,
+                    position: if kind == SyncCursorCollection::Stack {
+                        u64::MAX
+                    } else {
+                        0
+                    },
+                    descending: kind == SyncCursorCollection::Stack,
+                    current_key: None,
+                })),
+            );
+        }
+        cursor
+    }
+
+    fn sync_cursor_context(
+        &mut self,
+        cursor: u64,
+    ) -> Option<(
+        Arc<Mutex<SyncCursorState>>,
+        SyncCursorCollection,
+        SyncCursorSource,
+    )> {
+        let (collection, kind) = match self.object(cursor) {
+            Some(Object::SyncCursor { collection, kind }) => (*collection, *kind),
+            _ => {
+                self.last_status = STATUS_INVALID_HANDLE;
+                return None;
+            }
+        };
+        if self.retain(cursor) != STATUS_OK {
+            return None;
+        }
+        let Some(cursor_state) = self.sync_cursors.get(&cursor).cloned() else {
+            let _ = self.release(cursor);
+            self.last_status = STATUS_INVALID_HANDLE;
+            return None;
+        };
+        let Some((_, source)) = self.sync_cursor_source(collection) else {
+            let _ = self.release(cursor);
+            return None;
+        };
+        Some((cursor_state, kind, source))
+    }
+
     fn sync_array_from_values(&mut self, values: Vec<u64>) -> u64 {
         if values.len() > HOST_MAX_BYTES {
             self.last_status = STATUS_HOST_LIMIT;
@@ -2831,8 +3024,13 @@ impl State {
     fn sync_map_new(&mut self) -> u64 {
         let handle = self.alloc(Object::SyncMap, ObjectKind::SyncMap);
         if handle != 0 {
-            self.sync_maps
-                .insert(handle, Arc::new(RwLock::new(Vec::new())));
+            self.sync_maps.insert(
+                handle,
+                Arc::new(RwLock::new(SyncMapState {
+                    next_generation: 1,
+                    ..SyncMapState::default()
+                })),
+            );
             self.sync_collection_parks
                 .insert(handle, Arc::new(ParkingSignal::new()));
         }
@@ -2846,8 +3044,23 @@ impl State {
         }
         let handle = self.alloc(Object::SyncMap, ObjectKind::SyncMap);
         if handle != 0 {
-            self.sync_maps
-                .insert(handle, Arc::new(RwLock::new(entries)));
+            let next_generation = entries.len() as u64 + 1;
+            let entries = entries
+                .into_iter()
+                .enumerate()
+                .map(|(index, (key, value))| SyncMapEntry {
+                    key,
+                    value,
+                    generation: index as u64 + 1,
+                })
+                .collect();
+            self.sync_maps.insert(
+                handle,
+                Arc::new(RwLock::new(SyncMapState {
+                    entries,
+                    next_generation,
+                })),
+            );
             self.sync_collection_parks
                 .insert(handle, Arc::new(ParkingSignal::new()));
         }
@@ -2857,8 +3070,13 @@ impl State {
     fn sync_set_new(&mut self) -> u64 {
         let handle = self.alloc(Object::SyncSet, ObjectKind::SyncSet);
         if handle != 0 {
-            self.sync_sets
-                .insert(handle, Arc::new(RwLock::new(Vec::new())));
+            self.sync_sets.insert(
+                handle,
+                Arc::new(RwLock::new(SyncSetState {
+                    next_generation: 1,
+                    ..SyncSetState::default()
+                })),
+            );
             self.sync_collection_parks
                 .insert(handle, Arc::new(ParkingSignal::new()));
         }
@@ -2872,7 +3090,22 @@ impl State {
         }
         let handle = self.alloc(Object::SyncSet, ObjectKind::SyncSet);
         if handle != 0 {
-            self.sync_sets.insert(handle, Arc::new(RwLock::new(values)));
+            let next_generation = values.len() as u64 + 1;
+            let entries = values
+                .into_iter()
+                .enumerate()
+                .map(|(index, value)| SyncValueEntry {
+                    value,
+                    generation: index as u64 + 1,
+                })
+                .collect();
+            self.sync_sets.insert(
+                handle,
+                Arc::new(RwLock::new(SyncSetState {
+                    entries,
+                    next_generation,
+                })),
+            );
             self.sync_collection_parks
                 .insert(handle, Arc::new(ParkingSignal::new()));
         }
@@ -2882,8 +3115,13 @@ impl State {
     fn sync_stack_new(&mut self) -> u64 {
         let handle = self.alloc(Object::SyncStack, ObjectKind::SyncStack);
         if handle != 0 {
-            self.sync_stacks
-                .insert(handle, Arc::new(Mutex::new(Vec::new())));
+            self.sync_stacks.insert(
+                handle,
+                Arc::new(Mutex::new(SyncStackState {
+                    next_generation: 1,
+                    ..SyncStackState::default()
+                })),
+            );
             self.sync_collection_parks
                 .insert(handle, Arc::new(ParkingSignal::new()));
         }
@@ -2893,8 +3131,13 @@ impl State {
     fn sync_queue_new(&mut self) -> u64 {
         let handle = self.alloc(Object::SyncQueue, ObjectKind::SyncQueue);
         if handle != 0 {
-            self.sync_queues
-                .insert(handle, Arc::new(Mutex::new(VecDeque::new())));
+            self.sync_queues.insert(
+                handle,
+                Arc::new(Mutex::new(SyncQueueState {
+                    next_generation: 1,
+                    ..SyncQueueState::default()
+                })),
+            );
             self.sync_collection_parks
                 .insert(handle, Arc::new(ParkingSignal::new()));
         }
@@ -3635,6 +3878,163 @@ fn native_sync_mutex<T, R>(
     }
 }
 
+fn sync_cursor_horizon(source: &SyncCursorSource) -> Result<u64, u64> {
+    match source {
+        SyncCursorSource::Array(cell, park) => {
+            native_sync_read(cell, park, |values| values.len() as u64)
+        }
+        SyncCursorSource::Map(cell, park) => {
+            native_sync_read(cell, park, |state| state.next_generation.saturating_sub(1))
+        }
+        SyncCursorSource::Set(cell, park) => {
+            native_sync_read(cell, park, |state| state.next_generation.saturating_sub(1))
+        }
+        SyncCursorSource::Stack(cell, park) => {
+            native_sync_mutex(cell, park, |state| state.next_generation.saturating_sub(1))
+        }
+        SyncCursorSource::Queue(cell, park) => {
+            native_sync_mutex(cell, park, |state| state.next_generation.saturating_sub(1))
+        }
+    }
+}
+
+/// Reads one native cursor item under the collection's own synchronization
+/// primitive. The cursor state mutex is held by the caller, but the global
+/// handle table is never held while a collection worker parks.
+fn sync_cursor_next_value(
+    source: &SyncCursorSource,
+    cursor: &mut SyncCursorState,
+) -> Result<Option<(u64, Option<u64>)>, u64> {
+    let horizon = cursor.horizon;
+    let position = cursor.position;
+    let descending = cursor.descending;
+    match source {
+        SyncCursorSource::Array(cell, park) => {
+            if position >= horizon {
+                cursor.current_key = None;
+                return Ok(None);
+            }
+            let value = native_sync_read(cell, park, |values| {
+                usize::try_from(position)
+                    .ok()
+                    .and_then(|index| values.get(index).copied())
+            })?;
+            let Some(value) = value else {
+                cursor.position = horizon;
+                cursor.current_key = None;
+                return Ok(None);
+            };
+            cursor.position = position.saturating_add(1);
+            cursor.current_key = None;
+            Ok(Some((value, None)))
+        }
+        SyncCursorSource::Map(cell, park) => {
+            let item = native_sync_read(cell, park, |state| {
+                let eligible = state.entries.iter().filter(|entry| {
+                    entry.generation <= horizon
+                        && if descending {
+                            entry.generation < position
+                        } else {
+                            entry.generation > position
+                        }
+                });
+                if descending {
+                    eligible
+                        .max_by_key(|entry| entry.generation)
+                        .map(|entry| (entry.generation, entry.key, entry.value))
+                } else {
+                    eligible
+                        .min_by_key(|entry| entry.generation)
+                        .map(|entry| (entry.generation, entry.key, entry.value))
+                }
+            })?;
+            let Some((generation, key, value)) = item else {
+                cursor.current_key = None;
+                return Ok(None);
+            };
+            cursor.position = generation;
+            cursor.current_key = Some(key);
+            Ok(Some((value, Some(key))))
+        }
+        SyncCursorSource::Set(cell, park) => {
+            let item = native_sync_read(cell, park, |state| {
+                let eligible = state.entries.iter().filter(|entry| {
+                    entry.generation <= horizon
+                        && if descending {
+                            entry.generation < position
+                        } else {
+                            entry.generation > position
+                        }
+                });
+                if descending {
+                    eligible
+                        .max_by_key(|entry| entry.generation)
+                        .map(|entry| (entry.generation, entry.value))
+                } else {
+                    eligible
+                        .min_by_key(|entry| entry.generation)
+                        .map(|entry| (entry.generation, entry.value))
+                }
+            })?;
+            let Some((generation, value)) = item else {
+                cursor.current_key = None;
+                return Ok(None);
+            };
+            cursor.position = generation;
+            cursor.current_key = None;
+            Ok(Some((value, None)))
+        }
+        SyncCursorSource::Stack(cell, park) => {
+            let item = native_sync_mutex(cell, park, |state| {
+                state
+                    .entries
+                    .iter()
+                    .filter(|entry| {
+                        entry.generation <= horizon
+                            && if descending {
+                                entry.generation < position
+                            } else {
+                                entry.generation > position
+                            }
+                    })
+                    .map(|entry| (entry.generation, entry.value))
+                    .max_by_key(|(generation, _)| *generation)
+            })?;
+            let Some((generation, value)) = item else {
+                cursor.current_key = None;
+                return Ok(None);
+            };
+            cursor.position = generation;
+            cursor.current_key = None;
+            Ok(Some((value, None)))
+        }
+        SyncCursorSource::Queue(cell, park) => {
+            let item = native_sync_mutex(cell, park, |state| {
+                state
+                    .entries
+                    .iter()
+                    .filter(|entry| {
+                        entry.generation <= horizon
+                            && if descending {
+                                entry.generation < position
+                            } else {
+                                entry.generation > position
+                            }
+                    })
+                    .map(|entry| (entry.generation, entry.value))
+                    .min_by_key(|(generation, _)| *generation)
+            })?;
+            let Some((generation, value)) = item else {
+                cursor.current_key = None;
+                return Ok(None);
+            };
+            cursor.position = generation;
+            cursor.current_key = None;
+            Ok(Some((value, None)))
+        }
+    }
+}
+
 fn atomic_order(order: u64) -> Option<Ordering> {
     match order {
         0 => Some(Ordering::Relaxed),
@@ -4070,6 +4470,103 @@ fn native_optional_result(value: Option<u64>) -> u64 {
     native_collection_result(value.map_or(RESULT_NONE, |_| RESULT_SOME), value)
 }
 
+fn next_sync_generation(next_generation: &mut u64) -> Result<u64, u64> {
+    let generation = *next_generation;
+    let Some(next) = generation.checked_add(1) else {
+        return Err(STATUS_COUNT_OVERFLOW);
+    };
+    *next_generation = next;
+    Ok(generation)
+}
+
+/// Starts a private native cursor. The returned handle owns one strong edge
+/// to the source collection and captures only its finite structural horizon;
+/// it never snapshots collection contents.
+pub extern "C" fn tondo_rt_sync_cursor_start(collection: u64) -> u64 {
+    let Some((kind, source)) = with_state(|state| {
+        if state.retain(collection) != STATUS_OK {
+            return None;
+        }
+        match state.sync_cursor_source(collection) {
+            Some(source) => Some(source),
+            None => {
+                let _ = state.release(collection);
+                None
+            }
+        }
+    }) else {
+        return 0;
+    };
+    let horizon = match sync_cursor_horizon(&source) {
+        Ok(horizon) => horizon,
+        Err(status) => {
+            with_state(|state| {
+                let _ = state.release(collection);
+            });
+            native_collection_status(status);
+            return 0;
+        }
+    };
+    with_state(|state| {
+        let cursor = state.sync_cursor_allocate(collection, kind, horizon);
+        let _ = state.release(collection);
+        cursor
+    })
+}
+
+/// Returns the next scalar value from a private native cursor. Map cursors
+/// return the value and expose the corresponding key through
+/// `tondo_rt_sync_cursor_key`; all other collection kinds return their value
+/// directly. The result is an owned opaque `Option` record.
+pub extern "C" fn tondo_rt_sync_cursor_next(cursor: u64) -> u64 {
+    let Some((cursor_state, _kind, source)) = with_state(|state| state.sync_cursor_context(cursor))
+    else {
+        return 0;
+    };
+    let outcome = match cursor_state.lock() {
+        Ok(mut state) => sync_cursor_next_value(&source, &mut state),
+        Err(_) => Err(STATUS_INVALID_TRANSITION),
+    };
+    let result = match outcome {
+        Ok(Some((value, _))) => native_optional_result(Some(value)),
+        Ok(None) => native_optional_result(None),
+        Err(status) => {
+            native_collection_status(status);
+            0
+        }
+    };
+    with_state(|state| {
+        let _ = state.release(cursor);
+    });
+    result
+}
+
+/// Returns the key produced by the most recent successful `next` on a Map
+/// cursor. Calling it for another collection kind or before a value exists is
+/// an invalid transition and returns zero.
+pub extern "C" fn tondo_rt_sync_cursor_key(cursor: u64) -> u64 {
+    let Some((cursor_state, kind, _source)) = with_state(|state| state.sync_cursor_context(cursor))
+    else {
+        return 0;
+    };
+    let key = if kind == SyncCursorCollection::Map {
+        cursor_state.lock().ok().and_then(|state| state.current_key)
+    } else {
+        None
+    };
+    let result = match key {
+        Some(key) => key,
+        None => {
+            native_collection_status(STATUS_INVALID_TRANSITION);
+            0
+        }
+    };
+    with_state(|state| {
+        let _ = state.release(cursor);
+    });
+    result
+}
+
 /// Creates a fixed-length native `sync.Array` whose slots initially contain
 /// zero-valued scalar carriers. The compiler's generic lowering supplies real
 /// values through `set`; this private ABI never exposes a pointer or layout.
@@ -4229,7 +4726,7 @@ pub extern "C" fn tondo_rt_sync_map_length(map: u64) -> u64 {
     let Some(park) = with_state(|state| state.sync_collection_park(map)) else {
         return u64::MAX;
     };
-    native_sync_read(&cell, &park, Vec::len).map_or_else(
+    native_sync_read(&cell, &park, |state| state.entries.len()).map_or_else(
         |status| {
             native_collection_status(status);
             u64::MAX
@@ -4245,7 +4742,7 @@ pub extern "C" fn tondo_rt_sync_map_is_empty(map: u64) -> u64 {
     let Some(park) = with_state(|state| state.sync_collection_park(map)) else {
         return u64::MAX;
     };
-    native_sync_read(&cell, &park, Vec::is_empty).map_or_else(
+    native_sync_read(&cell, &park, |state| state.entries.is_empty()).map_or_else(
         |status| {
             native_collection_status(status);
             u64::MAX
@@ -4261,10 +4758,11 @@ pub extern "C" fn tondo_rt_sync_map_get(map: u64, key: u64) -> u64 {
     let Some(park) = with_state(|state| state.sync_collection_park(map)) else {
         return 0;
     };
-    let value = match native_sync_read(&cell, &park, |entries| {
-        entries
+    let value = match native_sync_read(&cell, &park, |state| {
+        state
+            .entries
             .iter()
-            .find_map(|(entry_key, value)| (*entry_key == key).then_some(*value))
+            .find_map(|entry| (entry.key == key).then_some(entry.value))
     }) {
         Ok(value) => value,
         Err(status) => {
@@ -4282,8 +4780,8 @@ pub extern "C" fn tondo_rt_sync_map_contains(map: u64, key: u64) -> u64 {
     let Some(park) = with_state(|state| state.sync_collection_park(map)) else {
         return u64::MAX;
     };
-    native_sync_read(&cell, &park, |entries| {
-        entries.iter().any(|(entry_key, _)| *entry_key == key)
+    native_sync_read(&cell, &park, |state| {
+        state.entries.iter().any(|entry| entry.key == key)
     })
     .map_or_else(
         |status| {
@@ -4301,13 +4799,21 @@ pub extern "C" fn tondo_rt_sync_map_insert(map: u64, key: u64, value: u64) -> u6
     let Some(park) = with_state(|state| state.sync_collection_park(map)) else {
         return 0;
     };
-    let outcome = native_sync_write(&cell, &park, |entries| {
-        if let Some(index) = entries.iter().position(|(entry_key, _)| *entry_key == key) {
-            Ok(Some(std::mem::replace(&mut entries[index].1, value)))
-        } else if entries.len() >= HOST_MAX_BYTES {
+    let outcome = native_sync_write(&cell, &park, |state| {
+        if let Some(index) = state.entries.iter().position(|entry| entry.key == key) {
+            Ok(Some(std::mem::replace(
+                &mut state.entries[index].value,
+                value,
+            )))
+        } else if state.entries.len() >= HOST_MAX_BYTES {
             Err(STATUS_HOST_LIMIT)
         } else {
-            entries.push((key, value));
+            let generation = next_sync_generation(&mut state.next_generation)?;
+            state.entries.push(SyncMapEntry {
+                key,
+                value,
+                generation,
+            });
             Ok(None)
         }
     });
@@ -4324,11 +4830,12 @@ pub extern "C" fn tondo_rt_sync_map_remove(map: u64, key: u64) -> u64 {
     let Some(park) = with_state(|state| state.sync_collection_park(map)) else {
         return 0;
     };
-    let value = match native_sync_write(&cell, &park, |entries| {
-        entries
+    let value = match native_sync_write(&cell, &park, |state| {
+        state
+            .entries
             .iter()
-            .position(|(entry_key, _)| *entry_key == key)
-            .map(|index| entries.remove(index).1)
+            .position(|entry| entry.key == key)
+            .map(|index| state.entries.remove(index).value)
     }) {
         Ok(value) => value,
         Err(status) => {
@@ -4353,9 +4860,9 @@ pub extern "C" fn tondo_rt_sync_map_compare_exchange(
     let Some(park) = with_state(|state| state.sync_collection_park(map)) else {
         return 0;
     };
-    let outcome = match native_sync_write(&cell, &park, |entries| {
-        let position = entries.iter().position(|(entry_key, _)| *entry_key == key);
-        let observed = position.map(|index| entries[index].1);
+    let outcome = match native_sync_write(&cell, &park, |state| {
+        let position = state.entries.iter().position(|entry| entry.key == key);
+        let observed = position.map(|index| state.entries[index].value);
         let matches = match (expected_some != 0, observed) {
             (true, Some(value)) => value == expected,
             (false, None) => true,
@@ -4363,11 +4870,18 @@ pub extern "C" fn tondo_rt_sync_map_compare_exchange(
         };
         if matches {
             match (desired_some != 0, position) {
-                (true, Some(index)) => entries[index].1 = desired,
-                (true, None) if entries.len() < HOST_MAX_BYTES => entries.push((key, desired)),
+                (true, Some(index)) => state.entries[index].value = desired,
+                (true, None) if state.entries.len() < HOST_MAX_BYTES => {
+                    let generation = next_sync_generation(&mut state.next_generation)?;
+                    state.entries.push(SyncMapEntry {
+                        key,
+                        value: desired,
+                        generation,
+                    });
+                }
                 (true, None) => return Err(STATUS_HOST_LIMIT),
                 (false, Some(index)) => {
-                    entries.remove(index);
+                    state.entries.remove(index);
                 }
                 (false, None) => {}
             }
@@ -4399,7 +4913,13 @@ pub extern "C" fn tondo_rt_sync_map_snapshot(map: u64) -> u64 {
     let Some(park) = with_state(|state| state.sync_collection_park(map)) else {
         return 0;
     };
-    let entries = match native_sync_read(&cell, &park, Clone::clone) {
+    let entries = match native_sync_read(&cell, &park, |state| {
+        state
+            .entries
+            .iter()
+            .map(|entry| (entry.key, entry.value))
+            .collect::<Vec<_>>()
+    }) {
         Ok(entries) => entries,
         Err(status) => {
             native_collection_status(status);
@@ -4420,7 +4940,7 @@ pub extern "C" fn tondo_rt_sync_set_length(set: u64) -> u64 {
     let Some(park) = with_state(|state| state.sync_collection_park(set)) else {
         return u64::MAX;
     };
-    native_sync_read(&cell, &park, Vec::len).map_or_else(
+    native_sync_read(&cell, &park, |state| state.entries.len()).map_or_else(
         |status| {
             native_collection_status(status);
             u64::MAX
@@ -4436,7 +4956,7 @@ pub extern "C" fn tondo_rt_sync_set_is_empty(set: u64) -> u64 {
     let Some(park) = with_state(|state| state.sync_collection_park(set)) else {
         return u64::MAX;
     };
-    native_sync_read(&cell, &park, Vec::is_empty).map_or_else(
+    native_sync_read(&cell, &park, |state| state.entries.is_empty()).map_or_else(
         |status| {
             native_collection_status(status);
             u64::MAX
@@ -4452,7 +4972,10 @@ pub extern "C" fn tondo_rt_sync_set_contains(set: u64, value: u64) -> u64 {
     let Some(park) = with_state(|state| state.sync_collection_park(set)) else {
         return u64::MAX;
     };
-    native_sync_read(&cell, &park, |values| values.contains(&value)).map_or_else(
+    native_sync_read(&cell, &park, |state| {
+        state.entries.iter().any(|entry| entry.value == value)
+    })
+    .map_or_else(
         |status| {
             native_collection_status(status);
             u64::MAX
@@ -4468,13 +4991,14 @@ pub extern "C" fn tondo_rt_sync_set_insert(set: u64, value: u64) -> u64 {
     let Some(park) = with_state(|state| state.sync_collection_park(set)) else {
         return 0;
     };
-    let outcome = native_sync_write(&cell, &park, |values| {
-        if values.contains(&value) {
+    let outcome = native_sync_write(&cell, &park, |state| {
+        if state.entries.iter().any(|entry| entry.value == value) {
             Ok(false)
-        } else if values.len() >= HOST_MAX_BYTES {
+        } else if state.entries.len() >= HOST_MAX_BYTES {
             Err(STATUS_HOST_LIMIT)
         } else {
-            values.push(value);
+            let generation = next_sync_generation(&mut state.next_generation)?;
+            state.entries.push(SyncValueEntry { value, generation });
             Ok(true)
         }
     });
@@ -4491,12 +5015,13 @@ pub extern "C" fn tondo_rt_sync_set_remove(set: u64, value: u64) -> u64 {
     let Some(park) = with_state(|state| state.sync_collection_park(set)) else {
         return 0;
     };
-    match native_sync_write(&cell, &park, |values| {
-        values
+    match native_sync_write(&cell, &park, |state| {
+        state
+            .entries
             .iter()
-            .position(|candidate| *candidate == value)
+            .position(|candidate| candidate.value == value)
             .map(|index| {
-                values.remove(index);
+                state.entries.remove(index);
                 true
             })
             .unwrap_or(false)
@@ -4516,7 +5041,9 @@ pub extern "C" fn tondo_rt_sync_set_snapshot(set: u64) -> u64 {
     let Some(park) = with_state(|state| state.sync_collection_park(set)) else {
         return 0;
     };
-    let values = match native_sync_read(&cell, &park, Clone::clone) {
+    let values = match native_sync_read(&cell, &park, |state| {
+        state.entries.iter().map(|entry| entry.value).collect()
+    }) {
         Ok(values) => values,
         Err(status) => {
             native_collection_status(status);
@@ -4537,7 +5064,7 @@ pub extern "C" fn tondo_rt_sync_stack_length(stack: u64) -> u64 {
     let Some(park) = with_state(|state| state.sync_collection_park(stack)) else {
         return u64::MAX;
     };
-    native_sync_mutex(&cell, &park, |values| values.len()).map_or_else(
+    native_sync_mutex(&cell, &park, |state| state.entries.len()).map_or_else(
         |status| {
             native_collection_status(status);
             u64::MAX
@@ -4553,7 +5080,7 @@ pub extern "C" fn tondo_rt_sync_stack_is_empty(stack: u64) -> u64 {
     let Some(park) = with_state(|state| state.sync_collection_park(stack)) else {
         return u64::MAX;
     };
-    native_sync_mutex(&cell, &park, |values| values.is_empty()).map_or_else(
+    native_sync_mutex(&cell, &park, |state| state.entries.is_empty()).map_or_else(
         |status| {
             native_collection_status(status);
             u64::MAX
@@ -4569,11 +5096,12 @@ pub extern "C" fn tondo_rt_sync_stack_push(stack: u64, value: u64) -> u64 {
     let Some(park) = with_state(|state| state.sync_collection_park(stack)) else {
         return 0;
     };
-    let outcome = native_sync_mutex(&cell, &park, |values| {
-        if values.len() >= HOST_MAX_BYTES {
+    let outcome = native_sync_mutex(&cell, &park, |state| {
+        if state.entries.len() >= HOST_MAX_BYTES {
             Err(STATUS_HOST_LIMIT)
         } else {
-            values.push(value);
+            let generation = next_sync_generation(&mut state.next_generation)?;
+            state.entries.push(SyncValueEntry { value, generation });
             Ok(())
         }
     });
@@ -4590,7 +5118,9 @@ pub extern "C" fn tondo_rt_sync_stack_pop(stack: u64) -> u64 {
     let Some(park) = with_state(|state| state.sync_collection_park(stack)) else {
         return 0;
     };
-    let value = match native_sync_mutex(&cell, &park, Vec::pop) {
+    let value = match native_sync_mutex(&cell, &park, |state| {
+        state.entries.pop().map(|entry| entry.value)
+    }) {
         Ok(value) => value,
         Err(status) => {
             native_collection_status(status);
@@ -4607,7 +5137,9 @@ pub extern "C" fn tondo_rt_sync_stack_peek(stack: u64) -> u64 {
     let Some(park) = with_state(|state| state.sync_collection_park(stack)) else {
         return 0;
     };
-    let value = match native_sync_mutex(&cell, &park, |values| values.last().copied()) {
+    let value = match native_sync_mutex(&cell, &park, |state| {
+        state.entries.last().map(|entry| entry.value)
+    }) {
         Ok(value) => value,
         Err(status) => {
             native_collection_status(status);
@@ -4624,7 +5156,9 @@ pub extern "C" fn tondo_rt_sync_stack_snapshot(stack: u64) -> u64 {
     let Some(park) = with_state(|state| state.sync_collection_park(stack)) else {
         return 0;
     };
-    let mut values: Vec<u64> = match native_sync_mutex(&cell, &park, |values| values.clone()) {
+    let mut values: Vec<u64> = match native_sync_mutex(&cell, &park, |state| {
+        state.entries.iter().map(|entry| entry.value).collect()
+    }) {
         Ok(values) => values,
         Err(status) => {
             native_collection_status(status);
@@ -4646,7 +5180,7 @@ pub extern "C" fn tondo_rt_sync_queue_length(queue: u64) -> u64 {
     let Some(park) = with_state(|state| state.sync_collection_park(queue)) else {
         return u64::MAX;
     };
-    native_sync_mutex(&cell, &park, |values| values.len()).map_or_else(
+    native_sync_mutex(&cell, &park, |state| state.entries.len()).map_or_else(
         |status| {
             native_collection_status(status);
             u64::MAX
@@ -4662,7 +5196,7 @@ pub extern "C" fn tondo_rt_sync_queue_is_empty(queue: u64) -> u64 {
     let Some(park) = with_state(|state| state.sync_collection_park(queue)) else {
         return u64::MAX;
     };
-    native_sync_mutex(&cell, &park, |values| values.is_empty()).map_or_else(
+    native_sync_mutex(&cell, &park, |state| state.entries.is_empty()).map_or_else(
         |status| {
             native_collection_status(status);
             u64::MAX
@@ -4678,11 +5212,14 @@ pub extern "C" fn tondo_rt_sync_queue_enqueue(queue: u64, value: u64) -> u64 {
     let Some(park) = with_state(|state| state.sync_collection_park(queue)) else {
         return 0;
     };
-    let outcome = native_sync_mutex(&cell, &park, |values| {
-        if values.len() >= HOST_MAX_BYTES {
+    let outcome = native_sync_mutex(&cell, &park, |state| {
+        if state.entries.len() >= HOST_MAX_BYTES {
             Err(STATUS_HOST_LIMIT)
         } else {
-            values.push_back(value);
+            let generation = next_sync_generation(&mut state.next_generation)?;
+            state
+                .entries
+                .push_back(SyncValueEntry { value, generation });
             Ok(())
         }
     });
@@ -4699,7 +5236,9 @@ pub extern "C" fn tondo_rt_sync_queue_dequeue(queue: u64) -> u64 {
     let Some(park) = with_state(|state| state.sync_collection_park(queue)) else {
         return 0;
     };
-    let value = match native_sync_mutex(&cell, &park, VecDeque::pop_front) {
+    let value = match native_sync_mutex(&cell, &park, |state| {
+        state.entries.pop_front().map(|entry| entry.value)
+    }) {
         Ok(value) => value,
         Err(status) => {
             native_collection_status(status);
@@ -4716,7 +5255,9 @@ pub extern "C" fn tondo_rt_sync_queue_peek(queue: u64) -> u64 {
     let Some(park) = with_state(|state| state.sync_collection_park(queue)) else {
         return 0;
     };
-    let value = match native_sync_mutex(&cell, &park, |values| values.front().copied()) {
+    let value = match native_sync_mutex(&cell, &park, |state| {
+        state.entries.front().map(|entry| entry.value)
+    }) {
         Ok(value) => value,
         Err(status) => {
             native_collection_status(status);
@@ -4733,7 +5274,9 @@ pub extern "C" fn tondo_rt_sync_queue_snapshot(queue: u64) -> u64 {
     let Some(park) = with_state(|state| state.sync_collection_park(queue)) else {
         return 0;
     };
-    let values = match native_sync_mutex(&cell, &park, |values| values.iter().copied().collect()) {
+    let values = match native_sync_mutex(&cell, &park, |state| {
+        state.entries.iter().map(|entry| entry.value).collect()
+    }) {
         Ok(values) => values,
         Err(status) => {
             native_collection_status(status);
@@ -6767,6 +7310,132 @@ mod tests {
         assert_eq!(tondo_rt_release(stale), STATUS_OK);
         assert_eq!(tondo_rt_sync_array_is_empty(stale), u64::MAX);
         assert_eq!(tondo_rt_last_status(), STATUS_INVALID_HANDLE);
+        assert_eq!(tondo_rt_live_objects(), 0);
+    }
+
+    #[test]
+    fn native_sync_cursor_is_finite_ordered_and_generation_safe() {
+        let _guard = test_guard();
+        tondo_rt_reset();
+
+        // Array cursors keep the fixed horizon but observe a value replacement
+        // made before the corresponding slot is read.
+        let array = tondo_rt_sync_array_new(2);
+        let set = tondo_rt_sync_array_set(array, 0, 11);
+        assert_eq!(tondo_rt_release(set), STATUS_OK);
+        let cursor = tondo_rt_sync_cursor_start(array);
+        assert_ne!(cursor, 0);
+        let replacement = tondo_rt_sync_array_set(array, 1, 22);
+        assert_eq!(tondo_rt_release(replacement), STATUS_OK);
+        let first = tondo_rt_sync_cursor_next(cursor);
+        assert_eq!(tondo_rt_result_tag(first), RESULT_SOME);
+        assert_eq!(tondo_rt_result_payload(first), 11);
+        assert_eq!(tondo_rt_release(first), STATUS_OK);
+        let second = tondo_rt_sync_cursor_next(cursor);
+        assert_eq!(tondo_rt_result_payload(second), 22);
+        assert_eq!(tondo_rt_release(second), STATUS_OK);
+        let end = tondo_rt_sync_cursor_next(cursor);
+        assert_eq!(tondo_rt_result_tag(end), RESULT_NONE);
+        assert_eq!(tondo_rt_release(end), STATUS_OK);
+
+        // A remove/reinsert receives a new generation and therefore cannot
+        // enter a cursor whose horizon was captured before the reinsertion.
+        let map = tondo_rt_sync_map_new();
+        for (key, value) in [(1, 10), (2, 20)] {
+            let inserted = tondo_rt_sync_map_insert(map, key, value);
+            assert_eq!(tondo_rt_release(inserted), STATUS_OK);
+        }
+        let map_cursor = tondo_rt_sync_cursor_start(map);
+        let removed = tondo_rt_sync_map_remove(map, 1);
+        assert_eq!(tondo_rt_release(removed), STATUS_OK);
+        let reinserted = tondo_rt_sync_map_insert(map, 1, 30);
+        assert_eq!(tondo_rt_release(reinserted), STATUS_OK);
+        let map_value = tondo_rt_sync_cursor_next(map_cursor);
+        assert_eq!(tondo_rt_result_payload(map_value), 20);
+        assert_eq!(tondo_rt_sync_cursor_key(map_cursor), 2);
+        assert_eq!(tondo_rt_release(map_value), STATUS_OK);
+        let map_end = tondo_rt_sync_cursor_next(map_cursor);
+        assert_eq!(tondo_rt_result_tag(map_end), RESULT_NONE);
+        assert_eq!(tondo_rt_release(map_end), STATUS_OK);
+
+        let set = tondo_rt_sync_set_new();
+        for value in [4, 5] {
+            let inserted = tondo_rt_sync_set_insert(set, value);
+            assert_eq!(tondo_rt_release(inserted), STATUS_OK);
+        }
+        let set_cursor = tondo_rt_sync_cursor_start(set);
+        assert_eq!(tondo_rt_sync_set_remove(set, 4), 1);
+        let reinserted = tondo_rt_sync_set_insert(set, 6);
+        assert_eq!(tondo_rt_release(reinserted), STATUS_OK);
+        let set_value = tondo_rt_sync_cursor_next(set_cursor);
+        assert_eq!(tondo_rt_result_payload(set_value), 5);
+        assert_eq!(tondo_rt_release(set_value), STATUS_OK);
+        let set_end = tondo_rt_sync_cursor_next(set_cursor);
+        assert_eq!(tondo_rt_result_tag(set_end), RESULT_NONE);
+        assert_eq!(tondo_rt_release(set_end), STATUS_OK);
+
+        // Stack is non-destructive and top-down; a push after start is out of
+        // horizon while removing the top before `next` simply skips it.
+        let stack = tondo_rt_sync_stack_new();
+        for value in [1, 2] {
+            let pushed = tondo_rt_sync_stack_push(stack, value);
+            assert_eq!(tondo_rt_release(pushed), STATUS_OK);
+        }
+        let stack_cursor = tondo_rt_sync_cursor_start(stack);
+        let pushed = tondo_rt_sync_stack_push(stack, 3);
+        assert_eq!(tondo_rt_release(pushed), STATUS_OK);
+        let popped = tondo_rt_sync_stack_pop(stack);
+        assert_eq!(tondo_rt_result_payload(popped), 3);
+        assert_eq!(tondo_rt_release(popped), STATUS_OK);
+        let top = tondo_rt_sync_cursor_next(stack_cursor);
+        assert_eq!(tondo_rt_result_payload(top), 2);
+        assert_eq!(tondo_rt_release(top), STATUS_OK);
+        let bottom = tondo_rt_sync_cursor_next(stack_cursor);
+        assert_eq!(tondo_rt_result_payload(bottom), 1);
+        assert_eq!(tondo_rt_release(bottom), STATUS_OK);
+
+        // Queue is FIFO and additions after the horizon are excluded.
+        let queue = tondo_rt_sync_queue_new();
+        for value in [7, 8] {
+            let enqueued = tondo_rt_sync_queue_enqueue(queue, value);
+            assert_eq!(tondo_rt_release(enqueued), STATUS_OK);
+        }
+        let queue_cursor = tondo_rt_sync_cursor_start(queue);
+        let enqueued = tondo_rt_sync_queue_enqueue(queue, 9);
+        assert_eq!(tondo_rt_release(enqueued), STATUS_OK);
+        let front = tondo_rt_sync_cursor_next(queue_cursor);
+        assert_eq!(tondo_rt_result_payload(front), 7);
+        assert_eq!(tondo_rt_release(front), STATUS_OK);
+        let dequeued = tondo_rt_sync_queue_dequeue(queue);
+        assert_eq!(tondo_rt_result_payload(dequeued), 7);
+        assert_eq!(tondo_rt_release(dequeued), STATUS_OK);
+        let next = tondo_rt_sync_cursor_next(queue_cursor);
+        assert_eq!(tondo_rt_result_payload(next), 8);
+        assert_eq!(tondo_rt_release(next), STATUS_OK);
+        let queue_end = tondo_rt_sync_cursor_next(queue_cursor);
+        assert_eq!(tondo_rt_result_tag(queue_end), RESULT_NONE);
+        assert_eq!(tondo_rt_release(queue_end), STATUS_OK);
+
+        // A cursor keeps its source alive, and stale/wrong handles fail closed.
+        assert_eq!(tondo_rt_release(array), STATUS_OK);
+        assert_eq!(tondo_rt_sync_array_length(array), 2);
+        assert_eq!(tondo_rt_release(cursor), STATUS_OK);
+        assert_eq!(tondo_rt_sync_cursor_next(cursor), 0);
+        assert_eq!(tondo_rt_last_status(), STATUS_INVALID_HANDLE);
+        assert_eq!(tondo_rt_sync_array_length(array), u64::MAX);
+        assert_eq!(tondo_rt_last_status(), STATUS_INVALID_HANDLE);
+        let wrong = tondo_rt_atomic_new(0);
+        assert_eq!(tondo_rt_sync_cursor_start(wrong), 0);
+        assert_eq!(tondo_rt_last_status(), STATUS_INVALID_HANDLE);
+        assert_eq!(tondo_rt_release(wrong), STATUS_OK);
+        assert_eq!(tondo_rt_release(map_cursor), STATUS_OK);
+        assert_eq!(tondo_rt_release(map), STATUS_OK);
+        assert_eq!(tondo_rt_release(set_cursor), STATUS_OK);
+        assert_eq!(tondo_rt_release(set), STATUS_OK);
+        assert_eq!(tondo_rt_release(stack_cursor), STATUS_OK);
+        assert_eq!(tondo_rt_release(stack), STATUS_OK);
+        assert_eq!(tondo_rt_release(queue_cursor), STATUS_OK);
+        assert_eq!(tondo_rt_release(queue), STATUS_OK);
         assert_eq!(tondo_rt_live_objects(), 0);
     }
 

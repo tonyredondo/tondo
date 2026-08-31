@@ -5244,6 +5244,36 @@ impl Verifier<'_> {
                     Ok(TypeKind::Scalar(ScalarType::String)) => {
                         Some(self.program.interner.scalar(ScalarType::Char))
                     }
+                    Ok(TypeKind::Nominal {
+                        identity,
+                        arguments,
+                    }) if identity.package().as_str() == "toolchain:std:0.1-bootstrap"
+                        && identity.module().as_str() == "sync" =>
+                    {
+                        let Some(name) = identity.declaration().names().first() else {
+                            return Err(HirInvariantError::new(
+                                context,
+                                "intrinsic std.sync cursor source has no declaration name",
+                            ));
+                        };
+                        let expected_arity = if name.as_str() == "Map" { 2 } else { 1 };
+                        if !matches!(name.as_str(), "Array" | "Map" | "Set" | "Stack" | "Queue")
+                            || arguments.len() != expected_arity
+                        {
+                            return Err(HirInvariantError::new(
+                                context,
+                                "intrinsic std.sync cursor source has invalid identity or arity",
+                            ));
+                        }
+                        if name.as_str() == "Map" {
+                            let mut interner = self.program.interner.clone();
+                            Some(interner.tuple(arguments.clone()).map_err(|error| {
+                                HirInvariantError::new(context, error.to_string())
+                            })?)
+                        } else {
+                            Some(arguments[0])
+                        }
+                    }
                     Ok(TypeKind::Error) => None,
                     Ok(_) | Err(_) => {
                         return Err(HirInvariantError::new(

@@ -183,6 +183,10 @@ jq -e '
   and .collections.direct_for.post_cursor_insertions == "excluded"
   and .collections.direct_for.lock_held_in_body == false
   and .collections.direct_for.materialization == "forbidden"
+  and .collections.direct_for.implementation_contract == "testing/stdlib-sync-collection-iter.json"
+  and .collections.direct_for.implementation_document == "docs/contracts/stdlib-sync-collection-iter.md"
+  and .collections.direct_for.runtime_status == "verified-hosted-vm-and-private-native-runtime-abi"
+  and .collections.direct_for.native_aot_lowering == "not-claimed"
   and .performance.task == "STD-SYNC-PERF-001"
   and .performance.status == "verified-hosted-vm"
   and .performance.contract == "testing/stdlib-sync-performance.json"
@@ -195,7 +199,7 @@ jq -e '
   and .performance.scope.native_aot == "not-claimed"
   and .performance.oracle.kind == "independent-model-and-host-invariant-checks"
   and .performance.invariants.fairness == "zero-FIFO-registration-violations"
-  and .promotion.next_blocks == ["STD-SYNC-COLLECTION-ITER-001"]
+  and .promotion.next_blocks == ["STD-SYNC-COLLECTION-TEST-001"]
   and .implementation.status == "verified-compiler-hosted-parking-native-bridge"
   and .implementation.public_api_promoted == false
   and .implementation.host == "scheduler-backed-hosted-model"
@@ -227,7 +231,9 @@ for path in \
     testing/stdlib-sync-collection-frontend.json \
     docs/contracts/stdlib-sync-collection-frontend.md \
     testing/stdlib-sync-collection.json \
-    docs/contracts/stdlib-sync-collection.md; do
+    docs/contracts/stdlib-sync-collection.md \
+    testing/stdlib-sync-collection-iter.json \
+    docs/contracts/stdlib-sync-collection-iter.md; do
     [[ -f "$root/$path" ]] || die "missing linked contract: $path"
 done
 
@@ -248,6 +254,7 @@ for marker in \
     'STD-SYNC-PERF-001' \
     'STD-SYNC-COLLECTION-FRONTEND-001' \
     'STD-SYNC-COLLECTION-IMPL-001' \
+    'STD-SYNC-COLLECTION-ITER-001' \
     'verified-hosted-vm-and-native-runtime-abi' \
     'tondo-vm-hosted' \
     'zero-FIFO-registration-violations'; do
@@ -265,10 +272,14 @@ grep -Fq 'testing/stdlib-sync-collection-frontend.json' "$root/TONDO_STANDARD_LI
     || die "main stdlib spec does not link the sync collection frontend contract"
 grep -Fq 'testing/stdlib-sync-collection.json' "$root/TONDO_STANDARD_LIBRARY_SPEC.md" \
     || die "main stdlib spec does not link the sync collection implementation contract"
+grep -Fq 'testing/stdlib-sync-collection-iter.json' "$root/TONDO_STANDARD_LIBRARY_SPEC.md" \
+    || die "main stdlib spec does not link the sync collection iteration contract"
 grep -Fq 'stdlib-sync-collection-frontend.md' "$root/docs/contracts/stdlib-sync.md" \
     || die "sync contract does not link the collection frontend contract"
 grep -Fq 'stdlib-sync-collection.md' "$root/docs/contracts/stdlib-sync.md" \
     || die "sync contract does not link the collection implementation contract"
+grep -Fq 'stdlib-sync-collection-iter.md' "$root/docs/contracts/stdlib-sync.md" \
+    || die "sync contract does not link the collection iteration contract"
 
 [[ -x "$root/scripts/stdlib-sync-performance.sh" ]] \
     || die "sync performance runner is not executable"
@@ -289,6 +300,13 @@ for symbol in \
     grep -Fq "$symbol" "$root/crates/tondo-native-runtime/src/lib.rs" \
         || die "sync host bridge misses native symbol: $symbol"
 done
+for symbol in \
+    tondo_rt_sync_cursor_start \
+    tondo_rt_sync_cursor_next \
+    tondo_rt_sync_cursor_key; do
+    grep -Fq "$symbol" "$root/crates/tondo-native-runtime/src/lib.rs" \
+        || die "sync host bridge misses native cursor symbol: $symbol"
+done
 grep -Fq 'cooperative VM never calls the blocking wait symbol' \
     "$root/docs/contracts/native-abi.md" \
     || die "sync host bridge does not document cooperative non-blocking wait"
@@ -296,5 +314,6 @@ grep -Fq 'set_execution_unit' "$root/crates/tondo-vm/src/runtime/execute.rs" \
     || die "sync host bridge misses execution-unit handoff"
 
 scripts/stdlib-sync-collection-check.sh >/dev/null
+scripts/stdlib-sync-collection-iter-check.sh >/dev/null
 
 echo "std.sync contract: OK (guards; condition/semaphore/once/barrier; explicit atomics; shared collections)"

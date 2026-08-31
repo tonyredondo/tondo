@@ -574,7 +574,11 @@
       "post_cursor_insertions": "excluded",
       "lock_held_in_body": false,
       "materialization": "forbidden",
-      "ordering": "array-index;map-set-linearized-insertion;stack-top-down;queue-front-first"
+      "ordering": "array-index;map-set-linearized-insertion;stack-top-down;queue-front-first",
+      "implementation_contract": "testing/stdlib-sync-collection-iter.json",
+      "implementation_document": "docs/contracts/stdlib-sync-collection-iter.md",
+      "runtime_status": "verified-hosted-vm-and-private-native-runtime-abi",
+      "native_aot_lowering": "not-claimed"
     },
     "literal_forms": [
       "sync.Array[...]",
@@ -799,7 +803,11 @@
       "crates/tondo-compiler/src/hir/check.rs",
       "crates/tondo-compiler/src/hir/lower.rs",
       "crates/tondo-compiler/src/hir/verify.rs",
+      "crates/tondo-compiler/src/mir/verify.rs",
       "crates/tondo-compiler/src/mir/lower.rs",
+      "crates/tondo-compiler/src/driver.rs",
+      "crates/tondo-vm/src/bytecode/verify.rs",
+      "crates/tondo-vm/src/runtime/heap.rs",
       "testing/stdlib-sync-collection-frontend.json",
       "docs/contracts/stdlib-sync-collection-frontend.md",
       "scripts/stdlib-sync-collection-frontend-check.sh",
@@ -807,10 +815,13 @@
       "testing/stdlib-sync-collection.json",
       "docs/contracts/stdlib-sync-collection.md",
       "scripts/stdlib-sync-collection-check.sh",
-      "scripts/stdlib-sync-collection-test.sh"
+      "scripts/stdlib-sync-collection-test.sh",
+      "testing/stdlib-sync-collection-iter.json",
+      "docs/contracts/stdlib-sync-collection-iter.md",
+      "scripts/stdlib-sync-collection-iter-check.sh",
+      "scripts/stdlib-sync-collection-iter-test.sh"
     ],
     "required_follow_ups": [
-      "STD-SYNC-COLLECTION-ITER-001",
       "STD-SYNC-COLLECTION-TEST-001",
       "STD-SYNC-COLLECTION-PERF-001",
       "STD-SYNC-COLLECTION-CONF-001",
@@ -820,13 +831,12 @@
   },
   "promotion": {
     "implementation_pending": [
-      "STD-SYNC-COLLECTION-ITER-001",
       "STD-SYNC-COLLECTION-TEST-001",
       "STD-SYNC-COLLECTION-PERF-001",
       "STD-SYNC-COLLECTION-CONF-001",
       "STD-SYNC-CONF-001",
       "STD-SYNC-DOC-001"
     ],
-    "next_blocks": ["STD-SYNC-COLLECTION-ITER-001"]
+    "next_blocks": ["STD-SYNC-COLLECTION-TEST-001"]
   }
 }

@@ -1,0 +1,153 @@
+{
+  "format": "tondo-stdlib-owner-contract/1",
+  "owner": "std.sync.collection.iter",
+  "parent_owner": "std.sync.collection",
+  "edition": "0.1",
+  "phase": "STD-0.1B",
+  "task": "STD-SYNC-COLLECTION-ITER-001",
+  "status": "contract-locked",
+  "contract": "docs/contracts/stdlib-sync-collection-iter.md",
+  "spec": "TONDO_STANDARD_LIBRARY_SPEC.md",
+  "language_spec": "TONDO_LANGUAGE_SPEC.md",
+  "parent_contract": "testing/stdlib-sync-collection.json",
+  "sync_contract": "testing/stdlib-sync.json",
+  "layer": "B2",
+  "kind": "runtime-facing",
+  "target": "tondo-vm-hosted-and-native-runtime-abi",
+  "surface": {
+    "identities": [
+      "std.sync.Array[T: Copy + Send + Share]",
+      "std.sync.Map[K: Key + Send + Share, V: Copy + Send + Share]",
+      "std.sync.Set[K: Key + Send + Share]",
+      "std.sync.Stack[T: Copy + Send + Share]",
+      "std.sync.Queue[T: Copy + Send + Share]"
+    ],
+    "protocol": "AsyncIterator",
+    "cursor_type": "cursor[sync,C]",
+    "binding": "value-only",
+    "source_evaluation": "once",
+    "materialization": "forbidden",
+    "new_keywords": false,
+    "public_api_promoted": false
+  },
+  "semantics": {
+    "horizon": "finite-structural-O1",
+    "horizon_capture": "no-content-copy",
+    "post_cursor_insertions": "excluded",
+    "post_cursor_reinsertions": "excluded",
+    "pre_next_removals": "may-be-omitted",
+    "replacement": "value-at-next-linearization",
+    "generation": "at-most-once-even-under-ABA",
+    "order": {
+      "array": "ascending-index",
+      "map": "linearized-insertion",
+      "set": "linearized-insertion",
+      "stack": "top-down-LIFO",
+      "queue": "front-first-FIFO"
+    },
+    "stack_queue_consumption": "non-destructive",
+    "lock_held_in_body": false,
+    "next": "linearizable-and-may-suspend",
+    "termination": "finite-even-with-continuing-writers",
+    "snapshot_difference": "snapshot-is-one-linearization-coherent-materialization"
+  },
+  "diagnostics": {
+    "loan_binding": "E1402",
+    "no_suspend_context": "E1601",
+    "stack_queue_missing_capability": "E1105",
+    "event": "sync.collection.cursor"
+  },
+  "ownership": {
+    "source_handle": "copied-identity",
+    "cursor_owner": "owning-private-state",
+    "cursor_copy": false,
+    "cursor_discard": "release-on-exhaustion-or-control-flow-exit",
+    "cursor_source_lifetime": "strong-edge-until-cursor-release",
+    "loaned_bindings": "forbidden",
+    "stack_queue_bounds": "Copy + Send + Share",
+    "body_lock": "none"
+  },
+  "runtime": {
+    "hosted_vm": {
+      "status": "verified",
+      "model": "single-worker-ready-job-linearization",
+      "storage": "typed-host-value-with-monotonic-generation-metadata",
+      "cursor": "IteratorAdapter::Sync",
+      "blocking": "cooperative-poll-and-scheduler-park"
+    },
+    "native_runtime_abi": {
+      "status": "verified-private-abi-cursor",
+      "carrier": "opaque-u64-capability",
+      "symbols": [
+        "tondo_rt_sync_cursor_start",
+        "tondo_rt_sync_cursor_next",
+        "tondo_rt_sync_cursor_key"
+      ],
+      "storage": "per-collection-lock-with-generation-metadata",
+      "cursor_storage": "opaque-handle-retaining-source",
+      "global_lock_while_waiting": false,
+      "blocking": "native-workers-only"
+    },
+    "native_aot_lowering": "not-claimed"
+  },
+  "implementation": {
+    "status": "verified-hosted-vm-and-private-native-runtime-abi",
+    "public_api_promoted": false,
+    "native_aot_lowering": "not-claimed",
+    "sources": [
+      "crates/tondo-compiler/src/hir/check.rs",
+      "crates/tondo-compiler/src/hir/verify.rs",
+      "crates/tondo-compiler/src/mir/verify.rs",
+      "crates/tondo-vm/src/bytecode/verify.rs",
+      "crates/tondo-vm/src/runtime/heap.rs",
+      "crates/tondo-vm/src/runtime/execute.rs",
+      "crates/tondo-compiler/src/process_host.rs",
+      "crates/tondo-compiler/src/driver.rs",
+      "crates/tondo-native-runtime/src/lib.rs"
+    ],
+    "tests": [
+      "crates/tondo-compiler/src/hir/check.rs::sync_collection_direct_iteration_is_value_only_and_suspendable",
+      "crates/tondo-compiler/src/driver.rs::sync_collection_direct_for_uses_finite_host_cursor_order",
+      "crates/tondo-compiler/src/process_host.rs::sync_collection_cursor_preserves_order_horizon_and_reinsertion_boundary",
+      "crates/tondo-native-runtime/src/lib.rs::native_sync_cursor_is_finite_ordered_and_generation_safe",
+      "scripts/stdlib-sync-collection-iter-check.sh",
+      "scripts/stdlib-sync-collection-iter-test.sh"
+    ],
+    "proof": "compiler checks value-only and capability rules; hosted VM executes all five direct orders with finite generation horizon; native private ABI verifies ordered cursors, removal/reinsertion exclusion, source retention and stale-handle cleanup",
+    "required_follow_ups": [
+      "STD-SYNC-COLLECTION-TEST-001",
+      "STD-SYNC-COLLECTION-PERF-001",
+      "STD-SYNC-COLLECTION-CONF-001",
+      "STD-SYNC-CONF-001",
+      "STD-SYNC-DOC-001"
+    ]
+  },
+  "negative_cases": [
+    "ref-binding-rejected",
+    "mut-binding-rejected",
+    "var-binding-rejected",
+    "no-suspend-context-rejected",
+    "stack-missing-copy-bound-rejected",
+    "queue-missing-send-bound-rejected",
+    "post-cursor-insertion-excluded",
+    "post-cursor-reinsertion-excluded",
+    "removed-before-next-may-be-omitted",
+    "cursor-does-not-consume-stack-or-queue",
+    "cursor-does-not-materialize-content",
+    "forged-or-stale-native-cursor-rejected",
+    "native-aot-lowering-claim",
+    "public-api-promotion"
+  ],
+  "promotion": {
+    "implementation_complete": true,
+    "implementation_pending": [],
+    "next_blocks": ["STD-SYNC-COLLECTION-TEST-001"],
+    "remaining": [
+      "STD-SYNC-COLLECTION-TEST-001",
+      "STD-SYNC-COLLECTION-PERF-001",
+      "STD-SYNC-COLLECTION-CONF-001",
+      "STD-SYNC-CONF-001",
+      "STD-SYNC-DOC-001"
+    ]
+  }
+}

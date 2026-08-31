@@ -778,6 +778,12 @@ pub(crate) struct BootstrapHost {
     environment_available: bool,
     env_snapshot_id: Option<u64>,
     values: BTreeMap<u64, HostValue>,
+    /// Birth generations for the live structural members of each hosted
+    /// concurrent collection.  Direct cursors retain only a cutoff and the
+    /// last observed generation, so removal/reinsertion cannot make one
+    /// member appear twice without copying collection contents.
+    sync_generations: BTreeMap<u64, Vec<u64>>,
+    next_sync_generation: u64,
     jobs: BTreeMap<u64, AsyncJob>,
     ready_jobs: BTreeMap<u64, Result<RuntimeValue, VmError>>,
     ready_fs_jobs: BTreeSet<u64>,
@@ -841,6 +847,8 @@ impl BootstrapHost {
             environment_available,
             env_snapshot_id: None,
             values: BTreeMap::new(),
+            sync_generations: BTreeMap::new(),
+            next_sync_generation: 1,
             jobs: BTreeMap::new(),
             ready_jobs: BTreeMap::new(),
             ready_fs_jobs: BTreeSet::new(),
@@ -961,7 +969,26 @@ impl BootstrapHost {
             .next_value
             .checked_add(1)
             .expect("host value identity space exhausted");
+        let generation_count = match &value {
+            HostValue::SyncArray(values)
+            | HostValue::SyncSet(values)
+            | HostValue::SyncStack(values) => Some(values.len()),
+            HostValue::SyncMap(entries) => Some(entries.len()),
+            HostValue::SyncQueue(values) => Some(values.len()),
+            _ => None,
+        };
         self.values.insert(id, value);
+        if let Some(count) = generation_count {
+            let mut generations = Vec::with_capacity(count);
+            for _ in 0..count {
+                generations.push(self.next_sync_generation);
+                self.next_sync_generation = self
+                    .next_sync_generation
+                    .checked_add(1)
+                    .expect("sync collection generation space exhausted");
+            }
+            self.sync_generations.insert(id, generations);
+        }
         RuntimeValue::Host { kind, id }
     }
 
@@ -3612,6 +3639,113 @@ impl BootstrapHost {
             }
             _ => Err(VmError::Host("VirtualTime controller is stale".into())),
         }
+    }
+
+    fn sync_cursor_start(
+        &self,
+        receiver: &RuntimeValue,
+        expected: RuntimeHostValueKind,
+        label: &str,
+    ) -> Result<RuntimeValue, VmError> {
+        let id = self.sync_host_id(receiver, expected, label)?;
+        if !self.sync_generations.contains_key(&id) {
+            return Err(VmError::Host(format!(
+                "{label} token has no cursor metadata"
+            )));
+        }
+        let cutoff = self.next_sync_generation.saturating_sub(1);
+        Ok(RuntimeValue::Tuple(vec![RuntimeValue::Integer(
+            i128::from(cutoff),
+        )]))
+    }
+
+    fn append_sync_generation(&mut self, id: u64) {
+        let generation = self.next_sync_generation;
+        self.next_sync_generation = self
+            .next_sync_generation
+            .checked_add(1)
+            .expect("sync collection generation space exhausted");
+        self.sync_generations
+            .entry(id)
+            .or_default()
+            .push(generation);
+    }
+
+    fn remove_sync_generation(&mut self, id: u64, index: usize) {
+        if let Some(generations) = self.sync_generations.get_mut(&id)
+            && index < generations.len()
+        {
+            generations.remove(index);
+        }
+    }
+
+    fn sync_cursor_next(
+        &self,
+        receiver: &RuntimeValue,
+        cutoff: &RuntimeValue,
+        last: &RuntimeValue,
+        expected: RuntimeHostValueKind,
+        label: &str,
+        descending: bool,
+    ) -> Result<RuntimeValue, VmError> {
+        let id = self.sync_host_id(receiver, expected, label)?;
+        let RuntimeValue::Integer(cutoff) = cutoff else {
+            return Err(VmError::Host("sync cursor cutoff is not an Int".into()));
+        };
+        let RuntimeValue::Integer(last) = last else {
+            return Err(VmError::Host("sync cursor position is not an Int".into()));
+        };
+        let cutoff = u64::try_from(*cutoff)
+            .map_err(|_| VmError::Host("sync cursor cutoff is outside UInt64".into()))?;
+        let last = u64::try_from(*last)
+            .map_err(|_| VmError::Host("sync cursor position is outside UInt64".into()))?;
+        let generations = self
+            .sync_generations
+            .get(&id)
+            .ok_or_else(|| VmError::Host(format!("{label} token has no cursor metadata")))?;
+        let select = |generation: &u64| {
+            if descending {
+                *generation <= cutoff && *generation < last
+            } else {
+                *generation <= cutoff && *generation > last
+            }
+        };
+        let selected = if descending {
+            generations
+                .iter()
+                .enumerate()
+                .filter(|(_, generation)| select(generation))
+                .max_by_key(|(_, generation)| **generation)
+        } else {
+            generations
+                .iter()
+                .enumerate()
+                .filter(|(_, generation)| select(generation))
+                .min_by_key(|(_, generation)| **generation)
+        };
+        let Some((index, generation)) = selected else {
+            return Ok(RuntimeValue::OptionNone);
+        };
+        let payload = match self.values.get(&id) {
+            Some(HostValue::SyncArray(values))
+            | Some(HostValue::SyncSet(values))
+            | Some(HostValue::SyncStack(values)) => values.get(index).cloned().map(|value| {
+                RuntimeValue::Tuple(vec![RuntimeValue::Integer(i128::from(*generation)), value])
+            }),
+            Some(HostValue::SyncMap(entries)) => entries.get(index).cloned().map(|(key, value)| {
+                RuntimeValue::Tuple(vec![
+                    RuntimeValue::Integer(i128::from(*generation)),
+                    RuntimeValue::Tuple(vec![key, value]),
+                ])
+            }),
+            Some(HostValue::SyncQueue(values)) => values.get(index).cloned().map(|value| {
+                RuntimeValue::Tuple(vec![RuntimeValue::Integer(i128::from(*generation)), value])
+            }),
+            _ => return Err(VmError::Host(format!("{label} token is stale or invalid"))),
+        };
+        Ok(payload.map_or(RuntimeValue::OptionNone, |payload| {
+            RuntimeValue::OptionSome(Box::new(payload))
+        }))
     }
 }
 
@@ -7127,6 +7261,61 @@ impl VmHost for BootstrapHost {
                     values: Vec::new(),
                 })
             }
+            ("std.sync.Array.__iterStart", [receiver]) => {
+                self.sync_cursor_start(receiver, RuntimeHostValueKind::SyncArray, "sync.Array")
+            }
+            ("std.sync.Array.__iterNext", [receiver, cutoff, last]) => self.sync_cursor_next(
+                receiver,
+                cutoff,
+                last,
+                RuntimeHostValueKind::SyncArray,
+                "sync.Array",
+                false,
+            ),
+            ("std.sync.Map.__iterStart", [receiver]) => {
+                self.sync_cursor_start(receiver, RuntimeHostValueKind::SyncMap, "sync.Map")
+            }
+            ("std.sync.Map.__iterNext", [receiver, cutoff, last]) => self.sync_cursor_next(
+                receiver,
+                cutoff,
+                last,
+                RuntimeHostValueKind::SyncMap,
+                "sync.Map",
+                false,
+            ),
+            ("std.sync.Set.__iterStart", [receiver]) => {
+                self.sync_cursor_start(receiver, RuntimeHostValueKind::SyncSet, "sync.Set")
+            }
+            ("std.sync.Set.__iterNext", [receiver, cutoff, last]) => self.sync_cursor_next(
+                receiver,
+                cutoff,
+                last,
+                RuntimeHostValueKind::SyncSet,
+                "sync.Set",
+                false,
+            ),
+            ("std.sync.Stack.__iterStart", [receiver]) => {
+                self.sync_cursor_start(receiver, RuntimeHostValueKind::SyncStack, "sync.Stack")
+            }
+            ("std.sync.Stack.__iterNext", [receiver, cutoff, last]) => self.sync_cursor_next(
+                receiver,
+                cutoff,
+                last,
+                RuntimeHostValueKind::SyncStack,
+                "sync.Stack",
+                true,
+            ),
+            ("std.sync.Queue.__iterStart", [receiver]) => {
+                self.sync_cursor_start(receiver, RuntimeHostValueKind::SyncQueue, "sync.Queue")
+            }
+            ("std.sync.Queue.__iterNext", [receiver, cutoff, last]) => self.sync_cursor_next(
+                receiver,
+                cutoff,
+                last,
+                RuntimeHostValueKind::SyncQueue,
+                "sync.Queue",
+                false,
+            ),
             ("std.sync.Array.literal", values) => {
                 if values.len() as u64 > self.max_bytes {
                     return Err(VmError::Host(
@@ -7344,6 +7533,9 @@ impl VmHost for BootstrapHost {
                     }
                     _ => return Err(VmError::Host("sync.Map token is stale or invalid".into())),
                 };
+                if previous.is_none() {
+                    self.append_sync_generation(id);
+                }
                 Ok(RuntimeValue::ResultOk(Box::new(
                     previous.map_or(RuntimeValue::OptionNone, |value| {
                         RuntimeValue::OptionSome(Box::new(value))
@@ -7352,19 +7544,24 @@ impl VmHost for BootstrapHost {
             }
             ("std.sync.Map.remove", [receiver, key]) => {
                 let id = self.sync_host_id(receiver, RuntimeHostValueKind::SyncMap, "sync.Map")?;
-                let previous = match self.values.get_mut(&id) {
-                    Some(HostValue::SyncMap(entries)) => entries
-                        .iter()
-                        .position(|(entry_key, _)| entry_key == key)
-                        .map(|index| entries.remove(index).1),
+                let (removed_index, previous) = match self.values.get_mut(&id) {
+                    Some(HostValue::SyncMap(entries)) => {
+                        let index = entries.iter().position(|(entry_key, _)| entry_key == key);
+                        (index, index.map(|index| entries.remove(index).1))
+                    }
                     _ => return Err(VmError::Host("sync.Map token is stale or invalid".into())),
                 };
+                if let Some(index) = removed_index {
+                    self.remove_sync_generation(id, index);
+                }
                 Ok(previous.map_or(RuntimeValue::OptionNone, |value| {
                     RuntimeValue::OptionSome(Box::new(value))
                 }))
             }
             ("std.sync.Map.compareExchange", [receiver, key, expected, desired]) => {
                 let id = self.sync_host_id(receiver, RuntimeHostValueKind::SyncMap, "sync.Map")?;
+                let mut removed_index = None;
+                let mut appended = false;
                 let (variant, observed) = match self.values.get_mut(&id) {
                     Some(HostValue::SyncMap(entries)) => {
                         let position = entries.iter().position(|(entry_key, _)| entry_key == key);
@@ -7376,6 +7573,7 @@ impl VmHost for BootstrapHost {
                                 RuntimeValue::OptionNone => {
                                     if let Some(index) = position {
                                         entries.remove(index);
+                                        removed_index = Some(index);
                                     }
                                 }
                                 RuntimeValue::OptionSome(value) => {
@@ -7388,6 +7586,7 @@ impl VmHost for BootstrapHost {
                                             ));
                                         }
                                         entries.push((key.clone(), (**value).clone()));
+                                        appended = true;
                                     }
                                 }
                                 _ => {
@@ -7403,6 +7602,12 @@ impl VmHost for BootstrapHost {
                     }
                     _ => return Err(VmError::Host("sync.Map token is stale or invalid".into())),
                 };
+                if let Some(index) = removed_index {
+                    self.remove_sync_generation(id, index);
+                }
+                if appended {
+                    self.append_sync_generation(id);
+                }
                 Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Variant {
                     name: "CompareExchange".into(),
                     variant,
@@ -7466,23 +7671,33 @@ impl VmHost for BootstrapHost {
                     }
                     _ => return Err(VmError::Host("sync.Set token is stale or invalid".into())),
                 };
+                if inserted {
+                    self.append_sync_generation(id);
+                }
                 Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Bool(
                     inserted,
                 ))))
             }
             ("std.sync.Set.remove", [receiver, key]) => {
                 let id = self.sync_host_id(receiver, RuntimeHostValueKind::SyncSet, "sync.Set")?;
-                let removed = match self.values.get_mut(&id) {
-                    Some(HostValue::SyncSet(values)) => values
-                        .iter()
-                        .position(|value| value == key)
-                        .map(|index| {
-                            values.remove(index);
-                            true
-                        })
-                        .unwrap_or(false),
+                let (removed_index, removed) = match self.values.get_mut(&id) {
+                    Some(HostValue::SyncSet(values)) => {
+                        let index = values.iter().position(|value| value == key);
+                        (
+                            index,
+                            index
+                                .map(|index| {
+                                    values.remove(index);
+                                    true
+                                })
+                                .unwrap_or(false),
+                        )
+                    }
                     _ => return Err(VmError::Host("sync.Set token is stale or invalid".into())),
                 };
+                if let Some(index) = removed_index {
+                    self.remove_sync_generation(id, index);
+                }
                 Ok(RuntimeValue::Bool(removed))
             }
             ("std.sync.Set.snapshot", [receiver]) => {
@@ -7531,19 +7746,22 @@ impl VmHost for BootstrapHost {
                     }
                     _ => return Err(VmError::Host("sync.Stack token is stale or invalid".into())),
                 }
+                self.append_sync_generation(id);
                 Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
             }
             ("std.sync.Stack.pop", [receiver]) => {
                 let id =
                     self.sync_host_id(receiver, RuntimeHostValueKind::SyncStack, "sync.Stack")?;
-                match self.values.get_mut(&id) {
-                    Some(HostValue::SyncStack(values)) => {
-                        Ok(values.pop().map_or(RuntimeValue::OptionNone, |value| {
-                            RuntimeValue::OptionSome(Box::new(value))
-                        }))
-                    }
-                    _ => Err(VmError::Host("sync.Stack token is stale or invalid".into())),
+                let value = match self.values.get_mut(&id) {
+                    Some(HostValue::SyncStack(values)) => values.pop(),
+                    _ => return Err(VmError::Host("sync.Stack token is stale or invalid".into())),
+                };
+                if value.is_some() {
+                    self.remove_sync_generation(id, self.sync_generations[&id].len() - 1);
                 }
+                Ok(value.map_or(RuntimeValue::OptionNone, |value| {
+                    RuntimeValue::OptionSome(Box::new(value))
+                }))
             }
             ("std.sync.Stack.peek", [receiver]) => {
                 let id =
@@ -7606,19 +7824,22 @@ impl VmHost for BootstrapHost {
                     }
                     _ => return Err(VmError::Host("sync.Queue token is stale or invalid".into())),
                 }
+                self.append_sync_generation(id);
                 Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
             }
             ("std.sync.Queue.dequeue", [receiver]) => {
                 let id =
                     self.sync_host_id(receiver, RuntimeHostValueKind::SyncQueue, "sync.Queue")?;
-                match self.values.get_mut(&id) {
-                    Some(HostValue::SyncQueue(values)) => Ok(values
-                        .pop_front()
-                        .map_or(RuntimeValue::OptionNone, |value| {
-                            RuntimeValue::OptionSome(Box::new(value))
-                        })),
+                let value = match self.values.get_mut(&id) {
+                    Some(HostValue::SyncQueue(values)) => Ok(values.pop_front()),
                     _ => Err(VmError::Host("sync.Queue token is stale or invalid".into())),
+                }?;
+                if value.is_some() {
+                    self.remove_sync_generation(id, 0);
                 }
+                Ok(value.map_or(RuntimeValue::OptionNone, |value| {
+                    RuntimeValue::OptionSome(Box::new(value))
+                }))
             }
             ("std.sync.Queue.peek", [receiver]) => {
                 let id =
@@ -10405,6 +10626,157 @@ mod tests {
             RuntimeValue::ResultErr(error)
                 if matches!(error.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::CollectionError, .. })
         ));
+    }
+
+    #[test]
+    fn sync_collection_cursor_preserves_order_horizon_and_reinsertion_boundary() {
+        let mut host = BootstrapHost::default();
+        let array = host
+            .invoke(
+                "std.sync.Array.literal",
+                &[RuntimeValue::Integer(1), RuntimeValue::Integer(2)],
+            )
+            .unwrap();
+        let RuntimeValue::Tuple(cutoff) = host
+            .invoke("std.sync.Array.__iterStart", std::slice::from_ref(&array))
+            .unwrap()
+        else {
+            panic!("cursor start did not return its cutoff");
+        };
+        let cutoff = cutoff[0].clone();
+        let first = host
+            .invoke(
+                "std.sync.Array.__iterNext",
+                &[array.clone(), cutoff.clone(), RuntimeValue::Integer(0)],
+            )
+            .unwrap();
+        assert_eq!(
+            first,
+            RuntimeValue::OptionSome(Box::new(RuntimeValue::Tuple(vec![
+                RuntimeValue::Integer(1),
+                RuntimeValue::Integer(1),
+            ])))
+        );
+        assert_eq!(
+            host.invoke(
+                "std.sync.Array.__iterNext",
+                &[array.clone(), cutoff.clone(), RuntimeValue::Integer(1)],
+            )
+            .unwrap(),
+            RuntimeValue::OptionSome(Box::new(RuntimeValue::Tuple(vec![
+                RuntimeValue::Integer(2),
+                RuntimeValue::Integer(2),
+            ])))
+        );
+        assert_eq!(
+            host.invoke(
+                "std.sync.Array.__iterNext",
+                &[array, cutoff.clone(), RuntimeValue::Integer(2)],
+            )
+            .unwrap(),
+            RuntimeValue::OptionNone
+        );
+
+        let map = host
+            .invoke(
+                "std.sync.Map.literal",
+                &[
+                    RuntimeValue::String("a".into()),
+                    RuntimeValue::Integer(1),
+                    RuntimeValue::String("b".into()),
+                    RuntimeValue::Integer(2),
+                ],
+            )
+            .unwrap();
+        let RuntimeValue::Tuple(map_cutoff) = host
+            .invoke("std.sync.Map.__iterStart", std::slice::from_ref(&map))
+            .unwrap()
+        else {
+            panic!("map cursor start did not return its cutoff");
+        };
+        let map_cutoff = map_cutoff[0].clone();
+        host.invoke(
+            "std.sync.Map.remove",
+            &[map.clone(), RuntimeValue::String("b".into())],
+        )
+        .unwrap();
+        host.invoke(
+            "std.sync.Map.insert",
+            &[
+                map.clone(),
+                RuntimeValue::String("b".into()),
+                RuntimeValue::Integer(3),
+            ],
+        )
+        .unwrap();
+        let next = host
+            .invoke(
+                "std.sync.Map.__iterNext",
+                &[map, map_cutoff, RuntimeValue::Integer(0)],
+            )
+            .unwrap();
+        assert_eq!(
+            next,
+            RuntimeValue::OptionSome(Box::new(RuntimeValue::Tuple(vec![
+                RuntimeValue::Integer(3),
+                RuntimeValue::Tuple(vec![
+                    RuntimeValue::String("a".into()),
+                    RuntimeValue::Integer(1),
+                ]),
+            ])))
+        );
+
+        let stack = host
+            .invoke(
+                "std.sync.Stack.literal",
+                &[RuntimeValue::Integer(1), RuntimeValue::Integer(2)],
+            )
+            .unwrap();
+        let RuntimeValue::Tuple(stack_cutoff) = host
+            .invoke("std.sync.Stack.__iterStart", std::slice::from_ref(&stack))
+            .unwrap()
+        else {
+            panic!("stack cursor start did not return its cutoff");
+        };
+        let first = host
+            .invoke(
+                "std.sync.Stack.__iterNext",
+                &[
+                    stack.clone(),
+                    stack_cutoff[0].clone(),
+                    RuntimeValue::Integer(u64::MAX as i128),
+                ],
+            )
+            .unwrap();
+        let RuntimeValue::OptionSome(payload) = first else {
+            panic!("stack cursor did not yield its top element");
+        };
+        let RuntimeValue::Tuple(values) = *payload else {
+            panic!("stack cursor payload is not a tuple");
+        };
+        assert_eq!(values[1], RuntimeValue::Integer(2));
+        let generation = values[0].clone();
+        let second = host
+            .invoke(
+                "std.sync.Stack.__iterNext",
+                &[stack.clone(), stack_cutoff[0].clone(), generation.clone()],
+            )
+            .unwrap();
+        let RuntimeValue::OptionSome(payload) = second else {
+            panic!("stack cursor did not yield its bottom element");
+        };
+        let RuntimeValue::Tuple(values) = *payload else {
+            panic!("stack cursor payload is not a tuple");
+        };
+        assert_eq!(values[1], RuntimeValue::Integer(1));
+        assert_eq!(
+            host.invoke(
+                "std.sync.Stack.__iterNext",
+                &[stack, stack_cutoff[0].clone(), values[0].clone()],
+            )
+            .unwrap(),
+            RuntimeValue::OptionNone
+        );
     }
 
     #[test]

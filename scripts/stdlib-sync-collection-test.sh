@@ -39,7 +39,7 @@ expect_failure queue-order \
     env TONDO_STDLIB_SYNC_COLLECTION_CONTRACT="$tmp_dir/queue-order.json" \
     scripts/stdlib-sync-collection-check.sh
 
-jq '.promotion.next_blocks = ["STD-SYNC-COLLECTION-TEST-001"]' \
+jq '.promotion.next_blocks = ["STD-SYNC-COLLECTION-ITER-001"]' \
     testing/stdlib-sync-collection.json > "$tmp_dir/next.json"
 expect_failure promotion-boundary \
     env TONDO_STDLIB_SYNC_COLLECTION_CONTRACT="$tmp_dir/next.json" \

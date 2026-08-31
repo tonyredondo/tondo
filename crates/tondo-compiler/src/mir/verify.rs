@@ -4871,6 +4871,30 @@ impl Verifier<'_> {
             TypeKind::Scalar(ScalarType::String) => {
                 destination == self.hir.interner().scalar(ScalarType::Char)
             }
+            TypeKind::Nominal {
+                identity,
+                arguments,
+            } if identity.package().as_str() == "toolchain:std:0.1-bootstrap"
+                && identity.module().as_str() == "sync" =>
+            {
+                if let Some(name) = identity.declaration().names().first() {
+                    if !matches!(name.as_str(), "Array" | "Map" | "Set" | "Stack" | "Queue") {
+                        false
+                    } else if name.as_str() == "Map" {
+                        matches!(
+                            self.kind(destination, context)?,
+                            TypeKind::Tuple(items)
+                                if items.len() == arguments.len() && items == arguments
+                        )
+                    } else {
+                        arguments
+                            .first()
+                            .is_some_and(|element| destination == *element)
+                    }
+                } else {
+                    false
+                }
+            }
             _ => false,
         };
         if !valid {
@@ -5192,6 +5216,23 @@ impl Verifier<'_> {
                 constructor: IntrinsicType::Map,
                 ..
             } => Some(source),
+            TypeKind::Nominal {
+                identity,
+                arguments,
+            } if identity.package().as_str() == "toolchain:std:0.1-bootstrap"
+                && identity.module().as_str() == "sync" =>
+            {
+                let name = identity.declaration().names().first()?.as_str();
+                if !matches!(name, "Array" | "Map" | "Set" | "Stack" | "Queue") {
+                    return None;
+                }
+                if name == "Map" {
+                    let mut interner = self.hir.interner().clone();
+                    interner.tuple(arguments.clone()).ok()
+                } else {
+                    arguments.first().copied()
+                }
+            }
             _ => None,
         }
     }

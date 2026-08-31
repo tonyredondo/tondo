@@ -5351,6 +5351,36 @@ impl Verifier<'_> {
             BytecodeTypeKind::Scalar(BytecodeScalarType::String) => {
                 Some(self.scalar_id(BytecodeScalarType::Char, context)?)
             }
+            BytecodeTypeKind::Nominal {
+                nominal: Some(nominal),
+                identity,
+                arguments,
+            } if identity.contains("toolchain:std:0.1-bootstrap")
+                && identity.contains("::sync::") =>
+            {
+                let descriptor = self.nominal(*nominal, context)?;
+                let expected_arity = if descriptor.name == "Map" { 2 } else { 1 };
+                if !matches!(
+                    descriptor.name.as_str(),
+                    "Array" | "Map" | "Set" | "Stack" | "Queue"
+                ) || arguments.len() != expected_arity
+                {
+                    None
+                } else if descriptor.name == "Map" {
+                    Some(self.find_type(
+                        |kind| {
+                            matches!(
+                                kind,
+                                BytecodeTypeKind::Tuple(items)
+                                    if items == arguments
+                            )
+                        },
+                        context,
+                    )?)
+                } else {
+                    arguments.first().copied()
+                }
+            }
             _ => None,
         };
         Ok(result)

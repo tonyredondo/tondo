@@ -152,6 +152,14 @@ pub(super) enum HeapObject {
 /// collection is materialized until `collect` is requested.
 #[derive(Debug, Clone, PartialEq)]
 pub(super) enum IteratorAdapter {
+    /// Internal cursor state for a hosted `std.sync` collection.  The
+    /// collection itself remains the source value; only the finite structural
+    /// cutoff and the last birth generation are retained.
+    Sync {
+        cutoff: u64,
+        last: u64,
+        descending: bool,
+    },
     Map {
         callback: Value,
         source_item: BytecodeTypeId,
@@ -638,9 +646,9 @@ impl Heap {
                 visit_optional_value(source, &mut visit);
                 if let Some(adapter) = adapter {
                     match adapter {
+                        IteratorAdapter::Sync { .. } | IteratorAdapter::Take { .. } => {}
                         IteratorAdapter::Map { callback, .. }
                         | IteratorAdapter::Filter { callback, .. } => visit(callback),
-                        IteratorAdapter::Take { .. } => {}
                     }
                 }
             }

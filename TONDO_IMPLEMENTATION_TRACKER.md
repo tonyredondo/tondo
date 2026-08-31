@@ -112,8 +112,10 @@ modelo hosted determinista y la campaña de rendimiento target-qualified;
 resolución nominal, HIR/MIR boundary y diagnóstico, y
 `STD-SYNC-COLLECTION-IMPL-001` queda cerrado para la ejecución en la VM hosted
 y el ABI nativo privado (sin promoción de una API pública ni lowering AOT
-genérico). El siguiente bloque es
-`STD-SYNC-COLLECTION-ITER-001`. El modelo y
+genérico). `STD-SYNC-COLLECTION-ITER-001` queda cerrado para el `for` directo
+finito en la VM hosted y el ABI nativo privado, sin reclamar lowering AOT
+genérico; el siguiente bloque es
+`STD-SYNC-COLLECTION-TEST-001`. El modelo y
 tests/fuzz hosted de Group están respaldados por
 `STD-ASYNC-GROUP-TEST-001`. El slice
 ejecutable de `select` ya está cerrado en la VM hosted —frontend,
@@ -6290,9 +6292,10 @@ publica hasta cerrar el gate final.
   primitivas, host y parking está cerrada; el frontend de literales está
   cerrado por `STD-SYNC-COLLECTION-FRONTEND-001`. La ejecución hosted y el ABI
   nativo privado de colecciones quedan cerrados por
-  `STD-SYNC-COLLECTION-IMPL-001`; la iteración directa, las optimizaciones
-  algorítmicas, la conformance final y el lowering AOT siguen pendientes de las
-  leaves `STD-SYNC-COLLECTION-*` tras `NATIVE-001`.
+  `STD-SYNC-COLLECTION-IMPL-001`; la iteración directa queda cerrada por
+  `STD-SYNC-COLLECTION-ITER-001` para hosted y ABI nativo privado. Las
+  optimizaciones algorítmicas, la conformance final y el lowering AOT siguen
+  pendientes de las leaves `STD-SYNC-COLLECTION-*` tras `NATIVE-001`.
 
 - [x] **STD-EXEC-001 — Especificar `std.executor`.** El registro
   [`testing/stdlib-executor.json`](./testing/stdlib-executor.json) y el contrato
@@ -6632,7 +6635,7 @@ estas leaves.
   `std.sync`. Los fast paths algorítmicos CAS/sharding, el lowering AOT
   genérico y la promoción de una API pública no se declaran completados; quedan
   target-qualified para `STD-SYNC-COLLECTION-PERF-001` y las leaves posteriores.
-- [ ] **STD-SYNC-COLLECTION-ITER-001 — Implementar `for` concurrente directo.**
+- [x] **STD-SYNC-COLLECTION-ITER-001 — Implementar `for` concurrente directo.**
   Reconocer solo las cinco identidades cerradas de `std.sync` y bajar el header
   ordinario por valor a `cursor[sync,C]: AsyncIterator[T]`, copiando el handle y
   capturando en O(1) un horizonte estructural finito. Excluir altas posteriores
@@ -6644,7 +6647,17 @@ estas leaves.
   Rechazar cualquier binding `ref`/`mut`/`var`; stack/queue exigen
   `T: Copy + Send + Share` y nunca consumen elementos. Mantener `snapshot()`
   como la única iteración de estado global coherente y no añadir `scan`, `live`,
-  `for await` ni otro protocolo público.
+  `for await` ni otro protocolo público. Cerrado para la VM hosted y el ABI
+  nativo privado: el checker infiere `AsyncIterator` por valor para las cinco
+  identidades nominales, rechaza préstamos y exige `Copy + Send + Share` en
+  `Stack`/`Queue`; el cursor captura un horizonte estructural O(1), no
+  materializa ni mantiene locks durante el body y excluye inserciones o
+  reinserciones posteriores mediante generaciones. La evidencia está en
+  [`testing/stdlib-sync-collection-iter.json`](./testing/stdlib-sync-collection-iter.json),
+  [`docs/contracts/stdlib-sync-collection-iter.md`](./docs/contracts/stdlib-sync-collection-iter.md),
+  `scripts/stdlib-sync-collection-iter-check.sh` y
+  `scripts/stdlib-sync-collection-iter-test.sh`. El runtime AOT genérico y una
+  API pública de cursor no se declaran completados.
 - [ ] **STD-SYNC-COLLECTION-TEST-001 — Modelar y fuzzear colecciones
   compartidas.** Mantener modelos secuenciales de referencia y linearizability
   histories para get/set/CAS, insert/remove, push/pop y enqueue/dequeue. Cubrir
@@ -7567,7 +7580,7 @@ promueve Cranelift únicamente para el target primario x86_64 GNU. El frontend d
 colecciones compartidas ya está cerrado por `STD-SYNC-COLLECTION-FRONTEND-001`;
 la ejecución hosted y el ABI nativo privado quedan cerrados por
 `STD-SYNC-COLLECTION-IMPL-001`; el siguiente bloque crítico es
-`STD-SYNC-COLLECTION-ITER-001`;
+`STD-SYNC-COLLECTION-TEST-001`;
 `STD-SYNC-HOST-001`,
 `STD-SYNC-TEST-001` y `STD-SYNC-PERF-001` ya cerraron la frontera de
 parking/atomics, la continuación de `Once`, el modelo hosted determinista y el
@@ -7601,7 +7614,7 @@ la frontera AOT y Gate N1 están cerrados para el target primario; el backend
 seleccionado queda promovido únicamente para x86_64 GNU. El frontend de
 colecciones compartidas está cerrado y la ejecución hosted/ABI nativo privado
 de `STD-SYNC-COLLECTION-IMPL-001` ya tiene evidencia ejecutable; el siguiente
-trabajo crítico es `STD-SYNC-COLLECTION-ITER-001`. La implementación de
+trabajo crítico es `STD-SYNC-COLLECTION-TEST-001`. La implementación de
 superficie, el parking hosted, el puente nativo escalar, el modelo/test/fuzz,
 el presupuesto de rendimiento y la conformance del ABI del runtime nativo de
 Group ya tienen fronteras explícitas, mientras la iteración directa, el

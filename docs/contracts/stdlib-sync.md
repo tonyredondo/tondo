@@ -16,7 +16,10 @@ La implementación de esos handles para el modelo hosted y el ABI nativo privado
 está cerrada por `STD-SYNC-COLLECTION-IMPL-001`; su registro es
 [`testing/stdlib-sync-collection.json`](../../testing/stdlib-sync-collection.json)
 y su contrato [`stdlib-sync-collection.md`](./stdlib-sync-collection.md). La
-iteración directa sigue pendiente de `STD-SYNC-COLLECTION-ITER-001`.
+iteración directa está cerrada para el VM hosted y el ABI nativo privado por
+`STD-SYNC-COLLECTION-ITER-001`; su registro es
+[`testing/stdlib-sync-collection-iter.json`](../../testing/stdlib-sync-collection-iter.json)
+y su contrato [`stdlib-sync-collection-iter.md`](./stdlib-sync-collection-iter.md).
 
 Implementación host: `scheduler-backed-hosted-model` con puente
 `verified-host-parking-native-atomic-epoch-bridge`.
@@ -267,9 +270,11 @@ ejecutable véase [`stdlib-sync-collection-frontend.md`](./stdlib-sync-collectio
 La implementación de handles y operaciones para hosted/native ABI tiene un
 contrato separado en [`stdlib-sync-collection.md`](./stdlib-sync-collection.md)
 y un registro en [`testing/stdlib-sync-collection.json`](../../testing/stdlib-sync-collection.json).
+La iteración directa tiene su contrato separado en
+[`stdlib-sync-collection-iter.md`](./stdlib-sync-collection-iter.md) y su registro
+en [`testing/stdlib-sync-collection-iter.json`](../../testing/stdlib-sync-collection-iter.json).
 Las operaciones listadas aquí ya se ejecutan en esos dos carriles; el lowering
-genérico AOT y la iteración directa permanecen target-qualified y siguen sus
-hojas propias.
+genérico AOT permanece target-qualified y sigue sus hojas propias.
 
 Las cinco identidades calificadas son:
 
