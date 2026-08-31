@@ -712,6 +712,49 @@
     "sync-publishes-waitgroup",
     "diagnostics-publish-payloads"
   ],
+  "performance": {
+    "task": "STD-SYNC-PERF-001",
+    "status": "verified-hosted-vm",
+    "contract": "testing/stdlib-sync-performance.json",
+    "document": "docs/contracts/stdlib-sync-performance.md",
+    "target": "tondo-vm-hosted",
+    "backend": "bytecode-vm",
+    "profile": "test",
+    "workloads": 20,
+    "samples_per_workload": 27,
+    "participant_cardinalities": [1, 8, 64],
+    "metrics": [
+      "latency",
+      "tail_latency",
+      "throughput",
+      "fairness",
+      "logical_memory_bytes",
+      "live_handles"
+    ],
+    "report": "target/reliability/evidence/stdlib-sync-performance.json",
+    "command": "scripts/stdlib-sync-performance.sh",
+    "scope": {
+      "hosted_vm": "measured-and-verified",
+      "native_aot": "not-claimed",
+      "native_boundary": "u64-atomic-and-epoch-parking-ABI-conformance-remains-separate"
+    },
+    "oracle": {
+      "sources": [
+        "crates/tondo-reliability/src/sync_model.rs",
+        "crates/tondo-reliability/tests/sync_models.rs"
+      ],
+      "kind": "independent-model-and-host-invariant-checks",
+      "correction": "FIFO-queue-order-exact-wakeup-counts-and-zero-detached-waiters"
+    },
+    "invariants": {
+      "operations": "stable-per-workload-across-samples",
+      "contention": "blocked-and-wakeup-counts-match-declared-participants; barrier-reports-two-reusable-generations",
+      "fairness": "zero-FIFO-registration-violations",
+      "memory": "logical-host-registry-and-queue-capacity-only; allocator-overhead-excluded",
+      "cleanup": "no-pending-sync-waiter-or-nonempty-queue-before-probe-return",
+      "aggregation": "never-aggregate-different-targets-or-backends"
+    }
+  },
   "implementation": {
     "status": "verified-compiler-hosted-parking-native-bridge",
     "public_api_promoted": false,
@@ -740,7 +783,6 @@
       "tests/runtime/m11-std-sync-test-001.to"
     ],
     "required_follow_ups": [
-      "STD-SYNC-PERF-001",
       "STD-SYNC-COLLECTION-FRONTEND-001",
       "STD-SYNC-COLLECTION-IMPL-001",
       "STD-SYNC-COLLECTION-ITER-001",
@@ -753,7 +795,6 @@
   },
   "promotion": {
     "implementation_pending": [
-      "STD-SYNC-PERF-001",
       "STD-SYNC-COLLECTION-FRONTEND-001",
       "STD-SYNC-COLLECTION-IMPL-001",
       "STD-SYNC-COLLECTION-ITER-001",
@@ -763,6 +804,6 @@
       "STD-SYNC-CONF-001",
       "STD-SYNC-DOC-001"
     ],
-    "next_blocks": ["STD-SYNC-PERF-001"]
+    "next_blocks": ["STD-SYNC-COLLECTION-FRONTEND-001"]
   }
 }

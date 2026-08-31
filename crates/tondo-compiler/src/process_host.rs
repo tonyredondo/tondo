@@ -10355,6 +10355,649 @@ mod tests {
         ));
     }
 
+    #[derive(Debug, Clone, Copy)]
+    struct SyncPerformanceSample {
+        nanos: u64,
+        operations: u64,
+        blocked: u64,
+        wakeups: u64,
+        fairness_violations: u64,
+        logical_bytes: u64,
+        live_handles: u64,
+    }
+
+    const SYNC_PERF_BATCH: usize = 32;
+
+    fn sync_performance_logical_bytes(host: &BootstrapHost) -> u64 {
+        let values = host
+            .values
+            .len()
+            .saturating_mul(std::mem::size_of::<HostValue>());
+        let waiters = host
+            .sync_waiters
+            .len()
+            .saturating_mul(std::mem::size_of::<PendingSync>());
+        let queue_capacity = host
+            .sync_queues
+            .values()
+            .map(|queue| queue.capacity().saturating_mul(std::mem::size_of::<u64>()))
+            .sum::<usize>();
+        u64::try_from(
+            values
+                .saturating_add(waiters)
+                .saturating_add(queue_capacity),
+        )
+        .expect("logical sync state size fits in u64")
+    }
+
+    fn sync_performance_finish(
+        host: &BootstrapHost,
+        started: Instant,
+        operations: usize,
+        blocked: usize,
+        wakeups: usize,
+        fairness_violations: usize,
+    ) -> SyncPerformanceSample {
+        sync_performance_finish_with_memory(
+            host,
+            started,
+            operations,
+            blocked,
+            wakeups,
+            fairness_violations,
+            sync_performance_logical_bytes(host),
+        )
+    }
+
+    fn sync_performance_finish_with_memory(
+        host: &BootstrapHost,
+        started: Instant,
+        operations: usize,
+        blocked: usize,
+        wakeups: usize,
+        fairness_violations: usize,
+        logical_bytes: u64,
+    ) -> SyncPerformanceSample {
+        assert!(
+            host.sync_waiters.is_empty(),
+            "sync probe left a pending waiter"
+        );
+        assert!(
+            host.sync_queues.values().all(VecDeque::is_empty),
+            "sync probe left a non-empty queue"
+        );
+        let nanos = started.elapsed().as_nanos().max(1);
+        SyncPerformanceSample {
+            nanos: u64::try_from(nanos).expect("sync probe duration fits in u64"),
+            operations: u64::try_from(operations).expect("sync probe operations fit in u64"),
+            blocked: u64::try_from(blocked).expect("sync probe blocked count fits in u64"),
+            wakeups: u64::try_from(wakeups).expect("sync probe wakeup count fits in u64"),
+            fairness_violations: u64::try_from(fairness_violations)
+                .expect("sync probe fairness count fits in u64"),
+            logical_bytes,
+            live_handles: u64::try_from(host.values.len())
+                .expect("sync probe handle count fits in u64"),
+        }
+    }
+
+    fn sync_performance_mutex_uncontended(participants: usize) -> SyncPerformanceSample {
+        let mut host = BootstrapHost::default();
+        let mutex = ok(host
+            .invoke("std.sync.mutex", &[RuntimeValue::Integer(0)])
+            .unwrap());
+        let started = Instant::now();
+        for unit in 0..participants {
+            host.set_execution_unit(unit as u64 + 1);
+            for _ in 0..SYNC_PERF_BATCH {
+                let guard = ok(host
+                    .invoke("std.sync.Mutex.lock", std::slice::from_ref(&mutex))
+                    .unwrap());
+                std::hint::black_box(&guard);
+                host.invoke("std.sync.MutexGuard.unlock", &[guard]).unwrap();
+            }
+        }
+        sync_performance_finish(&host, started, participants * SYNC_PERF_BATCH, 0, 0, 0)
+    }
+
+    fn sync_performance_mutex_contended(participants: usize) -> SyncPerformanceSample {
+        let mut host = BootstrapHost::default();
+        let mutex = ok(host
+            .invoke("std.sync.mutex", &[RuntimeValue::Integer(0)])
+            .unwrap());
+        host.set_execution_unit(0);
+        let owner = ok(host
+            .invoke("std.sync.Mutex.lock", std::slice::from_ref(&mutex))
+            .unwrap());
+        let started = Instant::now();
+        let mut calls = Vec::with_capacity(participants);
+        for unit in 1..=participants {
+            host.set_execution_unit(unit as u64);
+            calls.push(
+                host.start_async("std.sync.Mutex.lock", std::slice::from_ref(&mutex))
+                    .unwrap(),
+            );
+        }
+        assert!(
+            calls
+                .iter()
+                .all(|call| host.poll_async(*call).unwrap().is_none())
+        );
+        let peak_logical_bytes = sync_performance_logical_bytes(&host);
+        host.set_execution_unit(0);
+        host.invoke("std.sync.MutexGuard.unlock", &[owner]).unwrap();
+        let mut fairness_violations = 0;
+        for call in calls.iter().copied() {
+            let guard = host
+                .poll_async(call)
+                .unwrap()
+                .expect("FIFO mutex waiter must wake");
+            if !matches!(guard, RuntimeValue::ResultOk(_)) {
+                fairness_violations += 1;
+            }
+            let guard = ok(guard);
+            host.cleanup(&guard).unwrap();
+        }
+        sync_performance_finish_with_memory(
+            &host,
+            started,
+            participants,
+            participants,
+            participants,
+            fairness_violations,
+            peak_logical_bytes,
+        )
+    }
+
+    fn sync_performance_rwlock(participants: usize, write: bool) -> SyncPerformanceSample {
+        let mut host = BootstrapHost::default();
+        let lock = ok(host
+            .invoke(
+                "std.sync.rwLock",
+                &[RuntimeValue::Integer(if write { 1 } else { 0 })],
+            )
+            .unwrap());
+        let operation = if write {
+            "std.sync.RwLock.write"
+        } else {
+            "std.sync.RwLock.read"
+        };
+        let unlock = if write {
+            "std.sync.WriteGuard.unlock"
+        } else {
+            "std.sync.ReadGuard.unlock"
+        };
+        let started = Instant::now();
+        for unit in 0..participants {
+            host.set_execution_unit(unit as u64 + 1);
+            for _ in 0..SYNC_PERF_BATCH {
+                let guard = ok(host.invoke(operation, std::slice::from_ref(&lock)).unwrap());
+                std::hint::black_box(&guard);
+                host.invoke(unlock, &[guard]).unwrap();
+            }
+        }
+        sync_performance_finish(&host, started, participants * SYNC_PERF_BATCH, 0, 0, 0)
+    }
+
+    fn sync_performance_semaphore_uncontended(participants: usize) -> SyncPerformanceSample {
+        let mut host = BootstrapHost::default();
+        let semaphore = ok(host
+            .invoke(
+                "std.sync.semaphore",
+                &[RuntimeValue::Integer(participants as i128)],
+            )
+            .unwrap());
+        let started = Instant::now();
+        for unit in 0..participants {
+            host.set_execution_unit(unit as u64 + 1);
+            for _ in 0..SYNC_PERF_BATCH {
+                let permit = host
+                    .invoke(
+                        "std.sync.Semaphore.acquire",
+                        std::slice::from_ref(&semaphore),
+                    )
+                    .unwrap();
+                std::hint::black_box(&permit);
+                host.cleanup(&permit).unwrap();
+            }
+        }
+        sync_performance_finish(&host, started, participants * SYNC_PERF_BATCH, 0, 0, 0)
+    }
+
+    fn sync_performance_semaphore_contended(participants: usize) -> SyncPerformanceSample {
+        let mut host = BootstrapHost::default();
+        let semaphore = ok(host
+            .invoke("std.sync.semaphore", &[RuntimeValue::Integer(1)])
+            .unwrap());
+        host.set_execution_unit(0);
+        let owner = host
+            .invoke(
+                "std.sync.Semaphore.acquire",
+                std::slice::from_ref(&semaphore),
+            )
+            .unwrap();
+        let started = Instant::now();
+        let mut calls = Vec::with_capacity(participants);
+        for unit in 1..=participants {
+            host.set_execution_unit(unit as u64);
+            calls.push(
+                host.start_async(
+                    "std.sync.Semaphore.acquire",
+                    std::slice::from_ref(&semaphore),
+                )
+                .unwrap(),
+            );
+        }
+        assert!(
+            calls
+                .iter()
+                .all(|call| host.poll_async(*call).unwrap().is_none())
+        );
+        let peak_logical_bytes = sync_performance_logical_bytes(&host);
+        host.cleanup(&owner).unwrap();
+        let mut fairness_violations = 0;
+        for call in calls.iter().copied() {
+            let permit = host
+                .poll_async(call)
+                .unwrap()
+                .expect("FIFO semaphore waiter must wake");
+            if !matches!(permit, RuntimeValue::Host { .. }) {
+                fairness_violations += 1;
+            }
+            host.cleanup(&permit).unwrap();
+        }
+        sync_performance_finish_with_memory(
+            &host,
+            started,
+            participants,
+            participants,
+            participants,
+            fairness_violations,
+            peak_logical_bytes,
+        )
+    }
+
+    fn sync_performance_condition_contended(participants: usize) -> SyncPerformanceSample {
+        let mut host = BootstrapHost::default();
+        let condition = ok(host.invoke("std.sync.condition", &[]).unwrap());
+        let mutex = ok(host
+            .invoke("std.sync.mutex", &[RuntimeValue::Bool(true)])
+            .unwrap());
+        let started = Instant::now();
+        let mut waits = Vec::with_capacity(participants);
+        for unit in 1..=participants {
+            host.set_execution_unit(unit as u64);
+            let guard = ok(host
+                .invoke("std.sync.Mutex.lock", std::slice::from_ref(&mutex))
+                .unwrap());
+            let call = host
+                .start_async("std.sync.Condition.wait", &[condition.clone(), guard])
+                .unwrap();
+            waits.push(call);
+        }
+        assert!(
+            waits
+                .iter()
+                .all(|call| host.poll_async(*call).unwrap().is_none())
+        );
+        let peak_logical_bytes = sync_performance_logical_bytes(&host);
+        host.invoke(
+            "std.sync.Condition.notifyAll",
+            std::slice::from_ref(&condition),
+        )
+        .unwrap();
+        let mut fairness_violations = 0;
+        for call in waits.iter().copied() {
+            let guard = host
+                .poll_async(call)
+                .unwrap()
+                .expect("notified condition waiter must reacquire");
+            if !matches!(guard, RuntimeValue::Host { .. }) {
+                fairness_violations += 1;
+            }
+            host.cleanup(&guard).unwrap();
+        }
+        sync_performance_finish_with_memory(
+            &host,
+            started,
+            participants,
+            participants,
+            participants,
+            fairness_violations,
+            peak_logical_bytes,
+        )
+    }
+
+    fn sync_performance_barrier_generation(participants: usize) -> SyncPerformanceSample {
+        let mut host = BootstrapHost::default();
+        let barrier = ok(host
+            .invoke(
+                "std.sync.barrier",
+                &[RuntimeValue::Integer(participants as i128)],
+            )
+            .unwrap());
+        let started = Instant::now();
+        let mut fairness_violations = 0;
+        let mut peak_logical_bytes = 0;
+        for _generation in 0..2 {
+            let mut calls = Vec::with_capacity(participants);
+            for unit in 0..participants - 1 {
+                host.set_execution_unit(unit as u64 + 1);
+                calls.push(
+                    host.start_async("std.sync.Barrier.wait", std::slice::from_ref(&barrier))
+                        .unwrap(),
+                );
+            }
+            peak_logical_bytes = peak_logical_bytes.max(sync_performance_logical_bytes(&host));
+            host.set_execution_unit(participants as u64);
+            calls.push(
+                host.start_async("std.sync.Barrier.wait", std::slice::from_ref(&barrier))
+                    .unwrap(),
+            );
+            for (index, call) in calls.iter().copied().enumerate() {
+                let role = ok(host
+                    .poll_async(call)
+                    .unwrap()
+                    .expect("barrier participant ready"));
+                let expected = if index + 1 == participants { 0 } else { 1 };
+                if !matches!(
+                    role,
+                    RuntimeValue::Variant {
+                        name,
+                        variant,
+                        values
+                    } if name == "BarrierRole" && variant == expected && values.is_empty()
+                ) {
+                    fairness_violations += 1;
+                }
+            }
+        }
+        sync_performance_finish_with_memory(
+            &host,
+            started,
+            participants * 2,
+            participants.saturating_sub(1) * 2,
+            participants.saturating_sub(1) * 2,
+            fairness_violations,
+            peak_logical_bytes,
+        )
+    }
+
+    fn sync_performance_atomic_uncontended(participants: usize) -> SyncPerformanceSample {
+        let mut host = BootstrapHost::default();
+        let atomic = host
+            .invoke("std.sync.atomic", &[RuntimeValue::Integer(0)])
+            .unwrap();
+        let relaxed = host
+            .invoke("intrinsic.sync.MemoryOrder.Relaxed", &[])
+            .unwrap();
+        let release = host
+            .invoke("intrinsic.sync.MemoryOrder.Release", &[])
+            .unwrap();
+        let acquire = host
+            .invoke("intrinsic.sync.MemoryOrder.Acquire", &[])
+            .unwrap();
+        let seq_cst = host
+            .invoke("intrinsic.sync.MemoryOrder.SeqCst", &[])
+            .unwrap();
+        let started = Instant::now();
+        let mut operations = 0;
+        for unit in 0..participants {
+            host.set_execution_unit(unit as u64 + 1);
+            for _ in 0..SYNC_PERF_BATCH {
+                let current = host
+                    .invoke("std.sync.Atomic.load", &[atomic.clone(), relaxed.clone()])
+                    .unwrap();
+                let RuntimeValue::Integer(value) = current else {
+                    panic!("atomic probe returned a non-integer value")
+                };
+                host.invoke(
+                    "std.sync.Atomic.store",
+                    &[
+                        atomic.clone(),
+                        RuntimeValue::Integer(value),
+                        release.clone(),
+                    ],
+                )
+                .unwrap();
+                let previous = host
+                    .invoke(
+                        "std.sync.Atomic.swap",
+                        &[
+                            atomic.clone(),
+                            RuntimeValue::Integer(value + 1),
+                            seq_cst.clone(),
+                        ],
+                    )
+                    .unwrap();
+                let RuntimeValue::Integer(previous) = previous else {
+                    panic!("atomic probe swap returned a non-integer value")
+                };
+                let exchanged = host
+                    .invoke(
+                        "std.sync.Atomic.compareExchange",
+                        &[
+                            atomic.clone(),
+                            RuntimeValue::Integer(previous + 1),
+                            RuntimeValue::Integer(previous + 2),
+                            seq_cst.clone(),
+                            acquire.clone(),
+                        ],
+                    )
+                    .unwrap();
+                assert!(matches!(
+                    exchanged,
+                    RuntimeValue::Variant { variant: 0, .. }
+                ));
+                operations += 4;
+            }
+        }
+        sync_performance_finish(&host, started, operations, 0, 0, 0)
+    }
+
+    fn sync_performance_once_ready(participants: usize) -> SyncPerformanceSample {
+        let mut host = BootstrapHost::default();
+        let once = host.invoke("std.sync.once", &[]).unwrap();
+        let RuntimeValue::Host { id, .. } = once else {
+            panic!("Once constructor did not return a host token")
+        };
+        match host.values.get_mut(&id) {
+            Some(HostValue::SyncOnce { value }) => *value = Some(RuntimeValue::Integer(42)),
+            _ => panic!("Once constructor did not register sync state"),
+        }
+        let started = Instant::now();
+        for unit in 0..participants {
+            host.set_execution_unit(unit as u64 + 1);
+            for _ in 0..SYNC_PERF_BATCH {
+                let value = host
+                    .invoke("std.sync.Once.get", std::slice::from_ref(&once))
+                    .unwrap();
+                assert!(matches!(value, RuntimeValue::OptionSome(_)));
+                assert_eq!(
+                    host.invoke("std.sync.Once.isReady", std::slice::from_ref(&once))
+                        .unwrap(),
+                    RuntimeValue::Bool(true)
+                );
+            }
+        }
+        sync_performance_finish(&host, started, participants * SYNC_PERF_BATCH * 2, 0, 0, 0)
+    }
+
+    fn run_sync_performance_workload(workload: &str, participants: usize) -> SyncPerformanceSample {
+        match workload {
+            "mutex-uncontended" => sync_performance_mutex_uncontended(participants),
+            "mutex-contended" => sync_performance_mutex_contended(participants),
+            "rwlock-read" => sync_performance_rwlock(participants, false),
+            "rwlock-write" => sync_performance_rwlock(participants, true),
+            "semaphore-uncontended" => sync_performance_semaphore_uncontended(participants),
+            "semaphore-contended" => sync_performance_semaphore_contended(participants),
+            "condition-contended" => sync_performance_condition_contended(participants),
+            "barrier-generation" => sync_performance_barrier_generation(participants),
+            "atomic-uncontended" => sync_performance_atomic_uncontended(participants),
+            "once-ready" => sync_performance_once_ready(participants),
+            _ => panic!("unknown sync performance workload: {workload}"),
+        }
+    }
+
+    #[test]
+    fn sync_performance_probe() {
+        let workloads = [
+            (
+                "mutex-uncontended-1",
+                "uncontended",
+                "mutex",
+                "mutex-uncontended",
+                1,
+            ),
+            (
+                "mutex-uncontended-8",
+                "uncontended",
+                "mutex",
+                "mutex-uncontended",
+                8,
+            ),
+            (
+                "mutex-contended-8",
+                "contended",
+                "mutex",
+                "mutex-contended",
+                8,
+            ),
+            (
+                "mutex-contended-64",
+                "contended",
+                "mutex",
+                "mutex-contended",
+                64,
+            ),
+            (
+                "rwlock-read-1",
+                "uncontended",
+                "rwlock-read",
+                "rwlock-read",
+                1,
+            ),
+            (
+                "rwlock-read-8",
+                "uncontended",
+                "rwlock-read",
+                "rwlock-read",
+                8,
+            ),
+            (
+                "rwlock-write-1",
+                "uncontended",
+                "rwlock-write",
+                "rwlock-write",
+                1,
+            ),
+            (
+                "rwlock-write-8",
+                "uncontended",
+                "rwlock-write",
+                "rwlock-write",
+                8,
+            ),
+            (
+                "semaphore-uncontended-1",
+                "uncontended",
+                "semaphore",
+                "semaphore-uncontended",
+                1,
+            ),
+            (
+                "semaphore-uncontended-8",
+                "uncontended",
+                "semaphore",
+                "semaphore-uncontended",
+                8,
+            ),
+            (
+                "semaphore-contended-8",
+                "contended",
+                "semaphore",
+                "semaphore-contended",
+                8,
+            ),
+            (
+                "semaphore-contended-64",
+                "contended",
+                "semaphore",
+                "semaphore-contended",
+                64,
+            ),
+            (
+                "condition-contended-8",
+                "contended",
+                "condition",
+                "condition-contended",
+                8,
+            ),
+            (
+                "condition-contended-64",
+                "contended",
+                "condition",
+                "condition-contended",
+                64,
+            ),
+            (
+                "barrier-generation-8",
+                "contended",
+                "barrier",
+                "barrier-generation",
+                8,
+            ),
+            (
+                "barrier-generation-64",
+                "contended",
+                "barrier",
+                "barrier-generation",
+                64,
+            ),
+            (
+                "atomic-uncontended-1",
+                "uncontended",
+                "atomic",
+                "atomic-uncontended",
+                1,
+            ),
+            (
+                "atomic-uncontended-8",
+                "uncontended",
+                "atomic",
+                "atomic-uncontended",
+                8,
+            ),
+            ("once-ready-1", "ready", "once", "once-ready", 1),
+            ("once-ready-8", "ready", "once", "once-ready", 8),
+        ];
+        for _ in 0..3 {
+            for (_, _, _, workload, participants) in workloads {
+                let sample = run_sync_performance_workload(workload, participants);
+                assert!(sample.nanos > 0);
+                assert!(sample.operations > 0);
+                assert!(sample.logical_bytes > 0);
+            }
+        }
+        for _ in 0..9 {
+            for (id, mode, _, operation, participants) in workloads {
+                let sample = run_sync_performance_workload(operation, participants);
+                assert!(sample.nanos > 0);
+                assert!(sample.operations > 0);
+                assert!(sample.logical_bytes > 0);
+                println!(
+                    "TONDO_SYNC_PERF\t{id}\t{mode}\t{operation}\t{participants}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                    sample.nanos,
+                    sample.operations,
+                    sample.blocked,
+                    sample.wakeups,
+                    sample.fairness_violations,
+                    sample.logical_bytes,
+                    sample.live_handles,
+                );
+            }
+        }
+    }
+
     fn json_limits(host: &mut BootstrapHost) -> RuntimeValue {
         host.invoke(
             "intrinsic.json.JsonLimits.construct",

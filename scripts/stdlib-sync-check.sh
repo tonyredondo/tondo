@@ -173,7 +173,19 @@ jq -e '
   and .collections.direct_for.post_cursor_insertions == "excluded"
   and .collections.direct_for.lock_held_in_body == false
   and .collections.direct_for.materialization == "forbidden"
-  and .promotion.next_blocks == ["STD-SYNC-PERF-001"]
+  and .performance.task == "STD-SYNC-PERF-001"
+  and .performance.status == "verified-hosted-vm"
+  and .performance.contract == "testing/stdlib-sync-performance.json"
+  and .performance.document == "docs/contracts/stdlib-sync-performance.md"
+  and .performance.target == "tondo-vm-hosted"
+  and .performance.backend == "bytecode-vm"
+  and .performance.workloads == 20
+  and .performance.samples_per_workload == 27
+  and .performance.scope.hosted_vm == "measured-and-verified"
+  and .performance.scope.native_aot == "not-claimed"
+  and .performance.oracle.kind == "independent-model-and-host-invariant-checks"
+  and .performance.invariants.fairness == "zero-FIFO-registration-violations"
+  and .promotion.next_blocks == ["STD-SYNC-COLLECTION-FRONTEND-001"]
   and .implementation.status == "verified-compiler-hosted-parking-native-bridge"
   and .implementation.public_api_promoted == false
   and .implementation.host == "scheduler-backed-hosted-model"
@@ -199,7 +211,9 @@ for path in \
     TONDO_STANDARD_LIBRARY_SPEC.md \
     TONDO_LANGUAGE_SPEC.md \
     TONDO_IMPLEMENTATION_TRACKER.md \
-    testing/stdlib-sync-test.json; do
+    testing/stdlib-sync-test.json \
+    testing/stdlib-sync-performance.json \
+    docs/contracts/stdlib-sync-performance.md; do
     [[ -f "$root/$path" ]] || die "missing linked contract: $path"
 done
 
@@ -216,7 +230,10 @@ for marker in \
     'verified-host-parking-native-atomic-epoch-bridge' \
     'verified-vm-continuation-and-cleanup' \
     'STD-SYNC-TEST-001' \
-    'STD-SYNC-HOST-001'; do
+    'STD-SYNC-HOST-001' \
+    'STD-SYNC-PERF-001' \
+    'tondo-vm-hosted' \
+    'zero-FIFO-registration-violations'; do
     grep -Fq "$marker" "$root/docs/contracts/stdlib-sync.md" \
         || die "contract document misses marker: $marker"
 done
@@ -225,6 +242,13 @@ grep -Fq 'testing/stdlib-sync.json' "$root/TONDO_STANDARD_LIBRARY_SPEC.md" \
     || die "main stdlib spec does not link the sync registry"
 grep -Fq 'testing/stdlib-sync-test.json' "$root/TONDO_STANDARD_LIBRARY_SPEC.md" \
     || die "main stdlib spec does not link the sync testing contract"
+grep -Fq 'testing/stdlib-sync-performance.json' "$root/TONDO_STANDARD_LIBRARY_SPEC.md" \
+    || die "main stdlib spec does not link the sync performance contract"
+
+[[ -x "$root/scripts/stdlib-sync-performance.sh" ]] \
+    || die "sync performance runner is not executable"
+[[ -x "$root/scripts/stdlib-sync-performance-test.sh" ]] \
+    || die "sync performance contract test is not executable"
 
 for symbol in \
     tondo_rt_atomic_new \

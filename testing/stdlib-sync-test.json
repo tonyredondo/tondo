@@ -98,16 +98,33 @@
     "applicable": false,
     "address": "not-applicable-to-safe-model-and-hosted-VM",
     "undefined": "not-applicable-to-safe-model-and-hosted-VM",
-    "native_aot": "deferred-to-STD-SYNC-PERF-001",
-    "reason": "The independent model, VM continuation and native sync bridge are Rust code with forbid(unsafe_code); native AOT sanitizer coverage belongs to the target-qualified performance gate.",
+    "native_aot": "not-claimed-by-hosted-performance",
+    "reason": "The independent model, VM continuation and native sync bridge are Rust code with forbid(unsafe_code); this hosted performance gate does not claim native AOT sanitizer coverage.",
     "boundary": "scripts/native-aot-quality.sh"
+  },
+  "performance": {
+    "status": "verified",
+    "contract": "testing/stdlib-sync-performance.json",
+    "document": "docs/contracts/stdlib-sync-performance.md",
+    "target": "tondo-vm-hosted",
+    "workloads": 20,
+    "samples_per_workload": 27,
+    "metrics": [
+      "fairness",
+      "latency",
+      "live_handles",
+      "logical_memory_bytes",
+      "tail_latency",
+      "throughput"
+    ],
+    "report": "target/reliability/evidence/stdlib-sync-performance.json",
+    "command": "scripts/stdlib-sync-performance.sh"
   },
   "promotion": {
     "runtime_continuation_complete": true,
     "model_test_fuzz_complete": true,
     "sanitization_boundary_explicit": true,
     "remaining": [
-      "STD-SYNC-PERF-001",
       "STD-SYNC-COLLECTION-FRONTEND-001",
       "STD-SYNC-COLLECTION-IMPL-001",
       "STD-SYNC-COLLECTION-ITER-001",

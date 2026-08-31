@@ -2407,6 +2407,9 @@ normativa está en [`docs/contracts/stdlib-sync.md`](./docs/contracts/stdlib-syn
 La matriz independiente de modelo, runtime, fuzz y límites de sanitización de
 `STD-SYNC-TEST-001` está en
 [`testing/stdlib-sync-test.json`](./testing/stdlib-sync-test.json).
+El presupuesto reproducible de rendimiento de `STD-SYNC-PERF-001` está en
+[`testing/stdlib-sync-performance.json`](./testing/stdlib-sync-performance.json)
+y [`docs/contracts/stdlib-sync-performance.md`](./docs/contracts/stdlib-sync-performance.md).
 Estos artefactos fijan la superficie y sus negativos. La superficie de
 compilador, el parking cooperativo hosted y el puente ABI nativo de
 atomics/señales ya están implementados y verificados por

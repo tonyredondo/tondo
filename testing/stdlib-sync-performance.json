@@ -1,0 +1,93 @@
+{
+  "format": "tondo-stdlib-sync-performance/1",
+  "edition": "0.1",
+  "phase": "STD-0.1B",
+  "task": "STD-SYNC-PERF-001",
+  "owner": "std.sync",
+  "status": "verified-hosted-vm",
+  "target": "tondo-vm-hosted",
+  "backend": "bytecode-vm",
+  "profile": "test",
+  "probe": {
+    "path": "crates/tondo-compiler/src/process_host.rs",
+    "test": "process_host::tests::sync_performance_probe",
+    "sha256": "9cfe97a56b162101b7c314875f70934198ca9e8ec979298688ec31474a513bb2"
+  },
+  "protocol": {
+    "clock": "monotonic",
+    "warmup_iterations": 3,
+    "measurement_repetitions": 9,
+    "independent_processes": 3,
+    "minimum_sample_count": 27,
+    "batch_operations": 32,
+    "deterministic_seed": "tondo-stdlib-sync-perf-0.1",
+    "outliers": "report-not-delete",
+    "fixture_setup": "excluded-from-uncontended-latency; included-in-contended-round-trip-and-memory-counters"
+  },
+  "identity_fields": [
+    "suite",
+    "workload_id",
+    "probe_sha256",
+    "target",
+    "backend",
+    "profile",
+    "toolchain",
+    "flags",
+    "git_revision"
+  ],
+  "forbidden_identity": [
+    "ambient_environment",
+    "cpu_frequency",
+    "path",
+    "pid",
+    "timestamp"
+  ],
+  "metrics": [
+    "latency",
+    "tail_latency",
+    "throughput",
+    "fairness",
+    "logical_memory_bytes",
+    "live_handles"
+  ],
+  "workloads": [
+    {"id": "mutex-uncontended-1", "operation": "mutex-uncontended", "mode": "uncontended", "participants": 1},
+    {"id": "mutex-uncontended-8", "operation": "mutex-uncontended", "mode": "uncontended", "participants": 8},
+    {"id": "mutex-contended-8", "operation": "mutex-contended", "mode": "contended", "participants": 8},
+    {"id": "mutex-contended-64", "operation": "mutex-contended", "mode": "contended", "participants": 64},
+    {"id": "rwlock-read-1", "operation": "rwlock-read", "mode": "uncontended", "participants": 1},
+    {"id": "rwlock-read-8", "operation": "rwlock-read", "mode": "uncontended", "participants": 8},
+    {"id": "rwlock-write-1", "operation": "rwlock-write", "mode": "uncontended", "participants": 1},
+    {"id": "rwlock-write-8", "operation": "rwlock-write", "mode": "uncontended", "participants": 8},
+    {"id": "semaphore-uncontended-1", "operation": "semaphore-uncontended", "mode": "uncontended", "participants": 1},
+    {"id": "semaphore-uncontended-8", "operation": "semaphore-uncontended", "mode": "uncontended", "participants": 8},
+    {"id": "semaphore-contended-8", "operation": "semaphore-contended", "mode": "contended", "participants": 8},
+    {"id": "semaphore-contended-64", "operation": "semaphore-contended", "mode": "contended", "participants": 64},
+    {"id": "condition-contended-8", "operation": "condition-contended", "mode": "contended", "participants": 8},
+    {"id": "condition-contended-64", "operation": "condition-contended", "mode": "contended", "participants": 64},
+    {"id": "barrier-generation-8", "operation": "barrier-generation", "mode": "contended", "participants": 8},
+    {"id": "barrier-generation-64", "operation": "barrier-generation", "mode": "contended", "participants": 64},
+    {"id": "atomic-uncontended-1", "operation": "atomic-uncontended", "mode": "uncontended", "participants": 1},
+    {"id": "atomic-uncontended-8", "operation": "atomic-uncontended", "mode": "uncontended", "participants": 8},
+    {"id": "once-ready-1", "operation": "once-ready", "mode": "ready", "participants": 1},
+    {"id": "once-ready-8", "operation": "once-ready", "mode": "ready", "participants": 8}
+  ],
+  "invariants": {
+    "operations": "stable-per-workload-across-all-27-samples",
+    "contention": "blocked-and-wakeup-counts-equal-declared-participants-or-two-generations-of-participants-minus-one-for-barrier",
+    "fairness": "zero-FIFO-registration-violations",
+    "memory": "logical-host-registry-and-queue-capacity; allocator-overhead-excluded",
+    "cleanup": "no-pending-sync-waiter-or-nonempty-queue-before-probe-return",
+    "oracle": "independent-sync-model-laws-plus-host-state-invariants",
+    "target_isolation": "reports-never-combine-targets-or-backends"
+  },
+  "oracle": {
+    "sources": [
+      "crates/tondo-reliability/src/sync_model.rs",
+      "crates/tondo-reliability/tests/sync_models.rs"
+    ],
+    "command": "cargo test -p tondo-reliability --test sync_models --locked",
+    "kind": "independent-bounded-model-and-host-invariant-checks"
+  },
+  "report": "target/reliability/evidence/stdlib-sync-performance.json"
+}

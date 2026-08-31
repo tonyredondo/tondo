@@ -45,7 +45,7 @@ hosted; `DIAG-CI-001` y `DIAG-NATIVE-001` también están cerrados, con paridad
 lógica ejecutable entre Cranelift y LLVM. La captura de señales físicas sigue
 siendo una capacidad declarada por target.
 
-**Última actualización:** 2026-08-28
+**Última actualización:** 2026-08-31
 
 **Especificaciones normativas:**
 
@@ -70,6 +70,7 @@ siendo una capacidad declarada por target.
 - [Contrato de owner de `std.serialization`](./docs/contracts/stdlib-serialization.md)
 - [Contrato de owner de `std.testing`](./docs/contracts/stdlib-testing.md)
 - [Contrato de owner de `std.async`](./docs/contracts/stdlib-async.md)
+- [Contrato de rendimiento de `std.sync`](./docs/contracts/stdlib-sync-performance.md)
 - [Contrato de owner de `std.executor`](./docs/contracts/stdlib-executor.md)
 - [Matriz normativa de owners y firmas de stdlib](./docs/contracts/stdlib-matrix.md)
 - [Contrato de campañas de generación del runner](./docs/contracts/test-generation.md)
@@ -104,10 +105,10 @@ en requisito de Tondo 0.1.
 cerrar Gate N1. `STD-ASYNC-GROUP-IMPL-001`, `STD-ASYNC-GROUP-TEST-001`,
 `STD-ASYNC-GROUP-PERF-001`, `STD-ASYNC-GROUP-CONF-001` y
 `STD-ASYNC-GROUP-DOC-001` ya están cerrados para la VM hosted y el ABI del
-runtime nativo; `STD-SYNC-IMPL-001` ya está cerrado para la superficie del
-compilador y el modelo hosted determinista; el siguiente bloque es
-`STD-SYNC-TEST-001`, después de cerrar `STD-SYNC-HOST-001`. El bloque crítico
-actual queda cerrado y el siguiente es `STD-SYNC-PERF-001`. El modelo y
+runtime nativo; `STD-SYNC-IMPL-001`, `STD-SYNC-TEST-001` y
+`STD-SYNC-PERF-001` ya están cerrados para la superficie del compilador, el
+modelo hosted determinista y la campaña de rendimiento target-qualified; el
+siguiente bloque es `STD-SYNC-COLLECTION-FRONTEND-001`. El modelo y
 tests/fuzz hosted de Group están respaldados por
 `STD-ASYNC-GROUP-TEST-001`. El slice
 ejecutable de `select` ya está cerrado en la VM hosted —frontend,
@@ -6580,10 +6581,15 @@ estas leaves.
   `stdlib_sync` mantiene corpus persistente, 4 KiB/1.024 pasos y 128 ejecuciones
   smoke reproducibles. La frontera de sanitización es explícita: estos modelos,
   VM y bridge están escritos en Rust seguro (`forbid(unsafe_code)`), por lo que
-  ASan/UBSan no aplican aquí y la campaña AOT queda en `STD-SYNC-PERF-001`.
-- [ ] **STD-SYNC-PERF-001 — Medir sync.** Fijar uncontended/contended latency,
-  throughput, fairness, memoria y tail latency por target contra un oracle de
-  corrección independiente.
+  ASan/UBSan no aplican aquí; la campaña hosted y la frontera AOT se reportan
+  por separado.
+- [x] **STD-SYNC-PERF-001 — Medir sync.** La VM hosted tiene 20 workloads
+  uncontended/contended de Mutex, RwLock, Condition, Semaphore, Barrier,
+  Atomic y Once, con 27 muestras por workload en tres procesos independientes.
+  El informe fija latencia, P95/P99, throughput, fairness FIFO, memoria lógica,
+  handles vivos y contadores de wakeups contra el host y el oracle independiente
+  de `std.sync`. El cierre es target-qualified para `tondo-vm-hosted`; no
+  sobreafirma rendimiento AOT nativo ni agrega targets distintos.
 - [ ] **STD-SYNC-COLLECTION-FRONTEND-001 — Implementar literales concurrentes.**
   Extender lexer/parser preliminar, CST, formatter, resolución por identidad de
   declaración, tipos, HIR/MIR y diagnósticos para las cinco formas calificadas.
@@ -7533,9 +7539,10 @@ coordinación; `NATIVE-TARGET-DESC-001`, `NATIVE-ARTIFACT-001`,
 como contratos puros. `NATIVE-AOT-PERF-001` queda cerrado con evidencia
 repetida y path-free; Gate N1 queda cerrado por su informe compositivo y
 promueve Cranelift únicamente para el target primario x86_64 GNU. El siguiente
-bloque crítico es `STD-SYNC-PERF-001`; `STD-SYNC-HOST-001` y
-`STD-SYNC-TEST-001` ya cerraron la frontera de parking/atomics, la continuación
-de `Once` y el modelo hosted determinista. ARM64 conserva una clasificación
+bloque crítico es `STD-SYNC-COLLECTION-FRONTEND-001`; `STD-SYNC-HOST-001`,
+`STD-SYNC-TEST-001` y `STD-SYNC-PERF-001` ya cerraron la frontera de
+parking/atomics, la continuación de `Once`, el modelo hosted determinista y el
+presupuesto de rendimiento target-qualified. ARM64 conserva una clasificación
 de smoke de candidato hasta completar su corpus AOT y la ruta async nativa.
 `TRACKER-LINT-001` está cerrado y su informe deriva los
 conteos directamente del tracker. `STD-A-ASYNC-API-001` ya
@@ -7563,7 +7570,7 @@ identidad, la lane física de `NATIVE-THREAD-001` y la coordinación mínima de
 implementados. La frontera AOT está cerrada hasta `NATIVE-AOT-PERF-001`;
 la frontera AOT y Gate N1 están cerrados para el target primario; el backend
 seleccionado queda promovido únicamente para x86_64 GNU y el siguiente trabajo
-crítico es `STD-SYNC-PERF-001`; la implementación de superficie, el parking
+crítico es `STD-SYNC-COLLECTION-FRONTEND-001`; la implementación de superficie, el parking
 hosted, el puente nativo escalar, el modelo/test/fuzz, el presupuesto de
 rendimiento y la conformance del ABI del runtime nativo de Group ya tienen
 fronteras explícitas, mientras las colecciones compartidas y el lowering AOT

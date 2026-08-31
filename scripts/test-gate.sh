@@ -129,6 +129,10 @@ run_step stdlib-sync-contract \
     scripts/stdlib-sync-check.sh
 run_step stdlib-sync-contract-tests \
     scripts/stdlib-sync-test.sh
+run_step stdlib-sync-performance-contract-tests \
+    scripts/stdlib-sync-performance-test.sh
+run_step stdlib-sync-performance \
+    scripts/stdlib-sync-performance.sh
 run_step stdlib-executor-contract \
     scripts/stdlib-executor-check.sh
 run_step stdlib-executor-contract-tests \

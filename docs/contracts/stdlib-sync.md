@@ -349,6 +349,14 @@ semáforos, generaciones de barrera, reintentos de `Once`, wakeups y cleanup.
 replay determinista, límites finitos y cero waiters pendientes después del
 teardown.
 
+El presupuesto de rendimiento target-qualified de `STD-SYNC-PERF-001` está en
+[`testing/stdlib-sync-performance.json`](../../testing/stdlib-sync-performance.json)
+y [`stdlib-sync-performance.md`](./stdlib-sync-performance.md). Su probe mide
+el target `tondo-vm-hosted` con 20 workloads, tres procesos independientes y 27 muestras por
+workload. Comprueba latencia, P95/P99, throughput, FIFO, memoria lógica y
+cleanup contra el host y el oracle independiente; no mezcla targets ni afirma
+resultados AOT nativos.
+
 El fixture ejecutable
 `tests/runtime/m11-std-sync-test-001.to` comprueba la continuación real de
 `Once.getOrInit`: el closure se ejecuta, el resultado se publica después del
@@ -359,15 +367,16 @@ regresión y comprobando que cada resumen sea reproducible.
 
 La superficie modelada está escrita en Rust seguro y el runtime nativo declara
 `#![forbid(unsafe_code)]`; por ello AddressSanitizer/UBSan no añaden una
-frontera aplicable a este bloque. La campaña de sanitización de productos AOT
-queda explícitamente en `STD-SYNC-PERF-001`, mediante
-`scripts/native-aot-quality.sh`, sin presentar esta evidencia hosted como una
-garantía de otro target.
+frontera aplicable a este bloque. La campaña de sanitización y rendimiento de
+productos AOT sigue siendo una frontera target-qualified separada; el cierre
+de `STD-SYNC-PERF-001` no presenta esta evidencia hosted como una garantía de
+otro target.
 
 ## Fairness, progreso y diagnóstico
 
 Mutexes, semáforos y condiciones atienden waiters por FIFO de registro, con un
 bounded barging documentado para permitir fast paths sin starvation permanente.
+El presupuesto de fairness medido es `zero-FIFO-registration-violations`.
 La barrera completa todas las llegadas de una generación. El orden del scheduler
 no es una promesa de orden global. Backoff, yield o parking son acotados y
 suspendibles; el spin ilimitado y el bloqueo inadvertido del executor están
@@ -390,9 +399,9 @@ selectable, waitPop, waitDequeue, queues ilimitadas ocultas, préstamos en for y
 aliases globales SArray/SMap/SSet.
 
 La superficie de compilador, el parking cooperativo hosted, la continuación de
-`Once` y la ABI nativa de atomics/señales cierran `STD-SYNC-TEST-001` sobre la
-frontera actualmente implementada. Permanecen pendientes
-`STD-SYNC-PERF-001`, las leaves de colecciones, `STD-SYNC-CONF-001` y
+`Once`, la campaña target-qualified de `STD-SYNC-PERF-001` y la ABI nativa de
+atomics/señales cierran los bloques actualmente implementados. Permanecen
+pendientes las leaves de colecciones, `STD-SYNC-CONF-001` y
 `STD-SYNC-DOC-001`. La ABI nativa sigue siendo privada y solo su carril escalar
 `u64` está verificado aquí; los tipos genéricos y las colecciones deben
 demostrar su lowering y reclamación en sus propios bloques.

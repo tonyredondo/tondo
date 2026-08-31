@@ -72,12 +72,23 @@ jq -e '
   and .fuzz.smoke.result == "passed"
   and .sanitization.status == "bounded-safe-rust-no-unsafe-boundary"
   and .sanitization.applicable == false
-  and .sanitization.native_aot == "deferred-to-STD-SYNC-PERF-001"
+  and .sanitization.native_aot == "not-claimed-by-hosted-performance"
   and .promotion.runtime_continuation_complete == true
   and .promotion.model_test_fuzz_complete == true
   and .promotion.sanitization_boundary_explicit == true
+  and .performance.status == "verified"
+  and .performance.contract == "testing/stdlib-sync-performance.json"
+  and .performance.document == "docs/contracts/stdlib-sync-performance.md"
+  and .performance.target == "tondo-vm-hosted"
+  and .performance.workloads == 20
+  and .performance.samples_per_workload == 27
+  and (.performance.metrics | sort) == [
+    "fairness", "latency", "live_handles", "logical_memory_bytes",
+    "tail_latency", "throughput"
+  ]
+  and .performance.report == "target/reliability/evidence/stdlib-sync-performance.json"
+  and .performance.command == "scripts/stdlib-sync-performance.sh"
   and .promotion.remaining == [
-    "STD-SYNC-PERF-001",
     "STD-SYNC-COLLECTION-FRONTEND-001",
     "STD-SYNC-COLLECTION-IMPL-001",
     "STD-SYNC-COLLECTION-ITER-001",
@@ -199,7 +210,7 @@ jq -e '
   and .implementation.once_initializer_continuation == "verified-vm-continuation-and-cleanup"
   and .implementation.fixture_stdout == "sync-ok"
   and .testing == "testing/stdlib-sync-test.json"
-  and .promotion.next_blocks == ["STD-SYNC-PERF-001"]
+  and .promotion.next_blocks == ["STD-SYNC-COLLECTION-FRONTEND-001"]
 ' testing/stdlib-sync.json >/dev/null
 
 for path in \
@@ -219,11 +230,19 @@ for path in \
     fuzz/fuzz_targets/stdlib_sync.rs \
     fuzz/corpus/stdlib_sync/seed \
     scripts/stdlib-sync-fuzz.sh \
-    tests/runtime/m11-std-sync-test-001.to; do
+    tests/runtime/m11-std-sync-test-001.to \
+    testing/stdlib-sync-performance.json \
+    docs/contracts/stdlib-sync-performance.md \
+    scripts/stdlib-sync-performance.sh \
+    scripts/stdlib-sync-performance-test.sh; do
     [[ -e "$path" ]] || { echo "std.sync tests: missing TEST evidence path $path" >&2; exit 1; }
 done
 [[ -x scripts/stdlib-sync-fuzz.sh ]] \
     || { echo "std.sync tests: fuzz runner is not executable" >&2; exit 1; }
+[[ -x scripts/stdlib-sync-performance.sh ]] \
+    || { echo "std.sync tests: performance runner is not executable" >&2; exit 1; }
+[[ -x scripts/stdlib-sync-performance-test.sh ]] \
+    || { echo "std.sync tests: performance contract runner is not executable" >&2; exit 1; }
 [[ -s fuzz/corpus/stdlib_sync/seed ]] \
     || { echo "std.sync tests: fuzz corpus is empty" >&2; exit 1; }
 
