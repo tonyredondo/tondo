@@ -44,7 +44,7 @@
     },
     {
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "fence_byte": 407705,
+      "fence_byte": 407778,
       "source_sha256": "5ec9b2e36290cd6c537f367ae5aed160095d3dfc775392be884db66ff1e85a51",
       "behavior": "runtime",
       "evidence": [
@@ -53,7 +53,7 @@
     },
     {
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "fence_byte": 408749,
+      "fence_byte": 408822,
       "source_sha256": "a64bff32b2c09a0a292a02b87b08695473a5342a8eadb5e09248339adb79b9b5",
       "behavior": "runtime",
       "evidence": [
@@ -62,7 +62,7 @@
     },
     {
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "fence_byte": 409039,
+      "fence_byte": 409112,
       "source_sha256": "ac3735220d648c44d5496ec3104a038496a5a5d522a23870863b6d6c4f83d488",
       "behavior": "runtime",
       "evidence": [
@@ -71,7 +71,7 @@
     },
     {
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "fence_byte": 409596,
+      "fence_byte": 409669,
       "source_sha256": "ce3e1a12fe79a4f0148485ef6a0870662474cf8db0553f7e3d0eacc941d99ab0",
       "behavior": "runtime",
       "evidence": [
@@ -81,7 +81,7 @@
     },
     {
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "fence_byte": 410318,
+      "fence_byte": 410391,
       "source_sha256": "401f224239eb34100bd5c69f58adfcd838262402fde54b767cd17fef83cc0587",
       "behavior": "runtime",
       "evidence": [
@@ -90,7 +90,7 @@
     },
     {
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "fence_byte": 410661,
+      "fence_byte": 410734,
       "source_sha256": "4fc7a09c2711fbf622f24b66588c1fbf7e567b316e22be7f8b77dde21265f7b0",
       "behavior": "runtime",
       "evidence": [
@@ -99,7 +99,7 @@
     },
     {
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "fence_byte": 411113,
+      "fence_byte": 411186,
       "source_sha256": "494c2f724d1a857966d46811502c87f96e116208349160ad5830d7f4200251e5",
       "behavior": "runtime",
       "evidence": [
@@ -108,7 +108,7 @@
     },
     {
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "fence_byte": 411345,
+      "fence_byte": 411418,
       "source_sha256": "576aed9e1af7d5c6bc23961f37119f99eb667c8a7995d86417b3ff8221c251ba",
       "behavior": "runtime",
       "evidence": [
@@ -117,7 +117,7 @@
     },
     {
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "fence_byte": 411799,
+      "fence_byte": 411872,
       "source_sha256": "5cf5b63d0907df3299fe5cf5ea26d23d72047e54efc26648bfac4c7760973e08",
       "behavior": "runtime",
       "evidence": [
@@ -126,7 +126,7 @@
     },
     {
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "fence_byte": 412290,
+      "fence_byte": 412363,
       "source_sha256": "faa3e2d86e78c0cfc542b17f7638070ef72e2b5d8fb8c2b3177a62296c025836",
       "behavior": "runtime",
       "evidence": [
@@ -135,7 +135,7 @@
     },
     {
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "fence_byte": 412616,
+      "fence_byte": 412689,
       "source_sha256": "f6ed53ea3534274c7aa188f9851061ba8f36c3bb3b612805e841a2382c160072",
       "behavior": "runtime",
       "evidence": [
@@ -144,7 +144,7 @@
     },
     {
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "fence_byte": 413584,
+      "fence_byte": 413657,
       "source_sha256": "3872d07ac2546917ffd8d0d81c2b635145de62f8b81a426b6b51df444211eeaa",
       "behavior": "runtime",
       "evidence": [
@@ -153,7 +153,7 @@
     },
     {
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "fence_byte": 414142,
+      "fence_byte": 414215,
       "source_sha256": "2a6a66cbb61553ebd109df6ad3d159512b58a72bccb39641bde8c399e2018916",
       "behavior": "runtime",
       "evidence": [
@@ -162,7 +162,7 @@
     },
     {
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "fence_byte": 414372,
+      "fence_byte": 414445,
       "source_sha256": "d158cfddebea3356c6b7eb05f268378f95aba37bd903bb9c412863dcf96efa2e",
       "behavior": "runtime",
       "evidence": [
@@ -171,7 +171,7 @@
     },
     {
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "fence_byte": 414893,
+      "fence_byte": 414966,
       "source_sha256": "b13b5e548b8e1b73fddfdbbcf997926d1ab45480dd33865bbe108b1b44aad55e",
       "behavior": "runtime",
       "evidence": [
@@ -180,7 +180,7 @@
     },
     {
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "fence_byte": 415390,
+      "fence_byte": 415463,
       "source_sha256": "45d6e9191f925daeb392f42db7a687bf055719a34fdb894f253f7b7111fc1d11",
       "behavior": "static-only",
       "reason": "The example declares unsafe pointer operations but does not invoke them.",
@@ -188,7 +188,7 @@
     },
     {
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "fence_byte": 415952,
+      "fence_byte": 416025,
       "source_sha256": "e1fc1fc2d2f89fb86022523588c4b0a7965e570680434142756c68374f7581e8",
       "behavior": "runtime",
       "evidence": [
@@ -197,7 +197,7 @@
     },
     {
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "fence_byte": 461444,
+      "fence_byte": 461517,
       "source_sha256": "837f2269a066f9d2b689b2522c5c4fc788040ef57ae69cee816d7049655a7b02",
       "behavior": "runtime",
       "evidence": [
