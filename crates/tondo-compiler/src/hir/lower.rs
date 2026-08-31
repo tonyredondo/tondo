@@ -809,6 +809,15 @@ impl<'a> TypeLowerer<'a> {
         module: &ModuleId,
         name: &'static str,
     ) -> Result<TypeId, HirError> {
+        self.bootstrap_nominal_type_with_args(module, name, Vec::new())
+    }
+
+    fn bootstrap_nominal_type_with_args(
+        &mut self,
+        module: &ModuleId,
+        name: &'static str,
+        arguments: Vec<TypeId>,
+    ) -> Result<TypeId, HirError> {
         let name = Name::new(name).expect("bootstrap nominal names are valid");
         let symbol = self
             .resolved
@@ -820,7 +829,7 @@ impl<'a> TypeLowerer<'a> {
             .expect("bootstrap nominal symbols are indexed");
         Ok(self
             .interner
-            .nominal(declaration.identity().clone(), Vec::new())?)
+            .nominal(declaration.identity().clone(), arguments)?)
     }
 
     fn bootstrap_member(&self, owner: SymbolId, name: &'static str) -> crate::resolve::MemberId {
@@ -1464,6 +1473,443 @@ impl<'a> TypeLowerer<'a> {
                     self.prelude_trait_bound("Share"),
                 ],
             )];
+            let generic_key = self.interner.generic_parameter(0)?;
+            let generic_map_value = self.interner.generic_parameter(1)?;
+            let sync_array =
+                self.bootstrap_nominal_type_with_args(sync_module, "Array", vec![generic_value])?;
+            let sync_map = self.bootstrap_nominal_type_with_args(
+                sync_module,
+                "Map",
+                vec![generic_key, generic_map_value],
+            )?;
+            let sync_set =
+                self.bootstrap_nominal_type_with_args(sync_module, "Set", vec![generic_key])?;
+            let sync_stack =
+                self.bootstrap_nominal_type_with_args(sync_module, "Stack", vec![generic_value])?;
+            let sync_queue =
+                self.bootstrap_nominal_type_with_args(sync_module, "Queue", vec![generic_value])?;
+            let array_value = self.interner.option(generic_value)?;
+            let map_value = self.interner.option(generic_map_value)?;
+            let array_snapshot = self
+                .interner
+                .intrinsic(IntrinsicType::Array, vec![generic_value])?;
+            let map_snapshot = self
+                .interner
+                .intrinsic(IntrinsicType::Map, vec![generic_key, generic_map_value])?;
+            let set_snapshot = self
+                .interner
+                .intrinsic(IntrinsicType::Set, vec![generic_key])?;
+            let stack_snapshot = self
+                .interner
+                .intrinsic(IntrinsicType::Array, vec![generic_value])?;
+            let queue_snapshot = self
+                .interner
+                .intrinsic(IntrinsicType::Array, vec![generic_value])?;
+            let array_compare_exchange = self.bootstrap_nominal_type_with_args(
+                sync_module,
+                "CompareExchange",
+                vec![generic_value],
+            )?;
+            let map_compare_exchange = self.bootstrap_nominal_type_with_args(
+                sync_module,
+                "CompareExchange",
+                vec![map_value],
+            )?;
+            let array_bounds = vec![(
+                0,
+                vec![
+                    self.prelude_trait_bound("Copy"),
+                    self.prelude_trait_bound("Send"),
+                    self.prelude_trait_bound("Share"),
+                ],
+            )];
+            let array_compare_bounds = vec![(
+                0,
+                vec![
+                    self.prelude_trait_bound("Copy"),
+                    self.prelude_trait_bound("Equatable"),
+                    self.prelude_trait_bound("Send"),
+                    self.prelude_trait_bound("Share"),
+                ],
+            )];
+            let map_bounds = vec![
+                (
+                    0,
+                    vec![
+                        self.prelude_trait_bound("Key"),
+                        self.prelude_trait_bound("Send"),
+                        self.prelude_trait_bound("Share"),
+                    ],
+                ),
+                (
+                    1,
+                    vec![
+                        self.prelude_trait_bound("Copy"),
+                        self.prelude_trait_bound("Send"),
+                        self.prelude_trait_bound("Share"),
+                    ],
+                ),
+            ];
+            let map_compare_bounds = vec![
+                (
+                    0,
+                    vec![
+                        self.prelude_trait_bound("Key"),
+                        self.prelude_trait_bound("Send"),
+                        self.prelude_trait_bound("Share"),
+                    ],
+                ),
+                (
+                    1,
+                    vec![
+                        self.prelude_trait_bound("Copy"),
+                        self.prelude_trait_bound("Equatable"),
+                        self.prelude_trait_bound("Send"),
+                        self.prelude_trait_bound("Share"),
+                    ],
+                ),
+            ];
+            let set_bounds = vec![(
+                0,
+                vec![
+                    self.prelude_trait_bound("Key"),
+                    self.prelude_trait_bound("Send"),
+                    self.prelude_trait_bound("Share"),
+                ],
+            )];
+            let stack_bounds = vec![(
+                0,
+                vec![
+                    self.prelude_trait_bound("Send"),
+                    self.prelude_trait_bound("Discard"),
+                ],
+            )];
+            let stack_observe_bounds = vec![(
+                0,
+                vec![
+                    self.prelude_trait_bound("Copy"),
+                    self.prelude_trait_bound("Send"),
+                    self.prelude_trait_bound("Share"),
+                    self.prelude_trait_bound("Discard"),
+                ],
+            )];
+            let array_set_result = self.interner.result(generic_value, collection_error)?;
+            let array_compare_result = self
+                .interner
+                .result(array_compare_exchange, collection_error)?;
+            let array_snapshot_result = self.interner.result(array_snapshot, collection_error)?;
+            let map_insert_result = self.interner.result(map_value, collection_error)?;
+            let map_compare_result = self
+                .interner
+                .result(map_compare_exchange, collection_error)?;
+            let map_snapshot_result = self.interner.result(map_snapshot, collection_error)?;
+            let set_insert_result = self.interner.result(bool_type, collection_error)?;
+            let set_snapshot_result = self.interner.result(set_snapshot, collection_error)?;
+            let stack_push_result = self.interner.result(unit, collection_error)?;
+            let stack_snapshot_result = self.interner.result(stack_snapshot, collection_error)?;
+            let queue_push_result = self.interner.result(unit, collection_error)?;
+            let queue_snapshot_result = self.interner.result(queue_snapshot, collection_error)?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncArrayLength,
+                vec![(sync_array, ParameterMode::Ref, true)],
+                int,
+                1,
+                array_bounds.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncArrayIsEmpty,
+                vec![(sync_array, ParameterMode::Ref, true)],
+                bool_type,
+                1,
+                array_bounds.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncArrayGet,
+                vec![
+                    (sync_array, ParameterMode::Ref, true),
+                    (int, ParameterMode::Value, false),
+                ],
+                array_value,
+                1,
+                array_bounds.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncArraySet,
+                vec![
+                    (sync_array, ParameterMode::Ref, true),
+                    (int, ParameterMode::Value, false),
+                    (generic_value, ParameterMode::Value, false),
+                ],
+                array_set_result,
+                1,
+                array_bounds.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncArrayCompareExchange,
+                vec![
+                    (sync_array, ParameterMode::Ref, true),
+                    (int, ParameterMode::Value, false),
+                    (generic_value, ParameterMode::Value, false),
+                    (generic_value, ParameterMode::Value, false),
+                ],
+                array_compare_result,
+                1,
+                array_compare_bounds,
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncArraySnapshot,
+                vec![(sync_array, ParameterMode::Ref, true)],
+                array_snapshot_result,
+                1,
+                array_bounds,
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncMapLength,
+                vec![(sync_map, ParameterMode::Ref, true)],
+                int,
+                2,
+                map_bounds.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncMapIsEmpty,
+                vec![(sync_map, ParameterMode::Ref, true)],
+                bool_type,
+                2,
+                map_bounds.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncMapGet,
+                vec![
+                    (sync_map, ParameterMode::Ref, true),
+                    (generic_key, ParameterMode::Value, false),
+                ],
+                map_value,
+                2,
+                map_bounds.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncMapContains,
+                vec![
+                    (sync_map, ParameterMode::Ref, true),
+                    (generic_key, ParameterMode::Value, false),
+                ],
+                bool_type,
+                2,
+                map_bounds.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncMapInsert,
+                vec![
+                    (sync_map, ParameterMode::Ref, true),
+                    (generic_key, ParameterMode::Value, false),
+                    (generic_map_value, ParameterMode::Value, false),
+                ],
+                map_insert_result,
+                2,
+                map_bounds.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncMapRemove,
+                vec![
+                    (sync_map, ParameterMode::Ref, true),
+                    (generic_key, ParameterMode::Value, false),
+                ],
+                map_value,
+                2,
+                map_bounds.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncMapCompareExchange,
+                vec![
+                    (sync_map, ParameterMode::Ref, true),
+                    (generic_key, ParameterMode::Value, false),
+                    (map_value, ParameterMode::Value, false),
+                    (map_value, ParameterMode::Value, false),
+                ],
+                map_compare_result,
+                2,
+                map_compare_bounds,
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncMapSnapshot,
+                vec![(sync_map, ParameterMode::Ref, true)],
+                map_snapshot_result,
+                2,
+                map_bounds,
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncSetLength,
+                vec![(sync_set, ParameterMode::Ref, true)],
+                int,
+                1,
+                set_bounds.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncSetIsEmpty,
+                vec![(sync_set, ParameterMode::Ref, true)],
+                bool_type,
+                1,
+                set_bounds.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncSetContains,
+                vec![
+                    (sync_set, ParameterMode::Ref, true),
+                    (generic_key, ParameterMode::Value, false),
+                ],
+                bool_type,
+                1,
+                set_bounds.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncSetInsert,
+                vec![
+                    (sync_set, ParameterMode::Ref, true),
+                    (generic_key, ParameterMode::Value, false),
+                ],
+                set_insert_result,
+                1,
+                set_bounds.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncSetRemove,
+                vec![
+                    (sync_set, ParameterMode::Ref, true),
+                    (generic_key, ParameterMode::Value, false),
+                ],
+                bool_type,
+                1,
+                set_bounds.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncSetSnapshot,
+                vec![(sync_set, ParameterMode::Ref, true)],
+                set_snapshot_result,
+                1,
+                set_bounds,
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncStackLength,
+                vec![(sync_stack, ParameterMode::Ref, true)],
+                int,
+                1,
+                stack_bounds.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncStackIsEmpty,
+                vec![(sync_stack, ParameterMode::Ref, true)],
+                bool_type,
+                1,
+                stack_bounds.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncStackPush,
+                vec![
+                    (sync_stack, ParameterMode::Ref, true),
+                    (generic_value, ParameterMode::Value, false),
+                ],
+                stack_push_result,
+                1,
+                stack_bounds.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncStackPop,
+                vec![(sync_stack, ParameterMode::Ref, true)],
+                array_value,
+                1,
+                stack_bounds.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncStackPeek,
+                vec![(sync_stack, ParameterMode::Ref, true)],
+                array_value,
+                1,
+                stack_observe_bounds.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncStackSnapshot,
+                vec![(sync_stack, ParameterMode::Ref, true)],
+                stack_snapshot_result,
+                1,
+                stack_observe_bounds.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncQueueLength,
+                vec![(sync_queue, ParameterMode::Ref, true)],
+                int,
+                1,
+                stack_bounds.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncQueueIsEmpty,
+                vec![(sync_queue, ParameterMode::Ref, true)],
+                bool_type,
+                1,
+                stack_bounds.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncQueueEnqueue,
+                vec![
+                    (sync_queue, ParameterMode::Ref, true),
+                    (generic_value, ParameterMode::Value, false),
+                ],
+                queue_push_result,
+                1,
+                stack_bounds.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncQueueDequeue,
+                vec![(sync_queue, ParameterMode::Ref, true)],
+                array_value,
+                1,
+                stack_bounds.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncQueuePeek,
+                vec![(sync_queue, ParameterMode::Ref, true)],
+                array_value,
+                1,
+                stack_observe_bounds.clone(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::SyncQueueSnapshot,
+                vec![(sync_queue, ParameterMode::Ref, true)],
+                queue_snapshot_result,
+                1,
+                stack_observe_bounds,
+            )?;
             self.push_bootstrap_generic_host_callable(
                 span,
                 HirBootstrapHostFunction::SyncMutex,

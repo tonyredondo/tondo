@@ -10,7 +10,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, OnceLock, RwLock};
 use std::thread::ThreadId;
 use std::time::Duration;
 
@@ -19,6 +19,11 @@ const RESULT_NONE: u64 = 0;
 const RESULT_SOME: u64 = 1;
 const RESULT_OK: u64 = 2;
 const RESULT_ERR: u64 = 3;
+/// Private tags used by strong collection compare-exchange results. They are
+/// distinct from `Result`/`Option` so a caller can inspect one atomic outcome
+/// without racing on the process-wide diagnostic status channel.
+const RESULT_CAS_EXCHANGED: u64 = 4;
+const RESULT_CAS_MISMATCH: u64 = 5;
 
 const STATUS_OK: u64 = 0;
 const STATUS_INVALID_HANDLE: u64 = 1;
@@ -47,6 +52,8 @@ const STATUS_PANICKED: u64 = 16;
 const STATUS_ATOMIC_MISMATCH: u64 = 17;
 /// A memory-order argument is outside the closed native ABI set.
 const STATUS_ATOMIC_INVALID_ORDER: u64 = 18;
+/// A collection index or operation shape is invalid.
+const STATUS_COLLECTION_INVALID: u64 = 19;
 const STATUS_DIAG_CLEAN: u64 = 0;
 const STATUS_DIAG_FINDING: u64 = 1;
 const STATUS_DIAG_CAPTURED: u64 = 2;
@@ -131,6 +138,14 @@ enum Object {
     /// has been detached from the global handle table; waking never touches a
     /// cooperative VM worker directly.
     Park,
+    /// Shared collection state is stored behind a per-handle synchronization
+    /// primitive. The object table keeps only the opaque capability identity;
+    /// values never cross the native ABI as pointers.
+    SyncArray,
+    SyncMap,
+    SyncSet,
+    SyncStack,
+    SyncQueue,
     /// An immutable, bounded byte carrier used by the private host ABI.
     Buffer {
         bytes: Vec<u8>,
@@ -559,6 +574,11 @@ enum ObjectKind {
     Park,
     Buffer,
     Weak,
+    SyncArray,
+    SyncMap,
+    SyncSet,
+    SyncStack,
+    SyncQueue,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -663,6 +683,12 @@ struct State {
     thread_workers: BTreeMap<u64, Arc<WorkerSignal>>,
     atomics: BTreeMap<u64, Arc<std::sync::atomic::AtomicU64>>,
     parks: BTreeMap<u64, Arc<ParkingSignal>>,
+    sync_arrays: BTreeMap<u64, Arc<RwLock<Vec<u64>>>>,
+    sync_maps: BTreeMap<u64, Arc<RwLock<Vec<(u64, u64)>>>>,
+    sync_sets: BTreeMap<u64, Arc<RwLock<Vec<u64>>>>,
+    sync_stacks: BTreeMap<u64, Arc<Mutex<Vec<u64>>>>,
+    sync_queues: BTreeMap<u64, Arc<Mutex<VecDeque<u64>>>>,
+    sync_collection_parks: BTreeMap<u64, Arc<ParkingSignal>>,
     allocations_since_collection: u32,
     diagnostic: Option<DiagnosticCapture>,
 }
@@ -777,6 +803,11 @@ impl State {
             Object::Host { .. }
             | Object::Atomic
             | Object::Park
+            | Object::SyncArray
+            | Object::SyncMap
+            | Object::SyncSet
+            | Object::SyncStack
+            | Object::SyncQueue
             | Object::Buffer { .. }
             | Object::Weak { .. }
             | Object::Tombstone
@@ -848,7 +879,16 @@ impl State {
         }
         let object_kind = entry.object;
         let object = object.clone();
-        if matches!(object, Object::Atomic | Object::Park) {
+        if matches!(
+            object,
+            Object::Atomic
+                | Object::Park
+                | Object::SyncArray
+                | Object::SyncMap
+                | Object::SyncSet
+                | Object::SyncStack
+                | Object::SyncQueue
+        ) {
             let clone = self.alloc(object.clone(), object_kind);
             match object {
                 Object::Atomic => {
@@ -861,7 +901,35 @@ impl State {
                         self.parks.insert(clone, shared);
                     }
                 }
+                Object::SyncArray => {
+                    if let Some(shared) = self.sync_arrays.get(&handle).cloned() {
+                        self.sync_arrays.insert(clone, shared);
+                    }
+                }
+                Object::SyncMap => {
+                    if let Some(shared) = self.sync_maps.get(&handle).cloned() {
+                        self.sync_maps.insert(clone, shared);
+                    }
+                }
+                Object::SyncSet => {
+                    if let Some(shared) = self.sync_sets.get(&handle).cloned() {
+                        self.sync_sets.insert(clone, shared);
+                    }
+                }
+                Object::SyncStack => {
+                    if let Some(shared) = self.sync_stacks.get(&handle).cloned() {
+                        self.sync_stacks.insert(clone, shared);
+                    }
+                }
+                Object::SyncQueue => {
+                    if let Some(shared) = self.sync_queues.get(&handle).cloned() {
+                        self.sync_queues.insert(clone, shared);
+                    }
+                }
                 _ => unreachable!("specialized clone was checked above"),
+            }
+            if let Some(shared) = self.sync_collection_parks.get(&handle).cloned() {
+                self.sync_collection_parks.insert(clone, shared);
             }
             return clone;
         }
@@ -1046,6 +1114,26 @@ impl State {
             Object::Park => {
                 self.parks.remove(&handle);
             }
+            Object::SyncArray => {
+                self.sync_arrays.remove(&handle);
+                self.sync_collection_parks.remove(&handle);
+            }
+            Object::SyncMap => {
+                self.sync_maps.remove(&handle);
+                self.sync_collection_parks.remove(&handle);
+            }
+            Object::SyncSet => {
+                self.sync_sets.remove(&handle);
+                self.sync_collection_parks.remove(&handle);
+            }
+            Object::SyncStack => {
+                self.sync_stacks.remove(&handle);
+                self.sync_collection_parks.remove(&handle);
+            }
+            Object::SyncQueue => {
+                self.sync_queues.remove(&handle);
+                self.sync_collection_parks.remove(&handle);
+            }
             _ => {}
         }
     }
@@ -1220,6 +1308,29 @@ impl State {
             }
             if matches!(&object, Object::Park) {
                 self.parks.remove(&handle);
+            }
+            match &object {
+                Object::SyncArray => {
+                    self.sync_arrays.remove(&handle);
+                    self.sync_collection_parks.remove(&handle);
+                }
+                Object::SyncMap => {
+                    self.sync_maps.remove(&handle);
+                    self.sync_collection_parks.remove(&handle);
+                }
+                Object::SyncSet => {
+                    self.sync_sets.remove(&handle);
+                    self.sync_collection_parks.remove(&handle);
+                }
+                Object::SyncStack => {
+                    self.sync_stacks.remove(&handle);
+                    self.sync_collection_parks.remove(&handle);
+                }
+                Object::SyncQueue => {
+                    self.sync_queues.remove(&handle);
+                    self.sync_collection_parks.remove(&handle);
+                }
+                _ => {}
             }
             let children = Self::strong_children_of(&object);
             if let Object::Weak { target } = &object {
@@ -2603,6 +2714,187 @@ impl State {
         Some(signal)
     }
 
+    fn sync_array_cell(&mut self, handle: u64) -> Option<Arc<RwLock<Vec<u64>>>> {
+        if !matches!(self.object(handle), Some(Object::SyncArray)) {
+            self.last_status = STATUS_INVALID_HANDLE;
+            return None;
+        }
+        let Some(cell) = self.sync_arrays.get(&handle).cloned() else {
+            self.last_status = STATUS_INVALID_HANDLE;
+            return None;
+        };
+        Some(cell)
+    }
+
+    fn sync_map_cell(&mut self, handle: u64) -> Option<Arc<RwLock<Vec<(u64, u64)>>>> {
+        if !matches!(self.object(handle), Some(Object::SyncMap)) {
+            self.last_status = STATUS_INVALID_HANDLE;
+            return None;
+        }
+        let Some(cell) = self.sync_maps.get(&handle).cloned() else {
+            self.last_status = STATUS_INVALID_HANDLE;
+            return None;
+        };
+        Some(cell)
+    }
+
+    fn sync_set_cell(&mut self, handle: u64) -> Option<Arc<RwLock<Vec<u64>>>> {
+        if !matches!(self.object(handle), Some(Object::SyncSet)) {
+            self.last_status = STATUS_INVALID_HANDLE;
+            return None;
+        }
+        let Some(cell) = self.sync_sets.get(&handle).cloned() else {
+            self.last_status = STATUS_INVALID_HANDLE;
+            return None;
+        };
+        Some(cell)
+    }
+
+    fn sync_stack_cell(&mut self, handle: u64) -> Option<Arc<Mutex<Vec<u64>>>> {
+        if !matches!(self.object(handle), Some(Object::SyncStack)) {
+            self.last_status = STATUS_INVALID_HANDLE;
+            return None;
+        }
+        let Some(cell) = self.sync_stacks.get(&handle).cloned() else {
+            self.last_status = STATUS_INVALID_HANDLE;
+            return None;
+        };
+        Some(cell)
+    }
+
+    fn sync_queue_cell(&mut self, handle: u64) -> Option<Arc<Mutex<VecDeque<u64>>>> {
+        if !matches!(self.object(handle), Some(Object::SyncQueue)) {
+            self.last_status = STATUS_INVALID_HANDLE;
+            return None;
+        }
+        let Some(cell) = self.sync_queues.get(&handle).cloned() else {
+            self.last_status = STATUS_INVALID_HANDLE;
+            return None;
+        };
+        Some(cell)
+    }
+
+    fn sync_collection_park(&mut self, handle: u64) -> Option<Arc<ParkingSignal>> {
+        if !matches!(
+            self.object(handle),
+            Some(
+                Object::SyncArray
+                    | Object::SyncMap
+                    | Object::SyncSet
+                    | Object::SyncStack
+                    | Object::SyncQueue
+            )
+        ) {
+            self.last_status = STATUS_INVALID_HANDLE;
+            return None;
+        }
+        let Some(park) = self.sync_collection_parks.get(&handle).cloned() else {
+            self.last_status = STATUS_INVALID_HANDLE;
+            return None;
+        };
+        Some(park)
+    }
+
+    fn sync_array_from_values(&mut self, values: Vec<u64>) -> u64 {
+        if values.len() > HOST_MAX_BYTES {
+            self.last_status = STATUS_HOST_LIMIT;
+            return 0;
+        }
+        let handle = self.alloc(Object::SyncArray, ObjectKind::SyncArray);
+        if handle != 0 {
+            self.sync_arrays
+                .insert(handle, Arc::new(RwLock::new(values)));
+            self.sync_collection_parks
+                .insert(handle, Arc::new(ParkingSignal::new()));
+        }
+        handle
+    }
+
+    fn sync_array_new(&mut self, length: u64) -> u64 {
+        let Ok(length) = usize::try_from(length) else {
+            self.last_status = STATUS_HOST_LIMIT;
+            return 0;
+        };
+        if length > HOST_MAX_BYTES {
+            self.last_status = STATUS_HOST_LIMIT;
+            return 0;
+        }
+        self.sync_array_from_values(vec![0; length])
+    }
+
+    fn sync_map_new(&mut self) -> u64 {
+        let handle = self.alloc(Object::SyncMap, ObjectKind::SyncMap);
+        if handle != 0 {
+            self.sync_maps
+                .insert(handle, Arc::new(RwLock::new(Vec::new())));
+            self.sync_collection_parks
+                .insert(handle, Arc::new(ParkingSignal::new()));
+        }
+        handle
+    }
+
+    fn sync_map_from_entries(&mut self, entries: Vec<(u64, u64)>) -> u64 {
+        if entries.len() > HOST_MAX_BYTES {
+            self.last_status = STATUS_HOST_LIMIT;
+            return 0;
+        }
+        let handle = self.alloc(Object::SyncMap, ObjectKind::SyncMap);
+        if handle != 0 {
+            self.sync_maps
+                .insert(handle, Arc::new(RwLock::new(entries)));
+            self.sync_collection_parks
+                .insert(handle, Arc::new(ParkingSignal::new()));
+        }
+        handle
+    }
+
+    fn sync_set_new(&mut self) -> u64 {
+        let handle = self.alloc(Object::SyncSet, ObjectKind::SyncSet);
+        if handle != 0 {
+            self.sync_sets
+                .insert(handle, Arc::new(RwLock::new(Vec::new())));
+            self.sync_collection_parks
+                .insert(handle, Arc::new(ParkingSignal::new()));
+        }
+        handle
+    }
+
+    fn sync_set_from_values(&mut self, values: Vec<u64>) -> u64 {
+        if values.len() > HOST_MAX_BYTES {
+            self.last_status = STATUS_HOST_LIMIT;
+            return 0;
+        }
+        let handle = self.alloc(Object::SyncSet, ObjectKind::SyncSet);
+        if handle != 0 {
+            self.sync_sets.insert(handle, Arc::new(RwLock::new(values)));
+            self.sync_collection_parks
+                .insert(handle, Arc::new(ParkingSignal::new()));
+        }
+        handle
+    }
+
+    fn sync_stack_new(&mut self) -> u64 {
+        let handle = self.alloc(Object::SyncStack, ObjectKind::SyncStack);
+        if handle != 0 {
+            self.sync_stacks
+                .insert(handle, Arc::new(Mutex::new(Vec::new())));
+            self.sync_collection_parks
+                .insert(handle, Arc::new(ParkingSignal::new()));
+        }
+        handle
+    }
+
+    fn sync_queue_new(&mut self) -> u64 {
+        let handle = self.alloc(Object::SyncQueue, ObjectKind::SyncQueue);
+        if handle != 0 {
+            self.sync_queues
+                .insert(handle, Arc::new(Mutex::new(VecDeque::new())));
+            self.sync_collection_parks
+                .insert(handle, Arc::new(ParkingSignal::new()));
+        }
+        handle
+    }
+
     fn source_ready(&self, source: u64, kind: SelectSourceKind) -> Option<bool> {
         match (kind, self.object(source)) {
             (SelectSourceKind::Task, Some(Object::Task { state, .. })) => {
@@ -3247,6 +3539,96 @@ fn with_state<T>(function: impl FnOnce(&mut State) -> T) -> T {
     function(&mut state)
 }
 
+/// Acquires a per-collection read lock without spinning. Native workers wait
+/// on the collection's epoch signal when a writer owns the lock; the signal
+/// is detached from the global handle table, so unrelated handles continue to
+/// make progress.
+fn native_sync_read<T, R>(
+    cell: &Arc<RwLock<T>>,
+    park: &Arc<ParkingSignal>,
+    operation: impl Fn(&T) -> R,
+) -> Result<R, u64> {
+    loop {
+        let expected = park.epoch();
+        match cell.try_read() {
+            Ok(values) => {
+                let result = operation(&values);
+                drop(values);
+                park.wake(false);
+                return Ok(result);
+            }
+            Err(std::sync::TryLockError::WouldBlock) => {
+                let status = park.wait(expected, u64::MAX);
+                if status != STATUS_OK {
+                    return Err(status);
+                }
+            }
+            Err(std::sync::TryLockError::Poisoned(_)) => {
+                return Err(STATUS_INVALID_TRANSITION);
+            }
+        }
+    }
+}
+
+/// Acquires a per-collection write lock using the same epoch parking protocol
+/// as reads. A successful mutation wakes one native waiter after releasing the
+/// lock; no operation holds the global handle-table mutex while waiting.
+fn native_sync_write<T, R>(
+    cell: &Arc<RwLock<T>>,
+    park: &Arc<ParkingSignal>,
+    operation: impl Fn(&mut T) -> R,
+) -> Result<R, u64> {
+    loop {
+        let expected = park.epoch();
+        match cell.try_write() {
+            Ok(mut values) => {
+                let result = operation(&mut values);
+                drop(values);
+                park.wake(false);
+                return Ok(result);
+            }
+            Err(std::sync::TryLockError::WouldBlock) => {
+                let status = park.wait(expected, u64::MAX);
+                if status != STATUS_OK {
+                    return Err(status);
+                }
+            }
+            Err(std::sync::TryLockError::Poisoned(_)) => {
+                return Err(STATUS_INVALID_TRANSITION);
+            }
+        }
+    }
+}
+
+/// Mutex-backed stacks and queues use the same parking signal while keeping a
+/// single FIFO/LIFO mutation critical section per identity.
+fn native_sync_mutex<T, R>(
+    cell: &Arc<Mutex<T>>,
+    park: &Arc<ParkingSignal>,
+    operation: impl Fn(&mut T) -> R,
+) -> Result<R, u64> {
+    loop {
+        let expected = park.epoch();
+        match cell.try_lock() {
+            Ok(mut values) => {
+                let result = operation(&mut values);
+                drop(values);
+                park.wake(false);
+                return Ok(result);
+            }
+            Err(std::sync::TryLockError::WouldBlock) => {
+                let status = park.wait(expected, u64::MAX);
+                if status != STATUS_OK {
+                    return Err(status);
+                }
+            }
+            Err(std::sync::TryLockError::Poisoned(_)) => {
+                return Err(STATUS_INVALID_TRANSITION);
+            }
+        }
+    }
+}
+
 fn atomic_order(order: u64) -> Option<Ordering> {
     match order {
         0 => Some(Ordering::Relaxed),
@@ -3664,6 +4046,695 @@ pub extern "C" fn tondo_rt_sync_park_waiters(park: u64) -> u64 {
         return u64::MAX;
     };
     signal.waiters()
+}
+
+fn native_collection_result(tag: u64, payload: Option<u64>) -> u64 {
+    with_state(|state| state.host_result(tag, payload))
+}
+
+fn native_collection_error(status: u64) -> u64 {
+    with_state(|state| state.host_error(status))
+}
+
+fn native_collection_status(status: u64) {
+    with_state(|state| state.last_status = status);
+}
+
+fn native_optional_result(value: Option<u64>) -> u64 {
+    native_collection_result(value.map_or(RESULT_NONE, |_| RESULT_SOME), value)
+}
+
+/// Creates a fixed-length native `sync.Array` whose slots initially contain
+/// zero-valued scalar carriers. The compiler's generic lowering supplies real
+/// values through `set`; this private ABI never exposes a pointer or layout.
+pub extern "C" fn tondo_rt_sync_array_new(length: u64) -> u64 {
+    with_state(|state| state.sync_array_new(length))
+}
+
+pub extern "C" fn tondo_rt_sync_array_length(array: u64) -> u64 {
+    let Some(cell) = with_state(|state| state.sync_array_cell(array)) else {
+        return u64::MAX;
+    };
+    let Some(park) = with_state(|state| state.sync_collection_park(array)) else {
+        return u64::MAX;
+    };
+    native_sync_read(&cell, &park, Vec::len).map_or_else(
+        |status| {
+            native_collection_status(status);
+            u64::MAX
+        },
+        |length| length as u64,
+    )
+}
+
+pub extern "C" fn tondo_rt_sync_array_is_empty(array: u64) -> u64 {
+    let Some(cell) = with_state(|state| state.sync_array_cell(array)) else {
+        return u64::MAX;
+    };
+    let Some(park) = with_state(|state| state.sync_collection_park(array)) else {
+        return u64::MAX;
+    };
+    native_sync_read(&cell, &park, Vec::is_empty).map_or_else(
+        |status| {
+            native_collection_status(status);
+            u64::MAX
+        },
+        u64::from,
+    )
+}
+
+pub extern "C" fn tondo_rt_sync_array_get(array: u64, index: u64) -> u64 {
+    let Some(cell) = with_state(|state| state.sync_array_cell(array)) else {
+        return 0;
+    };
+    let Some(park) = with_state(|state| state.sync_collection_park(array)) else {
+        return 0;
+    };
+    let value = native_sync_read(&cell, &park, |values| {
+        usize::try_from(index)
+            .ok()
+            .and_then(|index| values.get(index).copied())
+    });
+    match value {
+        Ok(value) => native_optional_result(value),
+        Err(status) => {
+            native_collection_status(status);
+            0
+        }
+    }
+}
+
+pub extern "C" fn tondo_rt_sync_array_set(array: u64, index: u64, value: u64) -> u64 {
+    let Some(cell) = with_state(|state| state.sync_array_cell(array)) else {
+        return 0;
+    };
+    let Some(park) = with_state(|state| state.sync_collection_park(array)) else {
+        return 0;
+    };
+    let outcome = native_sync_write(&cell, &park, |values| {
+        let Ok(index) = usize::try_from(index) else {
+            return Err(STATUS_COLLECTION_INVALID);
+        };
+        values
+            .get_mut(index)
+            .map(|slot| std::mem::replace(slot, value))
+            .ok_or(STATUS_COLLECTION_INVALID)
+    });
+    match outcome {
+        Ok(Ok(previous)) => native_collection_result(RESULT_OK, Some(previous)),
+        Ok(Err(status)) | Err(status) => native_collection_error(status),
+    }
+}
+
+/// Performs a strong, non-spurious compare-exchange and returns an opaque
+/// `Result` carrying the observed scalar. `last_status` is `STATUS_OK` after
+/// an exchange and `STATUS_ATOMIC_MISMATCH` when the expectation did not
+/// match; the cell is never modified on a mismatch.
+pub extern "C" fn tondo_rt_sync_array_compare_exchange(
+    array: u64,
+    index: u64,
+    expected: u64,
+    desired: u64,
+) -> u64 {
+    let Some(cell) = with_state(|state| state.sync_array_cell(array)) else {
+        return 0;
+    };
+    let Some(park) = with_state(|state| state.sync_collection_park(array)) else {
+        return 0;
+    };
+    let outcome = native_sync_write(&cell, &park, |values| {
+        let Ok(index) = usize::try_from(index) else {
+            return Err(STATUS_COLLECTION_INVALID);
+        };
+        let Some(slot) = values.get_mut(index) else {
+            return Err(STATUS_COLLECTION_INVALID);
+        };
+        let observed = *slot;
+        let exchanged = observed == expected;
+        if exchanged {
+            *slot = desired;
+        }
+        Ok((observed, exchanged))
+    });
+    let (observed, exchanged) = match outcome {
+        Ok(Ok(outcome)) => outcome,
+        Ok(Err(status)) | Err(status) => return native_collection_error(status),
+    };
+    native_collection_status(if exchanged {
+        STATUS_OK
+    } else {
+        STATUS_ATOMIC_MISMATCH
+    });
+    native_collection_result(
+        if exchanged {
+            RESULT_CAS_EXCHANGED
+        } else {
+            RESULT_CAS_MISMATCH
+        },
+        Some(observed),
+    )
+}
+
+pub extern "C" fn tondo_rt_sync_array_snapshot(array: u64) -> u64 {
+    let Some(cell) = with_state(|state| state.sync_array_cell(array)) else {
+        return 0;
+    };
+    let Some(park) = with_state(|state| state.sync_collection_park(array)) else {
+        return 0;
+    };
+    let values = match native_sync_read(&cell, &park, Clone::clone) {
+        Ok(values) => values,
+        Err(status) => {
+            native_collection_status(status);
+            return 0;
+        }
+    };
+    with_state(|state| state.sync_array_from_values(values))
+}
+
+pub extern "C" fn tondo_rt_sync_map_new() -> u64 {
+    with_state(State::sync_map_new)
+}
+
+pub extern "C" fn tondo_rt_sync_map_length(map: u64) -> u64 {
+    let Some(cell) = with_state(|state| state.sync_map_cell(map)) else {
+        return u64::MAX;
+    };
+    let Some(park) = with_state(|state| state.sync_collection_park(map)) else {
+        return u64::MAX;
+    };
+    native_sync_read(&cell, &park, Vec::len).map_or_else(
+        |status| {
+            native_collection_status(status);
+            u64::MAX
+        },
+        |length| length as u64,
+    )
+}
+
+pub extern "C" fn tondo_rt_sync_map_is_empty(map: u64) -> u64 {
+    let Some(cell) = with_state(|state| state.sync_map_cell(map)) else {
+        return u64::MAX;
+    };
+    let Some(park) = with_state(|state| state.sync_collection_park(map)) else {
+        return u64::MAX;
+    };
+    native_sync_read(&cell, &park, Vec::is_empty).map_or_else(
+        |status| {
+            native_collection_status(status);
+            u64::MAX
+        },
+        u64::from,
+    )
+}
+
+pub extern "C" fn tondo_rt_sync_map_get(map: u64, key: u64) -> u64 {
+    let Some(cell) = with_state(|state| state.sync_map_cell(map)) else {
+        return 0;
+    };
+    let Some(park) = with_state(|state| state.sync_collection_park(map)) else {
+        return 0;
+    };
+    let value = match native_sync_read(&cell, &park, |entries| {
+        entries
+            .iter()
+            .find_map(|(entry_key, value)| (*entry_key == key).then_some(*value))
+    }) {
+        Ok(value) => value,
+        Err(status) => {
+            native_collection_status(status);
+            return 0;
+        }
+    };
+    native_optional_result(value)
+}
+
+pub extern "C" fn tondo_rt_sync_map_contains(map: u64, key: u64) -> u64 {
+    let Some(cell) = with_state(|state| state.sync_map_cell(map)) else {
+        return u64::MAX;
+    };
+    let Some(park) = with_state(|state| state.sync_collection_park(map)) else {
+        return u64::MAX;
+    };
+    native_sync_read(&cell, &park, |entries| {
+        entries.iter().any(|(entry_key, _)| *entry_key == key)
+    })
+    .map_or_else(
+        |status| {
+            native_collection_status(status);
+            u64::MAX
+        },
+        u64::from,
+    )
+}
+
+pub extern "C" fn tondo_rt_sync_map_insert(map: u64, key: u64, value: u64) -> u64 {
+    let Some(cell) = with_state(|state| state.sync_map_cell(map)) else {
+        return 0;
+    };
+    let Some(park) = with_state(|state| state.sync_collection_park(map)) else {
+        return 0;
+    };
+    let outcome = native_sync_write(&cell, &park, |entries| {
+        if let Some(index) = entries.iter().position(|(entry_key, _)| *entry_key == key) {
+            Ok(Some(std::mem::replace(&mut entries[index].1, value)))
+        } else if entries.len() >= HOST_MAX_BYTES {
+            Err(STATUS_HOST_LIMIT)
+        } else {
+            entries.push((key, value));
+            Ok(None)
+        }
+    });
+    match outcome {
+        Ok(Ok(previous)) => native_collection_result(RESULT_OK, previous),
+        Ok(Err(status)) | Err(status) => native_collection_error(status),
+    }
+}
+
+pub extern "C" fn tondo_rt_sync_map_remove(map: u64, key: u64) -> u64 {
+    let Some(cell) = with_state(|state| state.sync_map_cell(map)) else {
+        return 0;
+    };
+    let Some(park) = with_state(|state| state.sync_collection_park(map)) else {
+        return 0;
+    };
+    let value = match native_sync_write(&cell, &park, |entries| {
+        entries
+            .iter()
+            .position(|(entry_key, _)| *entry_key == key)
+            .map(|index| entries.remove(index).1)
+    }) {
+        Ok(value) => value,
+        Err(status) => {
+            native_collection_status(status);
+            return 0;
+        }
+    };
+    native_optional_result(value)
+}
+
+pub extern "C" fn tondo_rt_sync_map_compare_exchange(
+    map: u64,
+    key: u64,
+    expected: u64,
+    expected_some: u64,
+    desired: u64,
+    desired_some: u64,
+) -> u64 {
+    let Some(cell) = with_state(|state| state.sync_map_cell(map)) else {
+        return 0;
+    };
+    let Some(park) = with_state(|state| state.sync_collection_park(map)) else {
+        return 0;
+    };
+    let outcome = match native_sync_write(&cell, &park, |entries| {
+        let position = entries.iter().position(|(entry_key, _)| *entry_key == key);
+        let observed = position.map(|index| entries[index].1);
+        let matches = match (expected_some != 0, observed) {
+            (true, Some(value)) => value == expected,
+            (false, None) => true,
+            _ => false,
+        };
+        if matches {
+            match (desired_some != 0, position) {
+                (true, Some(index)) => entries[index].1 = desired,
+                (true, None) if entries.len() < HOST_MAX_BYTES => entries.push((key, desired)),
+                (true, None) => return Err(STATUS_HOST_LIMIT),
+                (false, Some(index)) => {
+                    entries.remove(index);
+                }
+                (false, None) => {}
+            }
+        }
+        Ok((observed, matches))
+    }) {
+        Ok(Ok(outcome)) => outcome,
+        Ok(Err(status)) | Err(status) => return native_collection_error(status),
+    };
+    native_collection_status(if outcome.1 {
+        STATUS_OK
+    } else {
+        STATUS_ATOMIC_MISMATCH
+    });
+    native_collection_result(
+        if outcome.1 {
+            RESULT_CAS_EXCHANGED
+        } else {
+            RESULT_CAS_MISMATCH
+        },
+        outcome.0,
+    )
+}
+
+pub extern "C" fn tondo_rt_sync_map_snapshot(map: u64) -> u64 {
+    let Some(cell) = with_state(|state| state.sync_map_cell(map)) else {
+        return 0;
+    };
+    let Some(park) = with_state(|state| state.sync_collection_park(map)) else {
+        return 0;
+    };
+    let entries = match native_sync_read(&cell, &park, Clone::clone) {
+        Ok(entries) => entries,
+        Err(status) => {
+            native_collection_status(status);
+            return 0;
+        }
+    };
+    with_state(|state| state.sync_map_from_entries(entries))
+}
+
+pub extern "C" fn tondo_rt_sync_set_new() -> u64 {
+    with_state(State::sync_set_new)
+}
+
+pub extern "C" fn tondo_rt_sync_set_length(set: u64) -> u64 {
+    let Some(cell) = with_state(|state| state.sync_set_cell(set)) else {
+        return u64::MAX;
+    };
+    let Some(park) = with_state(|state| state.sync_collection_park(set)) else {
+        return u64::MAX;
+    };
+    native_sync_read(&cell, &park, Vec::len).map_or_else(
+        |status| {
+            native_collection_status(status);
+            u64::MAX
+        },
+        |length| length as u64,
+    )
+}
+
+pub extern "C" fn tondo_rt_sync_set_is_empty(set: u64) -> u64 {
+    let Some(cell) = with_state(|state| state.sync_set_cell(set)) else {
+        return u64::MAX;
+    };
+    let Some(park) = with_state(|state| state.sync_collection_park(set)) else {
+        return u64::MAX;
+    };
+    native_sync_read(&cell, &park, Vec::is_empty).map_or_else(
+        |status| {
+            native_collection_status(status);
+            u64::MAX
+        },
+        u64::from,
+    )
+}
+
+pub extern "C" fn tondo_rt_sync_set_contains(set: u64, value: u64) -> u64 {
+    let Some(cell) = with_state(|state| state.sync_set_cell(set)) else {
+        return u64::MAX;
+    };
+    let Some(park) = with_state(|state| state.sync_collection_park(set)) else {
+        return u64::MAX;
+    };
+    native_sync_read(&cell, &park, |values| values.contains(&value)).map_or_else(
+        |status| {
+            native_collection_status(status);
+            u64::MAX
+        },
+        u64::from,
+    )
+}
+
+pub extern "C" fn tondo_rt_sync_set_insert(set: u64, value: u64) -> u64 {
+    let Some(cell) = with_state(|state| state.sync_set_cell(set)) else {
+        return 0;
+    };
+    let Some(park) = with_state(|state| state.sync_collection_park(set)) else {
+        return 0;
+    };
+    let outcome = native_sync_write(&cell, &park, |values| {
+        if values.contains(&value) {
+            Ok(false)
+        } else if values.len() >= HOST_MAX_BYTES {
+            Err(STATUS_HOST_LIMIT)
+        } else {
+            values.push(value);
+            Ok(true)
+        }
+    });
+    match outcome {
+        Ok(Ok(inserted)) => native_collection_result(RESULT_OK, Some(u64::from(inserted))),
+        Ok(Err(status)) | Err(status) => native_collection_error(status),
+    }
+}
+
+pub extern "C" fn tondo_rt_sync_set_remove(set: u64, value: u64) -> u64 {
+    let Some(cell) = with_state(|state| state.sync_set_cell(set)) else {
+        return 0;
+    };
+    let Some(park) = with_state(|state| state.sync_collection_park(set)) else {
+        return 0;
+    };
+    match native_sync_write(&cell, &park, |values| {
+        values
+            .iter()
+            .position(|candidate| *candidate == value)
+            .map(|index| {
+                values.remove(index);
+                true
+            })
+            .unwrap_or(false)
+    }) {
+        Ok(removed) => removed as u64,
+        Err(status) => {
+            native_collection_status(status);
+            0
+        }
+    }
+}
+
+pub extern "C" fn tondo_rt_sync_set_snapshot(set: u64) -> u64 {
+    let Some(cell) = with_state(|state| state.sync_set_cell(set)) else {
+        return 0;
+    };
+    let Some(park) = with_state(|state| state.sync_collection_park(set)) else {
+        return 0;
+    };
+    let values = match native_sync_read(&cell, &park, Clone::clone) {
+        Ok(values) => values,
+        Err(status) => {
+            native_collection_status(status);
+            return 0;
+        }
+    };
+    with_state(|state| state.sync_set_from_values(values))
+}
+
+pub extern "C" fn tondo_rt_sync_stack_new() -> u64 {
+    with_state(State::sync_stack_new)
+}
+
+pub extern "C" fn tondo_rt_sync_stack_length(stack: u64) -> u64 {
+    let Some(cell) = with_state(|state| state.sync_stack_cell(stack)) else {
+        return u64::MAX;
+    };
+    let Some(park) = with_state(|state| state.sync_collection_park(stack)) else {
+        return u64::MAX;
+    };
+    native_sync_mutex(&cell, &park, |values| values.len()).map_or_else(
+        |status| {
+            native_collection_status(status);
+            u64::MAX
+        },
+        |length| length as u64,
+    )
+}
+
+pub extern "C" fn tondo_rt_sync_stack_is_empty(stack: u64) -> u64 {
+    let Some(cell) = with_state(|state| state.sync_stack_cell(stack)) else {
+        return u64::MAX;
+    };
+    let Some(park) = with_state(|state| state.sync_collection_park(stack)) else {
+        return u64::MAX;
+    };
+    native_sync_mutex(&cell, &park, |values| values.is_empty()).map_or_else(
+        |status| {
+            native_collection_status(status);
+            u64::MAX
+        },
+        u64::from,
+    )
+}
+
+pub extern "C" fn tondo_rt_sync_stack_push(stack: u64, value: u64) -> u64 {
+    let Some(cell) = with_state(|state| state.sync_stack_cell(stack)) else {
+        return 0;
+    };
+    let Some(park) = with_state(|state| state.sync_collection_park(stack)) else {
+        return 0;
+    };
+    let outcome = native_sync_mutex(&cell, &park, |values| {
+        if values.len() >= HOST_MAX_BYTES {
+            Err(STATUS_HOST_LIMIT)
+        } else {
+            values.push(value);
+            Ok(())
+        }
+    });
+    match outcome {
+        Ok(Ok(())) => native_collection_result(RESULT_OK, None),
+        Ok(Err(status)) | Err(status) => native_collection_error(status),
+    }
+}
+
+pub extern "C" fn tondo_rt_sync_stack_pop(stack: u64) -> u64 {
+    let Some(cell) = with_state(|state| state.sync_stack_cell(stack)) else {
+        return 0;
+    };
+    let Some(park) = with_state(|state| state.sync_collection_park(stack)) else {
+        return 0;
+    };
+    let value = match native_sync_mutex(&cell, &park, Vec::pop) {
+        Ok(value) => value,
+        Err(status) => {
+            native_collection_status(status);
+            return 0;
+        }
+    };
+    native_optional_result(value)
+}
+
+pub extern "C" fn tondo_rt_sync_stack_peek(stack: u64) -> u64 {
+    let Some(cell) = with_state(|state| state.sync_stack_cell(stack)) else {
+        return 0;
+    };
+    let Some(park) = with_state(|state| state.sync_collection_park(stack)) else {
+        return 0;
+    };
+    let value = match native_sync_mutex(&cell, &park, |values| values.last().copied()) {
+        Ok(value) => value,
+        Err(status) => {
+            native_collection_status(status);
+            return 0;
+        }
+    };
+    native_optional_result(value)
+}
+
+pub extern "C" fn tondo_rt_sync_stack_snapshot(stack: u64) -> u64 {
+    let Some(cell) = with_state(|state| state.sync_stack_cell(stack)) else {
+        return 0;
+    };
+    let Some(park) = with_state(|state| state.sync_collection_park(stack)) else {
+        return 0;
+    };
+    let mut values: Vec<u64> = match native_sync_mutex(&cell, &park, |values| values.clone()) {
+        Ok(values) => values,
+        Err(status) => {
+            native_collection_status(status);
+            return 0;
+        }
+    };
+    values.reverse();
+    with_state(|state| state.sync_array_from_values(values))
+}
+
+pub extern "C" fn tondo_rt_sync_queue_new() -> u64 {
+    with_state(State::sync_queue_new)
+}
+
+pub extern "C" fn tondo_rt_sync_queue_length(queue: u64) -> u64 {
+    let Some(cell) = with_state(|state| state.sync_queue_cell(queue)) else {
+        return u64::MAX;
+    };
+    let Some(park) = with_state(|state| state.sync_collection_park(queue)) else {
+        return u64::MAX;
+    };
+    native_sync_mutex(&cell, &park, |values| values.len()).map_or_else(
+        |status| {
+            native_collection_status(status);
+            u64::MAX
+        },
+        |length| length as u64,
+    )
+}
+
+pub extern "C" fn tondo_rt_sync_queue_is_empty(queue: u64) -> u64 {
+    let Some(cell) = with_state(|state| state.sync_queue_cell(queue)) else {
+        return u64::MAX;
+    };
+    let Some(park) = with_state(|state| state.sync_collection_park(queue)) else {
+        return u64::MAX;
+    };
+    native_sync_mutex(&cell, &park, |values| values.is_empty()).map_or_else(
+        |status| {
+            native_collection_status(status);
+            u64::MAX
+        },
+        u64::from,
+    )
+}
+
+pub extern "C" fn tondo_rt_sync_queue_enqueue(queue: u64, value: u64) -> u64 {
+    let Some(cell) = with_state(|state| state.sync_queue_cell(queue)) else {
+        return 0;
+    };
+    let Some(park) = with_state(|state| state.sync_collection_park(queue)) else {
+        return 0;
+    };
+    let outcome = native_sync_mutex(&cell, &park, |values| {
+        if values.len() >= HOST_MAX_BYTES {
+            Err(STATUS_HOST_LIMIT)
+        } else {
+            values.push_back(value);
+            Ok(())
+        }
+    });
+    match outcome {
+        Ok(Ok(())) => native_collection_result(RESULT_OK, None),
+        Ok(Err(status)) | Err(status) => native_collection_error(status),
+    }
+}
+
+pub extern "C" fn tondo_rt_sync_queue_dequeue(queue: u64) -> u64 {
+    let Some(cell) = with_state(|state| state.sync_queue_cell(queue)) else {
+        return 0;
+    };
+    let Some(park) = with_state(|state| state.sync_collection_park(queue)) else {
+        return 0;
+    };
+    let value = match native_sync_mutex(&cell, &park, VecDeque::pop_front) {
+        Ok(value) => value,
+        Err(status) => {
+            native_collection_status(status);
+            return 0;
+        }
+    };
+    native_optional_result(value)
+}
+
+pub extern "C" fn tondo_rt_sync_queue_peek(queue: u64) -> u64 {
+    let Some(cell) = with_state(|state| state.sync_queue_cell(queue)) else {
+        return 0;
+    };
+    let Some(park) = with_state(|state| state.sync_collection_park(queue)) else {
+        return 0;
+    };
+    let value = match native_sync_mutex(&cell, &park, |values| values.front().copied()) {
+        Ok(value) => value,
+        Err(status) => {
+            native_collection_status(status);
+            return 0;
+        }
+    };
+    native_optional_result(value)
+}
+
+pub extern "C" fn tondo_rt_sync_queue_snapshot(queue: u64) -> u64 {
+    let Some(cell) = with_state(|state| state.sync_queue_cell(queue)) else {
+        return 0;
+    };
+    let Some(park) = with_state(|state| state.sync_collection_park(queue)) else {
+        return 0;
+    };
+    let values = match native_sync_mutex(&cell, &park, |values| values.iter().copied().collect()) {
+        Ok(values) => values,
+        Err(status) => {
+            native_collection_status(status);
+            return 0;
+        }
+    };
+    with_state(|state| state.sync_array_from_values(values))
 }
 
 pub extern "C" fn tondo_rt_scope_enter() -> u64 {
@@ -5479,6 +6550,359 @@ mod tests {
         assert_eq!(tondo_rt_group_remaining(group), 0);
         assert_eq!(tondo_rt_release(thread), STATUS_OK);
         assert_eq!(tondo_rt_release(group), STATUS_OK);
+        assert_eq!(tondo_rt_live_objects(), 0);
+    }
+
+    #[test]
+    fn native_sync_collections_preserve_order_and_share_state_across_workers() {
+        let _guard = test_guard();
+        tondo_rt_reset();
+
+        let array = tondo_rt_sync_array_new(2);
+        assert!(array & HANDLE_BIT != 0);
+        assert_eq!(tondo_rt_sync_array_length(array), 2);
+        assert_eq!(tondo_rt_sync_array_is_empty(array), 0);
+        let set_result = tondo_rt_sync_array_set(array, 0, 7);
+        assert_eq!(tondo_rt_result_tag(set_result), RESULT_OK);
+        assert_eq!(tondo_rt_result_payload(set_result), 0);
+        assert_eq!(tondo_rt_release(set_result), STATUS_OK);
+        let get = tondo_rt_sync_array_get(array, 0);
+        assert_eq!(tondo_rt_result_tag(get), RESULT_SOME);
+        assert_eq!(tondo_rt_result_payload(get), 7);
+        assert_eq!(tondo_rt_release(get), STATUS_OK);
+        let invalid = tondo_rt_sync_array_set(array, 9, 1);
+        assert_eq!(tondo_rt_result_tag(invalid), RESULT_ERR);
+        assert_eq!(tondo_rt_last_status(), STATUS_COLLECTION_INVALID);
+        assert_eq!(tondo_rt_release(invalid), STATUS_OK);
+
+        let mismatch = tondo_rt_sync_array_compare_exchange(array, 0, 8, 9);
+        assert_eq!(tondo_rt_result_tag(mismatch), RESULT_CAS_MISMATCH);
+        assert_eq!(tondo_rt_result_payload(mismatch), 7);
+        assert_eq!(tondo_rt_last_status(), STATUS_ATOMIC_MISMATCH);
+        assert_eq!(tondo_rt_release(mismatch), STATUS_OK);
+        let exchanged = tondo_rt_sync_array_compare_exchange(array, 0, 7, 9);
+        assert_eq!(tondo_rt_result_tag(exchanged), RESULT_CAS_EXCHANGED);
+        assert_eq!(tondo_rt_result_payload(exchanged), 7);
+        assert_eq!(tondo_rt_last_status(), STATUS_OK);
+        assert_eq!(tondo_rt_release(exchanged), STATUS_OK);
+
+        let array_snapshot = tondo_rt_sync_array_snapshot(array);
+        assert_eq!(tondo_rt_sync_array_length(array_snapshot), 2);
+        let snapshot_value = tondo_rt_sync_array_get(array_snapshot, 0);
+        assert_eq!(tondo_rt_result_payload(snapshot_value), 9);
+        assert_eq!(tondo_rt_release(snapshot_value), STATUS_OK);
+
+        // Copying a shared handle keeps one collection identity rather than
+        // making a copy-on-write value with independent contents.
+        assert_eq!(tondo_rt_mark_shared(array), STATUS_OK);
+        assert_eq!(tondo_rt_retain(array), STATUS_OK);
+        let shared_copy = tondo_rt_cow_clone(array);
+        assert_ne!(shared_copy, array);
+        let shared_set = tondo_rt_sync_array_set(shared_copy, 1, 11);
+        assert_eq!(tondo_rt_result_tag(shared_set), RESULT_OK);
+        assert_eq!(tondo_rt_release(shared_set), STATUS_OK);
+        let shared_get = tondo_rt_sync_array_get(array, 1);
+        assert_eq!(tondo_rt_result_payload(shared_get), 11);
+        assert_eq!(tondo_rt_release(shared_get), STATUS_OK);
+        assert_eq!(tondo_rt_release(shared_copy), STATUS_OK);
+        assert_eq!(tondo_rt_release(array), STATUS_OK);
+        assert_eq!(tondo_rt_release(array), STATUS_OK);
+        assert_eq!(tondo_rt_release(array_snapshot), STATUS_OK);
+
+        let map = tondo_rt_sync_map_new();
+        let inserted = tondo_rt_sync_map_insert(map, 1, 10);
+        assert_eq!(tondo_rt_result_tag(inserted), RESULT_OK);
+        assert_eq!(tondo_rt_result_tag(inserted), RESULT_OK);
+        assert_eq!(tondo_rt_release(inserted), STATUS_OK);
+        let replaced = tondo_rt_sync_map_insert(map, 1, 12);
+        assert_eq!(tondo_rt_result_payload(replaced), 10);
+        assert_eq!(tondo_rt_release(replaced), STATUS_OK);
+        assert_eq!(tondo_rt_sync_map_contains(map, 1), 1);
+        let removed = tondo_rt_sync_map_remove(map, 1);
+        assert_eq!(tondo_rt_result_tag(removed), RESULT_SOME);
+        assert_eq!(tondo_rt_result_payload(removed), 12);
+        assert_eq!(tondo_rt_release(removed), STATUS_OK);
+        assert_eq!(tondo_rt_sync_map_contains(map, 1), 0);
+        let absent_cas = tondo_rt_sync_map_compare_exchange(map, 1, 0, 0, 13, 1);
+        assert_eq!(tondo_rt_result_tag(absent_cas), RESULT_CAS_EXCHANGED);
+        assert_eq!(tondo_rt_last_status(), STATUS_OK);
+        assert_eq!(tondo_rt_release(absent_cas), STATUS_OK);
+        let map_snapshot = tondo_rt_sync_map_snapshot(map);
+        assert_eq!(tondo_rt_sync_map_length(map_snapshot), 1);
+        assert_eq!(tondo_rt_release(map_snapshot), STATUS_OK);
+        assert_eq!(tondo_rt_release(map), STATUS_OK);
+
+        let set = tondo_rt_sync_set_new();
+        let first_insert = tondo_rt_sync_set_insert(set, 4);
+        assert_eq!(tondo_rt_result_payload(first_insert), 1);
+        assert_eq!(tondo_rt_release(first_insert), STATUS_OK);
+        let duplicate = tondo_rt_sync_set_insert(set, 4);
+        assert_eq!(tondo_rt_result_payload(duplicate), 0);
+        assert_eq!(tondo_rt_release(duplicate), STATUS_OK);
+        assert_eq!(tondo_rt_sync_set_contains(set, 4), 1);
+        assert_eq!(tondo_rt_sync_set_remove(set, 4), 1);
+        assert_eq!(tondo_rt_sync_set_remove(set, 4), 0);
+        let set_snapshot = tondo_rt_sync_set_snapshot(set);
+        assert_eq!(tondo_rt_sync_set_length(set_snapshot), 0);
+        assert_eq!(tondo_rt_release(set_snapshot), STATUS_OK);
+        assert_eq!(tondo_rt_release(set), STATUS_OK);
+
+        let stack = tondo_rt_sync_stack_new();
+        for value in [1, 2] {
+            let pushed = tondo_rt_sync_stack_push(stack, value);
+            assert_eq!(tondo_rt_result_tag(pushed), RESULT_OK);
+            assert_eq!(tondo_rt_release(pushed), STATUS_OK);
+        }
+        let stack_peek = tondo_rt_sync_stack_peek(stack);
+        assert_eq!(tondo_rt_result_payload(stack_peek), 2);
+        assert_eq!(tondo_rt_release(stack_peek), STATUS_OK);
+        let stack_snapshot = tondo_rt_sync_stack_snapshot(stack);
+        let stack_first = tondo_rt_sync_array_get(stack_snapshot, 0);
+        assert_eq!(tondo_rt_result_payload(stack_first), 2);
+        assert_eq!(tondo_rt_release(stack_first), STATUS_OK);
+        assert_eq!(tondo_rt_release(stack_snapshot), STATUS_OK);
+        let stack_pop = tondo_rt_sync_stack_pop(stack);
+        assert_eq!(tondo_rt_result_payload(stack_pop), 2);
+        assert_eq!(tondo_rt_release(stack_pop), STATUS_OK);
+        assert_eq!(tondo_rt_release(stack), STATUS_OK);
+
+        let queue = tondo_rt_sync_queue_new();
+        for value in [3, 4] {
+            let enqueued = tondo_rt_sync_queue_enqueue(queue, value);
+            assert_eq!(tondo_rt_result_tag(enqueued), RESULT_OK);
+            assert_eq!(tondo_rt_release(enqueued), STATUS_OK);
+        }
+        let queue_snapshot = tondo_rt_sync_queue_snapshot(queue);
+        let queue_first = tondo_rt_sync_array_get(queue_snapshot, 0);
+        assert_eq!(tondo_rt_result_payload(queue_first), 3);
+        assert_eq!(tondo_rt_release(queue_first), STATUS_OK);
+        assert_eq!(tondo_rt_release(queue_snapshot), STATUS_OK);
+        let queue_first = tondo_rt_sync_queue_dequeue(queue);
+        assert_eq!(tondo_rt_result_payload(queue_first), 3);
+        assert_eq!(tondo_rt_release(queue_first), STATUS_OK);
+
+        // The array CAS path and the queue path both make progress from
+        // several native workers without touching the global table while the
+        // collection lock is held.
+        let counter = tondo_rt_sync_array_new(1);
+        let workers = (0..4)
+            .map(|_| {
+                std::thread::spawn(move || {
+                    for _ in 0..100 {
+                        loop {
+                            let observed = tondo_rt_sync_array_get(counter, 0);
+                            let value = tondo_rt_result_payload(observed);
+                            assert_eq!(tondo_rt_release(observed), STATUS_OK);
+                            let exchanged =
+                                tondo_rt_sync_array_compare_exchange(counter, 0, value, value + 1);
+                            let tag = tondo_rt_result_tag(exchanged);
+                            assert_eq!(tondo_rt_release(exchanged), STATUS_OK);
+                            if tag == RESULT_CAS_EXCHANGED {
+                                break;
+                            }
+                            assert_eq!(tag, RESULT_CAS_MISMATCH);
+                        }
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        for worker in workers {
+            worker.join().expect("native collection worker must finish");
+        }
+        let final_value = tondo_rt_sync_array_get(counter, 0);
+        assert_eq!(tondo_rt_result_payload(final_value), 400);
+        assert_eq!(tondo_rt_release(final_value), STATUS_OK);
+        assert_eq!(tondo_rt_release(counter), STATUS_OK);
+
+        let producers = (0..4)
+            .map(|worker| {
+                std::thread::spawn(move || {
+                    for offset in 0..25 {
+                        let result = tondo_rt_sync_queue_enqueue(queue, worker * 25 + offset);
+                        assert_eq!(tondo_rt_result_tag(result), RESULT_OK);
+                        assert_eq!(tondo_rt_release(result), STATUS_OK);
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        for producer in producers {
+            producer.join().expect("native queue producer must finish");
+        }
+        assert_eq!(tondo_rt_sync_queue_length(queue), 101);
+        let consumers = (0..4)
+            .map(|_| {
+                std::thread::spawn(move || {
+                    for _ in 0..25 {
+                        let result = tondo_rt_sync_queue_dequeue(queue);
+                        assert_eq!(tondo_rt_result_tag(result), RESULT_SOME);
+                        assert_eq!(tondo_rt_release(result), STATUS_OK);
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        for consumer in consumers {
+            consumer.join().expect("native queue consumer must finish");
+        }
+        assert_eq!(tondo_rt_sync_queue_length(queue), 1);
+        let last = tondo_rt_sync_queue_dequeue(queue);
+        assert_eq!(tondo_rt_result_tag(last), RESULT_SOME);
+        assert_eq!(tondo_rt_release(last), STATUS_OK);
+        assert_eq!(tondo_rt_release(queue), STATUS_OK);
+        assert_eq!(tondo_rt_sync_array_new(HOST_MAX_BYTES as u64 + 1), 0);
+        assert_eq!(tondo_rt_last_status(), STATUS_HOST_LIMIT);
+
+        // Collection capabilities are type-checked by the object table and
+        // cannot be reused after their terminal release.
+        let atomic = tondo_rt_atomic_new(0);
+        assert_eq!(tondo_rt_sync_array_length(atomic), u64::MAX);
+        assert_eq!(tondo_rt_last_status(), STATUS_INVALID_HANDLE);
+        assert_eq!(tondo_rt_release(atomic), STATUS_OK);
+        let stale = tondo_rt_sync_array_new(0);
+        assert_eq!(tondo_rt_release(stale), STATUS_OK);
+        assert_eq!(tondo_rt_sync_array_is_empty(stale), u64::MAX);
+        assert_eq!(tondo_rt_last_status(), STATUS_INVALID_HANDLE);
+        assert_eq!(tondo_rt_live_objects(), 0);
+    }
+
+    #[test]
+    fn native_sync_collections_cover_empty_and_invalid_edges() {
+        let _guard = test_guard();
+        tondo_rt_reset();
+
+        // Every collection entrypoint must fail closed for a valid object of
+        // another kind.  Result-producing operations return zero rather than
+        // manufacturing an unowned result record.
+        let wrong = tondo_rt_atomic_new(0);
+        assert_ne!(wrong, 0);
+        assert_eq!(tondo_rt_sync_array_length(wrong), u64::MAX);
+        assert_eq!(tondo_rt_sync_array_is_empty(wrong), u64::MAX);
+        assert_eq!(tondo_rt_sync_array_get(wrong, 0), 0);
+        assert_eq!(tondo_rt_sync_array_set(wrong, 0, 1), 0);
+        assert_eq!(tondo_rt_sync_array_compare_exchange(wrong, 0, 0, 1), 0);
+        assert_eq!(tondo_rt_sync_array_snapshot(wrong), 0);
+        assert_eq!(tondo_rt_sync_map_length(wrong), u64::MAX);
+        assert_eq!(tondo_rt_sync_map_is_empty(wrong), u64::MAX);
+        assert_eq!(tondo_rt_sync_map_get(wrong, 0), 0);
+        assert_eq!(tondo_rt_sync_map_contains(wrong, 0), u64::MAX);
+        assert_eq!(tondo_rt_sync_map_insert(wrong, 0, 1), 0);
+        assert_eq!(tondo_rt_sync_map_remove(wrong, 0), 0);
+        assert_eq!(tondo_rt_sync_map_compare_exchange(wrong, 0, 0, 0, 1, 1), 0);
+        assert_eq!(tondo_rt_sync_map_snapshot(wrong), 0);
+        assert_eq!(tondo_rt_sync_set_length(wrong), u64::MAX);
+        assert_eq!(tondo_rt_sync_set_is_empty(wrong), u64::MAX);
+        assert_eq!(tondo_rt_sync_set_contains(wrong, 0), u64::MAX);
+        assert_eq!(tondo_rt_sync_set_insert(wrong, 0), 0);
+        assert_eq!(tondo_rt_sync_set_remove(wrong, 0), 0);
+        assert_eq!(tondo_rt_sync_set_snapshot(wrong), 0);
+        assert_eq!(tondo_rt_sync_stack_length(wrong), u64::MAX);
+        assert_eq!(tondo_rt_sync_stack_is_empty(wrong), u64::MAX);
+        assert_eq!(tondo_rt_sync_stack_push(wrong, 0), 0);
+        assert_eq!(tondo_rt_sync_stack_pop(wrong), 0);
+        assert_eq!(tondo_rt_sync_stack_peek(wrong), 0);
+        assert_eq!(tondo_rt_sync_stack_snapshot(wrong), 0);
+        assert_eq!(tondo_rt_sync_queue_length(wrong), u64::MAX);
+        assert_eq!(tondo_rt_sync_queue_is_empty(wrong), u64::MAX);
+        assert_eq!(tondo_rt_sync_queue_enqueue(wrong, 0), 0);
+        assert_eq!(tondo_rt_sync_queue_dequeue(wrong), 0);
+        assert_eq!(tondo_rt_sync_queue_peek(wrong), 0);
+        assert_eq!(tondo_rt_sync_queue_snapshot(wrong), 0);
+        assert_eq!(tondo_rt_last_status(), STATUS_INVALID_HANDLE);
+        assert_eq!(tondo_rt_release(wrong), STATUS_OK);
+
+        let array = tondo_rt_sync_array_new(0);
+        assert_eq!(tondo_rt_sync_array_length(array), 0);
+        assert_eq!(tondo_rt_sync_array_is_empty(array), 1);
+        let value = tondo_rt_sync_array_get(array, 0);
+        assert_eq!(tondo_rt_result_tag(value), RESULT_NONE);
+        assert_eq!(tondo_rt_release(value), STATUS_OK);
+        let invalid = tondo_rt_sync_array_set(array, u64::MAX, 1);
+        assert_eq!(tondo_rt_result_tag(invalid), RESULT_ERR);
+        assert_eq!(tondo_rt_last_status(), STATUS_COLLECTION_INVALID);
+        assert_eq!(tondo_rt_release(invalid), STATUS_OK);
+        let snapshot = tondo_rt_sync_array_snapshot(array);
+        assert_ne!(snapshot, 0);
+        assert_eq!(tondo_rt_sync_array_is_empty(snapshot), 1);
+        assert_eq!(tondo_rt_release(snapshot), STATUS_OK);
+        assert_eq!(tondo_rt_release(array), STATUS_OK);
+
+        let map = tondo_rt_sync_map_new();
+        assert_eq!(tondo_rt_sync_map_length(map), 0);
+        assert_eq!(tondo_rt_sync_map_is_empty(map), 1);
+        let missing = tondo_rt_sync_map_get(map, 1);
+        assert_eq!(tondo_rt_result_tag(missing), RESULT_NONE);
+        assert_eq!(tondo_rt_release(missing), STATUS_OK);
+        assert_eq!(tondo_rt_sync_map_contains(map, 1), 0);
+        let absent = tondo_rt_sync_map_remove(map, 1);
+        assert_eq!(tondo_rt_result_tag(absent), RESULT_NONE);
+        assert_eq!(tondo_rt_release(absent), STATUS_OK);
+        let inserted = tondo_rt_sync_map_insert(map, 1, 10);
+        assert_eq!(tondo_rt_result_tag(inserted), RESULT_OK);
+        assert_eq!(tondo_rt_release(inserted), STATUS_OK);
+        let exchanged = tondo_rt_sync_map_compare_exchange(map, 1, 10, 1, 11, 1);
+        assert_eq!(tondo_rt_result_tag(exchanged), RESULT_CAS_EXCHANGED);
+        assert_eq!(tondo_rt_result_payload(exchanged), 10);
+        assert_eq!(tondo_rt_release(exchanged), STATUS_OK);
+        let mismatch = tondo_rt_sync_map_compare_exchange(map, 1, 10, 1, 12, 1);
+        assert_eq!(tondo_rt_result_tag(mismatch), RESULT_CAS_MISMATCH);
+        assert_eq!(tondo_rt_result_payload(mismatch), 11);
+        assert_eq!(tondo_rt_release(mismatch), STATUS_OK);
+        let remove = tondo_rt_sync_map_compare_exchange(map, 1, 11, 1, 0, 0);
+        assert_eq!(tondo_rt_result_tag(remove), RESULT_CAS_EXCHANGED);
+        assert_eq!(tondo_rt_release(remove), STATUS_OK);
+        let map_snapshot = tondo_rt_sync_map_snapshot(map);
+        assert_eq!(tondo_rt_sync_map_is_empty(map_snapshot), 1);
+        assert_eq!(tondo_rt_release(map_snapshot), STATUS_OK);
+        assert_eq!(tondo_rt_release(map), STATUS_OK);
+
+        let set = tondo_rt_sync_set_new();
+        assert_eq!(tondo_rt_sync_set_length(set), 0);
+        assert_eq!(tondo_rt_sync_set_is_empty(set), 1);
+        assert_eq!(tondo_rt_sync_set_contains(set, 1), 0);
+        assert_eq!(tondo_rt_sync_set_remove(set, 1), 0);
+        let inserted = tondo_rt_sync_set_insert(set, 1);
+        assert_eq!(tondo_rt_result_payload(inserted), 1);
+        assert_eq!(tondo_rt_release(inserted), STATUS_OK);
+        let duplicate = tondo_rt_sync_set_insert(set, 1);
+        assert_eq!(tondo_rt_result_payload(duplicate), 0);
+        assert_eq!(tondo_rt_release(duplicate), STATUS_OK);
+        let set_snapshot = tondo_rt_sync_set_snapshot(set);
+        assert_eq!(tondo_rt_sync_set_length(set_snapshot), 1);
+        assert_eq!(tondo_rt_release(set_snapshot), STATUS_OK);
+        assert_eq!(tondo_rt_release(set), STATUS_OK);
+
+        let stack = tondo_rt_sync_stack_new();
+        assert_eq!(tondo_rt_sync_stack_length(stack), 0);
+        assert_eq!(tondo_rt_sync_stack_is_empty(stack), 1);
+        let value = tondo_rt_sync_stack_pop(stack);
+        assert_eq!(tondo_rt_result_tag(value), RESULT_NONE);
+        assert_eq!(tondo_rt_release(value), STATUS_OK);
+        let value = tondo_rt_sync_stack_peek(stack);
+        assert_eq!(tondo_rt_result_tag(value), RESULT_NONE);
+        assert_eq!(tondo_rt_release(value), STATUS_OK);
+        let pushed = tondo_rt_sync_stack_push(stack, 7);
+        assert_eq!(tondo_rt_result_tag(pushed), RESULT_OK);
+        assert_eq!(tondo_rt_release(pushed), STATUS_OK);
+        let stack_snapshot = tondo_rt_sync_stack_snapshot(stack);
+        assert_eq!(tondo_rt_sync_array_length(stack_snapshot), 1);
+        assert_eq!(tondo_rt_release(stack_snapshot), STATUS_OK);
+        assert_eq!(tondo_rt_release(stack), STATUS_OK);
+
+        let queue = tondo_rt_sync_queue_new();
+        assert_eq!(tondo_rt_sync_queue_length(queue), 0);
+        assert_eq!(tondo_rt_sync_queue_is_empty(queue), 1);
+        let value = tondo_rt_sync_queue_dequeue(queue);
+        assert_eq!(tondo_rt_result_tag(value), RESULT_NONE);
+        assert_eq!(tondo_rt_release(value), STATUS_OK);
+        let value = tondo_rt_sync_queue_peek(queue);
+        assert_eq!(tondo_rt_result_tag(value), RESULT_NONE);
+        assert_eq!(tondo_rt_release(value), STATUS_OK);
+        let enqueued = tondo_rt_sync_queue_enqueue(queue, 8);
+        assert_eq!(tondo_rt_result_tag(enqueued), RESULT_OK);
+        assert_eq!(tondo_rt_release(enqueued), STATUS_OK);
+        let queue_snapshot = tondo_rt_sync_queue_snapshot(queue);
+        assert_eq!(tondo_rt_sync_array_length(queue_snapshot), 1);
+        assert_eq!(tondo_rt_release(queue_snapshot), STATUS_OK);
+        assert_eq!(tondo_rt_release(queue), STATUS_OK);
         assert_eq!(tondo_rt_live_objects(), 0);
     }
 

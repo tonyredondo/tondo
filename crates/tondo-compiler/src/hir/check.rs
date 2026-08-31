@@ -2047,7 +2047,12 @@ impl<'a> ExpressionChecker<'a> {
                     ConstantDiagnosticKind::Set(items.clone()),
                 )),
                 HirExpressionKind::BootstrapHostCall {
-                    function: HirBootstrapHostFunction::SyncCollectionLiteral,
+                    function:
+                        HirBootstrapHostFunction::SyncArrayLiteral
+                        | HirBootstrapHostFunction::SyncMapLiteral
+                        | HirBootstrapHostFunction::SyncSetLiteral
+                        | HirBootstrapHostFunction::SyncStackLiteral
+                        | HirBootstrapHostFunction::SyncQueueLiteral,
                     arguments,
                 } => {
                     let name = match self.program.interner.kind(expression.ty()) {
@@ -5263,7 +5268,7 @@ impl<'a> ExpressionChecker<'a> {
                 ty,
                 category: HirValueCategory::Value,
                 kind: HirExpressionKind::BootstrapHostCall {
-                    function: HirBootstrapHostFunction::SyncCollectionLiteral,
+                    function: HirBootstrapHostFunction::SyncMapLiteral,
                     arguments,
                 },
             })?));
@@ -5348,7 +5353,13 @@ impl<'a> ExpressionChecker<'a> {
             ty,
             category: HirValueCategory::Value,
             kind: HirExpressionKind::BootstrapHostCall {
-                function: HirBootstrapHostFunction::SyncCollectionLiteral,
+                function: match collection {
+                    SyncCollectionLiteralKind::Array => HirBootstrapHostFunction::SyncArrayLiteral,
+                    SyncCollectionLiteralKind::Set => HirBootstrapHostFunction::SyncSetLiteral,
+                    SyncCollectionLiteralKind::Stack => HirBootstrapHostFunction::SyncStackLiteral,
+                    SyncCollectionLiteralKind::Queue => HirBootstrapHostFunction::SyncQueueLiteral,
+                    SyncCollectionLiteralKind::Map => unreachable!(),
+                },
                 arguments,
             },
         })?))
@@ -17997,6 +18008,19 @@ impl<'a> ExpressionChecker<'a> {
         )? {
             return Ok(Some(call));
         }
+        if let Some(call) = self.check_sync_collection_method_call(
+            file,
+            range,
+            receiver,
+            receiver_type,
+            member_token,
+            suffix,
+            explicit_bracket,
+            expected,
+            context,
+        )? {
+            return Ok(Some(call));
+        }
         if let Some(call) = self.check_process_method_call(
             file,
             range,
@@ -18852,6 +18876,113 @@ impl<'a> ExpressionChecker<'a> {
             pending.extend(node.child_nodes());
         }
         selected
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn check_sync_collection_method_call(
+        &mut self,
+        file: FileId,
+        range: TextRange,
+        receiver: HirExpressionId,
+        receiver_type: TypeId,
+        member_token: SyntaxTokenRef<'_>,
+        suffix: SyntaxNodeRef<'_>,
+        explicit_bracket: Option<SyntaxNodeRef<'_>>,
+        expected: Option<ExpressionExpectation>,
+        context: &mut BodyContext,
+    ) -> Result<Option<HirExpressionId>, HirError> {
+        let member = member_token
+            .token()
+            .normalized_identifier()
+            .unwrap_or(self.token_text(file, member_token)?);
+        let TypeKind::Nominal {
+            identity,
+            arguments,
+        } = self.program.interner.kind(receiver_type)?
+        else {
+            return Ok(None);
+        };
+        if identity.package().as_str() != "toolchain:std:0.1-bootstrap"
+            || identity.module().as_str() != "sync"
+        {
+            return Ok(None);
+        }
+        let owner = identity.declaration().to_string();
+        let function = match (owner.as_str(), member) {
+            ("Array", "length") => HirBootstrapHostFunction::SyncArrayLength,
+            ("Array", "isEmpty") => HirBootstrapHostFunction::SyncArrayIsEmpty,
+            ("Array", "get") => HirBootstrapHostFunction::SyncArrayGet,
+            ("Array", "set") => HirBootstrapHostFunction::SyncArraySet,
+            ("Array", "compareExchange") => HirBootstrapHostFunction::SyncArrayCompareExchange,
+            ("Array", "snapshot") => HirBootstrapHostFunction::SyncArraySnapshot,
+            ("Map", "length") => HirBootstrapHostFunction::SyncMapLength,
+            ("Map", "isEmpty") => HirBootstrapHostFunction::SyncMapIsEmpty,
+            ("Map", "get") => HirBootstrapHostFunction::SyncMapGet,
+            ("Map", "contains") => HirBootstrapHostFunction::SyncMapContains,
+            ("Map", "insert") => HirBootstrapHostFunction::SyncMapInsert,
+            ("Map", "remove") => HirBootstrapHostFunction::SyncMapRemove,
+            ("Map", "compareExchange") => HirBootstrapHostFunction::SyncMapCompareExchange,
+            ("Map", "snapshot") => HirBootstrapHostFunction::SyncMapSnapshot,
+            ("Set", "length") => HirBootstrapHostFunction::SyncSetLength,
+            ("Set", "isEmpty") => HirBootstrapHostFunction::SyncSetIsEmpty,
+            ("Set", "contains") => HirBootstrapHostFunction::SyncSetContains,
+            ("Set", "insert") => HirBootstrapHostFunction::SyncSetInsert,
+            ("Set", "remove") => HirBootstrapHostFunction::SyncSetRemove,
+            ("Set", "snapshot") => HirBootstrapHostFunction::SyncSetSnapshot,
+            ("Stack", "length") => HirBootstrapHostFunction::SyncStackLength,
+            ("Stack", "isEmpty") => HirBootstrapHostFunction::SyncStackIsEmpty,
+            ("Stack", "push") => HirBootstrapHostFunction::SyncStackPush,
+            ("Stack", "pop") => HirBootstrapHostFunction::SyncStackPop,
+            ("Stack", "peek") => HirBootstrapHostFunction::SyncStackPeek,
+            ("Stack", "snapshot") => HirBootstrapHostFunction::SyncStackSnapshot,
+            ("Queue", "length") => HirBootstrapHostFunction::SyncQueueLength,
+            ("Queue", "isEmpty") => HirBootstrapHostFunction::SyncQueueIsEmpty,
+            ("Queue", "enqueue") => HirBootstrapHostFunction::SyncQueueEnqueue,
+            ("Queue", "dequeue") => HirBootstrapHostFunction::SyncQueueDequeue,
+            ("Queue", "peek") => HirBootstrapHostFunction::SyncQueuePeek,
+            ("Queue", "snapshot") => HirBootstrapHostFunction::SyncQueueSnapshot,
+            _ => return Ok(None),
+        };
+        let expected_arity = match owner.as_str() {
+            "Map" => 2,
+            "Array" | "Set" | "Stack" | "Queue" => 1,
+            _ => unreachable!("sync collection owner match is exhaustive"),
+        };
+        if arguments.len() != expected_arity {
+            return Ok(None);
+        }
+        if let Some(bracket) = explicit_bracket {
+            self.emit(
+                self.sources.span(file, bracket.range())?,
+                "E1104",
+                "std.sync collection methods do not declare explicit type arguments",
+                Vec::new(),
+                None,
+            )?;
+            return self.recovery_expression(file, range).map(Some);
+        }
+        if self
+            .program
+            .callable(HirCallableId::Host(function))
+            .is_none()
+        {
+            return Ok(None);
+        }
+        let callee =
+            self.bootstrap_host_callee(function, self.sources.span(file, member_token.range())?)?;
+        self.check_call(
+            CallSite {
+                file,
+                range,
+                suffix,
+                expected,
+            },
+            callee,
+            Some(receiver),
+            None,
+            context,
+        )
+        .map(Some)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -24717,7 +24848,12 @@ mod tests {
             .expressions()
             .filter_map(|expression| match expression.kind() {
                 HirExpressionKind::BootstrapHostCall {
-                    function: HirBootstrapHostFunction::SyncCollectionLiteral,
+                    function:
+                        HirBootstrapHostFunction::SyncArrayLiteral
+                        | HirBootstrapHostFunction::SyncMapLiteral
+                        | HirBootstrapHostFunction::SyncSetLiteral
+                        | HirBootstrapHostFunction::SyncStackLiteral
+                        | HirBootstrapHostFunction::SyncQueueLiteral,
                     arguments,
                 } => Some((expression.ty(), arguments.len())),
                 _ => None,
@@ -24830,6 +24966,50 @@ mod tests {
              }\n",
         );
         assert_eq!(codes(&set), ["W1011"]);
+    }
+
+    #[test]
+    fn sync_collection_methods_use_nominal_host_contracts() {
+        let (_, _, output) = check(
+            "import std.sync as concurrent\n\
+             fn methods() {\n\
+                 let array: concurrent.Array[Int] = concurrent.Array[1, 2]\n\
+                 let map: concurrent.Map[String, Int] = concurrent.Map[\"a\": 1]\n\
+                 let set: concurrent.Set[String] = concurrent.Set[\"a\"]\n\
+                 let stack: concurrent.Stack[Int] = concurrent.Stack[1, 2]\n\
+                 let queue: concurrent.Queue[Int] = concurrent.Queue[1, 2]\n\
+                 _ = (array.length(), array.isEmpty(), array.get(0), array.set(0, 3),\n\
+                      array.compareExchange(0, 3, 4), array.snapshot(),\n\
+                      map.length(), map.isEmpty(), map.get(\"a\"), map.contains(\"a\"),\n\
+                      map.insert(\"b\", 2), map.remove(\"b\"),\n\
+                      map.compareExchange(\"a\", some(1), some(2)), map.snapshot(),\n\
+                      set.length(), set.isEmpty(), set.contains(\"a\"),\n\
+                      set.insert(\"b\"), set.remove(\"b\"), set.snapshot(),\n\
+                      stack.length(), stack.isEmpty(), stack.push(3), stack.pop(),\n\
+                      stack.peek(), stack.snapshot(), queue.length(), queue.isEmpty(),\n\
+                      queue.enqueue(3), queue.dequeue(), queue.peek(), queue.snapshot())\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+        let method_calls = output
+            .program()
+            .expressions()
+            .filter_map(|expression| match expression.kind() {
+                HirExpressionKind::SpecializedFunction {
+                    callable: HirCallableId::Host(function),
+                    ..
+                }
+                | HirExpressionKind::Function(HirCallableId::Host(function)) => Some(*function),
+                _ => None,
+            })
+            .filter(|function| function.name().starts_with("std.sync."))
+            .count();
+        assert_eq!(method_calls, 32);
     }
 
     #[test]

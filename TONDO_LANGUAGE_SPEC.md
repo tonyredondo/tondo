@@ -9424,9 +9424,10 @@ El frontend de esta forma está cerrado por `STD-SYNC-COLLECTION-FRONTEND-001`.
 Su CST conserva `PathExpr + BracketPostfix` sin keywords nuevas y el HIR emite
 el marcador interno `std.sync.collectionLiteral` después de validar identidad,
 aridad, contexto vacío, trailing comma, orden de evaluación y duplicados. El
-verifier protege esa frontera y el lowering MIR rechaza todavía la construcción
-con `STD-SYNC-COLLECTION-IMPL-001`: la semántica de runtime de los handles no se
-considera implementada por este cierre de parser y checker.
+verifier protege esa frontera y el lowering MIR la entrega al consumidor de
+runtime verificado por `STD-SYNC-COLLECTION-IMPL-001` para hosted y el ABI nativo
+privado. Este cierre no afirma lowering genérico AOT ni iteración directa; el
+cursor `std.sync` queda en `STD-SYNC-COLLECTION-ITER-001`.
 
 ### 23.25 Records y variantes
 

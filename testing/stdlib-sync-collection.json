@@ -1,0 +1,208 @@
+{
+  "format": "tondo-stdlib-owner-contract/1",
+  "owner": "std.sync.collection",
+  "parent_owner": "std.sync",
+  "edition": "0.1",
+  "phase": "STD-0.1B",
+  "task": "STD-SYNC-COLLECTION-IMPL-001",
+  "status": "contract-locked",
+  "contract": "docs/contracts/stdlib-sync-collection.md",
+  "spec": "TONDO_STANDARD_LIBRARY_SPEC.md",
+  "language_spec": "TONDO_LANGUAGE_SPEC.md",
+  "parent_contract": "testing/stdlib-sync.json",
+  "frontend_contract": "testing/stdlib-sync-collection-frontend.json",
+  "layer": "B2",
+  "kind": "runtime-facing",
+  "target": "tondo-vm-hosted-and-native-runtime-abi",
+  "surface": {
+    "identities": [
+      "std.sync.Array[T: Copy + Send + Share]",
+      "std.sync.Map[K: Key + Send + Share, V: Copy + Send + Share]",
+      "std.sync.Set[K: Key + Send + Share]",
+      "std.sync.Stack[T: Send + Discard]",
+      "std.sync.Queue[T: Send + Discard]"
+    ],
+    "handle_traits": "Copy + Discard + Send + Share",
+    "copy_semantics": "copy-handle-same-state",
+    "constructors": [
+      "std.sync.Array.literal",
+      "std.sync.Map.literal",
+      "std.sync.Set.literal",
+      "std.sync.Stack.literal",
+      "std.sync.Queue.literal"
+    ],
+    "methods": [
+      "std.sync.Array.length",
+      "std.sync.Array.isEmpty",
+      "std.sync.Array.get",
+      "std.sync.Array.set",
+      "std.sync.Array.compareExchange",
+      "std.sync.Array.snapshot",
+      "std.sync.Map.length",
+      "std.sync.Map.isEmpty",
+      "std.sync.Map.get",
+      "std.sync.Map.contains",
+      "std.sync.Map.insert",
+      "std.sync.Map.remove",
+      "std.sync.Map.compareExchange",
+      "std.sync.Map.snapshot",
+      "std.sync.Set.length",
+      "std.sync.Set.isEmpty",
+      "std.sync.Set.contains",
+      "std.sync.Set.insert",
+      "std.sync.Set.remove",
+      "std.sync.Set.snapshot",
+      "std.sync.Stack.length",
+      "std.sync.Stack.isEmpty",
+      "std.sync.Stack.push",
+      "std.sync.Stack.pop",
+      "std.sync.Stack.peek",
+      "std.sync.Stack.snapshot",
+      "std.sync.Queue.length",
+      "std.sync.Queue.isEmpty",
+      "std.sync.Queue.enqueue",
+      "std.sync.Queue.dequeue",
+      "std.sync.Queue.peek",
+      "std.sync.Queue.snapshot"
+    ],
+    "array": {
+      "length": "fixed",
+      "index": "stable",
+      "structural_mutation": "forbidden",
+      "ordering": "ascending-index"
+    },
+    "map": {
+      "ordering": "insertion-by-linearization",
+      "replace_moves_key": false,
+      "remove_reinsert_moves_to_end": true
+    },
+    "set": {
+      "ordering": "insertion-by-linearization",
+      "duplicate_insert": "no-op-false",
+      "remove_reinsert_moves_to_end": true
+    },
+    "stack": {
+      "ordering": "LIFO",
+      "empty_pop": "none",
+      "snapshot": "top-down"
+    },
+    "queue": {
+      "ordering": "FIFO-MPMC",
+      "empty_dequeue": "none",
+      "snapshot": "front-first"
+    },
+    "selectable": false,
+    "operations_suspend_under_contention": true,
+    "snapshot": "one-linearization-coherent-value-collection"
+  },
+  "ownership": {
+    "handle_copy": "copies-identity",
+    "handle_clone": false,
+    "discard": "release-exactly-once",
+    "send": "requires-Send-bounds",
+    "share": "requires-Share-bounds",
+    "cow_clone": "shares-the-synchronization-cell",
+    "reclamation": "handle-table-cleanup-plus-Arc-cell-drop",
+    "stale_handle": "fail-closed-before-cell-access",
+    "aba": "monotonic-opaque-handle-without-reuse-in-process"
+  },
+  "compare_exchange": {
+    "strength": "strong-no-spurious-failure",
+    "array": "slot-linearization-under-write-lock",
+    "map": "key-and-optional-value-linearization-under-write-lock",
+    "mismatch": "observed-value-without-write"
+  },
+  "runtime": {
+    "hosted_vm": {
+      "status": "verified",
+      "model": "single-worker-ready-job-linearization",
+      "storage": "typed-HostValue-ordered-Vec-and-VecDeque",
+      "contention": "no-OS-blocking-in-cooperative-host",
+      "handles": "host-kind-and-live-id-checked"
+    },
+    "native_runtime_abi": {
+      "status": "verified",
+      "carrier": "opaque-u64-capability",
+      "storage": "per-collection-RwLock-or-Mutex-cell",
+      "parking": "per-collection-epoch-Condvar",
+      "global_lock_while_waiting": false,
+      "blocking": "native-workers-only",
+      "result_transport": "opaque-Option-Result-handles-with-private-CAS-tags"
+    },
+    "native_aot_lowering": "not-claimed",
+    "public_api_promoted": false
+  },
+  "limits": {
+    "host_max_bytes": "1<<20-logical-elements-or-entries",
+    "allocation_failure": "recoverable-CollectionError-or-private-status",
+    "invalid_index": "recoverable-CollectionError",
+    "oversized_constructor": "recoverable-CollectionError-or-zero-handle",
+    "unbounded_growth": "forbidden"
+  },
+  "implementation": {
+    "status": "verified-hosted-vm-and-native-runtime-abi",
+    "public_api_promoted": false,
+    "native_aot_lowering": "not-claimed",
+    "algorithmic_fast_paths": "deferred-to-STD-SYNC-COLLECTION-PERF-001",
+    "sources": [
+      "crates/tondo-compiler/src/hir.rs",
+      "crates/tondo-compiler/src/hir/check.rs",
+      "crates/tondo-compiler/src/hir/lower.rs",
+      "crates/tondo-compiler/src/hir/verify.rs",
+      "crates/tondo-compiler/src/mir/lower.rs",
+      "crates/tondo-compiler/src/bytecode/lower.rs",
+      "crates/tondo-vm/src/bytecode.rs",
+      "crates/tondo-vm/src/bytecode/verify.rs",
+      "crates/tondo-vm/src/runtime/execute.rs",
+      "crates/tondo-compiler/src/process_host.rs",
+      "crates/tondo-native-runtime/src/lib.rs"
+    ],
+    "tests": [
+      "crates/tondo-compiler/src/hir/check.rs::sync_collection_methods_use_nominal_host_contracts",
+      "crates/tondo-compiler/src/driver.rs::sync_collection_surface_executes_through_the_hosted_vm",
+      "crates/tondo-compiler/src/process_host.rs::sync_collections_are_ordered_mutable_and_bounded",
+      "crates/tondo-compiler/src/process_host.rs::sync_host_covers_forged_tokens_contended_paths_and_cleanup",
+      "crates/tondo-native-runtime/src/lib.rs::native_sync_collections_preserve_order_and_share_state_across_workers",
+      "scripts/stdlib-sync-collection-check.sh",
+      "scripts/stdlib-sync-collection-test.sh"
+    ],
+    "proof": "hosted VM exercises all five identities and 32 methods; native ABI exercises order, strong CAS, shared handles, worker progress, limits and teardown",
+    "required_follow_ups": [
+      "STD-SYNC-COLLECTION-ITER-001",
+      "STD-SYNC-COLLECTION-TEST-001",
+      "STD-SYNC-COLLECTION-PERF-001",
+      "STD-SYNC-COLLECTION-CONF-001",
+      "STD-SYNC-CONF-001",
+      "STD-SYNC-DOC-001"
+    ]
+  },
+  "negative_cases": [
+    "wrong-nominal-host-kind",
+    "stale-host-token",
+    "stale-native-handle",
+    "invalid-array-index",
+    "fixed-array-structural-mutation",
+    "duplicate-map-key-preserves-first-position",
+    "duplicate-set-value-is-no-op",
+    "map-compare-exchange-mismatch-does-not-write",
+    "empty-stack-pop",
+    "empty-queue-dequeue",
+    "constructor-or-growth-over-limit",
+    "native-wait-never-holds-global-table-lock",
+    "public-api-promotion",
+    "native-aot-lowering-claim"
+  ],
+  "promotion": {
+    "implementation_complete": true,
+    "implementation_pending": [],
+    "next_blocks": ["STD-SYNC-COLLECTION-ITER-001"],
+    "remaining": [
+      "STD-SYNC-COLLECTION-ITER-001",
+      "STD-SYNC-COLLECTION-TEST-001",
+      "STD-SYNC-COLLECTION-PERF-001",
+      "STD-SYNC-COLLECTION-CONF-001",
+      "STD-SYNC-CONF-001",
+      "STD-SYNC-DOC-001"
+    ]
+  }
+}

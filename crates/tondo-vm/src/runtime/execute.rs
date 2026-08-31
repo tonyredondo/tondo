@@ -6346,6 +6346,23 @@ fn runtime_host_kind(constructor: BytecodeIntrinsicType) -> Option<RuntimeHostVa
     })
 }
 
+fn sync_collection_host_kind(
+    nominal: &crate::bytecode::BytecodeNominal,
+) -> Option<RuntimeHostValueKind> {
+    let kind = match nominal.name.as_str() {
+        "Array" => RuntimeHostValueKind::SyncArray,
+        "Map" => RuntimeHostValueKind::SyncMap,
+        "Set" => RuntimeHostValueKind::SyncSet,
+        "Stack" => RuntimeHostValueKind::SyncStack,
+        "Queue" => RuntimeHostValueKind::SyncQueue,
+        _ => return None,
+    };
+    let identity_suffix = format!("::sync::type::{}", nominal.name);
+    (nominal.identity.contains(":toolchain:std:0.1-bootstrap::")
+        && nominal.identity.ends_with(&identity_suffix))
+    .then_some(kind)
+}
+
 fn oneshot_handle(value: &Value, expected: RuntimeHostValueKind) -> Result<u64, VmError> {
     let Value::Host(RuntimeValue::Host { kind, id }) = value else {
         return Err(VmError::invariant("one-shot handle is not opaque"));
@@ -12540,6 +12557,21 @@ impl Engine<'_, '_> {
                     HeapObject::Tuple(values.into_iter().map(Some).collect()),
                     &[],
                 )
+            }
+            (
+                BytecodeTypeKind::Nominal {
+                    nominal: Some(nominal),
+                    ..
+                },
+                RuntimeValue::Host { kind, id },
+            ) if self
+                .program
+                .nominals
+                .get(nominal.index() as usize)
+                .and_then(sync_collection_host_kind)
+                == Some(kind) =>
+            {
+                Ok(Value::Host(RuntimeValue::Host { kind, id }))
             }
             (
                 BytecodeTypeKind::Nominal {

@@ -3859,6 +3859,21 @@ fn lower_operation(
                 crate::mir::MirBootstrapHostFunction::PointerFromAddress => {
                     bc::BytecodeBootstrapHostFunction::PointerFromAddress
                 }
+                crate::mir::MirBootstrapHostFunction::SyncArrayLiteral => {
+                    bc::BytecodeBootstrapHostFunction::SyncArrayLiteral
+                }
+                crate::mir::MirBootstrapHostFunction::SyncMapLiteral => {
+                    bc::BytecodeBootstrapHostFunction::SyncMapLiteral
+                }
+                crate::mir::MirBootstrapHostFunction::SyncSetLiteral => {
+                    bc::BytecodeBootstrapHostFunction::SyncSetLiteral
+                }
+                crate::mir::MirBootstrapHostFunction::SyncStackLiteral => {
+                    bc::BytecodeBootstrapHostFunction::SyncStackLiteral
+                }
+                crate::mir::MirBootstrapHostFunction::SyncQueueLiteral => {
+                    bc::BytecodeBootstrapHostFunction::SyncQueueLiteral
+                }
                 crate::mir::MirBootstrapHostFunction::TestingLog => {
                     bc::BytecodeBootstrapHostFunction::TestingLog
                 }

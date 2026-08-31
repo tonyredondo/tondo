@@ -4608,6 +4608,62 @@ fn main(): !sync.SyncError {
     }
 
     #[test]
+    fn sync_collection_surface_executes_through_the_hosted_vm() {
+        let output = execute(operation_request(
+            Operation::Run,
+            br#"import std.sync as concurrent
+fn main() {
+    let array: concurrent.Array[Int] = concurrent.Array[1, 2]
+    assert(array.length() == 2)
+    assert(array.get(0) == some(1))
+    _ = array.set(1, 3)
+    assert(array.get(1) == some(3))
+    _ = array.compareExchange(0, 1, 4)
+    assert(array.get(0) == some(4))
+    _ = array.snapshot()
+
+    let map: concurrent.Map[String, Int] = concurrent.Map["a": 1]
+    assert(map.contains("a"))
+    _ = map.insert("b", 2)
+    assert(map.get("b") == some(2))
+    _ = map.remove("a")
+    _ = map.compareExchange("b", some(2), none)
+    _ = map.snapshot()
+
+    let set: concurrent.Set[String] = concurrent.Set["a"]
+    _ = set.insert("b")
+    assert(set.contains("b"))
+    _ = set.remove("a")
+    _ = set.snapshot()
+
+    let stack: concurrent.Stack[Int] = concurrent.Stack[1]
+    _ = stack.push(2)
+    assert(stack.peek() == some(2))
+    _ = stack.pop()
+    _ = stack.snapshot()
+
+    let queue: concurrent.Queue[Int] = concurrent.Queue[1]
+    _ = queue.enqueue(2)
+    assert(queue.peek() == some(1))
+    _ = queue.dequeue()
+    _ = queue.snapshot()
+}
+"#,
+            SourceForm::Script,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{:#?}",
+            output.diagnostics().diagnostics()
+        );
+        assert_eq!(output.exit_code(), 0);
+        assert!(output.diagnostics().diagnostics().is_empty());
+    }
+
+    #[test]
     fn sync_bootstrap_rejects_unknown_static_and_module_operations() {
         for source in [
             b"import std.sync\nfn main() { _ = sync.MemoryOrder.Unknown() }\n".as_slice(),

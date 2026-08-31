@@ -4,7 +4,7 @@
   "documents": [
     {
       "path": "TONDO_LANGUAGE_SPEC.md",
-      "sha256": "6737a99f0e9dae4e909ff9bacf5238668aa59d04a59d4cf86df946844c752127"
+      "sha256": "855357bd4fb8347c94b2b9f0266125b3b04c767e3c840cf75a6a68d093420d72"
     },
     {
       "path": "TONDO_TESTING_SPEC.md",
@@ -15,7 +15,7 @@
       "sha256": "00a57af904ae2440d14dc6de66618371064e2c40724ea6b38e736925bc6da751"
     }
   ],
-  "inventory_sha256": "74de93f04359b3083f97312f391dc5bfdd49be55c11ca2b10bc075152e799f86",
+  "inventory_sha256": "5a45c810116a8687f78a5d72a64f4b65f0dd833034521ac69117421b5cd2d0ea",
   "target": "tondo-vm-hosted",
   "summary": {
     "total": 436,
@@ -2127,7 +2127,7 @@
     {
       "id": "TL01-10-10-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "10.10 Consulta de maps",
       "heading_anchor": "10-10-consulta-de-maps",
       "line_start": 2732,
@@ -2198,7 +2198,7 @@
     {
       "id": "TL01-10-12-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "10.12 Orden de maps",
       "heading_anchor": "10-12-orden-de-maps",
       "line_start": 2799,
@@ -2269,7 +2269,7 @@
     {
       "id": "TL01-10-15-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "10.15 `Set[K]`",
       "heading_anchor": "10-15-set-k",
       "line_start": 2883,
@@ -2340,7 +2340,7 @@
     {
       "id": "TL01-10-17-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "10.17 `Iterator[T]`",
       "heading_anchor": "10-17-iterator-t",
       "line_start": 2943,
@@ -2411,7 +2411,7 @@
     {
       "id": "TL01-10-17-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "10.17 `Iterator[T]`",
       "heading_anchor": "10-17-iterator-t",
       "line_start": 3007,
@@ -2482,7 +2482,7 @@
     {
       "id": "TL01-10-17-R003",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "10.17 `Iterator[T]`",
       "heading_anchor": "10-17-iterator-t",
       "line_start": 3023,
@@ -2553,7 +2553,7 @@
     {
       "id": "TL01-10-17-R004",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "10.17 `Iterator[T]`",
       "heading_anchor": "10-17-iterator-t",
       "line_start": 3029,
@@ -2624,7 +2624,7 @@
     {
       "id": "TL01-10-18-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "10.18 `AsyncIterator[T]`",
       "heading_anchor": "10-18-asynciterator-t",
       "line_start": 3125,
@@ -2668,7 +2668,7 @@
     {
       "id": "TL01-10-3-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "10.3 Indexación de arrays",
       "heading_anchor": "10-3-indexación-de-arrays",
       "line_start": 2406,
@@ -2739,7 +2739,7 @@
     {
       "id": "TL01-10-3-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "10.3 Indexación de arrays",
       "heading_anchor": "10-3-indexación-de-arrays",
       "line_start": 2432,
@@ -2810,7 +2810,7 @@
     {
       "id": "TL01-10-4-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "10.4 Slicing",
       "heading_anchor": "10-4-slicing",
       "line_start": 2460,
@@ -2881,7 +2881,7 @@
     {
       "id": "TL01-10-4-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "10.4 Slicing",
       "heading_anchor": "10-4-slicing",
       "line_start": 2494,
@@ -2952,7 +2952,7 @@
     {
       "id": "TL01-10-5-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "10.5 Mutación de arrays",
       "heading_anchor": "10-5-mutación-de-arrays",
       "line_start": 2531,
@@ -3023,7 +3023,7 @@
     {
       "id": "TL01-10-6-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "10.6 Aritmética de arrays",
       "heading_anchor": "10-6-aritmética-de-arrays",
       "line_start": 2579,
@@ -3094,7 +3094,7 @@
     {
       "id": "TL01-10-6-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "10.6 Aritmética de arrays",
       "heading_anchor": "10-6-aritmética-de-arrays",
       "line_start": 2593,
@@ -3165,7 +3165,7 @@
     {
       "id": "TL01-10-6-R003",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "10.6 Aritmética de arrays",
       "heading_anchor": "10-6-aritmética-de-arrays",
       "line_start": 2609,
@@ -3236,7 +3236,7 @@
     {
       "id": "TL01-10-7-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "10.7 Concatenación, repetición y producto algebraico",
       "heading_anchor": "10-7-concatenación-repetición-y-producto-algebraico",
       "line_start": 2641,
@@ -3305,7 +3305,7 @@
     {
       "id": "TL01-10-9-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "10.9 `Map[K, V]`",
       "heading_anchor": "10-9-map-k-v",
       "line_start": 2722,
@@ -3376,7 +3376,7 @@
     {
       "id": "TL01-11-10-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "11.10 Funciones y efectos de suspensión",
       "heading_anchor": "11-10-funciones-y-efectos-de-suspensión",
       "line_start": 3797,
@@ -3442,7 +3442,7 @@
     {
       "id": "TL01-11-10-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "11.10 Funciones y efectos de suspensión",
       "heading_anchor": "11-10-funciones-y-efectos-de-suspensión",
       "line_start": 3815,
@@ -3486,7 +3486,7 @@
     {
       "id": "TL01-11-10-R003",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "11.10 Funciones y efectos de suspensión",
       "heading_anchor": "11-10-funciones-y-efectos-de-suspensión",
       "line_start": 3837,
@@ -3530,7 +3530,7 @@
     {
       "id": "TL01-11-10-R004",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "11.10 Funciones y efectos de suspensión",
       "heading_anchor": "11-10-funciones-y-efectos-de-suspensión",
       "line_start": 3863,
@@ -3574,7 +3574,7 @@
     {
       "id": "TL01-11-10-R005",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "11.10 Funciones y efectos de suspensión",
       "heading_anchor": "11-10-funciones-y-efectos-de-suspensión",
       "line_start": 3872,
@@ -3658,7 +3658,7 @@
     {
       "id": "TL01-11-10-R006",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "11.10 Funciones y efectos de suspensión",
       "heading_anchor": "11-10-funciones-y-efectos-de-suspensión",
       "line_start": 3880,
@@ -3742,7 +3742,7 @@
     {
       "id": "TL01-11-11-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "11.11 `await`",
       "heading_anchor": "11-11-await",
       "line_start": 3905,
@@ -3786,7 +3786,7 @@
     {
       "id": "TL01-11-12-1-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "11.12.1 Coordinación de múltiples hijos",
       "heading_anchor": "11-12-1-coordinación-de-múltiples-hijos",
       "line_start": 3944,
@@ -3830,7 +3830,7 @@
     {
       "id": "TL01-11-12-1-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "11.12.1 Coordinación de múltiples hijos",
       "heading_anchor": "11-12-1-coordinación-de-múltiples-hijos",
       "line_start": 3987,
@@ -3874,7 +3874,7 @@
     {
       "id": "TL01-11-12-2-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "11.12.2 Selección estructurada con `select`",
       "heading_anchor": "11-12-2-selección-estructurada-con-select",
       "line_start": 4034,
@@ -3918,7 +3918,7 @@
     {
       "id": "TL01-11-12-2-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "11.12.2 Selección estructurada con `select`",
       "heading_anchor": "11-12-2-selección-estructurada-con-select",
       "line_start": 4070,
@@ -3962,7 +3962,7 @@
     {
       "id": "TL01-11-12-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "11.12 Concurrencia estructurada",
       "heading_anchor": "11-12-concurrencia-estructurada",
       "line_start": 3933,
@@ -4028,7 +4028,7 @@
     {
       "id": "TL01-11-3-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "11.3 Parámetros y argumentos",
       "heading_anchor": "11-3-parámetros-y-argumentos",
       "line_start": 3243,
@@ -4094,7 +4094,7 @@
     {
       "id": "TL01-11-3-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "11.3 Parámetros y argumentos",
       "heading_anchor": "11-3-parámetros-y-argumentos",
       "line_start": 3245,
@@ -4160,7 +4160,7 @@
     {
       "id": "TL01-11-3-R003",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "11.3 Parámetros y argumentos",
       "heading_anchor": "11-3-parámetros-y-argumentos",
       "line_start": 3250,
@@ -4226,7 +4226,7 @@
     {
       "id": "TL01-11-3-R004",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "11.3 Parámetros y argumentos",
       "heading_anchor": "11-3-parámetros-y-argumentos",
       "line_start": 3293,
@@ -4292,7 +4292,7 @@
     {
       "id": "TL01-11-3-R005",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "11.3 Parámetros y argumentos",
       "heading_anchor": "11-3-parámetros-y-argumentos",
       "line_start": 3309,
@@ -4358,7 +4358,7 @@
     {
       "id": "TL01-11-3-R006",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "11.3 Parámetros y argumentos",
       "heading_anchor": "11-3-parámetros-y-argumentos",
       "line_start": 3317,
@@ -4424,7 +4424,7 @@
     {
       "id": "TL01-11-4-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "11.4 Recursión",
       "heading_anchor": "11-4-recursión",
       "line_start": 3331,
@@ -4490,7 +4490,7 @@
     {
       "id": "TL01-11-5-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "11.5 Métodos inherentes",
       "heading_anchor": "11-5-métodos-inherentes",
       "line_start": 3367,
@@ -4556,7 +4556,7 @@
     {
       "id": "TL01-11-5-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "11.5 Métodos inherentes",
       "heading_anchor": "11-5-métodos-inherentes",
       "line_start": 3371,
@@ -4622,7 +4622,7 @@
     {
       "id": "TL01-11-5-R003",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "11.5 Métodos inherentes",
       "heading_anchor": "11-5-métodos-inherentes",
       "line_start": 3412,
@@ -4688,7 +4688,7 @@
     {
       "id": "TL01-11-6-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "11.6 Receptores `mut self` y `var self`",
       "heading_anchor": "11-6-receptores-mut-self-y-var-self",
       "line_start": 3431,
@@ -4754,7 +4754,7 @@
     {
       "id": "TL01-11-7-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "11.7 Funciones como valores",
       "heading_anchor": "11-7-funciones-como-valores",
       "line_start": 3483,
@@ -4820,7 +4820,7 @@
     {
       "id": "TL01-11-7-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "11.7 Funciones como valores",
       "heading_anchor": "11-7-funciones-como-valores",
       "line_start": 3496,
@@ -4886,7 +4886,7 @@
     {
       "id": "TL01-11-7-R003",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "11.7 Funciones como valores",
       "heading_anchor": "11-7-funciones-como-valores",
       "line_start": 3507,
@@ -4952,7 +4952,7 @@
     {
       "id": "TL01-11-8-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "11.8 Cierres",
       "heading_anchor": "11-8-cierres",
       "line_start": 3522,
@@ -5018,7 +5018,7 @@
     {
       "id": "TL01-11-8-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "11.8 Cierres",
       "heading_anchor": "11-8-cierres",
       "line_start": 3555,
@@ -5084,7 +5084,7 @@
     {
       "id": "TL01-11-8-R003",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "11.8 Cierres",
       "heading_anchor": "11-8-cierres",
       "line_start": 3614,
@@ -5150,7 +5150,7 @@
     {
       "id": "TL01-11-9-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "11.9 Descarte de resultados",
       "heading_anchor": "11-9-descarte-de-resultados",
       "line_start": 3765,
@@ -5216,7 +5216,7 @@
     {
       "id": "TL01-11-9-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "11.9 Descarte de resultados",
       "heading_anchor": "11-9-descarte-de-resultados",
       "line_start": 3776,
@@ -5282,7 +5282,7 @@
     {
       "id": "TL01-12-1-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "12.1 Genéricos",
       "heading_anchor": "12-1-genéricos",
       "line_start": 4173,
@@ -5353,7 +5353,7 @@
     {
       "id": "TL01-12-2-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "12.2 Invariancia",
       "heading_anchor": "12-2-invariancia",
       "line_start": 4179,
@@ -5424,7 +5424,7 @@
     {
       "id": "TL01-12-3-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "12.3 Declaración de trait",
       "heading_anchor": "12-3-declaración-de-trait",
       "line_start": 4209,
@@ -5495,7 +5495,7 @@
     {
       "id": "TL01-12-3-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "12.3 Declaración de trait",
       "heading_anchor": "12-3-declaración-de-trait",
       "line_start": 4213,
@@ -5539,7 +5539,7 @@
     {
       "id": "TL01-12-4-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "12.4 Implementación explícita",
       "heading_anchor": "12-4-implementación-explícita",
       "line_start": 4241,
@@ -5610,7 +5610,7 @@
     {
       "id": "TL01-12-4-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "12.4 Implementación explícita",
       "heading_anchor": "12-4-implementación-explícita",
       "line_start": 4253,
@@ -5667,7 +5667,7 @@
     {
       "id": "TL01-12-4-R003",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "12.4 Implementación explícita",
       "heading_anchor": "12-4-implementación-explícita",
       "line_start": 4261,
@@ -5738,7 +5738,7 @@
     {
       "id": "TL01-12-4-R004",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "12.4 Implementación explícita",
       "heading_anchor": "12-4-implementación-explícita",
       "line_start": 4264,
@@ -5809,7 +5809,7 @@
     {
       "id": "TL01-12-4-R005",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "12.4 Implementación explícita",
       "heading_anchor": "12-4-implementación-explícita",
       "line_start": 4266,
@@ -5880,7 +5880,7 @@
     {
       "id": "TL01-12-5-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "12.5 Constraints",
       "heading_anchor": "12-5-constraints",
       "line_start": 4297,
@@ -5941,7 +5941,7 @@
     {
       "id": "TL01-12-6-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "12.6 Coherencia",
       "heading_anchor": "12-6-coherencia",
       "line_start": 4348,
@@ -6012,7 +6012,7 @@
     {
       "id": "TL01-12-6-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "12.6 Coherencia",
       "heading_anchor": "12-6-coherencia",
       "line_start": 4363,
@@ -6083,7 +6083,7 @@
     {
       "id": "TL01-12-6-R003",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "12.6 Coherencia",
       "heading_anchor": "12-6-coherencia",
       "line_start": 4395,
@@ -6154,7 +6154,7 @@
     {
       "id": "TL01-12-6-R004",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "12.6 Coherencia",
       "heading_anchor": "12-6-coherencia",
       "line_start": 4406,
@@ -6225,7 +6225,7 @@
     {
       "id": "TL01-12-8-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "12.8 Resultados opacos estáticos",
       "heading_anchor": "12-8-resultados-opacos-estáticos",
       "line_start": 4482,
@@ -6311,7 +6311,7 @@
     {
       "id": "TL01-12-8-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "12.8 Resultados opacos estáticos",
       "heading_anchor": "12-8-resultados-opacos-estáticos",
       "line_start": 4488,
@@ -6397,7 +6397,7 @@
     {
       "id": "TL01-12-8-R003",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "12.8 Resultados opacos estáticos",
       "heading_anchor": "12-8-resultados-opacos-estáticos",
       "line_start": 4495,
@@ -6483,7 +6483,7 @@
     {
       "id": "TL01-12-8-R004",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "12.8 Resultados opacos estáticos",
       "heading_anchor": "12-8-resultados-opacos-estáticos",
       "line_start": 4523,
@@ -6569,7 +6569,7 @@
     {
       "id": "TL01-13-1-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "13.1 Bloques",
       "heading_anchor": "13-1-bloques",
       "line_start": 4562,
@@ -6640,7 +6640,7 @@
     {
       "id": "TL01-13-2-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "13.2 `if`",
       "heading_anchor": "13-2-if",
       "line_start": 4569,
@@ -6711,7 +6711,7 @@
     {
       "id": "TL01-13-2-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "13.2 `if`",
       "heading_anchor": "13-2-if",
       "line_start": 4597,
@@ -6782,7 +6782,7 @@
     {
       "id": "TL01-13-3-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "13.3 Un único bucle `for`",
       "heading_anchor": "13-3-un-único-bucle-for",
       "line_start": 4684,
@@ -6853,7 +6853,7 @@
     {
       "id": "TL01-13-3-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "13.3 Un único bucle `for`",
       "heading_anchor": "13-3-un-único-bucle-for",
       "line_start": 4691,
@@ -6924,7 +6924,7 @@
     {
       "id": "TL01-13-3-R003",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "13.3 Un único bucle `for`",
       "heading_anchor": "13-3-un-único-bucle-for",
       "line_start": 4698,
@@ -6995,7 +6995,7 @@
     {
       "id": "TL01-13-3-R004",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "13.3 Un único bucle `for`",
       "heading_anchor": "13-3-un-único-bucle-for",
       "line_start": 4712,
@@ -7066,7 +7066,7 @@
     {
       "id": "TL01-13-4-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "13.4 `break` y `continue`",
       "heading_anchor": "13-4-break-y-continue",
       "line_start": 4761,
@@ -7137,7 +7137,7 @@
     {
       "id": "TL01-13-5-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "13.5 `return`",
       "heading_anchor": "13-5-return",
       "line_start": 4777,
@@ -7208,7 +7208,7 @@
     {
       "id": "TL01-13-6-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "13.6 `fail`",
       "heading_anchor": "13-6-fail",
       "line_start": 4789,
@@ -7279,7 +7279,7 @@
     {
       "id": "TL01-13-7-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "13.7 `defer`",
       "heading_anchor": "13-7-defer",
       "line_start": 4830,
@@ -7350,7 +7350,7 @@
     {
       "id": "TL01-13-7-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "13.7 `defer`",
       "heading_anchor": "13-7-defer",
       "line_start": 4843,
@@ -7421,7 +7421,7 @@
     {
       "id": "TL01-13-7-R003",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "13.7 `defer`",
       "heading_anchor": "13-7-defer",
       "line_start": 4848,
@@ -7492,7 +7492,7 @@
     {
       "id": "TL01-13-7-R004",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "13.7 `defer`",
       "heading_anchor": "13-7-defer",
       "line_start": 4854,
@@ -7563,7 +7563,7 @@
     {
       "id": "TL01-13-7-R005",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "13.7 `defer`",
       "heading_anchor": "13-7-defer",
       "line_start": 4860,
@@ -7634,7 +7634,7 @@
     {
       "id": "TL01-13-7-R006",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "13.7 `defer`",
       "heading_anchor": "13-7-defer",
       "line_start": 4861,
@@ -7690,7 +7690,7 @@
     {
       "id": "TL01-13-7-R007",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "13.7 `defer`",
       "heading_anchor": "13-7-defer",
       "line_start": 4872,
@@ -7746,7 +7746,7 @@
     {
       "id": "TL01-13-7-R008",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "13.7 `defer`",
       "heading_anchor": "13-7-defer",
       "line_start": 4882,
@@ -7802,7 +7802,7 @@
     {
       "id": "TL01-13-7-R009",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "13.7 `defer`",
       "heading_anchor": "13-7-defer",
       "line_start": 4883,
@@ -7858,7 +7858,7 @@
     {
       "id": "TL01-13-7-R010",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "13.7 `defer`",
       "heading_anchor": "13-7-defer",
       "line_start": 4889,
@@ -7914,7 +7914,7 @@
     {
       "id": "TL01-13-8-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "13.8 Asignación simple y múltiple",
       "heading_anchor": "13-8-asignación-simple-y-múltiple",
       "line_start": 4904,
@@ -7985,7 +7985,7 @@
     {
       "id": "TL01-13-8-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "13.8 Asignación simple y múltiple",
       "heading_anchor": "13-8-asignación-simple-y-múltiple",
       "line_start": 4932,
@@ -8056,7 +8056,7 @@
     {
       "id": "TL01-13-8-R003",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "13.8 Asignación simple y múltiple",
       "heading_anchor": "13-8-asignación-simple-y-múltiple",
       "line_start": 4944,
@@ -8127,7 +8127,7 @@
     {
       "id": "TL01-13-8-R004",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "13.8 Asignación simple y múltiple",
       "heading_anchor": "13-8-asignación-simple-y-múltiple",
       "line_start": 4973,
@@ -8198,7 +8198,7 @@
     {
       "id": "TL01-13-8-R005",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "13.8 Asignación simple y múltiple",
       "heading_anchor": "13-8-asignación-simple-y-múltiple",
       "line_start": 5017,
@@ -8255,7 +8255,7 @@
     {
       "id": "TL01-14-1-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "14.1 `match` como expresión",
       "heading_anchor": "14-1-match-como-expresión",
       "line_start": 5178,
@@ -8326,7 +8326,7 @@
     {
       "id": "TL01-14-2-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "14.2 Exhaustividad",
       "heading_anchor": "14-2-exhaustividad",
       "line_start": 5185,
@@ -8397,7 +8397,7 @@
     {
       "id": "TL01-14-4-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "14.4 Guards",
       "heading_anchor": "14-4-guards",
       "line_start": 5354,
@@ -8468,7 +8468,7 @@
     {
       "id": "TL01-15-2-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "15.2 Propagación con `?`",
       "heading_anchor": "15-2-propagación-con",
       "line_start": 5466,
@@ -8539,7 +8539,7 @@
     {
       "id": "TL01-15-2-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "15.2 Propagación con `?`",
       "heading_anchor": "15-2-propagación-con",
       "line_start": 5470,
@@ -8610,7 +8610,7 @@
     {
       "id": "TL01-15-2-R003",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "15.2 Propagación con `?`",
       "heading_anchor": "15-2-propagación-con",
       "line_start": 5491,
@@ -8681,7 +8681,7 @@
     {
       "id": "TL01-15-3-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "15.3 Widening de uniones de error",
       "heading_anchor": "15-3-widening-de-uniones-de-error",
       "line_start": 5525,
@@ -8752,7 +8752,7 @@
     {
       "id": "TL01-15-7-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "15.7 Pánicos",
       "heading_anchor": "15-7-pánicos",
       "line_start": 5600,
@@ -8814,7 +8814,7 @@
     {
       "id": "TL01-15-7-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "15.7 Pánicos",
       "heading_anchor": "15-7-pánicos",
       "line_start": 5624,
@@ -8885,7 +8885,7 @@
     {
       "id": "TL01-15-7-R003",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "15.7 Pánicos",
       "heading_anchor": "15-7-pánicos",
       "line_start": 5632,
@@ -8956,7 +8956,7 @@
     {
       "id": "TL01-15-7-R004",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "15.7 Pánicos",
       "heading_anchor": "15-7-pánicos",
       "line_start": 5641,
@@ -9027,7 +9027,7 @@
     {
       "id": "TL01-15-8-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "15.8 `assert`",
       "heading_anchor": "15-8-assert",
       "line_start": 5664,
@@ -9098,7 +9098,7 @@
     {
       "id": "TL01-16-10-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "16.10 `Ref[T]`",
       "heading_anchor": "16-10-ref-t",
       "line_start": 6106,
@@ -9169,7 +9169,7 @@
     {
       "id": "TL01-16-10-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "16.10 `Ref[T]`",
       "heading_anchor": "16-10-ref-t",
       "line_start": 6140,
@@ -9240,7 +9240,7 @@
     {
       "id": "TL01-16-11-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "16.11 Handles con identidad",
       "heading_anchor": "16-11-handles-con-identidad",
       "line_start": 6151,
@@ -9311,7 +9311,7 @@
     {
       "id": "TL01-16-11-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "16.11 Handles con identidad",
       "heading_anchor": "16-11-handles-con-identidad",
       "line_start": 6164,
@@ -9382,7 +9382,7 @@
     {
       "id": "TL01-16-12-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "16.12 `Pointer[T]` y `unsafe`",
       "heading_anchor": "16-12-pointer-t-y-unsafe",
       "line_start": 6170,
@@ -9453,7 +9453,7 @@
     {
       "id": "TL01-16-12-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "16.12 `Pointer[T]` y `unsafe`",
       "heading_anchor": "16-12-pointer-t-y-unsafe",
       "line_start": 6172,
@@ -9524,7 +9524,7 @@
     {
       "id": "TL01-16-12-R003",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "16.12 `Pointer[T]` y `unsafe`",
       "heading_anchor": "16-12-pointer-t-y-unsafe",
       "line_start": 6181,
@@ -9595,7 +9595,7 @@
     {
       "id": "TL01-16-13-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "16.13 Capacidades `Send` y `Share`",
       "heading_anchor": "16-13-capacidades-send-y-share",
       "line_start": 6335,
@@ -9666,7 +9666,7 @@
     {
       "id": "TL01-16-13-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "16.13 Capacidades `Send` y `Share`",
       "heading_anchor": "16-13-capacidades-send-y-share",
       "line_start": 6339,
@@ -9737,7 +9737,7 @@
     {
       "id": "TL01-16-13-R003",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "16.13 Capacidades `Send` y `Share`",
       "heading_anchor": "16-13-capacidades-send-y-share",
       "line_start": 6343,
@@ -9808,7 +9808,7 @@
     {
       "id": "TL01-16-13-R004",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "16.13 Capacidades `Send` y `Share`",
       "heading_anchor": "16-13-capacidades-send-y-share",
       "line_start": 6351,
@@ -9879,7 +9879,7 @@
     {
       "id": "TL01-16-14-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "16.14 Tasks, threads y canales",
       "heading_anchor": "16-14-tasks-threads-y-canales",
       "line_start": 6358,
@@ -9950,7 +9950,7 @@
     {
       "id": "TL01-16-14-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "16.14 Tasks, threads y canales",
       "heading_anchor": "16-14-tasks-threads-y-canales",
       "line_start": 6372,
@@ -9994,7 +9994,7 @@
     {
       "id": "TL01-16-14-R003",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "16.14 Tasks, threads y canales",
       "heading_anchor": "16-14-tasks-threads-y-canales",
       "line_start": 6401,
@@ -10065,7 +10065,7 @@
     {
       "id": "TL01-16-14-R004",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "16.14 Tasks, threads y canales",
       "heading_anchor": "16-14-tasks-threads-y-canales",
       "line_start": 6405,
@@ -10109,7 +10109,7 @@
     {
       "id": "TL01-16-14-R005",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "16.14 Tasks, threads y canales",
       "heading_anchor": "16-14-tasks-threads-y-canales",
       "line_start": 6418,
@@ -10153,7 +10153,7 @@
     {
       "id": "TL01-16-15-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "16.15 Modelo de memoria concurrente",
       "heading_anchor": "16-15-modelo-de-memoria-concurrente",
       "line_start": 6485,
@@ -10224,7 +10224,7 @@
     {
       "id": "TL01-16-15-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "16.15 Modelo de memoria concurrente",
       "heading_anchor": "16-15-modelo-de-memoria-concurrente",
       "line_start": 6492,
@@ -10295,7 +10295,7 @@
     {
       "id": "TL01-16-15-R003",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "16.15 Modelo de memoria concurrente",
       "heading_anchor": "16-15-modelo-de-memoria-concurrente",
       "line_start": 6502,
@@ -10366,7 +10366,7 @@
     {
       "id": "TL01-16-2-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "16.2 Parámetros inmutables",
       "heading_anchor": "16-2-parámetros-inmutables",
       "line_start": 5703,
@@ -10437,7 +10437,7 @@
     {
       "id": "TL01-16-3-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "16.3 Parámetros `ref`, `mut` y `var`",
       "heading_anchor": "16-3-parámetros-ref-mut-y-var",
       "line_start": 5722,
@@ -10508,7 +10508,7 @@
     {
       "id": "TL01-16-3-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "16.3 Parámetros `ref`, `mut` y `var`",
       "heading_anchor": "16-3-parámetros-ref-mut-y-var",
       "line_start": 5813,
@@ -10579,7 +10579,7 @@
     {
       "id": "TL01-16-3-R003",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "16.3 Parámetros `ref`, `mut` y `var`",
       "heading_anchor": "16-3-parámetros-ref-mut-y-var",
       "line_start": 5834,
@@ -10650,7 +10650,7 @@
     {
       "id": "TL01-16-3-R004",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "16.3 Parámetros `ref`, `mut` y `var`",
       "heading_anchor": "16-3-parámetros-ref-mut-y-var",
       "line_start": 5843,
@@ -10721,7 +10721,7 @@
     {
       "id": "TL01-16-4-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "16.4 Préstamos de regiones",
       "heading_anchor": "16-4-préstamos-de-regiones",
       "line_start": 5860,
@@ -10792,7 +10792,7 @@
     {
       "id": "TL01-16-4-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "16.4 Préstamos de regiones",
       "heading_anchor": "16-4-préstamos-de-regiones",
       "line_start": 5910,
@@ -10863,7 +10863,7 @@
     {
       "id": "TL01-16-5-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "16.5 Vida de préstamos",
       "heading_anchor": "16-5-vida-de-préstamos",
       "line_start": 5919,
@@ -10934,7 +10934,7 @@
     {
       "id": "TL01-16-5-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "16.5 Vida de préstamos",
       "heading_anchor": "16-5-vida-de-préstamos",
       "line_start": 5947,
@@ -11005,7 +11005,7 @@
     {
       "id": "TL01-16-6-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "16.6 Copy-on-write",
       "heading_anchor": "16-6-copy-on-write",
       "line_start": 5971,
@@ -11076,7 +11076,7 @@
     {
       "id": "TL01-17-1-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "17.1 Principio",
       "heading_anchor": "17-1-principio",
       "line_start": 6510,
@@ -11147,7 +11147,7 @@
     {
       "id": "TL01-17-1-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "17.1 Principio",
       "heading_anchor": "17-1-principio",
       "line_start": 6517,
@@ -11218,7 +11218,7 @@
     {
       "id": "TL01-17-4-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "17.4 Operadores aritméticos",
       "heading_anchor": "17-4-operadores-aritméticos",
       "line_start": 6593,
@@ -11289,7 +11289,7 @@
     {
       "id": "TL01-17-5-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "17.5 Shifts",
       "heading_anchor": "17-5-shifts",
       "line_start": 6607,
@@ -11347,7 +11347,7 @@
     {
       "id": "TL01-17-6-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "17.6 Bitwise y pipelines",
       "heading_anchor": "17-6-bitwise-y-pipelines",
       "line_start": 6636,
@@ -11418,7 +11418,7 @@
     {
       "id": "TL01-18-2-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "18.2 Overflow",
       "heading_anchor": "18-2-overflow",
       "line_start": 6791,
@@ -11489,7 +11489,7 @@
     {
       "id": "TL01-18-5-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "18.5 Floats",
       "heading_anchor": "18-5-floats",
       "line_start": 6843,
@@ -11560,7 +11560,7 @@
     {
       "id": "TL01-18-5-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "18.5 Floats",
       "heading_anchor": "18-5-floats",
       "line_start": 6849,
@@ -11631,7 +11631,7 @@
     {
       "id": "TL01-18-5-R003",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "18.5 Floats",
       "heading_anchor": "18-5-floats",
       "line_start": 6851,
@@ -11702,7 +11702,7 @@
     {
       "id": "TL01-19-2-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "19.2 Longitud e indexación",
       "heading_anchor": "19-2-longitud-e-indexación",
       "line_start": 6946,
@@ -11773,7 +11773,7 @@
     {
       "id": "TL01-19-2-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "19.2 Longitud e indexación",
       "heading_anchor": "19-2-longitud-e-indexación",
       "line_start": 6959,
@@ -11844,7 +11844,7 @@
     {
       "id": "TL01-19-3-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "19.3 Slicing de strings",
       "heading_anchor": "19-3-slicing-de-strings",
       "line_start": 6974,
@@ -11915,7 +11915,7 @@
     {
       "id": "TL01-19-6-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "19.6 Concatenación",
       "heading_anchor": "19-6-concatenación",
       "line_start": 7021,
@@ -11986,7 +11986,7 @@
     {
       "id": "TL01-2-2-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "2.2 No objetivos",
       "heading_anchor": "2-2-no-objetivos",
       "line_start": 162,
@@ -12030,7 +12030,7 @@
     {
       "id": "TL01-20-10-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "20.10 Terminación del programa",
       "heading_anchor": "20-10-terminación-del-programa",
       "line_start": 7303,
@@ -12098,7 +12098,7 @@
     {
       "id": "TL01-20-2-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "20.2 Restricciones de `main`",
       "heading_anchor": "20-2-restricciones-de-main",
       "line_start": 7112,
@@ -12166,7 +12166,7 @@
     {
       "id": "TL01-20-2-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "20.2 Restricciones de `main`",
       "heading_anchor": "20-2-restricciones-de-main",
       "line_start": 7114,
@@ -12234,7 +12234,7 @@
     {
       "id": "TL01-20-2-R003",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "20.2 Restricciones de `main`",
       "heading_anchor": "20-2-restricciones-de-main",
       "line_start": 7115,
@@ -12302,7 +12302,7 @@
     {
       "id": "TL01-20-3-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "20.3 Script raíz y `main` implícito",
       "heading_anchor": "20-3-script-raíz-y-main-implícito",
       "line_start": 7173,
@@ -12370,7 +12370,7 @@
     {
       "id": "TL01-20-3-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "20.3 Script raíz y `main` implícito",
       "heading_anchor": "20-3-script-raíz-y-main-implícito",
       "line_start": 7176,
@@ -12438,7 +12438,7 @@
     {
       "id": "TL01-20-3-R003",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "20.3 Script raíz y `main` implícito",
       "heading_anchor": "20-3-script-raíz-y-main-implícito",
       "line_start": 7177,
@@ -12506,7 +12506,7 @@
     {
       "id": "TL01-20-5-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "20.5 Comandos como valores",
       "heading_anchor": "20-5-comandos-como-valores",
       "line_start": 7209,
@@ -12574,7 +12574,7 @@
     {
       "id": "TL01-20-6-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "20.6 Pipelines",
       "heading_anchor": "20-6-pipelines",
       "line_start": 7236,
@@ -12642,7 +12642,7 @@
     {
       "id": "TL01-20-6-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "20.6 Pipelines",
       "heading_anchor": "20-6-pipelines",
       "line_start": 7248,
@@ -12710,7 +12710,7 @@
     {
       "id": "TL01-20-8-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "20.8 Inicio, salida y errores de procesos",
       "heading_anchor": "20-8-inicio-salida-y-errores-de-procesos",
       "line_start": 7272,
@@ -12778,7 +12778,7 @@
     {
       "id": "TL01-20-9-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "20.9 Vida, cancelación y cleanup",
       "heading_anchor": "20-9-vida-cancelación-y-cleanup",
       "line_start": 7280,
@@ -12846,7 +12846,7 @@
     {
       "id": "TL01-20-9-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "20.9 Vida, cancelación y cleanup",
       "heading_anchor": "20-9-vida-cancelación-y-cleanup",
       "line_start": 7287,
@@ -12914,7 +12914,7 @@
     {
       "id": "TL01-21-5-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "21.5 Documentación pública",
       "heading_anchor": "21-5-documentación-pública",
       "line_start": 7645,
@@ -12984,7 +12984,7 @@
     {
       "id": "TL01-21-5-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "21.5 Documentación pública",
       "heading_anchor": "21-5-documentación-pública",
       "line_start": 7655,
@@ -13054,7 +13054,7 @@
     {
       "id": "TL01-21-5-R003",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "21.5 Documentación pública",
       "heading_anchor": "21-5-documentación-pública",
       "line_start": 7663,
@@ -13124,7 +13124,7 @@
     {
       "id": "TL01-21-6-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "21.6 Ejemplos verificables",
       "heading_anchor": "21-6-ejemplos-verificables",
       "line_start": 7672,
@@ -13194,7 +13194,7 @@
     {
       "id": "TL01-21-6-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "21.6 Ejemplos verificables",
       "heading_anchor": "21-6-ejemplos-verificables",
       "line_start": 7699,
@@ -13264,7 +13264,7 @@
     {
       "id": "TL01-21-6-R003",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "21.6 Ejemplos verificables",
       "heading_anchor": "21-6-ejemplos-verificables",
       "line_start": 7709,
@@ -13334,7 +13334,7 @@
     {
       "id": "TL01-21-6-R004",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "21.6 Ejemplos verificables",
       "heading_anchor": "21-6-ejemplos-verificables",
       "line_start": 7730,
@@ -13404,7 +13404,7 @@
     {
       "id": "TL01-21-6-R005",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "21.6 Ejemplos verificables",
       "heading_anchor": "21-6-ejemplos-verificables",
       "line_start": 7737,
@@ -13474,7 +13474,7 @@
     {
       "id": "TL01-21-6-R006",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "21.6 Ejemplos verificables",
       "heading_anchor": "21-6-ejemplos-verificables",
       "line_start": 7781,
@@ -13544,7 +13544,7 @@
     {
       "id": "TL01-21-7-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "21.7 Corpus mínimo de formato 0.1",
       "heading_anchor": "21-7-corpus-mínimo-de-formato-0-1",
       "line_start": 7925,
@@ -13614,7 +13614,7 @@
     {
       "id": "TL01-22-1-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "22.1 Principios de diagnóstico",
       "heading_anchor": "22-1-principios-de-diagnóstico",
       "line_start": 7938,
@@ -13683,7 +13683,7 @@
     {
       "id": "TL01-22-2-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "22.2 Códigos estables",
       "heading_anchor": "22-2-códigos-estables",
       "line_start": 7951,
@@ -13752,7 +13752,7 @@
     {
       "id": "TL01-22-3-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "22.3 Salida estructurada",
       "heading_anchor": "22-3-salida-estructurada",
       "line_start": 8218,
@@ -13821,7 +13821,7 @@
     {
       "id": "TL01-22-3-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "22.3 Salida estructurada",
       "heading_anchor": "22-3-salida-estructurada",
       "line_start": 8239,
@@ -13890,7 +13890,7 @@
     {
       "id": "TL01-22-4-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "22.4 Fixes",
       "heading_anchor": "22-4-fixes",
       "line_start": 8318,
@@ -13959,7 +13959,7 @@
     {
       "id": "TL01-22-5-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "22.5 Consultas semánticas",
       "heading_anchor": "22-5-consultas-semánticas",
       "line_start": 8325,
@@ -14028,7 +14028,7 @@
     {
       "id": "TL01-22-7-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "22.7 Modo LLM",
       "heading_anchor": "22-7-modo-llm",
       "line_start": 8407,
@@ -14097,7 +14097,7 @@
     {
       "id": "TL01-22-8-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "22.8 Cobertura diagnóstica y perfiles",
       "heading_anchor": "22-8-cobertura-diagnóstica-y-perfiles",
       "line_start": 8421,
@@ -14166,7 +14166,7 @@
     {
       "id": "TL01-22-9-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "22.9 Conformidad ejecutable",
       "heading_anchor": "22-9-conformidad-ejecutable",
       "line_start": 8490,
@@ -14222,7 +14222,7 @@
     {
       "id": "TL01-22-9-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "22.9 Conformidad ejecutable",
       "heading_anchor": "22-9-conformidad-ejecutable",
       "line_start": 8529,
@@ -14278,7 +14278,7 @@
     {
       "id": "TL01-22-9-R003",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "22.9 Conformidad ejecutable",
       "heading_anchor": "22-9-conformidad-ejecutable",
       "line_start": 8536,
@@ -14334,7 +14334,7 @@
     {
       "id": "TL01-22-9-R004",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "22.9 Conformidad ejecutable",
       "heading_anchor": "22-9-conformidad-ejecutable",
       "line_start": 8557,
@@ -14390,7 +14390,7 @@
     {
       "id": "TL01-23-11-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "23.11 Enums",
       "heading_anchor": "23-11-enums",
       "line_start": 8913,
@@ -14460,7 +14460,7 @@
     {
       "id": "TL01-23-12-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "23.12 Traits e implementaciones",
       "heading_anchor": "23-12-traits-e-implementaciones",
       "line_start": 8946,
@@ -14504,7 +14504,7 @@
     {
       "id": "TL01-23-13-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "23.13 Funciones y métodos",
       "heading_anchor": "23-13-funciones-y-métodos",
       "line_start": 8982,
@@ -14574,7 +14574,7 @@
     {
       "id": "TL01-23-13-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "23.13 Funciones y métodos",
       "heading_anchor": "23-13-funciones-y-métodos",
       "line_start": 8984,
@@ -14644,7 +14644,7 @@
     {
       "id": "TL01-23-14-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "23.14 Bloques y sentencias",
       "heading_anchor": "23-14-bloques-y-sentencias",
       "line_start": 9038,
@@ -14700,7 +14700,7 @@
     {
       "id": "TL01-23-16-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "23.16 `for`",
       "heading_anchor": "23-16-for",
       "line_start": 9084,
@@ -14770,7 +14770,7 @@
     {
       "id": "TL01-23-18-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "23.18 Cierres",
       "heading_anchor": "23-18-cierres",
       "line_start": 9154,
@@ -14814,7 +14814,7 @@
     {
       "id": "TL01-23-19-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "23.19 Jerarquía de expresiones",
       "heading_anchor": "23-19-jerarquía-de-expresiones",
       "line_start": 9261,
@@ -14875,7 +14875,7 @@
     {
       "id": "TL01-23-19-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "23.19 Jerarquía de expresiones",
       "heading_anchor": "23-19-jerarquía-de-expresiones",
       "line_start": 9279,
@@ -14919,7 +14919,7 @@
     {
       "id": "TL01-23-2-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "23.2 Tokens léxicos",
       "heading_anchor": "23-2-tokens-léxicos",
       "line_start": 8653,
@@ -14989,7 +14989,7 @@
     {
       "id": "TL01-23-21-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "23.21 Llamadas",
       "heading_anchor": "23-21-llamadas",
       "line_start": 9341,
@@ -15059,7 +15059,7 @@
     {
       "id": "TL01-23-21-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "23.21 Llamadas",
       "heading_anchor": "23-21-llamadas",
       "line_start": 9345,
@@ -15129,7 +15129,7 @@
     {
       "id": "TL01-23-21-R003",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "23.21 Llamadas",
       "heading_anchor": "23-21-llamadas",
       "line_start": 9346,
@@ -15199,7 +15199,7 @@
     {
       "id": "TL01-23-21-R004",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "23.21 Llamadas",
       "heading_anchor": "23-21-llamadas",
       "line_start": 9348,
@@ -15269,7 +15269,7 @@
     {
       "id": "TL01-23-24-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "23.24 Set y colecciones concurrentes",
       "heading_anchor": "23-24-set-y-colecciones-concurrentes",
       "line_start": 9395,
@@ -15339,11 +15339,11 @@
     {
       "id": "TL01-23-26-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "23.26 Patrones",
       "heading_anchor": "23-26-patrones",
-      "line_start": 9545,
-      "line_end": 9545,
+      "line_start": 9546,
+      "line_end": 9546,
       "text": "`unit_pattern` coincide con el único valor de `Unit`. Un `qualified_value_pattern` debe resolver a una variante de enum sin payload; las variantes de usuario siempre permanecen calificadas.",
       "text_sha256": "f1d971696a3fb7237f68ae9aed18cab4d41e5084a24348be28ee63d4a67e8508",
       "phase": "grammar",
@@ -15409,11 +15409,11 @@
     {
       "id": "TL01-23-26-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "23.26 Patrones",
       "heading_anchor": "23-26-patrones",
-      "line_start": 9547,
-      "line_end": 9547,
+      "line_start": 9548,
+      "line_end": 9548,
       "text": "Un `constructor_pattern` puede resolver a una variante con payload, un newtype o el discriminador de un miembro de unión. En el último caso, `type_path` debe coincidir exactamente con uno de los miembros normalizados y los paréntesis contienen exactamente un patrón aplicado al valor completo.",
       "text_sha256": "3a7b8ab86456773a595885b2b1a4126f4f0066c7ef1bdd83d42c911d30425024",
       "phase": "grammar",
@@ -15479,11 +15479,11 @@
     {
       "id": "TL01-23-26-R003",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "23.26 Patrones",
       "heading_anchor": "23-26-patrones",
-      "line_start": 9549,
-      "line_end": 9549,
+      "line_start": 9550,
+      "line_end": 9550,
       "text": "`..` puede aparecer como máximo una vez en un patrón record y debe ser su último item.",
       "text_sha256": "3b313ab24022c47f112d6aa28d4c811b371acc0a328ca3d5f31943a18e7c9763",
       "phase": "grammar",
@@ -15549,11 +15549,11 @@
     {
       "id": "TL01-23-26-R004",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "23.26 Patrones",
       "heading_anchor": "23-26-patrones",
-      "line_start": 9558,
-      "line_end": 9560,
+      "line_start": 9559,
+      "line_end": 9561,
       "text": "En un record pattern, `ref:` comienza en cambio un field llamado `ref` y debe ir seguido por su patrón explícito. El lookahead de `:` distingue esta forma de `ref field`.",
       "text_sha256": "15c2b7f82f7eda347037535c24256a03f7e716548587e767b6e6568328db0bd2",
       "phase": "grammar",
@@ -15619,7 +15619,7 @@
     {
       "id": "TL01-23-6-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "23.6 Constantes",
       "heading_anchor": "23-6-constantes",
       "line_start": 8755,
@@ -15689,7 +15689,7 @@
     {
       "id": "TL01-23-7-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "23.7 Parámetros genéricos",
       "heading_anchor": "23-7-parámetros-genéricos",
       "line_start": 8770,
@@ -15759,7 +15759,7 @@
     {
       "id": "TL01-23-9-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "23.9 Expresiones de tipo",
       "heading_anchor": "23-9-expresiones-de-tipo",
       "line_start": 8853,
@@ -15829,7 +15829,7 @@
     {
       "id": "TL01-23-9-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "23.9 Expresiones de tipo",
       "heading_anchor": "23-9-expresiones-de-tipo",
       "line_start": 8855,
@@ -15899,7 +15899,7 @@
     {
       "id": "TL01-23-9-R003",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "23.9 Expresiones de tipo",
       "heading_anchor": "23-9-expresiones-de-tipo",
       "line_start": 8859,
@@ -15969,11 +15969,11 @@
     {
       "id": "TL01-24-14-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "24.14 Concurrencia estructurada",
       "heading_anchor": "24-14-concurrencia-estructurada",
-      "line_start": 9931,
-      "line_end": 9931,
+      "line_start": 9932,
+      "line_end": 9932,
       "text": "Los dos fetches pueden progresar en paralelo, pero sus handles no pueden escapar del `scope`.",
       "text_sha256": "41173ee9d0d28a246d98f900ff58a52b5309ef2c9381d459c8adeebb14b13762",
       "phase": "integrated-examples",
@@ -16040,11 +16040,11 @@
     {
       "id": "TL01-24-16-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "24.16 Frontera raw con `Pointer[T]`",
       "heading_anchor": "24-16-frontera-raw-con-pointer-t",
-      "line_start": 9963,
-      "line_end": 9967,
+      "line_start": 9964,
+      "line_end": 9968,
       "text": "`readAddress` continúa siendo `unsafe` porque no puede validar procedencia, validez ni lifetime a partir del puntero. El llamador escribe `unsafe { readAddress(address) }` y hace visible el punto exacto donde acepta esas obligaciones. Una función segura solo podría ocultarlo tras recibir un handle seguro que mantuviera dichas invariantes.",
       "text_sha256": "daeba75b671046cbaf0397018f546d11b22e76e3547c9a095fe27c2c7665f4e7",
       "phase": "integrated-examples",
@@ -16111,11 +16111,11 @@
     {
       "id": "TL01-25-14-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "25.14 Punteros en código seguro y memoria manual implícita",
       "heading_anchor": "25-14-punteros-en-código-seguro-y-memoria-manual-implícita",
-      "line_start": 10079,
-      "line_end": 10079,
+      "line_start": 10080,
+      "line_end": 10080,
       "text": "Tondo seguro no expone lectura, escritura, offsets, casts, `malloc` ni `free` raw. `Pointer[T]` solo se opera dentro de `unsafe`; la capa FFI y los módulos de sistema deben encapsularlo tras APIs seguras siempre que sea posible. La identidad cotidiana utiliza `Ref[T]`, no direcciones.",
       "text_sha256": "e04bd65e28ebe83f67e3547d15de8634454cdd0482cbec2adc8bc874e7f234ca",
       "phase": "boundary",
@@ -16123,7 +16123,7 @@
       "status": "target-not-applicable",
       "classification_reason": "The requirement describes a deliberately absent or non-bootstrap target surface.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:10079#25-14-punteros-en-código-seguro-y-memoria-manual-implícita"
+        "TONDO_LANGUAGE_SPEC.md:10080#25-14-punteros-en-código-seguro-y-memoria-manual-implícita"
       ],
       "dimensions": {
         "positive": {
@@ -16155,11 +16155,11 @@
     {
       "id": "TL01-25-22-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "25.22 Dispatch dinámico de traits",
       "heading_anchor": "25-22-dispatch-dinámico-de-traits",
-      "line_start": 10153,
-      "line_end": 10156,
+      "line_start": 10154,
+      "line_end": 10157,
       "text": "Los traits son constraints estáticos. Un resultado `impl Bound` conserva un único tipo concreto por declaración y tampoco introduce dispatch dinámico. La heterogeneidad dinámica debe ser cerrada y visible mediante enum, unión o callbacks.",
       "text_sha256": "d70976886642b8cce445610bba6a7292511c2adc32e10fab372c8a2a45129819",
       "phase": "boundary",
@@ -16167,7 +16167,7 @@
       "status": "target-not-applicable",
       "classification_reason": "The requirement describes a deliberately absent or non-bootstrap target surface.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:10153#25-22-dispatch-dinámico-de-traits"
+        "TONDO_LANGUAGE_SPEC.md:10154#25-22-dispatch-dinámico-de-traits"
       ],
       "dimensions": {
         "positive": {
@@ -16199,11 +16199,11 @@
     {
       "id": "TL01-26-5-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "26.5 Criterio para añadir una característica al lenguaje",
       "heading_anchor": "26-5-criterio-para-añadir-una-característica-al-lenguaje",
-      "line_start": 10341,
-      "line_end": 10341,
+      "line_start": 10342,
+      "line_end": 10342,
       "text": "Una capacidad solo debe pasar de librería a lenguaje si cumple todos:",
       "text_sha256": "f16bcbd9180e3643845d04dfd9357f86e2e3d8b6b21f8d217ee4e05d8aa41bbb",
       "phase": "boundary",
@@ -16211,7 +16211,7 @@
       "status": "stdlib-pending",
       "classification_reason": "The requirement belongs to the standard-library contract, which is outside Tondo 0.1 language conformance.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:10341#26-5-criterio-para-añadir-una-característica-al-lenguaje"
+        "TONDO_LANGUAGE_SPEC.md:10342#26-5-criterio-para-añadir-una-característica-al-lenguaje"
       ],
       "dimensions": {
         "positive": {
@@ -16243,11 +16243,11 @@
     {
       "id": "TL01-26-5-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "26.5 Criterio para añadir una característica al lenguaje",
       "heading_anchor": "26-5-criterio-para-añadir-una-característica-al-lenguaje",
-      "line_start": 10343,
-      "line_end": 10343,
+      "line_start": 10344,
+      "line_end": 10344,
       "text": "No puede expresarse con seguridad y ergonomía razonables como librería.",
       "text_sha256": "7e19191eb90ff67597c9d88e19f0d5456eb01cd570c312e1e609999aba447802",
       "phase": "boundary",
@@ -16255,7 +16255,7 @@
       "status": "stdlib-pending",
       "classification_reason": "The requirement belongs to the standard-library contract, which is outside Tondo 0.1 language conformance.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:10343#26-5-criterio-para-añadir-una-característica-al-lenguaje"
+        "TONDO_LANGUAGE_SPEC.md:10344#26-5-criterio-para-añadir-una-característica-al-lenguaje"
       ],
       "dimensions": {
         "positive": {
@@ -16287,11 +16287,11 @@
     {
       "id": "TL01-26-6-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "26.6 Criterio de estabilidad",
       "heading_anchor": "26-6-criterio-de-estabilidad",
-      "line_start": 10391,
-      "line_end": 10392,
+      "line_start": 10392,
+      "line_end": 10393,
       "text": "El formateador y compilador deben poder indicar la edición del lenguaje y la versión exacta del formato o suite de conformidad que implementan.",
       "text_sha256": "2e659028be041b25b9466d6639d3d20c02fc80b4a79e29b8ccc0064843ccc717",
       "phase": "boundary",
@@ -16299,7 +16299,7 @@
       "status": "stdlib-pending",
       "classification_reason": "The requirement belongs to the standard-library contract, which is outside Tondo 0.1 language conformance.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:10391#26-6-criterio-de-estabilidad"
+        "TONDO_LANGUAGE_SPEC.md:10392#26-6-criterio-de-estabilidad"
       ],
       "dimensions": {
         "positive": {
@@ -16331,11 +16331,11 @@
     {
       "id": "TL01-27-1-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "27.1 Modelo único",
       "heading_anchor": "27-1-modelo-único",
-      "line_start": 10414,
-      "line_end": 10416,
+      "line_start": 10415,
+      "line_end": 10417,
       "text": "La evaluación constante de 6.5 permanece deliberadamente pequeña. Un programa generador no es una función `comptime`: es un target separado del build y no puede llamarse desde fuente de aplicación.",
       "text_sha256": "58e0f18f5bc03888bcf7e08c78f5fd85d15bc4520697e2cae72a13f3b4ee337b",
       "phase": "metaprogramming",
@@ -16387,11 +16387,11 @@
     {
       "id": "TL01-27-2-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "27.2 Declaración `derive`",
       "heading_anchor": "27-2-declaración-derive",
-      "line_start": 10436,
-      "line_end": 10441,
+      "line_start": 10437,
+      "line_end": 10442,
       "text": "`derive` es una declaración top-level. No tiene cuerpo, `pub`, `priv`, opciones, attributes ni forma abreviada sobre la declaración del tipo. La lista separada por `+` es semánticamente un conjunto de identidades nominales de trait; cada una debe aparecer una sola vez y la misma pareja trait/target no puede solicitarse en otra declaración del módulo. El formatter conserva el orden escrito y el toolchain normaliza la solicitud por identidad canónica antes de ejecutarla.",
       "text_sha256": "d4002c2988d217af9b436950b77bc72d344f49bcc0ef4a760b817f7dc525757e",
       "phase": "metaprogramming",
@@ -16443,11 +16443,11 @@
     {
       "id": "TL01-27-2-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "27.2 Declaración `derive`",
       "heading_anchor": "27-2-declaración-derive",
-      "line_start": 10443,
-      "line_end": 10447,
+      "line_start": 10444,
+      "line_end": 10448,
       "text": "El target debe ser un record, enum o newtype nominal declarado en el mismo módulo. Sus argumentos deben ser exactamente los binders de `derive`, en el mismo orden y sin repetirlos. No se permite derivar para aliases, uniones, tuples, tipos intrínsecos ni tipos de otro módulo. Esta regla convierte la declaración en una autorización explícita del propietario.",
       "text_sha256": "51e6ff4eec595a94e0b61041f0c4487315a333eb603f75bd3122d8a2a6965b2f",
       "phase": "metaprogramming",
@@ -16499,11 +16499,11 @@
     {
       "id": "TL01-27-2-R003",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "27.2 Declaración `derive`",
       "heading_anchor": "27-2-declaración-derive",
-      "line_start": 10449,
-      "line_end": 10458,
+      "line_start": 10450,
+      "line_end": 10459,
       "text": "Los bounds escritos en los binders son parte de la solicitud. Además, un provider puede introducir únicamente los bounds positivos mínimos necesarios sobre esos mismos binders; por ejemplo, el `impl Encode[Json] for Page[T]` generado puede requerir `T: Encode[Json] + Decode[Json]` cuando la expansión lo necesite. Los bounds y la cabecera exacta del `impl` aparecen en la expansión semántica y en la interfaz pública cuando sean observables. Para cada bound introducido, el compilador vuelve a comprobar la expansión sin ese bound; si continúa siendo válida, la salida se rechaza por redundante. Un provider no puede añadir parámetros genéricos, elegir tipos ocultos distintos según el entorno ni cambiar la declaración objetivo.",
       "text_sha256": "642303076c9986bc4187513849605707d86169c9e8cc0b9c0723e10636fedf80",
       "phase": "metaprogramming",
@@ -16555,11 +16555,11 @@
     {
       "id": "TL01-27-3-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "27.3 Providers y resultado de `derive`",
       "heading_anchor": "27-3-providers-y-resultado-de-derive",
-      "line_start": 10474,
-      "line_end": 10480,
+      "line_start": 10475,
+      "line_end": 10481,
       "text": "No puede emitir helpers, tipos, globals, otra declaración `derive`, otra solicitud de generación ni un `impl` para un target o trait distinto. Puede utilizar paths completamente calificados dentro del body. La expansión completa se valida como fuente ordinaria. Orphan rules, terminación y coherencia continúan aplicándose; un `impl` manual solapado, dos providers que convergen en la misma cabecera o un impl generado que solape con otro impl válido producen `E1111`. Repetir la solicitud derive se detecta antes como `E2103`.",
       "text_sha256": "a5ec5a2ef68e541b09fedcf67865d35057b01b589638946a5ad751d0bad22c73",
       "phase": "metaprogramming",
@@ -16611,11 +16611,11 @@
     {
       "id": "TL01-27-4-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "27.4 Acceso privado de un provider",
       "heading_anchor": "27-4-acceso-privado-de-un-provider",
-      "line_start": 10504,
-      "line_end": 10508,
+      "line_start": 10505,
+      "line_end": 10509,
       "text": "El `impl` generado se atribuye al mismo módulo a efectos de visibilidad. Esta concesión existe solo para la pareja exacta `(declaración derive, target, provider)` y no se propaga a helpers de otro paquete, a reflection en runtime ni a un generador general. El provider no puede enumerar otros tipos privados del módulo.",
       "text_sha256": "6b5b42d63f3754959455f61ae05c38a9142fa8f20776848b02e52b24da3e7071",
       "phase": "metaprogramming",
@@ -16667,11 +16667,11 @@
     {
       "id": "TL01-27-5-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "27.5 Generadores declarados por el manifiesto",
       "heading_anchor": "27-5-generadores-declarados-por-el-manifiesto",
-      "line_start": 10538,
-      "line_end": 10542,
+      "line_start": 10539,
+      "line_end": 10543,
       "text": "Cada salida declarada debe aparecer exactamente una vez. Una salida adicional, ausente, duplicada, con otro módulo o fuera de su path produce `E2106` y descarta la generación completa. Los bytes aceptados se formatean canónicamente, reciben identidad de fuente generada y pasan por el lexer, parser, resolver y typechecker ordinarios.",
       "text_sha256": "ff77fa2408457ba146ea77e9d65df9dd25da2f16b5d3d1abbc37628ac242d1fe",
       "phase": "metaprogramming",
@@ -16723,11 +16723,11 @@
     {
       "id": "TL01-27-5-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "27.5 Generadores declarados por el manifiesto",
       "heading_anchor": "27-5-generadores-declarados-por-el-manifiesto",
-      "line_start": 10544,
-      "line_end": 10548,
+      "line_start": 10545,
+      "line_end": 10549,
       "text": "Un generador general solo observa la clausura semántica pública de los roots declarados. Una lista vacía produce un modelo sin declaraciones y es la forma normal de un generador schema-first. No recibe bodies ni símbolos privados. Para generar a partir de un schema, descriptor o archivo de datos, ese contenido debe ser un input explícito; no puede abrir el archivo por su cuenta.",
       "text_sha256": "367ce2d42f26fd13cce8a88a5968c1f29d3fa18263d8e876af5535c831a4cab0",
       "phase": "metaprogramming",
@@ -16779,11 +16779,11 @@
     {
       "id": "TL01-27-5-R003",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "27.5 Generadores declarados por el manifiesto",
       "heading_anchor": "27-5-generadores-declarados-por-el-manifiesto",
-      "line_start": 10550,
-      "line_end": 10554,
+      "line_start": 10551,
+      "line_end": 10555,
       "text": "Cada root, y toda declaración necesaria para resolver su firma o estructura, debe poder typecheckearse usando únicamente fuente escrita e interfaces de dependencias. Si depende de una salida de la ronda actual se produce `E2109`. Las declaraciones que no pertenezcan a esa clausura pueden referenciar fuente generada y se validan durante el typecheck completo posterior.",
       "text_sha256": "e96745bcd3edf815b7dde90d1e7ad503d121f713fc1e5d0bebf58833924b505e",
       "phase": "metaprogramming",
@@ -16835,11 +16835,11 @@
     {
       "id": "TL01-27-7-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "27.7 Perfil hermético `meta`",
       "heading_anchor": "27-7-perfil-hermético-meta",
-      "line_start": 10599,
-      "line_end": 10603,
+      "line_start": 10600,
+      "line_end": 10604,
       "text": "Un run tiene presupuestos enteros declarados de pasos, memoria administrada y bytes de resultado. Alcanzar uno produce `E2107`; pedir una capacidad ausente produce `E2108`. El mismo programa, modelo, inputs, límites, toolchain y target debe producir exactamente los mismos bytes o los mismos diagnósticos ordenados. Un proveedor que no pueda cumplirlo no es válido para un build reproducible.",
       "text_sha256": "48bb98c8054411605e3c6b831e69661cb5f7751621046c8c3d989e5ef2712fd6",
       "phase": "metaprogramming",
@@ -16891,11 +16891,11 @@
     {
       "id": "TL01-27-8-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "27.8 Fases y ausencia de ciclos",
       "heading_anchor": "27-8-fases-y-ausencia-de-ciclos",
-      "line_start": 10624,
-      "line_end": 10628,
+      "line_start": 10625,
+      "line_end": 10629,
       "text": "Ningún generador observa la salida de otro. La fuente generada no puede contener `derive`, registrar generadores ni crear una segunda ronda. Tampoco puede reemplazar un path escrito a mano o una salida de otro productor. Así, el grafo de generación es finito por construcción y su resultado no depende del orden de ejecución.",
       "text_sha256": "d116aee0949fd58076467a8a0bac9bad4c274df3c34cefb116afaf82672fd058",
       "phase": "metaprogramming",
@@ -16947,11 +16947,11 @@
     {
       "id": "TL01-28-1-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "28.1 Un único contrato Tondo 0.1",
       "heading_anchor": "28-1-un-único-contrato-tondo-0-1",
-      "line_start": 10730,
-      "line_end": 10733,
+      "line_start": 10731,
+      "line_end": 10734,
       "text": "El corpus, su manifest y sus observaciones evolucionan junto a esta superficie. No se conserva una edición, snapshot o suite anterior en paralelo: la primera publicación de Tondo 0.1 debe implementar y sellar el contrato consolidado que esté vigente en ese momento.",
       "text_sha256": "673e4109010f47ddc83f3dca6705cf3df3d88998585826cee6a462667e08492c",
       "phase": "testing",
@@ -17003,11 +17003,11 @@
     {
       "id": "TL01-28-2-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "28.2 Árbol estático",
       "heading_anchor": "28-2-árbol-estático",
-      "line_start": 10760,
-      "line_end": 10761,
+      "line_start": 10761,
+      "line_end": 10762,
       "text": "no pueden aparecer en funciones, cierres, traits, `impl`, bloques ordinarios, scripts ni bodies de test; y",
       "text_sha256": "5925e8aa84d38434cdd47f9ef53792702a572152034ff3aeb13edeb1d6f0ad3c",
       "phase": "testing",
@@ -17059,11 +17059,11 @@
     {
       "id": "TL01-28-3-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "28.3 Entradas ocultas e inferencia",
       "heading_anchor": "28-3-entradas-ocultas-e-inferencia",
-      "line_start": 10783,
-      "line_end": 10788,
+      "line_start": 10784,
+      "line_end": 10789,
       "text": "`E` es la unión cerrada inferida localmente y debe cumplir `Discard`; si no hay fallos, es `Never`. La entrada se vuelve suspendible cuando contiene una operación que exige suspensión, incluido un `defer` suspendible. No se escribe un modificador porque ninguna entrada es una API invocable. El body de test puede usar `return` sin valor, `fail` y `?`; el setup admite `fail` y `?`, pero un `return` que ocultaría descendientes produce `E1205`. Ninguna forma introduce `TestResult`.",
       "text_sha256": "512bf37612793f2689d0e0536095a88793b8f9aaae6cb24894e1c974e830a918",
       "phase": "testing",
@@ -17115,11 +17115,11 @@
     {
       "id": "TL01-28-5-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "28.5 Frontera con producción",
       "heading_anchor": "28-5-frontera-con-producción",
-      "line_start": 10824,
-      "line_end": 10828,
+      "line_start": 10825,
+      "line_end": 10829,
       "text": "Una declaración de test en producción o script produce `E2001`. Alterar desde test la API sellada, exportar una declaración de test o importar `std.testing` desde producción produce `E2003`. La validez del producto se comprueba antes de aplicar el overlay: los tests no pueden reparar una unidad de producción inválida.",
       "text_sha256": "3d3ff001823cbee9f12a90e45e0830608dc7b2fc82660616b5219f703ed37f45",
       "phase": "testing",
@@ -17171,7 +17171,7 @@
     {
       "id": "TL01-4-2-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "4.2 Inmutabilidad profunda por defecto",
       "heading_anchor": "4-2-inmutabilidad-profunda-por-defecto",
       "line_start": 367,
@@ -17240,7 +17240,7 @@
     {
       "id": "TL01-4-3-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "4.3 Contratos visibles",
       "heading_anchor": "4-3-contratos-visibles",
       "line_start": 388,
@@ -17309,7 +17309,7 @@
     {
       "id": "TL01-5-10-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "5.10 Literales de string",
       "heading_anchor": "5-10-literales-de-string",
       "line_start": 751,
@@ -17378,7 +17378,7 @@
     {
       "id": "TL01-5-10-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "5.10 Literales de string",
       "heading_anchor": "5-10-literales-de-string",
       "line_start": 761,
@@ -17447,7 +17447,7 @@
     {
       "id": "TL01-5-10-R003",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "5.10 Literales de string",
       "heading_anchor": "5-10-literales-de-string",
       "line_start": 793,
@@ -17516,7 +17516,7 @@
     {
       "id": "TL01-5-11-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "5.11 Literales de colecciones",
       "heading_anchor": "5-11-literales-de-colecciones",
       "line_start": 849,
@@ -17585,7 +17585,7 @@
     {
       "id": "TL01-5-4-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "5.4 Identificadores",
       "heading_anchor": "5-4-identificadores",
       "line_start": 527,
@@ -17654,7 +17654,7 @@
     {
       "id": "TL01-5-4-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "5.4 Identificadores",
       "heading_anchor": "5-4-identificadores",
       "line_start": 543,
@@ -17723,7 +17723,7 @@
     {
       "id": "TL01-5-4-R003",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "5.4 Identificadores",
       "heading_anchor": "5-4-identificadores",
       "line_start": 548,
@@ -17767,7 +17767,7 @@
     {
       "id": "TL01-5-4-R004",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "5.4 Identificadores",
       "heading_anchor": "5-4-identificadores",
       "line_start": 558,
@@ -17836,7 +17836,7 @@
     {
       "id": "TL01-5-5-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "5.5 Palabras reservadas",
       "heading_anchor": "5-5-palabras-reservadas",
       "line_start": 628,
@@ -17905,7 +17905,7 @@
     {
       "id": "TL01-5-7-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "5.7 Literales enteros",
       "heading_anchor": "5-7-literales-enteros",
       "line_start": 685,
@@ -17974,7 +17974,7 @@
     {
       "id": "TL01-5-7-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "5.7 Literales enteros",
       "heading_anchor": "5-7-literales-enteros",
       "line_start": 695,
@@ -18043,7 +18043,7 @@
     {
       "id": "TL01-5-8-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "5.8 Literales flotantes",
       "heading_anchor": "5-8-literales-flotantes",
       "line_start": 713,
@@ -18112,7 +18112,7 @@
     {
       "id": "TL01-5-9-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "5.9 Literales de caracteres",
       "heading_anchor": "5-9-literales-de-caracteres",
       "line_start": 727,
@@ -18181,7 +18181,7 @@
     {
       "id": "TL01-5-9-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "5.9 Literales de caracteres",
       "heading_anchor": "5-9-literales-de-caracteres",
       "line_start": 729,
@@ -18250,7 +18250,7 @@
     {
       "id": "TL01-6-3-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "6.3 Imports",
       "heading_anchor": "6-3-imports",
       "line_start": 949,
@@ -18320,7 +18320,7 @@
     {
       "id": "TL01-6-5-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "6.5 Constantes",
       "heading_anchor": "6-5-constantes",
       "line_start": 981,
@@ -18390,7 +18390,7 @@
     {
       "id": "TL01-6-5-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "6.5 Constantes",
       "heading_anchor": "6-5-constantes",
       "line_start": 999,
@@ -18460,7 +18460,7 @@
     {
       "id": "TL01-6-6-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "6.6 Módulos ejecutables",
       "heading_anchor": "6-6-módulos-ejecutables",
       "line_start": 1003,
@@ -18525,7 +18525,7 @@
     {
       "id": "TL01-6-7-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "6.7 Identidad de paquete, edición y resolución",
       "heading_anchor": "6-7-identidad-de-paquete-edición-y-resolución",
       "line_start": 1014,
@@ -18595,7 +18595,7 @@
     {
       "id": "TL01-6-7-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "6.7 Identidad de paquete, edición y resolución",
       "heading_anchor": "6-7-identidad-de-paquete-edición-y-resolución",
       "line_start": 1028,
@@ -18665,7 +18665,7 @@
     {
       "id": "TL01-6-7-R003",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "6.7 Identidad de paquete, edición y resolución",
       "heading_anchor": "6-7-identidad-de-paquete-edición-y-resolución",
       "line_start": 1041,
@@ -18735,7 +18735,7 @@
     {
       "id": "TL01-6-8-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "6.8 Source sets, targets y generación",
       "heading_anchor": "6-8-source-sets-targets-y-generación",
       "line_start": 1071,
@@ -18805,7 +18805,7 @@
     {
       "id": "TL01-6-8-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "6.8 Source sets, targets y generación",
       "heading_anchor": "6-8-source-sets-targets-y-generación",
       "line_start": 1086,
@@ -18861,7 +18861,7 @@
     {
       "id": "TL01-7-10-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "7.10 Namespaces",
       "heading_anchor": "7-10-namespaces",
       "line_start": 1314,
@@ -18931,7 +18931,7 @@
     {
       "id": "TL01-7-11-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "7.11 Alcance y orden de resolución",
       "heading_anchor": "7-11-alcance-y-orden-de-resolución",
       "line_start": 1353,
@@ -19001,7 +19001,7 @@
     {
       "id": "TL01-7-2-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "7.2 Bindings mutables",
       "heading_anchor": "7-2-bindings-mutables",
       "line_start": 1120,
@@ -19071,7 +19071,7 @@
     {
       "id": "TL01-7-3-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "7.3 Desestructuración",
       "heading_anchor": "7-3-desestructuración",
       "line_start": 1139,
@@ -19141,7 +19141,7 @@
     {
       "id": "TL01-7-4-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "7.4 Ausencia de shadowing",
       "heading_anchor": "7-4-ausencia-de-shadowing",
       "line_start": 1145,
@@ -19211,7 +19211,7 @@
     {
       "id": "TL01-7-4-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "7.4 Ausencia de shadowing",
       "heading_anchor": "7-4-ausencia-de-shadowing",
       "line_start": 1156,
@@ -19281,7 +19281,7 @@
     {
       "id": "TL01-7-6-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "7.6 Visibilidad de records",
       "heading_anchor": "7-6-visibilidad-de-records",
       "line_start": 1211,
@@ -19351,7 +19351,7 @@
     {
       "id": "TL01-7-6-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "7.6 Visibilidad de records",
       "heading_anchor": "7-6-visibilidad-de-records",
       "line_start": 1212,
@@ -19421,7 +19421,7 @@
     {
       "id": "TL01-7-6-R003",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "7.6 Visibilidad de records",
       "heading_anchor": "7-6-visibilidad-de-records",
       "line_start": 1221,
@@ -19491,7 +19491,7 @@
     {
       "id": "TL01-7-6-R004",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "7.6 Visibilidad de records",
       "heading_anchor": "7-6-visibilidad-de-records",
       "line_start": 1226,
@@ -19561,7 +19561,7 @@
     {
       "id": "TL01-7-6-R005",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "7.6 Visibilidad de records",
       "heading_anchor": "7-6-visibilidad-de-records",
       "line_start": 1236,
@@ -19631,7 +19631,7 @@
     {
       "id": "TL01-7-7-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "7.7 Visibilidad de enums",
       "heading_anchor": "7-7-visibilidad-de-enums",
       "line_start": 1256,
@@ -19701,7 +19701,7 @@
     {
       "id": "TL01-7-9-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "7.9 APIs públicas bien formadas",
       "heading_anchor": "7-9-apis-públicas-bien-formadas",
       "line_start": 1276,
@@ -19771,7 +19771,7 @@
     {
       "id": "TL01-7-9-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "7.9 APIs públicas bien formadas",
       "heading_anchor": "7-9-apis-públicas-bien-formadas",
       "line_start": 1287,
@@ -19841,7 +19841,7 @@
     {
       "id": "TL01-8-10-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "8.10 Valores `Copy` y valores afines",
       "heading_anchor": "8-10-valores-copy-y-valores-afines",
       "line_start": 1609,
@@ -19912,7 +19912,7 @@
     {
       "id": "TL01-8-10-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "8.10 Valores `Copy` y valores afines",
       "heading_anchor": "8-10-valores-copy-y-valores-afines",
       "line_start": 1634,
@@ -19983,7 +19983,7 @@
     {
       "id": "TL01-8-10-R003",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "8.10 Valores `Copy` y valores afines",
       "heading_anchor": "8-10-valores-copy-y-valores-afines",
       "line_start": 1741,
@@ -20054,7 +20054,7 @@
     {
       "id": "TL01-8-10-R004",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "8.10 Valores `Copy` y valores afines",
       "heading_anchor": "8-10-valores-copy-y-valores-afines",
       "line_start": 1763,
@@ -20125,7 +20125,7 @@
     {
       "id": "TL01-8-11-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "8.11 Igualdad",
       "heading_anchor": "8-11-igualdad",
       "line_start": 1785,
@@ -20196,7 +20196,7 @@
     {
       "id": "TL01-8-11-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "8.11 Igualdad",
       "heading_anchor": "8-11-igualdad",
       "line_start": 1791,
@@ -20267,7 +20267,7 @@
     {
       "id": "TL01-8-12-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "8.12 Capacidad `Key`",
       "heading_anchor": "8-12-capacidad-key",
       "line_start": 1823,
@@ -20338,7 +20338,7 @@
     {
       "id": "TL01-8-13-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "8.13 Representación y ABI",
       "heading_anchor": "8-13-representación-y-abi",
       "line_start": 1841,
@@ -20409,7 +20409,7 @@
     {
       "id": "TL01-8-13-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "8.13 Representación y ABI",
       "heading_anchor": "8-13-representación-y-abi",
       "line_start": 1852,
@@ -20453,7 +20453,7 @@
     {
       "id": "TL01-8-13-R003",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "8.13 Representación y ABI",
       "heading_anchor": "8-13-representación-y-abi",
       "line_start": 1857,
@@ -20497,7 +20497,7 @@
     {
       "id": "TL01-8-13-R004",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "8.13 Representación y ABI",
       "heading_anchor": "8-13-representación-y-abi",
       "line_start": 1872,
@@ -20541,7 +20541,7 @@
     {
       "id": "TL01-8-7-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "8.7 Aliases transparentes",
       "heading_anchor": "8-7-aliases-transparentes",
       "line_start": 1530,
@@ -20612,7 +20612,7 @@
     {
       "id": "TL01-9-10-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "9.10 Tipos recursivos",
       "heading_anchor": "9-10-tipos-recursivos",
       "line_start": 2313,
@@ -20683,7 +20683,7 @@
     {
       "id": "TL01-9-2-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "9.2 Records",
       "heading_anchor": "9-2-records",
       "line_start": 1969,
@@ -20754,7 +20754,7 @@
     {
       "id": "TL01-9-3-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "9.3 Actualización de records",
       "heading_anchor": "9-3-actualización-de-records",
       "line_start": 2006,
@@ -20825,7 +20825,7 @@
     {
       "id": "TL01-9-3-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "9.3 Actualización de records",
       "heading_anchor": "9-3-actualización-de-records",
       "line_start": 2007,
@@ -20896,7 +20896,7 @@
     {
       "id": "TL01-9-3-R003",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "9.3 Actualización de records",
       "heading_anchor": "9-3-actualización-de-records",
       "line_start": 2008,
@@ -20967,7 +20967,7 @@
     {
       "id": "TL01-9-3-R004",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "9.3 Actualización de records",
       "heading_anchor": "9-3-actualización-de-records",
       "line_start": 2017,
@@ -21038,7 +21038,7 @@
     {
       "id": "TL01-9-5-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "9.5 Uniones estructurales",
       "heading_anchor": "9-5-uniones-estructurales",
       "line_start": 2098,
@@ -21109,7 +21109,7 @@
     {
       "id": "TL01-9-5-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "9.5 Uniones estructurales",
       "heading_anchor": "9-5-uniones-estructurales",
       "line_start": 2099,
@@ -21180,11 +21180,11 @@
     {
       "id": "TL01-APNDICE-D-LAYOUT-CONVENCIONAL-DE-PROYECTOS-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "Apéndice D. Layout convencional de proyectos",
       "heading_anchor": "apéndice-d-layout-convencional-de-proyectos",
-      "line_start": 11372,
-      "line_end": 11378,
+      "line_start": 11373,
+      "line_end": 11379,
       "text": "La configuración humana opcional es `tondo.toml`; define nombre de paquete, edición, target, perfil, capabilities, features y aliases de dependencias, pero no puede declarar módulos alternativos ni cambiar la semántica de imports. Un `tondo.lock.toml` generado fija las identidades externas. Estos archivos son toolchain inputs, no unidades de compilación Tondo y no se importan desde `.to`. El compilador recibe finalmente el grafo cerrado interno y conserva la misma semántica que tendría un manifiesto explícito.",
       "text_sha256": "54c76c7b983d3bf27278039a24aec2e178996e84e6ff3973f587b08df60bda48",
       "phase": "language-contract",
@@ -21236,7 +21236,7 @@
     {
       "id": "TL01-ASYNC-Y-CONCURRENCIA-ESTRUCTURADA-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "Async y concurrencia estructurada",
       "heading_anchor": "async-y-concurrencia-estructurada",
       "line_start": 8057,
@@ -21280,7 +21280,7 @@
     {
       "id": "TL01-BINDING-PRESTADO-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "Binding prestado",
       "heading_anchor": "binding-prestado",
       "line_start": 5229,
@@ -21355,7 +21355,7 @@
     {
       "id": "TL01-BINDING-PRESTADO-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "Binding prestado",
       "heading_anchor": "binding-prestado",
       "line_start": 5232,
@@ -21430,7 +21430,7 @@
     {
       "id": "TL01-BINDING-PRESTADO-R003",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "Binding prestado",
       "heading_anchor": "binding-prestado",
       "line_start": 5242,
@@ -21505,11 +21505,11 @@
     {
       "id": "TL01-C-3-FIXTURES-ESPECIALIZADOS-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "C.3 Fixtures especializados",
       "heading_anchor": "c-3-fixtures-especializados",
-      "line_start": 11221,
-      "line_end": 11232,
+      "line_start": 11222,
+      "line_end": 11233,
       "text": "| Fixture | Declaraciones inyectadas | |---|---| | `spec.cursor` | `Query`, `Row`, `DatabaseError`, `RowCursor`, `Database.openRows`, `RowCursor.close` y su `impl Iterator[Row]`. | | `spec.resource` | `fn acquire(): Resource ! AcquireError`. | | `spec.domain` | `fn decodeUser(bytes: Bytes): User ! std.json.DecodeError`; `User` debe declararse en el propio fence. | | `spec.settings` | Binding de módulo `fs`; aliases `Path = fs.Path`, `IoError = fs.IoError`; tipos `DecodeError`, `Settings`; `fn decodeSettings(Bytes): Settings ! DecodeError`. | | `spec.user` | Tipos `UserId` y `User` definidos en C.4. | | `spec.console` | Binding de módulo `console = std.console`. | | `spec.jobs` | Tipos `Deque[T]`, `Job`, `JobError` y las operaciones de C.4. | | `spec.application` | Tipos y operaciones de aplicación de C.4; el import `std.process` permanece en el fence. | | `spec.async_page` | Binding `console = std.console`; tipos suspendibles de C.4. | | `spec.process` | Interfaces de proceso de C.2; los imports permanecen en el script. |",
       "text_sha256": "a2ee78e9e35d276011c83c97429aeac3cf7d81f3b54769f663a69a917765a2c4",
       "phase": "language-contract",
@@ -21580,11 +21580,11 @@
     {
       "id": "TL01-C-6-SERIALIZACIN-CANNICA-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "C.6 Serialización canónica",
       "heading_anchor": "c-6-serialización-canónica",
-      "line_start": 11351,
-      "line_end": 11356,
+      "line_start": 11352,
+      "line_end": 11357,
       "text": "Todo runner debe usar como única serialización canónica `conformance/0.1/fixtures/tondo-fixture-manifest.txt`. Está codificada en UTF-8, usa `LF`, comienza con `tondo-fixture-manifest 0.1` y termina con `end` seguido de `LF`. El generador debe calcular su SHA-256 desde esos bytes y fijarlo en cada caso documental y en el manifiesto vivo; no existe una segunda copia ni un hash actualizado manualmente dentro de esta especificación.",
       "text_sha256": "85dfa2b75f1f9a0be47a6bfa337461b72d4c9e199f76a11643cff3e4090a7b92",
       "phase": "language-contract",
@@ -21636,7 +21636,7 @@
     {
       "id": "TL01-CONTRATO-NORMATIVO-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "Contrato normativo",
       "heading_anchor": "contrato-normativo",
       "line_start": 5990,
@@ -21711,7 +21711,7 @@
     {
       "id": "TL01-CONTRATO-NORMATIVO-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "Contrato normativo",
       "heading_anchor": "contrato-normativo",
       "line_start": 6004,
@@ -21786,7 +21786,7 @@
     {
       "id": "TL01-CONTRATO-NORMATIVO-R003",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "Contrato normativo",
       "heading_anchor": "contrato-normativo",
       "line_start": 6011,
@@ -21861,7 +21861,7 @@
     {
       "id": "TL01-ESTRATEGIA-DE-LA-IMPLEMENTACIN-DE-REFERENCIA-NO-NORMATIVO-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "Estrategia de la implementación de referencia (no normativo)",
       "heading_anchor": "estrategia-de-la-implementación-de-referencia-no-normativo",
       "line_start": 6034,
@@ -21905,7 +21905,7 @@
     {
       "id": "TL01-FRONTERA-DE-SEGURIDAD-Y-COMPORTAMIENTO-INDEFINIDO-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "Frontera de seguridad y comportamiento indefinido",
       "heading_anchor": "frontera-de-seguridad-y-comportamiento-indefinido",
       "line_start": 6226,
@@ -21980,7 +21980,7 @@
     {
       "id": "TL01-FRONTERA-DE-SEGURIDAD-Y-COMPORTAMIENTO-INDEFINIDO-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "Frontera de seguridad y comportamiento indefinido",
       "heading_anchor": "frontera-de-seguridad-y-comportamiento-indefinido",
       "line_start": 6259,
@@ -22055,7 +22055,7 @@
     {
       "id": "TL01-FRONTERA-DE-SEGURIDAD-Y-COMPORTAMIENTO-INDEFINIDO-R003",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "Frontera de seguridad y comportamiento indefinido",
       "heading_anchor": "frontera-de-seguridad-y-comportamiento-indefinido",
       "line_start": 6297,
@@ -22130,7 +22130,7 @@
     {
       "id": "TL01-FRONTERA-DE-SEGURIDAD-Y-COMPORTAMIENTO-INDEFINIDO-R004",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "Frontera de seguridad y comportamiento indefinido",
       "heading_anchor": "frontera-de-seguridad-y-comportamiento-indefinido",
       "line_start": 6298,
@@ -22205,7 +22205,7 @@
     {
       "id": "TL01-GARANTA-DE-PROGRESO-COOPERATIVO-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "Garantía de progreso cooperativo",
       "heading_anchor": "garantía-de-progreso-cooperativo",
       "line_start": 6454,
@@ -22280,7 +22280,7 @@
     {
       "id": "TL01-GARANTA-DE-PROGRESO-COOPERATIVO-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "Garantía de progreso cooperativo",
       "heading_anchor": "garantía-de-progreso-cooperativo",
       "line_start": 6459,
@@ -22355,7 +22355,7 @@
     {
       "id": "TL01-GARANTA-DE-PROGRESO-COOPERATIVO-R003",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "Garantía de progreso cooperativo",
       "heading_anchor": "garantía-de-progreso-cooperativo",
       "line_start": 6470,
@@ -22430,7 +22430,7 @@
     {
       "id": "TL01-GARANTA-DE-PROGRESO-COOPERATIVO-R004",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "Garantía de progreso cooperativo",
       "heading_anchor": "garantía-de-progreso-cooperativo",
       "line_start": 6475,
@@ -22505,7 +22505,7 @@
     {
       "id": "TL01-LOCAL-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "Local",
       "heading_anchor": "local",
       "line_start": 128,
@@ -22580,7 +22580,7 @@
     {
       "id": "TL01-LXICO-Y-SINTAXIS-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "Léxico y sintaxis",
       "heading_anchor": "léxico-y-sintaxis",
       "line_start": 7965,
@@ -22661,11 +22661,11 @@
     {
       "id": "TL01-MUTACIN-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "Mutación",
       "heading_anchor": "mutación",
-      "line_start": 11000,
-      "line_end": 11001,
+      "line_start": 11001,
+      "line_end": 11002,
       "text": "`var T` presta un lvalue completo y exclusivo; permite reemplazar sin conservar extensión o redimensionar colecciones y no puede recibir una región parcial.",
       "text_sha256": "c3855b243871558b52fd3ec33025014ddb016da9dc9fdd3e808d8d819b771caf",
       "phase": "language-contract",
@@ -22736,7 +22736,7 @@
     {
       "id": "TL01-OPTION-RESULT-Y-PROPAGACIN-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "Option, Result y propagación",
       "heading_anchor": "option-result-y-propagación",
       "line_start": 8022,
@@ -22805,7 +22805,7 @@
     {
       "id": "TL01-OWNERSHIP-PRSTAMOS-Y-CLEANUP-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "Ownership, préstamos y cleanup",
       "heading_anchor": "ownership-préstamos-y-cleanup",
       "line_start": 8031,
@@ -22934,11 +22934,11 @@
     {
       "id": "TL01-OWNERSHIP-Y-CAPACIDADES-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "Ownership y capacidades",
       "heading_anchor": "ownership-y-capacidades",
-      "line_start": 11022,
-      "line_end": 11022,
+      "line_start": 11023,
+      "line_end": 11023,
       "text": "Un valor con obligación terminal debe consumirse explícitamente o reservarse con `defer`.",
       "text_sha256": "2c650cd89af6257879f439561118973f5850a2ba57d1bd4aec356c7b8cead101",
       "phase": "language-contract",
@@ -23009,7 +23009,7 @@
     {
       "id": "TL01-PEQUEO-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "Pequeño",
       "heading_anchor": "pequeño",
       "line_start": 120,
@@ -23084,7 +23084,7 @@
     {
       "id": "TL01-PREDECIBLE-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "Predecible",
       "heading_anchor": "predecible",
       "line_start": 124,
@@ -23159,7 +23159,7 @@
     {
       "id": "TL01-PROTOCOLOS-DE-LLAMADA-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "Protocolos de llamada",
       "heading_anchor": "protocolos-de-llamada",
       "line_start": 3691,
@@ -23234,7 +23234,7 @@
     {
       "id": "TL01-PROTOCOLOS-DE-LLAMADA-R002",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "Protocolos de llamada",
       "heading_anchor": "protocolos-de-llamada",
       "line_start": 3695,
@@ -23309,7 +23309,7 @@
     {
       "id": "TL01-PROTOCOLOS-DE-LLAMADA-R003",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "Protocolos de llamada",
       "heading_anchor": "protocolos-de-llamada",
       "line_start": 3703,
@@ -23384,7 +23384,7 @@
     {
       "id": "TL01-PROTOCOLOS-DE-LLAMADA-R004",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "Protocolos de llamada",
       "heading_anchor": "protocolos-de-llamada",
       "line_start": 3746,
@@ -23441,7 +23441,7 @@
     {
       "id": "TL01-RECORD-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "Record",
       "heading_anchor": "record",
       "line_start": 5292,
@@ -23516,7 +23516,7 @@
     {
       "id": "TL01-SEGURO-POR-DEFECTO-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "Seguro por defecto",
       "heading_anchor": "seguro-por-defecto",
       "line_start": 132,
@@ -23591,7 +23591,7 @@
     {
       "id": "TL01-TIPOS-DECLARACIONES-GENRICOS-Y-TRAITS-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "Tipos, declaraciones, genéricos y traits",
       "heading_anchor": "tipos-declaraciones-genéricos-y-traits",
       "line_start": 7989,
@@ -23764,7 +23764,7 @@
     {
       "id": "TL01-VISIBILIDAD-Y-API-R001",
       "document": "TONDO_LANGUAGE_SPEC.md",
-      "revision": "0.1@6737a99f0e9dae4e",
+      "revision": "0.1@855357bd4fb8347c",
       "heading": "Visibilidad y API",
       "heading_anchor": "visibilidad-y-api",
       "line_start": 8047,

@@ -2413,6 +2413,10 @@ y [`docs/contracts/stdlib-sync-performance.md`](./docs/contracts/stdlib-sync-per
 El frontend de los cinco literales cualificados tiene un contrato separado en
 [`testing/stdlib-sync-collection-frontend.json`](./testing/stdlib-sync-collection-frontend.json)
 y [`docs/contracts/stdlib-sync-collection-frontend.md`](./docs/contracts/stdlib-sync-collection-frontend.md).
+La implementación de handles, operaciones y reclamación para hosted y el ABI
+nativo privado está registrada por separado en
+[`testing/stdlib-sync-collection.json`](./testing/stdlib-sync-collection.json) y
+[`docs/contracts/stdlib-sync-collection.md`](./docs/contracts/stdlib-sync-collection.md).
 Estos artefactos fijan la superficie y sus negativos. La superficie de
 compilador, el parking cooperativo hosted y el puente ABI nativo de
 atomics/señales ya están implementados y verificados por
@@ -2428,9 +2432,11 @@ La sintaxis `sync.Array[...]`, `sync.Map[...]`, `sync.Set[...]`,
 aliases se resuelven por identidad de declaración, la posición de tipo no se
 confunde con la posición de expresión, los vacíos y `sync.Map[:]` reciben
 diagnósticos contextuales y el formatter conserva un round-trip lossless. El
-HIR emite el marcador interno `std.sync.collectionLiteral`; el lowering MIR
-mantiene una frontera explícita hasta `STD-SYNC-COLLECTION-IMPL-001`, por lo
-que todavía no se promete ejecución de handles concurrentes.
+HIR emite el marcador interno `std.sync.collectionLiteral`; el lowering MIR lo
+entrega al host y el bloque `STD-SYNC-COLLECTION-IMPL-001` verifica su ejecución
+en el modelo hosted y en el ABI nativo privado. Esto no promociona una API
+pública ni afirma lowering genérico AOT; la iteración directa queda en
+`STD-SYNC-COLLECTION-ITER-001`.
 
 Tondo no utiliza poisoning implícito: un pánico ejecuta cleanup y libera el
 guard, mientras que los invariantes recuperables pertenecen al tipo protegido y
@@ -2729,7 +2735,14 @@ solo instante se realizan sobre el snapshot, no directamente sobre el owner.
 
 ##### 14.4.4.5 Estrategia de implementación y progreso
 
-La semántica no fija un layout, pero sí una estrategia de rendimiento verificable:
+La semántica no fija un layout. El cierre de
+`STD-SYNC-COLLECTION-IMPL-001` usa un carrier correcto con valores hosted y
+celdas `RwLock`/`Mutex` por identidad en el ABI nativo, con parking epoch por
+colección y sin mantener el lock de la tabla global durante la espera. Esta es
+una evidencia de runtime y reclamación, no una afirmación de que los fast paths
+algorítmicos ni el lowering genérico AOT estén terminados. La siguiente lista
+describe las obligaciones de rendimiento target-qualified que se medirán en
+`STD-SYNC-COLLECTION-PERF-001`:
 
 - `sync.Array` usa slots atómicos o nodos versionados y evita un lock global.
 - `sync.Stack` tiene un fast path CAS de estilo Treiber.

@@ -44,6 +44,15 @@ jq -e '
   and .sync_bridge.cooperative_wait == "poll-and-scheduler-park"
   and .sync_bridge.blocking_wait == "native-workers-only"
   and .sync_bridge.generic_values == "pending-native-lowering"
+  and .sync_bridge.collection_carrier == "opaque-u64-capability"
+  and .sync_bridge.collection_storage == "per-identity-RwLock-or-Mutex-cell"
+  and .sync_bridge.collection_parking == "per-identity-epoch-condvar"
+  and .sync_bridge.collection_aot_lowering == "not-claimed"
+  and (.sync_bridge.collection_symbols | length) == 37
+  and (.sync_bridge.collection_symbols | unique | length) == 37
+  and (.sync_bridge.collection_symbols | index("tondo_rt_sync_array_new")) != null
+  and (.sync_bridge.collection_symbols | index("tondo_rt_sync_map_compare_exchange")) != null
+  and (.sync_bridge.collection_symbols | index("tondo_rt_sync_queue_snapshot")) != null
   and .direct_calls == "verified-ordinal-resolved-private-symbols"
   and .visibility == "compiler-runtime-only"
   and .public_ffi == "forbidden"
@@ -71,6 +80,22 @@ for symbol in \
     tondo_rt_sync_park_waiters; do
     grep -Fq "$symbol" "$root/crates/tondo-native-runtime/src/lib.rs" \
         || { echo "native sync ABI symbol is missing: $symbol" >&2; exit 1; }
+done
+for symbol in \
+    tondo_rt_sync_array_new \
+    tondo_rt_sync_array_compare_exchange \
+    tondo_rt_sync_array_snapshot \
+    tondo_rt_sync_map_new \
+    tondo_rt_sync_map_compare_exchange \
+    tondo_rt_sync_map_snapshot \
+    tondo_rt_sync_set_new \
+    tondo_rt_sync_set_snapshot \
+    tondo_rt_sync_stack_new \
+    tondo_rt_sync_stack_snapshot \
+    tondo_rt_sync_queue_new \
+    tondo_rt_sync_queue_snapshot; do
+    grep -Fq "$symbol" "$root/crates/tondo-native-runtime/src/lib.rs" \
+        || { echo "native collection ABI symbol is missing: $symbol" >&2; exit 1; }
 done
 grep -Fq 'cooperative VM never calls the blocking wait symbol' \
     "$root/docs/contracts/native-abi.md" \

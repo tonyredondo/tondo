@@ -43,7 +43,9 @@ jq -e '
   and .frontend.status == "verified"
   and .frontend.contract == "testing/stdlib-sync-collection-frontend.json"
   and .frontend.document == "docs/contracts/stdlib-sync-collection-frontend.md"
-  and .frontend.runtime_lowering == "pending-STD-SYNC-COLLECTION-IMPL-001"
+  and .frontend.runtime_lowering == "verified-hosted-runtime-boundary"
+  and .frontend.implementation_contract == "testing/stdlib-sync-collection.json"
+  and .frontend.implementation_document == "docs/contracts/stdlib-sync-collection.md"
   and .frontend.public_api_promoted == false
   and .surface.types == [
     "SyncError = { InvalidCapacity, InvalidParties, ResourceLimit, ReentrantLock, ReentrantInitialization, Broken }",
@@ -173,6 +175,8 @@ jq -e '
   and .collections.operations_suspend_under_contention == true
   and .collections.operations_selectable == false
   and .collections.snapshot == "one-linearization-coherent-value-collection"
+  and .collections.implementation_contract == "testing/stdlib-sync-collection.json"
+  and .collections.runtime_status == "verified-hosted-vm-and-native-runtime-abi"
   and .collections.direct_for.protocol == "AsyncIterator"
   and .collections.direct_for.horizon == "finite-structural-O1"
   and .collections.direct_for.binding == "value-only"
@@ -191,7 +195,7 @@ jq -e '
   and .performance.scope.native_aot == "not-claimed"
   and .performance.oracle.kind == "independent-model-and-host-invariant-checks"
   and .performance.invariants.fairness == "zero-FIFO-registration-violations"
-  and .promotion.next_blocks == ["STD-SYNC-COLLECTION-IMPL-001"]
+  and .promotion.next_blocks == ["STD-SYNC-COLLECTION-ITER-001"]
   and .implementation.status == "verified-compiler-hosted-parking-native-bridge"
   and .implementation.public_api_promoted == false
   and .implementation.host == "scheduler-backed-hosted-model"
@@ -221,7 +225,9 @@ for path in \
     testing/stdlib-sync-performance.json \
     docs/contracts/stdlib-sync-performance.md \
     testing/stdlib-sync-collection-frontend.json \
-    docs/contracts/stdlib-sync-collection-frontend.md; do
+    docs/contracts/stdlib-sync-collection-frontend.md \
+    testing/stdlib-sync-collection.json \
+    docs/contracts/stdlib-sync-collection.md; do
     [[ -f "$root/$path" ]] || die "missing linked contract: $path"
 done
 
@@ -241,6 +247,8 @@ for marker in \
     'STD-SYNC-HOST-001' \
     'STD-SYNC-PERF-001' \
     'STD-SYNC-COLLECTION-FRONTEND-001' \
+    'STD-SYNC-COLLECTION-IMPL-001' \
+    'verified-hosted-vm-and-native-runtime-abi' \
     'tondo-vm-hosted' \
     'zero-FIFO-registration-violations'; do
     grep -Fq "$marker" "$root/docs/contracts/stdlib-sync.md" \
@@ -255,8 +263,12 @@ grep -Fq 'testing/stdlib-sync-performance.json' "$root/TONDO_STANDARD_LIBRARY_SP
     || die "main stdlib spec does not link the sync performance contract"
 grep -Fq 'testing/stdlib-sync-collection-frontend.json' "$root/TONDO_STANDARD_LIBRARY_SPEC.md" \
     || die "main stdlib spec does not link the sync collection frontend contract"
+grep -Fq 'testing/stdlib-sync-collection.json' "$root/TONDO_STANDARD_LIBRARY_SPEC.md" \
+    || die "main stdlib spec does not link the sync collection implementation contract"
 grep -Fq 'stdlib-sync-collection-frontend.md' "$root/docs/contracts/stdlib-sync.md" \
     || die "sync contract does not link the collection frontend contract"
+grep -Fq 'stdlib-sync-collection.md' "$root/docs/contracts/stdlib-sync.md" \
+    || die "sync contract does not link the collection implementation contract"
 
 [[ -x "$root/scripts/stdlib-sync-performance.sh" ]] \
     || die "sync performance runner is not executable"
@@ -268,7 +280,12 @@ for symbol in \
     tondo_rt_atomic_compare_exchange \
     tondo_rt_sync_park_new \
     tondo_rt_sync_park_wait \
-    tondo_rt_sync_park_wake; do
+    tondo_rt_sync_park_wake \
+    tondo_rt_sync_array_new \
+    tondo_rt_sync_map_new \
+    tondo_rt_sync_set_new \
+    tondo_rt_sync_stack_new \
+    tondo_rt_sync_queue_new; do
     grep -Fq "$symbol" "$root/crates/tondo-native-runtime/src/lib.rs" \
         || die "sync host bridge misses native symbol: $symbol"
 done
@@ -277,5 +294,7 @@ grep -Fq 'cooperative VM never calls the blocking wait symbol' \
     || die "sync host bridge does not document cooperative non-blocking wait"
 grep -Fq 'set_execution_unit' "$root/crates/tondo-vm/src/runtime/execute.rs" \
     || die "sync host bridge misses execution-unit handoff"
+
+scripts/stdlib-sync-collection-check.sh >/dev/null
 
 echo "std.sync contract: OK (guards; condition/semaphore/once/barrier; explicit atomics; shared collections)"

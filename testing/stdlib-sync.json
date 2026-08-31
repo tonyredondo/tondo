@@ -565,6 +565,8 @@
     "operations_suspend_under_contention": true,
     "operations_selectable": false,
     "snapshot": "one-linearization-coherent-value-collection",
+    "implementation_contract": "testing/stdlib-sync-collection.json",
+    "runtime_status": "verified-hosted-vm-and-native-runtime-abi",
     "direct_for": {
       "protocol": "AsyncIterator",
       "horizon": "finite-structural-O1",
@@ -590,7 +592,9 @@
     "status": "verified",
     "contract": "testing/stdlib-sync-collection-frontend.json",
     "document": "docs/contracts/stdlib-sync-collection-frontend.md",
-    "runtime_lowering": "pending-STD-SYNC-COLLECTION-IMPL-001",
+    "runtime_lowering": "verified-hosted-runtime-boundary",
+    "implementation_contract": "testing/stdlib-sync-collection.json",
+    "implementation_document": "docs/contracts/stdlib-sync-collection.md",
     "public_api_promoted": false
   },
   "fairness": {
@@ -799,10 +803,13 @@
       "testing/stdlib-sync-collection-frontend.json",
       "docs/contracts/stdlib-sync-collection-frontend.md",
       "scripts/stdlib-sync-collection-frontend-check.sh",
-      "scripts/stdlib-sync-collection-frontend-test.sh"
+      "scripts/stdlib-sync-collection-frontend-test.sh",
+      "testing/stdlib-sync-collection.json",
+      "docs/contracts/stdlib-sync-collection.md",
+      "scripts/stdlib-sync-collection-check.sh",
+      "scripts/stdlib-sync-collection-test.sh"
     ],
     "required_follow_ups": [
-      "STD-SYNC-COLLECTION-IMPL-001",
       "STD-SYNC-COLLECTION-ITER-001",
       "STD-SYNC-COLLECTION-TEST-001",
       "STD-SYNC-COLLECTION-PERF-001",
@@ -813,7 +820,6 @@
   },
   "promotion": {
     "implementation_pending": [
-      "STD-SYNC-COLLECTION-IMPL-001",
       "STD-SYNC-COLLECTION-ITER-001",
       "STD-SYNC-COLLECTION-TEST-001",
       "STD-SYNC-COLLECTION-PERF-001",
@@ -821,6 +827,6 @@
       "STD-SYNC-CONF-001",
       "STD-SYNC-DOC-001"
     ],
-    "next_blocks": ["STD-SYNC-COLLECTION-IMPL-001"]
+    "next_blocks": ["STD-SYNC-COLLECTION-ITER-001"]
   }
 }

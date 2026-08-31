@@ -40,7 +40,7 @@ expect_failure missing-test \
     env TONDO_STDLIB_SYNC_COLLECTION_FRONTEND_CONTRACT="$tmp_dir/tests.json" \
     scripts/stdlib-sync-collection-frontend-check.sh
 
-jq '.promotion.next_blocks = ["STD-SYNC-COLLECTION-ITER-001"]' \
+jq '.promotion.next_blocks = ["STD-SYNC-COLLECTION-IMPL-001"]' \
     testing/stdlib-sync-collection-frontend.json > "$tmp_dir/promotion.json"
 expect_failure promotion-boundary \
     env TONDO_STDLIB_SYNC_COLLECTION_FRONTEND_CONTRACT="$tmp_dir/promotion.json" \

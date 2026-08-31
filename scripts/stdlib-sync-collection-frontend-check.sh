@@ -26,14 +26,14 @@ jq -e '
   and .contract == "docs/contracts/stdlib-sync-collection-frontend.md"
   and .spec == "TONDO_STANDARD_LIBRARY_SPEC.md"
   and .language_spec == "TONDO_LANGUAGE_SPEC.md"
-  and .implementation.status == "verified-frontend-runtime-lowering-pending"
+  and .implementation.status == "verified-frontend-lowering-consumed"
   and .implementation.public_api_promoted == false
   and .implementation.syntax == "lossless-BracketPostfix-without-new-keywords"
   and .implementation.resolution == "external-nominal-identity"
   and .implementation.formatter == "canonical-lossless-round-trip"
   and .implementation.hir_marker == "std.sync.collectionLiteral"
-  and .implementation.mir_boundary == "pending-STD-SYNC-COLLECTION-IMPL-001"
-  and .implementation.runtime == "pending-STD-SYNC-COLLECTION-IMPL-001"
+  and .implementation.mir_boundary == "verified-hosted-runtime-boundary"
+  and .implementation.runtime == "verified-by-STD-SYNC-COLLECTION-IMPL-001"
   and (.implementation.sources | type == "array" and length == 7)
   and (.implementation.tests | type == "array" and length == 5)
   and .surface.identities == [
@@ -75,9 +75,9 @@ jq -e '
   and .surface.duplicates == "ordinary-constant-collection-rules"
   and .surface.recovery == "typed-error-expression-without-partial-lowering"
   and .promotion.frontend_complete == true
-  and .promotion.runtime_complete == false
-  and .promotion.runtime_block == "STD-SYNC-COLLECTION-IMPL-001"
-  and .promotion.next_blocks == ["STD-SYNC-COLLECTION-IMPL-001"]
+  and .promotion.runtime_complete == true
+  and .promotion.implementation_block == "STD-SYNC-COLLECTION-IMPL-001"
+  and .promotion.next_blocks == ["STD-SYNC-COLLECTION-ITER-001"]
   and ((.negative_cases | unique | length) == (.negative_cases | length))
   and (.negative_cases | length) == 13
 ' "$contract" >/dev/null || die "invalid machine-readable frontend contract"
@@ -128,7 +128,9 @@ jq -e '
   .frontend.task == "STD-SYNC-COLLECTION-FRONTEND-001"
   and .frontend.status == "verified"
   and .frontend.contract == "testing/stdlib-sync-collection-frontend.json"
-  and .promotion.next_blocks == ["STD-SYNC-COLLECTION-IMPL-001"]
+  and .frontend.runtime_lowering == "verified-hosted-runtime-boundary"
+  and .frontend.implementation_contract == "testing/stdlib-sync-collection.json"
+  and .promotion.next_blocks == ["STD-SYNC-COLLECTION-ITER-001"]
   and (.promotion.implementation_pending | index("STD-SYNC-COLLECTION-FRONTEND-001")) == null
 ' "$root/testing/stdlib-sync.json" >/dev/null \
     || die "parent std.sync registry does not promote the frontend"

@@ -3063,6 +3063,16 @@ impl Verifier<'_> {
                         _ => None,
                     })
                 };
+                let sync_collection = |ty, name: &str, arity| -> Result<bool, MirInvariantError> {
+                    Ok(matches!(
+                        self.kind(ty, context)?,
+                        TypeKind::Nominal { identity, arguments }
+                            if identity.package().as_str() == "toolchain:std:0.1-bootstrap"
+                                && identity.module().as_str() == "sync"
+                                && identity.declaration().names().first().is_some_and(|candidate| candidate.as_str() == name)
+                                && arguments.len() == arity
+                    ))
+                };
                 let valid = match host_function {
                     super::MirBootstrapHostFunction::ConsolePrint
                     | super::MirBootstrapHostFunction::ConsolePrintln => {
@@ -3144,6 +3154,23 @@ impl Verifier<'_> {
                         arguments.len() == 1
                             && arguments[0].ty == self.hir.interner().scalar(ScalarType::UInt64)
                             && pointer_element(operation.ty)?.is_some()
+                    }
+                    super::MirBootstrapHostFunction::SyncArrayLiteral => {
+                        arguments.len() <= 128 && sync_collection(operation.ty, "Array", 1)?
+                    }
+                    super::MirBootstrapHostFunction::SyncMapLiteral => {
+                        arguments.len() <= 128
+                            && arguments.len().is_multiple_of(2)
+                            && sync_collection(operation.ty, "Map", 2)?
+                    }
+                    super::MirBootstrapHostFunction::SyncSetLiteral => {
+                        arguments.len() <= 128 && sync_collection(operation.ty, "Set", 1)?
+                    }
+                    super::MirBootstrapHostFunction::SyncStackLiteral => {
+                        arguments.len() <= 128 && sync_collection(operation.ty, "Stack", 1)?
+                    }
+                    super::MirBootstrapHostFunction::SyncQueueLiteral => {
+                        arguments.len() <= 128 && sync_collection(operation.ty, "Queue", 1)?
                     }
                     super::MirBootstrapHostFunction::TestingLog => {
                         arguments.len() == 1

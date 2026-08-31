@@ -12,7 +12,11 @@ literales cualificados de colecciones está cerrado por
 `STD-SYNC-COLLECTION-FRONTEND-001`; su contrato es
 [`testing/stdlib-sync-collection-frontend.json`](../../testing/stdlib-sync-collection-frontend.json)
 y su guía normativa [`stdlib-sync-collection-frontend.md`](./stdlib-sync-collection-frontend.md).
-El runtime de esos handles sigue pendiente de `STD-SYNC-COLLECTION-IMPL-001`.
+La implementación de esos handles para el modelo hosted y el ABI nativo privado
+está cerrada por `STD-SYNC-COLLECTION-IMPL-001`; su registro es
+[`testing/stdlib-sync-collection.json`](../../testing/stdlib-sync-collection.json)
+y su contrato [`stdlib-sync-collection.md`](./stdlib-sync-collection.md). La
+iteración directa sigue pendiente de `STD-SYNC-COLLECTION-ITER-001`.
 
 Implementación host: `scheduler-backed-hosted-model` con puente
 `verified-host-parking-native-atomic-epoch-bridge`.
@@ -64,10 +68,13 @@ El frontend de colecciones compartidas ya resuelve por identidad nominal,
 preserva la forma lossless `PathExpr + BracketPostfix`, admite aliases de
 `std.sync`, vacíos contextuales, `sync.Map[:]`, trailing comma y diagnósticos de
 duplicados. El HIR publica únicamente el marcador interno
-`std.sync.collectionLiteral`; el verifier lo sella y el lowering MIR detiene la
-construcción con la frontera explícita de `STD-SYNC-COLLECTION-IMPL-001`. Por
-tanto, esta leaf no presenta todavía una colección concurrente ejecutable ni
-una API pública promovida.
+`std.sync.collectionLiteral`; el verifier lo sella y el lowering MIR lo entrega
+al host. `STD-SYNC-COLLECTION-IMPL-001` verifica el runtime
+`verified-hosted-vm-and-native-runtime-abi`: el host hosted conserva el orden y
+los outcomes mediante jobs listos, y el ABI nativo usa celdas por identidad,
+parking epoch, handles opacos, CAS fuerte, límites recuperables y cleanup sin
+mantener el lock global durante la espera. No se promociona una API pública ni
+se afirma lowering genérico AOT.
 
 ## Superficie pública
 
@@ -257,8 +264,12 @@ de cambio se modela con Condition o channel.
 La sintaxis y resolución del frontend están cerradas por
 `STD-SYNC-COLLECTION-FRONTEND-001`; para el contrato detallado y su evidencia
 ejecutable véase [`stdlib-sync-collection-frontend.md`](./stdlib-sync-collection-frontend.md).
-Las operaciones listadas aquí describen la superficie futura; su lowering y
-runtime permanecen en `STD-SYNC-COLLECTION-IMPL-001`.
+La implementación de handles y operaciones para hosted/native ABI tiene un
+contrato separado en [`stdlib-sync-collection.md`](./stdlib-sync-collection.md)
+y un registro en [`testing/stdlib-sync-collection.json`](../../testing/stdlib-sync-collection.json).
+Las operaciones listadas aquí ya se ejecutan en esos dos carriles; el lowering
+genérico AOT y la iteración directa permanecen target-qualified y siguen sus
+hojas propias.
 
 Las cinco identidades calificadas son:
 
@@ -420,9 +431,10 @@ aliases globales SArray/SMap/SSet.
 
 La superficie de compilador, el parking cooperativo hosted, la continuación de
 `Once`, la campaña target-qualified de `STD-SYNC-PERF-001`, el frontend de
-literales de colecciones y la ABI nativa de atomics/señales cierran los bloques
-actualmente implementados. Permanecen pendientes el runtime e iteración de
-colecciones, `STD-SYNC-CONF-001` y
-`STD-SYNC-DOC-001`. La ABI nativa sigue siendo privada y solo su carril escalar
-`u64` está verificado aquí; los tipos genéricos y las colecciones deben
-demostrar su lowering y reclamación en sus propios bloques.
+literales y la implementación de colecciones compartidas para hosted/native ABI
+cierran los bloques actualmente implementados. Permanecen pendientes la
+iteración directa, `STD-SYNC-COLLECTION-TEST-001`,
+`STD-SYNC-COLLECTION-PERF-001`, `STD-SYNC-COLLECTION-CONF-001`,
+`STD-SYNC-CONF-001` y `STD-SYNC-DOC-001`. La ABI nativa sigue siendo privada:
+este bloque verifica el carrier escalar opaco y su reclamación, no un layout de
+tipos genéricos ni lowering AOT.

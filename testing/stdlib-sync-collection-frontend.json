@@ -10,14 +10,14 @@
   "spec": "TONDO_STANDARD_LIBRARY_SPEC.md",
   "language_spec": "TONDO_LANGUAGE_SPEC.md",
   "implementation": {
-    "status": "verified-frontend-runtime-lowering-pending",
+    "status": "verified-frontend-lowering-consumed",
     "public_api_promoted": false,
     "syntax": "lossless-BracketPostfix-without-new-keywords",
     "resolution": "external-nominal-identity",
     "formatter": "canonical-lossless-round-trip",
     "hir_marker": "std.sync.collectionLiteral",
-    "mir_boundary": "pending-STD-SYNC-COLLECTION-IMPL-001",
-    "runtime": "pending-STD-SYNC-COLLECTION-IMPL-001",
+    "mir_boundary": "verified-hosted-runtime-boundary",
+    "runtime": "verified-by-STD-SYNC-COLLECTION-IMPL-001",
     "sources": [
       "crates/tondo-compiler/src/syntax/parser.rs",
       "crates/tondo-compiler/src/resolve.rs",
@@ -32,7 +32,7 @@
       "crates/tondo-compiler/src/hir/check.rs::qualified_sync_collection_literals_resolve_by_nominal_identity",
       "crates/tondo-compiler/src/hir/check.rs::sync_collection_literal_context_and_shape_errors_are_diagnostic",
       "crates/tondo-compiler/src/hir/check.rs::sync_collection_literal_constant_duplicates_match_value_literal_rules",
-      "crates/tondo-compiler/src/mir/lower.rs::sync_collection_literals_stop_at_the_runtime_implementation_boundary"
+      "crates/tondo-compiler/src/mir/lower.rs::sync_collection_literals_lower_to_the_hosted_runtime_boundary"
     ]
   },
   "surface": {
@@ -83,9 +83,9 @@
   },
   "promotion": {
     "frontend_complete": true,
-    "runtime_complete": false,
-    "runtime_block": "STD-SYNC-COLLECTION-IMPL-001",
-    "next_blocks": ["STD-SYNC-COLLECTION-IMPL-001"]
+    "runtime_complete": true,
+    "implementation_block": "STD-SYNC-COLLECTION-IMPL-001",
+    "next_blocks": ["STD-SYNC-COLLECTION-ITER-001"]
   },
   "negative_cases": [
     "empty-array-without-type-context",

@@ -6887,13 +6887,11 @@ fn bootstrap_host_function(
         HirBootstrapHostFunction::PointerFromAddress => {
             MirBootstrapHostFunction::PointerFromAddress
         }
-        HirBootstrapHostFunction::SyncCollectionLiteral => {
-            return Err(MirError::Construction {
-                span,
-                message: "sync collection literal lowering is pending STD-SYNC-COLLECTION-IMPL-001"
-                    .into(),
-            });
-        }
+        HirBootstrapHostFunction::SyncArrayLiteral => MirBootstrapHostFunction::SyncArrayLiteral,
+        HirBootstrapHostFunction::SyncMapLiteral => MirBootstrapHostFunction::SyncMapLiteral,
+        HirBootstrapHostFunction::SyncSetLiteral => MirBootstrapHostFunction::SyncSetLiteral,
+        HirBootstrapHostFunction::SyncStackLiteral => MirBootstrapHostFunction::SyncStackLiteral,
+        HirBootstrapHostFunction::SyncQueueLiteral => MirBootstrapHostFunction::SyncQueueLiteral,
         HirBootstrapHostFunction::TestingLog => MirBootstrapHostFunction::TestingLog,
         HirBootstrapHostFunction::TestingTags => MirBootstrapHostFunction::TestingTags,
         HirBootstrapHostFunction::TestingFailNow => MirBootstrapHostFunction::TestingFailNow,
@@ -8074,7 +8072,7 @@ mod tests {
     }
 
     #[test]
-    fn sync_collection_literals_stop_at_the_runtime_implementation_boundary() {
+    fn sync_collection_literals_lower_to_the_hosted_runtime_boundary() {
         let (resolved, hir) = checked(
             "import std.sync as concurrent\n\
              fn main() {\n\
@@ -8086,13 +8084,8 @@ mod tests {
                  _ = (values, entries, set, stack, queue)\n\
              }\n",
         );
-        let error = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap_err();
-        assert!(
-            error.to_string().contains(
-                "sync collection literal lowering is pending STD-SYNC-COLLECTION-IMPL-001"
-            ),
-            "{error}"
-        );
+        let mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        verify_mir(&resolved, &hir, &mir).unwrap();
     }
 
     #[test]

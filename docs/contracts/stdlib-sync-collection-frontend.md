@@ -2,8 +2,10 @@
 
 Estado: `verified` para `STD-SYNC-COLLECTION-FRONTEND-001` en Tondo 0.1.
 Este documento cierra la sintaxis, el CST, la resolución nominal y el HIR de
-los cinco literales cualificados de `std.sync`; no afirma que exista todavía un
-runtime ejecutable. El registro machine-readable es
+los cinco literales cualificados de `std.sync`. El marcador HIR/MIR ya es
+consumido por el runtime hosted verificado y por el ABI nativo privado en el
+bloque separado `STD-SYNC-COLLECTION-IMPL-001`; este registro no afirma
+lowering AOT genérico ni una API pública promovida. El registro machine-readable es
 [`testing/stdlib-sync-collection-frontend.json`](../../testing/stdlib-sync-collection-frontend.json)
 y la implementación posterior está separada en
 `STD-SYNC-COLLECTION-IMPL-001`.
@@ -67,10 +69,11 @@ publican una construcción parcial.
 El HIR representa la construcción mediante el marcador interno
 `std.sync.collectionLiteral`, con el nominal y los operandos ya comprobados.
 El verifier vuelve a comprobar identidad, aridad y límites antes de cualquier
-backend. El lowering MIR reconoce el marcador como frontera explícita y falla
-con `STD-SYNC-COLLECTION-IMPL-001` hasta que exista la implementación de handles,
-reclamación y operaciones concurrentes. No se añade una API pública ni se
-simula un runtime.
+backend. El lowering MIR conserva el marcador como frontera explícita y lo
+entrega al host; `STD-SYNC-COLLECTION-IMPL-001` verifica la construcción de
+handles, reclamación, orden y operaciones concurrentes en hosted y en el ABI
+nativo privado. La iteración directa queda en la hoja posterior
+`STD-SYNC-COLLECTION-ITER-001`.
 
 ## Evidencia ejecutable
 
@@ -85,7 +88,8 @@ La cobertura del slice está repartida entre:
 
 Los tests canónicos están enumerados en el registro JSON y se ejecutan también
 por `scripts/stdlib-sync-collection-frontend-check.sh` y
-`scripts/stdlib-sync-collection-frontend-test.sh`. La evidencia no convierte
-esta leaf de frontend en conformidad de runtime: `STD-SYNC-COLLECTION-IMPL-001`,
-`STD-SYNC-COLLECTION-ITER-001` y sus campañas de modelo, rendimiento,
-conformance y documentación siguen siendo hojas posteriores.
+`scripts/stdlib-sync-collection-frontend-test.sh`. La evidencia de este
+documento no convierte el frontend en conformidad completa:
+`STD-SYNC-COLLECTION-ITER-001` y las campañas de modelo, rendimiento,
+conformance y documentación siguen siendo hojas posteriores. La evidencia de
+runtime se mantiene en `docs/contracts/stdlib-sync-collection.md`.

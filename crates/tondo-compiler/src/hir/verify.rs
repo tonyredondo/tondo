@@ -4682,7 +4682,11 @@ impl Verifier<'_> {
                             && argument_types[0] == self.program.interner.scalar(ScalarType::UInt64)
                             && pointer_element(expression.ty).is_some()
                     }
-                    super::HirBootstrapHostFunction::SyncCollectionLiteral => {
+                    super::HirBootstrapHostFunction::SyncArrayLiteral
+                    | super::HirBootstrapHostFunction::SyncMapLiteral
+                    | super::HirBootstrapHostFunction::SyncSetLiteral
+                    | super::HirBootstrapHostFunction::SyncStackLiteral
+                    | super::HirBootstrapHostFunction::SyncQueueLiteral => {
                         // This marker is emitted only by the qualified
                         // std.sync literal checker.  Its nominal identity is
                         // checked here so a forged HIR cannot turn the
@@ -4693,6 +4697,25 @@ impl Verifier<'_> {
                                 arguments,
                             }) => {
                                 let name = identity.declaration().names().first().map(Name::as_str);
+                                let function_matches_nominal = matches!(
+                                    (function, name),
+                                    (
+                                        super::HirBootstrapHostFunction::SyncArrayLiteral,
+                                        Some("Array")
+                                    ) | (
+                                        super::HirBootstrapHostFunction::SyncMapLiteral,
+                                        Some("Map")
+                                    ) | (
+                                        super::HirBootstrapHostFunction::SyncSetLiteral,
+                                        Some("Set")
+                                    ) | (
+                                        super::HirBootstrapHostFunction::SyncStackLiteral,
+                                        Some("Stack")
+                                    ) | (
+                                        super::HirBootstrapHostFunction::SyncQueueLiteral,
+                                        Some("Queue")
+                                    )
+                                );
                                 let nominal_arity = match name {
                                     Some("Map") => 2,
                                     Some("Array" | "Set" | "Stack" | "Queue") => 1,
@@ -4709,7 +4732,8 @@ impl Verifier<'_> {
                                     }
                                     _ => false,
                                 };
-                                identity.package().as_str() == "toolchain:std:0.1-bootstrap"
+                                function_matches_nominal
+                                    && identity.package().as_str() == "toolchain:std:0.1-bootstrap"
                                     && identity.module().as_str() == "sync"
                                     && nominal_arity == arguments.len()
                                     && operand_shape

@@ -2420,6 +2420,11 @@ impl Verifier<'_> {
                 && !callable.name.starts_with("std.sync.Once.")
                 && !callable.name.starts_with("std.sync.Barrier.")
                 && !callable.name.starts_with("std.sync.Atomic.")
+                && !callable.name.starts_with("std.sync.Array.")
+                && !callable.name.starts_with("std.sync.Map.")
+                && !callable.name.starts_with("std.sync.Set.")
+                && !callable.name.starts_with("std.sync.Stack.")
+                && !callable.name.starts_with("std.sync.Queue.")
                 && !callable.name.starts_with("std.testing.shrink")
             {
                 return Err(BytecodeVerificationError::new(
@@ -5882,6 +5887,23 @@ impl Verifier<'_> {
                             _ => None,
                         })
                     };
+                let sync_collection =
+                    |ty, name: &str, arity| -> Result<bool, BytecodeVerificationError> {
+                        let (nominal, _arguments, declaration) =
+                            self.nominal_instance(ty, context)?;
+                        let identity_suffix = format!("::sync::type::{name}");
+                        Ok(declaration.name == name
+                            && declaration.generic_arity == arity
+                            && declaration
+                                .identity
+                                .contains(":toolchain:std:0.1-bootstrap::")
+                            && declaration.identity.ends_with(&identity_suffix)
+                            && matches!(
+                                self.ty(ty, context)?.kind,
+                                BytecodeTypeKind::Nominal { nominal: Some(actual), .. }
+                                    if actual == nominal
+                            ))
+                    };
                 let valid = match host_function {
                     BytecodeBootstrapHostFunction::ConsolePrint
                     | BytecodeBootstrapHostFunction::ConsolePrintln => {
@@ -5962,6 +5984,23 @@ impl Verifier<'_> {
                         arguments.len() == 1
                             && self.is_scalar(arguments[0].ty, BytecodeScalarType::UInt64)
                             && pointer_element(operation.ty)?.is_some()
+                    }
+                    BytecodeBootstrapHostFunction::SyncArrayLiteral => {
+                        arguments.len() <= 128 && sync_collection(operation.ty, "Array", 1)?
+                    }
+                    BytecodeBootstrapHostFunction::SyncMapLiteral => {
+                        arguments.len() <= 128
+                            && arguments.len().is_multiple_of(2)
+                            && sync_collection(operation.ty, "Map", 2)?
+                    }
+                    BytecodeBootstrapHostFunction::SyncSetLiteral => {
+                        arguments.len() <= 128 && sync_collection(operation.ty, "Set", 1)?
+                    }
+                    BytecodeBootstrapHostFunction::SyncStackLiteral => {
+                        arguments.len() <= 128 && sync_collection(operation.ty, "Stack", 1)?
+                    }
+                    BytecodeBootstrapHostFunction::SyncQueueLiteral => {
+                        arguments.len() <= 128 && sync_collection(operation.ty, "Queue", 1)?
                     }
                     BytecodeBootstrapHostFunction::TestingLog => {
                         arguments.len() == 1

@@ -541,6 +541,11 @@ enum HostValue {
     SyncAtomic {
         value: RuntimeValue,
     },
+    SyncArray(Vec<RuntimeValue>),
+    SyncMap(Vec<(RuntimeValue, RuntimeValue)>),
+    SyncSet(Vec<RuntimeValue>),
+    SyncStack(Vec<RuntimeValue>),
+    SyncQueue(VecDeque<RuntimeValue>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -7122,6 +7127,527 @@ impl VmHost for BootstrapHost {
                     values: Vec::new(),
                 })
             }
+            ("std.sync.Array.literal", values) => {
+                if values.len() as u64 > self.max_bytes {
+                    return Err(VmError::Host(
+                        "sync.Array literal exceeds the configured collection limit".into(),
+                    ));
+                }
+                Ok(self.allocate(
+                    RuntimeHostValueKind::SyncArray,
+                    HostValue::SyncArray(values.to_vec()),
+                ))
+            }
+            ("std.sync.Map.literal", values) if values.len().is_multiple_of(2) => {
+                let mut entries = Vec::with_capacity(values.len() / 2);
+                for pair in values.chunks_exact(2) {
+                    if let Some(index) = entries.iter().position(|(key, _)| key == &pair[0]) {
+                        entries[index].1 = pair[1].clone();
+                    } else {
+                        entries.push((pair[0].clone(), pair[1].clone()));
+                    }
+                }
+                if entries.len() as u64 > self.max_bytes {
+                    return Err(VmError::Host(
+                        "sync.Map literal exceeds the configured collection limit".into(),
+                    ));
+                }
+                Ok(self.allocate(RuntimeHostValueKind::SyncMap, HostValue::SyncMap(entries)))
+            }
+            ("std.sync.Set.literal", values) => {
+                let mut unique = Vec::with_capacity(values.len());
+                for value in values {
+                    if !unique.contains(value) {
+                        unique.push(value.clone());
+                    }
+                }
+                if unique.len() as u64 > self.max_bytes {
+                    return Err(VmError::Host(
+                        "sync.Set literal exceeds the configured collection limit".into(),
+                    ));
+                }
+                Ok(self.allocate(RuntimeHostValueKind::SyncSet, HostValue::SyncSet(unique)))
+            }
+            ("std.sync.Stack.literal", values) => {
+                if values.len() as u64 > self.max_bytes {
+                    return Err(VmError::Host(
+                        "sync.Stack literal exceeds the configured collection limit".into(),
+                    ));
+                }
+                Ok(self.allocate(
+                    RuntimeHostValueKind::SyncStack,
+                    HostValue::SyncStack(values.to_vec()),
+                ))
+            }
+            ("std.sync.Queue.literal", values) => {
+                if values.len() as u64 > self.max_bytes {
+                    return Err(VmError::Host(
+                        "sync.Queue literal exceeds the configured collection limit".into(),
+                    ));
+                }
+                Ok(self.allocate(
+                    RuntimeHostValueKind::SyncQueue,
+                    HostValue::SyncQueue(values.iter().cloned().collect()),
+                ))
+            }
+            ("std.sync.Array.length", [receiver]) => {
+                let id =
+                    self.sync_host_id(receiver, RuntimeHostValueKind::SyncArray, "sync.Array")?;
+                match self.values.get(&id) {
+                    Some(HostValue::SyncArray(values)) => Ok(RuntimeValue::Integer(
+                        i128::try_from(values.len())
+                            .map_err(|_| VmError::Host("sync.Array length exceeds Int".into()))?,
+                    )),
+                    _ => Err(VmError::Host("sync.Array token is stale or invalid".into())),
+                }
+            }
+            ("std.sync.Array.isEmpty", [receiver]) => {
+                let id =
+                    self.sync_host_id(receiver, RuntimeHostValueKind::SyncArray, "sync.Array")?;
+                match self.values.get(&id) {
+                    Some(HostValue::SyncArray(values)) => Ok(RuntimeValue::Bool(values.is_empty())),
+                    _ => Err(VmError::Host("sync.Array token is stale or invalid".into())),
+                }
+            }
+            ("std.sync.Array.get", [receiver, RuntimeValue::Integer(index)]) => {
+                let id =
+                    self.sync_host_id(receiver, RuntimeHostValueKind::SyncArray, "sync.Array")?;
+                let Some(index) = usize::try_from(*index).ok() else {
+                    return Ok(RuntimeValue::OptionNone);
+                };
+                match self.values.get(&id) {
+                    Some(HostValue::SyncArray(values)) => Ok(values
+                        .get(index)
+                        .cloned()
+                        .map(|value| RuntimeValue::OptionSome(Box::new(value)))
+                        .unwrap_or(RuntimeValue::OptionNone)),
+                    _ => Err(VmError::Host("sync.Array token is stale or invalid".into())),
+                }
+            }
+            ("std.sync.Array.set", [receiver, RuntimeValue::Integer(index), value]) => {
+                let id =
+                    self.sync_host_id(receiver, RuntimeHostValueKind::SyncArray, "sync.Array")?;
+                let Some(index) = usize::try_from(*index).ok() else {
+                    return Ok(self.collection_result_error("sync.Array index is invalid"));
+                };
+                let previous = match self.values.get_mut(&id) {
+                    Some(HostValue::SyncArray(values)) => {
+                        let Some(slot) = values.get_mut(index) else {
+                            return Ok(self.collection_result_error("sync.Array index is invalid"));
+                        };
+                        std::mem::replace(slot, value.clone())
+                    }
+                    _ => return Err(VmError::Host("sync.Array token is stale or invalid".into())),
+                };
+                Ok(RuntimeValue::ResultOk(Box::new(previous)))
+            }
+            (
+                "std.sync.Array.compareExchange",
+                [receiver, RuntimeValue::Integer(index), expected, desired],
+            ) => {
+                let id =
+                    self.sync_host_id(receiver, RuntimeHostValueKind::SyncArray, "sync.Array")?;
+                let Some(index) = usize::try_from(*index).ok() else {
+                    return Ok(self.collection_result_error("sync.Array index is invalid"));
+                };
+                let (variant, observed) = match self.values.get_mut(&id) {
+                    Some(HostValue::SyncArray(values)) => {
+                        let Some(slot) = values.get_mut(index) else {
+                            return Ok(self.collection_result_error("sync.Array index is invalid"));
+                        };
+                        let observed = slot.clone();
+                        if observed == *expected {
+                            *slot = desired.clone();
+                            (0, observed)
+                        } else {
+                            (1, observed)
+                        }
+                    }
+                    _ => return Err(VmError::Host("sync.Array token is stale or invalid".into())),
+                };
+                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Variant {
+                    name: "CompareExchange".into(),
+                    variant,
+                    values: vec![observed],
+                })))
+            }
+            ("std.sync.Array.snapshot", [receiver]) => {
+                let id =
+                    self.sync_host_id(receiver, RuntimeHostValueKind::SyncArray, "sync.Array")?;
+                let values: Vec<RuntimeValue> = match self.values.get(&id) {
+                    Some(HostValue::SyncArray(values)) => values.clone(),
+                    _ => return Err(VmError::Host("sync.Array token is stale or invalid".into())),
+                };
+                if values.len() as u64 > self.max_bytes {
+                    return Ok(self.collection_result_error(
+                        "sync.Array snapshot exceeds the configured collection limit",
+                    ));
+                }
+                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Array(
+                    values,
+                ))))
+            }
+            ("std.sync.Map.length", [receiver]) => {
+                let id = self.sync_host_id(receiver, RuntimeHostValueKind::SyncMap, "sync.Map")?;
+                match self.values.get(&id) {
+                    Some(HostValue::SyncMap(entries)) => Ok(RuntimeValue::Integer(
+                        i128::try_from(entries.len())
+                            .map_err(|_| VmError::Host("sync.Map length exceeds Int".into()))?,
+                    )),
+                    _ => Err(VmError::Host("sync.Map token is stale or invalid".into())),
+                }
+            }
+            ("std.sync.Map.isEmpty", [receiver]) => {
+                let id = self.sync_host_id(receiver, RuntimeHostValueKind::SyncMap, "sync.Map")?;
+                match self.values.get(&id) {
+                    Some(HostValue::SyncMap(entries)) => Ok(RuntimeValue::Bool(entries.is_empty())),
+                    _ => Err(VmError::Host("sync.Map token is stale or invalid".into())),
+                }
+            }
+            ("std.sync.Map.get", [receiver, key]) => {
+                let id = self.sync_host_id(receiver, RuntimeHostValueKind::SyncMap, "sync.Map")?;
+                match self.values.get(&id) {
+                    Some(HostValue::SyncMap(entries)) => Ok(entries
+                        .iter()
+                        .find(|(entry_key, _)| entry_key == key)
+                        .map(|(_, value)| RuntimeValue::OptionSome(Box::new(value.clone())))
+                        .unwrap_or(RuntimeValue::OptionNone)),
+                    _ => Err(VmError::Host("sync.Map token is stale or invalid".into())),
+                }
+            }
+            ("std.sync.Map.contains", [receiver, key]) => {
+                let id = self.sync_host_id(receiver, RuntimeHostValueKind::SyncMap, "sync.Map")?;
+                match self.values.get(&id) {
+                    Some(HostValue::SyncMap(entries)) => Ok(RuntimeValue::Bool(
+                        entries.iter().any(|(entry_key, _)| entry_key == key),
+                    )),
+                    _ => Err(VmError::Host("sync.Map token is stale or invalid".into())),
+                }
+            }
+            ("std.sync.Map.insert", [receiver, key, value]) => {
+                let id = self.sync_host_id(receiver, RuntimeHostValueKind::SyncMap, "sync.Map")?;
+                let previous = match self.values.get_mut(&id) {
+                    Some(HostValue::SyncMap(entries)) => {
+                        if let Some(index) =
+                            entries.iter().position(|(entry_key, _)| entry_key == key)
+                        {
+                            Some(std::mem::replace(&mut entries[index].1, value.clone()))
+                        } else {
+                            if entries.len() as u64 >= self.max_bytes {
+                                return Ok(self.collection_result_error(
+                                    "sync.Map insert exceeds the configured collection limit",
+                                ));
+                            }
+                            entries.push((key.clone(), value.clone()));
+                            None
+                        }
+                    }
+                    _ => return Err(VmError::Host("sync.Map token is stale or invalid".into())),
+                };
+                Ok(RuntimeValue::ResultOk(Box::new(
+                    previous.map_or(RuntimeValue::OptionNone, |value| {
+                        RuntimeValue::OptionSome(Box::new(value))
+                    }),
+                )))
+            }
+            ("std.sync.Map.remove", [receiver, key]) => {
+                let id = self.sync_host_id(receiver, RuntimeHostValueKind::SyncMap, "sync.Map")?;
+                let previous = match self.values.get_mut(&id) {
+                    Some(HostValue::SyncMap(entries)) => entries
+                        .iter()
+                        .position(|(entry_key, _)| entry_key == key)
+                        .map(|index| entries.remove(index).1),
+                    _ => return Err(VmError::Host("sync.Map token is stale or invalid".into())),
+                };
+                Ok(previous.map_or(RuntimeValue::OptionNone, |value| {
+                    RuntimeValue::OptionSome(Box::new(value))
+                }))
+            }
+            ("std.sync.Map.compareExchange", [receiver, key, expected, desired]) => {
+                let id = self.sync_host_id(receiver, RuntimeHostValueKind::SyncMap, "sync.Map")?;
+                let (variant, observed) = match self.values.get_mut(&id) {
+                    Some(HostValue::SyncMap(entries)) => {
+                        let position = entries.iter().position(|(entry_key, _)| entry_key == key);
+                        let observed = position.map_or(RuntimeValue::OptionNone, |index| {
+                            RuntimeValue::OptionSome(Box::new(entries[index].1.clone()))
+                        });
+                        if observed == *expected {
+                            match desired {
+                                RuntimeValue::OptionNone => {
+                                    if let Some(index) = position {
+                                        entries.remove(index);
+                                    }
+                                }
+                                RuntimeValue::OptionSome(value) => {
+                                    if let Some(index) = position {
+                                        entries[index].1 = (**value).clone();
+                                    } else {
+                                        if entries.len() as u64 >= self.max_bytes {
+                                            return Ok(self.collection_result_error(
+                                                "sync.Map compareExchange exceeds the configured collection limit",
+                                            ));
+                                        }
+                                        entries.push((key.clone(), (**value).clone()));
+                                    }
+                                }
+                                _ => {
+                                    return Err(VmError::Host(
+                                        "sync.Map compareExchange expects an optional value".into(),
+                                    ));
+                                }
+                            }
+                            (0, observed)
+                        } else {
+                            (1, observed)
+                        }
+                    }
+                    _ => return Err(VmError::Host("sync.Map token is stale or invalid".into())),
+                };
+                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Variant {
+                    name: "CompareExchange".into(),
+                    variant,
+                    values: vec![observed],
+                })))
+            }
+            ("std.sync.Map.snapshot", [receiver]) => {
+                let id = self.sync_host_id(receiver, RuntimeHostValueKind::SyncMap, "sync.Map")?;
+                let entries = match self.values.get(&id) {
+                    Some(HostValue::SyncMap(entries)) => entries.clone(),
+                    _ => return Err(VmError::Host("sync.Map token is stale or invalid".into())),
+                };
+                if entries.len() as u64 > self.max_bytes {
+                    return Ok(self.collection_result_error(
+                        "sync.Map snapshot exceeds the configured collection limit",
+                    ));
+                }
+                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Map(entries))))
+            }
+            ("std.sync.Set.length", [receiver]) => {
+                let id = self.sync_host_id(receiver, RuntimeHostValueKind::SyncSet, "sync.Set")?;
+                match self.values.get(&id) {
+                    Some(HostValue::SyncSet(values)) => Ok(RuntimeValue::Integer(
+                        i128::try_from(values.len())
+                            .map_err(|_| VmError::Host("sync.Set length exceeds Int".into()))?,
+                    )),
+                    _ => Err(VmError::Host("sync.Set token is stale or invalid".into())),
+                }
+            }
+            ("std.sync.Set.isEmpty", [receiver]) => {
+                let id = self.sync_host_id(receiver, RuntimeHostValueKind::SyncSet, "sync.Set")?;
+                match self.values.get(&id) {
+                    Some(HostValue::SyncSet(values)) => Ok(RuntimeValue::Bool(values.is_empty())),
+                    _ => Err(VmError::Host("sync.Set token is stale or invalid".into())),
+                }
+            }
+            ("std.sync.Set.contains", [receiver, key]) => {
+                let id = self.sync_host_id(receiver, RuntimeHostValueKind::SyncSet, "sync.Set")?;
+                match self.values.get(&id) {
+                    Some(HostValue::SyncSet(values)) => {
+                        Ok(RuntimeValue::Bool(values.contains(key)))
+                    }
+                    _ => Err(VmError::Host("sync.Set token is stale or invalid".into())),
+                }
+            }
+            ("std.sync.Set.insert", [receiver, key]) => {
+                let id = self.sync_host_id(receiver, RuntimeHostValueKind::SyncSet, "sync.Set")?;
+                let inserted = match self.values.get_mut(&id) {
+                    Some(HostValue::SyncSet(values)) => {
+                        if values.contains(key) {
+                            false
+                        } else {
+                            if values.len() as u64 >= self.max_bytes {
+                                return Ok(self.collection_result_error(
+                                    "sync.Set insert exceeds the configured collection limit",
+                                ));
+                            }
+                            values.push(key.clone());
+                            true
+                        }
+                    }
+                    _ => return Err(VmError::Host("sync.Set token is stale or invalid".into())),
+                };
+                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Bool(
+                    inserted,
+                ))))
+            }
+            ("std.sync.Set.remove", [receiver, key]) => {
+                let id = self.sync_host_id(receiver, RuntimeHostValueKind::SyncSet, "sync.Set")?;
+                let removed = match self.values.get_mut(&id) {
+                    Some(HostValue::SyncSet(values)) => values
+                        .iter()
+                        .position(|value| value == key)
+                        .map(|index| {
+                            values.remove(index);
+                            true
+                        })
+                        .unwrap_or(false),
+                    _ => return Err(VmError::Host("sync.Set token is stale or invalid".into())),
+                };
+                Ok(RuntimeValue::Bool(removed))
+            }
+            ("std.sync.Set.snapshot", [receiver]) => {
+                let id = self.sync_host_id(receiver, RuntimeHostValueKind::SyncSet, "sync.Set")?;
+                let values: Vec<RuntimeValue> = match self.values.get(&id) {
+                    Some(HostValue::SyncSet(values)) => values.clone(),
+                    _ => return Err(VmError::Host("sync.Set token is stale or invalid".into())),
+                };
+                if values.len() as u64 > self.max_bytes {
+                    return Ok(self.collection_result_error(
+                        "sync.Set snapshot exceeds the configured collection limit",
+                    ));
+                }
+                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Set(values))))
+            }
+            ("std.sync.Stack.length", [receiver]) => {
+                let id =
+                    self.sync_host_id(receiver, RuntimeHostValueKind::SyncStack, "sync.Stack")?;
+                match self.values.get(&id) {
+                    Some(HostValue::SyncStack(values)) => Ok(RuntimeValue::Integer(
+                        i128::try_from(values.len())
+                            .map_err(|_| VmError::Host("sync.Stack length exceeds Int".into()))?,
+                    )),
+                    _ => Err(VmError::Host("sync.Stack token is stale or invalid".into())),
+                }
+            }
+            ("std.sync.Stack.isEmpty", [receiver]) => {
+                let id =
+                    self.sync_host_id(receiver, RuntimeHostValueKind::SyncStack, "sync.Stack")?;
+                match self.values.get(&id) {
+                    Some(HostValue::SyncStack(values)) => Ok(RuntimeValue::Bool(values.is_empty())),
+                    _ => Err(VmError::Host("sync.Stack token is stale or invalid".into())),
+                }
+            }
+            ("std.sync.Stack.push", [receiver, value]) => {
+                let id =
+                    self.sync_host_id(receiver, RuntimeHostValueKind::SyncStack, "sync.Stack")?;
+                match self.values.get_mut(&id) {
+                    Some(HostValue::SyncStack(values)) => {
+                        if values.len() as u64 >= self.max_bytes {
+                            return Ok(self.collection_result_error(
+                                "sync.Stack push exceeds the configured collection limit",
+                            ));
+                        }
+                        values.push(value.clone());
+                    }
+                    _ => return Err(VmError::Host("sync.Stack token is stale or invalid".into())),
+                }
+                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
+            }
+            ("std.sync.Stack.pop", [receiver]) => {
+                let id =
+                    self.sync_host_id(receiver, RuntimeHostValueKind::SyncStack, "sync.Stack")?;
+                match self.values.get_mut(&id) {
+                    Some(HostValue::SyncStack(values)) => {
+                        Ok(values.pop().map_or(RuntimeValue::OptionNone, |value| {
+                            RuntimeValue::OptionSome(Box::new(value))
+                        }))
+                    }
+                    _ => Err(VmError::Host("sync.Stack token is stale or invalid".into())),
+                }
+            }
+            ("std.sync.Stack.peek", [receiver]) => {
+                let id =
+                    self.sync_host_id(receiver, RuntimeHostValueKind::SyncStack, "sync.Stack")?;
+                match self.values.get(&id) {
+                    Some(HostValue::SyncStack(values)) => Ok(values
+                        .last()
+                        .cloned()
+                        .map(|value| RuntimeValue::OptionSome(Box::new(value)))
+                        .unwrap_or(RuntimeValue::OptionNone)),
+                    _ => Err(VmError::Host("sync.Stack token is stale or invalid".into())),
+                }
+            }
+            ("std.sync.Stack.snapshot", [receiver]) => {
+                let id =
+                    self.sync_host_id(receiver, RuntimeHostValueKind::SyncStack, "sync.Stack")?;
+                let values: Vec<RuntimeValue> = match self.values.get(&id) {
+                    Some(HostValue::SyncStack(values)) => values.iter().rev().cloned().collect(),
+                    _ => return Err(VmError::Host("sync.Stack token is stale or invalid".into())),
+                };
+                if values.len() as u64 > self.max_bytes {
+                    return Ok(self.collection_result_error(
+                        "sync.Stack snapshot exceeds the configured collection limit",
+                    ));
+                }
+                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Array(
+                    values,
+                ))))
+            }
+            ("std.sync.Queue.length", [receiver]) => {
+                let id =
+                    self.sync_host_id(receiver, RuntimeHostValueKind::SyncQueue, "sync.Queue")?;
+                match self.values.get(&id) {
+                    Some(HostValue::SyncQueue(values)) => Ok(RuntimeValue::Integer(
+                        i128::try_from(values.len())
+                            .map_err(|_| VmError::Host("sync.Queue length exceeds Int".into()))?,
+                    )),
+                    _ => Err(VmError::Host("sync.Queue token is stale or invalid".into())),
+                }
+            }
+            ("std.sync.Queue.isEmpty", [receiver]) => {
+                let id =
+                    self.sync_host_id(receiver, RuntimeHostValueKind::SyncQueue, "sync.Queue")?;
+                match self.values.get(&id) {
+                    Some(HostValue::SyncQueue(values)) => Ok(RuntimeValue::Bool(values.is_empty())),
+                    _ => Err(VmError::Host("sync.Queue token is stale or invalid".into())),
+                }
+            }
+            ("std.sync.Queue.enqueue", [receiver, value]) => {
+                let id =
+                    self.sync_host_id(receiver, RuntimeHostValueKind::SyncQueue, "sync.Queue")?;
+                match self.values.get_mut(&id) {
+                    Some(HostValue::SyncQueue(values)) => {
+                        if values.len() as u64 >= self.max_bytes {
+                            return Ok(self.collection_result_error(
+                                "sync.Queue enqueue exceeds the configured collection limit",
+                            ));
+                        }
+                        values.push_back(value.clone());
+                    }
+                    _ => return Err(VmError::Host("sync.Queue token is stale or invalid".into())),
+                }
+                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
+            }
+            ("std.sync.Queue.dequeue", [receiver]) => {
+                let id =
+                    self.sync_host_id(receiver, RuntimeHostValueKind::SyncQueue, "sync.Queue")?;
+                match self.values.get_mut(&id) {
+                    Some(HostValue::SyncQueue(values)) => Ok(values
+                        .pop_front()
+                        .map_or(RuntimeValue::OptionNone, |value| {
+                            RuntimeValue::OptionSome(Box::new(value))
+                        })),
+                    _ => Err(VmError::Host("sync.Queue token is stale or invalid".into())),
+                }
+            }
+            ("std.sync.Queue.peek", [receiver]) => {
+                let id =
+                    self.sync_host_id(receiver, RuntimeHostValueKind::SyncQueue, "sync.Queue")?;
+                match self.values.get(&id) {
+                    Some(HostValue::SyncQueue(values)) => Ok(values
+                        .front()
+                        .cloned()
+                        .map(|value| RuntimeValue::OptionSome(Box::new(value)))
+                        .unwrap_or(RuntimeValue::OptionNone)),
+                    _ => Err(VmError::Host("sync.Queue token is stale or invalid".into())),
+                }
+            }
+            ("std.sync.Queue.snapshot", [receiver]) => {
+                let id =
+                    self.sync_host_id(receiver, RuntimeHostValueKind::SyncQueue, "sync.Queue")?;
+                let values: Vec<RuntimeValue> = match self.values.get(&id) {
+                    Some(HostValue::SyncQueue(values)) => values.iter().cloned().collect(),
+                    _ => return Err(VmError::Host("sync.Queue token is stale or invalid".into())),
+                };
+                if values.len() as u64 > self.max_bytes {
+                    return Ok(self.collection_result_error(
+                        "sync.Queue snapshot exceeds the configured collection limit",
+                    ));
+                }
+                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Array(
+                    values,
+                ))))
+            }
             ("std.sync.mutex", [value]) => Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
                 RuntimeHostValueKind::Mutex,
                 HostValue::SyncMutex {
@@ -7716,6 +8242,28 @@ impl VmHost for BootstrapHost {
                 | "std.sync.Semaphore.acquire"
                 | "std.sync.Once.getOrInit"
                 | "std.sync.Barrier.wait"
+                | "std.sync.Array.get"
+                | "std.sync.Array.set"
+                | "std.sync.Array.compareExchange"
+                | "std.sync.Array.snapshot"
+                | "std.sync.Map.get"
+                | "std.sync.Map.contains"
+                | "std.sync.Map.insert"
+                | "std.sync.Map.remove"
+                | "std.sync.Map.compareExchange"
+                | "std.sync.Map.snapshot"
+                | "std.sync.Set.contains"
+                | "std.sync.Set.insert"
+                | "std.sync.Set.remove"
+                | "std.sync.Set.snapshot"
+                | "std.sync.Stack.push"
+                | "std.sync.Stack.pop"
+                | "std.sync.Stack.peek"
+                | "std.sync.Stack.snapshot"
+                | "std.sync.Queue.enqueue"
+                | "std.sync.Queue.dequeue"
+                | "std.sync.Queue.peek"
+                | "std.sync.Queue.snapshot"
         ) || name.starts_with("std.sync.Mutex.lock")
             || name.starts_with("std.sync.RwLock.read")
             || name.starts_with("std.sync.RwLock.write")
@@ -7723,6 +8271,28 @@ impl VmHost for BootstrapHost {
             || name.starts_with("std.sync.Semaphore.acquire")
             || name.starts_with("std.sync.Once.getOrInit")
             || name.starts_with("std.sync.Barrier.wait")
+            || name.starts_with("std.sync.Array.get")
+            || name.starts_with("std.sync.Array.set")
+            || name.starts_with("std.sync.Array.compareExchange")
+            || name.starts_with("std.sync.Array.snapshot")
+            || name.starts_with("std.sync.Map.get")
+            || name.starts_with("std.sync.Map.contains")
+            || name.starts_with("std.sync.Map.insert")
+            || name.starts_with("std.sync.Map.remove")
+            || name.starts_with("std.sync.Map.compareExchange")
+            || name.starts_with("std.sync.Map.snapshot")
+            || name.starts_with("std.sync.Set.contains")
+            || name.starts_with("std.sync.Set.insert")
+            || name.starts_with("std.sync.Set.remove")
+            || name.starts_with("std.sync.Set.snapshot")
+            || name.starts_with("std.sync.Stack.push")
+            || name.starts_with("std.sync.Stack.pop")
+            || name.starts_with("std.sync.Stack.peek")
+            || name.starts_with("std.sync.Stack.snapshot")
+            || name.starts_with("std.sync.Queue.enqueue")
+            || name.starts_with("std.sync.Queue.dequeue")
+            || name.starts_with("std.sync.Queue.peek")
+            || name.starts_with("std.sync.Queue.snapshot")
         {
             let call = self.next_async_call()?;
             if self.pending_sync_for(call, name, arguments)? {
@@ -9547,6 +10117,651 @@ mod tests {
     }
 
     #[test]
+    fn sync_collections_are_ordered_mutable_and_bounded() {
+        let mut host = BootstrapHost::default();
+        let await_sync = |host: &mut BootstrapHost, name: &str, arguments: &[RuntimeValue]| {
+            let call = host.start_async(name, arguments).unwrap();
+            let (completed, value) = host.wait_async(&[call]).unwrap();
+            assert_eq!(completed, call);
+            value
+        };
+        let array = host
+            .invoke(
+                "std.sync.Array.literal",
+                &[RuntimeValue::Integer(1), RuntimeValue::Integer(2)],
+            )
+            .unwrap();
+        assert_eq!(
+            host.invoke("std.sync.Array.length", std::slice::from_ref(&array))
+                .unwrap(),
+            RuntimeValue::Integer(2)
+        );
+        assert_eq!(
+            await_sync(
+                &mut host,
+                "std.sync.Array.get",
+                &[array.clone(), RuntimeValue::Integer(0)]
+            ),
+            RuntimeValue::OptionSome(Box::new(RuntimeValue::Integer(1)))
+        );
+        assert_eq!(
+            await_sync(
+                &mut host,
+                "std.sync.Array.get",
+                &[array.clone(), RuntimeValue::Integer(-1)]
+            ),
+            RuntimeValue::OptionNone
+        );
+        assert_eq!(
+            ok(await_sync(
+                &mut host,
+                "std.sync.Array.set",
+                &[
+                    array.clone(),
+                    RuntimeValue::Integer(1),
+                    RuntimeValue::Integer(3)
+                ],
+            )),
+            RuntimeValue::Integer(2)
+        );
+        assert!(matches!(
+            await_sync(
+                &mut host,
+                "std.sync.Array.set",
+                &[array.clone(), RuntimeValue::Integer(9), RuntimeValue::Integer(4)],
+            ),
+            RuntimeValue::ResultErr(error)
+                if matches!(error.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::CollectionError, .. })
+        ));
+        assert!(matches!(
+            ok(await_sync(
+                &mut host,
+                "std.sync.Array.compareExchange",
+                &[
+                    array.clone(),
+                    RuntimeValue::Integer(0),
+                    RuntimeValue::Integer(9),
+                    RuntimeValue::Integer(7),
+                ],
+            )),
+            RuntimeValue::Variant { name, variant: 1, values }
+                if name == "CompareExchange" && values == vec![RuntimeValue::Integer(1)]
+        ));
+        assert!(matches!(
+            ok(await_sync(
+                &mut host,
+                "std.sync.Array.compareExchange",
+                &[
+                    array.clone(),
+                    RuntimeValue::Integer(0),
+                    RuntimeValue::Integer(1),
+                    RuntimeValue::Integer(7),
+                ],
+            )),
+            RuntimeValue::Variant { name, variant: 0, values }
+                if name == "CompareExchange" && values == vec![RuntimeValue::Integer(1)]
+        ));
+        assert_eq!(
+            ok(await_sync(
+                &mut host,
+                "std.sync.Array.snapshot",
+                std::slice::from_ref(&array)
+            )),
+            RuntimeValue::Array(vec![RuntimeValue::Integer(7), RuntimeValue::Integer(3)])
+        );
+
+        let map = host
+            .invoke(
+                "std.sync.Map.literal",
+                &[
+                    RuntimeValue::String("a".into()),
+                    RuntimeValue::Integer(1),
+                    RuntimeValue::String("b".into()),
+                    RuntimeValue::Integer(2),
+                    RuntimeValue::String("a".into()),
+                    RuntimeValue::Integer(3),
+                ],
+            )
+            .unwrap();
+        assert_eq!(
+            ok(await_sync(
+                &mut host,
+                "std.sync.Map.snapshot",
+                std::slice::from_ref(&map)
+            )),
+            RuntimeValue::Map(vec![
+                (RuntimeValue::String("a".into()), RuntimeValue::Integer(3)),
+                (RuntimeValue::String("b".into()), RuntimeValue::Integer(2)),
+            ])
+        );
+        assert_eq!(
+            ok(await_sync(
+                &mut host,
+                "std.sync.Map.insert",
+                &[
+                    map.clone(),
+                    RuntimeValue::String("a".into()),
+                    RuntimeValue::Integer(4),
+                ],
+            )),
+            RuntimeValue::OptionSome(Box::new(RuntimeValue::Integer(3)))
+        );
+        assert_eq!(
+            await_sync(
+                &mut host,
+                "std.sync.Map.remove",
+                &[map.clone(), RuntimeValue::String("a".into())],
+            ),
+            RuntimeValue::OptionSome(Box::new(RuntimeValue::Integer(4)))
+        );
+        ok(await_sync(
+            &mut host,
+            "std.sync.Map.insert",
+            &[
+                map.clone(),
+                RuntimeValue::String("a".into()),
+                RuntimeValue::Integer(5),
+            ],
+        ));
+        assert!(matches!(
+            ok(await_sync(
+                &mut host,
+                "std.sync.Map.compareExchange",
+                &[
+                    map.clone(),
+                    RuntimeValue::String("b".into()),
+                    RuntimeValue::OptionSome(Box::new(RuntimeValue::Integer(2))),
+                    RuntimeValue::OptionNone,
+                ],
+            )),
+            RuntimeValue::Variant { name, variant: 0, .. } if name == "CompareExchange"
+        ));
+        assert_eq!(
+            ok(await_sync(
+                &mut host,
+                "std.sync.Map.snapshot",
+                std::slice::from_ref(&map)
+            )),
+            RuntimeValue::Map(vec![(
+                RuntimeValue::String("a".into()),
+                RuntimeValue::Integer(5)
+            ),])
+        );
+
+        let set = host
+            .invoke(
+                "std.sync.Set.literal",
+                &[
+                    RuntimeValue::String("a".into()),
+                    RuntimeValue::String("a".into()),
+                ],
+            )
+            .unwrap();
+        assert_eq!(
+            ok(await_sync(
+                &mut host,
+                "std.sync.Set.insert",
+                &[set.clone(), RuntimeValue::String("b".into())]
+            )),
+            RuntimeValue::Bool(true)
+        );
+        assert_eq!(
+            await_sync(
+                &mut host,
+                "std.sync.Set.insert",
+                &[set.clone(), RuntimeValue::String("b".into())]
+            ),
+            RuntimeValue::ResultOk(Box::new(RuntimeValue::Bool(false)))
+        );
+        assert_eq!(
+            await_sync(
+                &mut host,
+                "std.sync.Set.remove",
+                &[set.clone(), RuntimeValue::String("a".into())]
+            ),
+            RuntimeValue::Bool(true)
+        );
+        assert_eq!(
+            ok(await_sync(
+                &mut host,
+                "std.sync.Set.snapshot",
+                std::slice::from_ref(&set)
+            )),
+            RuntimeValue::Set(vec![RuntimeValue::String("b".into())])
+        );
+
+        let stack = host
+            .invoke(
+                "std.sync.Stack.literal",
+                &[RuntimeValue::Integer(1), RuntimeValue::Integer(2)],
+            )
+            .unwrap();
+        assert_eq!(
+            await_sync(
+                &mut host,
+                "std.sync.Stack.peek",
+                std::slice::from_ref(&stack)
+            ),
+            RuntimeValue::OptionSome(Box::new(RuntimeValue::Integer(2)))
+        );
+        assert_eq!(
+            ok(await_sync(
+                &mut host,
+                "std.sync.Stack.snapshot",
+                std::slice::from_ref(&stack),
+            )),
+            RuntimeValue::Array(vec![RuntimeValue::Integer(2), RuntimeValue::Integer(1)])
+        );
+        assert_eq!(
+            await_sync(
+                &mut host,
+                "std.sync.Stack.pop",
+                std::slice::from_ref(&stack)
+            ),
+            RuntimeValue::OptionSome(Box::new(RuntimeValue::Integer(2)))
+        );
+        let queue = host
+            .invoke(
+                "std.sync.Queue.literal",
+                &[RuntimeValue::Integer(1), RuntimeValue::Integer(2)],
+            )
+            .unwrap();
+        assert_eq!(
+            await_sync(
+                &mut host,
+                "std.sync.Queue.peek",
+                std::slice::from_ref(&queue)
+            ),
+            RuntimeValue::OptionSome(Box::new(RuntimeValue::Integer(1)))
+        );
+        assert_eq!(
+            ok(await_sync(
+                &mut host,
+                "std.sync.Queue.snapshot",
+                std::slice::from_ref(&queue),
+            )),
+            RuntimeValue::Array(vec![RuntimeValue::Integer(1), RuntimeValue::Integer(2)])
+        );
+        assert_eq!(
+            await_sync(
+                &mut host,
+                "std.sync.Queue.dequeue",
+                std::slice::from_ref(&queue)
+            ),
+            RuntimeValue::OptionSome(Box::new(RuntimeValue::Integer(1)))
+        );
+
+        let mut limited = BootstrapHost::with_max_bytes(Vec::new(), 1);
+        let limited_stack = limited
+            .invoke("std.sync.Stack.literal", &[RuntimeValue::Integer(1)])
+            .unwrap();
+        assert!(matches!(
+            limited
+                .invoke(
+                    "std.sync.Stack.push",
+                    &[limited_stack, RuntimeValue::Integer(2)],
+                )
+                .unwrap(),
+            RuntimeValue::ResultErr(error)
+                if matches!(error.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::CollectionError, .. })
+        ));
+    }
+
+    #[test]
+    fn sync_host_collections_cover_empty_async_and_limit_edges() {
+        let mut host = BootstrapHost::default();
+        let await_sync = |host: &mut BootstrapHost, name: &str, arguments: &[RuntimeValue]| {
+            let call = host.start_async(name, arguments).unwrap();
+            let (completed, value) = host.wait_async(&[call]).unwrap();
+            assert_eq!(completed, call);
+            value
+        };
+        let collection_error = |value: RuntimeValue| {
+            assert!(matches!(
+                value,
+                RuntimeValue::ResultErr(error)
+                    if matches!(error.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::CollectionError, .. })
+            ));
+        };
+
+        let array = host.invoke("std.sync.Array.literal", &[]).unwrap();
+        assert_eq!(
+            host.invoke("std.sync.Array.length", std::slice::from_ref(&array))
+                .unwrap(),
+            RuntimeValue::Integer(0)
+        );
+        assert_eq!(
+            host.invoke("std.sync.Array.isEmpty", std::slice::from_ref(&array))
+                .unwrap(),
+            RuntimeValue::Bool(true)
+        );
+        assert_eq!(
+            await_sync(
+                &mut host,
+                "std.sync.Array.get",
+                &[array.clone(), RuntimeValue::Integer(0)]
+            ),
+            RuntimeValue::OptionNone
+        );
+        collection_error(await_sync(
+            &mut host,
+            "std.sync.Array.set",
+            &[
+                array.clone(),
+                RuntimeValue::Integer(0),
+                RuntimeValue::Integer(1),
+            ],
+        ));
+        collection_error(await_sync(
+            &mut host,
+            "std.sync.Array.compareExchange",
+            &[
+                array.clone(),
+                RuntimeValue::Integer(0),
+                RuntimeValue::Integer(0),
+                RuntimeValue::Integer(1),
+            ],
+        ));
+        assert_eq!(
+            ok(await_sync(
+                &mut host,
+                "std.sync.Array.snapshot",
+                std::slice::from_ref(&array),
+            )),
+            RuntimeValue::Array(Vec::new())
+        );
+
+        let map = host.invoke("std.sync.Map.literal", &[]).unwrap();
+        assert_eq!(
+            host.invoke("std.sync.Map.length", std::slice::from_ref(&map))
+                .unwrap(),
+            RuntimeValue::Integer(0)
+        );
+        assert_eq!(
+            host.invoke("std.sync.Map.isEmpty", std::slice::from_ref(&map))
+                .unwrap(),
+            RuntimeValue::Bool(true)
+        );
+        assert_eq!(
+            await_sync(
+                &mut host,
+                "std.sync.Map.get",
+                &[map.clone(), RuntimeValue::String("missing".into())],
+            ),
+            RuntimeValue::OptionNone
+        );
+        assert_eq!(
+            await_sync(
+                &mut host,
+                "std.sync.Map.contains",
+                &[map.clone(), RuntimeValue::String("missing".into())],
+            ),
+            RuntimeValue::Bool(false)
+        );
+        assert_eq!(
+            await_sync(
+                &mut host,
+                "std.sync.Map.remove",
+                &[map.clone(), RuntimeValue::String("missing".into())],
+            ),
+            RuntimeValue::OptionNone
+        );
+        assert!(matches!(
+            ok(await_sync(
+                &mut host,
+                "std.sync.Map.compareExchange",
+                &[
+                    map.clone(),
+                    RuntimeValue::String("new".into()),
+                    RuntimeValue::OptionNone,
+                    RuntimeValue::OptionSome(Box::new(RuntimeValue::Integer(2))),
+                ],
+            )),
+            RuntimeValue::Variant { name, variant: 0, values }
+                if name == "CompareExchange" && values == vec![RuntimeValue::OptionNone]
+        ));
+        assert!(matches!(
+            ok(await_sync(
+                &mut host,
+                "std.sync.Map.compareExchange",
+                &[
+                    map.clone(),
+                    RuntimeValue::String("new".into()),
+                    RuntimeValue::OptionSome(Box::new(RuntimeValue::Integer(1))),
+                    RuntimeValue::OptionNone,
+                ],
+            )),
+            RuntimeValue::Variant { name, variant: 1, values }
+                if name == "CompareExchange" && values == vec![RuntimeValue::OptionSome(Box::new(RuntimeValue::Integer(2)))]
+        ));
+        assert_eq!(
+            ok(await_sync(
+                &mut host,
+                "std.sync.Map.insert",
+                &[
+                    map.clone(),
+                    RuntimeValue::String("new".into()),
+                    RuntimeValue::Integer(3),
+                ],
+            )),
+            RuntimeValue::OptionSome(Box::new(RuntimeValue::Integer(2)))
+        );
+        assert_eq!(
+            await_sync(
+                &mut host,
+                "std.sync.Map.remove",
+                &[map.clone(), RuntimeValue::String("new".into())],
+            ),
+            RuntimeValue::OptionSome(Box::new(RuntimeValue::Integer(3)))
+        );
+        assert_eq!(
+            ok(await_sync(
+                &mut host,
+                "std.sync.Map.snapshot",
+                std::slice::from_ref(&map),
+            )),
+            RuntimeValue::Map(Vec::new())
+        );
+
+        let set = host.invoke("std.sync.Set.literal", &[]).unwrap();
+        assert_eq!(
+            host.invoke("std.sync.Set.length", std::slice::from_ref(&set))
+                .unwrap(),
+            RuntimeValue::Integer(0)
+        );
+        assert_eq!(
+            host.invoke("std.sync.Set.isEmpty", std::slice::from_ref(&set))
+                .unwrap(),
+            RuntimeValue::Bool(true)
+        );
+        assert_eq!(
+            await_sync(
+                &mut host,
+                "std.sync.Set.contains",
+                &[set.clone(), RuntimeValue::Integer(1)],
+            ),
+            RuntimeValue::Bool(false)
+        );
+        assert_eq!(
+            await_sync(
+                &mut host,
+                "std.sync.Set.remove",
+                &[set.clone(), RuntimeValue::Integer(1)],
+            ),
+            RuntimeValue::Bool(false)
+        );
+        assert_eq!(
+            ok(await_sync(
+                &mut host,
+                "std.sync.Set.insert",
+                &[set.clone(), RuntimeValue::Integer(1)],
+            )),
+            RuntimeValue::Bool(true)
+        );
+        assert_eq!(
+            ok(await_sync(
+                &mut host,
+                "std.sync.Set.insert",
+                &[set.clone(), RuntimeValue::Integer(1)],
+            )),
+            RuntimeValue::Bool(false)
+        );
+        assert_eq!(
+            ok(await_sync(
+                &mut host,
+                "std.sync.Set.snapshot",
+                std::slice::from_ref(&set),
+            )),
+            RuntimeValue::Set(vec![RuntimeValue::Integer(1)])
+        );
+
+        let stack = host.invoke("std.sync.Stack.literal", &[]).unwrap();
+        assert_eq!(
+            host.invoke("std.sync.Stack.length", std::slice::from_ref(&stack))
+                .unwrap(),
+            RuntimeValue::Integer(0)
+        );
+        assert_eq!(
+            host.invoke("std.sync.Stack.isEmpty", std::slice::from_ref(&stack))
+                .unwrap(),
+            RuntimeValue::Bool(true)
+        );
+        assert_eq!(
+            await_sync(
+                &mut host,
+                "std.sync.Stack.pop",
+                std::slice::from_ref(&stack),
+            ),
+            RuntimeValue::OptionNone
+        );
+        assert_eq!(
+            await_sync(
+                &mut host,
+                "std.sync.Stack.peek",
+                std::slice::from_ref(&stack),
+            ),
+            RuntimeValue::OptionNone
+        );
+        ok(await_sync(
+            &mut host,
+            "std.sync.Stack.push",
+            &[stack.clone(), RuntimeValue::Integer(4)],
+        ));
+        assert_eq!(
+            ok(await_sync(
+                &mut host,
+                "std.sync.Stack.snapshot",
+                std::slice::from_ref(&stack),
+            )),
+            RuntimeValue::Array(vec![RuntimeValue::Integer(4)])
+        );
+
+        let queue = host.invoke("std.sync.Queue.literal", &[]).unwrap();
+        assert_eq!(
+            host.invoke("std.sync.Queue.length", std::slice::from_ref(&queue))
+                .unwrap(),
+            RuntimeValue::Integer(0)
+        );
+        assert_eq!(
+            host.invoke("std.sync.Queue.isEmpty", std::slice::from_ref(&queue))
+                .unwrap(),
+            RuntimeValue::Bool(true)
+        );
+        assert_eq!(
+            await_sync(
+                &mut host,
+                "std.sync.Queue.dequeue",
+                std::slice::from_ref(&queue),
+            ),
+            RuntimeValue::OptionNone
+        );
+        assert_eq!(
+            await_sync(
+                &mut host,
+                "std.sync.Queue.peek",
+                std::slice::from_ref(&queue),
+            ),
+            RuntimeValue::OptionNone
+        );
+        ok(await_sync(
+            &mut host,
+            "std.sync.Queue.enqueue",
+            &[queue.clone(), RuntimeValue::Integer(5)],
+        ));
+        assert_eq!(
+            ok(await_sync(
+                &mut host,
+                "std.sync.Queue.snapshot",
+                std::slice::from_ref(&queue),
+            )),
+            RuntimeValue::Array(vec![RuntimeValue::Integer(5)])
+        );
+
+        // Literal construction and every mutable collection reject growth
+        // beyond the configured host budget without mutating existing state.
+        let mut zero = BootstrapHost::with_max_bytes(Vec::new(), 0);
+        for (name, values) in [
+            ("std.sync.Array.literal", vec![RuntimeValue::Integer(1)]),
+            (
+                "std.sync.Map.literal",
+                vec![RuntimeValue::Integer(1), RuntimeValue::Integer(2)],
+            ),
+            ("std.sync.Set.literal", vec![RuntimeValue::Integer(1)]),
+            ("std.sync.Stack.literal", vec![RuntimeValue::Integer(1)]),
+            ("std.sync.Queue.literal", vec![RuntimeValue::Integer(1)]),
+        ] {
+            assert!(zero.invoke(name, &values).is_err());
+        }
+        assert!(
+            zero.invoke("std.sync.Map.literal", &[RuntimeValue::Integer(1)])
+                .is_err()
+        );
+
+        let mut limited = BootstrapHost::with_max_bytes(Vec::new(), 1);
+        let limited_map = limited
+            .invoke(
+                "std.sync.Map.literal",
+                &[RuntimeValue::Integer(1), RuntimeValue::Integer(1)],
+            )
+            .unwrap();
+        collection_error(await_sync(
+            &mut limited,
+            "std.sync.Map.insert",
+            &[
+                limited_map.clone(),
+                RuntimeValue::Integer(2),
+                RuntimeValue::Integer(2),
+            ],
+        ));
+        collection_error(await_sync(
+            &mut limited,
+            "std.sync.Map.compareExchange",
+            &[
+                limited_map,
+                RuntimeValue::Integer(2),
+                RuntimeValue::OptionNone,
+                RuntimeValue::OptionSome(Box::new(RuntimeValue::Integer(2))),
+            ],
+        ));
+        let limited_set = limited
+            .invoke("std.sync.Set.literal", &[RuntimeValue::Integer(1)])
+            .unwrap();
+        collection_error(await_sync(
+            &mut limited,
+            "std.sync.Set.insert",
+            &[limited_set, RuntimeValue::Integer(2)],
+        ));
+        let limited_queue = limited
+            .invoke("std.sync.Queue.literal", &[RuntimeValue::Integer(1)])
+            .unwrap();
+        collection_error(await_sync(
+            &mut limited,
+            "std.sync.Queue.enqueue",
+            &[limited_queue, RuntimeValue::Integer(2)],
+        ));
+    }
+
+    #[test]
     fn sync_host_covers_forged_tokens_contended_paths_and_cleanup() {
         let mut host = BootstrapHost::with_max_bytes(Vec::new(), 2);
 
@@ -10082,6 +11297,39 @@ mod tests {
                 &[forged(RuntimeHostValueKind::Barrier)],
             )
             .is_err()
+        );
+
+        let collection = host
+            .invoke(
+                "std.sync.Array.literal",
+                &[RuntimeValue::Integer(1), RuntimeValue::Integer(2)],
+            )
+            .unwrap();
+        let collection_id = token_id(&collection);
+        assert!(
+            host.invoke(
+                "std.sync.Array.length",
+                &[RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::SyncMap,
+                    id: collection_id,
+                }],
+            )
+            .is_err()
+        );
+        assert!(
+            host.invoke(
+                "std.sync.Array.length",
+                &[RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::SyncArray,
+                    id: u64::MAX,
+                }],
+            )
+            .is_err()
+        );
+        host.values.remove(&collection_id);
+        assert!(
+            host.invoke("std.sync.Array.length", std::slice::from_ref(&collection))
+                .is_err()
         );
         host.cleanup(&condition).unwrap();
         host.cleanup(&RuntimeValue::Host {

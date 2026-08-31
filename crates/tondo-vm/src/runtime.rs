@@ -230,6 +230,11 @@ pub enum RuntimeHostValueKind {
     Once,
     Barrier,
     Atomic,
+    SyncArray,
+    SyncMap,
+    SyncSet,
+    SyncStack,
+    SyncQueue,
 }
 
 /// Per-run counters useful for testing limits and collector behavior.

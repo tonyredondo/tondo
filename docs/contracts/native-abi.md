@@ -97,9 +97,23 @@ The atomic and parking maps retain `Arc` cells outside the global handle-table
 lock, so operations from distinct native workers are genuinely concurrent while
 handle validation and retain/release remain serialized. Invalid handles,
 invalid order pairs and timeout outcomes use the existing private status
-channel. This is a conformance bridge for the native scalar lane, not a
-generic managed-value or collection lowering; those consumers must add their
-own verified layouts and reclamation evidence.
+channel. The same private bridge now carries the collection implementation
+baseline. `tondo_rt_sync_array_*`, `tondo_rt_sync_map_*`, `tondo_rt_sync_set_*`,
+`tondo_rt_sync_stack_*` and `tondo_rt_sync_queue_*` expose constructors,
+observations, mutations, strong compare-exchange where defined and snapshots.
+They accept and return opaque `u64` capabilities; arrays/maps/sets use
+per-identity `RwLock` cells, stacks/queues use `Mutex` cells, and each cell has
+an epoch parking signal. A native worker retries after a changed epoch and
+never holds the global handle-table mutex while waiting. Release, copy-on-write
+cloning, stale-handle rejection and cycle/terminal cleanup remove each backing
+cell exactly once. The private CAS result tags are ABI-local and do not change
+the public `Result`/`Option` types.
+
+This collection lane is verified for the hosted VM and native runtime ABI only;
+generic managed-value lowering, algorithmic lock-free fast paths and native AOT
+lowering remain separate target-qualified work. The native runtime continues to
+declare `#![forbid(unsafe_code)]`, and no pointer, layout or public FFI symbol is
+introduced.
 
 The machine-readable record is
 [`testing/native-abi.json`](../../testing/native-abi.json). Its canonical typed

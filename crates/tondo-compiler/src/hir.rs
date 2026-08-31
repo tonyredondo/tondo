@@ -2680,10 +2680,47 @@ pub enum HirBootstrapHostFunction {
     SyncAtomicStore,
     SyncAtomicSwap,
     SyncAtomicCompareExchange,
-    /// Compiler-owned construction marker for a qualified `std.sync`
-    /// collection literal.  It is intentionally not a public host callable;
-    /// executable lowering remains gated by STD-SYNC-COLLECTION-IMPL-001.
-    SyncCollectionLiteral,
+    /// Compiler-owned construction operations for qualified `std.sync`
+    /// collection literals. They are not public host callables: the verifier
+    /// seals their nominal result identities and lowering selects the matching
+    /// opaque hosted handle.
+    SyncArrayLiteral,
+    SyncMapLiteral,
+    SyncSetLiteral,
+    SyncStackLiteral,
+    SyncQueueLiteral,
+    SyncArrayLength,
+    SyncArrayIsEmpty,
+    SyncArrayGet,
+    SyncArraySet,
+    SyncArrayCompareExchange,
+    SyncArraySnapshot,
+    SyncMapLength,
+    SyncMapIsEmpty,
+    SyncMapGet,
+    SyncMapContains,
+    SyncMapInsert,
+    SyncMapRemove,
+    SyncMapCompareExchange,
+    SyncMapSnapshot,
+    SyncSetLength,
+    SyncSetIsEmpty,
+    SyncSetContains,
+    SyncSetInsert,
+    SyncSetRemove,
+    SyncSetSnapshot,
+    SyncStackLength,
+    SyncStackIsEmpty,
+    SyncStackPush,
+    SyncStackPop,
+    SyncStackPeek,
+    SyncStackSnapshot,
+    SyncQueueLength,
+    SyncQueueIsEmpty,
+    SyncQueueEnqueue,
+    SyncQueueDequeue,
+    SyncQueuePeek,
+    SyncQueueSnapshot,
     SyncMemoryOrderRelaxed,
     SyncMemoryOrderAcquire,
     SyncMemoryOrderRelease,
@@ -3058,7 +3095,43 @@ impl HirBootstrapHostFunction {
             Self::SyncAtomicStore => "std.sync.Atomic.store",
             Self::SyncAtomicSwap => "std.sync.Atomic.swap",
             Self::SyncAtomicCompareExchange => "std.sync.Atomic.compareExchange",
-            Self::SyncCollectionLiteral => "std.sync.collectionLiteral",
+            Self::SyncArrayLiteral => "std.sync.Array.literal",
+            Self::SyncMapLiteral => "std.sync.Map.literal",
+            Self::SyncSetLiteral => "std.sync.Set.literal",
+            Self::SyncStackLiteral => "std.sync.Stack.literal",
+            Self::SyncQueueLiteral => "std.sync.Queue.literal",
+            Self::SyncArrayLength => "std.sync.Array.length",
+            Self::SyncArrayIsEmpty => "std.sync.Array.isEmpty",
+            Self::SyncArrayGet => "std.sync.Array.get",
+            Self::SyncArraySet => "std.sync.Array.set",
+            Self::SyncArrayCompareExchange => "std.sync.Array.compareExchange",
+            Self::SyncArraySnapshot => "std.sync.Array.snapshot",
+            Self::SyncMapLength => "std.sync.Map.length",
+            Self::SyncMapIsEmpty => "std.sync.Map.isEmpty",
+            Self::SyncMapGet => "std.sync.Map.get",
+            Self::SyncMapContains => "std.sync.Map.contains",
+            Self::SyncMapInsert => "std.sync.Map.insert",
+            Self::SyncMapRemove => "std.sync.Map.remove",
+            Self::SyncMapCompareExchange => "std.sync.Map.compareExchange",
+            Self::SyncMapSnapshot => "std.sync.Map.snapshot",
+            Self::SyncSetLength => "std.sync.Set.length",
+            Self::SyncSetIsEmpty => "std.sync.Set.isEmpty",
+            Self::SyncSetContains => "std.sync.Set.contains",
+            Self::SyncSetInsert => "std.sync.Set.insert",
+            Self::SyncSetRemove => "std.sync.Set.remove",
+            Self::SyncSetSnapshot => "std.sync.Set.snapshot",
+            Self::SyncStackLength => "std.sync.Stack.length",
+            Self::SyncStackIsEmpty => "std.sync.Stack.isEmpty",
+            Self::SyncStackPush => "std.sync.Stack.push",
+            Self::SyncStackPop => "std.sync.Stack.pop",
+            Self::SyncStackPeek => "std.sync.Stack.peek",
+            Self::SyncStackSnapshot => "std.sync.Stack.snapshot",
+            Self::SyncQueueLength => "std.sync.Queue.length",
+            Self::SyncQueueIsEmpty => "std.sync.Queue.isEmpty",
+            Self::SyncQueueEnqueue => "std.sync.Queue.enqueue",
+            Self::SyncQueueDequeue => "std.sync.Queue.dequeue",
+            Self::SyncQueuePeek => "std.sync.Queue.peek",
+            Self::SyncQueueSnapshot => "std.sync.Queue.snapshot",
             Self::SyncMemoryOrderRelaxed => "intrinsic.sync.MemoryOrder.Relaxed",
             Self::SyncMemoryOrderAcquire => "intrinsic.sync.MemoryOrder.Acquire",
             Self::SyncMemoryOrderRelease => "intrinsic.sync.MemoryOrder.Release",
@@ -3430,6 +3503,28 @@ impl HirBootstrapHostFunction {
                 | Self::SyncSemaphoreAcquire
                 | Self::SyncOnceGetOrInit
                 | Self::SyncBarrierWait
+                | Self::SyncArrayGet
+                | Self::SyncArraySet
+                | Self::SyncArrayCompareExchange
+                | Self::SyncArraySnapshot
+                | Self::SyncMapGet
+                | Self::SyncMapContains
+                | Self::SyncMapInsert
+                | Self::SyncMapRemove
+                | Self::SyncMapCompareExchange
+                | Self::SyncMapSnapshot
+                | Self::SyncSetContains
+                | Self::SyncSetInsert
+                | Self::SyncSetRemove
+                | Self::SyncSetSnapshot
+                | Self::SyncStackPush
+                | Self::SyncStackPop
+                | Self::SyncStackPeek
+                | Self::SyncStackSnapshot
+                | Self::SyncQueueEnqueue
+                | Self::SyncQueueDequeue
+                | Self::SyncQueuePeek
+                | Self::SyncQueueSnapshot
                 | Self::TimeSleep
                 | Self::TimerWait
                 | Self::TestingWithVirtualTime
